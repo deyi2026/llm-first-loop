@@ -202,7 +202,9 @@ def _write_closed_event_store(
     )
 
 
-def test_episode_store_indexes_consumed_tool_span_without_claiming_episode_resolution(tmp_path) -> None:
+def test_episode_store_indexes_consumed_tool_span_without_claiming_episode_resolution(
+    tmp_path,
+) -> None:
     store = EpisodeStore(tmp_path / "episodes")
     user, decl, tool, consumer = _user("QUESTION"), _decl("tc-1"), _tool("tc-1"), _consumer()
     ref = stable_tool_span_ref("sid", user, 0, 3, ["tc-1"])
@@ -228,9 +230,7 @@ def test_episode_store_indexes_consumed_tool_span_without_claiming_episode_resol
     hits = store.search("sid", "TOOL-SECRET", 10)
     assert hits and hits[0]["ref"] == ref
     searcher = RecordSearcher(audit_dir=tmp_path / "audit", episode_store=store)
-    record_hits = searcher.search(
-        kind="episode", query="TOOL-SECRET", limit=10, session_id="sid"
-    )
+    record_hits = searcher.search(kind="episode", query="TOOL-SECRET", limit=10, session_id="sid")
     assert record_hits and record_hits[0]["ref"] == ref
 
 
@@ -263,9 +263,7 @@ def test_multiple_tool_rounds_share_one_consumed_span(tmp_path) -> None:
     refs = backfill_consumed_tool_spans(store, sess)
 
     assert len(refs) == 1
-    assert {m.metadata.get(CONSUMED_TOOL_SPAN_REF_KEY) for m in (d1, t1, d2, t2)} == {
-        refs[0]
-    }
+    assert {m.metadata.get(CONSUMED_TOOL_SPAN_REF_KEY) for m in (d1, t1, d2, t2)} == {refs[0]}
     assert provider_view_without_resolved_episodes(sess.messages) == [user, consumer]
     hydrated = store.hydrate("sid", refs[0], max_chars=12000)
     assert hydrated is not None
@@ -405,16 +403,22 @@ def test_closed_attempt_requires_complete_receipts_and_matching_terminal(tmp_pat
     store = EpisodeStore(tmp_path / "episodes")
     missing_tool = [_user("Q"), _decl("tc-missing"), _program_terminal("llm_error")]
     sess_missing = SimpleNamespace(session_id="sid", messages=missing_tool)
-    assert backfill_closed_tool_attempts(
-        store, sess_missing, event_store=_closed_events(missing_tool, "llm_error")
-    ) == []
+    assert (
+        backfill_closed_tool_attempts(
+            store, sess_missing, event_store=_closed_events(missing_tool, "llm_error")
+        )
+        == []
+    )
     assert provider_view_without_resolved_episodes(sess_missing.messages) == missing_tool
 
     mismatch = [_user("Q"), _decl("tc-1"), _tool("tc-1"), _program_terminal("stagnation")]
     sess_mismatch = SimpleNamespace(session_id="sid", messages=mismatch)
-    assert backfill_closed_tool_attempts(
-        store, sess_mismatch, event_store=_closed_events(mismatch, "llm_error")
-    ) == []
+    assert (
+        backfill_closed_tool_attempts(
+            store, sess_mismatch, event_store=_closed_events(mismatch, "llm_error")
+        )
+        == []
+    )
     assert provider_view_without_resolved_episodes(sess_mismatch.messages) == mismatch
 
 
@@ -634,7 +638,12 @@ def test_engine_next_human_ingress_closes_prior_failed_tool_protocol(tmp_path) -
     events = EventStore(tmp_path / "event_logs")
     sid = sessions.create()
     stored = sessions.load(sid)
-    failed = [_user("FAILED-QUESTION"), _decl("tc-failed"), _tool("tc-failed", "FAILED-TOOL-SECRET"), _program_terminal("llm_error")]
+    failed = [
+        _user("FAILED-QUESTION"),
+        _decl("tc-failed"),
+        _tool("tc-failed", "FAILED-TOOL-SECRET"),
+        _program_terminal("llm_error"),
+    ]
     stored.messages = failed
     sessions.save(stored)
     _write_closed_event_store(events, sid, failed, "llm_error")
@@ -708,7 +717,12 @@ def test_engine_delegated_wake_keeps_prior_failed_tool_protocol_active(tmp_path)
     events = EventStore(tmp_path / "event_logs")
     sid = sessions.create()
     stored = sessions.load(sid)
-    failed = [_user("FAILED-QUESTION"), _decl("tc-failed"), _tool("tc-failed", "FAILED-TOOL-SECRET"), _program_terminal("llm_error")]
+    failed = [
+        _user("FAILED-QUESTION"),
+        _decl("tc-failed"),
+        _tool("tc-failed", "FAILED-TOOL-SECRET"),
+        _program_terminal("llm_error"),
+    ]
     stored.messages = failed
     sessions.save(stored)
     _write_closed_event_store(events, sid, failed, "llm_error")
@@ -740,6 +754,8 @@ def test_engine_delegated_wake_keeps_prior_failed_tool_protocol_active(tmp_path)
     assert not after.messages[1].metadata.get(CLOSED_TOOL_SPAN_REF_KEY)
     assert not after.messages[2].metadata.get(CLOSED_TOOL_SPAN_REF_KEY)
     delegated_users = [
-        message for message in after.messages if message.role == "user" and message.metadata.get("ingress_delegated")
+        message
+        for message in after.messages
+        if message.role == "user" and message.metadata.get("ingress_delegated")
     ]
     assert delegated_users and delegated_users[-1].content == "scheduled continuation"

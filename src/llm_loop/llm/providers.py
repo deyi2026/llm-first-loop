@@ -104,7 +104,9 @@ class ProviderSpec:
     history_budget_chars: int | None = None
     max_input_tokens: int | None = None  # provider 级输入 token 预算（None=仅物理窗口/其它 cap）
     max_tokens: int | None = None  # 2026-08-15: provider 级输出预算（None=全局 LLM_MAX_TOKENS）
-    chars_per_token: float | None = None  # EVO-20260824: provider 级字符/token 估算（None=全局 0.6）
+    chars_per_token: float | None = (
+        None  # EVO-20260824: provider 级字符/token 估算（None=全局 0.6）
+    )
     # deepseek 中文混合实测 1.676 tok/char → 0.6 chars/token；local qwen 中文 tokenizer 效率更高
     # （1 token≈1-1.5 中文字）→ 0.9。守卫/预算按 provider 取值，未配置回退全局（零回归）。
 
@@ -256,15 +258,39 @@ class ProviderRegistry:
                 else ({"max_tokens": spec.max_tokens} if spec.max_tokens is not None else {})
             ),
             # P3-5: 协议（模型级元数据；默认 openai 零回归）
-            **({"wire_protocol": spec.models[model_id].wire_protocol} if spec.models[model_id].wire_protocol != "openai" else {}),
+            **(
+                {"wire_protocol": spec.models[model_id].wire_protocol}
+                if spec.models[model_id].wire_protocol != "openai"
+                else {}
+            ),
             # 仅非默认值下发，保持旧 client_params 结构零回归。
             **({"send_tool_choice": False} if not spec.models[model_id].send_tool_choice else {}),
             **({"reasoning_split": True} if spec.models[model_id].reasoning_split else {}),
-            **({"reasoning_effort_map": dict(spec.models[model_id].reasoning_effort_map)} if spec.models[model_id].reasoning_effort_map else {}),
-            **({"temperature": spec.models[model_id].temperature} if spec.models[model_id].temperature is not None else {}),
-            **({"top_p": spec.models[model_id].top_p} if spec.models[model_id].top_p is not None else {}),
-            **({"top_k": spec.models[model_id].top_k} if spec.models[model_id].top_k is not None else {}),
-            **({"min_p": spec.models[model_id].min_p} if spec.models[model_id].min_p is not None else {}),
+            **(
+                {"reasoning_effort_map": dict(spec.models[model_id].reasoning_effort_map)}
+                if spec.models[model_id].reasoning_effort_map
+                else {}
+            ),
+            **(
+                {"temperature": spec.models[model_id].temperature}
+                if spec.models[model_id].temperature is not None
+                else {}
+            ),
+            **(
+                {"top_p": spec.models[model_id].top_p}
+                if spec.models[model_id].top_p is not None
+                else {}
+            ),
+            **(
+                {"top_k": spec.models[model_id].top_k}
+                if spec.models[model_id].top_k is not None
+                else {}
+            ),
+            **(
+                {"min_p": spec.models[model_id].min_p}
+                if spec.models[model_id].min_p is not None
+                else {}
+            ),
         }
 
 
@@ -312,9 +338,12 @@ def _parse_bool_field(
         if v in _FALSY_STRINGS:
             return False
     logger.warning(
-        "模型 %s/%s 字段 %s=%r 非合法布尔（仅接受 true/false/1/0/yes/no/on/off），"
-        "回退默认 %s",
-        pid, mid, field, value, default,
+        "模型 %s/%s 字段 %s=%r 非合法布尔（仅接受 true/false/1/0/yes/no/on/off），回退默认 %s",
+        pid,
+        mid,
+        field,
+        value,
+        default,
     )
     return default
 
@@ -343,13 +372,17 @@ def _parse_model_max_tokens(pid: str, mid: str, value: Any) -> int | None:
     except (TypeError, ValueError):
         logger.warning(
             "模型 %s/%s max_tokens=%r 非整数，回退 provider/global 输出预算",
-            pid, mid, value,
+            pid,
+            mid,
+            value,
         )
         return None
     if parsed <= 0:
         logger.warning(
             "模型 %s/%s max_tokens=%r 非正数，回退 provider/global 输出预算",
-            pid, mid, value,
+            pid,
+            mid,
+            value,
         )
         return None
     return parsed
@@ -364,19 +397,32 @@ def _parse_model_max_input_tokens(pid: str, mid: str, value: Any) -> int | None:
     except (TypeError, ValueError):
         logger.warning(
             "模型 %s/%s max_input_tokens=%r 非整数，回退 provider/物理窗口预算",
-            pid, mid, value,
+            pid,
+            mid,
+            value,
         )
         return None
     if parsed <= 0:
         logger.warning(
             "模型 %s/%s max_input_tokens=%r 非正数，回退 provider/物理窗口预算",
-            pid, mid, value,
+            pid,
+            mid,
+            value,
         )
         return None
     return parsed
 
 
-def _parse_optional_float(pid: str, mid: str, field: str, value: Any, *, minimum: float = 0.0, maximum: float | None = None, exclusive_min: bool = False) -> float | None:
+def _parse_optional_float(
+    pid: str,
+    mid: str,
+    field: str,
+    value: Any,
+    *,
+    minimum: float = 0.0,
+    maximum: float | None = None,
+    exclusive_min: bool = False,
+) -> float | None:
     if value is None:
         return None
     try:
@@ -384,7 +430,9 @@ def _parse_optional_float(pid: str, mid: str, field: str, value: Any, *, minimum
     except (TypeError, ValueError):
         logger.warning("模型 %s/%s %s=%r 非数字，忽略该显式生成参数", pid, mid, field, value)
         return None
-    if (parsed <= minimum if exclusive_min else parsed < minimum) or (maximum is not None and parsed > maximum):
+    if (parsed <= minimum if exclusive_min else parsed < minimum) or (
+        maximum is not None and parsed > maximum
+    ):
         logger.warning("模型 %s/%s %s=%r 超出允许范围，忽略该显式生成参数", pid, mid, field, value)
         return None
     return parsed
@@ -416,7 +464,9 @@ def _parse_wire_protocol(pid: str, mid: str, mval: dict[str, Any]) -> str:
     if raw != "openai":
         logger.warning(
             "模型 %s/%s 的 wire_protocol=%r 非法（支持 openai/anthropic/google/lms-chat），回退 openai",
-            pid, mid, raw,
+            pid,
+            mid,
+            raw,
         )
     return "openai"
 
@@ -425,18 +475,23 @@ def _parse_reasoning_control(pid: str, mid: str, mval: dict[str, Any]) -> str:
     """解析 reasoning 控制协议；非法显式值 fail-safe 到 unknown，不猜控制格式。"""
     raw = str(mval.get("reasoning_control", "legacy")).strip().lower()
     allowed = {
-        "legacy", "unknown", "none", "thinking_type", "chat_template",
+        "legacy",
+        "unknown",
+        "none",
+        "thinking_type",
+        "chat_template",
         "always_on_effort",
     }
     if raw in allowed:
         return raw
     logger.warning(
         "模型 %s/%s 的 reasoning_control=%r 非法（支持 %s），回退 unknown",
-        pid, mid, raw, "/".join(sorted(allowed)),
+        pid,
+        mid,
+        raw,
+        "/".join(sorted(allowed)),
     )
     return "unknown"
-
-
 
 
 def _parse_reasoning_effort_map(pid: str, mid: str, mval: dict[str, Any]) -> dict[str, str]:
@@ -450,9 +505,7 @@ def _parse_reasoning_effort_map(pid: str, mid: str, mval: dict[str, Any]) -> dic
     if raw is None:
         return {}
     if not isinstance(raw, dict):
-        logger.warning(
-            "模型 %s/%s reasoning_effort_map=%r 非对象，忽略该映射", pid, mid, raw
-        )
+        logger.warning("模型 %s/%s reasoning_effort_map=%r 非对象，忽略该映射", pid, mid, raw)
         return {}
     allowed_keys = {"low", "medium", "high", "max", "xhigh"}
     out: dict[str, str] = {}
@@ -462,7 +515,10 @@ def _parse_reasoning_effort_map(pid: str, mid: str, mval: dict[str, Any]) -> dic
         if k not in allowed_keys or not re.fullmatch(r"[a-z0-9_.-]{1,32}", v):
             logger.warning(
                 "模型 %s/%s reasoning_effort_map 条目 %r:%r 非法，忽略",
-                pid, mid, key, value,
+                pid,
+                mid,
+                key,
+                value,
             )
             continue
         out[k] = v
@@ -477,7 +533,10 @@ def _parse_reasoning_replay(pid: str, mid: str, mval: dict[str, Any]) -> str:
         return raw
     logger.warning(
         "模型 %s/%s 的 reasoning_replay=%r 非法（支持 %s），回退 configured",
-        pid, mid, raw, "/".join(sorted(allowed)),
+        pid,
+        mid,
+        raw,
+        "/".join(sorted(allowed)),
     )
     return "configured"
 
@@ -507,9 +566,7 @@ def _discover_llama_server(requested_model: str | None = None) -> tuple[str, str
     try:
         import subprocess
 
-        out = subprocess.run(
-            ["ps", "aux"], capture_output=True, text=True, timeout=5
-        ).stdout
+        out = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=5).stdout
         candidates: list[tuple[str, str, str]] = []
         for line in out.splitlines():
             lower_line = line.lower()
@@ -589,7 +646,8 @@ def _parse_capability_tier(pid: str, mid: str, mval: dict[str, Any]) -> str:
     if "capability_tier" not in mval:
         logger.info(
             "模型 %s/%s 未配置 capability_tier，按 unknown 处理（无能力结论，fail-open）",
-            pid, mid,
+            pid,
+            mid,
         )
         return "unknown"
     v = str(mval["capability_tier"]).strip().lower()
@@ -597,7 +655,9 @@ def _parse_capability_tier(pid: str, mid: str, mval: dict[str, Any]) -> str:
         return v
     logger.warning(
         "模型 %s/%s capability_tier=%r 非白名单值（strong/weak/unknown），回退 unknown",
-        pid, mid, mval["capability_tier"],
+        pid,
+        mid,
+        mval["capability_tier"],
     )
     return "unknown"
 
@@ -630,17 +690,15 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
         wire_protocol=_parse_wire_protocol(pid, mid, mval),
         # T-P2-1-1: 能力档白名单（缺失/非法 → unknown + 降级日志，不拖垮注册表）
         capability_tier=_parse_capability_tier(pid, mid, mval),
-        send_tool_choice=_parse_bool_field(
-            pid, mid, "send_tool_choice", mval, default=True
-        ),
-        reasoning_split=_parse_bool_field(
-            pid, mid, "reasoning_split", mval, default=False
-        ),
+        send_tool_choice=_parse_bool_field(pid, mid, "send_tool_choice", mval, default=True),
+        reasoning_split=_parse_bool_field(pid, mid, "reasoning_split", mval, default=False),
         reasoning_replay=_parse_reasoning_replay(pid, mid, mval),
         reasoning_effort_map=_parse_reasoning_effort_map(pid, mid, mval),
         runtime_identity=str(mval.get("runtime_identity", "") or "").strip(),
         temperature=_parse_optional_float(pid, mid, "temperature", mval.get("temperature")),
-        top_p=_parse_optional_float(pid, mid, "top_p", mval.get("top_p"), maximum=1.0, exclusive_min=True),
+        top_p=_parse_optional_float(
+            pid, mid, "top_p", mval.get("top_p"), maximum=1.0, exclusive_min=True
+        ),
         top_k=_parse_optional_nonnegative_int(pid, mid, "top_k", mval.get("top_k")),
         min_p=_parse_optional_float(pid, mid, "min_p", mval.get("min_p"), maximum=1.0),
     )
@@ -676,7 +734,9 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                     except (ValueError, TypeError) as exc:
                         logger.warning(
                             "模型条目 %s/%s 配置非法, 跳过该条（其余模型/Provider 正常加载）: %s",
-                            pid, mid, exc,
+                            pid,
+                            mid,
+                            exc,
                         )
             default_model = str(val.get("default_model", "")) or ""
             # provider 级超时（秒）: 仅合法正数接受; 非法/缺失 → None（全局 LLM_TIMEOUT_S 兜底）
@@ -690,12 +750,14 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                     else:
                         logger.warning(
                             "provider 条目 %r 的 timeout_s=%r 非正数, 回退全局超时",
-                            pid, raw_timeout,
+                            pid,
+                            raw_timeout,
                         )
                 except (ValueError, TypeError):
                     logger.warning(
                         "provider 条目 %r 的 timeout_s=%r 非法, 回退全局超时",
-                        pid, raw_timeout,
+                        pid,
+                        raw_timeout,
                     )
             # provider 级输入 token 预算：只限制模型可见输入，不伪造物理 context。
             # 非法/缺失 → None（由物理窗口 / output reserve / 其它显式 cap 决定）。
@@ -709,12 +771,14 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                     else:
                         logger.warning(
                             "provider 条目 %r 的 max_input_tokens=%r 非正数, 回退物理窗口预算",
-                            pid, raw_input_tokens,
+                            pid,
+                            raw_input_tokens,
                         )
                 except (ValueError, TypeError):
                     logger.warning(
                         "provider 条目 %r 的 max_input_tokens=%r 非法, 回退物理窗口预算",
-                        pid, raw_input_tokens,
+                        pid,
+                        raw_input_tokens,
                     )
             # provider 级输出预算（token）: 2026-08-15 显式 max_tokens（长分析模型放大）;
             # 非法/缺失 → None（全局 LLM_MAX_TOKENS 兜底）
@@ -728,12 +792,14 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                     else:
                         logger.warning(
                             "provider 条目 %r 的 max_tokens=%r 非正数, 回退全局预算",
-                            pid, raw_tokens,
+                            pid,
+                            raw_tokens,
                         )
                 except (ValueError, TypeError):
                     logger.warning(
                         "provider 条目 %r 的 max_tokens=%r 非法, 回退全局预算",
-                        pid, raw_tokens,
+                        pid,
+                        raw_tokens,
                     )
             # provider 级历史注入预算（字符）: 本地慢模型收紧以缩短 prefill;
             # 非法/缺失 → None（不增加 provider cap；交由显式全局 cap/模型物理窗口）
@@ -747,12 +813,14 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                     else:
                         logger.warning(
                             "provider 条目 %r 的 history_budget_chars=%r 非正数, 回退全局预算",
-                            pid, raw_budget,
+                            pid,
+                            raw_budget,
                         )
                 except (ValueError, TypeError):
                     logger.warning(
                         "provider 条目 %r 的 history_budget_chars=%r 非法, 回退全局预算",
-                        pid, raw_budget,
+                        pid,
+                        raw_budget,
                     )
             # EVO-20260824: provider 级字符/token 估算（chars_per_token）——本地 qwen tokenizer
             # 效率高于 deepseek（1 token≈1-1.5 中文字），统一 0.6 会让本地载荷高估 1.7-2 倍
@@ -767,12 +835,14 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                     else:
                         logger.warning(
                             "provider 条目 %r 的 chars_per_token=%r 非正数, 回退全局估算",
-                            pid, raw_cpt,
+                            pid,
+                            raw_cpt,
                         )
                 except (ValueError, TypeError):
                     logger.warning(
                         "provider 条目 %r 的 chars_per_token=%r 非法, 回退全局估算",
-                        pid, raw_cpt,
+                        pid,
+                        raw_cpt,
                     )
             out[str(pid)] = ProviderSpec(
                 id=str(pid),

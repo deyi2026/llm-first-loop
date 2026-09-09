@@ -49,10 +49,15 @@ logger = logging.getLogger(__name__)
 class _RunEntrypointMixin:
     # ── 主入口 ──
     def run_stream(
-        self, session_id: str, user_text: str, model: str | None = None,
+        self,
+        session_id: str,
+        user_text: str,
+        model: str | None = None,
         reasoning_effort: str | None = None,
         reasoning_mode: str | None = None,
-        *, ingress: object | None = None, user_metadata: dict[str, Any] | None = None,
+        *,
+        ingress: object | None = None,
+        user_metadata: dict[str, Any] | None = None,
     ) -> Iterator[StreamDelta]:
         """单条用户消息的完整循环（流式）：逐 content delta yield，结束返回 LoopResult.
 
@@ -141,9 +146,13 @@ class _RunEntrypointMixin:
             with self._run_acquired_callbacks_guard:
                 on_run_acquired = self._run_acquired_callbacks.get(session_id)
             inner = self._run_stream_inner(
-                session_id, user_text, model,
-                run_save_token=_run_save_token, on_run_acquired=on_run_acquired,
-                ingress=ingress, user_metadata=user_metadata,
+                session_id,
+                user_text,
+                model,
+                run_save_token=_run_save_token,
+                on_run_acquired=on_run_acquired,
+                ingress=ingress,
+                user_metadata=user_metadata,
             )
 
             while True:
@@ -185,8 +194,6 @@ class _RunEntrypointMixin:
             # 支撑第二次 /stop 幂等与恢复轮可再停止）
             self._sync_cancel_discard(session_id)
 
-
-
     def run(
         self: LoopEngine,
         session_id: str,
@@ -204,18 +211,19 @@ class _RunEntrypointMixin:
         ingress: agent_trace_leak 3.5——人类输入通道凭据（缺省 None 向后兼容）。
         """
         it = self.run_stream(
-            session_id, user_text, model, reasoning_effort=reasoning_effort,
+            session_id,
+            user_text,
+            model,
+            reasoning_effort=reasoning_effort,
             reasoning_mode=reasoning_mode,
-            ingress=ingress, user_metadata=user_metadata,
+            ingress=ingress,
+            user_metadata=user_metadata,
         )
         while True:
             try:
                 next(it)
             except StopIteration as exc:
                 return exc.value
-
-
-
 
     def _run_with_acquired(
         self: LoopEngine,
@@ -233,8 +241,13 @@ class _RunEntrypointMixin:
         """内部同步入口：首个generator推进前校验session解析时的workspace epoch。"""
         marker = self._session_lifecycle._install_run_acquired_callback(session_id, on_run_acquired)
         it = self.run_stream(
-            session_id, user_text, model=model, reasoning_effort=reasoning_effort,
-            reasoning_mode=reasoning_mode, ingress=ingress, user_metadata=user_metadata,
+            session_id,
+            user_text,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            reasoning_mode=reasoning_mode,
+            ingress=ingress,
+            user_metadata=user_metadata,
         )
         try:
             # 首次next执行run_stream admission；与epoch校验同处workspace guard内，
@@ -272,8 +285,13 @@ class _RunEntrypointMixin:
         """内部流式入口：首次推进时原子校验workspace epoch并完成run admission。"""
         marker = self._session_lifecycle._install_run_acquired_callback(session_id, on_run_acquired)
         it = self.run_stream(
-            session_id, user_text, model=model, reasoning_effort=reasoning_effort,
-            reasoning_mode=reasoning_mode, ingress=ingress, user_metadata=user_metadata,
+            session_id,
+            user_text,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            reasoning_mode=reasoning_mode,
+            ingress=ingress,
+            user_metadata=user_metadata,
         )
         try:
             with self._workspace_transition_guard:
@@ -327,7 +345,9 @@ class _RunEntrypointMixin:
         """记忆块解析落盘（委托 SessionLifecycle；feishu/bridge 直调面）."""
         self._session_lifecycle._remember(final_answer, session_id, sess)
 
-    def run_single(self: LoopEngine, user_text: str, model: str | None = None, *, ingress: object | None = None) -> LoopResult:
+    def run_single(
+        self: LoopEngine, user_text: str, model: str | None = None, *, ingress: object | None = None
+    ) -> LoopResult:
         """一次性便捷入口：自动创建新会话并执行完整循环."""
         session_id = self.session.create()
         return self.run(session_id, user_text, model=model, ingress=ingress)
@@ -342,10 +362,3 @@ class _RunEntrypointMixin:
             closer()
         except Exception as exc:  # noqa: BLE001 — 关闭失败 fail-open
             logger.warning("LLM 客户端关闭失败（fail-open）: %s", exc)
-
-
-
-
-
-
-

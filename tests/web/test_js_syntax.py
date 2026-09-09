@@ -61,7 +61,7 @@ def test_init_entrypoint_called() -> None:
     app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
     assert "init();" in app_js, "app.js 缺少 init() 调用——初始化（模型列表/会话/SSE）不会执行"
     # 调用必须在文件末尾（所有函数定义与事件绑定之后），否则引用的函数尚未定义
-    tail = app_js[app_js.rfind("init();"):]
+    tail = app_js[app_js.rfind("init();") :]
     assert tail.strip() == "init();", "init() 调用后不应再有其他代码"
 
 

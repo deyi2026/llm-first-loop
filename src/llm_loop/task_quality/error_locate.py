@@ -52,20 +52,29 @@ class PytestParser:
         for m in self._FAILED_RE.finditer(output):
             fpath, _test, reason = m.group(1), m.group(2), m.group(3).strip()
             line = self._find_line(output, fpath)
-            failures.append(FailureInfo(
-                file_path=fpath, line_number=line, reason=reason[:300],
-                code_snippet=self._snippet(fpath, line), assert_expression="",
-            ))
+            failures.append(
+                FailureInfo(
+                    file_path=fpath,
+                    line_number=line,
+                    reason=reason[:300],
+                    code_snippet=self._snippet(fpath, line),
+                    assert_expression="",
+                )
+            )
         # 无 FAILED 行但有定位行（断言失败在文件内）
         if not failures:
             for m in self._LOC_RE.finditer(output):
                 fpath, lineno = m.group(1), int(m.group(2))
                 reason = self._nearby_assert(output)
-                failures.append(FailureInfo(
-                    file_path=fpath, line_number=lineno, reason=reason,
-                    code_snippet=self._snippet(fpath, lineno),
-                    assert_expression=reason if reason.startswith("assert") else "",
-                ))
+                failures.append(
+                    FailureInfo(
+                        file_path=fpath,
+                        line_number=lineno,
+                        reason=reason,
+                        code_snippet=self._snippet(fpath, lineno),
+                        assert_expression=reason if reason.startswith("assert") else "",
+                    )
+                )
         return failures
 
     @staticmethod
@@ -105,12 +114,15 @@ class RuffParser:
     def parse(self, output: str) -> list[FailureInfo]:
         out: list[FailureInfo] = []
         for m in self._RE.finditer(output):
-            out.append(FailureInfo(
-                file_path=m.group(1), line_number=int(m.group(2)),
-                reason=f"{m.group(4)}: {m.group(5).strip()[:200]}",
-                code_snippet=PytestParser._snippet(m.group(1), int(m.group(2))),
-                assert_expression="",
-            ))
+            out.append(
+                FailureInfo(
+                    file_path=m.group(1),
+                    line_number=int(m.group(2)),
+                    reason=f"{m.group(4)}: {m.group(5).strip()[:200]}",
+                    code_snippet=PytestParser._snippet(m.group(1), int(m.group(2))),
+                    assert_expression="",
+                )
+            )
         return out
 
 
@@ -126,12 +138,15 @@ class PyrightParser:
     def parse(self, output: str) -> list[FailureInfo]:
         out: list[FailureInfo] = []
         for m in self._RE.finditer(output):
-            out.append(FailureInfo(
-                file_path=m.group(1), line_number=int(m.group(2)),
-                reason=f"{m.group(4)}: {m.group(5).strip()[:200]}",
-                code_snippet=PytestParser._snippet(m.group(1), int(m.group(2))),
-                assert_expression="",
-            ))
+            out.append(
+                FailureInfo(
+                    file_path=m.group(1),
+                    line_number=int(m.group(2)),
+                    reason=f"{m.group(4)}: {m.group(5).strip()[:200]}",
+                    code_snippet=PytestParser._snippet(m.group(1), int(m.group(2))),
+                    assert_expression="",
+                )
+            )
         return out
 
 
@@ -151,11 +166,15 @@ class GenericTraceParser:
         reason = f"{err.group(1)}: {err.group(2)[:200]}" if err else "error"
         out: list[FailureInfo] = []
         for fpath, lineno in files[:10]:  # 最多 10 帧
-            out.append(FailureInfo(
-                file_path=fpath, line_number=int(lineno), reason=reason,
-                code_snippet=PytestParser._snippet(fpath, int(lineno)),
-                assert_expression="",
-            ))
+            out.append(
+                FailureInfo(
+                    file_path=fpath,
+                    line_number=int(lineno),
+                    reason=reason,
+                    code_snippet=PytestParser._snippet(fpath, int(lineno)),
+                    assert_expression="",
+                )
+            )
         return out or [FailureInfo(file_path="", line_number=0, reason=reason)]
 
 
@@ -172,7 +191,10 @@ class ErrorLocator:
     ) -> None:
         self._max_chars = max_chars
         self._parsers: tuple[ErrorParser, ...] = parsers or (
-            PytestParser(), RuffParser(), PyrightParser(), GenericTraceParser(),
+            PytestParser(),
+            RuffParser(),
+            PyrightParser(),
+            GenericTraceParser(),
         )
         self._event_store = event_store
         self._session_id = session_id
@@ -192,8 +214,10 @@ class ErrorLocator:
         # 无输出/无失败特征 → 不触发解析（非测试输出）
         if not output or len(output.strip()) < 10:
             return ErrorLocationResult(
-                framework=TestFramework.UNKNOWN, fallback=True,
-                original_output=output, original_size=original_size,
+                framework=TestFramework.UNKNOWN,
+                fallback=True,
+                original_output=output,
+                original_size=original_size,
                 retained_size=original_size,
             )
 
@@ -206,16 +230,20 @@ class ErrorLocator:
         except Exception:  # noqa: BLE001 — 匹配异常回退
             logger.warning("错误定位匹配异常（回退原始输出）: %s", exc_info=True)
             return ErrorLocationResult(
-                framework=TestFramework.UNKNOWN, fallback=True,
-                original_output=output, original_size=original_size,
+                framework=TestFramework.UNKNOWN,
+                fallback=True,
+                original_output=output,
+                original_size=original_size,
                 retained_size=original_size,
             )
 
         if matched is None:
             # 格式不识别 → 回退原始输出（fail-open，不编造）
             return ErrorLocationResult(
-                framework=TestFramework.UNKNOWN, fallback=True,
-                original_output=output, original_size=original_size,
+                framework=TestFramework.UNKNOWN,
+                fallback=True,
+                original_output=output,
+                original_size=original_size,
                 retained_size=original_size,
             )
 
@@ -224,38 +252,48 @@ class ErrorLocator:
         except Exception as exc:  # noqa: BLE001 — 解析异常回退
             logger.warning("错误定位解析异常（回退原始输出）: %s", exc)
             return ErrorLocationResult(
-                framework=TestFramework.UNKNOWN, fallback=True,
-                original_output=output, original_size=original_size,
+                framework=TestFramework.UNKNOWN,
+                fallback=True,
+                original_output=output,
+                original_size=original_size,
                 retained_size=original_size,
             )
 
         # 框架名映射到枚举
         fw_map = {
-            "pytest": TestFramework.PYTEST, "ruff": TestFramework.RUFF,
-            "pyright": TestFramework.PYRIGHT, "generic": TestFramework.GENERIC,
+            "pytest": TestFramework.PYTEST,
+            "ruff": TestFramework.RUFF,
+            "pyright": TestFramework.PYRIGHT,
+            "generic": TestFramework.GENERIC,
         }
         framework = fw_map.get(matched.name, TestFramework.UNKNOWN)
 
         # 体积控制: 结构化文本超限截断（优先保留位置与原因）
         result = ErrorLocationResult(
-            framework=framework, failures=failures,
-            original_size=original_size, retained_size=original_size,
+            framework=framework,
+            failures=failures,
+            original_size=original_size,
+            retained_size=original_size,
         )
         structured = result.to_injection_text()
         if len(structured) > self._max_chars:
             # 截断: 保留前 max_chars*0.6 字符（失败位置与原因在前部）
             kept = structured[: self._max_chars]
             result = ErrorLocationResult(
-                framework=framework, failures=failures,
-                truncated=True, original_size=original_size,
+                framework=framework,
+                failures=failures,
+                truncated=True,
+                original_size=original_size,
                 retained_size=len(kept),
             )
             # failures 超限时也裁剪
             if len(result.to_injection_text()) > self._max_chars:
                 trimmed = tuple(failures[:3])
                 result = ErrorLocationResult(
-                    framework=framework, failures=trimmed,
-                    truncated=True, original_size=original_size,
+                    framework=framework,
+                    failures=trimmed,
+                    truncated=True,
+                    original_size=original_size,
                     retained_size=len(kept),
                 )
 
@@ -263,7 +301,8 @@ class ErrorLocator:
         if self._event_store is not None:
             try:
                 self._event_store.append(
-                    self._session_id, "task.error_locate.parsed",
+                    self._session_id,
+                    "task.error_locate.parsed",
                     {
                         "framework": framework.value,
                         "failure_count": len(failures),

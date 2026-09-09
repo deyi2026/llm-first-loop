@@ -101,7 +101,9 @@ def require_all_credentials() -> None:
         p["api_key_env"] for p in PROVIDERS.values() if not os.environ.get(p["api_key_env"], "")
     ]
     if missing:
-        raise RuntimeError("R7 v2 real execution preflight missing credentials: " + ", ".join(missing))
+        raise RuntimeError(
+            "R7 v2 real execution preflight missing credentials: " + ", ".join(missing)
+        )
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -119,9 +121,7 @@ def _build_registry(
     capture = EvidenceCapture(blobs, ledger)
     freshness = EvidenceFreshness(ledger)
     search = EvidenceSearch(blobs, ledger, snippet_chars=500)
-    registry = ToolRegistry(
-        max_output_chars=100000, failure_guidance_enabled=False
-    )
+    registry = ToolRegistry(max_output_chars=100000, failure_guidance_enabled=False)
     registry.register(ReadFileTool())
     registry.set_evidence_enforcer(
         EvidenceEnforcer(

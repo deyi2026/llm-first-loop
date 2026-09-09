@@ -434,7 +434,11 @@ class ToolExecutionJournal:
     ) -> dict[str, Any] | None:
         """Read current file identity for one durable effect without inferring execution causation."""
         store = self.event_store
-        if store is None or not bool(getattr(store, "enabled", False)) or not store.exists(session_id):
+        if (
+            store is None
+            or not bool(getattr(store, "enabled", False))
+            or not store.exists(session_id)
+        ):
             return None
         prepared: dict[str, Any] | None = None
         observed: dict[str, Any] | None = None
@@ -608,7 +612,11 @@ class ToolExecutionJournal:
     def recover(self, session_id: str, sess: Session) -> int:
         """Close incomplete WAL facts without automatically re-executing a tool."""
         store = self.event_store
-        if store is None or not bool(getattr(store, "enabled", False)) or not store.exists(session_id):
+        if (
+            store is None
+            or not bool(getattr(store, "enabled", False))
+            or not store.exists(session_id)
+        ):
             return 0
         try:
             states: dict[str, dict[str, Any]] = {}
@@ -667,8 +675,7 @@ class ToolExecutionJournal:
                 declaration_present = any(
                     m.role == "assistant"
                     and any(
-                        str((tc or {}).get("id") or "") == call_id
-                        for tc in (m.tool_calls or [])
+                        str((tc or {}).get("id") or "") == call_id for tc in (m.tool_calls or [])
                     )
                     for m in sess.messages
                 )
@@ -677,9 +684,7 @@ class ToolExecutionJournal:
 
                 if isinstance(finished, dict):
                     result_sha = str(finished.get("result_state_sha256") or "")
-                    msg = self.load_result(
-                        session_id, execution_id, expected_sha256=result_sha
-                    )
+                    msg = self.load_result(session_id, execution_id, expected_sha256=result_sha)
                     if msg is None:
                         msg = Message(
                             role="tool",
@@ -770,5 +775,7 @@ class ToolExecutionJournal:
                 self.session_store.save(sess)
             return recovered
         except Exception:  # noqa: BLE001 - recovery is fail-open and never auto-reexecutes
-            logger.warning("tool execution WAL recovery failed; no tool was re-executed", exc_info=True)
+            logger.warning(
+                "tool execution WAL recovery failed; no tool was re-executed", exc_info=True
+            )
             return 0

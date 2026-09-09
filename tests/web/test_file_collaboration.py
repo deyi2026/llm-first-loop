@@ -18,7 +18,9 @@ def _client(fake_settings, tmp_path: Path):
     return TestClient(build_app(engine=engine)), engine, workspace, sid
 
 
-def test_file_observe_edit_operations_api_no_model_run(fake_settings, tmp_path, monkeypatch) -> None:
+def test_file_observe_edit_operations_api_no_model_run(
+    fake_settings, tmp_path, monkeypatch
+) -> None:
     client, engine, workspace, sid = _client(fake_settings, tmp_path)
     target = workspace / "notes.txt"
     target.write_bytes(b"draft\r\n")
@@ -53,7 +55,9 @@ def test_file_observe_edit_operations_api_no_model_run(fake_settings, tmp_path, 
     ops = client.get(f"/api/v1/sessions/{sid}/files/operations?limit=10")
     assert ops.status_code == 200
     assert ops.json()["receipts"][0]["operation_id"] == saved.json()["operation_id"]
-    assert all(msg.role not in {"user", "assistant", "tool"} for msg in engine.session.load(sid).messages)
+    assert all(
+        msg.role not in {"user", "assistant", "tool"} for msg in engine.session.load(sid).messages
+    )
 
 
 def test_file_api_rejects_foreign_origin_and_out_of_scope_path(fake_settings, tmp_path) -> None:
@@ -72,13 +76,13 @@ def test_file_api_rejects_foreign_origin_and_out_of_scope_path(fake_settings, tm
     assert escaped.status_code == 400
 
 
-def test_file_edit_version_conflict_keeps_human_draft_source_unchanged(fake_settings, tmp_path) -> None:
+def test_file_edit_version_conflict_keeps_human_draft_source_unchanged(
+    fake_settings, tmp_path
+) -> None:
     client, _engine, workspace, sid = _client(fake_settings, tmp_path)
     target = workspace / "a.txt"
     target.write_text("base\n", encoding="utf-8")
-    baseline = client.post(
-        f"/api/v1/sessions/{sid}/files/observe", json={"path": "a.txt"}
-    ).json()
+    baseline = client.post(f"/api/v1/sessions/{sid}/files/observe", json={"path": "a.txt"}).json()
     target.write_text("external\n", encoding="utf-8")
     response = client.post(
         f"/api/v1/sessions/{sid}/files/edit",
@@ -95,7 +99,9 @@ def test_file_edit_version_conflict_keeps_human_draft_source_unchanged(fake_sett
     assert target.read_text(encoding="utf-8") == "external\n"
 
 
-def test_file_collaboration_routes_inherit_existing_web_auth(fake_settings, tmp_path, monkeypatch) -> None:
+def test_file_collaboration_routes_inherit_existing_web_auth(
+    fake_settings, tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("WEB_API_KEY", "test-only-key")
     monkeypatch.setenv("WEB_HOST", "0.0.0.0")
     monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
@@ -107,9 +113,10 @@ def test_file_collaboration_routes_inherit_existing_web_auth(fake_settings, tmp_
     (workspace / "a.txt").write_text("x\n", encoding="utf-8")
     client = TestClient(build_app(engine=engine))
 
-    assert client.post(
-        f"/api/v1/sessions/{sid}/files/observe", json={"path": "a.txt"}
-    ).status_code == 401
+    assert (
+        client.post(f"/api/v1/sessions/{sid}/files/observe", json={"path": "a.txt"}).status_code
+        == 401
+    )
     allowed = client.post(
         f"/api/v1/sessions/{sid}/files/observe",
         json={"path": "a.txt"},
@@ -126,9 +133,7 @@ def test_file_edit_route_holds_workspace_snapshot_and_session_lease_together(
     client, engine, workspace, sid = _client(fake_settings, tmp_path)
     target = workspace / "a.txt"
     target.write_text("base\n", encoding="utf-8")
-    baseline_response = client.post(
-        f"/api/v1/sessions/{sid}/files/observe", json={"path": "a.txt"}
-    )
+    baseline_response = client.post(f"/api/v1/sessions/{sid}/files/observe", json={"path": "a.txt"})
     assert baseline_response.status_code == 200
     baseline = baseline_response.json()
 

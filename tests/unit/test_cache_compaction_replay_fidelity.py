@@ -59,7 +59,6 @@ def test_compacted_source_mapping_never_guesses_out_of_range_indices():
     ) == [8]
 
 
-
 def test_eighty_eight_duplicate_compactions_keep_eighty_eight_exact_source_indices(monkeypatch):
     """Regression for the real 08:27 event shape: 88 marks must stay 88 distinct seqs."""
     monkeypatch.setenv("COMPRESS_TARGET_RATIO", "0.6")
@@ -81,6 +80,7 @@ def test_eighty_eight_duplicate_compactions_keep_eighty_eight_exact_source_indic
 
     assert compacted_indices == list(range(88))
     assert len(set(compacted_indices)) == 88
+
 
 def test_postprocess_emits_explicit_source_seq_and_replay_marks_exact_messages():
     from types import SimpleNamespace
@@ -122,8 +122,11 @@ def test_postprocess_emits_explicit_source_seq_and_replay_marks_exact_messages()
 
     replay_events: list[Event] = [
         Event(
-            event_id=f"m{i}", session_id=sess.session_id, seq=i + 1,
-            type="message.appended", ts="2026-09-03T00:00:00Z",
+            event_id=f"m{i}",
+            session_id=sess.session_id,
+            seq=i + 1,
+            type="message.appended",
+            ts="2026-09-03T00:00:00Z",
             payload={"index": i, "role": "assistant", "content": "dup"},
         )
         for i in range(10)
@@ -131,13 +134,18 @@ def test_postprocess_emits_explicit_source_seq_and_replay_marks_exact_messages()
     for j, payload in enumerate(compact_events, start=11):
         replay_events.append(
             Event(
-                event_id=f"c{j}", session_id=sess.session_id, seq=j,
-                type="message.cache_compacted", ts="2026-09-03T00:00:01Z", payload=payload,
+                event_id=f"c{j}",
+                session_id=sess.session_id,
+                seq=j,
+                type="message.cache_compacted",
+                ts="2026-09-03T00:00:01Z",
+                payload=payload,
             )
         )
     view = replay_session(replay_events)
     marked = [
-        i for i, msg in enumerate(view["messages"])
+        i
+        for i, msg in enumerate(view["messages"])
         if "glm" in (msg.get("metadata") or {}).get("cache_compacted_for", [])
     ]
     assert marked == [2, 5, 8]

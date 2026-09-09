@@ -305,26 +305,18 @@ class ExportReport:
             f"过滤段数          segments_filtered   = {self.segments_filtered}",
         ]
         if self.reason_counts:
-            main = " / ".join(
-                f"{k}={v}" for k, v in sorted(self.reason_counts.items())
-            )
+            main = " / ".join(f"{k}={v}" for k, v in sorted(self.reason_counts.items()))
             lines.append(f"  └─ 过滤主因 reason_counts    : {main}")
         if self.all_reason_counts:
-            allr = " / ".join(
-                f"{k}={v}" for k, v in sorted(self.all_reason_counts.items())
-            )
+            allr = " / ".join(f"{k}={v}" for k, v in sorted(self.all_reason_counts.items()))
             lines.append(f"  └─ 全因明细 all_reason_counts: {allr}")
-        lines.append(
-            f"产出样本数        samples_written     = {self.samples_written}"
-        )
+        lines.append(f"产出样本数        samples_written     = {self.samples_written}")
         lines.append(
             f"reasoning 覆盖率  reasoning           = {self.reasoning_present}/{self.reasoning_total} "
             f"({self.reasoning_coverage:.1%})"
         )
         if self.status_distribution:
-            sd = " / ".join(
-                f"{k}={v}" for k, v in sorted(self.status_distribution.items())
-            )
+            sd = " / ".join(f"{k}={v}" for k, v in sorted(self.status_distribution.items()))
             lines.append(f"非 success 分布   status_distribution = {sd}")
         lines.append(f"跳过文件          skipped_files       = {len(self.skipped_files)}")
         for sf in self.skipped_files:
@@ -359,11 +351,8 @@ class ExportReport:
                 "elapsed_s": self.elapsed_s,
                 "readonly_violations": self.readonly_violations,
                 "reconciliation": {
-                    "passed_plus_filtered": self.segments_passed
-                    + self.segments_filtered,
-                    "ok": self.segments_passed
-                    + self.segments_filtered
-                    == self.segments_total,
+                    "passed_plus_filtered": self.segments_passed + self.segments_filtered,
+                    "ok": self.segments_passed + self.segments_filtered == self.segments_total,
                 },
                 "text": self.render_text(),
             },
@@ -457,7 +446,9 @@ def run_export(
                     s = m.get("status")
                     if s and s != "success":
                         statuses.add(s)
-                _record_filtered(report, str(session.get("session_id")), si, main_reason, sorted(statuses))
+                _record_filtered(
+                    report, str(session.get("session_id")), si, main_reason, sorted(statuses)
+                )
                 continue
             gaps = check_closed_loop(seg)
             if gaps:
@@ -477,7 +468,6 @@ def run_export(
             report.segments_passed += 1
             report.samples_written += 1
 
-
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         for line in lines:
@@ -485,9 +475,9 @@ def run_export(
 
     for p in json_files:
         try:
-            if hashlib.sha256(Path(p).read_bytes()).hexdigest() != before.get(
-                str(p), {}
-            ).get("sha256"):
+            if hashlib.sha256(Path(p).read_bytes()).hexdigest() != before.get(str(p), {}).get(
+                "sha256"
+            ):
                 report.readonly_violations.append(f"{p} 内容哈希变化")
             if Path(p).stat().st_mtime_ns != before.get(str(p), {}).get("mtime"):
                 report.readonly_violations.append(f"{p} mtime 变化")

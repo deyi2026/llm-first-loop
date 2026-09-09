@@ -1,4 +1,5 @@
 """EVO-20260810-86e777d1: 演进待审阅弹窗提醒测试."""
+
 from unittest import mock
 
 from llm_loop.introspection.events import ArchitectureEventType
@@ -52,7 +53,9 @@ def test_notify_failure_fallback_event():
     """
     store = _FakeStore([{"id": "EVO-TEST-3", "status": "pending_review"}])
     det = LoopSignalDetector(popup_pending_review=True)
-    with mock.patch("llm_loop.introspection.loop_signals.confirm", side_effect=RuntimeError("boom")):
+    with mock.patch(
+        "llm_loop.introspection.loop_signals.confirm", side_effect=RuntimeError("boom")
+    ):
         event = det.check_pending_review(store)
     assert event is not None
     assert "EVO-TEST-3" in event.fact

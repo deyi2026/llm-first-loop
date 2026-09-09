@@ -98,6 +98,7 @@ class TestIngressToken:
 
         # 非哨兵类型的伪造对象：属性形态可相似，但凭据校验须以签发实例为源
         assert whitelist_allows(Fake()) is True  # 通道级固有成员判定（channel 键）
+
         # 通道值域外伪造（无白名单条目）→ 拒绝
         class Fake2:
             channel = "internal"
@@ -123,14 +124,18 @@ class TestWhitelistTraceability:
 
 
 class TestGuardModeMatrix:
-    def test_observe_allows_with_warning(self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_observe_allows_with_warning(
+        self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv(GUARD_MODE_ENV, "observe")
         msg = _user_msg()
         verdict = guard_user_write(_FakeSess(), msg, None, entry="t2")
         assert verdict.action is GuardAction.ALLOW
         assert leak_events.LEAK_CHANNEL_OVERREACH in sink.kinds()
 
-    def test_downgrade_marks_truthfully(self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_downgrade_marks_truthfully(
+        self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv(GUARD_MODE_ENV, "downgrade")
         msg = _user_msg("外部轨迹内容")
         verdict = guard_user_write(_FakeSess(), msg, None, entry="t2")
@@ -150,9 +155,7 @@ class TestGuardModeMatrix:
         verdict = guard_user_write(_FakeSess(), msg, None, entry="t2")
         assert verdict.action is GuardAction.DENY
         assert leak_events.LEAK_CHANNEL_DENIED in sink.kinds()
-        quarantined = list(
-            (tmp_path / "trace_leak_quarantine").rglob("*.json")
-        )
+        quarantined = list((tmp_path / "trace_leak_quarantine").rglob("*.json"))
         assert quarantined, "enforce 拒绝须有隔离记录（不静默丢弃）"
         body = json.loads(quarantined[0].read_text(encoding="utf-8"))
         assert body["content"] == "被拒内容" and body["basis"]
@@ -171,15 +174,15 @@ class TestGuardModeMatrix:
         verdict = guard_user_write(_FakeSess(), tool_msg, None, entry="t2")
         assert verdict.action is GuardAction.ALLOW
 
-    def test_guard_fault_fail_open(self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_guard_fault_fail_open(
+        self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv(GUARD_MODE_ENV, "downgrade")
 
         def boom(*a, **k):
             raise RuntimeError("guard internal fault")
 
-        monkeypatch.setattr(
-            "llm_loop.core.trace_leak.user_ingress_guard.current_guard_mode", boom
-        )
+        monkeypatch.setattr("llm_loop.core.trace_leak.user_ingress_guard.current_guard_mode", boom)
         msg = _user_msg()
         verdict = guard_user_write(_FakeSess(), msg, None, entry="t2")
         assert verdict.action is GuardAction.ALLOW  # fail-open 放行

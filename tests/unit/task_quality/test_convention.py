@@ -8,7 +8,7 @@ from pathlib import Path
 from llm_loop.task_quality.convention import ConventionExtractor
 from llm_loop.task_quality.models import ConventionType
 
-GOOD_CODE = '''\
+GOOD_CODE = """\
 import os
 import sys
 from pathlib import Path
@@ -24,7 +24,7 @@ def process_item(item_id: int, name: str) -> str:
 
 def helper(count: int) -> int:
     return count + 1
-'''
+"""
 
 BAD_NAMED = "def BadFunctionName( x ):\n    return x\n"
 
@@ -122,10 +122,12 @@ def test_latency_under_5s(tmp_path):
 def test_event_store_injected(tmp_path):
     """注入成功事件落盘."""
     events = []
+
     class _Store:
         def append(self, sid, etype, payload):
             events.append((etype, payload))
             return None
+
     d = _mk_dir(tmp_path, {"a.py": GOOD_CODE})
     ConventionExtractor(event_store=_Store(), session_id="s1").extract(str(d / "new.py"))
     assert len(events) == 1

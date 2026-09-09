@@ -92,7 +92,9 @@ class RecoveryChannel:
 
         result = retry_write(write_fn)
         if result.success:
-            return RecoveryReceipt(status="retried_ok", retries=result.attempts, elapsed_s=result.elapsed_s)
+            return RecoveryReceipt(
+                status="retried_ok", retries=result.attempts, elapsed_s=result.elapsed_s
+            )
 
         # 重试耗尽，转备份
         archive = BackupArchive(

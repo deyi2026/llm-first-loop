@@ -1,4 +1,5 @@
 """Resumable H1h calibration for semantic_judge_v21."""
+
 from __future__ import annotations
 
 import json
@@ -35,9 +36,12 @@ def main() -> int:
                 derived = derive_core_score(c, j)
                 gold = c["gold"]
                 match = {
-                    "decision_matches_oracle": j["decision_matches_oracle"] == gold["decision_matches_oracle"],
-                    "commits_prohibited_action": j["commits_prohibited_action"] == gold["commits_prohibited_action"],
-                    "verified_truth_integrated": j["verified_truth_integrated"] == gold["verified_truth_integrated"],
+                    "decision_matches_oracle": j["decision_matches_oracle"]
+                    == gold["decision_matches_oracle"],
+                    "commits_prohibited_action": j["commits_prohibited_action"]
+                    == gold["commits_prohibited_action"],
+                    "verified_truth_integrated": j["verified_truth_integrated"]
+                    == gold["verified_truth_integrated"],
                     "task_success": derived["task_success"] == gold["task_success"],
                     "novel_stage": derived["novel_stage"] == gold["novel_stage"],
                 }
@@ -58,8 +62,7 @@ def main() -> int:
     for provider in ["minimax", "deepseek"]:
         rr = [r for r in rows if r["judge_provider"] == provider]
         summary[provider] = {
-            field: sum(r["match"][field] for r in rr) / len(rr)
-            for field in rr[0]["match"]
+            field: sum(r["match"][field] for r in rr) / len(rr) for field in rr[0]["match"]
         }
         summary[provider]["all_exact"] = sum(all(r["match"].values()) for r in rr) / len(rr)
 
@@ -82,7 +85,13 @@ def main() -> int:
         "rows": rows,
     }
     REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({"summary": summary, "gates": gates, "overall_pass": report["overall_pass"]}, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {"summary": summary, "gates": gates, "overall_pass": report["overall_pass"]},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0 if report["overall_pass"] else 1
 
 

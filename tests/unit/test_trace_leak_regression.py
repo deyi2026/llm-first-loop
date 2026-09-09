@@ -94,7 +94,9 @@ class TestWritePathGuard:
     def _sess(self) -> SimpleNamespace:
         return SimpleNamespace(session_id="s-regression", messages=[])
 
-    def test_enforce_denies_evidence_write(self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_enforce_denies_evidence_write(
+        self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from llm_loop.core.trace_leak.user_ingress_guard import GuardAction, guard_user_write
 
         monkeypatch.setenv(GUARD_MODE_ENV, "enforce")
@@ -102,7 +104,9 @@ class TestWritePathGuard:
         assert verdict.action is GuardAction.DENY
         assert leak_events.LEAK_CHANNEL_DENIED in sink.kinds()
 
-    def test_observe_allows_with_overreach_event(self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_observe_allows_with_overreach_event(
+        self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from llm_loop.core.trace_leak.user_ingress_guard import GuardAction, guard_user_write
 
         monkeypatch.setenv(GUARD_MODE_ENV, "observe")
@@ -110,7 +114,9 @@ class TestWritePathGuard:
         assert verdict.action is GuardAction.ALLOW
         assert leak_events.LEAK_CHANNEL_OVERREACH in sink.kinds()
 
-    def test_downgrade_relabels_truthfully(self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_downgrade_relabels_truthfully(
+        self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from llm_loop.core.trace_leak.user_ingress_guard import GuardAction, guard_user_write
 
         monkeypatch.setenv(GUARD_MODE_ENV, "downgrade")
@@ -143,9 +149,7 @@ class TestBuildPathDetector:
         from llm_loop.core.trace_leak.trace_signature import trace_signature_scan
 
         monkeypatch.setenv("LFL_TRACE_SIGNATURE", "warn")
-        v = trace_signature_scan(
-            _evidence_message().content, has_human_credential=True
-        )
+        v = trace_signature_scan(_evidence_message().content, has_human_credential=True)
         assert not v.hit
 
     def test_mislabel_variant_excluded_at_build(self, sink: _CaptureSink) -> None:

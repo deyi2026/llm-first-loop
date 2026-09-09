@@ -125,8 +125,6 @@ def test_collect_truncation(tmp_path: Path):
     assert "300" in result.content  # 100 中文字符 = 300 字节
 
 
-
-
 def test_collect_governed_capture_preserves_full_result_before_registry_projection(tmp_path: Path):
     """Evidence/Archive governed execution must see exact CodeArts bytes before display truncation."""
     from llm_loop.core.run_context import current_evidence_shadow_enabled
@@ -144,6 +142,7 @@ def test_collect_governed_capture_preserves_full_result_before_registry_projecti
         current_evidence_shadow_enabled.reset(token)
     assert big_text in result.content
     assert "结果已截断" not in result.content
+
 
 def test_collect_artifacts_in_content(tmp_path: Path):
     from llm_loop.codearts.models import Artifact

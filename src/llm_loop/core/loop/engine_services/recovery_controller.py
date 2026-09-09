@@ -5,6 +5,7 @@ program slots, or stack blind/resend recovery loops. For exact HTTP 400/code 121
 losslessly normalize a consecutive tail-user wire shape and retry that *changed* payload
 once. If no structural transform applies, the original provider error is reported.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -189,7 +190,11 @@ class RecoveryController:
     ) -> tuple[Any | None, LLMError | None]:
         """Consume one changed-payload retry to completion without emitting partial deltas."""
         del metadata_registry
-        kwargs: dict[str, Any] = {"messages": messages, "tools": tools_param, "timeout_s": timeout_s}
+        kwargs: dict[str, Any] = {
+            "messages": messages,
+            "tools": tools_param,
+            "timeout_s": timeout_s,
+        }
         if chat_model_arg:
             kwargs["model"] = chat_model_arg
         stream_fn = getattr(llm_client, "chat_stream", None)

@@ -161,16 +161,16 @@ def test_physical_window_wins_over_requested_184k_input_cap():
 
 def test_tool_schema_is_reserved_inside_total_input_budget_without_semantic_tool_filtering():
     budget_info = {"model_window_budget": 110_400}
-    assert RoutingService.reserve_tool_schema_from_history_budget(
-        110_400, budget_info, 20_639
-    ) == 89_761
+    assert (
+        RoutingService.reserve_tool_schema_from_history_budget(110_400, budget_info, 20_639)
+        == 89_761
+    )
     # A stricter explicit history cap remains authoritative; tool reservation must not
     # expand or otherwise rewrite it.
-    assert RoutingService.reserve_tool_schema_from_history_budget(
-        50_000, budget_info, 20_639
-    ) == 50_000
+    assert (
+        RoutingService.reserve_tool_schema_from_history_budget(50_000, budget_info, 20_639)
+        == 50_000
+    )
     # Unknown physical/input-token capacity preserves legacy behavior rather than
     # inventing a new cap.
-    assert RoutingService.reserve_tool_schema_from_history_budget(
-        50_000, {}, 20_639
-    ) == 50_000
+    assert RoutingService.reserve_tool_schema_from_history_budget(50_000, {}, 20_639) == 50_000

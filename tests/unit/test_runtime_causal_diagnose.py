@@ -172,7 +172,6 @@ def test_ordinary_new_turn_does_not_false_positive_on_payload_growth() -> None:
     assert report["observed_facts"]["target"]["provider_structure_fp"] == "payload-b"
 
 
-
 def test_natural_ingress_volume_growth_is_observed_not_ranked_as_divergence() -> None:
     report = diagnose_causality(
         [
@@ -199,6 +198,7 @@ def test_ingress_mechanism_activation_remains_a_ranked_divergence() -> None:
     )
     assert report["earliest_mechanical_divergence"]["stage"] == "ingress"
 
+
 def test_recent_dialogue_mechanical_divergence_is_localized() -> None:
     report = diagnose_causality([_meta(1, dialogue_pairs=3), _usage(2), _meta(3, dialogue_pairs=1)])
     div = report["earliest_mechanical_divergence"]
@@ -220,7 +220,12 @@ def test_runtime_snapshot_change_is_first_mechanical_divergence() -> None:
 
 def test_output_budget_hit_is_reported_as_constraint_not_semantic_cause() -> None:
     report = diagnose_causality(
-        [_meta(1, max_tokens=8192), _usage(2), _meta(3, max_tokens=4096), _usage(4, tokens_out=4096)]
+        [
+            _meta(1, max_tokens=8192),
+            _usage(2),
+            _meta(3, max_tokens=4096),
+            _usage(4, tokens_out=4096),
+        ]
     )
     assert report["constraint_hits"] == [
         {
@@ -277,7 +282,9 @@ def test_exceptional_attempt_event_is_registered_and_secret_free() -> None:
     assert "SECRET-NOT-RECORDED" not in repr(payload)
 
 
-def test_architecture_status_causality_dimension_uses_current_session_without_schema_change() -> None:
+def test_architecture_status_causality_dimension_uses_current_session_without_schema_change() -> (
+    None
+):
     import json
 
     from llm_loop.introspection.corrections import CorrectionContext
@@ -333,7 +340,10 @@ def test_oracle_reasoning_only_empty_response_uses_terminal_failure_facts() -> N
 
 def test_oracle_reasoning_only_without_completion_tokens_stays_unknown() -> None:
     report = diagnose_causality(
-        [_meta(1, max_tokens=4096), _interrupted(2, completion_tokens=None, reasoning_tail_chars=8000)]
+        [
+            _meta(1, max_tokens=4096),
+            _interrupted(2, completion_tokens=None, reasoning_tail_chars=8000),
+        ]
     )
     assert report["constraint_hits"] == []
     assert "provider completion constraint unknown" in report["unknown"]
@@ -432,7 +442,9 @@ def test_input_budget_change_is_first_class_mechanical_divergence():
         [
             _meta(1, input_tokens=184000, tool_schema_reserve_chars=20000),
             _usage(2),
-            _meta(3, input_tokens=64000, allowed_input_tokens=48000, tool_schema_reserve_chars=20000),
+            _meta(
+                3, input_tokens=64000, allowed_input_tokens=48000, tool_schema_reserve_chars=20000
+            ),
         ]
     )
     assert report["earliest_mechanical_divergence"]["stage"] == "input_budget"

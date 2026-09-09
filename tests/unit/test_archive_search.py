@@ -210,9 +210,7 @@ def test_legacy_numeric_suffix_neighbor_uses_known_session_evidence(tmp_path):
         json.dumps(short, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     neighbor_path = tmp_path / "sess-1.jsonl"
-    neighbor_path.write_text(
-        json.dumps(neighbor, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    neighbor_path.write_text(json.dumps(neighbor, ensure_ascii=False) + "\n", encoding="utf-8")
     store = ArchiveStore(
         tmp_path,
         known_session_id_fn=lambda sid: sid == "sess-1",

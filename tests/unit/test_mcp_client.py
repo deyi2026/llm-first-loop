@@ -33,11 +33,14 @@ def _spec(**kw) -> McpServerSpec:
 
 # ── 配置解析 ──
 
+
 def test_parse_servers_valid():
-    raw = json.dumps([
-        {"name": "fs", "command": "npx", "args": ["-y", "srv"], "env": {"A": "1"}},
-        {"name": "off", "command": "x", "enabled": False},
-    ])
+    raw = json.dumps(
+        [
+            {"name": "fs", "command": "npx", "args": ["-y", "srv"], "env": {"A": "1"}},
+            {"name": "off", "command": "x", "enabled": False},
+        ]
+    )
     specs = parse_servers(raw)
     assert [s.name for s in specs] == ["fs", "off"]
     assert specs[0].args == ["-y", "srv"] and specs[0].env == {"A": "1"}
@@ -53,6 +56,7 @@ def test_parse_servers_invalid(caplog: pytest.LogCaptureFixture):
 
 
 # ── 连接与工具清单（真实 stdio 进程） ──
+
 
 def test_connect_lists_tools():
     conn = McpConnection(_spec())
@@ -71,6 +75,7 @@ def test_connect_missing_command_fails():
 
 
 # ── 五态包装 ──
+
 
 def _make_registered_tool(timeout: float = 10.0) -> McpConnection:
     conn = McpConnection(_spec(), call_timeout=timeout)
@@ -105,6 +110,7 @@ def test_call_timeout():
 
 # ── 注册表集成（五态 + 统一通道） ──
 
+
 def test_register_mcp_tools_and_execute():
     from llm_loop.core.message import ToolCall
 
@@ -136,10 +142,12 @@ def test_register_fail_open_when_server_down(caplog: pytest.LogCaptureFixture):
     from llm_loop.core.message import ToolCall
 
     registry = ToolRegistry()
-    raw = json.dumps([
-        {"name": "dead", "command": "/nonexistent/bin/xyz"},
-        {"name": "fake", "command": "python3", "args": [str(_FIXTURE)]},
-    ])
+    raw = json.dumps(
+        [
+            {"name": "dead", "command": "/nonexistent/bin/xyz"},
+            {"name": "fake", "command": "python3", "args": [str(_FIXTURE)]},
+        ]
+    )
     registered = register_mcp_tools(registry, raw)
     assert "mcp_dead_echo" not in registered  # 死服务器 fail-open
     assert "mcp_fake_echo" in registered  # 健康服务器不受影响

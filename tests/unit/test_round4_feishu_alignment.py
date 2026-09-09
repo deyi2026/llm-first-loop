@@ -22,9 +22,7 @@ DESIGN = ROOT / ".codeartsdoer" / "specs" / "ai_first_evolution_round4" / "desig
 
 _DESIGN_AVAILABLE = DESIGN.is_file()
 
-pytestmark = pytest.mark.skipif(
-    not _DESIGN_AVAILABLE, reason="specs 为本地开发文档，开源仓库不含"
-)
+pytestmark = pytest.mark.skipif(not _DESIGN_AVAILABLE, reason="specs 为本地开发文档，开源仓库不含")
 
 
 @pytest.fixture(scope="module")

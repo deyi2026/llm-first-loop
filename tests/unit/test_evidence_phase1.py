@@ -381,7 +381,10 @@ def test_manifest_masks_command_and_web_query_locator(tmp_path):
         )
     )
 
-    labels = [entry.source_label for entry in ManifestProjector(ledger).build_recent(owner=owner, limit=10).entries]
+    labels = [
+        entry.source_label
+        for entry in ManifestProjector(ledger).build_recent(owner=owner, limit=10).entries
+    ]
     joined = "\n".join(labels)
     assert "TOP_SECRET" not in joined
     assert "deploy --token" not in joined

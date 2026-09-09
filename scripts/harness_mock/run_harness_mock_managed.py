@@ -17,6 +17,7 @@
 
 用法: python3 scripts/harness_mock/run_harness_mock_managed.py [--no-sweep]
 """
+
 from __future__ import annotations  # 注解延迟求值（兼容 Python 3.9：`X | None` 不在定义时求值）
 
 import atexit
@@ -32,7 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 PORT = 8765
-RAW_SERVER = str(Path(__file__).resolve().parent / 'raw_server.py')
+RAW_SERVER = str(Path(__file__).resolve().parent / "raw_server.py")
 
 _server_proc = None
 _own_session = False  # raw server 是否由本进程启动（决定回收责任）
@@ -40,12 +41,15 @@ _own_session = False  # raw server 是否由本进程启动（决定回收责任
 
 # ── 端口/进程探测（macOS/Linux 兼容，探测失败 fail-open）──
 
+
 def _listener_pids(port: int) -> list[int]:
-    """返回监听指定端口的 pid 列表（lsof；失败返回 []）. """
+    """返回监听指定端口的 pid 列表（lsof；失败返回 []）."""
     try:
         out = subprocess.run(
-            ['lsof', f'-tiTCP:{port}', '-sTCP:LISTEN'],
-            capture_output=True, text=True, timeout=5,
+            ["lsof", f"-tiTCP:{port}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return [int(p) for p in out.stdout.split() if p.strip().isdigit()]
     except Exception:  # noqa: BLE001 — 探测失败 fail-open
@@ -56,18 +60,20 @@ def _cmdline_has_raw_server(pid: int) -> bool:
     """判断 pid 是否 raw_server.py 进程. 多路探测（/proc → ps args），全失败 fail-open False."""
     # 方法1: /proc/<pid>/cmdline（Linux，完整 argv）
     try:
-        with open(f'/proc/{pid}/cmdline', 'rb') as f:
-            if b'raw_server.py' in f.read():
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            if b"raw_server.py" in f.read():
                 return True
     except Exception:  # noqa: BLE001 — macOS 无 /proc 等
         pass
     # 方法2: ps -o args=（macOS/Linux 完整 argv；command= 会截断不用）
     try:
         out = subprocess.run(
-            ['ps', '-p', str(pid), '-o', 'args='],
-            capture_output=True, text=True, timeout=5,
+            ["ps", "-p", str(pid), "-o", "args="],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
-        if 'raw_server.py' in out.stdout:
+        if "raw_server.py" in out.stdout:
             return True
     except Exception:  # noqa: BLE001 — ps 不可用等
         pass
@@ -76,11 +82,12 @@ def _cmdline_has_raw_server(pid: int) -> bool:
 
 # ── mock raw server 生命周期 ──
 
+
 def _port_ready(port: int, timeout: float = 10.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with socket.create_connection(('127.0.0.1', port), timeout=0.5):
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
                 return True
         except OSError:
             time.sleep(0.2)
@@ -113,7 +120,9 @@ def _stop_raw_server() -> None:
         _kill_group(proc)
         print(f"[managed] mock raw server 已回收 pid={proc.pid}", flush=True)
     else:
-        print(f"[managed] mock raw server 已自行退出 pid={proc.pid} rc={proc.returncode}", flush=True)
+        print(
+            f"[managed] mock raw server 已自行退出 pid={proc.pid} rc={proc.returncode}", flush=True
+        )
 
 
 def _sweep_stale_raw_server(sweep: bool) -> bool:
@@ -130,7 +139,10 @@ def _sweep_stale_raw_server(sweep: bool) -> bool:
         return False
     if any(_cmdline_has_raw_server(p) for p in pids):
         if not sweep:
-            print(f"[managed] 端口 {PORT} 被 raw_server.py 占用，--no-sweep 跳过清扫，复用", flush=True)
+            print(
+                f"[managed] 端口 {PORT} 被 raw_server.py 占用，--no-sweep 跳过清扫，复用",
+                flush=True,
+            )
             return False
         for p in pids:
             if _cmdline_has_raw_server(p):
@@ -156,7 +168,8 @@ def _start_raw_server(sweep: bool = True):
         return None  # 复用外部服务
     _server_proc = subprocess.Popen(
         [sys.executable, RAW_SERVER, str(PORT)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         start_new_session=True,  # 独立进程组：与 harness 组隔离，回收互不误伤
     )
     _own_session = True
@@ -169,6 +182,7 @@ def _start_raw_server(sweep: bool = True):
 
 
 # ── 信号处理：中断（kill/Ctrl+C）也回收，不留孤儿 ──
+
 
 def _on_signal(signum, frame):
     """SIGTERM/SIGINT：回收 raw server → 清理本进程组（harness workers）→ 退出."""
@@ -192,14 +206,17 @@ def _install_signal_handlers() -> None:
 
 # ── 主流程 ──
 
+
 def main(argv: list[str] | None = None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    sweep = '--no-sweep' not in argv
+    sweep = "--no-sweep" not in argv
 
     # 1. monkeypatch SWE_BENCH_URL_RAW → 本地 mock raw（必须在 import harness 模块前）
     import swebench.harness.constants as sc
+
     sc.SWE_BENCH_URL_RAW = f"http://127.0.0.1:{PORT}/"
     import swebench.harness.test_spec.python as py_mod
+
     py_mod.SWE_BENCH_URL_RAW = f"http://127.0.0.1:{PORT}/"
 
     _install_signal_handlers()
@@ -210,14 +227,23 @@ def main(argv: list[str] | None = None):
         # 3. 跑标准 harness（参数与 run_harness_mock.py 一致）
         from swebench.harness.run_evaluation import main as harness_main
         from swebench.harness.run_evaluation import parse_args
-        sys.argv = ['run_eval',
-            '-d', 'data/swe_results/standard/pylint_dataset.json',
-            '-s', 'test',
-            '-p', 'data/swe_results/standard/pylint_preds.jsonl',
-            '--max_workers', '4',
-            '-id', 'pylint-standard-20260817',
-            '--cache_level', 'base',
-            '--report_dir', 'data/swe_results/standard/reports',
+
+        sys.argv = [
+            "run_eval",
+            "-d",
+            "data/swe_results/standard/pylint_dataset.json",
+            "-s",
+            "test",
+            "-p",
+            "data/swe_results/standard/pylint_preds.jsonl",
+            "--max_workers",
+            "4",
+            "-id",
+            "pylint-standard-20260817",
+            "--cache_level",
+            "base",
+            "--report_dir",
+            "data/swe_results/standard/reports",
         ]
         args = parse_args()
         harness_main(**vars(args))
@@ -226,5 +252,5 @@ def main(argv: list[str] | None = None):
         _stop_raw_server()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     raise SystemExit(main())

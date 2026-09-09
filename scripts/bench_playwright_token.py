@@ -24,8 +24,8 @@ TASK = {
     "new": "用 playwright_exec 验证网关 Web 首页（http://localhost:8902/）能正常渲染：goto 首页、确认标题非空、用 axtree_text 读取页面结构确认有内容。confirm=true 真实执行。",
 }
 
-HIDE_FOR_OLD = {"playwright_exec"}   # 旧形态跑时藏新工具
-HIDE_FOR_NEW = {"playwright_test"}   # 新形态跑时藏旧工具
+HIDE_FOR_OLD = {"playwright_exec"}  # 旧形态跑时藏新工具
+HIDE_FOR_NEW = {"playwright_test"}  # 新形态跑时藏旧工具
 
 
 def _patch_hidden(hidden_extra: set[str]):
@@ -57,8 +57,10 @@ def run_once(tmp: Path, variant: str, repeat: int) -> dict:
         llm_api_key=os.environ["LLM_API_KEY"],
         llm_base_url=os.environ.get("LLM_BASE_URL", ""),
         llm_model=os.environ.get("LLM_MODEL", ""),
-        data_dir=str(data_dir), run_mode="standard",
-        extract_enabled=False, docs_dir="",
+        data_dir=str(data_dir),
+        run_mode="standard",
+        extract_enabled=False,
+        docs_dir="",
     )
     engine = build_engine(settings)
     names = set(engine.registry._tools.keys())  # noqa: SLF001
@@ -68,9 +70,12 @@ def run_once(tmp: Path, variant: str, repeat: int) -> dict:
     t0 = time.time()
     r = engine.run_single(TASK[variant])
     return {
-        "variant": variant, "repeat": repeat,
-        "tokens_in": r.tokens_in, "tokens_out": r.tokens_out,
-        "rounds": r.rounds, "tool_calls": len(r.tool_calls),
+        "variant": variant,
+        "repeat": repeat,
+        "tokens_in": r.tokens_in,
+        "tokens_out": r.tokens_out,
+        "rounds": r.rounds,
+        "tool_calls": len(r.tool_calls),
         "elapsed_s": round(time.time() - t0, 1),
         "answer_tail": (r.final_answer or "")[-150:],
     }
@@ -90,10 +95,13 @@ def main() -> None:
         orig = _patch_hidden(hidden)
         try:
             for i in range(args.repeat):
-                print(f"[{variant} #{i+1}] ...", flush=True)
+                print(f"[{variant} #{i + 1}] ...", flush=True)
                 results.append(run_once(tmp, variant, i + 1))
                 rr = results[-1]
-                print(f"  -> in={rr['tokens_in']} out={rr['tokens_out']} rounds={rr['rounds']} ({rr['elapsed_s']}s)", flush=True)
+                print(
+                    f"  -> in={rr['tokens_in']} out={rr['tokens_out']} rounds={rr['rounds']} ({rr['elapsed_s']}s)",
+                    flush=True,
+                )
         finally:
             _restore(orig)
 
@@ -102,8 +110,12 @@ def main() -> None:
         return round(sum(xs) / len(xs), 1) if xs else 0.0
 
     summary = {
-        v: {"tokens_in_avg": _avg(v, "tokens_in"), "tokens_out_avg": _avg(v, "tokens_out"),
-            "rounds_avg": _avg(v, "rounds"), "tool_calls_avg": _avg(v, "tool_calls")}
+        v: {
+            "tokens_in_avg": _avg(v, "tokens_in"),
+            "tokens_out_avg": _avg(v, "tokens_out"),
+            "rounds_avg": _avg(v, "rounds"),
+            "tool_calls_avg": _avg(v, "tool_calls"),
+        }
         for v in ("old", "new")
     }
     old_in, new_in = summary["old"]["tokens_in_avg"], summary["new"]["tokens_in_avg"]

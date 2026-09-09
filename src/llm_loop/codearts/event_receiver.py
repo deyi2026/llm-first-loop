@@ -47,9 +47,7 @@ class CodeArtsEventReceiver:
         """
         if not self._secret or not signature_header:
             return False
-        expected = hmac.new(
-            self._secret.encode("utf-8"), payload_body, hashlib.sha256
-        ).hexdigest()
+        expected = hmac.new(self._secret.encode("utf-8"), payload_body, hashlib.sha256).hexdigest()
         return hmac.compare_digest(expected, signature_header)
 
     def handle_event(self, payload_body: bytes, signature_header: str) -> bool:

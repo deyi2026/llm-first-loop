@@ -68,7 +68,9 @@ class RegressionGuard:
         if not available:
             # 回退全量（fail-open，不静默跳过验证）
             return self._run_tests(
-                modified_files, affected_tests=[], fallback_full=True,
+                modified_files,
+                affected_tests=[],
+                fallback_full=True,
                 subset_ratio=1.0,
             )
 
@@ -76,14 +78,20 @@ class RegressionGuard:
             # 无受影响测试：如实标注，不执行、不伪造通过
             return RegressionResult(
                 modified_files=tuple(modified_files),
-                affected_tests=(), subset_ratio=0.0,
-                passed_count=0, failed_count=0, failures=(),
-                depgraph_available=True, fallback_full=False,
+                affected_tests=(),
+                subset_ratio=0.0,
+                passed_count=0,
+                failed_count=0,
+                failures=(),
+                depgraph_available=True,
+                fallback_full=False,
             )
 
         # 子集非空 → 执行（subset_ratio 相对全量未知，标注 0 由调用方定）
         return self._run_tests(
-            modified_files, affected_tests=subset, fallback_full=False,
+            modified_files,
+            affected_tests=subset,
+            fallback_full=False,
             subset_ratio=0.0,
         )
 
@@ -107,23 +115,35 @@ class RegressionGuard:
                 import subprocess
 
                 proc = subprocess.run(
-                    cmd, shell=True, capture_output=True, text=True, timeout=120.0,
+                    cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=120.0,
                 )
                 exit_code, output = proc.returncode, (proc.stdout or "") + (proc.stderr or "")
         except subprocess.TimeoutExpired:
             return RegressionResult(
                 modified_files=tuple(modified_files),
-                affected_tests=tuple(test_files), subset_ratio=subset_ratio,
-                passed_count=0, failed_count=0, failures=(),
-                depgraph_available=True, fallback_full=fallback_full,
+                affected_tests=tuple(test_files),
+                subset_ratio=subset_ratio,
+                passed_count=0,
+                failed_count=0,
+                failures=(),
+                depgraph_available=True,
+                fallback_full=fallback_full,
                 error="测试执行超时（120s）",
             )
         except Exception as exc:  # noqa: BLE001 — 框架崩溃如实回执
             return RegressionResult(
                 modified_files=tuple(modified_files),
-                affected_tests=tuple(test_files), subset_ratio=subset_ratio,
-                passed_count=0, failed_count=0, failures=(),
-                depgraph_available=True, fallback_full=fallback_full,
+                affected_tests=tuple(test_files),
+                subset_ratio=subset_ratio,
+                passed_count=0,
+                failed_count=0,
+                failures=(),
+                depgraph_available=True,
+                fallback_full=fallback_full,
                 error=f"测试框架异常: {type(exc).__name__}: {exc}",
             )
 
@@ -146,26 +166,31 @@ class RegressionGuard:
             if not failures:
                 matched = list(_FAILED_RE.finditer(output))
                 failures = tuple(
-                    FailureInfo(m.group(1), 0, (m.group(3) or "").strip()[:200])
-                    for m in matched
+                    FailureInfo(m.group(1), 0, (m.group(3) or "").strip()[:200]) for m in matched
                 ) or (FailureInfo("", 0, "测试失败（详见输出）"),)
 
         result = RegressionResult(
             modified_files=tuple(modified_files),
-            affected_tests=tuple(test_files), subset_ratio=subset_ratio,
-            passed_count=passed, failed_count=failed, failures=failures,
-            depgraph_available=True, fallback_full=fallback_full,
+            affected_tests=tuple(test_files),
+            subset_ratio=subset_ratio,
+            passed_count=passed,
+            failed_count=failed,
+            failures=failures,
+            depgraph_available=True,
+            fallback_full=fallback_full,
         )
 
         # 事件落盘（统计，不含敏感）
         if self._event_store is not None:
             try:
                 self._event_store.append(
-                    self._session_id, "task.regression.subset_executed",
+                    self._session_id,
+                    "task.regression.subset_executed",
                     {
                         "modified_files": list(modified_files),
                         "test_count": len(test_files),
-                        "passed": passed, "failed": failed,
+                        "passed": passed,
+                        "failed": failed,
                         "fallback_full": fallback_full,
                         "duration_ms": round((time.perf_counter() - start) * 1000, 2),
                     },

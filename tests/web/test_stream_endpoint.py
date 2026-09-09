@@ -33,6 +33,7 @@ def test_resume_without_background_runner_never_executes_placeholder(build_test_
     assert "no_active_run" in resp.text
     assert len(fake.calls) == 0
 
+
 CHAT_RESPONSE_FIELDS = [
     "session_id",
     "final_answer",
@@ -112,11 +113,7 @@ def test_chat_response_schema_unchanged():
     from pathlib import Path
 
     schemas = (
-        Path(__file__).resolve().parents[2]
-        / "src"
-        / "llm_loop"
-        / "web"
-        / "schemas.py"
+        Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "schemas.py"
     ).read_text(encoding="utf-8")
     for f in CHAT_RESPONSE_FIELDS:
         assert f in schemas, f"ChatResponse 缺字段 {f}"
@@ -137,12 +134,15 @@ def test_chat_stream_background_runner_mode(build_test_engine):
     engine, _ = build_test_engine([])
     engine.llm_pool.default_client = StreamingFakeLLM("后台回答")
     from llm_loop.core.loop.runner import BackgroundRunner
+
     engine.runner = BackgroundRunner(engine, enabled=True)
     client = _make_client(engine)
     resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
     assert resp.status_code == 200
     events = _parse_sse(resp.text)
-    assert events and events[-1]["type"] == "done", f"后台模式无 done 终态: {events[-1] if events else 'empty'}"
+    assert events and events[-1]["type"] == "done", (
+        f"后台模式无 done 终态: {events[-1] if events else 'empty'}"
+    )
     done = events[-1]["data"]
     assert done["final_answer"] == "后台回答"
 
@@ -152,6 +152,7 @@ def test_chat_stream_background_disabled_fallback(build_test_engine):
     engine, _ = build_test_engine([])
     engine.llm_pool.default_client = StreamingFakeLLM("直驱回答")
     from llm_loop.core.loop.runner import BackgroundRunner
+
     engine.runner = BackgroundRunner(engine, enabled=False)
     client = _make_client(engine)
     resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
@@ -169,8 +170,16 @@ def test_chat_stream_busy_does_not_persist_model_override(build_test_engine):
         enabled = True
 
         def start(
-            self, session_id, message, model=None, reasoning_effort=None, *,
-            reasoning_mode=None, resume=False, before_start=None, expected_workspace_epoch=None,
+            self,
+            session_id,
+            message,
+            model=None,
+            reasoning_effort=None,
+            *,
+            reasoning_mode=None,
+            resume=False,
+            before_start=None,
+            expected_workspace_epoch=None,
             ingress=None,
         ):
             return None, None

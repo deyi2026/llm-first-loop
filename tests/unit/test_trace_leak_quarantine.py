@@ -47,9 +47,7 @@ def sink(monkeypatch: pytest.MonkeyPatch) -> _CaptureSink:
 
 
 def _user(content: str, metadata: dict | None = None) -> Message:
-    return Message(
-        role="user", content=content, source=MessageSource.USER, metadata=metadata
-    )
+    return Message(role="user", content=content, source=MessageSource.USER, metadata=metadata)
 
 
 def _wire_engine(tmp_path: Path):
@@ -78,9 +76,7 @@ def _build_with_mislabel(tmp_path: Path, sink: _CaptureSink | None = None):
 def _provider_chars(out: list[dict], probe: str) -> int:
     """provider 视图中含探针子串的内容字符量（回喂路径 chars 度量）."""
     return sum(
-        len(str(m.get("content") or ""))
-        for m in out
-        if probe[:24] in str(m.get("content") or "")
+        len(str(m.get("content") or "")) for m in out if probe[:24] in str(m.get("content") or "")
     )
 
 
@@ -97,8 +93,7 @@ class TestDg1QuarantineEnforce:
         assert _provider_chars(out, leaked.content) == 0
         # 失真消息不以 user 历史原样投影
         assert not any(
-            m.get("role") == "user" and str(m.get("content") or "") == leaked.content
-            for m in out
+            m.get("role") == "user" and str(m.get("content") or "") == leaked.content for m in out
         )
         # leak.quarantined 事件在场（D-D1 三件套之一）
         assert leak_events.LEAK_QUARANTINED in sink.kinds()
@@ -135,9 +130,7 @@ class TestDg1QuarantineEnforce:
                     continue
                 assert long_body not in str(v)
 
-    def test_quarantine_file_permission_converged(
-        self, tmp_path: Path, sink: _CaptureSink
-    ) -> None:
+    def test_quarantine_file_permission_converged(self, tmp_path: Path, sink: _CaptureSink) -> None:
         """DT-1.1④: quarantine 目录 0700 / 文件 0600（泄漏面收敛）."""
         engine, sess, leaked, out = _build_with_mislabel(tmp_path, sink)
         qroot = leak_events.quarantine_root(sess.session_id)
@@ -146,17 +139,13 @@ class TestDg1QuarantineEnforce:
         assert (qroot.stat().st_mode & 0o777) == 0o700
         assert (files[0].stat().st_mode & 0o777) == 0o600
 
-    def test_ui_notice_channel_present(
-        self, tmp_path: Path, sink: _CaptureSink
-    ) -> None:
+    def test_ui_notice_channel_present(self, tmp_path: Path, sink: _CaptureSink) -> None:
         """⑤ UI 提示在场：leak.quarantined 经 engine._event_append 事件轨（SSE 面）。"""
         engine, sess, leaked, out = _build_with_mislabel(tmp_path, sink)
         kinds = sink.kinds()
         assert leak_events.LEAK_QUARANTINED in kinds, "UI/事件轨提示不缺席"
 
-    def test_census_count_reconciliation(
-        self, tmp_path: Path, sink: _CaptureSink
-    ) -> None:
+    def test_census_count_reconciliation(self, tmp_path: Path, sink: _CaptureSink) -> None:
         """⑦ enforce 态计数对账：leak.quarantined 事件数 == quarantine 文件数."""
         engine, sess, leaked, out = _build_with_mislabel(tmp_path, sink)
         evt_n = len(sink.of(leak_events.LEAK_QUARANTINED))
@@ -240,9 +229,9 @@ class TestDg2StaticAssertions:
         """leak_downgrade evidence has no model-visible program-prompt assembler."""
         import importlib.util
 
-        assert importlib.util.find_spec(
-            "llm_loop.core.prompt_build.stages.injection_assembly"
-        ) is None
+        assert (
+            importlib.util.find_spec("llm_loop.core.prompt_build.stages.injection_assembly") is None
+        )
 
     def test_dynamic_producer_registry_is_empty(self) -> None:
         """No legacy slot, including leak_downgrade, can regain prompt authority."""
@@ -265,9 +254,7 @@ class TestDg2StaticAssertions:
 class TestDg3FailClosedDefault:
     """D-G3: default mode=fail-closed + 无 token drop / 有 token 放行双态."""
 
-    def test_default_mode_is_enforce(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_default_mode_is_enforce(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from llm_loop.core.trace_leak.user_ingress_guard import (
             DEFAULT_GUARD_MODE,
             current_guard_mode,
@@ -287,12 +274,8 @@ class TestDg3FailClosedDefault:
         )
 
         monkeypatch.delenv(GUARD_MODE_ENV, raising=False)
-        monkeypatch.setattr(
-            leak_events, "_DEFAULT_SINK", sink, raising=False
-        )
-        store = SessionStore(
-            __import__("tempfile").mkdtemp(prefix="dg3-")
-        )
+        monkeypatch.setattr(leak_events, "_DEFAULT_SINK", sink, raising=False)
+        store = SessionStore(__import__("tempfile").mkdtemp(prefix="dg3-"))
         sid = store.create()
         verdict = guard_user_write(
             store.load(sid) if hasattr(store, "load") else type("S", (), {"session_id": sid})(),
@@ -349,9 +332,7 @@ class TestDg3FailClosedDefault:
         user_msgs = [m for m in sess.messages if m.role == "user"]
         assert user_msgs and user_msgs[0].metadata.get("ingress_channel") == "web"
 
-    def test_rollback_flip_default_back_to_observe(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_rollback_flip_default_back_to_observe(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """回滚演练留痕：仅翻回 default（env 显式 observe=operator 覆盖通道）。"""
         from llm_loop.core.trace_leak.user_ingress_guard import current_guard_mode
 
@@ -370,7 +351,9 @@ class TestDg3FailClosedDefault:
 
         monkeypatch.delenv(GUARD_MODE_ENV, raising=False)
         monkeypatch.setattr(leak_events, "_DEFAULT_SINK", sink, raising=False)
-        monkeypatch.setattr(uig, "current_guard_mode", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        monkeypatch.setattr(
+            uig, "current_guard_mode", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
         verdict = uig.guard_user_write(
             type("S", (), {"session_id": "s-fault"})(), _user("guard 异常"), None
         )

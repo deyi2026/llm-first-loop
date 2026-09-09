@@ -21,8 +21,10 @@ def main() -> None:
     print("=" * 40)
     print(result.final_answer)
     print("=" * 40)
-    print(f"[元信息] 模型: {result.model_used} | 轮数: {result.rounds} | "
-          f"工具调用: {len(result.tool_calls)} 次 | 截断: {result.truncated}")
+    print(
+        f"[元信息] 模型: {result.model_used} | 轮数: {result.rounds} | "
+        f"工具调用: {len(result.tool_calls)} 次 | 截断: {result.truncated}"
+    )
 
 
 if __name__ == "__main__":

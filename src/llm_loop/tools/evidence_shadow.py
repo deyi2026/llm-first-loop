@@ -57,7 +57,9 @@ class EvidenceShadowRecorder:
         self.capture.capture(request)
 
 
-def source_for_call(call: ToolCall, result: ToolResult | None = None) -> tuple[SourceIdentity, Coverage]:
+def source_for_call(
+    call: ToolCall, result: ToolResult | None = None
+) -> tuple[SourceIdentity, Coverage]:
     args = call.arguments if isinstance(call.arguments, dict) else {}
     if call.name == "read_file":
         locator = str(args.get("path", "<unknown-file>"))
@@ -75,9 +77,7 @@ def source_for_call(call: ToolCall, result: ToolResult | None = None) -> tuple[S
                     if locator.startswith(ARTIFACT_SCHEME)
                     else SourceVersionPolicy.PROBEABLE
                 ),
-                version_token=(
-                    None if result is None else result.evidence_source_version_token
-                ),
+                version_token=(None if result is None else result.evidence_source_version_token),
             ),
             Coverage(
                 unit="source_line",
@@ -124,7 +124,9 @@ def source_for_call(call: ToolCall, result: ToolResult | None = None) -> tuple[S
     if call.name == "web_search":
         query = args.get("query")
         queries = args.get("queries")
-        locator = str(query) if query else json.dumps(queries or [], ensure_ascii=False, sort_keys=True)
+        locator = (
+            str(query) if query else json.dumps(queries or [], ensure_ascii=False, sort_keys=True)
+        )
         return (
             SourceIdentity(
                 kind=SourceKind.WEB,

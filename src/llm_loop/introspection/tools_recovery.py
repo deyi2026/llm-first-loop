@@ -63,6 +63,7 @@ def run_recover_from_backup(
             return "[参数错误] backup_id source_id 越出 sessions_dir（未执行恢复）"
 
         if session_store is not None and hasattr(session_store, "restore_payload"):
+
             def target_write_fn(payload: bytes | str) -> None:
                 session_store.restore_payload(  # type: ignore[attr-defined]
                     source_id, payload, overwrite=on_conflict == "overwrite"
@@ -71,6 +72,7 @@ def run_recover_from_backup(
             def target_exists_fn() -> bool:
                 return bool(session_store.exists(source_id))  # type: ignore[attr-defined]
         else:
+
             def target_write_fn(payload: bytes | str) -> None:
                 content = payload.decode("utf-8") if isinstance(payload, bytes) else payload
                 target_path.parent.mkdir(parents=True, exist_ok=True)

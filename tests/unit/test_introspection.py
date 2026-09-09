@@ -189,18 +189,18 @@ def test_correction_clear_state_removed():
         "code_review",
         "grill_me",
         "stop_slop",
-            "handoff_now",
-            "generate_evolution_template",
-            "playwright_test",
-            # EVO-20260816-bfb9f215: 单 exec 浏览器工具（阶段二）
-            "playwright_exec",
-            "record_skill",
-            "brainstorm_design",
-            "tdd_red_green",
-            "design_review",
-            # B3: 插件化 Skill（skills/ 目录）
-            "skill_list",
-            "skill_load",
+        "handoff_now",
+        "generate_evolution_template",
+        "playwright_test",
+        # EVO-20260816-bfb9f215: 单 exec 浏览器工具（阶段二）
+        "playwright_exec",
+        "record_skill",
+        "brainstorm_design",
+        "tdd_red_green",
+        "design_review",
+        # B3: 插件化 Skill（skills/ 目录）
+        "skill_list",
+        "skill_load",
     }
 
 
@@ -557,13 +557,25 @@ def test_status_default_returns_lean_subset_with_hint(tmp_path):
 
     class _RespectingStatus:
         """snapshot 遵重 dimensions 参数（真实 provider 行为）."""
+
         _all = {
-            "current_phase": "idle", "action_trace": [], "tool_history": [],
-            "message_flow": [], "memory_state": {}, "context_usage": {"llm_rounds": 1},
-            "exception_log": [], "architecture_config": {"heavy": "H" * 6000},
-            "rules_version": "4", "workspace_changed": None, "process_versions": {},
-            "model_fallback": {}, "pending_actions": {}, "recovery": {}, "program_faults": {},
+            "current_phase": "idle",
+            "action_trace": [],
+            "tool_history": [],
+            "message_flow": [],
+            "memory_state": {},
+            "context_usage": {"llm_rounds": 1},
+            "exception_log": [],
+            "architecture_config": {"heavy": "H" * 6000},
+            "rules_version": "4",
+            "workspace_changed": None,
+            "process_versions": {},
+            "model_fallback": {},
+            "pending_actions": {},
+            "recovery": {},
+            "program_faults": {},
         }
+
         def snapshot(self, dimensions=None):
             if dimensions is None:
                 return self._all
@@ -584,14 +596,16 @@ def test_architecture_status_propagates_pending_capability_requirements():
     from llm_loop.introspection.tools_status import run_status
 
     p = ArchitectureStatusProvider()
-    p.set_pending_actions_fn(lambda: {
-        "executing_evolutions": 1,
-        "pending_reviews": 0,
-        "pending_self_evals": 0,
-        "hint": "1 项演进执行中（可经 evolution_complete 登记）",
-        "capability_requirements": ("evolution_complete",),
-        "note": None,
-    })
+    p.set_pending_actions_fn(
+        lambda: {
+            "executing_evolutions": 1,
+            "pending_reviews": 0,
+            "pending_self_evals": 0,
+            "hint": "1 项演进执行中（可经 evolution_complete 登记）",
+            "capability_requirements": ("evolution_complete",),
+            "note": None,
+        }
+    )
     r = run_status(CorrectionContext(), p, {})
     assert r.status.value == "success"
     assert r.capability_requirements == ("evolution_complete",)

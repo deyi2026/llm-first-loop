@@ -33,15 +33,35 @@ class SourceSynopsisTool:
                 "maxLength": 512,
                 "description": "save: attachment://, artifact://v1/, evidence://v1/ 或 truncated: exact source ref",
             },
-            "summary": {"type": "string", "maxLength": 32000, "description": "save: 当前模型自己写出的摘要正文"},
-            "source_start": {"type": "integer", "minimum": 0, "description": "save: 摘要绑定范围起点，0-based，默认0"},
-            "source_end": {"type": "integer", "minimum": 1, "description": "save: 摘要绑定范围终点exclusive，默认exact source末尾"},
+            "summary": {
+                "type": "string",
+                "maxLength": 32000,
+                "description": "save: 当前模型自己写出的摘要正文",
+            },
+            "source_start": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "save: 摘要绑定范围起点，0-based，默认0",
+            },
+            "source_end": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "save: 摘要绑定范围终点exclusive，默认exact source末尾",
+            },
             "expected_source_sha256": {
                 "type": "string",
                 "description": "save: 若前一读取已给出source SHA，可作为版本前置条件；不匹配则拒绝保存",
             },
-            "synopsis_ref": {"type": "string", "maxLength": 64, "description": "read_source: synopsis:<id>"},
-            "offset": {"type": "integer", "minimum": 0, "description": "read_source: exact snapshot字符起点，默认0"},
+            "synopsis_ref": {
+                "type": "string",
+                "maxLength": 64,
+                "description": "read_source: synopsis:<id>",
+            },
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "read_source: exact snapshot字符起点，默认0",
+            },
             "limit": {
                 "type": "integer",
                 "minimum": 1,
@@ -169,9 +189,7 @@ class SourceSynopsisTool:
             return self._failure(f"[synopsis source 读取失败] {exc}")
         if page is None:
             return self._failure("[synopsis 不可用] 当前 workspace/session 无此引用。")
-        header = {
-            key: value for key, value in page.items() if key != "content"
-        }
+        header = {key: value for key, value in page.items() if key != "content"}
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=(

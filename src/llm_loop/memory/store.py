@@ -48,9 +48,9 @@ class MemoryEntry:
     # retrieves memory explicitly and does not use this field to grant prompt authority.
     inject_policy: str = "auto"
     # ── Phase 2 增强（EVO-20260810-baae4016）──
-    access_count: int = 0            # 检索命中次数
-    last_access_at: str = ""         # 最近访问时间 ISO（空=从未被检索）
-    decay_score: float = 1.0         # 衰减分（1.0=最新最活跃；随未访问天数下降）
+    access_count: int = 0  # 检索命中次数
+    last_access_at: str = ""  # 最近访问时间 ISO（空=从未被检索）
+    decay_score: float = 1.0  # 衰减分（1.0=最新最活跃；随未访问天数下降）
     # Legacy persistence fields from the retired automatic-injection era. They are
     # read/write compatible only and no longer drive current applicability/promotion.
     inject_count: int = 0
@@ -62,9 +62,11 @@ class MemoryEntry:
     guidance_risk: int = 0
     citations: list[dict] = field(default_factory=list)  # 溯源: [{"kind","ref","note"}]
     # ── 版本化与去重（EVO-20260811-cbd6c52a）──
-    version: int = 1                 # 版本号（同事实更新 +1）
-    updated_at: str = ""             # 最近更新时间 ISO（空=与 created_at 同）
-    version_history: list[dict] = field(default_factory=list)  # 旧版沉淀: [{"version","content","updated_at"}]
+    version: int = 1  # 版本号（同事实更新 +1）
+    updated_at: str = ""  # 最近更新时间 ISO（空=与 created_at 同）
+    version_history: list[dict] = field(
+        default_factory=list
+    )  # 旧版沉淀: [{"version","content","updated_at"}]
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -120,9 +122,7 @@ class MemoryStore:
             if merge:
                 self._merge_remote_changes()
             # 原子写（tmp+rename）：Web/飞书跨进程共享记忆时防半写损坏/交错覆盖
-            payload = json.dumps(
-                [e.to_dict() for e in self._entries], ensure_ascii=False, indent=2
-            )
+            payload = json.dumps([e.to_dict() for e in self._entries], ensure_ascii=False, indent=2)
             try:
                 tmp = self._index_path.with_suffix(".tmp")
                 tmp.write_text(payload, encoding="utf-8")
@@ -146,7 +146,6 @@ class MemoryStore:
         if remote_only:
             # 磁盘顺序在前, 本进程新增在后（保持时间序稳定）
             self._entries = remote_only + self._entries
-
 
     # ── 版本化与去重（EVO-20260811-cbd6c52a）──
     def _compute_fingerprint(self, entry: MemoryEntry) -> str:
@@ -191,7 +190,9 @@ class MemoryStore:
         existing.version += 1
         existing.content = entry.content
         existing.keywords = list(entry.keywords)
-        existing.citations = entry.citations or existing.citations  # 溯源跟随新条目（修复残留旧来源）
+        existing.citations = (
+            entry.citations or existing.citations
+        )  # 溯源跟随新条目（修复残留旧来源）
         existing.summary = entry.summary or existing.summary
         existing.source_session_id = entry.source_session_id or existing.source_session_id
         existing.source_message_id = entry.source_message_id or existing.source_message_id
@@ -217,7 +218,9 @@ class MemoryStore:
         self._save()
         return entry
 
-    def search(self, keywords: list[str], top_k: int = 5, session_id: str = "") -> list[MemoryEntry]:
+    def search(
+        self, keywords: list[str], top_k: int = 5, session_id: str = ""
+    ) -> list[MemoryEntry]:
         """关键词检索 + 衰减排序（Phase 2）: 检索命中更新访问统计（内存），不即时全量落盘.
 
         记忆分级（2026-08-20，docs/ARCHITECTURE-cache-stable-rules.md §5）: scope=session

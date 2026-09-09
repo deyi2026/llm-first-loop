@@ -20,6 +20,7 @@ __all__ = ["build_bridge", "start_bridge", "main"]
 
 logger = logging.getLogger(__name__)
 
+
 # P1-3-R2: 优雅退出时间契约 —— wait(10) + drain(3) = 13s ≤ GRACE_S(15) − 2s 余量。
 # 硬编码 30s > GRACE_S 15s 是 2026-08-12 22:41 feishu 被 SIGKILL 强杀的直接原因。
 def _env_float(name: str, default: float) -> float:
@@ -147,9 +148,7 @@ def main() -> None:
     import signal
     import threading
 
-    _exit_log_path = os.path.join(
-        os.environ.get("DATA_DIR", "data"), "feishu_exit.log"
-    )
+    _exit_log_path = os.path.join(os.environ.get("DATA_DIR", "data"), "feishu_exit.log")
 
     def _log_exit(reason: str) -> None:
         try:

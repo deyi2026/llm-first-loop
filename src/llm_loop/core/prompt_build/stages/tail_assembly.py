@@ -58,15 +58,12 @@ def merge_persisted_tail_injections(
             prev = kept[-1]
             if prev.get("role") == "user":  # 群内恒真，防御性保留
                 prev["content"] = (
-                    str(prev.get("content") or "")
-                    + "\n\n"
-                    + str(cand.get("content") or "")
+                    str(prev.get("content") or "") + "\n\n" + str(cand.get("content") or "")
                 )
                 removed.append(j)
                 continue
         kept.append(cand)
     return tail_start, kept, removed
-
 
 
 @dataclass(slots=True)

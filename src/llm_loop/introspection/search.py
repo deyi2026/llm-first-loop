@@ -59,7 +59,6 @@ class InvalidSearchQueryError(ValueError):
     """A kind-specific strict query grammar rejected caller input."""
 
 
-
 def _jsonl_search(
     path: Path,
     query: str,
@@ -147,7 +146,9 @@ class RecordSearcher:
         self._memory = memory_store
         self._archive = archive_store
         self._episode_store = episode_store
-        self._experience_store = experience_store  # P1-2: 经验库（None 时 _search_experience 返回空）
+        self._experience_store = (
+            experience_store  # P1-2: 经验库（None 时 _search_experience 返回空）
+        )
         self._method_store = method_store
         self._semantic = semantic_retriever  # T31: 语义检索器（可 None 走关键词）
         default_rule_path = Path(__file__).resolve().parents[3] / "docs" / "ai_rules.md"
@@ -189,7 +190,9 @@ class RecordSearcher:
         # R3(P0-3): 每次检索重置诊断，防上一次 experience/all 检索的陈旧诊断跨 kind 泄漏
         self._last_diagnostics = None
         if kind not in _VALID_KINDS:
-            raise InvalidSearchKindError(f"kind '{kind}' 不在可选范围: {', '.join(sorted(_VALID_KINDS))}")
+            raise InvalidSearchKindError(
+                f"kind '{kind}' 不在可选范围: {', '.join(sorted(_VALID_KINDS))}"
+            )
         special = self._search_special(kind, query, limit, session_id)
         if special is not None:
             return special
@@ -281,7 +284,14 @@ class RecordSearcher:
                 query,
                 each_limit,
                 kind="declaration_check",
-                summary_keys=("id", "consistent", "declarations", "discrepancies", "cross_round_hits", "tool_call_ids"),
+                summary_keys=(
+                    "id",
+                    "consistent",
+                    "declarations",
+                    "discrepancies",
+                    "cross_round_hits",
+                    "tool_call_ids",
+                ),
                 content_key="answer_preview",
             )
         if kind in {"change_log", "all"}:  # P2-6: 配置变更审计
@@ -339,7 +349,9 @@ class RecordSearcher:
             return self._rule_index.search(query, limit)
         if kind == "synopsis":
             return self._search_synopsis(query, limit, session_id)
-        if kind == "method":  # Method Learning v1: 轻量 Method 卡发现（method-Mxxx/METHOD-xx 精确水合）
+        if (
+            kind == "method"
+        ):  # Method Learning v1: 轻量 Method 卡发现（method-Mxxx/METHOD-xx 精确水合）
             return self._search_method(query, limit)
         if kind == "file_effect":
             if self._file_effect_query is None or not session_id:
@@ -397,9 +409,7 @@ class RecordSearcher:
         raw = str(query or "").strip()
         if raw.startswith("synopsis:"):
             try:
-                record = self._synopsis_store.get(
-                    raw, workspace_scope=scope, session_id=session_id
-                )
+                record = self._synopsis_store.get(raw, workspace_scope=scope, session_id=session_id)
             except (TypeError, ValueError):
                 return []
             if record is None:
@@ -516,9 +526,7 @@ class RecordSearcher:
             pass  # duck-typing 守卫：无 search_truncated 的存储实现零影响
         except Exception:  # noqa: BLE001 — truncated 列表失败不拖垮 resolved 检索
             truncated = []
-        merged = sorted(
-            resolved + truncated, key=lambda h: str(h.get("ts") or ""), reverse=True
-        )
+        merged = sorted(resolved + truncated, key=lambda h: str(h.get("ts") or ""), reverse=True)
         return merged[: max(1, int(limit))]
 
     def hydrate_episode(
@@ -560,7 +568,14 @@ class RecordSearcher:
         "param_adjust": ("param_adjust_history.jsonl", ("key", "before", "after")),
         "declaration_check": (
             "declaration_check.jsonl",
-            ("id", "consistent", "declarations", "discrepancies", "cross_round_hits", "tool_call_ids"),
+            (
+                "id",
+                "consistent",
+                "declarations",
+                "discrepancies",
+                "cross_round_hits",
+                "tool_call_ids",
+            ),
         ),
         "self_eval": ("self_eval_log.jsonl", ("eval_id", "trigger", "summary")),
         "memory_extract": ("memory_extract_log.jsonl", ("extract_id", "scope", "summary")),
@@ -656,11 +671,16 @@ class RecordSearcher:
             if doc is not None:
                 # R3(P0-3): hydrate 路径不走扫描，诊断置健康零值（区分"不存在/不可解析"
                 # 依赖 get 留痕日志归因，design §1.2.3 口径注明）
-                self._last_diagnostics = {"scanned": 0, "degraded": 0, "skipped": 0, "scan_error": None}
+                self._last_diagnostics = {
+                    "scanned": 0,
+                    "degraded": 0,
+                    "skipped": 0,
+                    "scan_error": None,
+                }
                 stem = exact.removesuffix(".md")
                 return [self._experience_store.to_hydrated_record(stem, doc)][:limit]
         # R3(P0-3): 三态扫描 Outcome——诊断独立于 results[:limit] 截断照常回填
-        #（kind=all 聚合中 experience 记录被挤出返回集时，诊断仍到达模型）
+        # （kind=all 聚合中 experience 记录被挤出返回集时，诊断仍到达模型）
         outcome = self._experience_store.search_outcome(query, limit)
         self._last_diagnostics = {
             "scanned": outcome.scanned_count,
@@ -687,9 +707,7 @@ class RecordSearcher:
             "key": f"memory:{entry.id}",
         }
 
-    def _search_memory(
-        self, query: str, limit: int, session_id: str = ""
-    ) -> list[dict]:
+    def _search_memory(self, query: str, limit: int, session_id: str = "") -> list[dict]:
         """R3: keyword search plus exact ``memory:<id>`` hydration with scope isolation."""
         if self._memory is None:
             return []
@@ -701,14 +719,10 @@ class RecordSearcher:
                 return [self._memory_record(entry)][:limit]
         if not raw:
             entries = [
-                e
-                for e in self._memory.all()
-                if self._memory_visible_in_session(e, session_id)
+                e for e in self._memory.all() if self._memory_visible_in_session(e, session_id)
             ]
             return [self._memory_record(e) for e in entries[:limit]]
-        keyword_hits = self._memory.search(
-            raw.split(), top_k=limit, session_id=session_id
-        )
+        keyword_hits = self._memory.search(raw.split(), top_k=limit, session_id=session_id)
         keyword_dicts = [self._memory_record(e) for e in keyword_hits]
         # T31: semantic recall keeps the same session-scoped keyword seed.
         if self._semantic is not None and self._semantic.semantic_available():
@@ -740,9 +754,7 @@ class RecordSearcher:
         else:
             keyword_hits = []
             for sid in self._archive.session_ids():
-                keyword_hits += self._archive.search(
-                    sid, query, limit=limit - len(keyword_hits)
-                )
+                keyword_hits += self._archive.search(sid, query, limit=limit - len(keyword_hits))
                 if len(keyword_hits) >= limit:
                     break
             keyword_hits = self._tag_kind(keyword_hits)

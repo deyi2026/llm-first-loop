@@ -1,4 +1,5 @@
 """P2-B ERR1210 per-session isolation: bounded structural retry state only."""
+
 from __future__ import annotations
 
 import json
@@ -9,10 +10,16 @@ from llm_loop.llm.client import LLMResponse
 from llm_loop.llm.errors import LLMHTTPError
 from tests.unit.test_model_attribution import _FakeLLMClient, _make_engine, _make_pool, _settings
 
-_PROVIDER_JSON = json.dumps({"zhipu": {
-    "base_url": "https://api.zhipu.local/v1", "api_key_env": "ZHIPU_API_KEY",
-    "models": {"glm-5": {"context": 300000, "thinking": True}},
-    "default_model": "glm-5"}})
+_PROVIDER_JSON = json.dumps(
+    {
+        "zhipu": {
+            "base_url": "https://api.zhipu.local/v1",
+            "api_key_env": "ZHIPU_API_KEY",
+            "models": {"glm-5": {"context": 300000, "thinking": True}},
+            "default_model": "glm-5",
+        }
+    }
+)
 
 
 @contextmanager
@@ -28,10 +35,12 @@ def _engine(tmp_path, monkeypatch):
     monkeypatch.setenv("ZHIPU_API_KEY", "k")
     settings = _settings(tmp_path, model_providers_raw=_PROVIDER_JSON, llm_model="zhipu/glm-5")
     fake = _FakeLLMClient("zhipu/glm-5")
-    fake.queue([
-        LLMResponse(content="A-ok", tool_calls=[], provider="fake"),
-        LLMResponse(content="B-ok", tool_calls=[], provider="fake"),
-    ])
+    fake.queue(
+        [
+            LLMResponse(content="A-ok", tool_calls=[], provider="fake"),
+            LLMResponse(content="B-ok", tool_calls=[], provider="fake"),
+        ]
+    )
     eng = _make_engine(tmp_path, _make_pool(settings, fake, cached={"zhipu": fake}), settings)
     return eng, fake
 
@@ -42,9 +51,14 @@ def _e1210():
 
 def _attempt(eng, fake, sid):
     return eng._recovery._try_err1210_recovery(
-        exc=_e1210(), sess=eng.session.load(sid),
-        messages=[{"role":"user","content":"u1"},{"role":"user","content":"u2"}],
-        tools_param=[], llm_client=fake, chat_model_arg=None, timeout_s=1.0, session_id=sid,
+        exc=_e1210(),
+        sess=eng.session.load(sid),
+        messages=[{"role": "user", "content": "u1"}, {"role": "user", "content": "u2"}],
+        tools_param=[],
+        llm_client=fake,
+        chat_model_arg=None,
+        timeout_s=1.0,
+        session_id=sid,
     )
 
 
@@ -73,7 +87,10 @@ def test_retired_prompt_recovery_fields_are_absent(tmp_path, monkeypatch):
     with _switch_session(eng.session.create()):
         st = eng._run_state()
         for name in (
-            "last_build_injections", "last_build_defer_replayed", "deferred_replay_refs",
-            "deferred_replay_slots", "auto_continue_1210",
+            "last_build_injections",
+            "last_build_defer_replayed",
+            "deferred_replay_refs",
+            "deferred_replay_slots",
+            "auto_continue_1210",
         ):
             assert not hasattr(st, name)

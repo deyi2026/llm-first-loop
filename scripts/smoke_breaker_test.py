@@ -53,7 +53,9 @@ def main() -> None:
     global MODEL
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=10)
-    ap.add_argument("--model", default=MODEL, help="模型全限定名（默认 deepseek/deepseek-v4-flash）")
+    ap.add_argument(
+        "--model", default=MODEL, help="模型全限定名（默认 deepseek/deepseek-v4-flash）"
+    )
     args = ap.parse_args()
     MODEL = args.model
     print(f"压测模型: {MODEL}")
@@ -64,13 +66,17 @@ def main() -> None:
 
     audit_before = len(_read_jsonl(DATA / "audit" / "cache_breaker.jsonl"))
     files_line = "、".join(BIG_FILES)
-    r0 = post_chat(None, (
-        f"重工具长会话压测开始。请依次完整读取以下大文件（每次读一个，读完汇报"
-        f"文件大小、消息数、有无异常）：\n{files_line}\n"
-        f"读完所有文件后继续读取 data/event_logs/ 下其他 .jsonl 文件（可先 "
-        f"execute_command 'ls -S data/event_logs | head -20' 找大的），每轮读 1-2 个，"
-        f"持续汇报，直到我说停。"
-    ), new=True)
+    r0 = post_chat(
+        None,
+        (
+            f"重工具长会话压测开始。请依次完整读取以下大文件（每次读一个，读完汇报"
+            f"文件大小、消息数、有无异常）：\n{files_line}\n"
+            f"读完所有文件后继续读取 data/event_logs/ 下其他 .jsonl 文件（可先 "
+            f"execute_command 'ls -S data/event_logs | head -20' 找大的），每轮读 1-2 个，"
+            f"持续汇报，直到我说停。"
+        ),
+        new=True,
+    )
     sid = r0["session_id"]
     print(f"会话: {sid}")
     print(f"第1轮 final_answer 前缀: {r0['final_answer'][:120]!r}")
@@ -112,8 +118,10 @@ def main() -> None:
             max_streak = max(max_streak, cur)
         else:
             cur = 0
-    print(f"① 轮数={len(per_round)} 有压缩轮={len(storm_rounds)} "
-          f"最大单轮压缩={max(storm_rounds) if storm_rounds else 0} 连续压缩轮={max_streak}")
+    print(
+        f"① 轮数={len(per_round)} 有压缩轮={len(storm_rounds)} "
+        f"最大单轮压缩={max(storm_rounds) if storm_rounds else 0} 连续压缩轮={max_streak}"
+    )
     if max_streak >= 15:
         print("   ❌ 连续压缩 ≥15 轮——熔断未生效，失败")
         sys.exit(1)
@@ -124,9 +132,8 @@ def main() -> None:
 
     # ② breaker 不误触发
     audit_rows = _read_jsonl(DATA / "audit" / "cache_breaker.jsonl")
-    new_rows = [r for r in audit_rows[len(audit_before):] if r.get("session_id") == sid]
-    print(f"② 本会话 breaker 审计事件: {len(new_rows)} 条 "
-          f"（{[r['event'] for r in new_rows]}）")
+    new_rows = [r for r in audit_rows[len(audit_before) :] if r.get("session_id") == sid]
+    print(f"② 本会话 breaker 审计事件: {len(new_rows)} 条 （{[r['event'] for r in new_rows]}）")
     if new_rows:
         print("   ⚠️ 出现 breaker 事件——检查是否为误触发")
     else:
@@ -140,11 +147,9 @@ def main() -> None:
         print(f"   {ts[11:19]} in={tin:>10,} hit={thit:>10,} rate={rate:5.1f}%")
     if curve:
         rates = [hit / tokens_in * 100 for _, tokens_in, hit in curve if tokens_in]
-        print(f"   末段（后 5 请求）平均命中率: {sum(rates[-5:])/min(5,len(rates)):.1f}%")
+        print(f"   末段（后 5 请求）平均命中率: {sum(rates[-5:]) / min(5, len(rates)):.1f}%")
     # ④ 遥测隔离
-    sess_file = (
-        DATA / "sessions" / "--Users-yyj-Project-llm-first-loop-mirror--" / f"{sid}.json"
-    )
+    sess_file = DATA / "sessions" / "--Users-yyj-Project-llm-first-loop-mirror--" / f"{sid}.json"
     if sess_file.exists():
         sess = json.loads(sess_file.read_text(encoding="utf-8"))
         bad = [
@@ -153,7 +158,8 @@ def main() -> None:
             if m.get("role") == "assistant" and "缓存命中率" in (m.get("content") or "")
         ]
         with_meta = [
-            m for m in sess.get("messages", [])
+            m
+            for m in sess.get("messages", [])
             if m.get("role") == "assistant" and (m.get("metadata") or {}).get("cache_health")
         ]
         print(f"④ 正文含遥测的 assistant 消息: {len(bad)} 条（应=0）")

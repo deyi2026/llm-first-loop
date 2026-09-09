@@ -25,9 +25,7 @@ class IngressToken:
 
     __slots__ = ("channel", "entry", "issued_at", "delegated")
 
-    def __init__(
-        self, _pin: object, channel: str, entry: str, *, delegated: bool = False
-    ) -> None:
+    def __init__(self, _pin: object, channel: str, entry: str, *, delegated: bool = False) -> None:
         # _pin 为模块私有哨兵：外部无法伪造该参数 → 无法绕过 issue_ingress 构造
         if _pin is not _ISSUE_PIN:
             raise ValueError("IngressToken 仅可经 issue_ingress 构造（哨兵防护）")
@@ -70,9 +68,7 @@ def issue_ingress(channel: str) -> IngressToken:
     """签发人类输入通道凭据；同 channel 幂等（等价凭据，零重复事件）。"""
     ch = str(channel or "")
     if ch not in _ALLOWED_CHANNELS:
-        raise ValueError(
-            f"未知 ingress channel: {ch!r}（白名单外通道不存在签发路径，默认拒绝）"
-        )
+        raise ValueError(f"未知 ingress channel: {ch!r}（白名单外通道不存在签发路径，默认拒绝）")
     tok = _ISSUED.get(ch)
     if tok is None:
         tok = IngressToken(_ISSUE_PIN, ch, entry=ch)
@@ -104,9 +100,7 @@ def delegate_ingress(token: IngressToken, *, entry: str) -> IngressToken:
     ref = str(entry or "").strip()
     if not ref:
         raise ValueError("delegated ingress entry 不能为空")
-    return IngressToken(
-        _ISSUE_PIN, token.channel, entry=f"scheduled:{ref}", delegated=True
-    )
+    return IngressToken(_ISSUE_PIN, token.channel, entry=f"scheduled:{ref}", delegated=True)
 
 
 def is_whitelisted(token: object) -> bool:

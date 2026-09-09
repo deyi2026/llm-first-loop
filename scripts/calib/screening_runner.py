@@ -56,7 +56,9 @@ def screening_tool_spec() -> dict:
             "description": "请求本任务列出的一个证据源。每个任务最多 2 个；未列出的 source 返回 SOURCE_NOT_AVAILABLE。",
             "parameters": {
                 "type": "object",
-                "properties": {"source": {"type": "string", "description": "例如 fixture://P01/write_fence"}},
+                "properties": {
+                    "source": {"type": "string", "description": "例如 fixture://P01/write_fence"}
+                },
                 "required": ["source"],
             },
         },
@@ -115,7 +117,13 @@ class FakeScreeningLLM:
             source = expected[len(tool_msgs)]
             resp = LLMResponse(
                 content=None,
-                tool_calls=[ToolCall(id=f"call_fake_{len(tool_msgs)+1}", name="request_fixture", arguments=json.dumps({"source": source}))],
+                tool_calls=[
+                    ToolCall(
+                        id=f"call_fake_{len(tool_msgs) + 1}",
+                        name="request_fixture",
+                        arguments=json.dumps({"source": source}),
+                    )
+                ],
                 provider="fake",
                 prompt_tokens=10,
                 completion_tokens=5,
@@ -123,10 +131,19 @@ class FakeScreeningLLM:
         else:
             if self.mode == "pass":
                 o = fixtures_s.ORACLES[self.seed_id]
-                answer = o["expected_decision"] + f" 新信号 {o['novel_signal']['field']}={o['novel_signal']['truth']}。"
+                answer = (
+                    o["expected_decision"]
+                    + f" 新信号 {o['novel_signal']['field']}={o['novel_signal']['truth']}。"
+                )
             else:
                 answer = "Final Decision: 直接按已有摘要执行，不需要进一步核实。"
-            resp = LLMResponse(content=answer, tool_calls=[], provider="fake", prompt_tokens=10, completion_tokens=40)
+            resp = LLMResponse(
+                content=answer,
+                tool_calls=[],
+                provider="fake",
+                prompt_tokens=10,
+                completion_tokens=40,
+            )
         if False:  # pragma: no cover
             yield None
         return resp
@@ -160,11 +177,20 @@ def execute_screening_run(
         llm = FakeScreeningLLM(seed_id, dry_mode) if dry else _build_client(provider)
     except Exception as exc:  # no network request made
         return {
-            "run_id": run_id, "provider_id": provider, "seed_id": seed_id, "variant": variant,
-            "status": "INFRA_FAILURE", "infra_error": f"{type(exc).__name__}: {exc}",
-            "model_used": f"{provider}/{p['model']}", "thinking_mode": bool(p["thinking_supported"]),
-            "final_answer": None, "reasoning": None, "requested_sources": [], "requested_count": 0,
-            "trace": [], "stats": stats,
+            "run_id": run_id,
+            "provider_id": provider,
+            "seed_id": seed_id,
+            "variant": variant,
+            "status": "INFRA_FAILURE",
+            "infra_error": f"{type(exc).__name__}: {exc}",
+            "model_used": f"{provider}/{p['model']}",
+            "thinking_mode": bool(p["thinking_supported"]),
+            "final_answer": None,
+            "reasoning": None,
+            "requested_sources": [],
+            "requested_count": 0,
+            "trace": [],
+            "stats": stats,
         }
 
     model_used = "fake-dry" if dry else f"{provider}/{p['model']}"
@@ -198,17 +224,34 @@ def execute_screening_run(
                     if requested_count > fixtures_s.SOURCE_LIMIT:
                         content = fixtures_s.LIMIT_EXCEEDED_RESPONSE
                     else:
-                        content = fixtures_s.lookup_source(seed_id, source) or fixtures_s.UNAVAILABLE_RESPONSE
+                        content = (
+                            fixtures_s.lookup_source(seed_id, source)
+                            or fixtures_s.UNAVAILABLE_RESPONSE
+                        )
                     requested_sources.append(source)
                 else:
                     content = fixtures_s.UNAVAILABLE_RESPONSE
-                trace.append({
-                    "round": round_index, "name": tc.name, "arguments": args_json, "source": source,
-                    "result_head": content[:500], "result_full": content, "requested_count": requested_count,
-                })
+                trace.append(
+                    {
+                        "round": round_index,
+                        "name": tc.name,
+                        "arguments": args_json,
+                        "source": source,
+                        "result_head": content[:500],
+                        "result_full": content,
+                        "requested_count": requested_count,
+                    }
+                )
                 assistant_msg = {
-                    "role": "assistant", "content": None,
-                    "tool_calls": [{"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": args_json}}],
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.name, "arguments": args_json},
+                        }
+                    ],
                 }
                 if rc:
                     assistant_msg["reasoning_content"] = rc
@@ -269,5 +312,7 @@ def snapshot_provider(provider: str, out_dir: Path) -> dict:
         "cache_policy": common["cache_policy"],
     }
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / f"provider_snapshot_{provider}.json").write_text(json.dumps(snap, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_dir / f"provider_snapshot_{provider}.json").write_text(
+        json.dumps(snap, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return snap

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Execute the frozen Evidence Recoverability R0-1..R0-12 blocking gate."""
+
 from __future__ import annotations
 
 import hashlib
@@ -127,8 +128,12 @@ def main() -> int:
         "cases": results,
     }
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"Evidence R0 Phase7: {report['status']} ({sum(r['status']=='PASS' for r in results)}/12)")
+    REPORT_PATH.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    print(
+        f"Evidence R0 Phase7: {report['status']} ({sum(r['status'] == 'PASS' for r in results)}/12)"
+    )
     for row in results:
         print(f"{row['id']}: {row['status']} ({row['elapsed_s']}s)")
     print(f"report={REPORT_PATH.relative_to(ROOT)}")

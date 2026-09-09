@@ -59,7 +59,10 @@ def _check_rate_limit(receive_id: str) -> tuple[bool, str]:
     cutoff = now - 60.0
     timestamps[:] = [t for t in timestamps if t > cutoff]
     if len(timestamps) >= limit:
-        return False, f"[速率限制] 接收方 {receive_id} 在过去 60s 内已发送 {len(timestamps)} 条（上限 {limit}/分钟）"
+        return (
+            False,
+            f"[速率限制] 接收方 {receive_id} 在过去 60s 内已发送 {len(timestamps)} 条（上限 {limit}/分钟）",
+        )
     return True, ""
 
 
@@ -93,10 +96,21 @@ SEND_FEISHU_MESSAGE_TOOL_DEF: dict = {
     "parameters": {
         "type": "object",
         "properties": {
-            "receive_id": {"type": "string", "description": "飞书 open_id / chat_id / user_id（与 receive_id_type 对应）"},
+            "receive_id": {
+                "type": "string",
+                "description": "飞书 open_id / chat_id / user_id（与 receive_id_type 对应）",
+            },
             "content": {"type": "string", "description": "消息内容（Markdown/纯文本）"},
-            "receive_id_type": {"type": "string", "enum": ["open_id", "chat_id", "user_id", "email"], "description": "接收方 ID 类型，默认 open_id"},
-            "msg_type": {"type": "string", "enum": ["text", "interactive"], "description": "消息类型，text=纯文本，interactive=卡片（含表格/链接）"},
+            "receive_id_type": {
+                "type": "string",
+                "enum": ["open_id", "chat_id", "user_id", "email"],
+                "description": "接收方 ID 类型，默认 open_id",
+            },
+            "msg_type": {
+                "type": "string",
+                "enum": ["text", "interactive"],
+                "description": "消息类型，text=纯文本，interactive=卡片（含表格/链接）",
+            },
             "confirm": {"type": "boolean", "description": "二次确认（必须为 true 才执行）"},
         },
         "required": ["receive_id", "content", "confirm"],
@@ -126,8 +140,14 @@ SEND_FEISHU_ATTACHMENT_TOOL_DEF: dict = {
         "properties": {
             "receive_id": {"type": "string", "description": "飞书 open_id/chat_id/user_id"},
             "file_path": {"type": "string", "description": "本地文件绝对路径"},
-            "doc_id": {"type": "string", "description": "已创建的飞书文档 ID（与 file_path 二选一）"},
-            "receive_id_type": {"type": "string", "enum": ["open_id", "chat_id", "user_id", "email"]},
+            "doc_id": {
+                "type": "string",
+                "description": "已创建的飞书文档 ID（与 file_path 二选一）",
+            },
+            "receive_id_type": {
+                "type": "string",
+                "enum": ["open_id", "chat_id", "user_id", "email"],
+            },
             "confirm": {"type": "boolean", "description": "二次确认"},
         },
         "required": ["receive_id", "confirm"],
@@ -137,6 +157,7 @@ SEND_FEISHU_ATTACHMENT_TOOL_DEF: dict = {
 
 # ── 工具实现 ──
 
+
 def _preflight_check(receive_id: str, confirm: bool) -> tuple[bool, str]:
     """出站前置检查（开关/二次确认/白名单/速率）."""
     if not _is_outbound_enabled():
@@ -145,7 +166,10 @@ def _preflight_check(receive_id: str, confirm: bool) -> tuple[bool, str]:
         return False, "[二次确认未通过] 必须显式传 confirm=true 才执行主动出站（防误操作）"
     allowed = _get_allowed_users()
     if allowed and receive_id not in allowed:
-        return False, f"[白名单未通过] 接收方 {_mask_id(receive_id)} 不在 FEISHU_OUTBOUND_ALLOWED_USERS 配置内"
+        return (
+            False,
+            f"[白名单未通过] 接收方 {_mask_id(receive_id)} 不在 FEISHU_OUTBOUND_ALLOWED_USERS 配置内",
+        )
     ok, msg = _check_rate_limit(receive_id)
     if not ok:
         return False, msg
@@ -186,6 +210,7 @@ def run_send_feishu_message(
 
         from llm_loop.feishu.config import load_feishu_config
         from llm_loop.feishu.rest import FeishuRestClient
+
         config = load_feishu_config()
         if not config.has_credentials:
             return ToolResult(
@@ -205,15 +230,17 @@ def run_send_feishu_message(
         # send_text 已含 interactive/text 两种模式（内部按 msg_type 路由）
         message_id = client.send_text(receive_id, content, receive_id_type=receive_id_type)
     except Exception as exc:
-        _write_audit({
-            "ts": time.time(),
-            "action": "send_message",
-            "receive_id": _mask_id(receive_id),
-            "receive_id_type": receive_id_type,
-            "msg_type": msg_type,
-            "result": "fail",
-            "error": str(exc),
-        })
+        _write_audit(
+            {
+                "ts": time.time(),
+                "action": "send_message",
+                "receive_id": _mask_id(receive_id),
+                "receive_id_type": receive_id_type,
+                "msg_type": msg_type,
+                "result": "fail",
+                "error": str(exc),
+            }
+        )
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=f"[发送失败] FeishuRestClient 异常: {exc}",
@@ -222,16 +249,18 @@ def run_send_feishu_message(
         )
 
     _record_send(receive_id)
-    _write_audit({
-        "ts": time.time(),
-        "action": "send_message",
-        "receive_id": _mask_id(receive_id),
-        "receive_id_type": receive_id_type,
-        "msg_type": msg_type,
-        "result": "success",
-        "message_id": message_id,
-        "content_len": len(content),
-    })
+    _write_audit(
+        {
+            "ts": time.time(),
+            "action": "send_message",
+            "receive_id": _mask_id(receive_id),
+            "receive_id_type": receive_id_type,
+            "msg_type": msg_type,
+            "result": "success",
+            "message_id": message_id,
+            "content_len": len(content),
+        }
+    )
 
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
@@ -280,6 +309,7 @@ def run_create_feishu_doc(
 
         from llm_loop.feishu.config import load_feishu_config
         from llm_loop.feishu.rest import FeishuRestClient
+
         config = load_feishu_config()
         if not config.has_credentials:
             return ToolResult(
@@ -298,13 +328,15 @@ def run_create_feishu_doc(
         client = FeishuRestClient(config, lark_client)
         doc_id, doc_url = client.create_doc(title=title, content=content, folder_token=folder_token)
     except Exception as exc:
-        _write_audit({
-            "ts": time.time(),
-            "action": "create_doc",
-            "title": title,
-            "result": "fail",
-            "error": str(exc),
-        })
+        _write_audit(
+            {
+                "ts": time.time(),
+                "action": "create_doc",
+                "title": title,
+                "result": "fail",
+                "error": str(exc),
+            }
+        )
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=f"[创建文档失败] {exc}",
@@ -312,15 +344,17 @@ def run_create_feishu_doc(
             tool_name="create_feishu_doc",
         )
 
-    _write_audit({
-        "ts": time.time(),
-        "action": "create_doc",
-        "title": title,
-        "doc_id": doc_id,
-        "doc_url": doc_url,
-        "result": "success",
-        "content_len": len(content),
-    })
+    _write_audit(
+        {
+            "ts": time.time(),
+            "action": "create_doc",
+            "title": title,
+            "doc_id": doc_id,
+            "doc_url": doc_url,
+            "result": "success",
+            "content_len": len(content),
+        }
+    )
 
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
@@ -381,6 +415,7 @@ def run_send_feishu_attachment(
 
         from llm_loop.feishu.config import load_feishu_config
         from llm_loop.feishu.rest import FeishuRestClient
+
         config = load_feishu_config()
         if not config.has_credentials:
             return ToolResult(
@@ -404,15 +439,17 @@ def run_send_feishu_attachment(
             receive_id_type=receive_id_type,
         )
     except Exception as exc:
-        _write_audit({
-            "ts": time.time(),
-            "action": "send_attachment",
-            "receive_id": _mask_id(receive_id),
-            "file_path": file_path,
-            "doc_id": doc_id,
-            "result": "fail",
-            "error": str(exc),
-        })
+        _write_audit(
+            {
+                "ts": time.time(),
+                "action": "send_attachment",
+                "receive_id": _mask_id(receive_id),
+                "file_path": file_path,
+                "doc_id": doc_id,
+                "result": "fail",
+                "error": str(exc),
+            }
+        )
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=f"[发送附件失败] {exc}",
@@ -421,15 +458,17 @@ def run_send_feishu_attachment(
         )
 
     _record_send(receive_id)
-    _write_audit({
-        "ts": time.time(),
-        "action": "send_attachment",
-        "receive_id": _mask_id(receive_id),
-        "file_path": file_path,
-        "doc_id": doc_id,
-        "result": "success",
-        "message_id": message_id,
-    })
+    _write_audit(
+        {
+            "ts": time.time(),
+            "action": "send_attachment",
+            "receive_id": _mask_id(receive_id),
+            "file_path": file_path,
+            "doc_id": doc_id,
+            "result": "success",
+            "message_id": message_id,
+        }
+    )
 
     return ToolResult(
         status=ToolResultStatus.SUCCESS,

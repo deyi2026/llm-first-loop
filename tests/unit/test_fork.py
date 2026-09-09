@@ -26,9 +26,7 @@ def _build_stores(tmp_path: Path) -> tuple[EventStore, SessionStore]:
     return event_store, session_store
 
 
-def _build_source_session(
-    session_store: SessionStore, messages: list[Message]
-) -> str:
+def _build_source_session(session_store: SessionStore, messages: list[Message]) -> str:
     """构造源会话（含 session JSON + 事件日志双轨）."""
     sid = session_store.create()
     for msg in messages:

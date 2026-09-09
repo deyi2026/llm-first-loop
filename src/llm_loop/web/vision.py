@@ -31,6 +31,7 @@ import httpx
 
 VISION_DEFAULT_PROMPT = "请详细描述这张图片的内容，尽量转录图中文字。若无法识别图片，请如实说明。"
 
+
 # 2026-08-20（借鉴 SYAGI P1 修复）: 飞书图片消息不带扩展名, 此前 mime 恒 image/png,
 # jpg/gif/webp 错报致部分识别失败。按文件头 magic bytes 嗅探; 嗅探失败按 png 兜底。
 def _sniff_mime(image_bytes: bytes) -> str:
@@ -45,6 +46,7 @@ def _sniff_mime(image_bytes: bytes) -> str:
     if image_bytes[:2] == b"BM":
         return "image/bmp"
     return "image/png"
+
 
 _AUTH_HINT = (
     "请先运行 `arkcli auth login volc-sso` 刷新登录，或 `arkcli auth apikey` 选择 API Key"
@@ -295,7 +297,9 @@ def _describe_minimax(image_bytes: bytes, mime: str, prompt: str) -> str:
     return result
 
 
-def describe_image(image_bytes: bytes, mime: str = "", prompt: str = "", settings: Any = None) -> str:
+def describe_image(
+    image_bytes: bytes, mime: str = "", prompt: str = "", settings: Any = None
+) -> str:
     """调用图片识别能力描述图片，返回描述文本（非空）.
 
     识别结果即**文本**（供无视觉能力的主模型使用），调用方注入对话上下文。

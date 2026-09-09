@@ -109,11 +109,13 @@ class _OriginGuardMiddleware:
                         '{"error":"foreign_origin_forbidden","detail":'
                         '"跨站 Origin 拒绝（写请求仅接受当前同源或显式完整 Origin 白名单）。"}'
                     ).encode()
-                    await send({
-                        "type": "http.response.start",
-                        "status": 403,
-                        "headers": [(b"content-type", b"application/json; charset=utf-8")],
-                    })
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 403,
+                            "headers": [(b"content-type", b"application/json; charset=utf-8")],
+                        }
+                    )
                     await send({"type": "http.response.body", "body": body})
                     return
         await self.app(scope, receive, send)
@@ -144,7 +146,11 @@ def build_app(settings=None, engine=None) -> FastAPI:
     app.add_middleware(_OriginGuardMiddleware)
 
     # T5.1: 会话级并发锁装配（spec.md 5.4.1，默认开启，SESSION_CONCURRENCY_LOCK=false 退化为无锁）
-    _lock_enabled = os.environ.get("SESSION_CONCURRENCY_LOCK", "true").strip().lower() in ("true", "1", "")
+    _lock_enabled = os.environ.get("SESSION_CONCURRENCY_LOCK", "true").strip().lower() in (
+        "true",
+        "1",
+        "",
+    )
     app.state.session_locks = {} if _lock_enabled else None
 
     # 鉴权：公网/隧道暴露时，API 接受浏览器 session cookie 或 Bearer API key。
@@ -160,8 +166,11 @@ def build_app(settings=None, engine=None) -> FastAPI:
     # Web V2（React+TS，2026-08-15，对齐 DeepSeek Harness Web 端）：
     # 独立目录 webui/（独立分支 feature/web-v2），构建产物挂载 /ui/v2 与原版 / 并存。
     # 原版代码/资源保留不删不改；UI_V2_DIR 可覆盖（测试注入）；产物缺失时不挂载（零影响）。
-    _ui_v2_dir = Path(os.environ.get("UI_V2_DIR", "") or Path(__file__).resolve().parents[3] / "webui" / "dist")
+    _ui_v2_dir = Path(
+        os.environ.get("UI_V2_DIR", "") or Path(__file__).resolve().parents[3] / "webui" / "dist"
+    )
     if Path(_ui_v2_dir).is_dir():
+
         @app.middleware("http")
         async def _ui_v2_auth_gate(request: Request, call_next):
             # Mounted StaticFiles does not inherit APIRouter dependencies. Protect it

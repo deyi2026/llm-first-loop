@@ -65,7 +65,8 @@ def test_precheck_frozen():
 def test_static_check_feedback_success():
     """静态检查全过: SUCCESS."""
     r = StaticCheckResult(
-        file_path="a.py", language="python",
+        file_path="a.py",
+        language="python",
         overall_status=CheckOverallStatus.SUCCESS,
         checkers=(CheckerResult("ruff", CheckerStatus.SUCCESS),),
     )
@@ -77,11 +78,13 @@ def test_static_check_feedback_success():
 def test_static_check_feedback_issues():
     """静态检查有 error: FAILURE + 清单（file:line:col/code/severity）."""
     r = StaticCheckResult(
-        file_path="a.py", language="python",
+        file_path="a.py",
+        language="python",
         overall_status=CheckOverallStatus.FAILURE,
         checkers=(
             CheckerResult(
-                "ruff", CheckerStatus.FAILURE,
+                "ruff",
+                CheckerStatus.FAILURE,
                 issues=(CheckIssue("a.py", 10, 3, "E501", "line too long", Severity.ERROR),),
             ),
         ),
@@ -102,7 +105,9 @@ def test_convention_injection_text():
             ConventionItem(ConventionType.TYPE_ANNOTATION, "强制类型标注"),
         ),
         source_files=("a.py", "b.py"),
-        truncated=True, original_size=5000, retained_size=2000,
+        truncated=True,
+        original_size=5000,
+        retained_size=2000,
     )
     text = s.to_injection_text()
     assert "snake_case" in text
@@ -120,8 +125,11 @@ def test_convention_empty_no_inject():
 def test_error_location_fallback():
     """错误定位回退: 标注回退 + 原始输出."""
     r = ErrorLocationResult(
-        framework=tq_models.TestFramework.UNKNOWN, fallback=True,
-        original_output="raw output...", original_size=100, retained_size=100,
+        framework=tq_models.TestFramework.UNKNOWN,
+        fallback=True,
+        original_output="raw output...",
+        original_size=100,
+        retained_size=100,
     )
     text = r.to_injection_text()
     assert "解析失败已回退" in text
@@ -143,10 +151,16 @@ def test_error_location_structured():
 def test_fix_loop_feedback_fuse():
     """修复循环熔断: 终态汇报含轮数/熔断原因/未修复项."""
     r = FixLoopRecord(
-        loop_id="L1", trace_id="T1", max_rounds=5,
-        rounds=(RoundRecord(1, "fail", "loc", "fix", "fail"), RoundRecord(2, "fail", "loc", "fix", "fail")),
+        loop_id="L1",
+        trace_id="T1",
+        max_rounds=5,
+        rounds=(
+            RoundRecord(1, "fail", "loc", "fix", "fail"),
+            RoundRecord(2, "fail", "loc", "fix", "fail"),
+        ),
         final_status=FixLoopFinalStatus.FUSE_TRIGGERED,
-        unfixed_items=("E501: line too long",), fuse_count=3,
+        unfixed_items=("E501: line too long",),
+        fuse_count=3,
     )
     text = r.to_feedback_section()
     assert "[状态: fuse_triggered]" in text
@@ -160,7 +174,9 @@ def test_regression_feedback_subset():
     r = RegressionResult(
         modified_files=("x.py",),
         affected_tests=("tests/test_x.py",),
-        subset_ratio=0.5, passed_count=2, failed_count=1,
+        subset_ratio=0.5,
+        passed_count=2,
+        failed_count=1,
         failures=(FailureInfo("tests/test_x.py", 3, "assert failed"),),
         depgraph_available=True,
     )

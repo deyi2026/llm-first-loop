@@ -3,6 +3,7 @@
 A1 freezes component-level additions on top of the existing Contract treatment.
 It does not modify the historical C0/S2 treatment module.
 """
+
 from __future__ import annotations
 
 from scripts.calib.treatments import build_system_prompt

@@ -115,7 +115,9 @@ def test_verifier_distinguishes_missing_and_corrupt_blob(evidence_env):
 
     ref2 = _capture(blobs, ledger, owner, stable_id="corrupt")
     record2 = ledger.require_authorized(owner, ref2)
-    blob_path = blobs.root / "sha256" / record2.blob_ref.sha256[:2] / f"{record2.blob_ref.sha256}.blob"
+    blob_path = (
+        blobs.root / "sha256" / record2.blob_ref.sha256[:2] / f"{record2.blob_ref.sha256}.blob"
+    )
     blob_path.write_bytes(b"tampered")
     assert verifier.verify([ref2.ref]).status == "integrity_failed"
 
@@ -163,7 +165,9 @@ def test_task_store_records_successful_verification_metadata(evidence_env, tmp_p
     assert done.evidence_refs_digest
 
 
-def test_done_ref_change_is_verified_and_required_refs_cannot_be_removed(evidence_env, tmp_path: Path):
+def test_done_ref_change_is_verified_and_required_refs_cannot_be_removed(
+    evidence_env, tmp_path: Path
+):
     _blobs, _ledger, _owner, ref, verifier = evidence_env
     store = TaskStore(tmp_path / "audit", evidence_verifier=verifier)
     task = store.create(

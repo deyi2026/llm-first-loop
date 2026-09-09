@@ -100,7 +100,6 @@ def test_run_single_convenience_entry(tmp_path, monkeypatch):
     assert engine.session.exists(result.session_id)  # 会话已落盘可追溯
 
 
-
 def test_example01_assembly_chain_runs(tmp_path, monkeypatch):
     """B5: api.md §1 快速装配链路（load_env_file→load_settings→build_engine→run）可执行.
 

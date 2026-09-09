@@ -69,9 +69,7 @@ class HookRegistry:
     def __init__(self) -> None:
         self._hooks: list[dict] = []  # [{name, priority, action_type, rule}]
 
-    def register(
-        self, name: str, priority: int, action_type: str, rule: Any
-    ) -> None:
+    def register(self, name: str, priority: int, action_type: str, rule: Any) -> None:
         """注册钩子（priority 升序执行，同优先级按注册顺序稳定排序）."""
         self._hooks.append(
             {"name": name, "priority": priority, "action_type": action_type, "rule": rule}
@@ -130,9 +128,7 @@ class HookChain:
                 )
         return current, audits
 
-    def _exec_hook(
-        self, hook: dict, event: Any, meta: dict, audits: list[HookAudit]
-    ) -> Any | None:
+    def _exec_hook(self, hook: dict, event: Any, meta: dict, audits: list[HookAudit]) -> Any | None:
         """执行单个钩子."""
         name = hook["name"]
         action_type = hook["action_type"]
@@ -141,16 +137,16 @@ class HookChain:
         if action_type == "filter":
             if self._match_filter(event, rule):
                 audits.append(
-                    HookAudit(hook_name=name, action_type="filter", event_meta=meta, reason="matched")
+                    HookAudit(
+                        hook_name=name, action_type="filter", event_meta=meta, reason="matched"
+                    )
                 )
                 return None
             return event
 
         if action_type == "desensitize":
             new_event = self._desensitize(event, rule)
-            audits.append(
-                HookAudit(hook_name=name, action_type="desensitize", event_meta=meta)
-            )
+            audits.append(HookAudit(hook_name=name, action_type="desensitize", event_meta=meta))
             return new_event
 
         if action_type == "transform":

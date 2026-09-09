@@ -17,6 +17,7 @@ def _extract(answer: str) -> list[str]:
 
 # ── B2 计划陈述豁免 ──
 
+
 def test_b2_plan_statement_exempt():
     """B2 正例: 「下一步优先级」计划句不抽取（0812 误报样本重放）."""
     decls = _extract("下一步优先级：①修复回归 ②执行验证 ③提交代码")
@@ -38,23 +39,24 @@ def test_b2_todo_list_exempt():
 
 # ── B3 markdown 结构行豁免 ──
 
+
 def test_b3_code_fence_exempt():
     """B3 正例: fence 内代码片段不抽取（0814 误报样本重放）."""
-    answer = '说明如下：\n```python\n# 只读组：并行执行\n已创建连接池\n```\n完毕。'
+    answer = "说明如下：\n```python\n# 只读组：并行执行\n已创建连接池\n```\n完毕。"
     decls = _extract(answer)
     assert decls == [], f"fence 内内容应豁免，实际抽取: {decls}"
 
 
 def test_b3_table_row_exempt():
     """B3 正例: 表格行不抽取（0814 误报样本重放）."""
-    answer = '结果：\n| 生效 | 已修改配置 | 下一轮 |\n| 是 | 已执行 | 继续 |\n以上为状态表。'
+    answer = "结果：\n| 生效 | 已修改配置 | 下一轮 |\n| 是 | 已执行 | 继续 |\n以上为状态表。"
     decls = _extract(answer)
     assert decls == [], f"表格行应豁免，实际抽取: {decls}"
 
 
 def test_b3_quote_block_exempt():
     """B3 正例: 引用块行不抽取."""
-    answer = '> 已删除临时文件\n> 已更新文档\n以上引用自变更日志。'
+    answer = "> 已删除临时文件\n> 已更新文档\n以上引用自变更日志。"
     decls = _extract(answer)
     assert decls == [], f"引用块应豁免，实际抽取: {decls}"
 
@@ -67,6 +69,7 @@ def test_b3_normal_text_still_checked():
 
 
 # ── 真阳性约束：身份/比较结论路径不受影响 ──
+
 
 def test_identity_statement_still_extracted_true_positive():
     """真阳性约束: 身份幻觉句「由 Y 创建」命中创建动词——必须仍被抽取并判 False.

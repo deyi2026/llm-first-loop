@@ -30,12 +30,14 @@ def test_run_stream_reseeds_context_on_cross_context_resume(build_test_engine, t
     seen: list[tuple[str, str, str, str]] = []
 
     def snapshot() -> None:
-        seen.append((
-            current_session_id.get(),
-            current_workspace_root.get(),
-            current_reasoning_effort.get(),
-            current_model_label.get(),
-        ))
+        seen.append(
+            (
+                current_session_id.get(),
+                current_workspace_root.get(),
+                current_reasoning_effort.get(),
+                current_model_label.get(),
+            )
+        )
 
     def chat_stream(**_kwargs):
         # Fake 默认 planned label 在该测试装配下可为空；显式写入哨兵，验证 wrapper

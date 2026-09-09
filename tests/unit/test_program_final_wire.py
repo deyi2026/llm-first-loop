@@ -27,14 +27,15 @@ def _tool_resp(call_id: str) -> LLMResponse:
 
 
 class TestG9ProgramFinalWire:
-    def test_no_semantic_label_in_wire_and_role_shape_preserved(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_no_semantic_label_in_wire_and_role_shape_preserved(self, tmp_path: Path, monkeypatch):
         """程序终态后下一轮 wire: 无中文语义标签、无连续 user 角色。"""
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[
-                _tool_resp("c1"), _tool_resp("c2"), _tool_resp("c3"),
+                _tool_resp("c1"),
+                _tool_resp("c2"),
+                _tool_resp("c3"),
                 _resp("g9 回答"),
             ],
         )
@@ -95,9 +96,7 @@ class TestG9ProgramFinalWire:
                 metadata={"answer_origin": "program", "run_end_reason": "llm_error"},
             )
         )
-        sess.messages.append(
-            Message(role="user", content="后续任务", source=MessageSource.USER)
-        )
+        sess.messages.append(Message(role="user", content="后续任务", source=MessageSource.USER))
         engine.session.save(sess)
 
         engine.run(sid, "后续任务")
@@ -112,13 +111,9 @@ class TestG9ProgramFinalWire:
         )
         # 存储真相不动
         persisted = engine.session.load(sid)
-        assert any(
-            "[模型不可用]" in str(m.content or "") for m in persisted.messages
-        )
+        assert any("[模型不可用]" in str(m.content or "") for m in persisted.messages)
 
-    def test_legacy_model_echo_is_scrubbed_to_empty_role_frame(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_legacy_model_echo_is_scrubbed_to_empty_role_frame(self, tmp_path: Path, monkeypatch):
         """Pre-fix model-origin [program-final] must never survive provider projection."""
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_resp("正常总结")])
         sid = engine.session.create()
@@ -142,13 +137,9 @@ class TestG9ProgramFinalWire:
         assert LEGACY_PROGRAM_FINAL_MARKER not in "\n".join(
             str(m.get("content") or "") for m in wire
         )
-        assert any(
-            m.get("role") == "assistant" and m.get("content") == "" for m in wire
-        )
+        assert any(m.get("role") == "assistant" and m.get("content") == "" for m in wire)
 
-    def test_model_echo_retries_once_without_persisting_marker(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_model_echo_retries_once_without_persisting_marker(self, tmp_path: Path, monkeypatch):
         """One leaked-marker echo is not a completed answer; next provider round may recover."""
         engine, fake = _mk(
             tmp_path,
@@ -161,11 +152,12 @@ class TestG9ProgramFinalWire:
         assert result.final_answer == "正常最终总结"
         assert len(fake.calls) == 2
         persisted = engine.session.load(sid)
-        assert all(str(m.content or "").strip() != LEGACY_PROGRAM_FINAL_MARKER for m in persisted.messages)
+        assert all(
+            str(m.content or "").strip() != LEGACY_PROGRAM_FINAL_MARKER for m in persisted.messages
+        )
         final = [m for m in persisted.messages if m.role == "assistant"][-1]
         assert (final.metadata or {}).get("answer_origin") == "model"
         assert (final.metadata or {}).get("run_end_reason") == "completed"
-
 
     def test_empty_model_output_persists_zero_content_not_program_phrase(
         self, tmp_path: Path, monkeypatch
@@ -182,9 +174,7 @@ class TestG9ProgramFinalWire:
         assert (final.metadata or {}).get("empty_output") is True
         assert "无回答输出" not in "\n".join(str(m.content or "") for m in persisted.messages)
 
-    def test_repeated_model_echo_is_llm_error_not_completed(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_repeated_model_echo_is_llm_error_not_completed(self, tmp_path: Path, monkeypatch):
         """Two exact echoes fail truthfully instead of silently completing with a control token."""
         engine, fake = _mk(
             tmp_path,
@@ -201,4 +191,6 @@ class TestG9ProgramFinalWire:
         assert final.content == PROGRAM_FINAL_PROTOCOL_BOUNDARY
         assert (final.metadata or {}).get("answer_origin") == "program"
         assert (final.metadata or {}).get("run_end_reason") == "llm_error"
-        assert all(str(m.content or "").strip() != LEGACY_PROGRAM_FINAL_MARKER for m in persisted.messages)
+        assert all(
+            str(m.content or "").strip() != LEGACY_PROGRAM_FINAL_MARKER for m in persisted.messages
+        )

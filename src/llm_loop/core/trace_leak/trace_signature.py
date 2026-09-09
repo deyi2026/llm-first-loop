@@ -23,9 +23,7 @@ DEFAULT_SIGNATURE_MODE = "off"
 # - 行首「思考过程」独立标记（多次出现）
 # - 「自动」动作标记 + 工具命令（python3 -c / grep / sed / git / npm）
 _TRACE_THINK_MARK = re.compile(r"(?m)^\s*思考过程\s*$")
-_TOOL_CMD_MARK = re.compile(
-    r"(?m)^(python3? -[cs]\b|grep\b|sed\b|npm \w+|git \w+|rg\b|awk\b)"
-)
+_TOOL_CMD_MARK = re.compile(r"(?m)^(python3? -[cs]\b|grep\b|sed\b|npm \w+|git \w+|rg\b|awk\b)")
 
 
 @dataclass(frozen=True)

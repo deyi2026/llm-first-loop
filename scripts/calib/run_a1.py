@@ -1,4 +1,5 @@
 """A1 component-ablation generation runner. Semantic scoring is separate."""
+
 from __future__ import annotations
 
 import argparse
@@ -15,6 +16,7 @@ from scripts.calib.runner_a1 import execute_run_a1  # noqa: E402
 MATRIX = ROOT / "tests/fixtures/calib/a1_matrix_v1.json"
 OUT = ROOT / "data/calib/runs_a1"
 
+
 class Data:
     ORACLES = f.ORACLES_A1
     SOURCES = f.SOURCES_A1
@@ -27,10 +29,13 @@ class Data:
     def lookup_source(seed, source):
         return f.lookup_source_a1(seed, source)
 
+
 DATA = Data()
+
 
 def rows():
     return json.loads(MATRIX.read_text(encoding="utf-8"))["rows"]
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
@@ -53,23 +58,37 @@ def main(argv=None):
             raise SystemExit(f"from-run not found in selected block: {a.from_run}")
         rs = rs[idx:]
         if a.count is not None:
-            rs = rs[:a.count]
+            rs = rs[: a.count]
     elif not a.all:
         raise SystemExit("use --all, --run, or --from-run")
     if not a.dry and not a.execute_real:
         raise SystemExit("real A1 blocked until frozen preregistration")
     for r in rs:
-        print(f"[{r['run_id']}] {r['provider']} {r['seed']} {r['variant']} {'DRY' if a.dry else 'REAL'}", flush=True)
+        print(
+            f"[{r['run_id']}] {r['provider']} {r['seed']} {r['variant']} {'DRY' if a.dry else 'REAL'}",
+            flush=True,
+        )
         out_path = OUT / f"{r['run_id']}.json"
         if out_path.exists() and not a.dry:
             print(" -> SKIP existing raw artifact", flush=True)
             continue
-        o = execute_run_a1(r["run_id"], r["seed"], r["variant"], dry=a.dry, provider=r["provider"], data=DATA)
+        o = execute_run_a1(
+            r["run_id"], r["seed"], r["variant"], dry=a.dry, provider=r["provider"], data=DATA
+        )
         o["provider"] = r["provider"]
         o["matrix_block_seq"] = r["block_seq"]
         out_path.write_text(json.dumps(o, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(" ->", o["status"], "req", o["requested_count"], "lat", o["stats"]["latency_s"], flush=True)
+        print(
+            " ->",
+            o["status"],
+            "req",
+            o["requested_count"],
+            "lat",
+            o["stats"]["latency_s"],
+            flush=True,
+        )
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

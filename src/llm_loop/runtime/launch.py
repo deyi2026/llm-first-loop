@@ -8,6 +8,7 @@
 shell 脚本（restart_system.sh/restart_mirror.sh）只负责进程管理（stop/PID/nohup/日志）；
 业务配置语义全部在此解析（resolver → identity 守卫 → 服务入口）。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,26 +43,34 @@ def main(argv: list[str] | None = None) -> int:
     report = check_identity()
 
     ec = resolve_effective(args.service, cli)
-    print(f"[runtime-launch] service={args.service} identity_ok={report.ok} "
-          f"workspace={ec.workspace_root} env_file={ec.env_file}", file=sys.stderr)
+    print(
+        f"[runtime-launch] service={args.service} identity_ok={report.ok} "
+        f"workspace={ec.workspace_root} env_file={ec.env_file}",
+        file=sys.stderr,
+    )
     if ec.ignored_shell_env:
-        print(f"[runtime-launch] ignored shell env (not authoritative): "
-              f"{sorted(ec.ignored_shell_env)}", file=sys.stderr)
+        print(
+            f"[runtime-launch] ignored shell env (not authoritative): "
+            f"{sorted(ec.ignored_shell_env)}",
+            file=sys.stderr,
+        )
 
     if args.dry_run:
         import json
+
         print(json.dumps(ec.to_summary(), ensure_ascii=False, indent=2))
         # R3: dry-run 同步预览将写入的 manifest（不落盘，仅展示）
-        print(json.dumps(build_manifest(args.service, ec, report),
-                         ensure_ascii=False, indent=2))
+        print(json.dumps(build_manifest(args.service, ec, report), ensure_ascii=False, indent=2))
         return 0
 
     apply_to_environ(ec)
     # R3: 启动即写 manifest（身份 + 配置指纹 + providers 三 hash 的唯一事实源）
     manifest = build_manifest(args.service, ec, report)
     mf_path = write_manifest(manifest, report.data_dir)
-    print(f"[runtime-launch] manifest: {mf_path} "
-          f"config_hash={manifest['config_hash'][:12]}", file=sys.stderr)
+    print(
+        f"[runtime-launch] manifest: {mf_path} config_hash={manifest['config_hash'][:12]}",
+        file=sys.stderr,
+    )
     runpy.run_module(_SERVICES[args.service], run_name="__main__")
     return 0
 

@@ -15,6 +15,7 @@ Usage:
     python3 scripts/analysis_injection_baseline.py
     python3 scripts/analysis_injection_baseline.py --data-dir data --out-dir docs/injection-governance/r0
 """
+
 from __future__ import annotations
 
 import argparse
@@ -331,7 +332,9 @@ def analyze_session(source: SourceSession) -> tuple[list[dict[str, Any]], dict[s
             if event.get("type") == "message.appended" and _is_program_message(payload):
                 kind = _injection_kind(payload)
                 meta = payload.get("metadata") or {}
-                haystack = f"{kind} {json.dumps(meta, ensure_ascii=False)} {_content(payload)[:300]}"
+                haystack = (
+                    f"{kind} {json.dumps(meta, ensure_ascii=False)} {_content(payload)[:300]}"
+                )
                 if RECOVERY_HINT_RE.search(haystack):
                     recovery = True
                     break
@@ -357,9 +360,7 @@ def analyze_session(source: SourceSession) -> tuple[list[dict[str, Any]], dict[s
         all_program_injection_chars = sum(i["chars"] for i in injections)
         system_program_injection_chars = sum(i["chars"] for i in system_injections)
         post_user_chars = sum(
-            i["chars"]
-            for i in user_injections
-            if i["seq"] > int(human_event.get("seq") or 0)
+            i["chars"] for i in user_injections if i["seq"] > int(human_event.get("seq") or 0)
         )
         request_attribution_applicable = bool(request_meta) or any(
             int((e.get("payload") or {}).get("tokens_in") or 0) > 0 for e in run_ends
@@ -475,8 +476,8 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for row in completed:
         model = row.get("model_id") or "unknown"
         bucket_rows[f"model:{model}"].append(row)
-        bucket_rows[f"compact_first:{row.get('compact_first')}"] .append(row)
-        bucket_rows[f"recovery:{row.get('recovery')}"] .append(row)
+        bucket_rows[f"compact_first:{row.get('compact_first')}"].append(row)
+        bucket_rows[f"recovery:{row.get('recovery')}"].append(row)
     for key, values in sorted(bucket_rows.items()):
         by_bucket[key] = {
             "turns": len(values),
@@ -497,7 +498,9 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "request_attribution_applicable_turns": len(attrib_rows),
         "request_attribution_coverage_pct": _pct(attrib_ok, len(attrib_rows)),
         "turns_with_injection": len(with_injection),
-        "turns_with_post_user_injection": sum(r["injection_after_user_chars"] > 0 for r in completed),
+        "turns_with_post_user_injection": sum(
+            r["injection_after_user_chars"] > 0 for r in completed
+        ),
         "post_user_injection_turn_rate_pct": _pct(
             sum(r["injection_after_user_chars"] > 0 for r in completed), completed_n
         ),
@@ -527,9 +530,13 @@ def _build_fixtures(rows: list[dict[str, Any]], sessions: list[dict[str, Any]]) 
     completed = [r for r in rows if r["run_complete"]]
     post = max(completed, key=lambda r: r["injection_after_user_chars"], default=None)
     duplicate_candidates = [r for r in completed if r["duplicate_injection_count"] > 0]
-    duplicate = max(duplicate_candidates, key=lambda r: r["duplicate_injection_count"], default=None)
+    duplicate = max(
+        duplicate_candidates, key=lambda r: r["duplicate_injection_count"], default=None
+    )
     imperative_candidates = [r for r in completed if r["imperative_reference_count"] > 0]
-    imperative = max(imperative_candidates, key=lambda r: r["imperative_reference_count"], default=None)
+    imperative = max(
+        imperative_candidates, key=lambda r: r["imperative_reference_count"], default=None
+    )
     wire_candidates = [r for r in completed if (r["wire_consecutive_user_run_max"] or 0) >= 2]
     wire = max(wire_candidates, key=lambda r: r["wire_consecutive_user_run_max"], default=None)
 
@@ -672,7 +679,9 @@ def _render_report(
     lines.append("# R0 基线与数据门报告（INJECTION-GOVERNANCE）")
     lines.append("")
     lines.append(f"> schema: `{SCHEMA_VERSION}` | R0: **{gates['R0']}**")
-    lines.append("> 数据源：镜像区 `data/event_logs/*.jsonl`；本报告为确定性离线分析，不调用任何 LLM。")
+    lines.append(
+        "> 数据源：镜像区 `data/event_logs/*.jsonl`；本报告为确定性离线分析，不调用任何 LLM。"
+    )
     lines.append("")
     lines.append("## 1. R0 四门")
     lines.append("")
@@ -693,7 +702,9 @@ def _render_report(
     lines.append("")
     lines.append("## 2. 结构基线")
     lines.append("")
-    lines.append(f"- 有 **user-role 程序附录** 的 completed turn：**{agg['turns_with_injection']}/{agg['turns_completed']}**。")
+    lines.append(
+        f"- 有 **user-role 程序附录** 的 completed turn：**{agg['turns_with_injection']}/{agg['turns_completed']}**。"
+    )
     lines.append(
         f"- 用户真话之后仍追加程序块的 turn：**{agg['turns_with_post_user_injection']}/{agg['turns_completed']} ({agg['post_user_injection_turn_rate_pct']}%)**。"
     )
@@ -720,7 +731,9 @@ def _render_report(
     lines.append("")
     lines.append("### 按会话")
     lines.append("")
-    lines.append("| session | 角色 | turns | truth chars | injection chars | user-lane 注入占比 | 尾后注入 turn | 重复率 | 资料祈使率 | wire tail 违规 | models |")
+    lines.append(
+        "| session | 角色 | turns | truth chars | injection chars | user-lane 注入占比 | 尾后注入 turn | 重复率 | 资料祈使率 | wire tail 违规 | models |"
+    )
     lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|")
     for row in session_table:
         lines.append(
@@ -729,11 +742,15 @@ def _render_report(
     lines.append("")
     lines.append("### 分桶口径")
     lines.append("")
-    lines.append("`baseline.jsonl` 每行同时记录 `model_id / capability_tier / compact_first / recovery`，报告聚合保存在 `baseline-manifest.json:aggregate.by_bucket`。`compact_first` 的 R0 操作定义是：该 human turn 首个 `request.meta` 之前已有 durable `context.compressed` 事件；`recovery` 只认显式 recovery/retry 事件或程序恢复注入，不凭错误码猜测。")
+    lines.append(
+        "`baseline.jsonl` 每行同时记录 `model_id / capability_tier / compact_first / recovery`，报告聚合保存在 `baseline-manifest.json:aggregate.by_bucket`。`compact_first` 的 R0 操作定义是：该 human turn 首个 `request.meta` 之前已有 durable `context.compressed` 事件；`recovery` 只认显式 recovery/retry 事件或程序恢复注入，不凭错误码猜测。"
+    )
     lines.append("")
     lines.append("## 3. R0-3 冻结 fixture")
     lines.append("")
-    lines.append("`fixtures/structural-fixtures.json` 只保存来源 session/turn、字符数和 SHA-256 前缀，不保存用户原文或资料全文。四类 fixture 分别证明：")
+    lines.append(
+        "`fixtures/structural-fixtures.json` 只保存来源 session/turn、字符数和 SHA-256 前缀，不保存用户原文或资料全文。四类 fixture 分别证明："
+    )
     lines.append("")
     lines.append("1. program block 在用户真话之后追加；")
     lines.append("2. 同一规范化资料帧在同 session 重复出现；")
@@ -742,15 +759,27 @@ def _render_report(
     lines.append("")
     lines.append("## 4. R0-4 参数判定")
     lines.append("")
-    lines.append("- `INJECTION_BUDGET_CHARS=8000` 与 `K=3` **继续作为候选，不在 R0 擅自升级为生产常量**。")
-    lines.append("- R0 已冻结注入字符分布和分桶数据，可用于给 L3 选择候选区间。最终预算/K 必须在治理实现后用同 fixture 的任务完成率/漂移率 A/B 决定。")
-    lines.append("- 因用户此前已明确取消重复 cognilocal 基线跑，本轮没有重新启动本地模型；这不影响 R0 的确定性结构门。")
+    lines.append(
+        "- `INJECTION_BUDGET_CHARS=8000` 与 `K=3` **继续作为候选，不在 R0 擅自升级为生产常量**。"
+    )
+    lines.append(
+        "- R0 已冻结注入字符分布和分桶数据，可用于给 L3 选择候选区间。最终预算/K 必须在治理实现后用同 fixture 的任务完成率/漂移率 A/B 决定。"
+    )
+    lines.append(
+        "- 因用户此前已明确取消重复 cognilocal 基线跑，本轮没有重新启动本地模型；这不影响 R0 的确定性结构门。"
+    )
     lines.append("")
     lines.append("## 5. 数据完整性与限制")
     lines.append("")
-    lines.append("- `message.appended` 是 origin/content 真相源；`request.meta` 提供实际模型与 history_chars；`cache.window` 提供 wire role/char 结构；`context.compressed` 与 `run.end` 提供 compact/run 归因。`injection_chars` 仅指 user-role program appendix；system notice 单列在 `all_program_injection_chars/system_program_injection_chars`，不冒充“用户尾后注入”。")
-    lines.append("- `incremental_injection_share` 是“本 human turn 新增程序块字符 / 首请求 history_chars”，不是把历史中所有已存在注入重新归因；会话级 `user-lane 注入占比` 则衡量真实 user 与程序 user-like 数据量。")
-    lines.append("- 行为漂移率/任务完成率属于 L3 A/B；R0 只保存既有历史事故作为 supporting evidence，不以随机采样结果作为硬门。")
+    lines.append(
+        "- `message.appended` 是 origin/content 真相源；`request.meta` 提供实际模型与 history_chars；`cache.window` 提供 wire role/char 结构；`context.compressed` 与 `run.end` 提供 compact/run 归因。`injection_chars` 仅指 user-role program appendix；system notice 单列在 `all_program_injection_chars/system_program_injection_chars`，不冒充“用户尾后注入”。"
+    )
+    lines.append(
+        "- `incremental_injection_share` 是“本 human turn 新增程序块字符 / 首请求 history_chars”，不是把历史中所有已存在注入重新归因；会话级 `user-lane 注入占比` 则衡量真实 user 与程序 user-like 数据量。"
+    )
+    lines.append(
+        "- 行为漂移率/任务完成率属于 L3 A/B；R0 只保存既有历史事故作为 supporting evidence，不以随机采样结果作为硬门。"
+    )
     lines.append("")
     lines.append("## 6. Source manifest")
     lines.append("")
@@ -816,9 +845,7 @@ def run(data_dir: Path, out_dir: Path) -> dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
-    parser.add_argument(
-        "--out-dir", type=Path, default=Path("docs/injection-governance/r0")
-    )
+    parser.add_argument("--out-dir", type=Path, default=Path("docs/injection-governance/r0"))
     parser.add_argument("--json", action="store_true", help="print gate summary as JSON")
     return parser.parse_args()
 

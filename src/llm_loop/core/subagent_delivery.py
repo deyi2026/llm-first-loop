@@ -142,7 +142,9 @@ class SubAgentDeliveryJournal:
         parent_id = str(p.get("parent_id") or "")
         generation = str(p.get("generation") or "")
         raw_result = p.get("result")
-        if not all((result_id, child_id, parent_id, generation)) or not isinstance(raw_result, dict):
+        if not all((result_id, child_id, parent_id, generation)) or not isinstance(
+            raw_result, dict
+        ):
             return None
         report_ids = p.get("report_ids")
         return ResultRecord(
@@ -198,9 +200,14 @@ class SubAgentDeliveryJournal:
             if not tool_call_id:
                 continue
             seq = int(getattr(event, "seq", 0) or 0)
-            if event_type == "message.appended" and str(payload.get("tool_name") or "") == "subagent_result":
+            if (
+                event_type == "message.appended"
+                and str(payload.get("tool_name") or "") == "subagent_result"
+            ):
                 metadata = payload.get("metadata")
-                binding = metadata.get("subagent_settlement") if isinstance(metadata, dict) else None
+                binding = (
+                    metadata.get("subagent_settlement") if isinstance(metadata, dict) else None
+                )
                 if not isinstance(binding, dict):
                     continue
                 if (
@@ -316,7 +323,11 @@ class SubAgentDeliveryJournal:
         existing = self.result(child_id, generation)
         normalized_report_ids = tuple(str(x) for x in report_ids if str(x))
         if existing is not None:
-            if existing.parent_id == parent_id and existing.payload == result and existing.report_ids == normalized_report_ids:
+            if (
+                existing.parent_id == parent_id
+                and existing.payload == result
+                and existing.report_ids == normalized_report_ids
+            ):
                 return existing
             return None
         result_id = f"result-{generation}"

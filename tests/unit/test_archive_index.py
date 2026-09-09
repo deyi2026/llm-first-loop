@@ -219,9 +219,7 @@ def test_rebuild_idempotent_and_corrupt_skip(tmp_path):
     assert store.rebuild_segment_index(seg) == 1  # 损坏行跳过
     assert store.rebuild_segment_index(seg) == 1  # 幂等
     recs = [
-        raw_line
-        for raw_line in idx.read_text(encoding="utf-8").splitlines()
-        if raw_line.strip()
+        raw_line for raw_line in idx.read_text(encoding="utf-8").splitlines() if raw_line.strip()
     ]
     assert len(recs) == 1
 

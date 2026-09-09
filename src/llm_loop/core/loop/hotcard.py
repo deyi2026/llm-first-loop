@@ -147,9 +147,7 @@ def _render_card_text(card: dict, *, ref_path: str = "") -> str:
     return f"{line1}\nref=file:{ref}"
 
 
-def pop_hotcard(
-    *, session_id: str, data_dir: str | Path, authorized: bool = False
-) -> str | None:
+def pop_hotcard(*, session_id: str, data_dir: str | Path, authorized: bool = False) -> str | None:
     """显式授权后取出未消费且来源会话 ≠ 当前会话的热卡文本.
 
     R8.14/E24: ``origin_session != session_id`` 只能证明跨会话，不能证明用户要继续

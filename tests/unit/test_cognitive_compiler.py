@@ -185,6 +185,7 @@ def test_decision_line_frame_anchor_mode_unchanged():
     # 无 GoalStore 环境 → fail-open 空串（不抛异常）
     assert isinstance(_decision_line_frame("no-such"), str)
 
+
 def test_history_cognitive_reads_are_strict_session(tmp_path: Path, monkeypatch):
     """CR-R1.1a: compact/legacy decision line 都不得回退到他会 active Goal."""
     from llm_loop.core.history import _decision_line_frame, _persist_semantic_state

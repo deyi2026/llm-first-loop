@@ -191,10 +191,6 @@ def test_two_evaluations_metric_readable(tmp_path):
     assert not hasattr(evaluator, "compare")
 
 
-
-
-
-
 def test_eval_id_unique_across_runs(tmp_path):
     """M16 审计（FR-AUDIT-AI-10）: eval_id 含随机后缀，连续评估唯一."""
     evaluator = SelfEvaluator(status_provider=_Status(), audit_dir=tmp_path)
@@ -220,6 +216,7 @@ def test_eval_id_unique_across_restart(tmp_path):
 
 # ── EVO-20260816-f1f73a0d: 时间窗过滤 ──
 
+
 def test_time_filter_excludes_old_exceptions(tmp_path):
     """时间窗: 24h 前的异常被过滤，不污染当前评估（条数窗会把旧异常混入）."""
     from datetime import UTC, datetime, timedelta
@@ -237,10 +234,15 @@ def test_time_filter_excludes_old_exceptions(tmp_path):
     )
     _write_jsonl(
         tmp_path / "action_trace.jsonl",
-        [{"ts": new_ts, "phase": "action.tool_loop", "action_type": "tool_call", "detail": "ok"} for _ in range(8)],
+        [
+            {"ts": new_ts, "phase": "action.tool_loop", "action_type": "tool_call", "detail": "ok"}
+            for _ in range(8)
+        ],
     )
     status = _Status(llm_rounds=8)
-    ev = SelfEvaluator(status_provider=status, audit_dir=tmp_path, min_samples=5, span=50, window_hours=24)
+    ev = SelfEvaluator(
+        status_provider=status, audit_dir=tmp_path, min_samples=5, span=50, window_hours=24
+    )
     report = ev.evaluate(session_id="s1", trigger="manual")
     metrics = {m.name: m for m in report.metrics}
     # 24h 内异常: NewError + NoTs = 2 条（OldError 被过滤）→ 异常率 2/8
@@ -258,10 +260,15 @@ def test_time_filter_disabled_window_zero(tmp_path):
     )
     _write_jsonl(
         tmp_path / "action_trace.jsonl",
-        [{"ts": "t", "phase": "action.tool_loop", "action_type": "tool_call", "detail": "ok"} for _ in range(8)],
+        [
+            {"ts": "t", "phase": "action.tool_loop", "action_type": "tool_call", "detail": "ok"}
+            for _ in range(8)
+        ],
     )
     status = _Status(llm_rounds=8)
-    ev = SelfEvaluator(status_provider=status, audit_dir=tmp_path, min_samples=5, span=50, window_hours=0)
+    ev = SelfEvaluator(
+        status_provider=status, audit_dir=tmp_path, min_samples=5, span=50, window_hours=0
+    )
     report = ev.evaluate(session_id="s1", trigger="manual")
     metrics = {m.name: m for m in report.metrics}
     assert metrics["exception_rate"].value == 0.5  # 4/8 全部计入
@@ -273,13 +280,19 @@ def test_self_eval_persists_false_declaration_refs_without_receipt_duplication(t
         tmp_path / "declaration_check.jsonl",
         [
             {
-                "id": "DC-ok", "ts": "", "consistent": True,
-                "declarations": ["已读取文件"], "discrepancies": [],
-                "cross_round_hits": [], "tool_call_ids": ["ok-1"],
+                "id": "DC-ok",
+                "ts": "",
+                "consistent": True,
+                "declarations": ["已读取文件"],
+                "discrepancies": [],
+                "cross_round_hits": [],
+                "tool_call_ids": ["ok-1"],
                 "receipts": ["R" * 4000],
             },
             {
-                "id": "DC-bad", "ts": "", "consistent": False,
+                "id": "DC-bad",
+                "ts": "",
+                "consistent": False,
                 "declarations": ["已写入不存在的文件"],
                 "discrepancies": ["本轮未见写入成功"],
                 "cross_round_hits": ["跨轮候选未命中"],
@@ -306,6 +319,7 @@ def test_self_eval_persists_false_declaration_refs_without_receipt_duplication(t
     assert "VERY-LARGE-RECEIPT" not in json.dumps(row, ensure_ascii=False)
 
     from llm_loop.introspection.search import RecordSearcher
+
     searcher = RecordSearcher(audit_dir=tmp_path)
     exact = searcher.search(kind="self_eval", query=report.eval_id, limit=10)
     assert exact and exact[0]["id"] == report.eval_id
@@ -338,14 +352,18 @@ def test_self_eval_omits_diagnostics_when_no_false_declarations(tmp_path):
 def test_declaration_check_legacy_line_ref_hydrates_exact_sample(tmp_path):
     _write_jsonl(
         tmp_path / "declaration_check.jsonl",
-        [{
-            "ts": "legacy", "consistent": False,
-            "declarations": ["legacy declaration"],
-            "discrepancies": ["legacy gap"],
-            "receipts": ["legacy full receipt"],
-        }],
+        [
+            {
+                "ts": "legacy",
+                "consistent": False,
+                "declarations": ["legacy declaration"],
+                "discrepancies": ["legacy gap"],
+                "receipts": ["legacy full receipt"],
+            }
+        ],
     )
     from llm_loop.introspection.search import RecordSearcher
+
     hit = RecordSearcher(audit_dir=tmp_path).search(
         kind="declaration_check", query="declaration_check.jsonl:L1", limit=10
     )

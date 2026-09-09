@@ -45,7 +45,9 @@ def _write_fixture(workspace: Path) -> None:
         )
 
 
-def _versioned_ai_edit(engine, sid: str, workspace: Path, relative_path: str, round_no: int) -> None:
+def _versioned_ai_edit(
+    engine, sid: str, workspace: Path, relative_path: str, round_no: int
+) -> None:
     """Exercise the same durable effect path used by the model tool loop."""
     engine.registry.set_session_id(sid)
     token = current_workspace_root.set(str(workspace))

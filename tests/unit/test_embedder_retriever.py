@@ -148,8 +148,11 @@ def test_api_embedder_no_auth_when_api_key_empty():
     from unittest import mock
 
     from llm_loop.memory.embedder import APIEmbedder
+
     fake_resp = mock.Mock(status_code=200, json=lambda: {"data": [{"embedding": [0.1] * 4}]})
-    embedder = APIEmbedder(api_key="", base_url="http://localhost:1234/v1", model="text-emb", timeout_s=10)
+    embedder = APIEmbedder(
+        api_key="", base_url="http://localhost:1234/v1", model="text-emb", timeout_s=10
+    )
     with mock.patch.object(embedder._client, "post", return_value=fake_resp) as post:
         embedder.embed("hi")
     _, kwargs = post.call_args

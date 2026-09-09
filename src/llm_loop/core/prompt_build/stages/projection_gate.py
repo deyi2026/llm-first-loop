@@ -4,6 +4,7 @@ seq（消息数）= 历史追加水印；ver（构建参数+动态输入指纹�
 ver+seq 匹配而 built_hash 不同 → 非确定性构建/历史被改 → 只读告警
 （fail-open 不阻断 run）。借鉴 DSH seq 水印。
 """
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -74,17 +75,15 @@ def run_projection_gate(
         _built_for_hash = (
             built[:-1]
             if isinstance(_c_tail, str)
-            and (
-                _c_tail == GATE_NOTE_CONTENT
-                or "--- [slot:gate_note] ---" in _c_tail
-            )
+            and (_c_tail == GATE_NOTE_CONTENT or "--- [slot:gate_note] ---" in _c_tail)
             else built
         )
         _built_hash = stable_digest(_built_for_hash)
         # EVO-20260817: 压缩轮判定——主动/被动压缩归档（built 消息数 < base）属合法
         # 变化（缓存友好压缩锚点不动 → ver 不变但 built 变短），豁免投影 mismatch 误报
-        _compressed_this_build = decision.compacted = (
-            bool(last_history_compacted) or len(built) < len(base))
+        _compressed_this_build = decision.compacted = bool(last_history_compacted) or len(
+            built
+        ) < len(base)
         _guards = sess.projection_guard if sess.projection_guard is not None else {}
         _prev = _guards.get(provider_id)
         _state = projection_check(_prev, ver=_ver, seq=_seq, built_hash=_built_hash)

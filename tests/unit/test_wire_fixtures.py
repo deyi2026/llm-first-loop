@@ -4,6 +4,7 @@ fixture 由 scripts/extract_wire_fixtures.py 从真实 1210 offending payload �
 （data/audit/offending_payloads/，schema=2，content 截断脱敏）。
 本测试是 R5/R7 wire contract / tail packet 测试的资产基座。
 """
+
 from __future__ import annotations
 
 import json
@@ -109,8 +110,11 @@ def test_old_ref_replay_scenario_preserved() -> None:
     refs = re.findall(r"evidence://v1/[0-9a-f]{16,}", raw)
     assert len(refs) >= 7, f"重复请求实证不足: {len(refs)} < 7"
     assert len(set(refs)) == 1, "场景要求同一 evidence ref 重复出现"
-    fails = [m for m in fx["messages"] if m["role"] == "tool"
-             and str(m.get("content", "")).startswith("[状态: failure]")]
+    fails = [
+        m
+        for m in fx["messages"]
+        if m["role"] == "tool" and str(m.get("content", "")).startswith("[状态: failure]")
+    ]
     assert len(fails) >= 3, f"失败回环实证不足: {len(fails)} < 3"
 
 

@@ -1,4 +1,5 @@
 """Phase 3 RRF 多信号融合测试（借鉴 uteke/mem0 混合检索）."""
+
 from llm_loop.memory.embedder import HashEmbedder, NullEmbedder
 from llm_loop.memory.retriever import SemanticRetriever
 from llm_loop.memory.store import MemoryEntry, MemoryStore
@@ -13,7 +14,10 @@ def _mem(tmp_path):
 
 
 def _kw(hits):
-    return [{"kind": "memory", "id": h["id"], "content": h["content"], "key": f"memory:{h['id']}"} for h in hits]
+    return [
+        {"kind": "memory", "id": h["id"], "content": h["content"], "key": f"memory:{h['id']}"}
+        for h in hits
+    ]
 
 
 def test_rrf_double_signal_outranks_single(tmp_path):
@@ -22,8 +26,20 @@ def test_rrf_double_signal_outranks_single(tmp_path):
     retriever = SemanticRetriever(HashEmbedder(), memory_dir=tmp_path / "memory")
     # 构造: A 仅语义命中（排名高），B 语义+关键词双命中
     semantic = [
-        {"kind": "memory", "id": "A", "content": "用户喜欢蓝色", "key": "memory:A", "_semantic_score": 0.9},
-        {"kind": "memory", "id": "B", "content": "Python 开发", "key": "memory:B", "_semantic_score": 0.8},
+        {
+            "kind": "memory",
+            "id": "A",
+            "content": "用户喜欢蓝色",
+            "key": "memory:A",
+            "_semantic_score": 0.9,
+        },
+        {
+            "kind": "memory",
+            "id": "B",
+            "content": "Python 开发",
+            "key": "memory:B",
+            "_semantic_score": 0.8,
+        },
     ]
     keyword = [{"kind": "memory", "id": "B", "content": "Python 开发", "key": "memory:B"}]
     fused = retriever._rrf_fuse(semantic, keyword, top_k=5)
@@ -49,7 +65,9 @@ def test_rrf_search_mixed_mode_preserved(tmp_path):
     mem = _mem(tmp_path)
     retriever = SemanticRetriever(HashEmbedder(), memory_dir=tmp_path / "memory")
     kw = [{"kind": "memory", "id": "x", "content": "Python 开发", "key": "memory:x"}]
-    result = retriever.search("Python 技术", top_k=5, scope="memory", memory=mem, keyword_results=kw)
+    result = retriever.search(
+        "Python 技术", top_k=5, scope="memory", memory=mem, keyword_results=kw
+    )
     assert result.mode == "mixed"
     for e in result.entries:
         assert "_rrf_score" in e  # RRF 已生效

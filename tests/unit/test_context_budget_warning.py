@@ -50,9 +50,7 @@ def _make_fake():
                 return LLMResponse(
                     content="执行命令",
                     tool_calls=[
-                        ToolCall(
-                            id="tc1", name="execute_command", arguments={"command": "echo 1"}
-                        )
+                        ToolCall(id="tc1", name="execute_command", arguments={"command": "echo 1"})
                     ],
                     provider="fake",
                 )

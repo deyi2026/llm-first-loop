@@ -4,6 +4,7 @@
   字段完整（P0.5 清单）/ 绝不记录 API key / config 变化 → hash 变化 /
   providers override 三 hash / write-read roundtrip / launch 端到端落盘。
 """
+
 import json
 import os
 from pathlib import Path
@@ -21,11 +22,24 @@ from llm_loop.runtime.resolver import resolve_effective
 
 # design P0.5 字段清单（验收断言用，逐项必须存在）
 P05_FIELDS = [
-    "workspace_root", "git_head", "python_executable", "llm_loop_module",
-    "service", "pid", "model_ref", "provider_id", "provider_endpoint_host",
-    "history_budget_chars", "max_input_tokens", "max_tokens",
-    "data_dir", "config_sources", "config_hash",
-    "providers_base_hash", "providers_override_hash", "providers_effective_hash",
+    "workspace_root",
+    "git_head",
+    "python_executable",
+    "llm_loop_module",
+    "service",
+    "pid",
+    "model_ref",
+    "provider_id",
+    "provider_endpoint_host",
+    "history_budget_chars",
+    "max_input_tokens",
+    "max_tokens",
+    "data_dir",
+    "config_sources",
+    "config_hash",
+    "providers_base_hash",
+    "providers_override_hash",
+    "providers_effective_hash",
 ]
 
 _PROVIDERS = {
@@ -52,8 +66,7 @@ def test_manifest_fields_complete_and_no_api_key(tmp_path, monkeypatch):
     _mk(tmp_path, ["LLM_MODEL=glm/glm-5.3", "HISTORY_MAX_CHARS=150000"])
     monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
     report = compute_identity()
-    ec = resolve_effective("web", env={"LLM_API_KEY": "sk-secret-xyz"},
-                           workspace_root=tmp_path)
+    ec = resolve_effective("web", env={"LLM_API_KEY": "sk-secret-xyz"}, workspace_root=tmp_path)
     m = build_manifest("web", ec, report)
     for f in P05_FIELDS:
         assert f in m, f"缺 P0.5 字段: {f}"
@@ -72,8 +85,8 @@ def test_config_hash_changes_on_cli_override(tmp_path, monkeypatch):
     monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
     ec1 = resolve_effective("web", workspace_root=tmp_path)
     ec2 = resolve_effective(
-        "web", cli_overrides={"LLM_MODEL": "deepseek/deepseek-v4-flash"},
-        workspace_root=tmp_path)
+        "web", cli_overrides={"LLM_MODEL": "deepseek/deepseek-v4-flash"}, workspace_root=tmp_path
+    )
     assert config_hash(ec1) != config_hash(ec2)
 
 
@@ -85,7 +98,8 @@ def test_providers_hashes_override_semantics(tmp_path, monkeypatch):
     assert h1["providers_override_hash"] == ""
     assert h1["providers_effective_hash"] == h1["providers_base_hash"]
     (data / "providers.override.json").write_text(
-        json.dumps({"glm": {"history_budget_chars": 100000}}))
+        json.dumps({"glm": {"history_budget_chars": 100000}})
+    )
     h2 = providers_hashes(data)
     assert h2["providers_override_hash"]
     assert h2["providers_effective_hash"] != h2["providers_base_hash"]
@@ -113,12 +127,14 @@ def test_launch_writes_manifest_end_to_end(tmp_path, monkeypatch, capsys):
     验收：web/feishu 启动后 manifest 存在且字段完整。
     """
     from llm_loop.runtime import launch as launch_mod
+
     _mk(tmp_path, ["LLM_MODEL=glm/glm-5.3", "LLM_API_KEY=sk-dotenv-key"])
     monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.delenv("PYTHONPATH", raising=False)
     called = {}
-    monkeypatch.setattr(launch_mod.runpy, "run_module",
-                        lambda mod, run_name: called.setdefault("mod", mod))
+    monkeypatch.setattr(
+        launch_mod.runpy, "run_module", lambda mod, run_name: called.setdefault("mod", mod)
+    )
     saved = dict(os.environ)
     try:
         rc = launch_mod.main(["web"])
@@ -143,6 +159,7 @@ def test_dry_run_does_not_write_manifest(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.delenv("PYTHONPATH", raising=False)
     from llm_loop.runtime import launch as launch_mod
+
     rc = launch_mod.main(["web", "--dry-run"])
     assert rc == 0
     assert not (tmp_path / "data" / "runtime" / "runtime_manifest.json").exists()

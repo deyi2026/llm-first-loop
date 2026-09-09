@@ -14,11 +14,12 @@ def _mk_project(tmp_path: Path) -> Path:
     (root / "src").mkdir(parents=True)
     (root / "tests").mkdir()
     (root / "src" / "calc.py").write_text(
-        "import util\n\ndef add(a, b):\n    return a + b\n", encoding="utf-8")
+        "import util\n\ndef add(a, b):\n    return a + b\n", encoding="utf-8"
+    )
     (root / "src" / "util.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
     (root / "tests" / "test_calc.py").write_text(
-        "import calc\n\ndef test_add():\n    assert calc.add(1, 2) == 3\n",
-        encoding="utf-8")
+        "import calc\n\ndef test_add():\n    assert calc.add(1, 2) == 3\n", encoding="utf-8"
+    )
     return root
 
 
@@ -60,8 +61,8 @@ def test_incremental_update(tmp_path):
     # 新增 src/newmod.py 并被 test_calc 导入 → 增量更新
     (root / "src" / "newmod.py").write_text("def new():\n    return 2\n", encoding="utf-8")
     (root / "tests" / "test_calc.py").write_text(
-        "import calc, newmod\n\ndef test_add():\n    assert calc.add(1, 2) == 3\n",
-        encoding="utf-8")
+        "import calc, newmod\n\ndef test_add():\n    assert calc.add(1, 2) == 3\n", encoding="utf-8"
+    )
     assert g.incremental_update([str(root / "tests" / "test_calc.py")]) is True
     tests, available = g.affected_tests([str(root / "src" / "newmod.py")])
     assert available is True
@@ -111,12 +112,14 @@ def test_thread_safety(tmp_path):
     g = DepGraph(src_root=root)
     g.build()
     errors = []
+
     def _query():
         try:
             for _ in range(10):
                 g.affected_tests([str(root / "src" / "calc.py")])
         except Exception as e:  # noqa: BLE001
             errors.append(e)
+
     threads = [threading.Thread(target=_query) for _ in range(5)]
     for t in threads:
         t.start()
@@ -131,15 +134,18 @@ def test_incremental_update_not_built_no_deadlock(tmp_path):
     回归: 修复前该场景线程永久卡死（timeout 暴露）；修复后走 build 并返回 True。
     """
     import threading
+
     root = _mk_project(tmp_path)
     g = DepGraph(src_root=root)  # 未调用 build → _built=False
     result: list = []
+
     def worker():
         try:
             ok = g.incremental_update([str(root / "src" / "calc.py")])
             result.append(("ok", ok))
         except Exception as exc:  # noqa: BLE001
             result.append(("err", str(exc)))
+
     t = threading.Thread(target=worker)
     t.start()
     t.join(timeout=10.0)
@@ -160,7 +166,8 @@ def test_test_root_outside_src(tmp_path):
     tests.mkdir(parents=True)
     (src / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
     (tests / "test_calc.py").write_text(
-        "import calc\n\ndef test_add():\n    assert calc.add(1, 2) == 3\n", encoding="utf-8")
+        "import calc\n\ndef test_add():\n    assert calc.add(1, 2) == 3\n", encoding="utf-8"
+    )
     g = DepGraph(src_root=src, test_root=tests)
     g.build()
     tests, available = g.affected_tests([str(src / "calc.py")])

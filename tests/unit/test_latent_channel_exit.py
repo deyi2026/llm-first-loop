@@ -39,9 +39,17 @@ def test_eg6_slots_registry_memory_tip_retired():
 def test_eg6_unknown_producer_gains_no_semantic_layer():
     """resurrection=0: 以新 producer 名义（含旧名 memory/tip）不得获语义层."""
     for ghost in (
-        "memory", "tip", "anchor", "hotcard", "gate_note", "interop",
-        "program_recovery", "task_next_step", "memory_authorized",
-        "capability_unavailable", "new_channel",
+        "memory",
+        "tip",
+        "anchor",
+        "hotcard",
+        "gate_note",
+        "interop",
+        "program_recovery",
+        "task_next_step",
+        "memory_authorized",
+        "capability_unavailable",
+        "new_channel",
     ):
         assert dynamic_prompt_layer("内容", slot_kind=ghost) is None, (
             f"retired/unknown producer '{ghost}' 不得复活语义层"
@@ -71,9 +79,7 @@ def test_eg1_retrieval_plane_storage_untouched(tmp_path):
 
     store = MemoryStore(tmp_path / "memory")
     store.save_entry(
-        MemoryEntry(
-            id="m-1", type="fact", content="授权通道退出后存储仍在", keywords=["存储"]
-        )
+        MemoryEntry(id="m-1", type="fact", content="授权通道退出后存储仍在", keywords=["存储"])
     )
     rows = store.search(["存储"], top_k=5)
     assert any("存储仍在" in r.content for r in rows)
@@ -95,6 +101,7 @@ def test_eg2_eg5_decision_log_boundaries(build_test_engine):
     engine.run(sid, "全新普通问题")
 
     import json
+
     wire = json.dumps(fake.calls[-1]["messages"], ensure_ascii=False) if fake.calls else ""
     assert "slot:task_active" not in wire
     assert "IN-PROGRESS-0" not in wire
@@ -112,12 +119,12 @@ def test_route2_search_records_memory_recovery(tmp_path):
     memory = MemoryStore(tmp_path / "memory")
     memory.save_entry(
         MemoryEntry(
-            id="m-deploy", type="fact", content="部署顺序: 先迁移数据库再切流量",
+            id="m-deploy",
+            type="fact",
+            content="部署顺序: 先迁移数据库再切流量",
             keywords=["部署", "迁移"],
         )
     )
-    searcher = RecordSearcher(
-        audit_dir=tmp_path / "audit", memory_store=memory, archive_store=None
-    )
+    searcher = RecordSearcher(audit_dir=tmp_path / "audit", memory_store=memory, archive_store=None)
     rows = searcher.search(kind="memory", query="部署", limit=5)
     assert rows and "迁移" in str(rows[0]), "显式查询必须可取回（通道退出不影响检索面）"

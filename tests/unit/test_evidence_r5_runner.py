@@ -24,7 +24,9 @@ def test_r5_matrix_balanced_24() -> None:
 
 
 def test_r5_neutral_fillers_and_explicit_fields() -> None:
-    fixtures = json.loads((ROOT / "tests/fixtures/evidence_r5/fixtures_v1.json").read_text())["fixtures"]
+    fixtures = json.loads((ROOT / "tests/fixtures/evidence_r5/fixtures_v1.json").read_text())[
+        "fixtures"
+    ]
     for _seed, f in fixtures.items():
         for line in f["initial_content"].splitlines():
             if f["target_field"] not in line:
@@ -40,9 +42,15 @@ def test_r5_interval_repeat_metric_allows_partition_but_rejects_overlap() -> Non
     state = runner.RunState()
     fixture = runner.FIXTURES["J1"]
     calls = [
-        runner.ToolCall(id="a", name="read_file", arguments={"path": "/x", "offset": 0, "limit": 80}),
-        runner.ToolCall(id="b", name="read_file", arguments={"path": "/x", "offset": 80, "limit": 80}),
-        runner.ToolCall(id="c", name="read_file", arguments={"path": "/x", "offset": 40, "limit": 20}),
+        runner.ToolCall(
+            id="a", name="read_file", arguments={"path": "/x", "offset": 0, "limit": 80}
+        ),
+        runner.ToolCall(
+            id="b", name="read_file", arguments={"path": "/x", "offset": 80, "limit": 80}
+        ),
+        runner.ToolCall(
+            id="c", name="read_file", arguments={"path": "/x", "offset": 40, "limit": 20}
+        ),
     ]
     runner._record_source_success(state, calls[0], fixture)
     runner._record_source_success(state, calls[1], fixture)

@@ -49,10 +49,18 @@ def _stuff_history(engine, sid, total_chars: int) -> None:
     # 循环导致实际载荷约为声明的 2 倍，使大窗口测试错误触发 compact。
     for i in range(total_chars // (per_msg * 2)):
         sess.messages.append(
-            Message(role="user", content=f"历史消息{i} " + "x" * (per_msg - 20), source=MessageSource.USER)
+            Message(
+                role="user",
+                content=f"历史消息{i} " + "x" * (per_msg - 20),
+                source=MessageSource.USER,
+            )
         )
         sess.messages.append(
-            Message(role="assistant", content=f"历史回答{i} " + "y" * (per_msg - 20), source=MessageSource.USER)
+            Message(
+                role="assistant",
+                content=f"历史回答{i} " + "y" * (per_msg - 20),
+                source=MessageSource.USER,
+            )
         )
     engine.session.save(sess)
 
@@ -67,13 +75,16 @@ def test_legacy_history_anchor_is_reopened_for_current_contract() -> None:
         history_anchors={"minimax": 42},
         history_anchor_scopes={},
     )
-    assert _anchor_for_current_contract(
-        sess,
-        provider_id="minimax",
-        resolved_label="minimax/MiniMax-M3",
-        sess_anchor=42,
-        effective_budget=540_000,
-    ) == 0
+    assert (
+        _anchor_for_current_contract(
+            sess,
+            provider_id="minimax",
+            resolved_label="minimax/MiniMax-M3",
+            sess_anchor=42,
+            effective_budget=540_000,
+        )
+        == 0
+    )
     assert sess.history_anchors["minimax"] == 0
 
 
@@ -91,40 +102,52 @@ def test_versioned_history_anchor_survives_only_same_or_stricter_contract() -> N
         )
 
     same = _sess()
-    assert _anchor_for_current_contract(
-        same,
-        provider_id="glm",
-        resolved_label="glm/glm-5.3",
-        sess_anchor=37,
-        effective_budget=300_000,
-    ) == 37
+    assert (
+        _anchor_for_current_contract(
+            same,
+            provider_id="glm",
+            resolved_label="glm/glm-5.3",
+            sess_anchor=37,
+            effective_budget=300_000,
+        )
+        == 37
+    )
 
     stricter = _sess()
-    assert _anchor_for_current_contract(
-        stricter,
-        provider_id="glm",
-        resolved_label="glm/glm-5.3",
-        sess_anchor=37,
-        effective_budget=200_000,
-    ) == 37
+    assert (
+        _anchor_for_current_contract(
+            stricter,
+            provider_id="glm",
+            resolved_label="glm/glm-5.3",
+            sess_anchor=37,
+            effective_budget=200_000,
+        )
+        == 37
+    )
 
     expanded = _sess()
-    assert _anchor_for_current_contract(
-        expanded,
-        provider_id="glm",
-        resolved_label="glm/glm-5.3",
-        sess_anchor=37,
-        effective_budget=500_000,
-    ) == 0
+    assert (
+        _anchor_for_current_contract(
+            expanded,
+            provider_id="glm",
+            resolved_label="glm/glm-5.3",
+            sess_anchor=37,
+            effective_budget=500_000,
+        )
+        == 0
+    )
 
     switched = _sess()
-    assert _anchor_for_current_contract(
-        switched,
-        provider_id="glm",
-        resolved_label="glm/glm-5.3-flash",
-        sess_anchor=37,
-        effective_budget=300_000,
-    ) == 0
+    assert (
+        _anchor_for_current_contract(
+            switched,
+            provider_id="glm",
+            resolved_label="glm/glm-5.3-flash",
+            sess_anchor=37,
+            effective_budget=300_000,
+        )
+        == 0
+    )
 
 
 def test_engine_clears_legacy_marker_once_on_actual_session_messages(
@@ -178,10 +201,14 @@ def test_engine_clears_legacy_marker_once_on_actual_session_messages(
     assert engine._run_state().cache_prefix_epoch == epoch_after_first  # noqa: SLF001
 
 
-def test_small_window_model_compresses_proactively(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_small_window_model_compresses_proactively(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """256K 窗模型: 30万字符历史超过物理输入预算 → 主动压缩（M54 核心）."""
     monkeypatch.setenv("KIMI_API_KEY", "k")
-    settings = _settings(tmp_path, model_providers_raw=_K256_JSON, llm_model="k3-256k", history_max_chars=1_000_000)  # EVO-20260814: 显式 1M 模拟生产环境
+    settings = _settings(
+        tmp_path, model_providers_raw=_K256_JSON, llm_model="k3-256k", history_max_chars=1_000_000
+    )  # EVO-20260814: 显式 1M 模拟生产环境
     fake = _FakeLLMClient("k3-256k")
     pool = _make_pool(settings, fake)
     engine = _make_engine(tmp_path, pool, settings)
@@ -190,7 +217,9 @@ def test_small_window_model_compresses_proactively(tmp_path, monkeypatch: pytest
     _stuff_history(engine, sid, 300000)  # 30万字符 > ~14.2万模型历史预算, < 全局 1M
 
     result = engine.run(sid, "新问题")
-    assert result.final_answer.startswith("默认回答")  # 方案B尾行适配（EVO-20260819-2254e3b4，展示层不参与断言）
+    assert result.final_answer.startswith(
+        "默认回答"
+    )  # 方案B尾行适配（EVO-20260819-2254e3b4，展示层不参与断言）
     # 全局 1M 预算不会压缩 30万；256K 模型窗口预算约 14.2万字符，应压缩。
     received = _received_history_chars(fake)
     assert received < 290000, f"应压缩到预算内, 实际 {received}"
@@ -338,7 +367,8 @@ def test_local_tool_round_has_no_hidden_budget_clamp(
 
 
 def test_model_output_budget_reserve_overrides_provider_output_default(
-    tmp_path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """物理输入预算必须预留实际路由模型的输出上限，而不是 provider 兄弟模型默认值。"""
     providers = json.dumps(

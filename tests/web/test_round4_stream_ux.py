@@ -20,7 +20,6 @@ ROOT = Path(__file__).resolve().parents[2]
 APP_JS = ROOT / "src" / "llm_loop" / "web" / "static" / "app.js"
 
 
-
 class TestScrollFollow:
     def test_is_messages_at_bottom_defined(self, app_js_src: str):
         assert "function isMessagesAtBottom" in app_js_src
@@ -42,8 +41,8 @@ class TestStreamRetry:
         assert "try {" in app_js_src[max(0, idx - 60) : idx + 40]
 
     def test_error_type_field(self, app_js_src: str):
-        assert "errorType: \"network\"" in app_js_src
-        assert "errorType: \"engine\"" in app_js_src
+        assert 'errorType: "network"' in app_js_src
+        assert 'errorType: "engine"' in app_js_src
 
     def test_retry_entry(self, app_js_src: str):
         assert "重试" in app_js_src

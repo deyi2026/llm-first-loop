@@ -9,6 +9,7 @@
 - 父会话上下文不被污染（子代理独立 session）
 - P1-5(审计发现 #10): 子代理执行后会话 id 恢复为父会话（成功/异常路径都恢复）
 """
+
 from __future__ import annotations
 
 import re
@@ -39,17 +40,21 @@ def _await_child(runner: SubAgentRunner, receipt, wait_seconds: float = 2.0):
 def test_runner_success_executes_tool_and_returns(build_test_engine):
     """子代理: 一轮工具（read_file）后给出最终回答."""
     engine, fake = build_test_engine([])
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
 
     # 子代理消息序列: ① 调 read_file → ② 无工具调用给出回答
     def seq(calls):
         # 第一个 LLM 调用: 声明 read_file
         return LLMResponse(
-            content="", tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": "/nonexistent/x"})], provider="fake"
+            content="",
+            tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": "/nonexistent/x"})],
+            provider="fake",
         )
-    fake._responses = [seq, LLMResponse(content="子代理完成: 文件不存在", tool_calls=[], provider="fake")]
+
+    fake._responses = [
+        seq,
+        LLMResponse(content="子代理完成: 文件不存在", tool_calls=[], provider="fake"),
+    ]
 
     result = runner.run(task="检查文件是否存在", depth=0)
 
@@ -75,12 +80,16 @@ def test_runner_does_not_inject_last_round_forced_close(build_test_engine):
     fake._responses = [
         LLMResponse(
             content="",
-            tool_calls=[ToolCall(id="c1", name="execute_command", arguments={"command": "echo one"})],
+            tool_calls=[
+                ToolCall(id="c1", name="execute_command", arguments={"command": "echo one"})
+            ],
             provider="fake",
         ),
         LLMResponse(
             content="",
-            tool_calls=[ToolCall(id="c2", name="execute_command", arguments={"command": "echo two"})],
+            tool_calls=[
+                ToolCall(id="c2", name="execute_command", arguments={"command": "echo two"})
+            ],
             provider="fake",
         ),
     ]
@@ -105,13 +114,15 @@ def test_acceptance_is_guidance_not_programmatic_early_termination(build_test_en
     fake._responses = [
         LLMResponse(
             content="",
-            tool_calls=[ToolCall(id="c1", name="execute_command", arguments={"command": "echo ok"})],
+            tool_calls=[
+                ToolCall(id="c1", name="execute_command", arguments={"command": "echo ok"})
+            ],
             provider="fake",
         ),
         LLMResponse(content="我检查过验收条件后决定完成", tool_calls=[], provider="fake"),
     ]
 
-    result = runner.run(task="执行并判断验收", depth=0, acceptance=["命令成功"] )
+    result = runner.run(task="执行并判断验收", depth=0, acceptance=["命令成功"])
 
     assert result.outcome == "completed"
     assert result.rounds == 2
@@ -122,9 +133,7 @@ def test_acceptance_is_guidance_not_programmatic_early_termination(build_test_en
 def test_runner_preserves_assistant_tool_declaration_before_receipt(build_test_engine):
     """子代理下一轮必须看到完整 assistant(tool_calls)→tool(result) 协议配对。"""
     engine, fake = build_test_engine([])
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
     fake._responses = [
         LLMResponse(
             content="",
@@ -175,9 +184,7 @@ def test_llm_exception_does_not_create_orphan_tool_frame(build_test_engine):
 def test_terminal_assistant_is_persisted_in_child_session(build_test_engine):
     """父级拿到的 final_answer 必须同时存在于 child durable history。"""
     engine, fake = build_test_engine([])
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
     fake._responses = [LLMResponse(content="最终可交付答案", tool_calls=[], provider="fake")]
     result = runner.run(task="直接回答", depth=0)
     assert result.outcome == "completed"
@@ -209,7 +216,9 @@ def test_all_llm_failures_report_failed_not_truncated_or_success(build_test_engi
     assert "连续调用失败" in terminal.content
 
 
-def test_subagent_default_scope_is_full_registry_and_explicit_parent_scope_is_preserved(build_test_engine):
+def test_subagent_default_scope_is_full_registry_and_explicit_parent_scope_is_preserved(
+    build_test_engine,
+):
     """Child identity adds no tool penalty; explicit parent scope still cannot be expanded."""
     engine, fake = build_test_engine([])
     from llm_loop.core.run_context import current_tool_discovery_scope
@@ -283,8 +292,16 @@ def test_runner_max_iterations_truncated(build_test_engine):
     )
     # 每轮都声明工具调用（永不收敛）→ 触发截断
     fake._responses = [
-        LLMResponse(content="", tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": "/x"})], provider="fake"),
-        LLMResponse(content="", tool_calls=[ToolCall(id="c2", name="read_file", arguments={"path": "/y"})], provider="fake"),
+        LLMResponse(
+            content="",
+            tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": "/x"})],
+            provider="fake",
+        ),
+        LLMResponse(
+            content="",
+            tool_calls=[ToolCall(id="c2", name="read_file", arguments={"path": "/y"})],
+            provider="fake",
+        ),
     ]
     result = runner.run(task="死循环任务", depth=0)
     assert result.truncated is True
@@ -302,7 +319,9 @@ def test_runner_uses_registry_tool_safety_without_child_whitelist(build_test_eng
     fake._responses = [
         LLMResponse(
             content="",
-            tool_calls=[ToolCall(id="c1", name="edit_file", arguments={"path": "/x", "content": "y"})],
+            tool_calls=[
+                ToolCall(id="c1", name="edit_file", arguments={"path": "/x", "content": "y"})
+            ],
             provider="fake",
         ),
         LLMResponse(content="结束", tool_calls=[], provider="fake"),
@@ -336,7 +355,9 @@ def test_runner_recursive_spawn(build_test_engine):
                 return LLMResponse(
                     content="",
                     tool_calls=[
-                        ToolCall(id="spawn-grand", name="spawn_subagent", arguments={"task": "孙子任务"})
+                        ToolCall(
+                            id="spawn-grand", name="spawn_subagent", arguments={"task": "孙子任务"}
+                        )
                     ],
                     provider="fake",
                 )
@@ -474,9 +495,7 @@ def test_spawn_subagent_tool_missing_task(build_test_engine):
     engine, fake = build_test_engine([])
     from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
     tool = SpawnSubAgentTool(runner)
     result = tool.execute()
     assert result.status.value == "failure"
@@ -492,9 +511,7 @@ def test_runner_restores_parent_session_id(build_test_engine):
     from llm_loop.core.run_context import current_session_id
 
     engine, fake = build_test_engine([])
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
 
     # 探针工具（在子代理受限工具集内，且测试引擎未注册 web_search）:
     # 记录子代理执行瞬间的会话（contextvar 优先值 + 显式回退字段）
@@ -506,9 +523,7 @@ def test_runner_restores_parent_session_id(build_test_engine):
         parameters = {"type": "object", "properties": {}}
 
         def execute(self, **kwargs):
-            captured.append(
-                (engine.registry._session_id, engine.registry._session_id_explicit)
-            )
+            captured.append((engine.registry._session_id, engine.registry._session_id_explicit))
             return "探针结果"
 
     engine.registry.register(_ProbeTool())
@@ -605,7 +620,6 @@ def test_parent_stop_cancels_child_before_post_llm_tool_execution(build_test_eng
     assert "child_outcome=cancelled" in terminal.content
 
 
-
 def test_background_handle_hard_cap_refuses_only_new_resource(build_test_engine):
     """running handle 达硬上限时拒绝新 background resource，不淘汰活跃 child。"""
     engine, fake = build_test_engine([])
@@ -644,9 +658,7 @@ def test_runner_restores_parent_session_on_exception(build_test_engine):
     from llm_loop.core.run_context import current_session_id
 
     engine, fake = build_test_engine([])
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
     parent_sid = "parent_test_session"
     engine.registry.set_session_id(parent_sid)
     prev_ctx = current_session_id.get()
@@ -669,15 +681,17 @@ def test_runner_restores_parent_session_on_exception(build_test_engine):
 def test_runner_acceptance_injected(build_test_engine):
     """2026-08-18: acceptance 验收清单注入子代理系统提示（对齐 dsh_task 协议 v2）."""
     engine, fake = build_test_engine([])
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
 
     def seq(calls):
         # 记录收到的消息，断言验收清单已注入
         import json
 
-        msgs = json.dumps([m.to_llm_dict() for m in calls], ensure_ascii=False) if hasattr(calls[0], "to_llm_dict") else str(calls)
+        msgs = (
+            json.dumps([m.to_llm_dict() for m in calls], ensure_ascii=False)
+            if hasattr(calls[0], "to_llm_dict")
+            else str(calls)
+        )
         captured.append(msgs)
         return LLMResponse(content="完成", tool_calls=[], provider="fake")
 
@@ -749,9 +763,7 @@ def test_subagent_parent_id_mounted(build_test_engine, monkeypatch):
 
     engine, fake = build_test_engine([])
     fake._responses = [LLMResponse(content="完成", tool_calls=[], provider="fake")]
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
     # 模拟父会话 run 上下文（engine.run_stream 设置 current_session_id）
     parent_sid = "parent-session-123"
     tok = _csid.set(parent_sid)
@@ -775,9 +787,7 @@ def test_subagent_parent_id_mounted(build_test_engine, monkeypatch):
 def test_subagent_tools_have_type_field(build_test_engine):
     """2026-08-18 修复: 子代理 tools 参数必须含 type='function'（裸 schema → DeepSeek 400）."""
     engine, fake = build_test_engine([])
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
     fake._responses = [LLMResponse(content="完成", tool_calls=[], provider="fake")]
     result = runner.run(task="测试", depth=0)
     assert result.refused is False

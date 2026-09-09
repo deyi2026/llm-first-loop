@@ -18,8 +18,10 @@ class _DummyTool:
 
     def execute(self, **kwargs):
         from llm_loop.core.message import ToolResult, ToolResultStatus
-        return ToolResult(status=ToolResultStatus.SUCCESS, content="ok",
-                          tool_call_id="", tool_name=self.name)
+
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS, content="ok", tool_call_id="", tool_name=self.name
+        )
 
 
 def _make_registry(precheck=None):
@@ -70,6 +72,7 @@ def test_precheck_does_not_bypass_safety():
     """预检不替代安全检查: 灾难性动作仍被拦截（blocked）."""
     # 用 EXEC_MODE=blocked 验证: 预检开启不绕过命令分级（安全检查仍生效）
     from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
+
     reg2 = ToolRegistry(precheck_layer=PreCheckLayer(), exec_mode="blocked")
     reg2.register(ExecuteCommandTool(timeout_s=5))
     r = reg2.execute(_call(tool_name="execute_command", command="echo hi"))

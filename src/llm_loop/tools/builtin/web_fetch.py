@@ -108,8 +108,8 @@ def _embedded_json_extract(raw: str) -> str:
     patterns = [
         (r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', True),
         (r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', True),
-        (r'window\.__NUXT__\s*=\s*(.*?)</script>', False),
-        (r'window\.__INITIAL_STATE__\s*=\s*(.*?)</script>', False),
+        (r"window\.__NUXT__\s*=\s*(.*?)</script>", False),
+        (r"window\.__INITIAL_STATE__\s*=\s*(.*?)</script>", False),
     ]
     texts: list[str] = []
     for pat, need_json in patterns:
@@ -268,7 +268,15 @@ def _blocked_ip_label(ip_str: str) -> str:
     except ValueError:
         return ""
     if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-        kind = "私网" if ip.is_private else "回环" if ip.is_loopback else "链路本地" if ip.is_link_local else "保留地址"
+        kind = (
+            "私网"
+            if ip.is_private
+            else "回环"
+            if ip.is_loopback
+            else "链路本地"
+            if ip.is_link_local
+            else "保留地址"
+        )
         return f"{ip_str}（{kind}）"
     return ""
 
@@ -304,7 +312,13 @@ def _resolve_checked_ips(url: str) -> tuple[str, list[str], str, int, bool]:
         for cand in candidates:
             if ipaddress.ip_address(cand) in _FAKE_IP_NETWORK:
                 if _strict_fake_ip():
-                    return (f"{cand}（代理假 IP 段 198.18/15，严格模式拦截）", [], host, port, False)
+                    return (
+                        f"{cand}（代理假 IP 段 198.18/15，严格模式拦截）",
+                        [],
+                        host,
+                        port,
+                        False,
+                    )
                 fake_hits += 1
                 continue
             label = _blocked_ip_label(cand)
@@ -354,9 +368,18 @@ class WebFetchTool:
         "properties": {
             "url": {"type": "string", "description": "要抓取的完整 URL（http/https）"},
             "max_chars": {"type": "integer", "description": "返回内容最大字符数（默认 100000）"},
-            "start": {"type": "integer", "description": "分页续读起始偏移（字符，默认 0）。正文超长被截断后，用 start=上次位置 续读下一段"},
-            "count": {"type": "integer", "description": "分页续读每段长度（字符，默认 max_chars）。start 与 count 正交：start 定起点、count 定段长（分页续读语义）"},
-            "full": {"type": "boolean", "description": "legacy 模式 true=跳过本工具 max_chars 截断；Evidence enforce 模式默认抓取 observation 先持久化，模型视图仍受统一 projection budget，完整内容用 read_evidence 恢复"},
+            "start": {
+                "type": "integer",
+                "description": "分页续读起始偏移（字符，默认 0）。正文超长被截断后，用 start=上次位置 续读下一段",
+            },
+            "count": {
+                "type": "integer",
+                "description": "分页续读每段长度（字符，默认 max_chars）。start 与 count 正交：start 定起点、count 定段长（分页续读语义）",
+            },
+            "full": {
+                "type": "boolean",
+                "description": "legacy 模式 true=跳过本工具 max_chars 截断；Evidence enforce 模式默认抓取 observation 先持久化，模型视图仍受统一 projection budget，完整内容用 read_evidence 恢复",
+            },
         },
         "required": ["url"],
     }
@@ -395,7 +418,8 @@ class WebFetchTool:
             for i, ua in enumerate(_UA_POOL):
                 try:
                     with client.stream(
-                        "GET", url,
+                        "GET",
+                        url,
                         headers={"User-Agent": ua, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"},
                     ) as resp:
                         self._verify_peer(resp, url)  # P0-3: 实际对端命中私网 → 丢弃
@@ -526,9 +550,16 @@ class WebFetchTool:
         -w 尾部追加 "\\n%{http_code} %{redirect_url}" 供手动重定向循环判定。
         """
         args = [
-            "curl", "-s", "-m", str(int(self._timeout_s)), "-A", ua,
-            "-H", "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8",
-            "-w", "\n%{http_code} %{redirect_url}",
+            "curl",
+            "-s",
+            "-m",
+            str(int(self._timeout_s)),
+            "-A",
+            ua,
+            "-H",
+            "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8",
+            "-w",
+            "\n%{http_code} %{redirect_url}",
         ]
         if resolve:
             args += ["--resolve", resolve]  # P0-3: 预连接钉已校验 IP
@@ -706,7 +737,9 @@ class WebFetchTool:
             except Exception:  # noqa: BLE001 — curl 通道意外异常如实落入失败回执
                 fallback = None
             if fallback is None:
-                status = ToolResultStatus.TIMEOUT if "超时" in httpx_note else ToolResultStatus.FAILURE
+                status = (
+                    ToolResultStatus.TIMEOUT if "超时" in httpx_note else ToolResultStatus.FAILURE
+                )
                 return ToolResult(
                     status=status,
                     content=(
@@ -736,7 +769,7 @@ class WebFetchTool:
         if start > 0:
             # 分页续读（start 与 count 正交）
             # start 定起点、count 定段长；返回 [start, start+count) 段
-            body = body[start:start + count]
+            body = body[start : start + count]
             if not body:
                 return ToolResult(
                     status=ToolResultStatus.FAILURE,
@@ -744,7 +777,7 @@ class WebFetchTool:
                     tool_call_id="",
                     tool_name=self.name,
                 )
-            seg_note = f"\n…[分页 {start}-{start+len(body)}/{total}，续读；可用 start={start+len(body)} 继续]…"
+            seg_note = f"\n…[分页 {start}-{start + len(body)}/{total}，续读；可用 start={start + len(body)} 继续]…"
             if len(body) >= count:
                 body = body + seg_note
             return ToolResult(
@@ -760,7 +793,10 @@ class WebFetchTool:
 
         raw_observation = body if current_evidence_shadow_enabled.get() else None
         if not full and len(body) > max_chars and not current_evidence_enforce_enabled.get():
-            body = body[:max_chars] + f"\n…[内容超长，已截断，共 {len(body)} 字符；可用 start={max_chars} 续读]…"
+            body = (
+                body[:max_chars]
+                + f"\n…[内容超长，已截断，共 {len(body)} 字符；可用 start={max_chars} 续读]…"
+            )
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=body,

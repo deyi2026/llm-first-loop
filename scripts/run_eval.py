@@ -41,7 +41,9 @@ def load_scenarios(path: Path) -> dict:
     return data
 
 
-_SCENARIOS_DEFAULT = Path(__file__).resolve().parent.parent / "tests" / "eval_sets" / "scenarios_v1.json"
+_SCENARIOS_DEFAULT = (
+    Path(__file__).resolve().parent.parent / "tests" / "eval_sets" / "scenarios_v1.json"
+)
 
 
 def _settings(tmp_path, key: str):
@@ -233,7 +235,9 @@ def evaluate(scenarios: dict, *, dry: bool, samples_override: int | None, workdi
     if not dry:
         key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("LLM_API_KEY", "")
         if not key:
-            raise RuntimeError("无真实 LLM key（DEEPSEEK_API_KEY/LLM_API_KEY）；使用 --dry 验证管道")
+            raise RuntimeError(
+                "无真实 LLM key（DEEPSEEK_API_KEY/LLM_API_KEY）；使用 --dry 验证管道"
+            )
     else:
         # P2-5(2026-08-15): dry 路径开头做注入可见性自检——adjust_step 等依赖预置失败
         # 信号的场景必须在 dry 下同样可被发现（注入不可见 → 如实失败，防 dry 假绿）
@@ -247,7 +251,9 @@ def evaluate(scenarios: dict, *, dry: bool, samples_override: int | None, workdi
         per_scenario: list[dict] = []
         for i in range(n):
             sample = runner(sc["prompt"], workdir, key, setup)
-            verdict = run_verdict(sc["verdict"], sample["trace"], sample["answer"], sc.get("params"))
+            verdict = run_verdict(
+                sc["verdict"], sample["trace"], sample["answer"], sc.get("params")
+            )
             per_scenario.append(
                 {
                     "sample": i + 1,
@@ -318,14 +324,18 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=_SCENARIOS_DEFAULT,
     )
-    parser.add_argument("--samples", type=int, default=None, help="覆盖场景样本数（默认用场景定义值）")
+    parser.add_argument(
+        "--samples", type=int, default=None, help="覆盖场景样本数（默认用场景定义值）"
+    )
     parser.add_argument(
         "--output",
         type=Path,
         default=None,
         help="报告输出目录（默认 docs/metrics/eval_<ts>/，自动创建）",
     )
-    parser.add_argument("--dry", action="store_true", help="dry 模式：fixture 轨迹验证管道（零 LLM）")
+    parser.add_argument(
+        "--dry", action="store_true", help="dry 模式：fixture 轨迹验证管道（零 LLM）"
+    )
     args = parser.parse_args(argv)
 
     # M63 对齐: 与 CLI/Web/飞书一致从项目 .env 加载（环境变量优先），
@@ -339,11 +349,11 @@ def main(argv: list[str] | None = None) -> int:
         workdir = Path(__file__).resolve().parent.parent / "data" / "e2e"
         workdir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        out_dir = args.output or (Path(__file__).resolve().parent.parent / "docs" / "metrics" / f"eval_{ts}")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        eval_out = evaluate(
-            scenarios, dry=args.dry, samples_override=args.samples, workdir=workdir
+        out_dir = args.output or (
+            Path(__file__).resolve().parent.parent / "docs" / "metrics" / f"eval_{ts}"
         )
+        out_dir.mkdir(parents=True, exist_ok=True)
+        eval_out = evaluate(scenarios, dry=args.dry, samples_override=args.samples, workdir=workdir)
         (out_dir / "report.json").write_text(
             json.dumps(
                 {"scenario_version": scenarios["version"], "generated": ts, **eval_out},

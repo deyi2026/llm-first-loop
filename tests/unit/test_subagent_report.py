@@ -280,7 +280,9 @@ def test_parent_message_arrives_only_after_tool_protocol_boundary(build_test_eng
             assert release.wait(2.0)
             return LLMResponse(
                 content="",
-                tool_calls=[ToolCall(id="read-1", name="read_file", arguments={"path": "/missing"})],
+                tool_calls=[
+                    ToolCall(id="read-1", name="read_file", arguments={"path": "/missing"})
+                ],
                 provider="fake",
             )
         return LLMResponse(content="已按父消息调整并完成", tool_calls=[], provider="fake")
@@ -329,7 +331,6 @@ def test_parent_message_arrives_only_after_tool_protocol_boundary(build_test_eng
     assert f"direct-parent {parent_sid}" in second[-1]["content"]
     assert "forged-by-model" not in second[-1]["content"]
     assert "先集中确认 A" in second[-1]["content"]
-
 
 
 def test_multiple_parent_messages_are_one_nonhuman_delegated_frame(build_test_engine):
@@ -473,16 +474,18 @@ def test_inherit_injects_parent_context(build_test_engine, tmp_path, monkeypatch
     """inherit=True: 父会话最近消息切片注入子代理 context."""
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     engine, fake = build_test_engine([])
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
     # 造父会话: 2 条消息（用户 + 助手）
     parent_sid = "parent-fork-test"
     psess = engine.session.load(parent_sid)
     from llm_loop.core.message import Message, MessageSource
 
-    psess.messages.append(Message(role="user", content="用户原始问题: 如何优化缓存", source=MessageSource.USER))
-    psess.messages.append(Message(role="assistant", content="初步分析: 命中率低", source=MessageSource.SYSTEM))
+    psess.messages.append(
+        Message(role="user", content="用户原始问题: 如何优化缓存", source=MessageSource.USER)
+    )
+    psess.messages.append(
+        Message(role="assistant", content="初步分析: 命中率低", source=MessageSource.SYSTEM)
+    )
     engine.session.save(psess)
     # current_session_id 指向父会话（模拟主循环中）
     from llm_loop.core.run_context import current_session_id
@@ -508,14 +511,14 @@ def test_inherit_false_no_parent_context(build_test_engine, tmp_path, monkeypatc
     """inherit 默认 False: 不注入父会话（零回归）."""
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     engine, fake = build_test_engine([])
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
     parent_sid = "parent-noinherit"
     psess = engine.session.load(parent_sid)
     from llm_loop.core.message import Message, MessageSource
 
-    psess.messages.append(Message(role="user", content="不应继承的父消息", source=MessageSource.USER))
+    psess.messages.append(
+        Message(role="user", content="不应继承的父消息", source=MessageSource.USER)
+    )
     engine.session.save(psess)
     from llm_loop.core.run_context import current_session_id
 
@@ -534,9 +537,7 @@ def test_inherit_fail_open_no_parent_session(build_test_engine, tmp_path, monkey
     """inherit=True 但无父会话: fail-open 不阻断，子代理正常执行."""
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     engine, fake = build_test_engine([])
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
     from llm_loop.core.run_context import current_session_id
 
     tok = current_session_id.set("ghost-session-404")
@@ -553,14 +554,14 @@ def test_spawn_tool_inherit_param(build_test_engine, tmp_path, monkeypatch):
     """spawn_subagent(inherit=True) 参数透传 + 回执成功."""
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     engine, fake = build_test_engine([])
-    runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
-    )
+    runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
     parent_sid = "parent-spawn"
     psess = engine.session.load(parent_sid)
     from llm_loop.core.message import Message, MessageSource
 
-    psess.messages.append(Message(role="user", content="父上下文要点XYZ", source=MessageSource.USER))
+    psess.messages.append(
+        Message(role="user", content="父上下文要点XYZ", source=MessageSource.USER)
+    )
     engine.session.save(psess)
     from llm_loop.core.run_context import current_session_id
 
@@ -577,9 +578,7 @@ def test_spawn_tool_inherit_param(build_test_engine, tmp_path, monkeypatch):
 
         match = re.search(r"child_id=(subagent_[0-9a-f]+)", r.content)
         assert match, r.content
-        terminal = SubAgentResultTool(runner).execute(
-            child_id=match.group(1), wait_seconds=2
-        )
+        terminal = SubAgentResultTool(runner).execute(child_id=match.group(1), wait_seconds=2)
         assert terminal.status.name == "SUCCESS"
     finally:
         current_session_id.reset(tok)
@@ -632,9 +631,7 @@ def test_inherit_exposes_exact_parent_context_artifact_without_private_reasoning
         match = re.search(r"exact_parent_context_ref=(artifact://v1/[0-9a-f]{32})", joined)
         assert match, joined
         ref = match.group(1)
-        hydrated = ReadFileTool(artifact_store=artifact_store).execute(
-            path=ref, offset=0, limit=20
-        )
+        hydrated = ReadFileTool(artifact_store=artifact_store).execute(path=ref, offset=0, limit=20)
     finally:
         current_workspace_root.reset(ws_token)
         current_session_id.reset(sid_token)

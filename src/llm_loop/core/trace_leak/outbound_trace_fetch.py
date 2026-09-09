@@ -49,7 +49,7 @@ def fetch_external_trace(ref: str) -> TraceView:
     ref = str(ref or "")
     origin_sid = "?"
     if ref.startswith("external://"):
-        origin_sid = ref[len("external://"):].partition("#")[0] or "?"
+        origin_sid = ref[len("external://") :].partition("#")[0] or "?"
     view = TraceView(
         ref=ref,
         origin_session_id=origin_sid,

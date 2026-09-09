@@ -4,6 +4,7 @@ This module never mutates the user-visible final answer. It projects only observ
 facts (no hidden reasoning_content), asks the same routed model for a compact Method candidate,
 and persists only a structured candidate. Failure is always fail-open.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,11 +23,17 @@ class ReflectionOutcome:
     reason: str = ""
 
 
-def friction_facts(*, rounds: int, tool_trace: list[dict[str, Any]], run_end_reason: str) -> dict[str, Any]:
-    failures = sum(1 for row in tool_trace if str(row.get("status", "")).lower() not in {"success", "ok"})
+def friction_facts(
+    *, rounds: int, tool_trace: list[dict[str, Any]], run_end_reason: str
+) -> dict[str, Any]:
+    failures = sum(
+        1 for row in tool_trace if str(row.get("status", "")).lower() not in {"success", "ok"}
+    )
     counts: dict[str, int] = {}
     for row in tool_trace:
-        key = json.dumps([row.get("name"), row.get("arguments")], ensure_ascii=False, sort_keys=True, default=str)
+        key = json.dumps(
+            [row.get("name"), row.get("arguments")], ensure_ascii=False, sort_keys=True, default=str
+        )
         counts[key] = counts.get(key, 0) + 1
     duplicate_calls = sum(max(0, n - 1) for n in counts.values())
     return {
@@ -38,7 +45,9 @@ def friction_facts(*, rounds: int, tool_trace: list[dict[str, Any]], run_end_rea
     }
 
 
-def should_reflect(*, facts: dict[str, Any], min_rounds: int, min_tools: int, min_failures: int) -> bool:
+def should_reflect(
+    *, facts: dict[str, Any], min_rounds: int, min_tools: int, min_failures: int
+) -> bool:
     return bool(
         int(facts.get("rounds", 0)) >= max(1, min_rounds)
         or int(facts.get("tool_calls", 0)) >= max(1, min_tools)
@@ -48,7 +57,9 @@ def should_reflect(*, facts: dict[str, Any], min_rounds: int, min_tools: int, mi
     )
 
 
-def _observable_messages(messages: list[Any], *, max_messages: int = 36, max_total_chars: int = 18000) -> list[dict[str, str]]:
+def _observable_messages(
+    messages: list[Any], *, max_messages: int = 36, max_total_chars: int = 18000
+) -> list[dict[str, str]]:
     """Mechanical bounded projection; deliberately ignores reasoning_content/provider replay."""
     rows: list[dict[str, str]] = []
     remaining = max_total_chars
@@ -88,7 +99,10 @@ def _extract_json(text: str) -> dict[str, Any] | None:
 def _valid_candidate(value: dict[str, Any] | None) -> bool:
     if not value or value.get("decision") != "candidate":
         return False
-    return all(isinstance(value.get(k), str) and str(value.get(k)).strip() for k in ("name", "description", "body"))
+    return all(
+        isinstance(value.get(k), str) and str(value.get(k)).strip()
+        for k in ("name", "description", "body")
+    )
 
 
 def _teacher_text(store: MethodStore) -> tuple[str, list[str]]:
@@ -104,11 +118,16 @@ def _teacher_text(store: MethodStore) -> tuple[str, list[str]]:
     return "\n\n".join(chunks), refs
 
 
-def _call(client: Any, *, system: str, facts_payload: dict[str, Any], timeout_s: float) -> dict[str, Any] | None:
+def _call(
+    client: Any, *, system: str, facts_payload: dict[str, Any], timeout_s: float
+) -> dict[str, Any] | None:
     response = client.chat(
         messages=[
             {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps(facts_payload, ensure_ascii=False, sort_keys=True)},
+            {
+                "role": "user",
+                "content": json.dumps(facts_payload, ensure_ascii=False, sort_keys=True),
+            },
         ],
         tools=[],
         timeout_s=timeout_s,
@@ -137,11 +156,17 @@ def reflect_after_run(
     if mode != "auto" or store is None or llm_client is None:
         return ReflectionOutcome(attempted=False, triggered=False, reason="disabled_or_unavailable")
     facts = friction_facts(rounds=rounds, tool_trace=tool_trace, run_end_reason=run_end_reason)
-    if not should_reflect(facts=facts, min_rounds=min_rounds, min_tools=min_tools, min_failures=min_failures):
-        return ReflectionOutcome(attempted=False, triggered=False, reason="below_mechanical_friction_threshold")
+    if not should_reflect(
+        facts=facts, min_rounds=min_rounds, min_tools=min_tools, min_failures=min_failures
+    ):
+        return ReflectionOutcome(
+            attempted=False, triggered=False, reason="below_mechanical_friction_threshold"
+        )
     core = store.get("method:method-self-distill")
     if core is None:
-        return ReflectionOutcome(attempted=False, triggered=True, reason="self_distill_method_missing")
+        return ReflectionOutcome(
+            attempted=False, triggered=True, reason="self_distill_method_missing"
+        )
     payload = {
         "observable_friction": facts,
         "episode_messages": _observable_messages(messages),
@@ -156,29 +181,42 @@ def reflect_after_run(
     system = (
         "You are performing isolated post-task Method self-distillation. Never reveal or reconstruct hidden chain-of-thought. "
         "Use only the observable facts supplied by the caller. Return exactly one JSON object. If there is no reusable method, "
-        "return {\"decision\":\"none\",\"reason\":\"...\"}. If there is one, return decision=candidate with name, description, body. "
+        'return {"decision":"none","reason":"..."}. If there is one, return decision=candidate with name, description, body. '
         "The body must include trigger/discriminator/short_path/stop_conditions/verification/counterexamples and must not copy task-private literals unless necessary.\n\n"
         + core.body
     )
     try:
         value = _call(llm_client, system=system, facts_payload=payload, timeout_s=timeout_s)
         if value and value.get("decision") == "none":
-            return ReflectionOutcome(attempted=True, triggered=True, reason=str(value.get("reason", "no_reusable_method"))[:300])
+            return ReflectionOutcome(
+                attempted=True,
+                triggered=True,
+                reason=str(value.get("reason", "no_reusable_method"))[:300],
+            )
         used_teacher = False
         teacher_refs: list[str] = []
         if not _valid_candidate(value):
             teacher, teacher_refs = _teacher_text(store)
             if not teacher:
-                return ReflectionOutcome(attempted=True, triggered=True, reason="invalid_candidate_no_teacher")
+                return ReflectionOutcome(
+                    attempted=True, triggered=True, reason="invalid_candidate_no_teacher"
+                )
             used_teacher = True
             value = _call(
                 llm_client,
-                system=system + "\n\nTeacher exemplars teach abstraction style only; do not copy their concrete answers:\n" + teacher,
+                system=system
+                + "\n\nTeacher exemplars teach abstraction style only; do not copy their concrete answers:\n"
+                + teacher,
                 facts_payload=payload,
                 timeout_s=timeout_s,
             )
         if not _valid_candidate(value):
-            return ReflectionOutcome(attempted=True, triggered=True, used_teacher_fallback=used_teacher, reason="invalid_candidate")
+            return ReflectionOutcome(
+                attempted=True,
+                triggered=True,
+                used_teacher_fallback=used_teacher,
+                reason="invalid_candidate",
+            )
         candidate = cast(dict[str, Any], value)
         record = store.save_candidate(
             name=str(candidate["name"]),
@@ -188,6 +226,14 @@ def reflect_after_run(
             teacher_refs=teacher_refs if used_teacher else [],
             source_episode_refs=[f"session:{session_id}"],
         )
-        return ReflectionOutcome(attempted=True, triggered=True, saved_ref=record.method_ref, used_teacher_fallback=used_teacher, reason="candidate_saved")
+        return ReflectionOutcome(
+            attempted=True,
+            triggered=True,
+            saved_ref=record.method_ref,
+            used_teacher_fallback=used_teacher,
+            reason="candidate_saved",
+        )
     except Exception as exc:  # noqa: BLE001 - post-run learning must never break the user run
-        return ReflectionOutcome(attempted=True, triggered=True, reason=f"reflection_failed:{type(exc).__name__}")
+        return ReflectionOutcome(
+            attempted=True, triggered=True, reason=f"reflection_failed:{type(exc).__name__}"
+        )

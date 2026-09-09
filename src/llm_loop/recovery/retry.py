@@ -45,4 +45,6 @@ def retry_write(write_fn: Callable[[], None]) -> RetryResult:
 
     # 理论不可达（循环内所有路径均 return），防御性兜底
     elapsed = time.monotonic() - start
-    return RetryResult(success=False, attempts=max_attempts, elapsed_s=elapsed, final_error=last_error)
+    return RetryResult(
+        success=False, attempts=max_attempts, elapsed_s=elapsed, final_error=last_error
+    )

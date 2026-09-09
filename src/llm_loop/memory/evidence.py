@@ -525,7 +525,9 @@ class EvidenceLedgerStore:
             raise ValueError("record/state EvidenceRef mismatch")
         expected = make_evidence_ref(record.owner, record.stable_capture_id, record.blob_ref)
         if expected != record.evidence_ref:
-            raise EvidenceLedgerCommitError("EvidenceRef does not match deterministic record identity")
+            raise EvidenceLedgerCommitError(
+                "EvidenceRef does not match deterministic record identity"
+            )
 
         record_path = self._record_path(record.owner, record.evidence_ref)
         state_path = self._state_path(record.owner, record.evidence_ref)
@@ -608,7 +610,11 @@ class EvidenceLedgerStore:
         return sum(1 for _ in record_dir.glob("*.json"))
 
     def find_by_source(self, owner: OwnerScope, locator: str) -> list[EvidenceRecord]:
-        return [r for r in self.list_recent(owner, limit=max(1, self.count(owner))) if r.source.locator == locator]
+        return [
+            r
+            for r in self.list_recent(owner, limit=max(1, self.count(owner)))
+            if r.source.locator == locator
+        ]
 
     def find_by_tool_call_id(self, owner: OwnerScope, tool_call_id: str) -> list[EvidenceRecord]:
         if not tool_call_id:
@@ -753,7 +759,9 @@ class EvidenceCapture:
 class EvidenceHydration:
     """Owner-aware, bounded exact hydration from already captured observations."""
 
-    def __init__(self, blobs: BlobStore, ledger: EvidenceLedgerStore, *, max_limit: int = 4000) -> None:
+    def __init__(
+        self, blobs: BlobStore, ledger: EvidenceLedgerStore, *, max_limit: int = 4000
+    ) -> None:
         if max_limit <= 0:
             raise ValueError("max_limit must be > 0")
         self.blobs = blobs
@@ -847,7 +855,10 @@ class EvidenceFreshness:
     @staticmethod
     def _probe(owner: OwnerScope, record: EvidenceRecord) -> FreshnessState:
         source = record.source
-        if source.kind is not SourceKind.FILE or source.version_policy is not SourceVersionPolicy.PROBEABLE:
+        if (
+            source.kind is not SourceKind.FILE
+            or source.version_policy is not SourceVersionPolicy.PROBEABLE
+        ):
             return FreshnessState.UNKNOWN
         token = source.version_token
         if not token or not token.startswith("stat:"):
@@ -1187,9 +1198,7 @@ def _parse_evidence_query(query: str) -> tuple[tuple[str, ...], ...]:
     return tuple(tuple(group) for group in groups)
 
 
-def _matching_query_terms(
-    text: str, groups: tuple[tuple[str, ...], ...]
-) -> tuple[str, ...] | None:
+def _matching_query_terms(text: str, groups: tuple[tuple[str, ...], ...]) -> tuple[str, ...] | None:
     folded = text.casefold()
     for group in groups:
         if all(term in folded for term in group):
@@ -1259,15 +1268,15 @@ def _ensure_same_or_write(path: Path, payload: Mapping[str, object]) -> None:
 
 
 def _atomic_write_json(path: Path, payload: Mapping[str, object]) -> None:
-    data = json.dumps(dict(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    data = json.dumps(
+        dict(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     _atomic_write_bytes(path, data)
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(
-        f".{path.name}.{os.getpid()}.{threading.get_ident()}.{uuid4().hex}.tmp"
-    )
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.{uuid4().hex}.tmp")
     try:
         with tmp.open("xb") as fh:
             fh.write(data)

@@ -12,7 +12,9 @@ from llm_loop.core.session import SessionStore
 from llm_loop.event_log.store import EventStore
 
 
-def _build_stores(tmp_path: Path, read_path: str = "session_json") -> tuple[EventStore, SessionStore]:
+def _build_stores(
+    tmp_path: Path, read_path: str = "session_json"
+) -> tuple[EventStore, SessionStore]:
     event_store = EventStore(tmp_path / "event_logs", enabled=True)
     session_store = SessionStore(
         tmp_path / "sessions",
@@ -25,7 +27,9 @@ def _build_stores(tmp_path: Path, read_path: str = "session_json") -> tuple[Even
 def _seed(session_store: SessionStore) -> str:
     sid = session_store.create()
     session_store.append(sid, Message(role="user", content="hello", source=MessageSource.USER))
-    session_store.append(sid, Message(role="assistant", content="world", source=MessageSource.SYSTEM))
+    session_store.append(
+        sid, Message(role="assistant", content="world", source=MessageSource.SYSTEM)
+    )
     return sid
 
 
@@ -87,7 +91,6 @@ def test_read_path_switch_reversible(tmp_path):
     assert s2.messages[0].content == "hello"
 
 
-
 def test_global_session_id_claim_prevents_cross_workspace_event_collision(tmp_path):
     """EventStore按sid全局键；SessionStore必须在第二workspace首次落盘前拒绝重复sid。"""
     import pytest
@@ -100,12 +103,8 @@ def test_global_session_id_claim_prevents_cross_workspace_event_collision(tmp_pa
     root_a = sessions_base / "workspace-a"
     root_b = sessions_base / "workspace-b"
     sid = "same-session-id"
-    store_a = SessionStore(
-        root_a, event_store=event_store, identity_root=sessions_base
-    )
-    store_b = SessionStore(
-        root_b, event_store=event_store, identity_root=sessions_base
-    )
+    store_a = SessionStore(root_a, event_store=event_store, identity_root=sessions_base)
+    store_b = SessionStore(root_b, event_store=event_store, identity_root=sessions_base)
 
     store_a.save(
         Session(
@@ -117,9 +116,7 @@ def test_global_session_id_claim_prevents_cross_workspace_event_collision(tmp_pa
         store_b.save(
             Session(
                 session_id=sid,
-                messages=[
-                    Message(role="user", content="workspace-B", source=MessageSource.USER)
-                ],
+                messages=[Message(role="user", content="workspace-B", source=MessageSource.USER)],
             )
         )
 
@@ -136,12 +133,8 @@ def test_loading_missing_session_does_not_claim_global_id_for_workspace(tmp_path
 
     sessions_base = tmp_path / "sessions"
     sid = "read-only-missing-id"
-    store_a = SessionStore(
-        sessions_base / "workspace-a", identity_root=sessions_base
-    )
-    store_b = SessionStore(
-        sessions_base / "workspace-b", identity_root=sessions_base
-    )
+    store_a = SessionStore(sessions_base / "workspace-a", identity_root=sessions_base)
+    store_b = SessionStore(sessions_base / "workspace-b", identity_root=sessions_base)
 
     missing = store_a.load(sid)
     assert missing.session_id == sid

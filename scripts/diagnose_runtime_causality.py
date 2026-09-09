@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Read-only CLI for LFL Runtime Causal Flight Recorder."""
+
 from __future__ import annotations
 
 import argparse

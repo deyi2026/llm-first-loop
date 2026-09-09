@@ -39,9 +39,7 @@ class FakeEngine:
         for i in range(self._deltas):
             if self._delay:
                 time.sleep(self._delay)
-            yield SimpleNamespace(
-                text=f"t{i}", reasoning=f"r{i}", tool_round=None
-            )
+            yield SimpleNamespace(text=f"t{i}", reasoning=f"r{i}", tool_round=None)
         return SimpleNamespace(
             session_id=session_id,
             final_answer="final",
@@ -200,6 +198,7 @@ def test_handle_snapshot_readonly():
 
 # ── EVO-20260825（任务12 §5.12）: 压测残留 run 清理 + 巡检 ──
 
+
 class _OpsEngine(FakeEngine):
     """带 cache monitor + 审计记录的 engine 桩（验证 stop 清理侧链）."""
 
@@ -303,6 +302,7 @@ def test_note_active_updates_handle():
 
 
 # ── EVO-20260817 审查 P0-3: 同步 vs 后台并发互斥（双向） ──
+
 
 class _SyncEngine(FakeEngine):
     """带同步活跃注册表的 engine 桩（模拟真实 engine._sync_active）."""

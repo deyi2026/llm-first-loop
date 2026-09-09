@@ -18,7 +18,6 @@ INDEX_HTML = ROOT / "src" / "llm_loop" / "web" / "static" / "index.html"
 
 
 @pytest.fixture(scope="module")
-
 def style_css_src() -> str:
     return STYLE_CSS.read_text(encoding="utf-8")
 
@@ -41,7 +40,7 @@ def test_single_breakpoint(style_css_src):
 
 def test_viewport_zoom_kept(index_html_src):
     """viewport meta 含 width=device-width 且不禁用缩放."""
-    assert 'width=device-width' in index_html_src
+    assert "width=device-width" in index_html_src
     assert "user-scalable=no" not in index_html_src
 
 
@@ -118,15 +117,20 @@ def test_sanitize_whitelist_not_relaxed(app_js_src):
 
 def test_existing_symbols_kept(app_js_src, style_css_src):
     """既有关键函数与类名未删除（桌面与既有能力零回归）."""
-    for fn in ("renderMessages", "chunkLongContent", "isMessagesAtBottom",
-               "renderToolCalls", "sanitizeHtml"):
+    for fn in (
+        "renderMessages",
+        "chunkLongContent",
+        "isMessagesAtBottom",
+        "renderToolCalls",
+        "sanitizeHtml",
+    ):
         assert f"function {fn}" in app_js_src, f"{fn} 被删除"
     for cls in (".tool-call-chain", ".chunk-marker", ".chunked-pre"):
         assert cls in style_css_src, f"{cls} 被删除"
 
 
 def test_input_behavior_kept(app_js_src):
-    """既有输入行为保留（IME 组合态回车 + Shift+Enter 换行）. """
+    """既有输入行为保留（IME 组合态回车 + Shift+Enter 换行）."""
     assert "isComposing" in app_js_src
     assert "keyCode === 229" in app_js_src
     assert "Shift+Enter" in app_js_src or "shiftKey" in app_js_src

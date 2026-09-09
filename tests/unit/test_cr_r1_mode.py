@@ -4,6 +4,7 @@
 - history off 短路：同环境（活跃 goal 存在）下 shadow=默认落盘 / off 不写 store（行为级区分度）。
 - build 侧 MODE 覆写（off/shadow→anchor+平铺）为内联逻辑，由任务 7 不变量集成断言覆盖。
 """
+
 from pathlib import Path
 
 from llm_loop.config import _env_cog_mode

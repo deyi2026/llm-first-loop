@@ -21,7 +21,9 @@ def _make_msg() -> FeishuMessage:
     )
 
 
-def _make_handler(*, ocr_lines: list[str], ocr_error: Exception | None = None) -> tuple[FeishuMessageHandler, list]:
+def _make_handler(
+    *, ocr_lines: list[str], ocr_error: Exception | None = None
+) -> tuple[FeishuMessageHandler, list]:
     h = FeishuMessageHandler.__new__(FeishuMessageHandler)
     h._engine = SimpleNamespace(settings=SimpleNamespace())
     rest = MagicMock()

@@ -29,7 +29,6 @@ def test_memory_state_has_no_automatic_prompt_constructor() -> None:
     assert not hasattr(LoopEngine, "_inject_turn_memory_snapshot")
 
 
-
 def test_explicit_memory_search_still_finds_recall_only_state(tmp_path) -> None:
     store = MemoryStore(tmp_path / "memory")
     decision = store.save_entry(
@@ -45,7 +44,10 @@ def test_explicit_memory_search_still_finds_recall_only_state(tmp_path) -> None:
 
     assert any(hit.get("id") == decision.id for hit in decision_hits)
     assert any(hit.get("id") == convention.id for hit in convention_hits)
-    assert searcher.search(kind="memory", query=f"memory:{decision.id}", limit=1)[0]["id"] == decision.id
+    assert (
+        searcher.search(kind="memory", query=f"memory:{decision.id}", limit=1)[0]["id"]
+        == decision.id
+    )
 
 
 def test_new_decision_and_convention_extract_as_recall_only() -> None:

@@ -1,4 +1,5 @@
 """Phase 5 实体通道测试（mem0 式 Entity Linking 轻量版）."""
+
 from llm_loop.memory.embedder import HashEmbedder, NullEmbedder
 from llm_loop.memory.retriever import SemanticRetriever, extract_entities
 from llm_loop.memory.store import MemoryEntry, MemoryStore
@@ -6,7 +7,9 @@ from llm_loop.memory.store import MemoryEntry, MemoryStore
 
 def _mem(tmp_path):
     m = MemoryStore(tmp_path / "memory")
-    m.save_entry(MemoryEntry(id="", type="fact", content="Alice 负责 Python 项目", keywords=["Alice"]))
+    m.save_entry(
+        MemoryEntry(id="", type="fact", content="Alice 负责 Python 项目", keywords=["Alice"])
+    )
     m.save_entry(MemoryEntry(id="", type="fact", content="Bob 负责运维部署", keywords=["Bob"]))
     m.save_entry(MemoryEntry(id="", type="fact", content="今天天气晴", keywords=["天气"]))
     return m

@@ -84,7 +84,9 @@ class CodeArtsDispatchTool:
         # 构造 TimeoutBudget
         timeout_raw = kwargs.get("timeout_budget") or {}
         timeout_budget = TimeoutBudget(
-            connect_s=int(timeout_raw.get("connect_s", 10)) if isinstance(timeout_raw, dict) else 10,
+            connect_s=int(timeout_raw.get("connect_s", 10))
+            if isinstance(timeout_raw, dict)
+            else 10,
             call_s=int(timeout_raw.get("call_s", 30)) if isinstance(timeout_raw, dict) else 30,
             exec_s=int(timeout_raw.get("exec_s", 1800)) if isinstance(timeout_raw, dict) else 1800,
         )

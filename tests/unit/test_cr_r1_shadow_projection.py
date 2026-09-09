@@ -7,6 +7,7 @@ sess.messages）后仅 fail-open 才进 _inject_parts，packet 编译输入不�
 语义: shadow 与 enforce 使用同一 compiler 产物，前提是产物覆盖真实
 注入面）。
 """
+
 import json
 from pathlib import Path
 
@@ -33,11 +34,7 @@ def _telemetry_rows(engine) -> list[dict]:
     tpath = Path(engine.settings.data_dir) / "audit" / "cognitive_telemetry.jsonl"
     if not tpath.exists():
         return []
-    return [
-        json.loads(ln)
-        for ln in tpath.read_text(encoding="utf-8").splitlines()
-        if ln.strip()
-    ]
+    return [json.loads(ln) for ln in tpath.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
 
 def test_shadow_packet_covers_persisted_memory(tmp_path, monkeypatch):

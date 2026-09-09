@@ -12,9 +12,9 @@ LITE_EN = ROOT / "docs" / "ai_rules.lite.en.md"
 def _section(text: str, ref: str) -> str:
     match = re.search(rf"^## .*?{re.escape(ref)}.*?$", text, re.MULTILINE)
     assert match, ref
-    nxt = re.search(r"^## ", text[match.end():], re.MULTILINE)
+    nxt = re.search(r"^## ", text[match.end() :], re.MULTILINE)
     end = match.end() + nxt.start() if nxt else len(text)
-    return text[match.start():end]
+    return text[match.start() : end]
 
 
 def test_rule21_transitional_program_feedback_is_retired_from_lite():

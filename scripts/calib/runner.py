@@ -122,8 +122,11 @@ class FakeCalibLLM:
                 arguments=json.dumps({"source": source}, ensure_ascii=False),
             )
             resp = LLMResponse(
-                content=None, tool_calls=[tc], provider="fake",
-                prompt_tokens=10, completion_tokens=5,
+                content=None,
+                tool_calls=[tc],
+                provider="fake",
+                prompt_tokens=10,
+                completion_tokens=5,
             )
         else:
             resp = LLMResponse(
@@ -147,9 +150,7 @@ def _fake_answer(seed_id: str, mode: str, data=None) -> str:
             "Final Decision: " + oracle["expected_decision"] + " "
             f"关键新信号 {ns['field']}（{ns['truth']}）已核实并纳入判断。"
         )
-    return (
-        "Final Decision: 依据上下文材料直接判断，无需进一步核实。"
-    )
+    return "Final Decision: 依据上下文材料直接判断，无需进一步核实。"
 
 
 def execute_run(
@@ -218,7 +219,9 @@ def execute_run(
                         if requested_count > data.SOURCE_LIMIT:
                             content = data.LIMIT_EXCEEDED_RESPONSE
                         else:
-                            content = data.lookup_source(seed_id, source) or data.UNAVAILABLE_RESPONSE
+                            content = (
+                                data.lookup_source(seed_id, source) or data.UNAVAILABLE_RESPONSE
+                            )
                         requested_sources.append(source)
                     else:
                         content = data.UNAVAILABLE_RESPONSE
@@ -244,13 +247,15 @@ def execute_run(
                             }
                         ],
                     }
-                    rc = getattr(resp, "reasoning_content", None) or getattr(resp, "reasoning", None)
-                    if rc:
-                        assistant_msg["reasoning_content"] = rc  # M20 THK-04: 携带 tool_calls 必须回传否则 400
-                    messages.append(assistant_msg)
-                    messages.append(
-                        {"role": "tool", "tool_call_id": tc.id, "content": content}
+                    rc = getattr(resp, "reasoning_content", None) or getattr(
+                        resp, "reasoning", None
                     )
+                    if rc:
+                        assistant_msg["reasoning_content"] = (
+                            rc  # M20 THK-04: 携带 tool_calls 必须回传否则 400
+                        )
+                    messages.append(assistant_msg)
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
             else:
                 final_answer = resp.content
                 break

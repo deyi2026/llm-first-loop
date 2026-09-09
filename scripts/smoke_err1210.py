@@ -13,6 +13,7 @@
 
 用法: .venv/bin/python scripts/smoke_err1210.py
 """
+
 from __future__ import annotations
 
 import json
@@ -68,7 +69,9 @@ def main() -> int:
     fake = ta._FakeLLMClient("zhipu/glm-5")
     fake.queue(
         [
-            LLMHTTPError(f"HTTP 400: Bad Request | {_ERR_BODY}", status_code=400, body=_ERR_BODY),  # 对齐 client.py:1362 _raise_for_status 生产构造（message 拼 body，spec 6.1）
+            LLMHTTPError(
+                f"HTTP 400: Bad Request | {_ERR_BODY}", status_code=400, body=_ERR_BODY
+            ),  # 对齐 client.py:1362 _raise_for_status 生产构造（message 拼 body，spec 6.1）
             LLMResponse(content="冒烟恢复后的正常回答", tool_calls=[], provider="fake"),
         ]
     )
@@ -100,11 +103,13 @@ def main() -> int:
     check(
         "重试请求尾部无注入",
         not any(
-            str(m.get("content", "")).startswith(("[上下文注入", "[门禁干预"))
-            for m in retry[-3:]
+            str(m.get("content", "")).startswith(("[上下文注入", "[门禁干预")) for m in retry[-3:]
         ),
     )
-    check("defer 槽位回填（gate_note 复位）", engine._cache_monitor._get_bucket(sid).gate_note_pending is True)  # 非消费式核对（take 会消费，留给场景 2 重注入）
+    check(
+        "defer 槽位回填（gate_note 复位）",
+        engine._cache_monitor._get_bucket(sid).gate_note_pending is True,
+    )  # 非消费式核对（take 会消费，留给场景 2 重注入）
 
     # ── 场景 2: defer 重注入下一轮 ──
     print("[场景2] defer 重注入（下一轮 build，旧消息先注入 spec 5.1.3-3）")

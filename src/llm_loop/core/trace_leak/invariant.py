@@ -37,11 +37,15 @@ def correct_mislabeled_metadata(metadata: Any, *, injection_kind: str = "leak_do
     保留原 metadata 中恒等式两键之外的可选键（turn_ref 等既有契约字段），
     恒等式两键以重构造值为准。
     """
-    preserved = {
-        k: v
-        for k, v in (metadata or {}).items()
-        if k not in (ORIGIN_LAYER_KEY, PROGRAM_ORIGIN_KEY)
-    } if isinstance(metadata, dict) else {}
+    preserved = (
+        {
+            k: v
+            for k, v in (metadata or {}).items()
+            if k not in (ORIGIN_LAYER_KEY, PROGRAM_ORIGIN_KEY)
+        }
+        if isinstance(metadata, dict)
+        else {}
+    )
     return origin_metadata(
         InjectionLayer.PROGRAM_RECOVERY,
         injection_kind=injection_kind,

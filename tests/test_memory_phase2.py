@@ -1,4 +1,5 @@
 """Phase 2 记忆增强测试（EVO-20260810-baae4016）."""
+
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -31,7 +32,9 @@ def test_old_entry_backward_compat(tmp_path):
     store = _mk_store(tmp_path)
     # 模拟旧数据（无 Phase 2 字段）
     store._entries = [
-        MemoryEntry(id="MEM-OLD-1", type="fact", content="旧条目", created_at="2026-01-01T00:00:00+00:00")
+        MemoryEntry(
+            id="MEM-OLD-1", type="fact", content="旧条目", created_at="2026-01-01T00:00:00+00:00"
+        )
     ]
     store._save()
     store2 = MemoryStore(tmp_path)  # 重新加载
@@ -42,12 +45,18 @@ def test_old_entry_backward_compat(tmp_path):
 def test_decay_ranking(tmp_path):
     store = _mk_store(tmp_path)
     old = MemoryEntry(
-        id="M1", type="fact", content="关键词A", keywords=["k"],
+        id="M1",
+        type="fact",
+        content="关键词A",
+        keywords=["k"],
         created_at="2026-01-01T00:00:00+00:00",
         last_access_at=(datetime.now(UTC) - timedelta(days=60)).isoformat(),
     )
     fresh = MemoryEntry(
-        id="M2", type="fact", content="关键词A", keywords=["k"],
+        id="M2",
+        type="fact",
+        content="关键词A",
+        keywords=["k"],
         created_at="2026-08-01T00:00:00+00:00",
         last_access_at=datetime.now(UTC).isoformat(),
     )

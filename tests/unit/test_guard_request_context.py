@@ -96,12 +96,20 @@ def test_shared_client_interleaved_streams_keep_guard_telemetry_session_local():
         client_cls.return_value.stream.side_effect = [_StreamCtx(a_lines), _StreamCtx(b_lines)]
         client = LLMClient(api_key="k", base_url="https://fake.local/v1", model="m")
         ctx_a = _guard_ctx(
-            session_id="s-a", system_text="sys-a", history_budget=10000,
-            provider="fake", model="m", run_round=1,
+            session_id="s-a",
+            system_text="sys-a",
+            history_budget=10000,
+            provider="fake",
+            model="m",
+            run_round=1,
         )
         ctx_b = _guard_ctx(
-            session_id="s-b", system_text="sys-b", history_budget=10000,
-            provider="fake", model="m", run_round=1,
+            session_id="s-b",
+            system_text="sys-b",
+            history_budget=10000,
+            provider="fake",
+            model="m",
+            run_round=1,
         )
         a = client.chat_stream(
             messages=[{"role": "system", "content": "sys-a"}], tools=[], guard_context=ctx_a

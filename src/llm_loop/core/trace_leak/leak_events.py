@@ -64,12 +64,9 @@ _VALID_QUARANTINE_MODES = frozenset({"on", "shadow", "off"})
 
 def current_quarantine_mode() -> str:
     """读取 quarantine 处置模式（每次现读，供灰度切换与测试 monkeypatch）。"""
-    mode = (
-        str(os.environ.get(QUARANTINE_MODE_ENV, "") or DEFAULT_QUARANTINE_MODE)
-        .strip()
-        .lower()
-    )
+    mode = str(os.environ.get(QUARANTINE_MODE_ENV, "") or DEFAULT_QUARANTINE_MODE).strip().lower()
     return mode if mode in _VALID_QUARANTINE_MODES else DEFAULT_QUARANTINE_MODE
+
 
 # 事件接收器契约：(session_id, event_type, payload) -> None
 EventSink = Callable[[str, str, dict], None]
@@ -164,7 +161,11 @@ def emit_leak_event(
         else:
             logger.warning(
                 "leak event（未装配 sink，仅日志）: %s entry=%s sid=%s sha1=%s basis=%s",
-                kind, entry, session_id, digest[:12], basis,
+                kind,
+                entry,
+                session_id,
+                digest[:12],
+                basis,
             )
     except Exception:  # noqa: BLE001 — 事件落盘失败 fail-open（spec 4.2-1）
         logger.warning("泄漏事件写入失败（fail-open）: %s", kind, exc_info=True)

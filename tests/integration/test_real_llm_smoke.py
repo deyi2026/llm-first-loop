@@ -31,7 +31,8 @@ def _real_llm_settings(tmp_path):
         pytest.skip("无真实 LLM key（DEEPSEEK_API_KEY/LLM_API_KEY）")
     return Settings(
         llm_api_key=api_key,
-        llm_base_url=os.environ.get("LLM_BASE_URL") or "https://api.deepseek.com/v1",  # 空串回退（CI secrets 未配置=空串）
+        llm_base_url=os.environ.get("LLM_BASE_URL")
+        or "https://api.deepseek.com/v1",  # 空串回退（CI secrets 未配置=空串）
         llm_model=os.environ.get("LLM_MODEL") or "deepseek-v4-flash",
         data_dir=str(tmp_path / "data"),
         max_iterations=10,
@@ -596,7 +597,8 @@ def test_real_llm_tool_call_arguments_roundtrip(tmp_path):
     )
     sess = engine.session.load(resp.session_id)
     tool_msgs = [
-        m for m in sess.messages
+        m
+        for m in sess.messages
         if getattr(m, "role", "") == "tool" and getattr(m, "tool_call_id", "")
     ]
     assert tool_msgs, "存在执行轨迹但无 tool 回执消息（事件链断裂）"
@@ -617,4 +619,6 @@ def test_real_llm_tool_call_arguments_roundtrip(tmp_path):
         assert "参数必须为 JSON 对象" not in (tm.content or ""), (
             f"dispatcher 收到 str 参数（v0.6.5 回归信号，协议={wire}）: {tm.content[:200]}"
         )
-    print(f"[tool-roundtrip] 协议={wire} 工具调用 {parsed_args} 次，arguments 全部为 dict，回执无 T38 字样")
+    print(
+        f"[tool-roundtrip] 协议={wire} 工具调用 {parsed_args} 次，arguments 全部为 dict，回执无 T38 字样"
+    )

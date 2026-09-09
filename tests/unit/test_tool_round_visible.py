@@ -98,12 +98,20 @@ class _MultiRoundStreamFake:
 
     def chat(self, messages, tools, *, timeout_s=None, model=None) -> LLMResponse:
         self.calls.append({"messages": messages, "model": model})
-        return self._responses.pop(0) if self._responses else LLMResponse(content="", tool_calls=[], provider="fake")
+        return (
+            self._responses.pop(0)
+            if self._responses
+            else LLMResponse(content="", tool_calls=[], provider="fake")
+        )
 
     def chat_stream(self, messages, tools, *, timeout_s=None, model=None):
         self.calls.append({"messages": messages, "model": model})
-        resp = self._responses.pop(0) if self._responses else LLMResponse(content="", tool_calls=[], provider="fake")
-        for ch in (resp.content or ""):
+        resp = (
+            self._responses.pop(0)
+            if self._responses
+            else LLMResponse(content="", tool_calls=[], provider="fake")
+        )
+        for ch in resp.content or "":
             yield StreamDelta(text=ch)
         return resp
 
@@ -126,10 +134,16 @@ def test_run_stream_yields_tool_round(build_test_engine, tmp_path):
     f.write_text("content", encoding="utf-8")
 
     engine, _ = build_test_engine([])
-    fake = _MultiRoundStreamFake([
-        LLMResponse(content="", tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f)})], provider="fake"),
-        LLMResponse(content="done", tool_calls=[], provider="fake"),
-    ])
+    fake = _MultiRoundStreamFake(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f)})],
+                provider="fake",
+            ),
+            LLMResponse(content="done", tool_calls=[], provider="fake"),
+        ]
+    )
     engine.llm_pool.default_client = fake
 
     sid = engine.session.create()
@@ -166,11 +180,21 @@ def test_run_stream_multi_round_tool_round(build_test_engine, tmp_path):
     f2.write_text("B", encoding="utf-8")
 
     engine, _ = build_test_engine([])
-    fake = _MultiRoundStreamFake([
-        LLMResponse(content="", tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f1)})], provider="fake"),
-        LLMResponse(content="", tool_calls=[ToolCall(id="c2", name="read_file", arguments={"path": str(f2)})], provider="fake"),
-        LLMResponse(content="done", tool_calls=[], provider="fake"),
-    ])
+    fake = _MultiRoundStreamFake(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f1)})],
+                provider="fake",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCall(id="c2", name="read_file", arguments={"path": str(f2)})],
+                provider="fake",
+            ),
+            LLMResponse(content="done", tool_calls=[], provider="fake"),
+        ]
+    )
     engine.llm_pool.default_client = fake
 
     sid = engine.session.create()
@@ -192,13 +216,19 @@ def test_run_stream_multi_tool_call_same_round(build_test_engine, tmp_path):
     f2.write_text("B", encoding="utf-8")
 
     engine, _ = build_test_engine([])
-    fake = _MultiRoundStreamFake([
-        LLMResponse(content="", tool_calls=[
-            ToolCall(id="c1", name="read_file", arguments={"path": str(f1)}),
-            ToolCall(id="c2", name="read_file", arguments={"path": str(f2)}),
-        ], provider="fake"),
-        LLMResponse(content="done", tool_calls=[], provider="fake"),
-    ])
+    fake = _MultiRoundStreamFake(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(id="c1", name="read_file", arguments={"path": str(f1)}),
+                    ToolCall(id="c2", name="read_file", arguments={"path": str(f2)}),
+                ],
+                provider="fake",
+            ),
+            LLMResponse(content="done", tool_calls=[], provider="fake"),
+        ]
+    )
     engine.llm_pool.default_client = fake
 
     sid = engine.session.create()
@@ -393,14 +423,16 @@ def test_reconciliation_missing_result_synthesized(tmp_path, monkeypatch):
 
 def test_missing_tool_call_id_is_repaired_as_paired_blocked_receipt(build_test_engine):
     """Malformed provider tool call gets protocol pairing only; no program system advice."""
-    engine, fake = build_test_engine([
-        LLMResponse(
-            content="",
-            tool_calls=[ToolCall(id="", name="read_file", arguments={"path": "never-read"})],
-            provider="fake",
-        ),
-        LLMResponse(content="recovered-final", tool_calls=[], provider="fake"),
-    ])
+    engine, fake = build_test_engine(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCall(id="", name="read_file", arguments={"path": "never-read"})],
+                provider="fake",
+            ),
+            LLMResponse(content="recovered-final", tool_calls=[], provider="fake"),
+        ]
+    )
     sid = engine.session.create()
     result = engine.run(sid, "测试缺失 tool_call_id")
     assert result.final_answer == "recovered-final"

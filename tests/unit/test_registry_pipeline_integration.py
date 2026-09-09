@@ -53,7 +53,6 @@ def test_default_no_pipeline_zero_regression():
     assert "ok:" in r.content
 
 
-
 def test_pipeline_disabled_zero_regression():
     # 装配但 enabled=False → 行为与无 pipeline 一致
     p = ToolExecutionPipeline(PipelineConfig(enabled=False, materialize=True, guard=True))

@@ -27,20 +27,40 @@ from llm_loop.tools.source_recovery_contract import (
 # 其余非敏感键保留（避免破坏 git/ssh/代理等正常功能，零回归）。
 _ENV_WHITELIST = frozenset(
     {
-        "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SHELL",
-        "USER", "LOGNAME", "TERM", "TMPDIR", "HOSTNAME", "PWD",
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TZ",
+        "SHELL",
+        "USER",
+        "LOGNAME",
+        "TERM",
+        "TMPDIR",
+        "HOSTNAME",
+        "PWD",
         "SSH_AUTH_SOCK",  # agent socket 路径（非密钥），保留以支持 ssh/git agent
     }
 )
 # 密钥类模式（大小写不敏感，子串匹配）
 _ENV_BLOCK_PATTERNS = (
-    "API_KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD",
-    "PRIVATE_KEY", "CREDENTIAL", "ACCESS_KEY", "SESSION_KEY", "BEARER",
+    "API_KEY",
+    "SECRET",
+    "TOKEN",
+    "PASSWORD",
+    "PASSWD",
+    "PRIVATE_KEY",
+    "CREDENTIAL",
+    "ACCESS_KEY",
+    "SESSION_KEY",
+    "BEARER",
 )
 # 控制面 capability metadata（review R3 P0-1）：非密钥但 agent 无业务理由
 # 可知——COG_RUNTIME_ENFORCE_FILE 暴露路径即暴露 self-promote 攻击面
 # （同 Unix 用户下 ~/.config 类路径可写），从子进程环境剔除。
 _ENV_CONTROL_PLANE_EXACT = frozenset({"COG_RUNTIME_ENFORCE_FILE"})
+
 
 def _scrubbed_env() -> dict[str, str]:
     """构造清洗后的子进程环境：白名单强制保留 + 密钥类/控制面剔除 + 其余保留."""
@@ -56,7 +76,6 @@ def _scrubbed_env() -> dict[str, str]:
         else:
             scrubbed[k] = v
     return scrubbed
-
 
 
 class ExecuteCommandTool:
@@ -200,7 +219,11 @@ class ExecuteCommandTool:
                         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                     except (ProcessLookupError, PermissionError, OSError):
                         proc.terminate()  # 兜底：单进程 SIGTERM
-                    kind = "任务超限拒绝" if isinstance(exc, JobLimitExceeded) else "后台任务持久化失败"
+                    kind = (
+                        "任务超限拒绝"
+                        if isinstance(exc, JobLimitExceeded)
+                        else "后台任务持久化失败"
+                    )
                     return ToolResult(
                         status=ToolResultStatus.FAILURE,
                         content=f"[{kind}] {exc}\n后台进程已释放，不返回 false-success: {command}",
@@ -211,7 +234,7 @@ class ExecuteCommandTool:
                 return ToolResult(
                     status=ToolResultStatus.SUCCESS,
                     content=f"[后台任务已启动] job_id={job_id} status=running\n命令: {command}\n"
-                            f"用 job_output(job_id={job_id}) 查询输出；如用户明确要求终止，再按取消意图处理。",
+                    f"用 job_output(job_id={job_id}) 查询输出；如用户明确要求终止，再按取消意图处理。",
                     tool_call_id="",
                     tool_name=self.name,
                     # R2 P1-7: 回执文案与结构化字段同一构造点产出（活跃句柄 → 下轮投影选入）
@@ -292,7 +315,9 @@ class ExecuteCommandTool:
         # （原实现仅失败时前置退出码，成功时直接是输出内容）
         _cmd_preview = " ".join(command.split()[:8]) if command else "?"
         _out_lines = len(content.splitlines())
-        content = f"[命令] {_cmd_preview} [退出码 {proc.returncode}] [输出 {_out_lines} 行]\n{content}"
+        content = (
+            f"[命令] {_cmd_preview} [退出码 {proc.returncode}] [输出 {_out_lines} 行]\n{content}"
+        )
         from llm_loop.core.run_context import current_evidence_shadow_enabled
 
         raw_observation = content if current_evidence_shadow_enabled.get() else None

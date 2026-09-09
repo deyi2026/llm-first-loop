@@ -102,8 +102,6 @@ class _BlockingEffectTool:
         )
 
 
-
-
 def _probe_lease_from_process(sessions_dir: str, child_id: str, queue) -> None:  # noqa: ANN001
     store = SessionStore(sessions_dir)
     with store.run_lease(child_id) as acquired:
@@ -258,7 +256,9 @@ def test_subagent_wal_gate_failure_prevents_tool_execution(
         durable = store.load(child_id)
 
         assert effect.count == 0
-        receipts = [m for m in durable.messages if m.role == "tool" and m.tool_call_id == "effect-1"]
+        receipts = [
+            m for m in durable.messages if m.role == "tool" and m.tool_call_id == "effect-1"
+        ]
         assert len(receipts) == 1
         assert reason_code in receipts[0].content
         assert "auto_reexecuted=false" in receipts[0].content
@@ -318,7 +318,9 @@ def test_shared_journal_recovers_started_unknown_without_reexecution(tmp_path: P
     assert durable.messages[-1].metadata["tool_execution_recovery"]["auto_reexecuted"] is False
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="cross-process flock contract is POSIX-specific")
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="cross-process flock contract is POSIX-specific"
+)
 def test_running_child_lease_is_exclusive_across_processes(tmp_path: Path) -> None:
     store, _events = _store(tmp_path)
     llm = _BlockingFirstLLM()
@@ -350,7 +352,6 @@ def test_running_child_lease_is_exclusive_across_processes(tmp_path: Path) -> No
             process.join(timeout=2.0)
         if child_id:
             _wait_terminal(runner, child_id)
-
 
 
 def test_spawn_failure_to_persist_delegated_task_never_reaches_llm(

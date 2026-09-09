@@ -118,10 +118,12 @@ def test_failure_evidence_in_output():
 def test_event_store_parsed():
     """解析成功事件落盘（framework/failure_count/fallback 统计）."""
     events = []
+
     class _Store:
         def append(self, sid, etype, payload):
             events.append((etype, payload))
             return None
+
     locator = ErrorLocator(event_store=_Store(), session_id="s1")
     locator.locate(PYTEST_OUT)
     assert len(events) == 1

@@ -121,20 +121,34 @@ def test_breaker_full_chain_storm_to_recovery(tmp_path, monkeypatch):
 
     # 阶段3: 逃生轮（pressure 达上限）→ 放行一次受控压缩 → 上下文回落
     for i in range(3):
-        fake.queue([__import__("llm_loop.llm.client", fromlist=["LLMResponse"]).LLMResponse(
-            content="短回答", tool_calls=[], provider="fake",
-            prompt_tokens=20000, prompt_cache_hit_tokens=19000,  # 高命中
-        )])
+        fake.queue(
+            [
+                __import__("llm_loop.llm.client", fromlist=["LLMResponse"]).LLMResponse(
+                    content="短回答",
+                    tool_calls=[],
+                    provider="fake",
+                    prompt_tokens=20000,
+                    prompt_cache_hit_tokens=19000,  # 高命中
+                )
+            ]
+        )
         engine.run(sid, f"逃生轮{i}")
     events = [e["event"] for e in _read_audit(audit)]
     assert "escape_armed" in events, "连续 pressure 应武装逃生轮"
 
     # 阶段4: 受控压缩后上下文低于水位 + 连续稳定 → breaker 退出
     for i in range(6):
-        fake.queue([__import__("llm_loop.llm.client", fromlist=["LLMResponse"]).LLMResponse(
-            content="短回答", tool_calls=[], provider="fake",
-            prompt_tokens=20000, prompt_cache_hit_tokens=19000,
-        )])
+        fake.queue(
+            [
+                __import__("llm_loop.llm.client", fromlist=["LLMResponse"]).LLMResponse(
+                    content="短回答",
+                    tool_calls=[],
+                    provider="fake",
+                    prompt_tokens=20000,
+                    prompt_cache_hit_tokens=19000,
+                )
+            ]
+        )
         engine.run(sid, f"恢复轮{i}")
     events = [e["event"] for e in _read_audit(audit)]
     assert "breaker_exit" in events, "水位达标 + 连续稳定后应退出 breaker"
@@ -155,8 +169,17 @@ def test_breaker_freeze_prevents_compression(tmp_path, monkeypatch):
     assert mon.breaker_freeze_compression(sid) is True, "冻结期应禁止程序压缩"
     # 冻结期超安全水位 → context_pressure 拦截（不调用 LLM——不制造不可恢复前缀）
     calls_before = len(fake.calls)
-    fake.queue([LLMResponse(content="ok", tool_calls=[], provider="fake",
-                           prompt_tokens=20000, prompt_cache_hit_tokens=1000)])
+    fake.queue(
+        [
+            LLMResponse(
+                content="ok",
+                tool_calls=[],
+                provider="fake",
+                prompt_tokens=20000,
+                prompt_cache_hit_tokens=1000,
+            )
+        ]
+    )
     r = engine.run(sid, "P" * 60_000)
     assert "[上下文压力]" in r.final_answer
     assert len(fake.calls) == calls_before, "冻结期超水位不应提交 LLM 请求"
@@ -167,14 +190,21 @@ def test_no_false_breaker_when_hit_healthy(tmp_path, monkeypatch):
     from llm_loop.llm.client import LLMResponse
 
     audit = str(tmp_path / "breaker3.jsonl")
-    engine, fake = _mk_engine(
-        tmp_path, monkeypatch, audit_file=audit, head_keep_ratio="0.15"
-    )
+    engine, fake = _mk_engine(tmp_path, monkeypatch, audit_file=audit, head_keep_ratio="0.15")
     sid = engine.session.create()
     for i in range(8):
         # 每轮 40K 增长（折叠 3 组跟不上）+ 高命中共信号 → 不触发
-        fake.queue([LLMResponse(content=_BIG_ANSWER, tool_calls=[], provider="fake",
-                               prompt_tokens=20000, prompt_cache_hit_tokens=19000)])
+        fake.queue(
+            [
+                LLMResponse(
+                    content=_BIG_ANSWER,
+                    tool_calls=[],
+                    provider="fake",
+                    prompt_tokens=20000,
+                    prompt_cache_hit_tokens=19000,
+                )
+            ]
+        )
         engine.run(sid, f"第{i}轮")
     mon = engine._cache_monitor  # noqa: SLF001
     assert mon.breaker_active_for(sid) is False, "高命中时不误触发 breaker"
@@ -188,9 +218,7 @@ def test_mid_compaction_marker_survives_event_replay(tmp_path, monkeypatch):
     from llm_loop.llm.client import LLMResponse
 
     audit = str(tmp_path / "breaker-mid.jsonl")
-    engine, fake = _mk_engine(
-        tmp_path, monkeypatch, audit_file=audit, head_keep_ratio="0.15"
-    )
+    engine, fake = _mk_engine(tmp_path, monkeypatch, audit_file=audit, head_keep_ratio="0.15")
     engine._event_store = EventStore(tmp_path / "event_logs")  # noqa: SLF001
     sid = engine.session.create()
     for i in range(3):
@@ -249,8 +277,17 @@ def test_telemetry_content_transport_separation(tmp_path, monkeypatch):
         "⚡ 缓存命中率 93.6%（近 1 轮，724,096/773,371 tokens；"
         "本模型(deepseek-v4-flash)累计 1 轮 93.6% 724,096/773,371 tokens）"
     )
-    fake.queue([LLMResponse(content=forged, tool_calls=[], provider="fake",
-                           prompt_tokens=20000, prompt_cache_hit_tokens=19000)])
+    fake.queue(
+        [
+            LLMResponse(
+                content=forged,
+                tool_calls=[],
+                provider="fake",
+                prompt_tokens=20000,
+                prompt_cache_hit_tokens=19000,
+            )
+        ]
+    )
     r = engine.run(sid, "第一问")
     # 返回（transport 层）: 装饰后含 canonical 遥测，且只含一条 ⚡
     assert r.final_answer.count("⚡ 缓存命中率") == 1, "返回只应有一条 canonical 遥测"
@@ -282,15 +319,17 @@ def test_telemetry_metadata_only_change_is_persisted(tmp_path, monkeypatch):
     pool = _make_pool(settings, fake, cached={"deepseek": fake})
     engine = _make_engine(tmp_path, pool, settings)
     sid = engine.session.create()
-    fake.queue([
-        LLMResponse(
-            content="这是纯回答正文。",
-            tool_calls=[],
-            provider="fake",
-            prompt_tokens=20_000,
-            prompt_cache_hit_tokens=19_000,
-        )
-    ])
+    fake.queue(
+        [
+            LLMResponse(
+                content="这是纯回答正文。",
+                tool_calls=[],
+                provider="fake",
+                prompt_tokens=20_000,
+                prompt_cache_hit_tokens=19_000,
+            )
+        ]
+    )
 
     result = engine.run(sid, "第一问")
     assert result.final_answer.count("⚡ 缓存命中率") == 1

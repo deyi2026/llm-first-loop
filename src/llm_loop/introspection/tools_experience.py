@@ -26,7 +26,9 @@ def run_save_experience(
     body: str = "",
 ) -> str:
     """save_experience 工具逻辑：校验 → 构造 → 写入 → 如实回执。"""
-    missing = [f for f, v in (("title", title), ("scenario", scenario), ("solution", solution)) if not v]
+    missing = [
+        f for f, v in (("title", title), ("scenario", scenario), ("solution", solution)) if not v
+    ]
     if missing:
         return f"[参数错误] 缺失必填字段: {', '.join(missing)}（未写入）"
     now = datetime.now().astimezone().isoformat()

@@ -3,6 +3,7 @@
 验证: run_handoff_now 生成 handoff.md 后, 当前会话档案可经 search_archive 检索到交接内容
 （修复前 handoff.md 只写普通文件, search_archive 检索不到, 新会话恢复路径断裂）。
 """
+
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -20,7 +21,7 @@ def _make_ctx(session_id: str, archive: ArchiveStore) -> MagicMock:
 
 
 def test_handoff_now_archives_to_current_session():
-    """handoff_now 后, 当前会话档案可检索到交接内容. """
+    """handoff_now 后, 当前会话档案可检索到交接内容."""
     with tempfile.TemporaryDirectory() as td:
         store = ArchiveStore(Path(td) / "archives")
         ctx = _make_ctx("sess-test-001", store)
@@ -39,7 +40,7 @@ def test_handoff_now_archives_to_current_session():
 
 
 def test_handoff_archive_fail_open():
-    """归档失败 fail-open: 不影响 handoff 主流程（仍返回 SUCCESS）. """
+    """归档失败 fail-open: 不影响 handoff 主流程（仍返回 SUCCESS）."""
     with tempfile.TemporaryDirectory():
         # ctx.archive 用 MagicMock, 其 archive() 抛异常
         ctx = MagicMock()
@@ -53,7 +54,7 @@ def test_handoff_archive_fail_open():
 
 
 def test_archive_handoff_no_archive_attr():
-    """ctx 无 archive 属性: 静默跳过（fail-open）. """
+    """ctx 无 archive 属性: 静默跳过（fail-open）."""
     ctx = MagicMock()
     del ctx.archive  # 无 archive 属性
     _archive_handoff(ctx, "doc")  # 不应抛异常

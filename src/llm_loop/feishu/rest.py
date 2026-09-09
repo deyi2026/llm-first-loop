@@ -237,7 +237,9 @@ class FeishuRestClient:
         raise FeishuRestError("回退发送失败（重试后仍失败）")  # 不可达，类型兜底
 
     # === 主动出站文档创建（EVO-20260813-432813b2） ===
-    def create_doc(self, title: str, content: str, folder_token: str | None = None) -> tuple[str, str]:
+    def create_doc(
+        self, title: str, content: str, folder_token: str | None = None
+    ) -> tuple[str, str]:
         """创建飞书 docx 文档.
 
         Args:
@@ -252,6 +254,7 @@ class FeishuRestClient:
             CreateDocumentRequest,
             CreateDocumentRequestBody,
         )
+
         builder = CreateDocumentRequestBody.builder().title(title)
         if folder_token:
             builder = builder.folder_token(folder_token)
@@ -291,6 +294,7 @@ class FeishuRestClient:
             TextElementStyleBuilder,
             TextRunBuilder,
         )
+
         bold_re = _re.compile(r"\*\*(.+?)\*\*")
         divider_re = _re.compile(r"^\s*---\s*$")
         ordered_re = _re.compile(r"^\s*(\d+)\.\s+(.+)$")
@@ -309,7 +313,7 @@ class FeishuRestClient:
             pos = 0
             for m in bold_re.finditer(text):
                 if m.start() > pos:
-                    elements.append(_run(text[pos:m.start()]))
+                    elements.append(_run(text[pos : m.start()]))
                 elements.append(_run(m.group(1), bold=True))
                 pos = m.end()
             if pos < len(text):
@@ -429,11 +433,16 @@ class FeishuRestClient:
         docx = self._lark_client.docx
         assert docx is not None
         for i in range(0, len(blocks), batch_size):
-            batch = blocks[i:i + batch_size]
-            req = (CreateDocumentBlockChildrenRequest.builder()
-                   .document_id(doc_id).block_id(doc_id)
-                   .request_body(CreateDocumentBlockChildrenRequestBody.builder().children(batch).build())
-                   .build())
+            batch = blocks[i : i + batch_size]
+            req = (
+                CreateDocumentBlockChildrenRequest.builder()
+                .document_id(doc_id)
+                .block_id(doc_id)
+                .request_body(
+                    CreateDocumentBlockChildrenRequestBody.builder().children(batch).build()
+                )
+                .build()
+            )
             resp = docx.v1.document_block_children.create(req)
             if resp.code != 0:
                 raise FeishuRestError(f"写入文档内容失败 code={resp.code} msg={resp.msg}")
@@ -485,9 +494,7 @@ class FeishuRestClient:
         if resp.code in _RATE_LIMIT_CODES:
             logger.info("feishu typing reaction 限流, 跳过: code=%s", resp.code)
         else:
-            logger.debug(
-                "feishu typing reaction failed: code=%s msg=%s", resp.code, resp.msg
-            )
+            logger.debug("feishu typing reaction failed: code=%s msg=%s", resp.code, resp.msg)
         return ""
 
     def remove_reaction(self, message_id: str, reaction_id: str) -> None:
@@ -511,21 +518,16 @@ class FeishuRestClient:
                 resp = im.v1.message_reaction.delete(request)
                 if resp.code == 0:
                     return
-                if self._raise_if_token_invalid(
-                    resp.code, resp.raw.status_code if resp.raw else 0
-                ):
+                if self._raise_if_token_invalid(resp.code, resp.raw.status_code if resp.raw else 0):
                     if attempt == 0:
                         continue
                     break
                 break
-            logger.debug(
-                "feishu reaction delete failed: code=%s msg=%s", resp.code, resp.msg
-            )
+            logger.debug("feishu reaction delete failed: code=%s msg=%s", resp.code, resp.msg)
         except Exception as exc:  # noqa: BLE001 — 删除失败静默，不影响主流程
             logger.debug("feishu reaction delete error: %s", exc)
 
     # ── 附件下载（FR-SDK-DLD-01/03）──
-
 
     # 2026-08-20（借鉴 SYAGI）: 飞书 OCR（basic_recognize）——vision 全失败时的文字兑底。
     # 返回识别出的文本行；失败抛 RuntimeError（调用方 fail-open 如实处理）。
@@ -619,9 +621,7 @@ class FeishuRestClient:
         assert doc_id is not None  # 上述守卫已保证 doc_id 非空
         return self._send_doc_link(receive_id, doc_id, receive_id_type)
 
-    def _send_file_upload(
-        self, receive_id: str, file_path: str, receive_id_type: str
-    ) -> str:
+    def _send_file_upload(self, receive_id: str, file_path: str, receive_id_type: str) -> str:
         """本地文件上传（lark.im.v1.file.create）→ file_key → 发送文件消息."""
 
         from lark_oapi.api.im.v1 import (
@@ -693,9 +693,7 @@ class FeishuRestClient:
             raise FeishuRestError(f"文件消息发送失败 code={resp.code} msg={resp.msg}")
         raise FeishuRestError("文件消息发送失败（重试后仍失败）")  # 不可达，类型兜底
 
-    def _send_doc_link(
-        self, receive_id: str, doc_id: str, receive_id_type: str
-    ) -> str:
+    def _send_doc_link(self, receive_id: str, doc_id: str, receive_id_type: str) -> str:
         """发送飞书文档链接（doc_id → feishu.cn/docx/<id> 链接消息）."""
         from lark_oapi.api.im.v1.model.create_message_request import (
             CreateMessageRequest,

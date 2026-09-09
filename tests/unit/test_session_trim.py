@@ -16,16 +16,27 @@ def _make_session(tmp_path: Path, n_user: int = 5, n_tool_per_user: int = 20):
     store.load(sid)
     # 添加用户消息 + 每个用户消息后跟随 n_tool_per_user 条工具结果 + assistant 回复
     for i in range(n_user):
-        store.append(sid, Message(role="user", content=f"用户问题 {i}: 详细的需求描述", source=MessageSource.USER))
+        store.append(
+            sid,
+            Message(
+                role="user", content=f"用户问题 {i}: 详细的需求描述", source=MessageSource.USER
+            ),
+        )
         for j in range(n_tool_per_user):
-            store.append(sid, Message(
-                role="tool",
-                content=f"tool {i}-{j} 详细结果: 很长很长的内容 " * 5,
-                source=MessageSource.TOOL,
-                tool_call_id=f"call-{i}-{j}",
-                tool_name="execute_command",
-            ))
-        store.append(sid, Message(role="assistant", content=f"助手回答 {i}: 详细方案", source=MessageSource.USER))
+            store.append(
+                sid,
+                Message(
+                    role="tool",
+                    content=f"tool {i}-{j} 详细结果: 很长很长的内容 " * 5,
+                    source=MessageSource.TOOL,
+                    tool_call_id=f"call-{i}-{j}",
+                    tool_name="execute_command",
+                ),
+            )
+        store.append(
+            sid,
+            Message(role="assistant", content=f"助手回答 {i}: 详细方案", source=MessageSource.USER),
+        )
     return store, sid
 
 

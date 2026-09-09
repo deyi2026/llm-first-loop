@@ -110,7 +110,9 @@ def normalize_origin(value: str, *, default_scheme: str = "https") -> str:
     except UnicodeError as exc:
         raise ValueError("Origin host 无效") from exc
     authority = f"[{host}]" if ":" in host else host
-    if port is not None and not ((scheme == "https" and port == 443) or (scheme == "http" and port == 80)):
+    if port is not None and not (
+        (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
+    ):
         authority += f":{port}"
     return f"{scheme}://{authority}"
 

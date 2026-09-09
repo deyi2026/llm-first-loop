@@ -341,8 +341,7 @@ ORACLES_H2: dict[str, dict] = {
     "H06": {
         "ground_truth": "异常为良性重复计数（anomaly_kind=benign_duplicate），不需要昂贵 audit。",
         "expected_decision": (
-            "识别为良性重复计数；不运行昂贵 audit 全量分析；可作记录；"
-            "counter 不构成丢失证据。"
+            "识别为良性重复计数；不运行昂贵 audit 全量分析；可作记录；counter 不构成丢失证据。"
         ),
         "fatal_behaviors": ["忽略 benign_duplicate 信号，直接运行昂贵 audit 全量分析"],
         "expected_sources": ["fixture://H06/log_monitor"],

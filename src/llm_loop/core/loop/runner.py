@@ -144,7 +144,7 @@ class EventBus:
             # 缓冲写入（有界：超限丢弃最旧）
             self._history.append(event)
             if len(self._history) > self._HISTORY_MAX:
-                self._history = self._history[-self._HISTORY_MAX:]
+                self._history = self._history[-self._HISTORY_MAX :]
             subs = list(self._subs)
         for q in subs:
             try:
@@ -229,7 +229,9 @@ class BackgroundRunner:
             try:
                 cancel_session(session_id)
             except Exception:  # noqa: BLE001 — 工具硬取消失败仍保留循环 cancelled 标志
-                logger.warning("后台 run 工具取消失败（fail-open）: session=%s", session_id, exc_info=True)
+                logger.warning(
+                    "后台 run 工具取消失败（fail-open）: session=%s", session_id, exc_info=True
+                )
         return True
 
     def is_cancelled(self, session_id: str) -> bool:
@@ -287,18 +289,22 @@ class BackgroundRunner:
                     continue
                 if now - h.last_active_ts <= threshold:
                     continue
-                stale.append({
-                    "run_id": run_id,
-                    "running_hours": (now - h.started_at) / 3600,
-                    "rounds": h.current_round,
-                })
+                stale.append(
+                    {
+                        "run_id": run_id,
+                        "running_hours": (now - h.started_at) / 3600,
+                        "rounds": h.current_round,
+                    }
+                )
             if stale:
                 detail = ", ".join(
                     f"{s['run_id']}（运行 {s['running_hours']:.0f}h）" for s in stale
                 )
                 logger.warning(
                     "残留 run 巡检：发现 %d 个超过 %s 小时无活跃的后台 run：%s",
-                    len(stale), int(_STALE_RUN_INSPECT_HOURS), detail,
+                    len(stale),
+                    int(_STALE_RUN_INSPECT_HOURS),
+                    detail,
                 )
             return stale
         except Exception:  # noqa: BLE001 — fail-open
@@ -328,8 +334,10 @@ class BackgroundRunner:
                 confirm = dict(h.snapshot())
             logger.info(
                 "runner.stop 确认清单: run=%s 运行时长=%.1fh 当前轮数=%d 操作者=%s%s",
-                run_id, (time.time() - confirm["started_at"]) / 3600,
-                confirm["current_round"], operator,
+                run_id,
+                (time.time() - confirm["started_at"]) / 3600,
+                confirm["current_round"],
+                operator,
                 "（需二次确认）" if _RUN_CLEANUP_CONFIRMATION_REQUIRED else "",
             )
             # 设置取消标志 → 引擎主循环/LLM 流检查点退出（超时兜底强制移除）；
@@ -453,7 +461,18 @@ class BackgroundRunner:
         q = bus.subscribe()  # 先订阅再起线程（保证不丢 start 后首个事件）
         t = threading.Thread(
             target=self._consume,
-            args=(session_id, user_text, model, reasoning_effort, reasoning_mode, before_start, handle, bus, ingress, user_metadata),
+            args=(
+                session_id,
+                user_text,
+                model,
+                reasoning_effort,
+                reasoning_mode,
+                before_start,
+                handle,
+                bus,
+                ingress,
+                user_metadata,
+            ),
             name=f"bg-run-{session_id[:8]}",
             daemon=True,  # B4: 进程退出不阻塞
         )
@@ -495,8 +514,11 @@ class BackgroundRunner:
                     if not callable(accepted_stream):
                         raise RuntimeError("engine 不支持 accepted-boundary callback")
                     it = accepted_stream(
-                        session_id, user_text, model,
-                        on_run_acquired=before_start, **run_kwargs,
+                        session_id,
+                        user_text,
+                        model,
+                        on_run_acquired=before_start,
+                        **run_kwargs,
                     )
                 else:
                     it = self._engine.run_stream(session_id, user_text, model, **run_kwargs)

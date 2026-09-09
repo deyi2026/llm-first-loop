@@ -29,12 +29,12 @@ class RuntimeParamsService:
     def __init__(self, host: LoopEngine) -> None:
         self._host = host
 
-
     def _runtime_max_iterations(self) -> int:
         """轮数上限（PARAM-01: 动态优先、静态兜底）."""
         if self._host.runtime is not None:
             return self._host.runtime.max_iterations
         return self._host.settings.max_iterations
+
     def _runtime_history_budget(self) -> int:
         """历史预算诊断值（显式 cap 优先，否则按默认模型物理窗口估算）.
 
@@ -42,10 +42,7 @@ class RuntimeParamsService:
         当前实际路由模型计算 authoritative effective budget；本方法保留 int 返回仅供
         兼容诊断/旧调用方，不能被当作未配置时的独立限制。
         """
-        if (
-            self._host.runtime is not None
-            and self._host.runtime.is_overridden("history_budget")
-        ):
+        if self._host.runtime is not None and self._host.runtime.is_overridden("history_budget"):
             dynamic = self._host.runtime.history_max_chars
             if dynamic is not None:
                 return dynamic
@@ -64,16 +61,19 @@ class RuntimeParamsService:
         except Exception:  # noqa: BLE001 — 窗口查询失败兜底旧默认
             pass
         return 100000
+
     def _runtime_extract_interval(self) -> int:
         """会话状态快照注入间隔（M58 配置面收敛: 动态优先、静态兜底）."""
         if self._host.runtime is not None:
             return self._host.runtime.extract_interval_msgs
         return getattr(self._host.settings, "extract_interval_msgs", 20) or 20
+
     def _runtime_memory_top_k(self) -> int:
         """记忆检索条数（M57 配置面收敛: 动态优先、静态兜底）."""
         if self._host.runtime is not None:
             return self._host.runtime.memory_top_k
         return getattr(self._host.settings, "memory_top_k", 5)
+
     def _runtime_timeout(self) -> float | None:
         """LLM 调用超时（PARAM-01: 动态优先、静态兜底）.
 

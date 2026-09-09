@@ -28,9 +28,7 @@ def _pair(i: int) -> list[Message]:
             role="assistant",
             content="D" * 260,
             source=MessageSource.USER,
-            tool_calls=[
-                {"id": f"c{i}", "name": "read_file", "arguments": {"path": f"/tmp/{i}"}}
-            ],
+            tool_calls=[{"id": f"c{i}", "name": "read_file", "arguments": {"path": f"/tmp/{i}"}}],
         ),
         Message(
             role="tool",
@@ -213,8 +211,9 @@ def test_minimax_opaque_replay_survives_history_compaction_view():
     for assistant in kept:
         call_id = assistant["tool_calls"][0]["id"]
         assert assistant["_provider_replay"] == expected[call_id]
-        assert assistant["reasoning_content"] == (
-            expected[call_id]["fields"]["reasoning_details"][0]["text"]
+        assert (
+            assistant["reasoning_content"]
+            == (expected[call_id]["fields"]["reasoning_details"][0]["text"])
         )
 
 
@@ -290,8 +289,7 @@ def test_cloud_compaction_second_build_is_byte_stable_and_does_not_rearchive():
             reasoning_tail=0,
         )
         first_marked = sum(
-            provider in ((m.metadata or {}).get("cache_compacted_for") or [])
-            for m in messages
+            provider in ((m.metadata or {}).get("cache_compacted_for") or []) for m in messages
         )
         assert first_archived, provider
         assert first_marked == len(first_archived), provider
@@ -310,16 +308,13 @@ def test_cloud_compaction_second_build_is_byte_stable_and_does_not_rearchive():
             reasoning_tail=0,
         )
         second_marked = sum(
-            provider in ((m.metadata or {}).get("cache_compacted_for") or [])
-            for m in messages
+            provider in ((m.metadata or {}).get("cache_compacted_for") or []) for m in messages
         )
 
         assert second == first, provider
         assert second_archived == [], provider
         assert second_marked == first_marked, provider
-        kept_tools = [
-            m for m in second if m.get("role") == "assistant" and m.get("tool_calls")
-        ]
+        kept_tools = [m for m in second if m.get("role") == "assistant" and m.get("tool_calls")]
         assert kept_tools and all(m.get("reasoning_content") for m in kept_tools), provider
         if provider == "minimax":
             assert all(m.get("_provider_replay") for m in kept_tools)

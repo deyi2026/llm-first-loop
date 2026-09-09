@@ -18,9 +18,17 @@ EVOLUTION_TEMPLATE_TOOL_DEF: dict = {
     "parameters": {
         "type": "object",
         "properties": {
-            "source": {"type": "string", "enum": ["git_diff", "tools_added", "experience", "manual"], "description": "模板来源（默认 manual）"},
+            "source": {
+                "type": "string",
+                "enum": ["git_diff", "tools_added", "experience", "manual"],
+                "description": "模板来源（默认 manual）",
+            },
             "title": {"type": "string", "description": "演进标题（简明）"},
-            "priority": {"type": "string", "enum": ["P0", "P1", "P2"], "description": "优先级（默认 P1）"},
+            "priority": {
+                "type": "string",
+                "enum": ["P0", "P1", "P2"],
+                "description": "优先级（默认 P1）",
+            },
         },
         "required": ["title"],
     },
@@ -61,7 +69,9 @@ def _git_diff_summary() -> str:
         # 最近 1 次 commit diff
         r = subprocess.run(
             ["git", "diff", "HEAD~1", "HEAD", "--stat"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if r.returncode != 0:
             return "（git diff 失败——可能无 git 仓库）"
@@ -90,6 +100,7 @@ def _experience_summary() -> str:
     """从 experiences/ 目录提取最近经验."""
     try:
         from pathlib import Path
+
         exp_dir = Path("experiences")
         if not exp_dir.exists():
             return "（experiences/ 目录不存在）"
@@ -108,7 +119,8 @@ def run_generate_evolution_template(ctx: Any, audit: Any, args: dict) -> ToolRes
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content="[参数错误] 事实: title 为空。原因: 必填。建议: 提供简明标题。",
-            tool_call_id="", tool_name="generate_evolution_template",
+            tool_call_id="",
+            tool_name="generate_evolution_template",
         )
     source = str(args.get("source", "manual")).strip() or "manual"
     priority = str(args.get("priority", "P1")).strip() or "P1"
@@ -116,7 +128,8 @@ def run_generate_evolution_template(ctx: Any, audit: Any, args: dict) -> ToolRes
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=f"[参数错误] 事实: priority 收到非法值 '{priority}'。原因: 需为 P0/P1/P2。建议: 提供正确优先级。",
-            tool_call_id="", tool_name="generate_evolution_template",
+            tool_call_id="",
+            tool_name="generate_evolution_template",
         )
 
     # 根据 source 填充各段

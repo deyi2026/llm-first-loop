@@ -113,9 +113,7 @@ def _detect_inner(
     # 事件落盘（fire-and-forget）
     for f in findings:
         try:
-            content = str(
-                getattr(messages[f.message_ref], "content", "") or ""
-            )
+            content = str(getattr(messages[f.message_ref], "content", "") or "")
             leak_events.emit_leak_event(
                 f.kind,
                 entry="build.leak_detector",

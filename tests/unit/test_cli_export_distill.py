@@ -39,12 +39,18 @@ def _valid_messages() -> list:
                 {"id": "c1", "type": "function", "function": {"name": "f1", "arguments": "{}"}}
             ],
         },
-        {"role": "tool", "content": "[状态: success] 结果", "tool_call_id": "c1", "status": "success"},
+        {
+            "role": "tool",
+            "content": "[状态: success] 结果",
+            "tool_call_id": "c1",
+            "status": "success",
+        },
         {"role": "assistant", "content": "最终回答", "tool_calls": None},
     ]
 
 
 # ── 用例 19: --help ──
+
 
 def test_cli_export_distill_help(capsys):
     with pytest.raises(SystemExit) as exc:
@@ -60,6 +66,7 @@ def test_cli_export_distill_help(capsys):
 
 # ── 用例 20: 退出码 ──
 
+
 def test_cli_export_distill_exit_codes(tmp_path, capsys):
     sessions_dir = tmp_path / "sessions"
     sessions_dir.mkdir()
@@ -67,22 +74,49 @@ def test_cli_export_distill_exit_codes(tmp_path, capsys):
     out = tmp_path / "out.jsonl"
     rep = tmp_path / "rep.json"
     # 正常 → 0
-    assert _cmd_export_distill(["--input-dir", str(sessions_dir), "--output", str(out), "--report", str(rep)]) == 0
+    assert (
+        _cmd_export_distill(
+            ["--input-dir", str(sessions_dir), "--output", str(out), "--report", str(rep)]
+        )
+        == 0
+    )
     stdout = capsys.readouterr().out
     assert "对账 passed+filtered==total: OK" in stdout
     # 目录不存在 → 2
-    assert _cmd_export_distill(["--input-dir", str(tmp_path / "nope"), "--output", str(out), "--report", str(rep)]) == 2
+    assert (
+        _cmd_export_distill(
+            ["--input-dir", str(tmp_path / "nope"), "--output", str(out), "--report", str(rep)]
+        )
+        == 2
+    )
     # 输出冲突（非 --force）→ 2
-    assert _cmd_export_distill(["--input-dir", str(sessions_dir), "--output", str(out), "--report", str(rep)]) == 2
+    assert (
+        _cmd_export_distill(
+            ["--input-dir", str(sessions_dir), "--output", str(out), "--report", str(rep)]
+        )
+        == 2
+    )
     err = capsys.readouterr().err
     assert "--force" in err
     # --force 覆盖 → 0
-    assert _cmd_export_distill(
-        ["--input-dir", str(sessions_dir), "--output", str(out), "--report", str(rep), "--force"]
-    ) == 0
+    assert (
+        _cmd_export_distill(
+            [
+                "--input-dir",
+                str(sessions_dir),
+                "--output",
+                str(out),
+                "--report",
+                str(rep),
+                "--force",
+            ]
+        )
+        == 0
+    )
 
 
 # ── 用例 21: 分派注册 + 不触发 engine 装配 ──
+
 
 def test_cli_dispatch_registered(tmp_path, monkeypatch):
     from llm_loop.introspection import export_distill as ed
@@ -103,7 +137,15 @@ def test_cli_dispatch_registered(tmp_path, monkeypatch):
 
     monkeypatch.setattr(llm_loop.factory, "build_engine", _boom)
     code = _dispatch_command(
-        ["export-distill", "--input-dir", str(sessions_dir), "--output", str(out), "--report", str(rep)]
+        [
+            "export-distill",
+            "--input-dir",
+            str(sessions_dir),
+            "--output",
+            str(out),
+            "--report",
+            str(rep),
+        ]
     )
     assert code == 0
     assert out.exists()

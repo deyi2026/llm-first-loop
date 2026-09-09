@@ -27,9 +27,7 @@ def test_overflow_compacts_without_prompt_reinjection():
     eng: Any = _Engine()
     ctl = TerminationController(eng)
     sess = SimpleNamespace(messages=[])
-    action, final = ctl._handle_overflow(
-        LLMError("maximum context length exceeded"), sess, "model"
-    )
+    action, final = ctl._handle_overflow(LLMError("maximum context length exceeded"), sess, "model")
     assert action == "reinject" and final is None
     assert sess.messages == []
     assert eng.state.overflow_reinject_count == 1

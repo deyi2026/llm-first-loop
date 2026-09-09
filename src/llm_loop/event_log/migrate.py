@@ -192,9 +192,7 @@ def _generate_events(store: EventStore, session_id: str, source: dict) -> None:
     # 顶层字段缺省按读路径语义补默认（对齐 Session.load 的缺省向后兼容）：
     # v3 旧会话缺 pinned/channel/model_override 键 → 事件承载默认值而非 None，
     # 保证重放视图与 Session.load().to_dict() 逐字段一致（spec §5.4.1-1）。
-    payload = {
-        k: source.get(k, _TOP_LEVEL_DEFAULTS.get(k)) for k in _TOP_FIELDS
-    }
+    payload = {k: source.get(k, _TOP_LEVEL_DEFAULTS.get(k)) for k in _TOP_FIELDS}
     payload["version"] = source.get("version", _TOP_LEVEL_DEFAULTS.get("version", 4))
     store.append(session_id, EVENT_SESSION_CREATED, payload)
 
@@ -304,7 +302,11 @@ def run_rollback(
     errors: list[str] = []
 
     if not backup_sessions.is_dir():
-        return {"restored": [], "events_removed": [], "errors": [f"备份区无会话数据: {backup_root}"]}
+        return {
+            "restored": [],
+            "events_removed": [],
+            "errors": [f"备份区无会话数据: {backup_root}"],
+        }
 
     ids = set(session_ids) if session_ids else None
     for p in sorted(backup_sessions.glob("*.json")):

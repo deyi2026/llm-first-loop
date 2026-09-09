@@ -1,4 +1,5 @@
 """授权确认弹窗测试（EVO-20260810-86e777d1 演进: 通知型→授权确认型）."""
+
 from unittest import mock
 
 from llm_loop.introspection.loop_signals import LoopSignalDetector
@@ -57,7 +58,9 @@ def test_confirm_failure_fallback():
     """confirm 异常 → 降级拒绝（不阻断）."""
     store = _FakeStore([{"id": "EVO-C4", "status": "pending_review", "content": "x"}])
     det = LoopSignalDetector(popup_pending_review=True)
-    with mock.patch("llm_loop.introspection.loop_signals.confirm", side_effect=RuntimeError("boom")):
+    with mock.patch(
+        "llm_loop.introspection.loop_signals.confirm", side_effect=RuntimeError("boom")
+    ):
         event = det.check_pending_review(store)
     assert store.reviewed == []
     assert event is not None
@@ -81,8 +84,8 @@ def test_same_pending_only_prompts_once():
     store = _FakeStore([{"id": "EVO-D1", "status": "pending_review", "content": "x"}])
     det = LoopSignalDetector(popup_pending_review=True)
     with mock.patch("llm_loop.introspection.loop_signals.confirm", return_value=False) as m:
-        ev1 = det.check_pending_review(store)   # 第一次: 弹窗（拒绝）
-        ev2 = det.check_pending_review(store)   # 第二次: 不应再弹
+        ev1 = det.check_pending_review(store)  # 第一次: 弹窗（拒绝）
+        ev2 = det.check_pending_review(store)  # 第二次: 不应再弹
     assert m.call_count == 1  # 只弹一次
     assert ev1 is not None
     assert ev2 is None  # 去重生效

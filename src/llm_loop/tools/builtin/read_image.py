@@ -41,7 +41,11 @@ def _probe_meta(data: bytes) -> dict:
         if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 26:
             w, h, bit_depth, color_type = struct.unpack(">IIBB", data[16:26])
             ct = {
-                0: "灰度", 2: "RGB", 3: "调色板", 4: "灰度+Alpha", 6: "RGBA",
+                0: "灰度",
+                2: "RGB",
+                3: "调色板",
+                4: "灰度+Alpha",
+                6: "RGBA",
             }.get(color_type, f"未知({color_type})")
             meta.update(format="PNG", width=w, height=h, bit_depth=bit_depth, color_mode=ct)
         elif data[:2] == b"\xff\xd8":
@@ -96,7 +100,10 @@ class ReadImageTool:
     parameters = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "本地图片文件路径（png/jpg/jpeg/gif/webp/bmp）"},
+            "path": {
+                "type": "string",
+                "description": "本地图片文件路径（png/jpg/jpeg/gif/webp/bmp）",
+            },
             "prompt": {"type": "string", "description": "识别提示（可选，默认描述+转录图中文字）"},
         },
         "required": ["path"],
@@ -163,9 +170,13 @@ class ReadImageTool:
         if vision_error:
             lines.append(f"[识别降级] 视觉后端不可用/失败（{vision_error}）——仅返回元信息。")
             if "not logged in" in vision_error.lower() or "API Key" in vision_error:
-                lines.append("[指引] 请运行 `arkcli auth login volc-sso` 或 `arkcli auth apikey` 后重试。")
+                lines.append(
+                    "[指引] 请运行 `arkcli auth login volc-sso` 或 `arkcli auth apikey` 后重试。"
+                )
             else:
-                lines.append("[指引] 可尝试配置视觉后端（WEB_VISION_BACKEND=arkcli/provider）后重试。")
+                lines.append(
+                    "[指引] 可尝试配置视觉后端（WEB_VISION_BACKEND=arkcli/provider）后重试。"
+                )
         content = "\n".join(lines)
         status = (
             ToolResultStatus.SUCCESS

@@ -24,18 +24,15 @@ class _Sess:
         self.messages = messages
 
 
-
-
-
-
-
 def test_build_task_anchor():
     """任务锚点: 提取最近用户指令 + 最近工具动作."""
-    sess = _Sess([
-        _M("user", "给镜像LFL配置飞书"),
-        _M("assistant", "收到，先查配置"),
-        _M("tool", "[命令] grep feishu .env 输出 13 行"),
-    ])
+    sess = _Sess(
+        [
+            _M("user", "给镜像LFL配置飞书"),
+            _M("assistant", "收到，先查配置"),
+            _M("tool", "[命令] grep feishu .env 输出 13 行"),
+        ]
+    )
     anchor = build_task_anchor(sess)
     assert "配置飞书" in anchor
     assert "grep feishu" in anchor

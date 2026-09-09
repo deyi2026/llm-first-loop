@@ -5,6 +5,7 @@
 统计（检索路径 = 稳定 system prompt 宣告的 search_archive）。
 统计 dict 落 BuildAudit.compaction_audit（显式产物，收口只读）。
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -45,15 +46,9 @@ def run_compaction_audit(
                 "archived_count": _archived_count,
                 "drop_pct": _drop_pct,
                 "anchor_moved": int(anchor_moved),
-                "cache_boundary_mode": _compact_stats.get(
-                    "cache_boundary_mode", "inactive"
-                ),
-                "cache_protected_messages": _compact_stats.get(
-                    "cache_protected_messages", 0
-                ),
-                "cache_protected_chars": _compact_stats.get(
-                    "cache_protected_chars", 0
-                ),
+                "cache_boundary_mode": _compact_stats.get("cache_boundary_mode", "inactive"),
+                "cache_protected_messages": _compact_stats.get("cache_protected_messages", 0),
+                "cache_protected_chars": _compact_stats.get("cache_protected_chars", 0),
             }
             record_action(
                 "run.compact",

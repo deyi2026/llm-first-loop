@@ -228,11 +228,10 @@ class FileService:
                         raise FileServiceError("UnsupportedTextEncoding", detail=str(exc)) from exc
                 stat_after = path.stat()
                 if (stat_before.st_mtime_ns, stat_before.st_size) == (
-                    stat_after.st_mtime_ns, stat_after.st_size
+                    stat_after.st_mtime_ns,
+                    stat_after.st_size,
                 ):
-                    source_version_token = (
-                        f"stat:{stat_after.st_mtime_ns}:{stat_after.st_size}"
-                    )
+                    source_version_token = f"stat:{stat_after.st_mtime_ns}:{stat_after.st_size}"
             except FileServiceError:
                 raise
             except FileNotFoundError as exc:
@@ -256,7 +255,9 @@ class FileService:
             except ArtifactError as exc:
                 raise FileServiceError("SnapshotUnavailable", detail=str(exc)) from exc
 
-        visible_data = data[len(UTF8_BOM) :] if strip_utf8_bom and data.startswith(UTF8_BOM) else data
+        visible_data = (
+            data[len(UTF8_BOM) :] if strip_utf8_bom and data.startswith(UTF8_BOM) else data
+        )
         text = visible_data.decode("utf-8", errors="replace")
         lines = text.splitlines(keepends=True)
         total = len(lines)
@@ -389,11 +390,12 @@ class FileService:
         diff_text = "\n".join(diff_lines[:DIFF_MAX_LINES])
         if len(diff_lines) > DIFF_MAX_LINES:
             diff_text += (
-                f"\n... [diff 过长已截断: 共 {len(diff_lines)} 行，"
-                f"显示前 {DIFF_MAX_LINES} 行]"
+                f"\n... [diff 过长已截断: 共 {len(diff_lines)} 行，显示前 {DIFF_MAX_LINES} 行]"
             )
         added = sum(1 for line in diff_lines if line.startswith("+") and not line.startswith("+++"))
-        removed = sum(1 for line in diff_lines if line.startswith("-") and not line.startswith("---"))
+        removed = sum(
+            1 for line in diff_lines if line.startswith("-") and not line.startswith("---")
+        )
 
         out_text = updated if ending == "\n" else updated.replace("\n", ending)
         out_bytes = (UTF8_BOM if had_bom else b"") + out_text.encode("utf-8")

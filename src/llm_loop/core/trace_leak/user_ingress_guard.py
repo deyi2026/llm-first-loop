@@ -198,9 +198,7 @@ def guard_user_write(
             content=message.content,
             basis="enforce 拒绝的 user 写入内容（隔离留痕，不静默丢弃）",
         )
-        return GuardVerdict(
-            GuardAction.DENY, message, "enforce 模式：白名单外 user 写入拒绝"
-        )
+        return GuardVerdict(GuardAction.DENY, message, "enforce 模式：白名单外 user 写入拒绝")
     except Exception:  # noqa: BLE001 — fail-open（spec 4.2-1）
         logger.warning("guard_user_write 异常（fail-open 放行）", exc_info=True)
         with contextlib.suppress(Exception):  # noqa: BLE001 — 告警失败不覆盖原判定

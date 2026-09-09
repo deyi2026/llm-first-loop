@@ -98,6 +98,7 @@ class _FallbackRunGate:
             if self._readers:
                 self._readers -= 1
 
+
 # D1: session.created 事件承载的顶层字段（与 Session.to_dict() 对齐，缺失如实置空）
 _EVENT_TOP_FIELDS = (
     "version",
@@ -133,8 +134,8 @@ class SessionMeta:
     status: Literal["active", "archived"]
     last_message_preview: str
     # M56（Web/飞书会话同步）: 缺省向后兼容
-    pinned: bool = False   # 置顶
-    channel: str = "web"   # 来源通道
+    pinned: bool = False  # 置顶
+    channel: str = "web"  # 来源通道
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -152,14 +153,14 @@ class Session:
     status: Literal["active", "archived"] = _ACTIVE  # T24: 活跃/归档
     # version 3 分支字段（EVO-20260810-3188682f：会话分支；缺省向后兼容 version 1/2）
     parent_id: str | None = None  # 父会话 id（根会话为 None；fork 时指向来源会话）
-    branch_id: str = ""           # 分支标识（根会话为空；fork 生成唯一短 id）
-    branch_summary: str = ""      # 分支摘要（fork 时从父会话分叉点后提炼，跨分支情报传递）
+    branch_id: str = ""  # 分支标识（根会话为空；fork 生成唯一短 id）
+    branch_summary: str = ""  # 分支摘要（fork 时从父会话分叉点后提炼，跨分支情报传递）
     # M48（design §5.3）：会话级模型覆盖（switch_model 工具写入；None = 用装配默认）
     # 旧会话 JSON 缺省 → None（向后兼容，向前兼容 version 1/2/3 三套字段）
     model_override: str | None = None
     # M56（Web/飞书会话同步）：version 4 字段，缺省向后兼容
-    pinned: bool = False      # 置顶（Web 端会话列表置顶优先）
-    channel: str = "web"      # 来源通道: "web" / "feishu:p2p:{open_id}" / "feishu:group:{chat_id}"
+    pinned: bool = False  # 置顶（Web 端会话列表置顶优先）
+    channel: str = "web"  # 来源通道: "web" / "feishu:p2p:{open_id}" / "feishu:group:{chat_id}"
     # P1-10（窗口锚定）: 各 provider 的历史窗口锚点（provider_id → sess.messages 索引）。
     # 锚定后历史起点固定（只追加不挤旧, 超预算优先降级中段）, system+历史前缀稳定 →
     # 引擎/服务端前缀缓存命中; 缺省向后兼容（旧 JSON 无键 → {}）
@@ -176,7 +177,7 @@ class Session:
     # 前缀稳定原则（12 实验）: fixed_summary 生成后程序强制不可变; summary_chain 只尾部追加
     # （新摘要追加, 旧摘要不动）→ system+固定摘要+保留历史字节稳定 → 服务端缓存命中。
     # 缺省向后兼容（旧 JSON 无键 → 空）
-    fixed_summary: str = ""                       # 核心固定摘要（首次压缩生成, 永不更新）
+    fixed_summary: str = ""  # 核心固定摘要（首次压缩生成, 永不更新）
     summary_chain: list[str] = field(default_factory=list)  # 增量摘要链（尾部追加, 低频合并）
     # S1 selective-evidence canary: internal model-authored fold state. It is
     # persisted out-of-band from messages so it cannot masquerade as a normal
@@ -200,8 +201,8 @@ class Session:
             "history_anchors": self.history_anchors,
             "history_anchor_scopes": self.history_anchor_scopes,
             "projection_guard": self.projection_guard,  # EVO-20260817-b6554376 投影门闸缓存行
-            "fixed_summary": self.fixed_summary,        # 2026-08-21 追加式压缩: 核心固定摘要
-            "summary_chain": self.summary_chain,        # 2026-08-21 追加式压缩: 增量摘要链
+            "fixed_summary": self.fixed_summary,  # 2026-08-21 追加式压缩: 核心固定摘要
+            "summary_chain": self.summary_chain,  # 2026-08-21 追加式压缩: 增量摘要链
             "working_state_checkpoint": self.working_state_checkpoint,
             "messages": [
                 {
@@ -480,9 +481,7 @@ class SessionStore:
                         f"session_id {session_id} 的全局归属记录损坏，拒绝猜测"
                     ) from exc
                 if record.get("deleted_at"):
-                    raise SessionDeletedError(
-                        f"session_id {session_id} 已删除且不可恢复/复用"
-                    )
+                    raise SessionDeletedError(f"session_id {session_id} 已删除且不可恢复/复用")
                 if owner != current_owner:
                     raise SessionIdConflictError(
                         f"session_id {session_id} 已被其他工作区占用（owner={owner}）"
@@ -534,9 +533,7 @@ class SessionStore:
                     if allow_deleted and owner == current_owner:
                         self._identity_verified.discard(session_id)
                         return
-                    raise SessionDeletedError(
-                        f"session_id {session_id} 已删除且不可恢复/复用"
-                    )
+                    raise SessionDeletedError(f"session_id {session_id} 已删除且不可恢复/复用")
                 if owner != current_owner:
                     raise SessionIdConflictError(
                         f"session_id {session_id} 已被其他工作区占用（owner={owner}）"
@@ -583,9 +580,7 @@ class SessionStore:
                 )
             if not record.get("deleted_at"):
                 record["deleted_at"] = _now()
-                self._durable_replace_text(
-                    owner_path, json.dumps(record, ensure_ascii=False)
-                )
+                self._durable_replace_text(owner_path, json.dumps(record, ensure_ascii=False))
             self._identity_verified.discard(session_id)
 
     def claim_session_id(self, session_id: str) -> None:
@@ -604,9 +599,7 @@ class SessionStore:
             raise ValueError("恢复session payload不是合法JSON") from exc
         payload_sid = str(data.get("session_id", session_id))
         if payload_sid != session_id:
-            raise ValueError(
-                f"恢复session payload id不匹配: {payload_sid!r} != {session_id!r}"
-            )
+            raise ValueError(f"恢复session payload id不匹配: {payload_sid!r} != {session_id!r}")
         self._ensure_identity_owner(session_id)
         with self.management_lease(session_id), self._session_lock(session_id):
             p = self._path(session_id)
@@ -929,7 +922,11 @@ class SessionStore:
             sid = str(data.get("current", ""))
             if sid and self.exists(sid):
                 return sid
-        except (OSError, json.JSONDecodeError, ValueError) as exc:  # fail-open：读共享会话失败视为无
+        except (
+            OSError,
+            json.JSONDecodeError,
+            ValueError,
+        ) as exc:  # fail-open：读共享会话失败视为无
             logger.debug("读共享当前会话失败（fail-open）: %s", exc)
         return None
 
@@ -1065,9 +1062,7 @@ class SessionStore:
             view = replay_session(events)
             if not view or view.get("exists") is False:
                 return None
-            messages = [
-                _message_from_dict(m) for m in view.get("messages", [])
-            ]
+            messages = [_message_from_dict(m) for m in view.get("messages", [])]
             return Session(
                 session_id=view.get("session_id", session_id),
                 messages=messages,
@@ -1170,9 +1165,7 @@ class SessionStore:
                 guard_user_write,
             )
 
-            verdict = guard_user_write(
-                session, message, ingress, entry="SessionStore.append"
-            )
+            verdict = guard_user_write(session, message, ingress, entry="SessionStore.append")
             if verdict.action is GuardAction.DENY:
                 # enforce 拒绝：不追加（事件与隔离记录已由 guard 留痕）
                 raise _LeakWriteDeniedError(
@@ -1204,7 +1197,6 @@ class SessionStore:
                     session_id=session_id,
                     content=message.content,
                     basis="恒等式违反: program_origin != (origin_layer != user_instruction)",
-
                 )
                 message.metadata = correct_mislabeled_metadata(message.metadata)
         except Exception:  # noqa: BLE001 — fail-open（spec 4.2-1）
@@ -1254,14 +1246,19 @@ class SessionStore:
             session = self.load(session_id)
             original_count = len(session.messages)
             if original_count <= keep_recent:
-                return {"before": original_count, "after": original_count, "trimmed": 0,
-                        "archived_to": None, "note": "已足够短，无需瘦身"}
+                return {
+                    "before": original_count,
+                    "after": original_count,
+                    "trimmed": 0,
+                    "archived_to": None,
+                    "note": "已足够短，无需瘦身",
+                }
 
             # 摘要时转 dict（保留原 Message 列表以便 save 序列化）
             msg_dicts = [asdict(m) for m in session.messages]
             keep = list(session.messages[-keep_recent:])  # 完整保留近期（Message 对象）
             early_messages = list(session.messages[:-keep_recent])
-            early = list(msg_dicts[:-keep_recent])        # 早期用 dict 摘要
+            early = list(msg_dicts[:-keep_recent])  # 早期用 dict 摘要
 
             # INJECTION-GOVERNANCE R5: legacy trim 的 summary JSONL 也是长期摘要面。
             # raw backup 仍保留完整消息；仅派生 summary 将所有 identity episodes 聚合
@@ -1307,8 +1304,7 @@ class SessionStore:
                     else:
                         _summary = _summarize(_message)
                     f.write(
-                        json.dumps({"ts": _now(), "content": _summary}, ensure_ascii=False)
-                        + "\n"
+                        json.dumps({"ts": _now(), "content": _summary}, ensure_ascii=False) + "\n"
                     )
 
             session.messages = list(keep)
@@ -1349,7 +1345,9 @@ class SessionStore:
         """列出全部会话元数据（M56: 置顶优先，再按 updated_at 降序；归档默认隐藏）."""
         return self._list_sessions_in(self._dir, include_archived=include_archived)
 
-    def list_sessions_in(self, sessions_dir: str | Path, include_archived: bool = False) -> list[SessionMeta]:
+    def list_sessions_in(
+        self, sessions_dir: str | Path, include_archived: bool = False
+    ) -> list[SessionMeta]:
         """按指定目录列出会话元数据（工作区管理：按工作区分区展示，不改变当前根）."""
         return self._list_sessions_in(Path(sessions_dir), include_archived=include_archived)
 

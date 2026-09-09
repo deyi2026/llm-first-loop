@@ -78,8 +78,12 @@ class PreCheckLayer:
             self._validate_value(arguments, schema, "$", errors, depth=0)
         except RecursionError:
             errors.append(
-                FieldError("$", "object", type(arguments).__name__,
-                           f"参数嵌套深度超限（上限 {self._max_depth}）")
+                FieldError(
+                    "$",
+                    "object",
+                    type(arguments).__name__,
+                    f"参数嵌套深度超限（上限 {self._max_depth}）",
+                )
             )
         except Exception as exc:  # noqa: BLE001 — 校验异常 fail-open
             logger.warning("参数预检异常（fail-open 放行）: %s", exc)
@@ -95,8 +99,11 @@ class PreCheckLayer:
                     "task.precheck.failed",
                     {
                         "field_errors": [
-                            {"field_path": e.field_path, "expected": e.expected_type,
-                             "actual": e.actual_type}
+                            {
+                                "field_path": e.field_path,
+                                "expected": e.expected_type,
+                                "actual": e.actual_type,
+                            }
                             for e in result.errors
                         ],
                         "duration_ms": round(duration_ms, 2),
@@ -118,16 +125,21 @@ class PreCheckLayer:
         """递归校验单值（JSON Schema 子集: type/required/enum/properties/items）."""
         if depth > self._max_depth:
             errors.append(
-                FieldError(path, "object", type(value).__name__,
-                           f"嵌套深度超限（上限 {self._max_depth}）")
+                FieldError(
+                    path, "object", type(value).__name__, f"嵌套深度超限（上限 {self._max_depth}）"
+                )
             )
             return
 
         # enum 校验
         if "enum" in schema and isinstance(schema["enum"], list) and value not in schema["enum"]:
             errors.append(
-                FieldError(path, f"enum {schema['enum']}", type(value).__name__,
-                           f"value {value!r} not in enum {schema['enum']}")
+                FieldError(
+                    path,
+                    f"enum {schema['enum']}",
+                    type(value).__name__,
+                    f"value {value!r} not in enum {schema['enum']}",
+                )
             )
             return  # 枚举非法不再继续其他校验
 
@@ -140,8 +152,12 @@ class PreCheckLayer:
                 ok = self._type_matches(value, declared)
             if not ok:
                 errors.append(
-                    FieldError(path, str(declared), type(value).__name__,
-                               f"类型不匹配（期望 {declared}，实际 {type(value).__name__}）")
+                    FieldError(
+                        path,
+                        str(declared),
+                        type(value).__name__,
+                        f"类型不匹配（期望 {declared}，实际 {type(value).__name__}）",
+                    )
                 )
                 return
 
@@ -152,8 +168,12 @@ class PreCheckLayer:
             for req in schema.get("required", []) or []:
                 if req not in value:
                     errors.append(
-                        FieldError(f"{path}.{req}" if path != "$" else req,
-                                   "required", "missing", f"字段 '{req}' required but missing")
+                        FieldError(
+                            f"{path}.{req}" if path != "$" else req,
+                            "required",
+                            "missing",
+                            f"字段 '{req}' required but missing",
+                        )
                     )
             # 逐属性递归
             for key, val in value.items():
@@ -162,9 +182,7 @@ class PreCheckLayer:
                     self._validate_value(val, props[key], child_path, errors, depth=depth + 1)
         elif isinstance(value, list) and isinstance(schema.get("items"), dict):
             for i, item in enumerate(value):
-                self._validate_value(
-                    item, schema["items"], f"{path}[{i}]", errors, depth=depth + 1
-                )
+                self._validate_value(item, schema["items"], f"{path}[{i}]", errors, depth=depth + 1)
 
     @staticmethod
     def _type_matches(value: Any, declared: str) -> bool:

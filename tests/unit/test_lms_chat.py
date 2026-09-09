@@ -27,7 +27,16 @@ def test_input_system_tools_tail():
         {"role": "assistant", "content": "好的"},
         {"role": "user", "content": "现在几点了？"},
     ]
-    tools = [{"type": "function", "function": {"name": "get_time", "description": "获取当前时间", "parameters": {"type": "object", "properties": {}}}}]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_time",
+                "description": "获取当前时间",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
     out = c._to_lms_input(messages, tools)
     assert len(out) == 1 and out[0]["type"] == "text"
     text = out[0]["content"]
@@ -86,5 +95,17 @@ def test_msg_text_roles():
     """消息文本化：user/assistant(tool_calls)/tool 角色前缀标记."""
     assert LLMClient._lms_msg_text({"role": "user", "content": "hi"}) == "[用户] hi"
     assert LLMClient._lms_msg_text({"role": "assistant", "content": "ok"}) == "[助手] ok"
-    assert LLMClient._lms_msg_text({"role": "assistant", "content": "查一下", "tool_calls": [{"function": {"name": "get_time", "arguments": {}}}]}) == '[助手] 查一下 [调用工具 get_time 参数 {}]'
-    assert LLMClient._lms_msg_text({"role": "tool", "name": "get_time", "content": "2026-08-17"}) == "[工具结果 get_time] 2026-08-17"
+    assert (
+        LLMClient._lms_msg_text(
+            {
+                "role": "assistant",
+                "content": "查一下",
+                "tool_calls": [{"function": {"name": "get_time", "arguments": {}}}],
+            }
+        )
+        == "[助手] 查一下 [调用工具 get_time 参数 {}]"
+    )
+    assert (
+        LLMClient._lms_msg_text({"role": "tool", "name": "get_time", "content": "2026-08-17"})
+        == "[工具结果 get_time] 2026-08-17"
+    )

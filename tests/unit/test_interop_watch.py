@@ -68,7 +68,9 @@ def test_wakeup_only_coordinate_and_rate_limited(tmp_path: Path):
     inbox.mkdir(parents=True)
     wakeups: list[list[str]] = []
     w = _watcher(
-        inbox, wakeup_enabled=True, wakeup_fn=lambda n: wakeups.append(n),
+        inbox,
+        wakeup_enabled=True,
+        wakeup_fn=lambda n: wakeups.append(n),
         wakeup_min_interval_s=300,
     )
     w.poll_once()  # 基线
@@ -115,7 +117,9 @@ def test_bad_json_fail_open(tmp_path: Path):
     notified: list[list[str]] = []
     w = _watcher(inbox, on_notify=lambda n: notified.append(n))
     w.poll_once()  # 基线：通知存量 bad.json（不解析内容，不崩溃）
-    (inbox / "good.json").write_text(json.dumps({"id": "x", "status": "pending", "body": "x"}), encoding="utf-8")
+    (inbox / "good.json").write_text(
+        json.dumps({"id": "x", "status": "pending", "body": "x"}), encoding="utf-8"
+    )
     w.poll_once()
     assert notified == [["bad.json"], ["good.json"]]  # bad 不阻塞 good
 
@@ -137,9 +141,7 @@ def test_done_status_not_in_wakeup_topic(tmp_path: Path):
 
 def _write_full(inbox: Path, name: str, *, topic: str, ts: float) -> None:
     (inbox / name).write_text(
-        json.dumps(
-            {"id": name, "topic": topic, "status": "pending", "body": "x", "ts": ts}
-        ),
+        json.dumps({"id": name, "topic": topic, "status": "pending", "body": "x", "ts": ts}),
         encoding="utf-8",
     )
 

@@ -77,9 +77,7 @@ class CrossSyncWatcher:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._loop, name="feishu-cross-sync", daemon=True
-        )
+        self._thread = threading.Thread(target=self._loop, name="feishu-cross-sync", daemon=True)
         self._thread.start()
         logger.info("飞书跨端同步已启动（轮询 %.1fs）", self._poll_s)
 
@@ -197,7 +195,13 @@ class CrossSyncWatcher:
         header = f"[跨端同步] Web 端会话「{title}」新增 {len(messages)} 条消息："
         lines: list[str] = []
         for m in messages:
-            role = "👤 用户" if m.role == "user" else "🤖 AI" if m.role == "assistant" else f"⚙️ {m.role}"
+            role = (
+                "👤 用户"
+                if m.role == "user"
+                else "🤖 AI"
+                if m.role == "assistant"
+                else f"⚙️ {m.role}"
+            )
             content = (m.content or "").strip() or "（空消息）"
             line = f"{role}: {content}"
             if m.role == "assistant" and getattr(m, "model_used", ""):
@@ -211,7 +215,9 @@ class CrossSyncWatcher:
                 line += footer
             # P1 遥测内容/传输分层（2026-08-25）: 权威遥测在 metadata.cache_health
             # （正文=纯回答），transport 层在此渲染 canonical 一份（用户批准的展示）。
-            _health = (m.metadata or {}).get("cache_health") if getattr(m, "metadata", None) else None
+            _health = (
+                (m.metadata or {}).get("cache_health") if getattr(m, "metadata", None) else None
+            )
             if isinstance(_health, dict) and _health.get("note"):
                 line += f"\n{_health['note']}"
             lines.append(line)

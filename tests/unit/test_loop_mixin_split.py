@@ -26,7 +26,9 @@ def test_loop_mixin_split_layout():
         mixin = {"lifecycle.py": "_RunEntrypointMixin"}[fname]
         assert f"class {mixin}:" in src, f"{fname} 缺 {mixin} 类定义"
         assert "reportAttributeAccessIssue=false" in src, f"{fname} 缺 pyright 文件级豁免"
-        assert "from llm_loop.core.loop.engine import LoopEngine" in src, f"{fname} 缺 TYPE_CHECKING 引用"
+        assert "from llm_loop.core.loop.engine import LoopEngine" in src, (
+            f"{fname} 缺 TYPE_CHECKING 引用"
+        )
 
 
 def test_loop_reexport_kept():

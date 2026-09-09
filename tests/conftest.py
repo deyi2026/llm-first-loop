@@ -315,9 +315,7 @@ def build_test_engine(fake_settings):
         from llm_loop.subagent.runner import SubAgentRunner
         from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 
-        subagent_runner = SubAgentRunner(
-            llm=fake, registry=registry, session_store=session
-        )
+        subagent_runner = SubAgentRunner(llm=fake, registry=registry, session_store=session)
         registry.add_session_cancel_hook(subagent_runner.cancel_parent)
         registry.add_async_obligation_hook(subagent_runner.pending_obligations)
         registry.register(SpawnSubAgentTool(subagent_runner))
@@ -408,7 +406,9 @@ def pytest_configure(config):
         if script.exists():
             r = subprocess.run(
                 [sys.executable, str(script), str(root)],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             out = (r.stdout or "").strip()
             if out:

@@ -464,8 +464,7 @@ class EventStore:
                                 "fail_open": a.fail_open,
                             },
                             ensure_ascii=False,
-                        )
-                       .replace("\n", " ")
+                        ).replace("\n", " ")
                         + "\n"
                     )
         except OSError as exc:
@@ -490,4 +489,3 @@ class EventStore:
             )
         except (KeyError, ValueError, TypeError):
             return None
-

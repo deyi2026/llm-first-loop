@@ -14,7 +14,7 @@
 from llm_loop.config import load_env_file, load_settings
 from llm_loop.factory import build_engine
 
-load_env_file()              # 从项目根 .env 加载配置（环境变量优先）
+load_env_file()  # 从项目根 .env 加载配置（环境变量优先）
 engine = build_engine(load_settings())
 
 # 一次性对话（自动创建会话）：最简路径
@@ -46,7 +46,7 @@ print(result.final_answer)
 
 ### 注入自定义工具（B5）
 ```python
-engine.registry.register(MyTool())   # 实现 name/description/parameters/execute（见 §5）
+engine.registry.register(MyTool())  # 实现 name/description/parameters/execute（见 §5）
 # 注册后 AI 在下一轮循环即可自主调用（schema 自动注入）
 ```
 
@@ -72,6 +72,7 @@ engine.registry.register(MyTool())   # 实现 name/description/parameters/execut
 ```python
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
+
 class MyTool:
     name = "my_tool"
     description = "何时用/何时不用/失败对策"
@@ -79,8 +80,12 @@ class MyTool:
 
     def execute(self, **kwargs) -> ToolResult:
         # 返回五态之一：SUCCESS / FAILURE / ERROR / TIMEOUT / BLOCKED（禁止伪装成功）
-        return ToolResult(status=ToolResultStatus.SUCCESS, content="结果文本",
-                          tool_call_id="", tool_name=self.name)
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content="结果文本",
+            tool_call_id="",
+            tool_name=self.name,
+        )
 ```
 
 ### `ToolRegistry`
@@ -107,7 +112,7 @@ from llm_loop.config import load_env_file, load_settings
 from llm_loop.web import build_app
 
 load_env_file()
-app = build_app(settings=load_settings())   # FastAPI 应用（含鉴权/上传/SSE 全部端点）
+app = build_app(settings=load_settings())  # FastAPI 应用（含鉴权/上传/SSE 全部端点）
 # uvicorn.run(app, host="127.0.0.1", port=8902)
 ```
 

@@ -19,14 +19,28 @@ def test_session_stats_aggregates(build_test_engine):
     from llm_loop.core.message import Message, MessageSource
 
     sess = engine.session.load(sid)
-    sess.messages.append(Message(
-        role="assistant", content="回答", source=MessageSource.USER,
-        tokens_in=1000, tokens_out=200, tokens_cache_hit=700, llm_ms=3000.0, ttft_ms=800.0,
-    ))
-    sess.messages.append(Message(
-        role="tool", content="[状态: success] ok", tool_call_id="t1", tool_name="read_file",
-        source=MessageSource.USER, duration_ms=500.0,
-    ))
+    sess.messages.append(
+        Message(
+            role="assistant",
+            content="回答",
+            source=MessageSource.USER,
+            tokens_in=1000,
+            tokens_out=200,
+            tokens_cache_hit=700,
+            llm_ms=3000.0,
+            ttft_ms=800.0,
+        )
+    )
+    sess.messages.append(
+        Message(
+            role="tool",
+            content="[状态: success] ok",
+            tool_call_id="t1",
+            tool_name="read_file",
+            source=MessageSource.USER,
+            duration_ms=500.0,
+        )
+    )
     engine.session.save(sess)
     client = _make_client(engine)
     resp = client.get(f"/api/v1/sessions/{sid}/stats")

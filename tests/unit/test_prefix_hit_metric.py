@@ -35,8 +35,12 @@ def test_prefix_hit_pure_append(tmp_path):
     p = tmp_path / "t2.jsonl"
     os.environ["LLM_PAYLOAD_TRACE_PATH"] = str(p)
     os.environ["LLM_PAYLOAD_TRACE"] = "1"
-    _trace_payload_fingerprint({"messages": m1, "tools": []}, m1, session_id="s2", provider="p", model="m1")
-    _trace_payload_fingerprint({"messages": m2, "tools": []}, m2, session_id="s2", provider="p", model="m1")
+    _trace_payload_fingerprint(
+        {"messages": m1, "tools": []}, m1, session_id="s2", provider="p", model="m1"
+    )
+    _trace_payload_fingerprint(
+        {"messages": m2, "tools": []}, m2, session_id="s2", provider="p", model="m1"
+    )
     last = json.loads([ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()][-1])
     assert last["prefix_hit_msgs"] == 2, "m2 前两条与 m1 完全一致 → 公共前缀=2"
     assert last["prefix_hit_chars"] == len("S") + len("U1")
@@ -44,14 +48,26 @@ def test_prefix_hit_pure_append(tmp_path):
 
 def test_prefix_hit_breaks_at_first_diff(tmp_path):
     """中段插入场景: 断点=第一个不同消息索引（EVO-20260819 教训的定位能力）."""
-    m1 = [{"role": "system", "content": "S"}, {"role": "user", "content": "U1"}, {"role": "user", "content": "U2"}]
-    m2 = [{"role": "system", "content": "S"}, {"role": "user", "content": "CHANGED"}, {"role": "user", "content": "U2"}]
+    m1 = [
+        {"role": "system", "content": "S"},
+        {"role": "user", "content": "U1"},
+        {"role": "user", "content": "U2"},
+    ]
+    m2 = [
+        {"role": "system", "content": "S"},
+        {"role": "user", "content": "CHANGED"},
+        {"role": "user", "content": "U2"},
+    ]
     _PREFIX_TRACE_STATE.pop(("s3", "m1"), None)
     p = tmp_path / "t3.jsonl"
     os.environ["LLM_PAYLOAD_TRACE_PATH"] = str(p)
     os.environ["LLM_PAYLOAD_TRACE"] = "1"
-    _trace_payload_fingerprint({"messages": m1, "tools": []}, m1, session_id="s3", provider="p", model="m1")
-    _trace_payload_fingerprint({"messages": m2, "tools": []}, m2, session_id="s3", provider="p", model="m1")
+    _trace_payload_fingerprint(
+        {"messages": m1, "tools": []}, m1, session_id="s3", provider="p", model="m1"
+    )
+    _trace_payload_fingerprint(
+        {"messages": m2, "tools": []}, m2, session_id="s3", provider="p", model="m1"
+    )
     last = json.loads(p.read_text(encoding="utf-8").splitlines()[-1])
     assert last["prefix_hit_msgs"] == 1, "第 2 条(索引1)内容变化 → 断点前缀=1"
     assert last["prefix_hit_chars"] == len("S")

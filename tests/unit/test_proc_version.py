@@ -34,12 +34,19 @@ def test_process_versions_old_code_flagged(tmp_path, monkeypatch):
     path.parent.mkdir(parents=True, exist_ok=True)
     current = git_head()
     old_head = "deadbeef" if current != "deadbeef" else "cafebabe"
-    path.write_text(json.dumps({
-        "ts": "2026-08-11T00:00:00+00:00",
-        "pid": 9999,
-        "service": "old-svc",
-        "git_head": old_head,
-    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "ts": "2026-08-11T00:00:00+00:00",
+                "pid": 9999,
+                "service": "old-svc",
+                "git_head": old_head,
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     result = get_process_versions()
     old = [s for s in result["services"] if s["service"] == "old-svc"]
     assert len(old) == 1
@@ -53,7 +60,9 @@ def test_record_change_log(tmp_path, monkeypatch):
     record_change_log("execute_command", "echo test", session_id="s1")
     path = tmp_path / "audit" / "change_log.jsonl"
     assert path.exists()
-    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    records = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     assert len(records) == 1
     assert records[0]["tool"] == "execute_command"
     assert records[0]["session_id"] == "s1"

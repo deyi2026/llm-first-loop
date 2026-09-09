@@ -6,6 +6,7 @@ prints or persists secret values, endpoint URLs, raw HTTP bodies, or raw model a
 wire payload is the frozen R7 A/B message structure and the transport is the production
 LLMClient. This script is evidence-only: it does not mutate providers.json or apply profiles.
 """
+
 from __future__ import annotations
 
 import argparse

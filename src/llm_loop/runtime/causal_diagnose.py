@@ -48,19 +48,11 @@ def _attempts(events: Iterable[Any]) -> list[_Attempt]:
     for index, (seq, event_type, payload) in enumerate(request_rows):
         next_seq = request_rows[index + 1][0] if index + 1 < len(request_rows) else 2**63 - 1
         usage = next(
-            (
-                p
-                for s, t, p in rows
-                if seq < s < next_seq and t == "request.usage"
-            ),
+            (p for s, t, p in rows if seq < s < next_seq and t == "request.usage"),
             None,
         )
         interruption = next(
-            (
-                p
-                for s, t, p in rows
-                if seq < s < next_seq and t == "llm.interrupted"
-            ),
+            (p for s, t, p in rows if seq < s < next_seq and t == "llm.interrupted"),
             None,
         )
         out.append(
@@ -161,7 +153,6 @@ def _normalized_continuity(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-
 def _normalized_wire_transform(payload: dict[str, Any]) -> dict[str, Any]:
     transform = payload.get("transform") or {}
     return {
@@ -183,6 +174,7 @@ def _normalized_cache(attempt: _Attempt) -> dict[str, Any] | None:
         "cache_prefix_epoch": int(usage.get("cache_prefix_epoch", 0) or 0),
         "compaction_epoch": int(usage.get("compaction_epoch", 0) or 0),
     }
+
 
 def _stage_values(attempt: _Attempt) -> list[tuple[str, Any]]:
     payload = attempt.payload
@@ -224,8 +216,14 @@ def _attempt_card(attempt: _Attempt) -> dict[str, Any]:
         "attempt_kind": str(payload.get("attempt_kind") or "primary"),
         "attempt_index": int(payload.get("attempt_index", 0) or 0),
         "round": int(payload.get("round", 0) or 0),
-        "model": str(payload.get("model") or (payload.get("generation_contract") or {}).get("model") or ""),
-        "provider": str((payload.get("generation_contract") or {}).get("provider") or payload.get("provider") or ""),
+        "model": str(
+            payload.get("model") or (payload.get("generation_contract") or {}).get("model") or ""
+        ),
+        "provider": str(
+            (payload.get("generation_contract") or {}).get("provider")
+            or payload.get("provider")
+            or ""
+        ),
         "runtime_snapshot_id": str(runtime.get("snapshot_id") or ""),
         "history_chars": int(payload.get("history_chars", 0) or 0),
         "reasoning_chars": int(payload.get("reasoning_chars", 0) or 0),
@@ -316,7 +314,6 @@ def _constraint_hits(target: _Attempt) -> list[dict[str, Any]]:
     return hits
 
 
-
 def _target_unknowns(target: _Attempt, target_card: dict[str, Any]) -> list[str]:
     unknown: list[str] = []
     if not target_card["runtime_snapshot_id"] and target.event_type == "request.meta":
@@ -326,8 +323,11 @@ def _target_unknowns(target: _Attempt, target_card: dict[str, Any]) -> list[str]
         if not isinstance((target.interruption or {}).get("completion_tokens"), int):
             unknown.append("provider completion constraint unknown")
     if target.event_type == "request.attempt" and not target.payload.get("influence"):
-        unknown.append("exceptional attempt reuses/rebuilds prior projection; full stage influence not recorded")
+        unknown.append(
+            "exceptional attempt reuses/rebuilds prior projection; full stage influence not recorded"
+        )
     return unknown
+
 
 def diagnose_causality(events: Iterable[Any], *, target_attempt_id: str = "") -> dict[str, Any]:
     """Return a bounded mechanical comparison; never mutate runtime or infer answer quality."""
@@ -402,7 +402,9 @@ def diagnose_causality(events: Iterable[Any], *, target_attempt_id: str = "") ->
     }
 
 
-def diagnose_event_store(store: Any, session_id: str, *, target_attempt_id: str = "") -> dict[str, Any]:
+def diagnose_event_store(
+    store: Any, session_id: str, *, target_attempt_id: str = ""
+) -> dict[str, Any]:
     if not session_id:
         return {
             "status": "session_required",

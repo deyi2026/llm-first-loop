@@ -55,10 +55,16 @@ effective_budget = min(
 **真相源是 event_logs 的 request.meta**（每轮含 model/budget/history_chars/reasoning_chars/provider_visible_chars），不是 .env：
 ```python
 # 查每轮真实 budget
-reqs = [(json.loads(l)['ts'], json.loads(l)['payload']) for l in open(log) if 'request.meta' in l]
+reqs = [(json.loads(l)["ts"], json.loads(l)["payload"]) for l in open(log) if "request.meta" in l]
 for ts, p in reqs[-5:]:
-    print(ts[11:19], p.get('model'), p.get('budget'),
-          p.get('history_chars'), p.get('reasoning_chars'), p.get('provider_visible_chars'))
+    print(
+        ts[11:19],
+        p.get("model"),
+        p.get("budget"),
+        p.get("history_chars"),
+        p.get("reasoning_chars"),
+        p.get("provider_visible_chars"),
+    )
 ```
 
 **注意**：request.meta 里 model 字段才是实际运行模型（可能被 session model_override 覆盖）；budget 才是真正生效预算（min 链结果）。先查 model 再查对应 provider 的预算配置。

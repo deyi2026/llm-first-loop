@@ -62,15 +62,18 @@ def test_ck_final_terminal_release_preserves_workspace_artifact_across_session_d
         effect_kind="file_replace",
     )
     journal = ExternalExecutionJournal(events)
-    assert journal.launched(
-        session_id=producer_sid,
-        job_id="ck-final-job",
-        workspace_root=str(workspace),
-        executor="execute_command",
-        command_sha256="d" * 64,
-        pid=8181,
-        pgid=8181,
-    ) is not None
+    assert (
+        journal.launched(
+            session_id=producer_sid,
+            job_id="ck-final-job",
+            workspace_root=str(workspace),
+            executor="execute_command",
+            command_sha256="d" * 64,
+            pid=8181,
+            pgid=8181,
+        )
+        is not None
+    )
 
     # A nonterminal external execution is a mechanical deletion fence. Deletion
     # must not signal/reclaim the process or erase its durable ownership facts.
@@ -82,12 +85,15 @@ def test_ck_final_terminal_release_preserves_workspace_artifact_across_session_d
     assert pending is not None and pending.state == "running"
 
     # Only a durable terminal fact releases the physical-session deletion fence.
-    assert journal.terminal(
-        session_id=producer_sid,
-        job_id="ck-final-job",
-        exit_code=0,
-        killed=False,
-    ) is not None
+    assert (
+        journal.terminal(
+            session_id=producer_sid,
+            job_id="ck-final-job",
+            exit_code=0,
+            killed=False,
+        )
+        is not None
+    )
     assert engine.session.delete(producer_sid) is True
     assert engine.session.exists(producer_sid) is False
     assert events.exists(producer_sid) is False
@@ -128,7 +134,13 @@ def test_ck_final_working_state_checkpoint_producer_remains_hold() -> None:
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
-            name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else ""
+            )
             if name == "build_working_state_checkpoint":
                 calls.append(f"{path}:{node.lineno}")
 
@@ -143,28 +155,39 @@ def test_ck_final_external_execution_events_never_grant_auto_reclaim(tmp_path: P
     events = EventStore(tmp_path / "events", enabled=True)
     sid = "ck-final-owner"
     journal = ExternalExecutionJournal(events)
-    assert journal.launched(
-        session_id=sid,
-        job_id="ck-final-job",
-        workspace_root=str(tmp_path),
-        executor="execute_command",
-        command_sha256="e" * 64,
-        pid=9191,
-        pgid=9191,
-    ) is not None
-    assert journal.cancel_requested(
-        session_id=sid,
-        job_id="ck-final-job",
-        reason="user_job_kill",
-    ) is not None
-    assert journal.terminal(
-        session_id=sid,
-        job_id="ck-final-job",
-        exit_code=-15,
-        killed=True,
-    ) is not None
+    assert (
+        journal.launched(
+            session_id=sid,
+            job_id="ck-final-job",
+            workspace_root=str(tmp_path),
+            executor="execute_command",
+            command_sha256="e" * 64,
+            pid=9191,
+            pgid=9191,
+        )
+        is not None
+    )
+    assert (
+        journal.cancel_requested(
+            session_id=sid,
+            job_id="ck-final-job",
+            reason="user_job_kill",
+        )
+        is not None
+    )
+    assert (
+        journal.terminal(
+            session_id=sid,
+            job_id="ck-final-job",
+            exit_code=-15,
+            killed=True,
+        )
+        is not None
+    )
 
-    lifecycle = [event for event in events.read(sid) if event.type.startswith("external.execution.")]
+    lifecycle = [
+        event for event in events.read(sid) if event.type.startswith("external.execution.")
+    ]
     assert [event.type for event in lifecycle] == [
         "external.execution.launched",
         "external.execution.cancel_requested",

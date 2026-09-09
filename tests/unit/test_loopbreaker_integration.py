@@ -18,9 +18,7 @@ def _read_audit(engine) -> list[dict]:
     if not path.exists():
         return []
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -28,10 +26,7 @@ def test_five_identical_read_calls_all_execute(build_test_engine, tmp_path):
     probe = tmp_path / "repeat-observation-probe.txt"
     probe.write_text("repeat probe\n", encoding="utf-8")
     engine, _fake = build_test_engine(
-        [
-            {"content": "", "tool_calls": [_tc(i, probe)]}
-            for i in range(1, 6)
-        ]
+        [{"content": "", "tool_calls": [_tc(i, probe)]} for i in range(1, 6)]
         + [{"content": "done", "tool_calls": []}]
     )
     sid = engine.session.create()
@@ -58,17 +53,12 @@ def test_repeated_calls_preserve_declaration_receipt_pairing(build_test_engine, 
     probe = tmp_path / "pairing-probe.txt"
     probe.write_text("pairing probe\n", encoding="utf-8")
     engine, _fake = build_test_engine(
-        [
-            {"content": "", "tool_calls": [_tc(i, probe)]}
-            for i in range(1, 5)
-        ]
+        [{"content": "", "tool_calls": [_tc(i, probe)]} for i in range(1, 5)]
         + [{"content": "done", "tool_calls": []}]
     )
     sid = engine.session.create()
     engine.run(sid, "重复调用配对测试")
     msgs = engine.session.load(sid).messages
-    declared = {
-        tc["id"] for m in msgs if m.role == "assistant" for tc in (m.tool_calls or [])
-    }
+    declared = {tc["id"] for m in msgs if m.role == "assistant" for tc in (m.tool_calls or [])}
     answered = {m.tool_call_id for m in msgs if m.role == "tool" and m.tool_call_id}
     assert declared == answered

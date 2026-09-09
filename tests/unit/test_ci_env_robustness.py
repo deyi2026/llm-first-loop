@@ -21,7 +21,6 @@ def _real_llm_settings_module(name: str):
 def test_empty_string_env_falls_back(monkeypatch, tmp_path):
     """LLM_BASE_URL/LLM_MODEL 空串（CI secrets 未配置形态）→ 回退默认（根因回归）."""
 
-
     # 复现 CI 形态：变量存在但为空串
     monkeypatch.setenv("LLM_BASE_URL", "")
     monkeypatch.setenv("LLM_MODEL", "")

@@ -32,7 +32,12 @@ for idx, row in enumerate(rows, 1):
     row["run_id"] = f"R7V2-{idx:03d}"
 MATRIX_OUT.write_text(
     json.dumps(
-        {"schema": "evidence-r7v2-matrix-v1", "random_seed": SEED, "count": len(rows), "runs": rows},
+        {
+            "schema": "evidence-r7v2-matrix-v1",
+            "random_seed": SEED,
+            "count": len(rows),
+            "runs": rows,
+        },
         ensure_ascii=False,
         indent=2,
     )

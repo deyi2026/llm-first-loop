@@ -48,7 +48,10 @@ CHECKPOINT_GOAL_TOOL_DEF: dict = {
         "properties": {
             "goal_id": {"type": "string", "description": "目标 id（get_goal 返回）"},
             "what": {"type": "string", "description": "本里程碑变化（What）"},
-            "evidence": {"type": "string", "description": "权威证据（Evidence，工具回执/文件路径/状态）"},
+            "evidence": {
+                "type": "string",
+                "description": "权威证据（Evidence，工具回执/文件路径/状态）",
+            },
             "path": {"type": "string", "description": "影响路径或外部状态（Path）"},
             "next": {"type": "string", "description": "确切下一步（Next）"},
         },
@@ -66,7 +69,10 @@ GET_GOAL_TOOL_DEF: dict = {
     "parameters": {
         "type": "object",
         "properties": {
-            "goal_id": {"type": "string", "description": "目标 id（可选；缺省返回最近 active 或最近一条）"},
+            "goal_id": {
+                "type": "string",
+                "description": "目标 id（可选；缺省返回最近 active 或最近一条）",
+            },
         },
     },
 }
@@ -89,7 +95,12 @@ UPDATE_GOAL_TOOL_DEF: dict = {
     },
 }
 
-GOAL_TOOL_DEFS = [CREATE_GOAL_TOOL_DEF, CHECKPOINT_GOAL_TOOL_DEF, GET_GOAL_TOOL_DEF, UPDATE_GOAL_TOOL_DEF]
+GOAL_TOOL_DEFS = [
+    CREATE_GOAL_TOOL_DEF,
+    CHECKPOINT_GOAL_TOOL_DEF,
+    GET_GOAL_TOOL_DEF,
+    UPDATE_GOAL_TOOL_DEF,
+]
 
 
 def _store(ctx: Any, audit_dir: str | None) -> GoalStore | None:
@@ -105,10 +116,17 @@ def _store(ctx: Any, audit_dir: str | None) -> GoalStore | None:
 def run_create_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     objective = str(args.get("objective", "")).strip()
     if not objective:
-        return ToolResult(ToolResultStatus.FAILURE, "[参数错误] 缺少必填参数 'objective'（任务目标）", "", "create_goal")
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            "[参数错误] 缺少必填参数 'objective'（任务目标）",
+            "",
+            "create_goal",
+        )
     store = _store(ctx, str(host.audit_dir) if host.audit_dir else None)
     if store is None:
-        return ToolResult(ToolResultStatus.FAILURE, "[goal 存储不可用] audit_dir 未装配", "", "create_goal")
+        return ToolResult(
+            ToolResultStatus.FAILURE, "[goal 存储不可用] audit_dir 未装配", "", "create_goal"
+        )
     explicit_sid = str(args.get("session_id", "") or "").strip()
     if explicit_sid:
         sid = explicit_sid
@@ -120,18 +138,26 @@ def run_create_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     return ToolResult(
         ToolResultStatus.SUCCESS,
         f"[目标已创建] id={g.id} status=active\n目标: {g.objective[:200]}\n有界推进: 里程碑 checkpoint 收敛，禁止无界循环；遇边界暂停等人工确认。",
-        "", "create_goal",
+        "",
+        "create_goal",
     )
 
 
 def run_checkpoint_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     store = _store(ctx, str(host.audit_dir) if host.audit_dir else None)
     if store is None:
-        return ToolResult(ToolResultStatus.FAILURE, "[goal 存储不可用] audit_dir 未装配", "", "checkpoint_goal")
+        return ToolResult(
+            ToolResultStatus.FAILURE, "[goal 存储不可用] audit_dir 未装配", "", "checkpoint_goal"
+        )
     gid = str(args.get("goal_id", "")).strip()
     what = str(args.get("what", "")).strip()
     if not gid or not what:
-        return ToolResult(ToolResultStatus.FAILURE, "[参数错误] 缺少必填参数 goal_id / what", "", "checkpoint_goal")
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            "[参数错误] 缺少必填参数 goal_id / what",
+            "",
+            "checkpoint_goal",
+        )
     try:
         updated = store.checkpoint(
             gid,
@@ -150,19 +176,27 @@ def run_checkpoint_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     except ValueError as exc:
         return ToolResult(ToolResultStatus.FAILURE, f"[参数错误] {exc}", "", "checkpoint_goal")
     if updated is None:
-        return ToolResult(ToolResultStatus.FAILURE, f"[checkpoint 失败] 目标 {gid} 不存在或非 active", "", "checkpoint_goal")
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            f"[checkpoint 失败] 目标 {gid} 不存在或非 active",
+            "",
+            "checkpoint_goal",
+        )
     n = len(updated.get("checkpoints", []))
     return ToolResult(
         ToolResultStatus.SUCCESS,
         f"[checkpoint 已记录] goal={gid} 累计 {n} 次 | 最新: {what[:100]}",
-        "", "checkpoint_goal",
+        "",
+        "checkpoint_goal",
     )
 
 
 def run_get_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     store = _store(ctx, str(host.audit_dir) if host.audit_dir else None)
     if store is None:
-        return ToolResult(ToolResultStatus.FAILURE, "[goal 存储不可用] audit_dir 未装配", "", "get_goal")
+        return ToolResult(
+            ToolResultStatus.FAILURE, "[goal 存储不可用] audit_dir 未装配", "", "get_goal"
+        )
     gid = str(args.get("goal_id", "") or "").strip()
     try:
         if gid:
@@ -184,11 +218,11 @@ def run_get_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
         return ToolResult(ToolResultStatus.SUCCESS, "[无活动目标] 尚未 create_goal", "", "get_goal")
     cps = g.get("checkpoints", [])
     recent = cps[-3:][::-1]
-    lines = [f"目标: {g.get('objective','')[:200]}", f"状态: {g.get('status')} | id={g.get('id')}"]
+    lines = [f"目标: {g.get('objective', '')[:200]}", f"状态: {g.get('status')} | id={g.get('id')}"]
     if cps:
         lines.append(f"checkpoints: {len(cps)} 次")
         for cp in recent:
-            lines.append(f"  [{cp.get('ts','')[11:19]}] {str(cp.get('what',''))[:80]}")
+            lines.append(f"  [{cp.get('ts', '')[11:19]}] {str(cp.get('what', ''))[:80]}")
     else:
         lines.append("checkpoints: 无（首个里程碑后 checkpoint_goal）")
     # DESIGN-20260828: 任务图摘要（跨会话恢复一并可见，fail-open）
@@ -207,11 +241,18 @@ def run_get_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
 def run_update_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     store = _store(ctx, str(host.audit_dir) if host.audit_dir else None)
     if store is None:
-        return ToolResult(ToolResultStatus.FAILURE, "[goal 存储不可用] audit_dir 未装配", "", "update_goal")
+        return ToolResult(
+            ToolResultStatus.FAILURE, "[goal 存储不可用] audit_dir 未装配", "", "update_goal"
+        )
     gid = str(args.get("goal_id", "")).strip()
     status = str(args.get("status", "")).strip()
     if not gid or status not in ("complete", "blocked"):
-        return ToolResult(ToolResultStatus.FAILURE, "[参数错误] goal_id + status ∈ {complete, blocked}", "", "update_goal")
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            "[参数错误] goal_id + status ∈ {complete, blocked}",
+            "",
+            "update_goal",
+        )
     # DESIGN-20260828 Task Frontier §2.1: complete 前置校验——任务图存在 open 任务时
     # 拒绝收口（pending/in_progress 需推进终态；blocked/failed 需取消或人工 waive）。
     if status == "complete" and host.audit_dir:
@@ -242,9 +283,13 @@ def run_update_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     except ValueError as exc:
         return ToolResult(ToolResultStatus.FAILURE, f"[状态更新拒绝] {exc}", "", "update_goal")
     if g is None:
-        return ToolResult(ToolResultStatus.FAILURE, f"[更新失败] 目标 {gid} 不存在", "", "update_goal")
+        return ToolResult(
+            ToolResultStatus.FAILURE, f"[更新失败] 目标 {gid} 不存在", "", "update_goal"
+        )
     return ToolResult(
         ToolResultStatus.SUCCESS,
-        f"[目标已更新] {gid} → {status}" + (f"\n理由: {str(args.get('reason',''))[:150]}" if args.get("reason") else ""),
-        "", "update_goal",
+        f"[目标已更新] {gid} → {status}"
+        + (f"\n理由: {str(args.get('reason', ''))[:150]}" if args.get("reason") else ""),
+        "",
+        "update_goal",
     )

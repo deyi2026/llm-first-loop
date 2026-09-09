@@ -19,7 +19,9 @@ class _FakeResponse:
 def test_web_fetch_success(monkeypatch):
     tool = WebFetchTool()
     # P0-2 后 httpx 通道收敛到 _request（手动重定向循环）；mock 该边界保持行为断言不变
-    with mock.patch.object(tool, "_request", return_value=_FakeResponse(200, "<html>Hello Page</html>")):
+    with mock.patch.object(
+        tool, "_request", return_value=_FakeResponse(200, "<html>Hello Page</html>")
+    ):
         r = tool.execute(url="https://example.com")
     assert r.status == ToolResultStatus.SUCCESS
     assert "Hello Page" in r.content
@@ -41,8 +43,11 @@ def test_web_fetch_missing_url():
 
 def test_web_fetch_http_error(monkeypatch):
     tool = WebFetchTool()
-    with mock.patch.object(tool, "_curl_fetch", return_value=None), mock.patch.object(
-        tool, "_request", return_value=_FakeResponse(404, reason_phrase="Not Found")
+    with (
+        mock.patch.object(tool, "_curl_fetch", return_value=None),
+        mock.patch.object(
+            tool, "_request", return_value=_FakeResponse(404, reason_phrase="Not Found")
+        ),
     ):
         r = tool.execute(url="https://example.com/missing")
     assert r.status == ToolResultStatus.FAILURE
@@ -51,8 +56,11 @@ def test_web_fetch_http_error(monkeypatch):
 
 def test_web_fetch_timeout(monkeypatch):
     tool = WebFetchTool()
-    with mock.patch.object(tool, "_curl_fetch", return_value=None), mock.patch.object(
-        tool, "_request", side_effect=__import__("httpx").TimeoutException("timeout")
+    with (
+        mock.patch.object(tool, "_curl_fetch", return_value=None),
+        mock.patch.object(
+            tool, "_request", side_effect=__import__("httpx").TimeoutException("timeout")
+        ),
     ):
         r = tool.execute(url="https://example.com")
     assert r.status == ToolResultStatus.TIMEOUT
@@ -63,21 +71,30 @@ def test_web_fetch_timeout_config(tmp_path, monkeypatch):
     # 默认兜底 30
     t_default = WebFetchTool()
     assert t_default._timeout_s == 30.0
-    with mock.patch.object(t_default, "_curl_fetch", return_value=None), mock.patch.object(
-        t_default, "_request", side_effect=__import__("httpx").TimeoutException("timeout")
+    with (
+        mock.patch.object(t_default, "_curl_fetch", return_value=None),
+        mock.patch.object(
+            t_default, "_request", side_effect=__import__("httpx").TimeoutException("timeout")
+        ),
     ):
         r = t_default.execute(url="https://example.com")
     assert "30s" in r.content and "curl 回退亦失败" in r.content
     # 配置注入 45
     t45 = WebFetchTool(timeout_s=45)
     assert t45._timeout_s == 45.0
-    with mock.patch.object(t45, "_curl_fetch", return_value=None), mock.patch.object(
-        t45, "_request", side_effect=__import__("httpx").TimeoutException("timeout")
+    with (
+        mock.patch.object(t45, "_curl_fetch", return_value=None),
+        mock.patch.object(
+            t45, "_request", side_effect=__import__("httpx").TimeoutException("timeout")
+        ),
     ):
         r45 = t45.execute(url="https://example.com")
     assert "45s" in r45.content
     # 传入的 httpx.Client 超时用配置值（直接构造验证 Client(timeout=...)）
-    with mock.patch.object(t45, "_curl_fetch", return_value=None), mock.patch("httpx.Client") as client_cls:
+    with (
+        mock.patch.object(t45, "_curl_fetch", return_value=None),
+        mock.patch("httpx.Client") as client_cls,
+    ):
         client_cls.return_value.__enter__.return_value.stream.side_effect = __import__(
             "httpx"
         ).TimeoutException("t")
@@ -210,15 +227,18 @@ def test_web_fetch_full_skips_truncation():
     """EVO-20260819 full=true: 超过 max_chars 不截断，一次返回全部正文."""
     tool = WebFetchTool()
     long_body = "X" * 2500
-    with mock.patch.object(tool, "_request", return_value=_FakeResponse(200, f"<html>{long_body}</html>")):
+    with mock.patch.object(
+        tool, "_request", return_value=_FakeResponse(200, f"<html>{long_body}</html>")
+    ):
         r = tool.execute(url="https://example.com", max_chars=1000)
     assert r.status == ToolResultStatus.SUCCESS
     assert "已截断" in r.content  # 默认截断
-    with mock.patch.object(tool, "_request", return_value=_FakeResponse(200, f"<html>{long_body}</html>")):
+    with mock.patch.object(
+        tool, "_request", return_value=_FakeResponse(200, f"<html>{long_body}</html>")
+    ):
         r2 = tool.execute(url="https://example.com", max_chars=1000, full=True)
     assert "已截断" not in r2.content
     assert long_body in r2.content  # 全文返回
-
 
 
 # ── 2026-08-20: 截断标记"事实+动作"两段式（停滞循环排查落地）──

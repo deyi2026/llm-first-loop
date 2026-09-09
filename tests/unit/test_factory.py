@@ -118,9 +118,7 @@ def test_model_registry_resolved_false_warns_on_resolve_failure(tmp_path, caplog
         engine = build_engine(settings)  # type: ignore[arg-type]
     # warning 含模型名与失败原因（不吞错）
     assert any(
-        "ghost-model" in r.message
-        and "resolve" in r.message
-        and "不在注册表" in r.message
+        "ghost-model" in r.message and "resolve" in r.message and "不在注册表" in r.message
         for r in caplog.records
     )
     snap = engine.status.snapshot(dimensions=["architecture_config"])
@@ -263,8 +261,11 @@ def test_workspace_changed_dimension_in_status(tmp_path):
     from llm_loop.factory import build_engine
 
     settings = Settings(
-        llm_api_key="k", llm_base_url="https://x/v1", llm_model="m",
-        data_dir=str(tmp_path / "data"), extract_enabled=False,
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
     )
     engine = build_engine(settings)  # type: ignore[arg-type]
     snap = engine.status.snapshot()
@@ -273,14 +274,19 @@ def test_workspace_changed_dimension_in_status(tmp_path):
     # 有 flag → 返回内容
     d = tmp_path / "data"
     d.mkdir(parents=True, exist_ok=True)
-    (d / "workspace_changed.json").write_text(_json.dumps({
-        "changed_at": "2026-08-16T00:00:00+00:00",
-        "changed_files": ["src/x.py"],
-        "note": "变更", "action": "restart",
-    }), encoding="utf-8")
+    (d / "workspace_changed.json").write_text(
+        _json.dumps(
+            {
+                "changed_at": "2026-08-16T00:00:00+00:00",
+                "changed_files": ["src/x.py"],
+                "note": "变更",
+                "action": "restart",
+            }
+        ),
+        encoding="utf-8",
+    )
     snap2 = engine.status.snapshot()
     assert snap2["workspace_changed"]["changed_files"] == ["src/x.py"]
-
 
 
 def test_workspace_migration_conflict_stops_engine_startup(tmp_path, monkeypatch):
@@ -320,7 +326,9 @@ def test_recovery_sessions_dir_follows_session_store_workspace_root(tmp_path, mo
     assert engine.corrections.recovery_sessions_dir == engine.session.root
 
 
-def test_recover_from_backup_restores_session_into_current_workspace_partition(tmp_path, monkeypatch):
+def test_recover_from_backup_restores_session_into_current_workspace_partition(
+    tmp_path, monkeypatch
+):
     """真实恢复工具成功后，session必须落当前workspace分区并立即可被SessionStore读取。"""
     from llm_loop.core.interop_watch import InboxWatcher
     from llm_loop.core.session import Session
@@ -533,11 +541,13 @@ def test_interop_watcher_observes_without_recent_session_attribution(tmp_path, m
     engine.inbox_watcher._on_notify(["coord.json"])
 
     assert event_calls == []
-    assert actions == [(
-        "interop.pending_notify",
-        "awaiting_user_authorization",
-        "count=1;files=coord.json;prompt_chars=0",
-    )]
+    assert actions == [
+        (
+            "interop.pending_notify",
+            "awaiting_user_authorization",
+            "count=1;files=coord.json;prompt_chars=0",
+        )
+    ]
 
 
 def test_interop_wakeup_never_starts_model_without_user_authorization(tmp_path, monkeypatch):
@@ -558,11 +568,13 @@ def test_interop_wakeup_never_starts_model_without_user_authorization(tmp_path, 
     engine.inbox_watcher._wakeup_fn(["coord.json"])
 
     assert starts == []
-    assert actions == [(
-        "interop.coordinate_wakeup",
-        "blocked_no_user_authorization",
-        "files=coord.json;prompt_chars=0",
-    )]
+    assert actions == [
+        (
+            "interop.coordinate_wakeup",
+            "blocked_no_user_authorization",
+            "files=coord.json;prompt_chars=0",
+        )
+    ]
 
 
 def test_schedule_wake_uses_delegated_same_session_runner_not_inbox_wakeup(tmp_path, monkeypatch):
@@ -594,11 +606,13 @@ def test_schedule_wake_uses_delegated_same_session_runner_not_inbox_wakeup(tmp_p
 
     engine.runner.start = _start
     assert engine.scheduler._notify(entry) is True
-    assert starts == [(
-        "sess-scheduled",
-        "[定时续跑·先前真人授权的程序委派·非新真人输入] 复查后台 job",
-        grant,
-    )]
+    assert starts == [
+        (
+            "sess-scheduled",
+            "[定时续跑·先前真人授权的程序委派·非新真人输入] 复查后台 job",
+            grant,
+        )
+    ]
     assert store.wake_grant(sid) is None, "成功启动后 one-shot grant 必须立即消费"
     # 模拟 run 已启动但 schedule ack 尚未落盘：同一 entry 再次交付时已无 capability，
     # 只能降级通知，不能重复自动启动第二个模型 run。

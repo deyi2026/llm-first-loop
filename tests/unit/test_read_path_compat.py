@@ -66,6 +66,7 @@ def _canonical(raw: dict) -> str:
 
 # ── 读路径零变化（tasks §9.1）──
 
+
 def test_migration_preserves_session_load_byte_identical(tmp_path):
     sessions_dir = tmp_path / "sessions"
     logs_dir = tmp_path / "event_logs"
@@ -155,11 +156,14 @@ def test_archive_get_by_tool_call_id_after_migration(tmp_path):
 
 # ── 写路径挂接（tasks §7.3，零回归红线）──
 
+
 def test_save_backfill_default_none_zero_behavior(tmp_path):
     sessions_dir = tmp_path / "sessions"
     logs_dir = tmp_path / "event_logs"
     store = SessionStore(sessions_dir)  # event_store 默认 None
-    session = Session(session_id="s1", messages=[Message(role="user", content="hi", source=MessageSource.USER)])
+    session = Session(
+        session_id="s1", messages=[Message(role="user", content="hi", source=MessageSource.USER)]
+    )
     store.save(session)
     assert store.exists("s1")
     assert not logs_dir.exists()  # 未注入事件存储 → 零行为，不创建事件目录
@@ -169,7 +173,9 @@ def test_save_backfill_disabled_zero_write(tmp_path):
     sessions_dir = tmp_path / "sessions"
     logs_dir = tmp_path / "event_logs"
     store = SessionStore(sessions_dir, event_store=EventStore(logs_dir, enabled=False))
-    session = Session(session_id="s1", messages=[Message(role="user", content="hi", source=MessageSource.USER)])
+    session = Session(
+        session_id="s1", messages=[Message(role="user", content="hi", source=MessageSource.USER)]
+    )
     store.save(session)
     assert store.exists("s1")
     assert not logs_dir.exists()  # event_log_enabled=False → 事件目录零写入
@@ -199,19 +205,23 @@ def test_save_backfill_appends_missing_message_events(tmp_path):
     sessions_dir = tmp_path / "sessions"
     logs_dir = tmp_path / "event_logs"
     store = SessionStore(sessions_dir, event_store=EventStore(logs_dir))
-    store.save(Session(
-        session_id="s1",
-        messages=[
-            Message(role="user", content="hi", source=MessageSource.USER),
-            Message(role="assistant", content="回答", source=MessageSource.USER),
-        ],
-    ))
+    store.save(
+        Session(
+            session_id="s1",
+            messages=[
+                Message(role="user", content="hi", source=MessageSource.USER),
+                Message(role="assistant", content="回答", source=MessageSource.USER),
+            ],
+        )
+    )
     event_store = EventStore(logs_dir)
     assert len(event_store.read("s1")) == 3
 
     # 追加 1 条消息再 save → 兜底补 index=2 的事件，不重复既有事件
     session = store.load("s1")
-    session.messages.append(Message(role="assistant", content="追加回答", source=MessageSource.USER))
+    session.messages.append(
+        Message(role="assistant", content="追加回答", source=MessageSource.USER)
+    )
     store.save(session)
     events = event_store.read("s1")
     assert len(events) == 4
@@ -233,7 +243,9 @@ def test_event_write_exception_fail_open(tmp_path):
             return False
 
     store = SessionStore(sessions_dir, event_store=BoomStore())
-    session = Session(session_id="s1", messages=[Message(role="user", content="hi", source=MessageSource.USER)])
+    session = Session(
+        session_id="s1", messages=[Message(role="user", content="hi", source=MessageSource.USER)]
+    )
     store.save(session)  # 事件写入抛异常 → save 不中断（fail-open）
     assert store.exists("s1")
 
@@ -289,7 +301,9 @@ def test_migration_preserves_version5_summary_state(tmp_path):
     raw = json.loads((sessions_dir / "s1.json").read_text(encoding="utf-8"))
     raw["fixed_summary"] = "固定核心事实"
     raw["summary_chain"] = ["增量一", "增量二"]
-    (sessions_dir / "s1.json").write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+    (sessions_dir / "s1.json").write_text(
+        json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     rep = run_migration(sessions_dir, logs_dir)
     assert rep.migrated == 1, rep.failed

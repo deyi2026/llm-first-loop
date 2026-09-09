@@ -2,6 +2,7 @@
 
 不变量映射：① 会话隔离（spec 4.1-1）/ ③ 终态墓碑（spec 4.1-3）+ design §2.1。
 """
+
 import json
 
 from llm_loop.cognitive.state import (

@@ -156,7 +156,9 @@ def test_tool_result_helper_preserves_evidence_metadata_without_raw_wire_leak():
     assert message.metadata["evidence_origin_facts"]["source_version_token"] == "stat:1:2"
     direct = result.to_message()
     assert direct.metadata["evidence_origin_facts"] == message.metadata["evidence_origin_facts"]
-    assert "2026-09-05T01:02:03+00:00" not in wire["content"]  # metadata stays off wire until projection
+    assert (
+        "2026-09-05T01:02:03+00:00" not in wire["content"]
+    )  # metadata stays off wire until projection
     assert message.metadata["source_resolution_mode"] == "source_execution"
     assert message.metadata["source_execution_performed"] is True
     assert "evidence://v1/abc" not in wire["content"]

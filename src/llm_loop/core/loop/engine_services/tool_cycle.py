@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class ToolCycleService:
     # legacy 字段名 stagnation_state 仅承载事实观测；P2-A 后无 breaker authority。
 
@@ -211,10 +212,7 @@ class ToolCycleService:
                     for call, result in zip(executable_calls, results, strict=False):
                         persist_finished(call, result)
         by_id = {r.tool_call_id: r for r in results if r.tool_call_id}
-        ordered = [
-            pre_results.get(call.id) or by_id.get(call.id)
-            for call in allowed_calls
-        ]
+        ordered = [pre_results.get(call.id) or by_id.get(call.id) for call in allowed_calls]
         return [r for r in ordered if r is not None], wal_messages, wal_result_sha
 
     def _execute_tools(
@@ -254,9 +252,7 @@ class ToolCycleService:
                 ],
                 reasoning_content=resp.reasoning_content,
                 metadata=(
-                    {"provider_replay": resp.provider_replay}
-                    if resp.provider_replay
-                    else {}
+                    {"provider_replay": resp.provider_replay} if resp.provider_replay else {}
                 ),
             )
             sess.messages.append(assistant_decl)
@@ -337,8 +333,8 @@ class ToolCycleService:
                     except GeneratorExit:
                         # 客户端断流：全部声明未执行 → 合成取消回执 + 落盘（防孤儿）
                         self._synthesize_cancelled(
-                            sess, valid_calls,
-                            executed_ids=set(), round_index=rounds)
+                            sess, valid_calls, executed_ids=set(), round_index=rounds
+                        )
                         try:
                             self._host.session.save(sess)
                         except Exception:  # noqa: BLE001 — 保存失败 fail-open
@@ -350,7 +346,8 @@ class ToolCycleService:
                 runner = getattr(self._host, "runner", None)
                 if runner is not None and runner.enabled and runner.is_cancelled(sess.session_id):
                     self._synthesize_cancelled(
-                        sess, valid_calls, executed_ids=set(), round_index=rounds)
+                        sess, valid_calls, executed_ids=set(), round_index=rounds
+                    )
                     self._reachability_finalize("cancelled_tools")
                     return
                 # P2-A Rule-first: every valid declaration reaches the normal execution/WAL
@@ -364,7 +361,8 @@ class ToolCycleService:
                     missing = [tc for tc in valid_calls if tc.id not in executed_ids]
                     if missing:
                         self._synthesize_cancelled(
-                            sess, missing, executed_ids=set(), round_index=rounds)
+                            sess, missing, executed_ids=set(), round_index=rounds
+                        )
                         logger.warning(
                             "工具对账不变量缺失: 声明 %d 结果 %d（%d 条合成取消）",
                             len(valid_calls),
@@ -397,9 +395,7 @@ class ToolCycleService:
                     )
                     self._round_obs.finalize("tool_response")
                 except Exception:  # noqa: BLE001 — observability must not block the run
-                    logger.debug(
-                        "reachability executed/finalize failed (fail-open)", exc_info=True
-                    )
+                    logger.debug("reachability executed/finalize failed (fail-open)", exc_info=True)
             # 注：唯一中断点 = tool_round yield（内层 except GeneratorExit 已合成+落盘+重抛）；
             # execute_many 后无 yield（同步阻塞），不重复外层兜底（防重复合成）
             except GeneratorExit:
@@ -415,11 +411,10 @@ class ToolCycleService:
         """
         try:
             from llm_loop.tools.eligibility import runtime_tool_health
+
             names = tuple(
                 dict.fromkeys(
-                    str(n)
-                    for n in (getattr(result, "capability_requirements", ()) or ())
-                    if str(n)
+                    str(n) for n in (getattr(result, "capability_requirements", ()) or ()) if str(n)
                 )
             )
             if not names:
@@ -473,9 +468,7 @@ class ToolCycleService:
         )
         self._record_tool_history(result)
         # H-UI: 工具结果（实时状态条）
-        self._host._notify_action(
-            "tool_result", tool_name=tc.name, status=result.status.value
-        )
+        self._host._notify_action("tool_result", tool_name=tc.name, status=result.status.value)
         tool_msg = prebuilt_tool_msg
         if tool_msg is None:
             tool_msg = tool_result_to_message(
@@ -518,8 +511,9 @@ class ToolCycleService:
             ),
         )
 
-    def _synthesize_cancelled(self, sess, calls, *,
-                              executed_ids: set[str], round_index: int) -> None:
+    def _synthesize_cancelled(
+        self, sess, calls, *, executed_ids: set[str], round_index: int
+    ) -> None:
         """HARNESS-01: 对未执行声明写合成取消回执（防孤儿 tool_calls → 下轮 400）.
 
         消息如实标注"声明后中断未执行"，status 不设（非五态结果，不伪造成功/失败）；
@@ -648,7 +642,6 @@ class ToolCycleService:
                 )
             )
 
-
     def _record_current_provider_callable(self, schemas) -> None:
         """Record the exact current provider surface for schema-introspection truth."""
         try:
@@ -659,7 +652,6 @@ class ToolCycleService:
             }
         except Exception:  # noqa: BLE001 — introspection fact cannot block the run
             logger.debug("current provider callable surface record failed", exc_info=True)
-
 
     def _project_tool_schemas_for_round(
         self,
@@ -695,7 +687,11 @@ class ToolCycleService:
             self._round_obs.begin_round(
                 session_id=(
                     str(self._host._run_state_mgr.bound_session_id() or "")
-                    if callable(getattr(getattr(self._host, "_run_state_mgr", None), "bound_session_id", None))
+                    if callable(
+                        getattr(
+                            getattr(self._host, "_run_state_mgr", None), "bound_session_id", None
+                        )
+                    )
                     else ""
                 ),
                 round_no=int(logical_round or 0),

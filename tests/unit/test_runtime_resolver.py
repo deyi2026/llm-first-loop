@@ -3,6 +3,7 @@
 核心验收（design §5.3 矩阵第 6/7 行）：
   shell 残留 LLM_MODEL 不覆盖 .env；显式 CLI/ALLOW_OVERRIDE 才生效且被记录。
 """
+
 import os
 from pathlib import Path
 
@@ -21,13 +22,16 @@ def _make_env_file(tmp_path: Path, lines: list[str]) -> Path:
 
 def test_parse_env_file_strips_comments_and_trailing_spaces(tmp_path):
     """与 config.load_env_file 语义对齐：行内注释剥离、尾空格去除、非法键跳过。"""
-    f = _make_env_file(tmp_path, [
-        "LLM_MODEL=glm/glm-5.3  # 主力模型",
-        "HISTORY_MAX_CHARS=150000  ",
-        "# 注释行",
-        "非法键=值",
-        "WEB_PORT=8902",
-    ])
+    f = _make_env_file(
+        tmp_path,
+        [
+            "LLM_MODEL=glm/glm-5.3  # 主力模型",
+            "HISTORY_MAX_CHARS=150000  ",
+            "# 注释行",
+            "非法键=值",
+            "WEB_PORT=8902",
+        ],
+    )
     parsed = parse_env_file(f)
     assert parsed["LLM_MODEL"] == "glm/glm-5.3"
     assert parsed["HISTORY_MAX_CHARS"] == "150000"
@@ -46,7 +50,8 @@ def test_stale_shell_env_does_not_override_dotenv(tmp_path):
     """矩阵第 6 行：shell 残留 LLM_MODEL 不覆盖 .env。"""
     _make_env_file(tmp_path, ["LLM_MODEL=glm/glm-5.3"])
     ec = resolve_effective(
-        "web", env={"LLM_MODEL": "deepseek/deepseek-v4-flash"},
+        "web",
+        env={"LLM_MODEL": "deepseek/deepseek-v4-flash"},
         workspace_root=tmp_path,
     )
     assert ec.values["LLM_MODEL"] == "glm/glm-5.3"
@@ -70,7 +75,8 @@ def test_shell_override_needs_explicit_flag(tmp_path):
 def test_cli_override_highest_priority(tmp_path):
     _make_env_file(tmp_path, ["LLM_MODEL=glm/glm-5.3"])
     ec = resolve_effective(
-        "web", cli_overrides={"LLM_MODEL": "minimax/MiniMax-M3"},
+        "web",
+        cli_overrides={"LLM_MODEL": "minimax/MiniMax-M3"},
         env={"LLM_MODEL": "deepseek/deepseek-v4-flash"},
         workspace_root=tmp_path,
     )
@@ -115,6 +121,7 @@ def test_summary_no_secret_leak(tmp_path):
 def test_launch_dry_run(tmp_path, capsys, monkeypatch):
     """launch --dry-run：打印 effective 摘要，不启动服务。"""
     from llm_loop.runtime.launch import main as launch_main
+
     _make_env_file(tmp_path, ["LLM_MODEL=glm/glm-5.3"])
     monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.delenv("PYTHONPATH", raising=False)

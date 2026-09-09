@@ -65,7 +65,9 @@ def test_history_messages_reasoning_content(build_test_engine):
     hist = client.get(f"/api/v1/sessions/{sid}/messages")
     msgs = hist.json()["messages"]
     assistant_msgs = [m for m in msgs if m["role"] == "assistant"]
-    assert any(m.get("reasoning_content") for m in assistant_msgs), "历史 assistant 消息无 reasoning_content"
+    assert any(m.get("reasoning_content") for m in assistant_msgs), (
+        "历史 assistant 消息无 reasoning_content"
+    )
 
 
 def test_old_frontend_compat_static(app_js_src: str):

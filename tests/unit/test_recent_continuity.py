@@ -237,7 +237,6 @@ def test_tool_round_keeps_prior_assistant_before_current_user_without_reordering
     assert all("reasoning_content" not in item for item in out if item.get("content") == "OLD-A")
 
 
-
 def test_short_continue_keeps_only_immediately_recent_model_context() -> None:
     """“继续”只获得最近交互结构；旧 assistant 任务不得被 recent-continuity 复活。"""
     old_user = _user("处理旧的 fail-closed 补丁")
@@ -251,9 +250,7 @@ def test_short_continue_keeps_only_immediately_recent_model_context() -> None:
         {"role": "user", "content": "继续"},
     ]
 
-    out, info = apply_recent_continuity_suffix(
-        built, session_messages=session, current_turn_ref=4
-    )
+    out, info = apply_recent_continuity_suffix(built, session_messages=session, current_turn_ref=4)
 
     assert info["source"] == "recent_assistant_only"
     assert info["dialogue_pairs"] == 0
@@ -274,9 +271,7 @@ def test_interruption_resume_preserves_provider_native_replay_marker() -> None:
     replay = {
         "provider": "minimax",
         "fields": {
-            "reasoning_details": [
-                {"type": "reasoning.text", "text": "plan", "signature": "sig-1"}
-            ]
+            "reasoning_details": [{"type": "reasoning.text", "text": "plan", "signature": "sig-1"}]
         },
     }
     built = [
@@ -405,8 +400,7 @@ def test_current_turn_capability_fact_does_not_hide_current_human_identity() -> 
     current_user = _user("continue")
     current_wire = current_user.to_llm_dict()
     current_wire["content"] += (
-        "\n[能力边界事实]\n"
-        "tool=browser_exec; available=false; reason=runtime_unhealthy"
+        "\n[能力边界事实]\ntool=browser_exec; available=false; reason=runtime_unhealthy"
     )
 
     out, info = apply_recent_continuity_suffix(
@@ -497,7 +491,9 @@ def test_recent_continuity_does_not_repromote_older_human_tasks_for_cross_turn_r
     url_user = _user("https://example.test/context-layer")
     url_assistant = _model("这篇文章讲的是 Context Layer。", resolved=True)
     analysis_user = _user("是的，你分析这个技术的可行性。")
-    analysis_assistant = _model("Context Layer 技术整体可行，核心是缓存、合并与上下文裁剪。", resolved=True)
+    analysis_assistant = _model(
+        "Context Layer 技术整体可行，核心是缓存、合并与上下文裁剪。", resolved=True
+    )
     compare_user = _user("和我们项目的技术相比呢？")
     compare_assistant = _model("我需要先了解你们项目。", resolved=True)
     agent_user = _user("你现在在用的这个 AI Agent 架构啊。")
@@ -549,9 +545,7 @@ def test_recent_assistant_projection_keeps_only_latest_answer_under_char_budget(
     session = [old_user, old_assistant, recent_user, recent_assistant, current_user]
     built = [{"role": "system", "content": "SYS"}, {"role": "user", "content": "CURRENT"}]
 
-    out, info = apply_recent_continuity_suffix(
-        built, session_messages=session, current_turn_ref=4
-    )
+    out, info = apply_recent_continuity_suffix(built, session_messages=session, current_turn_ref=4)
 
     assert info["dialogue_pairs"] == 0
     assert info["assistant_context"] == 1
@@ -570,9 +564,7 @@ def test_unresolved_human_turn_blocks_reaching_older_completed_dialogue() -> Non
     session = [old_user, old_assistant, unresolved_user, current_user]
     built = [{"role": "system", "content": "SYS"}, {"role": "user", "content": "CURRENT-Q"}]
 
-    out, info = apply_recent_continuity_suffix(
-        built, session_messages=session, current_turn_ref=3
-    )
+    out, info = apply_recent_continuity_suffix(built, session_messages=session, current_turn_ref=3)
 
     assert info["dialogue_pairs"] == 0
     assert info["source"] == "current_user_only"
@@ -593,14 +585,17 @@ def test_resolved_human_task_is_not_repromoted_in_swarmforge_followup() -> None:
     )
     current_user = _user("需要")
     session = [
-        health_user, health_assistant, link_user, wrong_link_assistant,
-        correction_user, analysis_assistant, current_user,
+        health_user,
+        health_assistant,
+        link_user,
+        wrong_link_assistant,
+        correction_user,
+        analysis_assistant,
+        current_user,
     ]
     built = [{"role": "system", "content": "SYS"}, {"role": "user", "content": "需要"}]
 
-    out, info = apply_recent_continuity_suffix(
-        built, session_messages=session, current_turn_ref=6
-    )
+    out, info = apply_recent_continuity_suffix(built, session_messages=session, current_turn_ref=6)
 
     assert info["source"] == "recent_assistant_only"
     assert info["historical_user_messages"] == 0

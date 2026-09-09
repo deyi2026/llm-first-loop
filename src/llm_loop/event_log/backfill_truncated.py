@@ -67,7 +67,7 @@ def _digest_from_payload(reason: str, payload: dict[str, Any]) -> str:
     preview = str(payload.get("answer_preview") or "")
     for line in preview.splitlines():
         if line.startswith("原因: "):
-            return line[len("原因: "):].strip()
+            return line[len("原因: ") :].strip()
     return preview.strip()
 
 
@@ -129,9 +129,7 @@ def backfill_truncated_runs(
                     run_end_seq=int(run["seq"] or 0),
                 )
             except Exception:  # noqa: BLE001 — 单行失败不阻断（幂等键可安全重跑）
-                logger.warning(
-                    "回填写行失败: sid=%s seq=%s", sid, run["seq"], exc_info=True
-                )
+                logger.warning("回填写行失败: sid=%s seq=%s", sid, run["seq"], exc_info=True)
                 report["errors"] += 1
                 continue
             if written:

@@ -271,7 +271,9 @@ class FakeR4LLM:
         self.source_path = source_path
         self.step = 0
 
-    def chat_stream(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], **kwargs: Any):
+    def chat_stream(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], **kwargs: Any
+    ):
         response = self._response(messages)
         if False:  # pragma: no cover
             yield None
@@ -292,7 +294,11 @@ class FakeR4LLM:
     @staticmethod
     def _latest_next_start(messages: list[dict[str, Any]]) -> int:
         for content in reversed(FakeR4LLM._tool_contents(messages)):
-            body = content.split("] ", 1)[1] if content.startswith("[状态:") and "] " in content else content
+            body = (
+                content.split("] ", 1)[1]
+                if content.startswith("[状态:") and "] " in content
+                else content
+            )
             try:
                 payload = json.loads(body)
             except json.JSONDecodeError:
@@ -357,7 +363,12 @@ class FakeR4LLM:
                 return self._final(self.fixture.answer)
             return self._tool(
                 "read_evidence",
-                {"evidence_ref": ref, "range_type": "text_char", "start": self._latest_next_start(messages), "limit": 4000},
+                {
+                    "evidence_ref": ref,
+                    "range_type": "text_char",
+                    "start": self._latest_next_start(messages),
+                    "limit": 4000,
+                },
             )
         if seed == "K2":
             if "R4-K2-LEFT:" not in joined:
@@ -367,7 +378,9 @@ class FakeR4LLM:
             return self._final(self.fixture.answer)
         if seed == "K3":
             if "ACTION BUSINESS RECEIPT:" not in joined:
-                return self._tool("search_evidence", {"query": '"ACTION BUSINESS RECEIPT"', "limit": 5})
+                return self._tool(
+                    "search_evidence", {"query": '"ACTION BUSINESS RECEIPT"', "limit": 5}
+                )
             return self._final(self.fixture.answer)
         if seed == "K4":
             if "content=blocked" not in joined and "evidence_hydration_blocked" not in joined:
@@ -408,7 +421,7 @@ def _task_prompt(fixture: R4Fixture, source_path: str | None) -> str:
         source_note = "Source snapshot: r4_snapshot with source=fixture://r4/k6."
     return (
         f"R4 fresh holdout task {fixture.seed_id}.\n{source_note}\n{fixture.task}\n"
-        "Inspect the evidence needed for the answer. Return only JSON: {\"answer\":\"<value>\"}. Do not guess."
+        'Inspect the evidence needed for the answer. Return only JSON: {"answer":"<value>"}. Do not guess.'
     )
 
 
@@ -427,7 +440,13 @@ def _current_manifest(
 
 def _build_registry(
     *, fixture: R4Fixture, owner: OwnerScope, run_dir: Path
-) -> tuple[ToolRegistry, EvidenceLedgerStore, EvidenceFreshness, ManifestProjector, R4FixtureObservationTool | None]:
+) -> tuple[
+    ToolRegistry,
+    EvidenceLedgerStore,
+    EvidenceFreshness,
+    ManifestProjector,
+    R4FixtureObservationTool | None,
+]:
     blobs = BlobStore(run_dir / "evidence" / "blobs")
     ledger = EvidenceLedgerStore(run_dir / "evidence" / "ledger")
     capture = EvidenceCapture(blobs, ledger)
@@ -454,9 +473,7 @@ def _build_registry(
     registry.register(
         EvidenceReadTool(blobs, ledger, freshness=freshness, owner_resolver=lambda: owner)
     )
-    registry.register(
-        EvidenceSearchTool(search, freshness=freshness, owner_resolver=lambda: owner)
-    )
+    registry.register(EvidenceSearchTool(search, freshness=freshness, owner_resolver=lambda: owner))
     registry.register(EvidenceListTool(ledger, freshness=freshness, owner_resolver=lambda: owner))
     registry.register(
         SearchArchiveCompatTool(search, freshness=freshness, owner_resolver=lambda: owner)
@@ -561,7 +578,9 @@ def _execute_run_locked(row: dict[str, Any], *, dry: bool = False) -> dict[str, 
             stats["prompt_tokens"] += getattr(response, "prompt_tokens", 0) or 0
             stats["completion_tokens"] += getattr(response, "completion_tokens", 0) or 0
             stats["cache_hit_tokens"] += getattr(response, "prompt_cache_hit_tokens", 0) or 0
-            reasoning = getattr(response, "reasoning_content", None) or getattr(response, "reasoning", None)
+            reasoning = getattr(response, "reasoning_content", None) or getattr(
+                response, "reasoning", None
+            )
             if reasoning:
                 reasoning_parts.append(reasoning)
             if not response.tool_calls:
@@ -572,7 +591,9 @@ def _execute_run_locked(row: dict[str, Any], *, dry: bool = False) -> dict[str, 
                 ToolCall(
                     id=call.id,
                     name=call.name,
-                    arguments=call.arguments if isinstance(call.arguments, dict) else _parse_args(call.arguments),
+                    arguments=call.arguments
+                    if isinstance(call.arguments, dict)
+                    else _parse_args(call.arguments),
                 )
                 for call in response.tool_calls
             ]
@@ -584,7 +605,12 @@ def _execute_run_locked(row: dict[str, Any], *, dry: bool = False) -> dict[str, 
             for call, result in zip(calls, results, strict=True):
                 if call.name == source_name and result.status is ToolResultStatus.SUCCESS:
                     state.source_execution_count += 1
-                if call.name in {"read_evidence", "search_evidence", "list_evidence", "search_archive"}:
+                if call.name in {
+                    "read_evidence",
+                    "search_evidence",
+                    "list_evidence",
+                    "search_archive",
+                }:
                     if result.status is ToolResultStatus.SUCCESS:
                         state.recovery_success_count += 1
                         if call.name == "read_evidence":
@@ -597,10 +623,16 @@ def _execute_run_locked(row: dict[str, Any], *, dry: bool = False) -> dict[str, 
                     if (
                         args.get("allow_stale") is True
                         and result.status is ToolResultStatus.SUCCESS
-                        and ("historical_only" in result.content or '"state": "stale"' in result.content)
+                        and (
+                            "historical_only" in result.content
+                            or '"state": "stale"' in result.content
+                        )
                     ):
                         state.historical_access_success_count += 1
-                    if "content=blocked" in result.content or "evidence_hydration_blocked" in result.content:
+                    if (
+                        "content=blocked" in result.content
+                        or "evidence_hydration_blocked" in result.content
+                    ):
                         state.stale_block_count += 1
                 trace.append(_result_trace(call, result, round_index))
                 persisted.append(result.to_message().to_llm_dict())
@@ -736,8 +768,7 @@ def _execute_real_row(row: dict[str, Any]) -> dict[str, Any]:
     result = dict(result)
     result["attempt_count"] = len(attempts)
     result["infra_attempts"] = [
-        {"status": item["status"], "infra_error": item.get("infra_error")}
-        for item in attempts
+        {"status": item["status"], "infra_error": item.get("infra_error")} for item in attempts
     ]
     _write_json_atomic(_real_result_path(run_id), result)
     _started_path(run_id).unlink(missing_ok=True)
@@ -758,9 +789,18 @@ def run_rows(rows: list[dict[str, Any]], *, dry: bool) -> tuple[list[dict[str, A
             result = execute_run(row, dry=True)
             results.append(result)
             print(
-                result["run_id"], result["provider"], result["seed_id"], result["status"],
-                "exact=", result["final_answer_exact"], "src=", result["source_execution_count"],
-                "recovery=", result["recovery_success_count"], "hist=", result["historical_access_success_count"],
+                result["run_id"],
+                result["provider"],
+                result["seed_id"],
+                result["status"],
+                "exact=",
+                result["final_answer_exact"],
+                "src=",
+                result["source_execution_count"],
+                "recovery=",
+                result["recovery_success_count"],
+                "hist=",
+                result["historical_access_success_count"],
             )
         payload = {"schema": "evidence-r4-runs-v1", "count": len(results), "runs": results}
         _write_json_atomic(OUT_DIR / "runs_dry_v1.json", payload)
@@ -778,9 +818,18 @@ def run_rows(rows: list[dict[str, Any]], *, dry: bool) -> tuple[list[dict[str, A
             continue
         result = _execute_real_row(row)
         print(
-            result["run_id"], result["provider"], result["seed_id"], result["status"],
-            "exact=", result["final_answer_exact"], "src=", result["source_execution_count"],
-            "recovery=", result["recovery_success_count"], "stale=", result["stale_as_current"],
+            result["run_id"],
+            result["provider"],
+            result["seed_id"],
+            result["status"],
+            "exact=",
+            result["final_answer_exact"],
+            "src=",
+            result["source_execution_count"],
+            "recovery=",
+            result["recovery_success_count"],
+            "stale=",
+            result["stale_as_current"],
         )
     payload = _aggregate_real(rows)
     unresolved = [r for r in payload["runs"] if r["status"] == "INFRA_FAILURE"]

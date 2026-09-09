@@ -59,6 +59,7 @@ def _wire_fallback_pool(engine, fake_primary, fake_settings, monkeypatch):
 
 def test_fallback_500_triggers_chain_success(build_test_engine, fake_settings, monkeypatch):
     """主模型 500 → 降级链成功：回答来自降级模型 + 回执/状态/配置计数三可见."""
+
     def raise_500(calls):  # noqa: ARG001
         raise LLMHTTPError("upstream boom", status_code=500, provider="fake")
 
@@ -72,7 +73,9 @@ def test_fallback_500_triggers_chain_success(build_test_engine, fake_settings, m
     assert result.final_answer == "降级模型回答"
     assert fake_fb.calls, "降级候选未被调用"
     assert result.fallback_receipt == {
-        "from": "primary/fake-model", "to": "fb/fb-model", "reason": "HTTP 500 上游错误"
+        "from": "primary/fake-model",
+        "to": "fb/fb-model",
+        "reason": "HTTP 500 上游错误",
     }
     # ② R8.9: fallback call 已经完成后不再把 notice 写进未来 prompt history。
     sess = engine.session.load(sid)
@@ -90,6 +93,7 @@ def test_fallback_500_triggers_chain_success(build_test_engine, fake_settings, m
 
 def test_fallback_400_not_eligible(build_test_engine, fake_settings, monkeypatch):
     """零回归：4xx（非 429）不降级——如实反馈路径，降级候选不被调用."""
+
     def raise_400(calls):  # noqa: ARG001
         raise LLMHTTPError("bad request", status_code=400, provider="fake")
 
@@ -105,6 +109,7 @@ def test_fallback_400_not_eligible(build_test_engine, fake_settings, monkeypatch
 
 def test_fallback_chain_all_failed_summary(build_test_engine, fake_settings, monkeypatch):
     """链全失败：注入汇总消息（含各候选失败原因），回答走原异常如实反馈."""
+
     def raise_500(calls):  # noqa: ARG001
         raise LLMHTTPError("upstream boom", status_code=500, provider="fake")
 
@@ -118,8 +123,7 @@ def test_fallback_chain_all_failed_summary(build_test_engine, fake_settings, mon
 
     sess = engine.session.load(sid)
     assert not any(
-        m.role == "system" and "[模型降级] 事实" in (m.content or "")
-        for m in sess.messages
+        m.role == "system" and "[模型降级] 事实" in (m.content or "") for m in sess.messages
     )
     assert "[LLM 调用异常]" in result.final_answer
     assert "降级链全部失败" in result.final_answer
@@ -157,9 +161,7 @@ def test_cross_provider_fallback_rebuilds_reasoning_projection(
     engine.settings = settings
     registry = load_registry(settings)
     primary.model = "glm-primary"
-    backup = FakeLLM(
-        [LLMResponse(content="fallback-ok", tool_calls=[], provider="fake")]
-    )
+    backup = FakeLLM([LLMResponse(content="fallback-ok", tool_calls=[], provider="fake")])
     pool = ModelClientPool(  # type: ignore[arg-type]
         registry=registry,
         default_client=primary,

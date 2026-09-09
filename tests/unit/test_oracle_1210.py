@@ -34,7 +34,9 @@ def _make_sample(n_inject: int = 5, n_prefix: int = 4) -> OracleSample:
     """构造最小样本: 1 system + n_prefix 历史 + n_inject 尾部 user 注入群."""
     messages = [{"role": "system", "content": "S" * 50}]
     for i in range(n_prefix):
-        messages.append({"role": "user" if i % 2 == 0 else "assistant", "content": f"hist-{i}-" + "x" * 80})
+        messages.append(
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"hist-{i}-" + "x" * 80}
+        )
     span_start = len(messages)
     for i in range(n_inject):
         messages.append({"role": "user", "content": f"inj-{i}-" + "y" * (60 + i * 10)})
@@ -42,18 +44,20 @@ def _make_sample(n_inject: int = 5, n_prefix: int = 4) -> OracleSample:
         {"msg_idx": span_start + i, "slot_kind": "INTEROP", "prefix_sha": f"sha{i}"}
         for i in range(n_inject)
     ]
-    return OracleSample(snapshot={
-        "schema": 1,
-        "ts_utc": "2026-08-27T00:00:00+00:00",
-        "session_id": "sess-oracle-test",
-        "model": "glm-5.3",
-        "is_compact_first": True,
-        "messages": messages,
-        "tools": [{"type": "function", "function": {"name": "noop"}}],
-        "params": {"timeout_s": 30},
-        "injection_span": span,
-        "trace_key": {"session_id": "sess-oracle-test", "local_ts": "2026-08-27T19:02:30"},
-    })
+    return OracleSample(
+        snapshot={
+            "schema": 1,
+            "ts_utc": "2026-08-27T00:00:00+00:00",
+            "session_id": "sess-oracle-test",
+            "model": "glm-5.3",
+            "is_compact_first": True,
+            "messages": messages,
+            "tools": [{"type": "function", "function": {"name": "noop"}}],
+            "params": {"timeout_s": 30},
+            "injection_span": span,
+            "trace_key": {"session_id": "sess-oracle-test", "local_ts": "2026-08-27T19:02:30"},
+        }
+    )
 
 
 class ScriptedClient:
@@ -165,6 +169,7 @@ class TestBuildVariants:
         with pytest.raises(ValueError, match="keep_mask 长度"):
             build_variants  # noqa: B018 — 占位防误用；实际守卫在 _apply_mask
             from llm_loop.eval.oracle_1210 import _apply_mask
+
             _apply_mask(sample, (True, True))
 
     def test_unknown_track(self):
@@ -180,10 +185,14 @@ class TestMockPreflight:
         return ReplayVariant(variant_id="t", track="skeleton", keep_mask=(), messages=messages)
 
     def test_valid(self):
-        ok, reason = mock_preflight(self._variant([
-            {"role": "system", "content": "s"},
-            {"role": "user", "content": "u"},
-        ]))
+        ok, reason = mock_preflight(
+            self._variant(
+                [
+                    {"role": "system", "content": "s"},
+                    {"role": "user", "content": "u"},
+                ]
+            )
+        )
         assert ok and reason is None
 
     def test_invalid_role(self):
@@ -191,18 +200,32 @@ class TestMockPreflight:
         assert not ok and "role 非法" in (reason or "")
 
     def test_orphan_tool(self):
-        ok, reason = mock_preflight(self._variant([
-            {"role": "user", "content": "u"},
-            {"role": "tool", "content": "r", "tool_call_id": "tc-404"},
-        ]))
+        ok, reason = mock_preflight(
+            self._variant(
+                [
+                    {"role": "user", "content": "u"},
+                    {"role": "tool", "content": "r", "tool_call_id": "tc-404"},
+                ]
+            )
+        )
         assert not ok and "孤儿 tool" in (reason or "")
 
     def test_paired_tool_ok(self):
-        ok, _ = mock_preflight(self._variant([
-            {"role": "user", "content": "u"},
-            {"role": "assistant", "content": "", "tool_calls": [{"id": "tc-1", "type": "function", "function": {"name": "f"}}]},
-            {"role": "tool", "content": "r", "tool_call_id": "tc-1"},
-        ]))
+        ok, _ = mock_preflight(
+            self._variant(
+                [
+                    {"role": "user", "content": "u"},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {"id": "tc-1", "type": "function", "function": {"name": "f"}}
+                        ],
+                    },
+                    {"role": "tool", "content": "r", "tool_call_id": "tc-1"},
+                ]
+            )
+        )
         assert ok
 
     def test_empty_messages(self):
@@ -270,18 +293,30 @@ class TestRunOracle:
             return client_holder["c"]
 
         report = run_oracle(
-            sample, budget=budget, qps=0.5, client_factory=factory,
-            data_dir=data_dir, time_fn=clock.time_fn, sleep_fn=clock.sleep_fn, **kw,
+            sample,
+            budget=budget,
+            qps=0.5,
+            client_factory=factory,
+            data_dir=data_dir,
+            time_fn=clock.time_fn,
+            sleep_fn=clock.sleep_fn,
+            **kw,
         )
         return report, client_holder.get("c"), clock
 
     def test_structure_trigger(self, tmp_path):
         """仅骨架轨复现: 骨架占位即 1210，保真 keep_all 正常."""
         report, client, _ = self._run(
-            lambda msgs: "1210" if all(
-                isinstance(m.get("content"), str) and set(m["content"]) == {"注"}
-                for m in msgs if m["role"] != "system"
-            ) and any(m["role"] == "user" for m in msgs) else "ok",
+            lambda msgs: (
+                "1210"
+                if all(
+                    isinstance(m.get("content"), str) and set(m["content"]) == {"注"}
+                    for m in msgs
+                    if m["role"] != "system"
+                )
+                and any(m["role"] == "user" for m in msgs)
+                else "ok"
+            ),
             data_dir=tmp_path,
         )
         assert report.verdict == "STRUCTURE_TRIGGER"
@@ -290,8 +325,12 @@ class TestRunOracle:
 
     def test_content_trigger_single_message_located(self, tmp_path):
         """保真轨复现 + 二分收敛单条: 恰含 inj-3 的变体才 1210 → minimal_set=[8]."""
+
         def behavior(msgs):
-            if any(isinstance(m.get("content"), str) and m["content"].startswith("inj-3-") for m in msgs):
+            if any(
+                isinstance(m.get("content"), str) and m["content"].startswith("inj-3-")
+                for m in msgs
+            ):
                 return "1210"
             return "ok"
 
@@ -303,10 +342,14 @@ class TestRunOracle:
 
     def test_compound_trigger(self, tmp_path):
         """双轨均复现: 骨架 1210 + 保真 keep_all 1210（inj-1 触发）."""
+
         def behavior(msgs):
             if all(set(m.get("content", "注")) == {"注"} for m in msgs):
                 return "1210"  # 骨架轨复现
-            if any(isinstance(m.get("content"), str) and m["content"].startswith("inj-1-") for m in msgs):
+            if any(
+                isinstance(m.get("content"), str) and m["content"].startswith("inj-1-")
+                for m in msgs
+            ):
                 return "1210"  # 保真轨含触发条目复现
             return "ok"
 
@@ -315,8 +358,13 @@ class TestRunOracle:
 
     def test_combo_trigger_no_single_point(self, tmp_path):
         """组合触发: 注入群 ≥3 条共存时复现（任何半集/单条不复现）→ minimal_set=最小共存组合."""
+
         def behavior(msgs):
-            inj = sum(1 for m in msgs if isinstance(m.get("content"), str) and m["content"].startswith("inj-"))
+            inj = sum(
+                1
+                for m in msgs
+                if isinstance(m.get("content"), str) and m["content"].startswith("inj-")
+            )
             return "1210" if inj >= 3 else "ok"
 
         report, _, _ = self._run(behavior, data_dir=tmp_path)
@@ -333,7 +381,9 @@ class TestRunOracle:
     def test_budget_abort(self, tmp_path):
         """预算 ≤20 跨两轨共享: budget=2 → 第 3 个变体起 skipped，实验不完整."""
         report, client, _ = self._run(
-            lambda msgs: "1210", budget=2, data_dir=tmp_path,
+            lambda msgs: "1210",
+            budget=2,
+            data_dir=tmp_path,
         )
         assert report.budget_used == 2
         assert report.incomplete_reason == "budget_exhausted"
@@ -355,9 +405,13 @@ class TestRunOracle:
             return ScriptedClient(lambda m: "ok")
 
         report = run_oracle(
-            _make_sample(), qps=0.5, client_factory=factory,
-            data_dir=tmp_path, dry_run=True,
-            time_fn=FakeClock().time_fn, sleep_fn=FakeClock().sleep_fn,
+            _make_sample(),
+            qps=0.5,
+            client_factory=factory,
+            data_dir=tmp_path,
+            dry_run=True,
+            time_fn=FakeClock().time_fn,
+            sleep_fn=FakeClock().sleep_fn,
         )
         assert sent == [], "dry-run 不得构造/发送真实 client"
         assert report.dry_run and report.budget_used == 0
@@ -390,7 +444,9 @@ class TestTrackSelection(TestRunOracle):
         """单轨 live 运行不出 Verdict（R3 禁止项——禁止仅骨架轨下结论）."""
         for track in ("skeleton", "bisect"):
             report, client, _ = self._run(
-                lambda msgs: "ok", track=track, data_dir=tmp_path,
+                lambda msgs: "ok",
+                track=track,
+                data_dir=tmp_path,
             )
             assert report.verdict == "", f"单轨 {track} 不得产出 Verdict"
             assert report.confidence == "none-track-restricted"
@@ -402,10 +458,14 @@ class TestTrackSelection(TestRunOracle):
     def test_ticket_evidence_compound(self, tmp_path):
         """工单证据 + 保真轨复现 → COMPOUND_TRIGGER（等效两轨，spec 5.2.1-5b）."""
         report, client, _ = self._run(
-            lambda msgs: "1210" if any(
-                isinstance(m.get("content"), str) and m["content"].startswith("inj-")
-                for m in msgs
-            ) else "ok",
+            lambda msgs: (
+                "1210"
+                if any(
+                    isinstance(m.get("content"), str) and m["content"].startswith("inj-")
+                    for m in msgs
+                )
+                else "ok"
+            ),
             track="both",
             ticket_evidence={"ref": "T-1", "note": "官方确认连续 user 条数上限"},
             data_dir=tmp_path,
@@ -420,7 +480,8 @@ class TestTrackSelection(TestRunOracle):
     def test_ticket_evidence_structure_only(self, tmp_path):
         """工单证据 + 保真轨不复现 → STRUCTURE_TRIGGER（工单为结构直接证据）."""
         report, _, _ = self._run(
-            lambda msgs: "ok", track="both",
+            lambda msgs: "ok",
+            track="both",
             ticket_evidence={"ref": "T-1", "note": "官方确认结构性限制"},
             data_dir=tmp_path,
         )

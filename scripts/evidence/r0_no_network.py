@@ -1,4 +1,5 @@
 """Pytest plugin used by the offline Evidence R0 gate to make provider access impossible."""
+
 from __future__ import annotations
 
 import socket

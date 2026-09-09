@@ -181,8 +181,7 @@ class RunFinalizer:
         _answer_origin = "model" if _run_end_reason == "completed" else "program"
         _pf_source = (
             MessageSource.SYSTEM
-            if _answer_origin == "program"
-            or final_answer.startswith(PROGRAM_FEEDBACK_PREFIXES)
+            if _answer_origin == "program" or final_answer.startswith(PROGRAM_FEEDBACK_PREFIXES)
             else MessageSource.USER
         )
         _episode_resolution_candidate = bool(
@@ -274,9 +273,7 @@ class RunFinalizer:
                 )
             except Exception:  # noqa: BLE001 — audit 交付失败 fail-open（UI 轨不受影响）
                 logger.debug("program.final 事件写入失败（fail-open）")
-        _persist_content = (
-            PROGRAM_FINAL_PROTOCOL_BOUNDARY if _program_final else final_answer
-        )
+        _persist_content = PROGRAM_FINAL_PROTOCOL_BOUNDARY if _program_final else final_answer
         if resp is not None and resp.provider_replay and _answer_origin == "model":
             _origin_metadata = {
                 **_origin_metadata,
@@ -306,7 +303,12 @@ class RunFinalizer:
         )
         # M20 THK-04: 最终回答轮 assistant 消息也回传思考链（官方"后续所有请求"语义，防下一轮 400）
         # GPT 审计批次2 双保险: 程序反馈（answer_origin != model）不携带任何 reasoning
-        if final_answer and resp is not None and resp.reasoning_content and _answer_origin == "model":
+        if (
+            final_answer
+            and resp is not None
+            and resp.reasoning_content
+            and _answer_origin == "model"
+        ):
             last = sess.messages[-1]
             last.reasoning_content = resp.reasoning_content
         # D1: 最终回答消息事件（fail-open）
@@ -333,7 +335,9 @@ class RunFinalizer:
                 if m.role != "system":
                     continue
                 md = dict(m.metadata or {})
-                if md.get("injection_kind") == "round_exhaustion_decision" and not md.get("consumed"):
+                if md.get("injection_kind") == "round_exhaustion_decision" and not md.get(
+                    "consumed"
+                ):
                     md["consumed"] = True
                     m.metadata = md
         except Exception:  # noqa: BLE001 — consumption audit must not block delivery
@@ -397,7 +401,9 @@ class RunFinalizer:
             recovery_note = self._host._session_lifecycle._persist_with_recovery_note(
                 target_type="memory_stats",
                 source_id="memory",
-                write_fn=lambda: self._host.memory.flush() if self._host.memory is not None else None,
+                write_fn=lambda: (
+                    self._host.memory.flush() if self._host.memory is not None else None
+                ),
                 payload=self._host._memory_payload(),
                 trigger_point="memory_flush",
             )

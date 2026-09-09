@@ -57,7 +57,9 @@ _TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/inter
 # 防护三层：①_ 修补 _connect 锁泄漏（根治）②看门狗心跳 + 假死自杀（兜底）
 # ③restart_system.sh 健康检查改看门狗心跳新鲜度（消除误报）。
 _WATCHDOG_POLL_S = int(os.environ.get("FEISHU_WS_WATCHDOG_POLL_S", "30"))  # 看门狗轮询/心跳间隔
-_WATCHDOG_LOCK_S = float(os.environ.get("FEISHU_WS_WATCHDOG_LOCK_S", "180"))  # SDK 锁持有超此时长判定假死
+_WATCHDOG_LOCK_S = float(
+    os.environ.get("FEISHU_WS_WATCHDOG_LOCK_S", "180")
+)  # SDK 锁持有超此时长判定假死
 _HEARTBEAT_PATH = os.environ.get("FEISHU_HEARTBEAT_PATH", "data/feishu_heartbeat.json")
 # 中断补偿（2026-08-16）：优雅退出打断长任务 → 落盘 → 下次启动主动回复（避免静默丢失）
 # 2026-09 起：单文件改 JSONL 增量存储（feishu/compensation.py，legacy 单文件启动时自动迁移）
@@ -101,11 +103,13 @@ def rotate_heartbeat_history(hist_path: str | Path, max_bytes: int | None) -> bo
         pass  # 轮转失败 fail-open：不阻断心跳写入（下轮再试）
     return False
 
+
 # ── P1-2-R2: 消息处理线程迁移（阻塞消除）──
 # 根因: 事件回调在 SDK asyncio loop 内同步执行消息处理（LLM 推理可达分钟级），期间
 # _ping_loop 停发 → 服务端 3003 断开。方案: 单 worker 线程 + 有界队列，_handle_event
 # 仅 marshal + put_nowait 立即返回；队列满 fail-open 如实告警丢弃（不阻塞 loop）。
 _MAX_MSG_QUEUE: int = int(os.environ.get("FEISHU_WS_QUEUE_MAX", "64"))
+
 
 # ── P1-3-R2: 优雅退出 drain 时间预算 ──
 # 时间契约: wait(10) + drain(3) = 13s ≤ GRACE_S(15) − 2s 余量（与 feishu/__init__.py 对齐）。
@@ -340,7 +344,9 @@ class _WsConnector:
             return False
         content_raw = message.get("content") or ""
         try:
-            content = json.loads(content_raw) if isinstance(content_raw, str) else (content_raw or {})
+            content = (
+                json.loads(content_raw) if isinstance(content_raw, str) else (content_raw or {})
+            )
         except json.JSONDecodeError:
             return False
         text = str(content.get("text", "") or "").strip().lower()
@@ -474,7 +480,10 @@ class _WsConnector:
                 "（程序提示）您的一条消息因服务退出未处理，请重新发送。",
                 msg_id=msg_id,
             )
-        return {"count": len(results), "ids": ", ".join(results[:8]) + ("…" if len(results) > 8 else "")}
+        return {
+            "count": len(results),
+            "ids": ", ".join(results[:8]) + ("…" if len(results) > 8 else ""),
+        }
 
     def _worker_loop(self) -> None:
         """消息处理 worker 线程：串行处理队列消息（单 worker 保证 SessionStore 无并发）.
@@ -502,7 +511,6 @@ class _WsConnector:
                         self._safe_handle_message(leftover)
                 break
             self._safe_handle_message(item)
-
 
     def _safe_handle_message(self, payload: dict) -> None:
         """worker 线程内安全处理单条消息（单条异常不导致 worker 崩溃）.
@@ -870,9 +878,7 @@ class FeishuWsBridge:
                     or ""
                 )
                 if chat_key and pending_fn(chat_key) is True:
-                    logger.info(
-                        "user_stop 待收口窗口内优雅退出，跳过中断补偿落盘: msg_id=%s", mid
-                    )
+                    logger.info("user_stop 待收口窗口内优雅退出，跳过中断补偿落盘: msg_id=%s", mid)
                     return
             except Exception:  # noqa: BLE001 — 查询失败按现状落盘（零回归兜底）
                 logger.warning("user_stop 待收口查询异常（fail-open，按现状落盘）", exc_info=True)
@@ -1242,7 +1248,9 @@ def _reply_target_from_payload(payload: dict) -> tuple[str, str, str] | None:
     chat_id = str(message.get("chat_id") or (event.get("chat") or {}).get("chat_id") or "")
     sender = event.get("sender") or {}
     open_id = str((sender.get("sender_id") or {}).get("open_id", ""))
-    msg_id = str(message.get("message_id", "")) or str((payload.get("header") or {}).get("event_id", ""))
+    msg_id = str(message.get("message_id", "")) or str(
+        (payload.get("header") or {}).get("event_id", "")
+    )
     if chat_id:
         return chat_id, "chat_id", msg_id
     if open_id:

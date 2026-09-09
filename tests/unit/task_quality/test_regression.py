@@ -34,8 +34,7 @@ def _guard(dep, runner, **kw):
 
 def test_subset_passed():
     """子集全通过: passed_count=N, failed_count=0."""
-    g = _guard(_FakeDepGraph(["tests/test_calc.py"]),
-               _FakeRunner(0, "2 passed in 0.1s"))
+    g = _guard(_FakeDepGraph(["tests/test_calc.py"]), _FakeRunner(0, "2 passed in 0.1s"))
     r = g.verify(["src/calc.py"])
     assert r.depgraph_available is True
     assert r.fallback_full is False
@@ -47,10 +46,11 @@ def test_subset_passed():
 def test_subset_failed_with_location():
     """子集有失败: failures 含结构化 FailureInfo（经路径 H）."""
     from llm_loop.task_quality.error_locate import ErrorLocator
+
     out = "1 failed, 1 passed\nFAILED tests/test_calc.py::test_add - AssertionError: assert 1 == 2"
-    g = _guard(_FakeDepGraph(["tests/test_calc.py"]),
-               _FakeRunner(1, out),
-               error_locator=ErrorLocator())
+    g = _guard(
+        _FakeDepGraph(["tests/test_calc.py"]), _FakeRunner(1, out), error_locator=ErrorLocator()
+    )
     r = g.verify(["src/calc.py"])
     assert r.failed_count == 1
     assert len(r.failures) >= 1
@@ -73,7 +73,11 @@ def test_no_affected_tests():
     assert r.affected_tests == ()
     assert r.passed_count == 0 and r.failed_count == 0
     assert "无受影响测试" in r.to_feedback_section()
-    assert g._command_runner is not None and len(g._command_runner.calls) == 0 if hasattr(g, "_command_runner") else True
+    assert (
+        g._command_runner is not None and len(g._command_runner.calls) == 0
+        if hasattr(g, "_command_runner")
+        else True
+    )
 
 
 def test_framework_crash_honest():
@@ -88,12 +92,18 @@ def test_framework_crash_honest():
 def test_event_store_subset_executed():
     """子集执行事件落盘."""
     events = []
+
     class _Store:
         def append(self, sid, etype, payload):
             events.append((etype, payload))
             return None
-    g = _guard(_FakeDepGraph(["tests/test_calc.py"]), _FakeRunner(0, "1 passed"),
-               event_store=_Store(), session_id="s1")
+
+    g = _guard(
+        _FakeDepGraph(["tests/test_calc.py"]),
+        _FakeRunner(0, "1 passed"),
+        event_store=_Store(),
+        session_id="s1",
+    )
     g.verify(["src/calc.py"])
     assert len(events) == 1
     assert events[0][0] == "task.regression.subset_executed"
@@ -116,8 +126,10 @@ def test_runner_exception_sets_error_field(monkeypatch):
     回归: 修复前该路径 failed_count=0/failures=() → 调用方误判通过。
     """
     import subprocess
+
     def _boom(*a, **kw):
         raise subprocess.TimeoutExpired(cmd="pytest", timeout=120)
+
     monkeypatch.setattr(subprocess, "run", _boom)
     # 无 command_runner → 走 subprocess 路径
     g = RegressionGuard(dep_graph=_FakeDepGraph(["tests/test_calc.py"]))
@@ -131,8 +143,10 @@ def test_runner_exception_sets_error_field(monkeypatch):
 def test_runner_oserror_sets_error_field(monkeypatch):
     """框架 OSError → error 字段非空."""
     import subprocess
+
     def _boom(*a, **kw):
         raise OSError("no such file: pytest")
+
     monkeypatch.setattr(subprocess, "run", _boom)
     g = RegressionGuard(dep_graph=_FakeDepGraph(["tests/test_calc.py"]))
     r = g.verify(["src/calc.py"])

@@ -32,15 +32,18 @@ TASK_CREATE_TOOL_DEF: dict = {
             "goal_id": {"type": "string", "description": "所属目标 id（必填，get_goal 可查）"},
             "title": {"type": "string", "description": "任务标题（一句话）"},
             "acceptance": {
-                "type": "array", "items": {"type": "string"},
+                "type": "array",
+                "items": {"type": "string"},
                 "description": "验收条件（必填，可验收陈述列表）",
             },
             "done_when": {
-                "type": "array", "items": {"type": "string"},
+                "type": "array",
+                "items": {"type": "string"},
                 "description": "完成判据（可选，比 acceptance 更具体的可观测信号）",
             },
             "dependencies": {
-                "type": "array", "items": {"type": "string"},
+                "type": "array",
+                "items": {"type": "string"},
                 "description": "依赖的 task_id 列表（须同 goal 内已存在，可空）",
             },
             "parent_id": {"type": "string", "description": "父任务 id（可选，层次结构）"},
@@ -78,14 +81,20 @@ TASK_UPDATE_TOOL_DEF: dict = {
             },
             "blocked_reason": {"type": "string", "description": "阻塞原因（→blocked 必填）"},
             "evidence_refs": {
-                "type": "array", "items": {"type": "string"},
+                "type": "array",
+                "items": {"type": "string"},
                 "description": "证据引用（evidence:// 开头；evidence_required 任务 →done 必填）",
             },
             "acceptance": {
-                "type": "array", "items": {"type": "string"},
+                "type": "array",
+                "items": {"type": "string"},
                 "description": "修订验收条件（留痕，不可用于洗白已 done 任务）",
             },
-            "done_when": {"type": "array", "items": {"type": "string"}, "description": "修订完成判据"},
+            "done_when": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "修订完成判据",
+            },
             "title": {"type": "string", "description": "修订标题"},
             "confirm": {
                 "type": "boolean",
@@ -111,7 +120,10 @@ TASK_FRONTIER_TOOL_DEF: dict = {
         "type": "object",
         "properties": {
             "goal_id": {"type": "string", "description": "目标 id（可选，默认当前会话）"},
-            "full": {"type": "boolean", "description": "true=全图含 waiting/done 详情（默认 false）"},
+            "full": {
+                "type": "boolean",
+                "description": "true=全图含 waiting/done 详情（默认 false）",
+            },
         },
         "required": [],
     },
@@ -135,7 +147,10 @@ def _require_active_goal(ctx: Any, host: Any, goal_id: str) -> tuple[str | None,
     if g is None:
         return None, f"[goal 不存在] {goal_id}（先 create_goal）"
     if str(g.get("status", "")) != "active":
-        return None, f"[goal 非 active] {goal_id} status={g.get('status')}（重开 goal 任务请人工/新建 goal）"
+        return (
+            None,
+            f"[goal 非 active] {goal_id} status={g.get('status')}（重开 goal 任务请人工/新建 goal）",
+        )
     return audit, ""
 
 
@@ -167,9 +182,15 @@ def run_task_create(ctx: Any, host: Any, args: dict) -> ToolResult:
     return ToolResult(
         ToolResultStatus.SUCCESS,
         "[任务已建] {} {}\nacceptance: {}{}{}\n上限提示: 每 goal ≤{} 任务（防粒度失控）".format(
-            task.task_id, task.title[:80], "; ".join(task.acceptance)[:150], dep_note, ev_note, TASK_LIMIT_PER_GOAL
+            task.task_id,
+            task.title[:80],
+            "; ".join(task.acceptance)[:150],
+            dep_note,
+            ev_note,
+            TASK_LIMIT_PER_GOAL,
         ),
-        "", name,
+        "",
+        name,
     )
 
 
@@ -178,7 +199,9 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
     goal_id = str(args.get("goal_id", "") or "").strip()
     task_id = str(args.get("task_id", "") or "").strip()
     if not goal_id or not task_id:
-        return ToolResult(ToolResultStatus.FAILURE, "[参数错误] 必填 'goal_id' 和 'task_id'", "", name)
+        return ToolResult(
+            ToolResultStatus.FAILURE, "[参数错误] 必填 'goal_id' 和 'task_id'", "", name
+        )
     audit, err = _require_active_goal(ctx, host, goal_id)
     if err:
         return ToolResult(ToolResultStatus.FAILURE, err, "", name)
@@ -192,9 +215,17 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
             task_id,
             status=(target if target else None),
             blocked_reason=(str(args["blocked_reason"]) if args.get("blocked_reason") else None),
-            evidence_refs=([str(r) for r in args["evidence_refs"]] if args.get("evidence_refs") is not None else None),
-            acceptance=([str(a) for a in args["acceptance"]] if args.get("acceptance") is not None else None),
-            done_when=([str(w) for w in args["done_when"]] if args.get("done_when") is not None else None),
+            evidence_refs=(
+                [str(r) for r in args["evidence_refs"]]
+                if args.get("evidence_refs") is not None
+                else None
+            ),
+            acceptance=(
+                [str(a) for a in args["acceptance"]] if args.get("acceptance") is not None else None
+            ),
+            done_when=(
+                [str(w) for w in args["done_when"]] if args.get("done_when") is not None else None
+            ),
             title=(str(args["title"]) if args.get("title") else None),
             confirm=bool(args.get("confirm", False)),
         )
@@ -239,7 +270,12 @@ def run_task_frontier(ctx: Any, host: Any, args: dict) -> ToolResult:
             g = None
         goal_id = str((g or {}).get("id", "")) if g else ""
     if not goal_id:
-        return ToolResult(ToolResultStatus.SUCCESS, "[无任务图] 当前无活动 goal（先 create_goal + task_create）", "", name)
+        return ToolResult(
+            ToolResultStatus.SUCCESS,
+            "[无任务图] 当前无活动 goal（先 create_goal + task_create）",
+            "",
+            name,
+        )
     store = TaskStore(audit)
     if store.count_for_goal(goal_id) == 0:
         return ToolResult(ToolResultStatus.SUCCESS, f"[无任务图] goal {goal_id} 尚无任务", "", name)
@@ -250,7 +286,11 @@ def run_task_frontier(ctx: Any, host: Any, args: dict) -> ToolResult:
         done_ids = {t.task_id for t in fr["completed"]}
         waiting = []
         for t in store.list_for_goal(goal_id):
-            if t.status == "pending" and all(d in done_ids for d in t.dependencies) is False and t not in fr["unreachable"]:
+            if (
+                t.status == "pending"
+                and all(d in done_ids for d in t.dependencies) is False
+                and t not in fr["unreachable"]
+            ):
                 waiting.append(t)
         if waiting:
             lines.append("  -- waiting（依赖未满足，正常排队）--")

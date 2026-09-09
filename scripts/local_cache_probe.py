@@ -63,18 +63,32 @@ def build_tool_round_msgs(extra: bool = False) -> list[dict]:
         {
             "role": "system",
             "content": (
-                "你是 LFL 助手。固定系统前缀锚点。可用工具:\n" + tools_text + "\n需要调用工具时仅输出工具名与参数 JSON。"
+                "你是 LFL 助手。固定系统前缀锚点。可用工具:\n"
+                + tools_text
+                + "\n需要调用工具时仅输出工具名与参数 JSON。"
             ),
         },
         {"role": "user", "content": "请检查服务状态并汇报。"},
         {
             "role": "assistant",
             "tool_calls": [
-                {"id": "call_a", "type": "function", "function": {"name": "execute_command", "arguments": {"cmd": "ps aux | head"}}},
-                {"id": "call_b", "type": "function", "function": {"name": "read_file", "arguments": {"path": "/tmp/x"}}},
+                {
+                    "id": "call_a",
+                    "type": "function",
+                    "function": {"name": "execute_command", "arguments": {"cmd": "ps aux | head"}},
+                },
+                {
+                    "id": "call_b",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": {"path": "/tmp/x"}},
+                },
             ],
         },
-        {"role": "tool", "tool_call_id": "call_a", "content": "[状态: success] [输出 3 行] python 进程正常"},
+        {
+            "role": "tool",
+            "tool_call_id": "call_a",
+            "content": "[状态: success] [输出 3 行] python 进程正常",
+        },
         {"role": "tool", "tool_call_id": "call_b", "content": "[状态: success] 文件内容 42 字节"},
     ]
     if extra:
@@ -106,24 +120,40 @@ def call(client: httpx.Client, url: str, model: str, msgs: list[dict], label: st
     pct = (cached / prompt * 100) if prompt else 0.0
     print(
         f"  {label}: prompt={prompt:>5} cached={cached:>5} miss={miss:>5} "
-        f"hit={pct:5.1f}%  ttf={dt*1000:7.0f}ms"
+        f"hit={pct:5.1f}%  ttf={dt * 1000:7.0f}ms"
     )
     return {"prompt": prompt, "cached": cached, "miss": miss, "pct": pct, "ms": dt * 1000}
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--base-url", default="http://localhost:1234/v1", help="OpenAI 兼容端点（默认 localhost:1234/v1）")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--base-url",
+        default="http://localhost:1234/v1",
+        help="OpenAI 兼容端点（默认 localhost:1234/v1）",
+    )
     ap.add_argument("--model", default="qwen/qwen3.8-27b", help="本地模型 id（/v1/models 列表）")
-    ap.add_argument("--api-key", default="", help="直连 llama-server 的 Bearer key（lms ps / ps aux 查 --api-key）")
-    ap.add_argument("--tool-round", action="store_true", help="用 LFL 工具轮形态模拟（默认用一般对话形态）")
-    ap.add_argument("--ttl", type=float, default=0.0, help=">0 时在 B 与 C 之间加等值秒数间隔做 TTL 探测")
+    ap.add_argument(
+        "--api-key",
+        default="",
+        help="直连 llama-server 的 Bearer key（lms ps / ps aux 查 --api-key）",
+    )
+    ap.add_argument(
+        "--tool-round", action="store_true", help="用 LFL 工具轮形态模拟（默认用一般对话形态）"
+    )
+    ap.add_argument(
+        "--ttl", type=float, default=0.0, help=">0 时在 B 与 C 之间加等值秒数间隔做 TTL 探测"
+    )
     args = ap.parse_args()
 
     url = args.base_url.rstrip("/") + "/chat/completions"
     builder = build_tool_round_msgs if args.tool_round else build_general_msgs
 
-    print(f"== 本地前缀缓存探针 ==  model={args.model}  mode={'tool-round' if args.tool_round else 'general'}")
+    print(
+        f"== 本地前缀缓存探针 ==  model={args.model}  mode={'tool-round' if args.tool_round else 'general'}"
+    )
     print(f"   端点: {url}\n")
 
     headers = {}
@@ -154,7 +184,9 @@ def main() -> int:
     elif b_hit:
         print("⚠️ 仅精确缓存命中, 前缀追加不命中——可能是短 prompt 阈值效应或 KV 复用粒度过粗。")
     else:
-        print("❌ 未检测到前缀缓存——检查 LM Studio 设置（Context Caching / Prompt Caching 是否开启）。")
+        print(
+            "❌ 未检测到前缀缓存——检查 LM Studio 设置（Context Caching / Prompt Caching 是否开启）。"
+        )
     return 0 if (b_hit and c_hit) else 1
 
 

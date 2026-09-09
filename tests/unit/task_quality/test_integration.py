@@ -17,6 +17,7 @@ from llm_loop.task_quality.static_check import StaticCheckChain
 
 # ── 桩组件 ──
 
+
 class _FakeRegistry:
     """registry 桩：按命令内容返回预设结果（检查/测试命令分流）."""
 
@@ -31,8 +32,7 @@ class _FakeRegistry:
         self._round += 1
         content = self._check_results.get(self._round, self._test_output)
         status = ToolResultStatus.SUCCESS if "passed" in content else ToolResultStatus.FAILURE
-        return ToolResult(status=status, content=content, tool_call_id=call.id,
-                          tool_name=call.name)
+        return ToolResult(status=status, content=content, tool_call_id=call.id, tool_name=call.name)
 
 
 class _FakeSubAgent:
@@ -77,6 +77,7 @@ class _Store:
 
 # ── ① 装配开关 ──
 
+
 def test_assembly_switches_control_enable():
     """①装配: enabled_fn 控制路径生效（开=拦截/执行，关=放行/未启用）."""
     from llm_loop.task_quality.precheck import PreCheckLayer
@@ -90,10 +91,8 @@ def test_assembly_switches_control_enable():
 
     # I 修复循环开关
     reg = _FakeRegistry({1: "5 passed"})
-    on_i = FixLoopTool(registry=reg, subagent_runner=_FakeSubAgent(),
-                       enabled_fn=lambda: True)
-    off_i = FixLoopTool(registry=reg, subagent_runner=_FakeSubAgent(),
-                        enabled_fn=lambda: False)
+    on_i = FixLoopTool(registry=reg, subagent_runner=_FakeSubAgent(), enabled_fn=lambda: True)
+    off_i = FixLoopTool(registry=reg, subagent_runner=_FakeSubAgent(), enabled_fn=lambda: False)
     assert on_i.execute(check_command="pytest").status.value == "success"
     assert off_i.execute(check_command="pytest").status.value == "failure"
     assert "未启用" in off_i.execute(check_command="pytest").content
@@ -101,12 +100,12 @@ def test_assembly_switches_control_enable():
 
 # ── ② D+K 串接 ──
 
+
 def test_dk_chain_results_visible():
     """②D+K: 静态检查 + 回归保护结果并入回执（LLM 一次可见全部反馈）."""
     runner = _FakeCmdRunner(0, "2 passed")
     d = StaticCheckChain(command_runner=_FakeCmdRunner(0, ""))  # 全过
-    k = RegressionGuard(dep_graph=_FakeDepGraph(["tests/test_x.py"]),
-                        command_runner=runner)
+    k = RegressionGuard(dep_graph=_FakeDepGraph(["tests/test_x.py"]), command_runner=runner)
     # D: 检查结果
     check = d.run("src/x.py")
     # K: 回归结果
@@ -120,12 +119,15 @@ def test_dk_chain_results_visible():
 
 # ── ③ K+H 协同 ──
 
+
 def test_kh_failure_structured():
     """③K+H: 回归测试失败 → 经 ErrorLocator 结构化定位."""
-    out = ("1 failed\nFAILED tests/test_x.py::test_add - AssertionError: assert 1 == 2")
-    k = RegressionGuard(dep_graph=_FakeDepGraph(["tests/test_x.py"]),
-                        command_runner=_FakeCmdRunner(1, out),
-                        error_locator=ErrorLocator())
+    out = "1 failed\nFAILED tests/test_x.py::test_add - AssertionError: assert 1 == 2"
+    k = RegressionGuard(
+        dep_graph=_FakeDepGraph(["tests/test_x.py"]),
+        command_runner=_FakeCmdRunner(1, out),
+        error_locator=ErrorLocator(),
+    )
     r = k.verify(["src/x.py"])
     assert r.failed_count == 1
     assert len(r.failures) >= 1
@@ -137,14 +139,21 @@ def test_kh_failure_structured():
 
 # ── ④ I 复用 D+H+K ──
 
+
 def test_i_reuses_dhk():
     """④I: fix_loop 循环内跑检查经 registry（复用路径 D/K 执行通道）、定位复用 H."""
     store = _Store()
-    reg = _FakeRegistry({1: "1 failed\nFAILED tests/test_x.py::test_a - AssertionError",
-                         2: "5 passed"})
+    reg = _FakeRegistry(
+        {1: "1 failed\nFAILED tests/test_x.py::test_a - AssertionError", 2: "5 passed"}
+    )
     sub = _FakeSubAgent()
-    t = FixLoopTool(registry=reg, subagent_runner=sub,
-                    error_locator=ErrorLocator(), event_store=store, session_id="s1")
+    t = FixLoopTool(
+        registry=reg,
+        subagent_runner=sub,
+        error_locator=ErrorLocator(),
+        event_store=store,
+        session_id="s1",
+    )
     r = t.execute(check_command="pytest tests/test_x.py")
     assert r.status.value == "success"
     # 循环内全部经 registry 调用 execute_command（复用 ToolRegistry 通道）
@@ -154,6 +163,7 @@ def test_i_reuses_dhk():
 
 
 # ── ⑤ I 的 LLM 修复步骤 ──
+
 
 def test_i_llm_fix_via_subagent():
     """⑤I: 修复由子代理 LLM 完成（任务文本含修复指令，程序不自动改代码）."""
@@ -169,13 +179,18 @@ def test_i_llm_fix_via_subagent():
 
 # ── ⑥ 熔断协同 ──
 
+
 def test_fuse_uses_h_structured_fingerprint():
     """⑥熔断: 错误指纹经路径 H 结构化信息计算（同错误识别）."""
     err = "1 failed\nFAILED tests/test_x.py::test_a - AssertionError: assert 1 == 2"
     store = _Store()
     reg = _FakeRegistry({i: err for i in range(1, 4)})
-    t = FixLoopTool(registry=reg, subagent_runner=_FakeSubAgent(),
-                    error_locator=ErrorLocator(), event_store=store)
+    t = FixLoopTool(
+        registry=reg,
+        subagent_runner=_FakeSubAgent(),
+        error_locator=ErrorLocator(),
+        event_store=store,
+    )
     r = t.execute(check_command="pytest", fuse_count=3)
     assert r.status.value == "failure"
     assert "熔断" in r.content
@@ -185,6 +200,7 @@ def test_fuse_uses_h_structured_fingerprint():
 
 
 # ── ⑦ A 与 E 独立 ──
+
 
 def test_a_e_independent():
     """⑦A 与 E: 预检（调用前端）与约定注入（编辑前）独立，不参与纠错闭环."""
@@ -197,6 +213,7 @@ def test_a_e_independent():
     # E: 约定提取独立（不依赖 A）
     import tempfile
     from pathlib import Path
+
     tmp = Path(tempfile.mkdtemp())
     (tmp / "a.py").write_text("def good_name():\n    pass\n", encoding="utf-8")
     c = ConventionExtractor().extract(str(tmp / "new.py"))
@@ -207,13 +224,19 @@ def test_a_e_independent():
 
 # ── ⑧ trace_id 贯穿 ──
 
+
 def test_trace_id_throughout():
     """⑧trace_id: 贯穿每轮迭代/检查/定位/回归事件，可双向溯源."""
     store = _Store()
     err = "1 failed\nFAILED tests/test_x.py::test_a - AssertionError"
     reg = _FakeRegistry({1: err, 2: "5 passed"})
-    t = FixLoopTool(registry=reg, subagent_runner=_FakeSubAgent(),
-                    error_locator=ErrorLocator(), event_store=store, session_id="s1")
+    t = FixLoopTool(
+        registry=reg,
+        subagent_runner=_FakeSubAgent(),
+        error_locator=ErrorLocator(),
+        event_store=store,
+        session_id="s1",
+    )
     r = t.execute(check_command="pytest")
     assert r.status.value == "success"
     # 所有事件 trace_id 一致
@@ -228,6 +251,7 @@ def test_trace_id_throughout():
 
 # ── ⑨ fail-open 零回归 ──
 
+
 def test_fail_open_zero_regression():
     """⑨零回归: 各路径缺省关闭时既有工具行为不变（开关关=原行为）."""
     from llm_loop.task_quality.precheck import PreCheckLayer
@@ -237,9 +261,11 @@ def test_fail_open_zero_regression():
         name = "dummy"
         description = "t"
         parameters = {"type": "object", "properties": {}}
+
         def execute(self, **kw):
-            return ToolResult(status=ToolResultStatus.SUCCESS, content="ok",
-                              tool_call_id="", tool_name="dummy")
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS, content="ok", tool_call_id="", tool_name="dummy"
+            )
 
     # 开关关的 precheck（enabled_fn=False）→ 行为与无 precheck 一致
     reg = ToolRegistry(precheck_layer=PreCheckLayer(enabled_fn=lambda: False))
@@ -250,6 +276,7 @@ def test_fail_open_zero_regression():
 
 
 # ── ⑩ 程序最小化 ──
+
 
 def test_program_minimalism():
     """⑩程序最小化: 六路径只提供事实与执行通道，不含自动修改/强制指令."""

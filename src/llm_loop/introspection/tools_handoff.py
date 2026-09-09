@@ -21,8 +21,15 @@ HANDOFF_TOOL_DEF: dict = {
     "parameters": {
         "type": "object",
         "properties": {
-            "urgency": {"type": "string", "enum": ["low", "medium", "high"], "description": "紧急程度（low=总结 / medium=立即交接 / high=紧急交接）"},
-            "include_decisions": {"type": "boolean", "description": "是否包含关键决策记录（默认 true）"},
+            "urgency": {
+                "type": "string",
+                "enum": ["low", "medium", "high"],
+                "description": "紧急程度（low=总结 / medium=立即交接 / high=紧急交接）",
+            },
+            "include_decisions": {
+                "type": "boolean",
+                "description": "是否包含关键决策记录（默认 true）",
+            },
             "include_memory": {"type": "boolean", "description": "是否包含记忆指针（默认 true）"},
         },
     },
@@ -121,11 +128,11 @@ def _next_steps(urgency: str, pressure: float) -> str:
         lines.append("2. 可继续当前会话（压力尚可）")
     lines.append("3. 新会话读取 handoff.md 后，先验证外部状态再依赖内容（RULE-AI-12）：")
     lines.append("   ① `architecture_status` 验证引擎状态；② git status 核对 worktree 改动归属；")
-    lines.append("   ③ 关键文件 mtime 确认无意外变更；④ 演进建议状态（pending_review/accepted/executing）")
+    lines.append(
+        "   ③ 关键文件 mtime 确认无意外变更；④ 演进建议状态（pending_review/accepted/executing）"
+    )
     lines.append("4. 继续未完成任务清单")
     return "\n".join(lines)
-
-
 
 
 def _archive_handoff(ctx: Any, doc: str) -> None:
@@ -158,7 +165,8 @@ def run_handoff_now(ctx: Any, audit: Any, args: dict) -> ToolResult:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=f"[参数错误] 事实: urgency 收到非法值 '{urgency}'。原因: 需为 low/medium/high。建议: 提供正确紧急程度。",
-            tool_call_id="", tool_name="handoff_now",
+            tool_call_id="",
+            tool_name="handoff_now",
         )
 
     pressure = _calc_pressure(ctx)
@@ -184,7 +192,6 @@ def run_handoff_now(ctx: Any, audit: Any, args: dict) -> ToolResult:
 
     # EVO-20260813-4b49a822: 同步归档到当前会话 ArchiveStore（使 search_archive 天然可检索）
     _archive_handoff(ctx, doc)
-
 
     summary = (
         f"# 📨 交接文档已生成\n\n"

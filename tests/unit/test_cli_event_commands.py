@@ -26,26 +26,64 @@ from llm_loop.cli import (
 def _write_session(sessions_dir, sid: str, with_compressed: bool = False) -> None:
     sessions_dir.mkdir(parents=True, exist_ok=True)
     messages = [
-        {"role": "user", "content": "问题", "source": "user", "tool_call_id": None,
-         "status": None, "tool_name": None, "error_detail": None, "tool_calls": None,
-         "reasoning_content": None, "metadata": {}},
-        {"role": "assistant", "content": "回答", "source": "user", "tool_call_id": None,
-         "status": None, "tool_name": None, "error_detail": None, "tool_calls": None,
-         "reasoning_content": None, "metadata": {}},
+        {
+            "role": "user",
+            "content": "问题",
+            "source": "user",
+            "tool_call_id": None,
+            "status": None,
+            "tool_name": None,
+            "error_detail": None,
+            "tool_calls": None,
+            "reasoning_content": None,
+            "metadata": {},
+        },
+        {
+            "role": "assistant",
+            "content": "回答",
+            "source": "user",
+            "tool_call_id": None,
+            "status": None,
+            "tool_name": None,
+            "error_detail": None,
+            "tool_calls": None,
+            "reasoning_content": None,
+            "metadata": {},
+        },
     ]
     if with_compressed:
         messages.append(
-            {"role": "tool", "content": "…[本消息已压缩，完整内容已另存]…", "source": "tool",
-             "tool_call_id": "c1", "status": "success", "tool_name": "f1",
-             "error_detail": None, "tool_calls": None, "reasoning_content": None, "metadata": {}}
+            {
+                "role": "tool",
+                "content": "…[本消息已压缩，完整内容已另存]…",
+                "source": "tool",
+                "tool_call_id": "c1",
+                "status": "success",
+                "tool_name": "f1",
+                "error_detail": None,
+                "tool_calls": None,
+                "reasoning_content": None,
+                "metadata": {},
+            }
         )
     data = {
-        "version": 4, "session_id": sid, "created_at": "2026-01-01T00:00:00",
-        "title": f"会话{sid}", "updated_at": "2026-01-01T00:01:00", "status": "active",
-        "parent_id": None, "branch_id": "", "branch_summary": "", "model_override": None,
-        "pinned": False, "channel": "web", "messages": messages,
+        "version": 4,
+        "session_id": sid,
+        "created_at": "2026-01-01T00:00:00",
+        "title": f"会话{sid}",
+        "updated_at": "2026-01-01T00:01:00",
+        "status": "active",
+        "parent_id": None,
+        "branch_id": "",
+        "branch_summary": "",
+        "model_override": None,
+        "pinned": False,
+        "channel": "web",
+        "messages": messages,
     }
-    (sessions_dir / f"{sid}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    (sessions_dir / f"{sid}.json").write_text(
+        json.dumps(data, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 def _setup_data(tmp_path) -> str:
@@ -58,6 +96,7 @@ def _setup_data(tmp_path) -> str:
 
 
 # ── 非法参数 → 退出码 2 ──
+
 
 @pytest.mark.parametrize(
     "fn",
@@ -73,6 +112,7 @@ def test_event_cmd_invalid_arg_usage_exit2(fn, capsys):
 
 # ── 编排函数异常 → 退出码 1 ──
 
+
 def test_event_inventory_orchestration_error_exit1(tmp_path, monkeypatch):
     from llm_loop.event_log import inventory as inv_mod
 
@@ -83,11 +123,12 @@ def test_event_inventory_orchestration_error_exit1(tmp_path, monkeypatch):
     assert _cmd_event_inventory(["--data-dir", str(tmp_path)]) == 1
 
 
-
 def test_event_inventory_error_prints_reason(capsys, monkeypatch):
     from llm_loop.event_log import inventory as inv_mod
 
-    monkeypatch.setattr(inv_mod, "run_inventory", lambda d: (_ for _ in ()).throw(RuntimeError("盘点故障")))
+    monkeypatch.setattr(
+        inv_mod, "run_inventory", lambda d: (_ for _ in ()).throw(RuntimeError("盘点故障"))
+    )
     _cmd_event_inventory(["--data-dir", "/tmp/nonexistent-data-xyz"])
     err = capsys.readouterr().err
     assert "盘点失败" in err
@@ -97,7 +138,9 @@ def test_event_inventory_error_prints_reason(capsys, monkeypatch):
 def test_event_migrate_error_exit1(tmp_path, monkeypatch, capsys):
     from llm_loop.event_log import migrate as mig_mod
 
-    monkeypatch.setattr(mig_mod, "run_migration", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("迁移故障")))
+    monkeypatch.setattr(
+        mig_mod, "run_migration", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("迁移故障"))
+    )
     assert _cmd_event_migrate(["--data-dir", str(tmp_path)]) == 1
     err = capsys.readouterr().err
     assert "迁移失败" in err
@@ -106,9 +149,12 @@ def test_event_migrate_error_exit1(tmp_path, monkeypatch, capsys):
 def test_event_verify_error_exit1(tmp_path, monkeypatch, capsys):
     from llm_loop.event_log import replay as rep_mod
 
-    monkeypatch.setattr(rep_mod, "replay_session", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("校验故障")))
+    monkeypatch.setattr(
+        rep_mod, "replay_session", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("校验故障"))
+    )
     data_dir = _setup_data(tmp_path)
     from llm_loop.event_log.migrate import run_migration
+
     run_migration(f"{data_dir}/sessions", f"{data_dir}/event_logs")
     assert _cmd_event_verify(["--data-dir", data_dir]) == 1
     out = capsys.readouterr().out
@@ -122,13 +168,16 @@ def test_event_rollback_error_exit1(tmp_path, monkeypatch, capsys):
     # 先迁移生成备份区，再让 run_rollback 抛异常
     assert _cmd_event_migrate(["--data-dir", data_dir]) == 0
     capsys.readouterr()
-    monkeypatch.setattr(mig_mod, "run_rollback", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("回滚故障")))
+    monkeypatch.setattr(
+        mig_mod, "run_rollback", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("回滚故障"))
+    )
     assert _cmd_event_rollback(["--data-dir", data_dir]) == 1
     err = capsys.readouterr().err
     assert "回滚失败" in err
 
 
 # ── 正常路径退出码 0 + 闭环对账 ──
+
 
 def test_event_inventory_normal_exit0(tmp_path, capsys):
     data_dir = _setup_data(tmp_path)
@@ -190,6 +239,7 @@ def test_event_rollback_no_backup_exit1(tmp_path, capsys):
 
 # ── 分派注册 + 不触发 engine 装配 ──
 
+
 def test_event_cmd_dispatch_registered_without_engine(tmp_path, monkeypatch):
     import llm_loop.factory
 
@@ -202,7 +252,6 @@ def test_event_cmd_dispatch_registered_without_engine(tmp_path, monkeypatch):
     assert _dispatch_command(["event-inventory", "--data-dir", data_dir]) == 0
 
 
-
 def test_event_verify_rejects_session_path_traversal_before_source_read(tmp_path, capsys):
     """CLI --session不得越出sessions根读取兄弟JSON；非法ID应参数错误exit2。"""
     data = tmp_path / "data"
@@ -212,9 +261,7 @@ def test_event_verify_rejects_session_path_traversal_before_source_read(tmp_path
     sibling.mkdir(parents=True)
     (sibling / "victim.json").write_text("{corrupt", encoding="utf-8")
 
-    rc = _cmd_event_verify(
-        ["--data-dir", str(data), "--session", "../other/victim"]
-    )
+    rc = _cmd_event_verify(["--data-dir", str(data), "--session", "../other/victim"])
     captured = capsys.readouterr()
 
     assert rc == 2

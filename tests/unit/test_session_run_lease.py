@@ -19,7 +19,7 @@ def test_run_lease_cross_process_is_nonblocking_and_reacquirable(tmp_path: Path)
     ready = tmp_path / "ready"
     release = tmp_path / "release"
     sid = "shared-session"
-    worker = r'''
+    worker = r"""
 import sys, time
 from pathlib import Path
 from llm_loop.core.session import SessionStore
@@ -31,7 +31,7 @@ with store.run_lease(sid) as acquired:
     Path(ready).write_text("ready")
     while not Path(release).exists():
         time.sleep(0.01)
-'''
+"""
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
     proc = subprocess.Popen(
@@ -126,7 +126,9 @@ def test_management_mutations_reject_active_run(tmp_path):
             lambda: other.set_pinned(sid, True),
             lambda: other.set_channel(sid, "feishu:group:test"),
             lambda: other.archive(sid),
-            lambda: other.append(sid, Message(role="user", content="late", source=MessageSource.USER)),
+            lambda: other.append(
+                sid, Message(role="user", content="late", source=MessageSource.USER)
+            ),
             lambda: other.trim_session(sid, keep_recent=1),
             lambda: other.fork(sid),
             lambda: other.delete(sid),

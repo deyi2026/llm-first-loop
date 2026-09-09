@@ -148,6 +148,7 @@ def _provider_message_dict(m: Message, current_turn_ref: int | None) -> dict:
         d["content"] = str(d.get("content") or "") + boundary_block
     return d
 
+
 # EVO-20260816-380f1c2e: 压缩目标比例（裁到预算×此值，留缓冲降低断点频率）。
 # 2026-09-03 P0: 不能在模块 import 时读取 env。Web 入口会先 import factory/history，
 # 后在 main() 才 load_env_file；旧常量因此永久固化默认 0.6，磁盘 .env=0.5 实际不生效。
@@ -167,6 +168,7 @@ def _compress_target_ratio() -> float:
     if not 0.0 < ratio < 1.0:
         return _DEFAULT_COMPRESS_TARGET_RATIO
     return ratio
+
 
 _CACHE_COMPACTED_FOR_META = "cache_compacted_for"
 _CACHE_COMPACTION_SCOPE_META = "cache_compaction_scope"
@@ -297,6 +299,7 @@ def clear_cache_compacted_for(message: Message, provider_id: str) -> bool:
     message.metadata = meta
     return changed
 
+
 # EVO-20260818 cache_window_converge 的兼容入口。
 # 2026-09-04 agency-first 修正：未配置全局 HISTORY_MAX_CHARS 不再等价于隐藏
 # 100K~200K cap。value=None 时只给出按物理窗口估算的诊断预算：90% 输入安全
@@ -327,6 +330,7 @@ def _persist_semantic_state(session_id: str = "") -> bool:
     CR-R1（tasks 2.2）: COG_RUNTIME_MODE=off 时短路——连 store 写也不做（纯旧行为）。
     """
     import os as _os_mod
+
     if _os_mod.environ.get("COG_RUNTIME_MODE", "shadow").strip().lower() == "off":
         return False
     # CR-R1.1a: Semantic State 是会话级认知寄存器；缺失会话身份时禁止
@@ -349,9 +353,7 @@ def _persist_semantic_state(session_id: str = "") -> bool:
 
         base = os.environ.get("LFL_DATA_DIR", "data")
         audit = _Path(base) / "audit"
-        goal = GoalStore(audit).get(
-            prefer_session_id=session_id, strict_session=True
-        )
+        goal = GoalStore(audit).get(prefer_session_id=session_id, strict_session=True)
         store = SemanticStateStore(audit)
         state = rebuild_state(goal)
         if state is None:
@@ -391,9 +393,7 @@ def _persist_semantic_state(session_id: str = "") -> bool:
     except Exception:
         import logging
 
-        logging.getLogger(__name__).warning(
-            "语义状态持久化失败（fail-open）", exc_info=True
-        )
+        logging.getLogger(__name__).warning("语义状态持久化失败（fail-open）", exc_info=True)
         return False
 
 
@@ -415,9 +415,7 @@ def _decision_line_frame(session_id: str = "") -> str:
         from llm_loop.introspection.goal import GoalStore
 
         base = os.environ.get("LFL_DATA_DIR", "data")
-        g = GoalStore(_Path(base) / "audit").get(
-            prefer_session_id=session_id, strict_session=True
-        )
+        g = GoalStore(_Path(base) / "audit").get(prefer_session_id=session_id, strict_session=True)
         if not g or g.get("status") != "active":
             return ""
         obj = str(g.get("objective", ""))
@@ -429,9 +427,7 @@ def _decision_line_frame(session_id: str = "") -> str:
     except Exception:
         import logging
 
-        logging.getLogger(__name__).warning(
-            "决策线读取失败（fail-open 省略）", exc_info=True
-        )
+        logging.getLogger(__name__).warning("决策线读取失败（fail-open 省略）", exc_info=True)
         return ""
 
 
@@ -455,9 +451,7 @@ def converge_history_budget(
             return _HISTORY_BUDGET_DEFAULT, "窗口未知兜底 100K"
         try:
             adaptive = int(
-                model_window
-                * _HISTORY_BUDGET_INPUT_MARGIN
-                * _HISTORY_BUDGET_CHARS_PER_TOKEN
+                model_window * _HISTORY_BUDGET_INPUT_MARGIN * _HISTORY_BUDGET_CHARS_PER_TOKEN
             )
         except (TypeError, ValueError):
             return _HISTORY_BUDGET_DEFAULT, "窗口非法兜底 100K"
@@ -475,9 +469,7 @@ def converge_history_budget(
 ArchiveSink = Callable[[str, Message], None]
 
 
-def _apply_reasoning_tail(
-    messages: list[Message], reasoning_tail: int
-) -> list[Message]:
+def _apply_reasoning_tail(messages: list[Message], reasoning_tail: int) -> list[Message]:
     """M66 思考链瘦身: 历史中省略 assistant 思考链（reasoning_content）.
 
     更早轮次的思考链在**提交给 LLM 时**省略（内容/工具调用完整保留），
@@ -511,11 +503,7 @@ def _apply_reasoning_tail(
     if reasoning_tail == -1:
         out: list[Message] = []
         for m in messages:
-            if (
-                m.role == "assistant"
-                and m.reasoning_content
-                and not m.tool_calls
-            ):
+            if m.role == "assistant" and m.reasoning_content and not m.tool_calls:
                 out.append(replace(m, reasoning_content=None))  # 仅提交视图省略，不动原消息
             else:
                 out.append(m)
@@ -610,7 +598,8 @@ def build_history_messages(
     # <1.0 在预算附近提前整理压缩——裁到 COMPRESS_TARGET_RATIO 留缓冲, 避免撞顶被动压缩）
     session_id: str = "",
     archive_sink: ArchiveSink | None = None,
-    summarizer: Any | None = None,  # 保留签名向后兼容；压缩路径不再自动调 LLM 摘要（RULE-AI-00，LLM 摘要由 AI 经 search_archive(with_summary=true) 主动触发）
+    summarizer: Any
+    | None = None,  # 保留签名向后兼容；压缩路径不再自动调 LLM 摘要（RULE-AI-00，LLM 摘要由 AI 经 search_archive(with_summary=true) 主动触发）
     reasoning_tail: int = 0,  # M66: 历史中仅保留最近 N 轮思考链（默认 0=全保留，T-P0-1-1 capability-first）
     skip_injected_system: bool = False,  # P1-7: 跳过推送式 system 注入（metadata.injected_system）
     # —— 仅落会话不进提交, system 前缀保持静态 → 引擎前缀缓存命中; 功能性注入不受影响
@@ -634,7 +623,8 @@ def build_history_messages(
     cache_archive_model: str = "",  # P4: marker provenance，模型变化可重算旧 provider 折叠
     cache_archive_budget: int | None = None,  # P4: marker provenance，预算扩容可重算旧折叠
     cache_compacted_out: list[Message] | None = None,  # 本轮新写标记的原消息，供事件链同步
-    cache_compacted_index_out: list[int] | None = None,  # 对应消息在原始 session_messages/base 中的精确索引
+    cache_compacted_index_out: list[int]
+    | None = None,  # 对应消息在原始 session_messages/base 中的精确索引
     cache_protected_prefix_messages: int = 0,  # P1: 上轮已确认 cached 的历史消息数（system 后）
     cache_protected_prefix_chars: int = 0,  # P1: 上轮 cached boundary 扣除 system 后的字符近似
     compact_view_stats: list[dict] | None = None,  # EVO-20260825 任务6: 压缩后视图体积验证
@@ -642,8 +632,10 @@ def build_history_messages(
     # 供调用方（build.py）写 breaker 审计事件 view_not_shrinking_after_compact（drop<5% 时）。
     require_archive_success: bool = False,  # ERC enforce: hidden bytes must be durable before shrink
     preserve_last_human_exact: bool = False,  # R6 initial ingress: never replace current human truth with a compact surrogate
-    preserve_human_message: Message | None = None,  # exact active-human identity from filtered Session mapping
-    current_turn_ref: int | None = None,  # G6-v2: render source-attached boundary facts only in owning human turn
+    preserve_human_message: Message
+    | None = None,  # exact active-human identity from filtered Session mapping
+    current_turn_ref: int
+    | None = None,  # G6-v2: render source-attached boundary facts only in owning human turn
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
 
@@ -740,9 +732,7 @@ def build_history_messages(
             dyn2 = out[0]["content"][sys_base_len:]
             if len(dyn2) > max_sys_merge_chars * 1.5:
                 out[0]["content"] = (
-                    cur[:sys_base_len]
-                    + "...[已截断]...\n"
-                    + dyn2[-(max_sys_merge_chars - 20):]
+                    cur[:sys_base_len] + "...[已截断]...\n" + dyn2[-(max_sys_merge_chars - 20) :]
                 )
         else:
             out.append(msg_dict)
@@ -765,18 +755,13 @@ def build_history_messages(
     # A previously bad compaction may already have advanced the persisted anchor past
     # the active human. Re-open only as far as that exact identity; provider markers
     # still suppress every other already-compacted message.
-    if (
-        _preserved_human_source_index is not None
-        and history_anchor > _preserved_human_source_index
-    ):
+    if _preserved_human_source_index is not None and history_anchor > _preserved_human_source_index:
         history_anchor = _preserved_human_source_index
     if history_anchor > 0 and history_anchor < len(session_messages):
         session_messages = session_messages[history_anchor:]
         if cache_archive_provider:
             session_messages = [
-                m
-                for m in session_messages
-                if m is _preserved_human or not _marker_active(m)
+                m for m in session_messages if m is _preserved_human or not _marker_active(m)
             ]
         # 2026-08-16 锚点对齐工具轮边界（现场：tool_call_id is not found 根因）：
         # 锚点落在声明↔回执组内会把声明裁掉、留下孤儿回执（API 拒绝）。
@@ -807,9 +792,7 @@ def build_history_messages(
         total_chars = sum(_wire_size(m, current_turn_ref) for m in session_messages)
     elif cache_archive_provider:
         session_messages = [
-            m
-            for m in session_messages
-            if m is _preserved_human or not _marker_active(m)
+            m for m in session_messages if m is _preserved_human or not _marker_active(m)
         ]
         total_chars = sum(_wire_size(m, current_turn_ref) for m in session_messages)
 
@@ -897,9 +880,7 @@ def build_history_messages(
     # assistant(tool_calls)↔tool 回执或只保护半条 boundary message。调用侧只会在同 session /
     # 同模型 / 同 human turn / 同 stable-prefix fingerprint 时传非零值；其它情况自动为 0。
     try:
-        _reported_cached_messages = max(
-            0, int(cache_protected_prefix_messages or 0)
-        )
+        _reported_cached_messages = max(0, int(cache_protected_prefix_messages or 0))
     except (TypeError, ValueError):
         _reported_cached_messages = 0
     try:
@@ -1011,9 +992,7 @@ def build_history_messages(
         _kept_group_indices = list(range(head_count, len(atomic_groups)))
         _fold_count = 0
         while kept_groups:
-            _kept_chars = sum(
-                _wire_size(mm, current_turn_ref) for g in kept_groups for mm in g
-            )
+            _kept_chars = sum(_wire_size(mm, current_turn_ref) for g in kept_groups for mm in g)
             if len(system_prompt) + head_chars + _kept_chars <= archive_budget:
                 break
             # Mechanical oldest-first compaction with one non-removable identity:
@@ -1048,10 +1027,7 @@ def build_history_messages(
             if (
                 archive_budget - group_len < 0
                 and kept_groups
-                and not (
-                    _anchor_protect_valid
-                    and _gi in _anchor_protected_groups
-                )
+                and not (_anchor_protect_valid and _gi in _anchor_protected_groups)
             ):
                 # 漂移修复（2026-08-29）: 保护边界内（锚点组起）不归档——穿透预算
                 # 保留任务锚点，锚点丢失代价 > 超限 BLOCK 兜底
@@ -1059,8 +1035,7 @@ def build_history_messages(
                 _fold_count += 1
                 continue
             if group_len > trim_budget and (
-                not kept_groups
-                or (_anchor_protect_valid and _gi in _anchor_protected_groups)
+                not kept_groups or (_anchor_protect_valid and _gi in _anchor_protected_groups)
             ):
                 # 最新组单条/整组超限: 另存全文 + 精简注入（组内字段保留，仅 content 截断）
                 # 2026-08-29 回归修复（test_search_archive_in_loop_after_compression）:
@@ -1102,7 +1077,9 @@ def build_history_messages(
     _downgraded_head = False
     _cache_boundary_mode = "protected" if _protected_group_count > 0 else "inactive"
     if head_groups and kept_groups:
-        _kept_total = head_chars + sum(_wire_size(mm, current_turn_ref) for g in kept_groups for mm in g)
+        _kept_total = head_chars + sum(
+            _wire_size(mm, current_turn_ref) for g in kept_groups for mm in g
+        )
         if len(system_prompt) + _kept_total > int(max_chars * 0.95):
             _downgraded_head = True
             if _protected_group_count > 0:
@@ -1218,7 +1195,9 @@ def build_history_messages(
         # 否则 system 落在消息中间 → qwen 系模板(9B/27B) 报
         # "System message must be at the beginning" (HTTP 400/500)。
         if m.role == "system":
-            _append_or_merge(_provider_message_dict(m, current_turn_ref), dynamic=_is_dynamic_inject(m))
+            _append_or_merge(
+                _provider_message_dict(m, current_turn_ref), dynamic=_is_dynamic_inject(m)
+            )
         else:
             _d = _provider_message_dict(m, current_turn_ref)
             out.append(_d)
@@ -1233,14 +1212,10 @@ def build_history_messages(
         try:
             _pre_chars = len(system_prompt) + total_chars
             _post_chars = sum(_dict_wire_size(m) for m in out)
-            _drop_pct = (
-                (max(1, _pre_chars) - _post_chars) / max(1, _pre_chars) * 100.0
-            )
+            _drop_pct = (max(1, _pre_chars) - _post_chars) / max(1, _pre_chars) * 100.0
             _archived_ids = {id(m) for m in archived}
             _archived_group_count = sum(
-                1
-                for _g in atomic_groups
-                if any(id(_m) in _archived_ids for _m in _g)
+                1 for _g in atomic_groups if any(id(_m) in _archived_ids for _m in _g)
             )
             compact_view_stats.append(
                 {
@@ -1259,7 +1234,9 @@ def build_history_messages(
                     "archived_group_count": _archived_group_count,
                     "atomic_group_count": len(atomic_groups),
                     "compaction_mode": (
-                        "provider_contiguous_oldest" if cache_archive_provider else "budget_recent_tail"
+                        "provider_contiguous_oldest"
+                        if cache_archive_provider
+                        else "budget_recent_tail"
                     ),
                     "head_keep_chars": head_keep_chars,
                     "head_keep_target_ratio": head_keep_target_ratio,
@@ -1273,8 +1250,7 @@ def build_history_messages(
                 import logging
 
                 logging.getLogger(__name__).warning(
-                    "head_keep 大裁后视图未缩小: pre=%d post=%d drop=%.1f%% "
-                    "archived=%d session=%s",
+                    "head_keep 大裁后视图未缩小: pre=%d post=%d drop=%.1f%% archived=%d session=%s",
                     _pre_chars,
                     _post_chars,
                     _drop_pct,
@@ -1295,11 +1271,8 @@ def build_history_messages(
         except Exception:  # noqa: BLE001 — fail-open
             import logging
 
-            logging.getLogger(__name__).debug(
-                "压缩视图统计失败（fail-open）", exc_info=True
-            )
+            logging.getLogger(__name__).debug("压缩视图统计失败（fail-open）", exc_info=True)
     return _repair_tool_call_pairing(out)
-
 
 
 def _exact_tool_group(messages: list[dict], start: int) -> tuple[int, str] | None:
@@ -1357,11 +1330,7 @@ def _exact_tool_group(messages: list[dict], start: int) -> tuple[int, str] | Non
     if len(answered) != len(canonical_calls):
         return None
 
-    assistant_rest = {
-        key: value
-        for key, value in assistant.items()
-        if key != "tool_calls"
-    }
+    assistant_rest = {key: value for key, value in assistant.items() if key != "tool_calls"}
     canonical = {
         "assistant": assistant_rest,
         "tool_calls": canonical_calls,
@@ -1435,6 +1404,7 @@ def project_exact_duplicate_tool_groups(
         "removed_messages": removed_messages,
     }
 
+
 def compute_breakdown(
     session_messages: list[Message],
     system_prompt: str,
@@ -1492,20 +1462,14 @@ def compute_breakdown_from_dicts(
          total, budget, ratio}；memory 恒 0（记忆消息已并入 system/history，
         协议层不可区分）；budget<=0 时 ratio 为 None。
     """
-    sys_chars = sum(
-        len(str(m.get("content") or "")) for m in messages if m.get("role") == "system"
-    )
+    sys_chars = sum(len(str(m.get("content") or "")) for m in messages if m.get("role") == "system")
     hist_chars = sum(
         len(str(m.get("content") or ""))
         for m in messages
         if m.get("role") not in ("system", "tool")
     )
-    tool_chars = sum(
-        len(str(m.get("content") or "")) for m in messages if m.get("role") == "tool"
-    )
-    reasoning_chars = sum(
-        len(str(m.get("reasoning_content") or "")) for m in messages
-    )
+    tool_chars = sum(len(str(m.get("content") or "")) for m in messages if m.get("role") == "tool")
+    reasoning_chars = sum(len(str(m.get("reasoning_content") or "")) for m in messages)
     total = sys_chars + hist_chars + tool_chars + tool_schema_chars + reasoning_chars
 
     def _item(c: int) -> dict:
@@ -1743,6 +1707,7 @@ def stable_digest(obj: Any) -> str:
 
     Message 对象转 (role, content) 对；dict/list 稳定 JSON；其余 str() 兜底。
     """
+
     def _norm(o: Any):
         if isinstance(o, Message):
             return {"role": o.role, "content": o.content, "metadata": o.metadata}
@@ -1756,17 +1721,31 @@ def stable_digest(obj: Any) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def projection_ver(*, model: str, budget: int, anchor: int, memory_fp: str,
-                   interop_fp: str, system_fp: str, settings_fp: str) -> str:
+def projection_ver(
+    *,
+    model: str,
+    budget: int,
+    anchor: int,
+    memory_fp: str,
+    interop_fp: str,
+    system_fp: str,
+    settings_fp: str,
+) -> str:
     """构建参数指纹（ver）——任何影响构建输出的参数变化 → ver 变化 → 缓存行自然过期.
 
     seq（消息数）负责"历史追加"水印；ver 负责"参数/动态输入（记忆/协调/system/开关）"水印。
     """
-    return stable_digest({
-        "model": model, "budget": budget, "anchor": anchor,
-        "memory_fp": memory_fp, "interop_fp": interop_fp,
-        "system_fp": system_fp, "settings_fp": settings_fp,
-    })
+    return stable_digest(
+        {
+            "model": model,
+            "budget": budget,
+            "anchor": anchor,
+            "memory_fp": memory_fp,
+            "interop_fp": interop_fp,
+            "system_fp": system_fp,
+            "settings_fp": settings_fp,
+        }
+    )
 
 
 def projection_check(prev: dict | None, *, ver: str, seq: int, built_hash: str) -> str:

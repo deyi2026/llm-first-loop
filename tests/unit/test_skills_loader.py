@@ -27,9 +27,7 @@ def _mk_skill(root: Path, dir_name: str, name: str, desc: str) -> Path:
     d = root / dir_name
     d.mkdir(parents=True, exist_ok=True)
     f = d / "SKILL.md"
-    f.write_text(
-        _SKILL_TEMPLATE.format(name=name, desc=desc, title=name), encoding="utf-8"
-    )
+    f.write_text(_SKILL_TEMPLATE.format(name=name, desc=desc, title=name), encoding="utf-8")
     return f
 
 

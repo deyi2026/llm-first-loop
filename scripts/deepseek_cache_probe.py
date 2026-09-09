@@ -48,11 +48,26 @@ def build_msgs(extra: bool = False) -> list[dict]:
             "role": "assistant",
             "tool_calls": [
                 # DeepSeek API: function.arguments 必须是 JSON 字符串（本地 llama.cpp 才接受对象）
-                {"id": "call_a", "type": "function", "function": {"name": "execute_command", "arguments": json.dumps({"cmd": "ps aux | head"})}},
-                {"id": "call_b", "type": "function", "function": {"name": "read_file", "arguments": json.dumps({"path": "/tmp/x"})}},
+                {
+                    "id": "call_a",
+                    "type": "function",
+                    "function": {
+                        "name": "execute_command",
+                        "arguments": json.dumps({"cmd": "ps aux | head"}),
+                    },
+                },
+                {
+                    "id": "call_b",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": json.dumps({"path": "/tmp/x"})},
+                },
             ],
         },
-        {"role": "tool", "tool_call_id": "call_a", "content": "[状态: success] [输出 3 行] python 进程正常"},
+        {
+            "role": "tool",
+            "tool_call_id": "call_a",
+            "content": "[状态: success] [输出 3 行] python 进程正常",
+        },
         {"role": "tool", "tool_call_id": "call_b", "content": "[状态: success] 文件内容 42 字节"},
     ]
     # 历史段: 模拟多轮回答历史（稳定前缀的一部分）
@@ -88,16 +103,20 @@ def call(client: httpx.Client, url: str, model: str, msgs: list[dict], label: st
     pct = (cached / prompt * 100) if prompt else 0.0
     print(
         f"  {label}: prompt={prompt:>5} hit={cached:>5} miss={miss:>5} "
-        f"hit_rate={pct:5.1f}%  ttf={dt*1000:7.0f}ms"
+        f"hit_rate={pct:5.1f}%  ttf={dt * 1000:7.0f}ms"
     )
     return {"prompt": prompt, "cached": cached, "miss": miss, "pct": pct, "ms": dt * 1000}
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--base-url", default="https://api.deepseek.com/v1")
     ap.add_argument("--model", default="deepseek-v4-flash")
-    ap.add_argument("--ttl", type=float, default=0.0, help=">0 时在 B 与 C 之间加等值秒数间隔做 TTL 探测")
+    ap.add_argument(
+        "--ttl", type=float, default=0.0, help=">0 时在 B 与 C 之间加等值秒数间隔做 TTL 探测"
+    )
     args = ap.parse_args()
 
     api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("LLM_API_KEY")
@@ -127,14 +146,15 @@ def main() -> int:
     # B 命中 ≥80% 即精确重发命中; C 需同时满足 命中率≥80% 且 命中token数不较 B 回退（前缀未被破坏）
     b_hit = bool(b and b.get("pct", 0) >= 80)
     c_hit = bool(
-        c and c.get("pct", 0) >= 80
-        and b and c.get("cached", 0) >= b.get("cached", 0) * 0.95
+        c and c.get("pct", 0) >= 80 and b and c.get("cached", 0) >= b.get("cached", 0) * 0.95
     )
     if b_hit and c_hit:
         append_miss = (c.get("miss", 0) - b.get("miss", 0)) if b else 0
         append_tok = (c.get("prompt", 0) - b.get("prompt", 0)) if b else 0
-        print("✅ 前缀缓存生效: B 同载荷重发高命中 + C 追加后命中 token 不缩水"
-              f"（新增 miss {append_miss} ≈ 追加 {append_tok} tokens）→ 尾部追加不破坏命中。")
+        print(
+            "✅ 前缀缓存生效: B 同载荷重发高命中 + C 追加后命中 token 不缩水"
+            f"（新增 miss {append_miss} ≈ 追加 {append_tok} tokens）→ 尾部追加不破坏命中。"
+        )
         print("   LFL「稳定前缀 + 尾部追加」策略在 DeepSeek 成立, 缓存省钱可观测。")
     elif b_hit:
         print("⚠️ 精确重发高命中, 但前缀追加后命中回退——检查载荷差异（前缀字节是否被改动）。")

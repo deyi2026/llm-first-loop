@@ -23,7 +23,9 @@ def _audit():
 
 # ── code_review ──
 def test_code_review_basic():
-    r = run_code_review(_ctx(), _audit(), {"code": "def add(a, b):\n    return a + b\n", "language": "python"})
+    r = run_code_review(
+        _ctx(), _audit(), {"code": "def add(a, b):\n    return a + b\n", "language": "python"}
+    )
     assert r.status == ToolResultStatus.SUCCESS, r.content[:200]
     assert "审查报告" in r.content
     assert "审查维度清单" in r.content
@@ -33,7 +35,11 @@ def test_code_review_basic():
 
 
 def test_code_review_smell():
-    r = run_code_review(_ctx(), _audit(), {"code": "password = 'secret123'\neval(user_input)\n", "language": "python"})
+    r = run_code_review(
+        _ctx(),
+        _audit(),
+        {"code": "password = 'secret123'\neval(user_input)\n", "language": "python"},
+    )
     assert r.status == ToolResultStatus.SUCCESS
     assert "疑似密码硬编码" in r.content
     assert "使用 eval()" in r.content
@@ -41,10 +47,14 @@ def test_code_review_smell():
 
 
 def test_code_review_focus_filter():
-    r = run_code_review(_ctx(), _audit(), {
-        "code": "x = 1\n",
-        "focus": ["security", "performance"],
-    })
+    r = run_code_review(
+        _ctx(),
+        _audit(),
+        {
+            "code": "x = 1\n",
+            "focus": ["security", "performance"],
+        },
+    )
     assert r.status == ToolResultStatus.SUCCESS
     assert "security" in r.content
     assert "performance" in r.content
@@ -87,10 +97,14 @@ def test_grill_me_depth():
 
 
 def test_grill_me_focus_areas():
-    r = run_grill_me(_ctx(), _audit(), {
-        "design": "做缓存",
-        "focus_areas": ["security", "scale"],
-    })
+    r = run_grill_me(
+        _ctx(),
+        _audit(),
+        {
+            "design": "做缓存",
+            "focus_areas": ["security", "scale"],
+        },
+    )
     assert r.status == ToolResultStatus.SUCCESS
     # 只应显示 security 和 scale（没 edge_cases）
     sec = r.content.count("edge_cases")
@@ -114,9 +128,13 @@ def test_stop_slop_clean_text():
 
 
 def test_stop_slop_detects_slop():
-    r = run_stop_slop(_ctx(), _audit(), {
-        "text": "首先，我们需要考虑这个方案；其次，它至关重要；最后，让我们一起完成。",
-    })
+    r = run_stop_slop(
+        _ctx(),
+        _audit(),
+        {
+            "text": "首先，我们需要考虑这个方案；其次，它至关重要；最后，让我们一起完成。",
+        },
+    )
     assert r.status == ToolResultStatus.SUCCESS
     assert "AI 味" in r.content or "AI味" in r.content
     assert "首先" in r.content or "模板化" in r.content
@@ -124,10 +142,14 @@ def test_stop_slop_detects_slop():
 
 
 def test_stop_slop_aggressive():
-    r = run_stop_slop(_ctx(), _audit(), {
-        "text": "首先，这是个测试。最后，完成。",
-        "aggressive": True,
-    })
+    r = run_stop_slop(
+        _ctx(),
+        _audit(),
+        {
+            "text": "首先，这是个测试。最后，完成。",
+            "aggressive": True,
+        },
+    )
     assert r.status == ToolResultStatus.SUCCESS
     assert "清洗后文本" in r.content
     print("✅ test_stop_slop_aggressive")
@@ -142,9 +164,11 @@ def test_stop_slop_empty():
 
 # ── 工具定义 schema 完整性 ──
 def test_tool_defs_have_required_fields():
-    for name, defn in [("code_review", CODE_REVIEW_TOOL_DEF),
-                       ("grill_me", GRILL_ME_TOOL_DEF),
-                       ("stop_slop", STOP_SLOP_TOOL_DEF)]:
+    for name, defn in [
+        ("code_review", CODE_REVIEW_TOOL_DEF),
+        ("grill_me", GRILL_ME_TOOL_DEF),
+        ("stop_slop", STOP_SLOP_TOOL_DEF),
+    ]:
         assert "name" in defn and defn["name"] == name
         assert "description" in defn
         assert "parameters" in defn

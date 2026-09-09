@@ -399,7 +399,10 @@ def test_result_event_write_failure_never_creates_false_durable_terminal(
     ],
 )
 def test_noncompleted_exact_terminal_result_survives_restart(
-    tmp_path, llm, max_rounds: int, expected_outcome: str  # noqa: ANN001
+    tmp_path,
+    llm,
+    max_rounds: int,
+    expected_outcome: str,  # noqa: ANN001
 ) -> None:
     store, _events = _store(tmp_path)
     runner = _runner(llm, store)

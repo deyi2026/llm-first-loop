@@ -6,6 +6,7 @@
 - 两配置都为 0 时 cleanup 空操作（零回归）
 - 单文件损坏 fail-open（不阻断其他文件）
 """
+
 from __future__ import annotations
 
 import json
@@ -44,7 +45,9 @@ def test_archive_gc_by_max_entries(tmp_path):
     result = store.cleanup(max_entries=4, ttl_days=0)
     assert result["pruned_entries"] == 6
     p = store._dir / "s1.jsonl"
-    lines = [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
+    lines = [
+        json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     assert len(lines) == 4
     # 保留最近 4 条（id s1-6..s1-9）
     assert lines[0]["id"].endswith("-6")
@@ -214,9 +217,7 @@ def test_cleanup_legacy_numeric_suffix_neighbor_respects_known_session_owner(tmp
         json.dumps(old, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     neighbor_path = tmp_path / "sess-1.jsonl"
-    neighbor_path.write_text(
-        json.dumps(keep, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    neighbor_path.write_text(json.dumps(keep, ensure_ascii=False) + "\n", encoding="utf-8")
     store = ArchiveStore(
         tmp_path,
         known_session_id_fn=lambda sid: sid == "sess-1",

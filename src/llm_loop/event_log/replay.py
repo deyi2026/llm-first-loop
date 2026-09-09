@@ -126,9 +126,7 @@ def replay_session(events: list[Event]) -> dict:
 
     for event in ordered:
         if event.seq != expected_seq:
-            gaps.append(
-                {"gap_at": expected_seq, "missing": event.seq - expected_seq}
-            )
+            gaps.append({"gap_at": expected_seq, "missing": event.seq - expected_seq})
         expected_seq = event.seq + 1
 
         if event.type == "session.created":

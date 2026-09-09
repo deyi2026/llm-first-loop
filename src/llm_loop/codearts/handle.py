@@ -40,9 +40,7 @@ class HandleRegistry:
         self._sessions: dict[str, tuple[str, str]] = {}  # handle_id -> (session_id, trace_id)
         self._lock = threading.Lock()
 
-    def register(
-        self, handle: ExecutionHandle, *, session_id: str, trace_id: str
-    ) -> None:
+    def register(self, handle: ExecutionHandle, *, session_id: str, trace_id: str) -> None:
         """登记句柄 + 事件日志落盘（payload 不含凭证明文）."""
         with self._lock:
             self._handles[handle.handle_id] = handle
@@ -74,9 +72,7 @@ class HandleRegistry:
     def list_in_flight(self) -> list[ExecutionHandle]:
         """列出在途句柄（status ∈ {PENDING, RUNNING, UNKNOWN}）."""
         with self._lock:
-            return [
-                h for h in self._handles.values() if h.status in _IN_FLIGHT_STATUSES
-            ]
+            return [h for h in self._handles.values() if h.status in _IN_FLIGHT_STATUSES]
 
     def update_status(
         self,

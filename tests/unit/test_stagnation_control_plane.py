@@ -49,7 +49,9 @@ def _spy_actions(engine):
 def _same_arg_resp(call_id: str) -> LLMResponse:
     return LLMResponse(
         content="",
-        tool_calls=[ToolCall(id=call_id, name="read_file", arguments={"path": "/nonexistent/break-target"})],
+        tool_calls=[
+            ToolCall(id=call_id, name="read_file", arguments={"path": "/nonexistent/break-target"})
+        ],
         provider="fake",
     )
 
@@ -58,7 +60,8 @@ class TestG2StagnationObservability:
     def test_reminder_event_and_break_both_recorded(self, tmp_path: Path, monkeypatch):
         """同参失败可观测，但 legacy x5 程序终止不得覆盖模型裁决."""
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[_same_arg_resp(f"c{i}") for i in range(1, 7)],
         )
         actions = _spy_actions(engine)
@@ -74,7 +77,8 @@ class TestG2StagnationObservability:
     def test_identical_args_injection_chars_zero(self, tmp_path: Path, monkeypatch):
         """B-G2: identical_args 路径提醒注入 chars=0（wire + sess.messages 双面）."""
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[_same_arg_resp(f"c{i}") for i in range(1, 7)],
         )
         sid = engine.session.create()
@@ -82,24 +86,27 @@ class TestG2StagnationObservability:
 
         assert "[停滞提醒]" not in _wire_text(fake)
         persisted = engine.session.load(sid)
-        assert not any(
-            "[停滞提醒]" in str(m.content or "") for m in persisted.messages
-        )
+        assert not any("[停滞提醒]" in str(m.content or "") for m in persisted.messages)
 
     def test_empty_search_injection_chars_zero(self, tmp_path: Path, monkeypatch):
         """B-G2: 空结果路径提醒注入 chars=0；否定帧登记事件路径保留."""
+
         def _find_resp(call_id: str) -> LLMResponse:
             return LLMResponse(
                 content="",
-                tool_calls=[ToolCall(
-                    id=call_id, name="execute_command",
-                    arguments={"command": f"find {tmp_path} -name 'missing-*'"},
-                )],
+                tool_calls=[
+                    ToolCall(
+                        id=call_id,
+                        name="execute_command",
+                        arguments={"command": f"find {tmp_path} -name 'missing-*'"},
+                    )
+                ],
                 provider="fake",
             )
 
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[_find_resp("c1"), _find_resp("c2"), _find_resp("c3"), _find_resp("c4")],
         )
         actions = _spy_actions(engine)
@@ -109,16 +116,15 @@ class TestG2StagnationObservability:
         assert ("tool.empty_search_observed", "observed") in actions
         assert "[搜索空结果提醒]" not in _wire_text(fake)
         persisted = engine.session.load(sid)
-        assert not any(
-            "[搜索空结果提醒]" in str(m.content or "") for m in persisted.messages
-        )
+        assert not any("[搜索空结果提醒]" in str(m.content or "") for m in persisted.messages)
 
 
 class TestG3BreakFactsOnly:
     def test_break_final_has_facts_no_advice(self, tmp_path: Path, monkeypatch):
         """Agency-first: 程序不得以停滞终态覆盖模型最终回答."""
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[_same_arg_resp(f"c{i}") for i in range(1, 7)],
         )
         sid = engine.session.create()
@@ -137,7 +143,8 @@ class TestG3BreakFactsOnly:
     def test_no_evidence_gate_states_unresolved(self, tmp_path: Path, monkeypatch):
         """无成功回执只留观测事实，不得由程序伪造 unresolved 最终回答."""
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[_same_arg_resp(f"c{i}") for i in range(1, 7)],
         )
         sid = engine.session.create()

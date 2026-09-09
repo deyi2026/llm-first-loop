@@ -29,7 +29,7 @@ class _FakeRunner:
 RUFF_OK = ""
 RUFF_ERR = "tests/test_x.py:10:5: E501 Line too long (99 > 88)\ntests/test_x.py:12:1: F401 'os' imported but unused\nFound 2 errors."
 PYRIGHT_OK = ""
-PYRIGHT_ERR = "tests/test_x.py:10:5 - error: Argument of type \"int\" cannot be assigned (reportArgumentType)\ntests/test_x.py:15:3 - warning: \"x\" is not defined (reportUndefinedVariable)"
+PYRIGHT_ERR = 'tests/test_x.py:10:5 - error: Argument of type "int" cannot be assigned (reportArgumentType)\ntests/test_x.py:15:3 - warning: "x" is not defined (reportUndefinedVariable)'
 
 
 def _chain(outputs: dict[str, tuple[int, str]], **kw):
@@ -90,8 +90,9 @@ def test_checker_timeout():
 
 def test_severity_filter():
     """severity_filter: 过滤指定级别."""
-    c = _chain({"ruff": (1, RUFF_ERR), "pyright": (1, PYRIGHT_ERR)},
-               severity_filter=frozenset({"error"}))
+    c = _chain(
+        {"ruff": (1, RUFF_ERR), "pyright": (1, PYRIGHT_ERR)}, severity_filter=frozenset({"error"})
+    )
     r = c.run("tests/test_x.py")
     pyright = next(x for x in r.checkers if x.checker_name == "pyright")
     # error 被过滤 → 只剩 warning（若 warning 也在 filter 则空）
@@ -109,11 +110,15 @@ def test_parallel_execution():
 def test_event_store_completed():
     """检查完成事件落盘."""
     events = []
+
     class _Store:
         def append(self, sid, etype, payload):
             events.append((etype, payload))
             return None
-    c = _chain({"ruff": (1, RUFF_ERR), "pyright": (0, PYRIGHT_OK)}, event_store=_Store(), session_id="s1")
+
+    c = _chain(
+        {"ruff": (1, RUFF_ERR), "pyright": (0, PYRIGHT_OK)}, event_store=_Store(), session_id="s1"
+    )
     c.run("tests/test_x.py")
     assert len(events) == 1
     etype, payload = events[0]

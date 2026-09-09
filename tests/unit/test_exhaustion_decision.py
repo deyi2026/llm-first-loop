@@ -19,9 +19,7 @@ def _read_call(i: int) -> ToolCall:
 
 def test_exhaustion_hard_stop_zero_extra_llm_call(build_test_engine):
     """B-G4: 到达 budget 直接硬停——无决策轮、第 N+1 次 LLM call=0、终态纯事实."""
-    engine, fake = build_test_engine(
-        [{"tool_calls": [_read_call(i)]} for i in range(1, 7)]
-    )
+    engine, fake = build_test_engine([{"tool_calls": [_read_call(i)]} for i in range(1, 7)])
     object.__setattr__(engine.settings, "max_iterations", 3)
     sid = engine.session.create()
     result = engine.run(sid, "读文件")
@@ -35,9 +33,7 @@ def test_exhaustion_hard_stop_zero_extra_llm_call(build_test_engine):
 
 def test_exhaustion_hard_stop_no_decision_message(build_test_engine):
     """决策消息零注入（sess.messages 干净）；终态含"用户可继续"提示（默认开关）."""
-    engine, fake = build_test_engine(
-        [{"tool_calls": [_read_call(i)]} for i in range(1, 7)]
-    )
+    engine, fake = build_test_engine([{"tool_calls": [_read_call(i)]} for i in range(1, 7)])
     object.__setattr__(engine.settings, "max_iterations", 2)
     sid = engine.session.create()
     result = engine.run(sid, "读文件")
@@ -58,10 +54,7 @@ def test_exhaustion_hard_stop_no_decision_message(build_test_engine):
 def test_exhaustion_hard_stop_user_continues_in_new_run(build_test_engine):
     """硬停后用户继续（衔接 E 包 task_active 语义）: 新 run 正常接续（历史保留）."""
     engine, fake = build_test_engine(
-        [
-            {"tool_calls": [_read_call(i)]} for i in range(1, 4)
-        ]
-        + [{"content": "接续后的完成回答"}]
+        [{"tool_calls": [_read_call(i)]} for i in range(1, 4)] + [{"content": "接续后的完成回答"}]
     )
     object.__setattr__(engine.settings, "max_iterations", 2)
     sid = engine.session.create()

@@ -7,6 +7,7 @@
 - llm_error_text 对配额错误给出专门文案（非泛化"检查网络/Key"）
 - 非配额 LLM 异常仍走原泛化反馈（零回归）
 """
+
 from __future__ import annotations
 
 from llm_loop.feedback.honesty import llm_error_text

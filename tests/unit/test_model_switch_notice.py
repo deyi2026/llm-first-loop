@@ -1,4 +1,5 @@
 """R8.8 model switch is observability-only and never prompt/history material."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace

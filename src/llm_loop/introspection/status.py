@@ -127,7 +127,9 @@ class ArchitectureStatusProvider:
         self._recovery_status_fn: Callable[[], dict] | None = None
         # EVO-20260818（spec §5.4.1-2）: 缓存健康/cache_guard 快照回调（未注入 → None 零回归）
         self._cache_health_fn: Callable[[], dict | None] | None = None
-        self._cache_guard_fn: Callable[[str], dict | None] | None = None  # session 透传（grill-me Q11）
+        self._cache_guard_fn: Callable[[str], dict | None] | None = (
+            None  # session 透传（grill-me Q11）
+        )
         self._request_usage_fn: Callable[[], dict | None] | None = None
         self._causality_fn: Callable[[str], dict | None] | None = None
 
@@ -474,13 +476,9 @@ class ArchitectureStatusProvider:
             except Exception:  # noqa: BLE001 — 参数快照失败如实标注 None（fail-open）
                 runtime_params = None
         request_usage_fn = self._request_usage_fn
-        _causality_requested = (
-            isinstance(dimensions, list) and "causality" in dimensions
-        ) or (
+        _causality_requested = (isinstance(dimensions, list) and "causality" in dimensions) or (
             isinstance(dimensions, str)
-            and "causality" in {
-                item for item in re.split(r"[,，\s]+", dimensions) if item
-            }
+            and "causality" in {item for item in re.split(r"[,，\s]+", dimensions) if item}
         )
         _causality = (
             self._causality_snapshot(session_id)
@@ -518,12 +516,8 @@ class ArchitectureStatusProvider:
                 ),
                 # EVO-20260827-ed4c1350（P0-B）: 有效预算全口径归因（消除
                 # 1M/300K/200K 三口径误读——AI 直接见 effective + limited_by）
-                "budget": (
-                    self._budget_fn() if getattr(self, "_budget_fn", None) else None
-                ),
-                "last_request": (
-                    request_usage_fn() if request_usage_fn is not None else None
-                ),
+                "budget": (self._budget_fn() if getattr(self, "_budget_fn", None) else None),
+                "last_request": (request_usage_fn() if request_usage_fn is not None else None),
                 # EVO-20260818（spec §5.4.1-2）: 缓存健康/cache_guard 快照（fail-open——
                 # 回调异常字段置 None 不抛穿 architecture_status）
                 "cache_health": self._cache_health_snapshot(),
@@ -653,7 +647,9 @@ def cleanup_audit_logs(audit_dir: str | Path, ttl_days: int) -> dict:
                         continue
                 except (json.JSONDecodeError, AttributeError) as exc:
                     # fail-open：无法解析的行保守保留
-                    logging.getLogger(__name__).debug("审计行解析失败，保守保留（fail-open）: %s", exc)
+                    logging.getLogger(__name__).debug(
+                        "审计行解析失败，保守保留（fail-open）: %s", exc
+                    )
                 kept.append(line)
             if len(kept) < len(lines):
                 if kept:
@@ -662,9 +658,7 @@ def cleanup_audit_logs(audit_dir: str | Path, ttl_days: int) -> dict:
                     p.unlink(missing_ok=True)
                 files += 1
         except Exception:  # noqa: BLE001 — 单文件清理失败 fail-open
-            logging.getLogger(__name__).warning(
-                "审计清理失败（fail-open）: %s", p, exc_info=True
-            )
+            logging.getLogger(__name__).warning("审计清理失败（fail-open）: %s", p, exc_info=True)
             continue
     return {"pruned_files": files, "pruned_entries": total}
 
@@ -703,7 +697,7 @@ def _normalize_dimensions(dimensions, known: set[str]) -> list[str] | None:
             dimensions = re.split(r"[,\s]+", d)
     if not isinstance(dimensions, list):
         return None
-    out = [re.sub(r'^[\[\"\s]+|[\"\]\s]+$', '', str(x)) for x in dimensions]
+    out = [re.sub(r"^[\[\"\s]+|[\"\]\s]+$", "", str(x)) for x in dimensions]
     out = [x for x in out if x]
     if not out:
         return None

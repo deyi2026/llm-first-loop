@@ -11,6 +11,8 @@ from llm_loop.memory.evidence import EvidenceLedgerStore, OwnerScope
 _ROOT = Path(__file__).parents[2]
 _ORACLE = _ROOT / "tests" / "fixtures" / "evidence_recoverability_r0.json"
 _GATE = _ROOT / "tests" / "fixtures" / "evidence_r0_phase7_gate_v1.json"
+
+
 def _manifest(messages: list[dict]) -> str:
     rows = [
         str(row.get("content") or "")
@@ -43,7 +45,9 @@ def test_phase7_gate_map_exactly_covers_frozen_oracle():
     for case in gate["cases"]:
         assert set(case["covers"]) == set(oracle_by_id[case["id"]]["oracle"])
         assert case["selectors"]
-        assert all(selector.startswith("tests/unit/test_evidence") for selector in case["selectors"])
+        assert all(
+            selector.startswith("tests/unit/test_evidence") for selector in case["selectors"]
+        )
 
 
 def test_r0_09_provider_projection_switch_keeps_exact_evidence_set(tmp_path):
@@ -84,15 +88,15 @@ def test_r0_09_provider_projection_switch_keeps_exact_evidence_set(tmp_path):
     owner = OwnerScope(workspace_id=str(Path.cwd()), session_id=sid)
     ledger = EvidenceLedgerStore(settings.evidence_dir / "ledger")
     refs_before = {r.evidence_ref.ref for r in ledger.list_recent(owner, limit=100)}
-    blobs_before = {r.evidence_ref.ref: r.blob_ref.ref for r in ledger.list_recent(owner, limit=100)}
+    blobs_before = {
+        r.evidence_ref.ref: r.blob_ref.ref for r in ledger.list_recent(owner, limit=100)
+    }
 
     deepseek = engine._build_llm_messages(
         sess, [], max_chars=200000, planned_label="deepseek/model"
     )
     refs_deepseek = {r.evidence_ref.ref for r in ledger.list_recent(owner, limit=100)}
-    minimax = engine._build_llm_messages(
-        sess, [], max_chars=200000, planned_label="minimax/model"
-    )
+    minimax = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="minimax/model")
     refs_minimax = {r.evidence_ref.ref for r in ledger.list_recent(owner, limit=100)}
     deepseek_again = engine._build_llm_messages(
         sess, [], max_chars=200000, planned_label="deepseek/model"
@@ -134,9 +138,7 @@ def test_r0_12_non_target_guardrails_and_no_provider_policy(monkeypatch):
     assert "extract_supports" not in production
 
     # No anti-repeat prompt patch was introduced as the fix.
-    prompt_text = (_ROOT / "src" / "llm_loop" / "core" / "prompt.py").read_text(
-        encoding="utf-8"
-    )
+    prompt_text = (_ROOT / "src" / "llm_loop" / "core" / "prompt.py").read_text(encoding="utf-8")
     for phrase in ("不要重复查", "不要重复", "勿重复", "重复查"):
         assert phrase not in prompt_text
 

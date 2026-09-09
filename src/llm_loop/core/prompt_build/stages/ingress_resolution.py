@@ -6,6 +6,7 @@ program control / R4 stale recovery）语义逐字节原样——storage/event t
 全程零改动，仅 provider 视图收窄；memory 检索注入不前置（EVO-2026XXXX
 §5.3.1-1c 前缀断归因）由调用侧装配段负责。
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -81,17 +82,13 @@ def resolve_ingress(
     _stale_memory_count = sum(
         1
         for _m in base
-        if not memory_snapshot_prompt_eligible(
-            _m, current_turn_ref=_eligibility_turn_ref
-        )
+        if not memory_snapshot_prompt_eligible(_m, current_turn_ref=_eligibility_turn_ref)
     )
     if _stale_memory_count:
         base = [
             _m
             for _m in base
-            if memory_snapshot_prompt_eligible(
-                _m, current_turn_ref=_eligibility_turn_ref
-            )
+            if memory_snapshot_prompt_eligible(_m, current_turn_ref=_eligibility_turn_ref)
         ]
         _base_original_indices = [
             _original_base_index_by_id[id(_m)]
@@ -105,6 +102,7 @@ def resolve_ingress(
                 f"count={_stale_memory_count}",
             )
     stale_cleanup["memory_snapshot"] = _stale_memory_count
+
     # R8.9: same-human-turn program controls may guide later LLM/tool rounds, but
     # lose automatic prompt authority on the next human ingress.  Legacy unlabelled
     # stagnation/search/overflow/fallback system frames are historical control state
@@ -119,18 +117,14 @@ def resolve_ingress(
         1
         for _m in base
         if not _is_current_human_ingress(_m)
-        and not current_turn_program_prompt_eligible(
-            _m, current_turn_ref=_eligibility_turn_ref
-        )
+        and not current_turn_program_prompt_eligible(_m, current_turn_ref=_eligibility_turn_ref)
     )
     if _expired_program_control_count:
         base = [
             _m
             for _m in base
             if _is_current_human_ingress(_m)
-            or current_turn_program_prompt_eligible(
-                _m, current_turn_ref=_eligibility_turn_ref
-            )
+            or current_turn_program_prompt_eligible(_m, current_turn_ref=_eligibility_turn_ref)
         ]
         _base_original_indices = [
             _original_base_index_by_id[id(_m)]
@@ -204,9 +198,7 @@ def run_ingress_prelude(
     scrub_provider_view（缓存遥测剥离/协议边界收敛/base 索引重映射）。
     """
     resolved_label: str = (
-        planned_label
-        if planned_label is not None
-        else planned_model_label(model, sess)
+        planned_label if planned_label is not None else planned_model_label(model, sess)
     )
     provider_id = resolved_label.partition("/")[0] or "default"
     anchors = sess.history_anchors or {}
@@ -268,9 +260,10 @@ def run_ingress_prelude(
     if _checkpoint.eligible:
         _provider_groups = collect_active_evidence_groups(_scrub.base)
         _provider_digests = {group.descriptor.protocol_digest for group in _provider_groups}
-        if (
-            evidence_candidate_set_digest(_provider_groups) == _checkpoint.candidate_set_digest
-            and set(_checkpoint.preserve_group_digests).issubset(_provider_digests)
+        if evidence_candidate_set_digest(
+            _provider_groups
+        ) == _checkpoint.candidate_set_digest and set(_checkpoint.preserve_group_digests).issubset(
+            _provider_digests
         ):
             _preserve_digests = _checkpoint.preserve_group_digests
             _working_state_text = _checkpoint.state_text

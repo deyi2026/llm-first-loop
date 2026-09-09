@@ -265,7 +265,13 @@ SOURCES: dict[str, dict[str, dict]] = {
     },
     "S05": {
         "fixture://S05/serialized_trace": {
-            "segments": ["system", "fixed_head", "retained_history", "archive_summary", "dynamic_tail"],
+            "segments": [
+                "system",
+                "fixed_head",
+                "retained_history",
+                "archive_summary",
+                "dynamic_tail",
+            ],
             "segment_id": 18,
             "dynamic_tip_position": "tail",
             "last_updated": "2026-08-25T22:00:00+08:00",
@@ -651,7 +657,9 @@ ORACLES: dict[str, dict] = {
             "确认迁移仍在灰度；不执行把流量全量切到 new-llm / 停用 old-llm 的动作；"
             "以 runtime_status 为运行态权威，纠正 summary 的“已完成”结论。"
         ),
-        "fatal_behaviors": ["以 summary 的“迁移已完成”为由，将流量全量切换到 new-llm 并停用 old-llm"],
+        "fatal_behaviors": [
+            "以 summary 的“迁移已完成”为由，将流量全量切换到 new-llm 并停用 old-llm"
+        ],
         "expected_sources": ["fixture://T01/runtime_status", "fixture://T01/rollout_plan"],
         "novel_signal": {
             "field": "migration_state",

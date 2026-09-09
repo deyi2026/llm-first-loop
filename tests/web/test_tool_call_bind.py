@@ -22,7 +22,6 @@ STYLE_CSS = ROOT / "src" / "llm_loop" / "web" / "static" / "style.css"
 
 
 @pytest.fixture(scope="module")
-
 def style_css_src() -> str:
     return STYLE_CSS.read_text(encoding="utf-8")
 
@@ -36,7 +35,12 @@ def _make_client(engine):
 
 def test_pairing_functions_present(app_js_src, style_css_src):
     """配对纯函数/渲染函数/样式类均已落地."""
-    for fn in ("buildToolPairIndex", "parseToolResultStatus", "renderToolPairCard", "renderArchiveButton"):
+    for fn in (
+        "buildToolPairIndex",
+        "parseToolResultStatus",
+        "renderToolPairCard",
+        "renderArchiveButton",
+    ):
         assert f"function {fn}" in app_js_src, f"{fn} 未定义"
     assert "tool-pair-card" in app_js_src
     assert ".tool-pair-card" in style_css_src
@@ -115,9 +119,16 @@ def test_message_item_contract_allows_planned_fields(build_test_engine):
 
     engine, _ = build_test_engine([])
     session = Session(session_id="sess-contract")
-    session.messages.append(Message(role="tool", content="[状态: success] ok",
-                                    source=MessageSource.TOOL, tool_call_id="call-c1",
-                                    status=ToolResultStatus.SUCCESS, tool_name="read_file"))
+    session.messages.append(
+        Message(
+            role="tool",
+            content="[状态: success] ok",
+            source=MessageSource.TOOL,
+            tool_call_id="call-c1",
+            status=ToolResultStatus.SUCCESS,
+            tool_name="read_file",
+        )
+    )
     engine.session.save(session)
     client = _make_client(engine)
     resp = client.get("/api/v1/sessions/sess-contract/messages")
@@ -125,9 +136,17 @@ def test_message_item_contract_allows_planned_fields(build_test_engine):
         # M51/M52/M53: 模型+token+工具声明字段（2026-08-16 页脚/出产物扩展，属计划内契约变更）
         # ts: 消息时间戳；attachments: 结构化附件卡恢复（均为计划内契约扩展）
         assert set(m.keys()) <= {
-            "role", "content", "tool_call_id", "reasoning_content",
-            "model_used", "tokens_in", "tokens_out", "tokens_cache_hit", "tool_calls",
-            "ts", "attachments",
+            "role",
+            "content",
+            "tool_call_id",
+            "reasoning_content",
+            "model_used",
+            "tokens_in",
+            "tokens_out",
+            "tokens_cache_hit",
+            "tool_calls",
+            "ts",
+            "attachments",
         }
 
 
@@ -155,16 +174,21 @@ def test_sse_event_types_unchanged(build_test_engine, tmp_path):
 
         def chat_stream(self, messages, tools, *, timeout_s=None, model=None):
             resp = self._r.pop(0)
-            for ch in (resp.content or ""):
+            for ch in resp.content or "":
                 yield StreamDelta(text=ch)
             return resp
 
     engine, _ = build_test_engine([])
-    engine.llm_pool.default_client = _Fake([
-        LLMResponse(content="", tool_calls=[ToolCall(id="c1", name="read_file",
-                                                     arguments={"path": str(f)})], provider="fake"),
-        LLMResponse(content="done", tool_calls=[], provider="fake"),
-    ])
+    engine.llm_pool.default_client = _Fake(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f)})],
+                provider="fake",
+            ),
+            LLMResponse(content="done", tool_calls=[], provider="fake"),
+        ]
+    )
     client = _make_client(engine)
     resp = client.post("/api/v1/chat/stream", json={"message": "read"})
     types = set()
@@ -185,9 +209,16 @@ def test_message_item_tool_call_id_passthrough(build_test_engine):
 
     engine, _ = build_test_engine([])
     session = Session(session_id="sess-passthrough")
-    session.messages.append(Message(role="tool", content="[状态: success] ok",
-                                    source=MessageSource.TOOL, tool_call_id="call-t9",
-                                    status=ToolResultStatus.SUCCESS, tool_name="read_file"))
+    session.messages.append(
+        Message(
+            role="tool",
+            content="[状态: success] ok",
+            source=MessageSource.TOOL,
+            tool_call_id="call-t9",
+            status=ToolResultStatus.SUCCESS,
+            tool_name="read_file",
+        )
+    )
     engine.session.save(session)
     client = _make_client(engine)
     resp = client.get("/api/v1/sessions/sess-passthrough/messages")

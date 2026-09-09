@@ -43,9 +43,7 @@ def replay(run_id: str) -> dict:
     capture = EvidenceCapture(blobs, ledger)
     freshness = EvidenceFreshness(ledger)
     owner = OwnerScope(workspace_id=str(ROOT), session_id=f"r9-counterfactual-{run_id}")
-    registry = ToolRegistry(
-        max_output_chars=100000, failure_guidance_enabled=False
-    )
+    registry = ToolRegistry(max_output_chars=100000, failure_guidance_enabled=False)
     registry.register(ReadFileTool())
     registry.set_evidence_enforcer(
         EvidenceEnforcer(

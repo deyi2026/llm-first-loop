@@ -191,7 +191,8 @@ def build_engine(settings: Settings) -> LoopEngine:
             if _note:
                 logger.info(
                     "history_max_chars 未配置（无独立全局 cap）；%s，诊断预算=%d",
-                    _note, _budget,
+                    _note,
+                    _budget,
                 )
             else:
                 logger.info(
@@ -206,9 +207,7 @@ def build_engine(settings: Settings) -> LoopEngine:
                 if _budget != settings.history_max_chars:
                     settings = dataclasses.replace(settings, history_max_chars=_budget)
         thinking_supported = registry.supports_thinking(provider_id, model_id)
-        reasoning_capable, reasoning_control = registry.reasoning_contract(
-            provider_id, model_id
-        )
+        reasoning_capable, reasoning_control = registry.reasoning_contract(provider_id, model_id)
         model_registry_resolved = True
         if "/" in settings.llm_model:
             llm_params = registry.client_params(provider_id, model_id)
@@ -648,7 +647,9 @@ def build_engine(settings: Settings) -> LoopEngine:
         # Artifact identity is a continuity aid, not permission to make the whole
         # runtime unavailable.  Tools remain usable and report ref unavailability.
         _artifact_store = None
-        logger.warning("workspace artifact store unavailable; artifact refs disabled", exc_info=True)
+        logger.warning(
+            "workspace artifact store unavailable; artifact refs disabled", exc_info=True
+        )
     _file_service = FileService(
         artifact_store=_artifact_store,
         lock_root=Path(settings.data_dir) / "file_locks",
@@ -683,9 +684,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         if ref.startswith("attachment://"):
             if _attachment_store_for_tools is None:
                 raise SynopsisError("attachment store 当前不可用。")
-            record, text = _attachment_store_for_tools.ensure_full_text(
-                ref, workspace_scope=scope
-            )
+            record, text = _attachment_store_for_tools.ensure_full_text(ref, workspace_scope=scope)
             return SourceSnapshot(
                 source_ref=ref,
                 source_kind="attachment",
@@ -741,9 +740,7 @@ def build_engine(settings: Settings) -> LoopEngine:
             chunks: list[str] = []
             exact = False
             while True:
-                page = episode_store.hydrate_truncated(
-                    sid, ref, offset=offset, max_chars=100_000
-                )
+                page = episode_store.hydrate_truncated(sid, ref, offset=offset, max_chars=100_000)
                 if page is None:
                     raise SynopsisError("truncated source 不存在或当前 session 无权访问。")
                 total = int(page.get("total_chars") or 0)
@@ -808,9 +805,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     # 装配处 ScheduleStore() 分裂为两个实例，due() 只扫内存互不可见 → 永不触发；
     # 路径从 settings.data_dir 绝对化派生，消除 LFL_DATA_DIR env 与进程 cwd
     # 双基准导致的落点分裂（实证：注册与调度写读不同 schedule.json）。
-    _schedule_store = ScheduleStore(
-        Path(settings.data_dir).resolve() / "schedule.json"
-    )
+    _schedule_store = ScheduleStore(Path(settings.data_dir).resolve() / "schedule.json")
     _register_basic("schedule", ScheduleTool(store=_schedule_store))
     _register_basic("schedule_cancel", ScheduleCancelTool(store=_schedule_store))
     _register_basic("web_fetch", WebFetchTool(timeout_s=_tool_timeout))
@@ -1235,7 +1230,9 @@ def build_engine(settings: Settings) -> LoopEngine:
                     f"sid={entry.sid};session={session_id};delegated=1",
                 )
                 return True
-            if background_runner.is_running(session_id) or background_runner.is_sync_active(session_id):
+            if background_runner.is_running(session_id) or background_runner.is_sync_active(
+                session_id
+            ):
                 engine._record_action(
                     "schedule.wake",
                     "session_busy_retry",
@@ -1324,12 +1321,8 @@ def build_engine(settings: Settings) -> LoopEngine:
     status_provider.set_budget_fn(lambda: engine._run_state().last_budget_info)
     # 2026-09-04 P1: 最近一次真实 provider request 的 context/cache 事实按需可查，
     # 不再靠 prompt 注入让模型猜 headroom / prefix 漂移。
-    status_provider.set_request_usage_fn(
-        lambda: engine._run_state().last_request_usage
-    )
-    status_provider.set_causality_fn(
-        lambda sid: diagnose_event_store(engine._event_store, sid)
-    )
+    status_provider.set_request_usage_fn(lambda: engine._run_state().last_request_usage)
+    status_provider.set_causality_fn(lambda sid: diagnose_event_store(engine._event_store, sid))
     # EVO-20260818（spec §5.4.1-2）: cache_health/cache_guard 对外可观测注入——
     # cache_guard 回调透传 session_id（guard 窗口 per-session，grill-me Q11）；fail-open
     try:

@@ -26,8 +26,8 @@ class TestMaintenanceLock:
         text = _read("scripts/restart_system.sh")
         assert "MAINTENANCE_LOCK" in text
         assert "maintenance.lock" in text
-        assert "touch \"$MAINTENANCE_LOCK\"" in text
-        assert "rm -f \"$MAINTENANCE_LOCK\"" in text
+        assert 'touch "$MAINTENANCE_LOCK"' in text
+        assert 'rm -f "$MAINTENANCE_LOCK"' in text
 
     def test_guard_skips_on_maintenance(self):
         text = _read("scripts/guard_system.sh")
@@ -38,7 +38,7 @@ class TestMaintenanceLock:
 class TestStopAllProcesses:
     def test_stop_service_uses_pgrep_pkill(self):
         text = _read("scripts/restart_system.sh")
-        assert "pids=\"$(pgrep -f" in text
+        assert 'pids="$(pgrep -f' in text
         assert "pkill -9 -f" in text
 
     def test_stop_service_is_scoped_to_current_workspace(self):

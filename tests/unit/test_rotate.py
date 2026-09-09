@@ -123,7 +123,6 @@ def test_single_file_zero_regression(tmp_path):
     assert es.last_seq(sid) == events[-1].seq
 
 
-
 def test_list_segments_rejects_session_id_path_traversal(tmp_path):
     """CLI可控session不得让list_segments越出event_logs根枚举兄弟目录。"""
     event_logs = tmp_path / "event_logs"

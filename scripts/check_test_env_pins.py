@@ -13,6 +13,7 @@ Rule: a test file that (a) references exact compaction budget stat keys AND
 dependency -- explicit setenv/delenv, or the shared autouse pin fixture.
 Undeclared files fail the gate. Baseline at introduction: 0 violations.
 """
+
 from __future__ import annotations
 
 import sys
@@ -55,7 +56,9 @@ def main() -> int:
         print("   fix: explicit monkeypatch.setenv('COMPACT_RATIO', ...) or reference")
         print("   _pin_compact_ratio_env (sample: tests/unit/test_compact_observability_r817.py)")
         return 1
-    print(f"PASS test env-pin gate: scanned {len(files)} test files, 0 undeclared COMPACT_RATIO dependents")
+    print(
+        f"PASS test env-pin gate: scanned {len(files)} test files, 0 undeclared COMPACT_RATIO dependents"
+    )
     return 0
 
 

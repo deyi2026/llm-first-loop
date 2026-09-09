@@ -254,14 +254,17 @@ def _evidence_protocol_digest(declaration: Message, results: list[Message]) -> s
                 "tool_call_id": str(result.tool_call_id or ""),
                 "tool_name": str(result.tool_name or ""),
                 "status": _mechanical_status(result),
-                "content_sha256": hashlib.sha256((result.content or "").encode("utf-8")).hexdigest(),
+                "content_sha256": hashlib.sha256(
+                    (result.content or "").encode("utf-8")
+                ).hexdigest(),
             }
             for result in results
         ],
     }
-    return f"v{_EVIDENCE_GROUP_DIGEST_VERSION}:" + hashlib.sha256(
-        _canonical_json_bytes(payload)
-    ).hexdigest()
+    return (
+        f"v{_EVIDENCE_GROUP_DIGEST_VERSION}:"
+        + hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,9 +446,10 @@ def evidence_candidate_set_digest(groups: tuple[AtomicEvidenceGroup, ...]) -> st
         "version": _EVIDENCE_GROUP_DIGEST_VERSION,
         "protocol_digests": [group.descriptor.protocol_digest for group in groups],
     }
-    return f"v{_EVIDENCE_GROUP_DIGEST_VERSION}:" + hashlib.sha256(
-        _canonical_json_bytes(payload)
-    ).hexdigest()
+    return (
+        f"v{_EVIDENCE_GROUP_DIGEST_VERSION}:"
+        + hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+    )
 
 
 _WORKING_STATE_CHECKPOINT_VERSION = 1
@@ -538,9 +542,7 @@ def build_working_state_checkpoint(
         # chronologically true and leaves later-tail support to S2.
         "boundary_message_count": len(messages),
         "candidate_set_digest": stats.candidate_set_digest,
-        "selected_group_digests": [
-            group.descriptor.protocol_digest for group in selected_groups
-        ],
+        "selected_group_digests": [group.descriptor.protocol_digest for group in selected_groups],
         "selected_ids": list(stats.selected_ids),
         "state_text": text,
         "state_chars": len(text),
@@ -594,14 +596,18 @@ def resolve_working_state_checkpoint(
         return reject("human_anchor_shape")
     if human_index is None or checkpoint_human_index != human_index:
         return reject("human_anchor")
-    if str(checkpoint.get("human_anchor_digest") or "") != _human_anchor_digest(messages[human_index]):
+    if str(checkpoint.get("human_anchor_digest") or "") != _human_anchor_digest(
+        messages[human_index]
+    ):
         return reject("human_digest")
     groups = collect_active_evidence_groups(messages)
     candidate_digest = evidence_candidate_set_digest(groups)
     if str(checkpoint.get("candidate_set_digest") or "") != candidate_digest:
         return reject("candidate_digest")
     raw_selected = checkpoint.get("selected_group_digests")
-    if not isinstance(raw_selected, list) or any(not isinstance(item, str) for item in raw_selected):
+    if not isinstance(raw_selected, list) or any(
+        not isinstance(item, str) for item in raw_selected
+    ):
         return reject("selected_digest_shape")
     selected = tuple(raw_selected)
     if len(selected) != len(set(selected)):
@@ -713,7 +719,9 @@ def project_active_tool_working_set_with_stats(
     enabled = _working_set_receipts_enabled()
     batch_chars = _working_set_batch_chars() if enabled else 0
     grace_groups = _working_set_grace_groups() if enabled else 0
-    raw_tool_chars = sum(len(message.content or "") for message in messages if message.role == "tool")
+    raw_tool_chars = sum(
+        len(message.content or "") for message in messages if message.role == "tool"
+    )
     if not enabled or not messages:
         return messages, ToolWorkingSetProjectionStats(
             enabled=enabled,
@@ -875,9 +883,7 @@ def superseded_human_attempt_spans(
     """
     if not messages:
         return ()
-    human_indices = [
-        idx for idx, message in enumerate(messages) if is_human_user_message(message)
-    ]
+    human_indices = [idx for idx, message in enumerate(messages) if is_human_user_message(message)]
     if len(human_indices) < 2:
         return ()
 
@@ -1181,8 +1187,14 @@ def _tool_group_end(messages: list[Message], start: int, end_exclusive: int) -> 
     declaration = messages[start]
     if declaration.role != "assistant" or not declaration.tool_calls:
         return None
-    declared = [str(call.get("id") or "") for call in declaration.tool_calls if isinstance(call, dict)]
-    if not declared or any(not call_id for call_id in declared) or len(set(declared)) != len(declared):
+    declared = [
+        str(call.get("id") or "") for call in declaration.tool_calls if isinstance(call, dict)
+    ]
+    if (
+        not declared
+        or any(not call_id for call_id in declared)
+        or len(set(declared)) != len(declared)
+    ):
         return None
     idx = start + 1
     receipts: list[str] = []
@@ -1212,7 +1224,11 @@ def _is_tool_consumer(message: Message) -> bool:
     # Current format explicitly identifies model answers.  Legacy sessions often
     # lack answer_origin but retain model_used/source=user; accept those while the
     # program-feedback guards above deny known synthetic finals.
-    return md.get("answer_origin") == "model" or bool(message.model_used) or message.source == MessageSource.USER
+    return (
+        md.get("answer_origin") == "model"
+        or bool(message.model_used)
+        or message.source == MessageSource.USER
+    )
 
 
 def _mark_consumed_tool_indices(messages: list[Message], indices: list[int], ref: str) -> None:
@@ -1284,10 +1300,9 @@ def _closed_attempt_event_ranges(
                 if index < 0 or index >= len(messages):
                     continue
                 saved = messages[index]
-                if (
-                    str(payload.get("role") or "") != saved.role
-                    or str(payload.get("content") or "") != str(saved.content or "")
-                ):
+                if str(payload.get("role") or "") != saved.role or str(
+                    payload.get("content") or ""
+                ) != str(saved.content or ""):
                     continue
                 md = _metadata(saved)
                 if is_human_user_message(saved) and md.get("ingress_delegated") is not True:
@@ -1378,7 +1393,9 @@ def backfill_consumed_tool_spans(store: EpisodeStore | None, session: Any) -> li
         existing_refs.discard("")
         if len(existing_refs) > 1:
             continue
-        if existing_refs and all(is_consumed_tool_span_message(messages[idx]) for idx in tool_indices):
+        if existing_refs and all(
+            is_consumed_tool_span_message(messages[idx]) for idx in tool_indices
+        ):
             refs.extend(sorted(existing_refs))
             continue
 
@@ -1389,7 +1406,11 @@ def backfill_consumed_tool_spans(store: EpisodeStore | None, session: Any) -> li
             consumer,
             call_ids,
         )
-        raw_messages = [messages[start], *[messages[idx] for idx in tool_indices], messages[consumer]]
+        raw_messages = [
+            messages[start],
+            *[messages[idx] for idx in tool_indices],
+            messages[consumer],
+        ]
         try:
             store.index_tool_span(
                 session_id,
@@ -1436,16 +1457,10 @@ def backfill_closed_tool_attempts(
     # next user text means "continue".  On the following human ingress the last-human
     # index has advanced, so an unconsumed older failed span becomes normally closable.
     last_human_index = next(
-        (
-            idx
-            for idx in range(len(messages) - 1, -1, -1)
-            if is_human_user_message(messages[idx])
-        ),
+        (idx for idx in range(len(messages) - 1, -1, -1) if is_human_user_message(messages[idx])),
         None,
     )
-    for start, terminal, reason in _closed_attempt_event_ranges(
-        event_store, session_id, messages
-    ):
+    for start, terminal, reason in _closed_attempt_event_ranges(event_store, session_id, messages):
         if start == last_human_index and any(
             _metadata(messages[idx]).get("llm_interrupted") is True
             for idx in range(start + 1, min(terminal + 1, len(messages)))

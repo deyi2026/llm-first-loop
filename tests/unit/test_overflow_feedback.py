@@ -5,6 +5,7 @@
 - 退役 overflow 教程生产者不存在于生产源码
 - R8.24-B B-D5 集成: 首次 overflow 确定性收缩重发（零注入）、二次终止
 """
+
 from __future__ import annotations
 
 from llm_loop.llm.errors import LLMError, LLMHTTPError, LLMTimeoutError, is_overflow_error
@@ -37,10 +38,12 @@ def test_overflow_first_shrinks_budget_and_continues(build_test_engine):
     def raise_overflow(history):
         raise LLMHTTPError("context length exceeded", status_code=400)
 
-    engine, fake = build_test_engine([
-        raise_overflow,
-        {"content": "已处理overflow"},
-    ])
+    engine, fake = build_test_engine(
+        [
+            raise_overflow,
+            {"content": "已处理overflow"},
+        ]
+    )
     result = engine.run("s1", "你好")
     assert "已处理overflow" in result.final_answer
     assert len(fake.calls) == 2  # continue 后第二次调用在场
@@ -51,6 +54,7 @@ def test_overflow_first_shrinks_budget_and_continues(build_test_engine):
 
 def test_overflow_second_time_ends_loop(build_test_engine):
     """R8.24-B B-D5: 第二次 overflow 直接确定性终止（纯事实终态，无注入）."""
+
     def raise_overflow(history):
         raise LLMHTTPError("context length exceeded", status_code=400)
 

@@ -29,8 +29,16 @@ SCAN_ROOT_REL = "src/llm_loop"
 _REACHABILITY_RULES: list[tuple[str, str, str]] = [
     ("loop/engine.py", "user_role_construct", "可达（E1 主入口：run 内构造并落库）"),
     ("loop/turn_context.py", "user_role_construct", "可达（memory_snapshot 程序层标记落盘）"),
-    ("subagent/runner.py", "user_role_construct", "条件可达（spawn_subagent 触发；E2 零 metadata 缺陷点）"),
-    ("loop/turn_context.py", "origin_layer_literal", "不可达落盘（never persist 合成视图，仅 gate 计算）"),
+    (
+        "subagent/runner.py",
+        "user_role_construct",
+        "条件可达（spawn_subagent 触发；E2 零 metadata 缺陷点）",
+    ),
+    (
+        "loop/turn_context.py",
+        "origin_layer_literal",
+        "不可达落盘（never persist 合成视图，仅 gate 计算）",
+    ),
     ("injection_labels.py", "origin_layer_literal", "不可达绕过（单一真相源本体构造）"),
 ]
 
@@ -108,8 +116,10 @@ def _describe_metadata(call: ast.Call) -> str:
                     layer = ""
                     if v.args:
                         a = v.args[0]
-                        layer = getattr(a, "attr", "") or getattr(a, "id", "") or (
-                            getattr(a, "value", "") if isinstance(a, ast.Constant) else ""
+                        layer = (
+                            getattr(a, "attr", "")
+                            or getattr(a, "id", "")
+                            or (getattr(a, "value", "") if isinstance(a, ast.Constant) else "")
                         )
                     kinds = [
                         f"{kw2.arg}={getattr(kw2.value, 'value', '?')}"
@@ -120,8 +130,7 @@ def _describe_metadata(call: ast.Call) -> str:
                 return f"调用 {fn_name}(...)"
             if isinstance(v, ast.Dict):
                 keys = [
-                    getattr(k, "value", "?") if isinstance(k, ast.Constant) else "?"
-                    for k in v.keys
+                    getattr(k, "value", "?") if isinstance(k, ast.Constant) else "?" for k in v.keys
                 ]
                 return "手工 dict{" + ", ".join(keys) + "}"
 
@@ -276,9 +285,7 @@ def write_outputs(report: AuditReport, out_dir: Path) -> tuple[Path, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     js = out_dir / "ingress-audit.json"
     md = out_dir / "ingress-audit.md"
-    js.write_text(
-        json.dumps(report.to_dict(), ensure_ascii=False, indent=1), encoding="utf-8"
-    )
+    js.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=1), encoding="utf-8")
     kind_names = {
         "user_role_construct": "role=user 构造点",
         "messages_append": "messages.append 调用点",
@@ -286,12 +293,23 @@ def write_outputs(report: AuditReport, out_dir: Path) -> tuple[Path, Path]:
         "origin_layer_literal": "origin_layer 字面量直构造点",
         "engine_run_caller": "engine.run 调用方",
     }
-    rows = ["# ingress 入口审计清单（静态扫描）", "", f"- repo: `{report.repo_root}`", f"- findings: {len(report.findings)}", ""]
+    rows = [
+        "# ingress 入口审计清单（静态扫描）",
+        "",
+        f"- repo: `{report.repo_root}`",
+        f"- findings: {len(report.findings)}",
+        "",
+    ]
     for kind_label in kind_names.values():
         subset = [f for f in report.findings if kind_names.get(f.kind) == kind_label]
         if not subset:
             continue
-        rows += [f"## {kind_label}（{len(subset)}）", "", "| 文件:行 | 写入身份 | metadata 构造 | 可达性 |", "|---|---|---|---|"]
+        rows += [
+            f"## {kind_label}（{len(subset)}）",
+            "",
+            "| 文件:行 | 写入身份 | metadata 构造 | 可达性 |",
+            "|---|---|---|---|",
+        ]
         for f in subset:
             rows.append(
                 f"| `{f.file}:{f.line}` | {f.identity} | {f.metadata_style} | {f.reachability} |"

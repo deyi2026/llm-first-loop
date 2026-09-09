@@ -6,6 +6,7 @@
 - ⑤ 零注入安静轮 decision_visible=True（无槽位仍有 header-only 单条注入）
 - 宁缺勿错：goal 缺失 → 无 header（平铺照旧）；shadow 默认 → 无 header。
 """
+
 from pathlib import Path
 
 from llm_loop.cognitive.state import (
@@ -232,11 +233,7 @@ def test_shadow_isomorphic_telemetry_rows_exist(tmp_path, monkeypatch):
     assert "[当前决策]" not in tail  # shadow: 投影不进 prompt
     tpath = Path(engine.settings.data_dir) / "audit" / "cognitive_telemetry.jsonl"
     assert tpath.exists(), "shadow 同构后应产生 telemetry（旧行为 rows=0）"
-    rows = [
-        _json.loads(ln)
-        for ln in tpath.read_text(encoding="utf-8").splitlines()
-        if ln.strip()
-    ]
+    rows = [_json.loads(ln) for ln in tpath.read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert any(r.get("event") == "packet_compile" for r in rows)
     pc = next(r for r in rows if r.get("event") == "packet_compile")
     assert pc.get("goal_id"), "goal_id 归因（_env.identity 来源，旧写法恒空）"
@@ -261,11 +258,7 @@ def test_shadow_quiet_round_runs_cognitive_compute(tmp_path, monkeypatch):
     assert env.state is not None and env.state.objective == "quiet shadow 目标"
 
     tpath = audit / "cognitive_telemetry.jsonl"
-    rows = [
-        _json.loads(ln)
-        for ln in tpath.read_text(encoding="utf-8").splitlines()
-        if ln.strip()
-    ]
+    rows = [_json.loads(ln) for ln in tpath.read_text(encoding="utf-8").splitlines() if ln.strip()]
     pcs = [r for r in rows if r.get("event") == "packet_compile"]
     assert pcs, "quiet shadow 不得漏掉 packet_compile telemetry"
     assert pcs[-1]["mode"] == "shadow"

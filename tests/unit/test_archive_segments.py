@@ -234,7 +234,6 @@ def test_corrupt_segment_fail_open(tmp_path):
     assert Path(hits[0]["file"]) == tmp_path / f"{_SID}.segments" / "2.jsonl"
 
 
-
 def test_archive_store_rejects_session_id_path_traversal(tmp_path):
     """ArchiveStore查询/写入都不得通过../跨档案根访问兄弟会话。"""
     store_a = ArchiveStore(tmp_path / "ar-A", segment_bytes=0)
@@ -250,7 +249,6 @@ def test_archive_store_rejects_session_id_path_traversal(tmp_path):
     with pytest.raises(ValueError, match="非法 session_id"):
         store_a.archive(traversal, role="tool", source="test", content="ATTACK")
     assert victim.read_bytes() == before
-
 
 
 def test_archive_store_rejects_session_id_glob_injection(tmp_path):

@@ -6,9 +6,7 @@ from llm_loop.feishu.handlers import _fallback_receipt_line
 
 
 def test_fallback_receipt_line_renders_structured_fact() -> None:
-    result = SimpleNamespace(
-        fallback_receipt={"from": "p/a", "to": "p/b", "reason": "rate_limit"}
-    )
+    result = SimpleNamespace(fallback_receipt={"from": "p/a", "to": "p/b", "reason": "rate_limit"})
     assert _fallback_receipt_line(result) == "\n[模型降级: p/a→p/b, 原因: rate_limit]"
 
 

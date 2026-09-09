@@ -23,13 +23,25 @@ EVENT_HISTORY_COMPACTION = "history.compaction"
 EVENT_HISTORY_COMPACTION_STATE_RESET = "history.compaction_state_reset"
 EVENT_SESSION_META_CHANGED = "session.meta_changed"
 EVENT_SESSION_FORKED = "session.forked"  # D3 预留：本期登记不触发行为
-EVENT_REQUEST_META = "request.meta"  # HARNESS-02(2026-08-14): 每轮请求快照（模型/思考/工具目录/预算）
+EVENT_REQUEST_META = (
+    "request.meta"  # HARNESS-02(2026-08-14): 每轮请求快照（模型/思考/工具目录/预算）
+)
 EVENT_REQUEST_ATTEMPT = "request.attempt"  # exceptional provider attempts (fallback/retry)
-EVENT_REQUEST_USAGE = "request.usage"  # DSH 借鉴(2026-08-17): 每轮响应 usage 明细（命中/miss token 精确落盘）
-EVENT_INTEROP_SPLICED = "interop.spliced"  # DSH 借鉴(2026-08-17): 协调通道 inbox 注入事件（对齐 agent/inbox/spliced）
-EVENT_RUN_END = "run.end"  # DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 turn/end，结束原因可审计）
-EVENT_LLM_INTERRUPTED = "llm.interrupted"  # 未完成 provider 输出的终止事实（storage/audit，不等于完成 assistant）
-EVENT_LLM_PARTIAL_CHECKPOINT = "llm.partial_checkpoint"  # 流式 in-flight model state；重启续思数据源，不进对话
+EVENT_REQUEST_USAGE = (
+    "request.usage"  # DSH 借鉴(2026-08-17): 每轮响应 usage 明细（命中/miss token 精确落盘）
+)
+EVENT_INTEROP_SPLICED = (
+    "interop.spliced"  # DSH 借鉴(2026-08-17): 协调通道 inbox 注入事件（对齐 agent/inbox/spliced）
+)
+EVENT_RUN_END = (
+    "run.end"  # DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 turn/end，结束原因可审计）
+)
+EVENT_LLM_INTERRUPTED = (
+    "llm.interrupted"  # 未完成 provider 输出的终止事实（storage/audit，不等于完成 assistant）
+)
+EVENT_LLM_PARTIAL_CHECKPOINT = (
+    "llm.partial_checkpoint"  # 流式 in-flight model state；重启续思数据源，不进对话
+)
 EVENT_TOOL_EXECUTION_DECLARED = "tool.execution.declared"
 EVENT_TOOL_EXECUTION_STARTED = "tool.execution.started"
 EVENT_TOOL_EXECUTION_EFFECT_PREPARED = "tool.execution.effect_prepared"

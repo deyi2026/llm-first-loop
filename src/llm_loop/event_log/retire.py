@@ -116,8 +116,7 @@ def run_retire(
             # 和 updated_at（每次 save 更新 vs 事件写入时固定）
             _tolerable_fields = {"title", "updated_at"}
             real_top_diffs = [
-                d for d in result.top_level_diffs
-                if d.get("字段") not in _tolerable_fields
+                d for d in result.top_level_diffs if d.get("字段") not in _tolerable_fields
             ]
             if real_top_diffs or result.message_diffs:
                 diffs.append(

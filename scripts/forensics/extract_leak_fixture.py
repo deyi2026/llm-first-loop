@@ -33,9 +33,7 @@ _RE_HEX_LONG = re.compile(r"\b[0-9a-f]{24,}\b")
 _RE_HEX_SHORT = re.compile(r"(?<=[（(=、\s])[0-9a-f]{8}(?=[=）)、\s]|$)")
 _RE_REF_EVIDENCE = re.compile(r"evidence://v1/[0-9a-f]+")
 _RE_USER_PATH = re.compile(r"/Users/[^\s\"'，。；)）]+")
-_RE_EVENT_UUID = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-)
+_RE_EVENT_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 _SESSION_ID = "004976ea-5a23-4ae9-9f16-83b18767720a"
 _REDACTED_SESSION = "00000000-0eak-0000-0000-000000000280"

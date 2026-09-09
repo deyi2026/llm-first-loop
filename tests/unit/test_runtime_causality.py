@@ -79,10 +79,10 @@ def _run_once(tmp_path: Path, *, events: bool) -> tuple[list[dict], list[dict], 
 def test_causal_recording_is_provider_payload_neutral(tmp_path: Path) -> None:
     with_events = _run_once(tmp_path / "on", events=True)
     without_events = _run_once(tmp_path / "off", events=False)
+
     def _without_message_time(messages: list[dict]) -> list[dict]:
         return [
-            {k: v for k, v in message.items() if k != "_message_time_ts"}
-            for message in messages
+            {k: v for k, v in message.items() if k != "_message_time_ts"} for message in messages
         ]
 
     assert _without_message_time(with_events[0]) == _without_message_time(without_events[0])

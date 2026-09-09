@@ -273,7 +273,9 @@ class FeishuMessageHandler:
                 self._audit(msg, "stop_noop", f"sid={sid[:8] if sid else 'unmapped'}")
                 return True
             self._user_stop_register(sid, msg)
-            self._reply(msg, "停止已受理，本轮推理将在稍后终止；终止后可发送 /continue 或重发消息恢复。")
+            self._reply(
+                msg, "停止已受理，本轮推理将在稍后终止；终止后可发送 /continue 或重发消息恢复。"
+            )
             self._audit(msg, "stop_accepted", f"sid={sid[:8]} reason=user_stop")
             return True
         except Exception as exc:  # noqa: BLE001 — fail-open（spec 4.2.4，指令文本不漏入引擎）
@@ -356,7 +358,9 @@ class FeishuMessageHandler:
                 f"任务已完成（{decision.goal_id}），不再自动重跑；"
                 "如需重做请发送 /new 后发起新任务。",
             )
-            self._audit(msg, "restart_denied", f"goal_id={decision.goal_id}; reason={decision.reason}")
+            self._audit(
+                msg, "restart_denied", f"goal_id={decision.goal_id}; reason={decision.reason}"
+            )
             return "handled"
         if decision.kind == "confirm":
             self._push_restart_confirm(msg, decision)
@@ -404,7 +408,10 @@ class FeishuMessageHandler:
             self._reply(msg, f"[重启守卫] {reason}（goal_id={grant.goal_id or '未知'}）。")
             return
         if grant.decision == "timeout":
-            self._reply(msg, "[重启守卫] 上一条 /continue 授权已过期，本次不执行；如需恢复请重新发送 /continue。")
+            self._reply(
+                msg,
+                "[重启守卫] 上一条 /continue 授权已过期，本次不执行；如需恢复请重新发送 /continue。",
+            )
             return
         self._reply(
             msg,
@@ -460,7 +467,8 @@ class FeishuMessageHandler:
         now = time.time()
         with self._user_stop_pending_lock:
             stale = [
-                k for k, ts in self._user_stop_pending.items()
+                k
+                for k, ts in self._user_stop_pending.items()
                 if now - ts > _USER_STOP_PENDING_WINDOW_S
             ]
             for k in stale:
@@ -481,9 +489,7 @@ class FeishuMessageHandler:
         # 否则 owner 路径会被 get_shared_current() 拉回老 session → /clear 失效。
         # M52-fix: inherit_model_override=True 继承旧会话模型覆盖（不回落装配默认），
         # 故不再先 remove(key)（get_or_create 需读取旧映射拿旧 sid）。
-        new_sid = self._session_map.get_or_create(
-            key, force_new=True, inherit_model_override=True
-        )
+        new_sid = self._session_map.get_or_create(key, force_new=True, inherit_model_override=True)
         # 审计落盘（如实记录新会话 ID 前 8 位）
         self._audit(msg, "session_new", f"{cmd} → {new_sid[:8]}")
         if cmd == "/new":
@@ -568,7 +574,9 @@ class FeishuMessageHandler:
             if getattr(result, "tokens_in", 0) or getattr(result, "tokens_out", 0):
                 from llm_loop.core.loop import format_tokens
 
-                footer += f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+                footer += (
+                    f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+                )
             # P2-3: footer 附带工具调用次数（无工具调用不追加）
             n_tools = len(getattr(result, "tool_calls", None) or [])
             if n_tools > 0:
@@ -617,9 +625,7 @@ class FeishuMessageHandler:
             self._reply(msg, "视觉识别未配置（MINIMAX_API_KEY 缺失），图片已跳过。")
             return
         try:
-            text = describe_image(
-                data, settings=getattr(self._engine, "settings", None)
-            )
+            text = describe_image(data, settings=getattr(self._engine, "settings", None))
         except Exception as exc:  # 识别失败如实降级（无伪造描述）
             logger.info("feishu image vision failed (%s), OCR fallback: %s", filename, exc)
             # 2026-08-20（借鉴 SYAGI）: vision 全失败 → 飞书 OCR 文字兑底（诚实标注来源）
@@ -691,7 +697,9 @@ class FeishuMessageHandler:
             if getattr(result, "tokens_in", 0) or getattr(result, "tokens_out", 0):
                 from llm_loop.core.loop import format_tokens
 
-                footer += f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+                footer += (
+                    f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+                )
             # P2-3: footer 附带工具调用次数（无工具调用不追加）
             n_tools = len(getattr(result, "tool_calls", None) or [])
             if n_tools > 0:
@@ -799,7 +807,11 @@ class FeishuMessageHandler:
             summary = (answer or "").strip().splitlines()[0][:80] if (answer or "").strip() else ""
             ok = card.close(content=summary) if summary else card.close()
             if ok:
-                self._audit(msg, "status_card_close", "状态卡定稿（摘要已回填）" if summary else "状态卡定稿（✅ 处理完成）")
+                self._audit(
+                    msg,
+                    "status_card_close",
+                    "状态卡定稿（摘要已回填）" if summary else "状态卡定稿（✅ 处理完成）",
+                )
             else:
                 self._audit(msg, "status_card_fallback", "定稿失败（卡保持处理中态）")
         except Exception as exc:  # noqa: BLE001 — 定稿失败不阻断主流程

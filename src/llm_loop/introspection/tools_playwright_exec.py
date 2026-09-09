@@ -64,15 +64,23 @@ PLAYWRIGHT_EXEC_TOOL_DEF: dict = {
         "状态契约: 每次调用独立子进程（Python 变量/浏览器会话均不跨调用持久）；"
         "产物落盘 data/e2e/<session>/ 持久；长任务拆多次中型调用防超时丢进度；"
         "审计落盘 data/audit/playwright.jsonl。安全门控: 禁止 import playwright"
-        "（必须走 helper）；goto 白名单不可绕过；confirm=true 才真实执行。\n\n"
-        + _HELPER_SUMMARY
+        "（必须走 helper）；goto 白名单不可绕过；confirm=true 才真实执行。\n\n" + _HELPER_SUMMARY
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "code": {"type": "string", "description": "Python 脚本（使用预置 helper，禁止 import playwright；首行写 ≤60 字符步骤注释）"},
-            "session": {"type": "string", "description": "产物目录名（默认 default），用于 data/e2e/<session>/ 归类"},
-            "confirm": {"type": "boolean", "description": "确认执行（默认 false=dry_run 仅回显脚本+静态检查）"},
+            "code": {
+                "type": "string",
+                "description": "Python 脚本（使用预置 helper，禁止 import playwright；首行写 ≤60 字符步骤注释）",
+            },
+            "session": {
+                "type": "string",
+                "description": "产物目录名（默认 default），用于 data/e2e/<session>/ 归类",
+            },
+            "confirm": {
+                "type": "boolean",
+                "description": "确认执行（默认 false=dry_run 仅回显脚本+静态检查）",
+            },
             "timeout_s": {"type": "integer", "description": "子进程超时秒（默认 60，上限 300）"},
         },
         "required": ["code"],
@@ -80,7 +88,7 @@ PLAYWRIGHT_EXEC_TOOL_DEF: dict = {
 }
 
 # ── 子进程引导脚本（helper 实现; 模型代码经命名空间隔离执行，详见 _run 与文件头安全模型）──
-_PREAMBLE = '''
+_PREAMBLE = """
 import json, re, sys, time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -198,7 +206,7 @@ def _run_model(code):
     exec(compile(code, "<model>", "exec"), ns)
 
 _run_model(__MODEL_CODE__)
-'''
+"""
 
 
 def _scan_code(code: str) -> tuple[bool, str]:
@@ -221,26 +229,47 @@ def _scan_code(code: str) -> tuple[bool, str]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name.split(".")[0] == "playwright":
-                    return False, "禁止 import playwright——必须使用预置 helper（goto/click/fill/wait/js/screenshot/axtree_text）"
+                    return (
+                        False,
+                        "禁止 import playwright——必须使用预置 helper（goto/click/fill/wait/js/screenshot/axtree_text）",
+                    )
         elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "playwright":
             return False, "禁止 from playwright import——必须使用预置 helper"
         elif isinstance(node, ast.Call):
             f = node.func
-            name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else "")
+            name = (
+                f.id
+                if isinstance(f, ast.Name)
+                else (f.attr if isinstance(f, ast.Attribute) else "")
+            )
             if name in {"__import__", "import_module"}:
                 return False, "禁止动态导入（__import__/import_module）——必须使用预置 helper"
             if name in {"exec", "eval", "compile"}:
                 return False, "禁止动态执行（exec/eval/compile）——必须使用预置 helper"
             # getattr 间接引用: getattr(importlib, 'import_module')('playwright')
-            if name in {"getattr"} and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) \
-                    and isinstance(node.args[1].value, str) and node.args[1].value in {"__import__", "import_module", "exec", "eval", "compile"}:
+            if (
+                name in {"getattr"}
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+                and node.args[1].value in {"__import__", "import_module", "exec", "eval", "compile"}
+            ):
                 return False, f"禁止 getattr 间接引用（{node.args[1].value}）——必须使用预置 helper"
         elif isinstance(node, ast.Subscript):
             v = node.value
-            if isinstance(v, ast.Attribute) and v.attr == "modules" and isinstance(v.value, ast.Name) and v.value.id == "sys":
+            if (
+                isinstance(v, ast.Attribute)
+                and v.attr == "modules"
+                and isinstance(v.value, ast.Name)
+                and v.value.id == "sys"
+            ):
                 return False, "禁止经 sys.modules 取已加载模块——必须使用预置 helper"
-        elif isinstance(node, ast.Attribute) and node.attr == "modules" \
-                and isinstance(node.value, ast.Name) and node.value.id == "sys":
+        elif (
+            isinstance(node, ast.Attribute)
+            and node.attr == "modules"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "sys"
+        ):
             # sys.modules 的任何访问形态（含 .get/.keys 等方法调用）——preamble 已加载
             # playwright.sync_api，直接取模块即可绕过 import 拦截
             return False, "禁止访问 sys.modules——必须使用预置 helper"
@@ -250,7 +279,9 @@ def _scan_code(code: str) -> tuple[bool, str]:
 def _audit(record: dict) -> None:
     _AUDIT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _AUDIT_PATH.open("a") as f:
-        f.write(json.dumps({**record, "tool": TOOL_NAME, "ts": time.time()}, ensure_ascii=False) + "\n")
+        f.write(
+            json.dumps({**record, "tool": TOOL_NAME, "ts": time.time()}, ensure_ascii=False) + "\n"
+        )
 
 
 # ── 子进程加固（2026-08-16 DSH 复核 005 建议 a+c；门槛非沙箱，诚实声明见文件头）──
@@ -260,7 +291,8 @@ _SENSITIVE_ENV_MARKERS = ("KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD", "CREDE
 def _child_env() -> dict:
     """子进程 env：剥离敏感键（消除模型代码经 os.environ 读取凭据的面）."""
     return {
-        k: v for k, v in os.environ.items()
+        k: v
+        for k, v in os.environ.items()
         if not any(m in k.upper() for m in _SENSITIVE_ENV_MARKERS)
     }
 
@@ -295,7 +327,8 @@ def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content="[参数错误] 事实: code 为空。原因: 必填。建议: 传入使用预置 helper 的 Python 脚本。",
-            tool_call_id="", tool_name=TOOL_NAME,
+            tool_call_id="",
+            tool_name=TOOL_NAME,
         )
     try:
         session = _validate_session_name(session)
@@ -313,7 +346,8 @@ def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=f"[静态门控拒绝] 事实: {err}。原因: 防裸 API 绕过 URL 白名单。建议: 改用 helper goto/click/fill。",
-            tool_call_id="", tool_name=TOOL_NAME,
+            tool_call_id="",
+            tool_name=TOOL_NAME,
         )
 
     if not confirm:
@@ -325,7 +359,8 @@ def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
                 f"**session**: {session}\n**code**: {len(code)} 字符\n**timeout**: {timeout_s}s\n\n"
                 f"💡 确认执行: 重传参数 `confirm=true`"
             ),
-            tool_call_id="", tool_name=TOOL_NAME,
+            tool_call_id="",
+            tool_name=TOOL_NAME,
         )
 
     # 真实执行：独立子进程（解释器/浏览器均不跨调用持久）。
@@ -334,8 +369,7 @@ def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
     # cwd 限定 data/e2e/<session>/ + env 剥离敏感键（2026-08-16 DSH 复核 005 建议 a+c）
     workdir = _child_workdir(session)
     script = (
-        _PREAMBLE
-        .replace("__SESSION__", repr(session))
+        _PREAMBLE.replace("__SESSION__", repr(session))
         .replace("__OUT_ABS__", repr(str(workdir)))
         .replace("__MODEL_CODE__", repr(code))
     )
@@ -346,7 +380,9 @@ def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
             tmp_path = tf.name
         proc = subprocess.run(
             [sys.executable, tmp_path],
-            capture_output=True, text=True, timeout=timeout_s,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
             cwd=workdir,
             env=_child_env(),
         )
@@ -357,9 +393,12 @@ def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 content=f"✅ playwright_exec 执行成功（session={session}）\n\n**stdout**:\n```\n{out or '(空)'}\n```",
-                tool_call_id="", tool_name=TOOL_NAME,
+                tool_call_id="",
+                tool_name=TOOL_NAME,
             )
-        _audit({"session": session, "result": "failed", "rc": proc.returncode, "error": err_tail[:200]})
+        _audit(
+            {"session": session, "result": "failed", "rc": proc.returncode, "error": err_tail[:200]}
+        )
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=(
@@ -367,7 +406,8 @@ def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
                 f"**stderr**:\n```\n{err_tail or '(空)'}\n```\n**stdout**:\n```\n{out[-2000:] or '(空)'}\n```\n\n"
                 f"💡 常见原因: selector 未命中（先 axtree_text() 看页面结构）/ URL 白名单外 / chromium 未安装"
             ),
-            tool_call_id="", tool_name=TOOL_NAME,
+            tool_call_id="",
+            tool_name=TOOL_NAME,
         )
     except subprocess.TimeoutExpired:
         _audit({"session": session, "result": "timeout", "timeout_s": timeout_s})
@@ -377,14 +417,16 @@ def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
                 f"⏱️ playwright_exec 超时（{timeout_s}s）——子进程已终止。\n"
                 f"💡 建议: 拆多次中型调用（navigate 一次、act+extract 一次）；已完成的截图/产物在 data/e2e/{session}/ 不丢"
             ),
-            tool_call_id="", tool_name=TOOL_NAME,
+            tool_call_id="",
+            tool_name=TOOL_NAME,
         )
     except Exception as e:
         _audit({"session": session, "result": "error", "error": str(e)[:200]})
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=f"❌ playwright_exec 执行异常: {str(e)[:500]}\n💡 chromium 未安装时先 `playwright install chromium`",
-            tool_call_id="", tool_name=TOOL_NAME,
+            tool_call_id="",
+            tool_name=TOOL_NAME,
         )
     finally:
         if tmp_path:

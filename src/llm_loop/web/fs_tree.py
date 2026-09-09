@@ -36,7 +36,17 @@ _DANGEROUS_NAMES = {
     "__pycache__",  # 缓存
     "node_modules",  # 依赖（可重建，但常巨大，防误删）
 }
-_DANGEROUS_ROOT_PATTERNS = ("/System", "/Library", "/etc", "/usr", "/var", "/bin", "/sbin", "/Applications", "/opt")
+_DANGEROUS_ROOT_PATTERNS = (
+    "/System",
+    "/Library",
+    "/etc",
+    "/usr",
+    "/var",
+    "/bin",
+    "/sbin",
+    "/Applications",
+    "/opt",
+)
 
 
 def _resolve_under_root(raw: str, engine: Any) -> Path | None:
@@ -96,9 +106,13 @@ def fs_tree(request: Request, path: str = "") -> JSONResponse:
     engine = _engine_from(request)
     target = _resolve_under_root(path, engine)
     if target is None:
-        return JSONResponse(status_code=400, content={"error": "out_of_bounds", "detail": "路径越界或非法。"})
+        return JSONResponse(
+            status_code=400, content={"error": "out_of_bounds", "detail": "路径越界或非法。"}
+        )
     if not target.is_dir():
-        return JSONResponse(status_code=404, content={"error": "dir_not_found", "detail": f"目录不存在: {target}"})
+        return JSONResponse(
+            status_code=404, content={"error": "dir_not_found", "detail": f"目录不存在: {target}"}
+        )
     try:
         dirs, files = [], []
         for p in sorted(target.iterdir(), key=lambda p: p.name.lower()):
@@ -109,28 +123,38 @@ def fs_tree(request: Request, path: str = "") -> JSONResponse:
             elif p.is_file():
                 files.append({"name": p.name, "size": p.stat().st_size})
     except OSError as exc:
-        return JSONResponse(status_code=403, content={"error": "dir_unreadable", "detail": f"目录不可读: {exc}"})
-    return JSONResponse(content={
-        "path": str(target),
-        "parent": str(target.parent) if target != target.parent else None,
-        "dirs": dirs[:500],
-        "files": files[:500],
-    })
+        return JSONResponse(
+            status_code=403, content={"error": "dir_unreadable", "detail": f"目录不可读: {exc}"}
+        )
+    return JSONResponse(
+        content={
+            "path": str(target),
+            "parent": str(target.parent) if target != target.parent else None,
+            "dirs": dirs[:500],
+            "files": files[:500],
+        }
+    )
 
 
 @fs_router.post("/api/v1/fs/mkdir")
 def fs_mkdir(request: Request, path: str = "") -> JSONResponse:
     """新建目录（相对工作区根）."""
     if not path.strip():
-        return JSONResponse(status_code=400, content={"error": "invalid_path", "detail": "缺少 path。"})
+        return JSONResponse(
+            status_code=400, content={"error": "invalid_path", "detail": "缺少 path。"}
+        )
     engine = _engine_from(request)
     target = _resolve_under_root(path, engine)
     if target is None or _is_dangerous(target):
-        return JSONResponse(status_code=400, content={"error": "invalid_path", "detail": "路径越界或非法。"})
+        return JSONResponse(
+            status_code=400, content={"error": "invalid_path", "detail": "路径越界或非法。"}
+        )
     try:
         target.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        return JSONResponse(status_code=403, content={"error": "mkdir_failed", "detail": f"创建失败: {exc}"})
+        return JSONResponse(
+            status_code=403, content={"error": "mkdir_failed", "detail": f"创建失败: {exc}"}
+        )
     _audit(request, "mkdir", str(target))
     return JSONResponse(content={"status": "created", "path": str(target)})
 
@@ -139,18 +163,26 @@ def fs_mkdir(request: Request, path: str = "") -> JSONResponse:
 def fs_rename(request: Request, path: str = "", new_name: str = "") -> JSONResponse:
     """重命名文件/目录（path 为新名的父目录路径或旧路径，new_name 为目标名）."""
     if not path.strip() or not new_name.strip():
-        return JSONResponse(status_code=400, content={"error": "invalid_path", "detail": "缺少 path/new_name。"})
+        return JSONResponse(
+            status_code=400, content={"error": "invalid_path", "detail": "缺少 path/new_name。"}
+        )
     engine = _engine_from(request)
     target = _resolve_under_root(path, engine)
     if target is None or _is_dangerous(target):
-        return JSONResponse(status_code=400, content={"error": "invalid_path", "detail": "路径越界或非法。"})
+        return JSONResponse(
+            status_code=400, content={"error": "invalid_path", "detail": "路径越界或非法。"}
+        )
     new_target = target.with_name(new_name.strip())
     if not _resolve_under_root(str(new_target), engine):
-        return JSONResponse(status_code=400, content={"error": "out_of_bounds", "detail": "新路径越界。"})
+        return JSONResponse(
+            status_code=400, content={"error": "out_of_bounds", "detail": "新路径越界。"}
+        )
     try:
         target.rename(new_target)
     except OSError as exc:
-        return JSONResponse(status_code=403, content={"error": "rename_failed", "detail": f"重命名失败: {exc}"})
+        return JSONResponse(
+            status_code=403, content={"error": "rename_failed", "detail": f"重命名失败: {exc}"}
+        )
     _audit(request, "rename", f"{target} → {new_target}")
     return JSONResponse(content={"status": "renamed", "from": str(target), "to": str(new_target)})
 
@@ -159,20 +191,32 @@ def fs_rename(request: Request, path: str = "", new_name: str = "") -> JSONRespo
 def fs_delete(request: Request, path: str = "", confirm: bool = False) -> JSONResponse:
     """删除文件/目录（不可逆，须 confirm=true 两步确认）."""
     if not confirm:
-        return JSONResponse(status_code=409, content={"error": "confirm_required", "detail": "删除为不可逆操作，须带 confirm=true 确认。"})
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "confirm_required",
+                "detail": "删除为不可逆操作，须带 confirm=true 确认。",
+            },
+        )
     if not path.strip():
-        return JSONResponse(status_code=400, content={"error": "invalid_path", "detail": "缺少 path。"})
+        return JSONResponse(
+            status_code=400, content={"error": "invalid_path", "detail": "缺少 path。"}
+        )
     engine = _engine_from(request)
     target = _resolve_under_root(path, engine)
     if target is None or _is_dangerous(target):
-        return JSONResponse(status_code=400, content={"error": "invalid_path", "detail": "路径越界或危险，已拒绝。"})
+        return JSONResponse(
+            status_code=400, content={"error": "invalid_path", "detail": "路径越界或危险，已拒绝。"}
+        )
     try:
         if target.is_dir():
             shutil.rmtree(target)
         else:
             target.unlink()
     except OSError as exc:
-        return JSONResponse(status_code=403, content={"error": "delete_failed", "detail": f"删除失败: {exc}"})
+        return JSONResponse(
+            status_code=403, content={"error": "delete_failed", "detail": f"删除失败: {exc}"}
+        )
     _audit(request, "delete", str(target))
     return JSONResponse(content={"status": "deleted", "path": str(target)})
 
@@ -190,20 +234,24 @@ def agents_tree(request: Request) -> JSONResponse:
         metas = engine.session.list_sessions()
         sids = [m.session_id for m in metas]
     except Exception as exc:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": "list_failed", "detail": f"会话列表失败: {exc}"})
+        return JSONResponse(
+            status_code=500, content={"error": "list_failed", "detail": f"会话列表失败: {exc}"}
+        )
     nodes = []
     for sid in sids:
         try:
             if not engine.session.exists(sid):
                 continue
             sess = engine.session.load(sid)
-            nodes.append({
-                "id": sid,
-                "parent_id": getattr(sess, "parent_id", None),
-                "is_subagent": str(sid).startswith("subagent_"),
-                "model": getattr(sess, "model_override", None) or "",
-                "created_at": getattr(sess, "created_at", None),
-            })
+            nodes.append(
+                {
+                    "id": sid,
+                    "parent_id": getattr(sess, "parent_id", None),
+                    "is_subagent": str(sid).startswith("subagent_"),
+                    "model": getattr(sess, "model_override", None) or "",
+                    "created_at": getattr(sess, "created_at", None),
+                }
+            )
         except Exception:  # noqa: BLE001 — 单会话读取失败跳过
             continue
     return JSONResponse(content={"nodes": nodes})

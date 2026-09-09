@@ -309,41 +309,48 @@ def test_client_params_reads_key_on_demand(monkeypatch: pytest.MonkeyPatch) -> N
     }
 
 
-def test_reasoning_split_model_contract_is_parsed_and_passed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reasoning_split_model_contract_is_parsed_and_passed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("MINIMAX_API_KEY", "k")
-    raw = json.dumps({
-        "minimax": {
-            "base_url": "https://api.minimax.io/v1",
-            "api_key_env": "MINIMAX_API_KEY",
-            "models": {"MiniMax-M3": {"context": 1_000_000, "reasoning_split": True}},
-            "default_model": "MiniMax-M3",
+    raw = json.dumps(
+        {
+            "minimax": {
+                "base_url": "https://api.minimax.io/v1",
+                "api_key_env": "MINIMAX_API_KEY",
+                "models": {"MiniMax-M3": {"context": 1_000_000, "reasoning_split": True}},
+                "default_model": "MiniMax-M3",
+            }
         }
-    })
+    )
     reg = load_registry(_settings(model_providers_raw=raw))
     spec = reg.providers["minimax"].models["MiniMax-M3"]
     assert spec.reasoning_split is True
     assert reg.client_params("minimax", "MiniMax-M3")["reasoning_split"] is True
 
 
-
-def test_generation_profile_and_runtime_identity_are_explicit_model_facts(monkeypatch: pytest.MonkeyPatch) -> None:
-    raw = json.dumps({
-        "local": {
-            "base_url": "http://localhost:9999/v1",
-            "api_key_env": "",
-            "models": {
-                "m": {
-                    "runtime_identity": "llama.cpp/example.gguf/Q4_K",
-                    "reasoning_replay": "none",
-                    "temperature": 0.0,
-                    "top_p": 1.0,
-                    "top_k": 0,
-                    "min_p": 0.0
-                }
-            },
-            "default_model": "m"
+def test_generation_profile_and_runtime_identity_are_explicit_model_facts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = json.dumps(
+        {
+            "local": {
+                "base_url": "http://localhost:9999/v1",
+                "api_key_env": "",
+                "models": {
+                    "m": {
+                        "runtime_identity": "llama.cpp/example.gguf/Q4_K",
+                        "reasoning_replay": "none",
+                        "temperature": 0.0,
+                        "top_p": 1.0,
+                        "top_k": 0,
+                        "min_p": 0.0,
+                    }
+                },
+                "default_model": "m",
+            }
         }
-    })
+    )
     reg = load_registry(_settings(model_providers_raw=raw))
     spec = reg.providers["local"].models["m"]
     assert spec.runtime_identity == "llama.cpp/example.gguf/Q4_K"
@@ -353,6 +360,7 @@ def test_generation_profile_and_runtime_identity_are_explicit_model_facts(monkey
     assert params["top_p"] == 1.0
     assert params["top_k"] == 0
     assert params["min_p"] == 0.0
+
 
 def test_client_params_missing_key_truthful_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """key 缺失 → 如实报错含 env var 名字."""
@@ -609,7 +617,13 @@ def test_strict_bool_whitelist(raw, expected) -> None:
     reg = load_registry(
         _settings(
             model_providers_raw=json.dumps(
-                {"p1": {"base_url": "http://a", "api_key_env": "", "models": {"m1": {"thinking": raw}}}}
+                {
+                    "p1": {
+                        "base_url": "http://a",
+                        "api_key_env": "",
+                        "models": {"m1": {"thinking": raw}},
+                    }
+                }
             )
         )
     )
@@ -660,8 +674,7 @@ def test_invalid_context_entry_skipped_others_load(caplog: pytest.LogCaptureFixt
     assert not reg.degraded
     # warning 含条目 name/model 与原因
     assert any(
-        "p1" in r.message and "bad" in r.message and "context" in r.message
-        for r in caplog.records
+        "p1" in r.message and "bad" in r.message and "context" in r.message for r in caplog.records
     )
 
 
@@ -670,7 +683,13 @@ def test_missing_context_uses_default() -> None:
     reg = load_registry(
         _settings(
             model_providers_raw=json.dumps(
-                {"p1": {"base_url": "http://a", "api_key_env": "", "models": {"m1": {"thinking": True}}}}
+                {
+                    "p1": {
+                        "base_url": "http://a",
+                        "api_key_env": "",
+                        "models": {"m1": {"thinking": True}},
+                    }
+                }
             )
         )
     )
@@ -691,8 +710,6 @@ def test_non_dict_provider_warns_and_skipped(caplog: pytest.LogCaptureFixture) -
     assert "p2" in reg.providers
     assert not reg.degraded
     assert any("p1" in r.message and "非 dict" in r.message for r in caplog.records)
-
-
 
 
 def test_provider_and_model_max_input_tokens_parse_without_entering_client_payload() -> None:
@@ -737,12 +754,20 @@ def test_invalid_max_input_tokens_fail_open_to_physical_window() -> None:
 
 # ── 2026-08-15: provider 级 max_tokens 输出预算 ──
 
+
 def test_provider_max_tokens_parsed_and_passed() -> None:
     """provider 条目 max_tokens → ProviderSpec + client_params 下发（pool 优先用它）."""
     reg = load_registry(
         _settings(
             model_providers_raw=json.dumps(
-                {"p1": {"base_url": "http://a", "api_key_env": "", "max_tokens": 16384, "models": {"m1": {}}}}
+                {
+                    "p1": {
+                        "base_url": "http://a",
+                        "api_key_env": "",
+                        "max_tokens": 16384,
+                        "models": {"m1": {}},
+                    }
+                }
             )
         )
     )
@@ -755,8 +780,18 @@ def test_provider_max_tokens_invalid_falls_back() -> None:
     """max_tokens 非法（0/负数/非数字）→ None（全局 LLM_MAX_TOKENS 兜底）+ warning."""
     raw = json.dumps(
         {
-            "p1": {"base_url": "http://a", "api_key_env": "", "max_tokens": 0, "models": {"m1": {}}},
-            "p2": {"base_url": "http://b", "api_key_env": "", "max_tokens": "abc", "models": {"m2": {}}},
+            "p1": {
+                "base_url": "http://a",
+                "api_key_env": "",
+                "max_tokens": 0,
+                "models": {"m1": {}},
+            },
+            "p2": {
+                "base_url": "http://b",
+                "api_key_env": "",
+                "max_tokens": "abc",
+                "models": {"m2": {}},
+            },
         }
     )
     reg = load_registry(_settings(model_providers_raw=raw))
@@ -800,6 +835,7 @@ def test_model_max_tokens_overrides_provider_default() -> None:
 
 # ── P3-5: wire_protocol 元数据 ──
 
+
 def test_wire_protocol_parsed_and_passed(monkeypatch) -> None:
     """模型条目 wire_protocol → ModelSpec + client_params 下发（pool 透传客户端）."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k-a")
@@ -833,7 +869,9 @@ def test_wire_protocol_parsed_and_passed(monkeypatch) -> None:
     assert reg.providers["ds"].models["deepseek-v4-flash"].wire_protocol == "openai"
     assert reg.client_params("claude", "claude-sonnet").get("wire_protocol") == "anthropic"
     assert reg.client_params("gemini", "gemini-pro").get("wire_protocol") == "google"
-    assert "wire_protocol" not in reg.client_params("ds", "deepseek-v4-flash")  # 默认不下发（零回归）
+    assert "wire_protocol" not in reg.client_params(
+        "ds", "deepseek-v4-flash"
+    )  # 默认不下发（零回归）
 
 
 def test_wire_protocol_invalid_falls_back(caplog: pytest.LogCaptureFixture) -> None:
@@ -841,7 +879,13 @@ def test_wire_protocol_invalid_falls_back(caplog: pytest.LogCaptureFixture) -> N
     reg = load_registry(
         _settings(
             model_providers_raw=json.dumps(
-                {"p1": {"base_url": "http://a", "api_key_env": "", "models": {"m1": {"wire_protocol": "silly"}}}}
+                {
+                    "p1": {
+                        "base_url": "http://a",
+                        "api_key_env": "",
+                        "models": {"m1": {"wire_protocol": "silly"}},
+                    }
+                }
             )
         )
     )
@@ -850,6 +894,7 @@ def test_wire_protocol_invalid_falls_back(caplog: pytest.LogCaptureFixture) -> N
 
 
 # ── llama-server 直连发现：多模型选择安全性 ──
+
 
 def _fake_ps_result(stdout: str):
     from types import SimpleNamespace
@@ -867,9 +912,7 @@ def test_discover_llama_server_selects_requested_model_among_multiple(monkeypatc
         "u 2 0 0 0 0 ?? S 0:00 /opt/llama-server --model /m/Qwen3.8-27B.gguf "
         "--port 2222 --api-key fake-b\n"
     )
-    monkeypatch.setattr(
-        "subprocess.run", lambda *a, **k: _fake_ps_result(ps)
-    )
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _fake_ps_result(ps))
     got = _discover_llama_server("qwen3.8-27b-mlx")
     assert got is not None
     assert got[0] == "http://127.0.0.1:2222/v1"
@@ -884,9 +927,7 @@ def test_discover_llama_server_ambiguous_multiple_falls_back(monkeypatch):
         "u 1 0 0 0 0 ?? S 0:00 /opt/llama-server -m /m/Qwen3.6-27B.gguf --port 1111\n"
         "u 2 0 0 0 0 ?? S 0:00 /opt/llama-server -m /m/Qwen3.8-27B.gguf --port 2222\n"
     )
-    monkeypatch.setattr(
-        "subprocess.run", lambda *a, **k: _fake_ps_result(ps)
-    )
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _fake_ps_result(ps))
     assert _discover_llama_server("qwythos-9b") is None
 
 
@@ -898,9 +939,7 @@ def test_discover_llama_server_single_known_mismatch_falls_back(monkeypatch):
         "u 1 0 0 0 0 ?? S 0:00 /opt/llama-server -m /m/Qwen3.6-27B.gguf "
         "--port 1111 --api-key fake-a\n"
     )
-    monkeypatch.setattr(
-        "subprocess.run", lambda *a, **k: _fake_ps_result(ps)
-    )
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _fake_ps_result(ps))
     assert _discover_llama_server("qwen3.8-27b") is None
 
 
@@ -912,11 +951,10 @@ def test_discover_llama_server_single_candidate_keeps_compat(monkeypatch):
         "u 1 0 0 0 0 ?? S 0:00 /opt/llama-server -m /m/Qwen-custom.gguf "
         "--port 3333 --api-key fake-one\n"
     )
-    monkeypatch.setattr(
-        "subprocess.run", lambda *a, **k: _fake_ps_result(ps)
-    )
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _fake_ps_result(ps))
     assert _discover_llama_server("unmapped-local-model") == (
-        "http://127.0.0.1:3333/v1", "fake-one"
+        "http://127.0.0.1:3333/v1",
+        "fake-one",
     )
 
 

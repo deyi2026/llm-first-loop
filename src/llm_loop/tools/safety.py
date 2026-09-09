@@ -84,7 +84,9 @@ def _expand(command: str) -> str:
     expanded = os.path.expandvars(command)
     home = os.path.expanduser("~")
     if "~" in expanded and home != "~":
-        expanded = re.sub(r"(^|(?<=[\s;|&'\"=]))~(?=[/\s'\"]|$)", lambda m: m.group(1) + home, expanded)
+        expanded = re.sub(
+            r"(^|(?<=[\s;|&'\"=]))~(?=[/\s'\"]|$)", lambda m: m.group(1) + home, expanded
+        )
     return expanded
 
 
@@ -245,7 +247,9 @@ class CatastrophicGuard:
         if toks[0] == "rm" and _rm_recursive_force(toks):
             for target in _rm_targets(toks):
                 if _is_dangerous_rm_target(target):
-                    return self._block("rm -rf 指向根/主目录/系统关键目录", sub, f"rm 目标: {target}")
+                    return self._block(
+                        "rm -rf 指向根/主目录/系统关键目录", sub, f"rm 目标: {target}"
+                    )
 
         # 2) find 删除载荷（审计发现 #3：find -delete/-exec rm 绕过修复）
         if toks[0] == "find":
@@ -255,7 +259,9 @@ class CatastrophicGuard:
                 idx = toks.index("-exec")
                 payload = toks[idx + 1 :]
                 if payload and payload[0] in ("rm", "shred", "srm"):
-                    return self._block("find -exec 调用删除命令", sub, f"find -exec {payload[0]} ...")
+                    return self._block(
+                        "find -exec 调用删除命令", sub, f"find -exec {payload[0]} ..."
+                    )
 
         # 3) shell 载荷递归（sh -c "..." 内仍是命令，深度限 2 防无限递归）
         if depth < 2:
@@ -274,7 +280,9 @@ class CatastrophicGuard:
         if py_payload:
             m = _PY_DANGER.search(py_payload)
             if m:
-                return self._block("python -c 载荷含不可逆破坏调用", sub, f"载荷命中: {m.group(0)[:80]}")
+                return self._block(
+                    "python -c 载荷含不可逆破坏调用", sub, f"载荷命中: {m.group(0)[:80]}"
+                )
             # 引号/逗号归一后 token 扫描（subprocess.run(['rm','-rf','/']) 等列表形态）
             inner_toks = re.sub(r"['\",()\[\];]", " ", py_payload).split()
             for i, t in enumerate(inner_toks):

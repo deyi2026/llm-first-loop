@@ -51,8 +51,8 @@ def parse_skill_md(text: str, fallback_name: str, path: str) -> SkillMeta:
             line = line.strip()
             if ":" in line:
                 k, _, v = line.partition(":")
-                k = k.strip().strip('"\'')
-                v = v.strip().strip('"\'')
+                k = k.strip().strip("\"'")
+                v = v.strip().strip("\"'")
                 if k and v:
                     fm[k] = v
         body = text[m.end() :]

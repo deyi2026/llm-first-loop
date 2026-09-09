@@ -86,11 +86,20 @@ def test_missing_snapshot_exit_1(tmp_path, capsys):
 
 
 def test_ticket_evidence_skips_skeleton(tmp_path, capsys):
-    """spec 5.2.1-5b: 工单证据下骨架轨记 skipped_ticket（dry-run 不发送）. """
+    """spec 5.2.1-5b: 工单证据下骨架轨记 skipped_ticket（dry-run 不发送）."""
     p = _write_snapshot(tmp_path)
     code = main(
-        ["--snapshot", str(p), "--dry-run", "--ticket-ref", "T-20260827-01",
-         "--ticket-note", "官方确认连续 user 条数上限", "--data-dir", str(tmp_path / "d")]
+        [
+            "--snapshot",
+            str(p),
+            "--dry-run",
+            "--ticket-ref",
+            "T-20260827-01",
+            "--ticket-note",
+            "官方确认连续 user 条数上限",
+            "--data-dir",
+            str(tmp_path / "d"),
+        ]
     )
     out = capsys.readouterr().out
     assert code == 0

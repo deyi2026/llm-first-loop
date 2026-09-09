@@ -17,9 +17,7 @@ def test_semantic_injection_budget_runtime_is_retired() -> None:
     assert not (root / "src/llm_loop/core/injection_budget.py").exists()
     assert not (root / "src/llm_loop/core/prompt_build/stages/budget_application.py").exists()
     assert importlib.util.find_spec("llm_loop.core.injection_budget") is None
-    assert importlib.util.find_spec(
-        "llm_loop.core.prompt_build.stages.budget_application"
-    ) is None
+    assert importlib.util.find_spec("llm_loop.core.prompt_build.stages.budget_application") is None
 
 
 def test_settings_has_no_semantic_injection_budget_knob(monkeypatch) -> None:
@@ -41,14 +39,8 @@ def test_detect_program_layer_requires_explicit_program_marker() -> None:
         detect_program_layer(PROGRAM_APPENDIX_NOTICE + "\n[通知·状态]\n状态事实")
         is InjectionLayer.STATUS
     )
-    assert (
-        detect_program_layer("[任务·程序恢复]\n恢复事实")
-        is InjectionLayer.PROGRAM_RECOVERY
-    )
-    assert (
-        detect_program_layer("[资料·记忆/经验]\n历史事实")
-        is InjectionLayer.REFERENCE
-    )
+    assert detect_program_layer("[任务·程序恢复]\n恢复事实") is InjectionLayer.PROGRAM_RECOVERY
+    assert detect_program_layer("[资料·记忆/经验]\n历史事实") is InjectionLayer.REFERENCE
 
 
 def test_zero_dynamic_producer_fixed_point_end_to_end(tmp_path) -> None:
@@ -79,9 +71,7 @@ def test_persisted_program_blocks_are_filtered_before_cognitive_observability(tm
     from tests.unit.test_injection_fingerprint import _build, _engine
 
     engine, sess = _engine(tmp_path)
-    persisted = render_program_appendix(
-        "历史参考事实 " + "Z" * 900, InjectionLayer.REFERENCE
-    )
+    persisted = render_program_appendix("历史参考事实 " + "Z" * 900, InjectionLayer.REFERENCE)
     engine._run_state().current_turn_ref = 0
     sess.messages.append(
         Message(

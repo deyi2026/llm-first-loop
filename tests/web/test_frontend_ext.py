@@ -13,8 +13,20 @@ from llm_loop.web import build_app
 
 def read_all_js():
     from pathlib import Path
+
     _d = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static"
-    _fs = ["modules/state.js","modules/markdown-math.js","modules/tool-render.js","modules/message-render.js","modules/stream-chat.js","modules/app-core.js","modules/responsive.js","modules/session-list.js","modules/command-upload-model.js","app.js"]
+    _fs = [
+        "modules/state.js",
+        "modules/markdown-math.js",
+        "modules/tool-render.js",
+        "modules/message-render.js",
+        "modules/stream-chat.js",
+        "modules/app-core.js",
+        "modules/responsive.js",
+        "modules/session-list.js",
+        "modules/command-upload-model.js",
+        "app.js",
+    ]
     return chr(10).join((_d / f).read_text(encoding="utf-8") for f in _fs if (_d / f).exists())
 
 
@@ -144,6 +156,7 @@ def test_style_has_tool_chain_styles():
 
 
 # ── 2026-08-15: SSE 前端加固（失联自愈看门狗 + 聚焦即刷 + 命名事件监听）──
+
 
 class TestSseFrontendHardening:
     def test_refresh_from_sync_defined(self, app_js_src: str):

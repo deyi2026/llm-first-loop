@@ -1,12 +1,17 @@
 """EVO-20260810-50816b30: 声明-回执校验能力陈述语义区分测试."""
+
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
 from llm_loop.feedback.validator import DeclarationValidator
 
 
 def _tool_msg(name: str, content: str, status=ToolResultStatus.SUCCESS) -> Message:
     return Message(
-        role="tool", content=content, source=MessageSource.TOOL,
-        tool_call_id="t1", status=status, tool_name=name,
+        role="tool",
+        content=content,
+        source=MessageSource.TOOL,
+        tool_call_id="t1",
+        status=status,
+        tool_name=name,
     )
 
 

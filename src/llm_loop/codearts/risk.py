@@ -18,11 +18,26 @@ from llm_loop.tools.safety import CatastrophicGuard
 # 灾难性动作模式（spec §2 领域术语"灾难性动作"）
 # 生产部署 / 制品发布 / 仓库强推 / 环境销毁
 _CATASTROPHIC_TASK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("生产环境部署", re.compile(r"production\s+deploy|deploy\s+to\s+prod|生产部署|部署到生产", re.IGNORECASE)),
-    ("制品发布", re.compile(r"publish\s+artifact|release\s+artifact|制品发布|发布制品", re.IGNORECASE)),
-    ("仓库强制推送", re.compile(r"force\s+push|git\s+push\s+(-f|--force)|仓库强推|强制推送", re.IGNORECASE)),
-    ("环境销毁", re.compile(r"destroy\s+environment|terraform\s+destroy|环境销毁|销毁环境", re.IGNORECASE)),
-    ("数据库破坏性操作", re.compile(r"\bdrop\s+(database|table|schema)|truncate\s+table|数据库销毁", re.IGNORECASE)),
+    (
+        "生产环境部署",
+        re.compile(r"production\s+deploy|deploy\s+to\s+prod|生产部署|部署到生产", re.IGNORECASE),
+    ),
+    (
+        "制品发布",
+        re.compile(r"publish\s+artifact|release\s+artifact|制品发布|发布制品", re.IGNORECASE),
+    ),
+    (
+        "仓库强制推送",
+        re.compile(r"force\s+push|git\s+push\s+(-f|--force)|仓库强推|强制推送", re.IGNORECASE),
+    ),
+    (
+        "环境销毁",
+        re.compile(r"destroy\s+environment|terraform\s+destroy|环境销毁|销毁环境", re.IGNORECASE),
+    ),
+    (
+        "数据库破坏性操作",
+        re.compile(r"\bdrop\s+(database|table|schema)|truncate\s+table|数据库销毁", re.IGNORECASE),
+    ),
 ]
 
 

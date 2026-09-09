@@ -39,9 +39,7 @@ def sink(monkeypatch: pytest.MonkeyPatch) -> _CaptureSink:
 
 
 def _user(content: str, metadata: dict | None = None) -> Message:
-    return Message(
-        role="user", content=content, source=MessageSource.USER, metadata=metadata
-    )
+    return Message(role="user", content=content, source=MessageSource.USER, metadata=metadata)
 
 
 MISLABEL_MD = {"origin_layer": "user_instruction", "program_origin": True}
@@ -89,13 +87,13 @@ class TestDetectPureFunction:
         tool = Message(role="tool", content="结果", source=MessageSource.SYSTEM, tool_call_id="t1")
         assert detect_leak_at_build([assistant, tool], session_id="s1") == []
 
-    def test_detector_fault_fail_open(self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_detector_fault_fail_open(
+        self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         def _boom(messages, **_kw):
             raise RuntimeError("检测层内部故障")
 
-        monkeypatch.setattr(
-            "llm_loop.core.trace_leak.leak_detector._detect_inner", _boom
-        )
+        monkeypatch.setattr("llm_loop.core.trace_leak.leak_detector._detect_inner", _boom)
         bad = _user("失真", dict(MISLABEL_MD))
         assert detect_leak_at_build([bad], session_id="s1") == []
         assert leak_events.LEAK_DETECTOR_FAULT in sink.kinds()
@@ -125,11 +123,14 @@ class TestBuildAlphaMount:
 
         # 1) 失真消息不再以 user 历史原样投影
         assert not any(
-            m.get("role") == "user" and str(m.get("content") or "") == leaked.content
-            for m in out
+            m.get("role") == "user" and str(m.get("content") or "") == leaked.content for m in out
         )
         # 2) Even explicit on rollback cannot turn leaked content into model context.
-        downgraded = [str(m.get("content") or "") for m in out if leaked.content[:10] in str(m.get("content") or "")]
+        downgraded = [
+            str(m.get("content") or "")
+            for m in out
+            if leaked.content[:10] in str(m.get("content") or "")
+        ]
         assert downgraded == []
         assert leak_events.LEAK_MISLABEL_DETECTED in sink.kinds()
 
@@ -148,7 +149,9 @@ class TestBuildAlphaMount:
         assert stored.metadata.get("origin_layer") == "user_instruction"
         assert stored.metadata.get("program_origin") is True  # 原文 metadata 零改动
 
-    def test_detector_crash_fail_open_keeps_view(self, tmp_path: Path, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_detector_crash_fail_open_keeps_view(
+        self, tmp_path: Path, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         engine, sess = _wire_engine(tmp_path)
         leaked = _user("故障时也不丢消息", dict(MISLABEL_MD))
         sess.messages = [leaked] + list(sess.messages)
@@ -157,15 +160,12 @@ class TestBuildAlphaMount:
         def _boom(messages, **_kw):
             raise RuntimeError("挂载点异常")
 
-        monkeypatch.setattr(
-            "llm_loop.core.trace_leak.leak_detector._detect_inner", _boom
-        )
+        monkeypatch.setattr("llm_loop.core.trace_leak.leak_detector._detect_inner", _boom)
         out = engine._build_llm_messages(sess, [], planned_label="zhipu/glm-5")
         # Detector failure must not override the independent program-origin eligibility
         # boundary: explicit contradictory provenance remains provider-invisible.
         assert not any(
-            m.get("role") == "user" and str(m.get("content") or "") == leaked.content
-            for m in out
+            m.get("role") == "user" and str(m.get("content") or "") == leaked.content for m in out
         )
         assert leak_events.LEAK_DETECTOR_FAULT in sink.kinds()
 
@@ -175,7 +175,9 @@ class TestSignatureWarn:
 
     TRACE_CONTENT = "思考过程\npython3 -c 'print(1)'\n自动 grep -r secret ."
 
-    def test_off_by_default_no_scan(self, tmp_path: Path, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_off_by_default_no_scan(
+        self, tmp_path: Path, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv(SIGNATURE_ENV, raising=False)
         engine, sess = _wire_engine(tmp_path)
         sig = _user(self.TRACE_CONTENT)
@@ -185,7 +187,9 @@ class TestSignatureWarn:
         engine._build_llm_messages(sess, [], planned_label="zhipu/glm-5")
         assert leak_events.LEAK_SIGNATURE_WARNED not in sink.kinds()
 
-    def test_warn_emits_event_keeps_view(self, tmp_path: Path, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_warn_emits_event_keeps_view(
+        self, tmp_path: Path, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv(SIGNATURE_ENV, "warn")
         engine, sess = _wire_engine(tmp_path)
         sig = _user(
@@ -204,7 +208,9 @@ class TestSignatureWarn:
             for m in out
         )
 
-    def test_human_credential_exempt(self, tmp_path: Path, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_human_credential_exempt(
+        self, tmp_path: Path, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv(SIGNATURE_ENV, "warn")
         engine, sess = _wire_engine(tmp_path)
         cred = _user(

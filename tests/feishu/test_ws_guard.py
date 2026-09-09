@@ -111,7 +111,9 @@ class TestWatchdog:
         monkeypatch.setattr("llm_loop.feishu.bridge._WATCHDOG_POLL_S", 0.01)
 
         exited: list[int] = []
-        monkeypatch.setattr("os._exit", lambda code: exited.append(code) or c.__setattr__("_stop", True))
+        monkeypatch.setattr(
+            "os._exit", lambda code: exited.append(code) or c.__setattr__("_stop", True)
+        )
 
         import threading
 
@@ -262,7 +264,9 @@ class TestWatchdog:
         client = _SdkLikeClient()
         c._write_heartbeat(client)
         hb = json.loads(Path(tmp_path / "hb.json").read_text(encoding="utf-8"))
-        assert "last_message_ts" in hb and (hb["last_message_ts"] is None or isinstance(hb["last_message_ts"], float))
+        assert "last_message_ts" in hb and (
+            hb["last_message_ts"] is None or isinstance(hb["last_message_ts"], float)
+        )
         assert isinstance(hb["queue_depth"], int)
         assert "last_processed_ts" in hb
         assert isinstance(hb["processing_msg_id"], str)
@@ -331,7 +335,9 @@ class TestLogDowngrade:
         lark_logger = logging.getLogger("Lark")
         lark_logger.error("receive message loop exit, err: received 3003 ping_timeout")
         assert _PingTimeoutDowngradeFilter.count == before + 1
-        assert all(r.levelno == logging.WARNING for r in caplog.records if "ping_timeout" in r.getMessage())
+        assert all(
+            r.levelno == logging.WARNING for r in caplog.records if "ping_timeout" in r.getMessage()
+        )
 
     def test_filter_idempotent(self):
         import logging

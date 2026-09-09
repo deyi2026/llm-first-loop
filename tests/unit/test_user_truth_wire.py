@@ -128,14 +128,16 @@ def test_build_compact_initial_round_keeps_exact_truth_as_semantic_tail(tmp_path
     current = sess.messages[0]
     old: list[Message] = []
     for i in range(4):
-        old.append(Message(role="user", content=f"old-u{i}-" + "U" * 600, source=MessageSource.USER))
-        old.append(Message(role="assistant", content=f"old-a{i}-" + "A" * 600, source=MessageSource.SYSTEM))
+        old.append(
+            Message(role="user", content=f"old-u{i}-" + "U" * 600, source=MessageSource.USER)
+        )
+        old.append(
+            Message(role="assistant", content=f"old-a{i}-" + "A" * 600, source=MessageSource.SYSTEM)
+        )
     sess.messages = old + [current]
     engine._run_state().current_turn_ref = len(sess.messages) - 1
 
-    out = engine._build_llm_messages(
-        sess, [], max_chars=1800, planned_label="zhipu/glm-5"
-    )
+    out = engine._build_llm_messages(sess, [], max_chars=1800, planned_label="zhipu/glm-5")
 
     assert engine._last_history_compacted is True
     assert out[-1]["role"] == "user"
@@ -148,7 +150,9 @@ def test_build_compact_initial_round_keeps_exact_truth_as_semantic_tail(tmp_path
     assert _tail_user_run(out) == 1
 
 
-def test_build_oversized_current_user_is_never_replaced_by_compact_surrogate(tmp_path: Path) -> None:
+def test_build_oversized_current_user_is_never_replaced_by_compact_surrogate(
+    tmp_path: Path,
+) -> None:
     """R6 chooses explicit over-budget pressure over silently changing the user's task."""
     from tests.unit.test_injection_fingerprint import _engine
 
@@ -157,9 +161,7 @@ def test_build_oversized_current_user_is_never_replaced_by_compact_surrogate(tmp
     sess.messages[0].content = truth
     engine._run_state().current_turn_ref = 0
 
-    out = engine._build_llm_messages(
-        sess, [], max_chars=1200, planned_label="zhipu/glm-5"
-    )
+    out = engine._build_llm_messages(sess, [], max_chars=1200, planned_label="zhipu/glm-5")
 
     assert engine._last_history_compacted is True
     assert out[-1]["role"] == "user"

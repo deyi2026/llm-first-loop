@@ -29,8 +29,6 @@ class _EnumTool:
         return "ok"
 
 
-
-
 class _NestedTool:
     name = "workflow_like"
     description = "nested schema"
@@ -55,6 +53,7 @@ class _NestedTool:
 
     def execute(self, **kwargs):
         return "ok"
+
 
 class _PlainTool:
     name = "plain_tool"

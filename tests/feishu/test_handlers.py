@@ -396,9 +396,7 @@ class _FakeCardSvc:
         self.create_calls.append(request)
         if not self._ok:
             return type("R", (), {"code": 230001, "msg": "fail", "data": None})()
-        return type(
-            "R", (), {"code": 0, "data": type("D", (), {"card_id": "om_card"})()}
-        )()
+        return type("R", (), {"code": 0, "data": type("D", (), {"card_id": "om_card"})()})()
 
     def update(self, request):
         self.update_calls.append(request)
@@ -516,7 +514,10 @@ def test_typing_ack_exception_still_removes(build_test_engine, tmp_path):
     rest_client = type(
         "Rest",
         (),
-        {"add_typing_reaction": reaction.add_typing_reaction, "remove_reaction": reaction.remove_reaction},
+        {
+            "add_typing_reaction": reaction.add_typing_reaction,
+            "remove_reaction": reaction.remove_reaction,
+        },
     )()
     handler = FeishuMessageHandler(
         engine,
@@ -614,11 +615,14 @@ def test_audit_record_has_ts(build_test_engine, tmp_path):
     assert last["kind"] == "receive"
     assert last["detail"] == "测试审计"
     # 旧记录（无 ts）读取不报错
-    audit_file.write_text('{"message_id": "old", "kind": "receive", "detail": "x"}\n', encoding="utf-8")
+    audit_file.write_text(
+        '{"message_id": "old", "kind": "receive", "detail": "x"}\n', encoding="utf-8"
+    )
     assert json.loads(audit_file.read_text(encoding="utf-8").splitlines()[0])["message_id"] == "old"
 
 
 # ── G1 表格感知分段（P1-1）──
+
 
 def test_chunk_markdown_table_kept_in_segment():
     """G1: 长回复含表格 + 强制小 limit，表格整体保留单段、表内不切段（无段从数据行续起被误判为表头）."""
@@ -686,6 +690,7 @@ def test_chunk_markdown_fence_across_segments():
 
 
 # ── G4 长回执折叠 ──
+
 
 def test_reply_chunked_fold_threshold(build_test_engine, tmp_path, monkeypatch):
     """F4(env 选择加入 FEISHU_FOLD_LONG_REPLY=1): 长回复 > 阈值 → 仅发摘要卡（全文暂存）；「展开全文」取回全量分段推送."""

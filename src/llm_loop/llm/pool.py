@@ -130,9 +130,7 @@ class ModelClientPool:
                 else float(self.base_timeout_s or 120.0)
             ),
             max_tokens=(
-                provider_max_tokens
-                if provider_max_tokens is not None
-                else self.base_max_tokens
+                provider_max_tokens if provider_max_tokens is not None else self.base_max_tokens
             ),
             # Registry omits the default "openai" value from client_params for
             # compatibility. Absence therefore means openai, never "inherit the
@@ -165,9 +163,7 @@ class ModelClientPool:
             selected = registry if registry is not None else self.registry
             provider_id, model_id = selected.resolve(model_ref)
             use_cache = selected is self.registry
-            client = self._get_client_locked(
-                selected, provider_id, model_id, use_cache=use_cache
-            )
+            client = self._get_client_locked(selected, provider_id, model_id, use_cache=use_cache)
             retire_after = not use_cache
         if retire_after:
             # round已捕获旧快照而refresh已切表：本轮仍按旧快照完成；一次性client最后引用释放后关闭。
@@ -220,9 +216,7 @@ class ModelClientPool:
         if isinstance(client, LLMClient):
             transport = getattr(client, "_client", None)
             if transport is not None:
-                finalizer = weakref.finalize(
-                    client, ModelClientPool._close_transport, transport
-                )
+                finalizer = weakref.finalize(client, ModelClientPool._close_transport, transport)
                 with self._guard:
                     self._retired_refs = [
                         pair for pair in self._retired_refs if pair[0]() is not None
@@ -283,9 +277,7 @@ class ModelClientPool:
         except Exception as exc:  # noqa: BLE001 — 单个关闭失败 fail-open
             logger.warning("LLM 客户端关闭失败（fail-open）: %s", exc)
 
-    def fallback_candidates(
-        self, *, registry: ProviderRegistry | None = None
-    ) -> list[str]:
+    def fallback_candidates(self, *, registry: ProviderRegistry | None = None) -> list[str]:
         """解析 MODEL_FALLBACKS env 为合法 provider/model 引用列表 (M49 / design §5.4).
 
         返回:

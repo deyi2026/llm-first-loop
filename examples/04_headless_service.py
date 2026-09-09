@@ -40,9 +40,7 @@ def build_headless_app() -> FastAPI:
         """流式对话: SSE 逐段输出（内容增量 + 结束事件带完整结果）."""
 
         def _gen():
-            for delta in engine.run_stream(
-                engine.session.create(), body["text"]
-            ):
+            for delta in engine.run_stream(engine.session.create(), body["text"]):
                 if delta.content:
                     yield f"data: {delta.content}\n\n"
 

@@ -117,10 +117,16 @@ class ConfirmedFact:
             try:
                 provenance = EvidenceRef(str(ref))
             except ValueError:
-                logger.warning("confirmed_facts.provenance 非有效 evidence://v1 引用，置空: %r", ref)
+                logger.warning(
+                    "confirmed_facts.provenance 非有效 evidence://v1 引用，置空: %r", ref
+                )
         freshness_raw = str(data.get("freshness", ""))
         try:
-            freshness = ConfirmedFactFreshness(freshness_raw) if freshness_raw else ConfirmedFactFreshness.CURRENT
+            freshness = (
+                ConfirmedFactFreshness(freshness_raw)
+                if freshness_raw
+                else ConfirmedFactFreshness.CURRENT
+            )
         except ValueError:
             freshness = ConfirmedFactFreshness.CURRENT
         return cls(
@@ -173,7 +179,9 @@ class SemanticTaskState:
         checkpoint: CheckpointPointer | None = None
         if cp:
             try:
-                checkpoint = CheckpointPointer(what=str(cp.get("what", "")), next=str(cp.get("next", "")))
+                checkpoint = CheckpointPointer(
+                    what=str(cp.get("what", "")), next=str(cp.get("next", ""))
+                )
             except ValueError:
                 checkpoint = None  # 空 what：回退（spec 5.1.3-2）
         return cls(
@@ -203,7 +211,13 @@ def _is_durable(
     5. stable_reusable_fact 是后续任务高概率复用的稳定技术事实
     """
     return any(
-        (survives_boundary, is_hard_constraint, is_decision_basis, high_recover_cost, stable_reusable_fact)
+        (
+            survives_boundary,
+            is_hard_constraint,
+            is_decision_basis,
+            high_recover_cost,
+            stable_reusable_fact,
+        )
     )
 
 
@@ -256,7 +270,9 @@ class StateIdentity:
 
     def __post_init__(self) -> None:
         if not self.source_digest:
-            self.source_digest = _source_digest(self.goal_id, self.goal_updated_at, self.checkpoint_ts)
+            self.source_digest = _source_digest(
+                self.goal_id, self.goal_updated_at, self.checkpoint_ts
+            )
 
     def to_dict(self) -> dict:
         return {
@@ -322,7 +338,9 @@ class StateEnvelope:
         state_raw = data.get("state")
         return cls(
             identity=StateIdentity.from_dict(identity_raw),
-            tombstone=Tombstone.from_dict(tombstone_raw) if isinstance(tombstone_raw, dict) else None,
+            tombstone=Tombstone.from_dict(tombstone_raw)
+            if isinstance(tombstone_raw, dict)
+            else None,
             state=SemanticTaskState.from_dict(state_raw) if isinstance(state_raw, dict) else None,
         )
 
@@ -339,7 +357,9 @@ class _StaleUntrusted:
 STALE_UNTRUSTED = _StaleUntrusted()
 
 
-def rebuild_state(goal: dict | None, version: SemanticStateVersion | None = None) -> SemanticTaskState | None:
+def rebuild_state(
+    goal: dict | None, version: SemanticStateVersion | None = None
+) -> SemanticTaskState | None:
     """从 GoalStore.get() 返回的 goal dict 派生 SemanticTaskState（design 2.1.3.1）。
 
     - Goal 为空/**非 active（complete/blocked 终态）** → None（spec 4.1-3 墓碑前置检查）。
@@ -365,7 +385,9 @@ def rebuild_state(goal: dict | None, version: SemanticStateVersion | None = None
             break
         skipped_empty += 1
     if skipped_empty:
-        logger.warning("rebuild_state: %d 条空 what checkpoint 已跳过，回退上一有效 checkpoint", skipped_empty)
+        logger.warning(
+            "rebuild_state: %d 条空 what checkpoint 已跳过，回退上一有效 checkpoint", skipped_empty
+        )
     return SemanticTaskState(
         objective=objective,
         checkpoint=checkpoint,
@@ -465,7 +487,9 @@ class SemanticStateStore:
                 dir_fd = os.open(self._dir, flags)
                 os.fsync(dir_fd)
             except OSError:
-                logger.warning("语义状态目录 fsync 失败（写入已完成）: %s", self._dir, exc_info=True)
+                logger.warning(
+                    "语义状态目录 fsync 失败（写入已完成）: %s", self._dir, exc_info=True
+                )
             finally:
                 if dir_fd is not None:
                     os.close(dir_fd)

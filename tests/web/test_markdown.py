@@ -13,8 +13,20 @@ from llm_loop.web import build_app
 
 def read_all_js():
     from pathlib import Path
+
     _d = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static"
-    _fs = ["modules/state.js","modules/markdown-math.js","modules/tool-render.js","modules/message-render.js","modules/stream-chat.js","modules/app-core.js","modules/responsive.js","modules/session-list.js","modules/command-upload-model.js","app.js"]
+    _fs = [
+        "modules/state.js",
+        "modules/markdown-math.js",
+        "modules/tool-render.js",
+        "modules/message-render.js",
+        "modules/stream-chat.js",
+        "modules/app-core.js",
+        "modules/responsive.js",
+        "modules/session-list.js",
+        "modules/command-upload-model.js",
+        "app.js",
+    ]
     return chr(10).join((_d / f).read_text(encoding="utf-8") for f in _fs if (_d / f).exists())
 
 
@@ -103,7 +115,7 @@ def test_render_fallback_to_plaintext():
 
 def test_note_stays_plaintext():
     app_js = read_all_js()
-    assert 'msg-note' in app_js  # note 经 el() textContent 渲染，不 MD 渲染
+    assert "msg-note" in app_js  # note 经 el() textContent 渲染，不 MD 渲染
 
 
 def test_style_has_md_elements():

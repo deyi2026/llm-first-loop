@@ -46,11 +46,13 @@ def test_task_pending_waits_for_user_authorization(tmp_path, monkeypatch):
 
     assert eng._interop_inbox_messages() == []
     assert path.exists(), "未授权 external task 必须保留 pending，等待用户处理"
-    assert actions == [(
-        "interop.external_input",
-        "awaiting_user_authorization",
-        "id=20260816-005;topic=task;from=dsh;ref=;prompt_chars=0",
-    )]
+    assert actions == [
+        (
+            "interop.external_input",
+            "awaiting_user_authorization",
+            "id=20260816-005;topic=task;from=dsh;ref=;prompt_chars=0",
+        )
+    ]
     # 同进程再次扫描不重复刷 action。
     assert eng._interop_inbox_messages() == []
     assert len(actions) == 1
@@ -150,7 +152,9 @@ def test_notify_action_trace_has_zero_prompt_chars(tmp_path, monkeypatch):
     eng._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
 
     assert eng._interop_inbox_messages() == []
-    assert actions == [("interop.notify", "observed_only", "id=n2;from=dsh;ref=job-2;prompt_chars=0")]
+    assert actions == [
+        ("interop.notify", "observed_only", "id=n2;from=dsh;ref=job-2;prompt_chars=0")
+    ]
 
 
 def test_backlog_count_is_observability_only(tmp_path, monkeypatch):

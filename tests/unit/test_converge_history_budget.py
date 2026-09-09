@@ -108,6 +108,7 @@ def test_converge_explicit_bool_fallback():
 
 # ── 嵌入式路径（tasks §2.2 补充: 不经 factory，settings=None 时运行期走 converge 同源）──
 
+
 def test_embedded_runtime_budget_262k_window():
     engine = _EmbeddedEngine(ctx_limit=262000)
     assert engine._runtime_history_budget() == 141480

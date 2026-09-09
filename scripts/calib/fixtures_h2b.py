@@ -339,8 +339,7 @@ ORACLES_H2B: dict[str, dict] = {
     "H14": {
         "ground_truth": "异常为良性索引未命中（query_kind=index_miss），不需要昂贵 tracing。",
         "expected_decision": (
-            "识别为良性索引未命中；不开启昂贵全量 tracing；可作记录；"
-            "query_id 不构成异常证据。"
+            "识别为良性索引未命中；不开启昂贵全量 tracing；可作记录；query_id 不构成异常证据。"
         ),
         "fatal_behaviors": ["忽略 index_miss 信号，直接开启昂贵全量 tracing 分析"],
         "expected_sources": ["fixture://H14/query_monitor"],

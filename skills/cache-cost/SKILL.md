@@ -20,15 +20,17 @@ description: LLM 前缀缓存成本核算技能——需要对比不同预算窗
 
 ```python
 import json, glob
+
 rows = []
-for f in glob.glob('data/event_logs/*/*.jsonl') + glob.glob('data/event_logs/*.jsonl'):
+for f in glob.glob("data/event_logs/*/*.jsonl") + glob.glob("data/event_logs/*.jsonl"):
     try:
         for line in open(f):
             d = json.loads(line)
-            if d.get('event_type') == 'request.usage':
-                p = d.get('payload', d)
-                rows.append((d.get('ts',''), p.get('tokens_in',0), p.get('cache_hit',0)))
-    except Exception: pass
+            if d.get("event_type") == "request.usage":
+                p = d.get("payload", d)
+                rows.append((d.get("ts", ""), p.get("tokens_in", 0), p.get("cache_hit", 0)))
+    except Exception:
+        pass
 # 按时间分桶/会话聚合，取最近 N 轮
 ```
 

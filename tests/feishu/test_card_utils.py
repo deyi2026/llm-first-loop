@@ -80,6 +80,7 @@ def test_convert_tables_no_table_passthrough():
 
 # ── P2-1 HTML 清洗 / P2-4 公式检测 ──
 
+
 def test_sanitize_html_strips_tags_keeps_br():
     """P2-1: `<b>/<a>/<div>` 剥离、`<br>` 保留、无标签零改动."""
     assert sanitize_html_tags("<b>加粗</b> 文本 <a href='x'>链接</a>") == "加粗 文本 链接"
@@ -111,6 +112,7 @@ def test_detect_math_fence_ignored():
 
 # ── G3 错误醒目化 ──
 
+
 def test_detect_error_status_variants():
     """G3: `[状态: error/failure]`/`[参数错误]`/`[安全硬阻断]`/`[程序异常]` 命中、大小写不敏感、正常文本 False."""
     from llm_loop.feishu.card_utils import detect_error_status
@@ -129,6 +131,7 @@ def test_detect_error_status_variants():
 
 
 # ── G4 长回执折叠 ──
+
 
 def test_build_summary_card_truncate():
     """G4: 摘要卡截断 ≤200 字符、含折叠标注与引导、不切碎多字节字符."""

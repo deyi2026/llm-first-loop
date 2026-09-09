@@ -116,7 +116,9 @@ def test_dirty_source_is_metadata_only_with_fingerprint(tmp_path: Path) -> None:
     input_path = _write_input(tmp_path / "handoff.json", "dirty-work")
 
     payload = json.loads(_cli(source, "handoff", "--input", str(input_path)).stdout)
-    manifest = json.loads(next(store.glob("projects/test-project/handoffs/*/manifest.json")).read_text())
+    manifest = json.loads(
+        next(store.glob("projects/test-project/handoffs/*/manifest.json")).read_text()
+    )
     assert payload["source_portability"] == "metadata_only"
     assert manifest["tracked_dirty_count"] == 1
     assert manifest["untracked_count"] == 1
@@ -161,7 +163,10 @@ def test_concurrent_handoffs_use_unique_files_and_no_index_collision(tmp_path: P
     assert [result.returncode for result in results] == [0, 0]
     manifests = list(store.glob("projects/test-project/handoffs/*/manifest.json"))
     assert len(manifests) == 2
-    assert len({_load["handoff_id"] for _load in map(lambda p: json.loads(p.read_text()), manifests)}) == 2
+    assert (
+        len({_load["handoff_id"] for _load in map(lambda p: json.loads(p.read_text()), manifests)})
+        == 2
+    )
     assert _git(store, "status", "--porcelain") == ""
 
 
@@ -174,7 +179,9 @@ def test_offline_sync_preserves_local_handoff(tmp_path: Path) -> None:
     _cli(source, "configure")
     continuity_remote.rename(tmp_path / "continuity-remote.offline")
 
-    result = _cli(source, "handoff", "--input", str(_write_input(tmp_path / "offline.json", "offline")))
+    result = _cli(
+        source, "handoff", "--input", str(_write_input(tmp_path / "offline.json", "offline"))
+    )
     payload = json.loads(result.stdout)
     assert payload["remote_synced"] is False
     assert payload["sync_reason"] == "fetch_failed"
@@ -195,7 +202,6 @@ def test_secret_scan_rejects_private_key_and_does_not_commit(tmp_path: Path) -> 
     assert result.returncode == 2
     assert "secret scan" in result.stderr
     assert not list(store.glob("projects/test-project/handoffs/*/manifest.json"))
-
 
 
 def test_cross_clone_remote_roundtrip_and_closure(tmp_path: Path) -> None:
@@ -236,9 +242,7 @@ def test_cross_clone_remote_roundtrip_and_closure(tmp_path: Path) -> None:
 
     reason = tmp_path / "reason.txt"
     reason.write_text("acceptance complete\n", encoding="utf-8")
-    closed = json.loads(
-        _cli(source_b, "close", handoff_id, "--reason-file", str(reason)).stdout
-    )
+    closed = json.loads(_cli(source_b, "close", handoff_id, "--reason-file", str(reason)).stdout)
     assert closed["remote_synced"] is True
 
     rows_c = json.loads(_cli(source_c, "candidates", "--workstream", "cross-clone").stdout)
@@ -276,7 +280,9 @@ def test_close_is_append_only_and_hides_closed_candidate(tmp_path: Path) -> None
     store = tmp_path / "private-continuity"
     _configure_local(source, store)
     created = json.loads(
-        _cli(source, "handoff", "--input", str(_write_input(tmp_path / "close.json", "close"))).stdout
+        _cli(
+            source, "handoff", "--input", str(_write_input(tmp_path / "close.json", "close"))
+        ).stdout
     )
     hid = created["handoff_id"]
     handoff_path = store / "projects" / "test-project" / "handoffs" / hid / "HANDOFF.md"

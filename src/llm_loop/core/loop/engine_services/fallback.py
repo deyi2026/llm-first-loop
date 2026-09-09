@@ -5,7 +5,6 @@ P2-B: 仅对 5xx/429/超时/网络执行默认模型 availability failover；其
 (mixin 时代文件级 pyright 豁免已随宿主显式标注移除；如 pyright 报错回退并登记)
 """
 
-
 from __future__ import annotations
 
 import contextlib
@@ -29,8 +28,6 @@ from llm_loop.runtime.causality import exceptional_attempt_payload
 logger = logging.getLogger(__name__)
 
 
-
-
 class FallbackService:
     def __init__(self, host: LoopEngine) -> None:
         self._host = host
@@ -43,10 +40,15 @@ class FallbackService:
             tool_cycle = getattr(self._host, "_tool_cycle", None)
             fn = getattr(tool_cycle, "_reachability_begin_attempt", None)
             if callable(fn):
-                return str(fn(
-                    kind=kind, attempt_index=attempt_index,
-                    model=model, provider=provider,
-                ) or "")
+                return str(
+                    fn(
+                        kind=kind,
+                        attempt_index=attempt_index,
+                        model=model,
+                        provider=provider,
+                    )
+                    or ""
+                )
         except Exception:  # noqa: BLE001 -- telemetry fail-open
             logger.debug("fallback reachability bind failed (fail-open)", exc_info=True)
         return ""
@@ -60,6 +62,7 @@ class FallbackService:
                 fn(outcome)
         except Exception:  # noqa: BLE001 -- telemetry fail-open
             logger.debug("fallback reachability finalize failed (fail-open)", exc_info=True)
+
     # ── M49（design §5.4）: 降级逻辑辅助 ──
 
     @staticmethod
@@ -189,9 +192,7 @@ class FallbackService:
                             f"{provider_id}/{model_id}", fallback_registry
                         )
                     except Exception as exc:  # noqa: BLE001 — wrong-provider reuse is unsafe
-                        candidate_failures.append(
-                            (ref, "RequestBuildError", str(exc)[:200])
-                        )
+                        candidate_failures.append((ref, "RequestBuildError", str(exc)[:200]))
                         continue
                 chat_kwargs: dict = {
                     "messages": candidate_messages,
@@ -212,13 +213,10 @@ class FallbackService:
                         session_id=session_id,
                         system_text=(
                             candidate_messages[0].get("content", "")
-                            if candidate_messages
-                            and candidate_messages[0].get("role") == "system"
+                            if candidate_messages and candidate_messages[0].get("role") == "system"
                             else None
                         ),
-                        compress_count_this_run=getattr(
-                            self, "_compress_count_this_run", 0
-                        ),
+                        compress_count_this_run=getattr(self, "_compress_count_this_run", 0),
                         history_budget=int(fallback_budget or 0),
                         run_round=run_round,
                         provider=provider_id,
@@ -359,4 +357,3 @@ class FallbackService:
             content=content,
             source=MessageSource.SYSTEM,
         )
-

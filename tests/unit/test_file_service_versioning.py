@@ -130,7 +130,9 @@ def test_t08_matching_expected_snapshot_allows_versioned_edit(tmp_path: Path) ->
     assert path.read_bytes() == b"reviewed\n"
 
 
-def test_t09_same_size_and_same_mtime_but_different_bytes_is_version_conflict(tmp_path: Path) -> None:
+def test_t09_same_size_and_same_mtime_but_different_bytes_is_version_conflict(
+    tmp_path: Path,
+) -> None:
     service, _store, workspace = _service(tmp_path)
     path = workspace / "a.txt"
     path.write_bytes(b"AAAA\n")
@@ -369,7 +371,9 @@ def test_t14_prepared_failure_keeps_original_bytes(tmp_path: Path) -> None:
     assert path.read_bytes() == b"draft\n"
 
 
-def test_t15_observed_failure_does_not_turn_successful_write_into_not_applied(tmp_path: Path) -> None:
+def test_t15_observed_failure_does_not_turn_successful_write_into_not_applied(
+    tmp_path: Path,
+) -> None:
     service, _store, workspace = _service(tmp_path)
     path = workspace / "a.txt"
     path.write_bytes(b"draft\n")

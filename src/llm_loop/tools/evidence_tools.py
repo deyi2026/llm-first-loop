@@ -121,7 +121,9 @@ class EvidenceReadTool:
         except (EvidenceAuthDeniedError, EvidenceRefUnknownError):
             return _failure(self.name, f"[Evidence 不可用] {_OWNER_HIDDEN}")
         except EvidenceBlobLostError:
-            return _error(self.name, "[Evidence blob 丢失] logical record 存在，但 durable blob 不可读取。")
+            return _error(
+                self.name, "[Evidence blob 丢失] logical record 存在，但 durable blob 不可读取。"
+            )
         except EvidenceCorruptedError:
             return _error(self.name, "[Evidence 损坏] durable blob 完整性校验失败。")
         except (TypeError, ValueError) as exc:
@@ -287,7 +289,10 @@ class EvidenceSearchTool:
     parameters = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "检索表达式，如 error timeout、foo OR bar、\"exact phrase\""},
+            "query": {
+                "type": "string",
+                "description": '检索表达式，如 error timeout、foo OR bar、"exact phrase"',
+            },
             "limit": {"type": "integer", "description": "最大命中条数，默认 10，最大 20"},
             "tool_name": {"type": "string", "description": "可选：只检索指定原始工具的 Evidence"},
             "allow_stale": {
@@ -323,9 +328,7 @@ class EvidenceSearchTool:
         owner = self.owner_resolver()
         tool_name = str(kwargs.get("tool_name", "") or "").strip() or None
         try:
-            result = self.search.search(
-                owner=owner, query=query, limit=limit, tool_name=tool_name
-            )
+            result = self.search.search(owner=owner, query=query, limit=limit, tool_name=tool_name)
         except ValueError as exc:
             return _failure(self.name, f"[参数错误] {exc}")
         if not result.hits:
@@ -373,7 +376,6 @@ class EvidenceSearchTool:
         )
 
 
-
 def _currentness(freshness: FreshnessState) -> str:
     if freshness is FreshnessState.VERIFIED_CURRENT:
         return "current"
@@ -411,6 +413,7 @@ def _source_payload(record) -> dict[str, object]:
         "version_token": record.source.version_token,
         "provenance": record.provenance.to_dict(),
     }
+
 
 def _failure(tool_name: str, content: str) -> ToolResult:
     return ToolResult(

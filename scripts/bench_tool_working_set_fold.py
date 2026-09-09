@@ -6,6 +6,7 @@ fixed assistant(tool_calls)->tool sequence through the production projection and
 measures representation size plus byte-prefix continuity between consecutive
 provider views.  Output is JSON on stdout.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -122,9 +123,7 @@ def run_case(
                 "prev_wire_chars": len(previous_wire),
                 "wire_chars": len(current_wire),
                 "lcp_chars": prefix_chars,
-                "prefix_retained_ratio": round(
-                    prefix_chars / max(1, len(previous_wire)), 6
-                ),
+                "prefix_retained_ratio": round(prefix_chars / max(1, len(previous_wire)), 6),
                 "closure_marker_already_present": round_no > closure_marker_round,
             }
         )
@@ -148,18 +147,14 @@ def run_case(
         ),
         "new_fold_count": len(fold_rows),
         "fold_rounds": [row["round"] for row in fold_rows],
-        "fold_prefix_retained": [
-            row["prefix_retained_ratio"] for row in fold_rows
-        ],
+        "fold_prefix_retained": [row["prefix_retained_ratio"] for row in fold_rows],
         "post_fold_next_round_prefix_retained": [
             rows[row["round"]]["prefix_retained_ratio"]
             for row in fold_rows
             if row["round"] < len(rows)
         ],
         "fold_after_closure_marker_rounds": [
-            row["round"]
-            for row in fold_rows
-            if row["closure_marker_already_present"]
+            row["round"] for row in fold_rows if row["closure_marker_already_present"]
         ],
         "rows": rows,
     }

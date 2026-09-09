@@ -144,7 +144,9 @@ def _build_card_content(text: str) -> str:
     card = {
         "schema": "2.0",
         "config": {"width_mode": "fill"},
-        "body": {"elements": [{"tag": "markdown", "content": fold_long_lines(sanitize_html_tags(text))}]},
+        "body": {
+            "elements": [{"tag": "markdown", "content": fold_long_lines(sanitize_html_tags(text))}]
+        },
     }
     return json.dumps(card, ensure_ascii=False)
 
@@ -178,9 +180,7 @@ def fold_long_lines(text: str, limit: int = _FOLD_LINE_LIMIT) -> str:
             out.append(line)  # 代码块不折
             continue
         if len(line) > limit and not any(c.isspace() for c in line):
-            folded = _ZERO_WIDTH_SPACE.join(
-                line[i : i + limit] for i in range(0, len(line), limit)
-            )
+            folded = _ZERO_WIDTH_SPACE.join(line[i : i + limit] for i in range(0, len(line), limit))
             out.append(folded)
         else:
             out.append(line)
@@ -247,6 +247,8 @@ def convert_tables_to_bullets(text: str) -> str:
         n_headers = len(headers)
         note = "（表格已转为键值列表；原表格结构简化，Web 端可查看原始 markdown）"
         if n_headers > 6:
-            note = f"（表格列数较多（{n_headers} 列），已简化为键值列表；Web 端可查看原始 markdown）"
+            note = (
+                f"（表格列数较多（{n_headers} 列），已简化为键值列表；Web 端可查看原始 markdown）"
+            )
         result += "\n" + note
     return result

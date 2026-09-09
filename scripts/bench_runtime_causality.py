@@ -5,6 +5,7 @@ The normal request.meta path already serializes messages+tools once to count pro
 chars.  Causal Core reuses that exact serialization and adds one SHA256 plus compact metadata
 assembly.  This script measures only that incremental work; it does not call an LLM.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,9 +20,7 @@ def _measure(size: int, iterations: int) -> dict[str, float]:
         "messages": [{"role": "user", "content": "x" * size}],
         "tools": [],
     }
-    serialized = json.dumps(
-        payload, ensure_ascii=False, separators=(",", ":"), default=str
-    )
+    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
     samples: list[float] = []
     for _ in range(iterations):
         t0 = time.perf_counter_ns()

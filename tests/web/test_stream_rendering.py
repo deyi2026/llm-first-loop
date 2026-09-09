@@ -28,7 +28,6 @@ CHAT_RESPONSE_FIELDS = [
 ]
 
 
-
 class TestStreamRendering:
     def test_fake_typewriter_defined(self, app_js_src: str):
         assert "function fakeTypewriter" in app_js_src

@@ -26,7 +26,9 @@ def client(tmp_path):
     data_dir = tmp_path / "data"
     # data_dir 由 Settings 构造时自动 mkdir；sessions/audit 从 data_dir 派生
     settings = Settings(
-        llm_api_key="k", llm_base_url="http://t", llm_model="m",
+        llm_api_key="k",
+        llm_base_url="http://t",
+        llm_model="m",
         data_dir=str(data_dir),
     )
     (tmp_path / "ws").mkdir(exist_ok=True)
@@ -170,7 +172,9 @@ def test_evolution_review_reject_with_reason(client, tmp_path):
     engine.evolution_store = st
     sid = st.list()[0]["id"]
 
-    r = cli.post("/api/v1/evolution/review", json={"id": sid, "decision": "rejected", "reason": "不成熟"})
+    r = cli.post(
+        "/api/v1/evolution/review", json={"id": sid, "decision": "rejected", "reason": "不成熟"}
+    )
     assert r.status_code == 200
     assert r.json()["ok"] is True and "已拒绝" in r.json()["message"]
     assert st.list()[0]["status"] == "rejected"

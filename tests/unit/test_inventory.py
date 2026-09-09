@@ -21,9 +21,15 @@ def _build_minimal(tmp_path) -> dict:
     # 缺省字段 v3 会话
     (sessions / "s1.json").write_text(
         json.dumps(
-            {"version": 3, "session_id": "s1", "title": "t", "created_at": "2026-01-01",
-             "updated_at": "2026-01-01T00:00:01", "status": "active",
-             "messages": [{"role": "user", "content": "hi"}]},
+            {
+                "version": 3,
+                "session_id": "s1",
+                "title": "t",
+                "created_at": "2026-01-01",
+                "updated_at": "2026-01-01T00:00:01",
+                "status": "active",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
             ensure_ascii=False,
         ),
         encoding="utf-8",
@@ -34,8 +40,7 @@ def _build_minimal(tmp_path) -> dict:
     archives = data / "archives"
     archives.mkdir()
     (archives / "s1.jsonl").write_text(
-        json.dumps({"id": "ARC-1", "tool_call_id": "c1", "chars": 10}, ensure_ascii=False)
-        + "\n",
+        json.dumps({"id": "ARC-1", "tool_call_id": "c1", "chars": 10}, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     # compressed_archive

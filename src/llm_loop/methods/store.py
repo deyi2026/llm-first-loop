@@ -3,6 +3,7 @@
 Method records are retrieval assets, never automatic prompt injections. The program owns
 identity, lifecycle, provenance and exact bytes; semantic applicability remains model-owned.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -45,7 +46,7 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         key = key.strip()
         if key:
             data[key] = _scalar(value)
-    return data, text[match.end():]
+    return data, text[match.end() :]
 
 
 @dataclass(frozen=True)
@@ -89,16 +90,18 @@ class MethodRecord:
 
     def hydrated(self) -> dict[str, Any]:
         result = self.card()
-        result.update({
-            "body": self.body,
-            "teacher_refs": list(self.teacher_refs),
-            "source_episode_refs": list(self.source_episode_refs),
-            "evidence_refs": list(self.evidence_refs),
-            "parent_ref": self.parent_ref,
-            "supersedes": self.supersedes,
-            "qualification": self.qualification,
-            "projection_complete": True,
-        })
+        result.update(
+            {
+                "body": self.body,
+                "teacher_refs": list(self.teacher_refs),
+                "source_episode_refs": list(self.source_episode_refs),
+                "evidence_refs": list(self.evidence_refs),
+                "parent_ref": self.parent_ref,
+                "supersedes": self.supersedes,
+                "qualification": self.qualification,
+                "projection_complete": True,
+            }
+        )
         return result
 
 
@@ -134,15 +137,23 @@ class MethodStore:
         except OSError:
             return None
         meta, body = _parse_frontmatter(raw)
-        method_id = str(meta.get("method_id") or meta.get("name") or path.parent.name).strip().lower()
+        method_id = (
+            str(meta.get("method_id") or meta.get("name") or path.parent.name).strip().lower()
+        )
         if not _SAFE_ID_RE.fullmatch(method_id):
             return None
         status = str(meta.get("status") or "candidate").strip().lower()
         if status not in _VALID_STATUSES:
             return None
+
         def tuple_field(name: str) -> tuple[str, ...]:
             value = meta.get(name, "")
-            return tuple(v.strip() for v in value.split(",") if v.strip()) if isinstance(value, str) else ()
+            return (
+                tuple(v.strip() for v in value.split(",") if v.strip())
+                if isinstance(value, str)
+                else ()
+            )
+
         qualification: dict[str, Any] = {}
         qfile = path.parent / "qualification.json"
         if qfile.exists():
@@ -163,7 +174,11 @@ class MethodStore:
             source_model=str(meta.get("source_model") or ""),
             teacher_refs=(
                 tuple_field("teacher_refs")
-                or ((str(meta.get("teacher_ref") or "").strip(),) if str(meta.get("teacher_ref") or "").strip() else ())
+                or (
+                    (str(meta.get("teacher_ref") or "").strip(),)
+                    if str(meta.get("teacher_ref") or "").strip()
+                    else ()
+                )
             ),
             source_episode_refs=tuple_field("source_episode_refs"),
             evidence_refs=tuple_field("evidence_refs"),
@@ -205,11 +220,21 @@ class MethodStore:
             hay = f"{record.name} {record.description} {record.body}".lower()
             if terms and not all(term in hay for term in terms):
                 continue
-            lexical = sum(5 if t in record.name.lower() else 3 if t in record.description.lower() else 1 for t in terms)
-            life = {"active": 3, "qualified": 2, "candidate": 1, "teacher": 0, "hold": -1, "invalidated": -2}.get(record.status, -3)
+            lexical = sum(
+                5 if t in record.name.lower() else 3 if t in record.description.lower() else 1
+                for t in terms
+            )
+            life = {
+                "active": 3,
+                "qualified": 2,
+                "candidate": 1,
+                "teacher": 0,
+                "hold": -1,
+                "invalidated": -2,
+            }.get(record.status, -3)
             ranked.append((lexical * 10 + life, record))
         ranked.sort(key=lambda item: (item[0], item[1].method_id), reverse=True)
-        return [r.card() for _, r in ranked[:max(0, limit)]]
+        return [r.card() for _, r in ranked[: max(0, limit)]]
 
     def _ensure_runtime_copy(self, record: MethodRecord) -> MethodRecord:
         """Copy a tracked seed to runtime storage before any mutable lifecycle write."""
@@ -257,13 +282,20 @@ class MethodStore:
         if record is None:
             raise FileNotFoundError(method_ref)
         allowed = {"pass", "fail", "mixed", "insufficient", "not_evaluated"}
-        fields = {"verdict": verdict, "mechanism": mechanism, "task_benefit": task_benefit, "promotion": promotion}
+        fields = {
+            "verdict": verdict,
+            "mechanism": mechanism,
+            "task_benefit": task_benefit,
+            "promotion": promotion,
+        }
         for key, value in fields.items():
             if value not in allowed:
                 raise ValueError(f"{key} must be one of {sorted(allowed)}")
         clean_task_ref = task_ref.strip()
         if promotion == "pass" and clean_task_ref in set(record.source_episode_refs):
-            raise ValueError("promotion=pass qualification must be independent of the candidate source episode")
+            raise ValueError(
+                "promotion=pass qualification must be independent of the candidate source episode"
+            )
         record = self._ensure_runtime_copy(record)
         entry = {
             "ts": _now(),
@@ -321,13 +353,28 @@ class MethodStore:
         if target == "qualified":
             entries = self.qualification_entries(method_ref)
             if not any(e.get("promotion") == "pass" and e.get("task_ref") for e in entries):
-                raise ValueError("qualified requires at least one recorded promotion=pass qualification with task_ref")
+                raise ValueError(
+                    "qualified requires at least one recorded promotion=pass qualification with task_ref"
+                )
         path = Path(record.path)
         raw = path.read_text(encoding="utf-8")
         meta, body = _parse_frontmatter(raw)
         meta["status"] = target
         meta["updated_at"] = _now()
-        ordered = ["method_id", "name", "description", "status", "source_model", "teacher_refs", "source_episode_refs", "evidence_refs", "parent_ref", "supersedes", "created_at", "updated_at"]
+        ordered = [
+            "method_id",
+            "name",
+            "description",
+            "status",
+            "source_model",
+            "teacher_refs",
+            "source_episode_refs",
+            "evidence_refs",
+            "parent_ref",
+            "supersedes",
+            "created_at",
+            "updated_at",
+        ]
         lines: list[str] = []
         for key in ordered:
             value = meta.pop(key, None)
@@ -337,7 +384,9 @@ class MethodStore:
             value = meta[key]
             if value not in (None, ""):
                 lines.append(f"{key}: {value}")
-        path.write_text("---\n" + "\n".join(lines) + "\n---\n" + body.strip() + "\n", encoding="utf-8")
+        path.write_text(
+            "---\n" + "\n".join(lines) + "\n---\n" + body.strip() + "\n", encoding="utf-8"
+        )
         updated = self._load_path(path)
         if updated is None:
             raise RuntimeError("method lifecycle update did not round-trip")
@@ -376,13 +425,31 @@ class MethodStore:
             return record
         out_dir.mkdir(parents=True, exist_ok=False)
         now = _now()
+
         def line(k: str, v: str) -> str:
             clean = v.replace("\n", " ").strip()
             return f"{k}: {clean}\n" if clean else ""
-        front = "---\n" + line("method_id", method_id) + line("name", name) + line("description", description)
-        front += "status: candidate\n" + line("source_model", source_model) + line("teacher_refs", ",".join(checked_teachers))
-        front += line("source_episode_refs", ",".join(source_episode_refs or [])) + line("evidence_refs", ",".join(evidence_refs or []))
-        front += line("parent_ref", parent_ref) + line("created_at", now) + line("updated_at", now) + "---\n"
+
+        front = (
+            "---\n"
+            + line("method_id", method_id)
+            + line("name", name)
+            + line("description", description)
+        )
+        front += (
+            "status: candidate\n"
+            + line("source_model", source_model)
+            + line("teacher_refs", ",".join(checked_teachers))
+        )
+        front += line("source_episode_refs", ",".join(source_episode_refs or [])) + line(
+            "evidence_refs", ",".join(evidence_refs or [])
+        )
+        front += (
+            line("parent_ref", parent_ref)
+            + line("created_at", now)
+            + line("updated_at", now)
+            + "---\n"
+        )
         path.write_text(front + body.strip() + "\n", encoding="utf-8")
         record = self._load_path(path)
         if record is None:

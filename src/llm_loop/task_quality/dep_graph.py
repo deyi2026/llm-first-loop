@@ -119,9 +119,7 @@ class DepGraph:
                 pass  # 不在 test_root 下 → 按路径判断兜底（fail-open: is_test 保持 False 走常规判断）
         if not is_test:
             is_test = (
-                "tests" in fp.parts
-                or fp.name.startswith("test_")
-                or fp.name.endswith("_test.py")
+                "tests" in fp.parts or fp.name.startswith("test_") or fp.name.endswith("_test.py")
             )
         ntype = DepNodeType.TEST if is_test else DepNodeType.MODULE
         # 去掉 src/ 前缀（若存在）→ node_id 与 import 名对齐
@@ -249,8 +247,10 @@ class DepGraph:
         try:
             self._cache_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
-                "nodes": [{"id": n.node_id, "type": n.node_type.value, "file": n.file_path}
-                          for n in self._nodes.values()],
+                "nodes": [
+                    {"id": n.node_id, "type": n.node_type.value, "file": n.file_path}
+                    for n in self._nodes.values()
+                ],
                 "edges": {src: sorted(dst) for src, dst in self._edges.items()},
             }
             self._cache_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -265,9 +265,8 @@ class DepGraph:
             data = json.loads(self._cache_path.read_text(encoding="utf-8"))
             with self._lock:
                 self._nodes = {
-                    n["id"]: DepNode(
-                        DepNodeType(n["type"]), n["id"], n["file"]
-                    ) for n in data.get("nodes", [])
+                    n["id"]: DepNode(DepNodeType(n["type"]), n["id"], n["file"])
+                    for n in data.get("nodes", [])
                 }
                 self._edges = {k: set(v) for k, v in data.get("edges", {}).items()}
                 self._imported_by = {}

@@ -265,9 +265,7 @@ class SynopsisStore:
         _atomic_write_json(path, asdict(record))
         return record
 
-    def get(
-        self, ref: str, *, workspace_scope: str, session_id: str
-    ) -> SynopsisRecord | None:
+    def get(self, ref: str, *, workspace_scope: str, session_id: str) -> SynopsisRecord | None:
         synopsis_id = _synopsis_id(ref)
         scope = _canonical_scope(workspace_scope)
         path = self._record_path(scope, synopsis_id)
@@ -438,18 +436,27 @@ class SynopsisStore:
             representation=str(raw.get("representation") or "model_authored_synopsis"),
             task_applicability=str(raw.get("task_applicability") or "not_evaluated"),
         )
-        if record.version != SYNOPSIS_VERSION or record.ref != f"{SYNOPSIS_SCHEME}{record.synopsis_id}":
+        if (
+            record.version != SYNOPSIS_VERSION
+            or record.ref != f"{SYNOPSIS_SCHEME}{record.synopsis_id}"
+        ):
             raise ValueError("invalid synopsis record identity")
         _synopsis_id(record.ref)
         if record.access_scope != "session":
             raise ValueError("synopsis record must remain session-scoped")
         if record.source_access_scope not in {"workspace", "session"}:
             raise ValueError("invalid synopsis source access scope")
-        if record.source_chars < 0 or not (0 <= record.source_start < record.source_end <= record.source_chars):
+        if record.source_chars < 0 or not (
+            0 <= record.source_start < record.source_end <= record.source_chars
+        ):
             raise ValueError("invalid synopsis source range")
         if record.range_chars != record.source_end - record.source_start:
             raise ValueError("invalid synopsis range_chars")
-        if len(record.source_sha256) != 64 or len(record.range_sha256) != 64 or len(record.summary_sha256) != 64:
+        if (
+            len(record.source_sha256) != 64
+            or len(record.range_sha256) != 64
+            or len(record.summary_sha256) != 64
+        ):
             raise ValueError("invalid synopsis hashes")
         if record.summary_chars != len(record.summary):
             raise ValueError("invalid synopsis summary_chars")

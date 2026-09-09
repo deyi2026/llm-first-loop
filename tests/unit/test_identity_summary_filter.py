@@ -152,7 +152,9 @@ def test_explicit_human_origin_beats_program_like_visible_prefix() -> None:
     assert identity_episode_map(messages) == {0: 0, 1: 0}
 
 
-def test_archive_identity_episode_keeps_raw_but_sanitizes_persistent_summary(tmp_path: Path) -> None:
+def test_archive_identity_episode_keeps_raw_but_sanitizes_persistent_summary(
+    tmp_path: Path,
+) -> None:
     from llm_loop.core.identity_summary import render_identity_summary_placeholder
     from llm_loop.core.loop.engine import LoopEngine
     from llm_loop.memory.archive import ArchiveStore
@@ -261,7 +263,9 @@ def test_search_archive_with_summary_never_resummarizes_filtered_identity(tmp_pa
     assert answer in raw.content
 
 
-def test_identity_filtered_archive_summary_is_sticky_against_generic_backfill(tmp_path: Path) -> None:
+def test_identity_filtered_archive_summary_is_sticky_against_generic_backfill(
+    tmp_path: Path,
+) -> None:
     from llm_loop.core.loop.engine import LoopEngine
     from llm_loop.memory.archive import ArchiveStore
 

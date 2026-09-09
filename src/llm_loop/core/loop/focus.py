@@ -68,6 +68,4 @@ def wrap_injection(
     用户原话不经本函数改写；资料/通知 appendix 获得唯一冲突仲裁声明与
     语义标签。程序恢复任务仅获得 [任务·程序恢复] 标签，不伪装成背景资料。
     """
-    return render_program_appendix(
-        content, layer=layer, slot_kind=slot_kind, anchor=anchor
-    )
+    return render_program_appendix(content, layer=layer, slot_kind=slot_kind, anchor=anchor)

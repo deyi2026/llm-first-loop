@@ -50,7 +50,9 @@ def load_feishu_config() -> FeishuConfig:
         os.environ.get("FEISHU_SESSION_MAP_PATH", "").strip()
         or f"{os.environ.get('DATA_DIR', './data')}/feishu_session_map.json"
     )
-    chunk_limit = _env_int("FEISHU_CHUNK_LIMIT", 30000)  # F3: 字节预算语义（见 handlers._chunk_markdown）
+    chunk_limit = _env_int(
+        "FEISHU_CHUNK_LIMIT", 30000
+    )  # F3: 字节预算语义（见 handlers._chunk_markdown）
     typing_ack = _env_flag("FEISHU_TYPING_ACK", True)
     streaming = _env_flag("FEISHU_STREAMING", True)
     owner_open_id = os.environ.get("FEISHU_OWNER_OPEN_ID", "").strip()

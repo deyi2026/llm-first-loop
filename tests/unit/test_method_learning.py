@@ -27,7 +27,9 @@ class _Ctx:
     pass
 
 
-def _seed_method(root: Path, method_id: str, *, status: str = "candidate", body: str = "BODY") -> None:
+def _seed_method(
+    root: Path, method_id: str, *, status: str = "candidate", body: str = "BODY"
+) -> None:
     d = root / method_id
     d.mkdir(parents=True)
     (d / "METHOD.md").write_text(
@@ -62,8 +64,12 @@ def test_method_store_compact_discovery_and_exact_hydration(tmp_path: Path) -> N
 
 def test_candidate_is_immutable_and_cannot_jump_directly_active(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
-    first = store.save_candidate(name="hydrate trace", description="trace producer", body="counterexample: SSR page")
-    second = store.save_candidate(name="hydrate trace", description="trace producer", body="counterexample: SSR page")
+    first = store.save_candidate(
+        name="hydrate trace", description="trace producer", body="counterexample: SSR page"
+    )
+    second = store.save_candidate(
+        name="hydrate trace", description="trace producer", body="counterexample: SSR page"
+    )
     assert first.method_ref == second.method_ref
     assert first.status == "candidate"
 
@@ -77,7 +83,9 @@ def test_candidate_is_immutable_and_cannot_jump_directly_active(tmp_path: Path) 
 
 def test_qualification_then_qualified_then_active(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
-    record = store.save_candidate(name="api refresh", description="fresh callsites", body="verify current tree")
+    record = store.save_candidate(
+        name="api refresh", description="fresh callsites", body="verify current tree"
+    )
 
     try:
         store.update_status(record.method_ref, "qualified")
@@ -138,7 +146,12 @@ def test_teacher_cannot_be_reclassified(tmp_path: Path) -> None:
 
 def test_record_searcher_method_kind_and_renderer_hydrate_exact(tmp_path: Path) -> None:
     root = tmp_path / "methods"
-    _seed_method(root, "root-cause", status="active", body="GENERAL_RULE: isolate the first divergent boundary")
+    _seed_method(
+        root,
+        "root-cause",
+        status="active",
+        body="GENERAL_RULE: isolate the first divergent boundary",
+    )
     searcher = RecordSearcher(audit_dir=tmp_path / "audit", method_store=MethodStore(root))
 
     card = searcher.search(kind="method", query="diagnostic", limit=10)
@@ -162,7 +175,9 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     host = _Host(store)
     tool_defs = {d["name"]: d for d in experience_tool_defs()}
     assert "method_manage" in tool_defs
-    assert {"save_method_candidate", "record_method_qualification", "refine_method"}.isdisjoint(tool_defs)
+    assert {"save_method_candidate", "record_method_qualification", "refine_method"}.isdisjoint(
+        tool_defs
+    )
     save_props = tool_defs["method_manage"]["parameters"]["properties"]
     assert "source_model" not in save_props
     assert "source_episode_refs" not in save_props
@@ -174,7 +189,12 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     try:
         saved = execute_experience_tool(
             "method_manage",
-            {"action": "save_candidate", "name": "trace source", "description": "follow provenance", "body": "counterexample included"},
+            {
+                "action": "save_candidate",
+                "name": "trace source",
+                "description": "follow provenance",
+                "body": "counterexample included",
+            },
             cast(Any, host),
         )
     finally:
@@ -187,7 +207,9 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     assert persisted.source_episode_refs == ("session:method-test-session",)
 
     blocked = execute_experience_tool(
-        "method_manage", {"action": "refine", "method_ref": ref, "transition": "activate"}, cast(Any, host)
+        "method_manage",
+        {"action": "refine", "method_ref": ref, "transition": "activate"},
+        cast(Any, host),
     )
     assert blocked is not None and blocked.status.value == "failure"
 
@@ -206,11 +228,15 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     )
     assert qualified is not None and qualified.status.value == "success"
     moved = execute_experience_tool(
-        "method_manage", {"action": "refine", "method_ref": ref, "transition": "qualify"}, cast(Any, host)
+        "method_manage",
+        {"action": "refine", "method_ref": ref, "transition": "qualify"},
+        cast(Any, host),
     )
     assert moved is not None and moved.status.value == "success"
     activated = execute_experience_tool(
-        "method_manage", {"action": "refine", "method_ref": ref, "transition": "activate"}, cast(Any, host)
+        "method_manage",
+        {"action": "refine", "method_ref": ref, "transition": "activate"},
+        cast(Any, host),
     )
     assert activated is not None and activated.status.value == "success"
 
@@ -284,11 +310,14 @@ def test_reflection_saves_candidate_without_reasoning_projection(tmp_path: Path)
 
     class FakeClient:
         model = "m"
+
         def __init__(self) -> None:
             self.calls = []
+
         def chat(self, **kwargs):
             self.calls.append(kwargs)
             from llm_loop.llm.client import LLMResponse
+
             return LLMResponse(
                 content='{"decision":"candidate","name":"fresh callsite","description":"refresh current callsites","body":"trigger: signature changed\\ndiscriminator: current tree\\nshort_path: re-enumerate\\nstop_conditions: full gate green\\nverification: no missing args\\ncounterexamples: backwards compatible change"}',
                 tool_calls=[],
@@ -302,8 +331,12 @@ def test_reflection_saves_candidate_without_reasoning_projection(tmp_path: Path)
         store=store,
         session_id="s1",
         messages=[
-            SimpleNamespace(role="user", content="change API", reasoning_content="PRIVATE_REASONING"),
-            SimpleNamespace(role="assistant", content="done", reasoning_content="MORE_PRIVATE_REASONING"),
+            SimpleNamespace(
+                role="user", content="change API", reasoning_content="PRIVATE_REASONING"
+            ),
+            SimpleNamespace(
+                role="assistant", content="done", reasoning_content="MORE_PRIVATE_REASONING"
+            ),
         ],
         rounds=8,
         tool_trace=[{"name": "read_file", "arguments": {"path": "x"}, "status": "success"}] * 2,
@@ -334,9 +367,11 @@ def test_reflection_uses_one_teacher_fallback_on_invalid_structure(tmp_path: Pat
     class FakeClient:
         def __init__(self) -> None:
             self.n = 0
+
         def chat(self, **kwargs):
             self.n += 1
             from llm_loop.llm.client import LLMResponse
+
             if self.n == 1:
                 return LLMResponse(content="not-json", tool_calls=[], provider="fake")
             return LLMResponse(
@@ -347,9 +382,16 @@ def test_reflection_uses_one_teacher_fallback_on_invalid_structure(tmp_path: Pat
 
     client = FakeClient()
     out = reflect_after_run(
-        mode="auto", llm_client=client, store=store, session_id="s2",
-        messages=[SimpleNamespace(role="user", content="task")], rounds=7,
-        tool_trace=[], run_end_reason="completed", final_answer="done", source_model="p/m",
+        mode="auto",
+        llm_client=client,
+        store=store,
+        session_id="s2",
+        messages=[SimpleNamespace(role="user", content="task")],
+        rounds=7,
+        tool_trace=[],
+        run_end_reason="completed",
+        final_answer="done",
+        source_model="p/m",
     )
     assert out.saved_ref
     assert out.used_teacher_fallback is True

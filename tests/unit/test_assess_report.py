@@ -139,7 +139,9 @@ class TestExtractTransferable:
 
     def test_only_ai_friendliness_violations(self, all_risks):
         transferable = extract_transferable(all_risks)
-        viol_ids = {r.id for r in all_risks if r.rule_ai_00 == "VIOLATES" and r.dimension == "AI 友好性"}
+        viol_ids = {
+            r.id for r in all_risks if r.rule_ai_00 == "VIOLATES" and r.dimension == "AI 友好性"
+        }
         assert len(transferable) == len(viol_ids)
 
 

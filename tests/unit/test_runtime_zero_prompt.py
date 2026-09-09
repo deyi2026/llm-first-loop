@@ -50,7 +50,8 @@ def _spy_actions(engine):
 
 def _tool_resp(call_id: str, name: str, args: dict) -> LLMResponse:
     return LLMResponse(
-        content="", tool_calls=[ToolCall(id=call_id, name=name, arguments=args)],
+        content="",
+        tool_calls=[ToolCall(id=call_id, name=name, arguments=args)],
         provider="fake",
     )
 
@@ -59,7 +60,8 @@ class TestE15StagnationReminder:
     def test_threshold_hits_event_only_zero_wire_injection(self, tmp_path: Path, monkeypatch):
         """E15: 同参 3 次达阈值 → 'tool.repeat_observed/observed' 事件在场、wire 零提醒."""
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[
                 _tool_resp("c1", "read_file", {"path": "/nonexistent/stag-target"}),
                 _tool_resp("c2", "read_file", {"path": "/nonexistent/stag-target"}),
@@ -80,19 +82,21 @@ class TestE15StagnationReminder:
             assert marker not in wire, f"程序注入泄漏: {marker}"
 
 
-
 class TestE16EmptySearchReminder:
     def test_empty_search_threshold_hits_event_only(self, tmp_path: Path, monkeypatch):
         """E16: 搜索空结果 2 次达阈值 → 事件观测在场、wire 零建议层."""
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[
                 _tool_resp(
-                    "c1", "execute_command",
+                    "c1",
+                    "execute_command",
                     {"command": f"find {tmp_path} -name 'nonexistent-*'"},
                 ),
                 _tool_resp(
-                    "c2", "execute_command",
+                    "c2",
+                    "execute_command",
                     {"command": f"find {tmp_path} -name 'nonexistent-*'"},
                 ),
                 _resp("空搜索后的正常回答"),
@@ -146,7 +150,8 @@ class TestE18RoundExhaustion:
     def test_hard_stop_zero_extra_llm_call(self, tmp_path: Path, monkeypatch):
         """B-G4: 到达 budget 直接硬停——第 N+1 轮 LLM call=0（可区分一次额外调用）."""
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[
                 _tool_resp("c1", "read_file", {"path": "/nonexistent/e18"}),
                 _tool_resp("c2", "read_file", {"path": "/nonexistent/e18"}),
@@ -179,7 +184,8 @@ class TestE18RoundExhaustion:
         """LFL_E18_HARD_STOP=0: 终态去掉"可继续"提示行（纯事实），硬停不变."""
         monkeypatch.setenv("LFL_E18_HARD_STOP", "0")
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[
                 _tool_resp("c1", "read_file", {"path": "/nonexistent/e18b"}),
                 _tool_resp("c2", "read_file", {"path": "/nonexistent/e18b"}),
@@ -193,14 +199,17 @@ class TestE18RoundExhaustion:
 
         assert len(fake.calls) == 2
         assert "[已达轮数上限]" in result.final_answer
-        assert "发送\"继续\"" not in result.final_answer
+        assert '发送"继续"' not in result.final_answer
 
 
 class TestE12Err1210:
-    def test_single_tail_user_1210_zero_recovery_prompt_and_zero_retry(self, tmp_path: Path, monkeypatch):
+    def test_single_tail_user_1210_zero_recovery_prompt_and_zero_retry(
+        self, tmp_path: Path, monkeypatch
+    ):
         """P2-B: no structural wire transform => truthful 1210 end, no exact resend."""
         e1210 = LLMHTTPError(
-            "400 Invalid parameter", status_code=400,
+            "400 Invalid parameter",
+            status_code=400,
             body='{"error":{"code":"1210","message":"Invalid parameter"}}',
         )
         engine, fake = _mk(tmp_path, monkeypatch, responses=[e1210])

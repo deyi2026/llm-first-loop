@@ -61,7 +61,6 @@ class StateSynchronizer(Protocol):
         on_terminal: Callable[[HandleStatus], None],
     ) -> None: ...
 
-
     def stop(self, handle_id: str) -> None: ...
 
 
@@ -139,9 +138,7 @@ class PollingSynchronizer:
                     failed_attempts += 1
                     if failed_attempts > max_fail:
                         # 标注状态未知不臆造
-                        self._handle_registry.update_status(
-                            handle.handle_id, HandleStatus.UNKNOWN
-                        )
+                        self._handle_registry.update_status(handle.handle_id, HandleStatus.UNKNOWN)
                         session_info = self._handle_registry.get_session_info(handle.handle_id)
                         sid = session_info[0] if session_info else handle.session_id
                         self._event_store.append(
@@ -160,9 +157,7 @@ class PollingSynchronizer:
                 except (ClientError, RetryableError) as exc:
                     failed_attempts += 1
                     if failed_attempts > max_fail:
-                        self._handle_registry.update_status(
-                            handle.handle_id, HandleStatus.UNKNOWN
-                        )
+                        self._handle_registry.update_status(handle.handle_id, HandleStatus.UNKNOWN)
                         session_info = self._handle_registry.get_session_info(handle.handle_id)
                         sid = session_info[0] if session_info else handle.session_id
                         self._event_store.append(
@@ -181,13 +176,13 @@ class PollingSynchronizer:
                 except Exception:  # noqa: BLE001 — 未预期异常不阻断轮询
                     failed_attempts += 1
                     if failed_attempts > max_fail:
-                        self._handle_registry.update_status(
-                            handle.handle_id, HandleStatus.UNKNOWN
-                        )
+                        self._handle_registry.update_status(handle.handle_id, HandleStatus.UNKNOWN)
                         on_terminal(HandleStatus.UNKNOWN)
                         return
 
-        thread = threading.Thread(target=_poll_loop, daemon=True, name=f"codearts-sync-{handle.handle_id}")
+        thread = threading.Thread(
+            target=_poll_loop, daemon=True, name=f"codearts-sync-{handle.handle_id}"
+        )
         with self._lock:
             self._threads[handle.handle_id] = thread
         thread.start()

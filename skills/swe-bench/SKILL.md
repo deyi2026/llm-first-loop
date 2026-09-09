@@ -20,9 +20,10 @@ description: SWE-bench（AI 软件工程师基准）评测技能——真测真�
 ### Step 1: 取实例数据
 ```python
 from datasets import load_dataset
-ds = load_dataset('princeton-nlp/SWE-bench_Verified', split='test', streaming=True)
+
+ds = load_dataset("princeton-nlp/SWE-bench_Verified", split="test", streaming=True)
 # 单仓库全量（如 pytest 19 / pylint 10）比跨仓库抽样更有统计意义
-instances = [ex for ex in ds if ex.get('repo') == 'pytest-dev/pytest']
+instances = [ex for ex in ds if ex.get("repo") == "pytest-dev/pytest"]
 # 保存 /tmp/swe_<repo>_all.json（含 instance_id/base_commit/patch/test_patch/FAIL_TO_PASS/PASS_TO_PASS）
 ```
 

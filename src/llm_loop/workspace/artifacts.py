@@ -204,9 +204,7 @@ class WorkspaceArtifactStore:
     def resolve(self, ref: str, *, workspace_scope: str) -> ArtifactRecord:
         return self._load_record(ref, workspace_scope=workspace_scope, verify_blob=True)
 
-    def _load_record(
-        self, ref: str, *, workspace_scope: str, verify_blob: bool
-    ) -> ArtifactRecord:
+    def _load_record(self, ref: str, *, workspace_scope: str, verify_blob: bool) -> ArtifactRecord:
         artifact_id = _artifact_id(ref)
         scope = _canonical_workspace_scope(workspace_scope)
         path = self._record_path(scope, artifact_id)
@@ -234,9 +232,7 @@ class WorkspaceArtifactStore:
         record = self._load_record(ref, workspace_scope=workspace_scope, verify_blob=True)
         return self._snapshot_record(record)
 
-    def hydrate(
-        self, ref: str, *, workspace_scope: str
-    ) -> tuple[ArtifactResolution, bytes]:
+    def hydrate(self, ref: str, *, workspace_scope: str) -> tuple[ArtifactResolution, bytes]:
         """Resolve metadata, verify immutable bytes once, and inspect mutable workspace path."""
         record = self._load_record(ref, workspace_scope=workspace_scope, verify_blob=False)
         data = self._read_blob_verified(record)

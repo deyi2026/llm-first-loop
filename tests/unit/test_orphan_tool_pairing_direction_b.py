@@ -48,7 +48,11 @@ def test_orphan_receipt_following_valid_pair_is_dropped():
     """声明1个+回执1条+多余回执(无匹配声明) → 构建后多余回执被丢弃，无孤立泄漏."""
     msgs = [
         _m("user", "q"),
-        _m("assistant", "", tc=[{"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]),
+        _m(
+            "assistant",
+            "",
+            tc=[{"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+        ),
         _m("tool", "r1", tcid="c1"),
         _m("tool", "orphan", tcid="c_orphan"),  # 多余
         _m("assistant", "ok"),
@@ -71,7 +75,11 @@ def test_normal_pair_unchanged():
     """正常声明+回执配对 → 零回归（保留完整）."""
     msgs = [
         _m("user", "a"),
-        _m("assistant", "", tc=[{"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]),
+        _m(
+            "assistant",
+            "",
+            tc=[{"id": "c1", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+        ),
         _m("tool", "r1", tcid="c1"),
     ]
     out = _build(msgs)
@@ -104,7 +112,11 @@ def test_extra_receipt_beyond_declared_is_dropped():
 def test_orphan_detector_id_semantics():
     """_pairing_direction_b_orphans: id 精确判定——不匹配声明的回执被标为孤儿."""
     msgs = [
-        _m("assistant", "", tc=[{"id": "a", "type": "function", "function": {"name": "x", "arguments": "{}"}}]),
+        _m(
+            "assistant",
+            "",
+            tc=[{"id": "a", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+        ),
         _m("tool", "ra", tcid="a"),
         _m("tool", "wrong_id", tcid="nope"),
     ]
@@ -117,7 +129,11 @@ def test_orphan_detector_id_semantics():
 def test_nonempty_mismatched_id_is_orphan_and_repaired_with_declared_id():
     """两个不同非空 id 不得位置兜底；错回执丢弃并为声明补占位。"""
     msgs = [
-        _m("assistant", "", tc=[{"id": "a", "type": "function", "function": {"name": "x", "arguments": "{}"}}]),
+        _m(
+            "assistant",
+            "",
+            tc=[{"id": "a", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+        ),
         _m("tool", "wrong", tcid="WRONG"),
     ]
     d = [m.to_llm_dict() for m in msgs]
@@ -135,7 +151,11 @@ def test_nonempty_mismatched_id_is_orphan_and_repaired_with_declared_id():
 def test_empty_receipt_id_keeps_positional_compatibility():
     """存量空 tool_call_id 仍可按位置与非空声明兼容配对。"""
     msgs = [
-        _m("assistant", "", tc=[{"id": "a", "type": "function", "function": {"name": "x", "arguments": "{}"}}]),
+        _m(
+            "assistant",
+            "",
+            tc=[{"id": "a", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+        ),
         _m("tool", "legacy", tcid=""),
     ]
     d = [m.to_llm_dict() for m in msgs]

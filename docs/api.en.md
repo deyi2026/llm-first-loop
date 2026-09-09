@@ -17,7 +17,7 @@
 from llm_loop.config import load_env_file, load_settings
 from llm_loop.factory import build_engine
 
-load_env_file()              # Load config from the project root .env (environment variables take precedence)
+load_env_file()  # Load config from the project root .env (environment variables take precedence)
 engine = build_engine(load_settings())
 
 # One-shot conversation (session auto-created): the simplest path
@@ -49,7 +49,7 @@ Assembles all components (LLM client, memory, retrieval, tool registry, event lo
 
 ### Injecting a Custom Tool (B5)
 ```python
-engine.registry.register(MyTool())   # Implements name/description/parameters/execute (see §5)
+engine.registry.register(MyTool())  # Implements name/description/parameters/execute (see §5)
 # After registration the AI can invoke it autonomously in the next loop (schema auto-injected)
 ```
 
@@ -75,6 +75,7 @@ engine.registry.register(MyTool())   # Implements name/description/parameters/ex
 ```python
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
+
 class MyTool:
     name = "my_tool"
     description = "When to use / when not to use / failure handling"
@@ -82,8 +83,12 @@ class MyTool:
 
     def execute(self, **kwargs) -> ToolResult:
         # Return one of five statuses: SUCCESS / FAILURE / ERROR / TIMEOUT / BLOCKED (no faking success)
-        return ToolResult(status=ToolResultStatus.SUCCESS, content="result text",
-                          tool_call_id="", tool_name=self.name)
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content="result text",
+            tool_call_id="",
+            tool_name=self.name,
+        )
 ```
 
 ### `ToolRegistry`
@@ -110,7 +115,7 @@ from llm_loop.config import load_env_file, load_settings
 from llm_loop.web import build_app
 
 load_env_file()
-app = build_app(settings=load_settings())   # FastAPI app (includes auth/upload/SSE endpoints)
+app = build_app(settings=load_settings())  # FastAPI app (includes auth/upload/SSE endpoints)
 # uvicorn.run(app, host="127.0.0.1", port=8902)
 ```
 

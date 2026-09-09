@@ -138,7 +138,9 @@ class WorkspaceStore:
             if existed is not None and existed.path != ws.path:
                 logger.warning(
                     "工作区注册表跳过重复ID冲突: id=%s path=%s existing=%s",
-                    ws.id, ws.path, existed.path,
+                    ws.id,
+                    ws.path,
+                    existed.path,
                 )
                 continue
             workspaces[ws.id] = ws
@@ -147,8 +149,7 @@ class WorkspaceStore:
         raw_retired = raw.get("retired", [])
         if isinstance(raw_retired, dict):
             raw_retired = [
-                {"path": path, "id": ws_id, "created_at": ""}
-                for path, ws_id in raw_retired.items()
+                {"path": path, "id": ws_id, "created_at": ""} for path, ws_id in raw_retired.items()
             ]
         if isinstance(raw_retired, list):
             active_paths = {w.path for w in workspaces.values()}
@@ -224,9 +225,7 @@ class WorkspaceStore:
                 for w in self._retired_by_path.values()
             ],
         }
-        tmp = self._file.with_name(
-            f"{self._file.name}.{os.getpid()}.{threading.get_ident()}.tmp"
-        )
+        tmp = self._file.with_name(f"{self._file.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         dir_fd: int | None = None
         try:
             with tmp.open("w", encoding="utf-8") as f:
@@ -281,9 +280,7 @@ class WorkspaceStore:
         """按规范化绝对路径精确查询，不依赖可能碰撞的legacy key。"""
         normalized = str(Path(path).expanduser().resolve())
         with self._guard:
-            return next(
-                (w for w in self._workspaces.values() if w.path == normalized), None
-            )
+            return next((w for w in self._workspaces.values() if w.path == normalized), None)
 
     def get_current(self) -> Workspace | None:
         with self._guard:
@@ -319,9 +316,7 @@ class WorkspaceStore:
             owner = self._id_owner_path(retired.id)
             if owner is not None and owner != normalized:
                 self._retired_by_path[normalized] = retired
-                raise ValueError(
-                    f"历史工作区ID已被其它路径占用: id={retired.id} owner={owner}"
-                )
+                raise ValueError(f"历史工作区ID已被其它路径占用: id={retired.id} owner={owner}")
             self._workspaces[retired.id] = retired
             return retired, True
 
@@ -422,9 +417,7 @@ class WorkspaceStore:
             if ws is None:
                 raise ValueError(f"工作区未注册: {ws_id}")
             if not Path(ws.path).is_dir():
-                raise WorkspacePathUnavailableError(
-                    f"工作区目录当前不可用: {ws.path}"
-                )
+                raise WorkspacePathUnavailableError(f"工作区目录当前不可用: {ws.path}")
             if precommit is not None:
                 precommit(ws)
             self._current_id = ws_id

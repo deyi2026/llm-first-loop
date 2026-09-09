@@ -111,6 +111,7 @@ def test_too_many_steps_rejected():
 
 def test_failed_step_does_not_block_others():
     """某步失败不阻断后续步骤，整体如实标注 failure."""
+
     class FlakyRunner(FakeRunner):
         def run(self, task, context="", depth=0):
             if "bad" in task:
@@ -149,6 +150,7 @@ def test_workflow_tool_registered():
 
 
 # ── P3-4: dag 模式（拓扑序 + 依赖注入 + 节点预算 + 环检测） ──
+
 
 def test_dag_topological_order_and_dep_injection():
     """dag: 依赖步骤先执行；依赖 final_answer 注入被依赖步骤 context."""

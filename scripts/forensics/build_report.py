@@ -101,7 +101,12 @@ def load_incident_evidence(repo: Path) -> dict:
     # 注入前后会话活动（时间耦合输入）
     seq = sorted(
         (
-            (ev["payload"]["index"], ev["ts"], ev["payload"].get("role"), (ev["payload"].get("metadata") or {}))
+            (
+                ev["payload"]["index"],
+                ev["ts"],
+                ev["payload"].get("role"),
+                (ev["payload"].get("metadata") or {}),
+            )
             for ev in events
             if ev.get("type") == "message.appended"
             and isinstance(ev.get("payload", {}).get("index"), int)
@@ -118,9 +123,7 @@ def load_incident_evidence(repo: Path) -> dict:
             "role": prev[2],
             "origin_layer": (prev[3] or {}).get("origin_layer"),
         },
-        "silence_before_leak": (
-            _parse_ts(seq[i280][1]) - _parse_ts(prev[1])
-        ).total_seconds(),
+        "silence_before_leak": (_parse_ts(seq[i280][1]) - _parse_ts(prev[1])).total_seconds(),
         "next_human_msg_after_leaks": next(
             (
                 {"index": r[0], "ts": r[1], "chars_head": r[2]}
@@ -275,7 +278,13 @@ def write_report(report: dict, out_dir: Path) -> tuple[Path, Path]:
         "",
     ]
     for k, v in report["four_evidence"].items():
-        lines += [f"### {k}", f"- 来源：{v['source']}", f"- 等级：{v['grade']}", f"- 结论：{v['finding']}", ""]
+        lines += [
+            f"### {k}",
+            f"- 来源：{v['source']}",
+            f"- 等级：{v['grade']}",
+            f"- 结论：{v['finding']}",
+            "",
+        ]
     lines += ["## 时间耦合对照（FT-6）", "", "| 事件 | 时刻 | 距 #280 |", "|---|---|---|"]
     for r in report["time_coupling_table"]:
         lines.append(f"| {r['event']} | {r['ts']} | {r['delta_to_leak']} |")

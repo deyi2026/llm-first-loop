@@ -5,6 +5,7 @@ none has automatic prompt authority.  The stable invariant is stronger than the 
 "append-only injection" fingerprint: arming, adding, removing, or changing legacy prompt
 wrappers must leave the provider wire byte-identical to the naked baseline.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -84,9 +85,7 @@ def _arm_all_slots(
     if gate_note:
         engine._cache_monitor._get_bucket(sess.session_id).gate_note_pending = True
     return (
-        [Message(role="system", content=_MEMORY_FIX, source=MessageSource.SYSTEM)]
-        if memory
-        else []
+        [Message(role="system", content=_MEMORY_FIX, source=MessageSource.SYSTEM)] if memory else []
     )
 
 
@@ -154,7 +153,10 @@ class TestRedLightMutations:
 
     def test_wrap_bypassed(self, tmp_path):
         """The retired prompt assembly stage must not expose wrap_injection at all."""
-        assert importlib.util.find_spec("llm_loop.core.prompt_build.stages.injection_cognitive") is None
+        assert (
+            importlib.util.find_spec("llm_loop.core.prompt_build.stages.injection_cognitive")
+            is None
+        )
         engine, sess = _engine(tmp_path)
         _assert_prompt_neutral(engine, sess)
 

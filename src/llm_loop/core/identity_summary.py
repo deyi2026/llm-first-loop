@@ -116,7 +116,9 @@ def _is_human_boundary(message: Any) -> bool:
     """
     if not is_human_user_message(message):
         return False
-    metadata = (message.get("metadata") if isinstance(message, dict) else getattr(message, "metadata", {})) or {}
+    metadata = (
+        message.get("metadata") if isinstance(message, dict) else getattr(message, "metadata", {})
+    ) or {}
     if metadata.get("origin_layer") == "user_instruction":
         return True
     text = _content(message).lstrip()

@@ -97,7 +97,9 @@ class TestCrossBoundaryRecovery:
         """rebuild_state: GoalStore checkpoint 四要素回填投影（spec 5.1.1-4）."""
         store = GoalStore(tmp_path / "audit")
         g = store.create(objective="修复注入拆解回归", session_id="s1")
-        store.checkpoint(g.id, what="定位到段标记正则", evidence="e", path="p", next_step="更新黄金摘要")
+        store.checkpoint(
+            g.id, what="定位到段标记正则", evidence="e", path="p", next_step="更新黄金摘要"
+        )
         state = rebuild_state(store.get())
         assert state.objective == "修复注入拆解回归"
         assert state.checkpoint is not None
@@ -221,7 +223,7 @@ class TestSinglePipelineAndDegradation:
         state = _rich_state()
         parts = [
             ("gate_note", "门禁知情标记"),
-            ("tip", "暖" * 500),   # WARM 超预算
+            ("tip", "暖" * 500),  # WARM 超预算
             ("interop", "首条协调"),  # HOT
         ]
         packet = compile_decision_packet(parts, state, budget_chars=100)
@@ -258,9 +260,7 @@ class TestSinglePipelineAndDegradation:
 
         from llm_loop.cognitive.benchmark import FixtureSpec
 
-        bench = SemanticResetBenchmark(
-            preconditions=PreconditionState(True, True), runner=runner
-        )
+        bench = SemanticResetBenchmark(preconditions=PreconditionState(True, True), runner=runner)
         report = bench.run(FixtureSpec(track="A", root=tmp_path, limit=2), track="A")
         fm = report.comparison["first_miss_cost_mean_triggered_only"]
         assert fm is not None and fm["n"] == 1

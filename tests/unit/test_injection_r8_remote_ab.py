@@ -6,7 +6,9 @@ from pathlib import Path
 from llm_loop.llm.errors import LLMEmptyResponseError, LLMHTTPError
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("r8_remote", ROOT / "scripts/injection_r8_remote_ab.py")
+SPEC = importlib.util.spec_from_file_location(
+    "r8_remote", ROOT / "scripts/injection_r8_remote_ab.py"
+)
 assert SPEC and SPEC.loader
 mod = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(mod)

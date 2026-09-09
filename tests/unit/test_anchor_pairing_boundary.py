@@ -12,7 +12,14 @@ from llm_loop.core.message import Message, MessageSource
 
 def _session_with_tool_round() -> list[Message]:
     """声明(idx22) + 4 回执(idx23-26)，前 22 条普通消息."""
-    msgs = [Message(role="user" if i % 2 == 0 else "assistant", content=f"消息{i}", source=MessageSource.USER) for i in range(22)]
+    msgs = [
+        Message(
+            role="user" if i % 2 == 0 else "assistant",
+            content=f"消息{i}",
+            source=MessageSource.USER,
+        )
+        for i in range(22)
+    ]
     # 声明：2 个 tool_calls（idx22）
     msgs.append(
         Message(
@@ -20,13 +27,23 @@ def _session_with_tool_round() -> list[Message]:
             content="",
             source=MessageSource.USER,
             tool_calls=[
-                {"id": "tc-a", "type": "function", "function": {"name": "read_file", "arguments": "{}"}},
-                {"id": "tc-b", "type": "function", "function": {"name": "web_fetch", "arguments": "{}"}},
+                {
+                    "id": "tc-a",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                },
+                {
+                    "id": "tc-b",
+                    "type": "function",
+                    "function": {"name": "web_fetch", "arguments": "{}"},
+                },
             ],
         )
     )
     for tid in ("tc-a", "tc-b"):
-        msgs.append(Message(role="tool", content=f"回执{tid}", source=MessageSource.USER, tool_call_id=tid))
+        msgs.append(
+            Message(role="tool", content=f"回执{tid}", source=MessageSource.USER, tool_call_id=tid)
+        )
     return msgs
 
 

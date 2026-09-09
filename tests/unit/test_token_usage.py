@@ -91,7 +91,9 @@ def test_loop_aggregates_tokens_across_rounds(tmp_path, monkeypatch: pytest.Monk
         # 第 1 轮: 工具调用（read_file 不存在路径, 失败也无所谓, 循环继续）
         LLMResponse(
             content=None,
-            tool_calls=[SimpleNamespace(id="c1", name="read_file", arguments='{"path":"/nonexistent"}')],
+            tool_calls=[
+                SimpleNamespace(id="c1", name="read_file", arguments='{"path":"/nonexistent"}')
+            ],
             provider="fake",
             prompt_tokens=100,
             completion_tokens=10,
@@ -210,7 +212,15 @@ def test_web_chat_response_carries_tokens(tmp_path, monkeypatch: pytest.MonkeyPa
     settings = _settings(tmp_path)
     default_fake = _FakeLLMClient("deepseek-v4-flash")
     default_fake.queue(
-        [LLMResponse(content="回答", tool_calls=[], provider="fake", prompt_tokens=50, completion_tokens=8)]
+        [
+            LLMResponse(
+                content="回答",
+                tool_calls=[],
+                provider="fake",
+                prompt_tokens=50,
+                completion_tokens=8,
+            )
+        ]
     )
     pool = _make_pool(settings, default_fake)
     engine = _make_engine(tmp_path, pool, settings)

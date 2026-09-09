@@ -18,8 +18,13 @@ def _make(tmp_path, owner: str = "ou_owner"):
     smap = SessionMap(store, path=str(tmp_path / "map.json"), owner_open_id=owner)
     replies: list[tuple[str, str, str]] = []
     watcher = CrossSyncWatcher(
-        store, smap, lambda rid, text, rtype: replies.append((rid, text, rtype)),
-        str(tmp_path / "sessions"), poll_s=1.5, min_interval_s=3.0, max_chars=200,
+        store,
+        smap,
+        lambda rid, text, rtype: replies.append((rid, text, rtype)),
+        str(tmp_path / "sessions"),
+        poll_s=1.5,
+        min_interval_s=3.0,
+        max_chars=200,
     )
     return store, smap, watcher, replies
 
@@ -111,6 +116,7 @@ def test_session_cleared_no_push(tmp_path):
     store.load(sid).messages.clear()
     # 直接重写文件模拟清理（append 只增不减；用 save 覆盖）
     from llm_loop.core.session import Session
+
     sess = Session(session_id=sid, messages=[])
     store.save(sess)
     watcher.poll_once()
@@ -187,9 +193,7 @@ def test_single_long_line_hard_split_no_loss(tmp_path):
     _append_web(store, sid, [blob])
     watcher.poll_once()
     assert len(replies) >= 2
-    recovered = "".join(
-        t.split("\n", 1)[1].replace("🤖 AI: ", "", 1) for _, t, _ in replies
-    )
+    recovered = "".join(t.split("\n", 1)[1].replace("🤖 AI: ", "", 1) for _, t, _ in replies)
     assert blob in recovered or recovered.count("x") >= 500
 
 

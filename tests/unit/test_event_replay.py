@@ -47,26 +47,71 @@ def _source_session() -> dict:
         "pinned": True,
         "channel": "web",
         "messages": [
-            {"role": "user", "content": "你好", "source": "user", "tool_call_id": None,
-             "status": None, "tool_name": None, "error_detail": None, "tool_calls": None,
-             "reasoning_content": None, "metadata": {}},
-            {"role": "assistant", "content": "", "source": "user", "tool_call_id": None,
-             "status": None, "tool_name": None, "error_detail": None,
-             "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "f1", "arguments": "{}"}}],
-             "reasoning_content": "思考链", "metadata": {}},
-            {"role": "tool", "content": "[状态: success] 结果", "source": "tool",
-             "tool_call_id": "c1", "status": "success", "tool_name": "f1",
-             "error_detail": None, "tool_calls": None, "reasoning_content": None, "metadata": {}},
+            {
+                "role": "user",
+                "content": "你好",
+                "source": "user",
+                "tool_call_id": None,
+                "status": None,
+                "tool_name": None,
+                "error_detail": None,
+                "tool_calls": None,
+                "reasoning_content": None,
+                "metadata": {},
+            },
+            {
+                "role": "assistant",
+                "content": "",
+                "source": "user",
+                "tool_call_id": None,
+                "status": None,
+                "tool_name": None,
+                "error_detail": None,
+                "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "f1", "arguments": "{}"}}
+                ],
+                "reasoning_content": "思考链",
+                "metadata": {},
+            },
+            {
+                "role": "tool",
+                "content": "[状态: success] 结果",
+                "source": "tool",
+                "tool_call_id": "c1",
+                "status": "success",
+                "tool_name": "f1",
+                "error_detail": None,
+                "tool_calls": None,
+                "reasoning_content": None,
+                "metadata": {},
+            },
         ],
     }
 
 
 def _events_from_session(src: dict) -> list[Event]:
-    events = [_event(1, EVENT_SESSION_CREATED, **{
-        k: src[k] for k in ("version", "title", "created_at", "updated_at", "status",
-                            "parent_id", "branch_id", "branch_summary", "model_override",
-                            "pinned", "channel")
-    })]
+    events = [
+        _event(
+            1,
+            EVENT_SESSION_CREATED,
+            **{
+                k: src[k]
+                for k in (
+                    "version",
+                    "title",
+                    "created_at",
+                    "updated_at",
+                    "status",
+                    "parent_id",
+                    "branch_id",
+                    "branch_summary",
+                    "model_override",
+                    "pinned",
+                    "channel",
+                )
+            },
+        )
+    ]
     seq = 2
     for i, m in enumerate(src["messages"]):
         events.append(_event(seq, EVENT_MESSAGE_APPENDED, index=i, **m))
@@ -114,8 +159,11 @@ def test_replay_compressed_marker_preserved():
     src = _source_session()
     events = _events_from_session(src)
     # 追加 context.compressed（压缩引用契约）
-    events.append(_event(100, EVENT_CONTEXT_COMPRESSED,
-                         archive_ref="c1", tool_call_id="c1", msg_seq=2, chars=123))
+    events.append(
+        _event(
+            100, EVENT_CONTEXT_COMPRESSED, archive_ref="c1", tool_call_id="c1", msg_seq=2, chars=123
+        )
+    )
     view = replay_session(events)
     # 视图保留压缩标注语义（消息 content 原样）+ 压缩引用记录
     assert view["compressed_refs"] == [
@@ -142,9 +190,14 @@ def test_replay_provider_cache_compacted_updates_message_metadata():
 
 def test_replay_meta_changed_updates_top_level():
     events = _events_from_session(_source_session())
-    events.append(_event(99, EVENT_SESSION_META_CHANGED,
-                         field="title",
-                         changes={"title": {"from": "测试会话", "to": "新标题"}}))
+    events.append(
+        _event(
+            99,
+            EVENT_SESSION_META_CHANGED,
+            field="title",
+            changes={"title": {"from": "测试会话", "to": "新标题"}},
+        )
+    )
     view = replay_session(events)
     assert view["title"] == "新标题"
 
@@ -171,8 +224,14 @@ def test_replay_seq_gap_annotated():
     events = _events_from_session(src)
     # 制造缺口：把第二条消息的 seq 从 3 改到 10
     events = [
-        Event(event_id=e.event_id, session_id=e.session_id, seq=10, type=e.type, ts=e.ts,
-              payload=e.payload)
+        Event(
+            event_id=e.event_id,
+            session_id=e.session_id,
+            seq=10,
+            type=e.type,
+            ts=e.ts,
+            payload=e.payload,
+        )
         if e.type == EVENT_MESSAGE_APPENDED and e.payload.get("index") == 1
         else e
         for e in events
@@ -230,10 +289,15 @@ def test_replay_idx_conflict_keeps_all_messages():
 def test_replay_version5_summary_meta_change():
     events = [
         _event(1, EVENT_SESSION_CREATED, version=5, fixed_summary="", summary_chain=[]),
-        _event(2, EVENT_SESSION_META_CHANGED, field="summary_state", changes={
-            "fixed_summary": {"from": "", "to": "固定"},
-            "summary_chain": {"from": [], "to": ["一", "二"]},
-        }),
+        _event(
+            2,
+            EVENT_SESSION_META_CHANGED,
+            field="summary_state",
+            changes={
+                "fixed_summary": {"from": "", "to": "固定"},
+                "summary_chain": {"from": [], "to": ["一", "二"]},
+            },
+        ),
     ]
     view = replay_session(events)
     assert view["fixed_summary"] == "固定"

@@ -8,7 +8,7 @@ from llm_loop.llm.client import LLMClient
 
 
 def _simulate(client, chunks):
-    """模拟流式 content delta 序列（驱动 client 的剥离逻辑）. """
+    """模拟流式 content delta 序列（驱动 client 的剥离逻辑）."""
     texts, reasonings = [], []
     for chunk in chunks:
         client._think_buf = getattr(client, "_think_buf", "") + chunk
@@ -36,7 +36,7 @@ def _simulate(client, chunks):
                         reasonings.append(think)
                     break
                 think = client._think_buf[:end]
-                client._think_buf = client._think_buf[end + len("</think>"):]
+                client._think_buf = client._think_buf[end + len("</think>") :]
                 _in_think = False
                 if think:
                     reasonings.append(think)

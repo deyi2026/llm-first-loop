@@ -14,7 +14,9 @@ from unittest import mock
 from llm_loop.core.message import Message, MessageSource
 
 
-def test_c1_initial_session_save_failure_is_observable_not_prompted(build_test_engine, fake_settings):
+def test_c1_initial_session_save_failure_is_observable_not_prompted(
+    build_test_engine, fake_settings
+):
     """初始保存失败保留 selfheal/status 证据，但不写会话或 provider prompt."""
     import json
 
@@ -81,8 +83,12 @@ def test_c3_archive_sink_failure_during_active_run_does_not_pollute_bound_sessio
                 engine._run_sessions[sid] = active  # noqa: SLF001
             ctx_token = current_session_id.set(sid)
             try:
-                msg = Message(role="user", content="active-run archive failure", source=MessageSource.USER)
-                with mock.patch.object(engine.archive, "archive", side_effect=OSError("archive fail in run")):
+                msg = Message(
+                    role="user", content="active-run archive failure", source=MessageSource.USER
+                )
+                with mock.patch.object(
+                    engine.archive, "archive", side_effect=OSError("archive fail in run")
+                ):
                     engine._archive_sink(sid, msg)
             finally:
                 current_session_id.reset(ctx_token)

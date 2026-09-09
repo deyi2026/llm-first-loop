@@ -24,7 +24,9 @@ def test_r4_matrix_is_balanced_fresh_36() -> None:
 
 
 def test_r4_answers_are_fresh_not_r2_tokens() -> None:
-    fixtures = json.loads((ROOT / "tests/fixtures/evidence_r4/fixtures_v1.json").read_text())["fixtures"]
+    fixtures = json.loads((ROOT / "tests/fixtures/evidence_r4/fixtures_v1.json").read_text())[
+        "fixtures"
+    ]
     r2_text = (ROOT / "tests/fixtures/evidence_r2/fixtures_v1.json").read_text()
     for fixture in fixtures.values():
         assert fixture["answer"] not in r2_text

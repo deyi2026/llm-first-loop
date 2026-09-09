@@ -175,9 +175,7 @@ class EvidenceEnforcer:
                 # R2 P0-3: 截断文案与结构化字段同一构造点产出（exact omitted → read_evidence）
                 result.capability_requirements = ("read_evidence",)
                 result.content = (
-                    f"{projection.content}\n{_fact_line}"
-                    if projection.content
-                    else _fact_line
+                    f"{projection.content}\n{_fact_line}" if projection.content else _fact_line
                 )
             logger.info(
                 "event=evidence_capsule_omitted tool=%s complete=%s omitted_chars=%d ref=%s",

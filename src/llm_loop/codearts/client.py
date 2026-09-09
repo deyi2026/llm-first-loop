@@ -94,21 +94,15 @@ class CodeArtsClient(Protocol):
         self, task: DispatchTask, credential: Credential, *, region: str
     ) -> ExecutionHandle: ...
 
-    def query_status(
-        self, handle: ExecutionHandle, credential: Credential
-    ) -> RemoteStatus: ...
+    def query_status(self, handle: ExecutionHandle, credential: Credential) -> RemoteStatus: ...
 
-    def fetch_result(
-        self, handle: ExecutionHandle, credential: Credential
-    ) -> ExecutionResult: ...
+    def fetch_result(self, handle: ExecutionHandle, credential: Credential) -> ExecutionResult: ...
 
     def fetch_log_summary(
         self, handle: ExecutionHandle, credential: Credential, *, max_chars: int = 5000
     ) -> str: ...
 
-    def cancel_execution(
-        self, handle: ExecutionHandle, credential: Credential
-    ) -> bool: ...
+    def cancel_execution(self, handle: ExecutionHandle, credential: Credential) -> bool: ...
 
     def validate_api_version(self, credential: Credential) -> bool: ...
 
@@ -235,24 +229,16 @@ class HttpxCodeArtsClient:
             remote_status=RemoteStatus.RUNNING,
         )
 
-    def query_status(
-        self, handle: ExecutionHandle, credential: Credential
-    ) -> RemoteStatus:
+    def query_status(self, handle: ExecutionHandle, credential: Credential) -> RemoteStatus:
         """查询远端执行状态."""
-        resp = self._request(
-            "GET", f"/agent/executions/{handle.handle_id}/status", credential
-        )
+        resp = self._request("GET", f"/agent/executions/{handle.handle_id}/status", credential)
         data = resp.json()
         raw = str(data.get("status") or "RUNNING")
         return _map_remote_status(raw)
 
-    def fetch_result(
-        self, handle: ExecutionHandle, credential: Credential
-    ) -> ExecutionResult:
+    def fetch_result(self, handle: ExecutionHandle, credential: Credential) -> ExecutionResult:
         """拉取远端执行结果."""
-        resp = self._request(
-            "GET", f"/agent/executions/{handle.handle_id}/result", credential
-        )
+        resp = self._request("GET", f"/agent/executions/{handle.handle_id}/result", credential)
         data = resp.json()
         raw_status = str(data.get("status") or "SUCCEEDED")
         artifacts_raw = data.get("artifacts") or []
@@ -284,21 +270,15 @@ class HttpxCodeArtsClient:
         self, handle: ExecutionHandle, credential: Credential, *, max_chars: int = 5000
     ) -> str:
         """拉取执行日志摘要（截断至 max_chars）."""
-        resp = self._request(
-            "GET", f"/agent/executions/{handle.handle_id}/logs", credential
-        )
+        resp = self._request("GET", f"/agent/executions/{handle.handle_id}/logs", credential)
         data = resp.json()
         logs = str(data.get("logs") or "")
         return logs[:max_chars]
 
-    def cancel_execution(
-        self, handle: ExecutionHandle, credential: Credential
-    ) -> bool:
+    def cancel_execution(self, handle: ExecutionHandle, credential: Credential) -> bool:
         """取消远端执行；返回远端是否确认取消."""
         try:
-            resp = self._request(
-                "POST", f"/agent/executions/{handle.handle_id}/cancel", credential
-            )
+            resp = self._request("POST", f"/agent/executions/{handle.handle_id}/cancel", credential)
             return resp.status_code < 400
         except (ClientError, RetryableError):
             return False

@@ -188,9 +188,7 @@ class BackupStore:
             try:
                 archive = BackupArchive.from_dict(json.loads(path.read_text(encoding="utf-8")))
             except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-                raise OSError(
-                    f"无法判定恢复备份归属，拒绝物理删除: {path.name}"
-                ) from exc
+                raise OSError(f"无法判定恢复备份归属，拒绝物理删除: {path.name}") from exc
             if archive.source_id != source_id or archive.target_type != target_type:
                 continue
             path.unlink()
@@ -200,7 +198,11 @@ class BackupStore:
     def status_summary(self) -> dict:
         """返回 {pending_count, oldest_backup_at, by_type}（如实，不伪造）."""
         if not self._dir.exists():
-            return {"pending_count": 0, "oldest_backup_at": None, "by_type": {"session": 0, "memory_stats": 0}}
+            return {
+                "pending_count": 0,
+                "oldest_backup_at": None,
+                "by_type": {"session": 0, "memory_stats": 0},
+            }
         pending = self.list_pending()
         by_type: dict[str, int] = {"session": 0, "memory_stats": 0}
         for a in pending:

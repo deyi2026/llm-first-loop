@@ -4,6 +4,7 @@
 Reads AGX PerformanceStatistics through ioreg (no sudo) and optional process CPU/RSS
 through ps. Writes JSONL facts only; it does not import or modify LFL runtime state.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -53,7 +54,11 @@ def sample_ioreg() -> dict[str, Any]:
             parsed["ioreg_error"] = f"exit={proc.returncode}"
         return parsed
     except Exception as exc:  # telemetry must stay fail-open
-        return {**{key: None for key in _INT_FIELDS}, "ioreg_ok": False, "ioreg_error": type(exc).__name__}
+        return {
+            **{key: None for key in _INT_FIELDS},
+            "ioreg_ok": False,
+            "ioreg_error": type(exc).__name__,
+        }
 
 
 def sample_process(pid: int | None) -> dict[str, Any]:
@@ -118,7 +123,11 @@ def main() -> int:
             samples += 1
             elapsed = time.monotonic() - tick
             time.sleep(max(0.0, args.interval - elapsed))
-    print(json.dumps({"output": str(path), "samples": samples, "duration_s": time.monotonic() - start}))
+    print(
+        json.dumps(
+            {"output": str(path), "samples": samples, "duration_s": time.monotonic() - start}
+        )
+    )
     return 0
 
 

@@ -62,7 +62,13 @@ def parse_awesome(readme: str) -> list[dict]:
             continue
         m = _ENTRY_RE.match(line.strip())
         if m and m.group(1).lower() != "awesome-dsh-plugin/awesome-dsh-plugin":
-            plugins.append({"repo": m.group(1), "desc": m.group(2).strip()[:160], "category": category or "Uncategorized"})
+            plugins.append(
+                {
+                    "repo": m.group(1),
+                    "desc": m.group(2).strip()[:160],
+                    "category": category or "Uncategorized",
+                }
+            )
     return plugins
 
 
@@ -74,7 +80,9 @@ def _load_index(host: Any) -> tuple[list[dict] | None, str]:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             if now - data.get("fetched_at", 0) < INDEX_TTL_S:
-                return data["plugins"], f"缓存（TTL 剩余 {int((INDEX_TTL_S - (now - data['fetched_at'])) / 3600)}h）"
+                return data[
+                    "plugins"
+                ], f"缓存（TTL 剩余 {int((INDEX_TTL_S - (now - data['fetched_at'])) / 3600)}h）"
         except Exception:  # noqa: BLE001 — 缓存损坏视为 miss
             pass
     try:
@@ -84,7 +92,10 @@ def _load_index(host: Any) -> tuple[list[dict] | None, str]:
     if path:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({"fetched_at": now, "plugins": plugins}, ensure_ascii=False), encoding="utf-8")
+            path.write_text(
+                json.dumps({"fetched_at": now, "plugins": plugins}, ensure_ascii=False),
+                encoding="utf-8",
+            )
         except Exception:  # noqa: BLE001 — 缓存写失败不影响功能
             pass
     return plugins, "已刷新"
@@ -113,7 +124,8 @@ def run_dsh_skill_load(host: Any, repo: str) -> ToolResult:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=f"[参数错误] dsh 插件名格式应为 owner/repo，收到 '{repo}'",
-            tool_call_id="", tool_name="skill_load",
+            tool_call_id="",
+            tool_name="skill_load",
         )
     plugins, status = _load_index(host)
     meta = next((p for p in (plugins or []) if p["repo"].lower() == repo.lower()), None)
@@ -121,20 +133,25 @@ def run_dsh_skill_load(host: Any, repo: str) -> ToolResult:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=f"[未收录] '{repo}' 不在 awesome-dsh-plugin 清单（{len(plugins)} 插件，{status}）。未收录≠不可用，可经 GitHub 自行核实后用 dsh_task 桥接。",
-            tool_call_id="", tool_name="skill_load",
+            tool_call_id="",
+            tool_name="skill_load",
         )
-    head = f"[DSH 插件卡] {repo}" + (f"\n分类: {meta['category']}\n描述: {meta['desc']}" if meta else "")
+    head = f"[DSH 插件卡] {repo}" + (
+        f"\n分类: {meta['category']}\n描述: {meta['desc']}" if meta else ""
+    )
     snippet, err = "", ""
     try:
         readme = _fetch(f"https://raw.githubusercontent.com/{repo}/HEAD/README.md")
-        snippet = re.sub(r"<[^>]+>", " ", readme[:README_SNIPPET_CHARS * 2])[:README_SNIPPET_CHARS]
+        snippet = re.sub(r"<[^>]+>", " ", readme[: README_SNIPPET_CHARS * 2])[:README_SNIPPET_CHARS]
     except Exception as e:  # noqa: BLE001 — README 拉取失败如实标注（卡仍可用）
         err = f"（README 拉取失败: {type(e).__name__}，卡内容仅含索引元数据）"
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=(
             f"{head}\n来源: awesome-dsh-plugin 人工审核清单{err}\n"
-            "执行方式: [需 dsh_task 桥接] 本工具只读不执行；代码类插件经 dsh plugin add 安装于 DSH 侧后由 dsh_task 调度。\n\n--- README 摘要 ---\n" + snippet
+            "执行方式: [需 dsh_task 桥接] 本工具只读不执行；代码类插件经 dsh plugin add 安装于 DSH 侧后由 dsh_task 调度。\n\n--- README 摘要 ---\n"
+            + snippet
         ),
-        tool_call_id="", tool_name="skill_load",
+        tool_call_id="",
+        tool_name="skill_load",
     )

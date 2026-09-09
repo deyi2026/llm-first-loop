@@ -80,9 +80,10 @@ def test_pending_mailbox_excludes_ids_already_durable_in_child_transcript(tmp_pa
         content="ONCE",
     )
     assert queued is not None
-    assert journal.pending_mailbox(
-        "subagent_delivery_ids", "g1", delivered_ids={queued.message_id}
-    ) == []
+    assert (
+        journal.pending_mailbox("subagent_delivery_ids", "g1", delivered_ids={queued.message_id})
+        == []
+    )
 
 
 def test_delivery_journal_disabled_mode_is_explicitly_process_local(tmp_path) -> None:

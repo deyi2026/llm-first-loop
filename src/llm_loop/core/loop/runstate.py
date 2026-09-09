@@ -30,8 +30,11 @@ class _RunState:
 
     stagnation_state: dict = field(
         default_factory=lambda: {
-            "fp": None, "count": 0, "reminded": False,
-            "empty_count": 0, "empty_reminded": False,
+            "fp": None,
+            "count": 0,
+            "reminded": False,
+            "empty_count": 0,
+            "empty_reminded": False,
         }
     )
     # P1-B: exact provider-callable surface is a factual per-session snapshot only.

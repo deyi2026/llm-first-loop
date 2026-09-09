@@ -43,7 +43,6 @@ def test_max_iterations_feedback_has_resume_guidance():
     assert "adjust_strategy" not in msg.content
 
 
-
 def test_engine_injects_warning_at_80_percent(tmp_path, monkeypatch):
     """R8.24-B B-2.1: 达 80% 轮数只记 suppressed 观测事件，sess.messages 零注入."""
     from llm_loop.core.loop.engine import LoopEngine
@@ -151,7 +150,6 @@ def test_engine_injects_warning_at_80_percent(tmp_path, monkeypatch):
     assert result.final_answer  # 正常完成（未触顶）
 
 
-
 # ── H-UI: 引擎动作观察者（实时状态条数据源）──
 
 
@@ -173,9 +171,7 @@ def test_action_observer_events_sequence(tmp_path):
             if self.calls == 1:
                 return LLMResponse(
                     content="用工具",
-                    tool_calls=[
-                        ToolCall(id="tc1", name="read_file", arguments={"path": "a.txt"})
-                    ],
+                    tool_calls=[ToolCall(id="tc1", name="read_file", arguments={"path": "a.txt"})],
                     provider="fake",
                 )
             return LLMResponse(content="最终回答", tool_calls=[], provider="fake")
@@ -287,4 +283,6 @@ def test_action_observer_exception_fail_open(tmp_path):
 
     engine.set_action_observer(boom)
     result = engine.run_single("任务")
-    assert result.final_answer.startswith("回答")  # 观察者异常不影响结果；尾部可能有缓存命中率展示行（方案B）
+    assert result.final_answer.startswith(
+        "回答"
+    )  # 观察者异常不影响结果；尾部可能有缓存命中率展示行（方案B）

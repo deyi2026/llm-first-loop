@@ -38,12 +38,20 @@ class _MultiRoundStreamFake:
 
     def chat(self, messages, tools, *, timeout_s=None, model=None) -> LLMResponse:
         self.calls.append({"messages": messages, "model": model})
-        return self._responses.pop(0) if self._responses else LLMResponse(content="", tool_calls=[], provider="fake")
+        return (
+            self._responses.pop(0)
+            if self._responses
+            else LLMResponse(content="", tool_calls=[], provider="fake")
+        )
 
     def chat_stream(self, messages, tools, *, timeout_s=None, model=None):
         self.calls.append({"messages": messages, "model": model})
-        resp = self._responses.pop(0) if self._responses else LLMResponse(content="", tool_calls=[], provider="fake")
-        for ch in (resp.content or ""):
+        resp = (
+            self._responses.pop(0)
+            if self._responses
+            else LLMResponse(content="", tool_calls=[], provider="fake")
+        )
+        for ch in resp.content or "":
             yield StreamDelta(text=ch)
         return resp
 
@@ -54,10 +62,16 @@ def test_sse_tool_round_event(build_test_engine, tmp_path):
     f.write_text("content", encoding="utf-8")
 
     engine, _ = build_test_engine([])
-    engine.llm_pool.default_client = _MultiRoundStreamFake([
-        LLMResponse(content="", tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f)})], provider="fake"),
-        LLMResponse(content="done", tool_calls=[], provider="fake"),
-    ])
+    engine.llm_pool.default_client = _MultiRoundStreamFake(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f)})],
+                provider="fake",
+            ),
+            LLMResponse(content="done", tool_calls=[], provider="fake"),
+        ]
+    )
     client = _make_client(engine)
     resp = client.post("/api/v1/chat/stream", json={"message": "read test.txt"})
     events = _parse_sse(resp.text)
@@ -83,11 +97,21 @@ def test_sse_multi_round_tool_round(build_test_engine, tmp_path):
     f2.write_text("B", encoding="utf-8")
 
     engine, _ = build_test_engine([])
-    engine.llm_pool.default_client = _MultiRoundStreamFake([
-        LLMResponse(content="", tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f1)})], provider="fake"),
-        LLMResponse(content="", tool_calls=[ToolCall(id="c2", name="read_file", arguments={"path": str(f2)})], provider="fake"),
-        LLMResponse(content="done", tool_calls=[], provider="fake"),
-    ])
+    engine.llm_pool.default_client = _MultiRoundStreamFake(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f1)})],
+                provider="fake",
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCall(id="c2", name="read_file", arguments={"path": str(f2)})],
+                provider="fake",
+            ),
+            LLMResponse(content="done", tool_calls=[], provider="fake"),
+        ]
+    )
     client = _make_client(engine)
     resp = client.post("/api/v1/chat/stream", json={"message": "read a and b"})
     events = _parse_sse(resp.text)
@@ -107,10 +131,16 @@ def test_done_convergence(build_test_engine, tmp_path):
     f.write_text("content", encoding="utf-8")
 
     engine, _ = build_test_engine([])
-    engine.llm_pool.default_client = _MultiRoundStreamFake([
-        LLMResponse(content="", tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f)})], provider="fake"),
-        LLMResponse(content="final answer", tool_calls=[], provider="fake"),
-    ])
+    engine.llm_pool.default_client = _MultiRoundStreamFake(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f)})],
+                provider="fake",
+            ),
+            LLMResponse(content="final answer", tool_calls=[], provider="fake"),
+        ]
+    )
     client = _make_client(engine)
     resp = client.post("/api/v1/chat/stream", json={"message": "read test.txt"})
     events = _parse_sse(resp.text)
@@ -133,9 +163,11 @@ def test_old_frontend_compat_static(app_js_src: str):
 def test_new_frontend_compat_old_backend(build_test_engine):
     """4.9: 新前端遇旧后端（无 tool_round 事件）零回归。"""
     engine, _ = build_test_engine([])
-    engine.llm_pool.default_client = _MultiRoundStreamFake([
-        LLMResponse(content="hello", tool_calls=[], provider="fake"),
-    ])
+    engine.llm_pool.default_client = _MultiRoundStreamFake(
+        [
+            LLMResponse(content="hello", tool_calls=[], provider="fake"),
+        ]
+    )
     client = _make_client(engine)
     resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
     events = _parse_sse(resp.text)
@@ -150,9 +182,11 @@ def test_new_frontend_compat_old_backend(build_test_engine):
 def test_no_tool_calls_zero_regression(build_test_engine):
     """4.11: 纯文本对话无 tool_round 事件，零回归。"""
     engine, _ = build_test_engine([])
-    engine.llm_pool.default_client = _MultiRoundStreamFake([
-        LLMResponse(content="just text", tool_calls=[], provider="fake"),
-    ])
+    engine.llm_pool.default_client = _MultiRoundStreamFake(
+        [
+            LLMResponse(content="just text", tool_calls=[], provider="fake"),
+        ]
+    )
     client = _make_client(engine)
     resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
     events = _parse_sse(resp.text)
@@ -171,10 +205,16 @@ def test_tool_round_before_done(build_test_engine, tmp_path):
     f.write_text("content", encoding="utf-8")
 
     engine, _ = build_test_engine([])
-    engine.llm_pool.default_client = _MultiRoundStreamFake([
-        LLMResponse(content="", tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f)})], provider="fake"),
-        LLMResponse(content="done", tool_calls=[], provider="fake"),
-    ])
+    engine.llm_pool.default_client = _MultiRoundStreamFake(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": str(f)})],
+                provider="fake",
+            ),
+            LLMResponse(content="done", tool_calls=[], provider="fake"),
+        ]
+    )
     client = _make_client(engine)
     resp = client.post("/api/v1/chat/stream", json={"message": "read test.txt"})
     events = _parse_sse(resp.text)

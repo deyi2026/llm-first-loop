@@ -291,7 +291,9 @@ def test_stale_generation_or_wrong_parent_binding_never_settles(tmp_path) -> Non
         )
 
     assert runner.settle_committed_receipt(parent, _message(parent, "stale-generation")) is False
-    assert runner.settle_committed_receipt(parent, _message("different-parent", generation)) is False
+    assert (
+        runner.settle_committed_receipt(parent, _message("different-parent", generation)) is False
+    )
     assert runner.topology_snapshot(child)["settlement_state"] == "uncollected"
 
 
@@ -304,7 +306,9 @@ def _attach_shared_events(engine, runner: SubAgentRunner, events: EventStore) ->
     engine._tool_receipt_committed_hook = runner.settle_committed_receipt  # noqa: SLF001
 
 
-def test_real_tool_cycle_settles_only_after_parent_receipt_commit(build_test_engine, tmp_path) -> None:
+def test_real_tool_cycle_settles_only_after_parent_receipt_commit(
+    build_test_engine, tmp_path
+) -> None:
     from llm_loop.llm.client import LLMResponse
 
     child_box: dict[str, str] = {}
@@ -339,8 +343,7 @@ def test_real_tool_cycle_settles_only_after_parent_receipt_commit(build_test_eng
         event
         for event in events.read(parent)
         if (
-            event.type == "message.appended"
-            and event.payload.get("tool_name") == "subagent_result"
+            event.type == "message.appended" and event.payload.get("tool_name") == "subagent_result"
         )
         or (
             event.type == "tool.execution.receipt_committed"
@@ -353,11 +356,15 @@ def test_real_tool_cycle_settles_only_after_parent_receipt_commit(build_test_eng
     ]
     assert relevant[0].payload["metadata"]["subagent_settlement"]["child_id"] == child
 
-    recovered = SubAgentRunner(llm=_NoopLLM(), registry=ToolRegistry(), session_store=engine.session)  # type: ignore[arg-type]
+    recovered = SubAgentRunner(
+        llm=_NoopLLM(), registry=ToolRegistry(), session_store=engine.session
+    )  # type: ignore[arg-type]
     assert recovered.topology_snapshot(child)["settlement_state"] == "collected"
 
 
-def test_parent_receipt_commit_failure_never_settles(build_test_engine, tmp_path, monkeypatch) -> None:
+def test_parent_receipt_commit_failure_never_settles(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
     from llm_loop.llm.client import LLMResponse
 
     child_box: dict[str, str] = {}

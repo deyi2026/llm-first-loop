@@ -90,7 +90,7 @@ class EvolutionSuggestion:
     # ── Approval UX v2 批 1（EVO 拷问补丁，2026-08-21 镜像）──
     impact_files: list[str] = field(default_factory=list)  # 影响面文件/模块（提交时提取）
     rejected_reason: str = ""  # 拒绝理由（持久化留痕）
-    reviewed_at: str = ""      # 审批时间戳（approve/reject 时落）
+    reviewed_at: str = ""  # 审批时间戳（approve/reject 时落）
     reason_history: list[dict] = field(default_factory=list)  # 理由补录只追加: [{reason, at}]
 
     def to_dict(self) -> dict:

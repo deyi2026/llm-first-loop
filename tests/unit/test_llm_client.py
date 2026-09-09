@@ -160,11 +160,7 @@ def test_chat_reasoning_details_cumulative_is_not_double_counted():
     assert resp.content == "答案"
     assert resp.provider_replay == {
         "provider": "minimax",
-        "fields": {
-            "reasoning_details": [
-                {"type": "reasoning.text", "text": "思考过程"}
-            ]
-        },
+        "fields": {"reasoning_details": [{"type": "reasoning.text", "text": "思考过程"}]},
     }
 
 
@@ -183,7 +179,12 @@ def test_stream_state_hook_gets_opaque_reasoning_and_non_executable_tool_draft()
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
         resp = _client(provider="minimax").chat(
             messages=[{"role": "user", "content": "read"}],
-            tools=[{"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {"name": "read_file", "parameters": {"type": "object"}},
+                }
+            ],
             guard_context=ctx,
         )
 
@@ -199,7 +200,10 @@ def test_stream_state_hook_gets_opaque_reasoning_and_non_executable_tool_draft()
 
 def test_provider_replay_projects_only_to_matching_provider():
     """Opaque replay 不跨 provider 泄漏；匹配 provider 使用原生字段。"""
-    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
     details = [{"type": "reasoning.text", "text": "raw"}]
     message = {
         "role": "assistant",
@@ -229,7 +233,10 @@ def test_provider_replay_projects_only_to_matching_provider():
 
 def test_provider_replay_survives_cross_provider_projection_and_returns_to_origin():
     """Projection is a view, never a mutation of durable provider replay state."""
-    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
     details = [
         {
             "type": "reasoning.text",
@@ -397,10 +404,12 @@ def test_local_reasoning_mode_on_off_is_request_local(monkeypatch):
 
     def fake_stream(self, method, url, **kwargs):
         payloads.append(kwargs.get("json", {}))
-        return _FakeStreamCtx([
-            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
-            "data: [DONE]",
-        ])
+        return _FakeStreamCtx(
+            [
+                'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+                "data: [DONE]",
+            ]
+        )
 
     with mock.patch("httpx.Client.stream", fake_stream):
         c = _client(
@@ -433,10 +442,12 @@ def test_remote_reasoning_mode_auto_off_on_is_request_local():
 
     def fake_stream(self, method, url, **kwargs):
         payloads.append(kwargs.get("json", {}))
-        return _FakeStreamCtx([
-            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
-            "data: [DONE]",
-        ])
+        return _FakeStreamCtx(
+            [
+                'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+                "data: [DONE]",
+            ]
+        )
 
     with mock.patch("httpx.Client.stream", fake_stream):
         c = _client(provider="deepseek", thinking_supported=True)
@@ -463,10 +474,12 @@ def test_reasoning_capable_does_not_imply_control_protocol():
 
     def fake_stream(self, method, url, **kwargs):
         payloads.append(kwargs.get("json", {}))
-        return _FakeStreamCtx([
-            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
-            "data: [DONE]",
-        ])
+        return _FakeStreamCtx(
+            [
+                'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+                "data: [DONE]",
+            ]
+        )
 
     with mock.patch("httpx.Client.stream", fake_stream):
         c = _client(
@@ -499,11 +512,13 @@ def test_always_on_effort_maps_off_to_low_without_sending_disabled():
 
     def fake_stream(self, method, url, **kwargs):
         payloads.append(kwargs.get("json", {}))
-        return _FakeStreamCtx([
-            'data: {"choices": [{"delta": {"reasoning_content": "r"}}]}',
-            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
-            "data: [DONE]",
-        ])
+        return _FakeStreamCtx(
+            [
+                'data: {"choices": [{"delta": {"reasoning_content": "r"}}]}',
+                'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+                "data: [DONE]",
+            ]
+        )
 
     with mock.patch("httpx.Client.stream", fake_stream):
         c = _client(
@@ -526,10 +541,7 @@ def test_always_on_effort_maps_off_to_low_without_sending_disabled():
     assert payloads[1]["reasoning_effort"] == "low"
     assert payloads[2]["thinking"] == {"type": "enabled"}
     assert payloads[2]["reasoning_effort"] == "high"
-    assert all(
-        p.get("thinking") != {"type": "disabled"}
-        for p in payloads
-    )
+    assert all(p.get("thinking") != {"type": "disabled"} for p in payloads)
 
 
 def test_explicit_chat_template_contract_is_not_inferred_from_url():
@@ -540,10 +552,12 @@ def test_explicit_chat_template_contract_is_not_inferred_from_url():
 
     def fake_stream(self, method, url, **kwargs):
         payloads.append(kwargs.get("json", {}))
-        return _FakeStreamCtx([
-            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
-            "data: [DONE]",
-        ])
+        return _FakeStreamCtx(
+            [
+                'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+                "data: [DONE]",
+            ]
+        )
 
     with mock.patch("httpx.Client.stream", fake_stream):
         c = _client(
@@ -581,7 +595,10 @@ def test_openai_reasoning_tokens_usage_passthrough():
 
 def test_chat_payload_thinking_deepseek():
     """M20 THK-01: provider=deepseek → payload 含 thinking + reasoning_effort."""
-    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
         c = _client(provider="deepseek")
@@ -595,7 +612,10 @@ def test_chat_payload_reasoning_effort_context_override_is_request_local():
     """请求级 context override 优先于共享 client 默认，结束后不改实例属性。"""
     from llm_loop.core.run_context import current_reasoning_effort
 
-    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
         c = _client(provider="deepseek", reasoning_effort="high")
@@ -611,7 +631,10 @@ def test_chat_payload_reasoning_effort_context_override_is_request_local():
 
 def test_chat_payload_thinking_base_url_match():
     """M20 CFG-03: base_url 含 deepseek.com → 发送（不依赖 provider 字段）."""
-    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
         c = LLMClient(api_key="k", base_url="https://api.deepseek.com/v1", model="m")
@@ -622,7 +645,10 @@ def test_chat_payload_thinking_base_url_match():
 
 def test_chat_payload_thinking_non_deepseek_no():
     """M20 CFG-03: 非 DeepSeek（默认 fake.local）→ 无 thinking（零回归）."""
-    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
         c = _client()  # fake.local
@@ -633,7 +659,10 @@ def test_chat_payload_thinking_non_deepseek_no():
 
 def test_chat_payload_thinking_disabled():
     """M20 THK-01: thinking_mode=False → 无 thinking（VAL-01 对比组）."""
-    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
         c = _client(provider="deepseek", thinking_mode=False)
@@ -644,7 +673,10 @@ def test_chat_payload_thinking_disabled():
 
 def test_chat_payload_tools_empty_thinking():
     """无工具时不进入 tool protocol；thinking 控制保持独立生效。"""
-    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
         c = _client(provider="deepseek")  # thinking 默认开 + deepseek provider
@@ -657,7 +689,10 @@ def test_chat_payload_tools_empty_thinking():
 
 def test_chat_payload_nonempty_tools_enters_tool_protocol():
     """真正暴露工具时才发送 tools/tool_choice，避免 empty-tools 修复误伤工具调用。"""
-    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
     tools = [
         {
             "type": "function",
@@ -679,7 +714,10 @@ def test_chat_payload_nonempty_tools_enters_tool_protocol():
 
 def test_chat_payload_model_contract_can_omit_tool_choice():
     """Provider contract 可只发送 tools、依赖 provider 默认 auto，避免 thinking 兼容 400。"""
-    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
     tools = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
@@ -734,6 +772,7 @@ def test_local_provider_disables_thinking_in_payload(monkeypatch):
     不变项: 本地不发 OpenAI `thinking` 字段（LM Studio 优先级冲突, P1-FEISHU）。
     """
     from unittest.mock import patch
+
     captured = {}
 
     def fake_stream(self, method, url, **kwargs):
@@ -745,26 +784,36 @@ def test_local_provider_disables_thinking_in_payload(monkeypatch):
     # 默认: 不开 enable_thinking=False（思考保持开启）
     monkeypatch.delenv("LOCAL_ENABLE_THINKING", raising=False)
     with patch("httpx.Client.stream", fake_stream), contextlib.suppress(RuntimeError):
-        list(LLMClient(api_key="", base_url="http://localhost:1234/v1", model="m", timeout_s=5)
-             .chat_stream([{"role": "user", "content": "hi"}], tools=[]))
+        list(
+            LLMClient(
+                api_key="", base_url="http://localhost:1234/v1", model="m", timeout_s=5
+            ).chat_stream([{"role": "user", "content": "hi"}], tools=[])
+        )
     p = captured.get("json", {})
-    assert "chat_template_kwargs" not in p, f"默认应保持思考开启, 实际={p.get('chat_template_kwargs')}"
+    assert "chat_template_kwargs" not in p, (
+        f"默认应保持思考开启, 实际={p.get('chat_template_kwargs')}"
+    )
     assert "thinking" not in p, f"本地 provider 不应发 OpenAI thinking 字段, payload={p}"
 
     # 显式 LOCAL_ENABLE_THINKING=0: 发 enable_thinking=False
     monkeypatch.setenv("LOCAL_ENABLE_THINKING", "0")
     captured.clear()
     with patch("httpx.Client.stream", fake_stream), contextlib.suppress(RuntimeError):
-        list(LLMClient(api_key="", base_url="http://localhost:1234/v1", model="m", timeout_s=5)
-             .chat_stream([{"role": "user", "content": "hi"}], tools=[]))
+        list(
+            LLMClient(
+                api_key="", base_url="http://localhost:1234/v1", model="m", timeout_s=5
+            ).chat_stream([{"role": "user", "content": "hi"}], tools=[])
+        )
     p = captured.get("json", {})
     assert "chat_template_kwargs" in p, f"显式关闭时缺 chat_template_kwargs, payload={p}"
-    assert p["chat_template_kwargs"].get("enable_thinking") is False, \
+    assert p["chat_template_kwargs"].get("enable_thinking") is False, (
         f"LOCAL_ENABLE_THINKING=0 必须 enable_thinking=False, 实际={p['chat_template_kwargs']}"
+    )
     assert "thinking" not in p, f"本地 provider 不应发 OpenAI thinking 字段, payload={p}"
 
 
 # ── 2026-08-15: max_tokens 显式装配（回答不再被模型默认 4096 截断）──
+
 
 def test_chat_payload_max_tokens_sent():
     """显式配置 max_tokens → payload 携带（默认 4096 截断修复）."""
@@ -780,11 +829,10 @@ def test_chat_payload_max_tokens_sent():
     assert payload.get("max_tokens") == 8192
 
 
-
 def test_chat_payload_explicit_generation_profile_sent():
     lines = [
-        "data: {\"choices\": [{\"delta\": {\"content\": \"ok\"}}]}",
-        "data: {\"choices\": [{\"delta\": {}, \"finish_reason\": \"stop\"}]}",
+        'data: {"choices": [{"delta": {"content": "ok"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
         "data: [DONE]",
     ]
     with mock.patch("httpx.Client") as client_cls:
@@ -797,6 +845,7 @@ def test_chat_payload_explicit_generation_profile_sent():
     assert payload["top_p"] == 1.0
     assert payload["top_k"] == 0
     assert payload["min_p"] == 0.0
+
 
 def test_chat_payload_max_tokens_absent_when_none():
     """未配置 max_tokens（None）→ 不发字段（向后兼容）."""
@@ -847,6 +896,7 @@ def test_factory_wires_max_tokens(monkeypatch):
 
 # ── P3-5: 多协议（Anthropic / Google 原生协议） ──
 
+
 def _stream_resp(lines, status=200, headers=None):
     resp = _FakeStreamCtx(lines, status_code=status)
     resp.headers = headers or {}
@@ -868,10 +918,22 @@ def test_anthropic_payload_and_headers():
             messages=[
                 {"role": "system", "content": "你是助手"},
                 {"role": "user", "content": "hi"},
-                {"role": "assistant", "tool_calls": [{"id": "t1", "name": "read_file", "arguments": {"p": "x"}}]},
+                {
+                    "role": "assistant",
+                    "tool_calls": [{"id": "t1", "name": "read_file", "arguments": {"p": "x"}}],
+                },
                 {"role": "tool", "tool_call_id": "t1", "content": "内容"},
             ],
-            tools=[{"type": "function", "function": {"name": "read_file", "description": "d", "parameters": {"type": "object"}}}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "description": "d",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
         )
         final = None
         while True:
@@ -910,7 +972,9 @@ def test_anthropic_tool_use_aggregation():
     ]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _stream_resp(lines)
-        it = _client(wire_protocol="anthropic").chat_stream(messages=[{"role": "user", "content": "x"}], tools=[])
+        it = _client(wire_protocol="anthropic").chat_stream(
+            messages=[{"role": "user", "content": "x"}], tools=[]
+        )
         final = None
         while True:
             try:
@@ -931,10 +995,23 @@ def test_google_payload_and_stream():
     ]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _stream_resp(lines)
-        client = _client(wire_protocol="google", api_key="k-g", base_url="https://generativelanguage.googleapis.com")
+        client = _client(
+            wire_protocol="google",
+            api_key="k-g",
+            base_url="https://generativelanguage.googleapis.com",
+        )
         it = client.chat_stream(
             messages=[{"role": "system", "content": "规则"}, {"role": "user", "content": "hi"}],
-            tools=[{"type": "function", "function": {"name": "web_fetch", "description": "d", "parameters": {"type": "object"}}}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_fetch",
+                        "description": "d",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
         )
         deltas = []
         while True:
@@ -965,7 +1042,9 @@ def test_google_function_call_aggregation_and_truncation():
     ]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _stream_resp(lines)
-        it = _client(wire_protocol="google").chat_stream(messages=[{"role": "user", "content": "x"}], tools=[])
+        it = _client(wire_protocol="google").chat_stream(
+            messages=[{"role": "user", "content": "x"}], tools=[]
+        )
         while True:
             try:
                 next(it)
@@ -1001,6 +1080,7 @@ def test_wire_protocol_default_openai_zero_regression():
 
 
 # ── M58: 前缀缓存命中 token 解析（DeepSeek prompt_cache_hit_tokens / Kimi cached_tokens / Anthropic cache_read）──
+
 
 def test_chat_cache_hit_deepseek_field():
     """OpenAI 兼容（DeepSeek）：usage.prompt_cache_hit_tokens 解析入 LLMResponse."""
@@ -1079,14 +1159,24 @@ def test_anthropic_orphan_tool_use_cleaned():
     转换层删除该块；整条仅剩孤立 tool_use 的 assistant 消息删除。
     """
     from llm_loop.llm.client import LLMClient
-    out = LLMClient._to_anthropic_messages([
-        {"role": "user", "content": "hi"},
-        {"role": "assistant", "tool_calls": [{"id": "t1", "name": "read_file", "arguments": {"p": "x"}}]},
-        # t2 声明后无 tool 回执（孤立）
-        {"role": "assistant", "content": "先看代码", "tool_calls": [{"id": "t2", "name": "grep", "arguments": {"q": "x"}}]},
-        {"role": "tool", "tool_call_id": "t1", "content": "内容"},
-        {"role": "user", "content": "继续"},
-    ])
+
+    out = LLMClient._to_anthropic_messages(
+        [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "tool_calls": [{"id": "t1", "name": "read_file", "arguments": {"p": "x"}}],
+            },
+            # t2 声明后无 tool 回执（孤立）
+            {
+                "role": "assistant",
+                "content": "先看代码",
+                "tool_calls": [{"id": "t2", "name": "grep", "arguments": {"q": "x"}}],
+            },
+            {"role": "tool", "tool_call_id": "t1", "content": "内容"},
+            {"role": "user", "content": "继续"},
+        ]
+    )
     # t2 孤立 → 该 assistant 消息的 tool_use 块被剔除，保留文本
     assert out[1]["content"][0]["type"] == "tool_use"  # t1 保留
     assert out[2]["content"] == [{"type": "text", "text": "先看代码"}]  # t2 剔除
@@ -1097,11 +1187,14 @@ def test_anthropic_orphan_tool_use_cleaned():
 def test_anthropic_orphan_tool_result_skipped():
     """孤立 tool_result（无对应 tool_use）→ 跳过该 user 消息."""
     from llm_loop.llm.client import LLMClient
-    out = LLMClient._to_anthropic_messages([
-        {"role": "user", "content": "hi"},
-        {"role": "tool", "tool_call_id": "ghost", "content": "无主回执"},
-        {"role": "user", "content": "继续"},
-    ])
+
+    out = LLMClient._to_anthropic_messages(
+        [
+            {"role": "user", "content": "hi"},
+            {"role": "tool", "tool_call_id": "ghost", "content": "无主回执"},
+            {"role": "user", "content": "继续"},
+        ]
+    )
     roles = [m["role"] for m in out]
     assert roles == ["user", "user"]
     assert all("tool_result" not in json.dumps(m) for m in out)
@@ -1110,11 +1203,14 @@ def test_anthropic_orphan_tool_result_skipped():
 def test_anthropic_all_orphan_tool_use_message_dropped():
     """assistant 消息仅含孤立 tool_use（无文本）→ 整条删除."""
     from llm_loop.llm.client import LLMClient
-    out = LLMClient._to_anthropic_messages([
-        {"role": "user", "content": "hi"},
-        {"role": "assistant", "tool_calls": [{"id": "t9", "name": "ls", "arguments": {}}]},
-        {"role": "user", "content": "继续"},
-    ])
+
+    out = LLMClient._to_anthropic_messages(
+        [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "tool_calls": [{"id": "t9", "name": "ls", "arguments": {}}]},
+            {"role": "user", "content": "继续"},
+        ]
+    )
     assert len(out) == 2
     assert out[0]["role"] == "user"
     assert out[1]["role"] == "user"
@@ -1129,11 +1225,14 @@ def test_anthropic_multi_tool_use_merged_tool_results():
 
     msgs = [
         {"role": "user", "content": "并行查两个"},
-        {"role": "assistant", "content": "\n\n",
-         "tool_calls": [
-             {"id": "A", "type": "function", "function": {"name": "f1", "arguments": "{}"}},
-             {"id": "B", "type": "function", "function": {"name": "f2", "arguments": "{}"}},
-         ]},
+        {
+            "role": "assistant",
+            "content": "\n\n",
+            "tool_calls": [
+                {"id": "A", "type": "function", "function": {"name": "f1", "arguments": "{}"}},
+                {"id": "B", "type": "function", "function": {"name": "f2", "arguments": "{}"}},
+            ],
+        },
         {"role": "tool", "tool_call_id": "A", "content": "结果A"},
         {"role": "tool", "tool_call_id": "B", "content": "结果B"},
         {"role": "user", "content": "继续"},
@@ -1156,15 +1255,18 @@ def test_anthropic_single_tool_use_regression():
     from llm_loop.llm.client import LLMClient
 
     msgs = [
-        {"role": "assistant", "content": "查",
-         "tool_calls": [{"id": "C", "type": "function", "function": {"name": "f", "arguments": "{}"}}]},
+        {
+            "role": "assistant",
+            "content": "查",
+            "tool_calls": [
+                {"id": "C", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+            ],
+        },
         {"role": "tool", "tool_call_id": "C", "content": "结果C"},
     ]
     out = LLMClient._to_anthropic_messages(msgs)
     assert out[-1]["role"] == "user"
-    assert out[-1]["content"] == [
-        {"type": "tool_result", "tool_use_id": "C", "content": "结果C"}
-    ]
+    assert out[-1]["content"] == [{"type": "tool_result", "tool_use_id": "C", "content": "结果C"}]
 
 
 def test_anthropic_cache_control_localhost():
@@ -1178,12 +1280,28 @@ def test_anthropic_cache_control_localhost():
     ]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _stream_resp(lines)
-        client = _client(wire_protocol="anthropic", api_key="k-an", base_url="http://localhost:1234/v1")
+        client = _client(
+            wire_protocol="anthropic", api_key="k-an", base_url="http://localhost:1234/v1"
+        )
         it = client.chat_stream(
             messages=[{"role": "system", "content": "你是助手"}, {"role": "user", "content": "hi"}],
             tools=[
-                {"type": "function", "function": {"name": "read_file", "description": "d", "parameters": {"type": "object"}}},
-                {"type": "function", "function": {"name": "web_fetch", "description": "d", "parameters": {"type": "object"}}},
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "description": "d",
+                        "parameters": {"type": "object"},
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_fetch",
+                        "description": "d",
+                        "parameters": {"type": "object"},
+                    },
+                },
             ],
         )
         while True:
@@ -1193,7 +1311,9 @@ def test_anthropic_cache_control_localhost():
                 break
         payload = client_cls.return_value.stream.call_args.kwargs["json"]
         # system → 数组 + cache_control
-        assert payload["system"] == [{"type": "text", "text": "你是助手", "cache_control": {"type": "ephemeral"}}]
+        assert payload["system"] == [
+            {"type": "text", "text": "你是助手", "cache_control": {"type": "ephemeral"}}
+        ]
         # tools 末条 cache_control（前缀固化）
         assert payload["tools"][0].get("cache_control") is None
         assert payload["tools"][-1]["cache_control"] == {"type": "ephemeral"}
@@ -1209,10 +1329,21 @@ def test_anthropic_cache_control_remote_off():
     ]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _stream_resp(lines)
-        client = _client(wire_protocol="anthropic", api_key="k-an", base_url="https://api.example.com/v1")
+        client = _client(
+            wire_protocol="anthropic", api_key="k-an", base_url="https://api.example.com/v1"
+        )
         it = client.chat_stream(
             messages=[{"role": "system", "content": "你是助手"}, {"role": "user", "content": "hi"}],
-            tools=[{"type": "function", "function": {"name": "read_file", "description": "d", "parameters": {"type": "object"}}}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "description": "d",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
         )
         while True:
             try:
@@ -1230,7 +1361,9 @@ def test_anthropic_cache_control_env_override(monkeypatch):
     client = _client(wire_protocol="anthropic", api_key="k", base_url="http://localhost:1234/v1")
     assert client._anthropic_cache_enabled() is False
     monkeypatch.setenv("ANTHROPIC_CACHE_CONTROL", "1")
-    client2 = _client(wire_protocol="anthropic", api_key="k", base_url="https://remote.example.com/v1")
+    client2 = _client(
+        wire_protocol="anthropic", api_key="k", base_url="https://remote.example.com/v1"
+    )
     assert client2._anthropic_cache_enabled() is True
 
 
@@ -1297,7 +1430,9 @@ def test_chat_disconnect_retry_disabled(monkeypatch):
 
     monkeypatch.setenv("LLM_RETRY_DISCONNECT", "0")
     with mock.patch("httpx.Client") as client_cls:
-        client_cls.return_value.stream.side_effect = httpx.RemoteProtocolError("peer closed connection")
+        client_cls.return_value.stream.side_effect = httpx.RemoteProtocolError(
+            "peer closed connection"
+        )
         with pytest.raises(LLMNetworkError):
             _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
     assert client_cls.return_value.stream.call_count == 1
@@ -1390,15 +1525,19 @@ def test_chat_think_tags_can_split_across_sse_chunks():
 
 def test_unclosed_think_does_not_poison_next_request():
     """未闭合标签按字面正文回吐，且下一请求仍从干净 parser 状态开始。"""
-    first = _FakeStreamCtx([
-        'data: {"choices": [{"delta": {"content": "<think>未闭合推理"}}]}',
-        "data: [DONE]",
-    ])
-    second = _FakeStreamCtx([
-        'data: {"choices": [{"delta": {"content": "下一轮正文"}}]}',
-        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
-        "data: [DONE]",
-    ])
+    first = _FakeStreamCtx(
+        [
+            'data: {"choices": [{"delta": {"content": "<think>未闭合推理"}}]}',
+            "data: [DONE]",
+        ]
+    )
+    second = _FakeStreamCtx(
+        [
+            'data: {"choices": [{"delta": {"content": "下一轮正文"}}]}',
+            'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ]
+    )
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.side_effect = [first, second]
         c = _client()
@@ -1412,18 +1551,22 @@ def test_unclosed_think_does_not_poison_next_request():
 
 def test_concurrent_streams_on_same_client_have_isolated_think_state():
     """共享 provider client 的并发 session 不得共享 think parser 状态。"""
-    first = _FakeStreamCtx([
-        'data: {"choices": [{"delta": {"content": "<think>A"}}]}',
-        # 第二个 reasoning delta 让旧实现先把 self._in_think=True 写回共享 client，
-        # 再把 generator 停在下一次 yield；此时启动 g2 可稳定暴露跨会话污染。
-        'data: {"choices": [{"delta": {"content": "B"}}]}',
-        'data: {"choices": [{"delta": {"content": "</think>done-a"}}]}',
-        "data: [DONE]",
-    ])
-    second = _FakeStreamCtx([
-        'data: {"choices": [{"delta": {"content": "visible-b"}}]}',
-        "data: [DONE]",
-    ])
+    first = _FakeStreamCtx(
+        [
+            'data: {"choices": [{"delta": {"content": "<think>A"}}]}',
+            # 第二个 reasoning delta 让旧实现先把 self._in_think=True 写回共享 client，
+            # 再把 generator 停在下一次 yield；此时启动 g2 可稳定暴露跨会话污染。
+            'data: {"choices": [{"delta": {"content": "B"}}]}',
+            'data: {"choices": [{"delta": {"content": "</think>done-a"}}]}',
+            "data: [DONE]",
+        ]
+    )
+    second = _FakeStreamCtx(
+        [
+            'data: {"choices": [{"delta": {"content": "visible-b"}}]}',
+            "data: [DONE]",
+        ]
+    )
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.side_effect = [first, second]
         c = _client()
@@ -1448,9 +1591,7 @@ def test_interruption_replay_marker_keeps_existing_provider_projection_boundary(
     replay = {
         "provider": "minimax",
         "fields": {
-            "reasoning_details": [
-                {"type": "reasoning.text", "text": "plan", "signature": "sig-1"}
-            ]
+            "reasoning_details": [{"type": "reasoning.text", "text": "plan", "signature": "sig-1"}]
         },
     }
     current = Message(role="user", content="continue", source=MessageSource.USER)
@@ -1487,10 +1628,12 @@ def test_chat_template_reasoning_effort_uses_explicit_model_mapping() -> None:
 
     def fake_stream(self, method, url, **kwargs):
         payloads.append(kwargs.get("json", {}))
-        return _FakeStreamCtx([
-            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
-            "data: [DONE]",
-        ])
+        return _FakeStreamCtx(
+            [
+                'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+                "data: [DONE]",
+            ]
+        )
 
     with mock.patch("httpx.Client.stream", fake_stream):
         c = _client(

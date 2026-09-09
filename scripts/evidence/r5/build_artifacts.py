@@ -31,7 +31,9 @@ fixture_payload = {
     },
 }
 FIXTURE_OUT.parent.mkdir(parents=True, exist_ok=True)
-FIXTURE_OUT.write_text(json.dumps(fixture_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+FIXTURE_OUT.write_text(
+    json.dumps(fixture_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+)
 
 rows: list[dict[str, object]] = []
 for provider in ("minimax", "deepseek"):
@@ -42,8 +44,15 @@ rng = random.Random(SEED)
 rng.shuffle(rows)
 for idx, row in enumerate(rows, 1):
     row["run_id"] = f"R5-{idx:03d}"
-matrix_payload = {"schema": "evidence-r5-matrix-v1", "random_seed": SEED, "count": len(rows), "runs": rows}
-MATRIX_OUT.write_text(json.dumps(matrix_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+matrix_payload = {
+    "schema": "evidence-r5-matrix-v1",
+    "random_seed": SEED,
+    "count": len(rows),
+    "runs": rows,
+}
+MATRIX_OUT.write_text(
+    json.dumps(matrix_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+)
 
 for path in (FIXTURE_OUT, MATRIX_OUT):
     print(hashlib.sha256(path.read_bytes()).hexdigest(), path)

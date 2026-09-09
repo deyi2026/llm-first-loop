@@ -91,10 +91,18 @@ def test_dispatch_disabled(tmp_path: Path):
 
 
 def test_dispatch_concurrent_limit(tmp_path: Path):
-    config = CodeArtsSettings(enabled=True, endpoint="https://x.com", ak="a", sk="b", max_concurrent=1)
+    config = CodeArtsSettings(
+        enabled=True, endpoint="https://x.com", ak="a", sk="b", max_concurrent=1
+    )
     scheduler = _make_scheduler(config, tmp_path=tmp_path)
     # 手动填满在途
-    handle = ExecutionHandle(handle_id="h1", session_id="s1", trace_id="t1", created_at="2026-01-01T00:00:00Z", status=HandleStatus.RUNNING)
+    handle = ExecutionHandle(
+        handle_id="h1",
+        session_id="s1",
+        trace_id="t1",
+        created_at="2026-01-01T00:00:00Z",
+        status=HandleStatus.RUNNING,
+    )
     scheduler._handle_registry.register(handle, session_id="s1", trace_id="t1")
     result = scheduler.dispatch(_make_task(), session_id="s1")
     assert result.status == ToolResultStatus.BLOCKED
@@ -139,7 +147,14 @@ def test_dispatch_catastrophic_approved(tmp_path: Path):
     )
     scheduler._risk_classifier = mock_risk
     mock_client = MagicMock()
-    handle = ExecutionHandle(handle_id="h1", session_id="s1", trace_id="t1", created_at="2026-01-01T00:00:00Z", status=HandleStatus.RUNNING, remote_status=RemoteStatus.RUNNING)
+    handle = ExecutionHandle(
+        handle_id="h1",
+        session_id="s1",
+        trace_id="t1",
+        created_at="2026-01-01T00:00:00Z",
+        status=HandleStatus.RUNNING,
+        remote_status=RemoteStatus.RUNNING,
+    )
     mock_client.trigger_execution.return_value = handle
     scheduler._client = mock_client
     result = scheduler.dispatch(_make_task(), session_id="s1")

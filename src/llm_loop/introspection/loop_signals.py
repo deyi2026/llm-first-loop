@@ -91,7 +91,6 @@ class LoopSignalDetector:
                     fact=f"演进建议 {sid} 授权确认但自动审阅失败: {exc}（已加入忽略清单防反复弹）",
                     reason="store.review 执行异常",
                     suggestion="可执行 CLI: evolve-review <id> accepted 人工补审。",
-
                 )
         # 拒绝/降级 → 文本引导（不重复弹窗；下次仅静默，如需审阅走 CLI）
         return ArchitectureEvent(
@@ -103,7 +102,6 @@ class LoopSignalDetector:
                 "多条待审阅可逐条处理（不审阅不阻断本循环）。"
             ),
         )
-
 
     # ── EVO-20260811-f94e5306 补丁: 幽灵建议防御（确认后存储不存在的建议持久化忽略）──
     @staticmethod

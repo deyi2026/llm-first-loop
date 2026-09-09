@@ -52,9 +52,7 @@ def test_human_edit_is_idempotent_and_never_creates_model_messages(tmp_path: Pat
     workspace, events, _sessions, sid, human, query = _service(tmp_path)
     target = workspace / "a.txt"
     target.write_text("before\n", encoding="utf-8")
-    baseline = human.observe(
-        session_id=sid, workspace_scope=str(workspace), relative_path="a.txt"
-    )
+    baseline = human.observe(session_id=sid, workspace_scope=str(workspace), relative_path="a.txt")
     first = human.edit(
         session_id=sid,
         workspace_scope=str(workspace),
@@ -92,9 +90,7 @@ def test_same_request_id_different_params_is_conflict(tmp_path: Path) -> None:
     workspace, _events, _sessions, sid, human, _query = _service(tmp_path)
     target = workspace / "a.txt"
     target.write_text("before\n", encoding="utf-8")
-    baseline = human.observe(
-        session_id=sid, workspace_scope=str(workspace), relative_path="a.txt"
-    )
+    baseline = human.observe(session_id=sid, workspace_scope=str(workspace), relative_path="a.txt")
     human.edit(
         session_id=sid,
         workspace_scope=str(workspace),
@@ -120,9 +116,7 @@ def test_prepared_only_retry_is_read_only_unknown_not_replayed(tmp_path: Path) -
     workspace, events, _sessions, sid, human, _query = _service(tmp_path)
     target = workspace / "a.txt"
     target.write_text("before\n", encoding="utf-8")
-    baseline = human.observe(
-        session_id=sid, workspace_scope=str(workspace), relative_path="a.txt"
-    )
+    baseline = human.observe(session_id=sid, workspace_scope=str(workspace), relative_path="a.txt")
     digest = human.request_digest(
         session_id=sid,
         workspace_scope=str(workspace),
@@ -170,9 +164,7 @@ def test_busy_session_does_not_write_or_consume_request_id(tmp_path: Path) -> No
     workspace, events, sessions, sid, human, _query = _service(tmp_path)
     target = workspace / "a.txt"
     target.write_text("before\n", encoding="utf-8")
-    baseline = human.observe(
-        session_id=sid, workspace_scope=str(workspace), relative_path="a.txt"
-    )
+    baseline = human.observe(session_id=sid, workspace_scope=str(workspace), relative_path="a.txt")
     with sessions.run_lease(sid) as acquired:
         assert acquired
         with pytest.raises(HumanFileOperationError, match="session_busy"):
@@ -186,9 +178,7 @@ def test_busy_session_does_not_write_or_consume_request_id(tmp_path: Path) -> No
                 file_contract_version=1,
             )
     assert target.read_text(encoding="utf-8") == "before\n"
-    assert not any(
-        e.payload.get("request_id") == "request-0004" for e in events.read(sid)
-    )
+    assert not any(e.payload.get("request_id") == "request-0004" for e in events.read(sid))
 
 
 def test_human_path_is_relative_utf8_regular_and_no_symlink(tmp_path: Path) -> None:
@@ -213,7 +203,9 @@ def test_human_path_is_relative_utf8_regular_and_no_symlink(tmp_path: Path) -> N
         human.observe(session_id=sid, workspace_scope=str(workspace), relative_path="binary.bin")
 
 
-def test_human_bom_editor_content_excludes_marker_but_save_preserves_one_bom(tmp_path: Path) -> None:
+def test_human_bom_editor_content_excludes_marker_but_save_preserves_one_bom(
+    tmp_path: Path,
+) -> None:
     workspace, _events, _sessions, sid, human, _query = _service(tmp_path)
     target = workspace / "bom.txt"
     target.write_bytes(b"\xef\xbb\xbfbefore\n")
@@ -268,9 +260,7 @@ def test_human_save_holds_run_lease_against_cross_process_run_and_delete(
     workspace, _events, sessions, sid, human, _query = _service(tmp_path)
     target = workspace / "a.txt"
     target.write_text("before\n", encoding="utf-8")
-    baseline = human.observe(
-        session_id=sid, workspace_scope=str(workspace), relative_path="a.txt"
-    )
+    baseline = human.observe(session_id=sid, workspace_scope=str(workspace), relative_path="a.txt")
     entered = threading.Event()
     release = threading.Event()
     failures: list[BaseException] = []
@@ -302,7 +292,7 @@ def test_human_save_holds_run_lease_against_cross_process_run_and_delete(
     assert entered.wait(timeout=5)
 
     source_root = str(Path(__file__).resolve().parents[2] / "src")
-    script = r'''
+    script = r"""
 import sys
 from llm_loop.core.session import SessionMutationBusyError, SessionStore
 store = SessionStore(sys.argv[1])
@@ -315,7 +305,7 @@ except SessionMutationBusyError:
     print("delete=busy")
 else:
     print("delete=not_busy")
-'''
+"""
     env = os.environ.copy()
     env["PYTHONPATH"] = source_root
     proc = subprocess.run(

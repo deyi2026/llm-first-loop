@@ -92,7 +92,8 @@ class StaticCheckChain:
         enabled = self._checkers or _LANG_CHECKERS.get(language, ())
         if not enabled:
             return StaticCheckResult(
-                file_path=file_path, language=language,
+                file_path=file_path,
+                language=language,
                 overall_status=CheckOverallStatus.SKIPPED,
                 checkers=(),
             )
@@ -113,17 +114,21 @@ class StaticCheckChain:
         overall = self._aggregate(results)
 
         result = StaticCheckResult(
-            file_path=file_path, language=language,
-            overall_status=overall, checkers=tuple(results),
+            file_path=file_path,
+            language=language,
+            overall_status=overall,
+            checkers=tuple(results),
         )
 
         # 事件落盘（统计，不含源码）
         if self._event_store is not None:
             try:
                 self._event_store.append(
-                    self._session_id, "task.static_check.completed",
+                    self._session_id,
+                    "task.static_check.completed",
                     {
-                        "file_path": file_path, "language": language,
+                        "file_path": file_path,
+                        "language": language,
                         "overall_status": overall.value,
                         "checker_count": len(results),
                         "issue_count": sum(len(c.issues) for c in results),
@@ -145,8 +150,10 @@ class StaticCheckChain:
             if bin_path is None:
                 return CheckerResult(name, CheckerStatus.SKIPPED)
 
-        cmd = [part.replace("{bin}", bin_path).replace("{file_path}", file_path)
-               for part in _CMD_TEMPLATES[name]]
+        cmd = [
+            part.replace("{bin}", bin_path).replace("{file_path}", file_path)
+            for part in _CMD_TEMPLATES[name]
+        ]
 
         # 注入 command_runner 优先（测试/隔离场景）；缺省 subprocess 执行
         if self._command_runner is not None:
@@ -162,7 +169,10 @@ class StaticCheckChain:
         else:
             try:
                 proc = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=self._timeout_s,
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=self._timeout_s,
                 )
                 output = (proc.stdout or "") + (proc.stderr or "")
                 exit_code = proc.returncode
@@ -199,26 +209,41 @@ class StaticCheckChain:
         if checker == "ruff":
             # 错误码格式优先；无码（invalid-syntax）用第二个正则 + RUFF 占位
             for m in _RUFF_RE.finditer(output):
-                issues.append(CheckIssue(
-                    file_path=m.group(1), line=int(m.group(2)), column=int(m.group(3)),
-                    code=m.group(4), message=m.group(5).strip()[:200],
-                    severity=Severity.ERROR,
-                ))
+                issues.append(
+                    CheckIssue(
+                        file_path=m.group(1),
+                        line=int(m.group(2)),
+                        column=int(m.group(3)),
+                        code=m.group(4),
+                        message=m.group(5).strip()[:200],
+                        severity=Severity.ERROR,
+                    )
+                )
             if not issues:
                 for m in _RUFF_NOSYNTAX_RE.finditer(output):
-                    issues.append(CheckIssue(
-                        file_path=m.group(1), line=int(m.group(2)), column=int(m.group(3)),
-                        code="RUFF", message=(m.group(4) + ": " + m.group(5)).strip()[:200],
-                        severity=Severity.ERROR,
-                    ))
+                    issues.append(
+                        CheckIssue(
+                            file_path=m.group(1),
+                            line=int(m.group(2)),
+                            column=int(m.group(3)),
+                            code="RUFF",
+                            message=(m.group(4) + ": " + m.group(5)).strip()[:200],
+                            severity=Severity.ERROR,
+                        )
+                    )
         elif checker == "pyright":
             for m in _PYRIGHT_RE.finditer(output):
                 sev = _SEVERITY_MAP.get(m.group(3), Severity.WARNING)
-                issues.append(CheckIssue(
-                    file_path=m.group(1), line=int(m.group(2)), column=int(m.group(3)),
-                    code="pyright", message=m.group(5).strip()[:200],
-                    severity=sev,
-                ))
+                issues.append(
+                    CheckIssue(
+                        file_path=m.group(1),
+                        line=int(m.group(2)),
+                        column=int(m.group(3)),
+                        code="pyright",
+                        message=m.group(5).strip()[:200],
+                        severity=sev,
+                    )
+                )
         return tuple(issues)
 
     @staticmethod

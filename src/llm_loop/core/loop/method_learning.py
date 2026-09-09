@@ -4,6 +4,7 @@ Keeps Method observability/reflection out of LoopEngine's core five-stage loop. 
 post-run, fail-open, and non-authoritative: it cannot rewrite the user-visible final answer.
 Engine wiring: LoopEngine 持有 MethodLearningService 实例（组合而非 Mixin 基类）。
 """
+
 from __future__ import annotations
 
 import logging
@@ -103,13 +104,18 @@ class MethodLearningService:
         """Run isolated post-task reflection when explicitly enabled."""
         try:
             corrections = getattr(self._engine, "corrections", None)
-            method_store = getattr(corrections, "method_store", None) if corrections is not None else None
+            method_store = (
+                getattr(corrections, "method_store", None) if corrections is not None else None
+            )
             method_client = self._engine.llm
             if self._engine.llm_pool is not None and model_used and "/" in model_used:
                 try:
                     method_client = self._engine.llm_pool.get_client(model_used)
                 except Exception:  # noqa: BLE001 - preserve original run result
-                    logger.debug("Method reflection model resolve failed; fallback current client", exc_info=True)
+                    logger.debug(
+                        "Method reflection model resolve failed; fallback current client",
+                        exc_info=True,
+                    )
             outcome = reflect_after_run(
                 mode=getattr(self._engine.settings, "method_reflection_mode", "off"),
                 llm_client=method_client,

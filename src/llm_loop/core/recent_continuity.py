@@ -47,7 +47,11 @@ def latest_model_assistant_before_turn(
     session_messages: list[Any], current_turn_ref: int | None
 ) -> Any | None:
     """Return the nearest real final model assistant in the immediately prior turn."""
-    if current_turn_ref is None or current_turn_ref <= 0 or current_turn_ref >= len(session_messages):
+    if (
+        current_turn_ref is None
+        or current_turn_ref <= 0
+        or current_turn_ref >= len(session_messages)
+    ):
         return None
     current = session_messages[current_turn_ref]
     if not is_human_user_message(current):
@@ -163,15 +167,11 @@ def _resume_runtime_fact(state: dict[str, Any] | None) -> str:
         payload["checkpoint_selection"] = {
             "latest_checkpoint_seq": int(state.get("latest_checkpoint_seq") or 0),
             "model_state_checkpoint_seq": int(state.get("checkpoint_seq") or 0),
-            "latest_checkpoint_model_chars": int(
-                state.get("latest_checkpoint_model_chars") or 0
-            ),
+            "latest_checkpoint_model_chars": int(state.get("latest_checkpoint_model_chars") or 0),
         }
     if not payload:
         return ""
-    return "[runtime_continuity] " + json.dumps(
-        payload, ensure_ascii=False, separators=(",", ":")
-    )
+    return "[runtime_continuity] " + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def apply_recent_continuity_suffix(
@@ -192,7 +192,11 @@ def apply_recent_continuity_suffix(
     This keeps the stable system prefix unchanged and avoids providers that reject a
     second/mid-turn system role. The fact contains no continuation directive.
     """
-    if current_turn_ref is None or current_turn_ref < 0 or current_turn_ref >= len(session_messages):
+    if (
+        current_turn_ref is None
+        or current_turn_ref < 0
+        or current_turn_ref >= len(session_messages)
+    ):
         return built, {"applied": False, "reason": "no_current_turn"}
     current = session_messages[current_turn_ref]
     if not is_human_user_message(current):

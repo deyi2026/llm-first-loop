@@ -403,9 +403,7 @@ class CodeArtsScheduler:
             )
         )
 
-    def _audit_approval(
-        self, task: DispatchTask, approved: bool, timestamp: str
-    ) -> None:
+    def _audit_approval(self, task: DispatchTask, approved: bool, timestamp: str) -> None:
         from llm_loop.codearts.models import AuditRecord
 
         self._audit_logger.log(
