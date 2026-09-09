@@ -350,3 +350,53 @@ def test_image_vision_text_is_recoverable_but_never_claimed_as_complete_source(
     assert record.extraction_kind == "vision_text"
     assert record.extraction_complete is False
     assert record.extracted_chars == len("DERIVED-VISION-DESCRIPTION")
+
+
+def test_recent_attachment_library_is_workspace_scoped_and_path_free(
+    build_test_engine, fake_settings
+) -> None:
+    engine, _ = build_test_engine([])
+    client = _client(engine)
+    first = _upload(client, "first.txt", b"FIRST")
+    second = _upload(client, "second.txt", b"SECOND")
+
+    resp = client.get("/api/v1/attachments/recent?limit=10")
+    assert resp.status_code == 200
+    items = resp.json()["attachments"]
+    refs = {item["ref"] for item in items}
+    assert first["attachment_ref"] in refs
+    assert second["attachment_ref"] in refs
+    assert all("path" not in item and "workspace_scope" not in item for item in items)
+    assert all("source_text_sha256" in item for item in items)
+
+
+def test_import_workspace_file_uses_same_opaque_attachment_contract(
+    build_test_engine, fake_settings, tmp_path
+) -> None:
+    engine, _ = build_test_engine([])
+    engine.workspace_root = str(tmp_path)
+    source = tmp_path / "notes.txt"
+    source.write_bytes(b"WORKSPACE-BYTES")
+    client = _client(engine)
+
+    resp = client.post(
+        "/api/v1/attachments/import-workspace", json={"path": "notes.txt"}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["attachment_ref"].startswith("attachment://")
+    assert "path" not in body
+    store = AttachmentStore(fake_settings.data_dir)
+    record = store.resolve(body["attachment_ref"], workspace_scope=workspace_scope(tmp_path))
+    assert record.filename == "notes.txt"
+    assert store.original_path(
+        body["attachment_ref"], workspace_scope=workspace_scope(tmp_path)
+    ).read_bytes() == b"WORKSPACE-BYTES"
+
+    outside = tmp_path.parent / "outside-webui-import.txt"
+    outside.write_text("NO", encoding="utf-8")
+    denied = client.post(
+        "/api/v1/attachments/import-workspace", json={"path": str(outside)}
+    )
+    assert denied.status_code == 404
+    assert denied.json()["error"] == "workspace_file_not_found"

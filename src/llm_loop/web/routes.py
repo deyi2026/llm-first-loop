@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Request
+from fastapi import APIRouter, BackgroundTasks, Query, Request
 from fastapi.responses import (
     JSONResponse,
     RedirectResponse,
@@ -51,6 +51,7 @@ from .schemas import (
     SessionMetaItem,
     UploadRequest,
     UploadResponse,
+    WorkspaceAttachmentImportRequest,
     WorkspaceRequest,
     WorkspaceSwitchRequest,
 )
@@ -74,6 +75,21 @@ def _attachment_store(engine: Any) -> AttachmentStore:
 
 def _current_attachment_workspace_scope(engine: Any) -> str:
     return attachment_workspace_scope(getattr(engine, "workspace_root", "") or None)
+
+
+def _resolve_workspace_file(engine: Any, raw_path: str) -> Path | None:
+    """Resolve one ordinary file inside the current workspace (no escape)."""
+    root = Path(
+        getattr(engine, "workspace_root", "") or Path(__file__).resolve().parents[3]
+    ).expanduser().resolve()
+    try:
+        raw = Path(str(raw_path or "")).expanduser()
+        target = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
+    except OSError:
+        return None
+    if not target.is_relative_to(root) or not target.is_file():
+        return None
+    return target
 
 
 def _resolve_chat_attachment_facts(
@@ -1858,6 +1874,104 @@ def delete_session(session_id: str, request: Request, confirm: bool = False) -> 
     )
 
 
+def _process_upload_bytes(
+    engine: Any,
+    *,
+    workspace_scope: str,
+    filename: str,
+    data: bytes,
+) -> UploadResponse | Response:
+    """Validate, extract/describe, and persist already-decoded upload bytes."""
+    err = validate_upload(filename, data)
+    if err:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_upload", "detail": err},
+        )
+
+    ext = file_ext(filename)
+    if ext in SUPPORTED_IMAGE_EXTS:
+        from .vision import describe_image, vision_enabled
+
+        if not vision_enabled(settings=getattr(engine, "settings", None)):
+            return _persist_upload_response(
+                engine,
+                workspace_scope=workspace_scope,
+                filename=filename,
+                data=data,
+                response=UploadResponse(
+                    source_filename=filename,
+                    content_type="image",
+                    status="degraded",
+                    result_text="",
+                    detail="图片识别不可用（无视觉模型/工具），图片未识别且未包含在请求中。",
+                ),
+            )
+        mime = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+            ".bmp": "image/bmp",
+        }.get(ext, "image/png")
+        try:
+            vision_text = describe_image(
+                data, mime=mime, settings=getattr(engine, "settings", None)
+            )
+            return _persist_upload_response(
+                engine,
+                workspace_scope=workspace_scope,
+                filename=filename,
+                data=data,
+                response=UploadResponse(
+                    source_filename=filename,
+                    content_type="image",
+                    status="ok",
+                    result_text=vision_text,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - persistence remains truthful on vision failure
+            logger.exception("image vision failed: %s", filename)
+            return _persist_upload_response(
+                engine,
+                workspace_scope=workspace_scope,
+                filename=filename,
+                data=data,
+                response=UploadResponse(
+                    source_filename=filename,
+                    content_type="image",
+                    status="degraded",
+                    detail=(
+                        f"[程序异常] 图片识别失败（{type(exc).__name__}: {exc}）。"
+                        "图片内容**未包含**在本次请求中——请勿让 LLM 猜测图片内容。"
+                        "可设置 WEB_VISION_MODEL 指定 provider/model，或改用文本通道。"
+                    ),
+                ),
+            )
+
+    result = process_upload(filename, data)
+    return _persist_upload_response(
+        engine,
+        workspace_scope=workspace_scope,
+        filename=filename,
+        data=data,
+        response=UploadResponse(
+            source_filename=result.source_filename,
+            content_type=result.content_type,
+            status=result.status,
+            result_text=result.result_text,
+            detail=result.detail,
+            truncated=result.truncated,
+        ),
+        extracted_text=result.exact_text,
+        extraction_complete=result.extraction_complete,
+        extraction_kind=(f"{result.content_type}_extracted" if result.exact_text else ""),
+        page_count=result.page_count,
+        pages_extracted=result.pages_extracted,
+    )
+
+
 @router.post(
     "/api/v1/upload",
     response_model=UploadResponse,
@@ -1903,89 +2017,95 @@ def upload_file(payload: UploadRequest, request: Request) -> UploadResponse | Re
             status_code=400,
             content={"error": "invalid_upload", "detail": err},
         )
-
-    ext = file_ext(payload.filename)
-    if ext in SUPPORTED_IMAGE_EXTS:
-        # 图片 → 视觉识别（无 key 如实降级）
-        from .vision import describe_image, vision_enabled
-
-        if not vision_enabled(settings=getattr(engine, "settings", None)):
-            return _persist_upload_response(
-                engine,
-                workspace_scope=upload_workspace_scope,
-                filename=payload.filename,
-                data=data,
-                response=UploadResponse(
-                    source_filename=payload.filename,
-                    content_type="image",
-                    status="degraded",
-                    result_text="",
-                    detail="图片识别不可用（无视觉模型/工具），图片未识别且未包含在请求中。",
-                ),
-            )
-        mime = {
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".gif": "image/gif",
-            ".webp": "image/webp",
-            ".bmp": "image/bmp",
-        }.get(ext, "image/png")
-        try:
-            text = describe_image(data, mime=mime, settings=getattr(engine, "settings", None))
-            return _persist_upload_response(
-                engine,
-                workspace_scope=upload_workspace_scope,
-                filename=payload.filename,
-                data=data,
-                response=UploadResponse(
-                    source_filename=payload.filename,
-                    content_type="image",
-                    status="ok",
-                    result_text=text,
-                ),
-            )
-        except Exception as exc:  # 识别失败如实反馈，不伪装成功
-            logger.exception("image vision failed: %s", payload.filename)
-            return _persist_upload_response(
-                engine,
-                workspace_scope=upload_workspace_scope,
-                filename=payload.filename,
-                data=data,
-                response=UploadResponse(
-                    source_filename=payload.filename,
-                    content_type="image",
-                    status="degraded",
-                    detail=(
-                        f"[程序异常] 图片识别失败（{type(exc).__name__}: {exc}）。"
-                        "图片内容**未包含**在本次请求中——请勿让 LLM 猜测图片内容。"
-                        "可设置 WEB_VISION_MODEL 指定 provider/model（如 kimi/k3），"
-                        "或改用文本通道。"
-                    ),
-                ),
-            )
-
-    # 文本/docx/PDF → 文档提取
-    result = process_upload(payload.filename, data)
-    return _persist_upload_response(
+    return _process_upload_bytes(
         engine,
         workspace_scope=upload_workspace_scope,
         filename=payload.filename,
         data=data,
-        response=UploadResponse(
-            source_filename=result.source_filename,
-            content_type=result.content_type,
-            status=result.status,
-            result_text=result.result_text,
-            detail=result.detail,
-            truncated=result.truncated,
-        ),
-        extracted_text=result.exact_text,
-        extraction_complete=result.extraction_complete,
-        extraction_kind=(f"{result.content_type}_extracted" if result.exact_text else ""),
-        page_count=result.page_count,
-        pages_extracted=result.pages_extracted,
     )
+
+
+# ── Web V2 附件面板（近期附件 + 工作区文件导入为 durable attachment ref）──
+
+
+@router.get("/api/v1/attachments/recent")
+def attachments_recent(request: Request, limit: int = Query(20, ge=1, le=100)) -> Response:
+    """Recent workspace-scoped attachment facts; no host paths or extracted bodies."""
+    engine = _engine_from(request)
+    try:
+        with engine.workspace_snapshot():
+            scope = _current_attachment_workspace_scope(engine)
+            records = _attachment_store(engine).list_recent(
+                workspace_scope=scope, limit=max(1, min(int(limit or 20), 100))
+            )
+    except WorkspaceBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409, content={"error": "workspace_busy", "detail": str(exc)}
+        )
+    except Exception as exc:  # noqa: BLE001 - discovery is fail-open
+        logger.exception("recent attachment discovery failed")
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "attachment_list_failed", "detail": type(exc).__name__},
+        )
+    return UTF8JSONResponse(
+        content={"attachments": [record.public_facts() for record in records]}
+    )
+
+
+@router.post("/api/v1/attachments/import-workspace", response_model=None)
+def import_workspace_attachment(
+    payload: WorkspaceAttachmentImportRequest, request: Request
+) -> UploadResponse | Response:
+    """Explicitly import one current-workspace file into the attachment contract."""
+    engine = _engine_from(request)
+    try:
+        with engine.workspace_snapshot():
+            scope = _current_attachment_workspace_scope(engine)
+            target = _resolve_workspace_file(engine, payload.path)
+            if target is None:
+                return UTF8JSONResponse(
+                    status_code=404,
+                    content={
+                        "error": "workspace_file_not_found",
+                        "detail": "文件不存在、不是普通文件或已越出当前工作区。",
+                    },
+                )
+            try:
+                size = target.stat().st_size
+            except OSError:
+                size = -1
+            from .upload_handlers import MAX_UPLOAD_BYTES
+
+            if size < 0 or size > MAX_UPLOAD_BYTES:
+                return UTF8JSONResponse(
+                    status_code=413 if size > MAX_UPLOAD_BYTES else 400,
+                    content={
+                        "error": "upload_too_large" if size > MAX_UPLOAD_BYTES else "file_unreadable",
+                        "detail": (
+                            f"文件超过 10MB 上限（{size} 字节）。"
+                            if size > MAX_UPLOAD_BYTES
+                            else "文件不可读。"
+                        ),
+                    },
+                )
+            try:
+                data = target.read_bytes()
+            except OSError as exc:
+                return UTF8JSONResponse(
+                    status_code=403,
+                    content={"error": "file_unreadable", "detail": type(exc).__name__},
+                )
+            return _process_upload_bytes(
+                engine,
+                workspace_scope=scope,
+                filename=target.name,
+                data=data,
+            )
+    except WorkspaceBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409, content={"error": "workspace_busy", "detail": str(exc)}
+        )
 
 
 # ── 出产物文件预览（Web V2 对齐 DSH deliverables：编辑的文件可点击打开） ──

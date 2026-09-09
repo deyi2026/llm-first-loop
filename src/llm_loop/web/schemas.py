@@ -156,6 +156,12 @@ class UploadRequest(BaseModel):
     data: str = Field(min_length=1, description="文件内容（base64 编码）")
 
 
+class WorkspaceAttachmentImportRequest(BaseModel):
+    """Import one existing current-workspace file as a durable attachment ref."""
+
+    path: str = Field(min_length=1, max_length=2048, description="当前工作区内文件路径")
+
+
 class FeedbackRequest(BaseModel):
     """消息反馈（POST /api/v1/sessions/{id}/feedback，2026-08-15 对齐 DSH ui-message-feedback）."""
 

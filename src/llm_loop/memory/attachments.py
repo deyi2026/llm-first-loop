@@ -411,6 +411,47 @@ class AttachmentStore:
             "content": chunk,
         }
 
+    def list_recent(
+        self,
+        *,
+        workspace_scope: str,
+        limit: int = 20,
+    ) -> tuple[AttachmentRecord, ...]:
+        """List recent attachment metadata for one exact workspace.
+
+        Discovery surface only: never returns host paths or extracted bodies.
+        A later chat request still resolves/verifies the opaque ref before the
+        attachment can enter the request.
+        """
+        safe_limit = max(1, min(int(limit or 20), 100))
+        bucket = self.root / _workspace_bucket(workspace_scope)
+        if not bucket.is_dir():
+            return ()
+        records: list[AttachmentRecord] = []
+        try:
+            entries = tuple(bucket.iterdir())
+        except OSError:
+            return ()
+        for record_dir in entries:
+            if not record_dir.is_dir():
+                continue
+            metadata_path = record_dir / "metadata.json"
+            original_path = record_dir / "original"
+            if not metadata_path.is_file() or not original_path.is_file():
+                continue
+            try:
+                raw = json.loads(metadata_path.read_text(encoding="utf-8"))
+                record = self._from_json(raw)
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                continue
+            if record.workspace_scope != workspace_scope:
+                continue
+            if record.ref != f"{ATTACHMENT_SCHEME}{record.attachment_id}":
+                continue
+            records.append(record)
+        records.sort(key=lambda item: item.created_at, reverse=True)
+        return tuple(records[:safe_limit])
+
     def original_path(self, ref: str, *, workspace_scope: str) -> Path:
         """Internal-only path helper. Callers must resolve/verify the record first."""
         record = self.resolve(ref, workspace_scope=workspace_scope, verify_content=True)
