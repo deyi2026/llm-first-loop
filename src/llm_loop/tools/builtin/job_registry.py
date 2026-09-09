@@ -194,6 +194,32 @@ class JobRegistry:
                 if j.session_id == session_id and not j.done and not j.killed
             )
 
+    def snapshots_for_session(self, session_id: str) -> tuple[dict[str, object], ...]:
+        """Return owner-scoped local jobs plus durable nonterminal orphan facts.
+
+        Completed jobs remain visible while this runtime still has their local handle.
+        After restart, only durable launched-without-terminal executions are surfaced;
+        no liveness, reattach, or reclaim authority is inferred from PID/PGID facts.
+        """
+        if not session_id:
+            return ()
+        with self._lock:
+            local_ids = [entry.id for entry in self._jobs.values() if entry.session_id == session_id]
+        snapshots: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for job_id in local_ids:
+            item = self.snapshot(job_id, session_id=session_id)
+            if item is not None:
+                snapshots.append(item)
+                seen.add(job_id)
+        for state in self._journal.nonterminal(session_id):
+            if state.job_id in seen:
+                continue
+            item = self.snapshot(state.job_id, session_id=session_id)
+            if item is not None:
+                snapshots.append(item)
+        return tuple(snapshots)
+
     def snapshot(self, job_id: str, *, session_id: str = "") -> dict[str, object] | None:
         """Return local facts or owner-scoped durable facts without fabricating liveness."""
         entry = self.get(job_id)
