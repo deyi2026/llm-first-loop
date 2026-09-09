@@ -30,6 +30,12 @@ cd "$PROJECT_DIR"
 # 无需 PYTHONPATH 旁路；镜像工作区跑测试/服务时应显式设自己的 PYTHONPATH）
 unset PYTHONPATH
 
+# P2(2026-08-29, 并入 origin/main) cognitive env 进程树污染防御（实证事故: 旧 shell 预置的
+# COG_RUNTIME_ANCHOR_MODE=anchor 等 spec5.x 旧变量, 经 dotenv override=False
+# 压过 .env 新配置, build 走 anchor 回退→零 cognitive 编译/零 telemetry）。
+# 启动前清空全部 COG_RUNTIME_*, 统一由本区 .env 定源（进程内 dotenv 注入）。
+unset COG_RUNTIME_MODE COG_RUNTIME_TELEMETRY COG_RUNTIME_ANCHOR_MODE COG_RUNTIME_STATE_VERSION COG_RUNTIME_TIER_ENABLED COG_RUNTIME_DUAL_SOURCE_GUARD
+
 # P1(2026-08-28) 跨区数据锚点污染防御（实证事故: 主区 web/feishu 带 LFL_DATA_DIR=
 # 镜像路径启动, 本区 audit/trace/exception 全部写入镜像区 data/——两区观测互相污染）。
 # 启动前强制清空跨区锚点键, 由本区 .env/默认相对路径接管; 如确需覆盖应写入 .env。

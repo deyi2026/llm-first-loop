@@ -41,7 +41,7 @@ def _init_source(tmp_path: Path, *, with_remote: bool = False) -> tuple[Path, Pa
     remote = None
     if with_remote:
         remote = tmp_path / "source-remote.git"
-        _run(["git", "init", "-q", "--bare", str(remote)], tmp_path)
+        _run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], tmp_path)
         _git(source, "remote", "add", "origin", str(remote))
         _git(source, "push", "-q", "-u", "origin", "main")
     return source, remote
@@ -168,7 +168,7 @@ def test_concurrent_handoffs_use_unique_files_and_no_index_collision(tmp_path: P
 def test_offline_sync_preserves_local_handoff(tmp_path: Path) -> None:
     source, _ = _init_source(tmp_path, with_remote=True)
     continuity_remote = tmp_path / "continuity-remote.git"
-    _run(["git", "init", "-q", "--bare", str(continuity_remote)], tmp_path)
+    _run(["git", "init", "-q", "--bare", "-b", "main", str(continuity_remote)], tmp_path)
     store = tmp_path / "private-continuity"
     _configure_local(source, store, remote=continuity_remote)
     _cli(source, "configure")
@@ -214,7 +214,7 @@ def test_cross_clone_remote_roundtrip_and_closure(tmp_path: Path) -> None:
     _run(["git", "clone", "-q", str(source_remote), str(source_c)], source_c_parent)
 
     continuity_remote = tmp_path / "continuity.git"
-    _run(["git", "init", "-q", "--bare", str(continuity_remote)], tmp_path)
+    _run(["git", "init", "-q", "--bare", "-b", "main", str(continuity_remote)], tmp_path)
     store_a = tmp_path / "store-a"
     store_b = tmp_path / "store-b"
     store_c = tmp_path / "store-c"
@@ -295,7 +295,7 @@ def test_status_and_configure_output_do_not_expose_private_path_or_remote(tmp_pa
     source, _ = _init_source(tmp_path)
     store = tmp_path / "secret-private-path"
     remote = tmp_path / "secret-private-remote.git"
-    _run(["git", "init", "-q", "--bare", str(remote)], tmp_path)
+    _run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], tmp_path)
     configured = _cli(
         source,
         "configure",

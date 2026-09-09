@@ -19,6 +19,20 @@ import pytest
 from llm_loop.core.message import ToolCall
 from llm_loop.llm.client import LLMResponse
 
+# ── calib/screening 系测试依赖 data/calib/*.json 运行时数据（.gitignore 设计不入库）──
+# CI checkout 无 data/ 时整体跳过收集，避免 collection error / FileNotFoundError；
+# 本地有数据则照常收集执行（并入 origin/main b4eb4f8/45f7631 方案的推广版）。
+_CALIB_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "calib"
+collect_ignore: list[str] = []
+if not _CALIB_DATA_DIR.exists():
+    _unit_dir = Path(__file__).resolve().parent / "unit"
+    collect_ignore = [
+        str(p.relative_to(Path(__file__).resolve().parent))
+        for p in sorted(_unit_dir.glob("test_calib_*.py"))
+    ]
+    if (_unit_dir / "test_screening_s_runner.py").exists():
+        collect_ignore.append("unit/test_screening_s_runner.py")
+
 # ── R9-WF-01 tier0 冒烟集（T9-A 四类准入；标注口径：conftest 路径清单单点打标，──
 #    不侵入测试文件——外部混合层避让约束下的必然选择；Phase 2 守卫就绪后
 #    test_arch_guards.py（四检测器全集类）入列）
