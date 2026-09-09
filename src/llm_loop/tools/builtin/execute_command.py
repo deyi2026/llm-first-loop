@@ -37,6 +37,10 @@ _ENV_BLOCK_PATTERNS = (
     "API_KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD",
     "PRIVATE_KEY", "CREDENTIAL", "ACCESS_KEY", "SESSION_KEY", "BEARER",
 )
+# 控制面 capability metadata（review R3 P0-1）：非密钥但 agent 无业务理由
+# 可知——COG_RUNTIME_ENFORCE_FILE 暴露路径即暴露 self-promote 攻击面
+# （同 Unix 用户下 ~/.config 类路径可写），从子进程环境剔除。
+_ENV_CONTROL_PLANE_EXACT = frozenset({"COG_RUNTIME_ENFORCE_FILE"})
 
 def _scrubbed_env() -> dict[str, str]:
     """构造清洗后的子进程环境：白名单强制保留 + 密钥类/控制面剔除 + 其余保留."""
@@ -47,6 +51,8 @@ def _scrubbed_env() -> dict[str, str]:
             scrubbed[k] = v
         elif any(p in up for p in _ENV_BLOCK_PATTERNS):
             continue  # 密钥类剔除，不外泄
+        elif k in _ENV_CONTROL_PLANE_EXACT:
+            continue  # 控制面 capability metadata 剔除（review R3 P0-1）
         else:
             scrubbed[k] = v
     return scrubbed
