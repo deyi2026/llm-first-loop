@@ -86,6 +86,7 @@ class ResourceScopeKind(StrEnum):
 
     RUNTIME = "runtime"
     PROVIDER = "provider"
+    PRODUCT = "product"
     ACCOUNT = "account"
     PROJECT = "project"
     MODEL = "model"
