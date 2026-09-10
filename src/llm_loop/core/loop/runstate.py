@@ -54,6 +54,7 @@ class _RunState:
     last_cache_window_turn_ref: int | None = None
     last_cache_window_stable_fp: str = ""
     cache_gate_stable_fp: str = ""
+    cache_gate_system_fp: str = ""  # system 轴分量指纹（契约 §5.2，门禁双轴后检输入）
     # Exact fingerprint of the actual projected tool schema array for the current
     # provider attempt. Tool schema bytes are part of the request structure and
     # therefore must participate in cache-prefix stability even though they are

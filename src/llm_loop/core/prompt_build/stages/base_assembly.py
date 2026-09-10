@@ -88,6 +88,7 @@ class BaseAssemblyResult:
     base: list[Any]
     prefix_len: int
     stable_fp: str = ""
+    system_fp: str = ""  # system 轴分量指纹（契约 §5.2；门禁双轴判定输入）
 
 
 def run_base_assembly(
@@ -113,12 +114,15 @@ def run_base_assembly(
     # EVO-20260817-72fcd94a L3 发送前门禁·预检（程序常态锚点管理）: 稳定段指纹
     # （system+注入）与该 session 基线不符 → 强制缓存友好压缩，当次 build 即合规化。fail-open。
     try:
+        # 契约 R4（§5/F12）：system 轴 = 裸字符串 stable_digest(system_prompt)，
+        # 与 projection_gate 完全同形；不得复用含稳定注入的 _base_fp（列表形）。
+        _system_fp = stable_digest(system_prompt)
         _base_fp = stable_digest(
             [(m.role, m.content) for m in result.base[: result.prefix_len]]
             + [system_prompt]
         )
         # 轴埋点（步 2）：折叠前归因（门禁侧无原因字段，归因只能在调用点）
-        _probe_axis_change(session_id, _base_fp, tool_prefix_fp)
+        _probe_axis_change(session_id, _system_fp, tool_prefix_fp)
         # Tool schemas are part of the actual provider request prefix/surface.
         # A schema/order change invalidates the previous cache boundary even when
         # system + stable chat bytes are unchanged. Keep the original digest for
@@ -128,9 +132,13 @@ def run_base_assembly(
             if tool_prefix_fp
             else _base_fp
         )
-        cache_monitor.preflight(session_id, result.stable_fp)
+        result.system_fp = _system_fp  # system 轴（契约 §5.2/R4）：门禁按轴而非组合指纹判定
+        # 双轴预检（契约 §3/§7 不变式第 3 条）：system 轴变化 = 真漂移（干预）；
+        # tools 轴变化 = 合法变更（schema/顺序），由调用点轴埋点归因，不干预不计 drift。
+        cache_monitor.preflight(session_id, result.system_fp, tool_prefix_fp)
     except Exception:  # noqa: BLE001
         result.stable_fp = ""
+        result.system_fp = ""
     # Agency-first: session snapshot is runtime/status data, not model input. The old
     # build-time snapshot Message and its throttling plumbing have been removed.
     return result

@@ -470,6 +470,7 @@ class _BuildMixin:
         prefix_len = _asm.prefix_len
         _state = self._run_state()
         _state.cache_gate_stable_fp = _asm.stable_fp
+        _state.cache_gate_system_fp = _asm.system_fp
         _cache_protected_messages, _cache_protected_chars = _cache_boundary_protection(
             _state,
             resolved_label=resolved_label,
@@ -568,6 +569,8 @@ class _BuildMixin:
             record_action=self._record_action,
             cache_monitor=self._cache_monitor,
             cache_gate_stable_fp=self._run_state().cache_gate_stable_fp,
+            cache_gate_system_fp=self._run_state().cache_gate_system_fp,
+            tool_prefix_fp=self._run_state().cache_gate_tools_fp,
             last_history_compacted=self._last_history_compacted,
             anchor_sess=sess,
             current_turn_ref=_state.current_turn_ref,

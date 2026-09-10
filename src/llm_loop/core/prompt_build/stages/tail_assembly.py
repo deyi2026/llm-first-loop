@@ -100,6 +100,8 @@ def run_tail_assembly(
     record_action: Any,
     cache_monitor: Any,
     cache_gate_stable_fp: Any,
+    cache_gate_system_fp: Any = "",
+    tool_prefix_fp: Any = "",
     last_history_compacted: Any,
     anchor_sess: Any,
     current_turn_ref: int | None = None,
@@ -153,7 +155,11 @@ def run_tail_assembly(
     # 基线一致；不一致 → 审计 + hint（run 末注入 final_answer），fail-open 不阻断发送。
     cache_gate_hint: str | None = None
     try:
-        cache_gate_hint = cache_monitor.postcheck(sess.session_id, cache_gate_stable_fp)
+        # 双轴后检（契约 §5.2）：system 轴判定漂移；tools 轴合法变更仅审计计数。
+        # cache_gate_stable_fp（组合指纹）保留给调用方做边界保护/引擎引用，不进门禁。
+        cache_gate_hint = cache_monitor.postcheck(
+            sess.session_id, cache_gate_system_fp, tool_prefix_fp
+        )
         if cache_gate_hint:
             record_action("run.cache_gate", "drift", cache_gate_hint)
     except Exception:  # noqa: BLE001 — 门禁失败 fail-open

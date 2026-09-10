@@ -202,15 +202,12 @@ class CacheHealthMonitor:
         # 桶结构: {model_ref: {"in": int, "hit": int, "runs": int}}
         self._buckets: dict[str, dict[str, int]] = {}
         # 发送前门禁（per-session 基线: 不同会话注入/记忆不同，互不干扰）
-        self._baselines: dict[str, str] = {}  # session_id → 稳定段指纹（system+注入）
-        # EVO-20260829-8ff2cdbe H3'（FreeToken RETAIN_GAP 反哺，accepted）: 门禁信号分级。
-        # 骨架指纹 = 稳定段剔除 dynamic 注入（memory 检索/interop inbox，_is_dynamic_inject）。
-        # stable_fp 变而骨架未变 → 受控变更（动态输入更新，仅换基线，不计 drift 不干预）；
-        # 骨架变或 skeleton_fp 缺失 → 意外漂移（现行为：drift 计数 + force_head_keep）。
-        # 设计注意: 受控指纹不能取 stable_fp 的组成部分（组合哈希确定性 → 分级重言式），
-        # 必须按消息 dynamic 标记分解——骨架不变即"非动态部分字节稳定"。
-        self._skel_baselines: dict[str, str] = {}
-        self._controlled_change_count = 0
+        # 双轴基线（ARCHITECTURE-cache-prefix-surface-contract-v1 §3/§5.3）:
+        # - system 轴: 裸 system+稳定注入段指纹 → 基线不符 = 真漂移（干预+计数）；
+        # - tools 轴: 仅记上一轮指纹做合法变更审计计数（schema/顺序变化不干预不计 drift）。
+        self._system_baselines: dict[str, str] = {}  # session_id → system 轴指纹
+        self._tools_prev_fp: dict[str, str] = {}  # session_id → 上一轮 tools 轴指纹
+        self._tools_change_count = 0  # tools 轴合法变更计数（logger+计数器，不进 snapshot；§10 Q2 已决）
         self._gate_drift_count = 0
         # 参数
         self._min_runs = min_runs
@@ -244,6 +241,10 @@ class CacheHealthMonitor:
         b = self._session_buckets.get(sid)
         if b is None:
             b = _SessionBucket()
+            # 门禁路径（preflight 漂移）不经 record_usage 就建桶；不盖章则 ts=0，
+            # 聚合 snapshot 的惰性清理会把刚建的门禁桶当超时死桶清除（A4 红灯根因）。
+            # 仅创建时盖章：record_usage 每次刷新，snapshot 轮询不续命（否则永不清理）。
+            b.last_update_ts = time.time()
             self._session_buckets[sid] = b
         return b
 
@@ -797,7 +798,6 @@ class CacheHealthMonitor:
                 "rate": rate,
                 "anchor_moved_in_win": b.anchor_moved_in_win,
                 "gate_drift_count": self._gate_drift_count,
-                "controlled_change_count": self._controlled_change_count,
                 "likely_cause": cause,
             }
         except Exception:  # noqa: BLE001 — fail-open
@@ -817,9 +817,9 @@ class CacheHealthMonitor:
         try:
             self._session_buckets = {}
             self._anchor_move_runs = 0
-            self._baselines = {}
-            self._skel_baselines = {}
-            self._controlled_change_count = 0
+            self._system_baselines = {}
+            self._tools_prev_fp = {}
+            self._tools_change_count = 0
             self._gate_drift_count = 0
             self._breakers = {}  # P0: 熔断状态随重置清空（模型切换/会话变更重新判定）
             self._breaker_hit_win = {}  # P0: 命中共信号窗口同步清空
@@ -840,8 +840,8 @@ class CacheHealthMonitor:
             self._session_buckets.pop(session_id, None)
             self._breaker_hit_win.pop(session_id, None)
             self._breakers.pop(session_id, None)
-            self._baselines.pop(session_id, None)
-            self._skel_baselines.pop(session_id, None)
+            self._system_baselines.pop(session_id, None)
+            self._tools_prev_fp.pop(session_id, None)
             self._fail_alerted_sessions.discard(session_id)
         except Exception:  # noqa: BLE001 — fail-open
             logger.debug("cache_health reset_session 异常（fail-open）", exc_info=True)
@@ -876,25 +876,20 @@ class CacheHealthMonitor:
 
     # ── 发送前门禁（preflight/postcheck，程序常态锚点管理，per-session 基线）──
     def preflight(
-        self, session_id: str, stable_fp: str, skeleton_fp: str | None = None
+        self, session_id: str, system_fp: str, tools_fp: str = ""
     ) -> None:
-        """发送前预检: 本次稳定段（system+注入）指纹与该 session 基线不符 → 强制缓存友好压缩.
+        """发送前预检: system 轴指纹与该 session 基线不符 → 强制缓存友好压缩.
 
-        合规化动作（当次 build 即生效，锚点不动 → 前缀恢复稳定）。
+        双轴语义（契约 §3/§7 不变式第 3 条）:
+        - system 轴独变 = 真漂移 → force_head_keep + drift 计数 + 观测标记；
+        - tools 轴独变 = 合法变更（schema/顺序变化）→ 不干预不计 drift（归因走调用点轴埋点）。
+        合规化动作（当次 build 即生效，锚点不动 → 前缀恢复稳定）。fail-open。
         EVO-20260825: per-session 分桶——force_head_keep 写回对应会话 bucket。
-        EVO-20260829-8ff2cdbe H3': 信号分级——stable_fp 变而骨架未变（skeleton_fp ==
-        skel 基线）= 受控变更（动态注入更新），不干预不计 drift；骨架变或 skeleton_fp
-        缺失（旧调用方/传递失败）→ 保守按意外漂移处理（宁可多报不漏报）。
         """
+        _ = tools_fp  # 形参在位（§9.1 统一双轴面）；tools 轴不在 preflight 干预面
         try:
-            prev = self._baselines.get(session_id)
-            if prev is not None and stable_fp != prev:
-                prev_skel = self._skel_baselines.get(session_id)
-                if skeleton_fp and prev_skel and skeleton_fp == prev_skel:
-                    logger.info(
-                        "门禁预检: 受控变更（骨架未变，动态注入更新）session=%s", session_id
-                    )
-                    return
+            prev = self._system_baselines.get(session_id)
+            if prev is not None and system_fp != prev:
                 b = self._get_bucket(session_id)
                 b.force_head_keep = True
                 self._gate_drift_count += 1
@@ -903,36 +898,34 @@ class CacheHealthMonitor:
             logger.warning("门禁预检异常（fail-open）", exc_info=True)
 
     def postcheck(
-        self, session_id: str, stable_fp: str, skeleton_fp: str | None = None
+        self, session_id: str, system_fp: str, tools_fp: str = ""
     ) -> str | None:
-        """发送前校验: 本次稳定段与该 session 基线一致 → 出闸；不一致 → 提示 + 建新基线.
+        """发送前校验: system 轴一致 → 出闸；system 变 → 漂移提示 + 建新基线；tools 变 → 计数不提示.
 
         首次（无基线）直接建立基线。fail-open 不阻断发送（门禁是管理不是熔断）。
-        EVO-20260829-8ff2cdbe H3': stable_fp 变而骨架未变 → 受控变更——仅换基线 +
-        controlled 计数（审计可见），不出漂移提示不触发干预；骨架变或 skeleton_fp
-        缺失 → 意外漂移（现行为）。骨架基线仅在 skeleton_fp 非空时更新。
+        tools 轴独变 = 合法变更（§10 Q2 已决）：仅 _tools_change_count 计数 + logger，
+        不进 snapshot、不出提示、不触发干预。
         """
         try:
-            prev = self._baselines.get(session_id)
-            prev_skel = self._skel_baselines.get(session_id)
-            self._baselines[session_id] = stable_fp  # 总是更新为最新（受控变化即新基线）
-            if skeleton_fp:
-                self._skel_baselines[session_id] = skeleton_fp
+            prev = self._system_baselines.get(session_id)
+            prev_tools = self._tools_prev_fp.get(session_id)
+            self._system_baselines[session_id] = system_fp  # 总是更新为最新（漂移即新基线）
+            if tools_fp:
+                self._tools_prev_fp[session_id] = tools_fp
             if prev is None:
                 return None
-            if stable_fp != prev:
-                if skeleton_fp and prev_skel and skeleton_fp == prev_skel:
-                    self._controlled_change_count += 1
-                    logger.info(
-                        "门禁后检: 受控变更（骨架未变）session=%s 累计#%d",
-                        session_id,
-                        self._controlled_change_count,
-                    )
-                    return None
+            if system_fp != prev:
                 self._gate_drift_count += 1
                 return (
-                    "[拼装合规提示] 发送前检测到前缀漂移（锚点/注入变化），已记录并强制"
+                    "[拼装合规提示] 发送前检测到前缀漂移（system 轴变化），已记录并强制"
                     "后续压缩保留锚点头部；本请求不受影响。"
+                )
+            if tools_fp and prev_tools and tools_fp != prev_tools:
+                self._tools_change_count += 1
+                logger.info(
+                    "门禁后检: tools 轴变更（合法，不干预）session=%s 累计#%d",
+                    session_id,
+                    self._tools_change_count,
                 )
             return None
         except Exception:  # noqa: BLE001
@@ -990,9 +983,8 @@ class CacheHealthMonitor:
                     "fail_alerted": session_id in self._fail_alerted_sessions,
                     "recovery_timeout_runs": self._recovery_timeout_runs,
                     "gate_drift_count": self._gate_drift_count,
-                    "controlled_change_count": self._controlled_change_count,
                     "gate_note_pending": b.gate_note_pending,
-                    "baselines": dict(self._baselines),
+                    "baselines": dict(self._system_baselines),
                     "buckets": {k: dict(v) for k, v in self._buckets.items()},
                     "breakers": self.breaker_state(session_id),
                     "breaker_trigger_runs": self._breaker_trigger_runs,
@@ -1048,8 +1040,7 @@ class CacheHealthMonitor:
                 "sessions": sessions,
                 "anchor_move_runs": self._anchor_move_runs,
                 "gate_drift_count": self._gate_drift_count,
-                "controlled_change_count": self._controlled_change_count,
-                "baselines": dict(self._baselines),
+                "baselines": dict(self._system_baselines),
                 "buckets": {k: dict(v) for k, v in self._buckets.items()},
                 "breakers": self.breaker_state(),
                 "breaker_trigger_runs": self._breaker_trigger_runs,
