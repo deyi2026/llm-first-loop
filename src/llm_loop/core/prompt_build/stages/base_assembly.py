@@ -22,6 +22,64 @@ from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
 
 logger = logging.getLogger(__name__)
 
+# ── 轴埋点（契约 §8 量化验收 · 步 2，2026-09-10）──────────────────────────
+# 折叠前记录本会话上一轮的两轴分量指纹（system+注入 = _base_fp；tools = tool_prefix_fp），
+# 变化时归因到轴并计数。加性、fail-open、与门禁状态机解耦：
+# 门禁侧只见折叠后单指纹、无原因字段（主仓现状），归因只能发生在调用点折叠前。
+# before/after 采集：before = 修复前语义下的保守干预分布（空间成本）；
+# after = 双轴语义下的干预分布。无 before 则「保守口径在为多少空间买单」无分母。
+_axis_probe_prev: dict[str, tuple[str, str]] = {}
+_axis_change_stats: dict[str, int] = {
+    "system_axis": 0,
+    "tools_axis": 0,
+    "both_axis": 0,
+    "prefix_unchanged": 0,
+}
+
+
+def axis_change_stats() -> dict[str, int]:
+    """轴归因计数只读视图（量化验收采集出口；窗口监控可直接并入）。"""
+    return dict(_axis_change_stats)
+
+
+def reset_axis_probe() -> None:
+    """采集窗口/测试重置。"""
+    _axis_probe_prev.clear()
+    _axis_change_stats.update(
+        {
+            "system_axis": 0,
+            "tools_axis": 0,
+            "both_axis": 0,
+            "prefix_unchanged": 0,
+        }
+    )
+
+
+def _probe_axis_change(session_id: str, base_fp: str, tools_fp: str) -> None:
+    """fail-open：任何异常不得影响装配与门禁。"""
+    try:
+        prev = _axis_probe_prev.get(session_id)
+        _axis_probe_prev[session_id] = (base_fp, tools_fp)
+        if prev is None:
+            return
+        sys_chg = base_fp != prev[0]
+        tools_chg = bool(tools_fp) and tools_fp != prev[1]
+        if sys_chg and tools_chg:
+            axis = "both"
+        elif sys_chg:
+            axis = "system"
+        elif tools_chg:
+            axis = "tools"
+        else:
+            _axis_change_stats["prefix_unchanged"] += 1
+            return
+        _axis_change_stats[f"{axis}_axis"] += 1
+        logger.info(
+            "cache_prefix_axis_change axis=%s session=%s", axis, session_id
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
 
 @dataclass(slots=True)
 class BaseAssemblyResult:
@@ -59,6 +117,8 @@ def run_base_assembly(
             [(m.role, m.content) for m in result.base[: result.prefix_len]]
             + [system_prompt]
         )
+        # 轴埋点（步 2）：折叠前归因（门禁侧无原因字段，归因只能在调用点）
+        _probe_axis_change(session_id, _base_fp, tool_prefix_fp)
         # Tool schemas are part of the actual provider request prefix/surface.
         # A schema/order change invalidates the previous cache boundary even when
         # system + stable chat bytes are unchanged. Keep the original digest for
