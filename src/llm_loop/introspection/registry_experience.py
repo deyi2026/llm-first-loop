@@ -49,7 +49,6 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
             "description": {"type": "string", "description": "save_candidate: 触发条件/用途简介"},
             "body": {"type": "string", "description": "save_candidate: 完整 Method Card"},
             "parent_ref": {"type": "string", "description": "save_candidate: 修订来源 method ref（可选）"},
-            "task_ref": {"type": "string", "description": "record_qualification: 独立任务/evidence 稳定引用"},
             "verdict": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"]},
             "mechanism": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"]},
             "task_benefit": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"]},
@@ -169,13 +168,15 @@ def _run_save_method_candidate(args: dict, host: RegistryHost, *, tool_name: str
     try:
         from llm_loop.core.run_context import current_model_label
 
-        session_id = host.current_session_id()
+        episode_ref = str(host.current_episode_ref() or "")
+        if not episode_ref.startswith("episode:"):
+            return _method_failure(tool_name, "[Method candidate 写入失败] 当前 Episode provenance 不可用")
         record = store.save_candidate(
             name=name,
             description=description,
             body=body,
             source_model=current_model_label.get(),
-            source_episode_refs=[f"session:{session_id}"] if session_id else [],
+            source_episode_refs=[episode_ref] if episode_ref else [],
             evidence_refs=[str(v) for v in (args.get("evidence_refs") or [])],
             parent_ref=str(args.get("parent_ref", "")),
         )
@@ -190,10 +191,14 @@ def _run_record_method_qualification(args: dict, host: RegistryHost, *, tool_nam
     if store is None:
         return _method_failure(tool_name, "[程序异常] MethodStore 未装配")
     method_ref = str(args.get("method_ref", "")).strip()
-    task_ref = str(args.get("task_ref", "")).strip()
-    if not method_ref or not task_ref:
-        return _method_failure(tool_name, "[参数错误] method_ref/task_ref 为必填")
+    if not method_ref:
+        return _method_failure(tool_name, "[参数错误] method_ref 为必填")
     try:
+        # Qualification identity is a runtime fact, never a model declaration.
+        # Extra/legacy caller ``task_ref`` is intentionally ignored.
+        task_ref = str(host.current_episode_ref() or "")
+        if not task_ref.startswith("episode:"):
+            return _method_failure(tool_name, "[Method qualification 写入失败] 当前 Episode provenance 不可用")
         entry = store.record_qualification(
             method_ref,
             task_ref=task_ref,
@@ -206,8 +211,20 @@ def _run_record_method_qualification(args: dict, host: RegistryHost, *, tool_nam
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         return _method_failure(tool_name, f"[Method qualification 写入失败] {type(exc).__name__}: {exc}")
-    host.audit("record_method_qualification", {"method_ref": method_ref, "task_ref": task_ref, "verdict": entry["verdict"]}, "success")
-    return ToolResult(status=ToolResultStatus.SUCCESS, content=f"[record_method_qualification] {method_ref} task_ref={task_ref} verdict={entry['verdict']} promotion={entry['promotion']}", tool_call_id="", tool_name=tool_name)
+    host.audit(
+        "record_method_qualification",
+        {"method_ref": method_ref, "qualification_episode_ref": task_ref, "verdict": entry["verdict"]},
+        "success",
+    )
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=(
+            f"[record_method_qualification] {method_ref} "
+            f"qualification_episode_ref={task_ref} verdict={entry['verdict']} promotion={entry['promotion']}"
+        ),
+        tool_call_id="",
+        tool_name=tool_name,
+    )
 
 
 def _run_refine_method(args: dict, host: RegistryHost, *, tool_name: str = "refine_method") -> ToolResult:

@@ -49,6 +49,8 @@ from llm_loop.memory.synopsis import (
     SynopsisError,
     SynopsisStore,
 )
+from llm_loop.methods.learning_journal import LearningJournal
+from llm_loop.methods.learning_plane import LearningPlane
 from llm_loop.methods.store import (
     MethodStore,  # Method Learning v1：方法卡存储（顶层装配供 corrections/检索共享）
 )
@@ -1185,6 +1187,30 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     # M50（design §5.6）: 注入增强版 refresh_config executor — 重读 providers.json
     install_refresh_executor(engine)
+
+    # Learning Plane（design §5.3）: durable journal + 后台 ReflectionRun 消费者。
+    # 默认关闭（LEARNING_PLANE_ENABLED）；关闭时不挂载 engine.learning_journal，
+    # post_run 反射检查保持静默 —— 零行为变化、无队列积压。
+    engine.learning_plane = None
+    if settings.learning_plane_enabled:
+        learning_journal = LearningJournal(
+            path=Path(settings.sessions_dir) / "learning" / "journal.jsonl",
+            candidate_lookup=method_store.find_by_evidence,
+        )
+        engine.learning_journal = learning_journal
+        learning_plane = LearningPlane(
+            journal=learning_journal,
+            episode_store=episode_store,
+            method_store=method_store,
+            engine=engine,
+            model_resolver=model_pool.get_client,
+            sessions_dir=settings.sessions_dir,
+        )
+        learning_plane.start()
+        engine.learning_plane = learning_plane
+        logger.info("Learning Plane 已装配并启动 journal=%s", learning_journal._path)
+    else:
+        logger.debug("Learning Plane 未启用（LEARNING_PLANE_ENABLED）")
 
     # EVO 后台 run 改造（对齐 DSH 后台任务）：装配后台 run 执行器——SSE 端点改订阅，
     # run 在后台 daemon 线程执行，断连只停订阅、结果落盘；RUNNER_BACKGROUND=0 回退旧直驱

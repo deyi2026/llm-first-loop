@@ -210,3 +210,29 @@ def test_override_binding_resolves_per_session(build_test_engine):
     assert sess_b.model_override is None, "A 的 switch_model 串台写入 B 的 sess"
     assert binding_a[0]() == "minimax/MiniMax-M3"
     assert binding_b[0]() is None
+
+
+def test_production_registry_derives_current_episode_ref_from_active_human_turn(build_test_engine):
+    """Method provenance uses the active turn, not latest historical Episode or model input."""
+    from llm_loop.core.message import Message, MessageSource
+    from llm_loop.core.run_context import current_session_id
+    from llm_loop.memory.episode import stable_episode_ref
+
+    engine, _fake = build_test_engine([])
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    user = Message(role="user", content="current qualification turn", source=MessageSource.USER)
+    sess.messages.append(user)
+    turn_ref = len(sess.messages) - 1
+    engine._run_sessions[sid] = sess
+
+    token = current_session_id.set(sid)
+    try:
+        engine._run_state().current_turn_ref = turn_ref
+        expected = stable_episode_ref(sid, user, turn_ref)
+        assert engine.corrections.current_episode_ref() == expected
+        assert engine.correction_ctx.current_episode_ref_resolver is not None
+        assert engine.correction_ctx.current_episode_ref_resolver(sid) == expected
+    finally:
+        current_session_id.reset(token)
+        engine._run_sessions.pop(sid, None)

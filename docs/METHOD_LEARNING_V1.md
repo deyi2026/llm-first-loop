@@ -74,7 +74,7 @@ Teacher and Candidate are first-class Method assets, not hidden benchmark leftov
 `method_manage(action=save_candidate)` persists model-authored Method content. It:
 
 - requires explicit name/description/body;
-- records runtime-derived source model/session provenance; Teacher provenance is derived only when Teacher fallback actually runs; model-supplied evidence/parent refs remain declarations, not runtime identity;
+- records runtime-derived source model/current Episode provenance; Teacher provenance is derived only when Teacher fallback actually runs; model-supplied evidence/parent refs remain declarations, not runtime identity;
 - derives a deterministic content-hash id;
 - never overwrites an existing candidate;
 - always creates `status=candidate`;
@@ -90,12 +90,12 @@ The candidate body should contain trigger/discriminator/short path/branches/stop
 - mechanism;
 - task benefit;
 - promotion;
-- task/evidence refs.
+- runtime-derived `qualification_episode_ref` and separately declared evidence refs. The model-facing schema does not accept an Episode identity; legacy `task_ref` records remain read-compatible only.
 
 `method_manage(action=refine)` controls explicit lifecycle transitions. Mechanical fences include:
 
 - `candidate -> active` is forbidden;
-- `candidate -> qualified` requires at least one qualification receipt with `promotion=pass` and a task ref; a `promotion=pass` task ref cannot equal the candidate source episode ref;
+- `candidate -> qualified` requires at least one qualification receipt with `promotion=pass` and runtime Episode provenance; that qualification Episode cannot equal the candidate source Episode ref;
 - Teacher assets are immutable as teachers; a learned derivative must be a new Candidate.
 
 These fences mechanically prevent the source episode itself from authorizing promotion and prevent same-episode self-distillation from silently becoming active policy. They do **not** claim the program can judge qualification quality.
@@ -104,7 +104,7 @@ These fences mechanically prevent the source episode itself from authorizing pro
 
 `METHOD_REFLECTION_MODE=off|auto`, default `off`.
 
-When `auto` is enabled, reflection occurs only after the user-visible final answer is already determined. It is isolated and fail-open: reflection failure cannot rewrite or fail the task.
+When `auto` is enabled together with the Learning Plane, the Task path only enqueues a durable Episode-bound job. `LoopResult`/SSE `done` does not wait for the ReflectionRun. The background ReflectionRun is isolated and fail-open: reflection failure cannot rewrite or fail the task.
 
 Mechanical friction trigger can use only observable facts such as:
 

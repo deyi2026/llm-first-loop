@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from llm_loop.methods.reflection import reflect_after_run
+from llm_loop.methods.learning_journal import learning_job_id
 
 if TYPE_CHECKING:
     pass
@@ -100,42 +100,63 @@ class MethodLearningService:
         final_answer: str,
         model_used: str,
     ) -> None:
-        """Run isolated post-task reflection when explicitly enabled."""
+        """Enqueue-only: bind a Learning job to the exact completed episode.
+
+        P0 invariant — this method never calls the model and never reads
+        sess.messages. Input selection happens later, on the learning plane,
+        against the episode's own material (episode:{sid}:{seq}:{digest}), so
+        reflection of task C can no longer drag in the tail of tasks A/B.
+        Fail-open: learning must never delay or break the user's final answer.
+        """
         try:
-            corrections = getattr(self._engine, "corrections", None)
-            method_store = getattr(corrections, "method_store", None) if corrections is not None else None
-            method_client = self._engine.llm
-            if self._engine.llm_pool is not None and model_used and "/" in model_used:
-                try:
-                    method_client = self._engine.llm_pool.get_client(model_used)
-                except Exception:  # noqa: BLE001 - preserve original run result
-                    logger.debug("Method reflection model resolve failed; fallback current client", exc_info=True)
-            outcome = reflect_after_run(
-                mode=getattr(self._engine.settings, "method_reflection_mode", "off"),
-                llm_client=method_client,
-                store=method_store,
-                session_id=session_id,
-                messages=sess.messages,
-                rounds=rounds,
-                tool_trace=tool_trace,
-                run_end_reason=run_end_reason,
-                final_answer=final_answer,
-                source_model=model_used or getattr(method_client, "model", ""),
+            from llm_loop.methods.reflection import friction_facts, should_reflect
+
+            mode = str(getattr(self._engine.settings, "method_reflection_mode", "off"))
+            if mode == "off":
+                return
+            facts = friction_facts(rounds=rounds, tool_trace=tool_trace, run_end_reason=run_end_reason)
+            triggered = should_reflect(
+                facts=facts,
                 min_rounds=getattr(self._engine.settings, "method_reflection_min_rounds", 6),
                 min_tools=getattr(self._engine.settings, "method_reflection_min_tools", 6),
                 min_failures=getattr(self._engine.settings, "method_reflection_min_failures", 2),
-                timeout_s=getattr(self._engine.settings, "method_reflection_timeout_s", 120.0),
             )
+            if not triggered:
+                return
+            journal = getattr(self._engine, "learning_journal", None)
+            if journal is None:
+                return
+            episode = self._engine.episode_store.latest_episode(session_id)
+            episode_ref = str(episode.get("ref")) if episode else ""
+            if not episode_ref:
+                # No durable episode for this turn: reflection has no lawful input.
+                self._engine._event_append(
+                    session_id, "method.reflection",
+                    {"attempted": False, "triggered": True, "reason": "no_durable_episode", "model_used": model_used},
+                )
+                return
+            job = journal.append(
+                session_id=session_id,
+                source_episode_ref=episode_ref,
+                source_model=model_used or "",
+                trigger_facts={**facts, "final_answer_chars": len(str(final_answer or ""))},
+            )
+            if job is None:
+                # Episode already reached a terminal learning state: never re-learn.
+                self._engine._event_append(
+                    session_id,
+                    "learning.enqueued",
+                    {"learning_job_ref": f"learning:{learning_job_id(episode_ref)}", "source_episode_ref": episode_ref, "state": "skipped_terminal", "trigger_facts": facts},
+                )
+                return
             self._engine._event_append(
                 session_id,
-                "method.reflection",
+                "learning.enqueued",
                 {
-                    "attempted": outcome.attempted,
-                    "triggered": outcome.triggered,
-                    "saved_ref": outcome.saved_ref,
-                    "teacher_fallback": outcome.used_teacher_fallback,
-                    "reason": outcome.reason,
-                    "model_used": model_used,
+                    "learning_job_ref": f"learning:{job.job_id}",
+                    "source_episode_ref": episode_ref,
+                    "state": job.state,
+                    "trigger_facts": facts,
                 },
             )
         except Exception:  # noqa: BLE001 - Method learning is fail-open and non-authoritative

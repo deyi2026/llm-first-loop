@@ -264,9 +264,18 @@ class MethodStore:
         clean_task_ref = task_ref.strip()
         if promotion == "pass" and clean_task_ref in set(record.source_episode_refs):
             raise ValueError("promotion=pass qualification must be independent of the candidate source episode")
+        if promotion == "pass" and not clean_task_ref.startswith("episode:"):
+            raise ValueError(
+                "promotion=pass qualification must reference a real episode ref (episode:...); "
+                "model-invented refs cannot prove independence"
+            )
         record = self._ensure_runtime_copy(record)
         entry = {
             "ts": _now(),
+            # Canonical runtime provenance.  ``task_ref`` is retained as a
+            # read-compatible alias for existing qualification.jsonl readers;
+            # model-facing code must not supply either identity.
+            "qualification_episode_ref": clean_task_ref,
             "task_ref": clean_task_ref,
             "verdict": verdict,
             "mechanism": mechanism,
@@ -320,8 +329,14 @@ class MethodStore:
             raise ValueError("candidate cannot become active directly; qualify independently first")
         if target == "qualified":
             entries = self.qualification_entries(method_ref)
-            if not any(e.get("promotion") == "pass" and e.get("task_ref") for e in entries):
-                raise ValueError("qualified requires at least one recorded promotion=pass qualification with task_ref")
+            if not any(
+                e.get("promotion") == "pass"
+                and (e.get("qualification_episode_ref") or e.get("task_ref"))
+                for e in entries
+            ):
+                raise ValueError(
+                    "qualified requires at least one promotion=pass qualification with runtime episode provenance"
+                )
         path = Path(record.path)
         raw = path.read_text(encoding="utf-8")
         meta, body = _parse_frontmatter(raw)
@@ -364,6 +379,16 @@ class MethodStore:
             if teacher is None or teacher.status != "teacher":
                 raise ValueError(f"teacher_ref must identify a teacher Method: {teacher_ref}")
             checked_teachers.append(teacher.method_ref)
+        checked_episode_refs: list[str] = []
+        for ref in source_episode_refs or []:
+            clean = str(ref).strip()
+            if not clean:
+                continue
+            if not clean.startswith("episode:"):
+                raise ValueError(
+                    f"source_episode_refs entries must be real episode refs (episode:...), got: {clean}"
+                )
+            checked_episode_refs.append(clean)
         base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:72] or "candidate"
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
         method_id = self._safe_id(f"{base}-{digest}")
@@ -381,10 +406,28 @@ class MethodStore:
             return f"{k}: {clean}\n" if clean else ""
         front = "---\n" + line("method_id", method_id) + line("name", name) + line("description", description)
         front += "status: candidate\n" + line("source_model", source_model) + line("teacher_refs", ",".join(checked_teachers))
-        front += line("source_episode_refs", ",".join(source_episode_refs or [])) + line("evidence_refs", ",".join(evidence_refs or []))
+        front += line("source_episode_refs", ",".join(checked_episode_refs)) + line("evidence_refs", ",".join(evidence_refs or []))
         front += line("parent_ref", parent_ref) + line("created_at", now) + line("updated_at", now) + "---\n"
         path.write_text(front + body.strip() + "\n", encoding="utf-8")
         record = self._load_path(path)
         if record is None:
             raise RuntimeError("candidate write did not round-trip")
         return record
+
+    def find_by_evidence(self, evidence_ref: str) -> str | None:
+        """Return ``method_ref`` whose ``evidence_refs`` contains ``evidence_ref``.
+
+        Best-effort reverse lookup for LearningJournal reconcile: closes the
+        crash window between ``save_candidate`` (durable) and journal
+        ``mark_saved`` (durable). Scans records on demand; O(files).
+        """
+        needle = str(evidence_ref).strip()
+        if not needle:
+            return None
+        for path in self._iter_paths():
+            record = self._load_path(path)
+            if record is None:
+                continue
+            if needle in record.evidence_refs:
+                return record.method_ref
+        return None

@@ -20,6 +20,7 @@ class ReflectionOutcome:
     saved_ref: str = ""
     used_teacher_fallback: bool = False
     reason: str = ""
+    candidate_payload: dict[str, Any] | None = None
 
 
 def friction_facts(*, rounds: int, tool_trace: list[dict[str, Any]], run_end_reason: str) -> dict[str, Any]:
@@ -129,6 +130,7 @@ def reflect_after_run(
     run_end_reason: str,
     final_answer: str,
     source_model: str,
+    episode_ref: str = "",
     min_rounds: int = 6,
     min_tools: int = 6,
     min_failures: int = 2,
@@ -186,8 +188,190 @@ def reflect_after_run(
             body=str(candidate["body"]),
             source_model=source_model,
             teacher_refs=teacher_refs if used_teacher else [],
-            source_episode_refs=[f"session:{session_id}"],
+            source_episode_refs=[episode_ref] if episode_ref.startswith("episode:") else [],
         )
         return ReflectionOutcome(attempted=True, triggered=True, saved_ref=record.method_ref, used_teacher_fallback=used_teacher, reason="candidate_saved")
     except Exception as exc:  # noqa: BLE001 - post-run learning must never break the user run
         return ReflectionOutcome(attempted=True, triggered=True, reason=f"reflection_failed:{type(exc).__name__}")
+
+
+# ---------------------------------------------------------------------------
+# Learning Plane: episode-driven reflection (session-decoupled)
+# ---------------------------------------------------------------------------
+
+def build_episode_material(
+    entry: dict[str, Any] | None,
+    *,
+    max_total_chars: int = 18000,
+) -> list[dict[str, str]]:
+    """Project one durable episode snapshot into visible observation rows.
+
+    Episode snapshots already exclude hidden reasoning_content, so this is a
+    pure projection of visible facts for exactly one user turn. When the char
+    budget forces truncation the first user row and the final assistant row
+    are always kept; middle rows are dropped.
+    """
+    rows: list[dict[str, str]] = []
+    if not isinstance(entry, dict):
+        return rows
+    messages = entry.get("messages") or []
+    visible = [
+        {"role": str(m.get("role", "")), "content": str(m.get("content", "") or "")}
+        for m in messages
+        if str(m.get("role", "")) in {"user", "assistant", "tool"} and str(m.get("content", "") or "").strip()
+    ]
+    if not visible:
+        return rows
+    reserved = visible[0] if visible[0]["role"] == "user" else None
+    tail = visible[-1] if visible[-1]["role"] == "assistant" else None
+
+    def _budgeted(items: list[dict[str, str]]) -> list[dict[str, str]]:
+        out: list[dict[str, str]] = []
+        remaining = max_total_chars
+        for row in items:
+            chunk = row["content"][: min(1800, remaining)]
+            if not chunk:
+                break
+            out.append({"role": row["role"], "content": chunk})
+            remaining -= len(chunk)
+        return out
+
+    body = [m for m in visible if m is not reserved and m is not tail]
+    kept = _budgeted(body)
+    head = [reserved] if reserved else []
+    tail_rows = [tail] if tail else []
+    rows = head + kept + tail_rows
+    if sum(len(r["content"]) for r in rows) > max_total_chars and kept:
+        kept = _budgeted(kept[: max(0, len(kept) - 1)])
+        rows = head + kept + tail_rows
+    return rows
+
+
+_CANDIDATE_LIST_FIELDS = ("short_path", "stop_conditions", "verification", "counterexamples")
+
+
+def validate_candidate(value: dict[str, Any] | None) -> tuple[bool, list[str]]:
+    """Mechanical closed-schema check: fields exist, types correct, lengths legal.
+
+    This validates record format completeness only; it never judges whether the
+    content is smart. That judgment stays with the model.
+    """
+    errors: list[str] = []
+    if not isinstance(value, dict):
+        return False, ["payload must be a JSON object"]
+    if value.get("decision") != "candidate":
+        return False, ["decision must be 'candidate'"]
+    for key, limit in (("name", 96), ("description", 600)):
+        field = value.get(key)
+        if not isinstance(field, str) or not field.strip():
+            errors.append(f"{key} must be a non-empty string")
+        elif len(field) > limit:
+            errors.append(f"{key} exceeds {limit} chars")
+    for key in ("trigger", "discriminator"):
+        field = value.get(key)
+        if not isinstance(field, str) or not field.strip():
+            errors.append(f"{key} must be a non-empty string")
+        elif len(field) > 2000:
+            errors.append(f"{key} exceeds 2000 chars")
+    for key in _CANDIDATE_LIST_FIELDS:
+        items = value.get(key)
+        if not isinstance(items, list) or not items:
+            errors.append(f"{key} must be a non-empty list")
+            continue
+        for i, item in enumerate(items):
+            if not isinstance(item, str) or not item.strip():
+                errors.append(f"{key}[{i}] must be a non-empty string")
+    return (not errors), errors
+
+
+def render_candidate_body(value: dict[str, Any]) -> str:
+    """Mechanically render a validated candidate payload into a Method body."""
+    def section(title: str, content: Any) -> str:
+        if isinstance(content, list):
+            lines = [f"- {str(item).strip()}" for item in content if str(item).strip()]
+            return f"## {title}\n" + ("\n".join(lines) if lines else "(none)") + "\n"
+        text = str(content or "").strip()
+        return f"## {title}\n{text}\n" if text else f"## {title}\n(none)\n"
+
+    return "\n".join(
+        [
+            section("Trigger", value.get("trigger", "")),
+            section("Discriminator", value.get("discriminator", "")),
+            section("Short path", value.get("short_path", [])),
+            section("Stop conditions", value.get("stop_conditions", [])),
+            section("Verification", value.get("verification", [])),
+            section("Counterexamples", value.get("counterexamples", [])),
+        ]
+    )
+
+
+def reflect_on_episode(
+    *,
+    llm_client: Any,
+    store: MethodStore | None,
+    episode_entry: dict[str, Any] | None,
+    trigger_facts: dict[str, Any],
+    tool_trace: list[dict[str, Any]],
+    run_end_reason: str,
+    final_answer: str,
+    timeout_s: float = 120.0,
+    max_material_chars: int = 18000,
+) -> ReflectionOutcome:
+    """Run reflection over exactly one durable episode; do NOT persist anything.
+
+    Returns a validated candidate payload in the outcome; the caller
+    (ReflectionRun on the Learning Plane) supplies runtime provenance and
+    performs the only write via MethodStore.save_candidate.
+    """
+    if store is None or llm_client is None:
+        return ReflectionOutcome(attempted=False, triggered=True, reason="disabled_or_unavailable")
+    core = store.get("method:method-self-distill")
+    if core is None:
+        return ReflectionOutcome(attempted=False, triggered=True, reason="self_distill_method_missing")
+    material = build_episode_material(episode_entry, max_total_chars=max_material_chars)
+    if not material:
+        return ReflectionOutcome(attempted=False, triggered=True, reason="episode_material_empty")
+    payload = {
+        "observable_friction": trigger_facts,
+        "episode_material": material,
+        "tool_trace": tool_trace[-40:],
+        "final_outcome": {"reason": run_end_reason, "answer_preview": final_answer[:800]},
+        "output_contract": {
+            "decision": "candidate|none",
+            "candidate_fields": {
+                "name": "string <= 96 chars",
+                "description": "string <= 600 chars",
+                "trigger": "string",
+                "discriminator": "string",
+                "short_path": "non-empty list of strings",
+                "stop_conditions": "non-empty list of strings",
+                "verification": "non-empty list of strings",
+                "counterexamples": "non-empty list of strings",
+            },
+            "none_reason": "short string",
+        },
+    }
+    system = (
+        "You are performing isolated post-task Method self-distillation on the Learning Plane. "
+        "Never reveal or reconstruct hidden chain-of-thought. Use only the observable facts of this "
+        "single episode supplied by the caller. Return exactly one JSON object following the output_contract. "
+        'If there is no reusable method, return {"decision":"none","reason":"..."}. If there is one, return '
+        "decision=candidate with ALL required fields (name, description, trigger, discriminator, short_path, "
+        "stop_conditions, verification, counterexamples). Do not copy task-private literals unless necessary.\n\n"
+        + core.body
+    )
+    try:
+        value = _call(llm_client, system=system, facts_payload=payload, timeout_s=timeout_s)
+    except Exception:  # noqa: BLE001 - Learning Plane failures never reach the user session
+        return ReflectionOutcome(attempted=True, triggered=True, reason="reflection_call_failed")
+    if value is None:
+        return ReflectionOutcome(attempted=True, triggered=True, reason="reflection_model_not_json")
+    if value.get("decision") != "candidate":
+        return ReflectionOutcome(attempted=True, triggered=True, reason=str(value.get("reason", "none"))[:200])
+    ok, errors = validate_candidate(value)
+    if not ok:
+        return ReflectionOutcome(
+            attempted=True, triggered=True, reason="candidate_schema_invalid: " + "; ".join(errors[:6])
+        )
+    value["body"] = render_candidate_body(value)
+    return ReflectionOutcome(attempted=True, triggered=True, reason="schema_ok", candidate_payload=value)

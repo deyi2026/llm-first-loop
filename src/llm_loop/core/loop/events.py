@@ -25,10 +25,12 @@ from typing import Any
 
 from llm_loop.core.interruption_resume import open_execution_facts, select_open_checkpoint_events
 from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.reference_injection import is_human_user_message
 from llm_loop.core.session import _validate_session_id
 from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.event_log.model import build_message_payload
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
+from llm_loop.memory.episode import stable_episode_ref
 
 logger = logging.getLogger(__name__)
 
@@ -739,6 +741,28 @@ class _EventsMixin:
             lambda: sess.model_override,
             lambda value: self._set_session_override(sess, value),
         )
+
+    def _resolve_current_episode_ref(self, session_id: str) -> str:
+        """Mechanically derive the active human turn's eventual Episode ref.
+
+        ``stable_episode_ref`` is also used by final Episode indexing.  Deriving
+        it here from the exact in-memory user message + its real message index
+        makes provenance available during tool execution without trusting a
+        model-supplied id or accidentally using the previous durable episode.
+        """
+        if self._run_state_mgr.bound_session_id() != session_id:
+            return ""
+        with self._run_state_mgr.guard:
+            sess = self._run_sessions.get(session_id)
+        if sess is None:
+            return ""
+        turn_ref = self._run_state().current_turn_ref
+        if turn_ref is None or turn_ref < 0 or turn_ref >= len(sess.messages):
+            return ""
+        user_message = sess.messages[turn_ref]
+        if not is_human_user_message(user_message):
+            return ""
+        return stable_episode_ref(session_id, user_message, turn_ref)
 
     def _check_event_rotate(self, session_id: str) -> None:
         """P1-1: run 末事件日志滚动检查（fail-open；未接线/未启用零行为）."""

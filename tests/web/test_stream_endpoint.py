@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 
 from fastapi.testclient import TestClient
 
@@ -145,6 +147,91 @@ def test_chat_stream_background_runner_mode(build_test_engine):
     assert events and events[-1]["type"] == "done", f"后台模式无 done 终态: {events[-1] if events else 'empty'}"
     done = events[-1]["data"]
     assert done["final_answer"] == "后台回答"
+
+
+def test_chat_stream_done_and_next_turn_do_not_wait_for_learning_reflection(
+    build_test_engine, tmp_path, monkeypatch
+):
+    """User critical path ends before a deliberately blocked ReflectionRun."""
+    from dataclasses import replace
+
+    from llm_loop.core.loop.runner import BackgroundRunner
+    from llm_loop.memory.episode import EpisodeStore
+    from llm_loop.methods.learning_journal import LearningJournal
+    from llm_loop.methods.learning_plane import LearningPlane
+    from llm_loop.methods.reflection import ReflectionOutcome
+    from llm_loop.methods.store import MethodStore
+
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("第一轮")
+    episode_store = EpisodeStore(tmp_path / "episodes")
+    method_store = MethodStore(tmp_path / "methods")
+    journal = LearningJournal(tmp_path / "learning" / "journal.jsonl")
+    engine.episode_store = episode_store
+    engine.learning_journal = journal
+    engine.settings = replace(
+        engine.settings,
+        method_reflection_mode="auto",
+        method_reflection_min_rounds=1,
+        method_reflection_min_tools=999,
+        method_reflection_min_failures=999,
+    )
+    runner = BackgroundRunner(engine, enabled=True)
+    engine.runner = runner
+
+    reflection_started = threading.Event()
+    release_reflection = threading.Event()
+
+    def blocked_reflection(**_kwargs):
+        reflection_started.set()
+        assert release_reflection.wait(5), "reflection release timeout"
+        return ReflectionOutcome(attempted=True, triggered=True, reason="test_none")
+
+    monkeypatch.setattr("llm_loop.methods.learning_plane.reflect_on_episode", blocked_reflection)
+    plane = LearningPlane(
+        journal=journal,
+        episode_store=episode_store,
+        method_store=method_store,
+        engine=engine,
+        model_resolver=lambda _model: object(),
+        sessions_dir=engine.settings.sessions_dir,
+        poll_interval_s=1.0,
+        quiet_period_s=0.0,
+    )
+    engine.learning_plane = plane
+    plane.start()
+    client = _make_client(engine)
+    sid = engine.session.create()
+
+    try:
+        first_started = time.monotonic()
+        first = client.post("/api/v1/chat/stream", json={"message": "one", "session_id": sid})
+        first_elapsed = time.monotonic() - first_started
+        first_events = _parse_sse(first.text)
+        assert first_events[-1]["type"] == "done"
+        assert first_events[-1]["data"]["final_answer"] == "第一轮"
+        assert first_elapsed < 4.0, "SSE done should not wait for the blocked ReflectionRun"
+
+        assert reflection_started.wait(3), "LearningPlane did not start queued reflection"
+        assert not release_reflection.is_set(), "reflection must still be blocked after SSE done"
+
+        # The Learning run owns no user Session lease.  A genuine next turn on
+        # the same Session must still complete while reflection is blocked.
+        engine.llm_pool.default_client = StreamingFakeLLM("第二轮")
+        second = client.post("/api/v1/chat/stream", json={"message": "two", "session_id": sid})
+        second_events = _parse_sse(second.text)
+        assert second_events[-1]["type"] == "done"
+        assert second_events[-1]["data"]["final_answer"] == "第二轮"
+        assert not release_reflection.is_set()
+    finally:
+        release_reflection.set()
+        deadline = time.time() + 4
+        while time.time() < deadline:
+            first_job = next(iter(journal._snapshot().values()), None)
+            if first_job is not None and first_job.state in {"none", "saved", "failed"}:
+                break
+            time.sleep(0.02)
+        plane.stop()
 
 
 def test_chat_stream_background_disabled_fallback(build_test_engine):

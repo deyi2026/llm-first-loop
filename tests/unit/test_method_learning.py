@@ -15,6 +15,7 @@ class _Host:
         self.method_store = store
         self.experience_store = None
         self.audit_rows: list[tuple[str, dict, str]] = []
+        self.episode_ref = "episode:method-test-session:1:feedface"
 
     def audit(self, tool_name: str, arguments: dict, result_status: str) -> None:
         self.audit_rows.append((tool_name, arguments, result_status))
@@ -22,6 +23,8 @@ class _Host:
     def current_session_id(self) -> str:
         return "method-test-session"
 
+    def current_episode_ref(self) -> str:
+        return self.episode_ref
 
 class _Ctx:
     pass
@@ -107,12 +110,12 @@ def test_same_source_episode_cannot_supply_promotion_pass(tmp_path: Path) -> Non
         name="source-bound",
         description="independent qualification required",
         body="counterexample included",
-        source_episode_refs=["session:s1"],
+        source_episode_refs=["episode:s1:1:aa"],
     )
     try:
         store.record_qualification(
             record.method_ref,
-            task_ref="session:s1",
+            task_ref="episode:s1:1:aa",
             verdict="pass",
             mechanism="pass",
             task_benefit="pass",
@@ -122,6 +125,17 @@ def test_same_source_episode_cannot_supply_promotion_pass(tmp_path: Path) -> Non
         assert "independent" in str(exc)
     else:
         raise AssertionError("same source episode must not authorize promotion")
+
+    # An independent later episode may legitimately authorize promotion.
+    independent = store.record_qualification(
+        record.method_ref,
+        task_ref="episode:s1:9:bb",
+        verdict="pass",
+        mechanism="pass",
+        task_benefit="pass",
+        promotion="pass",
+    )
+    assert independent["promotion"] == "pass"
 
 
 def test_teacher_cannot_be_reclassified(tmp_path: Path) -> None:
@@ -167,6 +181,7 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     assert "source_model" not in save_props
     assert "source_episode_refs" not in save_props
     assert "teacher_ref" not in save_props
+    assert "task_ref" not in save_props
 
     from llm_loop.core.run_context import current_model_label
 
@@ -184,19 +199,22 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     persisted = store.get(ref)
     assert persisted is not None
     assert persisted.source_model == "test-provider/test-model"
-    assert persisted.source_episode_refs == ("session:method-test-session",)
+    assert persisted.source_episode_refs == ("episode:method-test-session:1:feedface",)
 
     blocked = execute_experience_tool(
         "method_manage", {"action": "refine", "method_ref": ref, "transition": "activate"}, cast(Any, host)
     )
     assert blocked is not None and blocked.status.value == "failure"
 
+    # Qualification identity must come from the runtime current Episode.  The
+    # legacy/spoofed caller task_ref is ignored and cannot manufacture independence.
+    host.episode_ref = "episode:method-test-session:9:qualification"
     qualified = execute_experience_tool(
         "method_manage",
         {
             "action": "record_qualification",
             "method_ref": ref,
-            "task_ref": "episode:unseen",
+            "task_ref": "episode:spoofed-caller-ref",
             "verdict": "pass",
             "mechanism": "pass",
             "task_benefit": "pass",
@@ -205,6 +223,10 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
         cast(Any, host),
     )
     assert qualified is not None and qualified.status.value == "success"
+    entry = store.qualification_entries(ref)[-1]
+    assert entry["qualification_episode_ref"] == "episode:method-test-session:9:qualification"
+    assert entry["task_ref"] == "episode:method-test-session:9:qualification"
+    assert entry["task_ref"] != "episode:spoofed-caller-ref"
     moved = execute_experience_tool(
         "method_manage", {"action": "refine", "method_ref": ref, "transition": "qualify"}, cast(Any, host)
     )
@@ -213,6 +235,34 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
         "method_manage", {"action": "refine", "method_ref": ref, "transition": "activate"}, cast(Any, host)
     )
     assert activated is not None and activated.status.value == "success"
+
+
+def test_model_facing_method_writes_require_runtime_episode_provenance(tmp_path: Path) -> None:
+    store = MethodStore(tmp_path / "methods")
+    host = _Host(store)
+    host.episode_ref = ""
+
+    saved = execute_experience_tool(
+        "method_manage",
+        {"action": "save_candidate", "name": "no source", "description": "must reject", "body": "body"},
+        cast(Any, host),
+    )
+    assert saved is not None and saved.status.value == "failure"
+    assert "provenance" in saved.content
+
+    record = store.save_candidate(name="existing", description="programmatic seed", body="body")
+    qualified = execute_experience_tool(
+        "method_manage",
+        {
+            "action": "record_qualification",
+            "method_ref": record.method_ref,
+            "task_ref": "episode:model-invented",
+            "promotion": "pass",
+        },
+        cast(Any, host),
+    )
+    assert qualified is not None and qualified.status.value == "failure"
+    assert "provenance" in qualified.content
 
 
 def test_repository_seed_methods_are_complete() -> None:

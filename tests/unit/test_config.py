@@ -268,3 +268,20 @@ def test_exact_duplicate_tool_fold_is_explicit_opt_in(monkeypatch):
     settings = load_settings()
     assert settings.exact_duplicate_tool_fold is True
     assert settings.to_status_dict()["exact_duplicate_tool_fold"] is True
+
+
+def test_load_settings_learning_plane_default_off(monkeypatch):
+    """Learning Plane 默认关闭；LEARNING_PLANE_ENABLED=1 → 开启."""
+    from llm_loop.config import load_settings
+
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("LLM_BASE_URL", "https://x/v1")
+    monkeypatch.setenv("LLM_MODEL", "m")
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.delenv("LEARNING_PLANE_ENABLED", raising=False)
+    s = load_settings()
+    assert s.learning_plane_enabled is False  # 默认关闭：后台 LLM 反思需显式开启
+
+    monkeypatch.setenv("LEARNING_PLANE_ENABLED", "1")
+    s2 = load_settings()
+    assert s2.learning_plane_enabled is True

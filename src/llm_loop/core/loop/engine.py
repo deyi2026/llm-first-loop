@@ -186,6 +186,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
     # They are transport/fact handles only; the model run loop never consumes them implicitly.
     file_effect_query: Any | None = None
     human_file_operations: Any | None = None
+    # Learning Plane（design §5.3）: factory 动态装配 durable journal + ReflectionRun 消费者；
+    # 默认关闭时保持 None —— post_run 反射静默，零行为变化。
+    learning_journal: Any | None = None
+    learning_plane: Any | None = None
     # ERR1210 per-engine/session attempt ledger; actual lifecycle owned by RecoveryController.
     _err1210_attempted: dict[str, int]
     # ERC Phase6: optional workspace-activation legacy sidecar migration hook.
@@ -231,6 +235,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # 定位本会话 sess，并发 run 不互踩 switch_model 回调）
         if correction_ctx is not None:
             correction_ctx.session_binding_resolver = self._resolve_session_binding
+            correction_ctx.current_episode_ref_resolver = self._resolve_current_episode_ref
         self.archive = archive  # ArchiveStore（T22 压缩档案，可 None 降级）
         self.summarizer = summarizer
         self.extractor = extractor

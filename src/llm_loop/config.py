@@ -337,6 +337,9 @@ class Settings:
     experiences_dir: str = "./experiences"  # P1-2: 经验库目录（默认项目根 experiences/）
     methods_dir: str = "./data/methods"  # runtime-learned candidates; keep private/local by default
     method_seed_dir: str = "./methods"  # reviewed tracked Method/Teacher seed assets
+    # Learning Plane（design §5.3）: durable journal + 后台 ReflectionRun 消费者。
+    # 默认关闭——后台自动 LLM 反思调用涉及成本与用户知情权，由部署侧显式开启。
+    learning_plane_enabled: bool = False
     skills_dir: str = (
         "./skills"  # B3(2026-08-14): 插件化 Skill 目录（skills/<name>/SKILL.md；空/不存在=零行为）
     )
@@ -639,6 +642,7 @@ def load_settings() -> Settings:
         experiences_dir=os.environ.get("EXPERIENCES_DIR", "./experiences").strip(),
         methods_dir=os.environ.get("METHODS_DIR", "./data/methods").strip(),
         method_seed_dir=os.environ.get("METHOD_SEED_DIR", "./methods").strip(),
+        learning_plane_enabled=os.environ.get("LEARNING_PLANE_ENABLED", "0").strip() in {"1", "true", "yes", "on"},
         skills_dir=os.environ.get("SKILLS_DIR", "./skills").strip(),  # B3: 插件化 Skill 目录
         docs_dir=os.environ.get("DOCS_DIR", "./docs").strip(),
         archive_max_entries=_env_int("ARCHIVE_MAX_ENTRIES", 0),

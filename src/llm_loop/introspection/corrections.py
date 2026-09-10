@@ -86,6 +86,9 @@ class CorrectionContext:
     # P0-5(2026-08-15): 每会话绑定解析器（contextvar 定位本会话 sess 的
     # override getter/setter；并发 run 不互踩。None = 无解析器，回退上方环境字段）
     session_binding_resolver: Callable[[str], Any] | None = None
+    # Learning Plane P0: 当前真实 human turn 的机械 Episode identity 解析器。
+    # 仅由活跃 Engine run 装配；不得回退 latest historical episode，也不接受模型自报 ref。
+    current_episode_ref_resolver: Callable[[str], str] | None = None
     summarizer: Any | None = None  # R2: search_archive(with_summary=true) LLM 摘要
     task_evidence_verifier: Any | None = None  # P1: Task Evidence 机械真实性校验器
 
@@ -179,6 +182,26 @@ class CorrectionToolRegistry:
         from llm_loop.introspection.tools_status import current_session_id
 
         return current_session_id(self.ctx)
+
+    def current_episode_ref(self) -> str:
+        """Return the runtime-derived Episode ref for the active human turn only.
+
+        The resolver is deliberately separate from ``session_binding_resolver``:
+        model override binding and provenance identity are different mechanical
+        capabilities.  Missing/out-of-run provenance returns an empty string;
+        callers that require provenance must fail rather than invent an id.
+        """
+        resolver = self.ctx.current_episode_ref_resolver
+        if resolver is None:
+            return ""
+        session_id = self.current_session_id()
+        if not session_id:
+            return ""
+        try:
+            ref = str(resolver(session_id) or "")
+        except Exception:  # noqa: BLE001 - caller decides whether provenance is mandatory
+            return ""
+        return ref if ref.startswith("episode:") else ""
 
     def current_params(self) -> dict:
         from llm_loop.introspection.tools_status import current_params

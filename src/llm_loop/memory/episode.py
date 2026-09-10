@@ -363,6 +363,17 @@ class EpisodeStore:
                 return entry
         return None
 
+    def latest_episode(self, session_id: str) -> dict[str, Any] | None:
+        """Most recently indexed real episode (entry_kind ``episode``) for a session.
+
+        Used by the learning plane to bind one reflection job to exactly one
+        completed user task; ``None`` when nothing is indexed yet.
+        """
+        for entry in reversed(self._iter_entries(session_id)):
+            if str(entry.get("entry_kind") or "episode") == "episode":
+                return entry
+        return None
+
     def index_episode(
         self,
         session_id: str,

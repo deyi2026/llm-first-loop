@@ -123,3 +123,15 @@
 不走 Settings 冻结字段（热加载不生效）；默认全关零回归。
 
 **使用**：`adjust_strategy {"precheck_enabled": 1}` 开启预检；`{"fix_loop_enabled": 1}` 开启修复循环。
+
+## 八、方法学习反例（Learning Plane，2026-09-10，源自 DESIGN-20260910 §2/§7）
+
+方法卡（kind=method）是把"一次有效解法"固化为可复用资产的通道，以下为设计文档 §2 归纳的强模型高频失误类（本节为纪律约定，非逐条实证）：
+
+- **旧 verdict 当当前真相**：method 卡上的 qualification verdict 是"当时那个 episode"的结论；源文件/代码已变更时旧 verdict 失效，必须重读当前源（`read_evidence` 水合）而非引用旧记录。
+- **自证**：用产生方法的同一 episode 去验证方法——程序已机械隔离（qualification episode_ref ≠ source episode_ref），模型不得在 note 中把源记录当独立证据。
+- **单次 qualification 当泛化**：一任务 pass 不代表跨任务可迁移（transfer 需独立 qualification）；把"在我这奏效"写成"普遍适用"是虚假泛化。
+- **不可用时忽略**：方法不在检索结果里≠方法不存在；`search_records(kind=method)` 查询词不匹配时先换词重查，不直接放弃。
+- **verdict 四值语义**：pass/fail/mixed/insufficient——insufficient 是合法结论（证据不足就如实记，不硬凑 pass）。
+
+**判定权边界**：程序只证 episode 身份与 provenance；"方法是否有帮助/是否引入偏差/是否该精化"归模型判断（§7.3 Model Authority）。
