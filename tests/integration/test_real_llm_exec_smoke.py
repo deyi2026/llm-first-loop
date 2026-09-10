@@ -118,7 +118,7 @@ def _real_llm_settings(tmp_path):
         pytest.skip("无真实 LLM key（DEEPSEEK_API_KEY/LLM_API_KEY）")
     # 注册表可用性: load_registry 优先级 2 读 {data_dir}/providers.json——tmp_path 无此文件
     # 会回退 L0 合成（无模型映射）→ factory resolve 失败 → engine.llm 回退带前缀模型名
-    # （deepseek/deepseek-v4-flash）→ Summarizer/Extractor 直调 engine.llm 发 API 400。
+    # （deepseek/deepseek-flash）→ Summarizer/Extractor 直调 engine.llm 发 API 400。
     # 把项目 providers.json 拷入 tmp_path，保持测试隔离同时注册表真实可用。
     import shutil
     from pathlib import Path as _Path
@@ -134,7 +134,7 @@ def _real_llm_settings(tmp_path):
         # strip 后直传 LLMClient——否则模型名/reasoning_effort 带空格 → DeepSeek 400
         # （实测 'unknown variant `max   `'，LLM 摘要降级 deterministic）
         llm_base_url=(os.environ.get("LLM_BASE_URL") or "https://api.deepseek.com/v1").strip(),  # 空串回退（CI secrets 未配置=空串）
-        llm_model=(os.environ.get("LLM_MODEL") or "deepseek-v4-flash").strip(),
+        llm_model=(os.environ.get("LLM_MODEL") or "deepseek-flash").strip(),
         data_dir=str(tmp_path / "data"),
         max_iterations=10,
         tool_timeout_s=30.0,

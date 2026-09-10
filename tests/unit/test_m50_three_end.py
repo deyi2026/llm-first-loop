@@ -567,9 +567,9 @@ def test_web_models_zero_regression_no_registry(tmp_path):
     resp = client.get("/api/v1/models")
     assert resp.status_code == 200
     body = resp.json()
-    # 零回归: 默认 candidates
+    # bootstrap fallback: 当前 DeepSeek 官方默认名 + Pro 档位
     assert "fake-model" in body["models"]
-    assert "deepseek-v4-flash" in body["models"]
+    assert "deepseek-flash" in body["models"]
 
 
 # ── 6. refresh_config providers.json 热重载 ──

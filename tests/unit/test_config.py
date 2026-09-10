@@ -182,7 +182,7 @@ def test_to_status_dict_m12_deep_fields():
 
 
 def test_load_settings_model_default_chain(monkeypatch):
-    """M20 CFG-01/02: LLM_MODEL 缺省链 显式 > OPENSYGAI_DEEPSEEK_DEFAULT_MODEL > 内置 v4-flash."""
+    """M20 CFG-01/02: LLM_MODEL 缺省链 显式 > OPENSYGAI_DEEPSEEK_DEFAULT_MODEL > 内置 deepseek-flash."""
     from llm_loop.config import load_settings
 
     monkeypatch.setenv("LLM_API_KEY", "k")
@@ -195,9 +195,9 @@ def test_load_settings_model_default_chain(monkeypatch):
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.setenv("OPENSYGAI_DEEPSEEK_DEFAULT_MODEL", "deepseek-v4-flash")
     assert load_settings().llm_model == "deepseek-v4-flash"
-    # ③ 内置默认（不降级，无旧 deepseek-chat）
+    # ③ 内置默认（不降级，无旧 deepseek-chat；2026-09-10 起官方名 deepseek-flash / V4.1-Flash）
     monkeypatch.delenv("OPENSYGAI_DEEPSEEK_DEFAULT_MODEL", raising=False)
-    assert load_settings().llm_model == "deepseek-v4-flash"
+    assert load_settings().llm_model == "deepseek-flash"
     assert load_settings().llm_model != "deepseek-chat"
 
 
@@ -211,12 +211,12 @@ def test_load_settings_requires_only_key_base(monkeypatch):
     monkeypatch.delenv("OPENSYGAI_DEEPSEEK_DEFAULT_MODEL", raising=False)
     with pytest.raises(ValueError, match="LLM_API_KEY"):
         load_settings()
-    # 有 key/base_url 无 model → 用默认 v4-flash
+    # 有 key/base_url 无 model → 用内置默认 deepseek-flash
     monkeypatch.setenv("LLM_API_KEY", "k")
     monkeypatch.setenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.delenv("OPENSYGAI_DEEPSEEK_DEFAULT_MODEL", raising=False)
-    assert load_settings().llm_model == "deepseek-v4-flash"
+    assert load_settings().llm_model == "deepseek-flash"
 
 
 def test_load_settings_thinking_env(monkeypatch):

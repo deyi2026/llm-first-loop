@@ -26,7 +26,7 @@ def _client() -> LLMClient:
         pytest.skip("无真实 LLM key（DEEPSEEK_API_KEY/LLM_API_KEY）")
     base_url = (os.environ.get("LLM_BASE_URL") or "https://api.deepseek.com/v1").strip()
     # 裸模型名（client 直连不接受 provider/ 前缀；registry 路由由上层负责）
-    model = (os.environ.get("LLM_MODEL") or "deepseek-v4-flash").split("/")[-1].strip()
+    model = (os.environ.get("LLM_MODEL") or "deepseek-flash").split("/")[-1].strip()
     return LLMClient(api_key=api_key, base_url=base_url, model=model)
 
 

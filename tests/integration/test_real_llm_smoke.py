@@ -21,7 +21,7 @@ pytestmark = pytest.mark.real_llm
 def _real_llm_settings(tmp_path):
     """构造真实 LLM Settings（DEEPSEEK_API_KEY 优先，回退 LLM_API_KEY）.
 
-    M20 MDL-02: 默认模型 deepseek-chat → deepseek-v4-flash（官方 V4-Flash-0731，降级点去除）；
+    M20 MDL-02: 默认模型 deepseek-chat → deepseek-flash（官方 V4.1-Flash，旧 V4 Flash 名已下线）；
     思考参数同步消费 env（VAL-01 对比组用 LLM_THINKING_MODE=disabled）。
     """
     from llm_loop.config import Settings
@@ -32,7 +32,7 @@ def _real_llm_settings(tmp_path):
     return Settings(
         llm_api_key=api_key,
         llm_base_url=os.environ.get("LLM_BASE_URL") or "https://api.deepseek.com/v1",  # 空串回退（CI secrets 未配置=空串）
-        llm_model=os.environ.get("LLM_MODEL") or "deepseek-v4-flash",
+        llm_model=os.environ.get("LLM_MODEL") or "deepseek-flash",
         data_dir=str(tmp_path / "data"),
         max_iterations=10,
         tool_timeout_s=30.0,
@@ -550,7 +550,7 @@ def test_real_llm_tool_call_arguments_roundtrip(tmp_path):
         wire = "openai"
         api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("LLM_API_KEY", "")
         base_url = os.environ.get("LLM_BASE_URL") or "https://api.deepseek.com/v1"
-        model = os.environ.get("LLM_MODEL") or "deepseek-v4-flash"
+        model = os.environ.get("LLM_MODEL") or "deepseek-flash"
         if not api_key:
             pytest.skip("无真实 LLM key（DEEPSEEK_API_KEY/LLM_API_KEY）")
 
@@ -567,7 +567,7 @@ def test_real_llm_tool_call_arguments_roundtrip(tmp_path):
     )
     # 注册表可用性（同 _real_llm_settings）: tmp_path 无 providers.json → load_registry
     # 回退 L0 合成（无模型映射）→ factory resolve 失败 → engine.llm 用带前缀模型名
-    # （deepseek/deepseek-v4-flash）→ 真实请求 400 → 模型无工具调用。拷贝项目注册表。
+    # （deepseek/deepseek-flash）→ 真实请求 400 → 模型无工具调用。拷贝项目注册表。
     import shutil
     from pathlib import Path as _Path
 

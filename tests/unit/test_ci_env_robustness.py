@@ -32,7 +32,7 @@ def test_empty_string_env_falls_back(monkeypatch, tmp_path):
 
     s = _real_llm_settings(tmp_path)  # type: ignore[arg-type]
     assert s.llm_base_url == "https://api.deepseek.com/v1"  # 空串回退
-    assert s.llm_model == "deepseek-v4-flash"
+    assert s.llm_model == "deepseek-flash"
 
 
 def test_empty_string_env_smoke_equivalent(monkeypatch, tmp_path):

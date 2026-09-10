@@ -34,10 +34,10 @@ uv sync --frozen --extra dev
 # 无 uv 时退化安装（不保证版本精确一致）：
 # python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
-# 2. 配置密钥（LLM_MODEL 缺省默认 deepseek-v4-flash，可不设）
+# 2. 配置密钥（LLM_MODEL 缺省默认 deepseek-flash，可不设）
 export LLM_API_KEY=sk-xxx
 export LLM_BASE_URL=https://api.deepseek.com/v1
-# export LLM_MODEL=deepseek-v4-flash   # 可选: deepseek-v4-flash（默认）/ deepseek-v4-pro
+# export LLM_MODEL=deepseek-flash   # 可选: deepseek-flash（默认）/ deepseek-v4-pro（legacy）
 # export LLM_THINKING_MODE=enabled     # DeepSeek V4 思考模式（默认开启）
 # export LLM_REASONING_EFFORT=high     # 推理强度 low/high/max（默认 high）
 
@@ -152,7 +152,7 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 | 变量 | 默认 | 说明 |
 |:---|:---|:---|
 | `LLM_API_KEY` / `LLM_BASE_URL` | — | 必填 |
-| `LLM_MODEL` | deepseek-v4-flash | 模型（缺省链: 显式 > OPENSYGAI_DEEPSEEK_DEFAULT_MODEL > 内置） |
+| `LLM_MODEL` | deepseek-flash | 模型（缺省链: 显式 > OPENSYGAI_DEEPSEEK_DEFAULT_MODEL > 内置；省略时采用 DeepSeek bootstrap 默认） |
 | `LLM_THINKING_MODE` | enabled | DeepSeek V4 思考模式开关（非 DeepSeek 自动不发） |
 | `LLM_REASONING_EFFORT` | high | 推理强度 low/high/max |
 | `LLM_MAX_ITERATIONS` | 40 | 单次 run 最大循环轮数（工具密集任务可调大；达 80% 时注入 [轮数预警]，AI 可经 adjust_strategy 调大，硬上限 500） |
@@ -169,7 +169,7 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 | `METHOD_REFLECTION_MODE` | off | Method post-run self-distill：off/auto；默认不增加模型调用 |
 | `METHOD_REFLECTION_MIN_ROUNDS` / `METHOD_REFLECTION_MIN_TOOLS` / `METHOD_REFLECTION_MIN_FAILURES` | 6/6/2 | auto 模式机械 friction 阈值 |
 | `METHOD_REFLECTION_TIMEOUT_S` | 120 | 隔离 reflection 单次模型调用超时（秒） |
-| `MODEL_FALLBACKS` | 空 | 降级链（逗号分隔 `provider/model`，如 `deepseek/deepseek-v4-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`）；空=不启用降级 |
+| `MODEL_FALLBACKS` | 空 | 降级链（逗号分隔 `provider/model`，如 `deepseek/deepseek-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`）；空=不启用降级 |
 | `EVENT_LOG_ENABLED` | 1 | 事件源化单一真相源开关（`data/event_logs/<session_id>.jsonl` 追加写；0=事件写入零行为） |
 | `EVENT_LOGS_DIR` | 空 | 事件日志目录覆盖（空=从 data_dir 派生 `data/event_logs`） |
 | `READ_PATH_SOURCE` | session_json | 读路径分派（session_json 既有 / event_log replay 重建） |

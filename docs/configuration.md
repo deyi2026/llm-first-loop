@@ -13,7 +13,9 @@
 |:---|:---|:---|
 | `LLM_API_KEY` | — | 模型 API Key（密钥仅 env，不入库/日志/审计） |
 | `LLM_BASE_URL` | — | API 端点，如 `https://api.deepseek.com/v1` |
-| `LLM_MODEL` | deepseek-v4-flash | 缺省链: 显式 > `OPENSYGAI_DEEPSEEK_DEFAULT_MODEL` > 内置 |
+| `LLM_MODEL` | deepseek-flash | 缺省链: 显式 > `OPENSYGAI_DEEPSEEK_DEFAULT_MODEL` > 内置；省略表示采用 DeepSeek bootstrap 默认，其他 provider 建议显式设置 |
+
+> DeepSeek 于 2026-09-10 发布 V4.1 Flash；官方 API 名为 `deepseek-flash`。旧 `deepseek-v4-flash` 目前仅作临时兼容路由，不再作为 LFL 新配置的缺省名。
 
 ## 二、循环控制
 

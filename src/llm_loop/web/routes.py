@@ -1175,7 +1175,7 @@ def list_models(request: Request) -> dict:
     import os as _os
 
     engine = _engine_from(request)
-    default_model = getattr(getattr(engine, "llm", None), "model", None) or "deepseek-v4-flash"
+    default_model = getattr(getattr(engine, "llm", None), "model", None) or "deepseek-flash"
     # M50: current 反映当前共享会话的 model_override（若有），否则回退默认装配。
     # 修复：Web 前端 state.model 初始值跟随此值，避免 per-call model 遮蔽 switch_model 会话 override。
     current = default_model
@@ -1196,7 +1196,7 @@ def list_models(request: Request) -> dict:
         names = (
             [m.strip() for m in configured.split(",") if m.strip()]
             if configured
-            else ["deepseek-v4-flash", "deepseek-v4-pro"]
+            else ["deepseek-flash", "deepseek-v4-pro"]
         )
         if current not in names:
             names.insert(0, current)
@@ -1215,7 +1215,7 @@ def list_models(request: Request) -> dict:
     else:
         names = all_names
     # current 不在列表中 → 归一化为全限定名（前端下拉可匹配高亮）或插入首部
-    # 修复（2026-08-11）: 裸名 current 已作为 provider/model 候选存在（如 deepseek/deepseek-v4-flash）
+    # 修复（2026-08-11）: 裸名 current 已作为 provider/model 候选存在（如 deepseek/deepseek-flash）
     # 时归一化为全限定名（避免下拉重复 + current 与候选项一致可高亮）
     if current not in names:
         matched = next((n for n in names if n.endswith(f"/{current}")), None)

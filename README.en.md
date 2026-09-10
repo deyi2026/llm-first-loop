@@ -32,10 +32,10 @@ Program code assists the LLM (timely feedback, honest feedback), never constrain
 cd llm-first-loop
 python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
-# 2. Configure keys (LLM_MODEL defaults to deepseek-v4-flash if unset)
+# 2. Configure keys (LLM_MODEL defaults to deepseek-flash if unset)
 export LLM_API_KEY=sk-xxx
 export LLM_BASE_URL=https://api.deepseek.com/v1
-# export LLM_MODEL=deepseek-v4-flash   # Optional: deepseek-v4-flash (default) / deepseek-v4-pro
+# export LLM_MODEL=deepseek-flash   # Optional: deepseek-flash (default) / deepseek-v4-pro (legacy)
 # export LLM_THINKING_MODE=enabled     # DeepSeek V4 thinking mode (enabled by default)
 # export LLM_REASONING_EFFORT=high     # Reasoning effort low/high/max (default high)
 
@@ -110,7 +110,7 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 | Variable | Default | Description |
 |:---|:---|:---|
 | `LLM_API_KEY` / `LLM_BASE_URL` | — | Required |
-| `LLM_MODEL` | deepseek-v4-flash | Model (fallback chain: explicit > OPENSYGAI_DEEPSEEK_DEFAULT_MODEL > built-in) |
+| `LLM_MODEL` | deepseek-flash | Model (fallback chain: explicit > OPENSYGAI_DEEPSEEK_DEFAULT_MODEL > built-in; omission uses the DeepSeek bootstrap default) |
 | `LLM_THINKING_MODE` | enabled | DeepSeek V4 thinking-mode switch (not sent automatically for non-DeepSeek) |
 | `LLM_REASONING_EFFORT` | high | Reasoning effort low/high/max |
 | `LLM_MAX_ITERATIONS` | 40 | Max loop rounds per run (raise for tool-intensive tasks; at 80% a [轮数预警] is injected and the AI can raise it via adjust_strategy; hard cap 500) |
@@ -124,7 +124,7 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 | `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 5/50 | Insufficient-sample threshold / aggregation window; evaluation timing is chosen on demand by the AI/maintenance task |
 | `SYSTEM_PROMPT_EXTRA` | retired | No universal-prompt write authority; use explicit user requests / tool schemas / skills / operator-owned control surfaces for local behavior |
 | `HISTORY_MAX_CHARS` | unset | **Optional** global history/performance cap. When unset, no independent 100K/200K cap is invented: each request derives its budget from the actually routed model's context window, output reserve, and any explicit provider performance cap. An explicit value limits retained history/prefill, not the capability limit of the current human input. |
-| `MODEL_FALLBACKS` | empty | Fallback chain (comma-separated `provider/model`, e.g. `deepseek/deepseek-v4-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`); empty = fallback disabled |
+| `MODEL_FALLBACKS` | empty | Fallback chain (comma-separated `provider/model`, e.g. `deepseek/deepseek-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`); empty = fallback disabled |
 | `EVENT_LOG_ENABLED` | 1 | Event-sourced single-source-of-truth switch (append-write to `data/event_logs/<session_id>.jsonl`; 0 = event writes are a no-op) |
 | `EVENT_LOGS_DIR` | empty | Event log directory override (empty = derived from data_dir as `data/event_logs`) |
 | `READ_PATH_SOURCE` | session_json | Read-path dispatch (session_json existing / event_log rebuilt by replay) |

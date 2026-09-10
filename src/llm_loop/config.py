@@ -563,11 +563,12 @@ def load_settings() -> Settings:
     _fallback_notes.clear()
     api_key = os.environ.get("LLM_API_KEY", "").strip()
     base_url = os.environ.get("LLM_BASE_URL", "").strip()
-    # M20 CFG-01/02: LLM_MODEL 缺省 → OPENSYGAI_DEEPSEEK_DEFAULT_MODEL → 内置 deepseek-v4-flash
+    # M20 CFG-01/02: LLM_MODEL 缺省 → OPENSYGAI_DEEPSEEK_DEFAULT_MODEL → 内置 deepseek-flash
+    # （2026-09-10 起官方模型名为 deepseek-flash / V4.1-Flash；旧名 deepseek-v4-flash 仅剩临时路由层）
     model = os.environ.get("LLM_MODEL", "").strip()
     if not model:
         model = (
-            os.environ.get("OPENSYGAI_DEEPSEEK_DEFAULT_MODEL", "").strip() or "deepseek-v4-flash"
+            os.environ.get("OPENSYGAI_DEEPSEEK_DEFAULT_MODEL", "").strip() or "deepseek-flash"
         )
 
     missing: list[str] = []
@@ -579,7 +580,7 @@ def load_settings() -> Settings:
         raise ValueError(
             "缺少必填环境变量: "
             + ", ".join(missing)
-            + "。请参考 .env.example 配置 LLM_API_KEY / LLM_BASE_URL（LLM_MODEL 缺省默认 deepseek-v4-flash）。"
+            + "。请参考 .env.example 配置 LLM_API_KEY / LLM_BASE_URL（LLM_MODEL 缺省默认 deepseek-flash）。"
         )
 
     # T3: 记录 env 未显式设置的可自适应配置项（消费方据此走自适应，env 显式设置时走固定值）
