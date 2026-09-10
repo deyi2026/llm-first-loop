@@ -1,3 +1,8 @@
+> **[SUPERSEDED 2026-09-11 — historical evidence only]**
+> Current RG-3E status authority: `docs/QUALIFICATION-20260910-resource-governor-rg3e-e4.md` (**E0–E5 PASS/CLOSE**).
+> Authority index: `docs/analysis/CURRENT-AUTHORITY-20260911.md`.
+> The verdict text below is preserved as historical qualification evidence and must not be read as the current RG-3E status.
+
 # RG-3E E3A-E3C Resource Identity / Control-Plane Qualification — 2026-09-10
 
 ## 0. Verdict

@@ -1,7 +1,7 @@
 {
-  "schema_version": "2026-09-10.2",
+  "schema_version": "2026-09-11.3",
   "generated_for": "LFL adaptive reasoning/learning convergence",
-  "generated_at": "2026-09-10",
+  "generated_at": "2026-09-11",
   "authority_note": "Mechanical replay matrix. Semantic rationale is in the paired MD; this JSON is not a second architecture SoT.",
   "official_baseline": "lfl/main@d59169ffb28d",
   "candidate_semantic_sot": "feature/resource-governor-rg3e-authoritative-adapters-20260910@cf5e6fb",
@@ -104,13 +104,15 @@
   "stale_qualification_actions": [
     {
       "path": "docs/QUALIFICATION-20260910-resource-governor-rg3e.md",
-      "action": "add_SUPERSEDED_banner",
-      "points_to": "docs/QUALIFICATION-20260910-resource-governor-rg3e-e4.md"
+      "action": "SUPERSEDED_banner_applied",
+      "points_to": "docs/QUALIFICATION-20260910-resource-governor-rg3e-e4.md",
+      "authority_index": "docs/analysis/CURRENT-AUTHORITY-20260911.md"
     },
     {
       "path": "docs/QUALIFICATION-20260910-resource-governor-rg3e-e3c.md",
-      "action": "add_SUPERSEDED_banner",
-      "points_to": "docs/QUALIFICATION-20260910-resource-governor-rg3e-e4.md"
+      "action": "SUPERSEDED_banner_applied",
+      "points_to": "docs/QUALIFICATION-20260910-resource-governor-rg3e-e4.md",
+      "authority_index": "docs/analysis/CURRENT-AUTHORITY-20260911.md"
     }
   ],
   "ownership": [
@@ -341,7 +343,6 @@
         "human_turn_queue": "4b07ea153f9a6459ef0054554ece81deaf3299ee",
         "ci_rg_fallback": "4b07ea153f9a6459ef0054554ece81deaf3299ee"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -363,7 +364,6 @@
         "human_turn_queue": "b014ebb4d0bb2c886663e473354fcd0d16085267",
         "ci_rg_fallback": "b014ebb4d0bb2c886663e473354fcd0d16085267"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -387,7 +387,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -412,16 +411,18 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "8ce092e8a1f509eacd8da055355bfd17ae40fe4c",
-        "sha256": "00fbc4c2663a927440edaeba22c92671284f7bdc5e7976560f8ca3b38d39a01c",
-        "classification_10_4_2": "matches_p0_clean_and_rg3e"
-      },
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "00fbc4c2663a927440edaeba22c92671284f7bdc5e7976560f8ca3b38d39a01c",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e",
+        "computed_blob_oid": "8ce092e8a1f509eacd8da055355bfd17ae40fe4c",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "docs/DESIGN-20260910-reflection-session-decoupled-learning.md",
@@ -442,7 +443,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -465,7 +465,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -488,7 +487,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -511,7 +509,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -534,7 +531,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -557,7 +553,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -580,7 +575,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -603,7 +597,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -625,7 +618,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -649,16 +641,18 @@
         "human_turn_queue": "d6252c5f671b2063d73797b0a6183730fd33a459",
         "ci_rg_fallback": "d6252c5f671b2063d73797b0a6183730fd33a459"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "9647bb12537629e694cdd365e99e2c9cd222eb7b",
-        "sha256": "ecec04bf0ce79dfe631c076fe282aa019be438e3630ee0533073acfa9b8a4011",
-        "classification_10_4_2": "matches_p0_clean_and_rg3e"
-      },
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "ecec04bf0ce79dfe631c076fe282aa019be438e3630ee0533073acfa9b8a4011",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e",
+        "computed_blob_oid": "9647bb12537629e694cdd365e99e2c9cd222eb7b",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "docs/QUALIFICATION-20260910-resource-governor-rg1.md",
@@ -677,7 +671,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -700,7 +693,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -723,7 +715,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -746,7 +737,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -769,7 +759,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -792,7 +781,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -814,7 +802,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "replace",
       "verification_level": "verified",
       "reason": "Historical RG-3E qualification has a stale HOLD verdict; add SUPERSEDED banner and point to E4/E5 final qualification.",
@@ -836,7 +823,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Authoritative current RG-3E E0-E5 PASS/CLOSE qualification.",
@@ -858,7 +844,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "replace",
       "verification_level": "verified",
       "reason": "Historical RG-3E qualification has a stale HOLD verdict; add SUPERSEDED banner and point to E4/E5 final qualification.",
@@ -882,7 +867,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -904,7 +888,6 @@
         "human_turn_queue": "1133b9b40af1c790513e95c22eccb22f05e76fb6",
         "ci_rg_fallback": "1133b9b40af1c790513e95c22eccb22f05e76fb6"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -927,7 +910,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "hold",
       "verification_level": "verified",
       "reason": "Cache-v2 branch has a verified design-vs-code axis reversal; characterize/fix before any integration of this feature patch.",
@@ -952,16 +934,18 @@
         "human_turn_queue": "61456cf9b765662f49a3e72900cd60911bcbc330",
         "ci_rg_fallback": "61456cf9b765662f49a3e72900cd60911bcbc330"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "e47278a26f3b6601f0241a0ecbb8d36673a964d6",
-        "sha256": "19a0d0415db4e267eeeae4f62671d3c7b2a04854113e995d0dbbbd2a105e2b96",
-        "classification_10_4_2": "matches_p0_clean_and_rg3e"
-      },
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "19a0d0415db4e267eeeae4f62671d3c7b2a04854113e995d0dbbbd2a105e2b96",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e",
+        "computed_blob_oid": "e47278a26f3b6601f0241a0ecbb8d36673a964d6",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "scripts/ci_gate.sh",
@@ -981,7 +965,6 @@
         "human_turn_queue": "bdbc37585f7830fa553464db65ccfc395a2104d1",
         "ci_rg_fallback": "bdbc37585f7830fa553464db65ccfc395a2104d1"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
@@ -1005,7 +988,6 @@
         "human_turn_queue": "f7d31f692da24afcf77c0d74ce6975febcaa98f1",
         "ci_rg_fallback": "f7d31f692da24afcf77c0d74ce6975febcaa98f1"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
@@ -1031,7 +1013,6 @@
         "human_turn_queue": "1f05e7dbb6a3789b84cf117eac7de43ce419a1f8",
         "ci_rg_fallback": "1f05e7dbb6a3789b84cf117eac7de43ce419a1f8"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
@@ -1054,7 +1035,6 @@
         "human_turn_queue": "af568863490bfc3471178c4200caae16b0520360",
         "ci_rg_fallback": "af568863490bfc3471178c4200caae16b0520360"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1079,7 +1059,6 @@
         "human_turn_queue": "9bec4100f398388dfc5a64ea742e802285460f0a",
         "ci_rg_fallback": "9bec4100f398388dfc5a64ea742e802285460f0a"
       },
-      "working_tree": null,
       "disposition": "hold",
       "verification_level": "verified",
       "reason": "p0a carries independent DeepSeek default-model migration 8e589de; review/reapply as a provider-config patch and requalify on unified tree.",
@@ -1102,7 +1081,6 @@
         "human_turn_queue": "d1a2490edaff4fab08f99caa723454d764a9fc8b",
         "ci_rg_fallback": "d1a2490edaff4fab08f99caa723454d764a9fc8b"
       },
-      "working_tree": null,
       "disposition": "hold",
       "verification_level": "verified",
       "reason": "Cache-v2 branch has a verified design-vs-code axis reversal; characterize/fix before any integration of this feature patch.",
@@ -1125,7 +1103,6 @@
         "human_turn_queue": "1960fb55347a86b0810bd62d8b06b2a0faa4a507",
         "ci_rg_fallback": "1960fb55347a86b0810bd62d8b06b2a0faa4a507"
       },
-      "working_tree": null,
       "disposition": "hold",
       "verification_level": "needs_characterization",
       "reason": "T2 archive ordering concern is code-shape evidence only; add provider-path ordering characterization before deciding bug/fix.",
@@ -1147,7 +1124,6 @@
         "human_turn_queue": "165559955290bf7f991033a329c27e9052b31314",
         "ci_rg_fallback": "a7072cb447d032b1369259769634a36b700dd1e6"
       },
-      "working_tree": null,
       "disposition": "admit",
       "verification_level": "verified",
       "reason": "Independent fix/ci-rg-fallback delta absent from qualified RG-3E; preserve as integration candidate and requalify on combined tree.",
@@ -1171,7 +1147,6 @@
         "human_turn_queue": "c0708f5e873a63eb60449433b343edcf53c3b05b",
         "ci_rg_fallback": "c0708f5e873a63eb60449433b343edcf53c3b05b"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1196,16 +1171,18 @@
         "human_turn_queue": "b8204b7b79a8ff456b9d267359edb1226df4187d",
         "ci_rg_fallback": "b8204b7b79a8ff456b9d267359edb1226df4187d"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "4f9c088fcf751383ed259703ddd21ac84344fd3a",
-        "sha256": "be277955568051f13a0049992038c85c988174c4dbe2bdd7720c274ef71365d7",
-        "classification_10_4_2": "matches_p0_clean_rg3e_evolved"
-      },
       "disposition": "replace",
       "verification_level": "verified",
       "reason": "Current dirty copy equals P0-clean but RG-3E has later qualified evolution; take RG-3E version, do not replay the stale dirty copy.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "be277955568051f13a0049992038c85c988174c4dbe2bdd7720c274ef71365d7",
+        "classification_10_4_2": "matches_p0_clean_rg3e_evolved",
+        "computed_blob_oid": "4f9c088fcf751383ed259703ddd21ac84344fd3a",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "src/llm_loop/core/loop/engine_services/fallback.py",
@@ -1224,7 +1201,6 @@
         "human_turn_queue": "72ddc7d63065958f4ce75b9d684d4982db81268c",
         "ci_rg_fallback": "72ddc7d63065958f4ce75b9d684d4982db81268c"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1247,7 +1223,6 @@
         "human_turn_queue": "a55ef56d25f675339eff73687bea4e091ae8c608",
         "ci_rg_fallback": "a55ef56d25f675339eff73687bea4e091ae8c608"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1271,16 +1246,18 @@
         "human_turn_queue": "aac411436cc4bc0c5dfdadf4734c213d6a060faf",
         "ci_rg_fallback": "aac411436cc4bc0c5dfdadf4734c213d6a060faf"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "b1b5ca76f9560cb44c209184931599a5c81a51b2",
-        "sha256": "b1858b81dd0ee7144e2cfa00a35a55c249a516a7df9f12478ed54a439f43581d",
-        "classification_10_4_2": "matches_p0_clean_and_rg3e"
-      },
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "b1858b81dd0ee7144e2cfa00a35a55c249a516a7df9f12478ed54a439f43581d",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e",
+        "computed_blob_oid": "b1b5ca76f9560cb44c209184931599a5c81a51b2",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "src/llm_loop/core/loop/method_learning.py",
@@ -1301,7 +1278,6 @@
         "human_turn_queue": "4b1fff0afd9a2d7cf14dcde176fd30e1aa785d72",
         "ci_rg_fallback": "4b1fff0afd9a2d7cf14dcde176fd30e1aa785d72"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1324,7 +1300,6 @@
         "human_turn_queue": "27d366fa1a2e510cab2c828250d759f27c9b1127",
         "ci_rg_fallback": "27d366fa1a2e510cab2c828250d759f27c9b1127"
       },
-      "working_tree": null,
       "disposition": "hold",
       "verification_level": "verified",
       "reason": "Cache-v2 branch has a verified design-vs-code axis reversal; characterize/fix before any integration of this feature patch.",
@@ -1347,7 +1322,6 @@
         "human_turn_queue": "853b090943f3a5384bb746e48c260be0cb7403dc",
         "ci_rg_fallback": "853b090943f3a5384bb746e48c260be0cb7403dc"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1370,7 +1344,6 @@
         "human_turn_queue": "4baf2c201001cbd184517f2be8626e3ad11d4004",
         "ci_rg_fallback": "4baf2c201001cbd184517f2be8626e3ad11d4004"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1393,7 +1366,6 @@
         "human_turn_queue": "da350e2dba78237d304a7a11a98a53a23cdb5524",
         "ci_rg_fallback": "da350e2dba78237d304a7a11a98a53a23cdb5524"
       },
-      "working_tree": null,
       "disposition": "hold",
       "verification_level": "needs_characterization",
       "reason": "T2 archive ordering concern is code-shape evidence only; add provider-path ordering characterization before deciding bug/fix.",
@@ -1416,7 +1388,6 @@
         "human_turn_queue": "f303088fa3636f4853fb0a146793ac0ba276cb42",
         "ci_rg_fallback": "f303088fa3636f4853fb0a146793ac0ba276cb42"
       },
-      "working_tree": null,
       "disposition": "hold",
       "verification_level": "verified",
       "reason": "Cache-v2 branch has a verified design-vs-code axis reversal; characterize/fix before any integration of this feature patch.",
@@ -1439,7 +1410,6 @@
         "human_turn_queue": "b3c2555222e465e2a1cb8118b761762e9bed3cb1",
         "ci_rg_fallback": "b3c2555222e465e2a1cb8118b761762e9bed3cb1"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1464,7 +1434,6 @@
         "human_turn_queue": "2e4b4301052ca42bc5277f674dd54a9169b8bd78",
         "ci_rg_fallback": "2e4b4301052ca42bc5277f674dd54a9169b8bd78"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1488,16 +1457,18 @@
         "human_turn_queue": "360804b6282a64b951f8a3864ea6e894f22dc0fa",
         "ci_rg_fallback": "360804b6282a64b951f8a3864ea6e894f22dc0fa"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "fe7495dfc1411b7228eee53cf91d690bd837389d",
-        "sha256": "63d43361452fab641d8e12663b8f863ade502cf4506d91f59900ae33f305d79a",
-        "classification_10_4_2": "matches_p0_clean_and_rg3e"
-      },
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "63d43361452fab641d8e12663b8f863ade502cf4506d91f59900ae33f305d79a",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e",
+        "computed_blob_oid": "fe7495dfc1411b7228eee53cf91d690bd837389d",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "src/llm_loop/introspection/registry_experience.py",
@@ -1518,16 +1489,18 @@
         "human_turn_queue": "b8c927ac52d7f7e0111b586718c5a6434d4f986a",
         "ci_rg_fallback": "b8c927ac52d7f7e0111b586718c5a6434d4f986a"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "0ab242c8c6c7af552e1ec4b2ea1dfc633a3cb7bc",
-        "sha256": "ece23a6b570ae62bc1206045967c249f369d3ff9b9413803ddc34bb6818df7be",
-        "classification_10_4_2": "matches_p0_clean_and_rg3e"
-      },
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "ece23a6b570ae62bc1206045967c249f369d3ff9b9413803ddc34bb6818df7be",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e",
+        "computed_blob_oid": "0ab242c8c6c7af552e1ec4b2ea1dfc633a3cb7bc",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "src/llm_loop/introspection/registry_host.py",
@@ -1548,16 +1521,18 @@
         "human_turn_queue": "a93ecdb621c43ce5ca167b4d550b3d90b2552daf",
         "ci_rg_fallback": "a93ecdb621c43ce5ca167b4d550b3d90b2552daf"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "e7609d4d722ddcc00e0affa720e8d0be91d9ff85",
-        "sha256": "7cd88ada2f270adb333d3b4b0837f6bdd0a36e5b46411f6c6cc9a4080e3c93c9",
-        "classification_10_4_2": "matches_p0_clean_and_rg3e"
-      },
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "7cd88ada2f270adb333d3b4b0837f6bdd0a36e5b46411f6c6cc9a4080e3c93c9",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e",
+        "computed_blob_oid": "e7609d4d722ddcc00e0affa720e8d0be91d9ff85",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "src/llm_loop/introspection/registry_introspection.py",
@@ -1576,7 +1551,6 @@
         "human_turn_queue": "4e98478478269acd5a61592c301cf8d4c4a346b8",
         "ci_rg_fallback": "4e98478478269acd5a61592c301cf8d4c4a346b8"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1599,7 +1573,6 @@
         "human_turn_queue": "465d21afd5b9704a109bee9e612cb792d0987dae",
         "ci_rg_fallback": "465d21afd5b9704a109bee9e612cb792d0987dae"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1622,7 +1595,6 @@
         "human_turn_queue": "99e3d46586027020faea1d334c25e6c556134273",
         "ci_rg_fallback": "99e3d46586027020faea1d334c25e6c556134273"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1645,7 +1617,6 @@
         "human_turn_queue": "b77eb250779fa2070daea430ca598edb560a33e3",
         "ci_rg_fallback": "b77eb250779fa2070daea430ca598edb560a33e3"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1668,7 +1639,6 @@
         "human_turn_queue": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0",
         "ci_rg_fallback": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1693,7 +1663,6 @@
         "human_turn_queue": "bd12ed1f247cb98d98418b1ed758d1609f04807f",
         "ci_rg_fallback": "bd12ed1f247cb98d98418b1ed758d1609f04807f"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1716,7 +1685,6 @@
         "human_turn_queue": "68c6521e4fa6723d630ec997868e70436f0339c3",
         "ci_rg_fallback": "68c6521e4fa6723d630ec997868e70436f0339c3"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1739,7 +1707,6 @@
         "human_turn_queue": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3",
         "ci_rg_fallback": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1761,7 +1728,6 @@
         "human_turn_queue": "32a1f33dae394bbe131b8a94ace4a57b1574cf09",
         "ci_rg_fallback": "32a1f33dae394bbe131b8a94ace4a57b1574cf09"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1783,7 +1749,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1808,7 +1773,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1833,16 +1797,18 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "724192f3c79868bf5d7c7f58ee9dc7f53ed1100e",
-        "sha256": "410fbaae0e49ace23f8105f57e319faf966bc7d81571fd1164b7e7aed7818889",
-        "classification_10_4_2": "matches_p0_clean_rg3e_evolved"
-      },
       "disposition": "replace",
       "verification_level": "verified",
       "reason": "Current dirty copy equals P0-clean but RG-3E has later qualified evolution; take RG-3E version, do not replay the stale dirty copy.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "410fbaae0e49ace23f8105f57e319faf966bc7d81571fd1164b7e7aed7818889",
+        "classification_10_4_2": "matches_p0_clean_rg3e_evolved",
+        "computed_blob_oid": "724192f3c79868bf5d7c7f58ee9dc7f53ed1100e",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "src/llm_loop/methods/reflection.py",
@@ -1863,7 +1829,6 @@
         "human_turn_queue": "cbd76c0c761bcff368cf34de442ab857dbb30e70",
         "ci_rg_fallback": "cbd76c0c761bcff368cf34de442ab857dbb30e70"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1888,16 +1853,18 @@
         "human_turn_queue": "6859dd3277933d9c2998e1030c541b8b4a0901dd",
         "ci_rg_fallback": "6859dd3277933d9c2998e1030c541b8b4a0901dd"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "54baab88dcf2f2bdb3a680b37a6aafcf316a5740",
-        "sha256": "2974710abe94fa5d6629e7d245a304dfda2199cdaa1f8f50a6edd586f26c0167",
-        "classification_10_4_2": "matches_p0_clean_and_rg3e"
-      },
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "2974710abe94fa5d6629e7d245a304dfda2199cdaa1f8f50a6edd586f26c0167",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e",
+        "computed_blob_oid": "54baab88dcf2f2bdb3a680b37a6aafcf316a5740",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "src/llm_loop/resources/__init__.py",
@@ -1916,7 +1883,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1939,7 +1905,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1962,7 +1927,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -1985,7 +1949,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2008,7 +1971,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2031,7 +1993,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2054,7 +2015,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2077,7 +2037,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2099,7 +2058,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2122,7 +2080,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2144,7 +2101,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2166,7 +2122,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2188,7 +2143,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2210,7 +2164,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2232,7 +2185,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2254,7 +2206,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2277,7 +2228,6 @@
         "human_turn_queue": "dfc5229c3372a4a6d3332f23ecfc6487168377ad",
         "ci_rg_fallback": "dfc5229c3372a4a6d3332f23ecfc6487168377ad"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2300,7 +2250,6 @@
         "human_turn_queue": "d2fb6d0559f466b68623d7cea9ee37d83f30be97",
         "ci_rg_fallback": "d2fb6d0559f466b68623d7cea9ee37d83f30be97"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2322,7 +2271,6 @@
         "human_turn_queue": "530959385016d80ab050dc213cd8689d37d6b01a",
         "ci_rg_fallback": "530959385016d80ab050dc213cd8689d37d6b01a"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2342,16 +2290,18 @@
         "human_turn_queue": "1246d5367f64dadc361408a0847bc5ec8741f5d1",
         "ci_rg_fallback": "1246d5367f64dadc361408a0847bc5ec8741f5d1"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "3ad04b0d374505954cfaa8f2b655b761ef7ca2fc",
-        "sha256": "268a505a062e5cc1892a1f5ced4a7d0aba25db3071ee0a46cc08a1f9cb1e5305",
-        "classification_10_4_2": "unique_current_dirty"
-      },
       "disposition": "hold",
       "verification_level": "unverified",
       "reason": "Current p0a working copy is an independent MCP refresh/registry-stack lifecycle line; isolate and qualify before integration.",
-      "target_layer": "registry_stack_review"
+      "target_layer": "registry_stack_review",
+      "working_copy": {
+        "status": " M",
+        "sha256": "268a505a062e5cc1892a1f5ced4a7d0aba25db3071ee0a46cc08a1f9cb1e5305",
+        "classification_10_4_2": "unique_current_dirty",
+        "computed_blob_oid": "3ad04b0d374505954cfaa8f2b655b761ef7ca2fc",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "src/llm_loop/tools/registry.py",
@@ -2367,16 +2317,18 @@
         "human_turn_queue": "f7c93409515b2308025b91bf8504d4a43b89220a",
         "ci_rg_fallback": "f7c93409515b2308025b91bf8504d4a43b89220a"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "505ed891685cf882874a7bcd873c57072e8eb244",
-        "sha256": "8b454af6e8cbcc353d315e6c47ba6094e301d66185c8646c2929a7e0d2b627c4",
-        "classification_10_4_2": "unique_current_dirty"
-      },
       "disposition": "hold",
       "verification_level": "unverified",
       "reason": "Current p0a working copy is an independent MCP refresh/registry-stack lifecycle line; isolate and qualify before integration.",
-      "target_layer": "registry_stack_review"
+      "target_layer": "registry_stack_review",
+      "working_copy": {
+        "status": " M",
+        "sha256": "8b454af6e8cbcc353d315e6c47ba6094e301d66185c8646c2929a7e0d2b627c4",
+        "classification_10_4_2": "unique_current_dirty",
+        "computed_blob_oid": "505ed891685cf882874a7bcd873c57072e8eb244",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "src/llm_loop/web/human_turn_queue.py",
@@ -2394,7 +2346,6 @@
         "human_turn_queue": "81de0c7ede15b92e0b9574aca7015bd78fc5a7c0",
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "hold",
       "verification_level": "verified",
       "reason": "Human-turn queue has a verified stale-claim reaper duplicate-dispatch path for long runs; fix/qualify before integration.",
@@ -2416,7 +2367,6 @@
         "human_turn_queue": "6a98aad91aa68db9af35bc36ecf865172f979960",
         "ci_rg_fallback": "26441a17c5168b78adb58261b27bcbbead9a4a78"
       },
-      "working_tree": null,
       "disposition": "hold",
       "verification_level": "verified",
       "reason": "Human-turn queue has a verified stale-claim reaper duplicate-dispatch path for long runs; fix/qualify before integration.",
@@ -2438,7 +2388,6 @@
         "human_turn_queue": "67e413a47f64937af238ba6156a3ec525eb2ad88",
         "ci_rg_fallback": "3c5f3b4fe45771c04c7daa83e94d6eb3d6e38a40"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2462,7 +2411,6 @@
         "human_turn_queue": "e028fc6d06a23c64d0c02c1ea8e592424409f32d",
         "ci_rg_fallback": "e028fc6d06a23c64d0c02c1ea8e592424409f32d"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
@@ -2486,7 +2434,6 @@
         "human_turn_queue": "ba4948c8c9e29eb43ef136fe749cf738ee581bde",
         "ci_rg_fallback": "ba4948c8c9e29eb43ef136fe749cf738ee581bde"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
@@ -2509,7 +2456,6 @@
         "human_turn_queue": "f6d6f2a2d2bb4eea216d7f1d176114623d278f20",
         "ci_rg_fallback": "f6d6f2a2d2bb4eea216d7f1d176114623d278f20"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2535,7 +2481,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
@@ -2558,7 +2503,6 @@
         "human_turn_queue": "c3a768550c5e3969abc3d4edf0573e28c110b69f",
         "ci_rg_fallback": "c3a768550c5e3969abc3d4edf0573e28c110b69f"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2581,7 +2525,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2604,7 +2547,6 @@
         "human_turn_queue": "e1a1e789dd375afbfdedbb3b40e87215172df39f",
         "ci_rg_fallback": "e1a1e789dd375afbfdedbb3b40e87215172df39f"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2627,7 +2569,6 @@
         "human_turn_queue": "cf589577fed9bac78274577208d6721cbc1e347a",
         "ci_rg_fallback": "cf589577fed9bac78274577208d6721cbc1e347a"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2650,7 +2591,6 @@
         "human_turn_queue": "f753a12a76825c6ee15fa5a52adb54e1736f2b54",
         "ci_rg_fallback": "f753a12a76825c6ee15fa5a52adb54e1736f2b54"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2675,7 +2615,6 @@
         "human_turn_queue": "c32d1299c9aec880040e30ec286bd1457c427d93",
         "ci_rg_fallback": "c32d1299c9aec880040e30ec286bd1457c427d93"
       },
-      "working_tree": null,
       "disposition": "hold",
       "verification_level": "verified",
       "reason": "p0a carries independent DeepSeek default-model migration 8e589de; review/reapply as a provider-config patch and requalify on unified tree.",
@@ -2697,7 +2636,6 @@
         "human_turn_queue": "d5bec700e9a96c90c9d75a4371cd82087ea123fe",
         "ci_rg_fallback": "128538028d19b17e2f5958e456bb164de2c8fa8b"
       },
-      "working_tree": null,
       "disposition": "admit",
       "verification_level": "verified",
       "reason": "Independent fix/ci-rg-fallback delta absent from qualified RG-3E; preserve as integration candidate and requalify on combined tree.",
@@ -2722,16 +2660,18 @@
         "human_turn_queue": "d758dc3d268ad66f6a1039a6abc9a4945396da89",
         "ci_rg_fallback": "d758dc3d268ad66f6a1039a6abc9a4945396da89"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "d8e856e1b3130ac4666f65ea2b18e9009be8afba",
-        "sha256": "05783a4c55590c14bb0da1527e59744726154dacf5114e7d8f739efe16249767",
-        "classification_10_4_2": "matches_p0_clean_and_rg3e"
-      },
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "05783a4c55590c14bb0da1527e59744726154dacf5114e7d8f739efe16249767",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e",
+        "computed_blob_oid": "d8e856e1b3130ac4666f65ea2b18e9009be8afba",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "tests/unit/test_event_log.py",
@@ -2750,7 +2690,6 @@
         "human_turn_queue": "41de440059aa1c091625f496e895ed549adf3646",
         "ci_rg_fallback": "41de440059aa1c091625f496e895ed549adf3646"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2772,7 +2711,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2795,7 +2733,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2817,7 +2754,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2839,7 +2775,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2861,7 +2796,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2883,7 +2817,6 @@
         "human_turn_queue": "a08254f0a995598a21c295ba8a0a295ecf1a6f48",
         "ci_rg_fallback": "2a7c0b21cf1588b1ead72b996e530dec99f5b22d"
       },
-      "working_tree": null,
       "disposition": "admit",
       "verification_level": "verified",
       "reason": "Independent fix/ci-rg-fallback delta absent from qualified RG-3E; preserve as integration candidate and requalify on combined tree.",
@@ -2907,7 +2840,6 @@
         "human_turn_queue": "a0e5f3664e758648a3ad0a78e7042c5ad39d1880",
         "ci_rg_fallback": "a0e5f3664e758648a3ad0a78e7042c5ad39d1880"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -2932,16 +2864,18 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "e3fd77b6e49dc4ed190618f182cb0954a1a91ddb",
-        "sha256": "000642c3baab4a265603da6251d21a98e02c49d62882407d1a41a823681d6dc3",
-        "classification_10_4_2": "matches_p0_clean_rg3e_evolved"
-      },
       "disposition": "replace",
       "verification_level": "verified",
       "reason": "Current dirty copy equals P0-clean but RG-3E has later qualified evolution; take RG-3E version, do not replay the stale dirty copy.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "000642c3baab4a265603da6251d21a98e02c49d62882407d1a41a823681d6dc3",
+        "classification_10_4_2": "matches_p0_clean_rg3e_evolved",
+        "computed_blob_oid": "e3fd77b6e49dc4ed190618f182cb0954a1a91ddb",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "tests/unit/test_method_learning.py",
@@ -2962,16 +2896,18 @@
         "human_turn_queue": "f62197aee270b79421770efe058a0f19d93a0771",
         "ci_rg_fallback": "f62197aee270b79421770efe058a0f19d93a0771"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "0a1e575735619cfee852c3fdf44086b8a8f7c6df",
-        "sha256": "0643cdbf97561684bdf5a326bf7b3e6d3960a4ec41ba3d8d577e4ae7a1e7e876",
-        "classification_10_4_2": "matches_p0_clean_and_rg3e"
-      },
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "0643cdbf97561684bdf5a326bf7b3e6d3960a4ec41ba3d8d577e4ae7a1e7e876",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e",
+        "computed_blob_oid": "0a1e575735619cfee852c3fdf44086b8a8f7c6df",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "tests/unit/test_provider_call_resources.py",
@@ -2990,7 +2926,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3013,7 +2948,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3035,7 +2969,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3058,7 +2991,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3081,7 +3013,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3104,7 +3035,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3127,7 +3057,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3150,7 +3079,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3172,7 +3100,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3194,7 +3121,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3216,7 +3142,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3242,7 +3167,6 @@
         "human_turn_queue": "7a5e5f293b3ea0b0df21deb19b62befe0790f0ee",
         "ci_rg_fallback": "7a5e5f293b3ea0b0df21deb19b62befe0790f0ee"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
@@ -3264,7 +3188,6 @@
         "human_turn_queue": null,
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3287,7 +3210,6 @@
         "human_turn_queue": "e13488535bb8a74519cabb6041092f94a5f0f284",
         "ci_rg_fallback": "e13488535bb8a74519cabb6041092f94a5f0f284"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3309,7 +3231,6 @@
         "human_turn_queue": "e59b94ecb8bb150978de7c8ca24b0b0d78b86e0d",
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "hold",
       "verification_level": "verified",
       "reason": "Human-turn queue has a verified stale-claim reaper duplicate-dispatch path for long runs; fix/qualify before integration.",
@@ -3333,16 +3254,18 @@
         "human_turn_queue": "c5106791ed63a01dd28ce216495575aca27ca5bf",
         "ci_rg_fallback": "c5106791ed63a01dd28ce216495575aca27ca5bf"
       },
-      "working_tree": {
-        "status": " M",
-        "blob_oid": "043b909db0c9b3ca4af1b4f675e0ac22d70ca0b4",
-        "sha256": "23c0b0a1862abaf36d684b488196746fadd720f2cff530ff8caf83d3349ce1ce",
-        "classification_10_4_2": "matches_p0_clean_rg3e_evolved"
-      },
       "disposition": "replace",
       "verification_level": "verified",
       "reason": "Current dirty copy equals P0-clean but RG-3E has later qualified evolution; take RG-3E version, do not replay the stale dirty copy.",
-      "target_layer": "unified_integration"
+      "target_layer": "unified_integration",
+      "working_copy": {
+        "status": " M",
+        "sha256": "23c0b0a1862abaf36d684b488196746fadd720f2cff530ff8caf83d3349ce1ce",
+        "classification_10_4_2": "matches_p0_clean_rg3e_evolved",
+        "computed_blob_oid": "043b909db0c9b3ca4af1b4f675e0ac22d70ca0b4",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "webui/src/components/conversation/ChatQueue.tsx",
@@ -3360,7 +3283,6 @@
         "human_turn_queue": "3bf0a81c7f85109a0924faff01f12001ac94db01",
         "ci_rg_fallback": null
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3382,7 +3304,6 @@
         "human_turn_queue": "ad436fef1038e9b7c380852a918795f51d5eddc0",
         "ci_rg_fallback": "ed7f87c73bc6047f946257a708d3afa615a9e84c"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3404,7 +3325,6 @@
         "human_turn_queue": "d2bf8cfd50cbccfee438ee5f933692387a164a10",
         "ci_rg_fallback": "c8438a0c672ae7cc39ffde519381077e543dca15"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3426,7 +3346,6 @@
         "human_turn_queue": "f53a7a2fa0f184dac21d1a375ab61ba57359d59a",
         "ci_rg_fallback": "e05866c0b755a4f33f950320255d542061801b91"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3448,7 +3367,6 @@
         "human_turn_queue": "70f5183ecdfa9e3c7eb6cab6a85f4559cd07c5c2",
         "ci_rg_fallback": "192d01072318cfd0eea8b9771dc4e9c3c0b64cd1"
       },
-      "working_tree": null,
       "disposition": "hold",
       "verification_level": "verified",
       "reason": "Human-turn queue has a verified stale-claim reaper duplicate-dispatch path for long runs; fix/qualify before integration.",
@@ -3470,7 +3388,6 @@
         "human_turn_queue": "c991ebc08b7295f4fa75fa872bc55f815902aaae",
         "ci_rg_fallback": "b6c7c2cf964a0c59072577a57e54087df56352f3"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3492,7 +3409,6 @@
         "human_turn_queue": "ae30f1137837b3c23ac6591bf1fa6c3a914aeb87",
         "ci_rg_fallback": "928af0631cb39c3130de2afee5606c54be773969"
       },
-      "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
@@ -3502,8 +3418,6 @@
   "significant_untracked": [
     {
       "path": "docs/DESIGN-20260910-adaptive-reasoning-learning-architecture.zh.md",
-      "working_blob_oid": "d6b92bf2194d6a6813c63c1eb4c710308af47ba7",
-      "working_sha256": "85342e8221861dbc666bdb4d9b3f3b021e86d853c83c9b0ca10157dfd2d8bbbc",
       "rg3e_blob_oid": "303bcc906b86f79cc4266521c67f5f5bf87ac6ba",
       "disposition": "replace",
       "verification_level": "verified",
@@ -3515,52 +3429,91 @@
         "deletions": 32
       },
       "classification": "stale_local_copy",
-      "verified_gap": "working copy lacks latest RG-3A through RG-3E status/close pointers present in qualified tracked SoT"
+      "verified_gap": "working copy lacks latest RG-3A through RG-3E status/close pointers present in qualified tracked SoT",
+      "working_copy": {
+        "computed_blob_oid": "d6b92bf2194d6a6813c63c1eb4c710308af47ba7",
+        "sha256": "85342e8221861dbc666bdb4d9b3f3b021e86d853c83c9b0ca10157dfd2d8bbbc",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "docs/analysis/ISSUE-20260910-registry-stack-preexisting-debts.md",
-      "working_blob_oid": "0d79d46ca2f3dc80b2cef41b03fe6de6084faabb",
-      "working_sha256": "1cff3f4ae0936aca05e5474eb653d9576629240053b0202eaed164653548892f",
       "rg3e_blob_oid": null,
       "disposition": "hold",
       "verification_level": "unverified",
-      "reason": "Untracked current-worktree artifact; provenance/classify before integration."
+      "reason": "Untracked current-worktree artifact; provenance/classify before integration.",
+      "working_copy": {
+        "computed_blob_oid": "0d79d46ca2f3dc80b2cef41b03fe6de6084faabb",
+        "sha256": "1cff3f4ae0936aca05e5474eb653d9576629240053b0202eaed164653548892f",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "docs/analysis/QUALIFICATION-20260910-learning-plane-p0.md",
-      "working_blob_oid": "15b70ecb1b156a6da12a0aa5ab6b6917993a0db5",
-      "working_sha256": "fa796ad8d3d53be200662aad5cd9e6699a9a4ebeda7b2a443226e9791bc8bc7f",
       "rg3e_blob_oid": "303da6e8362ed66dacf76d2100c1bcfa6739d160",
       "disposition": "hold",
       "verification_level": "unverified",
-      "reason": "Untracked current-worktree artifact; provenance/classify before integration."
+      "reason": "Untracked current-worktree artifact; provenance/classify before integration.",
+      "working_copy": {
+        "computed_blob_oid": "15b70ecb1b156a6da12a0aa5ab6b6917993a0db5",
+        "sha256": "fa796ad8d3d53be200662aad5cd9e6699a9a4ebeda7b2a443226e9791bc8bc7f",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "tests/unit/test_dispose_teardown.py",
-      "working_blob_oid": "45f33204a17c6c2a2a9c276e68f5661b5e8ec46f",
-      "working_sha256": "b5c2556b8ce03b80a1a795a4c363a0d7858940b79d8786d7b0461321c0063073",
       "rg3e_blob_oid": null,
       "disposition": "hold",
       "verification_level": "unverified",
-      "reason": "Untracked current-worktree artifact; provenance/classify before integration."
+      "reason": "Untracked current-worktree artifact; provenance/classify before integration.",
+      "working_copy": {
+        "computed_blob_oid": "45f33204a17c6c2a2a9c276e68f5661b5e8ec46f",
+        "sha256": "b5c2556b8ce03b80a1a795a4c363a0d7858940b79d8786d7b0461321c0063073",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "tests/unit/test_refresh_makethenbreak.py",
-      "working_blob_oid": "321235ec41420bfdb6643df8207911deb1dde87d",
-      "working_sha256": "0455548230a8895768bbf1ed17b4a8b4d08ccf16cdfbd9a91a2c1fd4bc6f94e0",
       "rg3e_blob_oid": null,
       "disposition": "hold",
       "verification_level": "unverified",
-      "reason": "Untracked current-worktree artifact; provenance/classify before integration."
+      "reason": "Untracked current-worktree artifact; provenance/classify before integration.",
+      "working_copy": {
+        "computed_blob_oid": "321235ec41420bfdb6643df8207911deb1dde87d",
+        "sha256": "0455548230a8895768bbf1ed17b4a8b4d08ccf16cdfbd9a91a2c1fd4bc6f94e0",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
     },
     {
       "path": "tests/unit/test_registry_stack.py",
-      "working_blob_oid": "ddde049885b06eb3ca7d851a71be6b32d111ae07",
-      "working_sha256": "a18880462f9824671d121f0907bb69007666031395db3bd97502f024a50ca471",
       "rg3e_blob_oid": null,
       "disposition": "hold",
       "verification_level": "unverified",
-      "reason": "Untracked current-worktree artifact; provenance/classify before integration."
+      "reason": "Untracked current-worktree artifact; provenance/classify before integration.",
+      "working_copy": {
+        "computed_blob_oid": "ddde049885b06eb3ca7d851a71be6b32d111ae07",
+        "sha256": "a18880462f9824671d121f0907bb69007666031395db3bd97502f024a50ca471",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      }
+    },
+    {
+      "path": ".tmp/cache_shape_probe.py",
+      "working_copy": {
+        "computed_blob_oid": "35a04cad88490b1e45d5fe88c39081c940a46329",
+        "sha256": "eaaaed6647842435404f77c53e88592511d9f43e23270c0d8764c0d55b9a4b81",
+        "repo_object_expected": false,
+        "reachability_applicable": false
+      },
+      "disposition": "preserve_then_review",
+      "verification_level": "verified_mechanical",
+      "classification": "unique_source_bearing_experiment",
+      "reason": "DeepSeek cache-shape A/B/C experiment; frozen audit found no ref-reachable equivalent. Preserve before cleanup."
     }
   ],
   "candidate_semantic_sot_role": "qualified_anchor_not_complete_convergence_target",
@@ -3572,12 +3525,15 @@
     "automatic_whole_branch_merges": []
   },
   "repository_entry_state": {
-    "local_main": "14c071086be6ef9cf4e72d2f046204e7373fe163",
-    "local_main_equals": "feature/context-elasticity-20260910@14c0710",
+    "frozen_audit_local_main": "14c071086be6ef9cf4e72d2f046204e7373fe163",
+    "current_local_main": "95515dba280720623c6cc66ae4e37b5e6b2dd8cc",
     "formal_baseline": "lfl/main@d59169ffb28da8134f4246b023082d0581f978de",
-    "verification_level": "verified",
-    "risk": "new branches from local main silently inherit context-elasticity commits",
-    "required_preflight_action": "after preserving/verifying the context-elasticity feature ref, repoint local main before cutting new branches",
+    "qualified_anchor": "cf5e6fb@cf5e6fbd07e7165727b665315ae4ac7ef89cb315",
+    "governance_start": "643b649@643b64955c99357806f34a360edd429f71e060f0",
+    "disposition": "PRESERVE_THEN_REPOINT",
+    "not_integration_target": true,
+    "risk": "local main contains feature-specific/unqualified deltas and is not a safe branch-entry authority",
+    "required_preflight_action": "preserve named feature refs, repoint local main to lfl/main formal branch-entry authority, then cut the single unified integration branch from governance_start",
     "action_performed_by_this_docs_revision": false
   },
   "worktree_stash_inventory": {
@@ -3679,5 +3635,134 @@
     "cause_class": "matrix path parsing/generation defect; not production source",
     "correction": "removed malformed duplicate and attached NUL-delimited porcelain-derived working-tree evidence to the real docs/DESIGN-20260910-learning-plane.md row",
     "verification": "full ref/blob + current working-tree replay required after correction"
+  },
+  "authority_index": "docs/analysis/CURRENT-AUTHORITY-20260911.md",
+  "final_inventory_snapshot": "docs/analysis/CONVERGENCE-DISPOSITION-INVENTORY-20260911.json",
+  "docs_closeout_status": "FINAL_DOCS_ONLY_REVISION__EXECUTION_PREFLIGHT_PENDING",
+  "working_copy_oid_contract": {
+    "field": "working_copy.computed_blob_oid",
+    "meaning": "Content fingerprint computed with Git blob hashing rules for the working copy.",
+    "repo_object_expected": false,
+    "reachability_applicable": false,
+    "rule": "Do not interpret absence from Git object DB/reachability as a content-integrity failure; use sha256/content comparison and disposition evidence instead."
+  },
+  "external_architecture_candidate": {
+    "location_class": "external_local_downloads",
+    "basename": "DESIGN-20260910-LFL-自适应推理与学习架构-最终中文版.md",
+    "duplicate_copy_count": 2,
+    "lines": 2081,
+    "sha256": "85f16b79342c19a0fa6903f0423052431eab72ba0e95183dc3aa7b5644ae3296",
+    "tracked_authority": {
+      "path": "docs/DESIGN-20260910-adaptive-reasoning-learning-architecture.zh.md",
+      "lines": 1144,
+      "sha256": "faab4c0582c54d3ee5f86e98369c34469e90bc6f9fdbc1d1b685ae371c380831"
+    },
+    "mechanical_relation": {
+      "same_bytes": false,
+      "diff_stat": "1194 insertions / 257 deletions relative to tracked SoT",
+      "downloads_mentions_rg3e": false,
+      "tracked_sot_mentions_rg3e": true
+    },
+    "disposition": "PRESERVE_EXTERNAL_CANDIDATE_HOLD",
+    "authority": false,
+    "reason": "The external 2081-line design is a materially different local candidate. It is not silently promoted by convergence: preserve its provenance for later semantic reconciliation, while the committed tracked Architecture SoT remains current authority."
+  },
+  "post_freeze_drift": {
+    "purpose": "Narrow pre-write drift capture; does not rewrite the frozen audit or silently qualify new work.",
+    "worktrees_total": 109,
+    "worktree_bound_branches": 35,
+    "detached": 74,
+    "dirty_worktrees_current": 18,
+    "local_heads": 66,
+    "added_heads": [
+      {
+        "branch": "fix/cache-prefix-surface-contract-20260910",
+        "tip": "2ec6875cada17f3e77f57bccaa8806af6d57aead",
+        "ahead_of_lfl_main": 17,
+        "behind_lfl_main": 0,
+        "worktree": ".worktrees/cache-contract-fix",
+        "disposition": "POST_FREEZE_ADMIT_CANDIDATE",
+        "verification": "not_qualified_by_convergence_audit",
+        "reason": "Created after frozen inventory; preserve as an independent delta and require separate review/requalification before admission."
+      }
+    ],
+    "removed_heads": [],
+    "added_worktrees": [
+      {
+        "worktree": ".worktrees/cache-contract-fix",
+        "head": "2ec6875cada17f3e77f57bccaa8806af6d57aead",
+        "branch": "fix/cache-prefix-surface-contract-20260910"
+      }
+    ],
+    "removed_worktrees": [],
+    "local_main": {
+      "current": "95515dba280720623c6cc66ae4e37b5e6b2dd8cc",
+      "frozen_audit_value": "14c071086be6ef9cf4e72d2f046204e7373fe163",
+      "ahead_of_lfl_main": 31,
+      "behind_lfl_main": 0,
+      "disposition": "PRESERVE_THEN_REPOINT",
+      "not_integration_target": true,
+      "required_action": "Preserve named feature refs for all current main-only content, then repoint local main to formal branch-entry authority lfl/main before cutting the unified integration branch from governance_start.",
+      "action_performed_by_docs_revision": false
+    },
+    "primary_now": {
+      "tracked_dirty": 16,
+      "recursive_untracked": 494,
+      "top_level_prefix_counts": {
+        ".proposals": 1,
+        ".tmp": 472,
+        ".worktrees": 6,
+        "SHA256SUMS": 1,
+        "docs": 4,
+        "models": 7,
+        "tests": 3
+      }
+    },
+    "dirty_worktree_delta": {
+      "frozen": 59,
+      "current": 18,
+      "previous_unique_worktrees_no_longer_dirty": [
+        "/private/tmp/lfl-k1-protected-rebase-20260906",
+        "/private/tmp/lfl-k1-protected-verify-git-20260906",
+        "/private/tmp/lfl-lazy-schema-audit-5359505",
+        "/private/tmp/lfl-repro.3Pgczp",
+        "/private/tmp/lfl-rule-v13-rebase-probe-20260906",
+        "/private/tmp/lfl-rules-exp-prereq-sim-20260906",
+        "/private/tmp/lfl-summary-default-off-20260906",
+        "/private/tmp/lfl-tier0-cleanup.QPP46c"
+      ],
+      "preservation_status": "UNKNOWN_UNTIL_PROVEN"
+    },
+    "rule": "Any post-freeze ref/worktree/working-state delta is a new convergence input. It is not inherited into the integration target merely because it appeared on local main."
+  },
+  "provenance_trailer_policy": {
+    "prospective_only": true,
+    "public_safe_fields": [
+      "LFL-Authored-By",
+      "LFL-Agent"
+    ],
+    "private_or_hashed_fields": [
+      "LFL-Session",
+      "LFL-Goal"
+    ],
+    "rule": "Never fabricate agent/session identity. Raw local session identifiers should not be exposed in a public repository; use a private audit reference or digest when needed."
+  },
+  "restart_ci_terminal_equivalence": {
+    "statement": "For the seven restart/CI assets enumerated in the paired MD: p0a(4ba9f12+8eb87f7) ≡ qualified(608ec12); terminal bytes are identical for this asset set, so do not cherry-pick the p0a restart/CI commits again.",
+    "disposition": "ALREADY_REPRESENTED"
+  },
+  "final_inventory_counts_frozen": {
+    "worktrees": 108,
+    "local_heads": 65,
+    "dirty_worktrees": 59,
+    "primary_recursive_untracked": 485,
+    "exact_duplicate_worktrees": 0,
+    "hold_equivalence_unproven_worktrees": 44
+  },
+  "current_live_counts_prewrite": {
+    "worktrees": 109,
+    "local_heads": 66,
+    "dirty_worktrees": 18,
+    "primary_recursive_untracked": 494
   }
 }

@@ -1,10 +1,12 @@
 # LFL Convergence + Disposition Gate — 2026-09-10
 
-> **Status: PROPOSED CONVERGENCE SoT / docs-only**
+> **Status: FINAL CONVERGENCE DISPOSITION / docs-only; execution preflight pending**
 > **Qualified semantic anchor:** `feature/resource-governor-rg3e-authoritative-adapters-20260910@cf5e6fb`
 > **Convergence target:** the qualified anchor **plus only individually reviewed and requalified independent deltas**; no unqualified branch is auto-merged.
 > **Official repository baseline:** `lfl/main@d59169f`
 > **Paired mechanical replay matrix:** `docs/analysis/CONVERGENCE-DISPOSITION-20260910.json`
+> **Final inventory snapshot:** `docs/analysis/CONVERGENCE-DISPOSITION-INVENTORY-20260911.json`
+> **Current authority index:** `docs/analysis/CURRENT-AUTHORITY-20260911.md`
 > **Scope of this document:** convergence, ownership, measurement and governance wiring only. It does **not** merge branches, change production runtime, enable RG-3F, start Reasoning Lab, or modify services.
 
 ---
@@ -55,11 +57,11 @@ The two older qualification files still contain historical HOLD text:
 - `docs/QUALIFICATION-20260910-resource-governor-rg3e.md`
 - `docs/QUALIFICATION-20260910-resource-governor-rg3e-e3c.md`
 
-They are historically useful evidence but are **not current status authorities**. During convergence they must receive a visible `[SUPERSEDED 2026-09-10]` banner pointing to the E4/E5 final qualification. Do not rewrite their historical evidence; only disambiguate current authority.
+They are historically useful evidence but are **not current status authorities**. This final docs-only revision applies a visible `[SUPERSEDED 2026-09-11]` banner to both files and points them to the E4/E5 final qualification plus the single current-authority index. Their historical evidence remains unchanged below the banner.
 
 This is a **VERIFIED intra-tree authority conflict**, not merely a naming concern: at the same `cf5e6fb` tree, `rg3e.md` says `E3 = NOT QUALIFIED / RG-3F must not start`, `rg3e-e3c.md` says overall `HOLD`, while `rg3e-e4.md` says `E0-E5 = PASS/CLOSE`. The final E4/E5 document is the current verdict; the older files must remain historical evidence only.
 
-This supersede action is deliberately **listed here rather than silently performed during audit**, so the convergence baseline remains replayable.
+The supersede action is now **performed by this final docs-only revision**. It changes documentation authority only; it does not change RG runtime behavior or qualification evidence.
 
 ## 1.2 Branch topology against the actual formal baseline
 
@@ -137,7 +139,7 @@ The following final tree blobs are byte-identical between p0a and RG-3E:
 - `tests/scripts/test_restart_mirror_hardening.py`
 - `tests/unit/test_restart_mirror_script.py`
 
-RG bridge commit `608ec12` already preserved this state. **Do not cherry-pick the p0a restart/CI commits again.**
+For the seven restart/CI assets listed above, RG bridge commit `608ec12` already preserves the same terminal bytes: **`p0a(4ba9f12+8eb87f7) ≡ qualified(608ec12)` for this asset set; terminal bytes are identical, so do not cherry-pick the p0a restart/CI commits again.**
 
 ## 1.5 p0a independent committed delta
 
@@ -159,29 +161,37 @@ The three affected paths are still byte-identical between `d59169f` and `cf5e6fb
 
 Disposition: **ADMIT candidate / preserve for the unified integration, then run focused + committed-state qualification before treating it as integrated truth.** Do not silently discard it and do not label it already qualified.
 
-## 1.7 Local `main` pointer drift — convergence preflight
+## 1.7 Local `main` pointer drift — `PRESERVE_THEN_REPOINT`
 
-Mechanical ref state at this audit:
+Frozen final-audit observation:
 
 ```text
-local main = 14c0710 = feature/context-elasticity-20260910 tip
-lfl/main   = d59169f = formal baseline for this architecture workline
+local main = 14c071086be6 = feature/context-elasticity-20260910 tip
+lfl/main   = d59169ffb28d = formal baseline
 ```
 
-This creates a dangerous branch-entry ambiguity: a future `git switch main && git switch -c ...` would silently inherit the 13 context-elasticity commits.
+A mandatory pre-write live check found a **post-freeze concurrent change** not made by this docs revision:
 
-Required convergence preflight: after re-verifying that `feature/context-elasticity-20260910` preserves `14c0710`, repoint local `main` to the intended formal/integration authority. **This document records the action only; the docs-only phase does not move refs.**
+```text
+local main = 95515dba2807  (+31/-0 vs lfl/main)
+parents    = 14c0710... + 2ec6875...
+new ref    = fix/cache-prefix-surface-contract-20260910@2ec6875...
+```
+
+This does **not** turn local `main` into the integration target. It enlarges the branch-entry drift: local `main` now contains the context-elasticity lineage plus a post-freeze cache-prefix lineage that has not been admitted by this convergence audit.
+
+Disposition: **`PRESERVE_THEN_REPOINT` / `ENTRY_HYGIENE_REQUIRED`**. Preserve named refs for all current main-only content, then repoint local `main` to the formal branch-entry authority `lfl/main@d59169ffb28d` **before** cutting the one unified integration branch from the `643b649` governance-start lineage. This docs-only revision records the rule; it does not move any ref.
 
 ## 1.8 Worktree and stash topology is part of the state
 
-Four current feature worktrees live under the repository's `.worktrees/` root and must be explicitly preserved/inventoried during convergence:
+The earlier Gate listed only four active feature worktrees. The final machine audit proved that was incomplete. At the frozen final-audit snapshot there were **108 worktrees total**, including **85 under `/private/tmp`**, **34 worktree-bound branches**, **74 detached worktrees**, and **59 dirty worktrees**. The complete sanitized manifest is now persisted in `CONVERGENCE-DISPOSITION-INVENTORY-20260911.json`. Four core worktrees already named by the earlier Gate were:
 
 - `rg3-unified-20260910` → `cf5e6fb`;
 - `ci-rg-fallback-20260910` → `d43612c`;
 - `context-elasticity` → `14c0710`;
 - `human-turn-queue` → `f391520`.
 
-They are **not the only Git worktrees**: the repository also retains many historical/detached verification worktrees under `/private/tmp` and backup/tmp locations. Convergence must distinguish active source-bearing worktrees from disposable verification remnants before pruning anything.
+They are **not the only Git worktrees**. The frozen snapshot classifies 15 worktrees as `UNIQUE_SOURCE_BEARING`, 44 former “duplicate” candidates as `HOLD_EQUIVALENCE_UNPROVEN`, and grants **zero** worktrees safe-prune status merely from individual blob duplication. A later pre-write live check observed post-freeze cleanup/mutation and only 18 worktrees still dirty; that later state does not erase the frozen evidence. Previously unique dirty states that are no longer visible require preservation/recovery proof before further cleanup.
 
 Two stashes also exist and are not branch-owned truth:
 
@@ -204,6 +214,141 @@ Ruling: the p0a untracked SoT is a **stale local copy**, not a competing authori
 
 For size reporting, use explicit reproducible scopes. At this snapshot `src/llm_loop/methods/**/*.py` is **1,348 lines**; do not reuse the earlier undefined `1,425 LOC` figure as a canonical metric.
 
+
+## 1.10 Final frozen inventory and 65-head disposition
+
+The final audit snapshot is intentionally frozen rather than silently rewritten by later concurrent work. Its machine source digests and sanitized 108-row worktree manifest are persisted in `CONVERGENCE-DISPOSITION-INVENTORY-20260911.json`.
+
+| metric | frozen value |
+|---|---:|
+| worktrees total | 108 |
+| /private/tmp | 85 |
+| .worktrees | 5 |
+| .backup/worktrees | 6 |
+| .tmp-ci | 2 |
+| project-direct | 4 |
+| research | 5 |
+| dirty worktrees | 59 |
+| detached | 74 |
+| local heads | 65 |
+| worktree-bound heads | 34 |
+| unbound heads | 31 |
+| primary tracked dirty | 16 |
+| primary recursive untracked | 485 |
+
+All 65 local heads in the frozen snapshot have an explicit disposition:
+
+| branch | tip | bound | +/− `lfl/main` | disposition |
+|---|---|---|---:|---|
+| `main` | `14c07108` | ref-only | +13/−0 | **PRESERVE_THEN_REPOINT** |
+| `docs/convergence-disposition-revision-20260910` | `643b6495` | yes | +24/−0 | **KEEP_REFERENCE** |
+| `experiment/s1-checkpoint-producer-20260906` | `718d9432` | yes | +0/−711 | **KEEP_REFERENCE** |
+| `feature/learning-plane-20260910` | `d2efc96f` | ref-only | +6/−0 | **KEEP_REFERENCE** |
+| `feature/learning-plane-p0a-20260910` | `8e589de5` | yes | +7/−0 | **KEEP_REFERENCE** |
+| `feature/resource-governor-rg3e-authoritative-adapters-20260910` | `cf5e6fbd` | yes | +22/−0 | **KEEP_REFERENCE** |
+| `feature/webui-live-parity-20260909` | `1640e196` | yes | +7/−656 | **KEEP_REFERENCE** |
+| `feature/webui-product-closure-20260909` | `f217baf4` | yes | +5/−656 | **KEEP_REFERENCE** |
+| `feature/webui-product-closure-on-integration-20260909` | `f94dd764` | yes | +5/−549 | **KEEP_REFERENCE** |
+| `research/cloud-continuity-glm-minimax-20260908` | `6762f28e` | yes | +0/−664 | **KEEP_REFERENCE** |
+| `research/cloud-continuity-qualification-20260908` | `6762f28e` | yes | +0/−664 | **KEEP_REFERENCE** |
+| `chore/ruff-format-repo` | `b859d18e` | yes | +1/−0 | **ADMIT_CANDIDATE** |
+| `feature/context-elasticity-20260910` | `14c07108` | yes | +13/−0 | **ADMIT_CANDIDATE** |
+| `feature/web-model-provider-admin-20260909` | `e7f33e7b` | yes | +3/−0 | **ADMIT_CANDIDATE** |
+| `feature/webui-human-turn-queue-20260910` | `f3915208` | yes | +1/−0 | **ADMIT_CANDIDATE** |
+| `feature/webui-tool-activity-parity-20260909` | `bb419592` | yes | +1/−0 | **ADMIT_CANDIDATE** |
+| `fix/cache-health-comparable-regression` | `b051bb74` | yes | +1/−663 | **ADMIT_CANDIDATE** |
+| `fix/ci-rg-fallback` | `d43612c1` | yes | +2/−0 | **ADMIT_CANDIDATE** |
+| `fix/err1214-preserve-human-wire` | `81a21bcf` | yes | +3/−659 | **ADMIT_CANDIDATE** |
+| `fix/projection-test-grace-env-leak` | `4ffb5bc9` | yes | +1/−0 | **ADMIT_CANDIDATE** |
+| `fix/web-evolution-approval-20260909` | `2bdc2c42` | yes | +1/−549 | **ADMIT_CANDIDATE** |
+| `hotfix/web-evolution-approval-live-20260909` | `0db66fd6` | yes | +1/−655 | **ADMIT_CANDIDATE** |
+| `research/cloud-provider-handoff-20260908` | `e2f71ab0` | yes | +1/−664 | **ADMIT_CANDIDATE** |
+| `research/model-protocol-continuity` | `75814fd9` | yes | +2/−683 | **ADMIT_CANDIDATE** |
+| `public/promotion-20260908` | `493fe9b5` | yes | +2/−904 | **HOLD** |
+| `feature/adaptive-learning-p0-clean-20260910` | `517d7aba` | ref-only | +3/−0 | **ALREADY_REPRESENTED** |
+| `feature/human-ai-continuity` | `7c0f4da7` | ref-only | +0/−683 | **ALREADY_REPRESENTED** |
+| `feature/method-learning-v1` | `be63dc86` | yes | +0/−901 | **ALREADY_REPRESENTED** |
+| `feature/qwen-runtime-erdc-public-20260908` | `1f991a9b` | yes | +0/−906 | **ALREADY_REPRESENTED** |
+| `feature/resource-governor-rg0-contract-20260910` | `5e6ca45d` | ref-only | +4/−0 | **ALREADY_REPRESENTED** |
+| `feature/resource-governor-rg1-learning-20260910` | `c7da5c5a` | ref-only | +6/−0 | **ALREADY_REPRESENTED** |
+| `feature/resource-governor-rg2-provider-lease-20260910` | `dac7c577` | ref-only | +8/−0 | **ALREADY_REPRESENTED** |
+| `feature/resource-governor-rg3b-transport-shadow-20260910` | `4da2c06e` | ref-only | +13/−0 | **ALREADY_REPRESENTED** |
+| `feature/resource-governor-rg3c-provider-call-settlement-20260910` | `12f28f10` | ref-only | +15/−0 | **ALREADY_REPRESENTED** |
+| `feature/resource-governor-rg3d-ledger-projection-20260910` | `9d09a099` | ref-only | +17/−0 | **ALREADY_REPRESENTED** |
+| `feature/web-v2` | `cf6554d8` | ref-only | +0/−1284 | **ALREADY_REPRESENTED** |
+| `fix/err1214-active-human-wire` | `34a5c836` | ref-only | +0/−659 | **ALREADY_REPRESENTED** |
+| `fix/message-time-system-local` | `fd49a0b6` | ref-only | +0/−658 | **ALREADY_REPRESENTED** |
+| `fix/restart-useful-continuity` | `2f35e477` | ref-only | +0/−654 | **ALREADY_REPRESENTED** |
+| `integration/development-repair-safety-playbook-20260907` | `a2af807f` | ref-only | +0/−677 | **ALREADY_REPRESENTED** |
+| `integration/final-s1-truncation-20260907` | `0f87e9c3` | ref-only | +0/−709 | **ALREADY_REPRESENTED** |
+| `integration/fix-restart-continuity-into-main` | `55f647f5` | ref-only | +0/−549 | **ALREADY_REPRESENTED** |
+| `integration/input184k-output16k-20260908` | `fd49a0b6` | ref-only | +0/−658 | **ALREADY_REPRESENTED** |
+| `integration/p0-capability-contract-20260907` | `8a450473` | ref-only | +0/−682 | **ALREADY_REPRESENTED** |
+| `integration/recent-dialogue-working-set-20260907` | `47556cb6` | ref-only | +0/−680 | **ALREADY_REPRESENTED** |
+| `integration/rg3-unified-20260910` | `9d09a099` | ref-only | +17/−0 | **ALREADY_REPRESENTED** |
+| `integration/runtime-causality-p0a-20260908` | `4ed08a21` | ref-only | +0/−675 | **ALREADY_REPRESENTED** |
+| `integration/runtime-causality-p0c-20260908` | `51ae82a4` | ref-only | +0/−674 | **ALREADY_REPRESENTED** |
+| `integration/runtime-causality-p1-20260908` | `e1d277ad` | yes | +0/−673 | **ALREADY_REPRESENTED** |
+| `integration/runtime-causality-sdd-qualified-20260908` | `c8440c5c` | ref-only | +0/−670 | **ALREADY_REPRESENTED** |
+| `integration/s1-truncation-continuity-20260906` | `718d9432` | yes | +0/−711 | **ALREADY_REPRESENTED** |
+| `integration/sdd-workflow-review-fix-20260908` | `96c988e1` | ref-only | +1/−675 | **ALREADY_REPRESENTED** |
+| `integration/source-hydration-p1-20260907` | `957b417d` | ref-only | +0/−679 | **ALREADY_REPRESENTED** |
+| `integration/source-synopsis-p2-20260907` | `deea2b54` | ref-only | +0/−678 | **ALREADY_REPRESENTED** |
+| `integration/truncation-recoverability-p0-20260907` | `1cf6ad53` | ref-only | +1/−682 | **ALREADY_REPRESENTED** |
+| `merge/lfl-main-history-bridge` | `67e2c633` | ref-only | +5/−0 | **ALREADY_REPRESENTED** |
+| `r9/refactor` | `b6c4ea87` | yes | +0/−795 | **ALREADY_REPRESENTED** |
+| `research/method-curriculum-20260908` | `411d2bad` | ref-only | +1/−664 | **ALREADY_REPRESENTED** |
+| `s1-main-93be3ea` | `b7574583` | yes | +0/−716 | **ALREADY_REPRESENTED** |
+| `truncation-continuity-20260906` | `acc14fb2` | yes | +0/−715 | **ALREADY_REPRESENTED** |
+| `webui-fix-desktop-mobile` | `4f6efe6d` | yes | +0/−905 | **ALREADY_REPRESENTED** |
+| `wip/tool-working-set-fold` | `dce6b25d` | yes | +0/−720 | **ALREADY_REPRESENTED** |
+| `backup/20260819-after-3am` | `1e9bbad4` | ref-only | +7/−1094 | **ARCHIVE_REFERENCE** |
+| `docs/convergence-disposition-20260910` | `cf77e3c2` | yes | +23/−0 | **ARCHIVE_REFERENCE** |
+| `s0-working-set-b2cb87e` | `b75ec595` | yes | +2/−729 | **ARCHIVE_REFERENCE** |
+
+The `main` row is deliberately not `KEEP`: its content must be preserved by named feature refs, while the pointer itself must be repaired before integration branch creation.
+
+## 1.11 Dirty-state safety model
+
+The first audit incorrectly treated individual file-blob duplication as proof that a whole dirty worktree was safely represented. The corrected final audit uses exact resulting-tree/binary-patch evidence. Frozen result:
+
+- `UNIQUE_SOURCE_BEARING`: **15 worktrees**;
+- `DUPLICATED_OR_COMMITTED_EXACT`: **0 worktrees**;
+- `HOLD_EQUIVALENCE_UNPROVEN`: **44 worktrees**;
+- pure generated-only worktrees: **0**;
+- no `safe-prune` permission is inferred from per-file blob existence.
+
+Primary recursive untracked state at the frozen snapshot was **485**: 468 pytest-generated entries, 3 R9 logs, 5 worktree-directory entries already covered by the worktree manifest, 7 source-bearing docs/tests, one proposal patch, and one substantive `.tmp/cache_shape_probe.py` experiment. The cache probe is `UNIQUE_SOURCE_BEARING` and must be preserved before cleanup.
+
+Salvage policy: `/tmp` may not be the only durable destination; bare `git stash create` is not complete protection for unique untracked state. A valid salvage requires a durable private/non-public destination, tracked exact binary diff, unique-untracked archive, path/HEAD/branch/file/artifact hashes, and recovery verification before prune.
+
+## 1.12 Post-freeze concurrent drift
+
+Immediately before this docs-only write, live state had moved to **109 worktrees / 66 local heads / 18 dirty worktrees / primary 16 tracked + 494 recursive untracked**. This was external concurrent activity, not this docs revision.
+
+New post-freeze refs are not silently admitted:
+
+| ref | tip | +/− `lfl/main` | disposition |
+|---|---|---:|---|
+| `fix/cache-prefix-surface-contract-20260910` | `2ec6875cada1` | +17/−0 | **POST_FREEZE_ADMIT_CANDIDATE** — independent review/requalification required |
+
+Local `main` is now `95515dba2807`, not the frozen `14c071086be6`. It remains `PRESERVE_THEN_REPOINT`, not an integration target. **8** worktrees that were `UNIQUE_SOURCE_BEARING` in the frozen audit are no longer dirty in the pre-write live check; their preservation/recovery status is therefore `UNKNOWN_UNTIL_PROVEN`, and the frozen evidence must not be erased by the later clean state.
+
+This is the boundary that closes endless inventory churn: the 108/65 audit is the frozen governance snapshot; anything created or mutated after the freeze is a new input that must pass the admission gate, not a reason to rewrite history.
+
+## 1.13 External 2,081-line Architecture candidate
+
+Two local Downloads copies are byte-identical (**2,081 lines**, SHA-256 `85f16b79342c19a0fa6903f0423052431eab72ba0e95183dc3aa7b5644ae3296`) but materially differ from the committed 1,144-line Architecture SoT (`docs/DESIGN-20260910-adaptive-reasoning-learning-architecture.zh.md`, SHA-256 `faab4c0582c54d3ee5f86e98369c34469e90bc6f9fdbc1d1b685ae371c380831`). The external file is longer, but length/title are not authority. It does not contain the later RG-3A/RG-3E and Learning Plane P0 status pointers present in the tracked SoT.
+
+Disposition: **`PRESERVE_EXTERNAL_CANDIDATE_HOLD`**. Preserve the external design provenance for a later semantic reconciliation if useful; do **not** silently overwrite or supersede the committed tracked Architecture SoT during convergence.
+
+## 1.14 Working-copy OID semantics
+
+All working-copy fingerprints in the paired JSON now use `working_copy.computed_blob_oid` plus SHA-256. These values are content fingerprints, not promises that Git has written the object into the object DB. The contract therefore explicitly sets `repo_object_expected=false` and `reachability_applicable=false`. Git-object reachability is valid for named committed refs; it is not a validity test for an arbitrary working-copy hash.
+
+## 1.15 Prospective commit provenance
+
+Future convergence commits should carry non-secret provenance trailers sufficient to distinguish human vs MCP Console authorship. Public-safe examples are `LFL-Authored-By` and `LFL-Agent`; raw session/Goal identifiers should be kept private or hashed rather than published. Never fabricate an agent/session identity when the runtime cannot prove it.
 ---
 
 # 2. Four-layer system diagnosis
@@ -427,7 +572,7 @@ Each row carries:
 path
 changed_from_baseline_in[]
 git_blob.{baseline,p0_clean,p0a,rg3_integration,rg3e,cache_v2,context_elasticity,human_turn_queue,ci_rg_fallback}
-working_tree.status/blob_oid/sha256/classification_10_4_2
+working_copy.status/computed_blob_oid/sha256/classification_10_4_2 + repo_object_expected=false + reachability_applicable=false
 disposition = admit | reuse | replace | delete | hold
 verification_level = verified | needs_characterization | unverified
 reason
@@ -865,7 +1010,7 @@ Convergence action:
 
 Do not delete historical qualification evidence merely because its verdict was later superseded.
 
-This action applies immediately to the two RG-3E historical HOLD files listed in §1.1 after the convergence plan itself is accepted/committed.
+This final docs-only revision **applies** the action to both RG-3E historical HOLD files and creates `docs/analysis/CURRENT-AUTHORITY-20260911.md` as the single current-authority index. Historical bodies remain preserved.
 
 ---
 
@@ -954,7 +1099,7 @@ Step 2  Review/requalify fix/ci-rg-fallback@d43612c against the RG-3E anchor; pr
 Step 3  Characterize T2 archive order; no source fix until result exists.
 Step 4  Fix/qualify cache-v2 axis contract and human-turn reaper duplicate path independently.
 Step 5  Review default-model migration + sanitized providers.json provenance and MCP/registry stack independently.
-Step 6  Inventory/disposition source-bearing worktrees, detached verification remnants, and both stashes before cleanup.
+Step 6  Use the frozen inventory; salvage/verify source-bearing and post-freeze preservation-unknown states before cleanup. New post-freeze refs must enter as new admission candidates, not by rewriting the frozen snapshot.
 Step 7  Construct one integration branch from qualified RG-3E and selectively port only qualified/admitted deltas.
 Step 8  Full committed-state + relevant live qualification; freeze Runtime Substrate B.
 Step 9  Write/freeze Phase 3.5 preregistration and run A/B/placebo.
@@ -970,10 +1115,11 @@ The ordering is intentionally conservative: **converge → instrument → measur
 The paired JSON is generated from Git blob identities rather than narrative comparison. After the path-parser correction documented in §5, it includes:
 
 - all relevant branch commit IDs, including the independent CI/RG fallback line;
-- the local `main` pointer observation and worktree/stash topology notes;
+- the frozen 108-worktree/65-head inventory plus the explicit post-freeze delta;
+- local `main` `PRESERVE_THEN_REPOINT` entry-hygiene status and the post-freeze cache-prefix ref;
 - changed-path union;
 - per-ref Git blob OIDs;
-- current working-tree blob OID + SHA-256 for tracked dirty files;
+- current working-copy `computed_blob_oid` + SHA-256 for tracked dirty files, explicitly non-reachability-bearing;
 - exact 10/4/2 classification;
 - branch source membership;
 - disposition and verification level;
@@ -986,6 +1132,16 @@ The paired JSON is generated from Git blob identities rather than narrative comp
 - adaptive effort / deliberation budget / IndependenceFacts constraints.
 
 The JSON intentionally does **not** contain credentials, API keys, provider balances, raw HTTP headers, raw control-plane bodies, or private user content.
+
+---
+
+# 19.1 Final docs-only closeout
+
+This revision closes the **inventory/governance analysis snapshot**, not runtime convergence. Documentation authority, frozen inventory, post-freeze delta handling, working-copy OID semantics, external Architecture-candidate provenance, RG-3E supersession, and prospective authorship provenance are now explicit.
+
+Still pending before Runtime Substrate B can freeze: actual `PRESERVE_THEN_REPOINT` entry hygiene, salvage/recovery proof for unique/post-freeze states, independent review/qualification of admission candidates (including `fix/ci-rg-fallback` and the post-freeze cache-prefix line), WebUI closure/live-parity disposition, `public/promotion` HOLD, cache/context/queue qualification, and the other §17 execution criteria.
+
+RG-3F and Reasoning Lab remain HOLD.
 
 ---
 
