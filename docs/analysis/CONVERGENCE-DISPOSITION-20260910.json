@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": "2026-09-10.2",
   "generated_for": "LFL adaptive reasoning/learning convergence",
   "generated_at": "2026-09-10",
   "authority_note": "Mechanical replay matrix. Semantic rationale is in the paired MD; this JSON is not a second architecture SoT.",
@@ -13,7 +13,8 @@
     "rg3e_qualified": "cf5e6fbd07e7165727b665315ae4ac7ef89cb315",
     "cache_v2_learning": "d2efc96f2f2e71990ea008651497d5616f7bdb44",
     "context_elasticity": "14c071086be6ef9cf4e72d2f046204e7373fe163",
-    "human_turn_queue": "f39152084ab420d0922e09c13732573e057df8eb"
+    "human_turn_queue": "f39152084ab420d0922e09c13732573e057df8eb",
+    "ci_rg_fallback": "d43612c188d7dda5aa690413b0699c4f5003b304"
   },
   "branch_ahead_of_lfl_main": {
     "p0_clean": 3,
@@ -22,7 +23,8 @@
     "rg3e_qualified": 22,
     "cache_v2_learning": 6,
     "context_elasticity": 13,
-    "human_turn_queue": 1
+    "human_turn_queue": 1,
+    "ci_rg_fallback": 2
   },
   "current_checkout": {
     "branch": "feature/learning-plane-p0a-20260910",
@@ -39,6 +41,22 @@
       ".tmp/",
       ".worktrees/",
       "docs/design/"
+    ],
+    "significant_untracked_count_scope": "individual file entries only; grouped roots excluded",
+    "significant_untracked_file_count": 6,
+    "grouped_untracked_root_count": 4,
+    "top_level_untracked_count": 10,
+    "top_level_untracked_entries": [
+      ".proposals/",
+      ".tmp/",
+      ".worktrees/",
+      "docs/DESIGN-20260910-adaptive-reasoning-learning-architecture.zh.md",
+      "docs/analysis/ISSUE-20260910-registry-stack-preexisting-debts.md",
+      "docs/analysis/QUALIFICATION-20260910-learning-plane-p0.md",
+      "docs/design/",
+      "tests/unit/test_dispose_teardown.py",
+      "tests/unit/test_refresh_makethenbreak.py",
+      "tests/unit/test_registry_stack.py"
     ]
   },
   "preintegration_defects": [
@@ -320,7 +338,8 @@
         "rg3e_qualified": "add74d6c6d2df10e77eb82f30539af2975a5fee2",
         "cache_v2_learning": "4b07ea153f9a6459ef0054554ece81deaf3299ee",
         "context_elasticity": "4b07ea153f9a6459ef0054554ece81deaf3299ee",
-        "human_turn_queue": "4b07ea153f9a6459ef0054554ece81deaf3299ee"
+        "human_turn_queue": "4b07ea153f9a6459ef0054554ece81deaf3299ee",
+        "ci_rg_fallback": "4b07ea153f9a6459ef0054554ece81deaf3299ee"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -341,7 +360,8 @@
         "rg3e_qualified": "b014ebb4d0bb2c886663e473354fcd0d16085267",
         "cache_v2_learning": "b014ebb4d0bb2c886663e473354fcd0d16085267",
         "context_elasticity": "16120656e9a9d651c619888fcc8f74e91a25094b",
-        "human_turn_queue": "b014ebb4d0bb2c886663e473354fcd0d16085267"
+        "human_turn_queue": "b014ebb4d0bb2c886663e473354fcd0d16085267",
+        "ci_rg_fallback": "b014ebb4d0bb2c886663e473354fcd0d16085267"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -364,7 +384,8 @@
         "rg3e_qualified": "303bcc906b86f79cc4266521c67f5f5bf87ac6ba",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -388,12 +409,18 @@
         "rg3e_qualified": "8ce092e8a1f509eacd8da055355bfd17ae40fe4c",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
-      "working_tree": null,
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "8ce092e8a1f509eacd8da055355bfd17ae40fe4c",
+        "sha256": "00fbc4c2663a927440edaeba22c92671284f7bdc5e7976560f8ca3b38d39a01c",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e"
+      },
       "disposition": "reuse",
       "verification_level": "verified",
-      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
       "target_layer": "unified_integration"
     },
     {
@@ -412,7 +439,8 @@
         "rg3e_qualified": "15eb9d6d63c5f0c3a41d5eaa6df2ee058322e731",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -434,7 +462,8 @@
         "rg3e_qualified": "8ac5d1a3d7620ce21b418df43650d04d96a6fb71",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -456,7 +485,8 @@
         "rg3e_qualified": "7e40adf71978b94de21ffb10542a93ae5770fe32",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -478,7 +508,8 @@
         "rg3e_qualified": "338ab72a08528e6ae53231b4455e6e35614ce122",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -500,7 +531,8 @@
         "rg3e_qualified": "175d9f946b559510395a881b08e082dbe94141ae",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -522,7 +554,8 @@
         "rg3e_qualified": "ddf0f14af1ad2aceb94de55129a30432b3615949",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -544,7 +577,8 @@
         "rg3e_qualified": "34122e4c9066bb15ed768003d439e4d76ae565af",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -566,7 +600,8 @@
         "rg3e_qualified": "73ea3b83fb51c3724a0629908a53cdcca56f009f",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -587,7 +622,8 @@
         "rg3e_qualified": "6e9818e976f9c3d690b4a829099c58b9cdf8f91e",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -610,7 +646,8 @@
         "rg3e_qualified": "9647bb12537629e694cdd365e99e2c9cd222eb7b",
         "cache_v2_learning": "d6252c5f671b2063d73797b0a6183730fd33a459",
         "context_elasticity": "d6252c5f671b2063d73797b0a6183730fd33a459",
-        "human_turn_queue": "d6252c5f671b2063d73797b0a6183730fd33a459"
+        "human_turn_queue": "d6252c5f671b2063d73797b0a6183730fd33a459",
+        "ci_rg_fallback": "d6252c5f671b2063d73797b0a6183730fd33a459"
       },
       "working_tree": {
         "status": " M",
@@ -637,7 +674,8 @@
         "rg3e_qualified": "651e3ff455e2a388abc499c5acfc40db53fc06b3",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -659,7 +697,8 @@
         "rg3e_qualified": "a8b5d1721596490f52f5f9d900b754f57fdb6bc0",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -681,7 +720,8 @@
         "rg3e_qualified": "6b25d84d042008c83f20c476a42b2628e582fb5c",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -703,7 +743,8 @@
         "rg3e_qualified": "3048ab07365ff4c37ee07edf2d7ff7b6492c60a5",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -725,7 +766,8 @@
         "rg3e_qualified": "619250b66acdadf918dfb5230ff03bd32f9a3493",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -747,7 +789,8 @@
         "rg3e_qualified": "0bb65100bd620f87c7b664b9ef16ddbf0f691db4",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -768,7 +811,8 @@
         "rg3e_qualified": "b425322ef1f8551d02085a710b0cf736d30679c9",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "replace",
@@ -789,7 +833,8 @@
         "rg3e_qualified": "290d0a62abe917771ca123bd7beed7635a30bda2",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -810,7 +855,8 @@
         "rg3e_qualified": "562c8e861393add732865522955a7ba6989e770b",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "replace",
@@ -833,7 +879,8 @@
         "rg3e_qualified": "303da6e8362ed66dacf76d2100c1bcfa6739d160",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -854,7 +901,8 @@
         "rg3e_qualified": "1133b9b40af1c790513e95c22eccb22f05e76fb6",
         "cache_v2_learning": "1133b9b40af1c790513e95c22eccb22f05e76fb6",
         "context_elasticity": "90fa42b66cbe0ed7f12da3d4f51b433386cef98e",
-        "human_turn_queue": "1133b9b40af1c790513e95c22eccb22f05e76fb6"
+        "human_turn_queue": "1133b9b40af1c790513e95c22eccb22f05e76fb6",
+        "ci_rg_fallback": "1133b9b40af1c790513e95c22eccb22f05e76fb6"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -876,7 +924,8 @@
         "rg3e_qualified": null,
         "cache_v2_learning": "83395b9d9a023acdceed0ef13d3870d150f5ea0c",
         "context_elasticity": "83395b9d9a023acdceed0ef13d3870d150f5ea0c",
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "hold",
@@ -900,36 +949,13 @@
         "rg3e_qualified": "e47278a26f3b6601f0241a0ecbb8d36673a964d6",
         "cache_v2_learning": "61456cf9b765662f49a3e72900cd60911bcbc330",
         "context_elasticity": "61456cf9b765662f49a3e72900cd60911bcbc330",
-        "human_turn_queue": "61456cf9b765662f49a3e72900cd60911bcbc330"
+        "human_turn_queue": "61456cf9b765662f49a3e72900cd60911bcbc330",
+        "ci_rg_fallback": "61456cf9b765662f49a3e72900cd60911bcbc330"
       },
       "working_tree": {
         "status": " M",
         "blob_oid": "e47278a26f3b6601f0241a0ecbb8d36673a964d6",
         "sha256": "19a0d0415db4e267eeeae4f62671d3c7b2a04854113e995d0dbbbd2a105e2b96",
-        "classification_10_4_2": "matches_p0_clean_and_rg3e"
-      },
-      "disposition": "reuse",
-      "verification_level": "verified",
-      "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
-      "target_layer": "unified_integration"
-    },
-    {
-      "path": "ocs/DESIGN-20260910-learning-plane.md",
-      "changed_from_baseline_in": [],
-      "git_blob": {
-        "baseline_lfl_main": null,
-        "p0_clean": null,
-        "p0a": null,
-        "rg3_integration": null,
-        "rg3e_qualified": null,
-        "cache_v2_learning": null,
-        "context_elasticity": null,
-        "human_turn_queue": null
-      },
-      "working_tree": {
-        "status": "M ",
-        "blob_oid": null,
-        "sha256": null,
         "classification_10_4_2": "matches_p0_clean_and_rg3e"
       },
       "disposition": "reuse",
@@ -952,7 +978,8 @@
         "rg3e_qualified": "7fcc98f50ec34218d790da801461eb7f71b3e174",
         "cache_v2_learning": "bdbc37585f7830fa553464db65ccfc395a2104d1",
         "context_elasticity": "bdbc37585f7830fa553464db65ccfc395a2104d1",
-        "human_turn_queue": "bdbc37585f7830fa553464db65ccfc395a2104d1"
+        "human_turn_queue": "bdbc37585f7830fa553464db65ccfc395a2104d1",
+        "ci_rg_fallback": "bdbc37585f7830fa553464db65ccfc395a2104d1"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -975,7 +1002,8 @@
         "rg3e_qualified": "f08fbf72ace74ae4989e46183ea581e0b1fdb46b",
         "cache_v2_learning": "f7d31f692da24afcf77c0d74ce6975febcaa98f1",
         "context_elasticity": "f7d31f692da24afcf77c0d74ce6975febcaa98f1",
-        "human_turn_queue": "f7d31f692da24afcf77c0d74ce6975febcaa98f1"
+        "human_turn_queue": "f7d31f692da24afcf77c0d74ce6975febcaa98f1",
+        "ci_rg_fallback": "f7d31f692da24afcf77c0d74ce6975febcaa98f1"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -986,11 +1014,11 @@
     {
       "path": "scripts/restart_mirror.sh",
       "changed_from_baseline_in": [
-        "cache_v2_learning",
-        "context_elasticity",
         "p0a",
         "rg3_integration",
-        "rg3e_qualified"
+        "rg3e_qualified",
+        "cache_v2_learning",
+        "context_elasticity"
       ],
       "git_blob": {
         "baseline_lfl_main": "1f05e7dbb6a3789b84cf117eac7de43ce419a1f8",
@@ -1000,7 +1028,8 @@
         "rg3e_qualified": "39c96e7cf1606e2ed96855048c718587ca9d8b09",
         "cache_v2_learning": "39c96e7cf1606e2ed96855048c718587ca9d8b09",
         "context_elasticity": "39c96e7cf1606e2ed96855048c718587ca9d8b09",
-        "human_turn_queue": "1f05e7dbb6a3789b84cf117eac7de43ce419a1f8"
+        "human_turn_queue": "1f05e7dbb6a3789b84cf117eac7de43ce419a1f8",
+        "ci_rg_fallback": "1f05e7dbb6a3789b84cf117eac7de43ce419a1f8"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1022,7 +1051,8 @@
         "rg3e_qualified": "af568863490bfc3471178c4200caae16b0520360",
         "cache_v2_learning": "1832124b394ad266e98d2e2472b9d9f996a94dfb",
         "context_elasticity": "1832124b394ad266e98d2e2472b9d9f996a94dfb",
-        "human_turn_queue": "af568863490bfc3471178c4200caae16b0520360"
+        "human_turn_queue": "af568863490bfc3471178c4200caae16b0520360",
+        "ci_rg_fallback": "af568863490bfc3471178c4200caae16b0520360"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1046,7 +1076,8 @@
         "rg3e_qualified": "ad0ca0c8a1cfab836b7c9d63f7daf55449780eb1",
         "cache_v2_learning": "9bec4100f398388dfc5a64ea742e802285460f0a",
         "context_elasticity": "9bec4100f398388dfc5a64ea742e802285460f0a",
-        "human_turn_queue": "9bec4100f398388dfc5a64ea742e802285460f0a"
+        "human_turn_queue": "9bec4100f398388dfc5a64ea742e802285460f0a",
+        "ci_rg_fallback": "9bec4100f398388dfc5a64ea742e802285460f0a"
       },
       "working_tree": null,
       "disposition": "hold",
@@ -1068,7 +1099,8 @@
         "rg3e_qualified": "d1a2490edaff4fab08f99caa723454d764a9fc8b",
         "cache_v2_learning": "1dc10f8f346717927a92becbf284d6b2ad93b8a3",
         "context_elasticity": "1dc10f8f346717927a92becbf284d6b2ad93b8a3",
-        "human_turn_queue": "d1a2490edaff4fab08f99caa723454d764a9fc8b"
+        "human_turn_queue": "d1a2490edaff4fab08f99caa723454d764a9fc8b",
+        "ci_rg_fallback": "d1a2490edaff4fab08f99caa723454d764a9fc8b"
       },
       "working_tree": null,
       "disposition": "hold",
@@ -1090,13 +1122,37 @@
         "rg3e_qualified": "1960fb55347a86b0810bd62d8b06b2a0faa4a507",
         "cache_v2_learning": "5fdc52604589dcd3f5090823045042f0f668d407",
         "context_elasticity": "469595d928610fbcfcdeec867ef902b3936da4ff",
-        "human_turn_queue": "1960fb55347a86b0810bd62d8b06b2a0faa4a507"
+        "human_turn_queue": "1960fb55347a86b0810bd62d8b06b2a0faa4a507",
+        "ci_rg_fallback": "1960fb55347a86b0810bd62d8b06b2a0faa4a507"
       },
       "working_tree": null,
       "disposition": "hold",
       "verification_level": "needs_characterization",
       "reason": "T2 archive ordering concern is code-shape evidence only; add provider-path ordering characterization before deciding bug/fix.",
       "target_layer": "preintegration_characterization_t2"
+    },
+    {
+      "path": "src/llm_loop/core/interop_watch.py",
+      "changed_from_baseline_in": [
+        "ci_rg_fallback"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "165559955290bf7f991033a329c27e9052b31314",
+        "p0_clean": "165559955290bf7f991033a329c27e9052b31314",
+        "p0a": "165559955290bf7f991033a329c27e9052b31314",
+        "rg3_integration": "165559955290bf7f991033a329c27e9052b31314",
+        "rg3e_qualified": "165559955290bf7f991033a329c27e9052b31314",
+        "cache_v2_learning": "165559955290bf7f991033a329c27e9052b31314",
+        "context_elasticity": "165559955290bf7f991033a329c27e9052b31314",
+        "human_turn_queue": "165559955290bf7f991033a329c27e9052b31314",
+        "ci_rg_fallback": "a7072cb447d032b1369259769634a36b700dd1e6"
+      },
+      "working_tree": null,
+      "disposition": "admit",
+      "verification_level": "verified",
+      "reason": "Independent fix/ci-rg-fallback delta absent from qualified RG-3E; preserve as integration candidate and requalify on combined tree.",
+      "target_layer": "unified_integration",
+      "qualification_status": "required_on_combined_integration_tree"
     },
     {
       "path": "src/llm_loop/core/loop/build.py",
@@ -1112,7 +1168,8 @@
         "rg3e_qualified": "c0708f5e873a63eb60449433b343edcf53c3b05b",
         "cache_v2_learning": "1bf9a8a50e0c5e775ac4f9fac5c81123c79cc7e3",
         "context_elasticity": "1bf9a8a50e0c5e775ac4f9fac5c81123c79cc7e3",
-        "human_turn_queue": "c0708f5e873a63eb60449433b343edcf53c3b05b"
+        "human_turn_queue": "c0708f5e873a63eb60449433b343edcf53c3b05b",
+        "ci_rg_fallback": "c0708f5e873a63eb60449433b343edcf53c3b05b"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1136,7 +1193,8 @@
         "rg3e_qualified": "c0cb492dfd23e37e3726cfb182aa1b6e72f68c84",
         "cache_v2_learning": "b8204b7b79a8ff456b9d267359edb1226df4187d",
         "context_elasticity": "b8204b7b79a8ff456b9d267359edb1226df4187d",
-        "human_turn_queue": "b8204b7b79a8ff456b9d267359edb1226df4187d"
+        "human_turn_queue": "b8204b7b79a8ff456b9d267359edb1226df4187d",
+        "ci_rg_fallback": "b8204b7b79a8ff456b9d267359edb1226df4187d"
       },
       "working_tree": {
         "status": " M",
@@ -1163,7 +1221,8 @@
         "rg3e_qualified": "a565a2567d660edf47a9deaae156acdf7ca20769",
         "cache_v2_learning": "72ddc7d63065958f4ce75b9d684d4982db81268c",
         "context_elasticity": "72ddc7d63065958f4ce75b9d684d4982db81268c",
-        "human_turn_queue": "72ddc7d63065958f4ce75b9d684d4982db81268c"
+        "human_turn_queue": "72ddc7d63065958f4ce75b9d684d4982db81268c",
+        "ci_rg_fallback": "72ddc7d63065958f4ce75b9d684d4982db81268c"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1185,7 +1244,8 @@
         "rg3e_qualified": "1a5407e8f97d414dfd27438a60e01f6945d2fb16",
         "cache_v2_learning": "a55ef56d25f675339eff73687bea4e091ae8c608",
         "context_elasticity": "a55ef56d25f675339eff73687bea4e091ae8c608",
-        "human_turn_queue": "a55ef56d25f675339eff73687bea4e091ae8c608"
+        "human_turn_queue": "a55ef56d25f675339eff73687bea4e091ae8c608",
+        "ci_rg_fallback": "a55ef56d25f675339eff73687bea4e091ae8c608"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1208,7 +1268,8 @@
         "rg3e_qualified": "b1b5ca76f9560cb44c209184931599a5c81a51b2",
         "cache_v2_learning": "aac411436cc4bc0c5dfdadf4734c213d6a060faf",
         "context_elasticity": "aac411436cc4bc0c5dfdadf4734c213d6a060faf",
-        "human_turn_queue": "aac411436cc4bc0c5dfdadf4734c213d6a060faf"
+        "human_turn_queue": "aac411436cc4bc0c5dfdadf4734c213d6a060faf",
+        "ci_rg_fallback": "aac411436cc4bc0c5dfdadf4734c213d6a060faf"
       },
       "working_tree": {
         "status": " M",
@@ -1237,7 +1298,8 @@
         "rg3e_qualified": "5093474da92e08e2275b7327b0d4a97918d26b1f",
         "cache_v2_learning": "4b1fff0afd9a2d7cf14dcde176fd30e1aa785d72",
         "context_elasticity": "4b1fff0afd9a2d7cf14dcde176fd30e1aa785d72",
-        "human_turn_queue": "4b1fff0afd9a2d7cf14dcde176fd30e1aa785d72"
+        "human_turn_queue": "4b1fff0afd9a2d7cf14dcde176fd30e1aa785d72",
+        "ci_rg_fallback": "4b1fff0afd9a2d7cf14dcde176fd30e1aa785d72"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1259,7 +1321,8 @@
         "rg3e_qualified": "27d366fa1a2e510cab2c828250d759f27c9b1127",
         "cache_v2_learning": "743ea29f42a1d1c6a1e63880748639904a98607d",
         "context_elasticity": "743ea29f42a1d1c6a1e63880748639904a98607d",
-        "human_turn_queue": "27d366fa1a2e510cab2c828250d759f27c9b1127"
+        "human_turn_queue": "27d366fa1a2e510cab2c828250d759f27c9b1127",
+        "ci_rg_fallback": "27d366fa1a2e510cab2c828250d759f27c9b1127"
       },
       "working_tree": null,
       "disposition": "hold",
@@ -1281,7 +1344,8 @@
         "rg3e_qualified": "853b090943f3a5384bb746e48c260be0cb7403dc",
         "cache_v2_learning": "a29c653b287202012f7645dca6ebd9a8156dd8cb",
         "context_elasticity": "607a8479e1e417cd882cf70ad57771a3f3bb0b07",
-        "human_turn_queue": "853b090943f3a5384bb746e48c260be0cb7403dc"
+        "human_turn_queue": "853b090943f3a5384bb746e48c260be0cb7403dc",
+        "ci_rg_fallback": "853b090943f3a5384bb746e48c260be0cb7403dc"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1303,7 +1367,8 @@
         "rg3e_qualified": "4baf2c201001cbd184517f2be8626e3ad11d4004",
         "cache_v2_learning": "25cd81829d504920f2f92a48a5ad971b799e7170",
         "context_elasticity": "48932636cb962288b14c768bb5bfbe76f9b25005",
-        "human_turn_queue": "4baf2c201001cbd184517f2be8626e3ad11d4004"
+        "human_turn_queue": "4baf2c201001cbd184517f2be8626e3ad11d4004",
+        "ci_rg_fallback": "4baf2c201001cbd184517f2be8626e3ad11d4004"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1325,7 +1390,8 @@
         "rg3e_qualified": "da350e2dba78237d304a7a11a98a53a23cdb5524",
         "cache_v2_learning": "c81037f36a5ff15d8eae16a1a2e443bcc997a95b",
         "context_elasticity": "aa652ca78c606e41a7a1925e3a8de4e31b52c773",
-        "human_turn_queue": "da350e2dba78237d304a7a11a98a53a23cdb5524"
+        "human_turn_queue": "da350e2dba78237d304a7a11a98a53a23cdb5524",
+        "ci_rg_fallback": "da350e2dba78237d304a7a11a98a53a23cdb5524"
       },
       "working_tree": null,
       "disposition": "hold",
@@ -1347,7 +1413,8 @@
         "rg3e_qualified": "f303088fa3636f4853fb0a146793ac0ba276cb42",
         "cache_v2_learning": "59cba13e21887f4502c5021b1b39cadf53459cc2",
         "context_elasticity": "59cba13e21887f4502c5021b1b39cadf53459cc2",
-        "human_turn_queue": "f303088fa3636f4853fb0a146793ac0ba276cb42"
+        "human_turn_queue": "f303088fa3636f4853fb0a146793ac0ba276cb42",
+        "ci_rg_fallback": "f303088fa3636f4853fb0a146793ac0ba276cb42"
       },
       "working_tree": null,
       "disposition": "hold",
@@ -1369,7 +1436,8 @@
         "rg3e_qualified": "7b6a3dd89133a34dbb76f31c131926e759cee692",
         "cache_v2_learning": "b3c2555222e465e2a1cb8118b761762e9bed3cb1",
         "context_elasticity": "b3c2555222e465e2a1cb8118b761762e9bed3cb1",
-        "human_turn_queue": "b3c2555222e465e2a1cb8118b761762e9bed3cb1"
+        "human_turn_queue": "b3c2555222e465e2a1cb8118b761762e9bed3cb1",
+        "ci_rg_fallback": "b3c2555222e465e2a1cb8118b761762e9bed3cb1"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1393,7 +1461,8 @@
         "rg3e_qualified": "fc5bb4f103c13ace571db0c51359c1da44cc68ac",
         "cache_v2_learning": "2e4b4301052ca42bc5277f674dd54a9169b8bd78",
         "context_elasticity": "2e4b4301052ca42bc5277f674dd54a9169b8bd78",
-        "human_turn_queue": "2e4b4301052ca42bc5277f674dd54a9169b8bd78"
+        "human_turn_queue": "2e4b4301052ca42bc5277f674dd54a9169b8bd78",
+        "ci_rg_fallback": "2e4b4301052ca42bc5277f674dd54a9169b8bd78"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1416,7 +1485,8 @@
         "rg3e_qualified": "fe7495dfc1411b7228eee53cf91d690bd837389d",
         "cache_v2_learning": "360804b6282a64b951f8a3864ea6e894f22dc0fa",
         "context_elasticity": "360804b6282a64b951f8a3864ea6e894f22dc0fa",
-        "human_turn_queue": "360804b6282a64b951f8a3864ea6e894f22dc0fa"
+        "human_turn_queue": "360804b6282a64b951f8a3864ea6e894f22dc0fa",
+        "ci_rg_fallback": "360804b6282a64b951f8a3864ea6e894f22dc0fa"
       },
       "working_tree": {
         "status": " M",
@@ -1445,7 +1515,8 @@
         "rg3e_qualified": "0ab242c8c6c7af552e1ec4b2ea1dfc633a3cb7bc",
         "cache_v2_learning": "b8c927ac52d7f7e0111b586718c5a6434d4f986a",
         "context_elasticity": "b8c927ac52d7f7e0111b586718c5a6434d4f986a",
-        "human_turn_queue": "b8c927ac52d7f7e0111b586718c5a6434d4f986a"
+        "human_turn_queue": "b8c927ac52d7f7e0111b586718c5a6434d4f986a",
+        "ci_rg_fallback": "b8c927ac52d7f7e0111b586718c5a6434d4f986a"
       },
       "working_tree": {
         "status": " M",
@@ -1474,7 +1545,8 @@
         "rg3e_qualified": "e7609d4d722ddcc00e0affa720e8d0be91d9ff85",
         "cache_v2_learning": "a93ecdb621c43ce5ca167b4d550b3d90b2552daf",
         "context_elasticity": "a93ecdb621c43ce5ca167b4d550b3d90b2552daf",
-        "human_turn_queue": "a93ecdb621c43ce5ca167b4d550b3d90b2552daf"
+        "human_turn_queue": "a93ecdb621c43ce5ca167b4d550b3d90b2552daf",
+        "ci_rg_fallback": "a93ecdb621c43ce5ca167b4d550b3d90b2552daf"
       },
       "working_tree": {
         "status": " M",
@@ -1501,7 +1573,8 @@
         "rg3e_qualified": "4e98478478269acd5a61592c301cf8d4c4a346b8",
         "cache_v2_learning": "840fafcd93ad02282ec2d67d6684a63962a07d46",
         "context_elasticity": "840fafcd93ad02282ec2d67d6684a63962a07d46",
-        "human_turn_queue": "4e98478478269acd5a61592c301cf8d4c4a346b8"
+        "human_turn_queue": "4e98478478269acd5a61592c301cf8d4c4a346b8",
+        "ci_rg_fallback": "4e98478478269acd5a61592c301cf8d4c4a346b8"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1523,7 +1596,8 @@
         "rg3e_qualified": "465d21afd5b9704a109bee9e612cb792d0987dae",
         "cache_v2_learning": "05f2b9c2723b2a96c668822e910a76c336a24ae8",
         "context_elasticity": "05f2b9c2723b2a96c668822e910a76c336a24ae8",
-        "human_turn_queue": "465d21afd5b9704a109bee9e612cb792d0987dae"
+        "human_turn_queue": "465d21afd5b9704a109bee9e612cb792d0987dae",
+        "ci_rg_fallback": "465d21afd5b9704a109bee9e612cb792d0987dae"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1545,7 +1619,8 @@
         "rg3e_qualified": "99e3d46586027020faea1d334c25e6c556134273",
         "cache_v2_learning": "7e09296351bd604659925c14b1cc5cef04388af8",
         "context_elasticity": "7e09296351bd604659925c14b1cc5cef04388af8",
-        "human_turn_queue": "99e3d46586027020faea1d334c25e6c556134273"
+        "human_turn_queue": "99e3d46586027020faea1d334c25e6c556134273",
+        "ci_rg_fallback": "99e3d46586027020faea1d334c25e6c556134273"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1567,7 +1642,8 @@
         "rg3e_qualified": "414562086b18289ec807dc1f65158edc7d7f9170",
         "cache_v2_learning": "b77eb250779fa2070daea430ca598edb560a33e3",
         "context_elasticity": "b77eb250779fa2070daea430ca598edb560a33e3",
-        "human_turn_queue": "b77eb250779fa2070daea430ca598edb560a33e3"
+        "human_turn_queue": "b77eb250779fa2070daea430ca598edb560a33e3",
+        "ci_rg_fallback": "b77eb250779fa2070daea430ca598edb560a33e3"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1589,7 +1665,8 @@
         "rg3e_qualified": "35096327a0d9f749d6d3c641fe291055e84aba6b",
         "cache_v2_learning": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0",
         "context_elasticity": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0",
-        "human_turn_queue": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0"
+        "human_turn_queue": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0",
+        "ci_rg_fallback": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1613,7 +1690,8 @@
         "rg3e_qualified": "58dcdc07bee6b6fb3d6aeecebc066ef99a46d364",
         "cache_v2_learning": "bd12ed1f247cb98d98418b1ed758d1609f04807f",
         "context_elasticity": "bd12ed1f247cb98d98418b1ed758d1609f04807f",
-        "human_turn_queue": "bd12ed1f247cb98d98418b1ed758d1609f04807f"
+        "human_turn_queue": "bd12ed1f247cb98d98418b1ed758d1609f04807f",
+        "ci_rg_fallback": "bd12ed1f247cb98d98418b1ed758d1609f04807f"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1635,7 +1713,8 @@
         "rg3e_qualified": "027602b36b85770a307aff2e928ee9d91ea78c8f",
         "cache_v2_learning": "68c6521e4fa6723d630ec997868e70436f0339c3",
         "context_elasticity": "68c6521e4fa6723d630ec997868e70436f0339c3",
-        "human_turn_queue": "68c6521e4fa6723d630ec997868e70436f0339c3"
+        "human_turn_queue": "68c6521e4fa6723d630ec997868e70436f0339c3",
+        "ci_rg_fallback": "68c6521e4fa6723d630ec997868e70436f0339c3"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1657,7 +1736,8 @@
         "rg3e_qualified": "6df95f71a23b5f1e131c9fa5a268f0885c5e9798",
         "cache_v2_learning": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3",
         "context_elasticity": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3",
-        "human_turn_queue": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3"
+        "human_turn_queue": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3",
+        "ci_rg_fallback": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1678,7 +1758,8 @@
         "rg3e_qualified": "32a1f33dae394bbe131b8a94ace4a57b1574cf09",
         "cache_v2_learning": "32a1f33dae394bbe131b8a94ace4a57b1574cf09",
         "context_elasticity": "e815b3d2de3fb96d5a1b8568488c8cea8842599c",
-        "human_turn_queue": "32a1f33dae394bbe131b8a94ace4a57b1574cf09"
+        "human_turn_queue": "32a1f33dae394bbe131b8a94ace4a57b1574cf09",
+        "ci_rg_fallback": "32a1f33dae394bbe131b8a94ace4a57b1574cf09"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1699,7 +1780,8 @@
         "rg3e_qualified": null,
         "cache_v2_learning": null,
         "context_elasticity": "e2ffb15bf2c1937afec3c09ece40504351e06ee3",
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1723,7 +1805,8 @@
         "rg3e_qualified": "ee40f4e2131b1f19f4ec473426fc55b8a3188ec3",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1747,7 +1830,8 @@
         "rg3e_qualified": "38a1359a875828c02bdce2a3b1db426a2f1c2e95",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": {
         "status": " M",
@@ -1776,7 +1860,8 @@
         "rg3e_qualified": "5d716da63b1e4abbefdfb91e79003620bf576af9",
         "cache_v2_learning": "cbd76c0c761bcff368cf34de442ab857dbb30e70",
         "context_elasticity": "cbd76c0c761bcff368cf34de442ab857dbb30e70",
-        "human_turn_queue": "cbd76c0c761bcff368cf34de442ab857dbb30e70"
+        "human_turn_queue": "cbd76c0c761bcff368cf34de442ab857dbb30e70",
+        "ci_rg_fallback": "cbd76c0c761bcff368cf34de442ab857dbb30e70"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1800,7 +1885,8 @@
         "rg3e_qualified": "54baab88dcf2f2bdb3a680b37a6aafcf316a5740",
         "cache_v2_learning": "6859dd3277933d9c2998e1030c541b8b4a0901dd",
         "context_elasticity": "6859dd3277933d9c2998e1030c541b8b4a0901dd",
-        "human_turn_queue": "6859dd3277933d9c2998e1030c541b8b4a0901dd"
+        "human_turn_queue": "6859dd3277933d9c2998e1030c541b8b4a0901dd",
+        "ci_rg_fallback": "6859dd3277933d9c2998e1030c541b8b4a0901dd"
       },
       "working_tree": {
         "status": " M",
@@ -1827,7 +1913,8 @@
         "rg3e_qualified": "9e430a2ae0d1bc1045a3cef962697596b536d092",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1849,7 +1936,8 @@
         "rg3e_qualified": "0162302e7869cd59e57e6f2532cbbc7ac7337143",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1871,7 +1959,8 @@
         "rg3e_qualified": "5a9f378b9180176720800a7440dac7baa08f1e1f",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1893,7 +1982,8 @@
         "rg3e_qualified": "edd95751e2d5dddbf142cc827a18bd69d74688f0",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1915,7 +2005,8 @@
         "rg3e_qualified": "1ec5eda47856c00c693ce5cb37dd9790bd5ffc8f",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1937,7 +2028,8 @@
         "rg3e_qualified": "20007da08d7752983a4bd7b2d22442a113b7b5fe",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1959,7 +2051,8 @@
         "rg3e_qualified": "865a5b5536b0893db6885b8c0cd7936bb72b3cf0",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -1981,7 +2074,8 @@
         "rg3e_qualified": "e56e04e8bffe80fe31658880ec294d7e817e272a",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2002,7 +2096,8 @@
         "rg3e_qualified": "7ace5ea25e77f6b40c8e8c56103f1e9b05c6cfba",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2024,7 +2119,8 @@
         "rg3e_qualified": "afe90dd380eee433049ff3cc298d7e9f4b6fa3c9",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2045,7 +2141,8 @@
         "rg3e_qualified": "c6948c983f8c779db85aed5c1446ab6d0198b232",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2066,7 +2163,8 @@
         "rg3e_qualified": "ffeea6743f578aa7e88f7ece9b963494681ce667",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2087,7 +2185,8 @@
         "rg3e_qualified": "88ffbdc5fcae0d1c7880e097dd21dbfca3b0b0c5",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2108,7 +2207,8 @@
         "rg3e_qualified": "a0d33c7a6da1e62193c89cfe022781283a280fa8",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2129,7 +2229,8 @@
         "rg3e_qualified": "fa4885021d1cc221e271cca0ada5ae72bd1ea613",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2150,7 +2251,8 @@
         "rg3e_qualified": "f28accb2eac3104ecc96bf8f57814f454974c985",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2172,7 +2274,8 @@
         "rg3e_qualified": "88199347d1c79a807f816165574fd9335740ae50",
         "cache_v2_learning": "dfc5229c3372a4a6d3332f23ecfc6487168377ad",
         "context_elasticity": "dfc5229c3372a4a6d3332f23ecfc6487168377ad",
-        "human_turn_queue": "dfc5229c3372a4a6d3332f23ecfc6487168377ad"
+        "human_turn_queue": "dfc5229c3372a4a6d3332f23ecfc6487168377ad",
+        "ci_rg_fallback": "dfc5229c3372a4a6d3332f23ecfc6487168377ad"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2194,7 +2297,8 @@
         "rg3e_qualified": "a97227db61bd50f1638fa27e62d819331e6fa080",
         "cache_v2_learning": "d2fb6d0559f466b68623d7cea9ee37d83f30be97",
         "context_elasticity": "d2fb6d0559f466b68623d7cea9ee37d83f30be97",
-        "human_turn_queue": "d2fb6d0559f466b68623d7cea9ee37d83f30be97"
+        "human_turn_queue": "d2fb6d0559f466b68623d7cea9ee37d83f30be97",
+        "ci_rg_fallback": "d2fb6d0559f466b68623d7cea9ee37d83f30be97"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2215,7 +2319,8 @@
         "rg3e_qualified": "530959385016d80ab050dc213cd8689d37d6b01a",
         "cache_v2_learning": "530959385016d80ab050dc213cd8689d37d6b01a",
         "context_elasticity": "6363cdb6e02e9582e7573dd9a9805f2d26dba200",
-        "human_turn_queue": "530959385016d80ab050dc213cd8689d37d6b01a"
+        "human_turn_queue": "530959385016d80ab050dc213cd8689d37d6b01a",
+        "ci_rg_fallback": "530959385016d80ab050dc213cd8689d37d6b01a"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2234,7 +2339,8 @@
         "rg3e_qualified": "1246d5367f64dadc361408a0847bc5ec8741f5d1",
         "cache_v2_learning": "1246d5367f64dadc361408a0847bc5ec8741f5d1",
         "context_elasticity": "1246d5367f64dadc361408a0847bc5ec8741f5d1",
-        "human_turn_queue": "1246d5367f64dadc361408a0847bc5ec8741f5d1"
+        "human_turn_queue": "1246d5367f64dadc361408a0847bc5ec8741f5d1",
+        "ci_rg_fallback": "1246d5367f64dadc361408a0847bc5ec8741f5d1"
       },
       "working_tree": {
         "status": " M",
@@ -2258,7 +2364,8 @@
         "rg3e_qualified": "f7c93409515b2308025b91bf8504d4a43b89220a",
         "cache_v2_learning": "f7c93409515b2308025b91bf8504d4a43b89220a",
         "context_elasticity": "f7c93409515b2308025b91bf8504d4a43b89220a",
-        "human_turn_queue": "f7c93409515b2308025b91bf8504d4a43b89220a"
+        "human_turn_queue": "f7c93409515b2308025b91bf8504d4a43b89220a",
+        "ci_rg_fallback": "f7c93409515b2308025b91bf8504d4a43b89220a"
       },
       "working_tree": {
         "status": " M",
@@ -2284,7 +2391,8 @@
         "rg3e_qualified": null,
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": "81de0c7ede15b92e0b9574aca7015bd78fc5a7c0"
+        "human_turn_queue": "81de0c7ede15b92e0b9574aca7015bd78fc5a7c0",
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "hold",
@@ -2305,7 +2413,8 @@
         "rg3e_qualified": "26441a17c5168b78adb58261b27bcbbead9a4a78",
         "cache_v2_learning": "26441a17c5168b78adb58261b27bcbbead9a4a78",
         "context_elasticity": "26441a17c5168b78adb58261b27bcbbead9a4a78",
-        "human_turn_queue": "6a98aad91aa68db9af35bc36ecf865172f979960"
+        "human_turn_queue": "6a98aad91aa68db9af35bc36ecf865172f979960",
+        "ci_rg_fallback": "26441a17c5168b78adb58261b27bcbbead9a4a78"
       },
       "working_tree": null,
       "disposition": "hold",
@@ -2326,7 +2435,8 @@
         "rg3e_qualified": "3c5f3b4fe45771c04c7daa83e94d6eb3d6e38a40",
         "cache_v2_learning": "3c5f3b4fe45771c04c7daa83e94d6eb3d6e38a40",
         "context_elasticity": "3c5f3b4fe45771c04c7daa83e94d6eb3d6e38a40",
-        "human_turn_queue": "67e413a47f64937af238ba6156a3ec525eb2ad88"
+        "human_turn_queue": "67e413a47f64937af238ba6156a3ec525eb2ad88",
+        "ci_rg_fallback": "3c5f3b4fe45771c04c7daa83e94d6eb3d6e38a40"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2349,7 +2459,8 @@
         "rg3e_qualified": "42ed2d608e220d2d552f6c48a4e21d2c76987368",
         "cache_v2_learning": "e028fc6d06a23c64d0c02c1ea8e592424409f32d",
         "context_elasticity": "e028fc6d06a23c64d0c02c1ea8e592424409f32d",
-        "human_turn_queue": "e028fc6d06a23c64d0c02c1ea8e592424409f32d"
+        "human_turn_queue": "e028fc6d06a23c64d0c02c1ea8e592424409f32d",
+        "ci_rg_fallback": "e028fc6d06a23c64d0c02c1ea8e592424409f32d"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2372,7 +2483,8 @@
         "rg3e_qualified": "667634b9855773cffe693d64bb17d2d3f8a6f907",
         "cache_v2_learning": "ba4948c8c9e29eb43ef136fe749cf738ee581bde",
         "context_elasticity": "ba4948c8c9e29eb43ef136fe749cf738ee581bde",
-        "human_turn_queue": "ba4948c8c9e29eb43ef136fe749cf738ee581bde"
+        "human_turn_queue": "ba4948c8c9e29eb43ef136fe749cf738ee581bde",
+        "ci_rg_fallback": "ba4948c8c9e29eb43ef136fe749cf738ee581bde"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2394,7 +2506,8 @@
         "rg3e_qualified": "f6d6f2a2d2bb4eea216d7f1d176114623d278f20",
         "cache_v2_learning": "26415e7fbb9cce0955c58f2712ded44fe2e766bc",
         "context_elasticity": "26415e7fbb9cce0955c58f2712ded44fe2e766bc",
-        "human_turn_queue": "f6d6f2a2d2bb4eea216d7f1d176114623d278f20"
+        "human_turn_queue": "f6d6f2a2d2bb4eea216d7f1d176114623d278f20",
+        "ci_rg_fallback": "f6d6f2a2d2bb4eea216d7f1d176114623d278f20"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2405,11 +2518,11 @@
     {
       "path": "tests/scripts/test_restart_mirror_hardening.py",
       "changed_from_baseline_in": [
-        "cache_v2_learning",
-        "context_elasticity",
         "p0a",
         "rg3_integration",
-        "rg3e_qualified"
+        "rg3e_qualified",
+        "cache_v2_learning",
+        "context_elasticity"
       ],
       "git_blob": {
         "baseline_lfl_main": null,
@@ -2419,7 +2532,8 @@
         "rg3e_qualified": "76d3ac0b74826b16c991a9b5e59851fa538a1e3a",
         "cache_v2_learning": "57fb6324a8efb10857520b53bbabd971e6b626d6",
         "context_elasticity": "57fb6324a8efb10857520b53bbabd971e6b626d6",
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2441,7 +2555,8 @@
         "rg3e_qualified": "c3a768550c5e3969abc3d4edf0573e28c110b69f",
         "cache_v2_learning": "02ad58ac1a477131a749c446041667967f06cee3",
         "context_elasticity": "02ad58ac1a477131a749c446041667967f06cee3",
-        "human_turn_queue": "c3a768550c5e3969abc3d4edf0573e28c110b69f"
+        "human_turn_queue": "c3a768550c5e3969abc3d4edf0573e28c110b69f",
+        "ci_rg_fallback": "c3a768550c5e3969abc3d4edf0573e28c110b69f"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2463,7 +2578,8 @@
         "rg3e_qualified": null,
         "cache_v2_learning": "29256433131835d2359639b8844beae60ea561ec",
         "context_elasticity": "29256433131835d2359639b8844beae60ea561ec",
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2485,7 +2601,8 @@
         "rg3e_qualified": "e1a1e789dd375afbfdedbb3b40e87215172df39f",
         "cache_v2_learning": "11a1ea4e3b33615f83288528d9a8800aa1db173f",
         "context_elasticity": "11a1ea4e3b33615f83288528d9a8800aa1db173f",
-        "human_turn_queue": "e1a1e789dd375afbfdedbb3b40e87215172df39f"
+        "human_turn_queue": "e1a1e789dd375afbfdedbb3b40e87215172df39f",
+        "ci_rg_fallback": "e1a1e789dd375afbfdedbb3b40e87215172df39f"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2507,7 +2624,8 @@
         "rg3e_qualified": "cf589577fed9bac78274577208d6721cbc1e347a",
         "cache_v2_learning": "d6a8c2d9e5e1223e801b57a44d222800e83f4e7d",
         "context_elasticity": "d6a8c2d9e5e1223e801b57a44d222800e83f4e7d",
-        "human_turn_queue": "cf589577fed9bac78274577208d6721cbc1e347a"
+        "human_turn_queue": "cf589577fed9bac78274577208d6721cbc1e347a",
+        "ci_rg_fallback": "cf589577fed9bac78274577208d6721cbc1e347a"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2529,7 +2647,8 @@
         "rg3e_qualified": "f753a12a76825c6ee15fa5a52adb54e1736f2b54",
         "cache_v2_learning": "8557d6bf49786e351d6b2b4f29f3580c446d428f",
         "context_elasticity": "8557d6bf49786e351d6b2b4f29f3580c446d428f",
-        "human_turn_queue": "f753a12a76825c6ee15fa5a52adb54e1736f2b54"
+        "human_turn_queue": "f753a12a76825c6ee15fa5a52adb54e1736f2b54",
+        "ci_rg_fallback": "f753a12a76825c6ee15fa5a52adb54e1736f2b54"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2553,13 +2672,37 @@
         "rg3e_qualified": "511834feef36e0464d39607677092a433bfa8bac",
         "cache_v2_learning": "c32d1299c9aec880040e30ec286bd1457c427d93",
         "context_elasticity": "c32d1299c9aec880040e30ec286bd1457c427d93",
-        "human_turn_queue": "c32d1299c9aec880040e30ec286bd1457c427d93"
+        "human_turn_queue": "c32d1299c9aec880040e30ec286bd1457c427d93",
+        "ci_rg_fallback": "c32d1299c9aec880040e30ec286bd1457c427d93"
       },
       "working_tree": null,
       "disposition": "hold",
       "verification_level": "verified",
       "reason": "p0a carries independent DeepSeek default-model migration 8e589de; review/reapply as a provider-config patch and requalify on unified tree.",
       "target_layer": "provider_config_review"
+    },
+    {
+      "path": "tests/unit/test_control_plane_closure.py",
+      "changed_from_baseline_in": [
+        "ci_rg_fallback"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "d5bec700e9a96c90c9d75a4371cd82087ea123fe",
+        "p0_clean": "d5bec700e9a96c90c9d75a4371cd82087ea123fe",
+        "p0a": "d5bec700e9a96c90c9d75a4371cd82087ea123fe",
+        "rg3_integration": "d5bec700e9a96c90c9d75a4371cd82087ea123fe",
+        "rg3e_qualified": "d5bec700e9a96c90c9d75a4371cd82087ea123fe",
+        "cache_v2_learning": "d5bec700e9a96c90c9d75a4371cd82087ea123fe",
+        "context_elasticity": "d5bec700e9a96c90c9d75a4371cd82087ea123fe",
+        "human_turn_queue": "d5bec700e9a96c90c9d75a4371cd82087ea123fe",
+        "ci_rg_fallback": "128538028d19b17e2f5958e456bb164de2c8fa8b"
+      },
+      "working_tree": null,
+      "disposition": "admit",
+      "verification_level": "verified",
+      "reason": "Independent fix/ci-rg-fallback delta absent from qualified RG-3E; preserve as integration candidate and requalify on combined tree.",
+      "target_layer": "unified_integration",
+      "qualification_status": "required_on_combined_integration_tree"
     },
     {
       "path": "tests/unit/test_engine_reentrancy.py",
@@ -2576,7 +2719,8 @@
         "rg3e_qualified": "d8e856e1b3130ac4666f65ea2b18e9009be8afba",
         "cache_v2_learning": "d758dc3d268ad66f6a1039a6abc9a4945396da89",
         "context_elasticity": "d758dc3d268ad66f6a1039a6abc9a4945396da89",
-        "human_turn_queue": "d758dc3d268ad66f6a1039a6abc9a4945396da89"
+        "human_turn_queue": "d758dc3d268ad66f6a1039a6abc9a4945396da89",
+        "ci_rg_fallback": "d758dc3d268ad66f6a1039a6abc9a4945396da89"
       },
       "working_tree": {
         "status": " M",
@@ -2603,7 +2747,8 @@
         "rg3e_qualified": "b5a4aeb9cc7bdd4e685e888790543101a5b36bf4",
         "cache_v2_learning": "41de440059aa1c091625f496e895ed549adf3646",
         "context_elasticity": "41de440059aa1c091625f496e895ed549adf3646",
-        "human_turn_queue": "41de440059aa1c091625f496e895ed549adf3646"
+        "human_turn_queue": "41de440059aa1c091625f496e895ed549adf3646",
+        "ci_rg_fallback": "41de440059aa1c091625f496e895ed549adf3646"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2624,7 +2769,8 @@
         "rg3e_qualified": null,
         "cache_v2_learning": null,
         "context_elasticity": "cb8d7d26ebcb12eed63ea8ca0bf3dcc6a689fef8",
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2646,7 +2792,8 @@
         "rg3e_qualified": null,
         "cache_v2_learning": "8d87b8f449efa2cf72d4041d2db4ad48684e5594",
         "context_elasticity": "8d87b8f449efa2cf72d4041d2db4ad48684e5594",
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2667,7 +2814,8 @@
         "rg3e_qualified": null,
         "cache_v2_learning": null,
         "context_elasticity": "06573fe9ada9a7c5816319fda919e07851a1a89d",
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2688,7 +2836,8 @@
         "rg3e_qualified": null,
         "cache_v2_learning": null,
         "context_elasticity": "3f2d73398d52f479849e66661a7c2e6a49aa95e6",
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2709,13 +2858,37 @@
         "rg3e_qualified": null,
         "cache_v2_learning": null,
         "context_elasticity": "a43161b2cece90c0dc4e6bb953f4d105aaef695d",
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
       "verification_level": "verified",
       "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
       "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_interop_watch.py",
+      "changed_from_baseline_in": [
+        "ci_rg_fallback"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "a08254f0a995598a21c295ba8a0a295ecf1a6f48",
+        "p0_clean": "a08254f0a995598a21c295ba8a0a295ecf1a6f48",
+        "p0a": "a08254f0a995598a21c295ba8a0a295ecf1a6f48",
+        "rg3_integration": "a08254f0a995598a21c295ba8a0a295ecf1a6f48",
+        "rg3e_qualified": "a08254f0a995598a21c295ba8a0a295ecf1a6f48",
+        "cache_v2_learning": "a08254f0a995598a21c295ba8a0a295ecf1a6f48",
+        "context_elasticity": "a08254f0a995598a21c295ba8a0a295ecf1a6f48",
+        "human_turn_queue": "a08254f0a995598a21c295ba8a0a295ecf1a6f48",
+        "ci_rg_fallback": "2a7c0b21cf1588b1ead72b996e530dec99f5b22d"
+      },
+      "working_tree": null,
+      "disposition": "admit",
+      "verification_level": "verified",
+      "reason": "Independent fix/ci-rg-fallback delta absent from qualified RG-3E; preserve as integration candidate and requalify on combined tree.",
+      "target_layer": "unified_integration",
+      "qualification_status": "required_on_combined_integration_tree"
     },
     {
       "path": "tests/unit/test_introspection_status.py",
@@ -2731,7 +2904,8 @@
         "rg3e_qualified": "a0e5f3664e758648a3ad0a78e7042c5ad39d1880",
         "cache_v2_learning": "5adc818096dbdd41ee2619eb708948077ca491cf",
         "context_elasticity": "5adc818096dbdd41ee2619eb708948077ca491cf",
-        "human_turn_queue": "a0e5f3664e758648a3ad0a78e7042c5ad39d1880"
+        "human_turn_queue": "a0e5f3664e758648a3ad0a78e7042c5ad39d1880",
+        "ci_rg_fallback": "a0e5f3664e758648a3ad0a78e7042c5ad39d1880"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2755,7 +2929,8 @@
         "rg3e_qualified": "7c2d7a432e9ba023633216c6505eb2f2ca5e85a9",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": {
         "status": " M",
@@ -2784,7 +2959,8 @@
         "rg3e_qualified": "0a1e575735619cfee852c3fdf44086b8a8f7c6df",
         "cache_v2_learning": "f62197aee270b79421770efe058a0f19d93a0771",
         "context_elasticity": "f62197aee270b79421770efe058a0f19d93a0771",
-        "human_turn_queue": "f62197aee270b79421770efe058a0f19d93a0771"
+        "human_turn_queue": "f62197aee270b79421770efe058a0f19d93a0771",
+        "ci_rg_fallback": "f62197aee270b79421770efe058a0f19d93a0771"
       },
       "working_tree": {
         "status": " M",
@@ -2811,7 +2987,8 @@
         "rg3e_qualified": "3ea7e9ce23fd19934c5216e400b11b96616567a4",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2833,7 +3010,8 @@
         "rg3e_qualified": "c2fc50e74b899455b8aecccb82a7859fbf26802a",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2854,7 +3032,8 @@
         "rg3e_qualified": "5d22351facb16d2ebdf1a6b2ceec0032b6ca8996",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2876,7 +3055,8 @@
         "rg3e_qualified": "ba463ac20601d00d402abaf32e90dff1a0ae24ab",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2898,7 +3078,8 @@
         "rg3e_qualified": "20a2e96e53611ab79fdec0ad543daf56b58dcf8d",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2920,7 +3101,8 @@
         "rg3e_qualified": "c850e8b8067f20de3e4f3d904a427a6b743aa034",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2942,7 +3124,8 @@
         "rg3e_qualified": "c580a7a3c50aea64344182645a60d7a7ab76c72c",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2964,7 +3147,8 @@
         "rg3e_qualified": "f296e13748793416ed488a92e3bdb8a4df541053",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -2985,7 +3169,8 @@
         "rg3e_qualified": "5cb0d49adc90fe50104c789e86305272dae9168c",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -3006,7 +3191,8 @@
         "rg3e_qualified": "b4beb085cb9b33162490c4c40ba83a11b32d7799",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -3027,7 +3213,8 @@
         "rg3e_qualified": "077e023785e0d1fe1831faba14418b1f535f5977",
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -3038,11 +3225,11 @@
     {
       "path": "tests/unit/test_restart_mirror_script.py",
       "changed_from_baseline_in": [
-        "cache_v2_learning",
-        "context_elasticity",
         "p0a",
         "rg3_integration",
-        "rg3e_qualified"
+        "rg3e_qualified",
+        "cache_v2_learning",
+        "context_elasticity"
       ],
       "git_blob": {
         "baseline_lfl_main": "7a5e5f293b3ea0b0df21deb19b62befe0790f0ee",
@@ -3052,7 +3239,8 @@
         "rg3e_qualified": "432bdfa6d721d133f62669d738fbc8b7909a708e",
         "cache_v2_learning": "432bdfa6d721d133f62669d738fbc8b7909a708e",
         "context_elasticity": "432bdfa6d721d133f62669d738fbc8b7909a708e",
-        "human_turn_queue": "7a5e5f293b3ea0b0df21deb19b62befe0790f0ee"
+        "human_turn_queue": "7a5e5f293b3ea0b0df21deb19b62befe0790f0ee",
+        "ci_rg_fallback": "7a5e5f293b3ea0b0df21deb19b62befe0790f0ee"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -3073,7 +3261,8 @@
         "rg3e_qualified": null,
         "cache_v2_learning": null,
         "context_elasticity": "081d1cd7610b2f72a600a55d755571f5aa35d058",
-        "human_turn_queue": null
+        "human_turn_queue": null,
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -3095,7 +3284,8 @@
         "rg3e_qualified": "e13488535bb8a74519cabb6041092f94a5f0f284",
         "cache_v2_learning": "b6340bca0c7d4464aae69c4531ac5a409e998091",
         "context_elasticity": "b6340bca0c7d4464aae69c4531ac5a409e998091",
-        "human_turn_queue": "e13488535bb8a74519cabb6041092f94a5f0f284"
+        "human_turn_queue": "e13488535bb8a74519cabb6041092f94a5f0f284",
+        "ci_rg_fallback": "e13488535bb8a74519cabb6041092f94a5f0f284"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -3116,7 +3306,8 @@
         "rg3e_qualified": null,
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": "e59b94ecb8bb150978de7c8ca24b0b0d78b86e0d"
+        "human_turn_queue": "e59b94ecb8bb150978de7c8ca24b0b0d78b86e0d",
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "hold",
@@ -3139,7 +3330,8 @@
         "rg3e_qualified": "eccb4e27937f029bda3692dd6e297ffb54bf0ad8",
         "cache_v2_learning": "c5106791ed63a01dd28ce216495575aca27ca5bf",
         "context_elasticity": "c5106791ed63a01dd28ce216495575aca27ca5bf",
-        "human_turn_queue": "c5106791ed63a01dd28ce216495575aca27ca5bf"
+        "human_turn_queue": "c5106791ed63a01dd28ce216495575aca27ca5bf",
+        "ci_rg_fallback": "c5106791ed63a01dd28ce216495575aca27ca5bf"
       },
       "working_tree": {
         "status": " M",
@@ -3165,7 +3357,8 @@
         "rg3e_qualified": null,
         "cache_v2_learning": null,
         "context_elasticity": null,
-        "human_turn_queue": "3bf0a81c7f85109a0924faff01f12001ac94db01"
+        "human_turn_queue": "3bf0a81c7f85109a0924faff01f12001ac94db01",
+        "ci_rg_fallback": null
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -3186,7 +3379,8 @@
         "rg3e_qualified": "ed7f87c73bc6047f946257a708d3afa615a9e84c",
         "cache_v2_learning": "ed7f87c73bc6047f946257a708d3afa615a9e84c",
         "context_elasticity": "ed7f87c73bc6047f946257a708d3afa615a9e84c",
-        "human_turn_queue": "ad436fef1038e9b7c380852a918795f51d5eddc0"
+        "human_turn_queue": "ad436fef1038e9b7c380852a918795f51d5eddc0",
+        "ci_rg_fallback": "ed7f87c73bc6047f946257a708d3afa615a9e84c"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -3207,7 +3401,8 @@
         "rg3e_qualified": "c8438a0c672ae7cc39ffde519381077e543dca15",
         "cache_v2_learning": "c8438a0c672ae7cc39ffde519381077e543dca15",
         "context_elasticity": "c8438a0c672ae7cc39ffde519381077e543dca15",
-        "human_turn_queue": "d2bf8cfd50cbccfee438ee5f933692387a164a10"
+        "human_turn_queue": "d2bf8cfd50cbccfee438ee5f933692387a164a10",
+        "ci_rg_fallback": "c8438a0c672ae7cc39ffde519381077e543dca15"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -3228,7 +3423,8 @@
         "rg3e_qualified": "e05866c0b755a4f33f950320255d542061801b91",
         "cache_v2_learning": "e05866c0b755a4f33f950320255d542061801b91",
         "context_elasticity": "e05866c0b755a4f33f950320255d542061801b91",
-        "human_turn_queue": "f53a7a2fa0f184dac21d1a375ab61ba57359d59a"
+        "human_turn_queue": "f53a7a2fa0f184dac21d1a375ab61ba57359d59a",
+        "ci_rg_fallback": "e05866c0b755a4f33f950320255d542061801b91"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -3249,7 +3445,8 @@
         "rg3e_qualified": "192d01072318cfd0eea8b9771dc4e9c3c0b64cd1",
         "cache_v2_learning": "192d01072318cfd0eea8b9771dc4e9c3c0b64cd1",
         "context_elasticity": "192d01072318cfd0eea8b9771dc4e9c3c0b64cd1",
-        "human_turn_queue": "70f5183ecdfa9e3c7eb6cab6a85f4559cd07c5c2"
+        "human_turn_queue": "70f5183ecdfa9e3c7eb6cab6a85f4559cd07c5c2",
+        "ci_rg_fallback": "192d01072318cfd0eea8b9771dc4e9c3c0b64cd1"
       },
       "working_tree": null,
       "disposition": "hold",
@@ -3270,7 +3467,8 @@
         "rg3e_qualified": "b6c7c2cf964a0c59072577a57e54087df56352f3",
         "cache_v2_learning": "b6c7c2cf964a0c59072577a57e54087df56352f3",
         "context_elasticity": "b6c7c2cf964a0c59072577a57e54087df56352f3",
-        "human_turn_queue": "c991ebc08b7295f4fa75fa872bc55f815902aaae"
+        "human_turn_queue": "c991ebc08b7295f4fa75fa872bc55f815902aaae",
+        "ci_rg_fallback": "b6c7c2cf964a0c59072577a57e54087df56352f3"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -3291,7 +3489,8 @@
         "rg3e_qualified": "928af0631cb39c3130de2afee5606c54be773969",
         "cache_v2_learning": "928af0631cb39c3130de2afee5606c54be773969",
         "context_elasticity": "928af0631cb39c3130de2afee5606c54be773969",
-        "human_turn_queue": "ae30f1137837b3c23ac6591bf1fa6c3a914aeb87"
+        "human_turn_queue": "ae30f1137837b3c23ac6591bf1fa6c3a914aeb87",
+        "ci_rg_fallback": "928af0631cb39c3130de2afee5606c54be773969"
       },
       "working_tree": null,
       "disposition": "reuse",
@@ -3308,7 +3507,15 @@
       "rg3e_blob_oid": "303bcc906b86f79cc4266521c67f5f5bf87ac6ba",
       "disposition": "replace",
       "verification_level": "verified",
-      "reason": "Untracked local SoT copy differs from newer RG-3E tracked SoT; use RG-3E version."
+      "reason": "Untracked local SoT copy differs from newer RG-3E tracked SoT; use RG-3E version.",
+      "rg3e_lines": 1144,
+      "working_lines": 1128,
+      "working_vs_rg3e_diff": {
+        "insertions": 16,
+        "deletions": 32
+      },
+      "classification": "stale_local_copy",
+      "verified_gap": "working copy lacks latest RG-3A through RG-3E status/close pointers present in qualified tracked SoT"
     },
     {
       "path": "docs/analysis/ISSUE-20260910-registry-stack-preexisting-debts.md",
@@ -3355,5 +3562,122 @@
       "verification_level": "unverified",
       "reason": "Untracked current-worktree artifact; provenance/classify before integration."
     }
-  ]
+  ],
+  "candidate_semantic_sot_role": "qualified_anchor_not_complete_convergence_target",
+  "convergence_target_formula": {
+    "qualified_anchor": "feature/resource-governor-rg3e-authoritative-adapters-20260910@cf5e6fb",
+    "independent_candidates_require_review_and_requalification": [
+      "fix/ci-rg-fallback@d43612c"
+    ],
+    "automatic_whole_branch_merges": []
+  },
+  "repository_entry_state": {
+    "local_main": "14c071086be6ef9cf4e72d2f046204e7373fe163",
+    "local_main_equals": "feature/context-elasticity-20260910@14c0710",
+    "formal_baseline": "lfl/main@d59169ffb28da8134f4246b023082d0581f978de",
+    "verification_level": "verified",
+    "risk": "new branches from local main silently inherit context-elasticity commits",
+    "required_preflight_action": "after preserving/verifying the context-elasticity feature ref, repoint local main before cutting new branches",
+    "action_performed_by_this_docs_revision": false
+  },
+  "worktree_stash_inventory": {
+    "core_repo_worktrees": [
+      {
+        "path": ".worktrees/rg3-unified-20260910",
+        "ref": "feature/resource-governor-rg3e-authoritative-adapters-20260910@cf5e6fb"
+      },
+      {
+        "path": ".worktrees/ci-rg-fallback-20260910",
+        "ref": "fix/ci-rg-fallback@d43612c"
+      },
+      {
+        "path": ".worktrees/context-elasticity",
+        "ref": "feature/context-elasticity-20260910@14c0710"
+      },
+      {
+        "path": ".worktrees/human-turn-queue",
+        "ref": "feature/webui-human-turn-queue-20260910@f391520"
+      }
+    ],
+    "other_historical_or_detached_worktrees_present": true,
+    "cleanup_rule": "inventory provenance and source-bearing status before prune/remove",
+    "stashes": [
+      {
+        "ref": "stash@{0}",
+        "description": "context-elasticity history.py WIP from pre-p0a/cache-v2 line",
+        "disposition": "hold"
+      },
+      {
+        "ref": "stash@{1}",
+        "description": "2026-09-05 broad emergency snapshot",
+        "disposition": "hold"
+      }
+    ]
+  },
+  "runtime_config_provenance": {
+    "path": "data/providers.json",
+    "tracked": false,
+    "ignored_or_untracked_runtime_config": true,
+    "observed_sha256": "bf463c72a8cfcd9261ed2d8c11d4f8b3d4ed37569bb4f678d50566e231e6be4e",
+    "linked_commit": "8e589de58661188333234d003a72b011fd3d9ad4",
+    "evidence": "8e589de commit message explicitly states providers.json was modified in the same migration batch",
+    "content_embedded": false,
+    "disposition": "hold_with_committed_patch_until_sanitized_provenance_review"
+  },
+  "reproducible_size_metrics": {
+    "src_llm_loop_resources_python_loc": 4768,
+    "src_llm_loop_methods_python_loc": 1348,
+    "note": "Use explicit path/language scopes. Earlier undefined 1425 Method LOC figure is not canonical."
+  },
+  "independent_branch_candidates": [
+    {
+      "ref": "fix/ci-rg-fallback@d43612c",
+      "base": "d59169f",
+      "ahead": 2,
+      "ancestor_of_rg3e": false,
+      "disposition": "admit",
+      "verification_level": "verified",
+      "qualification_status": "required_on_combined_integration_tree",
+      "patch_3way_apply_check_to_cf5e6fb": "PASS",
+      "paths": [
+        "src/llm_loop/core/interop_watch.py",
+        "tests/unit/test_control_plane_closure.py",
+        "tests/unit/test_interop_watch.py"
+      ],
+      "reason": "Independent mechanical CI/interop fixes are absent from the qualified RG-3E delta and would be silently lost from a bare-cf5e6fb convergence."
+    }
+  ],
+  "matrix_summary": {
+    "row_count": 134,
+    "disposition_counts": {
+      "admit": 3,
+      "hold": 14,
+      "replace": 6,
+      "reuse": 111
+    },
+    "verification_counts": {
+      "needs_characterization": 2,
+      "unverified": 2,
+      "verified": 130
+    },
+    "ref_count": 9,
+    "working_dirty_classification_expected": {
+      "matches_p0_clean_and_rg3e": 10,
+      "matches_p0_clean_rg3e_evolved": 4,
+      "unique_current_dirty": 2
+    }
+  },
+  "convergence_preflight": [
+    "preserve context-elasticity feature ref and repoint local main away from 14c0710 before new branch creation",
+    "review and requalify fix/ci-rg-fallback@d43612c against the qualified RG-3E anchor",
+    "inventory source-bearing worktrees and both stashes before cleanup/apply/drop",
+    "bind 8e589de review to sanitized data/providers.json provenance"
+  ],
+  "matrix_generation_correction": {
+    "previous_commit": "cf77e3c2cd188beb0742ac364d9f03b900c4038f",
+    "issue": "previous JSON contained malformed duplicate path ocs/DESIGN-20260910-learning-plane.md carrying the working-tree classification with null hashes",
+    "cause_class": "matrix path parsing/generation defect; not production source",
+    "correction": "removed malformed duplicate and attached NUL-delimited porcelain-derived working-tree evidence to the real docs/DESIGN-20260910-learning-plane.md row",
+    "verification": "full ref/blob + current working-tree replay required after correction"
+  }
 }

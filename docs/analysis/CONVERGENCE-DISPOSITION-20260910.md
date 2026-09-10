@@ -1,7 +1,8 @@
 # LFL Convergence + Disposition Gate — 2026-09-10
 
 > **Status: PROPOSED CONVERGENCE SoT / docs-only**
-> **Candidate semantic base:** `feature/resource-governor-rg3e-authoritative-adapters-20260910@cf5e6fb`
+> **Qualified semantic anchor:** `feature/resource-governor-rg3e-authoritative-adapters-20260910@cf5e6fb`
+> **Convergence target:** the qualified anchor **plus only individually reviewed and requalified independent deltas**; no unqualified branch is auto-merged.
 > **Official repository baseline:** `lfl/main@d59169f`
 > **Paired mechanical replay matrix:** `docs/analysis/CONVERGENCE-DISPOSITION-20260910.json`
 > **Scope of this document:** convergence, ownership, measurement and governance wiring only. It does **not** merge branches, change production runtime, enable RG-3F, start Reasoning Lab, or modify services.
@@ -16,6 +17,7 @@ LFL has reached an asymmetric state:
 2. **Intelligence-growth evidence is still weak.** Method has promising POC evidence, but no pre-registered repeatable unseen-task transfer gate exists yet. Reasoning Lab and Meta-Learning are not qualified.
 3. **Integration is the highest immediate engineering risk.** Learning, RG, cache-v2, context elasticity, human-turn queue and registry-refresh work are star-shaped descendants of the same old baseline rather than one ancestry.
 4. **Governance execution is incomplete.** Admission-asymmetry rules exist in `AGENTS.md` and `docs/subsystem-disposition-20260909.md`, but they are not yet a submission gate. New control machinery can still land without an explicit model-invokable evidence/veto/recovery exit.
+5. **Repository entry state is itself part of convergence.** Local `main` currently points at the context-elasticity tip rather than `lfl/main`, independent fix work is checked out in separate worktrees, and two stashes remain. Branch names alone are therefore not a complete description of live integration state.
 
 Therefore the next system-level action is **not another feature phase**. The required order is:
 
@@ -32,7 +34,7 @@ H    Meta-Learning only after repeated unseen transfer evidence
 I    Long-running benchmark as an expansion of Phase 3.5
 ```
 
-**Freeze rule:** until A/B are complete, do not start another Learning/Reasoning/RG branch from `d59169f`, and do not integrate the current p0a tree wholesale.
+**Freeze rule:** until A/B are complete, do not start another Learning/Reasoning/RG branch from `d59169f`, do not use the currently mispointed local `main` as a new-branch entry point, and do not integrate the current p0a tree wholesale.
 
 ---
 
@@ -55,6 +57,8 @@ The two older qualification files still contain historical HOLD text:
 
 They are historically useful evidence but are **not current status authorities**. During convergence they must receive a visible `[SUPERSEDED 2026-09-10]` banner pointing to the E4/E5 final qualification. Do not rewrite their historical evidence; only disambiguate current authority.
 
+This is a **VERIFIED intra-tree authority conflict**, not merely a naming concern: at the same `cf5e6fb` tree, `rg3e.md` says `E3 = NOT QUALIFIED / RG-3F must not start`, `rg3e-e3c.md` says overall `HOLD`, while `rg3e-e4.md` says `E0-E5 = PASS/CLOSE`. The final E4/E5 document is the current verdict; the older files must remain historical evidence only.
+
 This supersede action is deliberately **listed here rather than silently performed during audit**, so the convergence baseline remains replayable.
 
 ## 1.2 Branch topology against the actual formal baseline
@@ -70,8 +74,9 @@ Formal baseline is `lfl/main@d59169f`; legacy `origin/main` is not the compariso
 | learning/cache-v2 | `d2efc96` | +6 | HOLD pending defect/disposition |
 | context-elasticity | `14c0710` | +13 | HOLD pending characterization/disposition |
 | human-turn-queue | `f391520` | +1 | HOLD pending duplicate-dispatch fix |
+| CI/RG fallback fixes | `d43612c` | +2 | **ADMIT candidate** after independent review/requalification |
 
-RG-3E relative to `lfl/main` is currently **86 files / +20,263 / -119**. The paired JSON records file-level branch/blob evidence for the union of relevant lines.
+RG-3E relative to `lfl/main` is currently **86 files / +20,263 / -119**. The paired JSON records file-level branch/blob evidence for the union of relevant lines. The convergence target is **not bare `cf5e6fb`**: `cf5e6fb` is the qualified anchor, and independent deltas such as `d43612c` must be carried forward only after their own review/requalification.
 
 ## 1.3 Current p0a dirty state is decomposable, not opaque
 
@@ -136,9 +141,68 @@ RG bridge commit `608ec12` already preserved this state. **Do not cherry-pick th
 
 ## 1.5 p0a independent committed delta
 
-`8e589de` changes `src/llm_loop/config.py` and `tests/unit/test_config.py` for a DeepSeek default-model migration. It is not part of Learning semantics and is not automatically entitled to ride the RG convergence.
+`8e589de` changes `src/llm_loop/config.py` and `tests/unit/test_config.py` for a DeepSeek default-model migration. It is not part of Learning semantics and is not automatically entitled to ride the RG convergence. Its own commit message explicitly states that the same operational migration also changed local untracked/ignored `data/providers.json`; therefore reviewing the two committed files alone is incomplete provenance.
 
-Disposition: **HOLD / independent provider-config review and requalification on the eventual unified tree**.
+Current mechanical observation: `data/providers.json` is not Git-tracked; the observed local file is represented in the paired JSON by SHA-256 only. No provider credential or raw provider-config body is copied into this document.
+
+Disposition: **HOLD / review the committed patch together with sanitized runtime-config provenance, then independently requalify on the eventual unified tree**.
+
+
+## 1.6 Independent `fix/ci-rg-fallback` line — preserve, do not silently lose
+
+`fix/ci-rg-fallback@d43612c` is a real +2 branch from `d59169f` and is **not** an ancestor of `cf5e6fb`:
+
+- `9b2fff4` — CI guard fallback when `rg` is unavailable, scoped to Python files;
+- `d43612c` — first `coordinate` wakeup is decoupled from machine uptime by replacing the `0.0` monotonic sentinel with an explicit never-fired state.
+
+The three affected paths are still byte-identical between `d59169f` and `cf5e6fb`, so the qualified RG-3E line did not independently acquire these fixes. A three-way patch applicability check against `cf5e6fb` passes, but **clean applicability is not qualification**.
+
+Disposition: **ADMIT candidate / preserve for the unified integration, then run focused + committed-state qualification before treating it as integrated truth.** Do not silently discard it and do not label it already qualified.
+
+## 1.7 Local `main` pointer drift — convergence preflight
+
+Mechanical ref state at this audit:
+
+```text
+local main = 14c0710 = feature/context-elasticity-20260910 tip
+lfl/main   = d59169f = formal baseline for this architecture workline
+```
+
+This creates a dangerous branch-entry ambiguity: a future `git switch main && git switch -c ...` would silently inherit the 13 context-elasticity commits.
+
+Required convergence preflight: after re-verifying that `feature/context-elasticity-20260910` preserves `14c0710`, repoint local `main` to the intended formal/integration authority. **This document records the action only; the docs-only phase does not move refs.**
+
+## 1.8 Worktree and stash topology is part of the state
+
+Four current feature worktrees live under the repository's `.worktrees/` root and must be explicitly preserved/inventoried during convergence:
+
+- `rg3-unified-20260910` → `cf5e6fb`;
+- `ci-rg-fallback-20260910` → `d43612c`;
+- `context-elasticity` → `14c0710`;
+- `human-turn-queue` → `f391520`.
+
+They are **not the only Git worktrees**: the repository also retains many historical/detached verification worktrees under `/private/tmp` and backup/tmp locations. Convergence must distinguish active source-bearing worktrees from disposable verification remnants before pruning anything.
+
+Two stashes also exist and are not branch-owned truth:
+
+- `stash@{0}` — context-elasticity `history.py` WIP from the pre-p0a/cache-v2 line;
+- `stash@{1}` — 2026-09-05 broad emergency snapshot.
+
+Neither stash may be silently applied or dropped. They require provenance/disposition first.
+
+## 1.9 Untracked architecture drift and count semantics
+
+Current p0a top-level untracked status has **10 entries**: four grouped directories (`.proposals/`, `.tmp/`, `.worktrees/`, `docs/design/`) plus six individual files. The JSON's older `significant_untracked_count=6` referred only to individual file entries; the revised matrix records both scopes explicitly.
+
+Highest priority among these is the untracked Architecture SoT copy:
+
+- qualified RG-3E tracked SoT: **1144 lines**, blob `303bcc9...`;
+- p0a untracked copy: **1128 lines**, blob `d6b92bf...`;
+- diff versus qualified SoT: local copy has 16 insertions / 32 deletions and lacks the latest RG-3A→RG-3E close/status pointers.
+
+Ruling: the p0a untracked SoT is a **stale local copy**, not a competing authority, and must not overwrite the qualified tracked SoT during convergence.
+
+For size reporting, use explicit reproducible scopes. At this snapshot `src/llm_loop/methods/**/*.py` is **1,348 lines**; do not reuse the earlier undefined `1,425 LOC` figure as a canonical metric.
 
 ---
 
@@ -194,6 +258,10 @@ lfl/main d59169f -------+---- P0 clean ---- RG0 ... RG3E
                         +---- context-elasticity
                         |
                         +---- human-turn-queue
+                        |
+                        +---- fix/ci-rg-fallback (+2, independent)
+
+local main -------------> context-elasticity tip (14c0710), not formal lfl/main
 ```
 
 Cache/context/queue/registry work all touch or approach Engine/Factory/Session/Prompt/runtime lifecycle surfaces. Continuing feature development before convergence increases conflict and makes qualification evidence tree-dependent.
@@ -349,7 +417,7 @@ This follows `docs/DEVELOPMENT_REPAIR_SAFETY.md`: **characterize the real behavi
 
 # 5. File-level disposition contract
 
-The complete 132-row matrix is in:
+The complete **134-row** matrix is in:
 
 `docs/analysis/CONVERGENCE-DISPOSITION-20260910.json`
 
@@ -358,7 +426,7 @@ Each row carries:
 ```text
 path
 changed_from_baseline_in[]
-git_blob.{baseline,p0_clean,p0a,rg3_integration,rg3e,cache_v2,context_elasticity,human_turn_queue}
+git_blob.{baseline,p0_clean,p0a,rg3_integration,rg3e,cache_v2,context_elasticity,human_turn_queue,ci_rg_fallback}
 working_tree.status/blob_oid/sha256/classification_10_4_2
 disposition = admit | reuse | replace | delete | hold
 verification_level = verified | needs_characterization | unverified
@@ -372,9 +440,11 @@ target_layer
 - **replace** — older/stale version must give way to a newer qualified authority;
 - **delete** — capability or duplicate authority is proven unnecessary; deletion requires its own exact-scope validation;
 - **hold** — no integration until evidence/qualification is adequate;
-- **admit** — new capability passes the admission-asymmetry gate and has an integration target.
+- **admit** — preserve an independently justified capability/fix as an integration candidate with a named target; **admit is not synonymous with already merged or fully qualified**, and any row/branch-specific qualification requirement still applies.
 
 The JSON is a **mechanical replay matrix**, not a second architecture SoT. Semantic rationale lives here; hashes and path facts live in JSON.
+
+**Revision integrity note:** the first docs-only commit `cf77e3c` contained one malformed duplicate matrix path, `ocs/DESIGN-20260910-learning-plane.md`, created by the earlier working-tree path parser. It carried a classification but null hashes while the real `docs/DESIGN-20260910-learning-plane.md` row also existed. This revision removes the malformed row and attaches NUL-delimited porcelain-derived working-tree hashes/classification to the real path. All matrix replay counts below refer to the corrected 134-row matrix.
 
 ### 5.2 Verification levels
 
@@ -388,7 +458,7 @@ No agent should silently upgrade `needs_characterization` or `unverified` to a d
 
 # 6. Branch/component disposition
 
-## 6.1 RG-3E stack — REUSE as candidate semantic SoT
+## 6.1 RG-3E stack — REUSE as qualified semantic anchor
 
 `cf5e6fb` is the best current integration base because it contains:
 
@@ -398,7 +468,7 @@ No agent should silently upgrade `needs_characterization` or `unverified` to a d
 - current Architecture SoT update;
 - no cloud enforcement or RG-3F behavior.
 
-This does **not** mean every one of its 20K added lines is permanently accepted. It means convergence starts from the most-qualified ancestry, then disposition may still delete/replace unnecessary machinery.
+This does **not** mean every one of its 20K added lines is permanently accepted, nor that bare `cf5e6fb` is the complete future SoT. It means convergence starts from the most-qualified ancestry; independently reviewed/requalified deltas are then admitted selectively, and disposition may still delete/replace unnecessary machinery.
 
 ## 6.2 p0a whole-tree — REJECT as merge unit
 
@@ -428,6 +498,14 @@ Fix duplicate-dispatch path first, then integrate and jointly qualify with foreg
 ## 6.7 MCP refresh / registry-stack dirty — HOLD
 
 The two truly independent dirty source files plus their untracked tests must be isolated, source-bounded and qualified separately. Do not let current p0a dirty status determine their integration ancestry.
+
+## 6.8 `fix/ci-rg-fallback@d43612c` — ADMIT candidate / requalify
+
+Preserve both commits as independent convergence input. Their three paths are absent from the RG-3E delta and the patch mechanically applies to the RG-3E anchor, but integration qualification has not yet been run on the combined tree. Admission here means **do not lose the fixes**; it does not mean skip review/tests.
+
+## 6.9 Local refs / worktrees / stashes — HOLD until provenance disposition
+
+Before constructing the unified tree, correct the local `main` entry pointer, inventory source-bearing worktrees, and classify both stashes. Never delete a worktree or stash merely to simplify the branch graph.
 
 ---
 
@@ -795,16 +873,19 @@ This action applies immediately to the two RG-3E historical HOLD files listed in
 
 When actual convergence begins:
 
-1. start from qualified `cf5e6fb`, not current p0a;
-2. do not whole-merge p0a;
-3. do not replay restart/CI assets already byte-identical in RG-3E;
-4. separately review/requalify `8e589de` provider-default migration;
-5. separately isolate/qualify MCP/registry-stack dirty work;
-6. resolve cache-v2 verified defect before admitting cache-v2;
-7. characterize T2 provider archive ordering before repair/admission;
-8. fix human-turn-queue duplicate path before admission;
-9. then selectively port only qualified cache/context/queue deltas;
-10. run committed-state integration gates and live qualification relevant to the merged behavior.
+0. verify `feature/context-elasticity-20260910@14c0710` preserves the current local-main tip, then repoint local `main` away from that feature tip before any new branch is cut;
+1. start from qualified `cf5e6fb` as the semantic anchor, not current p0a;
+2. preserve and independently review/requalify `fix/ci-rg-fallback@d43612c`; admit its qualified result rather than silently losing it;
+3. do not whole-merge p0a;
+4. do not replay restart/CI assets already byte-identical in RG-3E;
+5. review/requalify `8e589de` together with sanitized `data/providers.json` provenance, not the commit in isolation;
+6. separately isolate/qualify MCP/registry-stack dirty work;
+7. resolve cache-v2 verified defect before admitting cache-v2;
+8. characterize T2 provider archive ordering before repair/admission;
+9. fix human-turn-queue duplicate path before admission;
+10. inventory/disposition source-bearing worktrees and both stashes before pruning or applying anything;
+11. then selectively port only qualified cache/context/queue/independent deltas;
+12. run committed-state integration gates and live qualification relevant to the merged behavior.
 
 The resulting unified integration branch becomes the **only allowed ancestor for subsequent Learning/Reasoning/RG work** until this architecture phase closes.
 
@@ -843,35 +924,41 @@ This convergence gate does **not** authorize:
 
 A/A.5 may close only when all are true:
 
-1. paired JSON matrix covers every file in the selected branch union and current relevant dirty set;
+1. paired JSON matrix covers every file in the selected branch union and current relevant dirty set, including `fix/ci-rg-fallback`;
 2. 10/4/2 working-tree classification remains mechanically reproducible or changes are explicitly re-baselined;
-3. RG-3E stale qualification files are marked superseded without destroying historical evidence;
-4. cache-v2 axis mismatch is resolved and qualified;
-5. human-turn claim/reaper duplicate path is fixed and regression-tested;
-6. T2 provider archive ordering has a characterization verdict (`bug` or `expected`), not an inference;
-7. p0a default-model migration receives an independent provider/config disposition;
-8. MCP/registry-stack dirty work receives an independent provenance/qualification verdict;
-9. cache/context/queue branch changes receive file-level dispositions;
-10. A.5 G1–G4 control-machine declarations are represented in review/submission workflow;
-11. a single unified integration ancestry is created and clean committed-state gates pass;
-12. Phase 3.5 preregistration artifact is frozen before its first result is observed.
+3. local `main` no longer points at the context-elasticity feature tip and its prior tip remains preserved by a named feature ref;
+4. source-bearing worktrees and both current stashes have explicit preserve/admit/drop dispositions before any cleanup;
+5. RG-3E stale qualification files are marked superseded without destroying historical evidence;
+6. the stale p0a untracked Architecture SoT is prevented from overwriting the qualified tracked SoT;
+7. `fix/ci-rg-fallback@d43612c` is independently reviewed and requalified on the integration anchor before admission;
+8. cache-v2 axis mismatch is resolved and qualified;
+9. human-turn claim/reaper duplicate path is fixed and regression-tested;
+10. T2 provider archive ordering has a characterization verdict (`bug` or `expected`), not an inference;
+11. p0a default-model migration receives an independent provider/config disposition that includes sanitized `data/providers.json` provenance;
+12. MCP/registry-stack dirty work receives an independent provenance/qualification verdict;
+13. cache/context/queue branch changes receive file-level dispositions;
+14. A.5 G1–G4 control-machine declarations are represented in review/submission workflow;
+15. a single unified integration ancestry is created and clean committed-state gates pass;
+16. Phase 3.5 preregistration artifact is frozen before its first result is observed.
 
-Only after 1–12 should the architecture proceed to intelligence-layer expansion.
+Only after 1–16 should the architecture proceed to intelligence-layer expansion.
 
 ---
 
 # 18. Recommended immediate execution sequence
 
 ```text
-Step 1  Commit this docs-only Convergence + JSON matrix on the RG-3E-derived docs branch.
-Step 2  Mark two stale RG-3E HOLD qualification docs SUPERSEDED -> E4/E5 current authority.
+Step 0  Preserve the context-elasticity feature ref, then repoint local main away from 14c0710 before new branches are cut.
+Step 1  Mark two stale RG-3E HOLD qualification docs SUPERSEDED -> E4/E5 current authority.
+Step 2  Review/requalify fix/ci-rg-fallback@d43612c against the RG-3E anchor; preserve it unless disproven.
 Step 3  Characterize T2 archive order; no source fix until result exists.
 Step 4  Fix/qualify cache-v2 axis contract and human-turn reaper duplicate path independently.
-Step 5  Review default-model migration and MCP/registry stack independently.
-Step 6  Construct one integration branch from qualified RG-3E and selectively port qualified deltas.
-Step 7  Full committed-state + relevant live qualification; freeze Runtime Substrate B.
-Step 8  Write/freeze Phase 3.5 preregistration and run A/B/placebo.
-Step 9  Decide from measured transfer whether RG-3F/Reasoning Lab progression is justified.
+Step 5  Review default-model migration + sanitized providers.json provenance and MCP/registry stack independently.
+Step 6  Inventory/disposition source-bearing worktrees, detached verification remnants, and both stashes before cleanup.
+Step 7  Construct one integration branch from qualified RG-3E and selectively port only qualified/admitted deltas.
+Step 8  Full committed-state + relevant live qualification; freeze Runtime Substrate B.
+Step 9  Write/freeze Phase 3.5 preregistration and run A/B/placebo.
+Step 10 Decide from measured transfer whether RG-3F/Reasoning Lab progression is justified.
 ```
 
 The ordering is intentionally conservative: **converge → instrument → measure → add intelligence**, rather than **add more machinery → measure at the end**.
@@ -880,16 +967,18 @@ The ordering is intentionally conservative: **converge → instrument → measur
 
 # 19. Evidence and replay notes
 
-The paired JSON is generated from Git blob identities rather than narrative comparison. It includes:
+The paired JSON is generated from Git blob identities rather than narrative comparison. After the path-parser correction documented in §5, it includes:
 
-- all relevant branch commit IDs;
+- all relevant branch commit IDs, including the independent CI/RG fallback line;
+- the local `main` pointer observation and worktree/stash topology notes;
 - changed-path union;
 - per-ref Git blob OIDs;
 - current working-tree blob OID + SHA-256 for tracked dirty files;
 - exact 10/4/2 classification;
 - branch source membership;
 - disposition and verification level;
-- significant current untracked artifacts;
+- significant current untracked artifacts with explicit top-level-vs-file count scope;
+- sanitized hash-only provenance for ignored `data/providers.json`;
 - three pre-integration defect records;
 - ownership/veto policy;
 - A.5 gate;
