@@ -7,6 +7,7 @@
 | Adaptive reasoning & learning Architecture SoT | `docs/DESIGN-20260910-adaptive-reasoning-learning-architecture.zh.md` | committed tracked Architecture SoT; external 2081-line Downloads candidate is preserved as non-authoritative HOLD input |
 | Resource Governor RG-3E qualification | `docs/QUALIFICATION-20260910-resource-governor-rg3e-e4.md` | **RG-3E E0–E5 PASS/CLOSE**; RG-3F may only begin as separately authorized shadow work after convergence prerequisites |
 | Convergence / disposition governance | `docs/analysis/CONVERGENCE-DISPOSITION-20260910.md` | final docs-only governance/disposition authority; runtime integration is still pending |
+| Human Turn Queue convergence | `docs/QUALIFICATION-20260911-human-turn-queue-convergence.md` | **PASS / ADMIT final safe queue implementation**; original `f391520` is source evidence only and not a merge unit |
 | Mechanical inventory | `docs/analysis/CONVERGENCE-DISPOSITION-INVENTORY-20260911.json` | frozen 108/65 audit snapshot + explicit post-freeze delta; no credentials/private file bodies |
 | Paired file replay matrix | `docs/analysis/CONVERGENCE-DISPOSITION-20260910.json` | mechanical file/OID/provenance evidence; not a second Architecture SoT |
 
