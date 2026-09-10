@@ -76,6 +76,8 @@ class FactSource(StrEnum):
     OPERATOR_CONFIG = "operator_config"
     RUNTIME_PROBE = "runtime_probe"
     PROVIDER_RESPONSE = "provider_response"
+    PROVIDER_DOCUMENTATION = "provider_documentation"
+    PROVIDER_CONTROL_PLANE = "provider_control_plane"
     USAGE_LEDGER = "usage_ledger"
 
 
@@ -89,6 +91,15 @@ class ResourceScopeKind(StrEnum):
     MODEL = "model"
 
 
+class ResourceDimension(StrEnum):
+    """Independent mechanical resource dimensions over the same scope key."""
+
+    CONCURRENCY = "concurrency"
+    RATE = "rate"
+    QUOTA = "quota"
+    COST = "cost"
+
+
 class RateLimitMetric(StrEnum):
     """Provider-defined rolling rate unit; RPM/TPM are common 60s instances."""
 
@@ -96,6 +107,26 @@ class RateLimitMetric(StrEnum):
     INPUT_TOKENS = "input_tokens"
     OUTPUT_TOKENS = "output_tokens"
     TOTAL_TOKENS = "total_tokens"
+
+
+class QuotaMetric(StrEnum):
+    """Provider quota unit; PROVIDER_UNITS keeps plan-specific units opaque."""
+
+    REQUESTS = "requests"
+    INPUT_TOKENS = "input_tokens"
+    OUTPUT_TOKENS = "output_tokens"
+    TOTAL_TOKENS = "total_tokens"
+    PROVIDER_UNITS = "provider_units"
+
+
+class PricingBasis(StrEnum):
+    """Mechanical billing basis; rules may vary by time, length, or service tier."""
+
+    INPUT_MILLION_TOKENS = "input_million_tokens"
+    CACHED_INPUT_MILLION_TOKENS = "cached_input_million_tokens"
+    OUTPUT_MILLION_TOKENS = "output_million_tokens"
+    PROVIDER_UNIT = "provider_unit"
+    SUBSCRIPTION_PERIOD = "subscription_period"
 
 
 class AdmissionOutcome(StrEnum):
@@ -138,6 +169,15 @@ def _require_positive(name: str, value: int | float | None) -> None:
         raise ValueError(f"{name} must be > 0")
 
 
+def _require_decimal(name: str, value: Decimal, *, positive: bool = False) -> None:
+    if not isinstance(value, Decimal):
+        raise TypeError(f"{name} must be Decimal")
+    if positive and value <= 0:
+        raise ValueError(f"{name} must be > 0")
+    if not positive and value < 0:
+        raise ValueError(f"{name} must be >= 0")
+
+
 @dataclass(frozen=True)
 class FactProvenance:
     """Non-secret origin + acquisition time for a mechanical resource fact."""
@@ -165,6 +205,36 @@ class ResourceKey:
 
 
 @dataclass(frozen=True)
+class ResourceProductIdentity:
+    """Explicit non-secret cloud product/account identity; never inferred from provider name."""
+
+    provider_id: str
+    product_id: str
+    account_alias: str
+    provenance: FactProvenance
+    api_family: str | None = None
+    region: str | None = None
+    project_alias: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_text("provider_id", self.provider_id)
+        _require_text("product_id", self.product_id)
+        _require_text("account_alias", self.account_alias)
+        for name in ("api_family", "region", "project_alias"):
+            value = getattr(self, name)
+            if value is not None:
+                _require_text(name, value)
+
+
+@dataclass(frozen=True)
+class ResourceRequirement:
+    """One resource scope/dimension pair; no dimension implies another."""
+
+    key: ResourceKey
+    dimension: ResourceDimension
+
+
+@dataclass(frozen=True)
 class RateLimitSpec:
     """Declared rate limit over an exact window."""
 
@@ -188,6 +258,84 @@ class RateUsage:
     def __post_init__(self) -> None:
         _require_non_negative("used", self.used)
         _require_positive("window_seconds", self.window_seconds)
+
+
+@dataclass(frozen=True)
+class RateLimitResetFacts:
+    """Normalized safe rate-limit/reset facts; raw response headers are never retained."""
+
+    metric: RateLimitMetric
+    limit: int | None = None
+    remaining: int | None = None
+    window_seconds: float | None = None
+    reset_at: float | None = None
+    reset_after_seconds: float | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_negative("limit", self.limit)
+        _require_non_negative("remaining", self.remaining)
+        _require_positive("window_seconds", self.window_seconds)
+        _require_non_negative("reset_at", self.reset_at)
+        _require_non_negative("reset_after_seconds", self.reset_after_seconds)
+        if self.limit is not None and self.remaining is not None and self.remaining > self.limit:
+            raise ValueError("remaining cannot exceed limit")
+        if all(
+            value is None
+            for value in (
+                self.limit,
+                self.remaining,
+                self.window_seconds,
+                self.reset_at,
+                self.reset_after_seconds,
+            )
+        ):
+            raise ValueError("rate-limit reset facts must contain at least one observed value")
+
+
+@dataclass(frozen=True)
+class QuotaSpec:
+    """Declared quota ceiling; time window/reset may be fixed, calendar based, or unknown."""
+
+    metric: QuotaMetric
+    limit: Decimal
+    provenance: FactProvenance
+    window_seconds: float | None = None
+    reset_at: float | None = None
+    provider_unit: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_decimal("limit", self.limit, positive=True)
+        _require_positive("window_seconds", self.window_seconds)
+        _require_non_negative("reset_at", self.reset_at)
+        if self.metric is QuotaMetric.PROVIDER_UNITS:
+            if self.provider_unit is None:
+                raise ValueError("provider_unit is required for PROVIDER_UNITS quota")
+            _require_text("provider_unit", self.provider_unit)
+        elif self.provider_unit is not None:
+            _require_text("provider_unit", self.provider_unit)
+
+
+@dataclass(frozen=True)
+class QuotaUsage:
+    """Observed quota consumption; Decimal supports weighted provider-defined units."""
+
+    metric: QuotaMetric
+    used: Decimal
+    provenance: FactProvenance
+    window_seconds: float | None = None
+    reset_at: float | None = None
+    provider_unit: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_decimal("used", self.used)
+        _require_positive("window_seconds", self.window_seconds)
+        _require_non_negative("reset_at", self.reset_at)
+        if self.metric is QuotaMetric.PROVIDER_UNITS:
+            if self.provider_unit is None:
+                raise ValueError("provider_unit is required for PROVIDER_UNITS quota usage")
+            _require_text("provider_unit", self.provider_unit)
+        elif self.provider_unit is not None:
+            _require_text("provider_unit", self.provider_unit)
 
 
 @dataclass(frozen=True)
@@ -231,6 +379,71 @@ class TokenPricing:
 
 
 @dataclass(frozen=True)
+class PricingRule:
+    """One normalized price rule with only mechanical selectors."""
+
+    rule_id: str
+    basis: PricingBasis
+    price: MoneyAmount
+    min_input_tokens: int | None = None
+    max_input_tokens: int | None = None
+    service_tier: str | None = None
+    effective_from: float | None = None
+    effective_until: float | None = None
+    provider_unit: str | None = None
+    period_seconds: float | None = None
+
+    def __post_init__(self) -> None:
+        _require_text("rule_id", self.rule_id)
+        _require_non_negative("min_input_tokens", self.min_input_tokens)
+        _require_non_negative("max_input_tokens", self.max_input_tokens)
+        _require_non_negative("effective_from", self.effective_from)
+        _require_non_negative("effective_until", self.effective_until)
+        _require_positive("period_seconds", self.period_seconds)
+        if (
+            self.min_input_tokens is not None
+            and self.max_input_tokens is not None
+            and self.min_input_tokens > self.max_input_tokens
+        ):
+            raise ValueError("min_input_tokens cannot exceed max_input_tokens")
+        if (
+            self.effective_from is not None
+            and self.effective_until is not None
+            and self.effective_from >= self.effective_until
+        ):
+            raise ValueError("effective_from must be earlier than effective_until")
+        if self.service_tier is not None:
+            _require_text("service_tier", self.service_tier)
+        if self.basis is PricingBasis.PROVIDER_UNIT:
+            if self.provider_unit is None:
+                raise ValueError("provider_unit is required for PROVIDER_UNIT pricing")
+            _require_text("provider_unit", self.provider_unit)
+        elif self.provider_unit is not None:
+            _require_text("provider_unit", self.provider_unit)
+        if self.basis is PricingBasis.SUBSCRIPTION_PERIOD and self.period_seconds is None:
+            raise ValueError("period_seconds is required for SUBSCRIPTION_PERIOD pricing")
+
+
+@dataclass(frozen=True)
+class PricingSchedule:
+    """Authoritative normalized pricing rules for one explicit resource product."""
+
+    product: ResourceProductIdentity
+    provenance: FactProvenance
+    rules: tuple[PricingRule, ...]
+    model_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.rules:
+            raise ValueError("pricing schedule must contain at least one rule")
+        if self.model_id is not None:
+            _require_text("model_id", self.model_id)
+        currencies = {rule.price.currency for rule in self.rules}
+        if len(currencies) != 1:
+            raise ValueError("pricing schedule rules must use one currency")
+
+
+@dataclass(frozen=True)
 class CostBudget:
     """Mechanical monetary ceiling for a resource scope and exact time window."""
 
@@ -254,6 +467,74 @@ class CostUsage:
 
 
 @dataclass(frozen=True)
+class ProviderUsageFacts:
+    """Per-call provider usage facts; None means unreported and is distinct from zero."""
+
+    provider_id: str
+    model_id: str
+    provenance: FactProvenance
+    product: ResourceProductIdentity | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    total_tokens: int | None = None
+    provider_units: Decimal | None = None
+    provider_unit: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_text("provider_id", self.provider_id)
+        _require_text("model_id", self.model_id)
+        for name in (
+            "input_tokens",
+            "output_tokens",
+            "cached_input_tokens",
+            "reasoning_tokens",
+            "total_tokens",
+        ):
+            _require_non_negative(name, getattr(self, name))
+        if (
+            self.input_tokens is not None
+            and self.cached_input_tokens is not None
+            and self.cached_input_tokens > self.input_tokens
+        ):
+            raise ValueError("cached_input_tokens cannot exceed input_tokens")
+        if self.provider_units is not None:
+            _require_decimal("provider_units", self.provider_units)
+            if self.provider_unit is None:
+                raise ValueError("provider_unit is required when provider_units are reported")
+        if self.provider_unit is not None:
+            _require_text("provider_unit", self.provider_unit)
+        if self.product is not None and self.product.provider_id != self.provider_id:
+            raise ValueError("product provider_id must match usage provider_id")
+
+
+@dataclass(frozen=True)
+class ProviderErrorFacts:
+    """Safe normalized provider failure facts; excludes body, raw headers, prompt, and credentials."""
+
+    provider_id: str
+    model_id: str
+    provenance: FactProvenance
+    product: ResourceProductIdentity | None = None
+    status_code: int | None = None
+    provider_code: str | None = None
+    retry_after_seconds: float | None = None
+    rate_limits: tuple[RateLimitResetFacts, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_text("provider_id", self.provider_id)
+        _require_text("model_id", self.model_id)
+        if self.status_code is not None and not 100 <= self.status_code <= 599:
+            raise ValueError("status_code must be a valid HTTP status")
+        if self.provider_code is not None:
+            _require_text("provider_code", self.provider_code)
+        _require_non_negative("retry_after_seconds", self.retry_after_seconds)
+        if self.product is not None and self.product.provider_id != self.provider_id:
+            raise ValueError("product provider_id must match error provider_id")
+
+
+@dataclass(frozen=True)
 class DeclaredResourceProfile:
     """Operator/provider-declared limits; never silently treated as live truth."""
 
@@ -262,7 +543,9 @@ class DeclaredResourceProfile:
     runtime_type: RuntimeType = RuntimeType.UNKNOWN
     max_concurrency: int | None = None
     rate_limits: tuple[RateLimitSpec, ...] = ()
+    quota_limits: tuple[QuotaSpec, ...] = ()
     cost_budget: CostBudget | None = None
+    product: ResourceProductIdentity | None = None
     trust_domain: str | None = None
     supports_cancel: CapabilityState = CapabilityState.UNKNOWN
     supports_priority: CapabilityState = CapabilityState.UNKNOWN
@@ -270,6 +553,8 @@ class DeclaredResourceProfile:
 
     def __post_init__(self) -> None:
         _require_positive("max_concurrency", self.max_concurrency)
+        if self.product is not None and self.product.provider_id != self.key.provider_id:
+            raise ValueError("product provider_id must match resource key provider_id")
         if self.trust_domain is not None:
             _require_text("trust_domain", self.trust_domain)
 
@@ -286,7 +571,9 @@ class ObservedResourceState:
     max_concurrency: int | None = None
     in_flight: int | None = None
     rate_usage: tuple[RateUsage, ...] = ()
+    quota_usage: tuple[QuotaUsage, ...] = ()
     cost_usage: CostUsage | None = None
+    product: ResourceProductIdentity | None = None
     local_memory_pressure: float | None = None
     local_cache_slots_total: int | None = None
     local_cache_slots_used: int | None = None
@@ -302,6 +589,8 @@ class ObservedResourceState:
         _require_non_negative("in_flight", self.in_flight)
         _require_non_negative("local_cache_slots_total", self.local_cache_slots_total)
         _require_non_negative("local_cache_slots_used", self.local_cache_slots_used)
+        if self.product is not None and self.product.provider_id != self.key.provider_id:
+            raise ValueError("product provider_id must match resource key provider_id")
         if self.local_memory_pressure is not None and not 0 <= self.local_memory_pressure <= 1:
             raise ValueError("local_memory_pressure must be within [0, 1]")
         if (

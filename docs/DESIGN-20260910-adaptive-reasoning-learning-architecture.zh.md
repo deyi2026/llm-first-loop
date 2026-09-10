@@ -515,6 +515,8 @@ RG-1 最小运行时与 Learning 迁移细则见 `docs/DESIGN-20260910-resource-
 
 RG-2 provider-call lease 与本地 runtime concurrency 细则见 `docs/DESIGN-20260910-resource-governor-rg2.md`；RG-2 只把已选择的 Task/SubAgent/Learning 本地 provider 调用接到同一机械 runtime lease，cloud rate/cost/trust/cancel 仍后移。
 
+RG-3A cloud facts contract 见 `docs/DESIGN-20260910-resource-governor-rg3a-cloud-facts.md`；**RG-3A 仅冻结 cloud resource facts contract，不接 cloud enforcement**：显式区分 product/account identity、usage unknown vs zero、safe provider error/reset facts、quota、动态 pricing，以及 concurrency/rate/quota/cost 独立资源维度；TrustDomain/cancel 仍不接线。
+
 这套架构必须同时适用于：
 
 ```text
