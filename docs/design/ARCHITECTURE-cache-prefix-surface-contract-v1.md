@@ -190,6 +190,21 @@ tail_assembly.py
 
 **保留**：`_gate_drift_count`（告警出口）、`_baselines`（改名 `_system_baselines` 继续用）、combined `stable_fp` 的边界保护路径。
 
+### 6.1 主仓基线对账（2026-09-10，基线 8e589de）
+
+上表行号与符号清单以**设计时基线树**（f938428 的父树）为准；主仓 8e589de 对账差异如下，落地与 conformance 套件以本节为准：
+
+| 项 | 主仓 8e589de 实况 | 处置 |
+|---|---|---|
+| `_model_prefix_contract` / `_contract_drift_count` | **不存在**（零引用；F13 基线为设计时树） | 从删除面移除（无物可删） |
+| `postcheck` 的 `model_ref` 参数 | **不存在**（主仓签名 `(session_id, stable_fp, skeleton_fp=None)`） | 同上 |
+| `_skel_baselines` | 在场 `cache_health.py:212` | 删除 |
+| `_controlled_change_count` | 在场 `cache_health.py:213`（snapshot 出口键 `controlled_change_count`，`cache_health.py:800`） | 删除（snapshot 键同步清理） |
+| `preflight`/`postcheck` 的 `skeleton_fp` 形参与保守漂移分支 | 在场 `cache_health.py:878`/`905` 起 | 删除，替换为 §3 双轴签名 |
+| `tests/unit/test_cache_monitor.py:360` `test_gate_missing_skeleton_conservative_drift`（及相邻 skeleton 系列测试） | 在场——把退化路径按预期行为**锁定** | 随语义修复同步重写为 §7/§9 断言 |
+
+行号漂移以符号名为准。conformance 套件不逐行断言 §5/§6 清单（基线相对），仅以 §7 不变式与 §9 验收为行为基准；删除面静态检查以本节**在场 4 项**为准。
+
 ---
 
 ## 7. 不变式（设计必须维持）
@@ -225,7 +240,7 @@ tail_assembly.py
 
 ---
 
-## 10. 开放问题
+## 10. 开放问题（已决 2026-09-10，落地前关闭——conformance 套件转录基准冻结于此）
 
-- 是否需要把 `system_fp()` 提取为 `history.py` 的共享 helper（取代 base_assembly 与 projection_gate 各自调用 `stable_digest(system_prompt)`）？最小化方案不提取；若要强一致，建议提取并在两处引用。
-- `_tools_change_count` 是否需要进 snapshot/审计文件，还是仅 logger？当前方案建议仅 logger + 计数，避免扩大审计面。
+- **Q1 共享 helper：不提取。** base_assembly 与 projection_gate 各自单行调用 `stable_digest(system_prompt)`（裸字符串）。提取触发条件（rule of three）：同形指纹计算出现第三处消费者时再提取到 `history.py`，届时 §7 不变式第 5 条改引 helper 名。
+- **Q2 `_tools_change_count`：不进 snapshot/审计文件。** 仅 logger.info + 进程内计数器。理由：snapshot 消费方（take_gate_note/监控窗口）契约不扩张；tools 变化是合法常态而非异常，跨会话统计需要时由调用点埋点（base_assembly 轴埋点）承接，不进门禁状态机。
