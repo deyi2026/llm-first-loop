@@ -77,8 +77,13 @@ class TestG7ProgrammaticResendRetired:
 class TestG8KeywordScan:
     def test_forbidden_program_keywords_zero_in_code_paths(self):
         """B-G8 静态面: 退役策略提示生产者从生产源码完全消失."""
+        import shutil
         import subprocess
 
+        # R9-IMM-02 适配：conftest chdir 沙箱后 cwd≠仓库根，锚定 __file__ 定位 src
+        from pathlib import Path
+
+        repo_src = Path(__file__).resolve().parents[2] / "src" / "llm_loop"
         for func in (
             "max_iterations_decision_message",
             "max_iterations_warning_message",
@@ -86,17 +91,23 @@ class TestG8KeywordScan:
             "empty_search_reminder_message",
             "overflow_feedback",
         ):
-            # R9-IMM-02 适配：conftest chdir 沙箱后 cwd≠仓库根，锚定 __file__ 定位 src
-            from pathlib import Path
-
-            repo_src = Path(__file__).resolve().parents[2] / "src" / "llm_loop"
-            result = subprocess.run(
-                ["rg", "-l", func, str(repo_src)],
-                capture_output=True, text=True,
-            )
+            if shutil.which("rg"):
+                result = subprocess.run(
+                    ["rg", "-l", func, str(repo_src), "-g", "*.py"],
+                    capture_output=True,
+                    text=True,
+                )
+            else:
+                # CI runner 无 rg：grep 等价降级。双侧统一限定 *.py——
+                # 标识符是 Python 函数名；不限文件类型时裸 grep 会扫
+                # __pycache__/*.pyc（rg 尊重 .gitignore 会跳过），产生伪命中。
+                result = subprocess.run(
+                    ["grep", "-rl", "--include=*.py", func, str(repo_src)],
+                    capture_output=True,
+                    text=True,
+                )
             files = [f for f in result.stdout.splitlines() if f.strip()]
             assert files == [], f"{func} 出现在生产面: {files}"
-
 
 
 class TestB33RepairBeforeLifecycle:
