@@ -509,6 +509,8 @@ if tool_count > 10: start Reasoning Lab
 
 # 11. Unified Resource Governor / 统一资源治理
 
+> RG-0 详细权力边界、数据契约与测试矩阵见 `docs/DESIGN-20260910-resource-governor-rg0.md`。RG-0 仅冻结 contract，不接管任何 runtime path。
+
 这套架构必须同时适用于：
 
 ```text
