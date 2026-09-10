@@ -3,7 +3,8 @@
 > **Verdict:** PASS / ADMIT final safe queue implementation.
 > **Integration parent:** `integration/convergence-20260911@43c78ee`.
 > **Source feature evidence:** `feature/webui-human-turn-queue-20260910@f39152084ab420d0922e09c13732573e057df8eb`.
-> **Qualified implementation commit:** `5349a337a62fefbd06df78286e6d3e9cf765f91e`.
+> **Qualified source implementation commit:** `5349a337a62fefbd06df78286e6d3e9cf765f91e`.
+> **Unified integration implementation:** `60f8b75` plus post-port static closeout `733df23`; qualification document is carried on the same integration ancestry.
 > **Rule:** the source feature commit is evidence, not an admissible merge unit; its duplicate-dispatch lifecycle gaps are corrected in the qualified implementation.
 
 ## 1. User-visible capability
@@ -129,7 +130,7 @@ Backend:
 ```text
 queue + BackgroundRunner focused                 50/50 PASS
 Web / Session / Event adjacent                  157/157 PASS
-Ruff changed Python surface                     PASS
+Ruff final integration changed Python surface   PASS
 py_compile changed Python surface                PASS
 Pyright repository                              0 errors / 0 warnings / 0 informations
 git diff --check                                PASS
@@ -148,6 +149,15 @@ Vite production build                           PASS
 ```
 
 Existing React `act(...)` warnings and bundle-size warning remain warnings only and were not introduced as queue correctness gates.
+
+
+### 6.1 Post-port lint enumeration correction
+
+The first candidate-side Ruff command built its file list from `git diff --name-only`. At that point the new queue module and queue Web test were still **untracked**, so that enumeration omitted them and the early “changed Python surface PASS” statement was incomplete. After the implementation became tracked on the unified integration branch, the post-port gate correctly surfaced three static-only issues: one `contextlib.suppress` modernization, one unused test local, and one import naming violation.
+
+`733df23` fixes only those three static findings. The final gate enumerates the complete Python delta from the pushed integration baseline plus any current dirty Python paths, then reruns Ruff, py_compile, Pyright, focused queue tests, and the full non-real-LLM suite. Result: PASS.
+
+Reusable qualification rule: **new/untracked source files must be included explicitly in candidate lint/type enumeration; `git diff --name-only` alone is not a complete changed-surface inventory before files are tracked.**
 
 ## 7. A.5 governance declaration (G1–G4)
 
