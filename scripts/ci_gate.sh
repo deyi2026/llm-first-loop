@@ -92,7 +92,7 @@ if [[ "$MODE" == "--quick" ]]; then
 fi
 
 echo "═══ [5/5] pytest 全量门禁（xdist loadfile 并行；提交门禁恒为全量）═══"
-GATE_OUT="$(mktemp)"; GATE_SER="$(mktemp)"
+GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_ser.XXXXXX)"
 if "$PY" -m pytest --dist loadfile -n auto -q >"$GATE_OUT" 2>&1; then
   echo "（xdist 全量绿）"
 else

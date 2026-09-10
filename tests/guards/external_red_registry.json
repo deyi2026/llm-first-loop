@@ -9,7 +9,7 @@
     "复核条款": "tasks-b3.md CLOSE-03；事件全档：b3-execution-log.md 事件节",
     "闸三": "用户裁决 2026-09-01：方案 A（等外部演进合流，63 项自然转绿后 registry 清空）+ deadline = 第 4 批（B4）收口时点；逾期未合流转 B（test(r9) 代收口 63 项 HEAD 化）或 C（跨批挂账逐批 CLOSE 复核），转 B/C 前交用户确认口径。落款：b3-execution-log §10.4；复核承载：tasks-b4 B4-CLOSE-03。",
     "Gate0重建": "2026-09-02 hermetic PROBE 真值重建（tasks-b5 §-1 项4）：隔离检出 b4de819+Gate0面 全量红集 91 = 保留 62 + 销号 1（test_trace_leak_regression::test_replay_pair_fixture_loads ——fixture 版本化后提交态转绿，原子销号实证）+ 新登 29（calib/screening 系外部评测测试依赖 data/ gitignore 资产，外部演进配对面缺口归因；销号复核沿 C 裁决逐批）。63→91。",
-    "最后复核": "2026-09-02 02:10"
+    "最后复核": "2026-09-10 03:15（r9 全量门禁触达）——外部演进链 f1ae293(2026-09-06 合入, Gate0 2026-09-02 重建之后) 带入 working_set receipts 4 红：src 侧入 HEAD 配对测试未齐，同 _meta 既有归因模式；新登 4 项（86→90），销号复核沿 C 裁决逐批。登记时点实测：HERMETIC HEAD 全量红集恰为此 4 项。"
   },
   "exempt": [
     "tests/integration/test_cognitive_integration.py::TestSinglePipelineAndDegradation::test_single_packet_pipeline_tier_on_and_off",
@@ -97,6 +97,10 @@
     "tests/unit/test_screening_s_runner.py::test_dry_p05_preserves_dru_waiver",
     "tests/unit/test_screening_s_runner.py::test_manifest_has_four_provider_panel",
     "tests/unit/test_task_active_prompt_r816.py::test_unique_in_progress_projects_only_minimal_identity",
-    "tests/unit/test_user_truth_wire.py::test_build_initial_round_envelope_ends_with_exact_user_truth"
+    "tests/unit/test_user_truth_wire.py::test_build_initial_round_envelope_ends_with_exact_user_truth",
+    "tests/unit/test_tool_working_set_projection.py::test_working_set_receipt_compacts_only_older_exposed_group",
+    "tests/unit/test_tool_working_set_projection.py::test_working_set_receipt_exposes_mechanical_origin_not_task_judgment",
+    "tests/unit/test_tool_working_set_projection.py::test_working_set_stats_expose_incomplete_batch_without_folding",
+    "tests/unit/test_tool_working_set_projection.py::test_working_set_stats_report_only_mechanical_projection_facts"
   ]
 }

@@ -142,10 +142,12 @@ GATE_EXIT=0
 if [ "$GATE_EXIT" -eq 0 ]; then
   echo "✅ ci_gate 全链路 EXIT=0（PROBE 隔离态，PROBE=$(git rev-parse --short "$PROBE")）"
 else
-  # Gate 0 项3-空集防护（升级）：未达 [4/4] = 基建失败；达 [4/4] 但失败集为空 = 未知
+  # Gate 0 项3-空集防护（升级）：未达 [5/5] 全量测试步 = 基建失败；已达但失败集为空 = 未知
   # 失败形态（xdist worker crash / collection 中断无节点行）——两者都拒绝放行。
-  if ! grep -q "═══ \[4/4\]" "$GATE_LOG"; then
-    echo "❌ ci_gate 非零退出且未达 [4/4] 测试步——基建失败（非测试红），中止" >&2
+  # 2026-09-10：ci_gate 步进格式已是 5 步（[2/5]..[5/5]，仅 [1/4] ruff 残留旧标号），
+  # 探测标记从旧 [4/4] 对准最终测试步 [5/5]——旧标记永不匹配导致"基建失败"误判中止。
+  if ! grep -q "═══ \[5/5\]" "$GATE_LOG"; then
+    echo "❌ ci_gate 非零退出且未达 [5/5] 测试步——基建失败（非测试红），中止" >&2
     echo "── ci_gate 输出尾部 ──"; tail -20 "$GATE_LOG"; exit 1
   fi
   # 完整收集：FAILED + ERROR（collection/setup error 节点行）；node id 去重排序。

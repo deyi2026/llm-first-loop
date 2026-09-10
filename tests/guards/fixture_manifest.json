@@ -14,9 +14,9 @@
     },
     {
       "path": "tests/fixtures/tool_factualization/death-loop-scenario.json",
-      "sha256": "62ac85ec837f1bab8ee4ce8e714cc6d6ef306a0d4e800f953e07ad82086e9981",
-      "bytes": 707,
-      "source": "external-untracked-asset（镜像区同源校验 death-loop-scenario=62ac85ec）"
+      "sha256": "2723d19538d76f4f082d2817795a2e49ad75402f449da965afec8357e95adaf3",
+      "bytes": 716,
+      "source": "external-untracked-asset（镜像区同源校验 death-loop-scenario=62ac85ec；d03c913 接口重命名同步 2723d195）"
     },
     {
       "path": "data/calib/h1c_control_bank.json",
