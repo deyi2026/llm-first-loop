@@ -146,6 +146,7 @@ def exceptional_attempt_payload(
     messages: list[dict],
     tools: list[dict],
     transform: dict[str, Any] | None = None,
+    provider_call_id: str | None = None,
 ) -> dict[str, Any]:
     """Build bounded facts for a real non-primary provider attempt.
 
@@ -168,6 +169,7 @@ def exceptional_attempt_payload(
     return {
         "round": int(round_no or 0),
         "attempt_id": str(attempt_id or ""),
+        "provider_call_id": str(provider_call_id or ""),
         "attempt_kind": str(kind or "unknown"),
         "attempt_index": int(attempt_index or 0),
         "provider": contract["provider"],

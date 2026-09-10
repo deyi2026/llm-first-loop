@@ -36,6 +36,10 @@ from llm_loop.event_log.model import (
     EVENT_MESSAGE_APPENDED,
     EVENT_MESSAGE_CACHE_COMPACTED,
     EVENT_PROGRAM_RECOVERY,
+    EVENT_PROVIDER_CALL_OPENED,
+    EVENT_PROVIDER_CALL_SETTLED,
+    EVENT_PROVIDER_TRANSPORT_OPENED,
+    EVENT_PROVIDER_TRANSPORT_SETTLED,
     EVENT_REQUEST_ATTEMPT,
     EVENT_REQUEST_META,
     EVENT_REQUEST_USAGE,
@@ -144,6 +148,10 @@ def test_registry_covers_registered_types_with_fields():
     EVENT_SUBAGENT_LINKED,
     EVENT_SUBAGENT_TERMINAL,
         EVENT_SESSION_FORKED,
+        EVENT_PROVIDER_CALL_OPENED,
+        EVENT_PROVIDER_TRANSPORT_OPENED,
+        EVENT_PROVIDER_TRANSPORT_SETTLED,
+        EVENT_PROVIDER_CALL_SETTLED,
         EVENT_REQUEST_ATTEMPT,
         EVENT_REQUEST_META,  # HARNESS-02: request.meta 请求快照
         EVENT_REQUEST_USAGE,  # DSH 借鉴: request.usage 响应 usage 明细
@@ -179,6 +187,20 @@ def test_registry_covers_registered_types_with_fields():
     }
     assert set(REGISTRY.registered()) == names
     # 字段语义可查询
+    call_spec = REGISTRY.spec(EVENT_PROVIDER_CALL_OPENED)
+    assert call_spec is not None
+    assert {
+        "call_id", "idempotency_digest", "owner_ref", "execution_class",
+        "service_priority", "purpose", "created_at",
+    } <= set(call_spec.fields)
+    transport_spec = REGISTRY.spec(EVENT_PROVIDER_TRANSPORT_SETTLED)
+    assert transport_spec is not None
+    assert {
+        "call_id", "attempt_id", "parent_attempt_id", "attempt_kind",
+        "site_index", "transport_retry_index", "provider_id", "model_id",
+        "outcome", "usage", "usage_observations", "status_code",
+        "provider_code", "retry_after_seconds", "rate_limits", "error_type",
+    } <= set(transport_spec.fields)
     external_spec = REGISTRY.spec(EVENT_EXTERNAL_EXECUTION_LAUNCHED)
     assert external_spec is not None
     assert {"job_id", "workspace_root", "executor", "command_sha256", "pid", "pgid"} <= set(

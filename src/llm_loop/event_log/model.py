@@ -26,6 +26,10 @@ EVENT_SESSION_FORKED = "session.forked"  # D3 预留：本期登记不触发行�
 EVENT_REQUEST_META = "request.meta"  # HARNESS-02(2026-08-14): 每轮请求快照（模型/思考/工具目录/预算）
 EVENT_REQUEST_ATTEMPT = "request.attempt"  # exceptional provider attempts (fallback/retry)
 EVENT_REQUEST_USAGE = "request.usage"  # DSH 借鉴(2026-08-17): 每轮响应 usage 明细（命中/miss token 精确落盘）
+EVENT_PROVIDER_CALL_OPENED = "provider.call.opened"
+EVENT_PROVIDER_TRANSPORT_OPENED = "provider.transport.opened"
+EVENT_PROVIDER_TRANSPORT_SETTLED = "provider.transport.settled"
+EVENT_PROVIDER_CALL_SETTLED = "provider.call.settled"
 EVENT_INTEROP_SPLICED = "interop.spliced"  # DSH 借鉴(2026-08-17): 协调通道 inbox 注入事件（对齐 agent/inbox/spliced）
 EVENT_RUN_END = "run.end"  # DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 turn/end，结束原因可审计）
 EVENT_LLM_INTERRUPTED = "llm.interrupted"  # 未完成 provider 输出的终止事实（storage/audit，不等于完成 assistant）
@@ -668,7 +672,8 @@ REGISTRY.register(
             "reasoning_chars": "提交 messages 中 reasoning_content 字符数",
             "provider_visible_chars": "主要 provider-visible 结构字符数（messages + tool schemas；不含传输头/凭据）",
             "budget": "本轮历史预算",
-            "attempt_id": "provider attempt 机械身份；不参与 prompt/provider payload",
+            "attempt_id": "legacy caller-visible provider attempt 机械身份；不参与 prompt/provider payload",
+            "provider_call_id": "RG-3C logical provider-call identity；仅审计关联，不参与 prompt/provider payload",
             "attempt_kind": "primary/fallback/err1210_retry 等机械 attempt 类型",
             "attempt_index": "同类 attempt 序号",
             "provider_structure_fp": "messages+tools 主要 provider-visible 结构的一次性 SHA256 短指纹",
@@ -684,7 +689,8 @@ REGISTRY.register(
         version=1,
         fields={
             "round": "循环轮次",
-            "attempt_id": "provider attempt 机械身份",
+            "attempt_id": "legacy caller-visible provider attempt 机械身份",
+            "provider_call_id": "RG-3C logical provider-call identity；用于与 physical transport attempt 关联",
             "attempt_kind": "fallback/err1210_retry 等异常路径类型",
             "attempt_index": "同类 attempt 序号",
             "provider": "实际 provider",
@@ -721,6 +727,75 @@ REGISTRY.register(
 )
 # DSH 借鉴(2026-08-17): 每轮响应 usage 明细——对齐 DSH 事件流 usage 事件，
 # 命中/miss token 逐轮落盘，命中率实时可算（不再依赖 CSV 账单/流式 M58 盲区）。
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_PROVIDER_CALL_OPENED,
+        version=1,
+        fields={
+            "call_id": "stable logical provider-call identity",
+            "idempotency_digest": "non-reversible digest of mechanical idempotency key",
+            "owner_ref": "mechanical execution owner reference",
+            "execution_class": "Resource Governor execution class",
+            "service_priority": "mechanical service priority at call creation",
+            "purpose": "provider-call producer purpose",
+            "created_at": "unix timestamp",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_PROVIDER_TRANSPORT_OPENED,
+        version=1,
+        fields={
+            "call_id": "logical provider-call identity",
+            "attempt_id": "unique physical transport-send identity",
+            "parent_attempt_id": "previous actual send in this call lineage",
+            "attempt_kind": "primary/err1210_retry/fallback",
+            "site_index": "caller-visible attempt index",
+            "transport_retry_index": "retry index inside one caller-visible attempt",
+            "provider_id": "actual provider",
+            "model_id": "actual model",
+            "started_at": "unix timestamp immediately before transport send",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_PROVIDER_TRANSPORT_SETTLED,
+        version=1,
+        fields={
+            "call_id": "logical provider-call identity",
+            "attempt_id": "unique physical transport-send identity",
+            "parent_attempt_id": "previous actual send in this call lineage",
+            "attempt_kind": "primary/err1210_retry/fallback",
+            "site_index": "caller-visible attempt index",
+            "transport_retry_index": "retry index inside one caller-visible attempt",
+            "provider_id": "actual provider",
+            "model_id": "actual model",
+            "started_at": "transport send start unix timestamp",
+            "settled_at": "terminal observation unix timestamp",
+            "outcome": "success/error/interrupted transport fact",
+            "usage": "normalized nullable provider usage; no raw response",
+            "usage_observations": "number of typed usage observations merged for this send",
+            "status_code": "observed HTTP status if available",
+            "provider_code": "safe structured provider code if available",
+            "retry_after_seconds": "normalized Retry-After if available",
+            "rate_limits": "safe normalized typed rate-limit/reset facts if available",
+            "error_type": "exception class name when the transport did not complete",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_PROVIDER_CALL_SETTLED,
+        version=1,
+        fields={
+            "call_id": "stable logical provider-call identity",
+            "outcome": "success/error/interrupted/blocked_before_transport",
+            "settled_at": "logical call terminal unix timestamp",
+        },
+    )
+)
 REGISTRY.register(
     EventTypeSpec(
         name=EVENT_REQUEST_USAGE,

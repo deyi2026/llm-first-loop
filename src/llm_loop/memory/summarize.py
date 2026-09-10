@@ -10,11 +10,20 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from llm_loop.core.run_context import current_session_id
 from llm_loop.llm.errors import LLMError
 from llm_loop.memory.archive import extract_key_info
+from llm_loop.resources.contracts import ExecutionClass, ServicePriority
+from llm_loop.resources.provider_calls import ProviderCallCoordinator
+from llm_loop.resources.provider_settlement import (
+    ProviderAttemptKind,
+    ProviderCallOutcome,
+    ProviderCallPurpose,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +58,14 @@ class Summarizer:
         timeout_s: float = 30.0,
         max_input_chars: int = 100000,
         max_async_queue: int = 4,
+        provider_call_coordinator: ProviderCallCoordinator | None = None,
     ) -> None:
         self.llm = llm_client
         self.mode = mode
         self.timeout_s = timeout_s
         self.max_input_chars = max_input_chars
         self._max_queue = max_async_queue
+        self.provider_call_coordinator = provider_call_coordinator
         self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         self._queue_count = 0
         self._queue_lock = __import__("threading").Lock()
@@ -92,8 +103,61 @@ class Summarizer:
         except Exception as exc:  # noqa: BLE001
             return SummaryResult(summary="", source="none", note=f"确定性摘要失败: {exc}")
 
+    def _provider_chat(
+        self,
+        llm: Any,
+        *,
+        messages: list[dict[str, str]],
+        session_id: str,
+        background: bool,
+    ) -> Any:
+        """RG-3C shadow settlement around one summary provider call; no new admission."""
+
+        coordinator = self.provider_call_coordinator
+        if coordinator is None or not session_id:
+            return llm.chat(messages=messages, tools=[])
+        execution_class = (
+            ExecutionClass.BACKGROUND_LEARNING
+            if background
+            else ExecutionClass.FOREGROUND_TASK
+        )
+        service_priority = (
+            ServicePriority.P3_BACKGROUND_LEARNING
+            if background
+            else ServicePriority.P0_FOREGROUND
+        )
+        call = coordinator.open_shadow_call_for_client(
+            llm,
+            session_id=session_id,
+            idempotency_key=f"summarizer:{uuid.uuid4().hex}",
+            owner_ref=f"summarizer:{session_id}",
+            execution_class=execution_class,
+            service_priority=service_priority,
+            purpose=ProviderCallPurpose.SUMMARIZER,
+        )
+        try:
+            with coordinator.bind_shadow_call_site(
+                call,
+                llm,
+                attempt_kind=ProviderAttemptKind.PRIMARY,
+                site_index=0,
+            ):
+                response = llm.chat(messages=messages, tools=[])
+        except Exception:
+            coordinator.settle_shadow_call(call, ProviderCallOutcome.ERROR)
+            raise
+        coordinator.settle_shadow_call(call, ProviderCallOutcome.SUCCESS)
+        return response
+
     # ── 同步 LLM 摘要 ──
-    def _llm_sync(self, text: str, *, truncated: bool) -> SummaryResult:
+    def _llm_sync(
+        self,
+        text: str,
+        *,
+        truncated: bool,
+        session_id: str | None = None,
+        background: bool = False,
+    ) -> SummaryResult:
         # 热重载可能原子替换 self.llm；局部强引用保证本次已开始的摘要用同一个 client
         # 跑到结束，旧 client 的 weakref 退休随后再安全关闭 transport。
         llm = self.llm
@@ -102,11 +166,13 @@ class Summarizer:
                 text, note="LLM 摘要不可用（未装配 llm_client），已降级为确定性摘要"
             )
         try:
-            resp = llm.chat(
+            resp = self._provider_chat(
+                llm,
                 messages=[
                     {"role": "user", "content": _SUMMARY_PROMPT.format(content=text)},
                 ],
-                tools=[],
+                session_id=(current_session_id.get() if session_id is None else session_id),
+                background=background,
             )
             summary = (resp.content or "").strip()
             if not summary:
@@ -127,7 +193,7 @@ class Summarizer:
         with self._queue_lock:
             self._queue_count += 1
         try:
-            future = self._pool.submit(self._llm_sync_worker, text, truncated)
+            future = self._pool.submit(self._llm_sync_worker, text, truncated, current_session_id.get())
             self._last_future = future  # 供调用方回填
         except Exception:
             with self._queue_lock:
@@ -135,12 +201,16 @@ class Summarizer:
             return self._deterministic(text, note="异步提交失败，已降级为确定性摘要")
         return self._deterministic(text, note="异步摘要已提交，当前为确定性占位")
 
-    def _llm_sync_worker(self, text: str, truncated: bool) -> SummaryResult:
+    def _llm_sync_worker(
+        self, text: str, truncated: bool, session_id: str = ""
+    ) -> SummaryResult:
         """后台线程执行（含超时/降级，绝不抛穿）."""
         try:
             with self._queue_lock:
                 self._queue_count -= 1
-            return self._llm_sync(text, truncated=truncated)
+            return self._llm_sync(
+                text, truncated=truncated, session_id=session_id, background=True
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("异步摘要异常（fail-open）: %s", exc)
             return self._deterministic(text, note=f"异步摘要异常: {exc}")
@@ -160,7 +230,13 @@ class Summarizer:
             # 后台: LLM 摘要生成 → 回填（主线程立即返回占位，DFX-PERF-04）
             placeholder = self._deterministic(text, note="异步摘要已提交，当前为确定性占位")
             if self._can_submit():
-                self._pool.submit(self._async_summarize_backfill, archive, entry_id, text)
+                self._pool.submit(
+                    self._async_summarize_backfill,
+                    archive,
+                    entry_id,
+                    text,
+                    current_session_id.get(),
+                )
             else:
                 self._backfill(
                     archive, entry_id, placeholder.summary, "deterministic", "异步队列已满"
@@ -172,7 +248,9 @@ class Summarizer:
         self._backfill(archive, entry_id, result.summary, result.source, result.note)
         return result
 
-    def _async_summarize_backfill(self, archive: Any, entry_id: str, text: str) -> None:
+    def _async_summarize_backfill(
+        self, archive: Any, entry_id: str, text: str, session_id: str = ""
+    ) -> None:
         """后台: LLM 摘要 → 回填（失败降级为确定性，绝不影响主循环）."""
         try:
             truncated = len(text) > self.max_input_chars
@@ -182,7 +260,9 @@ class Summarizer:
                     + "\n…[已截断]…\n"
                     + text[-self.max_input_chars // 2 :]
                 )
-            result = self._llm_sync(text, truncated=truncated)
+            result = self._llm_sync(
+                text, truncated=truncated, session_id=session_id, background=True
+            )
             self._backfill(archive, entry_id, result.summary, result.source, result.note)
         except Exception as exc:  # noqa: BLE001 — 后台失败隔离
             logger.warning("异步摘要回填异常（fail-open）: %s", exc)

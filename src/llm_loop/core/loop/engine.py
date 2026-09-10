@@ -85,9 +85,15 @@ from llm_loop.llm.client import GuardRequestContext, LLMClient, LLMResponse, Str
 from llm_loop.llm.errors import LLMError
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.memory.store import MemoryStore
+from llm_loop.resources.contracts import ExecutionClass, ServicePriority
 from llm_loop.resources.provider_calls import (
     foreground_task_provider_chat,
     foreground_task_provider_stream,
+)
+from llm_loop.resources.provider_settlement import (
+    ProviderAttemptKind,
+    ProviderCallOutcome,
+    ProviderCallPurpose,
 )
 from llm_loop.runtime.causality import effective_generation_contract, provider_message_shape
 from llm_loop.tools.registry import ToolRegistry
@@ -198,6 +204,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
     resource_governor: Any | None = None
     # RG-2: qualified provider-call coordinator; never chooses a model or task.
     provider_call_coordinator: Any | None = None
+    provider_call_settlement_journal: Any | None = None
     # ERR1210 per-engine/session attempt ledger; actual lifecycle owned by RecoveryController.
     _err1210_attempted: dict[str, int]
     # ERC Phase6: optional workspace-activation legacy sidecar migration hook.
@@ -406,6 +413,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         run_round=None,
         metadata_out=None,
         request_builder=None,
+        provider_call=None,
+        site_index_offset=1,
     ):
         return self._fallback._try_fallback_chain(
             messages=messages,
@@ -417,6 +426,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             run_round=run_round,
             metadata_out=metadata_out,
             request_builder=request_builder,
+            provider_call=provider_call,
+            site_index_offset=site_index_offset,
         )
 
     def _fallback_reason_label(self, exc):
@@ -784,6 +795,24 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 model=model_used or chat_model_arg or getattr(llm_client, "model", ""),
                 provider=getattr(llm_client, "provider", ""),
             )
+            _provider_call_coordinator = getattr(self, "provider_call_coordinator", None)
+            _provider_call = (
+                _provider_call_coordinator.open_shadow_call_for_client(
+                    llm_client,
+                    session_id=session_id,
+                    idempotency_key=(
+                        f"task:{session_id}:turn:{self._run_state().current_turn_ref}:round:{rounds}"
+                    ),
+                    owner_ref=(
+                        f"task:{session_id}:turn:{self._run_state().current_turn_ref}:round:{rounds}"
+                    ),
+                    execution_class=ExecutionClass.FOREGROUND_TASK,
+                    service_priority=ServicePriority.P0_FOREGROUND,
+                    purpose=ProviderCallPurpose.TASK,
+                )
+                if _provider_call_coordinator is not None
+                else None
+            )
             # HARNESS-02(2026-08-14): 每轮请求快照进事件日志（fail-open）——routing/fallback
             # 可能中途换模型，事件回放据此确知"当时用的哪个模型/挂了哪些工具/预算多少"，
             # 对 self_evaluate 溯源与回放诊断有帮助
@@ -891,6 +920,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         },
                         "projection_guard": getattr(self, "_projection_guard_state", "miss"),
                         "attempt_id": _primary_attempt_id,
+                        "provider_call_id": getattr(_provider_call, "call_id", ""),
                         "attempt_kind": "primary",
                         "attempt_index": 0,
                         "provider_structure_fp": _provider_structure_fp,
@@ -957,6 +987,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         provider_id=str(getattr(llm_client, "provider", "") or ""),
                         model_id=chat_model_arg or getattr(llm_client, "model", ""),
                         before_call=cap.mark_provider_send,
+                        provider_call=_provider_call,
+                        attempt_kind=ProviderAttemptKind.PRIMARY,
+                        site_index=0,
                     )
                     while True:
                         try:
@@ -1027,6 +1060,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         provider_id=str(getattr(llm_client, "provider", "") or ""),
                         model_id=chat_model_arg or getattr(llm_client, "model", ""),
                         before_call=cap.mark_provider_send,
+                        provider_call=_provider_call,
+                        attempt_kind=ProviderAttemptKind.PRIMARY,
+                        site_index=0,
                     )
                     _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
                     if resp is not None:
@@ -1045,6 +1081,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     "cancelled_provider" if _cancel_reason else "provider_error"
                 )
                 if _cancel_reason:
+                    if _provider_call_coordinator is not None:
+                        _provider_call_coordinator.settle_shadow_call(
+                            _provider_call, ProviderCallOutcome.INTERRUPTED
+                        )
                     _run_end_reason = "cancelled"
                     final_answer = _CANCELLED_ANSWER
                     resp = None
@@ -1055,6 +1095,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 from llm_loop.cache_guard.guard import CacheGuardBlockedError
 
                 if isinstance(exc, CacheGuardBlockedError):
+                    if _provider_call_coordinator is not None:
+                        _provider_call_coordinator.settle_shadow_call(
+                            _provider_call, ProviderCallOutcome.BLOCKED_BEFORE_TRANSPORT
+                        )
                     self._record_action("action.llm_decide", "guard_block", str(exc)[:200])
                     if self.status:
                         self.status.record_exception("guard_block", exc)
@@ -1077,18 +1121,26 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     model_window={"label": model_used, "context": _response_context_limit},
                 )
                 if overflow_action == "reinject":
+                    if _provider_call_coordinator is not None:
+                        _provider_call_coordinator.settle_shadow_call(
+                            _provider_call, ProviderCallOutcome.ERROR
+                        )
                     # R8.24-B B-D5: 首次 overflow——预算已确定性收缩
                     # （_overflow_shrink_factor），continue 后下一轮 build 以收紧
                     # 预算重组（超出部分 lossless 归档），零 prompt 注入。
                     continue
                 if overflow_action == "end" and overflow_final is not None:
+                    if _provider_call_coordinator is not None:
+                        _provider_call_coordinator.settle_shadow_call(
+                            _provider_call, ProviderCallOutcome.ERROR
+                        )
                     _run_end_reason = "overflow"
                     final_answer = overflow_final
                     break
                 # ── err1210 P0（tasks 4.3）: compact 首请求 1210 定向降级重试（mixin 封装，
                 # 编排与控制流语义见 err1210.py；恢复成功 → 新 resp 走下方正常路径，
                 # 失败 → 原样继续既有错误链；env ERR1210_RECOVERY=0 完全旁路）──
-                _e1210_recovered, resp, _llm_round_ms, _ = (
+                _e1210_recovered, resp, _llm_round_ms, _e1210_retry_count = (
                     self._recovery._err1210_attempt_recovery(
                         exc=exc,
                         sess=sess,
@@ -1102,6 +1154,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         model_label=model_used or getattr(self.settings, "llm_model", ""),
                         metadata_registry=routing.metadata_registry,
                         round_no=rounds,
+                        provider_call=_provider_call,
                     )
                 )
                 # ── M49（design §5.4）: 降级逻辑 ──
@@ -1154,6 +1207,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         run_round=rounds,
                         metadata_out=_fallback_metadata,
                         request_builder=_fallback_request_builder,
+                        provider_call=_provider_call,
+                        site_index_offset=1 + int(_e1210_retry_count or 0),
                     )
                     # Successful fallback facts are carried by RunState/LoopResult, not
                     # model-visible Message objects. inject_msgs is all-failed facts only.
@@ -1180,6 +1235,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         )
                     else:
                         # 链全失败 → 已注入汇总提示, 走原异常如实反馈路径
+                        if _provider_call_coordinator is not None:
+                            _provider_call_coordinator.settle_shadow_call(
+                                _provider_call, ProviderCallOutcome.ERROR
+                            )
                         _run_end_reason = "llm_error"
                         final_answer, resp = self._llm_error_round_exit(
                             sess, cap, exc, session_id, len(messages), rounds, "fallback_exhausted"
@@ -1192,6 +1251,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 elif not _e1210_recovered:
                     # P2-B: if no mechanical payload transform recovered the request,
                     # report the provider failure. No second exact resend/rebuild loop.
+                    if _provider_call_coordinator is not None:
+                        _provider_call_coordinator.settle_shadow_call(
+                            _provider_call, ProviderCallOutcome.ERROR
+                        )
                     _run_end_reason = "llm_error"
                     final_answer, resp = self._llm_error_round_exit(
                         sess, cap, exc, session_id, len(messages), rounds, "llm_error"
@@ -1199,6 +1262,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     break
 
             if cap.cancelled:
+                if _provider_call_coordinator is not None:
+                    _provider_call_coordinator.settle_shadow_call(
+                        _provider_call, ProviderCallOutcome.INTERRUPTED
+                    )
                 self._tool_cycle._reachability_finalize("cancelled_provider")
                 _run_end_reason = "cancelled"
                 final_answer = _CANCELLED_ANSWER
@@ -1207,7 +1274,12 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
 
             # All paths reaching this boundary have a completed provider response:
             # normal return, successful fallback, or successful ERR1210 recovery.
-            # Error/cancel paths break above.  Cast only communicates that control-flow
+            # Error/cancel paths break above.
+            if _provider_call_coordinator is not None:
+                _provider_call_coordinator.settle_shadow_call(
+                    _provider_call, ProviderCallOutcome.SUCCESS
+                )
+            # Cast only communicates that control-flow
             # invariant to static analysis; it does not change runtime behavior.
             resp = cast(LLMResponse, resp)
             self._tool_cycle._reachability_record_response(resp)

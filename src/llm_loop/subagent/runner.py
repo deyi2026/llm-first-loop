@@ -30,7 +30,13 @@ from llm_loop.core.subagent_delivery import SubAgentDeliveryJournal
 from llm_loop.core.subagent_topology import SubAgentTopologyJournal, SubAgentTopologyState
 from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.llm.client import LLMClient
-from llm_loop.resources.provider_calls import subagent_provider_call_lease
+from llm_loop.resources.contracts import ExecutionClass, ServicePriority
+from llm_loop.resources.provider_calls import ProviderCallCoordinator, subagent_provider_chat
+from llm_loop.resources.provider_settlement import (
+    ProviderAttemptKind,
+    ProviderCallOutcome,
+    ProviderCallPurpose,
+)
 from llm_loop.tools.registry import ToolRegistry
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 
@@ -117,7 +123,7 @@ class SubAgentRunner:
         max_iterations: int = MAX_ITERATIONS,
         tool_execution_root: str | None = None,
         artifact_store: WorkspaceArtifactStore | None = None,
-        provider_call_coordinator: object | None = None,
+        provider_call_coordinator: ProviderCallCoordinator | None = None,
     ) -> None:
         self.llm = llm
         self.registry = registry
@@ -1365,14 +1371,40 @@ class SubAgentRunner:
                 }
                 for t in sub_schemas
             ]
+            _provider_call_coordinator = self.provider_call_coordinator
+            _provider_call = (
+                _provider_call_coordinator.open_shadow_call_for_client(
+                    self.llm,
+                    session_id=sess.session_id,
+                    idempotency_key=f"subagent:{sess.session_id}:round:{rounds}",
+                    owner_ref=f"subagent:{sess.session_id}:round:{rounds}",
+                    execution_class=ExecutionClass.SUBAGENT,
+                    service_priority=ServicePriority.P1_ACTIVE_TASK_AUXILIARY,
+                    purpose=ProviderCallPurpose.SUBAGENT,
+                )
+                if _provider_call_coordinator is not None
+                else None
+            )
             try:
-                with subagent_provider_call_lease(
+                resp = subagent_provider_chat(
                     self,
                     self.llm,
+                    lambda _msgs=msgs, _schemas=sub_schemas: self.llm.chat(_msgs, tools=_schemas),
+                    {},
                     owner_ref=f"subagent:{sess.session_id}:round:{rounds}",
-                ):
-                    resp = self.llm.chat(msgs, tools=sub_schemas)
+                    provider_call=_provider_call,
+                    attempt_kind=ProviderAttemptKind.PRIMARY,
+                    site_index=0,
+                )
+                if _provider_call_coordinator is not None:
+                    _provider_call_coordinator.settle_shadow_call(
+                        _provider_call, ProviderCallOutcome.SUCCESS
+                    )
             except Exception as exc:  # noqa: BLE001 — 子代理 LLM 失败如实回传
+                if _provider_call_coordinator is not None:
+                    _provider_call_coordinator.settle_shadow_call(
+                        _provider_call, ProviderCallOutcome.ERROR
+                    )
                 # LLM 调用失败时根本没有 assistant tool declaration，因此不能伪造
                 # role=tool 错误帧；否则下一轮会形成 orphan tool protocol。失败事实
                 # 留在本地 terminal outcome，不进入模型对话历史。

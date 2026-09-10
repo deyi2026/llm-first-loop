@@ -12,8 +12,10 @@ import re
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import UTC
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
@@ -27,6 +29,12 @@ from llm_loop.resources.contracts import (
     ProviderUsageFacts,
     RateLimitMetric,
     RateLimitResetFacts,
+)
+from llm_loop.resources.provider_settlement import (
+    ProviderCallSettlementJournal,
+    ProviderTransportAttempt,
+    ProviderTransportOutcome,
+    current_provider_call_site,
 )
 
 
@@ -43,6 +51,56 @@ class ShadowTransportObservation:
     sequence: int
     kind: TransportObservationKind
     fact: ProviderResponseFacts | ProviderUsageFacts | ProviderErrorFacts
+    call_id: str | None = None
+    attempt_id: str | None = None
+
+
+@dataclass
+class _ActiveTransportCapture:
+    attempt: ProviderTransportAttempt
+    usage: dict[str, Any] = field(default_factory=dict)
+    usage_observations: int = 0
+    status_code: int | None = None
+    provider_code: str | None = None
+    retry_after_seconds: float | None = None
+    rate_limits: tuple[RateLimitResetFacts, ...] = ()
+
+    def observe(
+        self,
+        kind: TransportObservationKind,
+        fact: ProviderResponseFacts | ProviderUsageFacts | ProviderErrorFacts,
+    ) -> None:
+        if kind is TransportObservationKind.USAGE and isinstance(fact, ProviderUsageFacts):
+            for name in (
+                "input_tokens",
+                "output_tokens",
+                "cached_input_tokens",
+                "reasoning_tokens",
+                "total_tokens",
+                "provider_units",
+                "provider_unit",
+            ):
+                value = getattr(fact, name)
+                if value is not None:
+                    self.usage[name] = value
+            self.usage_observations += 1
+            return
+        if isinstance(fact, ProviderResponseFacts):
+            self.status_code = fact.status_code
+            if fact.retry_after_seconds is not None:
+                self.retry_after_seconds = fact.retry_after_seconds
+            if fact.rate_limits:
+                self.rate_limits = fact.rate_limits
+            return
+        if isinstance(fact, ProviderErrorFacts):
+            if fact.status_code is not None:
+                self.status_code = fact.status_code
+            if fact.provider_code is not None:
+                self.provider_code = fact.provider_code
+            if fact.retry_after_seconds is not None:
+                self.retry_after_seconds = fact.retry_after_seconds
+            if fact.rate_limits:
+                self.rate_limits = fact.rate_limits
 
 
 _DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(ms|s|m|h)", re.IGNORECASE)
@@ -192,16 +250,98 @@ class ShadowTransportRecorder:
         self._entries: deque[ShadowTransportObservation] = deque(maxlen=max_entries)
         self._lock = threading.Lock()
         self._sequence = 0
+        self._settlement_journal: ProviderCallSettlementJournal | None = None
+        self._active_transport: ContextVar[_ActiveTransportCapture | None] = ContextVar(
+            f"lfl_rg3c_transport_{id(self)}", default=None
+        )
+
+    def set_settlement_journal(
+        self, journal: ProviderCallSettlementJournal | None
+    ) -> None:
+        """Attach RG-3C durable shadow settlement; never an admission input."""
+
+        self._settlement_journal = journal
+
+    @property
+    def settlement_journal(self) -> ProviderCallSettlementJournal | None:
+        return self._settlement_journal
+
+    @contextmanager
+    def transport_attempt(
+        self,
+        *,
+        provider_id: str,
+        model_id: str,
+        transport_retry_index: int = 0,
+    ) -> Iterator[ProviderTransportAttempt | None]:
+        """Correlate exactly one physical send with the current logical call."""
+
+        journal = self._settlement_journal
+        site = current_provider_call_site()
+        if journal is None or site is None or not journal.enabled:
+            yield None
+            return
+        try:
+            # The actual client/provider is authoritative for the physical send.
+            if site.provider_id != provider_id or site.model_id != model_id:
+                yield None
+                return
+            attempt = journal.open_transport_attempt(
+                site, transport_retry_index=transport_retry_index
+            )
+        except Exception:
+            yield None
+            return
+
+        capture = _ActiveTransportCapture(attempt=attempt)
+        token = self._active_transport.set(capture)
+        outcome = ProviderTransportOutcome.SUCCESS
+        error_type: str | None = None
+        try:
+            yield attempt
+        except BaseException as exc:
+            outcome = (
+                ProviderTransportOutcome.INTERRUPTED
+                if isinstance(exc, GeneratorExit)
+                else ProviderTransportOutcome.ERROR
+            )
+            error_type = type(exc).__name__
+            raise
+        finally:
+            self._active_transport.reset(token)
+            # Settlement observation is fail-open and cannot affect transport behavior.
+            with suppress(Exception):
+                journal.settle_transport_attempt(
+                    session_id=site.call.session_id,
+                    attempt=attempt,
+                    outcome=outcome,
+                    usage=capture.usage,
+                    usage_observations=capture.usage_observations,
+                    status_code=capture.status_code,
+                    provider_code=capture.provider_code,
+                    retry_after_seconds=capture.retry_after_seconds,
+                    rate_limits=capture.rate_limits,
+                    error_type=error_type,
+                )
 
     def _append(
         self,
         kind: TransportObservationKind,
         fact: ProviderResponseFacts | ProviderUsageFacts | ProviderErrorFacts,
     ) -> None:
+        active = self._active_transport.get()
+        if active is not None:
+            active.observe(kind, fact)
         with self._lock:
             self._sequence += 1
             self._entries.append(
-                ShadowTransportObservation(sequence=self._sequence, kind=kind, fact=fact)
+                ShadowTransportObservation(
+                    sequence=self._sequence,
+                    kind=kind,
+                    fact=fact,
+                    call_id=(active.attempt.call_id if active is not None else None),
+                    attempt_id=(active.attempt.attempt_id if active is not None else None),
+                )
             )
 
     def record_response(

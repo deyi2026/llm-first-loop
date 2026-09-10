@@ -19,6 +19,7 @@ import re
 import shutil
 import time
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -684,6 +685,24 @@ class LLMClient:
         except Exception:  # noqa: BLE001 - RG-3B shadow can never affect provider behavior
             logger.debug("resource transport error observation failed (shadow)", exc_info=True)
 
+    def _transport_attempt_scope(
+        self, *, model_id: str, transport_retry_index: int = 0
+    ) -> Any:
+        """Return RG-3C physical-send correlation scope or a zero-behavior fallback."""
+
+        observer = self.transport_observer
+        fn = getattr(observer, "transport_attempt", None) if observer is not None else None
+        if not callable(fn):
+            return nullcontext()
+        try:
+            return fn(
+                provider_id=self.provider,
+                model_id=model_id,
+                transport_retry_index=transport_retry_index,
+            )
+        except Exception:  # noqa: BLE001 - settlement shadow can never block transport
+            return nullcontext()
+
     def _thinking_supported(self) -> bool:
         """思考参数发送判定（M20 CFG-03 + M47 §5.5）.
 
@@ -1257,11 +1276,14 @@ class LLMClient:
             _retry_disconnect = 1
         _tc_seen = False
 
-        def _openai_stream_once() -> Iterator[StreamDelta]:
+        def _openai_stream_once(transport_retry_index: int) -> Iterator[StreamDelta]:
             """单次流式请求（yield delta；传输异常向上抛，由外层重试判定）."""
             nonlocal _tc_seen
             think_parser = _ThinkTagStreamParser()
-            with self._client.stream(
+            with self._transport_attempt_scope(
+                model_id=str(payload["model"]),
+                transport_retry_index=transport_retry_index,
+            ), self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
@@ -1401,7 +1423,7 @@ class LLMClient:
         while True:
             _attempt += 1
             try:
-                yield from _openai_stream_once()
+                yield from _openai_stream_once(_attempt - 1)
                 break  # 流完整结束（含 [DONE]）
             except httpx.TimeoutException as exc:
                 raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
@@ -1487,10 +1509,13 @@ class LLMClient:
         agg = ToolCallDeltaAggregator()
         try:
             effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
-            with self._client.stream(
+            with self._transport_attempt_scope(
+                model_id=str(payload["model"]), transport_retry_index=0
+            ), self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
+                self._observe_transport_response(resp, model_id=str(payload["model"]))
                 for line in resp.iter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -1592,10 +1617,13 @@ class LLMClient:
         google_fc_index = 0  # Google functionCall 每次独立工具调用（index 递增）
         try:
             effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
-            with self._client.stream(
+            with self._transport_attempt_scope(
+                model_id=model_id, transport_retry_index=0
+            ), self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
                 self._raise_for_status(resp, model_id=model_id)
+                self._observe_transport_response(resp, model_id=model_id)
                 for line in resp.iter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -1682,11 +1710,14 @@ class LLMClient:
         acc = _StreamAcc()
         try:
             effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
-            with self._client.stream(
+            with self._transport_attempt_scope(
+                model_id=model_id, transport_retry_index=0
+            ), self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
                 if resp.status_code >= 400:
                     self._raise_for_status(resp, model_id=model_id)
+                self._observe_transport_response(resp, model_id=model_id)
                 for line in resp.iter_lines():
                     if not line or not line.startswith("data: "):
                         continue

@@ -15,7 +15,14 @@ from typing import TYPE_CHECKING, Any, cast
 from llm_loop.core.loop.err1210 import Err1210RecoveryResult, is_err1210, snapshot_offending_payload
 from llm_loop.core.session import Session
 from llm_loop.llm.errors import LLMError
-from llm_loop.resources.provider_calls import foreground_task_provider_call_lease
+from llm_loop.resources.provider_calls import (
+    foreground_task_provider_chat,
+    foreground_task_provider_stream,
+)
+from llm_loop.resources.provider_settlement import (
+    ProviderAttemptKind,
+    ProviderCallIdentity,
+)
 from llm_loop.runtime.causality import exceptional_attempt_payload
 
 if TYPE_CHECKING:
@@ -96,6 +103,7 @@ class RecoveryController:
         model_label: str = "",
         metadata_registry: Any = None,
         round_no: int = 0,
+        provider_call: ProviderCallIdentity | None = None,
     ) -> Err1210RecoveryResult:
         """For exact 1210, retry once only when tail-user normalization changes the payload."""
         del metadata_registry
@@ -152,6 +160,7 @@ class RecoveryController:
                     "messages_after": len(retry_messages),
                     "tail_users_merged": int(result.transformed_tail_users or 0),
                 },
+                provider_call=provider_call,
             )
             if resp is not None:
                 result.resp = resp
@@ -187,6 +196,7 @@ class RecoveryController:
         round_no: int = 0,
         attempt_index: int = 1,
         transform: dict[str, Any] | None = None,
+        provider_call: ProviderCallIdentity | None = None,
     ) -> tuple[Any | None, LLMError | None]:
         """Consume one changed-payload retry to completion without emitting partial deltas."""
         del metadata_registry
@@ -214,26 +224,51 @@ class RecoveryController:
                         messages=messages,
                         tools=tools_param,
                         transform=dict(transform or {"wire_shape_changed": True}),
+                        provider_call_id=getattr(provider_call, "call_id", ""),
                     ),
                 )
-            with foreground_task_provider_call_lease(
-                self._host,
-                llm_client,
-                owner_ref=(
-                    f"task:{session_id}:round:{round_no}:err1210:"
-                    f"{attempt_index}:{_attempt_id}"
+            _owner_ref = (
+                f"task:{session_id}:round:{round_no}:err1210:"
+                f"{attempt_index}:{_attempt_id}"
+            )
+            _provider_id = str(getattr(llm_client, "provider", "") or "")
+            _model_id = chat_model_arg or getattr(llm_client, "model", "")
+            if callable(stream_fn):
+                it = cast(
+                    "Iterator[Any]",
+                    foreground_task_provider_stream(
+                        self._host,
+                        llm_client,
+                        stream_fn,
+                        kwargs,
+                        owner_ref=_owner_ref,
+                        provider_id=_provider_id,
+                        model_id=_model_id,
+                        provider_call=provider_call,
+                        attempt_kind=ProviderAttemptKind.ERR1210_RETRY,
+                        site_index=attempt_index,
+                    ),
+                )
+                while True:
+                    try:
+                        next(it)
+                    except StopIteration as stop:
+                        return stop.value, None
+            return (
+                foreground_task_provider_chat(
+                    self._host,
+                    llm_client,
+                    llm_client.chat,
+                    kwargs,
+                    owner_ref=_owner_ref,
+                    provider_id=_provider_id,
+                    model_id=_model_id,
+                    provider_call=provider_call,
+                    attempt_kind=ProviderAttemptKind.ERR1210_RETRY,
+                    site_index=attempt_index,
                 ),
-                provider_id=str(getattr(llm_client, "provider", "") or ""),
-                model_id=chat_model_arg or getattr(llm_client, "model", ""),
-            ):
-                if callable(stream_fn):
-                    it = cast("Iterator[Any]", stream_fn(**kwargs))
-                    while True:
-                        try:
-                            next(it)
-                        except StopIteration as stop:
-                            return stop.value, None
-                return llm_client.chat(**kwargs), None
+                None,
+            )
         except Exception as retry_exc:  # noqa: BLE001
             self._reachability_finalize("provider_error")
             self._host._record_action(
@@ -265,6 +300,7 @@ class RecoveryController:
         model_label: str = "",
         metadata_registry: Any = None,
         round_no: int = 0,
+        provider_call: ProviderCallIdentity | None = None,
     ) -> tuple[bool, Any, float, int]:
         result = Err1210RecoveryResult()
         try:
@@ -280,6 +316,7 @@ class RecoveryController:
                 model_label=model_label,
                 metadata_registry=metadata_registry,
                 round_no=round_no,
+                provider_call=provider_call,
             )
             if result.recovered and result.resp is not None:
                 return True, result.resp, 0.0, result.provider_retry_count

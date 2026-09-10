@@ -31,6 +31,11 @@ from llm_loop.resources.contracts import (
 )
 from llm_loop.resources.governor import ResourceGovernor
 from llm_loop.resources.provider_calls import ProviderCallCoordinator
+from llm_loop.resources.provider_settlement import (
+    ProviderAttemptKind,
+    ProviderCallOutcome,
+    ProviderCallPurpose,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -214,16 +219,61 @@ class LearningPlane:
                 if str(row.get("role")) == "assistant":
                     final_answer = str(row.get("content") or "")
                     break
-            outcome = reflect_on_episode(
-                llm_client=client,
-                store=self._method_store,
-                episode_entry=entry,
-                trigger_facts=dict(job.trigger_facts or {}),
-                tool_trace=[],
-                run_end_reason=str((job.trigger_facts or {}).get("run_end_reason", "")),
-                final_answer=final_answer,
-                timeout_s=timeout_s,
+            coordinator = self._provider_call_coordinator
+            provider_call = (
+                coordinator.open_shadow_call_for_client(
+                    client,
+                    session_id=job.session_id,
+                    idempotency_key=f"learning:{job.job_id}:attempt:{job.attempt + 1}",
+                    owner_ref=f"learning:{job.job_id}",
+                    execution_class=ExecutionClass.BACKGROUND_LEARNING,
+                    service_priority=ServicePriority.P3_BACKGROUND_LEARNING,
+                    purpose=ProviderCallPurpose.LEARNING,
+                )
+                if coordinator is not None
+                else None
             )
+            site_scope = (
+                coordinator.bind_shadow_call_site(
+                    provider_call,
+                    client,
+                    attempt_kind=ProviderAttemptKind.PRIMARY,
+                    site_index=0,
+                )
+                if coordinator is not None
+                else None
+            )
+            if site_scope is None:
+                outcome = reflect_on_episode(
+                    llm_client=client,
+                    store=self._method_store,
+                    episode_entry=entry,
+                    trigger_facts=dict(job.trigger_facts or {}),
+                    tool_trace=[],
+                    run_end_reason=str((job.trigger_facts or {}).get("run_end_reason", "")),
+                    final_answer=final_answer,
+                    timeout_s=timeout_s,
+                )
+            else:
+                with site_scope:
+                    outcome = reflect_on_episode(
+                        llm_client=client,
+                        store=self._method_store,
+                        episode_entry=entry,
+                        trigger_facts=dict(job.trigger_facts or {}),
+                        tool_trace=[],
+                        run_end_reason=str((job.trigger_facts or {}).get("run_end_reason", "")),
+                        final_answer=final_answer,
+                        timeout_s=timeout_s,
+                    )
+            if coordinator is not None:
+                if not outcome.attempted:
+                    call_outcome = ProviderCallOutcome.BLOCKED_BEFORE_TRANSPORT
+                elif outcome.reason == "reflection_call_failed":
+                    call_outcome = ProviderCallOutcome.ERROR
+                else:
+                    call_outcome = ProviderCallOutcome.SUCCESS
+                coordinator.settle_shadow_call(provider_call, call_outcome)
             if outcome.candidate_payload is not None:  # reason == schema_ok
                 try:
                     record = self._method_store.save_candidate(

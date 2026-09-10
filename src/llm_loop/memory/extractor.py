@@ -16,6 +16,7 @@ import logging
 import re
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +25,13 @@ from typing import Any, Literal
 from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES  # P0-B3
 from llm_loop.memory.extract import extract_memory_blocks, memory_blocks_to_entries
 from llm_loop.memory.store import MemoryEntry, MemoryStore
+from llm_loop.resources.contracts import ExecutionClass, ServicePriority
+from llm_loop.resources.provider_calls import ProviderCallCoordinator
+from llm_loop.resources.provider_settlement import (
+    ProviderAttemptKind,
+    ProviderCallOutcome,
+    ProviderCallPurpose,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +102,7 @@ class MemoryExtractor:
         max_input_chars: int = 100000,
         timeout_s: float = 60.0,
         audit_dir: str | Path | None = None,
+        provider_call_coordinator: ProviderCallCoordinator | None = None,
     ) -> None:
         self.llm = llm_client
         self.memory = memory
@@ -104,6 +113,7 @@ class MemoryExtractor:
         self.max_input_chars = max_input_chars
         self.timeout_s = timeout_s
         self._audit_dir = Path(audit_dir) if audit_dir else None
+        self.provider_call_coordinator = provider_call_coordinator
         self._last_trigger_ts: dict[str, float] = {}
         self._lock = threading.Lock()
 
@@ -151,15 +161,63 @@ class MemoryExtractor:
             history_text = history_text[: self.max_input_chars]
             note = f"输入超预算，已截断至 {self.max_input_chars} 字符"
 
-        try:
-            resp = self.llm.chat(
-                messages=[
-                    {"role": "user", "content": _EXTRACT_PROMPT.format(history=history_text)}
-                ],
-                tools=[],
+        coordinator = self.provider_call_coordinator
+        background = trigger == "interval"
+        execution_class = (
+            ExecutionClass.BACKGROUND_LEARNING
+            if background
+            else ExecutionClass.FOREGROUND_TASK
+        )
+        service_priority = (
+            ServicePriority.P3_BACKGROUND_LEARNING
+            if background
+            else ServicePriority.P0_FOREGROUND
+        )
+        provider_call = (
+            coordinator.open_shadow_call_for_client(
+                self.llm,
+                session_id=session_id,
+                # MemoryExtractor has no durable upstream job identity. Each actual
+                # invocation gets a fresh logical call rather than conflating two
+                # independent manual runs that happen to see the same message count.
+                idempotency_key=f"memory-extractor:{uuid.uuid4().hex}",
+                owner_ref=f"memory-extractor:{session_id}:{trigger}",
+                execution_class=execution_class,
+                service_priority=service_priority,
+                purpose=ProviderCallPurpose.MEMORY_EXTRACTOR,
             )
+            if coordinator is not None
+            else None
+        )
+        try:
+            if coordinator is None:
+                resp = self.llm.chat(
+                    messages=[
+                        {"role": "user", "content": _EXTRACT_PROMPT.format(history=history_text)}
+                    ],
+                    tools=[],
+                )
+            else:
+                with coordinator.bind_shadow_call_site(
+                    provider_call,
+                    self.llm,
+                    attempt_kind=ProviderAttemptKind.PRIMARY,
+                    site_index=0,
+                ):
+                    resp = self.llm.chat(
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": _EXTRACT_PROMPT.format(history=history_text),
+                            }
+                        ],
+                        tools=[],
+                    )
+                coordinator.settle_shadow_call(provider_call, ProviderCallOutcome.SUCCESS)
             answer = resp.content or ""
         except Exception as exc:  # noqa: BLE001 — 提取失败隔离，不影响主循环
+            if coordinator is not None:
+                coordinator.settle_shadow_call(provider_call, ProviderCallOutcome.ERROR)
             self._audit(
                 session_id,
                 trigger,

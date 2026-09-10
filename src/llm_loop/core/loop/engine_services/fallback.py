@@ -24,7 +24,11 @@ from llm_loop.llm.errors import (
     LLMNetworkError,
     LLMTimeoutError,
 )
-from llm_loop.resources.provider_calls import foreground_task_provider_call_lease
+from llm_loop.resources.provider_calls import foreground_task_provider_chat
+from llm_loop.resources.provider_settlement import (
+    ProviderAttemptKind,
+    ProviderCallIdentity,
+)
 from llm_loop.runtime.causality import exceptional_attempt_payload
 
 logger = logging.getLogger(__name__)
@@ -111,6 +115,8 @@ class FallbackService:
         run_round: int | None = None,
         metadata_out: dict[str, Any] | None = None,
         request_builder: Callable[[str, Any], tuple[list[dict], list[dict]]] | None = None,
+        provider_call: ProviderCallIdentity | None = None,
+        site_index_offset: int = 1,
     ) -> tuple[LLMResponse | None, list[Message], str | None]:
         """沿 fallback 链尝试下一个候选（design §5.4 行为规则表 + 原则 2 如实反馈）.
 
@@ -225,9 +231,10 @@ class FallbackService:
                         provider=provider_id,
                         model=model_id,
                     )
+                _site_index = int(site_index_offset) + provider_attempt_index
                 _attempt_id = self._reachability_begin_attempt(
                     kind="fallback",
-                    attempt_index=provider_attempt_index,
+                    attempt_index=_site_index,
                     model=f"{provider_id}/{model_id}",
                     provider=provider_id,
                 )
@@ -238,24 +245,30 @@ class FallbackService:
                         exceptional_attempt_payload(
                             attempt_id=_attempt_id,
                             kind="fallback",
-                            attempt_index=provider_attempt_index,
+                            attempt_index=_site_index,
                             round_no=int(run_round or 0),
                             client=client,
                             messages=candidate_messages,
                             tools=candidate_tools,
+                            provider_call_id=getattr(provider_call, "call_id", ""),
                         ),
                     )
-                with foreground_task_provider_call_lease(
+                provider_attempt_index += 1
+                resp = foreground_task_provider_chat(
                     self._host,
                     client,
+                    client.chat,
+                    chat_kwargs,
                     owner_ref=(
                         f"task:{session_id}:round:{run_round}:fallback:"
-                        f"{provider_attempt_index}:{_attempt_id}"
+                        f"{_site_index}:{_attempt_id}"
                     ),
                     provider_id=provider_id,
                     model_id=model_id,
-                ):
-                    resp = client.chat(**chat_kwargs)
+                    provider_call=provider_call,
+                    attempt_kind=ProviderAttemptKind.FALLBACK,
+                    site_index=_site_index,
+                )
             except LLMError as exc:
                 self._reachability_finalize("provider_error")
                 # 该候选也失败, 继续尝试下一个; 记录 (model_ref, error_type, error_msg)

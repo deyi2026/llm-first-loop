@@ -58,6 +58,7 @@ from llm_loop.resources.foreground import ForegroundActivityProbe
 from llm_loop.resources.governor import ResourceGovernor
 from llm_loop.resources.local_runtime import LocalRuntimeConcurrencyAdapter
 from llm_loop.resources.provider_calls import ProviderCallCoordinator
+from llm_loop.resources.provider_settlement import ProviderCallSettlementJournal
 from llm_loop.resources.transport_observation import ShadowTransportRecorder
 from llm_loop.runtime.causal_diagnose import diagnose_event_store
 from llm_loop.runtime.causality import build_runtime_causal_snapshot
@@ -327,6 +328,10 @@ def build_engine(settings: Settings) -> LoopEngine:
         except Exception:  # noqa: BLE001 — GC 失败不影响启动
             logger.warning("档案 GC 启动清理失败（fail-open）", exc_info=True)
     event_store = _build_event_store(settings)
+    # RG-3C: EventStore is the durable shadow settlement SoT. The RG-3B
+    # recorder only writes normalized mechanical facts into this journal.
+    provider_call_settlement_journal = ProviderCallSettlementJournal(event_store)
+    transport_observer.set_settlement_journal(provider_call_settlement_journal)
 
     def identity_history_exists(session_id: str) -> bool:
         if archive is None:
@@ -1209,8 +1214,16 @@ def build_engine(settings: Settings) -> LoopEngine:
     provider_call_coordinator = ProviderCallCoordinator(
         resource_governor,
         local_runtime=LocalRuntimeConcurrencyAdapter(),
+        settlement_journal=provider_call_settlement_journal,
     )
     engine.provider_call_coordinator = provider_call_coordinator
+    engine.provider_call_settlement_journal = provider_call_settlement_journal
+    # RG-3C shadow accounting reaches auxiliary provider users without changing
+    # their scheduling/admission behavior in this phase.
+    if summarizer is not None:
+        summarizer.provider_call_coordinator = provider_call_coordinator
+    if extractor is not None:
+        extractor.provider_call_coordinator = provider_call_coordinator
     if settings.learning_plane_enabled:
         learning_journal = LearningJournal(
             path=Path(settings.sessions_dir) / "learning" / "journal.jsonl",
