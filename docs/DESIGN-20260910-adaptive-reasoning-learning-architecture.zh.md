@@ -523,7 +523,7 @@ RG-3C unified provider-call settlement / shadow 见 `docs/DESIGN-20260910-resour
 
 RG-3D global ledger projection / shadow admission facts 见 `docs/DESIGN-20260910-resource-governor-rg3d-ledger-projection.md`；qualification 见 `docs/QUALIFICATION-20260910-resource-governor-rg3d.md`。**RG-3D 已 PASS/CLOSE，且不把 per-call complete 外推为 account/window complete**：EventStore 继续是 SoT，SQLite 仅为可重建的跨 Session 派生索引；scope binding、exact window、fact validity/freshness、LFL source-set coverage 与 provider-global coverage 分离表达，provider-global 默认 unknown。真实 DeepSeek/GLM/MiniMax projection canary 3/3 PASS；RG-3D 仍不产生 admit/reject/defer，也不接 cloud enforcement。下一阶段为 RG-3E Authoritative Vendor/Product Adapters。
 
-RG-3E authoritative vendor/product adapters 见 `docs/DESIGN-20260910-resource-governor-rg3e-authoritative-adapters.md`。**RG-3E 当前为 contract/observation-first implementation candidate**：新增 PRODUCT resource scope，公开 provider 默认事实与 exact product/account/project truth 分层，资源身份使用独立显式 non-secret manifest，三家 adapter 只做 typed normalization；当前 provider routing config 不自动升级为 product/account binding，且 RG-3E 不接 ResourceGovernor/admission。
+RG-3E authoritative vendor/product adapters 见 `docs/DESIGN-20260910-resource-governor-rg3e-authoritative-adapters.md`；qualification 见 `docs/QUALIFICATION-20260910-resource-governor-rg3e.md`。**RG-3E E0-E2 已 PASS，但整体 HOLD / 未完全 CLOSE**：PRODUCT resource scope、公开事实与 exact product/account/project truth 分层、显式 non-secret resource manifest 与三家 pure normalizer 已完成资格化；当前真实 routing targets 在无 resource manifest 时如实保持 product_unbound，未调用 product-specific control plane。E3/E4 必须等显式产品/账户绑定后再做 read-only schema/live fact qualification；RG-3F 不启动，RG-3E 仍不接 ResourceGovernor/admission。
 
 这套架构必须同时适用于：
 
