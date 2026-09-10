@@ -183,12 +183,15 @@ def test_factory_assembles_learning_plane_only_when_enabled(tmp_path):
     assert getattr(engine_off, "learning_journal", None) is None  # 关闭=无 Learning 队列/线程
     assert isinstance(engine_off.resource_governor, ResourceGovernor)
     assert engine_off.resource_governor.active_leases() == ()
+    assert engine_off.provider_call_coordinator.governor is engine_off.resource_governor
 
     engine_on = build_engine(_mk(True))
     try:
         plane = engine_on.learning_plane
         assert plane is not None and plane._thread.is_alive()
         assert engine_on.resource_governor is plane._resource_governor
+        assert plane._provider_call_coordinator is engine_on.provider_call_coordinator
+        assert engine_on.provider_call_coordinator.governor is engine_on.resource_governor
         journal = engine_on.learning_journal
         assert journal is not None
         assert journal._path.parent.name == "learning"  # sessions/learning/journal.jsonl

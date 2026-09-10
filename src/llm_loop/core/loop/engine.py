@@ -85,6 +85,10 @@ from llm_loop.llm.client import GuardRequestContext, LLMClient, LLMResponse, Str
 from llm_loop.llm.errors import LLMError
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.memory.store import MemoryStore
+from llm_loop.resources.provider_calls import (
+    foreground_task_provider_chat,
+    foreground_task_provider_stream,
+)
 from llm_loop.runtime.causality import effective_generation_contract, provider_message_shape
 from llm_loop.tools.registry import ToolRegistry
 
@@ -190,8 +194,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
     # 默认关闭时保持 None —— post_run 反射静默，零行为变化。
     learning_journal: Any | None = None
     learning_plane: Any | None = None
-    # RG-1: optional mechanical lease/concurrency governor; Task/SubAgent are not wired yet.
+    # RG-1: shared mechanical lease/concurrency governor.
     resource_governor: Any | None = None
+    # RG-2: qualified provider-call coordinator; never chooses a model or task.
+    provider_call_coordinator: Any | None = None
     # ERR1210 per-engine/session attempt ledger; actual lifecycle owned by RecoveryController.
     _err1210_attempted: dict[str, int]
     # ERC Phase6: optional workspace-activation legacy sidecar migration hook.
@@ -942,8 +948,16 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     }
                     if _guard_ctx is not None:
                         _stream_kwargs["guard_context"] = _guard_ctx
-                    cap.mark_provider_send()
-                    it = stream_fn(**_stream_kwargs)
+                    it = foreground_task_provider_stream(
+                        self,
+                        llm_client,
+                        stream_fn,
+                        _stream_kwargs,
+                        owner_ref=f"task:{session_id}:round:{rounds}:primary:{_primary_attempt_id}",
+                        provider_id=str(getattr(llm_client, "provider", "") or ""),
+                        model_id=chat_model_arg or getattr(llm_client, "model", ""),
+                        before_call=cap.mark_provider_send,
+                    )
                     while True:
                         try:
                             d = next(it)
@@ -1004,8 +1018,16 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             provider=getattr(llm_client, "provider", ""),
                             model=chat_model_arg or getattr(llm_client, "model", ""),
                         )
-                    cap.mark_provider_send()
-                    resp = llm_client.chat(**_chat_kwargs)
+                    resp = foreground_task_provider_chat(
+                        self,
+                        llm_client,
+                        llm_client.chat,
+                        _chat_kwargs,
+                        owner_ref=f"task:{session_id}:round:{rounds}:primary:{_primary_attempt_id}",
+                        provider_id=str(getattr(llm_client, "provider", "") or ""),
+                        model_id=chat_model_arg or getattr(llm_client, "model", ""),
+                        before_call=cap.mark_provider_send,
+                    )
                     _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
                     if resp is not None:
                         cap.on_response(resp)

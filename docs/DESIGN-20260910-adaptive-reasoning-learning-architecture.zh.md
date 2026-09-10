@@ -513,6 +513,8 @@ if tool_count > 10: start Reasoning Lab
 
 RG-1 最小运行时与 Learning 迁移细则见 `docs/DESIGN-20260910-resource-governor-rg1.md`；RG-1 只拥有 lease/concurrency/service-order 机械权力，Task/SubAgent/provider rate/cost/trust/cancel 仍未接入。
 
+RG-2 provider-call lease 与本地 runtime concurrency 细则见 `docs/DESIGN-20260910-resource-governor-rg2.md`；RG-2 只把已选择的 Task/SubAgent/Learning 本地 provider 调用接到同一机械 runtime lease，cloud rate/cost/trust/cancel 仍后移。
+
 这套架构必须同时适用于：
 
 ```text

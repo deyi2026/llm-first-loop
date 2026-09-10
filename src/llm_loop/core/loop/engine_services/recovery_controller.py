@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 from llm_loop.core.loop.err1210 import Err1210RecoveryResult, is_err1210, snapshot_offending_payload
 from llm_loop.core.session import Session
 from llm_loop.llm.errors import LLMError
+from llm_loop.resources.provider_calls import foreground_task_provider_call_lease
 from llm_loop.runtime.causality import exceptional_attempt_payload
 
 if TYPE_CHECKING:
@@ -215,14 +216,24 @@ class RecoveryController:
                         transform=dict(transform or {"wire_shape_changed": True}),
                     ),
                 )
-            if callable(stream_fn):
-                it = cast("Iterator[Any]", stream_fn(**kwargs))
-                while True:
-                    try:
-                        next(it)
-                    except StopIteration as stop:
-                        return stop.value, None
-            return llm_client.chat(**kwargs), None
+            with foreground_task_provider_call_lease(
+                self._host,
+                llm_client,
+                owner_ref=(
+                    f"task:{session_id}:round:{round_no}:err1210:"
+                    f"{attempt_index}:{_attempt_id}"
+                ),
+                provider_id=str(getattr(llm_client, "provider", "") or ""),
+                model_id=chat_model_arg or getattr(llm_client, "model", ""),
+            ):
+                if callable(stream_fn):
+                    it = cast("Iterator[Any]", stream_fn(**kwargs))
+                    while True:
+                        try:
+                            next(it)
+                        except StopIteration as stop:
+                            return stop.value, None
+                return llm_client.chat(**kwargs), None
         except Exception as retry_exc:  # noqa: BLE001
             self._reachability_finalize("provider_error")
             self._host._record_action(

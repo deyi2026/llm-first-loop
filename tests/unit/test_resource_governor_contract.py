@@ -364,28 +364,55 @@ def test_contract_module_is_pure_and_does_not_import_runtime_decision_planes() -
     assert not any(name.startswith("llm_loop.") for name in imported)
 
 
-def test_rg1_wiring_is_narrow_and_task_subagent_provider_pool_remain_unwired() -> None:
+def test_rg2_wiring_is_narrow_to_task_subagent_learning_and_not_model_pool() -> None:
     root = Path(__file__).parents[2]
-    allowed = {
+    wired = (
         root / "src/llm_loop/factory.py",
         root / "src/llm_loop/methods/learning_plane.py",
-    }
-    forbidden = {
+        root / "src/llm_loop/core/loop/engine.py",
+        root / "src/llm_loop/core/loop/engine_services/fallback.py",
+        root / "src/llm_loop/core/loop/engine_services/recovery_controller.py",
         root / "src/llm_loop/subagent/runner.py",
-        root / "src/llm_loop/llm/pool.py",
-    }
-    for path in allowed:
+    )
+    for path in wired:
         text = path.read_text(encoding="utf-8")
         assert "llm_loop.resources" in text, path
-    for path in forbidden:
-        text = path.read_text(encoding="utf-8")
-        assert "llm_loop.resources" not in text, path
-        assert "ResourceGovernor" not in text, path
+
+    pool = root / "src/llm_loop/llm/pool.py"
+    pool_text = pool.read_text(encoding="utf-8")
+    assert "llm_loop.resources" not in pool_text
+    assert "ResourceGovernor" not in pool_text
+
+    # `_Err1210Mixin` is retired compatibility code; production LoopEngine uses
+    # RecoveryController and must not rewire the dead path just to satisfy grep.
+    injection_text = (root / "src/llm_loop/core/loop/injection_span.py").read_text(encoding="utf-8")
+    assert "llm_loop.resources" not in injection_text
 
     engine_text = (root / "src/llm_loop/core/loop/engine.py").read_text(encoding="utf-8")
+    assert "_Err1210Mixin" not in engine_text.split("class LoopEngine", 1)[1].split(":", 1)[0]
     assert "resource_governor: Any | None = None" in engine_text
+    assert "provider_call_coordinator: Any | None = None" in engine_text
+    assert "foreground_task_provider_stream(" in engine_text
+    assert "foreground_task_provider_chat(" in engine_text
     assert "try_acquire(" not in engine_text
     assert "acquire(" not in engine_text
+
+    for rel in (
+        "src/llm_loop/core/loop/engine_services/fallback.py",
+        "src/llm_loop/core/loop/engine_services/recovery_controller.py",
+        "src/llm_loop/subagent/runner.py",
+    ):
+        text = (root / rel).read_text(encoding="utf-8")
+        assert any(
+            helper in text
+            for helper in (
+                "foreground_task_provider_call_lease(",
+                "foreground_task_provider_chat(",
+                "foreground_task_provider_stream(",
+                "subagent_provider_call_lease(",
+                "subagent_provider_chat(",
+            )
+        )
 
 
 def test_architecture_sot_points_to_rg0_contract_without_runtime_claim() -> None:

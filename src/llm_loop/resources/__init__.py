@@ -1,6 +1,6 @@
 """Provider-agnostic resource governance.
 
-RG-0 defines pure data contracts. RG-1 adds a minimal process-local
-lease/concurrency governor and mechanical foreground activity probe; provider
-rate/cost/trust/cancel policy remains intentionally unwired.
+RG-0 defines pure contracts; RG-1 adds the minimal lease/concurrency governor;
+RG-2 adds qualified local-runtime provider-call coordination for Task/SubAgent
+while keeping cloud rate/cost/trust/cancel policy intentionally unwired.
 """

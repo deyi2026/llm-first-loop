@@ -30,6 +30,7 @@ from llm_loop.core.subagent_delivery import SubAgentDeliveryJournal
 from llm_loop.core.subagent_topology import SubAgentTopologyJournal, SubAgentTopologyState
 from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.llm.client import LLMClient
+from llm_loop.resources.provider_calls import subagent_provider_call_lease
 from llm_loop.tools.registry import ToolRegistry
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 
@@ -116,6 +117,7 @@ class SubAgentRunner:
         max_iterations: int = MAX_ITERATIONS,
         tool_execution_root: str | None = None,
         artifact_store: WorkspaceArtifactStore | None = None,
+        provider_call_coordinator: object | None = None,
     ) -> None:
         self.llm = llm
         self.registry = registry
@@ -123,6 +125,7 @@ class SubAgentRunner:
         self.max_depth = max_depth
         self.max_iterations = max_iterations
         self.artifact_store = artifact_store
+        self.provider_call_coordinator = provider_call_coordinator
         journal_root = (
             tool_execution_root
             if tool_execution_root is not None
@@ -1363,7 +1366,12 @@ class SubAgentRunner:
                 for t in sub_schemas
             ]
             try:
-                resp = self.llm.chat(msgs, tools=sub_schemas)
+                with subagent_provider_call_lease(
+                    self,
+                    self.llm,
+                    owner_ref=f"subagent:{sess.session_id}:round:{rounds}",
+                ):
+                    resp = self.llm.chat(msgs, tools=sub_schemas)
             except Exception as exc:  # noqa: BLE001 — 子代理 LLM 失败如实回传
                 # LLM 调用失败时根本没有 assistant tool declaration，因此不能伪造
                 # role=tool 错误帧；否则下一轮会形成 orphan tool protocol。失败事实

@@ -24,6 +24,7 @@ from llm_loop.llm.errors import (
     LLMNetworkError,
     LLMTimeoutError,
 )
+from llm_loop.resources.provider_calls import foreground_task_provider_call_lease
 from llm_loop.runtime.causality import exceptional_attempt_payload
 
 logger = logging.getLogger(__name__)
@@ -244,7 +245,17 @@ class FallbackService:
                             tools=candidate_tools,
                         ),
                     )
-                resp = client.chat(**chat_kwargs)
+                with foreground_task_provider_call_lease(
+                    self._host,
+                    client,
+                    owner_ref=(
+                        f"task:{session_id}:round:{run_round}:fallback:"
+                        f"{provider_attempt_index}:{_attempt_id}"
+                    ),
+                    provider_id=provider_id,
+                    model_id=model_id,
+                ):
+                    resp = client.chat(**chat_kwargs)
             except LLMError as exc:
                 self._reachability_finalize("provider_error")
                 # 该候选也失败, 继续尝试下一个; 记录 (model_ref, error_type, error_msg)

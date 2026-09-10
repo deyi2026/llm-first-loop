@@ -56,6 +56,8 @@ from llm_loop.methods.store import (
 )
 from llm_loop.resources.foreground import ForegroundActivityProbe
 from llm_loop.resources.governor import ResourceGovernor
+from llm_loop.resources.local_runtime import LocalRuntimeConcurrencyAdapter
+from llm_loop.resources.provider_calls import ProviderCallCoordinator
 from llm_loop.runtime.causal_diagnose import diagnose_event_store
 from llm_loop.runtime.causality import build_runtime_causal_snapshot
 from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
@@ -1197,6 +1199,11 @@ def build_engine(settings: Settings) -> LoopEngine:
     foreground_probe = ForegroundActivityProbe(engine, settings.sessions_dir)
     resource_governor = ResourceGovernor(foreground_probe=foreground_probe.active)
     engine.resource_governor = resource_governor
+    provider_call_coordinator = ProviderCallCoordinator(
+        resource_governor,
+        local_runtime=LocalRuntimeConcurrencyAdapter(),
+    )
+    engine.provider_call_coordinator = provider_call_coordinator
     if settings.learning_plane_enabled:
         learning_journal = LearningJournal(
             path=Path(settings.sessions_dir) / "learning" / "journal.jsonl",
@@ -1215,6 +1222,7 @@ def build_engine(settings: Settings) -> LoopEngine:
             model_resolver=model_pool.get_client,
             resource_governor=resource_governor,
             resource_target_resolver=_resolve_learning_resource_target,
+            provider_call_coordinator=provider_call_coordinator,
         )
         learning_plane.start()
         engine.learning_plane = learning_plane
@@ -1426,6 +1434,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         max_iterations=settings.max_iterations,
         tool_execution_root=str(settings.audit_dir / "tool_execution"),
         artifact_store=_artifact_store,
+        provider_call_coordinator=provider_call_coordinator,
     )
     # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。

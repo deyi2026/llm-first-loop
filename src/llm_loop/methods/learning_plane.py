@@ -30,6 +30,7 @@ from llm_loop.resources.contracts import (
     ServicePriority,
 )
 from llm_loop.resources.governor import ResourceGovernor
+from llm_loop.resources.provider_calls import ProviderCallCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class LearningPlane:
         model_resolver: Callable[[str], Any],
         resource_governor: ResourceGovernor,
         resource_target_resolver: Callable[[str], tuple[str, str]],
+        provider_call_coordinator: ProviderCallCoordinator | None = None,
         poll_interval_s: float = 5.0,
         quiet_period_s: float = 15.0,
     ) -> None:
@@ -65,6 +67,7 @@ class LearningPlane:
         self._model_resolver = model_resolver
         self._resource_governor = resource_governor
         self._resource_target_resolver = resource_target_resolver
+        self._provider_call_coordinator = provider_call_coordinator
         self._poll_interval_s = max(1.0, float(poll_interval_s))
         self._quiet_period_s = max(0.0, float(quiet_period_s))
         self._thread: threading.Thread | None = None
@@ -93,13 +96,33 @@ class LearningPlane:
         )
 
     def _resource_request(self, job: LearningJob) -> AdmissionRequest:
-        """Build one process-local RG-1 Learning coordination lease request.
+        """Build the Learning lease request, sharing a qualified local runtime key.
 
-        The limit=1 fact describes this Learning consumer lane only.  It is not
-        a claim about the selected provider/model's true concurrency; provider
-        capacity moves into the Governor only when a later adapter proves it.
+        RG-2 first asks the provider-call coordinator for a live local runtime
+        resource. If no such fact exists (cloud, unknown local runtime, probe
+        failure), the RG-1 process-local Learning lane remains the exact fallback.
         """
         provider_id, model_id = self._resource_target_resolver(job.source_model)
+        request_id = f"learning:{job.job_id}:attempt:{job.attempt + 1}"
+        owner_ref = f"learning:{job.job_id}"
+        coordinator = self._provider_call_coordinator
+        if coordinator is not None:
+            try:
+                client = self._model_resolver(job.source_model)
+                shared = coordinator.build_request_for_client(
+                    client,
+                    execution_class=ExecutionClass.BACKGROUND_LEARNING,
+                    service_priority=ServicePriority.P3_BACKGROUND_LEARNING,
+                    owner_ref=owner_ref,
+                    provider_id=provider_id,
+                    model_id=model_id,
+                    request_id=request_id,
+                )
+            except Exception:  # noqa: BLE001 - preserve the RG-1 fallback lane
+                shared = None
+            if shared is not None:
+                return shared
+
         key = ResourceKey(
             provider_id=provider_id,
             scope_kind=ResourceScopeKind.RUNTIME,
@@ -107,8 +130,8 @@ class LearningPlane:
         )
         self._resource_governor.set_concurrency_limit(key, 1)
         return AdmissionRequest(
-            request_id=f"learning:{job.job_id}:attempt:{job.attempt + 1}",
-            owner_ref=f"learning:{job.job_id}",
+            request_id=request_id,
+            owner_ref=owner_ref,
             execution_class=ExecutionClass.BACKGROUND_LEARNING,
             service_priority=ServicePriority.P3_BACKGROUND_LEARNING,
             provider_id=provider_id,
