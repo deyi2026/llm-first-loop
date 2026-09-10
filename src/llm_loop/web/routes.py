@@ -1249,8 +1249,10 @@ def health() -> dict:
 def architecture_status_web(request: Request, session_id: str = "") -> Response:
     """EVO-20260818（spec §5.4.1-2）: 架构状态 web API 通道.
 
-    含 context_usage.cache_health / cache_guard 快照——命中率权威口径为
-    cache_guard.recent_hit_rate（会话近 10 次窗口，目标 ≥90%）。fail-open：
+    含 context_usage.cache_health / cache_guard 快照。recent_hit_rate 是成本/展示事实；
+    缓存回归以 cache_guard.cache_health 为权威机械口径：仅在同 run 连续轮、
+    provider/model/stable_prefix_fp/cache_prefix_epoch/compaction_epoch 均可比、未过 TTL
+    且 prompt 非收缩时，绝对 hit tokens 下降才标 regression。fail-open：
     快照异常返回部分字段（error + 空快照），不抛 500。
     """
     engine = _engine_from(request)

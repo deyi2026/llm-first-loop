@@ -405,6 +405,11 @@ class PromptGuard:
         self.audit_file = audit_file
         # 规则 G: 会话级命中率窗口（近 N 次请求的 hit/in——响应回馈）
         self._hit_win: dict[str, list[tuple[int, int, float]]] = {}  # session → [(in, hit, ts)...]
+        # 请求发送前记录纯机械 shape，响应回执到达时用于判断“可比 transition”。
+        # 这只改变 compute telemetry/告警归因，不参与模型策略或缓存 admission。
+        self._pending_request_shape: dict[str, dict] = {}
+        self._last_result_shape: dict[str, dict] = {}
+        self._last_cache_health: dict[str, dict] = {}
         # 逃生（拷问③）: 每会话连续 BLOCK 计数——达上限自动降级 WARN
         self._block_streak: dict[str, int] = {}
         # provider client 可跨多个模型复用；模型游标必须按 session 隔离。
@@ -417,6 +422,9 @@ class PromptGuard:
             self._baselines.pop(session_id, None)
             self._block_streak.pop(session_id, None)
             self._last_model_by_session.pop(session_id, None)
+            self._pending_request_shape.pop(session_id, None)
+            self._last_result_shape.pop(session_id, None)
+            self._last_cache_health.pop(session_id, None)
         except Exception:  # noqa: BLE001
             pass
 
@@ -439,9 +447,22 @@ class PromptGuard:
                 return
             win = self._hit_win.setdefault(session_id, [])
             # EVO-20260818: 元组加时间戳（TTL 过期判定——间隔 > provider 缓存 TTL）
-            win.append((tokens_in, tokens_hit, time.time()))
+            result_ts = time.time()
+            win.append((tokens_in, tokens_hit, result_ts))
             if len(win) > 10:
                 del win[:-10]  # 窗口最近 10 次
+            shape = self._pending_request_shape.pop(session_id, None)
+            previous = self._last_result_shape.get(session_id)
+            health = self._classify_cache_transition(
+                previous=previous, current=shape, tokens_in=tokens_in, tokens_hit=tokens_hit,
+                result_ts=result_ts,
+            )
+            self._last_cache_health[session_id] = health
+            if shape is not None:
+                self._last_result_shape[session_id] = {
+                    **shape, "tokens_in": tokens_in, "tokens_hit": tokens_hit,
+                    "result_ts": result_ts,
+                }
             # 对账行（append-only；与发送行经 ts/session_id 关联）
             row = {
                 "ts": datetime.now(UTC).isoformat(),
@@ -451,6 +472,7 @@ class PromptGuard:
                 "model": model,
                 "tokens_in": tokens_in,
                 "tokens_hit": tokens_hit,
+                "cache_health": health,
             }
             path = _resolve_audit_path(self.audit_file)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -458,6 +480,63 @@ class PromptGuard:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
         except Exception:  # noqa: BLE001
             logger.debug("guard record_result 失败（fail-open）")
+
+    @staticmethod
+    def _classify_cache_transition(
+        *, previous: dict | None, current: dict | None, tokens_in: int, tokens_hit: int,
+        result_ts: float
+    ) -> dict:
+        """用机械可比条件判断 absolute cache-hit 是否真实回退。
+
+        ratio 保留为成本/展示事实；regression 必须是同 run 连续轮、同
+        provider/model/stable_prefix_fp/cache_prefix_epoch/compaction_epoch、未过 TTL
+        且 prompt 非收缩。这些均复用既有 request.usage compute facts。
+        """
+        base = {
+            "status": "unknown",
+            "reason": "insufficient_shape",
+            "comparable_transition": False,
+            "absolute_hit_delta": None,
+        }
+        if previous is None or current is None:
+            return base
+        prev_round = previous.get("run_round")
+        cur_round = current.get("run_round")
+        if not isinstance(prev_round, int) or not isinstance(cur_round, int):
+            return base
+        if cur_round != prev_round + 1:
+            return {**base, "status": "warmup", "reason": "new_run_or_nonconsecutive_round"}
+        prev_ts = float(previous.get("result_ts") or 0.0)
+        provider = str(current.get("provider") or "")
+        if prev_ts > 0 and result_ts - prev_ts > _cache_ttl_for(provider):
+            return {**base, "status": "warmup", "reason": "provider_ttl"}
+        for key in ("provider", "model"):
+            if current.get(key) != previous.get(key):
+                return {**base, "status": "warmup", "reason": f"{key}_changed"}
+        current_fp = str(current.get("stable_prefix_fp") or "")
+        previous_fp = str(previous.get("stable_prefix_fp") or "")
+        if not current_fp or not previous_fp:
+            return base
+        if current_fp != previous_fp:
+            return {**base, "status": "warmup", "reason": "stable_prefix_changed"}
+        for key in ("cache_prefix_epoch", "compaction_epoch"):
+            cur_epoch = current.get(key)
+            prev_epoch = previous.get(key)
+            if not isinstance(cur_epoch, int) or not isinstance(prev_epoch, int):
+                return base
+            if cur_epoch != prev_epoch:
+                return {**base, "status": "warmup", "reason": f"{key}_changed"}
+        prev_in = int(previous.get("tokens_in") or 0)
+        prev_hit = int(previous.get("tokens_hit") or 0)
+        if tokens_in < prev_in:
+            return {**base, "status": "warmup", "reason": "prompt_shrink"}
+        delta = tokens_hit - prev_hit
+        return {
+            "status": "regression" if delta < 0 else "healthy",
+            "reason": "absolute_hit_regression" if delta < 0 else "absolute_hit_non_decrease",
+            "comparable_transition": True,
+            "absolute_hit_delta": delta,
+        }
 
     def _recent_hit_rate(self, session_id: str) -> float | None:
         """该会话近期命中率（窗口样本不足返回 None——不判）. """
@@ -476,6 +555,7 @@ class PromptGuard:
         recent_hit_rate 恒 None 且 telemetry="n/a"（规则 G 停用）。
         """
         try:
+            sid = session_id
             if session_id and session_id not in self._hit_win:
                 recent = None
                 win_size = 0
@@ -490,6 +570,7 @@ class PromptGuard:
                 win_size = len(win)
             return {
                 "recent_hit_rate": recent if self.hit_telemetry else None,
+                "cache_health": self._last_cache_health.get(sid) if sid else None,
                 "hit_win_size": win_size,
                 "block_streak": dict(self._block_streak),
                 "baselines_count": len(self._baselines),
@@ -536,8 +617,21 @@ class PromptGuard:
         if not self.hit_telemetry:
             return None  # EVO-20260818（spec §6.2-6）: 无命中回执的 provider（lms-chat）不判
         win = self._hit_win.get(session_id) or []
+        latest_health = self._last_cache_health.get(session_id) or {}
+        # 两次机械可比请求已经足够证明 absolute-hit 回退；不能再受旧 ratio 窗口
+        # 的 3-sample 门限制，否则最早的真实回归会被静默一轮。
+        if latest_health.get("status") == "regression":
+            delta = latest_health.get("absolute_hit_delta")
+            return GuardDecision(
+                verdict="WARN",
+                rule="cache_hit_regression",
+                detail=(
+                    "可比请求间绝对 cache-hit tokens 回退"
+                    f"（delta={delta}）；stable_prefix/epochs/model/provider 均保持可比"
+                ),
+            )
         if len(win) < _HIT_SAMPLE_MIN:
-            return None  # 样本不足（含新会话第一条）——不判
+            return None  # ratio 样本不足（含新会话第一条）——不判
         rate = self._recent_hit_rate(session_id)
         if rate is None:
             return None
@@ -631,6 +725,9 @@ class PromptGuard:
         provider: str = "",
         model: str = "",
         breaker_active: bool | None = None,  # P0（2026-08-25）: 压缩风暴熔断冻结期标志
+        stable_prefix_fp: str = "",
+        cache_prefix_epoch: int | None = None,
+        compaction_epoch: int | None = None,
         # 任务3（§5.9）: None=engine 未传递该标志（传递丢失）——不同于 False（非冻结期
         # 正常传递）。None 时规则 F 降级 WARN（防"禁压缩+禁提交"双拦死锁）。
     ) -> GuardDecision:
@@ -639,6 +736,15 @@ class PromptGuard:
             self.reset_session(session_id)
         if model:
             self._last_model_by_session[session_id] = model
+        tools_payload = tools or []
+        self._pending_request_shape[session_id] = {
+            "run_round": run_round,
+            "provider": provider or "openai-compat",
+            "model": model,
+            "stable_prefix_fp": stable_prefix_fp,
+            "cache_prefix_epoch": cache_prefix_epoch,
+            "compaction_epoch": compaction_epoch,
+        }
         baseline = self._baselines.get(session_id)
         decision = validate_request(
             system_text=system_text,
@@ -651,7 +757,7 @@ class PromptGuard:
                 "provider": provider or "openai-compat",
                 "model": model,
                 "run_round": run_round,
-                "tools": tools or [],
+                "tools": tools_payload,
                 "breaker_active": breaker_active,
                 "compress_count_this_run": compress_count_this_run,
                 "history_budget": history_budget,

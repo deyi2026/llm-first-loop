@@ -143,6 +143,59 @@ class TestValidateRequest:
         d = g.check(session_id="s-ok", system_text="sys", messages=_sys("sys"))
         assert d.verdict == "ALLOW"
 
+    def test_comparable_absolute_hit_regression_warns(self, tmp_path):
+        """稳定 lineage 中 prompt 不缩但绝对 hit 回退，才是强缓存异常。"""
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
+        g.check(
+            session_id="s-reg", system_text="sys", messages=_sys("sys"), tools=tools,
+            run_round=1, provider="glm", model="glm-5.3", stable_prefix_fp="fp",
+            cache_prefix_epoch=3, compaction_epoch=7,
+        )
+        g.record_result("s-reg", 30000, 28000, provider="glm", model="glm-5.3")
+        g.check(
+            session_id="s-reg", system_text="sys",
+            messages=_sys("sys") + [{"role": "user", "content": "x"}],
+            tools=tools, run_round=2, provider="glm", model="glm-5.3", stable_prefix_fp="fp",
+            cache_prefix_epoch=3, compaction_epoch=7,
+        )
+        g.record_result("s-reg", 32000, 20000, provider="glm", model="glm-5.3")
+        health = g.snapshot("s-reg")["cache_health"]
+        assert health["status"] == "regression"
+        assert health["comparable_transition"] is True
+        assert health["absolute_hit_delta"] == -8000
+        d = g.check(
+            session_id="s-reg", system_text="sys",
+            messages=_sys("sys") + [{"role": "user", "content": "xy"}],
+            tools=tools, run_round=3, provider="glm", model="glm-5.3", stable_prefix_fp="fp",
+            cache_prefix_epoch=3, compaction_epoch=7,
+        )
+        assert d.verdict == "WARN"
+        assert d.rule == "cache_hit_regression"
+
+    def test_compaction_drop_is_warmup_not_regression(self, tmp_path):
+        """真实形态：压缩使 prompt/hit 同降，应标 warmup 而非缓存回归。"""
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
+        g.check(
+            session_id="s-compact", system_text="sys",
+            messages=_sys("sys") + [{"role": "user", "content": "a"}] * 28,
+            tools=tools, run_round=5, compress_count_this_run=0, provider="glm", model="glm-5.3",
+            stable_prefix_fp="fp-a", cache_prefix_epoch=3, compaction_epoch=7,
+        )
+        g.record_result("s-compact", 33955, 29888, provider="glm", model="glm-5.3")
+        g.check(
+            session_id="s-compact", system_text="sys",
+            messages=_sys("sys") + [{"role": "user", "content": "a"}] * 20,
+            tools=tools, run_round=6, compress_count_this_run=1, provider="glm", model="glm-5.3",
+            stable_prefix_fp="fp-a", cache_prefix_epoch=3, compaction_epoch=8,
+        )
+        g.record_result("s-compact", 19432, 9280, provider="glm", model="glm-5.3")
+        health = g.snapshot("s-compact")["cache_health"]
+        assert health["status"] == "warmup"
+        assert health["reason"] == "compaction_epoch_changed"
+        assert health["comparable_transition"] is False
+
     def test_insufficient_sample(self, tmp_path):
         g = PromptGuard(audit_file=tmp_path / "g.jsonl")
         g.record_result("s-1", 10000, 0)  # 仅 1 次——样本不足不判

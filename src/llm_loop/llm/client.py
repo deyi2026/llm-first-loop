@@ -132,6 +132,9 @@ class GuardRequestContext:
     run_round: int | None = None
     provider: str = ""
     model: str = ""
+    stable_prefix_fp: str = ""
+    cache_prefix_epoch: int | None = None
+    compaction_epoch: int | None = None
     breaker_active: bool = False  # P0（2026-08-25）: 压缩风暴熔断冻结期（规则 F 降级协调）
     # Optional request-scoped observer for provider-native in-flight state.  It is
     # deliberately carried on the immutable request context rather than shared client
@@ -1016,6 +1019,9 @@ class LLMClient:
                     provider=_guard_ctx.provider or self.provider,
                     model=_guard_ctx.model or actual_model,
                     breaker_active=_guard_ctx.breaker_active,
+                    stable_prefix_fp=_guard_ctx.stable_prefix_fp,
+                    cache_prefix_epoch=_guard_ctx.cache_prefix_epoch,
+                    compaction_epoch=_guard_ctx.compaction_epoch,
                 )
                 if _d.rule == "submit_ratio" and _d.verdict == "WARN":
                     # 规则 F WARN 升级：注入提示（AI 可见——接近超限提前处理）

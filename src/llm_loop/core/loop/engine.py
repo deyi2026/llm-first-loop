@@ -993,6 +993,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             run_round=rounds,
                             provider=getattr(llm_client, "provider", ""),
                             model=chat_model_arg or getattr(llm_client, "model", ""),
+                            stable_prefix_fp=self._run_state().cache_gate_stable_fp,
+                            cache_prefix_epoch=self._run_state().cache_prefix_epoch,
+                            compaction_epoch=self._run_state().compact_event_seq,
                             stream_state_hook=cap.on_provider_state,
                         )
                         if isinstance(llm_client, LLMClient)
@@ -1078,6 +1081,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             run_round=rounds,
                             provider=getattr(llm_client, "provider", ""),
                             model=chat_model_arg or getattr(llm_client, "model", ""),
+                            stable_prefix_fp=self._run_state().cache_gate_stable_fp,
+                            cache_prefix_epoch=self._run_state().cache_prefix_epoch,
+                            compaction_epoch=self._run_state().compact_event_seq,
                         )
                     resp = foreground_task_provider_chat(
                         self,

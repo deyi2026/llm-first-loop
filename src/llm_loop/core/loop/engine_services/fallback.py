@@ -40,6 +40,31 @@ class FallbackService:
     def __init__(self, host: LoopEngine) -> None:
         self._host = host
 
+    def _guard_cache_shape(self) -> tuple[str, int | None, int | None]:
+        """Read request-local cache-boundary facts when the host exposes RunState.
+
+        Production ``LoopEngine`` owns these mechanical facts. Historical duck hosts
+        used by tests/integrations do not promise the private RunState accessor, so
+        cache telemetry must degrade to unknown instead of becoming a fallback
+        availability dependency. The read happens after a fallback request is rebuilt,
+        ensuring the shape belongs to that candidate rather than the failed primary.
+        """
+        run_state_fn = getattr(self._host, "_run_state", None)
+        if not callable(run_state_fn):
+            return "", None, None
+        try:
+            state = run_state_fn()
+            prefix_epoch = getattr(state, "cache_prefix_epoch", None)
+            compaction_epoch = getattr(state, "compact_event_seq", None)
+            return (
+                str(getattr(state, "cache_gate_stable_fp", "") or ""),
+                prefix_epoch if isinstance(prefix_epoch, int) else None,
+                compaction_epoch if isinstance(compaction_epoch, int) else None,
+            )
+        except Exception:  # noqa: BLE001 -- telemetry must not block fallback
+            logger.debug("fallback cache-shape read failed (fail-open)", exc_info=True)
+            return "", None, None
+
     def _reachability_begin_attempt(
         self, *, kind: str, attempt_index: int, model: str, provider: str
     ) -> str:
@@ -215,6 +240,11 @@ class FallbackService:
                         if fallback_registry is not None
                         else self._host._effective_history_budget(fallback_label)
                     )
+                    (
+                        cache_stable_fp,
+                        cache_prefix_epoch,
+                        compaction_epoch,
+                    ) = self._guard_cache_shape()
                     chat_kwargs["guard_context"] = GuardRequestContext(
                         session_id=session_id,
                         system_text=(
@@ -230,6 +260,9 @@ class FallbackService:
                         run_round=run_round,
                         provider=provider_id,
                         model=model_id,
+                        stable_prefix_fp=cache_stable_fp,
+                        cache_prefix_epoch=cache_prefix_epoch,
+                        compaction_epoch=compaction_epoch,
                     )
                 _site_index = int(site_index_offset) + provider_attempt_index
                 _attempt_id = self._reachability_begin_attempt(
