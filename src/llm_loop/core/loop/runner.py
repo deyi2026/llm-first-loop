@@ -53,6 +53,10 @@ class SessionBusyError(RuntimeError):
     """
 
 
+class QueuedIngressDurabilityError(RuntimeError):
+    """Queued human ingress could not cross its mandatory durable EventStore boundary."""
+
+
 @dataclass
 class RunHandle:
     """一次后台 run 的句柄（状态仅 registry 锁内变更；对外用 snapshot 只读快照）.
@@ -396,6 +400,7 @@ class BackgroundRunner:
         expected_workspace_epoch: int | None = None,
         ingress: object | None = None,
         user_metadata: dict[str, Any] | None = None,
+        terminal_callback: Callable[[str, str | None], None] | None = None,
     ) -> tuple[RunHandle | None, queue.Queue | None]:
         """注册 + 起后台线程；返回 (handle, queue)，调用方订阅消费.
 
@@ -453,7 +458,19 @@ class BackgroundRunner:
         q = bus.subscribe()  # 先订阅再起线程（保证不丢 start 后首个事件）
         t = threading.Thread(
             target=self._consume,
-            args=(session_id, user_text, model, reasoning_effort, reasoning_mode, before_start, handle, bus, ingress, user_metadata),
+            args=(
+                session_id,
+                user_text,
+                model,
+                reasoning_effort,
+                reasoning_mode,
+                before_start,
+                handle,
+                bus,
+                ingress,
+                user_metadata,
+                terminal_callback,
+            ),
             name=f"bg-run-{session_id[:8]}",
             daemon=True,  # B4: 进程退出不阻塞
         )
@@ -461,6 +478,20 @@ class BackgroundRunner:
         return handle, q
 
     # ── 后台消费 ──
+    @staticmethod
+    def _notify_terminal(
+        callback: Callable[[str, str | None], None] | None,
+        status: str,
+        detail: str | None,
+    ) -> None:
+        """Best-effort owner callback; subscriber lifecycle must not own run terminal truth."""
+        if callback is None:
+            return
+        try:
+            callback(status, detail)
+        except Exception:  # noqa: BLE001 - queue/sidecar failure cannot rewrite run outcome
+            logger.exception("background run terminal callback failed: status=%s", status)
+
     def _consume(
         self,
         session_id: str,
@@ -473,6 +504,7 @@ class BackgroundRunner:
         bus: EventBus,
         ingress: object | None = None,
         user_metadata: dict[str, Any] | None = None,
+        terminal_callback: Callable[[str, str | None], None] | None = None,
     ) -> None:
         """后台线程体：copy_context 传播（P0-5 模式）→ 迭代 run_stream → 广播终态."""
         self._worker_idents.add(threading.get_ident())
@@ -508,6 +540,9 @@ class BackgroundRunner:
                     bus.emit({"type": "delta", "delta": delta})
 
             result = ctx.run(_run)
+            # The run itself owns terminal side effects. Subscribers may disconnect at any
+            # point and therefore cannot be the sole owner of durable terminal callbacks.
+            self._notify_terminal(terminal_callback, "completed", None)
             bus.emit({"type": "done", "result": result})
             with self._guard:
                 handle.status = "done"
@@ -516,7 +551,15 @@ class BackgroundRunner:
         except Exception as exc:  # noqa: BLE001 — 后台异常如实广播，不泄漏线程
             logger.exception("后台 run 失败: session=%s", session_id)
             err = f"{type(exc).__name__}: {exc}"
-            code = "session_busy" if isinstance(exc, SessionBusyError) else "internal_error"
+            not_started = isinstance(exc, (SessionBusyError, QueuedIngressDurabilityError))
+            if isinstance(exc, SessionBusyError):
+                code = "session_busy"
+            elif isinstance(exc, QueuedIngressDurabilityError):
+                code = "queue_ingress_durability_unavailable"
+            else:
+                code = "internal_error"
+            terminal_status = "not_started" if not_started else "failed"
+            self._notify_terminal(terminal_callback, terminal_status, err)
             bus.emit({"type": "error", "error": err, "error_code": code})
             with self._guard:
                 handle.status = "error"
@@ -527,4 +570,10 @@ class BackgroundRunner:
             self._worker_idents.discard(threading.get_ident())
 
 
-__all__ = ["SessionBusyError", "RunHandle", "EventBus", "BackgroundRunner"]
+__all__ = [
+    "SessionBusyError",
+    "QueuedIngressDurabilityError",
+    "RunHandle",
+    "EventBus",
+    "BackgroundRunner",
+]

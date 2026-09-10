@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
-import { sendMessage, stopStreaming, useConversation, conversationStore } from "../../core/conversation";
+import { sendMessage, stopStreaming, useConversation, conversationStore, enqueueQueueTurn } from "../../core/conversation";
 import { fetchModels, uploadFileBase64, type ModelCatalog } from "../../core/chat";
 import { sessionStore } from "../../core/stores";
 import { useCapabilities } from "../../core/capabilities";
@@ -219,7 +219,45 @@ export function Composer() {
   }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Cmd/Ctrl+Enter：流式生成中 → 排队插话（P0 假对齐修复：zh.ts 早已宣称此能力）
+    // 必须在普通 Enter 分支之前判断（普通分支条件会先命中同为 Enter 的组合键）
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      // IME 保护同普通 Enter：组合中（含候选选择）回车交给输入法
+      if (composingRef.current || e.nativeEvent.isComposing) return;
+      if (Date.now() - lastCompEndRef.current < 400) return;
+      e.preventDefault();
+      if (conv.streaming) {
+        const trimmed = text.trim();
+        const hasSendable = attachments.some((a) => a.status === "ok");
+        const hasUnready = attachments.some((a) => a.status !== "ok");
+        if (hasUnready) {
+          flashHint("有附件仍在处理或处理失败；请等待完成或移除后再排队。");
+          return;
+        }
+        if (!trimmed && !hasSendable) {
+          flashHint("没有可排队的内容。");
+          return;
+        }
+        // 乐观清空（与 doSend 一致：让用户确认"已接受"）；失败再回填
+        const snapshotText = trimmed;
+        const snapshotAttachments = attachments;
+        setText("");
+        setAttachments([]);
+        setCmdOpen(false);
+        void enqueueQueueTurn(snapshotText, snapshotAttachments).then((r) => {
+          if (!r.ok) {
+            flashHint(r.detail ?? "排队失败，请稍后重试");
+            setText(snapshotText);
+            setAttachments(snapshotAttachments);
+          }
+        });
+      } else {
+        // 非流式：与普通发送等价（快捷键语义一致性）
+        void doSend();
+      }
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       // 输入法组合中（含候选选择）：回车交给输入法选候选，不发送
       if (composingRef.current || e.nativeEvent.isComposing) return;
       // 组合刚结束（候选确认的回车，≤400ms）：本次回车=选候选——不发送（下次回车才发送）

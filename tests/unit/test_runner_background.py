@@ -161,6 +161,44 @@ def test_unsubscribe_stops_delivery():
     assert q.empty()
 
 
+
+def test_terminal_callback_survives_subscriber_disconnect():
+    """终态 owner 是 runner，不是 SSE subscriber；断连后 callback 仍必须执行。"""
+    eng = FakeEngine(deltas=8, delay=0.02)
+    r = BackgroundRunner(eng)
+    terminals: list[tuple[str, str | None]] = []
+    handle, q = r.start(
+        "s-terminal-owner",
+        "hi",
+        terminal_callback=lambda status, detail: terminals.append((status, detail)),
+    )
+    assert handle is not None and q is not None
+    _drain(q, 1)
+    r.unsubscribe("s-terminal-owner", q)
+    deadline = time.time() + 5
+    while r.is_running("s-terminal-owner") and time.time() < deadline:
+        time.sleep(0.01)
+    assert handle.status == "done"
+    assert terminals == [("completed", None)]
+
+
+def test_terminal_callback_reports_background_error():
+    eng = FakeEngine(fail=True)
+    r = BackgroundRunner(eng)
+    terminals: list[tuple[str, str | None]] = []
+    handle, _q = r.start(
+        "s-terminal-error",
+        "hi",
+        terminal_callback=lambda status, detail: terminals.append((status, detail)),
+    )
+    deadline = time.time() + 5
+    while r.is_running("s-terminal-error") and time.time() < deadline:
+        time.sleep(0.01)
+    assert handle is not None and handle.status == "error"
+    assert len(terminals) == 1
+    assert terminals[0][0] == "failed"
+    assert "llm boom" in str(terminals[0][1])
+
 def test_resume_subscribes_existing_run():
     """resume=True 且同会话已有 running → 返回 (None, 新订阅队列)（重连订阅已有 run）."""
     eng = FakeEngine(deltas=8, delay=0.03)

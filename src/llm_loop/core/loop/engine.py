@@ -571,6 +571,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             _user_metadata["attachments"] = [
                 dict(item) for item in raw_attachments if isinstance(item, dict)
             ]
+        raw_queue_id = (user_metadata or {}).get("human_turn_queue_id")
+        if isinstance(raw_queue_id, str) and 0 < len(raw_queue_id) <= 128:
+            # Mechanical provenance only. It is persisted in Message/Event metadata and is
+            # never rendered into provider-visible message content or tool schemas.
+            _user_metadata["human_turn_queue_id"] = raw_queue_id
         # Provenance/ingress are program-owned truth; arbitrary caller metadata never enters a
         # genuine human message through this transport-only extension.
         _user_metadata.update(origin_metadata(InjectionLayer.USER_INSTRUCTION))
@@ -621,7 +626,28 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         sess.messages.append(user_msg)
         # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
         self._ensure_session_created(sess)
-        self._append_message_event(sess, user_msg)
+        _user_event = self._append_message_event(sess, user_msg)
+        if raw_queue_id:
+            # A queued human turn is replay-sensitive: after a dispatcher/process crash the
+            # queue may re-dispatch only when it can prove this ingress never started. Make
+            # EventStore the single durable execution boundary; without the exact ingress
+            # event no LLM/tool side effect is allowed to begin. Ordinary human turns keep
+            # the repository's historical fail-open event behavior.
+            _event_store = getattr(self, "_event_store", None)
+            if (
+                _event_store is None
+                or getattr(_event_store, "enabled", False) is False
+                or _user_event is None
+            ):
+                # The exact queued ingress did not become durable, so restore the in-memory
+                # Session snapshot before unwinding; the dispatcher may safely retry later.
+                if sess.messages and sess.messages[-1] is user_msg:
+                    sess.messages.pop()
+                from llm_loop.core.loop.runner import QueuedIngressDurabilityError
+
+                raise QueuedIngressDurabilityError(
+                    "queued human turn ingress durability unavailable; run not started"
+                )
         self._prepare_interruption_resume(session_id, sess)
         _turn_ref = len(sess.messages) - 1  # user_msg seq（turn 身份）
         # T5: per-session RunState 分桶（串台修复）；tip 判断改 SoT 派生（tool_exec）

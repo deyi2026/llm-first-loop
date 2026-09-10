@@ -34,6 +34,10 @@ class ChatRequest(BaseModel):
         description="reasoning 模式：auto=尊重 provider/operator 默认，off/on=本请求显式关闭/开启",
     )
     resume: bool = Field(default=False, description="EVO 后台 run：true=不提交新 run，订阅已有 run（刷新/切回）")
+    queue_id: str | None = Field(
+        default=None,
+        description="排队派发标记：本次 run 承接该排队项，run 终态时回写队列状态（completed/failed）",
+    )
 
     @model_validator(mode="after")
     def _require_human_payload(self) -> "ChatRequest":
@@ -70,6 +74,49 @@ class ChatCancelRequest(BaseModel):
     """停止请求（POST /api/v1/chat/cancel body，2026-08-23 停止按钮修复）."""
 
     session_id: str = Field(description="要停止的会话 ID（必填）")
+
+
+class QueueEnqueueRequest(BaseModel):
+    """排队入队（POST /api/v1/chat/queue body）：生成中 Cmd/Ctrl+Enter 插话."""
+
+    session_id: str = Field(description="目标会话 ID（必填）")
+    message: str = Field(default="", description="排队消息原文；纯附件可为空")
+    attachments: list[ChatAttachmentRef] = Field(
+        default_factory=list,
+        max_length=20,
+        description="服务端签发的附件引用（入队时冻结）",
+    )
+    model: str | None = Field(default=None, description="排队时的模型选择（冻结）")
+    reasoning_effort: str | None = Field(default=None, description="排队时的推理等级（冻结）")
+    reasoning_mode: Literal["auto", "off", "on"] = Field(
+        default="auto", description="排队时的 reasoning 模式（冻结）"
+    )
+
+    @model_validator(mode="after")
+    def _require_payload(self) -> "QueueEnqueueRequest":
+        if not self.message and not self.attachments:
+            raise ValueError("message 或 attachments 至少提供一项")
+        return self
+
+
+class QueueCancelRequest(BaseModel):
+    """取消排队项（DELETE /api/v1/chat/queue body）."""
+
+    session_id: str = Field(description="目标会话 ID")
+    queue_id: str = Field(description="要取消的排队项 ID")
+
+
+class QueueDispatchRequest(BaseModel):
+    """派发领取（POST /api/v1/chat/queue/dispatch body）：原子领取队首 queued 项."""
+
+    session_id: str = Field(description="目标会话 ID")
+
+
+class QueueReleaseRequest(BaseModel):
+    """领取方回滚（POST /api/v1/chat/queue/release body）：claimed→queued."""
+
+    session_id: str = Field(description="目标会话 ID")
+    queue_id: str = Field(description="要回滚的排队项 ID")
 
 
 class SessionMetaItem(BaseModel):

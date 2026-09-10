@@ -109,6 +109,23 @@ export interface UploadResult {
 export interface StreamOutcome {
   ok: boolean;
   errorType: "network" | "http" | "engine" | null;
-  error: { detail?: string } | null;
+  // error 字段：后端结构化错误码（如 session_busy——队列 relay 竞态识别用）
+  error: { detail?: string; error?: string } | null;
   data: ChatDoneData | null;
+}
+
+/** Human Turn 排队项（后端 durable 事实冻结形态；cmd/ctrl+Enter 插话） */
+export interface QueueItem {
+  queue_id: string;
+  session_id: string;
+  message: string;
+  /** 服务端 opaque 引用（与 /chat 请求同格式） */
+  attachments: { ref: string }[];
+  model: string | null;
+  reasoning_effort: string | null;
+  reasoning_mode: string;
+  attachment_facts: AttachmentFact[];
+  status: "queued" | "claimed";
+  created_at: number;
+  [key: string]: unknown;
 }

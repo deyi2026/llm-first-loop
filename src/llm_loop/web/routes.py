@@ -22,7 +22,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from llm_loop.core.loop.runner import SessionBusyError
+from llm_loop.core.loop.runner import QueuedIngressDurabilityError, SessionBusyError
 from llm_loop.core.session import SessionExternalResourceBusyError, SessionMutationBusyError
 from llm_loop.feedback.honesty import (
     append_feedback,
@@ -38,6 +38,7 @@ from llm_loop.workspace.store import (
 
 from .attachments import AttachmentError, AttachmentStore
 from .attachments import workspace_scope as attachment_workspace_scope
+from .human_turn_queue import HumanTurnQueue
 from .schemas import (
     ChatCancelRequest,
     ChatRequest,
@@ -46,6 +47,10 @@ from .schemas import (
     EvolutionReviewRequest,
     FeedbackRequest,
     MessageItem,
+    QueueCancelRequest,
+    QueueDispatchRequest,
+    QueueEnqueueRequest,
+    QueueReleaseRequest,
     SessionListResponse,
     SessionMessagesResponse,
     SessionMetaItem,
@@ -71,6 +76,116 @@ router = APIRouter()
 def _attachment_store(engine: Any) -> AttachmentStore:
     data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
     return AttachmentStore(data_dir)
+
+
+def _human_turn_queue(request: Request) -> HumanTurnQueue:
+    """Human Turn 队列单例（按 data_dir 缓存在 app.state；JSON 落盘为 durable 事实）."""
+    engine = _engine_from(request)
+    data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
+    key = str(Path(data_dir).expanduser().resolve())
+    store = getattr(request.app.state, "human_turn_queues", None)
+    if store is None:
+        store = {}
+        request.app.state.human_turn_queues = store
+    q = store.get(key)
+    if q is None:
+        q = HumanTurnQueue(
+            data_dir,
+            claim_state_probe=lambda sid, qid: _queue_claim_state(engine, sid, qid),
+        )
+        store[key] = q
+    return q
+
+
+def _queue_claim_state(engine: Any, session_id: str, queue_id: str) -> str:
+    """Resolve one stale claim from formal run + EventStore facts only."""
+    runner = getattr(engine, "runner", None)
+    try:
+        if runner is not None and (
+            bool(runner.is_running(session_id)) or bool(runner.is_sync_active(session_id))
+        ):
+            return "active"
+    except Exception:  # noqa: BLE001 - uncertainty is never replay authority
+        return "unknown"
+
+    # Cross-process whole-run lease is the formal activity truth. A shared management
+    # lease can be acquired only when no exclusive run lease is active.
+    try:
+        with engine.session.management_lease(session_id):
+            pass
+    except SessionMutationBusyError:
+        return "active"
+    except Exception:  # noqa: BLE001 - lock uncertainty fails closed
+        return "unknown"
+
+    store = getattr(engine, "_event_store", None)
+    if store is None or getattr(store, "enabled", False) is False:
+        return "unknown"
+    try:
+        events = store.read(session_id)
+        if int(getattr(store, "last_read_skipped", 0) or 0) > 0:
+            return "unknown"
+    except Exception:  # noqa: BLE001 - corrupt/unreadable evidence cannot authorize replay
+        return "unknown"
+
+    matches: list[tuple[int, Any]] = []
+    for pos, event in enumerate(events):
+        if str(getattr(event, "type", "")) != "message.appended":
+            continue
+        payload = getattr(event, "payload", {}) or {}
+        metadata = payload.get("metadata") if isinstance(payload, dict) else None
+        if (
+            isinstance(metadata, dict)
+            and str(metadata.get("human_turn_queue_id") or "") == queue_id
+            and str(payload.get("role") or "") == "user"
+        ):
+            matches.append((pos, event))
+    if not matches:
+        # Queued runs fail closed before any LLM/tool call when this exact ingress event
+        # cannot be persisted; absence is therefore proof that execution never crossed
+        # the queued-human durable boundary.
+        return "not_started"
+    if len(matches) != 1:
+        return "unknown"
+
+    start_pos = matches[0][0]
+    for event in events[start_pos + 1 :]:
+        event_type = str(getattr(event, "type", ""))
+        payload = getattr(event, "payload", {}) or {}
+        if event_type == "run.end":
+            return "completed" if str(payload.get("reason") or "") == "completed" else "failed"
+        if event_type == "message.appended" and isinstance(payload, dict):
+            md = payload.get("metadata")
+            if (
+                str(payload.get("role") or "") == "user"
+                and isinstance(md, dict)
+                and not bool(md.get("program_origin"))
+                and not bool(md.get("ingress_delegated"))
+            ):
+                # A later genuine human turn before a run.end makes correlation
+                # ambiguous; never guess which run the later terminal belongs to.
+                return "unknown"
+    return "ingress_open"
+
+
+def _queue_claim_matches(
+    payload: ChatRequest, claimed: dict[str, Any], attachment_facts: list[dict[str, Any]]
+) -> bool:
+    """Exact mechanical handoff check: queue_id cannot authorize different request bytes."""
+    payload_refs = [str(getattr(ref, "ref", "") or "") for ref in payload.attachments]
+    frozen_refs = [
+        str(ref.get("ref") or "")
+        for ref in claimed.get("attachments", [])
+        if isinstance(ref, dict)
+    ]
+    return bool(
+        str(claimed.get("message") or "") == payload.message
+        and frozen_refs == payload_refs
+        and list(claimed.get("attachment_facts") or []) == list(attachment_facts)
+        and (claimed.get("model") or None) == (payload.model or None)
+        and (claimed.get("reasoning_effort") or None) == (payload.reasoning_effort or None)
+        and str(claimed.get("reasoning_mode") or "auto") == str(payload.reasoning_mode or "auto")
+    )
 
 
 def _current_attachment_workspace_scope(engine: Any) -> str:
@@ -404,6 +519,16 @@ def _sse(event_type: str, data: Any) -> str:
     return f"data: {json.dumps({'type': event_type, 'data': data}, ensure_ascii=False)}\n\n"
 
 
+def _safe_queue_terminal(
+    cb: Callable[[str, str | None], None], status: str, run_error: str | None
+) -> None:
+    """队列终态回写 fail-open：失败只记日志，绝不影响主响应流."""
+    try:
+        cb(status, run_error)
+    except Exception:  # noqa: BLE001
+        logger.exception("human turn queue terminal 回写失败: status=%s", status)
+
+
 def _fmt_ts(ts: float | None) -> str:
     """时间戳 → HH:MM:SS（busy 提示用；非法/缺失返回空串）."""
     if not ts:
@@ -477,6 +602,7 @@ def _stream_background(
     before_start: Callable[[Any], None] | None = None,
     expected_workspace_epoch: int | None = None,
     user_metadata: dict[str, Any] | None = None,
+    queue_terminal: Callable[[str, str | None], None] | None = None,
 ) -> Any:
     """后台 run 订阅生成器（EVO 后台 run 改造）：提交 → 消费事件 → 分片 yield SSE.
 
@@ -502,6 +628,8 @@ def _stream_background(
         }
         if not resume and user_metadata is not None:
             start_kwargs["user_metadata"] = user_metadata
+        if not resume and queue_terminal is not None:
+            start_kwargs["terminal_callback"] = queue_terminal
         handle, q = runner.start(session_id, message, **start_kwargs)
     except WorkspaceChangedError as exc:
         yield _sse("error", {"error": "workspace_changed", "detail": str(exc)})
@@ -590,11 +718,12 @@ def _stream_background(
                 return
             elif etype == "error":
                 code = ev.get("error_code", "internal_error")
-                detail = (
-                    "会话繁忙，请稍后重试"
-                    if code == "session_busy"
-                    else f"[程序异常] 引擎执行失败（{ev['error']}）。"
-                )
+                if code == "session_busy":
+                    detail = "会话繁忙，请稍后重试"
+                elif code == "queue_ingress_durability_unavailable":
+                    detail = "排队消息持久化边界不可用，本次尚未执行；队列项已保留可重试"
+                else:
+                    detail = f"[程序异常] 引擎执行失败（{ev['error']}）。"
                 yield _sse("error", {"error": code, "detail": detail})
                 return
     finally:
@@ -653,6 +782,25 @@ def chat_stream(
             content={"error": "workspace_busy", "detail": str(exc)},
         )
 
+    _queue_id = getattr(payload, "queue_id", None)
+    _queue_store: HumanTurnQueue | None = None
+    if _queue_id:
+        if bool(getattr(payload, "resume", False)):
+            return UTF8JSONResponse(
+                status_code=409,
+                content={"error": "queue_claim_mismatch", "detail": "排队项不能作为 resume 订阅重放"},
+            )
+        _queue_store = _human_turn_queue(request)
+        _claimed = _queue_store.claimed_item(session_id, _queue_id)
+        if _claimed is None or not _queue_claim_matches(payload, _claimed, attachment_facts):
+            return UTF8JSONResponse(
+                status_code=409,
+                content={
+                    "error": "queue_claim_mismatch",
+                    "detail": "queue_id 不存在、未处于 claimed，或请求事实与领取时冻结值不一致",
+                },
+            )
+
     # Web 模型选择只在请求成功接单后持久化。未知模型不写 session，
     # 仍交本次 per-call 路由生成“模型不可用”反馈；busy/resume 必须零副作用。
     _persist_model_ref = _canonical_persist_model(engine, payload.model)
@@ -666,6 +814,21 @@ def chat_stream(
             if (_persist_model_ref and not _resume)
             else None
         )
+        # 排队派发承接（feature/webui-human-turn-queue-20260910）：本次 run 若承接
+        # 队列项（queue_id），终态时回写队列状态；fail-open 不影响响应流。
+        _queue_terminal: Callable[[str, str | None], None] | None = None
+        if _queue_id and _queue_store is not None:
+            queue_id = str(_queue_id)
+            queue_store = _queue_store
+
+            def _mark_queue_terminal(status: str, run_error: str | None = None) -> None:
+                if status == "not_started":
+                    queue_store.release(session_id, queue_id)
+                    return
+                queue_store.mark_terminal(session_id, queue_id, status, run_error)
+
+            _queue_terminal = _mark_queue_terminal
+
         if runner is not None and runner.enabled:
             yield from _stream_background(
                 runner,
@@ -677,7 +840,15 @@ def chat_stream(
                 resume=_resume,
                 before_start=_before_start,
                 expected_workspace_epoch=workspace_epoch,
-                user_metadata={"attachments": attachment_facts} if attachment_facts else None,
+                user_metadata=(
+                    {
+                        "attachments": attachment_facts,
+                        **({"human_turn_queue_id": _queue_id} if _queue_id else {}),
+                    }
+                    if attachment_facts or _queue_id
+                    else None
+                ),
+                queue_terminal=_queue_terminal,
             )
             return
         if _resume:
@@ -711,7 +882,14 @@ def chat_stream(
                 on_run_acquired=_before_start,
                 expected_workspace_epoch=workspace_epoch,
                 ingress=issue_ingress("web"),
-                user_metadata={"attachments": attachment_facts} if attachment_facts else None,
+                user_metadata=(
+                    {
+                        "attachments": attachment_facts,
+                        **({"human_turn_queue_id": _queue_id} if _queue_id else {}),
+                    }
+                    if attachment_facts or _queue_id
+                    else None
+                ),
             )
             while True:
                 try:
@@ -736,13 +914,29 @@ def chat_stream(
                     result = exc.value
                     break
         except WorkspaceChangedError as exc:
+            if _queue_terminal is not None:
+                _safe_queue_terminal(_queue_terminal, "failed", str(exc))
             yield _sse("error", {"error": "workspace_changed", "detail": str(exc)})
             return
         except SessionBusyError as exc:
+            if _queue_terminal is not None:
+                _safe_queue_terminal(_queue_terminal, "not_started", str(exc))
             yield _sse("error", {"error": "session_busy", "detail": str(exc)})
+            return
+        except QueuedIngressDurabilityError as exc:
+            if _queue_terminal is not None:
+                _safe_queue_terminal(_queue_terminal, "not_started", str(exc))
+            yield _sse(
+                "error",
+                {"error": "queue_ingress_durability_unavailable", "detail": str(exc)},
+            )
             return
         except Exception as exc:  # noqa: BLE001 — 引擎异常如实反馈（已生成分片不撤回）
             logger.exception("engine.run_stream failed: session_id=%s", session_id)
+            if _queue_terminal is not None:
+                _safe_queue_terminal(
+                    _queue_terminal, "failed", f"[程序异常] {type(exc).__name__}: {exc}"
+                )
             yield _sse(
                 "error",
                 {
@@ -778,6 +972,8 @@ def chat_stream(
                 "reasoning_tokens": getattr(result, "reasoning_tokens", None),
             },
         )
+        if _queue_terminal is not None:
+            _safe_queue_terminal(_queue_terminal, "completed", None)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -815,6 +1011,112 @@ def chat_cancel(payload: ChatCancelRequest, request: Request) -> Response:
         )
     ok = runner.cancel(payload.session_id)
     return UTF8JSONResponse(content={"cancelled": ok})
+
+
+@router.get("/api/v1/chat/queue")
+def queue_list(request: Request, session_id: str = Query(..., description="会话 ID")) -> Response:
+    """查看会话的活跃排队项（FIFO 序；触发 claimed 悬挂 reaper）."""
+    hq = _human_turn_queue(request)
+    items = hq.list_active(session_id)
+    return UTF8JSONResponse(
+        content={
+            "items": items,
+            "count": len(items),
+            "queued": sum(1 for it in items if it.get("status") == "queued"),
+            "claimed": sum(1 for it in items if it.get("status") == "claimed"),
+        }
+    )
+
+
+@router.post("/api/v1/chat/queue", status_code=202)
+def queue_enqueue(payload: QueueEnqueueRequest, request: Request) -> Response:
+    """入队：生成中 Cmd/Ctrl+Enter 插话；冻结本条事实（message/attachments/model）.
+
+    会话不存在 → 404；附件引用非法 → 400（与 /chat 同规则）。
+    """
+    engine = _engine_from(request)
+    if not engine.session.exists(payload.session_id):
+        return UTF8JSONResponse(
+            status_code=404,
+            content={
+                "error": "session_not_found",
+                "detail": session_not_found_message(payload.session_id),
+            },
+        )
+    try:
+        with engine.workspace_snapshot():
+            attachment_facts = _resolve_chat_attachment_facts(
+                engine,
+                payload.attachments,
+                workspace_scope=_current_attachment_workspace_scope(engine),
+            )
+    except (AttachmentError, WorkspaceBusyError) as exc:
+        return UTF8JSONResponse(
+            status_code=400 if isinstance(exc, AttachmentError) else 409,
+            content={"error": "invalid_attachment" if isinstance(exc, AttachmentError) else "workspace_busy", "detail": str(exc)},
+        )
+    hq = _human_turn_queue(request)
+    item = hq.enqueue(
+        payload.session_id,
+        payload.message,
+        attachments=[ref.model_dump() if hasattr(ref, "model_dump") else dict(ref) for ref in payload.attachments],
+        model=payload.model,
+        reasoning_effort=payload.reasoning_effort,
+        reasoning_mode=payload.reasoning_mode,
+        attachment_facts=attachment_facts,
+    )
+    active = hq.list_active(payload.session_id)
+    position = sum(1 for it in active if it.get("status") == "queued")
+    return UTF8JSONResponse(
+        status_code=202,
+        content={"queue_id": item["queue_id"], "position": position, "item": item},
+    )
+
+
+@router.delete("/api/v1/chat/queue")
+def queue_cancel(payload: QueueCancelRequest, request: Request) -> Response:
+    """取消排队项（仅 queued 可取消；claimed 已进入发送流程不可取消）."""
+    hq = _human_turn_queue(request)
+    if not hq.cancel(payload.session_id, payload.queue_id):
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "error": "queue_cancel_conflict",
+                "detail": "排队项不存在或已在发送中，无法取消",
+            },
+        )
+    return UTF8JSONResponse(content={"ok": True})
+
+
+@router.post("/api/v1/chat/queue/dispatch")
+def queue_dispatch(payload: QueueDispatchRequest, request: Request) -> Response:
+    """原子领取队首 queued 项（FIFO）：多标签并发领取只有一个成功（幂等收敛）.
+
+    返回冻结事实（message/attachment_facts/model/...），领取方以其发起正式
+    /chat/stream 请求（带 queue_id）；无法发起（session_busy 等）时调 release 回滚。
+    """
+    hq = _human_turn_queue(request)
+    claimed = hq.dispatch_claim(payload.session_id, claimed_by="web")
+    return UTF8JSONResponse(content={"claimed": claimed})
+
+
+@router.post("/api/v1/chat/queue/release")
+def queue_release(payload: QueueReleaseRequest, request: Request) -> Response:
+    """外部回滚仅允许机械证明 not_started 的 claim；执行态绝不重新排队."""
+    engine = _engine_from(request)
+    hq = _human_turn_queue(request)
+    state = _queue_claim_state(engine, payload.session_id, payload.queue_id)
+    if state != "not_started":
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": "queue_release_not_safe",
+                "detail": f"排队项当前机械状态为 {state}，不能证明未执行，拒绝重新排队",
+            },
+        )
+    ok = hq.release(payload.session_id, payload.queue_id)
+    return UTF8JSONResponse(content={"ok": ok})
 
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"

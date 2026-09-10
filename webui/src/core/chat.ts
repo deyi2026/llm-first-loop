@@ -7,6 +7,7 @@ import type {
   ChatMessage,
   HistoryMessage,
   HistoryResponse,
+  QueueItem,
   StreamOutcome,
   ToolCallDelta,
   ToolCallInfo,
@@ -50,7 +51,7 @@ export async function streamChatRequest(
   const decoder = new TextDecoder();
   let buffer = "";
   let doneData: ChatDoneData | null = null;
-  let errorData: { detail?: string } | null = null;
+  let errorData: { detail?: string; error?: string } | null = null;
   let toolAccum: ToolCallDelta[] = [];
   let finished = false;
   while (!finished) {
@@ -87,7 +88,7 @@ export async function streamChatRequest(
         finished = true;
         break;
       } else if (evt.type === "error") {
-        errorData = (d as { detail?: string }) ?? {};
+        errorData = (d as { detail?: string; error?: string }) ?? {};
         finished = true;
         break;
       }
@@ -183,6 +184,118 @@ export async function uploadFileBase64(
     return { status: resp.status, data };
   } catch {
     return { status: 0, data: { status: "error", detail: "网络连接失败，附件未上传。" } };
+  }
+}
+
+// ── Human Turn 排队（生成中 cmd/ctrl+Enter 插话；后端 durable 事实）──
+
+export interface QueueListResponse {
+  items: QueueItem[];
+  count: number;
+  queued: number;
+  claimed: number;
+}
+
+/** 队列状态列表（FIFO 序；仅活跃项 queued/claimed） */
+export async function fetchQueueList(sessionId: string): Promise<QueueListResponse | null> {
+  try {
+    const resp = await fetch(`/api/v1/chat/queue?session_id=${encodeURIComponent(sessionId)}`);
+    if (!resp.ok) return null;
+    const data = (await resp.json().catch(() => ({}))) as Partial<QueueListResponse>;
+    return {
+      items: Array.isArray(data.items) ? (data.items as QueueItem[]) : [],
+      count: typeof data.count === "number" ? data.count : 0,
+      queued: typeof data.queued === "number" ? data.queued : 0,
+      claimed: typeof data.claimed === "number" ? data.claimed : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export interface QueueEnqueueResponse {
+  ok: boolean;
+  status: number;
+  queue_id?: string;
+  position?: number;
+  error?: string;
+  detail?: string;
+}
+
+/** 入队一条 human turn（冻结 message/attachments/model/effort） */
+export async function enqueueQueueMessage(
+  sessionId: string,
+  message: string,
+  attachments: { ref: string }[],
+  model: string | null,
+  reasoningEffort: string | null,
+  reasoningMode: string | null
+): Promise<QueueEnqueueResponse> {
+  try {
+    const resp = await fetch("/api/v1/chat/queue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        message,
+        attachments,
+        model: model || undefined,
+        reasoning_effort: reasoningEffort || undefined,
+        reasoning_mode: reasoningMode || "auto",
+      }),
+    });
+    const data = (await resp.json().catch(() => ({}))) as {
+      queue_id?: string;
+      position?: number;
+      error?: string;
+      detail?: string;
+    };
+    return { ok: resp.ok, status: resp.status, ...data };
+  } catch {
+    return { ok: false, status: 0, error: "network", detail: "网络连接失败，排队未成功。" };
+  }
+}
+
+/** 取消排队项（仅 queued 可取消） */
+export async function cancelQueueItem(sessionId: string, queueId: string): Promise<boolean> {
+  try {
+    const resp = await fetch("/api/v1/chat/queue", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, queue_id: queueId }),
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** 原子领取队首 queued 项（多标签并发只有一个成功）；null=队空 */
+export async function claimNextQueued(sessionId: string): Promise<QueueItem | null> {
+  try {
+    const resp = await fetch("/api/v1/chat/queue/dispatch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!resp.ok) return null;
+    const data = (await resp.json().catch(() => ({}))) as { claimed?: QueueItem | null };
+    return data.claimed ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** 领取方回滚：claimed → queued（保持 FIFO 位置；session_busy 等无法发起时用） */
+export async function releaseQueueItem(sessionId: string, queueId: string): Promise<void> {
+  try {
+    await fetch("/api/v1/chat/queue/release", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, queue_id: queueId }),
+    });
+  } catch {
+    // fail-open：release 失败由后端 reaper 兜底（悬挂 claimed 超时回滚）
   }
 }
 

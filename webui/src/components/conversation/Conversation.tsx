@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MessageList } from "./MessageList";
+import { ChatQueue } from "./ChatQueue";
 import { Composer } from "./Composer";
 import { SessionStats } from "./SessionStats";
 import { ContinuityBanner } from "./ContinuityBanner";
@@ -75,6 +76,7 @@ export function Conversation() {
         </div>
       )}
       <MessageList />
+      <ChatQueue />
       <Composer />
     </main>
   );

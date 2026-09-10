@@ -74,6 +74,34 @@ afterEach(() => {
 });
 
 describe("product composer", () => {
+  for (const modifier of ["metaKey", "ctrlKey"] as const) {
+    it(`${modifier} + Enter 在生成中把 Human Turn 入队而不是再次直发`, async () => {
+      let queueBody: Record<string, unknown> | null = null;
+      let directStreamCalls = 0;
+      vi.stubGlobal("fetch", baseFetch((url, init) => {
+        if (url.endsWith("/api/v1/chat/queue") && init?.method === "POST") {
+          queueBody = JSON.parse(String(init.body ?? "{}"));
+          return new Response(JSON.stringify({ queue_id: "q-shortcut", position: 1 }), { status: 202 });
+        }
+        if (url.includes("/api/v1/chat/queue?") && (!init?.method || init.method === "GET")) {
+          return new Response(JSON.stringify({ items: [] }), { status: 200 });
+        }
+        if (url.includes("/api/v1/chat/stream")) {
+          directStreamCalls += 1;
+        }
+        return undefined;
+      }));
+      conversationStore.setState({ streaming: true, queueItems: [] });
+      render(<Composer />);
+      const ta = screen.getByTestId("composer-input");
+      fireEvent.change(ta, { target: { value: "生成中插话" } });
+      fireEvent.keyDown(ta, { key: "Enter", [modifier]: true });
+      await waitFor(() => expect(queueBody).not.toBeNull());
+      expect(queueBody).toMatchObject({ session_id: "s1", message: "生成中插话" });
+      expect(directStreamCalls).toBe(0);
+      expect((ta as HTMLTextAreaElement).value).toBe("");
+    });
+  }
   it("同名多文件按唯一实例跟踪，不串 ref，并一次发送全部成功引用", async () => {
     let uploadCount = 0;
     let sent = "";

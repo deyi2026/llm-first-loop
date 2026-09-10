@@ -62,3 +62,16 @@ export const zh = {
   refresh: "刷新",
   sessionTreeRoot: "工作区会话",
 };
+
+// ══ Human Turn 排队（生成中 Cmd/Ctrl+Enter 插话；P0 假对齐修复）══
+// composerHint:27 已宣称"Cmd/Ctrl+Enter 插话发送（排队）"——本组文案补齐真实能力。
+export const queueZh = {
+  queueBarTitle: (n: number) => `已排队 ${n} 条插话，生成完成后按序发送`,
+  queueItemSending: "最新一条发送中",
+  queueCancel: "取消",
+  queueAttachmentsOnly: "［附件消息］",
+  queueEnqueued: "已加入排队（生成完成后自动发送）",
+  queueEnqueueFailed: "排队失败，内容已恢复到输入框",
+  queueEmptyHint: "没有可排队的内容。",
+  queueAttachmentUnready: "有附件仍在处理或处理失败；请等待完成或移除后再排队。",
+};

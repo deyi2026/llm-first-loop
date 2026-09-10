@@ -1,8 +1,18 @@
 // Web V2：对话 store（消息流 / 流式状态 / 历史分页 / 发送·停止·重试）
 
 import { useSyncExternalStore } from "react";
-import type { AttachmentFact, ChatDoneData, ChatMessage } from "./types";
-import { streamChatRequest, toChatMessage, buildAssistantNote, fetchHistory, fetchStreamStatus } from "./chat";
+import type { AttachmentFact, ChatDoneData, ChatMessage, QueueItem } from "./types";
+import {
+  streamChatRequest,
+  toChatMessage,
+  buildAssistantNote,
+  fetchHistory,
+  fetchStreamStatus,
+  fetchQueueList,
+  enqueueQueueMessage,
+  cancelQueueItem,
+  claimNextQueued,
+} from "./chat";
 import { sessionStore } from "./stores";
 
 const HISTORY_PAGE_SIZE = 100;
@@ -25,6 +35,8 @@ interface ConversationState {
   lastError: string | null;
   /** 本次流式开始时刻（占位符等待时长展示；null=未在流式） */
   streamStartedAt: number | null;
+  /** 当前会话的 Human Turn 排队项（FIFO 序；后端 durable 事实的本地镜像） */
+  queueItems: QueueItem[];
 }
 
 const listeners = new Set<() => void>();
@@ -38,6 +50,7 @@ let state: ConversationState = {
   streamingIndex: -1,
   lastError: null,
   streamStartedAt: null,
+  queueItems: [],
 };
 
 let abortCtrl: AbortController | null = null;
@@ -197,6 +210,12 @@ export async function loadHistory(sessionId: string): Promise<void> {
   ensureIdlePoll(sessionId);
   idleProbeFp = fingerprintLatest(messages[messages.length - 1]);
   void checkBackgroundRun(sessionId);
+  // Human Turn 队列：切会话/刷新后恢复队列镜像；空闲且有排队 → 兜底接力
+  // （多标签场景：A 标签关页后其 run 终态无人接力，切回时由这里补发）
+  void (async () => {
+    await refreshQueue(sessionId);
+    void relayNextQueued(sessionId);
+  })();
 }
 
 /** 后台 run 检查：running → resume 订阅（重放已生成内容+实时流式——对齐 DSH 刷新可见中间状态）；
@@ -347,7 +366,15 @@ export interface SendAttachment {
   sha256?: string;
 }
 
-export async function sendMessage(text: string, attachments: SendAttachment[]): Promise<void> {
+/** 队列接力选项：以排队时冻结的事实发起（模型/effort 不取当前 UI 值） */
+export interface SendQueueOpts {
+  queueId: string;
+  frozenModel: string | null;
+  frozenEffort: string | null;
+  frozenReasoningMode: string | null;
+}
+
+export async function sendMessage(text: string, attachments: SendAttachment[], opts?: SendQueueOpts): Promise<void> {
   const cur = conversationStore.getState();
   // 空串归一为 null：新工作区/新会话无会话时后端按"新建会话"处理
   // （不可在此 return，否则新工作区发消息被静默拦截）
@@ -398,10 +425,13 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
     message: text,
     attachments: attachmentRefs,
     session_id: sessionId,
-    model: sessionStore.getState().model,
-    reasoning_effort: sessionStore.getState().reasoningEffort,
-    reasoning_mode: sessionStore.getState().thinkingMode,
+    // 队列接力：用排队时冻结的模型/effort/mode（不取当前 UI 值——冻结语义）
+    model: opts ? opts.frozenModel : sessionStore.getState().model,
+    reasoning_effort: opts ? opts.frozenEffort : sessionStore.getState().reasoningEffort,
+    reasoning_mode: opts ? opts.frozenReasoningMode ?? undefined : sessionStore.getState().thinkingMode,
     new_session: newSessionPending || undefined,
+    // 队列项回写：run 终态时后端把该 queue 项标 completed/failed（durable 收敛）
+    queue_id: opts?.queueId,
   };
   const controller = new AbortController();
   abortCtrl = controller;
@@ -514,7 +544,24 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
       ts: Date.now() / 1000,
     });
     conversationStore.setState({ lastError: note });
+    // 队列路径必有 sessionId（claim 项即来自该会话）；null 时跳过——后端 reaper 兜底
+    if (opts?.queueId && sessionId) {
+      if (outcome.error?.error === "session_busy") {
+        // run owner 已在正式 admission 失败点把该 queue claim 安全回滚；前端只刷新镜像，
+        // 不再自行调用 release（客户端不能成为“是否已开始执行”的真相源）。
+        await refreshQueue(sessionId);
+        return;
+      }
+      // 真失败（引擎/网络）：后端已把 queue 项标 failed；刷新镜像收敛 UI
+      await refreshQueue(sessionId);
+    }
+    // 失败也是终态：队列接力继续（用户可看到错误后下一条照常发出）
+    if (sessionId) void relayNextQueued(sessionId);
+    return;
   }
+  // 成功终态：FIFO 接力下一条排队消息（冻结事实派发）
+  if (opts && sessionId) await refreshQueue(sessionId);
+  if (sessionId) void relayNextQueued(sessionId);
 }
 
 function patchStreaming(partial: Partial<ChatMessage>): void {
@@ -523,4 +570,100 @@ function patchStreaming(partial: Partial<ChatMessage>): void {
   const idx = st.streamingIndex;
   const messages = st.messages.map((m, i) => (i === idx ? { ...m, ...partial } : m));
   conversationStore.setState({ messages });
+}
+
+// ══ Human Turn 排队（生成中 cmd/ctrl+Enter 插话；后端 durable 事实）══
+// 模型（P0 假对齐修复）：zh.ts 已宣称"Cmd/Ctrl+Enter 插话发送（排队）"但
+// 原实现流式时静默 return。本块补齐真实能力：入队冻结事实 → run 终态后
+// FIFO 接力派发（多标签原子 claim 只有一个成功）。
+
+/** 刷新当前会话队列镜像（FIFO 序；切会话/入队/取消/接力后调用） */
+export async function refreshQueue(sessionId: string): Promise<void> {
+  const resp = await fetchQueueList(sessionId);
+  if (!resp) return;
+  // 会话守卫：切换期间返回的旧会话队列不写回当前视图
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
+  conversationStore.setState({ queueItems: resp.items });
+}
+
+/** 入队一条 human turn（流式时 Composer cmd/ctrl+Enter 调用）：
+ *  冻结 message/attachments/model/effort/created_at；返回 false 时调用方提示错误。 */
+export async function enqueueQueueTurn(
+  text: string,
+  attachments: SendAttachment[]
+): Promise<{ ok: boolean; detail?: string }> {
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return { ok: false, detail: "新会话尚未建立，无法排队（先发送第一条消息）" };
+  const sendable = attachments.filter(
+    (a) => a.status === "ok" && typeof a.attachment_ref === "string" && a.attachment_ref.length > 0
+  );
+  if (!text.trim() && sendable.length === 0) return { ok: false, detail: "空消息不能排队" };
+  const refs = sendable.map((a) => ({ ref: a.attachment_ref! }));
+  const st = sessionStore.getState();
+  const resp = await enqueueQueueMessage(
+    sessionId, text.trim(), refs, st.model, st.reasoningEffort, st.thinkingMode
+  );
+  if (!resp.ok) {
+    return { ok: false, detail: resp.detail ?? "排队失败，请稍后重试" };
+  }
+  await refreshQueue(sessionId);
+  return { ok: true };
+}
+
+/** 取消排队项（仅 queued 可取消；claimed 已进入发送流程） */
+export async function cancelQueueTurn(queueId: string): Promise<void> {
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return;
+  const ok = await cancelQueueItem(sessionId, queueId);
+  if (!ok) {
+    // 已被领取/不存在：刷新镜像收敛（终态由后端回写）
+  }
+  await refreshQueue(sessionId);
+}
+
+/** relay 防重入（多路径终态触发：done/error/停止/切回兜底） */
+let relayInFlight: string | null = null;
+
+/** run 终态后 FIFO 接力：原子领取队首 → 以冻结事实发起正式发送。
+ *  多标签并发领取只有一个成功；领取后发现 session_busy/本地仍在流式 → release 回滚保持 FIFO。
+ *  链式接力由 sendMessage 终态再次触发（队列消费自动递归）。 */
+export async function relayNextQueued(sessionId: string): Promise<void> {
+  if (relayInFlight === sessionId) return;
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
+  const st = conversationStore.getState();
+  if (st.streaming || st.backgroundRunning) return; // run 仍在进行：等其终态再接力
+  const hasQueued = st.queueItems.some((it) => it.status === "queued");
+  if (!hasQueued) return;
+  relayInFlight = sessionId;
+  try {
+    const claimed = await claimNextQueued(sessionId);
+    if (!claimed) {
+      await refreshQueue(sessionId); // 队空或被其他标签领走：收敛镜像
+      return;
+    }
+    await refreshQueue(sessionId); // claimed 状态立即反映到 UI
+    // 以冻结事实发起正式发送（模型/effort 用冻结值；queue_id 让后端终态回写队列）
+    const frozenAttachments: SendAttachment[] = (claimed.attachment_facts ?? []).map((f) => ({
+      filename: f.filename,
+      result_text: "",
+      status: "ok",
+      attachment_ref: f.ref,
+      content_type: f.content_type,
+      size_bytes: f.size_bytes,
+      sha256: f.sha256,
+    }));
+    // sendMessage 终态（done/error）会再次触发 relayNextQueued → 链式消费。
+    // 不 await（fire-and-forget）：await 会让本函数直到 run 终态才结束，
+    // 防重入闸 relayInFlight 迟迟不清，反而拦死 sendMessage 终态处的链式接力。
+    void sendMessage(claimed.message || "", frozenAttachments, {
+      queueId: claimed.queue_id,
+      frozenModel: claimed.model ?? null,
+      frozenEffort: claimed.reasoning_effort ?? null,
+      frozenReasoningMode: (claimed as { reasoning_mode?: string }).reasoning_mode ?? null,
+    }).catch(() => {
+      // 兜底：sendMessage 不应抛出；抛出则该队列项悬挂，由后端 reaper 回滚
+    });
+  } finally {
+    relayInFlight = null;
+  }
 }
