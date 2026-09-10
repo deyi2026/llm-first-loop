@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -42,9 +44,24 @@ def axis_change_stats() -> dict[str, int]:
     return dict(_axis_change_stats)
 
 
+# §8 步 6b：请求前缀事件（有界环形缓冲，进程内）。
+# 事件 = 一次主请求的稳定前缀分类记录（axis ∈ init/system/tools/both/unchanged
+# + 8 位短指纹），供步 4 量化验收与排查直接读取；纯加性，不影响门禁。
+_prefix_events: deque[dict[str, str]] = deque(maxlen=256)
+
+
+def request_prefix_events(limit: int | None = None) -> list[dict[str, str]]:
+    """请求前缀事件只读视图；limit 取最近 N 条（§8 步 6b）."""
+    items = list(_prefix_events)
+    if limit is not None:
+        items = items[-limit:]
+    return [dict(e) for e in items]
+
+
 def reset_axis_probe() -> None:
     """采集窗口/测试重置。"""
     _axis_probe_prev.clear()
+    _prefix_events.clear()
     _axis_change_stats.update(
         {
             "system_axis": 0,
@@ -61,6 +78,15 @@ def _probe_axis_change(session_id: str, base_fp: str, tools_fp: str) -> None:
         prev = _axis_probe_prev.get(session_id)
         _axis_probe_prev[session_id] = (base_fp, tools_fp)
         if prev is None:
+            _prefix_events.append(
+                {
+                    "ts": f"{time.time():.3f}",
+                    "session_id": session_id,
+                    "axis": "init",
+                    "system_fp": base_fp[:8],
+                    "tools_fp": tools_fp[:8],
+                }
+            )
             return
         sys_chg = base_fp != prev[0]
         tools_chg = bool(tools_fp) and tools_fp != prev[1]
@@ -72,8 +98,26 @@ def _probe_axis_change(session_id: str, base_fp: str, tools_fp: str) -> None:
             axis = "tools"
         else:
             _axis_change_stats["prefix_unchanged"] += 1
+            _prefix_events.append(
+                {
+                    "ts": f"{time.time():.3f}",
+                    "session_id": session_id,
+                    "axis": "unchanged",
+                    "system_fp": base_fp[:8],
+                    "tools_fp": tools_fp[:8],
+                }
+            )
             return
         _axis_change_stats[f"{axis}_axis"] += 1
+        _prefix_events.append(
+            {
+                "ts": f"{time.time():.3f}",
+                "session_id": session_id,
+                "axis": axis,
+                "system_fp": base_fp[:8],
+                "tools_fp": tools_fp[:8],
+            }
+        )
         logger.info(
             "cache_prefix_axis_change axis=%s session=%s", axis, session_id
         )

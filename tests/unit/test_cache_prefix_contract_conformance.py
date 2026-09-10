@@ -36,7 +36,7 @@ def _drift(m: CacheHealthMonitor) -> int:
     return int(m.snapshot().get("gate_drift_count", -1))
 
 
-def test_A1_c7_1_gate_fail_open() -> None:
+def test_a1_c7_1_gate_fail_open() -> None:
     """§7 第 1 条：门禁任何内部异常不得外溢（fail-open）。"""
     m = CacheHealthMonitor()
     m._baselines = None  # 内部状态损坏 → 内部抛 AttributeError
@@ -44,7 +44,7 @@ def test_A1_c7_1_gate_fail_open() -> None:
     m.postcheck("s", "sysfp-1", "toolsfp-1")   # 不得 raise
 
 
-def test_A2_c7_2_steady_state_zero_cost() -> None:
+def test_a2_c7_2_steady_state_zero_cost() -> None:
     """§7 第 2 条：system/tools 双指纹不变 → 零 drift、零干预、零提示。"""
     m = CacheHealthMonitor()
     m.postcheck("s", "sysfp-1", "toolsfp-1")
@@ -54,7 +54,7 @@ def test_A2_c7_2_steady_state_zero_cost() -> None:
     assert m.force_head_keep_for("s") is False
 
 
-def test_A3_c7_3_tools_axis_never_intervenes() -> None:
+def test_a3_c7_3_tools_axis_never_intervenes() -> None:
     """§7 第 3 条（核心）：tools 指纹独变 = 合法变更 → 仅审计，绝不干预。"""
     m = CacheHealthMonitor()
     m.postcheck("s", "sysfp-1", "toolsfp-1")
@@ -65,7 +65,7 @@ def test_A3_c7_3_tools_axis_never_intervenes() -> None:
     assert _drift(m) == 0, "§7 第 3 条：tools 轴独变不得计入 gate_drift_count"
 
 
-def test_A4_c7_3_system_axis_is_drift() -> None:
+def test_a4_c7_3_system_axis_is_drift() -> None:
     """§7 第 3 条（核心）：system 指纹独变 = 真漂移 → drift + 干预 + 可观测出口。"""
     m = CacheHealthMonitor()
     m.postcheck("s", "sysfp-1", "toolsfp-1")
@@ -77,7 +77,7 @@ def test_A4_c7_3_system_axis_is_drift() -> None:
     assert m.take_gate_note("s") is True, "§9 第 2 条：告警出口必须可观测"
 
 
-def test_A5_c9_2_tools_change_counted_not_intervening() -> None:
+def test_a5_c9_2_tools_change_counted_not_intervening() -> None:
     """§9 第 2 条：tools 独变 → 无提示 + `_tools_change_count` 计 1（不进 snapshot）。"""
     m = CacheHealthMonitor()
     m.postcheck("s", "sys", "toolsfp-1")
@@ -91,7 +91,7 @@ def test_A5_c9_2_tools_change_counted_not_intervening() -> None:
     )
 
 
-def test_A6_c9_2_system_change_hint_and_drift() -> None:
+def test_a6_c9_2_system_change_hint_and_drift() -> None:
     """§9 第 2 条：system 独变 → postcheck 返回合规提示 + drift 计数。"""
     m = CacheHealthMonitor()
     m.postcheck("s", "sysfp-1", "toolsfp-1")
@@ -100,7 +100,7 @@ def test_A6_c9_2_system_change_hint_and_drift() -> None:
     assert _drift(m) == 1
 
 
-def test_A7_c9_3_system_fp_same_form_as_projection_gate() -> None:
+def test_a7_c9_3_system_fp_same_form_as_projection_gate() -> None:
     """§9 第 3 条 + §5 第 2 条：result.system_fp == stable_digest(system_prompt) 裸字符串。"""
     res = _assemble(system_prompt="SYS-CONST-CONF", tool_prefix_fp="toolsfp-1")
     assert getattr(res, "system_fp", None) == stable_digest("SYS-CONST-CONF"), (
@@ -112,7 +112,7 @@ def test_A7_c9_3_system_fp_same_form_as_projection_gate() -> None:
     )
 
 
-def test_A8_c7_4_combined_fp_boundary_sensitivity() -> None:
+def test_a8_c7_4_combined_fp_boundary_sensitivity() -> None:
     """§7 第 4 条：combined stable_fp 对 tools 变化保持敏感（边界保护输入）。"""
     a = _assemble(system_prompt="SYS-CONST-CONF", tool_prefix_fp="toolsfp-1")
     b = _assemble(system_prompt="SYS-CONST-CONF", tool_prefix_fp="toolsfp-2")
@@ -126,7 +126,7 @@ def test_A8_c7_4_combined_fp_boundary_sensitivity() -> None:
 # ───────────────────────── B 静态断言（§9 第 1/5 条）─────────────────────────
 
 
-def test_B1_c9_1_gate_signatures() -> None:
+def test_b1_c9_1_gate_signatures() -> None:
     """§9 第 1 条：preflight/postcheck 签名 == (session_id, system_fp, tools_fp)。"""
     for name in ("preflight", "postcheck"):
         params = list(inspect.signature(getattr(CacheHealthMonitor, name)).parameters)
@@ -135,7 +135,7 @@ def test_B1_c9_1_gate_signatures() -> None:
         )
 
 
-def test_B2_c9_5_deleted_symbols_unreferenced() -> None:
+def test_b2_c9_5_deleted_symbols_unreferenced() -> None:
     """§9 第 5 条：删除面符号在 src/ 全库零引用（清单 = 契约 §6.1 在场 4 项）。"""
     dead = re.compile(
         r"_skel_baselines|_controlled_change_count|_model_prefix_contract"
@@ -150,7 +150,7 @@ def test_B2_c9_5_deleted_symbols_unreferenced() -> None:
     assert not hits, "§9 第 5 条：以下残留引用必须删除：\n" + "\n".join(hits)
 
 
-def test_B3_c9_1_production_callers_pass_both_axes() -> None:
+def test_b3_c9_1_production_callers_pass_both_axes() -> None:
     """§9 第 1 条（尾句）：生产调用方必须同时传双轴（防「分支全绿、生产不传参」退化）。"""
     for fname in ("base_assembly.py", "tail_assembly.py"):
         tree = ast.parse((STAGES / fname).read_text(encoding="utf-8"))
@@ -170,7 +170,7 @@ def test_B3_c9_1_production_callers_pass_both_axes() -> None:
             )
 
 
-def test_B4_c9_5_snapshot_surface() -> None:
+def test_b4_c9_5_snapshot_surface() -> None:
     """§6.1 + §10 Q2：snapshot 不再暴露 controlled_change_count；tools_change_count 不入。"""
     snap = CacheHealthMonitor().snapshot()
     assert "controlled_change_count" not in snap, (
@@ -179,7 +179,7 @@ def test_B4_c9_5_snapshot_surface() -> None:
     assert "tools_change_count" not in snap, "§10 Q2（已决）：不入 snapshot"
 
 
-def test_B5_c7_5_projection_gate_untouched() -> None:
+def test_b5_c7_5_projection_gate_untouched() -> None:
     """§7 第 5 条：projection_gate 的 system_fp=stable_digest(system_prompt) 裸字符串不得回退。"""
     tree = ast.parse(
         (STAGES / "projection_gate.py").read_text(encoding="utf-8")
