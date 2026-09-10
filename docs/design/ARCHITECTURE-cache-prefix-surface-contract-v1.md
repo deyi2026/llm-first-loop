@@ -1,5 +1,7 @@
 # 缓存门禁·前缀表面契约收缩方案（R1–R4）
 
+> **Convergence status (2026-09-11):** R1–R4 双轴契约已在 `fix/cache-axis-convergence-20260911` 上按统一 integration ancestry 重新验证；设计时分支/commit 引用保留为历史 provenance。`610ebe5` 的 auxiliary wire-prefix replay 与 `dae2bcc` 的 replay-prefix unit **不属于本契约的准入结果**：它们为 cache/KV 优化改变 Reflection/Summarizer 的 provider-visible messages/tools，违反已 qualified Learning Plane 的 `no normal agent tools` 边界，故不进入 convergence。当前资格证据见 `docs/QUALIFICATION-20260911-cache-axis-convergence.md`。
+
 - 版本: v1
 - 日期: 2026-09-10
 - 状态: 已实施（f938428，v2 前缀面契约）；本文档为该实现的设计依据
