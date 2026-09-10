@@ -454,7 +454,7 @@ Official references captured for qualification:
 
 ---
 
-## 15. Current operator state is intentionally unbound
+## 15. Initial operator state was intentionally unbound
 
 At RG-3E start, the current `data/providers.json` has routing entries for DeepSeek,
 GLM and MiniMax, but there is no separate qualified resource-product manifest.
@@ -472,6 +472,28 @@ unknown until an explicit operator resource manifest exists.
 
 This means a live Token Plan control-plane request must not be issued solely because a
 MiniMax credential exists. Product binding is a prerequisite to that qualification.
+
+
+### 15.1 E3A-E3C qualification update (2026-09-10)
+
+After the initial E0-E2 qualification, owner-authorized identity discovery and
+read-only control-plane probes established a narrower mixed state:
+
+```text
+DeepSeek standard API/account resource  explicitly bound to local non-secret aliases
+DeepSeek model/pricing identity          still unproven
+MiniMax Token Plan product family        bound
+MiniMax control-plane region             cn (live China endpoint success; global endpoint rejects current key)
+MiniMax plan tier                         unknown
+GLM product/account entitlement          unbound
+```
+
+DeepSeek `/user/balance` and MiniMax China `/v1/token_plan/remains` success schemas
+are independently recorded in
+`docs/QUALIFICATION-20260910-resource-governor-rg3e-e3c.md`.
+
+This does **not** enable E4 mapping or admission. Product/account/tier facts absent
+from authoritative evidence remain unknown.
 
 ---
 
