@@ -16,6 +16,7 @@ from llm_loop.resources.contracts import (
     DeclaredResourceProfile,
     FactProvenance,
     FactSource,
+    MoneyAmount,
     ObservedResourceState,
     PricingRule,
     PricingSchedule,
@@ -55,6 +56,9 @@ class ProviderAdapterGap(StrEnum):
     CONTROL_PLANE_SCHEMA_UNPROVEN = "control_plane_schema_unproven"
     PROVIDER_GLOBAL_COVERAGE_UNPROVEN = "provider_global_coverage_unproven"
     FACT_NOT_CURRENT = "fact_not_current"
+    PROVIDER_STATUS_SEMANTICS_UNPROVEN = "provider_status_semantics_unproven"
+    REMAINING_PERCENT_SEMANTICS_UNPROVEN = "remaining_percent_semantics_unproven"
+    WINDOW_POLICY_SEMANTICS_UNPROVEN = "window_policy_semantics_unproven"
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,32 @@ class ProviderPublishedResourceProfile:
             raise ValueError("product_id must be non-empty when supplied")
         if self.max_concurrency is not None and self.max_concurrency <= 0:
             raise ValueError("max_concurrency must be > 0")
+
+
+@dataclass(frozen=True)
+class ProviderBalanceEntry:
+    """One provider-reported monetary balance row; it is not a budget or spend limit."""
+
+    total: MoneyAmount
+    granted: MoneyAmount
+    topped_up: MoneyAmount
+
+    def __post_init__(self) -> None:
+        currencies = {self.total.currency, self.granted.currency, self.topped_up.currency}
+        if len(currencies) != 1:
+            raise ValueError("balance row money amounts must use one currency")
+
+
+@dataclass(frozen=True)
+class ProviderAccountBalance:
+    """Exact account balance/availability observation with no budget semantics."""
+
+    is_available: bool
+    balances: tuple[ProviderBalanceEntry, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.is_available, bool):
+            raise TypeError("is_available must be bool")
 
 
 @dataclass(frozen=True)
@@ -138,6 +168,7 @@ class ProviderAuthoritativeSnapshot:
     pricing_schedules: tuple[PricingSchedule, ...] = ()
     accounting_windows: tuple[AccountingWindow, ...] = ()
     coverage_proofs: tuple[ProviderGlobalCoverageProof, ...] = ()
+    account_balance: ProviderAccountBalance | None = None
 
     def __post_init__(self) -> None:
         if not self.provider_id.strip():
@@ -171,6 +202,7 @@ class ProviderAuthoritativeSnapshot:
                 self.pricing_schedules,
                 self.accounting_windows,
                 self.coverage_proofs,
+                self.account_balance is not None,
             )
         ):
             raise ValueError("authoritative snapshot must contain at least one normalized fact")
@@ -186,6 +218,8 @@ class ProviderAuthoritativeSnapshot:
         for proof in self.coverage_proofs:
             if proof.key != self.resource_key:
                 raise ValueError("coverage proof key must equal snapshot resource_key")
+        if self.account_balance is not None and self.applicability is not ProviderFactApplicability.EXACT_ACCOUNT:
+            raise ValueError("account balance requires exact-account applicability")
 
 
 @dataclass(frozen=True)

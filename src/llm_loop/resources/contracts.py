@@ -305,7 +305,7 @@ class QuotaSpec:
     provider_unit: str | None = None
 
     def __post_init__(self) -> None:
-        _require_decimal("limit", self.limit, positive=True)
+        _require_decimal("limit", self.limit)
         _require_positive("window_seconds", self.window_seconds)
         _require_non_negative("reset_at", self.reset_at)
         if self.metric is QuotaMetric.PROVIDER_UNITS:

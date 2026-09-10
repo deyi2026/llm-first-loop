@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from decimal import Decimal, InvalidOperation
+
 from llm_loop.resources.contracts import (
     DeclaredResourceProfile,
     FactProvenance,
     FactSource,
+    MoneyAmount,
     PricingRule,
     ResourceKey,
     ResourceProductIdentity,
@@ -15,12 +19,44 @@ from llm_loop.resources.contracts import (
 from llm_loop.resources.ledger_projection import FactValidity, ProviderResourceBinding
 from llm_loop.resources.vendor_adapters._common import product_pricing_snapshot, require_provider
 from llm_loop.resources.vendor_facts import (
+    ProviderAccountBalance,
     ProviderAdapterGap,
     ProviderAdapterResult,
     ProviderAuthoritativeSnapshot,
+    ProviderBalanceEntry,
     ProviderFactApplicability,
     ProviderPublishedResourceProfile,
 )
+
+
+def _mapping(value: object, name: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{name} must be an object")
+    return value
+
+
+def _sequence(value: object, name: str) -> Sequence[object]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(f"{name} must be an array")
+    return value
+
+
+def _text(value: object, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
+    return value.strip()
+
+
+def _decimal_string(value: object, name: str) -> Decimal:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a decimal string")
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"{name} must be a decimal string") from exc
+    if not parsed.is_finite() or parsed < 0:
+        raise ValueError(f"{name} must be a non-negative finite decimal string")
+    return parsed
 
 
 class DeepSeekResourceAdapter:
@@ -96,6 +132,69 @@ class DeepSeekResourceAdapter:
             authoritative=(snapshot,),
             gaps=(ProviderAdapterGap.PROVIDER_GLOBAL_COVERAGE_UNPROVEN,),
         )
+
+    def map_account_balance_response(
+        self,
+        payload: Mapping[str, object],
+        *,
+        key: ResourceKey,
+        product: ResourceProductIdentity,
+        binding: ProviderResourceBinding,
+        provenance: FactProvenance,
+        validity: FactValidity,
+    ) -> ProviderAdapterResult:
+        """Map the independently qualified `/user/balance` schema into account facts."""
+
+        require_provider(self.provider_id, key, product, binding)
+        if key.scope_kind is not ResourceScopeKind.ACCOUNT:
+            raise ValueError("DeepSeek balance requires an ACCOUNT key")
+        if provenance.source is not FactSource.PROVIDER_CONTROL_PLANE:
+            raise ValueError("DeepSeek balance mapping requires provider control-plane provenance")
+        if binding.product != product or not binding.includes(key):
+            raise ValueError("DeepSeek balance binding must include the exact account key/product")
+
+        available = payload.get("is_available")
+        if not isinstance(available, bool):
+            raise ValueError("is_available must be bool")
+        rows = _sequence(payload.get("balance_infos"), "balance_infos")
+        balances: list[ProviderBalanceEntry] = []
+        for index, raw_row in enumerate(rows):
+            row = _mapping(raw_row, f"balance_infos[{index}]")
+            currency = _text(row.get("currency"), f"balance_infos[{index}].currency")
+            balances.append(
+                ProviderBalanceEntry(
+                    total=MoneyAmount(
+                        _decimal_string(row.get("total_balance"), f"balance_infos[{index}].total_balance"),
+                        currency,
+                    ),
+                    granted=MoneyAmount(
+                        _decimal_string(
+                            row.get("granted_balance"), f"balance_infos[{index}].granted_balance"
+                        ),
+                        currency,
+                    ),
+                    topped_up=MoneyAmount(
+                        _decimal_string(
+                            row.get("topped_up_balance"), f"balance_infos[{index}].topped_up_balance"
+                        ),
+                        currency,
+                    ),
+                )
+            )
+        snapshot = ProviderAuthoritativeSnapshot(
+            provider_id=self.provider_id,
+            applicability=ProviderFactApplicability.EXACT_ACCOUNT,
+            resource_key=key,
+            product=product,
+            provenance=provenance,
+            validity=validity,
+            bindings=(binding,),
+            account_balance=ProviderAccountBalance(
+                is_available=available,
+                balances=tuple(balances),
+            ),
+        )
+        return ProviderAdapterResult(authoritative=(snapshot,))
 
     def product_pricing(
         self,

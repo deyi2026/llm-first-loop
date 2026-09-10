@@ -679,3 +679,23 @@ RG-3E bound provider facts
 ```
 
 in **shadow admission simulations**. RG-3F still does not enforce.
+
+---
+
+## 25. E4 exact typed mapping
+
+E4 maps only fields whose product/scope/schema semantics were independently qualified in E3. It remains observation-only and adds no ResourceGovernor consumer.
+
+### 25.1 DeepSeek account balance
+
+`GET /user/balance` maps to an exact-account `ProviderAccountBalance` containing provider-returned availability plus currency-safe balance rows. This fact is deliberately separate from `CostBudget` and `CostUsage`: account balance is money currently reported by the provider, not a time-window spend ceiling or measured spend. Exact monetary values need not be logged for qualification.
+
+### 25.2 MiniMax China Token Plan remains
+
+For an explicit `token-plan`, `region=cn` product binding and successful control-plane response, each returned provider bucket is mapped mechanically into two `QuotaMetric.PROVIDER_UNITS` facts: current window and weekly window. `start_time`/`end_time` define the exact observed `AccountingWindow`; `reset_at` is the observed window end. Zero quota limits are valid mechanical facts and remain distinct from unknown.
+
+The mapper does **not** infer quota math from `remaining_percent`, does not interpret provider status enums, does not assert provider-global exhaustive coverage, and does not assume a stable recurring window duration. E3C observed one `general` window of 18,000 seconds; a later E4 live observation returned 14,400 seconds. Therefore exact current window bounds are authoritative for that snapshot, while recurring window-policy semantics remain `window_policy_semantics_unproven`.
+
+### 25.3 Deliberate non-wiring
+
+E4 does not wire these facts into Governor/admission/enforcement, does not change routing/fallback, and leaves GLM unbound. RG-3F remains a later shadow-admission phase.

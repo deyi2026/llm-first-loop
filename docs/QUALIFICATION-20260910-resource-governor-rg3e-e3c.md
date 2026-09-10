@@ -187,16 +187,18 @@ weekly_remains_time
 
 ### 5.3 Window and unit qualification
 
-Mechanical live checks established:
+Mechanical live checks for the **E3C observation** established:
 
 ```text
-general current interval = 18,000 seconds = 5 hours
-video current interval   = 86,400 seconds = 24 hours
-weekly window            = 604,800 seconds = 7 days
+general current interval = 18,000 seconds in that snapshot
+video current interval   = 86,400 seconds in that snapshot
+weekly window            = 604,800 seconds in that snapshot
 start/end fields          epoch milliseconds
 remains_time              milliseconds remaining until current interval end
 weekly_remains_time       milliseconds remaining until weekly end
 ```
+
+These values qualified the response-field units and the exact bounds of that observation; they did **not** prove a fixed recurring product policy. A later E4 live observation returned a 14,400-second `general` current window while preserving the same start/end schema. The recurring interval rule is therefore explicitly unqualified; consumers must use the response's exact current window rather than a hard-coded 5-hour assumption.
 
 `current_*_total_count` and `current_*_usage_count` were non-negative and usage did not exceed total in the observation.
 

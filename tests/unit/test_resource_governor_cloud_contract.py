@@ -144,8 +144,16 @@ def test_quota_contract_handles_token_and_provider_defined_units() -> None:
         provider_unit="plan_hour_equivalent",
         provenance=_prov(FactSource.PROVIDER_CONTROL_PLANE),
     )
+    zero_quota = QuotaSpec(
+        metric=QuotaMetric.PROVIDER_UNITS,
+        limit=Decimal("0"),
+        window_seconds=18000.0,
+        provider_unit="temporarily_unavailable_bucket",
+        provenance=_prov(FactSource.PROVIDER_CONTROL_PLANE),
+    )
     assert token_quota.metric is QuotaMetric.TOTAL_TOKENS
     assert plan_quota.provider_unit == usage.provider_unit
+    assert zero_quota.limit == Decimal("0")
     with pytest.raises(ValueError, match="provider_unit"):
         QuotaSpec(
             metric=QuotaMetric.PROVIDER_UNITS,
