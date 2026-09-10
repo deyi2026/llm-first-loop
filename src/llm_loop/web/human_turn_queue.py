@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -84,10 +85,8 @@ class HumanTurnQueue:
                 json.dump(payload, f, ensure_ascii=False)
             os.replace(tmp, self._path)
         except BaseException:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp)
-            except OSError:
-                pass
             raise
 
     # ------------------------------------------------------------------ 内部

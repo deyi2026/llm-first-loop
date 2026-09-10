@@ -307,7 +307,7 @@ class TestQueueAPI:
         )
         assert r1.status_code == 202, r1.text
         body1 = r1.json()
-        qid = body1["queue_id"]
+        assert body1["queue_id"]
         assert body1["position"] == 1
 
         r2 = client.post(
@@ -428,8 +428,7 @@ class TestQueueAPI:
         client.post("/api/v1/chat/queue", json={"session_id": sid, "message": "durable"})
 
         data_dir = engine.settings.data_dir
-        from pathlib import Path as _P
-        raw = json.loads((_P(data_dir) / "human_turn_queue.json").read_text(encoding="utf-8"))
+        raw = json.loads((Path(data_dir) / "human_turn_queue.json").read_text(encoding="utf-8"))
         assert any(it["message"] == "durable" for it in raw["items"])
 
 
