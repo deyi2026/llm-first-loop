@@ -517,6 +517,8 @@ RG-2 provider-call lease 与本地 runtime concurrency 细则见 `docs/DESIGN-20
 
 RG-3A cloud facts contract 见 `docs/DESIGN-20260910-resource-governor-rg3a-cloud-facts.md`；**RG-3A 仅冻结 cloud resource facts contract，不接 cloud enforcement**：显式区分 product/account identity、usage unknown vs zero、safe provider error/reset facts、quota、动态 pricing，以及 concurrency/rate/quota/cost 独立资源维度；TrustDomain/cancel 仍不接线。
 
+RG-3B transport observation / shadow 见 `docs/DESIGN-20260910-resource-governor-rg3b-transport-shadow.md`；**RG-3B 只旁路捕获 typed provider transport facts**，admission/routing/fallback/enforcement 不消费 shadow；无法证明含义的 reset/rate 字段保持 unknown。
+
 这套架构必须同时适用于：
 
 ```text

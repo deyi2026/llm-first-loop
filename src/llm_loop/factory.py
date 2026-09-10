@@ -58,6 +58,7 @@ from llm_loop.resources.foreground import ForegroundActivityProbe
 from llm_loop.resources.governor import ResourceGovernor
 from llm_loop.resources.local_runtime import LocalRuntimeConcurrencyAdapter
 from llm_loop.resources.provider_calls import ProviderCallCoordinator
+from llm_loop.resources.transport_observation import ShadowTransportRecorder
 from llm_loop.runtime.causal_diagnose import diagnose_event_store
 from llm_loop.runtime.causality import build_runtime_causal_snapshot
 from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
@@ -228,6 +229,10 @@ def build_engine(settings: Settings) -> LoopEngine:
             exc,
         )
 
+    # RG-3B shadow observation: one bounded process-local recorder is shared by
+    # the default client and every routed client. It is not an admission input.
+    transport_observer = ShadowTransportRecorder()
+
     # LLM 客户端（全限定默认模型走注册表参数, 否则 env 三件套）
     llm = LLMClient(
         api_key=(llm_params or {}).get("api_key", settings.llm_api_key),
@@ -251,6 +256,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         provider=resolved_provider_id,
         send_tool_choice=bool((llm_params or {}).get("send_tool_choice", True)),
         reasoning_split=bool((llm_params or {}).get("reasoning_split", False)),
+        transport_observer=transport_observer,
     )
 
     # M48（design §5.3）: 模型客户端路由池（会话级 model_override 路由 + provider 级缓存）
@@ -264,6 +270,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         model_fallbacks_raw=settings.model_fallbacks_raw,
         base_timeout_s=settings.llm_timeout_s,
         base_max_tokens=settings.llm_max_tokens,
+        transport_observer=transport_observer,
     )
 
     # 存储（记忆 + 压缩档案 + 会话 + fail-open恢复备份）

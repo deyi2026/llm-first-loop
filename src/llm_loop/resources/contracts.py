@@ -510,6 +510,28 @@ class ProviderUsageFacts:
 
 
 @dataclass(frozen=True)
+class ProviderResponseFacts:
+    """Safe normalized HTTP response facts; raw headers are never retained."""
+
+    provider_id: str
+    model_id: str
+    provenance: FactProvenance
+    status_code: int
+    product: ResourceProductIdentity | None = None
+    retry_after_seconds: float | None = None
+    rate_limits: tuple[RateLimitResetFacts, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_text("provider_id", self.provider_id)
+        _require_text("model_id", self.model_id)
+        if not 100 <= self.status_code <= 599:
+            raise ValueError("status_code must be a valid HTTP status")
+        _require_non_negative("retry_after_seconds", self.retry_after_seconds)
+        if self.product is not None and self.product.provider_id != self.provider_id:
+            raise ValueError("product provider_id must match response provider_id")
+
+
+@dataclass(frozen=True)
 class ProviderErrorFacts:
     """Safe normalized provider failure facts; excludes body, raw headers, prompt, and credentials."""
 

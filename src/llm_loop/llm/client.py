@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import time
 from collections.abc import Callable, Iterator
@@ -44,6 +45,38 @@ from llm_loop.llm.errors import (
 from llm_loop.llm.schemas import ToolCallDeltaAggregator
 
 logger = logging.getLogger(__name__)
+
+_SAFE_PROVIDER_CODE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+
+
+def _safe_provider_code_value(value: Any) -> str | None:
+    """Normalize only short structured provider codes, never arbitrary diagnostics."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return str(value) if value >= 0 else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped if _SAFE_PROVIDER_CODE_RE.fullmatch(stripped) else None
+    return None
+
+
+def _safe_provider_code_from_body(body: str) -> str | None:
+    """Read only structured JSON code fields; raw body text is never returned."""
+    if not body:
+        return None
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    error = data.get("error")
+    if isinstance(error, dict):
+        code = _safe_provider_code_value(error.get("code"))
+        if code is not None:
+            return code
+    return _safe_provider_code_value(data.get("code"))
   # finish() 含 json.loads 归一（约束 C5）
 
 
@@ -569,6 +602,9 @@ class LLMClient:
     guard_session_id: str = ""
     guard_compress_count: int = 0
     guard_history_budget: int = 0
+    # RG-3B: bounded process-local shadow recorder. It receives only typed transport
+    # facts and is never consulted for admission/routing/fallback in this phase.
+    transport_observer: Any | None = field(default=None, repr=False, compare=False)
     # 模型切换检测（拷问②）: 记录上次模型——切换时重置 guard 窗口（防旧模型低命中误拦）
     guard_last_model: str = ""
     def __post_init__(self) -> None:
@@ -598,6 +634,55 @@ class LLMClient:
         else:
             trust_env = not _is_local_base
         self._client = httpx.Client(timeout=self.timeout_s, headers=headers, trust_env=trust_env)
+
+    def _observe_transport_response(self, resp: httpx.Response, *, model_id: str) -> None:
+        observer = self.transport_observer
+        if observer is None:
+            return
+        try:
+            observer.record_response(
+                provider_id=self.provider,
+                model_id=model_id,
+                status_code=int(resp.status_code),
+                headers=resp.headers,
+            )
+        except Exception:  # noqa: BLE001 - RG-3B shadow can never affect provider behavior
+            logger.debug("resource transport response observation failed (shadow)", exc_info=True)
+
+    def _observe_transport_usage(self, usage: dict[str, Any], *, model_id: str) -> None:
+        observer = self.transport_observer
+        if observer is None:
+            return
+        try:
+            observer.record_usage(
+                provider_id=self.provider,
+                model_id=model_id,
+                usage=usage,
+            )
+        except Exception:  # noqa: BLE001 - RG-3B shadow can never affect provider behavior
+            logger.debug("resource transport usage observation failed (shadow)", exc_info=True)
+
+    def _observe_transport_error(
+        self,
+        *,
+        model_id: str,
+        status_code: int | None,
+        provider_code: str | None,
+        headers: Any | None = None,
+    ) -> None:
+        observer = self.transport_observer
+        if observer is None:
+            return
+        try:
+            observer.record_error(
+                provider_id=self.provider,
+                model_id=model_id,
+                status_code=status_code,
+                provider_code=provider_code,
+                headers=headers,
+            )
+        except Exception:  # noqa: BLE001 - RG-3B shadow can never affect provider behavior
+            logger.debug("resource transport error observation failed (shadow)", exc_info=True)
 
     def _thinking_supported(self) -> bool:
         """思考参数发送判定（M20 CFG-03 + M47 §5.5）.
@@ -1179,7 +1264,8 @@ class LLMClient:
             with self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
-                self._raise_for_status(resp)
+                self._raise_for_status(resp, model_id=str(payload["model"]))
+                self._observe_transport_response(resp, model_id=str(payload["model"]))
                 for line in resp.iter_lines():
                     if not line or not line.startswith("data: "):
                         continue
@@ -1190,9 +1276,12 @@ class LLMClient:
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
                         continue
-                    self._check_sse_error(chunk)
+                    self._check_sse_error(
+                        chunk, model_id=str(payload["model"]), http_status=int(resp.status_code)
+                    )
                     usage = chunk.get("usage")
                     if isinstance(usage, dict):
+                        self._observe_transport_usage(usage, model_id=str(payload["model"]))
                         # M58 修复（审查中危）: 缺失不覆盖——部分 provider 在中间 chunk
                         # 带 usage 但缺字段（或全 0），覆盖式赋值会把已累计值清零。
                         pt = usage.get("prompt_tokens")
@@ -1401,7 +1490,7 @@ class LLMClient:
             with self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
-                self._raise_for_status(resp)
+                self._raise_for_status(resp, model_id=str(payload["model"]))
                 for line in resp.iter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -1506,7 +1595,7 @@ class LLMClient:
             with self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
-                self._raise_for_status(resp)
+                self._raise_for_status(resp, model_id=model_id)
                 for line in resp.iter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -1597,7 +1686,7 @@ class LLMClient:
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
                 if resp.status_code >= 400:
-                    self._raise_for_status(resp)
+                    self._raise_for_status(resp, model_id=model_id)
                 for line in resp.iter_lines():
                     if not line or not line.startswith("data: "):
                         continue
@@ -1800,9 +1889,17 @@ class LLMClient:
         return out
 
     # ── 共享工具方法 ──
-    def _raise_for_status(self, resp: httpx.Response) -> None:
+    def _raise_for_status(
+        self, resp: httpx.Response, *, model_id: str | None = None
+    ) -> None:
         if resp.status_code >= 400:
             body = resp.read().decode("utf-8", errors="replace")[:2000]
+            self._observe_transport_error(
+                model_id=model_id or self.model,
+                status_code=int(resp.status_code),
+                provider_code=_safe_provider_code_from_body(body),
+                headers=getattr(resp, "headers", None),
+            )
             raise LLMHTTPError(
                 f"HTTP {resp.status_code}: {resp.reason_phrase} | {body}",
                 status_code=resp.status_code,
@@ -1810,12 +1907,24 @@ class LLMClient:
                 provider=self.provider,
             )
 
-    def _check_sse_error(self, chunk: dict[str, Any]) -> None:
+    def _check_sse_error(
+        self,
+        chunk: dict[str, Any],
+        *,
+        model_id: str | None = None,
+        http_status: int | None = None,
+    ) -> None:
         """P1-FEISHU: LM Studio SSE 错误事件检测（HTTP 200 + data: {error:...}）."""
         err_obj = chunk.get("error")
         if isinstance(err_obj, dict):
             msg = err_obj.get("message") or err_obj.get("code") or "未知 SSE 错误"
-            code = err_obj.get("code") or 500
+            raw_code = err_obj.get("code")
+            code = raw_code or 500
+            self._observe_transport_error(
+                model_id=model_id or self.model,
+                status_code=http_status,
+                provider_code=_safe_provider_code_value(raw_code),
+            )
             try:
                 code_i = int(code)
             except Exception:

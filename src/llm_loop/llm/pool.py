@@ -55,6 +55,7 @@ class ModelClientPool:
     # M49（design §5.4）: MODEL_FALLBACKS env 原始字符串（构造时由 builder 注入）
     # 解析在 fallback_candidates() 中按调用执行（每次取最新值，避免启动时缓存过期）
     model_fallbacks_raw: str = ""
+    transport_observer: Any | None = None
 
     def __post_init__(self) -> None:
         # default_client 不参与 provider 热重载；其能力/窗口元数据也必须绑定启动快照。
@@ -151,6 +152,11 @@ class ModelClientPool:
             top_p=top_p,
             top_k=top_k,
             min_p=min_p,
+            **(
+                {"transport_observer": self.transport_observer}
+                if self.transport_observer is not None
+                else {}
+            ),
         )
         if use_cache:
             self._provider_cache[cache_key] = client
