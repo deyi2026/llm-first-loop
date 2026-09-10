@@ -56,6 +56,7 @@ from llm_loop.methods.store import (
 )
 from llm_loop.resources.foreground import ForegroundActivityProbe
 from llm_loop.resources.governor import ResourceGovernor
+from llm_loop.resources.ledger_projection import ProviderSettlementProjectionIndex
 from llm_loop.resources.local_runtime import LocalRuntimeConcurrencyAdapter
 from llm_loop.resources.provider_calls import ProviderCallCoordinator
 from llm_loop.resources.provider_settlement import ProviderCallSettlementJournal
@@ -328,9 +329,16 @@ def build_engine(settings: Settings) -> LoopEngine:
         except Exception:  # noqa: BLE001 — GC 失败不影响启动
             logger.warning("档案 GC 启动清理失败（fail-open）", exc_info=True)
     event_store = _build_event_store(settings)
+    # RG-3D: global SQLite state is a rebuildable cross-session projection only.
+    # EventStore remains the durable SoT; startup never scans historical sessions.
+    provider_settlement_projection_index = ProviderSettlementProjectionIndex(
+        settings.audit_dir / "resource_governor" / "provider_settlement_projection.sqlite3"
+    )
     # RG-3C: EventStore is the durable shadow settlement SoT. The RG-3B
     # recorder only writes normalized mechanical facts into this journal.
-    provider_call_settlement_journal = ProviderCallSettlementJournal(event_store)
+    provider_call_settlement_journal = ProviderCallSettlementJournal(
+        event_store, projection_sink=provider_settlement_projection_index
+    )
     transport_observer.set_settlement_journal(provider_call_settlement_journal)
 
     def identity_history_exists(session_id: str) -> bool:
@@ -1218,6 +1226,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     )
     engine.provider_call_coordinator = provider_call_coordinator
     engine.provider_call_settlement_journal = provider_call_settlement_journal
+    engine.provider_settlement_projection_index = provider_settlement_projection_index
     # RG-3C shadow accounting reaches auxiliary provider users without changing
     # their scheduling/admission behavior in this phase.
     if summarizer is not None:

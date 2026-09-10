@@ -521,6 +521,8 @@ RG-3B transport observation / shadow 见 `docs/DESIGN-20260910-resource-governor
 
 RG-3C unified provider-call settlement / shadow 见 `docs/DESIGN-20260910-resource-governor-rg3c-provider-call-settlement.md`；qualification 见 `docs/QUALIFICATION-20260910-resource-governor-rg3c.md`。**RG-3C 已 PASS/CLOSE：统一 logical call identity、每次真实 transport send 的 attempt lineage 与 durable/idempotent accounting**。已知 usage 求和与完整性分开表达；open/unsettled send 保持 unknown exposure；settlement 仍不参与 admission/routing/fallback/enforcement。
 
+RG-3D global ledger projection / shadow admission facts 见 `docs/DESIGN-20260910-resource-governor-rg3d-ledger-projection.md`。**RG-3D 不把 per-call complete 外推为 account/window complete**：EventStore 继续是 SoT，SQLite 仅为可重建的跨 Session 派生索引；scope binding、exact window、fact validity/freshness、LFL source-set coverage 与 provider-global coverage 分离表达，provider-global 默认 unknown。RG-3D 仍不产生 admit/reject/defer，也不接 cloud enforcement。早期 RG-3A 路线中的 Vendor Adapter / Enforcement 因此顺延到 RG-3E 之后。
+
 这套架构必须同时适用于：
 
 ```text

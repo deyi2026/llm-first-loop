@@ -205,6 +205,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
     # RG-2: qualified provider-call coordinator; never chooses a model or task.
     provider_call_coordinator: Any | None = None
     provider_call_settlement_journal: Any | None = None
+    # RG-3D: rebuildable cross-session settlement projection; shadow facts only.
+    provider_settlement_projection_index: Any | None = None
     # ERR1210 per-engine/session attempt ledger; actual lifecycle owned by RecoveryController.
     _err1210_attempted: dict[str, int]
     # ERC Phase6: optional workspace-activation legacy sidecar migration hook.

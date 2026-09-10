@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from decimal import Decimal
@@ -162,9 +162,16 @@ class ProviderCallSettlementJournal:
     TRANSPORT_SETTLED = "provider.transport.settled"
     CALL_SETTLED = "provider.call.settled"
 
-    def __init__(self, event_store: Any, *, clock=time.time) -> None:
+    def __init__(
+        self,
+        event_store: Any,
+        *,
+        clock=time.time,
+        projection_sink: Any | None = None,
+    ) -> None:
         self._event_store = event_store
         self._clock = clock
+        self._projection_sink = projection_sink
         self._lock = threading.RLock()
         self._loaded_sessions: set[str] = set()
         self._calls: dict[str, ProviderCallIdentity] = {}
@@ -176,6 +183,15 @@ class ProviderCallSettlementJournal:
     @property
     def enabled(self) -> bool:
         return bool(self._event_store is not None and getattr(self._event_store, "enabled", False))
+
+    def _project_written_event(self, event: Any | None) -> None:
+        """Best-effort RG-3D derived projection; EventStore remains the SoT."""
+
+        sink = self._projection_sink
+        if event is None or sink is None:
+            return
+        with suppress(Exception):
+            sink.ingest_event(event)
 
     def _hydrate_session_locked(self, session_id: str) -> None:
         if session_id in self._loaded_sessions:
@@ -284,6 +300,7 @@ class ProviderCallSettlementJournal:
             written = self._event_store.append(session_id, self.CALL_OPENED, payload) if self.enabled else None
             if written is not None:
                 self._calls[call_id] = call
+                self._project_written_event(written)
             return call
 
     def open_transport_attempt(
@@ -321,6 +338,7 @@ class ProviderCallSettlementJournal:
             if written is not None:
                 self._opened_attempts[attempt.attempt_id] = payload
                 self._last_attempt_id[attempt.call_id] = attempt.attempt_id
+                self._project_written_event(written)
             return attempt
 
     @staticmethod
@@ -375,6 +393,7 @@ class ProviderCallSettlementJournal:
             if written is not None:
                 self._settled_attempts[attempt.attempt_id] = candidate
                 self._last_attempt_id[attempt.call_id] = attempt.attempt_id
+                self._project_written_event(written)
                 return dict(candidate)
             return None
 
@@ -451,6 +470,7 @@ class ProviderCallSettlementJournal:
             written = self._event_store.append(call.session_id, self.CALL_SETTLED, payload) if self.enabled else None
             if written is not None:
                 self._settled_calls[call.call_id] = payload
+                self._project_written_event(written)
                 return dict(payload)
             return None
 
