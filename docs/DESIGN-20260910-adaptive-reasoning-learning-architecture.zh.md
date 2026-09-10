@@ -519,7 +519,7 @@ RG-3A cloud facts contract 见 `docs/DESIGN-20260910-resource-governor-rg3a-clou
 
 RG-3B transport observation / shadow 见 `docs/DESIGN-20260910-resource-governor-rg3b-transport-shadow.md`；**RG-3B 只旁路捕获 typed provider transport facts**，admission/routing/fallback/enforcement 不消费 shadow；无法证明含义的 reset/rate 字段保持 unknown。
 
-RG-3C unified provider-call settlement / shadow 见 `docs/DESIGN-20260910-resource-governor-rg3c-provider-call-settlement.md`；**RG-3C 统一 logical call identity、每次真实 transport send 的 attempt lineage 与 durable/idempotent accounting**。已知 usage 求和与完整性分开表达；open/unsettled send 保持 unknown exposure；settlement 仍不参与 admission/routing/fallback/enforcement。
+RG-3C unified provider-call settlement / shadow 见 `docs/DESIGN-20260910-resource-governor-rg3c-provider-call-settlement.md`；qualification 见 `docs/QUALIFICATION-20260910-resource-governor-rg3c.md`。**RG-3C 已 PASS/CLOSE：统一 logical call identity、每次真实 transport send 的 attempt lineage 与 durable/idempotent accounting**。已知 usage 求和与完整性分开表达；open/unsettled send 保持 unknown exposure；settlement 仍不参与 admission/routing/fallback/enforcement。
 
 这套架构必须同时适用于：
 

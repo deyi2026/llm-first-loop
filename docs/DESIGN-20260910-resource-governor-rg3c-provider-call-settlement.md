@@ -1,6 +1,6 @@
 # RG-3C — Unified Provider-Call Settlement / Shadow-First
 
-Status: implementation candidate under qualification
+Status: **QUALIFIED / PASS-CLOSE** (`4ae9255`)
 Date: 2026-09-10
 Parent: RG-3B Transport Observation / Shadow (`4da2c06`)
 Scope: mechanical call identity, physical transport-attempt topology, durable/idempotent accounting only
