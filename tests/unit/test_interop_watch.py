@@ -7,6 +7,7 @@ notify 类不触发 wakeup / 坏文件 fail-open。
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from llm_loop.core.interop_watch import InboxWatcher
@@ -79,16 +80,52 @@ def test_wakeup_only_coordinate_and_rate_limited(tmp_path: Path):
     _write(inbox, "d.json", topic="coordinate")
     w.poll_once()
     assert len(wakeups) == 1
-    # notify 类永不触发（即使限频已过——模拟重置限频）
-    w._last_wakeup = 0.0
+    # notify 类永不触发（即使限频已过——模拟重置限频；与时钟原点解耦）
+    w._last_wakeup = time.monotonic() - w._wakeup_min_interval - 1.0
     _write(inbox, "e.json", topic="notify")
     w.poll_once()
     assert len(wakeups) == 1
     # 限频过后 coordinate 再次触发
-    w._last_wakeup = 0.0
+    w._last_wakeup = time.monotonic() - w._wakeup_min_interval - 1.0
     _write(inbox, "f.json", topic="coordinate")
     w.poll_once()
     assert len(wakeups) == 2
+
+
+def test_wakeup_first_fire_regardless_of_uptime(tmp_path, monkeypatch):
+    """回归(2026-09-10 CI): uptime < 限频窗的机器首条 coordinate 必须唤醒.
+
+    旧实现 _last_wakeup 哨兵 0.0 与 time.monotonic()（原点=开机时刻）耦合：
+    GitHub runner 每作业全新 VM，pytest 时 uptime 常 < 300s → 首轮唤醒被
+    静默限频（CI 掷硬币红绿）。冻结时钟=10s 直接编码该场景。
+    """
+    import time as _time
+    import types
+
+    inbox = tmp_path / "pending"
+    inbox.mkdir(parents=True)
+    wakeups: list[list[str]] = []
+    monkeypatch.setattr(
+        "llm_loop.core.interop_watch.time",
+        types.SimpleNamespace(
+            monotonic=lambda: 10.0,  # 冻结 uptime=10s < 300s
+            time=_time.time,  # startup_cleanup/backlog 仍走真实墙钟
+        ),
+    )
+    w = _watcher(
+        inbox,
+        wakeup_enabled=True,
+        wakeup_fn=lambda n: wakeups.append(n),
+        wakeup_min_interval_s=300,
+    )
+    w.poll_once()  # 基线
+    _write(inbox, "u.json", topic="coordinate")
+    w.poll_once()
+    assert len(wakeups) == 1  # uptime=10s < 300s，首条仍须唤醒
+    # 同一冻结时钟内限频仍生效（不重复唤醒）
+    _write(inbox, "v.json", topic="coordinate")
+    w.poll_once()
+    assert len(wakeups) == 1
 
 
 def test_wakeup_disabled_by_default(tmp_path: Path):
