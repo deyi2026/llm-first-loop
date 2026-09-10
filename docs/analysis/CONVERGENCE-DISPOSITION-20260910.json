@@ -1,0 +1,3359 @@
+{
+  "schema_version": 1,
+  "generated_for": "LFL adaptive reasoning/learning convergence",
+  "generated_at": "2026-09-10",
+  "authority_note": "Mechanical replay matrix. Semantic rationale is in the paired MD; this JSON is not a second architecture SoT.",
+  "official_baseline": "lfl/main@d59169ffb28d",
+  "candidate_semantic_sot": "feature/resource-governor-rg3e-authoritative-adapters-20260910@cf5e6fb",
+  "refs": {
+    "baseline_lfl_main": "d59169ffb28da8134f4246b023082d0581f978de",
+    "p0_clean": "517d7abaa60744a51a78d0e2ed52d42beb468967",
+    "p0a": "8e589de58661188333234d003a72b011fd3d9ad4",
+    "rg3_integration": "9d09a09918298aa3dd3199cad83917907ff54991",
+    "rg3e_qualified": "cf5e6fbd07e7165727b665315ae4ac7ef89cb315",
+    "cache_v2_learning": "d2efc96f2f2e71990ea008651497d5616f7bdb44",
+    "context_elasticity": "14c071086be6ef9cf4e72d2f046204e7373fe163",
+    "human_turn_queue": "f39152084ab420d0922e09c13732573e057df8eb"
+  },
+  "branch_ahead_of_lfl_main": {
+    "p0_clean": 3,
+    "p0a": 7,
+    "rg3_integration": 17,
+    "rg3e_qualified": 22,
+    "cache_v2_learning": 6,
+    "context_elasticity": 13,
+    "human_turn_queue": 1
+  },
+  "current_checkout": {
+    "branch": "feature/learning-plane-p0a-20260910",
+    "head": "8e589de58661188333234d003a72b011fd3d9ad4",
+    "tracked_dirty_count": 16,
+    "working_class_counts": {
+      "matches_p0_clean_and_rg3e": 10,
+      "matches_p0_clean_rg3e_evolved": 4,
+      "unique_current_dirty": 2
+    },
+    "significant_untracked_count": 6,
+    "grouped_untracked_roots": [
+      ".proposals/",
+      ".tmp/",
+      ".worktrees/",
+      "docs/design/"
+    ]
+  },
+  "preintegration_defects": [
+    {
+      "id": "CACHE-V2-AXIS-REVERSAL",
+      "status": "verified",
+      "disposition": "fix_before_integration",
+      "branch": "feature/learning-plane-20260910",
+      "commit": "f938428",
+      "evidence": [
+        "docs/design/ARCHITECTURE-cache-prefix-surface-contract-v1.md: system_fp change => drift/force_head_keep; tools_fp change => audit-only",
+        "src/llm_loop/core/cache_health.py preflight/postcheck: system change => controlled/rebase; tools change => force_head_keep/drift",
+        "No independent cache-gate enable flag found in the feature source/config search."
+      ],
+      "required_next": "Reconcile design vs code authority first; add/verify rollback/default-off decision if retained; do not integrate current patch as-is."
+    },
+    {
+      "id": "HUMAN-TURN-CLAIM-REAPER-DUPLICATE",
+      "status": "verified",
+      "disposition": "fix_before_integration",
+      "branch": "feature/webui-human-turn-queue-20260910",
+      "commit": "f391520",
+      "evidence": [
+        "human_turn_queue.py: any claimed item older than CLAIM_TIMEOUT_S=60 is requeued by read/dispatch paths without checking an active run lease",
+        "routes.py: queue item is marked terminal only at formal run terminal callback",
+        "conversation.ts: claim is followed by fire-and-forget sendMessage; relay guard is released immediately",
+        "test_chat_queue.py explicitly proves a timed-out claimed queue_id can be claimed again."
+      ],
+      "required_next": "Bind claim lifetime to durable run identity/lease or heartbeat/terminal fact; regression must prove a >60s active run cannot be re-dispatched."
+    },
+    {
+      "id": "T2-PROVIDER-ARCHIVE-ORDER",
+      "status": "needs_characterization",
+      "disposition": "characterize_before_fix",
+      "branch": "feature/context-elasticity-20260910",
+      "commit": "6c416da",
+      "evidence": [
+        "history.py contains archived[0:0] front insertion for turn rounding and multiple archived.extend(...) paths",
+        "provider-path cache_archive_provider marking consumes the resulting archived sequence",
+        "No dedicated injected cache_archive_provider test currently proves the intended provider-visible ordering for this mixed path."
+      ],
+      "required_next": "Add one characterization test with ordered sentinel messages and injected cache_archive_provider; only after observed behavior may the issue be classified as bug or expected order."
+    }
+  ],
+  "stale_qualification_actions": [
+    {
+      "path": "docs/QUALIFICATION-20260910-resource-governor-rg3e.md",
+      "action": "add_SUPERSEDED_banner",
+      "points_to": "docs/QUALIFICATION-20260910-resource-governor-rg3e-e4.md"
+    },
+    {
+      "path": "docs/QUALIFICATION-20260910-resource-governor-rg3e-e3c.md",
+      "action": "add_SUPERSEDED_banner",
+      "points_to": "docs/QUALIFICATION-20260910-resource-governor-rg3e-e4.md"
+    }
+  ],
+  "ownership": [
+    {
+      "system": "Task Model",
+      "owns": [
+        "semantics",
+        "strategy",
+        "relevance",
+        "method applicability",
+        "completion judgment"
+      ],
+      "must_not_own": [
+        "physical resource truth"
+      ],
+      "model_veto_exit": "N/A: this is the semantic authority."
+    },
+    {
+      "system": "Learning Plane",
+      "owns": [
+        "Episode->candidate workflow",
+        "durable learning job lifecycle"
+      ],
+      "must_not_own": [
+        "block Task completion",
+        "auto-decide method applicability"
+      ],
+      "model_veto_exit": "Candidate may be none/hold/reject; task model need not retrieve or use any candidate."
+    },
+    {
+      "system": "ResourceGovernor",
+      "owns": [
+        "mechanical concurrency/rate/quota/cost/trust admission for already-selected target"
+      ],
+      "must_not_own": [
+        "provider/model semantic selection",
+        "task value/quality/relevance"
+      ],
+      "model_veto_exit": "Return typed reason + observed facts; model may choose another already-available strategy/target only through normal model/user authority; no hidden auto-routing."
+    },
+    {
+      "system": "StateBraid/backend cache",
+      "owns": [
+        "cache/KV slot lifecycle",
+        "mechanical admission/eviction/restore"
+      ],
+      "must_not_own": [
+        "semantic cache relevance",
+        "method/task priority"
+      ],
+      "model_veto_exit": "Expose capacity/hit/eviction facts; model can request/re-read evidence, but cannot override physical memory safety."
+    },
+    {
+      "system": "Context elasticity",
+      "owns": [
+        "mechanical history projection/fold/window fit"
+      ],
+      "must_not_own": [
+        "semantic importance/relevance verdict"
+      ],
+      "model_veto_exit": "Stable EvidenceRef/exact hydration/raw source recovery where available; no silent semantic deletion."
+    },
+    {
+      "system": "SubAgent runtime",
+      "owns": [
+        "isolated child lifecycle",
+        "durability",
+        "cancel/fencing/delivery"
+      ],
+      "must_not_own": [
+        "Deliberation semantic strategy"
+      ],
+      "model_veto_exit": "Task model decides whether to invoke/accept/ignore a deliberation brief."
+    },
+    {
+      "system": "EventStore",
+      "owns": [
+        "durable factual SoT"
+      ],
+      "must_not_own": [
+        "derived semantic verdicts"
+      ],
+      "model_veto_exit": "Exact event/evidence retrieval; derived stores are rebuildable only."
+    },
+    {
+      "system": "Ledger projection",
+      "owns": [
+        "rebuildable cross-session mechanical projection"
+      ],
+      "must_not_own": [
+        "become second durable truth",
+        "semantic admission policy"
+      ],
+      "model_veto_exit": "Conflicts/coverage gaps remain explicit unknown and defer to EventStore/control-plane facts."
+    },
+    {
+      "system": "ERDC/usage telemetry",
+      "owns": [
+        "cache/prefill/TTFT/token/queue/cost facts"
+      ],
+      "must_not_own": [
+        "judge Method value"
+      ],
+      "model_veto_exit": "Raw/typed metrics remain inspectable; value judgment stays model/human/eval owned."
+    }
+  ],
+  "governance_wiring_A_5": {
+    "control_machinery_gate": [
+      "Every new hard gate/heuristic/silent truncation/compat control must state why model + existing tools cannot safely judge it.",
+      "Every mechanical refusal must document a model-invokable evidence/override/recovery exit, or explicitly prove that no override can exist because it is a physical/safety/protocol boundary.",
+      "Every new Store/Runner/scheduler/governor must declare reuse|replace|second-source-proof and identify the existing authority it does not duplicate.",
+      "Every control change must be represented in the file-level disposition matrix with verification_level and rollback/deny path."
+    ],
+    "submission_gate": "Fail review if a new control machine has no rationale/exit/ownership entry; do not widen test baselines to pass."
+  },
+  "phase_3_5_preregistration": {
+    "purpose": "Test whether qualified Method availability causes repeatable unseen-task improvement before Reasoning Lab or Meta-Learning expansion.",
+    "freeze": [
+      "committed runtime SHA",
+      "provider/model config",
+      "tool surface",
+      "unseen dataset version",
+      "Method library snapshot",
+      "evaluation rules before results"
+    ],
+    "arms": {
+      "A_base": "Target Method unavailable.",
+      "B_qualified": "Qualified target Method discoverable/hydratable; never auto-injected.",
+      "C_placebo": "Irrelevant or shuffled Method library with matched retrieval surface/context opportunity."
+    },
+    "usage_stages": [
+      "available",
+      "discovered",
+      "hydrated",
+      "used_or_referenced",
+      "final_accept_partial_reject_none"
+    ],
+    "metrics": [
+      "task_success",
+      "rounds",
+      "tool_calls",
+      "irrelevant_exploration",
+      "evidence_errors",
+      "input_tokens",
+      "output_tokens",
+      "cache_read_or_hit",
+      "prefill",
+      "TTFT",
+      "queue_delay",
+      "wall_time",
+      "settled_cost"
+    ],
+    "statistics": "Pre-register minimum n and decision rule; reuse existing Wilson CI where applicable. Do not define success after observing results.",
+    "gate": "No material repeatable transfer over base and placebo => HOLD Reasoning Lab expansion and Meta-Learning."
+  },
+  "adaptive_reasoning_control_surface": {
+    "authority": "Model requests effort; adapter applies only supported mechanical capability and returns truthful receipt.",
+    "receipt_fields": [
+      "requested_effort",
+      "applied_effort",
+      "capability_state",
+      "reasoning_token_or_char_count",
+      "input/output tokens",
+      "cache read/hit",
+      "TTFT",
+      "prefill",
+      "wall time",
+      "queue delay",
+      "settled cost if known"
+    ],
+    "cache_stability": [
+      "No per-round auto-growing program narrative",
+      "Never mutate stable prefix",
+      "Prefer model-requested tool result or fixed-shape bounded receipt"
+    ],
+    "forbidden": "No task-complexity classifier or program-owned effort decision."
+  },
+  "deliberation_budget": {
+    "hard_boundaries": [
+      "recursion_depth<=1 candidate",
+      "max 1 active deliberation per source episode candidate",
+      "per-run token/time hard cap",
+      "per-episode accumulated cap",
+      "truthful refusal/timeout receipt; no silent truncation"
+    ],
+    "accounting_authority": "Consumed usage must come from RG-3C/3D settlement/ledger; Deliberation runner may hold configured ceilings but must not maintain a second usage truth.",
+    "unknown_rule": "unknown != zero != unlimited"
+  },
+  "qualification_independence_facts": [
+    "different_episode",
+    "different_session",
+    "different_benchmark_case",
+    "different_workspace",
+    "different_provider",
+    "different_model",
+    "time_separation",
+    "counterexample_attempt_ref"
+  ],
+  "integration_order": [
+    "A Convergence / file-level disposition",
+    "A.5 Governance wiring gate",
+    "B Runtime substrate freeze on a single integration ancestry",
+    "C Phase 3.5 pre-registered A/B/placebo measurement loop",
+    "D RG-3F shadow admission + TrustDomain + adaptive effort control + deliberation mechanical budgets",
+    "E Reasoning Lab MVP as restricted SubAgent profile + ReasoningBrief artifact/event projection",
+    "F IndependenceFacts + transfer telemetry",
+    "G Reasoning Skills/Method governance reuse",
+    "H Meta-Learning only after repeated unseen transfer evidence",
+    "I Long-running benchmark as expansion of Phase 3.5, not first measurement"
+  ],
+  "file_matrix": [
+    {
+      "path": "README.md",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "4b07ea153f9a6459ef0054554ece81deaf3299ee",
+        "p0_clean": "add74d6c6d2df10e77eb82f30539af2975a5fee2",
+        "p0a": "add74d6c6d2df10e77eb82f30539af2975a5fee2",
+        "rg3_integration": "add74d6c6d2df10e77eb82f30539af2975a5fee2",
+        "rg3e_qualified": "add74d6c6d2df10e77eb82f30539af2975a5fee2",
+        "cache_v2_learning": "4b07ea153f9a6459ef0054554ece81deaf3299ee",
+        "context_elasticity": "4b07ea153f9a6459ef0054554ece81deaf3299ee",
+        "human_turn_queue": "4b07ea153f9a6459ef0054554ece81deaf3299ee"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/CHANGELOG.md",
+      "changed_from_baseline_in": [
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "b014ebb4d0bb2c886663e473354fcd0d16085267",
+        "p0_clean": "b014ebb4d0bb2c886663e473354fcd0d16085267",
+        "p0a": "b014ebb4d0bb2c886663e473354fcd0d16085267",
+        "rg3_integration": "b014ebb4d0bb2c886663e473354fcd0d16085267",
+        "rg3e_qualified": "b014ebb4d0bb2c886663e473354fcd0d16085267",
+        "cache_v2_learning": "b014ebb4d0bb2c886663e473354fcd0d16085267",
+        "context_elasticity": "16120656e9a9d651c619888fcc8f74e91a25094b",
+        "human_turn_queue": "b014ebb4d0bb2c886663e473354fcd0d16085267"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/DESIGN-20260910-adaptive-reasoning-learning-architecture.zh.md",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": "c02171d030cb2663c877983630dab54e3f2f7b53",
+        "p0a": null,
+        "rg3_integration": "2390350de49d8011281ad442ec97cc6362ecbafb",
+        "rg3e_qualified": "303bcc906b86f79cc4266521c67f5f5bf87ac6ba",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/DESIGN-20260910-learning-plane.md",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": "8ce092e8a1f509eacd8da055355bfd17ae40fe4c",
+        "p0a": "ce4b4ee82544e310c4f2a053fab038ef5630c239",
+        "rg3_integration": "8ce092e8a1f509eacd8da055355bfd17ae40fe4c",
+        "rg3e_qualified": "8ce092e8a1f509eacd8da055355bfd17ae40fe4c",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/DESIGN-20260910-reflection-session-decoupled-learning.md",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": "15eb9d6d63c5f0c3a41d5eaa6df2ee058322e731",
+        "p0a": "15eb9d6d63c5f0c3a41d5eaa6df2ee058322e731",
+        "rg3_integration": "15eb9d6d63c5f0c3a41d5eaa6df2ee058322e731",
+        "rg3e_qualified": "15eb9d6d63c5f0c3a41d5eaa6df2ee058322e731",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/DESIGN-20260910-resource-governor-rg0.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "8ac5d1a3d7620ce21b418df43650d04d96a6fb71",
+        "rg3e_qualified": "8ac5d1a3d7620ce21b418df43650d04d96a6fb71",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/DESIGN-20260910-resource-governor-rg1.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "7e40adf71978b94de21ffb10542a93ae5770fe32",
+        "rg3e_qualified": "7e40adf71978b94de21ffb10542a93ae5770fe32",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/DESIGN-20260910-resource-governor-rg2.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "338ab72a08528e6ae53231b4455e6e35614ce122",
+        "rg3e_qualified": "338ab72a08528e6ae53231b4455e6e35614ce122",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/DESIGN-20260910-resource-governor-rg3a-cloud-facts.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "175d9f946b559510395a881b08e082dbe94141ae",
+        "rg3e_qualified": "175d9f946b559510395a881b08e082dbe94141ae",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/DESIGN-20260910-resource-governor-rg3b-transport-shadow.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "ddf0f14af1ad2aceb94de55129a30432b3615949",
+        "rg3e_qualified": "ddf0f14af1ad2aceb94de55129a30432b3615949",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/DESIGN-20260910-resource-governor-rg3c-provider-call-settlement.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "34122e4c9066bb15ed768003d439e4d76ae565af",
+        "rg3e_qualified": "34122e4c9066bb15ed768003d439e4d76ae565af",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/DESIGN-20260910-resource-governor-rg3d-ledger-projection.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "73ea3b83fb51c3724a0629908a53cdcca56f009f",
+        "rg3e_qualified": "73ea3b83fb51c3724a0629908a53cdcca56f009f",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/DESIGN-20260910-resource-governor-rg3e-authoritative-adapters.md",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "6e9818e976f9c3d690b4a829099c58b9cdf8f91e",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/METHOD_LEARNING_V1.md",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "d6252c5f671b2063d73797b0a6183730fd33a459",
+        "p0_clean": "9647bb12537629e694cdd365e99e2c9cd222eb7b",
+        "p0a": "d6252c5f671b2063d73797b0a6183730fd33a459",
+        "rg3_integration": "9647bb12537629e694cdd365e99e2c9cd222eb7b",
+        "rg3e_qualified": "9647bb12537629e694cdd365e99e2c9cd222eb7b",
+        "cache_v2_learning": "d6252c5f671b2063d73797b0a6183730fd33a459",
+        "context_elasticity": "d6252c5f671b2063d73797b0a6183730fd33a459",
+        "human_turn_queue": "d6252c5f671b2063d73797b0a6183730fd33a459"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "9647bb12537629e694cdd365e99e2c9cd222eb7b",
+        "sha256": "ecec04bf0ce79dfe631c076fe282aa019be438e3630ee0533073acfa9b8a4011",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e"
+      },
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/QUALIFICATION-20260910-resource-governor-rg1.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "651e3ff455e2a388abc499c5acfc40db53fc06b3",
+        "rg3e_qualified": "651e3ff455e2a388abc499c5acfc40db53fc06b3",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/QUALIFICATION-20260910-resource-governor-rg2.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "a8b5d1721596490f52f5f9d900b754f57fdb6bc0",
+        "rg3e_qualified": "a8b5d1721596490f52f5f9d900b754f57fdb6bc0",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/QUALIFICATION-20260910-resource-governor-rg3a.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "6b25d84d042008c83f20c476a42b2628e582fb5c",
+        "rg3e_qualified": "6b25d84d042008c83f20c476a42b2628e582fb5c",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/QUALIFICATION-20260910-resource-governor-rg3b.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "3048ab07365ff4c37ee07edf2d7ff7b6492c60a5",
+        "rg3e_qualified": "3048ab07365ff4c37ee07edf2d7ff7b6492c60a5",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/QUALIFICATION-20260910-resource-governor-rg3c.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "619250b66acdadf918dfb5230ff03bd32f9a3493",
+        "rg3e_qualified": "619250b66acdadf918dfb5230ff03bd32f9a3493",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/QUALIFICATION-20260910-resource-governor-rg3d.md",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "0bb65100bd620f87c7b664b9ef16ddbf0f691db4",
+        "rg3e_qualified": "0bb65100bd620f87c7b664b9ef16ddbf0f691db4",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/QUALIFICATION-20260910-resource-governor-rg3e-e3c.md",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "b425322ef1f8551d02085a710b0cf736d30679c9",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "replace",
+      "verification_level": "verified",
+      "reason": "Historical RG-3E qualification has a stale HOLD verdict; add SUPERSEDED banner and point to E4/E5 final qualification.",
+      "target_layer": "documentation_reconciliation"
+    },
+    {
+      "path": "docs/QUALIFICATION-20260910-resource-governor-rg3e-e4.md",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "290d0a62abe917771ca123bd7beed7635a30bda2",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Authoritative current RG-3E E0-E5 PASS/CLOSE qualification.",
+      "target_layer": "documentation_sot"
+    },
+    {
+      "path": "docs/QUALIFICATION-20260910-resource-governor-rg3e.md",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "562c8e861393add732865522955a7ba6989e770b",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "replace",
+      "verification_level": "verified",
+      "reason": "Historical RG-3E qualification has a stale HOLD verdict; add SUPERSEDED banner and point to E4/E5 final qualification.",
+      "target_layer": "documentation_reconciliation"
+    },
+    {
+      "path": "docs/analysis/QUALIFICATION-20260910-learning-plane-p0.md",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": "303da6e8362ed66dacf76d2100c1bcfa6739d160",
+        "p0a": null,
+        "rg3_integration": "303da6e8362ed66dacf76d2100c1bcfa6739d160",
+        "rg3e_qualified": "303da6e8362ed66dacf76d2100c1bcfa6739d160",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/configuration.md",
+      "changed_from_baseline_in": [
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "1133b9b40af1c790513e95c22eccb22f05e76fb6",
+        "p0_clean": "1133b9b40af1c790513e95c22eccb22f05e76fb6",
+        "p0a": "1133b9b40af1c790513e95c22eccb22f05e76fb6",
+        "rg3_integration": "1133b9b40af1c790513e95c22eccb22f05e76fb6",
+        "rg3e_qualified": "1133b9b40af1c790513e95c22eccb22f05e76fb6",
+        "cache_v2_learning": "1133b9b40af1c790513e95c22eccb22f05e76fb6",
+        "context_elasticity": "90fa42b66cbe0ed7f12da3d4f51b433386cef98e",
+        "human_turn_queue": "1133b9b40af1c790513e95c22eccb22f05e76fb6"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "docs/design/ARCHITECTURE-cache-prefix-surface-contract-v1.md",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": "83395b9d9a023acdceed0ef13d3870d150f5ea0c",
+        "context_elasticity": "83395b9d9a023acdceed0ef13d3870d150f5ea0c",
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "hold",
+      "verification_level": "verified",
+      "reason": "Cache-v2 branch has a verified design-vs-code axis reversal; characterize/fix before any integration of this feature patch.",
+      "target_layer": "preintegration_defect_cache_v2"
+    },
+    {
+      "path": "docs/development_methodology.md",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "61456cf9b765662f49a3e72900cd60911bcbc330",
+        "p0_clean": "e47278a26f3b6601f0241a0ecbb8d36673a964d6",
+        "p0a": "a3729ed82a3419f58bd9a60f428e4af4c6fdb169",
+        "rg3_integration": "e47278a26f3b6601f0241a0ecbb8d36673a964d6",
+        "rg3e_qualified": "e47278a26f3b6601f0241a0ecbb8d36673a964d6",
+        "cache_v2_learning": "61456cf9b765662f49a3e72900cd60911bcbc330",
+        "context_elasticity": "61456cf9b765662f49a3e72900cd60911bcbc330",
+        "human_turn_queue": "61456cf9b765662f49a3e72900cd60911bcbc330"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "e47278a26f3b6601f0241a0ecbb8d36673a964d6",
+        "sha256": "19a0d0415db4e267eeeae4f62671d3c7b2a04854113e995d0dbbbd2a105e2b96",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e"
+      },
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "ocs/DESIGN-20260910-learning-plane.md",
+      "changed_from_baseline_in": [],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": {
+        "status": "M ",
+        "blob_oid": null,
+        "sha256": null,
+        "classification_10_4_2": "matches_p0_clean_and_rg3e"
+      },
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "scripts/ci_gate.sh",
+      "changed_from_baseline_in": [
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "bdbc37585f7830fa553464db65ccfc395a2104d1",
+        "p0_clean": "bdbc37585f7830fa553464db65ccfc395a2104d1",
+        "p0a": "7fcc98f50ec34218d790da801461eb7f71b3e174",
+        "rg3_integration": "7fcc98f50ec34218d790da801461eb7f71b3e174",
+        "rg3e_qualified": "7fcc98f50ec34218d790da801461eb7f71b3e174",
+        "cache_v2_learning": "bdbc37585f7830fa553464db65ccfc395a2104d1",
+        "context_elasticity": "bdbc37585f7830fa553464db65ccfc395a2104d1",
+        "human_turn_queue": "bdbc37585f7830fa553464db65ccfc395a2104d1"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "scripts/r9_commit.sh",
+      "changed_from_baseline_in": [
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "f7d31f692da24afcf77c0d74ce6975febcaa98f1",
+        "p0_clean": "f7d31f692da24afcf77c0d74ce6975febcaa98f1",
+        "p0a": "f08fbf72ace74ae4989e46183ea581e0b1fdb46b",
+        "rg3_integration": "f08fbf72ace74ae4989e46183ea581e0b1fdb46b",
+        "rg3e_qualified": "f08fbf72ace74ae4989e46183ea581e0b1fdb46b",
+        "cache_v2_learning": "f7d31f692da24afcf77c0d74ce6975febcaa98f1",
+        "context_elasticity": "f7d31f692da24afcf77c0d74ce6975febcaa98f1",
+        "human_turn_queue": "f7d31f692da24afcf77c0d74ce6975febcaa98f1"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "scripts/restart_mirror.sh",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "1f05e7dbb6a3789b84cf117eac7de43ce419a1f8",
+        "p0_clean": "1f05e7dbb6a3789b84cf117eac7de43ce419a1f8",
+        "p0a": "39c96e7cf1606e2ed96855048c718587ca9d8b09",
+        "rg3_integration": "39c96e7cf1606e2ed96855048c718587ca9d8b09",
+        "rg3e_qualified": "39c96e7cf1606e2ed96855048c718587ca9d8b09",
+        "cache_v2_learning": "39c96e7cf1606e2ed96855048c718587ca9d8b09",
+        "context_elasticity": "39c96e7cf1606e2ed96855048c718587ca9d8b09",
+        "human_turn_queue": "1f05e7dbb6a3789b84cf117eac7de43ce419a1f8"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "scripts/run_real_smoke.sh",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "af568863490bfc3471178c4200caae16b0520360",
+        "p0_clean": "af568863490bfc3471178c4200caae16b0520360",
+        "p0a": "af568863490bfc3471178c4200caae16b0520360",
+        "rg3_integration": "af568863490bfc3471178c4200caae16b0520360",
+        "rg3e_qualified": "af568863490bfc3471178c4200caae16b0520360",
+        "cache_v2_learning": "1832124b394ad266e98d2e2472b9d9f996a94dfb",
+        "context_elasticity": "1832124b394ad266e98d2e2472b9d9f996a94dfb",
+        "human_turn_queue": "af568863490bfc3471178c4200caae16b0520360"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/config.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "9bec4100f398388dfc5a64ea742e802285460f0a",
+        "p0_clean": "ad0ca0c8a1cfab836b7c9d63f7daf55449780eb1",
+        "p0a": "e4f0db837378d0354819b7f4468970e892c8232d",
+        "rg3_integration": "ad0ca0c8a1cfab836b7c9d63f7daf55449780eb1",
+        "rg3e_qualified": "ad0ca0c8a1cfab836b7c9d63f7daf55449780eb1",
+        "cache_v2_learning": "9bec4100f398388dfc5a64ea742e802285460f0a",
+        "context_elasticity": "9bec4100f398388dfc5a64ea742e802285460f0a",
+        "human_turn_queue": "9bec4100f398388dfc5a64ea742e802285460f0a"
+      },
+      "working_tree": null,
+      "disposition": "hold",
+      "verification_level": "verified",
+      "reason": "p0a carries independent DeepSeek default-model migration 8e589de; review/reapply as a provider-config patch and requalify on unified tree.",
+      "target_layer": "provider_config_review"
+    },
+    {
+      "path": "src/llm_loop/core/cache_health.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "d1a2490edaff4fab08f99caa723454d764a9fc8b",
+        "p0_clean": "d1a2490edaff4fab08f99caa723454d764a9fc8b",
+        "p0a": "d1a2490edaff4fab08f99caa723454d764a9fc8b",
+        "rg3_integration": "d1a2490edaff4fab08f99caa723454d764a9fc8b",
+        "rg3e_qualified": "d1a2490edaff4fab08f99caa723454d764a9fc8b",
+        "cache_v2_learning": "1dc10f8f346717927a92becbf284d6b2ad93b8a3",
+        "context_elasticity": "1dc10f8f346717927a92becbf284d6b2ad93b8a3",
+        "human_turn_queue": "d1a2490edaff4fab08f99caa723454d764a9fc8b"
+      },
+      "working_tree": null,
+      "disposition": "hold",
+      "verification_level": "verified",
+      "reason": "Cache-v2 branch has a verified design-vs-code axis reversal; characterize/fix before any integration of this feature patch.",
+      "target_layer": "preintegration_defect_cache_v2"
+    },
+    {
+      "path": "src/llm_loop/core/history.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "1960fb55347a86b0810bd62d8b06b2a0faa4a507",
+        "p0_clean": "1960fb55347a86b0810bd62d8b06b2a0faa4a507",
+        "p0a": "1960fb55347a86b0810bd62d8b06b2a0faa4a507",
+        "rg3_integration": "1960fb55347a86b0810bd62d8b06b2a0faa4a507",
+        "rg3e_qualified": "1960fb55347a86b0810bd62d8b06b2a0faa4a507",
+        "cache_v2_learning": "5fdc52604589dcd3f5090823045042f0f668d407",
+        "context_elasticity": "469595d928610fbcfcdeec867ef902b3936da4ff",
+        "human_turn_queue": "1960fb55347a86b0810bd62d8b06b2a0faa4a507"
+      },
+      "working_tree": null,
+      "disposition": "hold",
+      "verification_level": "needs_characterization",
+      "reason": "T2 archive ordering concern is code-shape evidence only; add provider-path ordering characterization before deciding bug/fix.",
+      "target_layer": "preintegration_characterization_t2"
+    },
+    {
+      "path": "src/llm_loop/core/loop/build.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "c0708f5e873a63eb60449433b343edcf53c3b05b",
+        "p0_clean": "c0708f5e873a63eb60449433b343edcf53c3b05b",
+        "p0a": "c0708f5e873a63eb60449433b343edcf53c3b05b",
+        "rg3_integration": "c0708f5e873a63eb60449433b343edcf53c3b05b",
+        "rg3e_qualified": "c0708f5e873a63eb60449433b343edcf53c3b05b",
+        "cache_v2_learning": "1bf9a8a50e0c5e775ac4f9fac5c81123c79cc7e3",
+        "context_elasticity": "1bf9a8a50e0c5e775ac4f9fac5c81123c79cc7e3",
+        "human_turn_queue": "c0708f5e873a63eb60449433b343edcf53c3b05b"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/core/loop/engine.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "b8204b7b79a8ff456b9d267359edb1226df4187d",
+        "p0_clean": "4f9c088fcf751383ed259703ddd21ac84344fd3a",
+        "p0a": "ea71a242c41c61feda0a95527ccb97064727bb18",
+        "rg3_integration": "c0cb492dfd23e37e3726cfb182aa1b6e72f68c84",
+        "rg3e_qualified": "c0cb492dfd23e37e3726cfb182aa1b6e72f68c84",
+        "cache_v2_learning": "b8204b7b79a8ff456b9d267359edb1226df4187d",
+        "context_elasticity": "b8204b7b79a8ff456b9d267359edb1226df4187d",
+        "human_turn_queue": "b8204b7b79a8ff456b9d267359edb1226df4187d"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "4f9c088fcf751383ed259703ddd21ac84344fd3a",
+        "sha256": "be277955568051f13a0049992038c85c988174c4dbe2bdd7720c274ef71365d7",
+        "classification_10_4_2": "matches_p0_clean_rg3e_evolved"
+      },
+      "disposition": "replace",
+      "verification_level": "verified",
+      "reason": "Current dirty copy equals P0-clean but RG-3E has later qualified evolution; take RG-3E version, do not replay the stale dirty copy.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/core/loop/engine_services/fallback.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "72ddc7d63065958f4ce75b9d684d4982db81268c",
+        "p0_clean": "72ddc7d63065958f4ce75b9d684d4982db81268c",
+        "p0a": "72ddc7d63065958f4ce75b9d684d4982db81268c",
+        "rg3_integration": "a565a2567d660edf47a9deaae156acdf7ca20769",
+        "rg3e_qualified": "a565a2567d660edf47a9deaae156acdf7ca20769",
+        "cache_v2_learning": "72ddc7d63065958f4ce75b9d684d4982db81268c",
+        "context_elasticity": "72ddc7d63065958f4ce75b9d684d4982db81268c",
+        "human_turn_queue": "72ddc7d63065958f4ce75b9d684d4982db81268c"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/core/loop/engine_services/recovery_controller.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "a55ef56d25f675339eff73687bea4e091ae8c608",
+        "p0_clean": "a55ef56d25f675339eff73687bea4e091ae8c608",
+        "p0a": "a55ef56d25f675339eff73687bea4e091ae8c608",
+        "rg3_integration": "1a5407e8f97d414dfd27438a60e01f6945d2fb16",
+        "rg3e_qualified": "1a5407e8f97d414dfd27438a60e01f6945d2fb16",
+        "cache_v2_learning": "a55ef56d25f675339eff73687bea4e091ae8c608",
+        "context_elasticity": "a55ef56d25f675339eff73687bea4e091ae8c608",
+        "human_turn_queue": "a55ef56d25f675339eff73687bea4e091ae8c608"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/core/loop/events.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "aac411436cc4bc0c5dfdadf4734c213d6a060faf",
+        "p0_clean": "b1b5ca76f9560cb44c209184931599a5c81a51b2",
+        "p0a": "aac411436cc4bc0c5dfdadf4734c213d6a060faf",
+        "rg3_integration": "b1b5ca76f9560cb44c209184931599a5c81a51b2",
+        "rg3e_qualified": "b1b5ca76f9560cb44c209184931599a5c81a51b2",
+        "cache_v2_learning": "aac411436cc4bc0c5dfdadf4734c213d6a060faf",
+        "context_elasticity": "aac411436cc4bc0c5dfdadf4734c213d6a060faf",
+        "human_turn_queue": "aac411436cc4bc0c5dfdadf4734c213d6a060faf"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "b1b5ca76f9560cb44c209184931599a5c81a51b2",
+        "sha256": "b1858b81dd0ee7144e2cfa00a35a55c249a516a7df9f12478ed54a439f43581d",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e"
+      },
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/core/loop/method_learning.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "4b1fff0afd9a2d7cf14dcde176fd30e1aa785d72",
+        "p0_clean": "5093474da92e08e2275b7327b0d4a97918d26b1f",
+        "p0a": "5093474da92e08e2275b7327b0d4a97918d26b1f",
+        "rg3_integration": "5093474da92e08e2275b7327b0d4a97918d26b1f",
+        "rg3e_qualified": "5093474da92e08e2275b7327b0d4a97918d26b1f",
+        "cache_v2_learning": "4b1fff0afd9a2d7cf14dcde176fd30e1aa785d72",
+        "context_elasticity": "4b1fff0afd9a2d7cf14dcde176fd30e1aa785d72",
+        "human_turn_queue": "4b1fff0afd9a2d7cf14dcde176fd30e1aa785d72"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/core/prompt_build/stages/base_assembly.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "27d366fa1a2e510cab2c828250d759f27c9b1127",
+        "p0_clean": "27d366fa1a2e510cab2c828250d759f27c9b1127",
+        "p0a": "27d366fa1a2e510cab2c828250d759f27c9b1127",
+        "rg3_integration": "27d366fa1a2e510cab2c828250d759f27c9b1127",
+        "rg3e_qualified": "27d366fa1a2e510cab2c828250d759f27c9b1127",
+        "cache_v2_learning": "743ea29f42a1d1c6a1e63880748639904a98607d",
+        "context_elasticity": "743ea29f42a1d1c6a1e63880748639904a98607d",
+        "human_turn_queue": "27d366fa1a2e510cab2c828250d759f27c9b1127"
+      },
+      "working_tree": null,
+      "disposition": "hold",
+      "verification_level": "verified",
+      "reason": "Cache-v2 branch has a verified design-vs-code axis reversal; characterize/fix before any integration of this feature patch.",
+      "target_layer": "preintegration_defect_cache_v2"
+    },
+    {
+      "path": "src/llm_loop/core/prompt_build/stages/history_budget_prep.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "853b090943f3a5384bb746e48c260be0cb7403dc",
+        "p0_clean": "853b090943f3a5384bb746e48c260be0cb7403dc",
+        "p0a": "853b090943f3a5384bb746e48c260be0cb7403dc",
+        "rg3_integration": "853b090943f3a5384bb746e48c260be0cb7403dc",
+        "rg3e_qualified": "853b090943f3a5384bb746e48c260be0cb7403dc",
+        "cache_v2_learning": "a29c653b287202012f7645dca6ebd9a8156dd8cb",
+        "context_elasticity": "607a8479e1e417cd882cf70ad57771a3f3bb0b07",
+        "human_turn_queue": "853b090943f3a5384bb746e48c260be0cb7403dc"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/core/prompt_build/stages/history_pipeline.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "4baf2c201001cbd184517f2be8626e3ad11d4004",
+        "p0_clean": "4baf2c201001cbd184517f2be8626e3ad11d4004",
+        "p0a": "4baf2c201001cbd184517f2be8626e3ad11d4004",
+        "rg3_integration": "4baf2c201001cbd184517f2be8626e3ad11d4004",
+        "rg3e_qualified": "4baf2c201001cbd184517f2be8626e3ad11d4004",
+        "cache_v2_learning": "25cd81829d504920f2f92a48a5ad971b799e7170",
+        "context_elasticity": "48932636cb962288b14c768bb5bfbe76f9b25005",
+        "human_turn_queue": "4baf2c201001cbd184517f2be8626e3ad11d4004"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/core/prompt_build/stages/history_projection.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "da350e2dba78237d304a7a11a98a53a23cdb5524",
+        "p0_clean": "da350e2dba78237d304a7a11a98a53a23cdb5524",
+        "p0a": "da350e2dba78237d304a7a11a98a53a23cdb5524",
+        "rg3_integration": "da350e2dba78237d304a7a11a98a53a23cdb5524",
+        "rg3e_qualified": "da350e2dba78237d304a7a11a98a53a23cdb5524",
+        "cache_v2_learning": "c81037f36a5ff15d8eae16a1a2e443bcc997a95b",
+        "context_elasticity": "aa652ca78c606e41a7a1925e3a8de4e31b52c773",
+        "human_turn_queue": "da350e2dba78237d304a7a11a98a53a23cdb5524"
+      },
+      "working_tree": null,
+      "disposition": "hold",
+      "verification_level": "needs_characterization",
+      "reason": "T2 archive ordering concern is code-shape evidence only; add provider-path ordering characterization before deciding bug/fix.",
+      "target_layer": "preintegration_characterization_t2"
+    },
+    {
+      "path": "src/llm_loop/core/prompt_build/stages/tail_assembly.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "f303088fa3636f4853fb0a146793ac0ba276cb42",
+        "p0_clean": "f303088fa3636f4853fb0a146793ac0ba276cb42",
+        "p0a": "f303088fa3636f4853fb0a146793ac0ba276cb42",
+        "rg3_integration": "f303088fa3636f4853fb0a146793ac0ba276cb42",
+        "rg3e_qualified": "f303088fa3636f4853fb0a146793ac0ba276cb42",
+        "cache_v2_learning": "59cba13e21887f4502c5021b1b39cadf53459cc2",
+        "context_elasticity": "59cba13e21887f4502c5021b1b39cadf53459cc2",
+        "human_turn_queue": "f303088fa3636f4853fb0a146793ac0ba276cb42"
+      },
+      "working_tree": null,
+      "disposition": "hold",
+      "verification_level": "verified",
+      "reason": "Cache-v2 branch has a verified design-vs-code axis reversal; characterize/fix before any integration of this feature patch.",
+      "target_layer": "preintegration_defect_cache_v2"
+    },
+    {
+      "path": "src/llm_loop/event_log/model.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "b3c2555222e465e2a1cb8118b761762e9bed3cb1",
+        "p0_clean": "b3c2555222e465e2a1cb8118b761762e9bed3cb1",
+        "p0a": "b3c2555222e465e2a1cb8118b761762e9bed3cb1",
+        "rg3_integration": "7b6a3dd89133a34dbb76f31c131926e759cee692",
+        "rg3e_qualified": "7b6a3dd89133a34dbb76f31c131926e759cee692",
+        "cache_v2_learning": "b3c2555222e465e2a1cb8118b761762e9bed3cb1",
+        "context_elasticity": "b3c2555222e465e2a1cb8118b761762e9bed3cb1",
+        "human_turn_queue": "b3c2555222e465e2a1cb8118b761762e9bed3cb1"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/factory.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "2e4b4301052ca42bc5277f674dd54a9169b8bd78",
+        "p0_clean": "2964693dd4f1be2b84c110ec97329fcf95a4f6eb",
+        "p0a": "2964693dd4f1be2b84c110ec97329fcf95a4f6eb",
+        "rg3_integration": "fc5bb4f103c13ace571db0c51359c1da44cc68ac",
+        "rg3e_qualified": "fc5bb4f103c13ace571db0c51359c1da44cc68ac",
+        "cache_v2_learning": "2e4b4301052ca42bc5277f674dd54a9169b8bd78",
+        "context_elasticity": "2e4b4301052ca42bc5277f674dd54a9169b8bd78",
+        "human_turn_queue": "2e4b4301052ca42bc5277f674dd54a9169b8bd78"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/introspection/corrections.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "360804b6282a64b951f8a3864ea6e894f22dc0fa",
+        "p0_clean": "fe7495dfc1411b7228eee53cf91d690bd837389d",
+        "p0a": "360804b6282a64b951f8a3864ea6e894f22dc0fa",
+        "rg3_integration": "fe7495dfc1411b7228eee53cf91d690bd837389d",
+        "rg3e_qualified": "fe7495dfc1411b7228eee53cf91d690bd837389d",
+        "cache_v2_learning": "360804b6282a64b951f8a3864ea6e894f22dc0fa",
+        "context_elasticity": "360804b6282a64b951f8a3864ea6e894f22dc0fa",
+        "human_turn_queue": "360804b6282a64b951f8a3864ea6e894f22dc0fa"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "fe7495dfc1411b7228eee53cf91d690bd837389d",
+        "sha256": "63d43361452fab641d8e12663b8f863ade502cf4506d91f59900ae33f305d79a",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e"
+      },
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/introspection/registry_experience.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "b8c927ac52d7f7e0111b586718c5a6434d4f986a",
+        "p0_clean": "0ab242c8c6c7af552e1ec4b2ea1dfc633a3cb7bc",
+        "p0a": "7f699089a16996e161a491a6f55c88bf0d23d87a",
+        "rg3_integration": "0ab242c8c6c7af552e1ec4b2ea1dfc633a3cb7bc",
+        "rg3e_qualified": "0ab242c8c6c7af552e1ec4b2ea1dfc633a3cb7bc",
+        "cache_v2_learning": "b8c927ac52d7f7e0111b586718c5a6434d4f986a",
+        "context_elasticity": "b8c927ac52d7f7e0111b586718c5a6434d4f986a",
+        "human_turn_queue": "b8c927ac52d7f7e0111b586718c5a6434d4f986a"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "0ab242c8c6c7af552e1ec4b2ea1dfc633a3cb7bc",
+        "sha256": "ece23a6b570ae62bc1206045967c249f369d3ff9b9413803ddc34bb6818df7be",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e"
+      },
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/introspection/registry_host.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "a93ecdb621c43ce5ca167b4d550b3d90b2552daf",
+        "p0_clean": "e7609d4d722ddcc00e0affa720e8d0be91d9ff85",
+        "p0a": "db71617724a36ab0d3d5ad1dadbb6d46bc7711b7",
+        "rg3_integration": "e7609d4d722ddcc00e0affa720e8d0be91d9ff85",
+        "rg3e_qualified": "e7609d4d722ddcc00e0affa720e8d0be91d9ff85",
+        "cache_v2_learning": "a93ecdb621c43ce5ca167b4d550b3d90b2552daf",
+        "context_elasticity": "a93ecdb621c43ce5ca167b4d550b3d90b2552daf",
+        "human_turn_queue": "a93ecdb621c43ce5ca167b4d550b3d90b2552daf"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "e7609d4d722ddcc00e0affa720e8d0be91d9ff85",
+        "sha256": "7cd88ada2f270adb333d3b4b0837f6bdd0a36e5b46411f6c6cc9a4080e3c93c9",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e"
+      },
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/introspection/registry_introspection.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "4e98478478269acd5a61592c301cf8d4c4a346b8",
+        "p0_clean": "4e98478478269acd5a61592c301cf8d4c4a346b8",
+        "p0a": "4e98478478269acd5a61592c301cf8d4c4a346b8",
+        "rg3_integration": "4e98478478269acd5a61592c301cf8d4c4a346b8",
+        "rg3e_qualified": "4e98478478269acd5a61592c301cf8d4c4a346b8",
+        "cache_v2_learning": "840fafcd93ad02282ec2d67d6684a63962a07d46",
+        "context_elasticity": "840fafcd93ad02282ec2d67d6684a63962a07d46",
+        "human_turn_queue": "4e98478478269acd5a61592c301cf8d4c4a346b8"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/introspection/search.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "465d21afd5b9704a109bee9e612cb792d0987dae",
+        "p0_clean": "465d21afd5b9704a109bee9e612cb792d0987dae",
+        "p0a": "465d21afd5b9704a109bee9e612cb792d0987dae",
+        "rg3_integration": "465d21afd5b9704a109bee9e612cb792d0987dae",
+        "rg3e_qualified": "465d21afd5b9704a109bee9e612cb792d0987dae",
+        "cache_v2_learning": "05f2b9c2723b2a96c668822e910a76c336a24ae8",
+        "context_elasticity": "05f2b9c2723b2a96c668822e910a76c336a24ae8",
+        "human_turn_queue": "465d21afd5b9704a109bee9e612cb792d0987dae"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/introspection/tools_status.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "99e3d46586027020faea1d334c25e6c556134273",
+        "p0_clean": "99e3d46586027020faea1d334c25e6c556134273",
+        "p0a": "99e3d46586027020faea1d334c25e6c556134273",
+        "rg3_integration": "99e3d46586027020faea1d334c25e6c556134273",
+        "rg3e_qualified": "99e3d46586027020faea1d334c25e6c556134273",
+        "cache_v2_learning": "7e09296351bd604659925c14b1cc5cef04388af8",
+        "context_elasticity": "7e09296351bd604659925c14b1cc5cef04388af8",
+        "human_turn_queue": "99e3d46586027020faea1d334c25e6c556134273"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/llm/client.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "b77eb250779fa2070daea430ca598edb560a33e3",
+        "p0_clean": "b77eb250779fa2070daea430ca598edb560a33e3",
+        "p0a": "b77eb250779fa2070daea430ca598edb560a33e3",
+        "rg3_integration": "414562086b18289ec807dc1f65158edc7d7f9170",
+        "rg3e_qualified": "414562086b18289ec807dc1f65158edc7d7f9170",
+        "cache_v2_learning": "b77eb250779fa2070daea430ca598edb560a33e3",
+        "context_elasticity": "b77eb250779fa2070daea430ca598edb560a33e3",
+        "human_turn_queue": "b77eb250779fa2070daea430ca598edb560a33e3"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/llm/pool.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0",
+        "p0_clean": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0",
+        "p0a": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0",
+        "rg3_integration": "35096327a0d9f749d6d3c641fe291055e84aba6b",
+        "rg3e_qualified": "35096327a0d9f749d6d3c641fe291055e84aba6b",
+        "cache_v2_learning": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0",
+        "context_elasticity": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0",
+        "human_turn_queue": "ab0ecf1ca48e419d61dcdd6d8b7366035f3f79c0"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/memory/episode.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "bd12ed1f247cb98d98418b1ed758d1609f04807f",
+        "p0_clean": "58dcdc07bee6b6fb3d6aeecebc066ef99a46d364",
+        "p0a": "58dcdc07bee6b6fb3d6aeecebc066ef99a46d364",
+        "rg3_integration": "58dcdc07bee6b6fb3d6aeecebc066ef99a46d364",
+        "rg3e_qualified": "58dcdc07bee6b6fb3d6aeecebc066ef99a46d364",
+        "cache_v2_learning": "bd12ed1f247cb98d98418b1ed758d1609f04807f",
+        "context_elasticity": "bd12ed1f247cb98d98418b1ed758d1609f04807f",
+        "human_turn_queue": "bd12ed1f247cb98d98418b1ed758d1609f04807f"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/memory/extractor.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "68c6521e4fa6723d630ec997868e70436f0339c3",
+        "p0_clean": "68c6521e4fa6723d630ec997868e70436f0339c3",
+        "p0a": "68c6521e4fa6723d630ec997868e70436f0339c3",
+        "rg3_integration": "027602b36b85770a307aff2e928ee9d91ea78c8f",
+        "rg3e_qualified": "027602b36b85770a307aff2e928ee9d91ea78c8f",
+        "cache_v2_learning": "68c6521e4fa6723d630ec997868e70436f0339c3",
+        "context_elasticity": "68c6521e4fa6723d630ec997868e70436f0339c3",
+        "human_turn_queue": "68c6521e4fa6723d630ec997868e70436f0339c3"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/memory/summarize.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3",
+        "p0_clean": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3",
+        "p0a": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3",
+        "rg3_integration": "6df95f71a23b5f1e131c9fa5a268f0885c5e9798",
+        "rg3e_qualified": "6df95f71a23b5f1e131c9fa5a268f0885c5e9798",
+        "cache_v2_learning": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3",
+        "context_elasticity": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3",
+        "human_turn_queue": "ac6bdf9950a0084a2a1f57e844bca3a1ae07cfe3"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/memory/synopsis.py",
+      "changed_from_baseline_in": [
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "32a1f33dae394bbe131b8a94ace4a57b1574cf09",
+        "p0_clean": "32a1f33dae394bbe131b8a94ace4a57b1574cf09",
+        "p0a": "32a1f33dae394bbe131b8a94ace4a57b1574cf09",
+        "rg3_integration": "32a1f33dae394bbe131b8a94ace4a57b1574cf09",
+        "rg3e_qualified": "32a1f33dae394bbe131b8a94ace4a57b1574cf09",
+        "cache_v2_learning": "32a1f33dae394bbe131b8a94ace4a57b1574cf09",
+        "context_elasticity": "e815b3d2de3fb96d5a1b8568488c8cea8842599c",
+        "human_turn_queue": "32a1f33dae394bbe131b8a94ace4a57b1574cf09"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/memory/synopsis_coverage.py",
+      "changed_from_baseline_in": [
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": null,
+        "context_elasticity": "e2ffb15bf2c1937afec3c09ece40504351e06ee3",
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/methods/learning_journal.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": "ee40f4e2131b1f19f4ec473426fc55b8a3188ec3",
+        "p0a": "ee40f4e2131b1f19f4ec473426fc55b8a3188ec3",
+        "rg3_integration": "ee40f4e2131b1f19f4ec473426fc55b8a3188ec3",
+        "rg3e_qualified": "ee40f4e2131b1f19f4ec473426fc55b8a3188ec3",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/methods/learning_plane.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": "724192f3c79868bf5d7c7f58ee9dc7f53ed1100e",
+        "p0a": "86f32c94af715198f1efa267f18bd8107e4c3411",
+        "rg3_integration": "38a1359a875828c02bdce2a3b1db426a2f1c2e95",
+        "rg3e_qualified": "38a1359a875828c02bdce2a3b1db426a2f1c2e95",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "724192f3c79868bf5d7c7f58ee9dc7f53ed1100e",
+        "sha256": "410fbaae0e49ace23f8105f57e319faf966bc7d81571fd1164b7e7aed7818889",
+        "classification_10_4_2": "matches_p0_clean_rg3e_evolved"
+      },
+      "disposition": "replace",
+      "verification_level": "verified",
+      "reason": "Current dirty copy equals P0-clean but RG-3E has later qualified evolution; take RG-3E version, do not replay the stale dirty copy.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/methods/reflection.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "cbd76c0c761bcff368cf34de442ab857dbb30e70",
+        "p0_clean": "5d716da63b1e4abbefdfb91e79003620bf576af9",
+        "p0a": "5d716da63b1e4abbefdfb91e79003620bf576af9",
+        "rg3_integration": "5d716da63b1e4abbefdfb91e79003620bf576af9",
+        "rg3e_qualified": "5d716da63b1e4abbefdfb91e79003620bf576af9",
+        "cache_v2_learning": "cbd76c0c761bcff368cf34de442ab857dbb30e70",
+        "context_elasticity": "cbd76c0c761bcff368cf34de442ab857dbb30e70",
+        "human_turn_queue": "cbd76c0c761bcff368cf34de442ab857dbb30e70"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/methods/store.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "6859dd3277933d9c2998e1030c541b8b4a0901dd",
+        "p0_clean": "54baab88dcf2f2bdb3a680b37a6aafcf316a5740",
+        "p0a": "5b7af0648d202ef5660b416dfa58aeed18a90e4f",
+        "rg3_integration": "54baab88dcf2f2bdb3a680b37a6aafcf316a5740",
+        "rg3e_qualified": "54baab88dcf2f2bdb3a680b37a6aafcf316a5740",
+        "cache_v2_learning": "6859dd3277933d9c2998e1030c541b8b4a0901dd",
+        "context_elasticity": "6859dd3277933d9c2998e1030c541b8b4a0901dd",
+        "human_turn_queue": "6859dd3277933d9c2998e1030c541b8b4a0901dd"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "54baab88dcf2f2bdb3a680b37a6aafcf316a5740",
+        "sha256": "2974710abe94fa5d6629e7d245a304dfda2199cdaa1f8f50a6edd586f26c0167",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e"
+      },
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/__init__.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "23fd4dbf9feec49ead7378b7cf08c809ab3eeae6",
+        "rg3e_qualified": "9e430a2ae0d1bc1045a3cef962697596b536d092",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/contracts.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "b8017bfb5091bee4dd9c7e36b82531051dec6e08",
+        "rg3e_qualified": "0162302e7869cd59e57e6f2532cbbc7ac7337143",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/foreground.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "5a9f378b9180176720800a7440dac7baa08f1e1f",
+        "rg3e_qualified": "5a9f378b9180176720800a7440dac7baa08f1e1f",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/governor.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "edd95751e2d5dddbf142cc827a18bd69d74688f0",
+        "rg3e_qualified": "edd95751e2d5dddbf142cc827a18bd69d74688f0",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/ledger_projection.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "1ec5eda47856c00c693ce5cb37dd9790bd5ffc8f",
+        "rg3e_qualified": "1ec5eda47856c00c693ce5cb37dd9790bd5ffc8f",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/local_runtime.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "20007da08d7752983a4bd7b2d22442a113b7b5fe",
+        "rg3e_qualified": "20007da08d7752983a4bd7b2d22442a113b7b5fe",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/provider_calls.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "865a5b5536b0893db6885b8c0cd7936bb72b3cf0",
+        "rg3e_qualified": "865a5b5536b0893db6885b8c0cd7936bb72b3cf0",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/provider_settlement.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "e56e04e8bffe80fe31658880ec294d7e817e272a",
+        "rg3e_qualified": "e56e04e8bffe80fe31658880ec294d7e817e272a",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/resource_bindings.py",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "7ace5ea25e77f6b40c8e8c56103f1e9b05c6cfba",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/transport_observation.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "afe90dd380eee433049ff3cc298d7e9f4b6fa3c9",
+        "rg3e_qualified": "afe90dd380eee433049ff3cc298d7e9f4b6fa3c9",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/vendor_adapters/__init__.py",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "c6948c983f8c779db85aed5c1446ab6d0198b232",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/vendor_adapters/_common.py",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "ffeea6743f578aa7e88f7ece9b963494681ce667",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/vendor_adapters/deepseek.py",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "88ffbdc5fcae0d1c7880e097dd21dbfca3b0b0c5",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/vendor_adapters/glm.py",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "a0d33c7a6da1e62193c89cfe022781283a280fa8",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/vendor_adapters/minimax.py",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "fa4885021d1cc221e271cca0ada5ae72bd1ea613",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/resources/vendor_facts.py",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "f28accb2eac3104ecc96bf8f57814f454974c985",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/runtime/causality.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "dfc5229c3372a4a6d3332f23ecfc6487168377ad",
+        "p0_clean": "dfc5229c3372a4a6d3332f23ecfc6487168377ad",
+        "p0a": "dfc5229c3372a4a6d3332f23ecfc6487168377ad",
+        "rg3_integration": "88199347d1c79a807f816165574fd9335740ae50",
+        "rg3e_qualified": "88199347d1c79a807f816165574fd9335740ae50",
+        "cache_v2_learning": "dfc5229c3372a4a6d3332f23ecfc6487168377ad",
+        "context_elasticity": "dfc5229c3372a4a6d3332f23ecfc6487168377ad",
+        "human_turn_queue": "dfc5229c3372a4a6d3332f23ecfc6487168377ad"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/subagent/runner.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "d2fb6d0559f466b68623d7cea9ee37d83f30be97",
+        "p0_clean": "d2fb6d0559f466b68623d7cea9ee37d83f30be97",
+        "p0a": "d2fb6d0559f466b68623d7cea9ee37d83f30be97",
+        "rg3_integration": "a97227db61bd50f1638fa27e62d819331e6fa080",
+        "rg3e_qualified": "a97227db61bd50f1638fa27e62d819331e6fa080",
+        "cache_v2_learning": "d2fb6d0559f466b68623d7cea9ee37d83f30be97",
+        "context_elasticity": "d2fb6d0559f466b68623d7cea9ee37d83f30be97",
+        "human_turn_queue": "d2fb6d0559f466b68623d7cea9ee37d83f30be97"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/tools/builtin/source_synopsis.py",
+      "changed_from_baseline_in": [
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "530959385016d80ab050dc213cd8689d37d6b01a",
+        "p0_clean": "530959385016d80ab050dc213cd8689d37d6b01a",
+        "p0a": "530959385016d80ab050dc213cd8689d37d6b01a",
+        "rg3_integration": "530959385016d80ab050dc213cd8689d37d6b01a",
+        "rg3e_qualified": "530959385016d80ab050dc213cd8689d37d6b01a",
+        "cache_v2_learning": "530959385016d80ab050dc213cd8689d37d6b01a",
+        "context_elasticity": "6363cdb6e02e9582e7573dd9a9805f2d26dba200",
+        "human_turn_queue": "530959385016d80ab050dc213cd8689d37d6b01a"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "src/llm_loop/tools/mcp_client.py",
+      "changed_from_baseline_in": [],
+      "git_blob": {
+        "baseline_lfl_main": "1246d5367f64dadc361408a0847bc5ec8741f5d1",
+        "p0_clean": "1246d5367f64dadc361408a0847bc5ec8741f5d1",
+        "p0a": "1246d5367f64dadc361408a0847bc5ec8741f5d1",
+        "rg3_integration": "1246d5367f64dadc361408a0847bc5ec8741f5d1",
+        "rg3e_qualified": "1246d5367f64dadc361408a0847bc5ec8741f5d1",
+        "cache_v2_learning": "1246d5367f64dadc361408a0847bc5ec8741f5d1",
+        "context_elasticity": "1246d5367f64dadc361408a0847bc5ec8741f5d1",
+        "human_turn_queue": "1246d5367f64dadc361408a0847bc5ec8741f5d1"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "3ad04b0d374505954cfaa8f2b655b761ef7ca2fc",
+        "sha256": "268a505a062e5cc1892a1f5ced4a7d0aba25db3071ee0a46cc08a1f9cb1e5305",
+        "classification_10_4_2": "unique_current_dirty"
+      },
+      "disposition": "hold",
+      "verification_level": "unverified",
+      "reason": "Current p0a working copy is an independent MCP refresh/registry-stack lifecycle line; isolate and qualify before integration.",
+      "target_layer": "registry_stack_review"
+    },
+    {
+      "path": "src/llm_loop/tools/registry.py",
+      "changed_from_baseline_in": [],
+      "git_blob": {
+        "baseline_lfl_main": "f7c93409515b2308025b91bf8504d4a43b89220a",
+        "p0_clean": "f7c93409515b2308025b91bf8504d4a43b89220a",
+        "p0a": "f7c93409515b2308025b91bf8504d4a43b89220a",
+        "rg3_integration": "f7c93409515b2308025b91bf8504d4a43b89220a",
+        "rg3e_qualified": "f7c93409515b2308025b91bf8504d4a43b89220a",
+        "cache_v2_learning": "f7c93409515b2308025b91bf8504d4a43b89220a",
+        "context_elasticity": "f7c93409515b2308025b91bf8504d4a43b89220a",
+        "human_turn_queue": "f7c93409515b2308025b91bf8504d4a43b89220a"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "505ed891685cf882874a7bcd873c57072e8eb244",
+        "sha256": "8b454af6e8cbcc353d315e6c47ba6094e301d66185c8646c2929a7e0d2b627c4",
+        "classification_10_4_2": "unique_current_dirty"
+      },
+      "disposition": "hold",
+      "verification_level": "unverified",
+      "reason": "Current p0a working copy is an independent MCP refresh/registry-stack lifecycle line; isolate and qualify before integration.",
+      "target_layer": "registry_stack_review"
+    },
+    {
+      "path": "src/llm_loop/web/human_turn_queue.py",
+      "changed_from_baseline_in": [
+        "human_turn_queue"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": "81de0c7ede15b92e0b9574aca7015bd78fc5a7c0"
+      },
+      "working_tree": null,
+      "disposition": "hold",
+      "verification_level": "verified",
+      "reason": "Human-turn queue has a verified stale-claim reaper duplicate-dispatch path for long runs; fix/qualify before integration.",
+      "target_layer": "preintegration_defect_human_turn_queue"
+    },
+    {
+      "path": "src/llm_loop/web/routes.py",
+      "changed_from_baseline_in": [
+        "human_turn_queue"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "26441a17c5168b78adb58261b27bcbbead9a4a78",
+        "p0_clean": "26441a17c5168b78adb58261b27bcbbead9a4a78",
+        "p0a": "26441a17c5168b78adb58261b27bcbbead9a4a78",
+        "rg3_integration": "26441a17c5168b78adb58261b27bcbbead9a4a78",
+        "rg3e_qualified": "26441a17c5168b78adb58261b27bcbbead9a4a78",
+        "cache_v2_learning": "26441a17c5168b78adb58261b27bcbbead9a4a78",
+        "context_elasticity": "26441a17c5168b78adb58261b27bcbbead9a4a78",
+        "human_turn_queue": "6a98aad91aa68db9af35bc36ecf865172f979960"
+      },
+      "working_tree": null,
+      "disposition": "hold",
+      "verification_level": "verified",
+      "reason": "Human-turn queue has a verified stale-claim reaper duplicate-dispatch path for long runs; fix/qualify before integration.",
+      "target_layer": "preintegration_defect_human_turn_queue"
+    },
+    {
+      "path": "src/llm_loop/web/schemas.py",
+      "changed_from_baseline_in": [
+        "human_turn_queue"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "3c5f3b4fe45771c04c7daa83e94d6eb3d6e38a40",
+        "p0_clean": "3c5f3b4fe45771c04c7daa83e94d6eb3d6e38a40",
+        "p0a": "3c5f3b4fe45771c04c7daa83e94d6eb3d6e38a40",
+        "rg3_integration": "3c5f3b4fe45771c04c7daa83e94d6eb3d6e38a40",
+        "rg3e_qualified": "3c5f3b4fe45771c04c7daa83e94d6eb3d6e38a40",
+        "cache_v2_learning": "3c5f3b4fe45771c04c7daa83e94d6eb3d6e38a40",
+        "context_elasticity": "3c5f3b4fe45771c04c7daa83e94d6eb3d6e38a40",
+        "human_turn_queue": "67e413a47f64937af238ba6156a3ec525eb2ad88"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/guards/external_red_registry.json",
+      "changed_from_baseline_in": [
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "e028fc6d06a23c64d0c02c1ea8e592424409f32d",
+        "p0_clean": "e028fc6d06a23c64d0c02c1ea8e592424409f32d",
+        "p0a": "42ed2d608e220d2d552f6c48a4e21d2c76987368",
+        "rg3_integration": "42ed2d608e220d2d552f6c48a4e21d2c76987368",
+        "rg3e_qualified": "42ed2d608e220d2d552f6c48a4e21d2c76987368",
+        "cache_v2_learning": "e028fc6d06a23c64d0c02c1ea8e592424409f32d",
+        "context_elasticity": "e028fc6d06a23c64d0c02c1ea8e592424409f32d",
+        "human_turn_queue": "e028fc6d06a23c64d0c02c1ea8e592424409f32d"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/guards/fixture_manifest.json",
+      "changed_from_baseline_in": [
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "ba4948c8c9e29eb43ef136fe749cf738ee581bde",
+        "p0_clean": "ba4948c8c9e29eb43ef136fe749cf738ee581bde",
+        "p0a": "667634b9855773cffe693d64bb17d2d3f8a6f907",
+        "rg3_integration": "667634b9855773cffe693d64bb17d2d3f8a6f907",
+        "rg3e_qualified": "667634b9855773cffe693d64bb17d2d3f8a6f907",
+        "cache_v2_learning": "ba4948c8c9e29eb43ef136fe749cf738ee581bde",
+        "context_elasticity": "ba4948c8c9e29eb43ef136fe749cf738ee581bde",
+        "human_turn_queue": "ba4948c8c9e29eb43ef136fe749cf738ee581bde"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/integration/test_cache_hit_smoke.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "f6d6f2a2d2bb4eea216d7f1d176114623d278f20",
+        "p0_clean": "f6d6f2a2d2bb4eea216d7f1d176114623d278f20",
+        "p0a": "f6d6f2a2d2bb4eea216d7f1d176114623d278f20",
+        "rg3_integration": "f6d6f2a2d2bb4eea216d7f1d176114623d278f20",
+        "rg3e_qualified": "f6d6f2a2d2bb4eea216d7f1d176114623d278f20",
+        "cache_v2_learning": "26415e7fbb9cce0955c58f2712ded44fe2e766bc",
+        "context_elasticity": "26415e7fbb9cce0955c58f2712ded44fe2e766bc",
+        "human_turn_queue": "f6d6f2a2d2bb4eea216d7f1d176114623d278f20"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/scripts/test_restart_mirror_hardening.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": "76d3ac0b74826b16c991a9b5e59851fa538a1e3a",
+        "rg3_integration": "76d3ac0b74826b16c991a9b5e59851fa538a1e3a",
+        "rg3e_qualified": "76d3ac0b74826b16c991a9b5e59851fa538a1e3a",
+        "cache_v2_learning": "57fb6324a8efb10857520b53bbabd971e6b626d6",
+        "context_elasticity": "57fb6324a8efb10857520b53bbabd971e6b626d6",
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_archive_search.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "c3a768550c5e3969abc3d4edf0573e28c110b69f",
+        "p0_clean": "c3a768550c5e3969abc3d4edf0573e28c110b69f",
+        "p0a": "c3a768550c5e3969abc3d4edf0573e28c110b69f",
+        "rg3_integration": "c3a768550c5e3969abc3d4edf0573e28c110b69f",
+        "rg3e_qualified": "c3a768550c5e3969abc3d4edf0573e28c110b69f",
+        "cache_v2_learning": "02ad58ac1a477131a749c446041667967f06cee3",
+        "context_elasticity": "02ad58ac1a477131a749c446041667967f06cee3",
+        "human_turn_queue": "c3a768550c5e3969abc3d4edf0573e28c110b69f"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_cache_gate_profile.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": "29256433131835d2359639b8844beae60ea561ec",
+        "context_elasticity": "29256433131835d2359639b8844beae60ea561ec",
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_cache_health_buckets.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "e1a1e789dd375afbfdedbb3b40e87215172df39f",
+        "p0_clean": "e1a1e789dd375afbfdedbb3b40e87215172df39f",
+        "p0a": "e1a1e789dd375afbfdedbb3b40e87215172df39f",
+        "rg3_integration": "e1a1e789dd375afbfdedbb3b40e87215172df39f",
+        "rg3e_qualified": "e1a1e789dd375afbfdedbb3b40e87215172df39f",
+        "cache_v2_learning": "11a1ea4e3b33615f83288528d9a8800aa1db173f",
+        "context_elasticity": "11a1ea4e3b33615f83288528d9a8800aa1db173f",
+        "human_turn_queue": "e1a1e789dd375afbfdedbb3b40e87215172df39f"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_cache_monitor.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "cf589577fed9bac78274577208d6721cbc1e347a",
+        "p0_clean": "cf589577fed9bac78274577208d6721cbc1e347a",
+        "p0a": "cf589577fed9bac78274577208d6721cbc1e347a",
+        "rg3_integration": "cf589577fed9bac78274577208d6721cbc1e347a",
+        "rg3e_qualified": "cf589577fed9bac78274577208d6721cbc1e347a",
+        "cache_v2_learning": "d6a8c2d9e5e1223e801b57a44d222800e83f4e7d",
+        "context_elasticity": "d6a8c2d9e5e1223e801b57a44d222800e83f4e7d",
+        "human_turn_queue": "cf589577fed9bac78274577208d6721cbc1e347a"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_cache_window_session_scope.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "f753a12a76825c6ee15fa5a52adb54e1736f2b54",
+        "p0_clean": "f753a12a76825c6ee15fa5a52adb54e1736f2b54",
+        "p0a": "f753a12a76825c6ee15fa5a52adb54e1736f2b54",
+        "rg3_integration": "f753a12a76825c6ee15fa5a52adb54e1736f2b54",
+        "rg3e_qualified": "f753a12a76825c6ee15fa5a52adb54e1736f2b54",
+        "cache_v2_learning": "8557d6bf49786e351d6b2b4f29f3580c446d428f",
+        "context_elasticity": "8557d6bf49786e351d6b2b4f29f3580c446d428f",
+        "human_turn_queue": "f753a12a76825c6ee15fa5a52adb54e1736f2b54"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_config.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "c32d1299c9aec880040e30ec286bd1457c427d93",
+        "p0_clean": "511834feef36e0464d39607677092a433bfa8bac",
+        "p0a": "7e61cae1f8150b644148a7d61b7f9e2729feb899",
+        "rg3_integration": "511834feef36e0464d39607677092a433bfa8bac",
+        "rg3e_qualified": "511834feef36e0464d39607677092a433bfa8bac",
+        "cache_v2_learning": "c32d1299c9aec880040e30ec286bd1457c427d93",
+        "context_elasticity": "c32d1299c9aec880040e30ec286bd1457c427d93",
+        "human_turn_queue": "c32d1299c9aec880040e30ec286bd1457c427d93"
+      },
+      "working_tree": null,
+      "disposition": "hold",
+      "verification_level": "verified",
+      "reason": "p0a carries independent DeepSeek default-model migration 8e589de; review/reapply as a provider-config patch and requalify on unified tree.",
+      "target_layer": "provider_config_review"
+    },
+    {
+      "path": "tests/unit/test_engine_reentrancy.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "d758dc3d268ad66f6a1039a6abc9a4945396da89",
+        "p0_clean": "d8e856e1b3130ac4666f65ea2b18e9009be8afba",
+        "p0a": "d758dc3d268ad66f6a1039a6abc9a4945396da89",
+        "rg3_integration": "d8e856e1b3130ac4666f65ea2b18e9009be8afba",
+        "rg3e_qualified": "d8e856e1b3130ac4666f65ea2b18e9009be8afba",
+        "cache_v2_learning": "d758dc3d268ad66f6a1039a6abc9a4945396da89",
+        "context_elasticity": "d758dc3d268ad66f6a1039a6abc9a4945396da89",
+        "human_turn_queue": "d758dc3d268ad66f6a1039a6abc9a4945396da89"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "d8e856e1b3130ac4666f65ea2b18e9009be8afba",
+        "sha256": "05783a4c55590c14bb0da1527e59744726154dacf5114e7d8f739efe16249767",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e"
+      },
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_event_log.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "41de440059aa1c091625f496e895ed549adf3646",
+        "p0_clean": "41de440059aa1c091625f496e895ed549adf3646",
+        "p0a": "41de440059aa1c091625f496e895ed549adf3646",
+        "rg3_integration": "b5a4aeb9cc7bdd4e685e888790543101a5b36bf4",
+        "rg3e_qualified": "b5a4aeb9cc7bdd4e685e888790543101a5b36bf4",
+        "cache_v2_learning": "41de440059aa1c091625f496e895ed549adf3646",
+        "context_elasticity": "41de440059aa1c091625f496e895ed549adf3646",
+        "human_turn_queue": "41de440059aa1c091625f496e895ed549adf3646"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_history_defer_reasoning.py",
+      "changed_from_baseline_in": [
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": null,
+        "context_elasticity": "cb8d7d26ebcb12eed63ea8ca0bf3dcc6a689fef8",
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_history_elastic.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": "8d87b8f449efa2cf72d4041d2db4ad48684e5594",
+        "context_elasticity": "8d87b8f449efa2cf72d4041d2db4ad48684e5594",
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_history_observability_t5.py",
+      "changed_from_baseline_in": [
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": null,
+        "context_elasticity": "06573fe9ada9a7c5816319fda919e07851a1a89d",
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_history_tiered_freeze.py",
+      "changed_from_baseline_in": [
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": null,
+        "context_elasticity": "3f2d73398d52f479849e66661a7c2e6a49aa95e6",
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_history_turn_rounding.py",
+      "changed_from_baseline_in": [
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": null,
+        "context_elasticity": "a43161b2cece90c0dc4e6bb953f4d105aaef695d",
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_introspection_status.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "a0e5f3664e758648a3ad0a78e7042c5ad39d1880",
+        "p0_clean": "a0e5f3664e758648a3ad0a78e7042c5ad39d1880",
+        "p0a": "a0e5f3664e758648a3ad0a78e7042c5ad39d1880",
+        "rg3_integration": "a0e5f3664e758648a3ad0a78e7042c5ad39d1880",
+        "rg3e_qualified": "a0e5f3664e758648a3ad0a78e7042c5ad39d1880",
+        "cache_v2_learning": "5adc818096dbdd41ee2619eb708948077ca491cf",
+        "context_elasticity": "5adc818096dbdd41ee2619eb708948077ca491cf",
+        "human_turn_queue": "a0e5f3664e758648a3ad0a78e7042c5ad39d1880"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_learning_journal.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": "e3fd77b6e49dc4ed190618f182cb0954a1a91ddb",
+        "p0a": "c4b674ae20a51fcec080edcff2c9dbffe9a9f161",
+        "rg3_integration": "7c2d7a432e9ba023633216c6505eb2f2ca5e85a9",
+        "rg3e_qualified": "7c2d7a432e9ba023633216c6505eb2f2ca5e85a9",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "e3fd77b6e49dc4ed190618f182cb0954a1a91ddb",
+        "sha256": "000642c3baab4a265603da6251d21a98e02c49d62882407d1a41a823681d6dc3",
+        "classification_10_4_2": "matches_p0_clean_rg3e_evolved"
+      },
+      "disposition": "replace",
+      "verification_level": "verified",
+      "reason": "Current dirty copy equals P0-clean but RG-3E has later qualified evolution; take RG-3E version, do not replay the stale dirty copy.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_method_learning.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "f62197aee270b79421770efe058a0f19d93a0771",
+        "p0_clean": "0a1e575735619cfee852c3fdf44086b8a8f7c6df",
+        "p0a": "f5b84e2af4c41537ee4bc2e2701219f3e5b99f10",
+        "rg3_integration": "0a1e575735619cfee852c3fdf44086b8a8f7c6df",
+        "rg3e_qualified": "0a1e575735619cfee852c3fdf44086b8a8f7c6df",
+        "cache_v2_learning": "f62197aee270b79421770efe058a0f19d93a0771",
+        "context_elasticity": "f62197aee270b79421770efe058a0f19d93a0771",
+        "human_turn_queue": "f62197aee270b79421770efe058a0f19d93a0771"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "0a1e575735619cfee852c3fdf44086b8a8f7c6df",
+        "sha256": "0643cdbf97561684bdf5a326bf7b3e6d3960a4ec41ba3d8d577e4ae7a1e7e876",
+        "classification_10_4_2": "matches_p0_clean_and_rg3e"
+      },
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Current dirty bytes already equal both qualified P0-clean and RG-3E; not a new change.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_provider_call_resources.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "3ea7e9ce23fd19934c5216e400b11b96616567a4",
+        "rg3e_qualified": "3ea7e9ce23fd19934c5216e400b11b96616567a4",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_provider_call_settlement.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "c2fc50e74b899455b8aecccb82a7859fbf26802a",
+        "rg3e_qualified": "c2fc50e74b899455b8aecccb82a7859fbf26802a",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_resource_binding_manifest.py",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "5d22351facb16d2ebdf1a6b2ceec0032b6ca8996",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_resource_governor_cloud_contract.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "951520203f6bd8a199a2aa77cdb1c266f100383d",
+        "rg3e_qualified": "ba463ac20601d00d402abaf32e90dff1a0ae24ab",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_resource_governor_contract.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "20a2e96e53611ab79fdec0ad543daf56b58dcf8d",
+        "rg3e_qualified": "20a2e96e53611ab79fdec0ad543daf56b58dcf8d",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_resource_governor_runtime.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "c850e8b8067f20de3e4f3d904a427a6b743aa034",
+        "rg3e_qualified": "c850e8b8067f20de3e4f3d904a427a6b743aa034",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_resource_ledger_projection.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "c580a7a3c50aea64344182645a60d7a7ab76c72c",
+        "rg3e_qualified": "c580a7a3c50aea64344182645a60d7a7ab76c72c",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_resource_transport_shadow.py",
+      "changed_from_baseline_in": [
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": "f296e13748793416ed488a92e3bdb8a4df541053",
+        "rg3e_qualified": "f296e13748793416ed488a92e3bdb8a4df541053",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_resource_vendor_adapters.py",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "5cb0d49adc90fe50104c789e86305272dae9168c",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_resource_vendor_e4.py",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "b4beb085cb9b33162490c4c40ba83a11b32d7799",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_resource_vendor_facts.py",
+      "changed_from_baseline_in": [
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": "077e023785e0d1fe1831faba14418b1f535f5977",
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_restart_mirror_script.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity",
+        "p0a",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "7a5e5f293b3ea0b0df21deb19b62befe0790f0ee",
+        "p0_clean": "7a5e5f293b3ea0b0df21deb19b62befe0790f0ee",
+        "p0a": "432bdfa6d721d133f62669d738fbc8b7909a708e",
+        "rg3_integration": "432bdfa6d721d133f62669d738fbc8b7909a708e",
+        "rg3e_qualified": "432bdfa6d721d133f62669d738fbc8b7909a708e",
+        "cache_v2_learning": "432bdfa6d721d133f62669d738fbc8b7909a708e",
+        "context_elasticity": "432bdfa6d721d133f62669d738fbc8b7909a708e",
+        "human_turn_queue": "7a5e5f293b3ea0b0df21deb19b62befe0790f0ee"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "p0a and RG-3E tree blobs are byte-identical; RG bridge 608ec12 already preserves the restart/CI state. Do not cherry-pick again.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_synopsis_coverage.py",
+      "changed_from_baseline_in": [
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": null,
+        "context_elasticity": "081d1cd7610b2f72a600a55d755571f5aa35d058",
+        "human_turn_queue": null
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/unit/test_tool_working_set_projection.py",
+      "changed_from_baseline_in": [
+        "cache_v2_learning",
+        "context_elasticity"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "e13488535bb8a74519cabb6041092f94a5f0f284",
+        "p0_clean": "e13488535bb8a74519cabb6041092f94a5f0f284",
+        "p0a": "e13488535bb8a74519cabb6041092f94a5f0f284",
+        "rg3_integration": "e13488535bb8a74519cabb6041092f94a5f0f284",
+        "rg3e_qualified": "e13488535bb8a74519cabb6041092f94a5f0f284",
+        "cache_v2_learning": "b6340bca0c7d4464aae69c4531ac5a409e998091",
+        "context_elasticity": "b6340bca0c7d4464aae69c4531ac5a409e998091",
+        "human_turn_queue": "e13488535bb8a74519cabb6041092f94a5f0f284"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "tests/web/test_chat_queue.py",
+      "changed_from_baseline_in": [
+        "human_turn_queue"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": "e59b94ecb8bb150978de7c8ca24b0b0d78b86e0d"
+      },
+      "working_tree": null,
+      "disposition": "hold",
+      "verification_level": "verified",
+      "reason": "Human-turn queue has a verified stale-claim reaper duplicate-dispatch path for long runs; fix/qualify before integration.",
+      "target_layer": "preintegration_defect_human_turn_queue"
+    },
+    {
+      "path": "tests/web/test_stream_endpoint.py",
+      "changed_from_baseline_in": [
+        "p0_clean",
+        "rg3_integration",
+        "rg3e_qualified"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "c5106791ed63a01dd28ce216495575aca27ca5bf",
+        "p0_clean": "043b909db0c9b3ca4af1b4f675e0ac22d70ca0b4",
+        "p0a": "c5106791ed63a01dd28ce216495575aca27ca5bf",
+        "rg3_integration": "eccb4e27937f029bda3692dd6e297ffb54bf0ad8",
+        "rg3e_qualified": "eccb4e27937f029bda3692dd6e297ffb54bf0ad8",
+        "cache_v2_learning": "c5106791ed63a01dd28ce216495575aca27ca5bf",
+        "context_elasticity": "c5106791ed63a01dd28ce216495575aca27ca5bf",
+        "human_turn_queue": "c5106791ed63a01dd28ce216495575aca27ca5bf"
+      },
+      "working_tree": {
+        "status": " M",
+        "blob_oid": "043b909db0c9b3ca4af1b4f675e0ac22d70ca0b4",
+        "sha256": "23c0b0a1862abaf36d684b488196746fadd720f2cff530ff8caf83d3349ce1ce",
+        "classification_10_4_2": "matches_p0_clean_rg3e_evolved"
+      },
+      "disposition": "replace",
+      "verification_level": "verified",
+      "reason": "Current dirty copy equals P0-clean but RG-3E has later qualified evolution; take RG-3E version, do not replay the stale dirty copy.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "webui/src/components/conversation/ChatQueue.tsx",
+      "changed_from_baseline_in": [
+        "human_turn_queue"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": null,
+        "p0_clean": null,
+        "p0a": null,
+        "rg3_integration": null,
+        "rg3e_qualified": null,
+        "cache_v2_learning": null,
+        "context_elasticity": null,
+        "human_turn_queue": "3bf0a81c7f85109a0924faff01f12001ac94db01"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "webui/src/components/conversation/Composer.tsx",
+      "changed_from_baseline_in": [
+        "human_turn_queue"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "ed7f87c73bc6047f946257a708d3afa615a9e84c",
+        "p0_clean": "ed7f87c73bc6047f946257a708d3afa615a9e84c",
+        "p0a": "ed7f87c73bc6047f946257a708d3afa615a9e84c",
+        "rg3_integration": "ed7f87c73bc6047f946257a708d3afa615a9e84c",
+        "rg3e_qualified": "ed7f87c73bc6047f946257a708d3afa615a9e84c",
+        "cache_v2_learning": "ed7f87c73bc6047f946257a708d3afa615a9e84c",
+        "context_elasticity": "ed7f87c73bc6047f946257a708d3afa615a9e84c",
+        "human_turn_queue": "ad436fef1038e9b7c380852a918795f51d5eddc0"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "webui/src/components/conversation/Conversation.tsx",
+      "changed_from_baseline_in": [
+        "human_turn_queue"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "c8438a0c672ae7cc39ffde519381077e543dca15",
+        "p0_clean": "c8438a0c672ae7cc39ffde519381077e543dca15",
+        "p0a": "c8438a0c672ae7cc39ffde519381077e543dca15",
+        "rg3_integration": "c8438a0c672ae7cc39ffde519381077e543dca15",
+        "rg3e_qualified": "c8438a0c672ae7cc39ffde519381077e543dca15",
+        "cache_v2_learning": "c8438a0c672ae7cc39ffde519381077e543dca15",
+        "context_elasticity": "c8438a0c672ae7cc39ffde519381077e543dca15",
+        "human_turn_queue": "d2bf8cfd50cbccfee438ee5f933692387a164a10"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "webui/src/core/chat.ts",
+      "changed_from_baseline_in": [
+        "human_turn_queue"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "e05866c0b755a4f33f950320255d542061801b91",
+        "p0_clean": "e05866c0b755a4f33f950320255d542061801b91",
+        "p0a": "e05866c0b755a4f33f950320255d542061801b91",
+        "rg3_integration": "e05866c0b755a4f33f950320255d542061801b91",
+        "rg3e_qualified": "e05866c0b755a4f33f950320255d542061801b91",
+        "cache_v2_learning": "e05866c0b755a4f33f950320255d542061801b91",
+        "context_elasticity": "e05866c0b755a4f33f950320255d542061801b91",
+        "human_turn_queue": "f53a7a2fa0f184dac21d1a375ab61ba57359d59a"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "webui/src/core/conversation.ts",
+      "changed_from_baseline_in": [
+        "human_turn_queue"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "192d01072318cfd0eea8b9771dc4e9c3c0b64cd1",
+        "p0_clean": "192d01072318cfd0eea8b9771dc4e9c3c0b64cd1",
+        "p0a": "192d01072318cfd0eea8b9771dc4e9c3c0b64cd1",
+        "rg3_integration": "192d01072318cfd0eea8b9771dc4e9c3c0b64cd1",
+        "rg3e_qualified": "192d01072318cfd0eea8b9771dc4e9c3c0b64cd1",
+        "cache_v2_learning": "192d01072318cfd0eea8b9771dc4e9c3c0b64cd1",
+        "context_elasticity": "192d01072318cfd0eea8b9771dc4e9c3c0b64cd1",
+        "human_turn_queue": "70f5183ecdfa9e3c7eb6cab6a85f4559cd07c5c2"
+      },
+      "working_tree": null,
+      "disposition": "hold",
+      "verification_level": "verified",
+      "reason": "Human-turn queue has a verified stale-claim reaper duplicate-dispatch path for long runs; fix/qualify before integration.",
+      "target_layer": "preintegration_defect_human_turn_queue"
+    },
+    {
+      "path": "webui/src/core/types.ts",
+      "changed_from_baseline_in": [
+        "human_turn_queue"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "b6c7c2cf964a0c59072577a57e54087df56352f3",
+        "p0_clean": "b6c7c2cf964a0c59072577a57e54087df56352f3",
+        "p0a": "b6c7c2cf964a0c59072577a57e54087df56352f3",
+        "rg3_integration": "b6c7c2cf964a0c59072577a57e54087df56352f3",
+        "rg3e_qualified": "b6c7c2cf964a0c59072577a57e54087df56352f3",
+        "cache_v2_learning": "b6c7c2cf964a0c59072577a57e54087df56352f3",
+        "context_elasticity": "b6c7c2cf964a0c59072577a57e54087df56352f3",
+        "human_turn_queue": "c991ebc08b7295f4fa75fa872bc55f815902aaae"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    },
+    {
+      "path": "webui/src/i18n/zh.ts",
+      "changed_from_baseline_in": [
+        "human_turn_queue"
+      ],
+      "git_blob": {
+        "baseline_lfl_main": "928af0631cb39c3130de2afee5606c54be773969",
+        "p0_clean": "928af0631cb39c3130de2afee5606c54be773969",
+        "p0a": "928af0631cb39c3130de2afee5606c54be773969",
+        "rg3_integration": "928af0631cb39c3130de2afee5606c54be773969",
+        "rg3e_qualified": "928af0631cb39c3130de2afee5606c54be773969",
+        "cache_v2_learning": "928af0631cb39c3130de2afee5606c54be773969",
+        "context_elasticity": "928af0631cb39c3130de2afee5606c54be773969",
+        "human_turn_queue": "ae30f1137837b3c23ac6591bf1fa6c3a914aeb87"
+      },
+      "working_tree": null,
+      "disposition": "reuse",
+      "verification_level": "verified",
+      "reason": "Qualified RG-3E candidate tree is the default semantic source for this path.",
+      "target_layer": "unified_integration"
+    }
+  ],
+  "significant_untracked": [
+    {
+      "path": "docs/DESIGN-20260910-adaptive-reasoning-learning-architecture.zh.md",
+      "working_blob_oid": "d6b92bf2194d6a6813c63c1eb4c710308af47ba7",
+      "working_sha256": "85342e8221861dbc666bdb4d9b3f3b021e86d853c83c9b0ca10157dfd2d8bbbc",
+      "rg3e_blob_oid": "303bcc906b86f79cc4266521c67f5f5bf87ac6ba",
+      "disposition": "replace",
+      "verification_level": "verified",
+      "reason": "Untracked local SoT copy differs from newer RG-3E tracked SoT; use RG-3E version."
+    },
+    {
+      "path": "docs/analysis/ISSUE-20260910-registry-stack-preexisting-debts.md",
+      "working_blob_oid": "0d79d46ca2f3dc80b2cef41b03fe6de6084faabb",
+      "working_sha256": "1cff3f4ae0936aca05e5474eb653d9576629240053b0202eaed164653548892f",
+      "rg3e_blob_oid": null,
+      "disposition": "hold",
+      "verification_level": "unverified",
+      "reason": "Untracked current-worktree artifact; provenance/classify before integration."
+    },
+    {
+      "path": "docs/analysis/QUALIFICATION-20260910-learning-plane-p0.md",
+      "working_blob_oid": "15b70ecb1b156a6da12a0aa5ab6b6917993a0db5",
+      "working_sha256": "fa796ad8d3d53be200662aad5cd9e6699a9a4ebeda7b2a443226e9791bc8bc7f",
+      "rg3e_blob_oid": "303da6e8362ed66dacf76d2100c1bcfa6739d160",
+      "disposition": "hold",
+      "verification_level": "unverified",
+      "reason": "Untracked current-worktree artifact; provenance/classify before integration."
+    },
+    {
+      "path": "tests/unit/test_dispose_teardown.py",
+      "working_blob_oid": "45f33204a17c6c2a2a9c276e68f5661b5e8ec46f",
+      "working_sha256": "b5c2556b8ce03b80a1a795a4c363a0d7858940b79d8786d7b0461321c0063073",
+      "rg3e_blob_oid": null,
+      "disposition": "hold",
+      "verification_level": "unverified",
+      "reason": "Untracked current-worktree artifact; provenance/classify before integration."
+    },
+    {
+      "path": "tests/unit/test_refresh_makethenbreak.py",
+      "working_blob_oid": "321235ec41420bfdb6643df8207911deb1dde87d",
+      "working_sha256": "0455548230a8895768bbf1ed17b4a8b4d08ccf16cdfbd9a91a2c1fd4bc6f94e0",
+      "rg3e_blob_oid": null,
+      "disposition": "hold",
+      "verification_level": "unverified",
+      "reason": "Untracked current-worktree artifact; provenance/classify before integration."
+    },
+    {
+      "path": "tests/unit/test_registry_stack.py",
+      "working_blob_oid": "ddde049885b06eb3ca7d851a71be6b32d111ae07",
+      "working_sha256": "a18880462f9824671d121f0907bb69007666031395db3bd97502f024a50ca471",
+      "rg3e_blob_oid": null,
+      "disposition": "hold",
+      "verification_level": "unverified",
+      "reason": "Untracked current-worktree artifact; provenance/classify before integration."
+    }
+  ]
+}
