@@ -207,7 +207,7 @@ def test_generator_exit_partial_resumes_once_before_next_human_ingress(build_tes
 def test_hard_restart_open_stream_checkpoint_is_first_class_recent_continuity(
     build_test_engine, tmp_path
 ):
-    """A process-death checkpoint with no run.end resumes immediately on next ingress."""
+    """A process-death checkpoint exposes visible partial context on the next ingress."""
     engine, fake = build_test_engine([{"content": "RESUMED-ANSWER"}])
     es = EventStore(str(tmp_path / "restart-events"), enabled=True)
     engine._event_store = es  # noqa: SLF001 — integration-test durable source
@@ -233,11 +233,8 @@ def test_hard_restart_open_stream_checkpoint_is_first_class_recent_continuity(
     result = engine.run(sid, "继续")
     assert result.final_answer == "RESUMED-ANSWER"
     wire = fake.calls[-1]["messages"]
-    assert wire[-2] == {
-        "role": "assistant",
-        "content": "MODEL-PARTIAL",
-        "reasoning_content": "MODEL-REASONING",
-    }
+    assert wire[-2] == {"role": "assistant", "content": "MODEL-PARTIAL"}
+    assert "reasoning_content" not in wire[-2]
     assert wire[-1]["role"] == "user"
     assert wire[-1]["content"] == "继续"
     assert float(wire[-1].get("_message_time_ts") or 0.0) > 0
@@ -333,7 +330,7 @@ def test_restart_merges_latest_useful_model_state_with_mechanical_execution(
     wire = fake.calls[-1]["messages"]
     assert wire[-2]["role"] == "assistant"
     assert wire[-2]["content"] == "两个全量对照仍在运行，下一步比较结果。"
-    assert wire[-2]["reasoning_content"] == "WAIT-FOR-BOTH-JOBS-THEN-COMPARE"
+    assert "reasoning_content" not in wire[-2]
     assert wire[-1]["role"] == "user"
     assert wire[-1]["content"].startswith("继续\n\n[provider_runtime_fact—not_human_text]\n")
     assert '"state":"started_outcome_unknown"' in wire[-1]["content"]
@@ -375,10 +372,10 @@ def test_nonterminal_background_job_alone_is_not_misclassified_as_restart_state(
     assert "provider_runtime_fact" not in wire[-1]["content"]
 
 
-def test_hard_restart_uses_full_sidecar_reasoning_not_bounded_event_tail(
+def test_hard_restart_uses_full_sidecar_visible_text_without_hidden_reasoning(
     build_test_engine, tmp_path, monkeypatch
 ):
-    """Long in-flight reasoning resumes from the hash-verified full snapshot."""
+    """Exact sidecar text survives restart while hidden reasoning stays out of new-human wire."""
     engine, fake = build_test_engine([{"content": "RESUMED-FULL"}])
     es = EventStore(str(tmp_path / "full-restart-events"), enabled=True)
     engine._event_store = es  # noqa: SLF001
@@ -408,7 +405,7 @@ def test_hard_restart_uses_full_sidecar_reasoning_not_bounded_event_tail(
     wire = fake.calls[-1]["messages"]
     assert wire[-2]["role"] == "assistant"
     assert wire[-2]["content"] == text
-    assert wire[-2]["reasoning_content"] == reasoning
+    assert "reasoning_content" not in wire[-2]
     assert wire[-1]["role"] == "user"
     assert wire[-1]["content"] == "继续"
     assert float(wire[-1].get("_message_time_ts") or 0.0) > 0

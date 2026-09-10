@@ -111,11 +111,8 @@ def test_interruption_resume_wins_and_contains_no_program_annotation() -> None:
     )
 
     assert info["source"] == "open_stream_checkpoint"
-    assert out[-2] == {
-        "role": "assistant",
-        "content": "MODEL-PARTIAL",
-        "reasoning_content": "MODEL-REASONING",
-    }
+    assert out[-2] == {"role": "assistant", "content": "MODEL-PARTIAL"}
+    assert "reasoning_content" not in out[-2]
     assert "截断标注" not in out[-2]["content"]
     assert out[-1] == {"role": "user", "content": "继续"}
 
@@ -266,8 +263,8 @@ def test_short_continue_keeps_only_immediately_recent_model_context() -> None:
     assert all(item.get("content") != "先不动代码，只分析安全边界" for item in out)
 
 
-def test_interruption_resume_preserves_provider_native_replay_marker() -> None:
-    """Crash recovery must not discard exact provider-native replay already captured."""
+def test_interruption_resume_does_not_promote_provider_native_replay_across_human() -> None:
+    """Native replay stays durable but loses automatic provider visibility after human ingress."""
     previous_user = _user("inspect")
     current_user = _user("continue")
     session = [previous_user, current_user]
@@ -299,8 +296,9 @@ def test_interruption_resume_preserves_provider_native_replay_marker() -> None:
     )
 
     assert info["source"] == "open_stream_checkpoint"
-    assert out[-2]["content"] == "MODEL-PARTIAL"
-    assert out[-2]["_provider_replay"] == replay
+    assert out[-2] == {"role": "assistant", "content": "MODEL-PARTIAL"}
+    assert "reasoning_content" not in out[-2]
+    assert "_provider_replay" not in out[-2]
     assert out[-1] == {"role": "user", "content": "continue"}
 
 
@@ -346,11 +344,8 @@ def test_attachment_bearing_current_user_keeps_interruption_continuity() -> None
     )
 
     assert info["source"] == "open_stream_checkpoint"
-    assert out[-2] == {
-        "role": "assistant",
-        "content": "MODEL-PARTIAL",
-        "reasoning_content": "MODEL-REASONING",
-    }
+    assert out[-2] == {"role": "assistant", "content": "MODEL-PARTIAL"}
+    assert "reasoning_content" not in out[-2]
     assert out[-1] == current_wire
     assert "[attachment_facts]" in out[-1]["content"]
 
@@ -615,3 +610,69 @@ def test_resolved_human_task_is_not_repromoted_in_swarmforge_followup() -> None:
     assert "跟前面没关系" not in visible
     assert "https://example.test/swarmforge" not in visible
     assert "OLD-HIDDEN-REASONING" not in visible
+
+
+def test_fresh_human_ingress_does_not_replay_reasoning_only_interrupted_state() -> None:
+    """Regression a15d031c: hidden cancelled reasoning cannot cross a new human boundary."""
+    previous_user = _user("继续检查 8901 部署")
+    interrupted_storage = Message(
+        role="assistant",
+        content="[截断标注] 本回合被中断（reason=cancelled）。未产生回答内容。",
+        source=MessageSource.SYSTEM,
+        reasoning_content="STALE-HIDDEN-PLAN: continue probing launchd and run more commands",
+        metadata={"llm_interrupted": True, "answer_origin": "program"},
+    )
+    current_user = _user("我让GPT修复")
+    session = [previous_user, interrupted_storage, current_user]
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": current_user.content},
+    ]
+
+    out, info = apply_recent_continuity_suffix(
+        built,
+        session_messages=session,
+        current_turn_ref=2,
+        interruption_resume={
+            "source": "persisted_interrupted",
+            "text_tail": "",
+            "reasoning_tail": "STALE-HIDDEN-PLAN: continue probing launchd and run more commands",
+        },
+    )
+
+    assert info["source"] == "current_user_only"
+    assert info["rehydrated"] is False
+    assert out == built
+    assert all("reasoning_content" not in item for item in out)
+
+
+def test_human_followup_keeps_visible_partial_but_not_hidden_or_native_action_state() -> None:
+    """Across human ingress, visible dialogue may survive; hidden/provider state loses authority."""
+    previous_user = _user("分析这个问题")
+    current_user = _user("继续，但先别再调用工具")
+    replay = {
+        "provider": "minimax",
+        "fields": {"reasoning_details": [{"type": "reasoning.text", "text": "OLD-PLAN"}]},
+    }
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": current_user.content},
+    ]
+
+    out, info = apply_recent_continuity_suffix(
+        built,
+        session_messages=[previous_user, current_user],
+        current_turn_ref=1,
+        interruption_resume={
+            "source": "open_stream_checkpoint",
+            "text_tail": "可见的未完成回答",
+            "reasoning_tail": "OLD-HIDDEN-REASONING",
+            "provider_replay": replay,
+        },
+    )
+
+    assert info["source"] == "open_stream_checkpoint"
+    assert out[-2] == {"role": "assistant", "content": "可见的未完成回答"}
+    assert "reasoning_content" not in out[-2]
+    assert "_provider_replay" not in out[-2]
+    assert out[-1] == {"role": "user", "content": current_user.content}

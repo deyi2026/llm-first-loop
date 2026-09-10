@@ -91,23 +91,21 @@ def _recent_assistant_wire(message: Any | None) -> dict[str, Any] | None:
 
 
 def _resume_message(state: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Project only visible interrupted assistant text across a human boundary.
+
+    ``reasoning_tail`` and provider-native replay remain durable recovery evidence,
+    but a new genuine-human ingress is an authority boundary: hidden/model-native
+    action state from the interrupted run must not be auto-promoted into the next
+    provider request.  The current human can still continue from visible partial
+    text, while changing/stopping/delegating the task is not biased by stale hidden
+    plans.  Partial tool-call drafts remain non-executable and are never projected.
+    """
     if not isinstance(state, dict):
         return None
     text_tail = str(state.get("text_tail") or "")
-    reasoning_tail = str(state.get("reasoning_tail") or "")
-    replay = state.get("provider_replay")
-    if not text_tail and not reasoning_tail and not isinstance(replay, dict):
+    if not text_tail:
         return None
-    out: dict[str, Any] = {"role": "assistant", "content": text_tail}
-    if reasoning_tail:
-        out["reasoning_content"] = reasoning_tail
-    # Opaque provider-native replay is transport state, not prose. Keep the
-    # internal marker so LLMClient can project it only to its originating provider;
-    # foreign providers deterministically strip it. Partial tool-call drafts remain
-    # non-executable and are intentionally not projected here.
-    if isinstance(replay, dict):
-        out["_provider_replay"] = replay
-    return out
+    return {"role": "assistant", "content": text_tail}
 
 
 def _current_user_wire_index(built: list[dict], current: Any) -> int | None:
@@ -184,9 +182,10 @@ def apply_recent_continuity_suffix(
     """Make recent assistant/current human the final provider-visible suffix.
 
     Returns a fresh list only when an initial genuine-human ingress is present.
-    ``interruption_resume`` wins over the prior completed assistant because it is the
-    more recent unfinished model state. For provider token-limit truncation only, a
-    provider-only structured runtime fact is attached to the provider view of the
+    Visible interrupted assistant text may replace the prior completed assistant because
+    it is the more recent dialogue state. Hidden reasoning/provider-native replay never
+    crosses this genuine-human authority boundary automatically. For provider token-limit
+    truncation only, a provider-only structured runtime fact is attached to the provider view of the
     current genuine-human wire message, after the exact human text and under an
     explicit runtime marker. Durable Session content remains byte-exact human input.
     This keeps the stable system prefix unchanged and avoids providers that reject a

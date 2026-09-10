@@ -1440,8 +1440,8 @@ def test_concurrent_streams_on_same_client_have_isolated_think_state():
         g2.close()
 
 
-def test_interruption_replay_marker_keeps_existing_provider_projection_boundary():
-    """Recent-continuity opaque replay is native only for its originating provider."""
+def test_interruption_replay_marker_is_not_projected_across_human_boundary():
+    """Captured native replay remains durable recovery evidence, not new-turn action state."""
     from llm_loop.core.message import Message, MessageSource
     from llm_loop.core.recent_continuity import apply_recent_continuity_suffix
 
@@ -1468,16 +1468,17 @@ def test_interruption_replay_marker_keeps_existing_provider_projection_boundary(
             "provider_replay": replay,
         },
     )
-    assert resumed[-2]["_provider_replay"] == replay
+    assert resumed[-2] == {"role": "assistant", "content": "PARTIAL"}
 
     minimax = _client(provider="minimax")._project_provider_replay(resumed)  # noqa: SLF001
     foreign = _client(provider="deepseek")._project_provider_replay(resumed)  # noqa: SLF001
 
-    assert minimax[-2]["reasoning_details"] == replay["fields"]["reasoning_details"]
+    assert "reasoning_details" not in minimax[-2]
     assert "_provider_replay" not in minimax[-2]
+    assert "reasoning_content" not in minimax[-2]
     assert "reasoning_details" not in foreign[-2]
     assert "_provider_replay" not in foreign[-2]
-    assert resumed[-2]["_provider_replay"] == replay
+    assert "reasoning_content" not in foreign[-2]
 
 
 def test_chat_template_reasoning_effort_uses_explicit_model_mapping() -> None:

@@ -387,6 +387,40 @@ def test_b1_row_wire_projection_placeholder_no_leak(build_test_engine):
     assert any("[截断标注]" in str(m.content or "") for m in sess.messages)
 
 
+def test_cancelled_reasoning_only_state_loses_action_authority_on_fresh_human(
+    build_test_engine,
+):
+    """Regression a15d031c: cancelled hidden plan is durable but absent from next provider wire."""
+    engine, fake = build_test_engine([{"content": "明白，交给 GPT。"}])
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    sess.messages.append(
+        Message(role="user", content="继续检查 8901", source=MessageSource.USER)
+    )
+    engine._on_llm_interrupted(
+        sess,
+        text_parts=[],
+        reasoning_parts=["STALE-HIDDEN-PLAN: continue probing launchd and execute commands"],
+        reason="cancelled",
+        round_no=5,
+        provider="glm",
+        model="glm/glm-5.3",
+    )
+    engine.session.save(sess)
+
+    result = engine.run(sid, "我让GPT修复")
+
+    assert result.final_answer == "明白，交给 GPT。"
+    wire = fake.calls[-1]["messages"]
+    assert wire[-1]["role"] == "user"
+    assert wire[-1]["content"] == "我让GPT修复"
+    assert all(
+        "STALE-HIDDEN-PLAN" not in str(item.get("reasoning_content") or "")
+        for item in wire
+    )
+    assert all("_provider_replay" not in item for item in wire)
+
+
 def test_engine_llm_error_persists_b1_row_and_b2_row(build_test_engine, tmp_path):
     """同步 chat 抛 LLMError：B1 零产物不加行 + B2 truncated 行（llm_error）。"""
     engine, fake = build_test_engine([])
