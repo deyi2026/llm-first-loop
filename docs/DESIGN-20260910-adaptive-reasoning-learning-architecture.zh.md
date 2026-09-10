@@ -511,6 +511,8 @@ if tool_count > 10: start Reasoning Lab
 
 > RG-0 详细权力边界、数据契约与测试矩阵见 `docs/DESIGN-20260910-resource-governor-rg0.md`。RG-0 仅冻结 contract，不接管任何 runtime path。
 
+RG-1 最小运行时与 Learning 迁移细则见 `docs/DESIGN-20260910-resource-governor-rg1.md`；RG-1 只拥有 lease/concurrency/service-order 机械权力，Task/SubAgent/provider rate/cost/trust/cancel 仍未接入。
+
 这套架构必须同时适用于：
 
 ```text

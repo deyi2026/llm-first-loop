@@ -364,19 +364,28 @@ def test_contract_module_is_pure_and_does_not_import_runtime_decision_planes() -
     assert not any(name.startswith("llm_loop.") for name in imported)
 
 
-def test_rg0_is_not_wired_into_existing_runtime_planes() -> None:
+def test_rg1_wiring_is_narrow_and_task_subagent_provider_pool_remain_unwired() -> None:
     root = Path(__file__).parents[2]
-    runtime_paths = (
-        root / "src/llm_loop/core/loop/engine.py",
+    allowed = {
         root / "src/llm_loop/factory.py",
         root / "src/llm_loop/methods/learning_plane.py",
+    }
+    forbidden = {
         root / "src/llm_loop/subagent/runner.py",
         root / "src/llm_loop/llm/pool.py",
-    )
-    for path in runtime_paths:
+    }
+    for path in allowed:
+        text = path.read_text(encoding="utf-8")
+        assert "llm_loop.resources" in text, path
+    for path in forbidden:
         text = path.read_text(encoding="utf-8")
         assert "llm_loop.resources" not in text, path
         assert "ResourceGovernor" not in text, path
+
+    engine_text = (root / "src/llm_loop/core/loop/engine.py").read_text(encoding="utf-8")
+    assert "resource_governor: Any | None = None" in engine_text
+    assert "try_acquire(" not in engine_text
+    assert "acquire(" not in engine_text
 
 
 def test_architecture_sot_points_to_rg0_contract_without_runtime_claim() -> None:

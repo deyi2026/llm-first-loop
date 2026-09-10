@@ -54,6 +54,8 @@ from llm_loop.methods.learning_plane import LearningPlane
 from llm_loop.methods.store import (
     MethodStore,  # Method Learning v1：方法卡存储（顶层装配供 corrections/检索共享）
 )
+from llm_loop.resources.foreground import ForegroundActivityProbe
+from llm_loop.resources.governor import ResourceGovernor
 from llm_loop.runtime.causal_diagnose import diagnose_event_store
 from llm_loop.runtime.causality import build_runtime_causal_snapshot
 from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
@@ -1192,19 +1194,27 @@ def build_engine(settings: Settings) -> LoopEngine:
     # 默认关闭（LEARNING_PLANE_ENABLED）；关闭时不挂载 engine.learning_journal，
     # post_run 反射检查保持静默 —— 零行为变化、无队列积压。
     engine.learning_plane = None
+    foreground_probe = ForegroundActivityProbe(engine, settings.sessions_dir)
+    resource_governor = ResourceGovernor(foreground_probe=foreground_probe.active)
+    engine.resource_governor = resource_governor
     if settings.learning_plane_enabled:
         learning_journal = LearningJournal(
             path=Path(settings.sessions_dir) / "learning" / "journal.jsonl",
             candidate_lookup=method_store.find_by_evidence,
         )
         engine.learning_journal = learning_journal
+
+        def _resolve_learning_resource_target(model_ref: str) -> tuple[str, str]:
+            return model_pool.registry.resolve(model_ref or settings.llm_model)
+
         learning_plane = LearningPlane(
             journal=learning_journal,
             episode_store=episode_store,
             method_store=method_store,
             engine=engine,
             model_resolver=model_pool.get_client,
-            sessions_dir=settings.sessions_dir,
+            resource_governor=resource_governor,
+            resource_target_resolver=_resolve_learning_resource_target,
         )
         learning_plane.start()
         engine.learning_plane = learning_plane

@@ -1,5 +1,6 @@
-"""Provider-agnostic resource governance contracts.
+"""Provider-agnostic resource governance.
 
-RG-0 exposes data contracts only. Runtime admission/scheduling is introduced in
-later phases and must not be inferred from importing this package.
+RG-0 defines pure data contracts. RG-1 adds a minimal process-local
+lease/concurrency governor and mechanical foreground activity probe; provider
+rate/cost/trust/cancel policy remains intentionally unwired.
 """

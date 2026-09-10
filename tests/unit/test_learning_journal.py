@@ -6,11 +6,15 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from llm_loop.methods.learning_journal import (
     LearningJournal,
     learning_job_id,
 )
 from llm_loop.methods.learning_plane import LearningPlane
+from llm_loop.resources.foreground import ForegroundActivityProbe
+from llm_loop.resources.governor import ResourceGovernor
 
 
 def _mk(tmp_path: Path, *, max_attempts: int = 2, found: dict[str, str] | None = None) -> LearningJournal:
@@ -176,12 +180,15 @@ def test_factory_assembles_learning_plane_only_when_enabled(tmp_path):
 
     engine_off = build_engine(_mk(False))
     assert engine_off.learning_plane is None
-    assert getattr(engine_off, "learning_journal", None) is None  # 关闭=完全静默
+    assert getattr(engine_off, "learning_journal", None) is None  # 关闭=无 Learning 队列/线程
+    assert isinstance(engine_off.resource_governor, ResourceGovernor)
+    assert engine_off.resource_governor.active_leases() == ()
 
     engine_on = build_engine(_mk(True))
     try:
         plane = engine_on.learning_plane
         assert plane is not None and plane._thread.is_alive()
+        assert engine_on.resource_governor is plane._resource_governor
         journal = engine_on.learning_journal
         assert journal is not None
         assert journal._path.parent.name == "learning"  # sessions/learning/journal.jsonl
@@ -192,14 +199,23 @@ def test_factory_assembles_learning_plane_only_when_enabled(tmp_path):
     assert engine_on.learning_plane._thread is None or not engine_on.learning_plane._thread.is_alive()
 
 
+def _resource_target(model_ref: str) -> tuple[str, str]:
+    if "/" in model_ref:
+        return tuple(model_ref.split("/", 1))  # type: ignore[return-value]
+    return "test-provider", model_ref or "test-model"
+
+
 def _plane_for_admission(tmp_path: Path, engine, journal: LearningJournal) -> LearningPlane:
+    probe = ForegroundActivityProbe(engine, tmp_path / "sessions")
+    governor = ResourceGovernor(foreground_probe=probe.active)
     return LearningPlane(
         journal=journal,
         episode_store=SimpleNamespace(get=lambda *_args: None),
         method_store=SimpleNamespace(),
         engine=engine,
         model_resolver=lambda _model: (_ for _ in ()).throw(AssertionError("model call not expected")),
-        sessions_dir=tmp_path / "sessions",
+        resource_governor=governor,
+        resource_target_resolver=_resource_target,
         poll_interval_s=1.0,
         quiet_period_s=0.0,
     )
@@ -258,13 +274,16 @@ def test_learning_plane_detects_held_run_lock_in_nested_workspace(tmp_path):
         _sync_guard=threading.Lock(),
         _sync_active=set(),
     )
+    probe = ForegroundActivityProbe(engine, sessions)
+    governor = ResourceGovernor(foreground_probe=probe.active)
     plane = LearningPlane(
         journal=_mk(tmp_path),
         episode_store=SimpleNamespace(get=lambda *_args: None),
         method_store=SimpleNamespace(),
         engine=engine,
         model_resolver=lambda _model: object(),
-        sessions_dir=sessions,
+        resource_governor=governor,
+        resource_target_resolver=_resource_target,
         poll_interval_s=1.0,
         quiet_period_s=0.0,
     )
@@ -276,3 +295,86 @@ def test_learning_plane_detects_held_run_lock_in_nested_workspace(tmp_path):
         finally:
             fcntl.flock(fh, fcntl.LOCK_UN)
     assert plane.foreground_busy() is False
+
+
+def test_learning_plane_concurrency_lease_blocks_without_changing_job_state(tmp_path):
+    """An occupied RG-1 Learning lane defers the job and leaves it queued."""
+    journal = _mk(tmp_path)
+    job = journal.enqueue("episode:s1:3:xyz", session_id="s1", source_model="provider/model")
+    assert job is not None
+    engine = SimpleNamespace(
+        registry=object(),
+        runner=SimpleNamespace(has_running=lambda: False),
+        _sync_guard=threading.Lock(),
+        _sync_active=set(),
+    )
+    plane = _plane_for_admission(tmp_path, engine, journal)
+    request = plane._resource_request(job)
+    blocker = plane._resource_governor.try_acquire(
+        type(request)(
+            request_id="learning:blocker",
+            owner_ref="learning:blocker",
+            execution_class=request.execution_class,
+            service_priority=request.service_priority,
+            provider_id=request.provider_id,
+            model_id=request.model_id,
+            resource_keys=request.resource_keys,
+            submitted_at=request.submitted_at,
+        )
+    )
+    assert blocker.lease is not None
+    try:
+        assert plane._try_execute(job) is False
+        after = journal.job(job.job_id)
+        assert after is not None and after.state == "queued" and after.attempt == 0
+    finally:
+        assert plane._resource_governor.release(blocker.lease) is True
+
+
+def test_learning_plane_releases_resource_lease_when_reflection_raises(
+    tmp_path, monkeypatch
+):
+    """Every exceptional ReflectionRun path releases the mechanical lease."""
+    journal = _mk(tmp_path)
+    job = journal.enqueue("episode:s1:3:xyz", session_id="s1", source_model="provider/model")
+    assert job is not None
+    engine = SimpleNamespace(
+        registry=object(),
+        runner=SimpleNamespace(has_running=lambda: False),
+        _sync_guard=threading.Lock(),
+        _sync_active=set(),
+        settings=SimpleNamespace(method_reflection_timeout_s=120.0),
+    )
+    plane = _plane_for_admission(tmp_path, engine, journal)
+    plane._episode_store = SimpleNamespace(
+        get=lambda *_args: {"messages": [{"role": "assistant", "content": "done"}]}
+    )
+    plane._model_resolver = lambda _model: object()
+
+    def boom(**_kwargs):
+        raise RuntimeError("reflection exploded")
+
+    monkeypatch.setattr("llm_loop.methods.learning_plane.reflect_on_episode", boom)
+    with pytest.raises(RuntimeError, match="reflection exploded"):
+        plane._try_execute(job)
+    assert plane._resource_governor.active_leases() == ()
+    assert all(plane._resource_governor.in_flight(key) == 0 for key in plane._resource_request(job).resource_keys)
+
+
+def test_learning_plane_unresolved_resource_target_yields_without_attempt(tmp_path):
+    """Unknown routing facts are not guessed and do not create an infinite failed-attempt loop."""
+    journal = _mk(tmp_path)
+    job = journal.enqueue("episode:s1:3:xyz", session_id="s1", source_model="missing/model")
+    assert job is not None
+    engine = SimpleNamespace(
+        registry=object(),
+        runner=SimpleNamespace(has_running=lambda: False),
+        _sync_guard=threading.Lock(),
+        _sync_active=set(),
+    )
+    plane = _plane_for_admission(tmp_path, engine, journal)
+    plane._resource_target_resolver = lambda _model: (_ for _ in ()).throw(ValueError("unknown"))
+    assert plane._try_execute(job) is False
+    after = journal.job(job.job_id)
+    assert after is not None and after.state == "queued" and after.attempt == 0
+    assert plane._resource_governor.active_leases() == ()

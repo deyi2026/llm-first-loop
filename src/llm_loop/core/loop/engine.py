@@ -190,6 +190,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
     # 默认关闭时保持 None —— post_run 反射静默，零行为变化。
     learning_journal: Any | None = None
     learning_plane: Any | None = None
+    # RG-1: optional mechanical lease/concurrency governor; Task/SubAgent are not wired yet.
+    resource_governor: Any | None = None
     # ERR1210 per-engine/session attempt ledger; actual lifecycle owned by RecoveryController.
     _err1210_attempted: dict[str, int]
     # ERC Phase6: optional workspace-activation legacy sidecar migration hook.

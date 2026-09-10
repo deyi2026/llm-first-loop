@@ -111,6 +111,8 @@ class AdmissionReason(StrEnum):
 
     AVAILABLE = "available"
     CONCURRENCY_FULL = "concurrency_full"
+    HIGHER_PRIORITY_ACTIVE = "higher_priority_active"
+    HIGHER_PRIORITY_WAITING = "higher_priority_waiting"
     REQUEST_RATE_LIMIT = "request_rate_limit"
     TOKEN_RATE_LIMIT = "token_rate_limit"
     COST_BUDGET_EXHAUSTED = "cost_budget_exhausted"

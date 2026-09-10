@@ -161,6 +161,8 @@ def test_chat_stream_done_and_next_turn_do_not_wait_for_learning_reflection(
     from llm_loop.methods.learning_plane import LearningPlane
     from llm_loop.methods.reflection import ReflectionOutcome
     from llm_loop.methods.store import MethodStore
+    from llm_loop.resources.foreground import ForegroundActivityProbe
+    from llm_loop.resources.governor import ResourceGovernor
 
     engine, _ = build_test_engine([])
     engine.llm_pool.default_client = StreamingFakeLLM("第一轮")
@@ -188,13 +190,16 @@ def test_chat_stream_done_and_next_turn_do_not_wait_for_learning_reflection(
         return ReflectionOutcome(attempted=True, triggered=True, reason="test_none")
 
     monkeypatch.setattr("llm_loop.methods.learning_plane.reflect_on_episode", blocked_reflection)
+    foreground_probe = ForegroundActivityProbe(engine, engine.settings.sessions_dir)
+    resource_governor = ResourceGovernor(foreground_probe=foreground_probe.active)
     plane = LearningPlane(
         journal=journal,
         episode_store=episode_store,
         method_store=method_store,
         engine=engine,
         model_resolver=lambda _model: object(),
-        sessions_dir=engine.settings.sessions_dir,
+        resource_governor=resource_governor,
+        resource_target_resolver=lambda _model: ("test-provider", "test-model"),
         poll_interval_s=1.0,
         quiet_period_s=0.0,
     )

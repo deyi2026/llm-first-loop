@@ -13,45 +13,26 @@ Power boundaries (by design, not by convention):
 """
 from __future__ import annotations
 
-import fcntl
 import logging
 import threading
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from llm_loop.methods.learning_journal import LearningJob, LearningJournal
 from llm_loop.methods.reflection import reflect_on_episode
+from llm_loop.resources.contracts import (
+    AdmissionOutcome,
+    AdmissionRequest,
+    ExecutionClass,
+    ResourceKey,
+    ResourceScopeKind,
+    ServicePriority,
+)
+from llm_loop.resources.governor import ResourceGovernor
 
 logger = logging.getLogger(__name__)
 
-
-def _locks_dir_busy(sessions_dir: str | Path) -> bool:
-    """Cross-process foreground probe across all workspace partitions.
-
-    SessionStore places run leases under ``sessions/<workspace>/<sid>.run.lock``.
-    Learning protects a shared provider/runtime, so a foreground run in *any*
-    workspace must win; probing only the sessions root would miss those leases.
-    """
-    try:
-        for lock_path in Path(sessions_dir).rglob("*.run.lock"):
-            if not lock_path.exists():
-                continue
-            try:
-                fd = lock_path.open("r")
-            except OSError:
-                continue  # lock file vanished between glob and open
-            try:
-                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            except OSError:
-                return True  # an exclusive whole-run lease is held
-            finally:
-                fd.close()
-    except Exception:  # noqa: BLE001 - admission must fail closed (learning yields)
-        return True
-    return False
 
 
 class LearningPlane:
@@ -72,7 +53,8 @@ class LearningPlane:
         method_store: Any,
         engine: Any,
         model_resolver: Callable[[str], Any],
-        sessions_dir: str | Path,
+        resource_governor: ResourceGovernor,
+        resource_target_resolver: Callable[[str], tuple[str, str]],
         poll_interval_s: float = 5.0,
         quiet_period_s: float = 15.0,
     ) -> None:
@@ -81,7 +63,8 @@ class LearningPlane:
         self._method_store = method_store
         self._engine = engine
         self._model_resolver = model_resolver
-        self._sessions_dir = Path(sessions_dir)
+        self._resource_governor = resource_governor
+        self._resource_target_resolver = resource_target_resolver
         self._poll_interval_s = max(1.0, float(poll_interval_s))
         self._quiet_period_s = max(0.0, float(quiet_period_s))
         self._thread: threading.Thread | None = None
@@ -104,29 +87,35 @@ class LearningPlane:
     # ---------- admission ----------
 
     def foreground_busy(self) -> bool:
-        """True when any foreground run exists (runner/sync registry or run locks).
+        """Compatibility view of the Governor's mechanical foreground barrier."""
+        return self._resource_governor.higher_priority_active(
+            ServicePriority.P3_BACKGROUND_LEARNING
+        )
 
-        ``engine.registry`` is the ToolRegistry and is normally truthy even when
-        no task is running; it is not a workload registry and must never gate
-        Learning admission.  Only mechanical run-activity facts belong here.
+    def _resource_request(self, job: LearningJob) -> AdmissionRequest:
+        """Build one process-local RG-1 Learning coordination lease request.
+
+        The limit=1 fact describes this Learning consumer lane only.  It is not
+        a claim about the selected provider/model's true concurrency; provider
+        capacity moves into the Governor only when a later adapter proves it.
         """
-        runner = getattr(self._engine, "runner", None)
-        try:
-            has_running = getattr(runner, "has_running", None)
-            if callable(has_running) and bool(has_running()):
-                return True
-        except Exception:  # noqa: BLE001
-            return True
-        guard = getattr(self._engine, "_sync_guard", None)
-        active = getattr(self._engine, "_sync_active", None)
-        if guard is not None and active is not None:
-            try:
-                with guard:
-                    if bool(active):
-                        return True
-            except Exception:  # noqa: BLE001 - admission uncertainty yields to foreground
-                return True
-        return _locks_dir_busy(self._sessions_dir)
+        provider_id, model_id = self._resource_target_resolver(job.source_model)
+        key = ResourceKey(
+            provider_id=provider_id,
+            scope_kind=ResourceScopeKind.RUNTIME,
+            scope_id=f"rg1-learning-process:{model_id}",
+        )
+        self._resource_governor.set_concurrency_limit(key, 1)
+        return AdmissionRequest(
+            request_id=f"learning:{job.job_id}:attempt:{job.attempt + 1}",
+            owner_ref=f"learning:{job.job_id}",
+            execution_class=ExecutionClass.BACKGROUND_LEARNING,
+            service_priority=ServicePriority.P3_BACKGROUND_LEARNING,
+            provider_id=provider_id,
+            model_id=model_id,
+            resource_keys=(key,),
+            submitted_at=time.time(),
+        )
 
     def _quiet_elapsed(self, job: LearningJob) -> bool:
         try:
@@ -169,61 +158,76 @@ class LearningPlane:
         if not self._quiet_elapsed(job):
             return False
         try:
-            self._journal.mark_admitted(job.job_id)
-        except Exception:  # noqa: BLE001
+            request = self._resource_request(job)
+        except Exception:  # noqa: BLE001 - unresolved target yields without consuming an attempt
+            logger.warning("learning job %s resource target unavailable", job.job_id, exc_info=True)
             return False
-        if self.foreground_busy():  # re-check between admission and start
-            self._journal.mark_requeued(job.job_id, "foreground_arrived")
+
+        decision = self._resource_governor.try_acquire(request)
+        if decision.outcome is not AdmissionOutcome.ADMITTED or decision.lease is None:
             return False
-        self._journal.mark_started(job.job_id)
-        if self.foreground_busy():  # last check before spending the model slot
-            self._journal.mark_requeued(job.job_id, "foreground_arrived")
-            return False
-        entry = self._episode_store.get(job.session_id, job.source_episode_ref)
-        if entry is None:
-            self._journal.mark_failed(job.job_id, "episode_not_found")
-            return True
-        settings = getattr(self._engine, "settings", None)
-        timeout_s = float(getattr(settings, "method_reflection_timeout_s", 120.0) or 120.0)
-        client = self._model_resolver(job.source_model)
-        final_answer = ""
-        for row in reversed(entry.get("messages") or []):
-            if str(row.get("role")) == "assistant":
-                final_answer = str(row.get("content") or "")
-                break
-        outcome = reflect_on_episode(
-            llm_client=client,
-            store=self._method_store,
-            episode_entry=entry,
-            trigger_facts=dict(job.trigger_facts or {}),
-            tool_trace=[],
-            run_end_reason=str((job.trigger_facts or {}).get("run_end_reason", "")),
-            final_answer=final_answer,
-            timeout_s=timeout_s,
-        )
-        if outcome.candidate_payload is not None:  # reason == schema_ok
+        lease = decision.lease
+        try:
             try:
-                record = self._method_store.save_candidate(
-                    name=str(outcome.candidate_payload.get("name", "")),
-                    description=str(outcome.candidate_payload.get("description", "")),
-                    body=str(outcome.candidate_payload.get("body", "")),
-                    source_model=job.source_model,
-                    source_episode_refs=[job.source_episode_ref],
-                    evidence_refs=[f"learning:{job.job_id}"],
-                )
+                self._journal.mark_admitted(job.job_id)
             except Exception:  # noqa: BLE001
-                logger.warning("learning job %s candidate save failed", job.job_id, exc_info=True)
-                self._journal.mark_failed(job.job_id, "candidate_save_failed")
+                return False
+            if self.foreground_busy():  # re-check between admission and start
+                self._journal.mark_requeued(job.job_id, "foreground_arrived")
+                return False
+            self._journal.mark_started(job.job_id)
+            if self.foreground_busy():  # last check before spending the model slot
+                self._journal.mark_requeued(job.job_id, "foreground_arrived")
+                return False
+            entry = self._episode_store.get(job.session_id, job.source_episode_ref)
+            if entry is None:
+                self._journal.mark_failed(job.job_id, "episode_not_found")
                 return True
-            self._journal.mark_saved(job.job_id, record.method_ref)
+            settings = getattr(self._engine, "settings", None)
+            timeout_s = float(getattr(settings, "method_reflection_timeout_s", 120.0) or 120.0)
+            client = self._model_resolver(job.source_model)
+            final_answer = ""
+            for row in reversed(entry.get("messages") or []):
+                if str(row.get("role")) == "assistant":
+                    final_answer = str(row.get("content") or "")
+                    break
+            outcome = reflect_on_episode(
+                llm_client=client,
+                store=self._method_store,
+                episode_entry=entry,
+                trigger_facts=dict(job.trigger_facts or {}),
+                tool_trace=[],
+                run_end_reason=str((job.trigger_facts or {}).get("run_end_reason", "")),
+                final_answer=final_answer,
+                timeout_s=timeout_s,
+            )
+            if outcome.candidate_payload is not None:  # reason == schema_ok
+                try:
+                    record = self._method_store.save_candidate(
+                        name=str(outcome.candidate_payload.get("name", "")),
+                        description=str(outcome.candidate_payload.get("description", "")),
+                        body=str(outcome.candidate_payload.get("body", "")),
+                        source_model=job.source_model,
+                        source_episode_refs=[job.source_episode_ref],
+                        evidence_refs=[f"learning:{job.job_id}"],
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "learning job %s candidate save failed", job.job_id, exc_info=True
+                    )
+                    self._journal.mark_failed(job.job_id, "candidate_save_failed")
+                    return True
+                self._journal.mark_saved(job.job_id, record.method_ref)
+                return True
+            if not outcome.attempted:
+                # structural: disabled / core method missing / empty material — terminal "none"
+                self._journal.mark_none(job.job_id, outcome.reason or "not_attempted")
+                return True
+            if outcome.reason == "reflection_call_failed":
+                self._journal.mark_failed(job.job_id, outcome.reason)
+                return True
+            # model returned decision=none, non-JSON, or schema-invalid payload
+            self._journal.mark_none(job.job_id, outcome.reason[:200] or "no_candidate")
             return True
-        if not outcome.attempted:
-            # structural: disabled / core method missing / empty material — terminal "none"
-            self._journal.mark_none(job.job_id, outcome.reason or "not_attempted")
-            return True
-        if outcome.reason == "reflection_call_failed":
-            self._journal.mark_failed(job.job_id, outcome.reason)
-            return True
-        # model returned decision=none, non-JSON, or schema-invalid payload
-        self._journal.mark_none(job.job_id, outcome.reason[:200] or "no_candidate")
-        return True
+        finally:
+            self._resource_governor.release(lease)
