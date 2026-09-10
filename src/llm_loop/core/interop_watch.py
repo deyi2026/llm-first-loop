@@ -77,7 +77,9 @@ class InboxWatcher:
         self._wakeup_min_interval = wakeup_min_interval_s
         self._seen: set[str] = set()  # 已提示文件名（去重）
         self._baselined = False  # 首轮只建基线（启动不刷屏，对齐 cross_sync）
-        self._last_wakeup = 0.0
+        # None=从未唤醒。不可用 0.0 哨兵：time.monotonic() 原点=开机时刻，
+        # uptime < 限频窗的机器（CI 全新 runner VM 常态）首轮唤醒会被静默限频。
+        self._last_wakeup: float | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._backlog_alerted = False  # 任务9: 堆积告警去抖（回落时复位）
@@ -145,7 +147,8 @@ class InboxWatcher:
         # B: 可选 wakeup（仅 coordinate，限频）
         if self._wakeup_enabled and self._wakeup_fn is not None:
             now = time.monotonic()
-            if now - self._last_wakeup >= self._wakeup_min_interval:
+            elapsed = now - self._last_wakeup if self._last_wakeup is not None else None
+            if elapsed is None or elapsed >= self._wakeup_min_interval:
                 topics = self._topics_of(new_files)
                 if "coordinate" in topics:
                     self._last_wakeup = now
