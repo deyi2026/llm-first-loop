@@ -110,8 +110,11 @@ def test_stable_prefix_fingerprint_includes_projected_tool_surface():
         def __init__(self):
             self.seen = []
 
-        def preflight(self, _sid, fp):
-            self.seen.append(fp)
+        def preflight(self, _sid, system_fp, tools_fp):
+            # 契约 §3/§7 双轴协议：gate 输入为 (system 轴, tools 轴) 二元组
+            # 而非组合指纹（e1d0bcd 起）。本测试意图不变：投影 tools 面必须
+            # 进入 gate 指纹——tools 变化时 tools 轴分量必须随之变化。
+            self.seen.append((system_fp, tools_fp))
 
     def _inject(base, prefix_len, _sid):
         return base, prefix_len
@@ -140,4 +143,11 @@ def test_stable_prefix_fingerprint_includes_projected_tool_surface():
     )
     assert a1.stable_fp == a2.stable_fp
     assert b.stable_fp != a1.stable_fp
-    assert monitor.seen == [a1.stable_fp, a2.stable_fp, b.stable_fp]
+    # 双轴断言（契约 §3/§7）：system 轴恒定，tools 轴分量区分 a/b
+    # （tools 面进指纹轴 = 原测试意图在新协议下的表达）。
+    assert monitor.seen == [
+        (a1.system_fp, tool_a),
+        (a2.system_fp, tool_a),
+        (b.system_fp, tool_b),
+    ]
+    assert a1.system_fp == b.system_fp
