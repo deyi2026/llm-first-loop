@@ -133,6 +133,22 @@ def test_compact_contract_keeps_load_bearing_search_and_evidence_semantics():
     assert "当前任务" in defs["read_evidence"]["description"]
 
 
+def test_compact_contract_keeps_versioned_edit_discovery_path():
+    """Factory strict edit precondition must be discoverable without guessing parameter provenance."""
+    reg = ToolRegistry()
+    reg.register(_FakeTool("read_file"))
+    reg.register(_FakeTool("edit_file"))
+    reg.register(_FakeTool("get_tool_schema"))
+    defs = {row["name"]: row for row in reg.schemas(lazy=True)}
+
+    assert "snapshot=true" in defs["read_file"]["description"]
+    assert "snapshot_ref" in defs["read_file"]["description"]
+    assert "必须" in defs["read_file"]["description"]
+    assert "read_file(snapshot=true)" in defs["edit_file"]["description"]
+    assert "expected_snapshot_ref" in defs["edit_file"]["description"]
+    assert "参数/协议失败" in defs["get_tool_schema"]["description"]
+
+
 def test_lazy_schema_preserves_current_machine_bounds_without_parameter_prose():
     """Lazy transport keeps current hard bounds as machine schema, not duplicate prose."""
     from llm_loop.tools.builtin.agent_message import AgentMessageTool

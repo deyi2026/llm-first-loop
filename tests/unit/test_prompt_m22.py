@@ -43,4 +43,4 @@ def test_prompt_is_small_static_contract():
     first = build_system_prompt()
     second = build_system_prompt()
     assert first == second
-    assert len(first) < 200
+    assert len(first) < 400

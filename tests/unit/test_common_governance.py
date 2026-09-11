@@ -9,7 +9,7 @@ def test_common_governance_prefix_is_deterministic_and_bounded():
     a = build_system_prompt()
     b = build_system_prompt()
     assert a == b
-    assert len(a) < 200
+    assert len(a) < 400
     assert sha256(a.encode()).hexdigest() == sha256(b.encode()).hexdigest()
 
 
@@ -18,11 +18,14 @@ def test_common_governance_encodes_reusable_anti_drift_invariants():
     expected = (
         "保持目标约束",
         "区分事实/假设",
+        "先取真实证据，不猜",
+        "未获成功回执不得声称完成",
+        "参数失败时先核当前 Schema/代码/文档再修正",
+        "已验证经验/方法并核适用性",
         "无新反证不重复核验",
         "只查会改变下一步的不确定性",
-        "优先当前证据",
-        "历史经验按需",
         "中断后先接最近未完成状态",
+        "已确立事实、未解决问题和本步动作",
     )
     for item in expected:
         assert item in prompt

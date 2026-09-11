@@ -66,7 +66,7 @@ def test_lite_playbooks_are_v15_and_keep_compact_maintenance_contracts() -> None
     en = _read("docs/ai_rules.lite.en.md")
     for text in (zh, en):
         first = text.splitlines()[0]
-        assert re.search(r"version=15\b", first)
+        assert re.search(r"version=16\b", first)
         assert "RULE-AI-24" in text
         assert "docs/DEVELOPMENT_REPAIR_SAFETY.md" in text
         assert "merge" in text.lower()
