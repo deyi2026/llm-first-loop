@@ -54,9 +54,12 @@ class ReadFileTool:
         + SHARED_SOURCE_RECOVERY_CONTRACT
         + source_recovery_guidance(SourceRecoveryKind.PROBEABLE_FILE)
         + "Evidence enforce 中 verified-current 且 coverage 已覆盖时由 resolver 复用 Evidence 并内联正文；"
-        "无法内联时该次复用按 failure 如实回执（force_refresh=true 显式要求物理重读）。"
+        "无法内联时该次复用按 failure 如实回执（evidence_force_refresh=true 显式要求物理重读）。"
+        "evidence_force_refresh 只改变 Evidence 复用/读取来源，不创建 snapshot_ref，也不能替代 snapshot=true 的版本 baseline；"
         "legacy/off 模式下超大文件仍可用 offset/limit 分段读取。"
         "snapshot=true 时强制物理观察当前完整文件并返回 file_contract_version=1 的 immutable baseline ref；"
+        "versioned write 的机械配对是 read_file(snapshot=true) 取得当前完整字节 baseline，再由 "
+        "edit_file(expected_snapshot_ref=<snapshot_ref>) 使用该 baseline；普通 snapshot=false 读取不会产生这个精确写前置条件；"
         "path 也可为 artifact://v1/...；此时读取当前工作区绑定的 immutable artifact snapshot，"
         "并如实报告其 workspace path 当前是否仍匹配该版本。"
     )
@@ -66,13 +69,13 @@ class ReadFileTool:
             "path": {"type": "string", "description": "要读取的文件路径"},
             "offset": {"type": "integer", "description": "起始行号（0-based，默认 0）"},
             "limit": {"type": "integer", "description": "最多读取行数（默认全部）"},
-            "force_refresh": {
+            "evidence_force_refresh": {
                 "type": "boolean",
-                "description": "Evidence enforce 模式显式要求物理重新读取，即使 verified-current Evidence 已覆盖；默认 false",
+                "description": "仅用于 Evidence enforce：即使 verified-current Evidence 已覆盖也绕过复用并物理重读；默认 false。它不创建 snapshot_ref，不能满足 edit_file.expected_snapshot_ref 的版本前置条件",
             },
             "snapshot": {
                 "type": "boolean",
-                "description": "为 true 时强制物理读取完整当前文件并保存 immutable baseline，返回 file_contract_version=1/snapshot_ref；默认 false",
+                "description": "为 true 时强制物理读取完整当前文件并保存 immutable baseline，返回 file_contract_version=1/snapshot_ref，可供 edit_file.expected_snapshot_ref 做精确写前置条件；默认 false，普通读取不产生该前置条件",
             },
         },
         "required": ["path"],

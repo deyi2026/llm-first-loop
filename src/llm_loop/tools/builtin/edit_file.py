@@ -102,7 +102,7 @@ class EditFileTool:
         "失败对策: old_string 未匹配（0 处）→ read_file 核对原文（注意缩进差异）后重试；"
         "多处匹配 → 扩大 old_string 上下文保证唯一，或确认后 replace_all=true；"
         "外部修改冲突 → 重新 read_file 后基于最新内容重试；"
-        "需要跨观察期版本保护时可传 read_file(snapshot=true) 返回的 expected_snapshot_ref；"
+        "versioned-write 机械合同: 先 read_file(snapshot=true) 取得 snapshot_ref，再把它原样传入 expected_snapshot_ref；"
         "写入/校验失败会如实返回原因，文件保持原状（原子写入不产生半成品）。"
     )
     parameters: dict = {
@@ -124,7 +124,7 @@ class EditFileTool:
             },
             "expected_snapshot_ref": {
                 "type": "string",
-                "description": "可选。read_file(snapshot=true) 返回的 artifact ref；提供时写前精确核对同工作区、同路径、完整字节版本",
+                "description": "read_file(snapshot=true) 返回的 artifact ref；提供时写前精确核对同工作区、同路径、完整字节版本",
             },
         },
         "required": ["path", "old_string", "new_string"],
@@ -134,8 +134,28 @@ class EditFileTool:
         self,
         artifact_store: WorkspaceArtifactStore | None = None,
         file_service: FileService | None = None,
+        *,
+        require_version_precondition: bool = False,
     ) -> None:
+        if require_version_precondition and artifact_store is None:
+            raise ValueError("require_version_precondition requires artifact_store")
         self.artifact_store = artifact_store
+        self.require_version_precondition = bool(require_version_precondition)
+        # Strictness is an explicit assembly fact, never inferred from task meaning.
+        # Bare/custom registries retain historical optional behavior.
+        if self.require_version_precondition:
+            self.parameters = {
+                **type(self).parameters,
+                "properties": dict(type(self).parameters["properties"]),
+                "required": [
+                    *type(self).parameters["required"],
+                    "expected_snapshot_ref",
+                ],
+            }
+            self.description = (
+                type(self).description
+                + "当前实例启用 immutable version precondition；机器 schema 要求 expected_snapshot_ref。"
+            )
         self._file_service = file_service or FileService(
             artifact_store=artifact_store,
             # Keep the legacy baseline hook observable for existing tests/callers.
@@ -183,6 +203,13 @@ class EditFileTool:
         old, new = str(old), str(new)
         if old == "":
             return self._fail("old_string 为空无法定位（插入内容请锚定相邻原文）")
+
+        if self.require_version_precondition and not dry_run and not expected_snapshot_ref:
+            return self._fail(
+                "当前 edit_file 实例要求 expected_snapshot_ref 版本前置条件；本次未写入。"
+                "请先 read_file(snapshot=true) 获取当前文件 snapshot_ref 后重试。",
+                "VersionPreconditionRequired",
+            )
 
         path, reject = self._symlink_write_guard(path_str)
         if reject is not None:

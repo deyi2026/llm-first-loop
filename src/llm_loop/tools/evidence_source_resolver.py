@@ -57,7 +57,11 @@ class EvidenceSourceResolver:
     def resolve(self, call: ToolCall) -> ToolResult | None:
         if call.name != "read_file" or not isinstance(call.arguments, dict):
             return None
-        if bool(call.arguments.get("force_refresh", False)):
+        if bool(call.arguments.get("evidence_force_refresh", False)) or bool(
+            call.arguments.get("force_refresh", False)
+        ):
+            # Provider-facing name is evidence-specific. Legacy stored calls keep
+            # the old alias so recovery compatibility is not broken by the rename.
             return None
         # P2 T07: snapshot=true is an explicit request to observe the current physical
         # file and mint a new immutable baseline. Historical Evidence must not replace it.

@@ -253,9 +253,14 @@ def test_p3_file_contract_is_reachable_in_lazy_provider_schema(fake_settings) ->
         assert name in lazy
         assert engine.registry.get(name) is not None
 
-    read_props = lazy["read_file"]["parameters"]["properties"]
-    edit_props = lazy["edit_file"]["parameters"]["properties"]
+    read_params = lazy["read_file"]["parameters"]
+    edit_params = lazy["edit_file"]["parameters"]
+    read_props = read_params["properties"]
+    edit_props = edit_params["properties"]
     search_props = lazy["search_records"]["parameters"]["properties"]
     assert "snapshot" in read_props
+    assert "evidence_force_refresh" in read_props
+    assert "force_refresh" not in read_props
     assert "expected_snapshot_ref" in edit_props
+    assert "expected_snapshot_ref" in edit_params["required"]
     assert "file_effect" in search_props["kind"]["enum"]

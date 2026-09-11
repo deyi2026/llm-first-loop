@@ -190,7 +190,7 @@ def test_partial_evidence_does_not_satisfy_uncovered_range(tmp_path: Path) -> No
     assert ledger.count(owner) == 2
 
 
-def test_force_refresh_bypasses_current_full_evidence(tmp_path: Path) -> None:
+def test_evidence_force_refresh_bypasses_current_full_evidence(tmp_path: Path) -> None:
     path = tmp_path / "force.txt"
     _write(path)
     owner = OwnerScope(workspace_id=str(tmp_path), session_id="r9-force")
@@ -203,7 +203,7 @@ def test_force_refresh_bypasses_current_full_evidence(tmp_path: Path) -> None:
         ToolCall(
             id="f2",
             name="read_file",
-            arguments={"path": str(path), "full": True, "force_refresh": True},
+            arguments={"path": str(path), "full": True, "evidence_force_refresh": True},
         )
     )
     assert first.status is ToolResultStatus.SUCCESS
@@ -211,6 +211,31 @@ def test_force_refresh_bypasses_current_full_evidence(tmp_path: Path) -> None:
     assert second.source_resolution_mode == "source_execution"
     assert second.source_execution_performed is True
     assert second.evidence_ref != first.evidence_ref
+    assert tool.execute_count == 2
+    assert ledger.count(owner) == 2
+
+
+def test_legacy_force_refresh_alias_still_bypasses_current_evidence(tmp_path: Path) -> None:
+    """Stored/legacy calls keep working after the provider-facing schema rename."""
+    path = tmp_path / "legacy-force.txt"
+    _write(path)
+    owner = OwnerScope(workspace_id=str(tmp_path), session_id="r9-force-legacy")
+    registry, tool, ledger = _registry(tmp_path, owner)
+
+    first = registry.execute(
+        ToolCall(id="lf1", name="read_file", arguments={"path": str(path), "full": True})
+    )
+    second = registry.execute(
+        ToolCall(
+            id="lf2",
+            name="read_file",
+            arguments={"path": str(path), "full": True, "force_refresh": True},
+        )
+    )
+    assert first.status is ToolResultStatus.SUCCESS
+    assert second.status is ToolResultStatus.SUCCESS
+    assert second.source_resolution_mode == "source_execution"
+    assert second.source_execution_performed is True
     assert tool.execute_count == 2
     assert ledger.count(owner) == 2
 
@@ -235,10 +260,13 @@ def test_cross_owner_evidence_never_satisfies_source_request(tmp_path: Path) -> 
     assert owner_a != owner_b
 
 
-def test_read_file_schema_exposes_force_refresh_escape_hatch() -> None:
-    prop = ReadFileTool.parameters["properties"]["force_refresh"]
+def test_read_file_schema_exposes_evidence_specific_refresh_not_generic_alias() -> None:
+    props = ReadFileTool.parameters["properties"]
+    assert "force_refresh" not in props
+    prop = props["evidence_force_refresh"]
     assert prop["type"] == "boolean"
-    assert "物理" in prop["description"] or "重新" in prop["description"]
+    assert "Evidence" in prop["description"]
+    assert "snapshot_ref" in prop["description"]
 
 
 def test_same_batch_recovery_plus_overlapping_source_fallback_reuses_instead_of_reread(

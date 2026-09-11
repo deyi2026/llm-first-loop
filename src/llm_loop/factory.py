@@ -815,7 +815,11 @@ def build_engine(settings: Settings) -> LoopEngine:
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
     _register_basic(
         "edit_file",
-        EditFileTool(artifact_store=_artifact_store, file_service=_file_service),
+        EditFileTool(
+            artifact_store=_artifact_store,
+            file_service=_file_service,
+            require_version_precondition=True,
+        ),
     )
     # EVO-d5db88d9: 按需读取工具完整 Schema（懒加载配套；零副作用可始终注册）
     from llm_loop.tools.registry import GetToolSchemaTool

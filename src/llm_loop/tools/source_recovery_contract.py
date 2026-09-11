@@ -31,7 +31,8 @@ _GUIDANCE = {
     SourceRecoveryKind.PROBEABLE_FILE: (
         "文件语义: verified_current 且覆盖所需范围时恢复已有 Evidence；"
         "stale 且任务要求当前文件状态时重新读取 source；"
-        "offset/limit 在 Evidence enforce 模式用于 genuinely 未覆盖的文件范围；force_refresh=true 显式要求物理重读。"
+        "offset/limit 在 Evidence enforce 模式用于 genuinely 未覆盖的文件范围；"
+        "evidence_force_refresh=true 仅用于显式绕过 Evidence 复用并物理重读。"
     ),
     SourceRecoveryKind.COMMAND_SNAPSHOT: (
         "命令语义: 既有命令 Evidence 是历史执行 observation；需要该历史结果时恢复 Evidence；"
