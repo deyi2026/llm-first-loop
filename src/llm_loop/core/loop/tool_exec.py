@@ -21,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 # P2-A Rule-first: 阈值仅控制观测事件采样频率，不阻断、不终止、不注入。
 _STAGNATION_REMIND_AT = 3
-# EVO-20260814-aab7eb0b P2: 实时停滞熔断阈值（engine 主循环消费，tool_cycle 判定）
-_STAGNATION_BREAK_AT = 5
 
 # EVO-20260823-9bb27899: 搜索/定位类工具目标级停滞检测
 # 背景: 原指纹 = 工具名 + 完整参数 JSON 全等匹配；"换深度/换目录/换工具搜同一目标"时
@@ -30,7 +28,7 @@ _STAGNATION_BREAK_AT = 5
 # 对策: ① 对搜索类工具提取"目标指纹"（同目标不同细节参数 → 同一指纹 → 计数累计）；
 #       ② 搜索类工具连续空结果达阈值 → 注入 [搜索空结果提醒]（目标可能不存在/前提失效）。
 _SEARCH_LIKE_TOOLS = {"search_files", "search_records", "search_archive", "search_docs"}
-_EMPTY_SEARCH_REMIND_AT = 2  # 连续空结果达此数 → 注入 [搜索空结果提醒]（一次）
+_EMPTY_SEARCH_REMIND_AT = 2  # 连续空结果达此数 → 仅记录一次观测事件
 
 
 def _is_search_like_command(command: str) -> bool:

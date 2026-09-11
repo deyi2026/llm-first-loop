@@ -39,13 +39,20 @@ class TestEvidenceGateWiring:
     def test_engine_has_no_breaker_wiring(self):
         from pathlib import Path
 
-        src = (Path(__file__).resolve().parents[2] / "src/llm_loop/core/loop/engine.py").read_text(
+        root = Path(__file__).resolve().parents[2]
+        src = (root / "src/llm_loop/core/loop/engine.py").read_text(encoding="utf-8")
+        tool_cycle = (root / "src/llm_loop/core/loop/engine_services/tool_cycle.py").read_text(
             encoding="utf-8"
         )
+        tool_exec = (root / "src/llm_loop/core/loop/tool_exec.py").read_text(encoding="utf-8")
         # 停滞判定不得接线主循环（观测留在 tool_cycle: tool.repeat_observed）
         assert "_stagnation_should_break" not in src
         # 程序终止动作不存在（无 breaker authority）
         assert '"stagnation.break"' not in src
+        # 退役 breaker 不保留零调用死入口/阈值，避免未来维护误接回 Program Authority。
+        assert "def _stagnation_should_break" not in tool_cycle
+        assert "_STAGNATION_BREAK_AT" not in tool_cycle
+        assert "_STAGNATION_BREAK_AT" not in tool_exec
 
     def test_tool_trace_status_recorded(self):
         from pathlib import Path
