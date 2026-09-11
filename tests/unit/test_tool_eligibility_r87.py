@@ -145,6 +145,7 @@ def test_retired_selection_modes_are_not_settings_or_config(monkeypatch):
     [
         "https://m.toutiao.com/article/1234567890123456789/",
         "https://m.toutiao.com/i1234567890123456789/",
+        "https://m.toutiao.com/w/1234567890123456789/",
         "https://www.toutiao.com/x?group_id=1234567890123456789",
     ],
 )

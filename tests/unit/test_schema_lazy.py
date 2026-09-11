@@ -149,6 +149,24 @@ def test_compact_contract_keeps_versioned_edit_discovery_path():
     assert "参数/协议失败" in defs["get_tool_schema"]["description"]
 
 
+def test_compact_contract_keeps_skill_discovery_trigger_without_forcing_selection():
+    """Failure replay: compacting must not erase the only cue that reusable Skills exist."""
+    reg = ToolRegistry()
+    reg.register(_FakeTool("skill_list"))
+    reg.register(_FakeTool("skill_load"))
+    defs = {row["name"]: row for row in reg.schemas(lazy=True)}
+
+    list_desc = defs["skill_list"]["description"]
+    load_desc = defs["skill_load"]["description"]
+    assert "格式转换/PDF" in list_desc
+    assert "特定站点抓取" in list_desc
+    assert "execute_command" in list_desc
+    assert "先用本工具发现候选" in list_desc
+    assert "模型根据当前任务判断" in list_desc
+    assert "skill_list 已发现" in load_desc
+    assert "不代表" in load_desc and "适用于当前任务" in load_desc
+
+
 def test_lazy_schema_preserves_current_machine_bounds_without_parameter_prose():
     """Lazy transport keeps current hard bounds as machine schema, not duplicate prose."""
     from llm_loop.tools.builtin.agent_message import AgentMessageTool

@@ -48,14 +48,14 @@ Specific constraints:
 
 **Program role**: only provides receipt facts (status markers) + a lightweight `[声明提醒]` (declaration reminder) (prompts once when a declaration is detected without a success receipt; does not force correction or re-entry).
 
-**Positive example**: before declaring "written to data/out.txt", first verify the receipt contains write_file success; without a receipt, truthfully say "not executed successfully".
+**Positive example**: before declaring "written to data/out.txt", verify that this round contains a success receipt for the write action that actually ran; without a success receipt, truthfully say "not executed successfully". Do not cite a tool name that is not present in the current tool surface as proof of completion.
 **Negative example**: answering "write completed" without calling the tool (fabricated completion).
 
 ---
 
 ## Rule Two: Autonomous Tool-Parameter Discipline (RULE-AI-02, replacing program pre-emptive type interception)
 
-**Rule**: before calling a tool, verify parameter formats and required fields (the tool description includes "when to use / when not to use / failure response" + parameter requirements). If you receive parameter-guidance feedback, correct it yourself and retry.
+**Rule**: before calling a tool, verify the machine Schema for parameter structure, required fields, enums, and hard bounds. A compact/lazy description guarantees only the executable skeleton plus reviewed load-bearing semantics; it does not promise the full "when to use / when not to use / failure response" prose. For an unfamiliar tool, unclear parameter semantics, or a parameter/protocol failure, inspect the current full Schema/code/docs before correcting. Do not treat an unchanged call against unchanged state as new verification.
 
 **Active management self-check** (carried by the M18 AA1 handover; the original program parameter-signal detection of four signal types is handed over to the AI's autonomy): during operation, you may periodically self-check running-parameter status via `architecture_status` — when the tool error rate is high (exception_log / tool_history counts), there are consecutive repeated actions (the most recent N entries of the same kind in tool_history), loop budget usage is high (current_phase / round count), or context usage approaches the budget (context_usage, including the model_window), you may call `adjust_strategy` to adjust whitelist parameters (max_iterations / timeout_s / history_budget / memory_top_k / extract_interval_msgs / retrieve_semantic_top_k, subject to the global hard cap of 500 and the PARAM-03 per-round frequency constraint; since M57 the currently effective values are queryable and verifiable via `architecture_status.context_usage.runtime_params`); the self-check is the AI's autonomous judgment, and the program no longer pushes parameter-adjustment suggestions (it retains only the `architecture_status` raw data + the `adjust_strategy` execution channel).
 

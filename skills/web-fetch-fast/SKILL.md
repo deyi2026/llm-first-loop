@@ -20,7 +20,7 @@ description: 网页/文章链接抓取与分析的快速收敛技能——用户
 
 直接把用户提供的完整 URL 交给 `web_fetch`。
 
-头条 `article/<ID>`、`i<ID>`、`?group_id=<ID>` 会由 `web_fetch` 内部机械提取文章 ID，优先尝试固定 `m.toutiao.com/i<ID>/info/v2/` 快路径。该快路径复用受保护 curl 通道：逐跳校验重定向、校验私网/保留地址，并用 `--resolve` 钉住已验证 DNS 结果。
+头条 `article/<ID>`、`i<ID>`、`w/<ID>`、`?group_id=<ID>` 会由 `web_fetch` 内部机械提取文章 ID，优先尝试固定 `m.toutiao.com/i<ID>/info/v2/` 快路径。该快路径复用受保护 curl 通道：逐跳校验重定向、校验私网/保留地址，并用 `--resolve` 钉住已验证 DNS 结果。
 
 快路径失败时，工具会自动回落到通用 httpx + 受保护 curl 正文提取链。模型不需要自己拼 UA、URL 或 HTML/JSON 解析器。
 

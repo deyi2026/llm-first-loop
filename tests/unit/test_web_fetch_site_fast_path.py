@@ -15,6 +15,7 @@ def test_toutiao_article_id_requires_trusted_host() -> None:
     article_id = "1234567890123456789"
     assert _toutiao_article_id(f"https://www.toutiao.com/article/{article_id}/") == article_id
     assert _toutiao_article_id(f"https://m.toutiao.com/i{article_id}/") == article_id
+    assert _toutiao_article_id(f"https://m.toutiao.com/w/{article_id}/") == article_id
     assert _toutiao_article_id(f"https://www.toutiao.com/x?group_id={article_id}") == article_id
     assert _toutiao_article_id(f"https://evil.example/article/{article_id}/") is None
     assert _toutiao_article_id("https://toutiao.com.evil.example/article/123456789/") is None
@@ -64,6 +65,33 @@ def test_toutiao_fast_path_uses_protected_adapter_and_skips_generic_request(monk
     assert "[extract] toutiao_info_v2" in result.content
     assert "站点快路径" in result.content
     assert "这是通过 info/v2 快路径返回的正文" in result.content
+
+
+def test_toutiao_micro_post_fast_path_uses_same_protected_adapter(monkeypatch) -> None:
+    """Regression: real /w/<id> links must not be preflight-routed away from info/v2."""
+    article_id = "1876019686147072"
+    original = f"https://m.toutiao.com/w/{article_id}/?app=news_article"
+    payload = json.dumps(
+        {
+            "data": {
+                "title": "微头条正文",
+                "content": "<p>这是通过微头条 /w/ 地址进入同一受保护 info/v2 适配器的正文。</p>",
+            }
+        },
+        ensure_ascii=False,
+    )
+    tool = WebFetchTool()
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
+    with (
+        mock.patch.object(tool, "_curl_fetch", return_value=("strip", payload)) as curl_fetch,
+        mock.patch.object(tool, "_request") as generic_request,
+    ):
+        result = tool.execute(url=original)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    curl_fetch.assert_called_once_with(f"https://m.toutiao.com/i{article_id}/info/v2/")
+    generic_request.assert_not_called()
+    assert "微头条 /w/ 地址" in result.content
 
 
 def test_toutiao_fast_path_miss_falls_back_to_generic_request(monkeypatch) -> None:

@@ -53,7 +53,11 @@ _UA_POOL = [
 # 疑似 JS 壳/反爬页特征（正文提取失败时如实提示，不伪装成功）
 _SHELL_HINTS = ("enable javascript", "需要允许", "_$jsvmprt", "browser check", "cf-chl")
 
-_TOUTIAO_ARTICLE_ID_RE = re.compile(r"/(?:article/|i)(\d{8,30})(?:/|$)")
+# Trusted Toutiao content URL shapes that can be normalized to the protected
+# ``i<ID>/info/v2`` adapter.  ``/w/<ID>`` is the mobile micro-post shape; a
+# real 2026-09-11 failure replay showed it was incorrectly routed away before
+# WebFetchTool could reach the same deterministic adapter.
+_TOUTIAO_ARTICLE_ID_RE = re.compile(r"/(?:article/|i|w/)(\d{8,30})(?:/|$)")
 
 
 def _extract_title(raw: str) -> str:
