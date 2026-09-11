@@ -60,6 +60,30 @@ def test_document_round_trip_empty_source_and_body():
     assert restored.status == "active"
 
 
+def test_document_round_trip_multiline_frontmatter_fields():
+    """模型生成的多行经验字段必须可由生产 parser 原样读回。"""
+    doc = ExperienceDocument(
+        title="多行经验",
+        scenario="line 1\nline 2",
+        root_cause="root 1\n\nroot 3",
+        solution="1. first\n2. second: keep exact text\n  nested note",
+        evidence="proof A\nproof B",
+        tags=["round-trip"],
+        source={},
+        record_kind="experience",
+        verification_state="verified",
+    )
+
+    md = doc.to_md()
+    restored = ExperienceDocument.from_md(md)
+
+    assert "solution: |\n" in md
+    assert restored.scenario == doc.scenario
+    assert restored.root_cause == doc.root_cause
+    assert restored.solution == doc.solution
+    assert restored.evidence == doc.evidence
+
+
 def test_document_default_status_active():
     """status 默认 active。"""
     doc = ExperienceDocument(title="t", scenario="s", root_cause="", solution="sol", evidence="", tags=[], source={})

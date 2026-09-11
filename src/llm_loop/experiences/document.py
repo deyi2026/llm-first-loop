@@ -41,11 +41,11 @@ class ExperienceDocument:
     def to_md(self) -> str:
         """序列化为 YAML front matter + Markdown body。"""
         lines = ["---"]
-        lines.append(f"title: {_yaml_str(self.title)}")
-        lines.append(f"scenario: {_yaml_str(self.scenario)}")
-        lines.append(f"root_cause: {_yaml_str(self.root_cause)}")
-        lines.append(f"solution: {_yaml_str(self.solution)}")
-        lines.append(f"evidence: {_yaml_str(self.evidence)}")
+        _append_scalar(lines, "title", self.title)
+        _append_scalar(lines, "scenario", self.scenario)
+        _append_scalar(lines, "root_cause", self.root_cause)
+        _append_scalar(lines, "solution", self.solution)
+        _append_scalar(lines, "evidence", self.evidence)
         lines.append(f"tags: [{', '.join(_yaml_str(t) for t in self.tags)}]")
         if self.source:
             if set(self.source.keys()) == {"raw"} and "\n" in str(self.source["raw"]):
@@ -57,17 +57,17 @@ class ExperienceDocument:
                 lines.append(f"  {k}: {_yaml_str(str(v))}")
         else:
             lines.append("source: {}")
-        lines.append(f"status: {self.status}")
-        lines.append(f"record_kind: {_yaml_str(self.record_kind)}")
-        lines.append(f"verification_state: {_yaml_str(self.verification_state)}")
-        lines.append(f"created_at: {_yaml_str(self.created_at)}")
-        lines.append(f"updated_at: {_yaml_str(self.updated_at)}")
+        _append_scalar(lines, "status", self.status)
+        _append_scalar(lines, "record_kind", self.record_kind)
+        _append_scalar(lines, "verification_state", self.verification_state)
+        _append_scalar(lines, "created_at", self.created_at)
+        _append_scalar(lines, "updated_at", self.updated_at)
         if self.superseded_by:
-            lines.append(f"superseded_by: {_yaml_str(self.superseded_by)}")
+            _append_scalar(lines, "superseded_by", self.superseded_by)
         if self.promoted_to_rule:
-            lines.append(f"promoted_to_rule: {_yaml_str(self.promoted_to_rule)}")
+            _append_scalar(lines, "promoted_to_rule", self.promoted_to_rule)
         if self.last_verified_at:
-            lines.append(f"last_verified_at: {_yaml_str(self.last_verified_at)}")
+            _append_scalar(lines, "last_verified_at", self.last_verified_at)
         lines.append("---")
         if self.body:
             lines.append("")
@@ -135,6 +135,24 @@ def _yaml_str(val: str) -> str:
     return s
 
 
+def _append_scalar(lines: list[str], key: str, value: str) -> None:
+    """Append one scalar without emitting parser-invalid physical newlines.
+
+    The experience format intentionally uses a tiny YAML subset rather than PyYAML.
+    Multiline model-authored fields therefore need one explicit representation shared
+    by writer and reader. A ``|`` block preserves the exact text while leaving legacy
+    one-line documents byte-semantically unchanged.
+    """
+
+    text = str(value or "")
+    if "\n" not in text and "\r" not in text:
+        lines.append(f"{key}: {_yaml_str(text)}")
+        return
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines.append(f"{key}: |")
+    lines.extend(f"  {row}" for row in normalized.split("\n"))
+
+
 def _parse_front_matter(content: str) -> dict:
     """极简 YAML front matter 解析（支持 key: value / key: [list] / key: 缩进块）。"""
     lines = content.split("\n")
@@ -160,7 +178,14 @@ def _parse_front_matter(content: str) -> dict:
             raise ExperienceParseError(f"front matter 行格式非法: {line!r}")
         key = m.group(1)
         val = m.group(2).strip()
-        if val:
+        if val == "|":
+            i += 1
+            block: list[str] = []
+            while i < len(fm_lines) and fm_lines[i].startswith("  "):
+                block.append(fm_lines[i][2:])
+                i += 1
+            result[key] = "\n".join(block)
+        elif val:
             result[key] = _parse_value(val)
             i += 1
         else:
