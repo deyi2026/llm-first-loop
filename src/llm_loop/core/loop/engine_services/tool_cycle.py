@@ -38,7 +38,7 @@ from llm_loop.core.message import (
     ToolResultStatus,
 )
 from llm_loop.introspection.status import ToolHistoryItem
-from llm_loop.llm.client import LLMResponse, StreamDelta, ToolRoundInfo
+from llm_loop.llm.client import LLMResponse, StreamDelta, ToolResultInfo, ToolRoundInfo
 from llm_loop.runtime.tool_octet import record_tool_octet
 from llm_loop.tools.registry import tool_result_to_message
 
@@ -371,6 +371,7 @@ class ToolCycleService:
                             len(results),
                             len(missing),
                         )
+                recorded_results: list[tuple[Any, Any]] = []
                 for tc, result in zip(valid_calls, results, strict=False):
                     self._record_single_receipt(
                         sess,
@@ -381,6 +382,32 @@ class ToolCycleService:
                         prebuilt_tool_msg=_wal_messages.get(tc.id),
                         wal_execution_id=_execution_ids.get(tc.id, ""),
                         wal_result_sha=_wal_result_sha.get(tc.id, ""),
+                    )
+                    recorded_results.append((tc, result))
+
+                # ``tool_result`` introduces a new post-execution yield point. Persist the
+                # complete execution batch before exposing any UI terminal event so a client
+                # disconnect at that yield cannot skip the normal loop-end session save and
+                # leave JSON-read recovery behind the already-executed tools. Event/WAL facts
+                # remain authoritative where enabled; this snapshot is the no-event-log fence.
+                try:
+                    self._host.session.save(sess)
+                except Exception:  # noqa: BLE001 — UI observability must not block tool semantics
+                    logger.warning(
+                        "tool_result 前会话快照持久化失败（fail-open）", exc_info=True
+                    )
+
+                # UI terminal facts are emitted only after every receipt in this execution
+                # batch has been recorded and the batch persistence boundary was attempted.
+                for tc, result in recorded_results:
+                    yield StreamDelta(
+                        text="",
+                        tool_result=ToolResultInfo(
+                            tool_name=tc.name,
+                            tool_call_id=tc.id,
+                            status=result.status.value,
+                            duration_ms=result.duration_ms,
+                        ),
                     )
                 # EVO-20260903-ba25857b Phase 0: executed receipt facts + flush.
                 try:

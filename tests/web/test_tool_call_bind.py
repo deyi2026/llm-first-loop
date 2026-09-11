@@ -127,7 +127,7 @@ def test_message_item_contract_allows_planned_fields(build_test_engine):
         assert set(m.keys()) <= {
             "role", "content", "tool_call_id", "reasoning_content",
             "model_used", "tokens_in", "tokens_out", "tokens_cache_hit", "tool_calls",
-            "ts", "attachments",
+            "ts", "attachments", "status", "tool_name", "duration_ms",
         }
 
 
@@ -172,7 +172,8 @@ def test_sse_event_types_unchanged(build_test_engine, tmp_path):
         for line in block.split("\n"):
             if line.startswith("data: "):
                 types.add(json.loads(line[6:])["type"])
-    assert types <= {"answer_delta", "reasoning_delta", "tool_round", "done", "error"}
+    assert types <= {"answer_delta", "reasoning_delta", "tool_round", "tool_result", "done", "error"}
+    assert "tool_result" in types
 
 
 # ── T9: 历史接口 tool_call_id 透传集成回归 ──
@@ -185,12 +186,16 @@ def test_message_item_tool_call_id_passthrough(build_test_engine):
 
     engine, _ = build_test_engine([])
     session = Session(session_id="sess-passthrough")
-    session.messages.append(Message(role="tool", content="[状态: success] ok",
+    session.messages.append(Message(role="tool", content="[状态: failure] structured wins",
                                     source=MessageSource.TOOL, tool_call_id="call-t9",
-                                    status=ToolResultStatus.SUCCESS, tool_name="read_file"))
+                                    status=ToolResultStatus.FAILURE, tool_name="read_file",
+                                    duration_ms=12.5))
     engine.session.save(session)
     client = _make_client(engine)
     resp = client.get("/api/v1/sessions/sess-passthrough/messages")
     tool_msgs = [m for m in resp.json()["messages"] if m["role"] == "tool"]
     assert tool_msgs, "历史接口应含 tool 消息"
     assert tool_msgs[0]["tool_call_id"] == "call-t9"
+    assert tool_msgs[0]["status"] == "failure"
+    assert tool_msgs[0]["tool_name"] == "read_file"
+    assert tool_msgs[0]["duration_ms"] == 12.5

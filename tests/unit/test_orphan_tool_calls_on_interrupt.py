@@ -114,3 +114,64 @@ def test_event_log_path_interrupt_no_orphan(build_test_engine, tmp_path):
     msgs_after = engine.session.load(sid).messages
     _, _, orphans_after = _orphan_report(msgs_after)
     assert not orphans_after, "继续对话后历史保持自洽"
+
+
+class _TwoReadStreamFake(_StreamFake):
+    """First round reads two caller-supplied files, then would answer text."""
+
+    def __init__(self, first_path: str, second_path: str) -> None:
+        super().__init__()
+        self._paths = (first_path, second_path)
+
+    def chat_stream(self, messages, tools, *, timeout_s=None, model=None):
+        self.calls.append({"messages": list(messages), "model": model})
+        self._round += 1
+        if self._round == 1:
+            resp = LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(id="c1", name="read_file", arguments={"path": self._paths[0]}),
+                    ToolCall(id="c2", name="read_file", arguments={"path": self._paths[1]}),
+                ],
+                provider="fake",
+            )
+        else:
+            resp = LLMResponse(content="done", tool_calls=[], provider="fake")
+        for ch in (resp.content or ""):
+            yield StreamDelta(text=ch)
+        return resp
+
+
+def test_tool_result_yield_disconnect_persists_complete_executed_batch_without_event_log(
+    build_test_engine, tmp_path
+):
+    """A post-execution UI disconnect cannot lose already executed receipt facts."""
+    a = tmp_path / "a.txt"
+    b = tmp_path / "b.txt"
+    a.write_text("A", encoding="utf-8")
+    b.write_text("B", encoding="utf-8")
+
+    engine, _ = build_test_engine([])
+    assert getattr(engine, "_event_store", None) is None
+    engine.llm_pool.default_client = _TwoReadStreamFake(str(a), str(b))
+    sid = engine.session.create()
+
+    gen = engine.run_stream(sid, "read both files")
+    first_result = None
+    for delta in gen:
+        if getattr(delta, "tool_result", None) is not None:
+            first_result = delta.tool_result
+            break
+    assert first_result is not None and first_result.tool_call_id == "c1"
+    gen.close()  # disconnect exactly at the new post-execution UI yield point
+
+    # Force a fresh JSON read. Both tools were executed before the first tool_result event;
+    # both exact receipts therefore must already be persisted and protocol-complete.
+    msgs = engine.session.load(sid).messages
+    declared, answered, orphans = _orphan_report(msgs)
+    assert declared == {"c1", "c2"}
+    assert answered == {"c1", "c2"}
+    assert not orphans
+    receipts = {m.tool_call_id: m for m in msgs if m.role == "tool"}
+    assert receipts["c1"].status is not None and receipts["c1"].status.value == "success"
+    assert receipts["c2"].status is not None and receipts["c2"].status.value == "success"

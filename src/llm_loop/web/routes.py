@@ -610,7 +610,7 @@ def _stream_background(
     """后台 run 订阅生成器（EVO 后台 run 改造）：提交 → 消费事件 → 分片 yield SSE.
 
     - resume=True: 不提交新 run，订阅已有 run（刷新/切回会话场景）
-    - delta: text/reasoning/tool_round 分片独立 yield（对齐旧路径 P1-1/P2-1）
+    - delta: text/reasoning/tool_round/tool_result 分片独立 yield（机械事实直传）
     - done: 终态九字段（对齐非流式 ChatResponse）
     - error: 引擎异常如实回执
     - finally: unsubscribe（SSE 断连只停订阅，后台线程不受影响、继续落盘）
@@ -691,6 +691,17 @@ def _stream_background(
                             "round_index": getattr(tr, "round_index", 0),
                             "args_summary": getattr(tr, "args_summary", ""),
                             "tool_call_id": getattr(tr, "tool_call_id", ""),
+                        },
+                    )
+                tool_result = getattr(delta, "tool_result", None)
+                if tool_result is not None:
+                    yield _sse(
+                        "tool_result",
+                        {
+                            "tool_name": getattr(tool_result, "tool_name", ""),
+                            "tool_call_id": getattr(tool_result, "tool_call_id", ""),
+                            "status": getattr(tool_result, "status", ""),
+                            "duration_ms": getattr(tool_result, "duration_ms", None),
                         },
                     )
             elif etype == "done":
@@ -911,6 +922,16 @@ def chat_stream(
                                 "round_index": delta.tool_round.round_index,
                                 "args_summary": delta.tool_round.args_summary,
                                 "tool_call_id": delta.tool_round.tool_call_id,
+                            },
+                        )
+                    if delta.tool_result is not None:
+                        yield _sse(
+                            "tool_result",
+                            {
+                                "tool_name": delta.tool_result.tool_name,
+                                "tool_call_id": delta.tool_result.tool_call_id,
+                                "status": delta.tool_result.status,
+                                "duration_ms": delta.tool_result.duration_ms,
                             },
                         )
                 except StopIteration as exc:
@@ -2205,6 +2226,9 @@ def get_session_messages(
             role=m.role,
             content=m.content,
             tool_call_id=m.tool_call_id,
+            status=getattr(getattr(m, "status", None), "value", None),
+            tool_name=getattr(m, "tool_name", None),
+            duration_ms=float(getattr(m, "duration_ms", 0.0) or 0.0),
             reasoning_content=getattr(m, "reasoning_content", None),  # P1-1: 历史思考链透传
             model_used=getattr(m, "model_used", ""),  # M51: 历史模型标签透传（页脚）
             tokens_in=getattr(m, "tokens_in", 0),  # M52: 历史 token 消耗透传

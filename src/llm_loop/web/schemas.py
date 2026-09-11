@@ -158,6 +158,9 @@ class MessageItem(BaseModel):
     role: str
     content: str
     tool_call_id: str | None = None  # M52: tool 消息透出（web 端"展开原文"精确定位档案）
+    status: str | None = None  # tool receipt 结构化终态；非 tool/旧消息缺省 None
+    tool_name: str | None = None  # tool receipt 机械工具名；不从正文反推
+    duration_ms: float = 0.0  # tool receipt 机械耗时；旧消息缺省 0
     reasoning_content: str | None = None  # P1-1: assistant 消息思考链透传（历史会话恢复渲染）
     model_used: str = ""  # M51: assistant 消息模型标签透传（页脚显示）
     tokens_in: int = 0  # M52: assistant 消息 prompt tokens 透传

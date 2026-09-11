@@ -115,10 +115,21 @@ class ToolRoundInfo:
 
 
 @dataclass
+class ToolResultInfo:
+    """Exact terminal tool-execution fact for UI/transport observability only."""
+
+    tool_name: str
+    tool_call_id: str
+    status: str
+    duration_ms: float | None = None
+
+
+@dataclass
 class StreamDelta:
     text: str = ""
     reasoning: str | None = None
     tool_round: ToolRoundInfo | None = None
+    tool_result: ToolResultInfo | None = None
 
 
 @dataclass(frozen=True)

@@ -89,7 +89,7 @@ class TestHistoryPagination:
             assert set(m.keys()) <= {
                 "role", "content", "tool_call_id", "reasoning_content",
                 "model_used", "tokens_in", "tokens_out", "tokens_cache_hit", "tool_calls",
-                "ts", "attachments",
+                "ts", "attachments", "status", "tool_name", "duration_ms",
             }
 
 

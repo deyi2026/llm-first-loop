@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from llm_loop.core.message import ToolCall
-from llm_loop.llm.client import LLMResponse, StreamDelta, ToolRoundInfo
+from llm_loop.llm.client import LLMResponse, StreamDelta, ToolResultInfo, ToolRoundInfo
 
 
 def test_stream_delta_tool_round_default_none():
@@ -22,6 +22,22 @@ def test_stream_delta_tool_round_set():
     assert d.tool_round.tool_name == "read_file"
     assert d.tool_round.round_index == 1
     assert d.text == ""
+
+
+def test_stream_delta_tool_result_exact_terminal_fact():
+    """tool_result is an explicit mechanical terminal fact, separate from tool_round."""
+    info = ToolResultInfo(
+        tool_name="read_file",
+        tool_call_id="call_done",
+        status="failure",
+        duration_ms=12.5,
+    )
+    d = StreamDelta(text="", tool_result=info)
+    assert d.tool_round is None
+    assert d.tool_result is not None
+    assert d.tool_result.tool_call_id == "call_done"
+    assert d.tool_result.status == "failure"
+    assert d.tool_result.duration_ms == 12.5
 
 
 def test_tool_round_info_defaults():

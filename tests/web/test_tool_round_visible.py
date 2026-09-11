@@ -70,9 +70,46 @@ def test_sse_tool_round_event(build_test_engine, tmp_path):
     assert data["tool_call_id"] == "c1"
     assert "path" in data["args_summary"]
 
+    tool_result_events = [e for e in events if e["type"] == "tool_result"]
+    assert len(tool_result_events) == 1
+    result = tool_result_events[0]["data"]
+    assert result["tool_call_id"] == "c1"
+    assert result["tool_name"] == "read_file"
+    assert result["status"] == "success"
+    assert isinstance(result["duration_ms"], (int, float))
+    assert result["duration_ms"] >= 0
+    types = [e["type"] for e in events]
+    assert types.index("tool_round") < types.index("tool_result") < types.index("done")
+
     done = [e for e in events if e["type"] == "done"]
     assert done, "无 done 事件"
     assert len(done[0]["data"]["tool_calls"]) == 1
+
+
+def test_sse_background_runner_emits_exact_tool_result(build_test_engine, tmp_path):
+    """BackgroundRunner/EventBus transparently carries the same exact terminal fact."""
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    f = tmp_path / "background.txt"
+    f.write_text("content", encoding="utf-8")
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = _MultiRoundStreamFake([
+        LLMResponse(
+            content="",
+            tool_calls=[ToolCall(id="bg-c1", name="read_file", arguments={"path": str(f)})],
+            provider="fake",
+        ),
+        LLMResponse(content="done", tool_calls=[], provider="fake"),
+    ])
+    engine.runner = BackgroundRunner(engine, enabled=True)
+    client = _make_client(engine)
+    events = _parse_sse(client.post("/api/v1/chat/stream", json={"message": "read"}).text)
+    result_events = [e for e in events if e["type"] == "tool_result"]
+    assert len(result_events) == 1
+    assert result_events[0]["data"]["tool_call_id"] == "bg-c1"
+    assert result_events[0]["data"]["status"] == "success"
+    types = [e["type"] for e in events]
+    assert types.index("tool_round") < types.index("tool_result") < types.index("done")
 
 
 def test_sse_multi_round_tool_round(build_test_engine, tmp_path):
