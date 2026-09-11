@@ -11,7 +11,8 @@ def _design() -> str:
 def test_agency_first_architecture_defines_epistemic_honesty() -> None:
     text = _design()
 
-    assert "R7 诚实感官与连续性" in text
+    assert "R8 Runtime Identity Boundary" in text
+    assert "R7 的诚实感官与连续性继续有效" in text
     assert "## 1.5 认识论诚实" in text
     assert "当前可核事实" in text
     assert "训练先验不是证据" in text
@@ -26,6 +27,10 @@ def test_agency_first_architecture_defines_epistemic_honesty() -> None:
     assert "Working-set 收敛是表示/资源机制" in text
     assert "不得恢复隐藏 reasoning" in text
     assert "禁止恢复已被实测否决的“每轮一暴露就重写旧前缀”方案" in text
+    assert "## 1.7 运维沙箱不是 LFL Runtime 身份" in text
+    assert "这些值不得因为一次 restart/deploy 动作而无意变成" in text
+    assert "不能用 operator 的临时沙箱替代这些 LFL 安全机制" in text
+    assert "DSH_HOME=<mirror>/data/dsh-home" in text
 
 
 def test_epistemic_honesty_is_provider_agnostic_without_new_semantic_gate() -> None:

@@ -30,3 +30,25 @@ def test_mirror_restart_waits_for_process_exit_not_only_port_release() -> None:
     stop_block = script.split("_stop_web() {", 1)[1].split("_start_web() {", 1)[0]
     assert "_pid_alive" in stop_block
     assert "kill -KILL" in stop_block
+
+
+def test_mirror_dsh_env_is_independent_of_caller_home_and_path() -> None:
+    """Operator sandboxes must not become the long-lived LFL service identity."""
+    root = Path(__file__).resolve().parents[2]
+    script = (root / "scripts/restart_mirror.sh").read_text(encoding="utf-8")
+    block = script.split("_prep_dsh_env() {", 1)[1].split("\n}\n", 1)[0]
+
+    assert "pwd.getpwuid(os.getuid()).pw_dir" in block
+    assert 'export HOME="$account_home"' in block
+    assert "DARWIN_USER_TEMP_DIR" in block
+    assert 'export TMPDIR="$account_tmp"' in block
+    assert 'dsh_bin_dir="$account_home/.local/dsh/bin"' in block
+    assert 'export PATH="$dsh_bin_dir:$PATH"' in block
+    assert 'export DSH_HOME="$MIRROR_DIR/data/dsh-home"' in block
+
+    # Regression for 2026-09-11: the function used to export DSH_HOME and then
+    # immediately unset it, leaving a service launched from MCP Console pointed
+    # at the temporary sandbox HOME instead of the mirror DSH home.
+    for line in block.splitlines():
+        if line.strip().startswith("unset "):
+            assert "DSH_HOME" not in line

@@ -133,12 +133,39 @@ _restart_precheck() {
   fi
 }
 
-# DSH 环境隔离（2026-08-23 拷问修复 P1）:
-#   1. DSH_HOME 重定向到镜像区项目内 data/dsh-home —— 否则落到全局 ~/.dsh，
+# LFL/DSH 服务运行身份（2026-08-23 拷问修复 P1；2026-09-11 caller-sandbox 修正）:
+#   0. 常驻 LFL 服务不能继承“谁发起重启”的临时 HOME/TMPDIR。MCP Console 等运维
+#      通道可以沙箱自己的 exec，但那不是 LFL 的安全模型。服务恢复当前 Unix 账户的真实
+#      HOME 与 macOS 原生 user TMPDIR；LFL 自身的 CatastrophicGuard/EXEC_MODE/approval/
+#      EXEC_SANDBOX 继续独立决定工具执行边界。
+#   1. DSH_HOME 重定向到镜像区项目内 data/dsh-home —— 否则落到调用方 HOME 下的 ~/.dsh，
 #      dsh_task/dsh_session_read 的 session 目录按镜像区 workspace_key 找不到 → 失败。
-#   2. 清理主区 DSH 环境残留（DSH_SESSION_JSONL/DSH_SESSION_ID/DSH_SHELL/DSH_WEB_URL）
+#      MCP Console 会把 HOME 指向临时沙箱，因此 DSH_HOME 必须显式保留到服务进程，不能
+#      在同一函数后续 unset 掉。凭据解析仍可按 DSH 自身契约从 invocation cwd/.env 取得。
+#   2. dsh 二进制安装在真实账户 home 的 ~/.local/dsh/bin；服务启动不得依赖调用 shell 的
+#      HOME/PATH。用 passwd 数据库解析真实账户 home，只把已存在的 dsh bin 目录加到 PATH；
+#      服务 HOME 也明确恢复为该账户 home，不把其它用户目录注入 PATH。
+#   3. 清理主区 DSH 会话环境残留（DSH_SESSION_JSONL/DSH_SESSION_ID/DSH_SHELL/DSH_WEB_URL）
 #      —— 镜像进程若从主区 DSH 会话环境启动会携带这些变量，路径解析错指主区。
 _prep_dsh_env() {
+  local account_home="" account_tmp="" dsh_bin_dir=""
+  account_home="$("$VENV_PY" -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)' 2>/dev/null || true)"
+  if [[ -n "$account_home" ]]; then
+    export HOME="$account_home"
+    if [[ "$(uname -s)" == "Darwin" ]] && [[ -x /usr/bin/getconf ]]; then
+      account_tmp="$(/usr/bin/getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)"
+      if [[ -n "$account_tmp" && -d "$account_tmp" ]]; then
+        export TMPDIR="$account_tmp"
+      fi
+    fi
+    dsh_bin_dir="$account_home/.local/dsh/bin"
+    if [[ -x "$dsh_bin_dir/dsh" ]]; then
+      case ":$PATH:" in
+        *":$dsh_bin_dir:"*) ;;
+        *) export PATH="$dsh_bin_dir:$PATH" ;;
+      esac
+    fi
+  fi
   export DSH_HOME="$MIRROR_DIR/data/dsh-home"
   mkdir -p "$DSH_HOME"
   unset DSH_SESSION_JSONL DSH_SESSION_ID DSH_SHELL DSH_WEB_URL 2>/dev/null || true
@@ -155,7 +182,7 @@ _prep_dsh_env() {
 # 两个不同的键！），且环境优先压过 .env——启动 shell 残留 DATA_DIR=<主区绝对路径>时
 # engine 直读主区 data → 镜像 web 显示主区会话（实证 pid 97159）。清空后由 .env 的
 # DATA_DIR=./data（cwd 锚定）接管。
-unset LFL_DATA_DIR DSH_HOME PYTHONPATH FEISHU_APP_ID FEISHU_APP_SECRET DATA_DIR
+unset LFL_DATA_DIR PYTHONPATH FEISHU_APP_ID FEISHU_APP_SECRET DATA_DIR
 }
 
 # 按端口找监听进程（只识别目标端口；不会碰主区 8902）。

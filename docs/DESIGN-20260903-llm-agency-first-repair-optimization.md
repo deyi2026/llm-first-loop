@@ -1,11 +1,11 @@
 # LFL 修复与优化总书：LLM Agency First（模型能力优先）
 
-> 状态：**R7 / P1-A + P1-B + P1-C 已验证完成**（修订记录见附录 A）
+> 状态：**R8 / P1-A + P1-B + P1-C 已验证完成**（修订记录见附录 A）
 > 日期：2026-09-03
 > 适用范围：LFL 的工具发现与投影、工具执行循环、停滞/熔断、任务恢复授权、Prompt Eligibility、动态注入、错误回执、本地/远程模型工具路由，以及后续所有修复、优化、功能新增。
 > 核心裁决：**程序的职责是提供能力、事实、边界和可恢复性，不是替模型做推理，不是用规则替代模型判断，也不能以“稳定/省 token/防犯错”为由制造模型无法完成任务的结构性障碍。**
 > 本文是后续相关设计与代码评审的上位原则。与旧规则冲突时，旧规则必须重新证明必要性；不能证明则修改、降级为观测或删除。
-> 当前修订：**R7 诚实感官与连续性（Honest Sensing & Continuity）**——在 R6 认识论诚实上补齐四个机械推论：失败回执只给事实/硬约束而不替模型制定修复策略；运行事件默认按当前 session 归因并保留 provenance；历史分叉时不猜测合并，但中断后的同 session 可证明模型可见状态与机械执行事实不能一起丢失；已暴露且可恢复的旧工具结果按机械资源边界 receipt 化，同时保留最新未决链与不可恢复事实。该层 provider-agnostic，不新增程序语义强制器。R5/R6 裁决继续有效；历史 R2/R8 章节仅作演进证据。
+> 当前修订：**R8 Runtime Identity Boundary**——R7 的诚实感官与连续性继续有效；新增“运维调用方环境不是 LFL 运行身份”边界：MCP Console、IDE、CI 或其它 operator 通道可以为自己的执行使用沙箱 HOME/TMPDIR/PATH，但常驻 LFL Web/Feishu 服务不得被动继承这些临时身份。服务启动必须恢复宿主账户运行身份，再由 LFL 自身的 CatastrophicGuard / EXEC_MODE / approval / EXEC_SANDBOX / workspace scope 独立实施安全边界；DSH 等子系统可另有显式、可审计的专用数据根。该边界不扩大模型权限，只消除“由谁重启服务决定模型看到哪个 HOME/PATH”的非确定性。
 
 ---
 
@@ -186,6 +186,16 @@ event log 与 live session 前缀不一致时，程序不得猜测哪条旧历�
 在一个长 active episode 中，已经被后续模型轮次看过、且拥有稳定 EvidenceRef/可恢复来源的旧 tool result，可以机械替换为 protocol-preserving receipt；原始证据仍可精确水合。最新未暴露/未决 tool chain 保持原文，不可恢复的 failure/error/timeout 事实也不得为了省 token 直接丢弃。
 
 折叠必须兼顾 provider 前缀稳定：禁止恢复已被实测否决的“每轮一暴露就重写旧前缀”方案。当前边界采用**粗字节批次 + 已暴露 pending-result 数量上限**双机械阈值；两者只回答“表示层积压是否过大”，不回答“哪条证据重要/是否足够/任务是否完成”。模型仍拥有证据相关性、充分性和收口判断权。
+
+## 1.7 运维沙箱不是 LFL Runtime 身份（R8）
+
+LFL 的 operator/维护通道与 LFL 常驻 runtime 是两个不同安全域。MCP Console、IDE agent、CI runner 或其它维护工具可以为了保护自己的执行过程设置临时 `HOME`、`TMPDIR`、`PATH` 或其它沙箱环境；**这些值不得因为一次 restart/deploy 动作而无意变成 Web/Feishu 等常驻 LFL 服务的运行身份。**
+
+服务启动器必须机械恢复当前 Unix 服务账户的真实 `HOME` 与平台原生临时目录，并显式构造运行所需 `PATH`/`PYTHONPATH`/数据根。之后的工具执行安全继续由 LFL 自己负责：灾难性操作由 CatastrophicGuard 硬阻断，`EXEC_MODE`/approval 负责授权分级，`EXEC_SANDBOX` 若显式启用则负责命令沙箱，文件/证据工具继续遵守 workspace scope。**不能用 operator 的临时沙箱替代这些 LFL 安全机制，也不能因为恢复宿主 HOME 就绕过它们。**
+
+DSH 等外部执行子系统可以使用独立、显式、可审计的数据根。例如镜像运行时固定 `DSH_HOME=<mirror>/data/dsh-home`，用于隔离 profile/session；二进制发现则使用宿主账户已安装的 `~/.local/dsh/bin`。这类显式子系统隔离与把整个 LFL runtime 偶然塞进 operator sandbox 是两回事。
+
+2026-09-11 事故证据：由 MCP Console 调用 `restart_mirror.sh` 后，8903 曾实际继承 `HOME=<mcp-console>/home`、`TMPDIR=<mcp-console>/tmp`，且 `_prep_dsh_env()` 先 export 镜像 `DSH_HOME` 又在同函数中 unset，最终 `dsh_task` 将真实已安装的 DSH 误报为 unavailable。修复后 8903 的 `HOME` 恢复宿主账户、`TMPDIR` 恢复 macOS user temp，`DSH_HOME` 保持镜像专用目录，PATH 可发现宿主 DSH；LFL 自身安全策略不变。
 
 ---
 
