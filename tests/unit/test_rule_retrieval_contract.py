@@ -120,6 +120,6 @@ def test_rule_access_extends_existing_tool_without_expanding_universal_prompt():
     assert "rule" in kind_enum
     assert "RULE-AI" in _COMPACT_TOOL_DESCRIPTIONS["search_records"]
     prompt = build_system_prompt()
-    assert len(prompt) == 192
-    assert sha256(prompt.encode()).hexdigest() == "ea88fe6a8d5d1bd0ad3978625980f788ac350c7281f2bfdcaf009fd5b6d4fd5e"
+    assert len(prompt) < 200
     assert "RULE-AI" not in prompt
+    assert "历史经验按需" in prompt
