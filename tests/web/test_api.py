@@ -267,14 +267,18 @@ def test_chat_model_omitted_uses_default(build_test_engine, fake_settings):
 
 
 def test_list_models_endpoint(build_test_engine, fake_settings):
-    """GET /api/v1/models 返回候选模型列表 + 当前装配模型."""
+    """GET /api/v1/models 分开返回 effective 候选与当前选择的可用性事实."""
     engine, fake = build_test_engine([{"content": "a"}])
     client = _make_client(engine)
     resp = client.get("/api/v1/models")
     assert resp.status_code == 200
     body = resp.json()
     assert "models" in body and body["models"]
-    assert body["current"] in body["models"]
+    assert isinstance(body["current"], str)
+    assert body["current_available"] is (body["current"] in body["models"])
+    if body["current_available"] is False:
+        assert body["current"] not in body["models"], "stale current must not be fabricated as available"
+    assert isinstance(body["catalog"], list)
     assert len(fake.calls) == 0  # 不调 LLM
 
 

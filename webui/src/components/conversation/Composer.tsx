@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
 import { sendMessage, stopStreaming, useConversation, conversationStore, enqueueQueueTurn } from "../../core/conversation";
-import { fetchModels, uploadFileBase64, type ModelCatalog } from "../../core/chat";
+import { MODEL_CATALOG_CHANGED_EVENT, fetchModels, uploadFileBase64, type ModelCatalog } from "../../core/chat";
 import { sessionStore } from "../../core/stores";
 import { useCapabilities } from "../../core/capabilities";
 import { InsertMenu } from "./InsertMenu";
@@ -65,14 +65,26 @@ export function Composer() {
     hintTimer.current = window.setTimeout(() => setHint(""), 2500);
   };
 
-  // 模型目录（下拉与 /model 命令共用；initial current 同步到会话模型覆盖）
+  // 模型目录（下拉与 /model 命令共用；provider admin 热变更后同步刷新）。
   useEffect(() => {
-    void fetchModels().then((catalog) => {
+    let active = true;
+    const loadModelCatalog = async () => {
+      const catalog = await fetchModels();
+      if (!active) return;
       modelsRef.current = catalog.models;
       setModels(catalog.models);
       setModelCatalog(catalog);
+      // current 是 session/runtime 事实；只在前端尚无选择时初始化，热刷新绝不
+      // 自动覆盖已有 session/model state（包括 current_available=false 的 stale 选择）。
       if (catalog.current && !sessionStore.getState().model) sessionStore.setModel(catalog.current);
-    });
+    };
+    const onCatalogChanged = () => { void loadModelCatalog(); };
+    void loadModelCatalog();
+    window.addEventListener(MODEL_CATALOG_CHANGED_EVENT, onCatalogChanged);
+    return () => {
+      active = false;
+      window.removeEventListener(MODEL_CATALOG_CHANGED_EVENT, onCatalogChanged);
+    };
   }, []);
 
   // models 到达/变更时刷新命令选项（修复竞态：先输入 /model、选项后到）

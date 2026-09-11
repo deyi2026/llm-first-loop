@@ -99,7 +99,7 @@ def test_capability_manifest_reflects_registered_routes(build_test_engine) -> No
     resp = _client(engine).get("/api/v1/capabilities")
     assert resp.status_code == 200
     caps = resp.json()["capabilities"]
-    for key in ("attachments", "fsTree", "pin", "archive", "delete", "fork", "feedback", "jobs", "continuity"):
+    for key in ("attachments", "fsTree", "pin", "archive", "delete", "fork", "feedback", "jobs", "continuity", "providerAdmin"):
         assert caps.get(key) is True
 
 

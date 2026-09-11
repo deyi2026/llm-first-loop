@@ -240,7 +240,9 @@ def main() -> None:
     # 锚定 CWD（与 data_dir="./data" 同约定，重启脚本均 cd 到各自项目根）；
     # 不可用默认 __file__ 锚定——共享代码（venv .pth 指向镜像 src）会让主区进程
     # 误读镜像 .env 的 WEB_PORT=8903/LFL_DATA_DIR，主区 web 绑镜像端口直接起不来。
-    load_env_file(Path.cwd() / ".env")
+    _env_file = (Path.cwd() / ".env").resolve()
+    os.environ.setdefault("LFL_ENV_FILE", str(_env_file))
+    load_env_file(_env_file)
     # P1 route attribution: 服务入口本身是 route 的权威事实；显式 LFL_ROUTE 仍优先。
     os.environ.setdefault("LFL_ROUTE", "web")
     # EVO-20260811-f94e5306: 记录进程启动版本（一致性检测）

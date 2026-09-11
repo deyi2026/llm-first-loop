@@ -5,8 +5,8 @@
 
   - workspace/git/venv/module/pid（身份事实，来自 R1 IdentityReport）
   - effective config 摘要与 config_hash（来自 R2 EffectiveConfig，已脱敏）
-  - providers base/override/effective 三 hash（漂移治理：任何人都能区分
-    "intentional override" 与 "两个 repo 漂移了"）
+  - providers tracked base / Web local snapshot / env owner / legacy diagnostic / effective hashes
+    （漂移治理：区分公开 seed、本机配置与历史 override）
 
 绝不记录 API key：manifest 是落盘文件，密钥脱敏在 resolver.to_summary
 源头完成（_mask_secret），本模块不再二次防御性过滤但保持结构不含密钥键。
@@ -43,36 +43,89 @@ def config_hash(ec: EffectiveConfig) -> str:
     return _sha256_text(payload)
 
 
-def providers_hashes(data_dir: str | Path) -> dict[str, str]:
-    """P0.6：base/override/effective 三 hash。
+def _manifest_model_providers_raw(ec: EffectiveConfig) -> str:
+    """Observe the MODEL_PROVIDERS value the service will actually consume.
 
-    effective = base 与 override 顶层键合并后序列化的 hash（override 覆盖
-    base）；无 override 文件时 effective_hash == base_hash（override_hash
-    为空串）。解析失败如实置空，不伪造。
+    External process environment owns the value.  Before ``runtime.launch`` has
+    applied/loaded dotenv, mirror ``load_env_file`` by reading the same env file so
+    the launch manifest and the later service manifest describe one source contract.
+    """
+    raw = str(os.environ.get("MODEL_PROVIDERS", "") or "").strip()
+    if raw:
+        return raw
+    try:
+        from .resolver import parse_env_file
+
+        return str(parse_env_file(ec.env_file).get("MODEL_PROVIDERS", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def _parse_provider_object(raw: str) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def providers_hashes(
+    data_dir: str | Path, *, model_providers_raw: str | None = None
+) -> dict[str, str]:
+    """Hash each provider source and identify only the source Registry consumes.
+
+    Runtime priority is ``MODEL_PROVIDERS > providers.local.json > providers.json > L0``.
+    ``providers.override.json`` is retained only as historical drift evidence: no
+    production Registry consumer reads it, so it must never be labelled effective.
+    A malformed higher-priority source yields an unknown/empty effective hash rather
+    than falsely attributing a lower-priority file.
     """
     data = Path(data_dir)
     base_p = data / "providers.json"
+    local_p = data / "providers.local.json"
     over_p = data / "providers.override.json"
     base_hash = _sha256_file(base_p)
+    local_hash = _sha256_file(local_p)
     override_hash = _sha256_file(over_p)
-    effective_hash = base_hash
-    if override_hash:
+    env_raw = (
+        str(os.environ.get("MODEL_PROVIDERS", "") or "").strip()
+        if model_providers_raw is None
+        else str(model_providers_raw or "").strip()
+    )
+    env_hash = _sha256_text(env_raw) if env_raw else ""
+
+    if env_raw:
+        effective_hash = env_hash if _parse_provider_object(env_raw) is not None else ""
+    elif local_p.is_file():
         try:
-            merged: dict = json.loads(base_p.read_text()) if base_p.is_file() else {}
-            merged.update(json.loads(over_p.read_text()))
-            effective_hash = _sha256_text(
-                json.dumps(merged, ensure_ascii=False, sort_keys=True))
-        except Exception:
-            effective_hash = ""  # override 解析失败：如实置空
+            local_value = json.loads(local_p.read_text(encoding="utf-8"))
+            effective_hash = local_hash if isinstance(local_value, dict) else ""
+        except (OSError, json.JSONDecodeError):
+            effective_hash = ""
+    elif base_p.is_file():
+        try:
+            base_value = json.loads(base_p.read_text(encoding="utf-8"))
+            effective_hash = base_hash if isinstance(base_value, dict) else ""
+        except (OSError, json.JSONDecodeError):
+            effective_hash = ""
+    else:
+        effective_hash = ""  # L0 is synthesized runtime state, not a provider-file hash.
+
     return {
         "providers_base_hash": base_hash,
+        "providers_local_hash": local_hash,
         "providers_override_hash": override_hash,
+        "providers_env_hash": env_hash,
         "providers_effective_hash": effective_hash,
     }
 
 
-def _provider_info(model_ref: str, data_dir: str | Path) -> dict[str, Any]:
-    """从 providers.json 提取 provider_id / endpoint_host / model 元信息（宽松）。"""
+def _provider_info(
+    model_ref: str, data_dir: str | Path, *, model_providers_raw: str = ""
+) -> dict[str, Any]:
+    """Read provider/model facts from the same effective source as ProviderRegistry."""
     info: dict[str, Any] = {
         "provider_id": "", "provider_endpoint_host": "",
         "provider_meta": {}, "model_meta": {},
@@ -80,23 +133,41 @@ def _provider_info(model_ref: str, data_dir: str | Path) -> dict[str, Any]:
     pid, _, mname = model_ref.partition("/")
     info["provider_id"] = pid
     try:
-        data = json.loads((Path(data_dir) / "providers.json").read_text())
+        raw = str(model_providers_raw or "").strip()
+        if raw:
+            data = _parse_provider_object(raw)
+            if data is None:
+                return info
+        else:
+            root = Path(data_dir)
+            provider_file = root / "providers.local.json"
+            if not provider_file.is_file():
+                provider_file = root / "providers.json"
+            data = json.loads(provider_file.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return info
         prov = data.get(pid) or {}
+        if not isinstance(prov, dict):
+            return info
         info["provider_endpoint_host"] = (
             (prov.get("base_url") or "").split("//")[-1].split("/")[0])
         info["provider_meta"] = prov
-        info["model_meta"] = (prov.get("models") or {}).get(mname or model_ref, {})
+        models = prov.get("models") or {}
+        info["model_meta"] = (models.get(mname or model_ref, {}) if isinstance(models, dict) else {})
     except Exception:
-        pass  # providers.json 缺失/损坏：字段留空，manifest 仍产出（不阻塞启动）
+        pass  # source missing/malformed: leave facts empty rather than invent a lower source.
     return info
 
 
 def build_manifest(service: str, ec: EffectiveConfig,
                    report: IdentityReport) -> dict:
-    """合并身份事实 + 配置指纹 + providers 三 hash（design P0.5 字段清单）。"""
+    """合并身份事实 + 配置指纹 + providers 各来源/effective hashes。"""
     v = ec.values
     model_ref = v.get("LLM_MODEL", "")
-    pinfo = _provider_info(model_ref, report.data_dir)
+    model_providers_raw = _manifest_model_providers_raw(ec)
+    pinfo = _provider_info(
+        model_ref, report.data_dir, model_providers_raw=model_providers_raw
+    )
     provider_meta = pinfo.get("provider_meta") or {}
     meta = pinfo.get("model_meta") or {}
     max_input_tokens = meta.get("max_input_tokens", provider_meta.get("max_input_tokens", ""))
@@ -128,7 +199,7 @@ def build_manifest(service: str, ec: EffectiveConfig,
         "config_hash": config_hash(ec),
         "ignored_shell_env": sorted(ec.ignored_shell_env),
         # —— providers 漂移治理（P0.6）——
-        **providers_hashes(report.data_dir),
+        **providers_hashes(report.data_dir, model_providers_raw=model_providers_raw),
     }
 
 
@@ -176,7 +247,7 @@ def health_identity(data_dir: str | Path | None = None) -> dict:
 
 
 def write_runtime_manifest(service: str, data_dir: str | Path | None = None) -> Path | None:
-    """R3 便捷落盘: 身份事实 + 配置指纹 + providers 三 hash → runtime_manifest.json.
+    """R3 便捷落盘: 身份事实 + 配置指纹 + providers source/effective hashes → runtime_manifest.json.
 
     （2026-08-30 重写——恢复半改工作区丢失的未提交 API；原"无参 write_manifest()"
     的等价物，显式 service 参数更清晰。）

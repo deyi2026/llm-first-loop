@@ -517,6 +517,7 @@ def test_web_models_from_registry_full(tmp_path):
     assert "deepseek/deepseek-v4-pro" in body["models"]
     assert "minimax/MiniMax-M3" in body["models"]
     assert body["current"] in body["models"]
+    assert body["current_available"] is True
 
 
 def test_web_models_with_web_models_env_filter(tmp_path):

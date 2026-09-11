@@ -117,7 +117,23 @@ app = build_app(settings=load_settings())   # FastAPI app (includes auth/upload/
 `build_app(settings=None, engine=None)`: two-argument assembly; `app.state.engine` single instance.
 Endpoint quick view: `POST /api/v1/chat` (body: `{message, session_id?, model?}`),
 `POST /api/v1/chat/stream`, `GET /api/v1/sessions`, `POST /api/v1/upload`, `GET /health`
-(auth: loopback exemption + `WEB_API_KEY` enforced remotely).
+(auth: loopback exemption + `WEB_API_KEY` enforced remotely). The Web settings provider/model control
+plane uses `GET/POST /api/v1/providers`, `PUT/DELETE /api/v1/providers/{provider_id}`,
+`POST /api/v1/providers/{provider_id}/test`, and `POST /api/v1/providers/reload`. Web mutations write a
+git-ignored full local snapshot at `data/providers.local.json`; they never modify tracked
+`data/providers.json`. API-key plaintext is written only to the local `.env`/process environment and is
+never returned by the API. Dynamic provider/model changes hot-reload and can be selected immediately;
+changing `LLM_MODEL` changes the configured default only, while the shared startup default client requires
+a Web Runtime restart. If `MODEL_PROVIDERS` is present it retains highest priority, so the Web settings
+control plane becomes read-only and refuses shadowed local writes.
+`GET /api/v1/models` returns `models` (choices in the effective Registry), `current` (the
+actual session selection), `current_available`, and the mechanical `catalog`. Hot-disabling or deleting
+a provider never rewrites the session choice: when `current` is no longer effective, the API reports
+`current_available=false` and does not fabricate it back into `models`; the UI renders it as a disabled
+“currently unavailable” entry. Provider connectivity tests return only success/latency or a safe exception
+type plus mechanically available HTTP-status/timeout category; raw provider/library exception text, URL
+credentials, and response bodies are never reflected. Provider-JSON and `.env` management writes share one
+compare-and-write lock so concurrent settings requests cannot lose updates.
 
 **Headless service mode (B5)**: pure-API embedding without a UI — see `examples/04_headless_service.py`
 (assembly + sync/streaming chat endpoints, ~20 lines); the core is a `build_engine(load_settings())`
@@ -136,7 +152,7 @@ snapshot tests).
 
 | Extension surface | Entry point |
 |:---|:---|
-| New LLM Provider | `MODEL_PROVIDERS` registry JSON + `llm_loop.llm.providers` |
+| New LLM Provider | Web settings `/api/v1/providers` (full local snapshot) or `MODEL_PROVIDERS` registry JSON + `llm_loop.llm.providers` |
 | New tool | `ToolRegistry.register` (protocol see §5) |
 | Semantic retrieval | `EMBEDDING_PROVIDER` (none/hash/api) + `memory.retriever` |
 | Event sourcing | `EVENT_LOG_ENABLED` + `event_log` package |

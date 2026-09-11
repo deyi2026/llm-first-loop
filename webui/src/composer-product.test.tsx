@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Composer } from "./components/conversation/Composer";
+import { MODEL_CATALOG_CHANGED_EVENT } from "./core/chat";
 import { conversationStore } from "./core/conversation";
 import { sessionStore } from "./core/stores";
 
@@ -74,6 +75,36 @@ afterEach(() => {
 });
 
 describe("product composer", () => {
+
+  it("provider catalog 变更事件会刷新下拉且不覆盖 stale session 选择", async () => {
+    let catalog = modelResponse();
+    vi.stubGlobal("fetch", baseFetch((url) => {
+      if (url.includes("/api/v1/models")) {
+        return new Response(JSON.stringify(catalog), { status: 200 });
+      }
+      return undefined;
+    }));
+    render(<Composer />);
+    const select = await screen.findByTestId("model-select") as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("glm/glm-5.3"));
+
+    catalog = {
+      ...modelResponse(),
+      models: ["cognilocal/qwen3.8-27b-mlx-8bit"],
+      current: "glm/glm-5.3",
+      current_available: false,
+      catalog: modelResponse().catalog.filter((row) => row.id !== "glm/glm-5.3"),
+    } as ReturnType<typeof modelResponse> & { current_available: boolean };
+    window.dispatchEvent(new Event(MODEL_CATALOG_CHANGED_EVENT));
+
+    await waitFor(() => {
+      expect(select.value).toBe("glm/glm-5.3");
+      const stale = within(select).getByRole("option", { name: /当前不可用/ }) as HTMLOptionElement;
+      expect(stale.disabled).toBe(true);
+      expect(within(select).getByRole("option", { name: "qwen3.8-27b-mlx-8bit" })).toBeInTheDocument();
+    });
+    expect(sessionStore.getState().model).toBe("glm/glm-5.3");
+  });
   for (const modifier of ["metaKey", "ctrlKey"] as const) {
     it(`${modifier} + Enter 在生成中把 Human Turn 入队而不是再次直发`, async () => {
       let queueBody: Record<string, unknown> | null = null;

@@ -46,6 +46,9 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
   }, [capability, effort, mode]);
 
   const selected = currentModel || catalog.current || "";
+  const staleSelected = Boolean(
+    selected && catalog.currentAvailable === false && selected === catalog.current
+  );
   const reasoningLabel = (() => {
     if (!capability?.reasoning_capable) return "推理:模型自管";
     if (!capability.reasoning_control_supported) return "推理:模型自管";
@@ -70,7 +73,12 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
         title={selected || "默认模型"}
         data-testid="model-select"
       >
-        {catalog.models.length === 0 ? <option value="">默认模型</option> : null}
+        {staleSelected ? (
+          <option value={selected} disabled>
+            {shortModelName(selected)} · 当前不可用
+          </option>
+        ) : null}
+        {catalog.models.length === 0 && !staleSelected ? <option value="">默认模型</option> : null}
         {catalog.models.map((model) => (
           <option key={model} value={model}>
             {shortModelName(model)}

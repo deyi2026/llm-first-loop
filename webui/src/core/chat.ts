@@ -143,7 +143,15 @@ export interface ModelCapability {
 export interface ModelCatalog {
   models: string[];
   current: string | null;
+  /** false means current is a preserved session fact absent from the effective registry. */
+  currentAvailable?: boolean | null;
   catalog: ModelCapability[];
+}
+
+export const MODEL_CATALOG_CHANGED_EVENT = "lfl:model-catalog-changed";
+
+export function notifyModelCatalogChanged(): void {
+  window.dispatchEvent(new Event(MODEL_CATALOG_CHANGED_EVENT));
 }
 
 /** /api/v1/models: ids + mechanical model capability facts; never provider secrets. */
@@ -153,7 +161,7 @@ export async function fetchModels(): Promise<ModelCatalog> {
     const resp = await fetch("/api/v1/models");
     if (!resp.ok) return empty;
     const data = (await resp.json().catch(() => ({}))) as {
-      models?: unknown; current?: unknown; catalog?: unknown;
+      models?: unknown; current?: unknown; current_available?: unknown; catalog?: unknown;
     };
     const catalog = Array.isArray(data.catalog)
       ? data.catalog.filter((item): item is ModelCapability =>
@@ -163,6 +171,7 @@ export async function fetchModels(): Promise<ModelCatalog> {
     return {
       models: Array.isArray(data.models) ? data.models.map(String).filter(Boolean) : [],
       current: typeof data.current === "string" ? data.current : null,
+      currentAvailable: typeof data.current_available === "boolean" ? data.current_available : null,
       catalog,
     };
   } catch {

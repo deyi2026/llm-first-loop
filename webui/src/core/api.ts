@@ -435,3 +435,186 @@ export async function saveHumanFile(
     }),
   });
 }
+
+// ── Provider / model settings control plane ────────────────────────────────
+export interface ProviderModelAdminFact {
+  id: string;
+  enabled: boolean;
+  effective?: boolean;
+  context?: number;
+  max_input_tokens?: number | null;
+  max_tokens?: number | null;
+  cost_tier?: string;
+  thinking?: boolean;
+  reasoning_capable?: boolean;
+  reasoning_control?: string;
+  reasoning?: boolean;
+  long_context?: boolean;
+  multimodal?: boolean;
+  wire_protocol?: string;
+  capability_tier?: string;
+  send_tool_choice?: boolean;
+  reasoning_split?: boolean;
+  reasoning_replay?: string;
+  reasoning_effort_map?: Record<string, string>;
+  runtime_identity?: string;
+  temperature?: number | null;
+  top_p?: number | null;
+  top_k?: number | null;
+  min_p?: number | null;
+}
+
+export interface ProviderAdminFact {
+  id: string;
+  enabled: boolean;
+  effective?: boolean;
+  base_url: string;
+  api_key_env?: string;
+  credential_configured?: boolean;
+  credential_source?: string;
+  default_model?: string;
+  timeout_s?: number | null;
+  history_budget_chars?: number | null;
+  max_input_tokens?: number | null;
+  max_tokens?: number | null;
+  chars_per_token?: number | null;
+  models: ProviderModelAdminFact[];
+}
+
+export interface ProviderAdminSnapshot {
+  source: "env" | "local" | "base" | "missing" | string;
+  mutable: boolean;
+  config_version: string;
+  configured_default_model?: string;
+  runtime_default_model?: string;
+  default_source?: string;
+  restart_required?: boolean;
+  effective_provider_count?: number;
+  effective_model_count?: number;
+  providers: ProviderAdminFact[];
+}
+
+export interface ProviderModelAdminInput extends ProviderModelAdminFact {
+  enabled: boolean;
+}
+
+export interface ProviderAdminInput {
+  id: string;
+  enabled: boolean;
+  base_url: string;
+  api_key_env?: string;
+  default_model?: string;
+  timeout_s?: number | null;
+  history_budget_chars?: number | null;
+  max_input_tokens?: number | null;
+  max_tokens?: number | null;
+  chars_per_token?: number | null;
+  models: ProviderModelAdminInput[];
+}
+
+export interface ProviderMutationResult {
+  ok: boolean;
+  status: number;
+  detail: string;
+  snapshot: ProviderAdminSnapshot | null;
+}
+
+function providerResult(status: number, data: unknown): ProviderMutationResult {
+  const body = (data && typeof data === "object") ? data as Record<string, unknown> : {};
+  const ok = status >= 200 && status < 300;
+  return {
+    ok,
+    status,
+    detail: String(body.detail ?? body.error ?? ""),
+    snapshot: ok && Array.isArray(body.providers) ? body as unknown as ProviderAdminSnapshot : null,
+  };
+}
+
+export async function fetchProviderAdmin(): Promise<ProviderAdminSnapshot | null> {
+  const { status, data } = await api<ProviderAdminSnapshot>("/api/v1/providers", { cache: "no-store" });
+  return status === 200 && Array.isArray(data.providers) ? data : null;
+}
+
+export async function createProvider(
+  expectedVersion: string,
+  provider: ProviderAdminInput,
+  apiKey?: string
+): Promise<ProviderMutationResult> {
+  const body: Record<string, unknown> = { expected_version: expectedVersion, provider };
+  if (apiKey !== undefined && apiKey !== "") body.api_key = apiKey;
+  const { status, data } = await api("/api/v1/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return providerResult(status, data);
+}
+
+export async function replaceProvider(
+  expectedVersion: string,
+  provider: ProviderAdminInput
+): Promise<ProviderMutationResult> {
+  const { status, data } = await api(`/api/v1/providers/${encodeURIComponent(provider.id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_version: expectedVersion, provider }),
+  });
+  return providerResult(status, data);
+}
+
+export async function updateProviderCredential(
+  providerId: string,
+  apiKey: string
+): Promise<ProviderMutationResult> {
+  const { status, data } = await api(`/api/v1/providers/${encodeURIComponent(providerId)}/credential`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+  return providerResult(status, data);
+}
+
+export async function deleteProviderConfig(
+  providerId: string,
+  expectedVersion: string
+): Promise<ProviderMutationResult> {
+  const qs = new URLSearchParams({ expected_version: expectedVersion, confirm: "true" });
+  const { status, data } = await api(
+    `/api/v1/providers/${encodeURIComponent(providerId)}?${qs.toString()}`,
+    { method: "DELETE" }
+  );
+  return providerResult(status, data);
+}
+
+export async function setConfiguredDefaultModel(model: string): Promise<ProviderMutationResult> {
+  const { status, data } = await api("/api/v1/providers/default-model", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model }),
+  });
+  return providerResult(status, data);
+}
+
+export async function reloadProviderRegistry(): Promise<ProviderMutationResult> {
+  const { status, data } = await api("/api/v1/providers/reload", { method: "POST" });
+  return providerResult(status, data);
+}
+
+export async function testProviderConnection(
+  providerId: string,
+  model = ""
+): Promise<{ ok: boolean; detail: string; latencyMs?: number }> {
+  const { status, data } = await api<Record<string, unknown>>(
+    `/api/v1/providers/${encodeURIComponent(providerId)}/test`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    }
+  );
+  return {
+    ok: status === 200 && data.ok === true,
+    detail: status === 200 ? `连接成功 · ${Number(data.latency_ms ?? 0)} ms` : String(data.detail ?? data.error ?? "连接失败"),
+    latencyMs: status === 200 ? Number(data.latency_ms ?? 0) : undefined,
+  };
+}

@@ -2,7 +2,7 @@
 
 核心验收（tasks.md R3 / design P0.5）：
   字段完整（P0.5 清单）/ 绝不记录 API key / config 变化 → hash 变化 /
-  providers override 三 hash / write-read roundtrip / launch 端到端落盘。
+  providers 各来源/effective hash / write-read roundtrip / launch 端到端落盘。
 """
 import json
 import os
@@ -25,7 +25,8 @@ P05_FIELDS = [
     "service", "pid", "model_ref", "provider_id", "provider_endpoint_host",
     "history_budget_chars", "max_input_tokens", "max_tokens",
     "data_dir", "config_sources", "config_hash",
-    "providers_base_hash", "providers_override_hash", "providers_effective_hash",
+    "providers_base_hash", "providers_local_hash", "providers_override_hash",
+    "providers_env_hash", "providers_effective_hash",
 ]
 
 _PROVIDERS = {
@@ -67,7 +68,7 @@ def test_manifest_fields_complete_and_no_api_key(tmp_path, monkeypatch):
 
 
 def test_config_hash_changes_on_cli_override(tmp_path, monkeypatch):
-    """config reload / override → effective hash 必变（R3 验收判据）。"""
+    """Effective config override changes the config hash（R3 验收判据）."""
     _mk(tmp_path, ["LLM_MODEL=glm/glm-5.3"])
     monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
     ec1 = resolve_effective("web", workspace_root=tmp_path)
@@ -77,8 +78,8 @@ def test_config_hash_changes_on_cli_override(tmp_path, monkeypatch):
     assert config_hash(ec1) != config_hash(ec2)
 
 
-def test_providers_hashes_override_semantics(tmp_path, monkeypatch):
-    """P0.6：无 override → effective==base；有 override → 三 hash 区分。"""
+def test_providers_hashes_legacy_override_is_diagnostic_not_effective(tmp_path, monkeypatch):
+    """No runtime Registry consumer reads providers.override.json anymore."""
     _mk(tmp_path, ["LLM_MODEL=glm/glm-5.3"])
     data = tmp_path / "data"
     h1 = providers_hashes(data)
@@ -88,7 +89,98 @@ def test_providers_hashes_override_semantics(tmp_path, monkeypatch):
         json.dumps({"glm": {"history_budget_chars": 100000}}))
     h2 = providers_hashes(data)
     assert h2["providers_override_hash"]
-    assert h2["providers_effective_hash"] != h2["providers_base_hash"]
+    assert h2["providers_effective_hash"] == h2["providers_base_hash"]
+
+
+def test_providers_hashes_local_overlay_is_effective_snapshot(tmp_path):
+    """Web full local snapshot owns the effective registry without rewriting tracked seed."""
+    _mk(tmp_path, ["LLM_MODEL=glm/glm-5.3"])
+    data = tmp_path / "data"
+    local = {
+        "local": {
+            "base_url": "https://local.example/v1",
+            "api_key_env": "",
+            "default_model": "m",
+            "models": {"m": {"context": 262144}},
+        }
+    }
+    (data / "providers.local.json").write_text(json.dumps(local), encoding="utf-8")
+    hashes = providers_hashes(data)
+    assert hashes["providers_local_hash"]
+    assert hashes["providers_effective_hash"] == hashes["providers_local_hash"]
+    assert hashes["providers_effective_hash"] != hashes["providers_base_hash"]
+
+def test_manifest_effective_provider_facts_follow_model_providers_env(tmp_path, monkeypatch):
+    """Highest-priority MODEL_PROVIDERS owns manifest facts without exposing contents."""
+    import hashlib
+
+    _mk(tmp_path, ["LLM_MODEL=glm/glm-5.3"])
+    raw = json.dumps(
+        {
+            "glm": {
+                "base_url": "https://env-provider.example/v1",
+                "api_key_env": "ENV_ONLY_SECRET_NAME",
+                "max_input_tokens": 77777,
+                "max_tokens": 3333,
+                "models": {"glm-5.3": {"context": 999999}},
+            }
+        },
+        separators=(",", ":"),
+    )
+    monkeypatch.setenv("MODEL_PROVIDERS", raw)
+    monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
+    report = compute_identity()
+    ec = resolve_effective("web", workspace_root=tmp_path)
+    manifest = build_manifest("web", ec, report)
+
+    expected = hashlib.sha256(raw.encode()).hexdigest()
+    assert manifest["providers_env_hash"] == expected
+    assert manifest["providers_effective_hash"] == expected
+    assert manifest["provider_endpoint_host"] == "env-provider.example"
+    assert manifest["max_input_tokens"] == 77777
+    assert manifest["max_tokens"] == 3333
+    assert raw not in str(manifest)
+
+
+def test_manifest_reads_dotenv_model_providers_before_service_load(tmp_path, monkeypatch):
+    """runtime.launch and post-load service manifests observe one dotenv source."""
+    import hashlib
+
+    raw = json.dumps(
+        {
+            "glm": {
+                "base_url": "http://127.0.0.1:8901/v1",
+                "api_key_env": "",
+                "models": {"glm-5.3": {"context": 123456}},
+            }
+        },
+        separators=(",", ":"),
+    )
+    _mk(tmp_path, ["LLM_MODEL=glm/glm-5.3", f"MODEL_PROVIDERS={raw}"])
+    monkeypatch.delenv("MODEL_PROVIDERS", raising=False)
+    monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
+    report = compute_identity()
+    ec = resolve_effective("web", workspace_root=tmp_path)
+    manifest = build_manifest("web", ec, report)
+
+    assert manifest["providers_env_hash"] == hashlib.sha256(raw.encode()).hexdigest()
+    assert manifest["providers_effective_hash"] == manifest["providers_env_hash"]
+    assert manifest["provider_endpoint_host"] == "127.0.0.1:8901"
+
+
+def test_manifest_malformed_model_providers_does_not_fabricate_lower_source(tmp_path, monkeypatch):
+    _mk(tmp_path, ["LLM_MODEL=glm/glm-5.3"])
+    monkeypatch.setenv("MODEL_PROVIDERS", "{malformed")
+    monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
+    report = compute_identity()
+    ec = resolve_effective("web", workspace_root=tmp_path)
+    manifest = build_manifest("web", ec, report)
+
+    assert manifest["providers_env_hash"]
+    assert manifest["providers_effective_hash"] == ""
+    assert manifest["providers_base_hash"]
+    assert manifest["provider_endpoint_host"] == ""
+    assert manifest["max_input_tokens"] == ""
 
 
 def test_write_read_roundtrip_and_health_identity(tmp_path, monkeypatch):

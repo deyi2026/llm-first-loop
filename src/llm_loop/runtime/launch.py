@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     apply_to_environ(ec)
-    # R3: 启动即写 manifest（身份 + 配置指纹 + providers 三 hash 的唯一事实源）
+    # R3: 启动即写 manifest（身份 + 配置指纹 + providers source/effective hashes 的唯一事实源）
     manifest = build_manifest(args.service, ec, report)
     mf_path = write_manifest(manifest, report.data_dir)
     print(f"[runtime-launch] manifest: {mf_path} "

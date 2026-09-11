@@ -39,6 +39,7 @@ from llm_loop.workspace.store import (
 from .attachments import AttachmentError, AttachmentStore
 from .attachments import workspace_scope as attachment_workspace_scope
 from .human_turn_queue import HumanTurnQueue
+from .provider_routes import router as provider_admin_router
 from .schemas import (
     ChatCancelRequest,
     ChatRequest,
@@ -71,6 +72,8 @@ from .upload_handlers import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+router.include_router(provider_admin_router)
 
 
 def _attachment_store(engine: Any) -> AttachmentStore:
@@ -1155,6 +1158,7 @@ def api_info() -> dict:
             "DELETE /api/v1/sessions/{session_id}?confirm=true": "删除会话（须确认）",
             "POST /api/v1/sessions/{session_id}/pin": "会话置顶/取消置顶（M56）",
             "GET /api/v1/models": "可用模型列表",
+            "GET /api/v1/providers": "Provider/模型本机配置（鉴权控制面）",
             "GET /api/v1/events": "SSE 会话更新事件流（M56 实时刷新）",
             "GET /health": "健康检查",
             "GET /docs": "Swagger 交互文档",
@@ -1191,7 +1195,8 @@ def list_models(request: Request) -> dict:
     # M50: 从注册表生成候选
     registry = getattr(getattr(engine, "llm_pool", None), "registry", None)
     if registry is None:
-        # 零回归回顾: 未注入 model_pool（test 场景）→ 行为同现状
+        # 零回归回顾: 未注入 model_pool（test 场景）→ 行为同现状。此路径没有
+        # registry truth 可判定 availability，因此仍把 current 放入 fallback options。
         configured = _os.environ.get("WEB_MODELS", "").strip()
         names = (
             [m.strip() for m in configured.split(",") if m.strip()]
@@ -1200,9 +1205,9 @@ def list_models(request: Request) -> dict:
         )
         if current not in names:
             names.insert(0, current)
-        return {"models": names, "current": current}
+        return {"models": names, "current": current, "current_available": True, "catalog": []}
 
-    # 拉取所有注册表内全限定 'provider/model'
+    # 拉取所有当前 registry 中实际可用的全限定 'provider/model'。
     all_names: list[str] = []
     for pid, spec in registry.providers.items():
         for mid in spec.models:
@@ -1214,16 +1219,60 @@ def list_models(request: Request) -> dict:
         names = [n for n in all_names if n in wanted]
     else:
         names = all_names
-    # current 不在列表中 → 归一化为全限定名（前端下拉可匹配高亮）或插入首部
-    # 修复（2026-08-11）: 裸名 current 已作为 provider/model 候选存在（如 deepseek/deepseek-flash）
-    # 时归一化为全限定名（避免下拉重复 + current 与候选项一致可高亮）
-    if current not in names:
+
+    # current 是会话事实，不等于 availability。裸名若唯一匹配当前可用 registry，
+    # 仅做显示规范化；若 provider/model 已被热禁用/删除，则保留原 current 并
+    # 显式 current_available=false，绝不自动改写用户 session override，也不把它
+    # 重新塞回“可用模型列表”。
+    current_available = current in names
+    if not current_available:
         matched = next((n for n in names if n.endswith(f"/{current}")), None)
         if matched:
             current = matched
-        else:
-            names.insert(0, current)
-    return {"models": names, "current": current}
+            current_available = True
+
+    catalog: list[dict[str, Any]] = []
+    for pid, spec in registry.providers.items():
+        for mid, mspec in spec.models.items():
+            model_ref = f"{pid}/{mid}"
+            if model_ref not in names:
+                continue
+            capable, control = registry.reasoning_contract(pid, mid)
+            control_supported = control in {"thinking_type", "chat_template", "always_on_effort"} or (
+                control == "legacy" and bool(getattr(mspec, "thinking", False))
+            )
+            can_disable = control in {"thinking_type", "chat_template"} or (
+                control == "legacy" and bool(getattr(mspec, "thinking", False))
+            )
+            effort_map = dict(getattr(mspec, "reasoning_effort_map", {}) or {})
+            efforts = sorted(effort_map) if effort_map else (
+                ["low", "medium", "high"] if control == "always_on_effort" else []
+            )
+            catalog.append(
+                {
+                    "id": model_ref,
+                    "provider": pid,
+                    "model": mid,
+                    "context": int(getattr(mspec, "context", 0) or 0),
+                    "max_input_tokens": getattr(mspec, "max_input_tokens", None)
+                    or getattr(spec, "max_input_tokens", None),
+                    "max_output_tokens": getattr(mspec, "max_tokens", None)
+                    or getattr(spec, "max_tokens", None),
+                    "cost_tier": str(getattr(mspec, "cost_tier", "") or ""),
+                    "multimodal": bool(getattr(mspec, "multimodal", False)),
+                    "reasoning_capable": bool(capable),
+                    "reasoning_control": control,
+                    "reasoning_control_supported": control_supported,
+                    "reasoning_can_disable": can_disable,
+                    "reasoning_efforts": efforts,
+                }
+            )
+    return {
+        "models": names,
+        "current": current,
+        "current_available": current_available,
+        "catalog": catalog,
+    }
 
 
 @router.get("/health")
@@ -2910,6 +2959,12 @@ _CAPABILITY_ROUTES: dict[str, tuple[tuple[str, str], ...]] = {
         ("POST", "/api/v1/sessions/{session_id}/jobs/{job_id}/kill"),
     ),
     "continuity": (("GET", "/api/v1/sessions/{session_id}/continuity"),),
+    "providerAdmin": (
+        ("GET", "/api/v1/providers"),
+        ("POST", "/api/v1/providers"),
+        ("POST", "/api/v1/providers/reload"),
+        ("POST", "/api/v1/providers/default-model"),
+    ),
 }
 
 
