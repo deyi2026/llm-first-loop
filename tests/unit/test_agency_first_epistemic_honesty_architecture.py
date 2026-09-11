@@ -11,7 +11,7 @@ def _design() -> str:
 def test_agency_first_architecture_defines_epistemic_honesty() -> None:
     text = _design()
 
-    assert "R6 认识论诚实" in text
+    assert "R7 诚实感官与连续性" in text
     assert "## 1.5 认识论诚实" in text
     assert "当前可核事实" in text
     assert "训练先验不是证据" in text
@@ -19,6 +19,13 @@ def test_agency_first_architecture_defines_epistemic_honesty() -> None:
     assert "证据对象、版本、时间和运行层必须支持所声称的结论" in text
     assert "不能单独证明运行中的 Web 已加载该版本" in text
     assert "执行完成以真实成功回执" in text
+    assert "## 1.6 诚实感官的四个机械推论" in text
+    assert "失败回执是事实，不是修复计划" in text
+    assert "默认模型视图应限定当前 session" in text
+    assert "active continuity 不得归零" in text
+    assert "Working-set 收敛是表示/资源机制" in text
+    assert "不得恢复隐藏 reasoning" in text
+    assert "禁止恢复已被实测否决的“每轮一暴露就重写旧前缀”方案" in text
 
 
 def test_epistemic_honesty_is_provider_agnostic_without_new_semantic_gate() -> None:
@@ -37,6 +44,7 @@ def test_epistemic_honesty_is_provider_agnostic_without_new_semantic_gate() -> N
     assert "所有当前事实固定查 N 个来源" in text
     assert "模型仍自主判断什么证据足够" in text
     assert "不得把整份架构文档重新注入普通 prompt" in text
+    assert "不得把安装依赖、切换工具/模型、重试、修改任务方案等策略" in text
 
 
 def test_architecture_and_rule_sot_are_explicitly_linked() -> None:
