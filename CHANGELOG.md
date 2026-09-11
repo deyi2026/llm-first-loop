@@ -2,6 +2,14 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.10 — Honest sensing, scoped recovery and bounded working set（2026-09-11）
+
+- **失败回执去策略化**：工具不可用时只返回当前状态、原因、PATH/Schema/权限/资源等可机械证明的事实，不再由程序在 failure receipt 中指定安装依赖、切换工具/模型或重试策略；模型保留修复路径与任务策略判断权。
+- **会话 provenance**：`event_stream` 默认只读当前 session，并在每条事件中保留 `session_id`；跨会话 workspace 审计必须显式 `scope=workspace`，避免并发 release/测试/其它会话动作被误认成当前会话事实。
+- **Active interruption continuity**：历史 event/live 前缀分叉仍 fail-open、绝不猜测合并；若上一真实用户轮在 tool chain 中取消，则从 live session 机械恢复最近模型可见文本与终态工具回执作为一次性 continuity fact，不恢复隐藏 reasoning/tool draft，当前用户输入仍是最终授权真值。
+- **Working-set 双机械上限**：保留 64K coarse byte batching 以保护 provider prefix/cache，同时对已暴露、可恢复的 pending tool results 增加 12-result 上限，避免大量小回执长期卡在字节阈值下。真实 2026-09-11 事故回放从 63,979 tool chars 投影到 28,131，61 个旧可恢复结果 receipt 化、pending 仅 2；固定 18×12K benchmark 仍维持 coarse fold cadence（grace0 R7/R13、grace1 R8/R14），未退回已被否决的 per-round rewrite。
+- **版本边界**：`v0.6.9` 保持已发布不可移动；本修复集作为新的 patch 版本 `v0.6.10` 验证和发布，出现问题可直接回滚到 `v0.6.9`。
+
 ## v0.6.9 — Provider-agnostic honesty and tool-use recovery（2026-09-11）
 
 - **全模型诚实契约**：本地与网络 API 模型统一遵守“当前可核事实先取当前证据”。训练先验、参数内知识、历史经验/记录可用于提出假设与缩小检索范围，但不能冒充已经核对过的当前代码、文件、路径、版本、运行态、配置或外部接口；无法取得当前证据时必须明确未核验/不确定性。
