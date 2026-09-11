@@ -32,6 +32,11 @@ class ExperienceDocument:
     superseded_by: str = ""
     promoted_to_rule: str = ""
     last_verified_at: str = ""
+    # P1-B: positive reusable experience and negative/failed lesson are distinct facts.
+    # Legacy documents deliberately remain readable without being silently promoted to
+    # "verified" merely because they predate these fields.
+    record_kind: str = "experience"
+    verification_state: str = "legacy_unclassified"
 
     def to_md(self) -> str:
         """序列化为 YAML front matter + Markdown body。"""
@@ -53,6 +58,8 @@ class ExperienceDocument:
         else:
             lines.append("source: {}")
         lines.append(f"status: {self.status}")
+        lines.append(f"record_kind: {_yaml_str(self.record_kind)}")
+        lines.append(f"verification_state: {_yaml_str(self.verification_state)}")
         lines.append(f"created_at: {_yaml_str(self.created_at)}")
         lines.append(f"updated_at: {_yaml_str(self.updated_at)}")
         if self.superseded_by:
@@ -92,6 +99,10 @@ class ExperienceDocument:
                 superseded_by=str(fields_map.get("superseded_by", "")),
                 promoted_to_rule=str(fields_map.get("promoted_to_rule", "")),
                 last_verified_at=str(fields_map.get("last_verified_at", "")),
+                record_kind=str(fields_map.get("record_kind", "experience")),
+                verification_state=str(
+                    fields_map.get("verification_state", "legacy_unclassified")
+                ),
             )
         except ExperienceParseError:
             raise

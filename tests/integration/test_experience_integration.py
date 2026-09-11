@@ -43,6 +43,8 @@ def test_save_then_search_experience_end_to_end(tmp_path):
             "scenario": "Web前端思考过程不显示",
             "root_cause": "SSE事件未透传reasoning_delta",
             "solution": "在event_stream增加reasoning_delta事件",
+            "record_kind": "experience",
+            "verification_state": "verified",
             "evidence": "tests/web/test_reasoning_render.py",
             "tags": ["web", "sse", "reasoning"],
             "source": {"session": "s1", "task": "P1-1"},
@@ -85,6 +87,9 @@ def test_save_then_search_with_source_tracing(tmp_path):
             "title": "source-trace-test",
             "scenario": "场景",
             "solution": "解法",
+            "record_kind": "experience",
+            "verification_state": "verified",
+            "evidence": "fixture:source-trace",
             "source": {"origin": "ai-analysis", "round": "3"},
         },
     )
@@ -148,7 +153,14 @@ def test_exp_dir_not_exist_save_still_works(tmp_path):
 
     result = corrections.execute(
         "save_experience",
-        {"title": "auto-create-test", "scenario": "场景", "solution": "解法"},
+        {
+            "title": "auto-create-test",
+            "scenario": "场景",
+            "solution": "解法",
+            "record_kind": "experience",
+            "verification_state": "verified",
+            "evidence": "fixture:auto-create",
+        },
     )
     assert result.status == ToolResultStatus.SUCCESS
     assert exp_dir.exists()

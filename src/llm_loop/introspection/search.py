@@ -37,6 +37,7 @@ _VALID_KINDS = {
     "proc_versions",  # P2-6: 进程版本记录
     "feishu_audit",  # P2-6: 飞书消息审计
     "experience",  # P1-2: 经验库检索
+    "lesson",  # P1-B: 失败/未验证/已证伪教训，与正向经验分开 discovery
     "episode",  # INJECTION-GOVERNANCE R8.5: resolved Q&A/tool-chain index
     "rule",  # on-demand Rule SoT index / exact hydration
     "file_effect",  # P3: current-session mechanical AI/human file-effect receipts
@@ -314,7 +315,9 @@ class RecordSearcher:
             results += self._search_memory(query, each_limit, session_id=session_id)
             results += self._search_archive(query, each_limit, session_id)
             results += self._search_episode(query, each_limit, session_id)
-            results += self._search_experience(query, each_limit)  # P1-2: 经验库并列返回
+            # P1-B: all 可发现两类学习记录；每条卡片自身携带
+            # record_kind/verification_state，不把失败 lesson 静默当成正向经验。
+            results += self._search_experience(query, each_limit, record_kind=None)
             results += self._search_synopsis(query, each_limit, session_id)
             results += self._search_method(query, each_limit)
         return results[:limit]
@@ -333,8 +336,10 @@ class RecordSearcher:
             return self._search_archive(query, limit, session_id)
         if kind == "episode":
             return self._search_episode(query, limit, session_id)
-        if kind == "experience":  # P1-2: 经验库检索
-            return self._search_experience(query, limit)
+        if kind == "experience":  # P1-2/P1-B: verified-positive/legacy experience discovery
+            return self._search_experience(query, limit, record_kind="experience")
+        if kind == "lesson":
+            return self._search_experience(query, limit, record_kind="lesson")
         if kind == "rule":
             return self._rule_index.search(query, limit)
         if kind == "synopsis":
@@ -644,8 +649,18 @@ class RecordSearcher:
             return []
         return self._method_store.list(query, limit)
 
-    def _search_experience(self, query: str, limit: int) -> list[dict]:
-        """P1-2/R3: experience search with exact ``experience:<id>`` hydration."""
+    def _search_experience(
+        self,
+        query: str,
+        limit: int,
+        *,
+        record_kind: str | None = "experience",
+    ) -> list[dict]:
+        """P1-2/P1-B: typed discovery with exact ``experience:<id>`` hydration.
+
+        Exact refs remain historically traceable regardless of record_kind. Broad discovery
+        is where lesson vs positive experience is separated.
+        """
         if self._experience_store is None:
             self._last_diagnostics = None
             return []
@@ -661,7 +676,11 @@ class RecordSearcher:
                 return [self._experience_store.to_hydrated_record(stem, doc)][:limit]
         # R3(P0-3): 三态扫描 Outcome——诊断独立于 results[:limit] 截断照常回填
         #（kind=all 聚合中 experience 记录被挤出返回集时，诊断仍到达模型）
-        outcome = self._experience_store.search_outcome(query, limit)
+        outcome = self._experience_store.search_outcome(
+            query,
+            limit,
+            record_kind=record_kind,
+        )
         self._last_diagnostics = {
             "scanned": outcome.scanned_count,
             "degraded": outcome.degraded_count,

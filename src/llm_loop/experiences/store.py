@@ -109,7 +109,13 @@ class ExperienceStore:
         path.write_text(doc.to_md(), encoding="utf-8")
         return filename
 
-    def list_active(self, query: str = "", limit: int = 20) -> list[dict]:
+    def list_active(
+        self,
+        query: str = "",
+        limit: int = 20,
+        *,
+        record_kind: str | None = None,
+    ) -> list[dict]:
         """扫描 experiences/*.md，过滤 active，按相关性排序截断到 limit（兼容 wrapper）.
 
         T5: embedder 注入且 embed(query) 成功时走语义检索（cosine 相似度降序）；
@@ -117,9 +123,15 @@ class ExperienceStore:
         跳过发生且结果非空时，命中记录附 degraded="[经验库降级] ..."（拼接共存）；
         可降级记录附 degraded_fields=["source"]。签名与返回形状零变化。
         """
-        return self.search_outcome(query, limit).records
+        return self.search_outcome(query, limit, record_kind=record_kind).records
 
-    def search_outcome(self, query: str = "", limit: int = 20) -> ExperienceSearchOutcome:
+    def search_outcome(
+        self,
+        query: str = "",
+        limit: int = 20,
+        *,
+        record_kind: str | None = None,
+    ) -> ExperienceSearchOutcome:
         """三态扫描 + 诊断载体：正常/可降级文档入结果，不可解析文档跳过并脱敏留痕.
 
         目录级扫描失败（glob PermissionError/OSError）不崩库，以 scan_error 诊断态
@@ -155,6 +167,8 @@ class ExperienceStore:
             if self._is_degraded_source(doc.source):
                 degraded_count += 1  # 可降级文档：正常入候选，不跳过不留痕（design §2.1.3-1）
             if doc.status != "active":
+                continue
+            if record_kind is not None and doc.record_kind != record_kind:
                 continue
             active.append((path.name, doc))
 
@@ -387,7 +401,9 @@ class ExperienceStore:
         experience_ref = f"experience:{stem}"
         scenario = " ".join(str(doc.scenario or "").split())[:240]
         rec: dict = {
-            "kind": "experience",
+            "kind": doc.record_kind,
+            "record_kind": doc.record_kind,
+            "verification_state": doc.verification_state,
             "ts": doc.updated_at or doc.created_at,
             "id": stem,
             "summary": doc.title,
@@ -420,7 +436,9 @@ class ExperienceStore:
         stem = experience_id.removesuffix(".md")
         experience_ref = f"experience:{stem}"
         rec: dict = {
-            "kind": "experience",
+            "kind": doc.record_kind,
+            "record_kind": doc.record_kind,
+            "verification_state": doc.verification_state,
             "ts": doc.updated_at or doc.created_at,
             "id": stem,
             "summary": doc.title,

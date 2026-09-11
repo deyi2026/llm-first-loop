@@ -430,13 +430,15 @@ def test_search_kind_experience_no_match_returns_empty(tmp_path):
 
 
 def test_run_save_experience_success(tmp_path):
-    """沉淀成功回执含文件名/路径。"""
+    """沉淀成功回执同时给文件名与可直接复用的 stable ref。"""
     store = ExperienceStore(tmp_path / "exp")
     result = run_save_experience(
         store,
         title="成功沉淀经验",
         scenario="场景",
         solution="解法",
+        record_kind="experience",
+        verification_state="verified",
         root_cause="根因",
         evidence="证据",
         tags=["tag1"],
@@ -446,6 +448,8 @@ def test_run_save_experience_success(tmp_path):
     assert result.startswith("[save_experience]")
     assert "已沉淀" in result
     assert "EXPERIENCE-" in result
+    assert "experience_ref=experience:EXPERIENCE-" in result
+    assert "status=active" in result
 
 
 def test_run_save_experience_missing_required(tmp_path):
@@ -470,8 +474,16 @@ def test_run_save_experience_missing_required(tmp_path):
 def test_run_save_experience_conflict(tmp_path):
     """文件名冲突返回冲突提示，不假装成功。"""
     store = ExperienceStore(tmp_path / "exp")
-    run_save_experience(store, title="冲突经验", scenario="s", solution="sol")
-    result = run_save_experience(store, title="冲突经验", scenario="s", solution="sol")
+    kwargs = {
+        "title": "冲突经验",
+        "scenario": "s",
+        "solution": "sol",
+        "record_kind": "experience",
+        "verification_state": "verified",
+        "evidence": "fixture:verified",
+    }
+    run_save_experience(store, **kwargs)
+    result = run_save_experience(store, **kwargs)
     assert "冲突" in result or "[save_experience]" not in result
 
 
@@ -505,6 +517,35 @@ def test_run_refine_experience_invalidate_and_restore(tmp_path):
     doc = store.get(exp_id)
     assert doc is not None
     assert doc.status == "active"
+
+
+def test_run_refine_experience_accepts_stable_ref_and_md_filename(tmp_path):
+    """Regression e979: stable ref must work without a failed bare-ID rediscovery loop."""
+    store = ExperienceStore(tmp_path / "exp")
+    filename = store.save(_make_doc(title="stable ref lifecycle"))
+    exp_id = filename.removesuffix(".md")
+
+    invalidated = run_refine_experience(
+        store,
+        experience_id=f"experience:{exp_id}",
+        action="invalidate",
+    )
+    assert invalidated.startswith("[refine_experience]")
+    assert f"experience:{exp_id}" in invalidated
+    invalid_doc = store.get(exp_id)
+    assert invalid_doc is not None
+    assert invalid_doc.status == "invalid"
+
+    restored = run_refine_experience(
+        store,
+        experience_id=filename,
+        action="restore",
+    )
+    assert restored.startswith("[refine_experience]")
+    assert f"experience:{exp_id}" in restored
+    restored_doc = store.get(exp_id)
+    assert restored_doc is not None
+    assert restored_doc.status == "active"
 
 
 def test_run_refine_experience_not_found(tmp_path):

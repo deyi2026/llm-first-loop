@@ -13,20 +13,33 @@ from llm_loop.introspection.registry_host import RegistryHost
 
 _SAVE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
     "name": "save_experience",
-    "description": "沉淀工程经验到经验库（跨会话复用）。何时用: 产生可复用的工程经验（根因分析/修复模式/架构决策）时。何时不用: 闲聊/过程性内容。失败对策: 必填字段缺失返回参数错误，IO 异常返回程序异常，均如实不伪造成功。",
+    "description": "沉淀学习记录到经验库。必须显式区分 record_kind=experience（已有证据证明生效的正向经验）或 lesson（失败/未验证/已证伪教训），并声明 verification_state；程序只验结构与证据存在，不替模型判断语义真伪。成功回执返回 stable experience:<id>。",
     "parameters": {
         "type": "object",
         "properties": {
             "title": {"type": "string", "description": "经验标题（生成文件名 slug）"},
             "scenario": {"type": "string", "description": "触发场景"},
             "solution": {"type": "string", "description": "解决方案"},
+            "record_kind": {
+                "type": "string",
+                "enum": ["experience", "lesson"],
+                "description": "experience=已验证正向经验；lesson=失败/未验证/已证伪教训",
+            },
+            "verification_state": {
+                "type": "string",
+                "enum": ["verified", "unverified", "disproven"],
+                "description": "当前记录的验证状态；experience 必须为 verified",
+            },
             "root_cause": {"type": "string", "description": "根因（可选）"},
-            "evidence": {"type": "string", "description": "证据引用（可选）"},
+            "evidence": {
+                "type": "string",
+                "description": "证据引用；verified/disproven 时必填",
+            },
             "tags": {"type": "array", "items": {"type": "string"}, "description": "标签（可选）"},
             "source": {"type": "object", "description": "来源溯源（可选）"},
             "body": {"type": "string", "description": "经验正文原文（可选）"},
         },
-        "required": ["title", "scenario", "solution"],
+        "required": ["title", "scenario", "solution", "record_kind", "verification_state"],
     },
 }
 
@@ -67,12 +80,18 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
 
 _REFINE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
     "name": "refine_experience",
-    "description": "经验生命周期流转（归档/失效/恢复）。何时用: 经验过时/失效/需恢复时。何时不用: 经验仍有效时无需流转。失败对策: 经验不存在返回未找到，action 非法返回参数错误，均如实。",
+    "description": "经验生命周期流转入口。archive/invalidate/restore 显式流转记录；experience_id 接受 stable experience:<id>、裸 ID 或 .md。使用结果日志暂不提供，避免形成无界 append-only 堆积。",
     "parameters": {
         "type": "object",
         "properties": {
-            "experience_id": {"type": "string", "description": "经验标识（文件名去 .md）"},
-            "action": {"type": "string", "enum": ["archive", "invalidate", "restore"]},
+            "experience_id": {
+                "type": "string",
+                "description": "经验标识：推荐 stable experience:<id>；兼容裸 ID 或 <id>.md",
+            },
+            "action": {
+                "type": "string",
+                "enum": ["archive", "invalidate", "restore"],
+            },
         },
         "required": ["experience_id", "action"],
     },
@@ -109,6 +128,8 @@ def _run_save_experience(args: dict, host: RegistryHost) -> ToolResult:
         title=args.get("title", ""),
         scenario=args.get("scenario", ""),
         solution=args.get("solution", ""),
+        record_kind=args.get("record_kind", ""),
+        verification_state=args.get("verification_state", ""),
         root_cause=args.get("root_cause", ""),
         evidence=args.get("evidence", ""),
         tags=args.get("tags") or [],

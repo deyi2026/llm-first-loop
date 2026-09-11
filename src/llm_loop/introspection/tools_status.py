@@ -493,6 +493,8 @@ def _render_experience_record(record: dict, fallback_kind: str) -> str:
     title = str(record.get("summary", ""))
     ref = str(record.get("experience_ref") or record.get("key") or "")
     status = str(record.get("status", ""))
+    record_kind = str(record.get("record_kind") or record.get("kind") or "experience")
+    verification = str(record.get("verification_state") or "legacy_unclassified")
     applicability = str(record.get("task_applicability") or "not_evaluated")
     source = str(record.get("source") or {})
     lifecycle = [
@@ -506,6 +508,7 @@ def _render_experience_record(record: dict, fallback_kind: str) -> str:
         return (
             f"[{ts}] {record.get('kind', fallback_kind)}: {title} | "
             f"experience_ref={ref} | status={status} | "
+            f"record_kind={record_kind} | verification_state={verification} | "
             f"task_applicability={applicability} | scenario={scenario} | source={source}"
             f"{lifecycle_suffix}"
         )
@@ -513,6 +516,8 @@ def _render_experience_record(record: dict, fallback_kind: str) -> str:
         f"[{ts}] {record.get('kind', fallback_kind)}: {title}",
         f"experience_ref={ref}",
         f"status={status}",
+        f"record_kind={record_kind}",
+        f"verification_state={verification}",
         f"task_applicability={applicability}",
         f"representation={record.get('representation', 'full_record')}",
         f"projection_complete={str(bool(record.get('projection_complete'))).lower()}",
@@ -618,7 +623,7 @@ def _finalize_search_records(
     raw_lines: list[str] = []
     for r in result[:limit]:
         record_kind = str(r.get("kind", kind))
-        if record_kind == "experience":
+        if record_kind in {"experience", "lesson"}:
             rendered = _render_experience_record(r, kind)
             lines.append(rendered)
             raw_lines.append(rendered)
