@@ -29,6 +29,12 @@ from llm_loop.memory.episode import (
 
 logger = logging.getLogger(__name__)
 
+# A second, count-based mechanical bound prevents many small already-exposed results
+# from sitting raw forever just below the coarse byte threshold.  Twelve preserves the
+# previously qualified coarse-fold scale (roughly 12-13 groups in the exact-T2 runs)
+# while bounding small-result accumulation without returning to per-round rewrites.
+_WORKING_SET_PENDING_RESULT_CAP = 12
+
 
 RESOLVED_EPISODE_REF_KEY = "resolved_episode_ref"
 EPISODE_STATE_KEY = "episode_state"
@@ -854,7 +860,10 @@ def project_active_tool_working_set_with_stats(
                 pending.extend(promoted_receipts)
                 pending_chars += promoted_chars
                 pending_group_count += 1
-                if pending and pending_chars >= batch_chars:
+                if pending and (
+                    pending_chars >= batch_chars
+                    or len(pending) >= _WORKING_SET_PENDING_RESULT_CAP
+                ):
                     for idx, receipt in pending:
                         projected[idx] = receipt
                         receipt_chars += len(receipt.content or "")

@@ -99,7 +99,7 @@ def test_working_set_receipt_fails_open_without_durable_ref(monkeypatch):
     assert project_active_tool_working_set(messages)[2].content == raw
 
 
-def test_working_set_receipts_keep_incomplete_batch_raw(monkeypatch):
+def test_working_set_receipts_keep_small_incomplete_batch_raw(monkeypatch):
     monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
     monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "32768")
     first_raw = "A" * 12000
@@ -112,6 +112,7 @@ def test_working_set_receipts_keep_incomplete_batch_raw(monkeypatch):
     ]
     projected = project_active_tool_working_set(messages)
     assert projected[2].content == first_raw
+    assert projected[4].content == "latest"
 
 
 def test_working_set_receipts_default_off(monkeypatch):
@@ -204,7 +205,7 @@ def test_working_set_stats_report_only_mechanical_projection_facts(monkeypatch):
     assert projected[6].content == "C" * 5000
 
 
-def test_working_set_stats_expose_incomplete_batch_without_folding(monkeypatch):
+def test_working_set_stats_expose_small_incomplete_batch_without_folding(monkeypatch):
     from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
 
     monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
@@ -220,11 +221,45 @@ def test_working_set_stats_expose_incomplete_batch_without_folding(monkeypatch):
     projected, stats = project_active_tool_working_set_with_stats(messages)
 
     assert stats.folded_results == 0
+    assert stats.folded_groups == 0
     assert stats.pending_raw_chars == 5000
     assert stats.pending_results == 1
     assert stats.latest_raw_chars == 5000
     assert stats.fold_boundaries == ()
     assert projected[2].content == "A" * 5000
+    assert projected[4].content == "B" * 5000
+
+
+def test_long_active_episode_bounds_small_pending_results_without_per_round_folding(monkeypatch):
+    """Many small closed groups are bounded even when bytes stay below the coarse threshold."""
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "65536")
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "1")
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 21):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(65 + idx % 26) * 1000, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(messages)
+
+    assert stats.raw_tool_chars == 20000
+    assert stats.folded_groups == 12
+    assert stats.folded_results == 12
+    assert stats.pending_results == 6
+    assert stats.pending_results < 12
+    assert stats.grace_results == 1
+    assert stats.latest_raw_chars == 1000
+    assert "tool_result_receipt" in projected[2].content
+    # Pending tail + one configured grace group + newest unexposed group remain raw;
+    # unlike the rejected per-round prototype, the prefix is not rewritten every round.
+    assert "tool_result_receipt" not in projected[-3].content
+    assert "tool_result_receipt" not in projected[-1].content
 
 
 def test_working_set_grace_keeps_recent_exposed_groups_raw(monkeypatch):

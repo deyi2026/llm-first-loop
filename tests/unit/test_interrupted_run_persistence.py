@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 from llm_loop.core.loop.events import _EventsMixin
 from llm_loop.core.loop.runner import BackgroundRunner
-from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.message import Message, MessageSource, ToolResultStatus
 from llm_loop.introspection.search import RecordSearcher
 from llm_loop.llm.client import StreamDelta
 from llm_loop.memory.episode import EpisodeStore
@@ -476,6 +476,69 @@ def test_generic_llm_error_partial_is_not_promoted_to_adjacent_resume(build_test
         assert engine._run_state().interruption_resume is None
     finally:
         current_session_id.reset(token)
+
+
+def test_prepare_resume_uses_live_cancelled_turn_when_event_history_cannot_help(
+    build_test_engine,
+) -> None:
+    """Engine wiring: a cancelled active tool turn remains factually resumable."""
+    from llm_loop.core.run_context import current_session_id
+
+    engine, _fake = build_test_engine([])
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    sess.messages = [
+        Message(role="user", content="按建议执行", source=MessageSource.USER),
+        Message(
+            role="assistant",
+            content="正在核当前环境状态。",
+            source=MessageSource.USER,
+            tool_calls=[
+                {
+                    "id": "call-live",
+                    "type": "function",
+                    "function": {
+                        "name": "execute_command",
+                        "arguments": '{"command":"probe"}',
+                    },
+                }
+            ],
+        ),
+        Message(
+            role="tool",
+            content="[状态: failure] [退出码 -9] probe terminated",
+            source=MessageSource.TOOL,
+            tool_call_id="call-live",
+            status=ToolResultStatus.FAILURE,
+            tool_name="execute_command",
+        ),
+        Message(
+            role="assistant",
+            content="",
+            source=MessageSource.SYSTEM,
+            metadata={
+                "answer_origin": "program",
+                "run_end_reason": "cancelled",
+                "program_final_placeholder": True,
+            },
+        ),
+        Message(role="user", content="你是不是跑偏了？", source=MessageSource.USER),
+    ]
+    token = current_session_id.set(sid)
+    try:
+        engine._prepare_interruption_resume(sid, sess)
+        resumed = engine._run_state().interruption_resume
+    finally:
+        current_session_id.reset(token)
+
+    assert resumed is not None
+    assert resumed["source"] == "persisted_cancelled_turn"
+    assert resumed["text_tail"] == "正在核当前环境状态。"
+    assert resumed["reasoning_tail"] == ""
+    receipt = resumed["mechanical_execution"]["recent_tool_receipts"][0]
+    assert receipt["tool_name"] == "execute_command"
+    assert receipt["status"] == "failure"
+    assert "退出码 -9" in receipt["receipt"]
 
 def _digest():
     from llm_loop.core.loop.engine_services.interrupted_capture import (

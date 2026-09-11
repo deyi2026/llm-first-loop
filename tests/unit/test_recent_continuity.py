@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from llm_loop.core.interruption_resume import cancelled_turn_resume_state
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
 from llm_loop.core.recent_continuity import apply_recent_continuity_suffix
 
@@ -122,6 +123,79 @@ def test_interruption_resume_wins_and_contains_no_program_annotation() -> None:
     assert "reasoning_content" not in out[-2]
     assert "截断标注" not in out[-2]["content"]
     assert out[-1] == {"role": "user", "content": "继续"}
+
+
+def test_cancelled_tool_turn_rehydrates_visible_state_and_last_receipt() -> None:
+    """22:15 regression: failed history reconcile must not imply current_user_only."""
+    previous_user = _user("按建议执行")
+    model_tool_turn = Message(
+        role="assistant",
+        content="两个 npm 进程仍在运行；再核一轮状态。",
+        source=MessageSource.USER,
+        tool_calls=[
+            {
+                "id": "call-last",
+                "type": "function",
+                "function": {"name": "execute_command", "arguments": '{"command":"probe"}'},
+            }
+        ],
+    )
+    last_receipt = Message(
+        role="tool",
+        content="[状态: failure] [退出码 -9] probe terminated",
+        source=MessageSource.TOOL,
+        tool_call_id="call-last",
+        status=ToolResultStatus.FAILURE,
+        tool_name="execute_command",
+    )
+    cancelled_placeholder = Message(
+        role="assistant",
+        content="",
+        source=MessageSource.SYSTEM,
+        metadata={
+            "answer_origin": "program",
+            "run_end_reason": "cancelled",
+            "program_final_placeholder": True,
+        },
+    )
+    current_user = _user("你是不是跑偏了？")
+    session = [
+        previous_user,
+        model_tool_turn,
+        last_receipt,
+        cancelled_placeholder,
+        current_user,
+    ]
+    resume = cancelled_turn_resume_state(session, current_idx=4)
+
+    assert resume is not None
+    assert resume["source"] == "persisted_cancelled_turn"
+    assert resume["text_tail"] == model_tool_turn.content
+    assert resume["reasoning_tail"] == ""
+    receipt = resume["mechanical_execution"]["recent_tool_receipts"][0]
+    assert receipt["tool_name"] == "execute_command"
+    assert receipt["status"] == "failure"
+    assert "退出码 -9" in receipt["receipt"]
+
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "你是不是跑偏了？"},
+    ]
+    out, info = apply_recent_continuity_suffix(
+        built,
+        session_messages=session,
+        current_turn_ref=4,
+        interruption_resume=resume,
+    )
+
+    assert info["source"] == "persisted_cancelled_turn"
+    assert info["rehydrated"] is True
+    assert info["runtime_fact"] is True
+    assert out[-2] == {"role": "assistant", "content": model_tool_turn.content}
+    assert "interrupted_execution_state" in out[-1]["content"]
+    assert "execute_command" in out[-1]["content"]
+    assert "退出码 -9" in out[-1]["content"]
+    assert out[-1]["content"].startswith("你是不是跑偏了？")
 
 
 def test_provider_truncation_resume_exposes_factual_runtime_state_before_exact_partial() -> None:

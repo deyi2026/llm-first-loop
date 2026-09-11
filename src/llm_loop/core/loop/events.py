@@ -23,7 +23,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from llm_loop.core.interruption_resume import open_execution_facts, select_open_checkpoint_events
+from llm_loop.core.interruption_resume import (
+    cancelled_turn_resume_state,
+    open_execution_facts,
+    select_open_checkpoint_events,
+)
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.reference_injection import is_human_user_message
 from llm_loop.core.session import _validate_session_id
@@ -706,8 +710,9 @@ class _EventsMixin:
                     break
 
             open_checkpoint = self._prepare_open_interruption_resume(session_id)
+            cancelled_turn = cancelled_turn_resume_state(messages, current_idx=current_idx)
 
-            state = open_checkpoint or persisted
+            state = open_checkpoint or persisted or cancelled_turn
             if state is None:
                 return
             bucket.interruption_resume = state

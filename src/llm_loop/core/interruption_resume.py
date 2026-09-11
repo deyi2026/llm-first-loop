@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 
+_CANCELLED_RESUME_TEXT_CHARS = 4000
+_CANCELLED_RESUME_RECEIPT_CHARS = 2000
+_CANCELLED_RESUME_RECEIPTS = 4
+
 
 def _checkpoint_has_model_bytes(event: Any) -> bool:
     """Whether a checkpoint contains model-origin text/reasoning worth restoring.
@@ -180,4 +184,86 @@ def open_execution_facts(events: list[Any], *, after_pos: int) -> dict[str, Any]
     return out
 
 
-__all__ = ["open_execution_facts", "select_open_checkpoint_events"]
+def cancelled_turn_resume_state(messages: list[Any], *, current_idx: int) -> dict[str, Any] | None:
+    """Project bounded factual context from the immediately prior cancelled human turn.
+
+    This does not reconcile divergent event/session histories and never restores hidden
+    reasoning or executable tool-call drafts.  It preserves only model-visible text and
+    terminal tool receipts already present in the live Session, so a new human ingress
+    does not degrade to ``current_user_only`` merely because the prior turn ended while
+    a tool chain was active.
+    """
+    if current_idx <= 0 or current_idx >= len(messages):
+        return None
+    current = messages[current_idx]
+    if str(getattr(current, "role", "")) != "user":
+        return None
+    previous_human = None
+    for idx in range(current_idx - 1, -1, -1):
+        if str(getattr(messages[idx], "role", "")) == "user":
+            previous_human = idx
+            break
+    if previous_human is None:
+        return None
+    span = messages[previous_human + 1 : current_idx]
+    if not span:
+        return None
+    terminal = span[-1]
+    terminal_md = getattr(terminal, "metadata", None)
+    terminal_md = terminal_md if isinstance(terminal_md, dict) else {}
+    if not (
+        str(getattr(terminal, "role", "")) == "assistant"
+        and terminal_md.get("program_final_placeholder") is True
+        and str(terminal_md.get("run_end_reason") or "") == "cancelled"
+    ):
+        return None
+
+    model_pos = None
+    model_text = ""
+    for pos in range(len(span) - 2, -1, -1):
+        message = span[pos]
+        if str(getattr(message, "role", "")) != "assistant":
+            continue
+        md = getattr(message, "metadata", None)
+        md = md if isinstance(md, dict) else {}
+        if md.get("program_origin") is True or md.get("program_final_placeholder") is True:
+            continue
+        content = str(getattr(message, "content", "") or "")
+        if not content:
+            continue
+        model_pos = pos
+        model_text = content[-_CANCELLED_RESUME_TEXT_CHARS:]
+        break
+
+    receipts: list[dict[str, Any]] = []
+    receipt_start = (model_pos + 1) if model_pos is not None else 0
+    for message in span[receipt_start:-1]:
+        if str(getattr(message, "role", "")) != "tool":
+            continue
+        content = str(getattr(message, "content", "") or "")
+        receipts.append(
+            {
+                "tool_name": str(getattr(message, "tool_name", "") or ""),
+                "tool_call_id": str(getattr(message, "tool_call_id", "") or ""),
+                "status": str(getattr(message, "status", "") or ""),
+                "receipt": content[-_CANCELLED_RESUME_RECEIPT_CHARS:],
+            }
+        )
+    receipts = receipts[-_CANCELLED_RESUME_RECEIPTS:]
+    if not model_text and not receipts:
+        return None
+    state: dict[str, Any] = {
+        "source": "persisted_cancelled_turn",
+        "text_tail": model_text,
+        "reasoning_tail": "",
+    }
+    if receipts:
+        state["mechanical_execution"] = {"recent_tool_receipts": receipts}
+    return state
+
+
+__all__ = [
+    "cancelled_turn_resume_state",
+    "open_execution_facts",
+    "select_open_checkpoint_events",
+]
