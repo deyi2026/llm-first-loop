@@ -58,13 +58,16 @@ def test_timeout_kills_process(monkeypatch, tmp_path):
     assert "已整树终止" in result.content
 
 
-def test_dsh_missing_guidance(monkeypatch):
-    """dsh 不在 PATH → failure + 安装引导."""
+def test_dsh_missing_reports_capability_fact_without_install_strategy(monkeypatch):
+    """dsh 不在 PATH → 只报告能力事实，不替模型制定安装策略."""
     monkeypatch.setattr("shutil.which", lambda _name: None)
     tool = DshTaskTool()
     result = tool.execute(task="任务")
     assert result.status == ToolResultStatus.FAILURE
-    assert "找不到 dsh 命令" in result.content
+    assert "dsh executable unavailable" in result.content
+    assert "PATH" in result.content
+    assert "npm" not in result.content
+    assert "重试" not in result.content
 
 
 def test_missing_task_param(monkeypatch, tmp_path):

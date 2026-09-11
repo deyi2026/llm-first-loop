@@ -177,8 +177,8 @@ class DshTaskTool:
         if dsh_bin is None:
             return self._fail(
                 kwargs,
-                "找不到 dsh 命令（DeepSeek Harness 未安装或不在 PATH）。"
-                "安装/确认后可重试；示例: npm i -g @deepseek-ai/dsh 或确保 ~/.npm/_npx/*/node_modules/.bin 在 PATH。",
+                "dsh executable unavailable：当前 PATH 解析不到可执行文件 'dsh'；"
+                "本次 dsh_task 未启动，运行环境未被本工具修改。",
             )
 
         # 任务组装：ctx exact source 引用 → 汇报格式注入 → 脱敏。ctx 文件不再

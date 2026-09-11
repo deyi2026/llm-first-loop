@@ -109,7 +109,7 @@ _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
 
 _EVENT_STREAM_TOOL_DEF: dict[str, Any] = {
     "name": "event_stream",
-    "description": "统一事件流视图（EVO-20260814，对齐 Harness Trajectory）：把分散的 append-only 审计流（action_trace/exception_log/self_correction/evolution/param_adjust 等）按时间序合并为单一轨迹流。何时用: 需要看'系统最近发生了什么'的连贯轨迹（回溯/审计/交接/排障）而非按 kind 分别检索时。何时不用: 只查单类记录或压缩档案时，应使用对应的专用检索能力。失败对策: 无事件/审计目录不存在会如实返回空视图（不伪造），请核对 audit_dir 配置。",
+    "description": "统一事件流视图（EVO-20260814，对齐 Harness Trajectory）：把分散的 append-only 审计流按时间序合并。默认只返回当前 session，且每条保留 session_id；只有显式 scope=workspace 才允许跨会话审计。何时用: 回溯/审计/交接/排障。何时不用: 只查单类记录或压缩档案时使用对应专用检索能力。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -128,6 +128,11 @@ _EVENT_STREAM_TOOL_DEF: dict[str, Any] = {
             "since": {
                 "type": "string",
                 "description": "ISO 时间下界（只返回 ts >= since 的事件，空 = 不限）。如 '2026-08-14T00:00:00'",
+            },
+            "scope": {
+                "type": "string",
+                "enum": ["current_session", "workspace"],
+                "description": "事件归因范围。默认 current_session；workspace 会显式混合多个会话，仅用于跨会话审计。",
             },
         },
     },
@@ -169,7 +174,7 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
     if name == "event_stream":
         from llm_loop.introspection.tools_status import run_event_stream
 
-        return run_event_stream(host.search_records_fn, args)
+        return run_event_stream(host.search_records_fn, args, host.current_session_id)
 
     if name == "search_docs":
         from llm_loop.introspection.tools_docs import run_search_docs

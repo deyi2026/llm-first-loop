@@ -69,7 +69,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "task_frontier": "读取当前 Goal 的 Task 图状态/frontier；程序记结构，模型决定如何推进。",
     "architecture_status": "读取 LFL 运行时状态、缓存、异常、配置与动作轨迹；不作为用户任务 Goal 事实源。",
     "search_records": "按 kind/query 检索记录。episode=已解决/退休片段，非当前任务；experience/lesson 分开 discovery，共用 stable experience:<id> 精确水合；kind=synopsis 返回模型自写摘要轻量卡和 stable ref，完整摘要/原文用 source_synopsis；kind=rule 返回 RULE-AI 卡片，RULE-AI-xx 精确水合规则正文；kind=method 返回 Method 卡片/精确正文。历史适用性由模型判断。",
-    "event_stream": "按时间顺序读取统一运行事件流，用于审计、交接与排障。",
+    "event_stream": "按时间顺序读取运行事件；默认仅当前 session 且保留 session_id，跨会话审计必须显式 scope=workspace。",
     "search_docs": "检索 docs/ Markdown 文档并返回路径、标题、摘要与相关性。",
     "adjust_strategy": "调整白名单运行参数 max_iterations/timeout_s/history_budget，受全局硬上限约束。",
     "retry_tool": "用给定参数重新执行指定工具，仍经过完整安全、校验与超时包裹。",

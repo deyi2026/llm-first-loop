@@ -583,6 +583,7 @@ class RecordSearcher:
         query: str = "",
         limit: int = 50,
         since: str = "",
+        session_id: str | None = None,
     ) -> list[dict]:
         """统一事件流视图（EVO-20260814）.
 
@@ -595,6 +596,7 @@ class RecordSearcher:
             query: 关键词（空 = 不过滤）.
             limit: 返回条数上限（按时间倒序取最近 N 条）.
             since: ISO 时间下界（只返回 ts >= since 的事件，空 = 不限）.
+            session_id: 精确 session 过滤；None 表示显式 workspace-wide 审计.
 
         Returns:
             按 ts 升序（旧→新）的统一事件列表; 每条含 stream/ts/summary 可溯源.
@@ -624,6 +626,9 @@ class RecordSearcher:
                     ts = str(entry.get("ts", entry.get("created_at", entry.get("timestamp", ""))))
                     if since and ts < since:
                         continue
+                    entry_session_id = str(entry.get("session_id") or "")
+                    if session_id is not None and entry_session_id != session_id:
+                        continue
                     hay = " ".join(
                         str(entry.get(k, "")) for k in keys + ("content", "note")
                     ).lower()
@@ -633,6 +638,7 @@ class RecordSearcher:
                         {
                             "stream": name,
                             "ts": ts,
+                            "session_id": entry_session_id,
                             "summary": " ".join(str(entry.get(k, "")) for k in keys)[:300],
                             "file": str(path),
                         }

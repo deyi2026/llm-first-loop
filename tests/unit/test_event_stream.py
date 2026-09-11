@@ -17,12 +17,12 @@ from llm_loop.introspection.search import RecordSearcher
 
 def _seed(dirpath: Path) -> None:
     with (dirpath / "action_trace.jsonl").open("w", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": "2026-08-14T10:00:00", "phase": "run",
+        f.write(json.dumps({"ts": "2026-08-14T10:00:00", "session_id": "sid-a", "phase": "run",
                             "action_type": "tool.execute_command", "detail": "ls"}) + "\n")
-        f.write(json.dumps({"ts": "2026-08-14T10:00:01", "phase": "run",
+        f.write(json.dumps({"ts": "2026-08-14T10:00:01", "session_id": "sid-b", "phase": "run",
                             "action_type": "tool.edit_file", "detail": "修改 registry.py"}) + "\n")
     with (dirpath / "exception_log.jsonl").open("w", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": "2026-08-14T10:00:02", "phase": "run",
+        f.write(json.dumps({"ts": "2026-08-14T10:00:02", "session_id": "sid-a", "phase": "run",
                             "error_type": "TimeoutError", "detail": "工具超时"}) + "\n")
 
 
@@ -46,12 +46,16 @@ class _Adapter:
 
 
 class _Host(RegistryHost):
-    def __init__(self, s: RecordSearcher) -> None:
+    def __init__(self, s: RecordSearcher, session_id: str = "sid-a") -> None:
         self._s = s
+        self._session_id = session_id
 
     @property
     def search_records_fn(self):
         return _Adapter(self._s)
+
+    def current_session_id(self) -> str:
+        return self._session_id
 
 
 def test_event_stream_merges_all_streams_in_time_order():
@@ -59,6 +63,7 @@ def test_event_stream_merges_all_streams_in_time_order():
     ev = _searcher().event_stream(streams="all", limit=50)
     assert len(ev) == 3
     assert [e["stream"] for e in ev] == ["action_trace", "action_trace", "exception_log"]
+    assert [e["session_id"] for e in ev] == ["sid-a", "sid-b", "sid-a"]
     assert ev[0]["ts"] <= ev[-1]["ts"]  # 升序
 
 
@@ -103,12 +108,32 @@ def test_event_stream_tool_registered_in_defs():
 
 
 def test_event_stream_dispatch_returns_success():
-    """registry 分派 event_stream 返回成功回执."""
+    """工具默认只返回当前 session，不能静默混入其他会话."""
     s = _searcher()
     res = ri_execute("event_stream", {"streams": "all"}, _Host(s))
     assert res.status.value == "success"
-    assert "统一事件流 3 条" in res.content
+    assert "统一事件流 2 条" in res.content
+    assert "scope=current_session:sid-a" in res.content
+    assert "session=sid-a" in res.content
+    assert "session=sid-b" not in res.content
     assert "action_trace" in res.content and "exception_log" in res.content
+
+
+def test_event_stream_workspace_scope_is_explicit_and_keeps_provenance():
+    s = _searcher()
+    res = ri_execute("event_stream", {"streams": "all", "scope": "workspace"}, _Host(s))
+    assert res.status.value == "success"
+    assert "统一事件流 3 条" in res.content
+    assert "scope=workspace" in res.content
+    assert "session=sid-a" in res.content
+    assert "session=sid-b" in res.content
+
+
+def test_event_stream_missing_current_session_never_falls_back_to_workspace():
+    s = _searcher()
+    res = ri_execute("event_stream", {"streams": "all"}, _Host(s, session_id=""))
+    assert res.status.value == "failure"
+    assert "未回退为 workspace-wide" in res.content
 
 
 def test_event_stream_dispatch_empty_dir_honest():

@@ -332,7 +332,7 @@ def run_search_archive(ctx: Any, archive: Any, args: dict, session_id_fn: Any, s
 
 
 
-def run_event_stream(search_fn: Any, args: dict) -> ToolResult:
+def run_event_stream(search_fn: Any, args: dict, session_id_fn: Any) -> ToolResult:
     """event_stream: 统一事件流视图（EVO-20260814）."""
     if search_fn is None:
         return ToolResult(
@@ -346,8 +346,32 @@ def run_event_stream(search_fn: Any, args: dict) -> ToolResult:
     limit = int(args.get("limit") or 50)
     limit = max(1, min(limit, 200))
     since = str(args.get("since", "")).strip()
+    scope = str(args.get("scope", "current_session") or "current_session").strip().lower()
+    if scope not in {"current_session", "workspace"}:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[event_stream 参数错误] scope 仅允许 current_session/workspace。",
+            tool_call_id="",
+            tool_name="event_stream",
+        )
+    session_id: str | None = None
+    if scope == "current_session":
+        session_id = str(session_id_fn() or "")
+        if not session_id:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[event_stream 不可归因] 当前 session_id 不可用；未回退为 workspace-wide 事件，避免跨会话混淆。",
+                tool_call_id="",
+                tool_name="event_stream",
+            )
     try:
-        result = search_fn.event_stream(streams=streams, query=query, limit=limit, since=since)
+        result = search_fn.event_stream(
+            streams=streams,
+            query=query,
+            limit=limit,
+            since=since,
+            session_id=session_id,
+        )
     except Exception as exc:  # noqa: BLE001 — 事件流读取失败如实回执
         return ToolResult(
             status=ToolResultStatus.FAILURE,
@@ -364,8 +388,16 @@ def run_event_stream(search_fn: Any, args: dict) -> ToolResult:
         )
     lines: list[str] = []
     for e in result:
-        lines.append(f"[{e.get('ts', '')}] {e.get('stream', '?')}: {str(e.get('summary', ''))[:200]}")
-    content = "[event_stream] 统一事件流 " + str(len(result)) + " 条（旧→新）:\n" + "\n".join(lines)
+        sid = str(e.get("session_id") or "<unattributed>")
+        lines.append(
+            f"[{e.get('ts', '')}] {e.get('stream', '?')} session={sid}: "
+            f"{str(e.get('summary', ''))[:200]}"
+        )
+    scope_label = f"current_session:{session_id}" if session_id is not None else "workspace"
+    content = (
+        f"[event_stream] 统一事件流 {len(result)} 条（旧→新，scope={scope_label}）:\n"
+        + "\n".join(lines)
+    )
     if len(result) == limit:
         content += f"\n[已达 limit={limit} 上限] 如需更早事件可提高 limit 或加 since 过滤。"
     return ToolResult(
