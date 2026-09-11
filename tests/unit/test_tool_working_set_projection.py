@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+
+import pytest
+
 from llm_loop.core.episode_history import project_active_tool_working_set
 from llm_loop.core.message import (
     Message,
@@ -9,6 +13,13 @@ from llm_loop.core.message import (
     ToolResultStatus,
 )
 from llm_loop.tools.registry import tool_result_to_message
+
+
+@pytest.fixture(autouse=True)
+def _isolate_tool_working_set_env(monkeypatch):
+    """Keep runtime-exported working-set knobs from changing test semantics."""
+    for key in [k for k in os.environ if k.startswith("LFL_TOOL_WORKING_SET_")]:
+        monkeypatch.delenv(key, raising=False)
 
 
 def _assistant(call_id: str) -> Message:
