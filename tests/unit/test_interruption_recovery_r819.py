@@ -251,3 +251,145 @@ def test_pre_ingress_repair_restores_open_human_task_before_resolved_history_ret
     assert "I have the README; now verify author/license/tree" in visible
     assert h.actions[-1][1] == "repaired"
     assert "recovered=2" in h.actions[-1][2]
+
+
+def test_repair_tolerates_only_rebuildable_runtime_metadata_drift() -> None:
+    """P5: derived runtime annotations are not immutable message identity."""
+    live_old = _m("old")
+    live_old.metadata.update(
+        {
+            "attachments": [{"ref": "attachment://stable"}],
+            "resolved_episode_ref": "episode:sid:0:done",
+            "episode_state": "resolved",
+            "consumed_tool_span_ref": "tool-span:sid:1",
+            "tool_span_state": "consumed",
+            "closed_tool_span_ref": "closed-tool-span:sid:2",
+            "cache_health": {"kind": "normal", "note": "observed"},
+            "cache_compacted_for": ["glm"],
+            "cache_compaction_scope": {"glm": {"model": "glm-5.3", "budget": 1000}},
+        }
+    )
+    replay_old = _m("old")
+    replay_old.metadata["attachments"] = [{"ref": "attachment://stable"}]
+    missing = _m("MISSING", role="assistant")
+    current = _m("CURRENT")
+    replay_current = _m("CURRENT")
+    sess = SimpleNamespace(messages=[live_old, current])
+    h = _Harness(
+        event_count=3,
+        replay_messages=[replay_old, missing, replay_current],
+    )
+
+    h._inject_interruption_recovery("sid", sess)
+
+    assert [m.content for m in sess.messages] == ["old", "MISSING", "CURRENT"]
+    assert sess.messages[0] is live_old, "live derived metadata remains intact"
+    assert sess.messages[-1] is current, "live current ingress object remains authoritative"
+    assert h.actions[-1][1] == "repaired"
+    assert "recovered=1" in h.actions[-1][2]
+
+
+def test_repair_tolerates_finalizer_consumed_marker_drift() -> None:
+    """Finalizer-consumed program markers are lifecycle state, not message identity."""
+    live_old = Message(
+        role="system",
+        content="ROUND-DECISION",
+        source=MessageSource.SYSTEM,
+        metadata={"injection_kind": "round_exhaustion_decision", "consumed": True},
+    )
+    replay_old = Message(
+        role="system",
+        content="ROUND-DECISION",
+        source=MessageSource.SYSTEM,
+        metadata={"injection_kind": "round_exhaustion_decision"},
+    )
+    current = _m("CURRENT")
+    sess = SimpleNamespace(messages=[live_old, current])
+    h = _Harness(
+        event_count=3,
+        replay_messages=[replay_old, _m("MISSING", role="assistant"), _m("CURRENT")],
+    )
+
+    h._inject_interruption_recovery("sid", sess)
+
+    assert [m.content for m in sess.messages] == ["ROUND-DECISION", "MISSING", "CURRENT"]
+    assert sess.messages[0].metadata["consumed"] is True
+    assert h.actions[-1][1] == "repaired"
+
+
+def test_repair_normalizes_post_append_cache_telemetry_content() -> None:
+    """P5: compare the same deterministic assistant content form persisted live."""
+    live_old = _m("ANSWER", role="assistant")
+    live_old.metadata["cache_health"] = {"kind": "normal", "note": "observed"}
+    replay_old = _m("ANSWER\n\n⚡ 缓存命中率 80%（8/10 tokens）", role="assistant")
+    current = _m("CURRENT")
+    sess = SimpleNamespace(messages=[live_old, current])
+    h = _Harness(
+        event_count=3,
+        replay_messages=[replay_old, _m("MISSING", role="assistant"), _m("CURRENT")],
+    )
+
+    h._inject_interruption_recovery("sid", sess)
+
+    assert [m.content for m in sess.messages] == ["ANSWER", "MISSING", "CURRENT"]
+    assert sess.messages[0] is live_old
+    assert h.actions[-1][1] == "repaired"
+
+
+def test_repair_still_rejects_stable_provenance_metadata_mismatch() -> None:
+    """P5 must not weaken attachments/queue/provenance into derived metadata."""
+    live_old = _m("old")
+    live_old.metadata.update(
+        {
+            "attachments": [{"ref": "attachment://live"}],
+            "human_turn_queue_id": "queue-live",
+        }
+    )
+    replay_old = _m("old")
+    replay_old.metadata.update(
+        {
+            "attachments": [{"ref": "attachment://other"}],
+            "human_turn_queue_id": "queue-other",
+        }
+    )
+    current = _m("CURRENT")
+    original = [live_old, current]
+    sess = SimpleNamespace(messages=list(original))
+    h = _Harness(
+        event_count=3,
+        replay_messages=[replay_old, _m("MISSING", role="assistant"), _m("CURRENT")],
+    )
+
+    h._inject_interruption_recovery("sid", sess)
+
+    assert sess.messages == original
+    assert h.actions[-1][1] == "repair_failed"
+    assert "reason=prefix_mismatch" in h.actions[-1][2]
+
+
+def test_full_reconcile_still_reports_derived_metadata_drift() -> None:
+    """Recovery equivalence is intentionally narrower than audit reconciliation."""
+    from llm_loop.event_log.reconcile import reconcile
+
+    source = {
+        "session_id": "sid",
+        "messages": [
+            {
+                "role": "user",
+                "content": "old",
+                "source": "user",
+                "metadata": {"resolved_episode_ref": "episode:sid:0:done"},
+            }
+        ],
+    }
+    derived = {
+        "session_id": "sid",
+        "messages": [
+            {"role": "user", "content": "old", "source": "user", "metadata": {}}
+        ],
+    }
+
+    report = reconcile(derived, source)
+
+    assert report.passed is False
+    assert any(diff.get("字段") == "metadata" for diff in report.message_diffs)

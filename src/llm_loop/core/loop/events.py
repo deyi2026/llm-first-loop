@@ -35,6 +35,54 @@ from llm_loop.memory.episode import stable_episode_ref
 logger = logging.getLogger(__name__)
 
 
+# Interruption recovery proves that replay and live storage describe the same immutable
+# message sequence before appending event-only tail rows. These keys are deliberately
+# excluded from that identity because they are runtime-derived annotations written after
+# message.appended and mechanically rebuilt/observed elsewhere. Full event-log reconcile
+# remains byte/field strict and does NOT use this reduced identity.
+_RECOVERY_DERIVED_METADATA_KEYS = frozenset(
+    {
+        "resolved_episode_ref",
+        "episode_state",
+        "consumed_tool_span_ref",
+        "tool_span_state",
+        "closed_tool_span_ref",
+        "cache_health",
+        "cache_compacted_for",
+        "cache_compaction_scope",
+        "consumed",
+    }
+)
+
+
+def _recovery_message_identity(msg: Message) -> tuple[Any, ...]:
+    """Immutable-enough identity for safe event-tail recovery only."""
+    content = msg.content
+    if msg.role == "assistant" and "缓存命中率" in (content or ""):
+        # Production post-run persistence deterministically strips this transport-only
+        # line after message.appended. Compare both sides in the same canonical form.
+        from llm_loop.core.cache_health import strip_cache_telemetry_lines
+
+        content = strip_cache_telemetry_lines(content)
+    metadata = {
+        key: value
+        for key, value in dict(msg.metadata or {}).items()
+        if key not in _RECOVERY_DERIVED_METADATA_KEYS
+    }
+    return (
+        msg.role,
+        content,
+        str(msg.source),
+        msg.tool_call_id,
+        str(msg.status) if msg.status is not None else None,
+        msg.tool_name,
+        msg.error_detail,
+        msg.tool_calls,
+        msg.reasoning_content,
+        metadata,
+    )
+
+
 class _EventsMixin:
     """事件/通知/审计/载荷辅助（self 状态来自 LoopEngine.__init__）."""
 
@@ -279,27 +327,13 @@ class _EventsMixin:
             live_prefix = live[:-1] if current_user is not None else live
             replay_messages = list(replayed.messages)
 
-            def _identity(msg: Message) -> tuple[Any, ...]:
-                return (
-                    msg.role,
-                    msg.content,
-                    str(msg.source),
-                    msg.tool_call_id,
-                    str(msg.status) if msg.status is not None else None,
-                    msg.tool_name,
-                    msg.error_detail,
-                    msg.tool_calls,
-                    msg.reasoning_content,
-                    dict(msg.metadata or {}),
-                )
-
             prefix_len = len(live_prefix)
             if len(replay_messages) < prefix_len:
                 # Event log is behind the already-loaded historical prefix.  It has no
                 # recovery material for this turn; preserve the live session unchanged.
                 return
-            if [_identity(m) for m in replay_messages[:prefix_len]] != [
-                _identity(m) for m in live_prefix
+            if [_recovery_message_identity(m) for m in replay_messages[:prefix_len]] != [
+                _recovery_message_identity(m) for m in live_prefix
             ]:
                 self._record_action(
                     "run.interruption_recovery",
@@ -310,9 +344,11 @@ class _EventsMixin:
 
             replay_tail = replay_messages[prefix_len:]
             if current_user is not None and replay_tail:
-                current_key = _identity(current_user)
+                current_key = _recovery_message_identity(current_user)
                 matching_positions = [
-                    i for i, message in enumerate(replay_tail) if _identity(message) == current_key
+                    i
+                    for i, message in enumerate(replay_tail)
+                    if _recovery_message_identity(message) == current_key
                 ]
                 if matching_positions:
                     # The ingress event must be the final replayed message.  If it is
