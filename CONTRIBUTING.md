@@ -76,7 +76,8 @@ python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 2. **PR 合并后**：`release-drafter.yml` 工作流自动更新 Draft Release（草稿，无副作用）。
 3. **发版（维护者）**：
    - 核对 Draft Release 内容 → 与 `CHANGELOG.md` 最新段一致（公开面原则：只含使用者可见变更）
-   - 打 tag：`git tag vX.Y.Z && git push origin vX.Y.Z`（触发 `release.yml`：门禁复核 + 生成 Release 草稿）
-   - 人工确认发布 Release；同步更新 `CHANGELOG.md` 版本段与 `pyproject.toml`/web 版本号
+   - 先同步 `CHANGELOG.md` 版本段与 `pyproject.toml`/Web/README 版本号，并通过版本一致性测试
+   - 正式仓 remote 为 `lfl`：`git tag vX.Y.Z && git push lfl vX.Y.Z`（触发 `release.yml`：门禁复核 + 生成 Release 草稿）。不要把 legacy `origin` 当正式发布目标。
+   - 人工确认发布 Release；出现回归时优先回滚到上一个已验证 tag/commit，再单独修复，不在已发布 tag 上改写历史
 4. **版本语义**：0.x 内小版本可增补能力，不破坏既有行为；公共 API 语义变更必须升版本
    （`docs/api.md` §1 稳定声明 + 签名快照测试保护）。

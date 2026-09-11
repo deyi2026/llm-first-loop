@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.9 — Provider-agnostic honesty and tool-use recovery（2026-09-11）
+
+- **全模型诚实契约**：本地与网络 API 模型统一遵守“当前可核事实先取当前证据”。训练先验、参数内知识、历史经验/记录可用于提出假设与缩小检索范围，但不能冒充已经核对过的当前代码、文件、路径、版本、运行态、配置或外部接口；无法取得当前证据时必须明确未核验/不确定性。
+- **工具使用恢复**：保留最小 Common Governance，恢复失败后核当前 Schema/code/docs、自主纠正参数、专业工作流 Skill discoverability，并让默认 `search_files` 优先当前 workspace、避免临时 CI/backup/worktree 的旧源码副本污染当前事实；显式 root 仍可审计历史副本。
+- **Provider 无差别**：上述治理位于统一 prompt/tool/schema/evidence 层，不按 Ornith/GLM/MiniMax/DeepSeek 分叉；provider adapter 只承载 wire/reasoning/transport 差异。
+- **版本与回滚**：统一 package/Web/README 为 0.6.9；Release tag 必须与 `pyproject.toml` 版本一致，正式发布 remote 明确为 `lfl`，版本异常可回到上一已验证 tag/commit 后再修复。
+
 ### M61：工具可达性每轮观测（Phase 0）——EVO-20260903-ba25857b 第一优先落地（2026-09-03）
 - **背景**：P0-0 能力可达性缺陷（get_tool_schema(X) 连续 SUCCESS 但 X 未进 provider callable 集、schema-loop 熔断）的演进修复，实施顺序冻结 P0-1→P0-2→P0-3；本轮执行第一优先 Phase 0 观测性（P0-1 状态机/P0-2 no-progress 语义已先行在位，单测 25+ 全过）。
 - **新增**（`engine_services/tool_reachability.py`，224 行）：`RoundReachabilityRecorder` 每轮记录 registered_tools / candidate_tools / final_provider_callable_tools / promoted / quarantined / promotion_state 快照及 schema_lookups（get_tool_schema 探测事件）→ emissions（raw_arguments 线上 JSON 串 + arguments 解析态）→ executed（真实回执 + duplicate-guard 阻断帧 blocked=True 如实区分）全链；JSONL 每轮一行落盘 `data/observability/tool_reachability.jsonl`（env `TOOL_REACHABILITY_LOG` 覆盖，`off` 禁写）；flush 成功即清当前轮（防重复落盘）并留 last_flushed 快照。
