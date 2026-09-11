@@ -247,7 +247,13 @@ class ModelClientPool:
             self.registry = new_registry
             self._provider_cache.clear()
         for client in old_clients:
-            self._retire_client(client)
+            try:
+                self._retire_client(client)
+            except Exception:  # noqa: BLE001 — registry commit must not be undone by cleanup
+                logger.warning(
+                    "旧 LLM client 退休登记失败（registry 已切换，fail-open 保持新表）",
+                    exc_info=True,
+                )
 
     def close(self) -> None:
         """关闭 default/current/退休 clients；单对象或 finalizer 只执行一次。"""

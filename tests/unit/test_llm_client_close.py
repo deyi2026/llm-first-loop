@@ -374,3 +374,20 @@ def test_feishu_close_engine_fail_open():
     from llm_loop.feishu import _close_engine
 
     _close_engine(types.SimpleNamespace(_engine=_CloseTracker(raise_on_close=True)))
+
+
+def test_replace_registry_retirement_cleanup_failure_does_not_abort_committed_registry(monkeypatch):
+    """Registry swap is the commit point; retirement cleanup is fail-open mechanics."""
+    cached = _CloseTracker()
+    pool = _make_pool(cached={"old": cached})
+    new_registry = object()
+
+    def fail_retire(_client):
+        raise RuntimeError("retirement cleanup failed")
+
+    monkeypatch.setattr(pool, "_retire_client", fail_retire)
+
+    pool.replace_registry(new_registry)  # must not report reload failure after registry commit
+
+    assert pool.registry is new_registry
+    assert pool.cached_provider_ids() == []
