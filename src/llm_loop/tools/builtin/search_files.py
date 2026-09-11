@@ -139,8 +139,24 @@ class SearchFilesTool:
                 tool_name=self.name,
             )
 
-        # 默认忽略常见噪声目录
-        _ignore_dirs = {".git", "__pycache__", ".venv", "node_modules", "data", "dist", "build", ".idea", ".vscode"}
+        # 默认忽略常见噪声目录。`.tmp-ci` / `.backup` / `.worktrees` 是
+        # 当前 workspace 旁路副本容器：默认全仓搜索若把它们与主源码混在一起，
+        # 会把旧版本/测试副本当成“当前代码”候选。显式把 root 指向这些目录时
+        # 仍然允许搜索，因为 os.walk 从该 root 内部开始，不会被父目录名裁掉。
+        _ignore_dirs = {
+            ".git",
+            "__pycache__",
+            ".venv",
+            "node_modules",
+            "data",
+            "dist",
+            "build",
+            ".idea",
+            ".vscode",
+            ".tmp-ci",
+            ".backup",
+            ".worktrees",
+        }
 
         results: list[str] = []
         try:

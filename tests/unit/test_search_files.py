@@ -56,6 +56,39 @@ def test_ignore_git_dir(tmp_path):
     assert "config" not in r.content  # .git/config 被忽略
 
 
+def test_default_search_ignores_transient_workspace_copies(tmp_path):
+    """默认根不把 CI/backup/worktree 旁路副本混进当前 workspace 结果。"""
+    root = _mk_project(tmp_path)
+    (root / "src" / "current.py").write_text("MARKER = 'current'\n", encoding="utf-8")
+    for container in (".tmp-ci", ".backup", ".worktrees"):
+        copy = root / container / "copy" / "src"
+        copy.mkdir(parents=True)
+        (copy / "current.py").write_text(f"MARKER = '{container}'\n", encoding="utf-8")
+
+    tool = SearchFilesTool()
+    r = tool.execute(root=str(root), pattern="current.py")
+
+    assert r.status.value == "success"
+    assert "src/current.py" in r.content
+    assert ".tmp-ci" not in r.content
+    assert ".backup" not in r.content
+    assert ".worktrees" not in r.content
+
+
+def test_explicit_root_can_search_transient_workspace_copy(tmp_path):
+    """旁路副本只是默认降噪；显式 root 仍可审计。"""
+    root = _mk_project(tmp_path)
+    copy_root = root / ".backup" / "worktrees" / "copy"
+    (copy_root / "src").mkdir(parents=True)
+    (copy_root / "src" / "current.py").write_text("MARKER = 'backup'\n", encoding="utf-8")
+
+    tool = SearchFilesTool()
+    r = tool.execute(root=str(copy_root), pattern="current.py", content="backup")
+
+    assert r.status.value == "success"
+    assert "src/current.py:1:" in r.content
+
+
 def test_no_match(tmp_path):
     """无匹配: 返回成功 + 空结果说明."""
     tool = SearchFilesTool()

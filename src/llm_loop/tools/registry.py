@@ -60,7 +60,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "execute_command": "在本地 shell 执行命令并返回 stdout/stderr；每次为独立进程，灾难性命令由硬安全边界阻断。",
     "job_output": "查询 execute_command 后台任务的状态与已收集输出。",
     "job_kill": "终止仍在运行的 execute_command 后台任务。",
-    "search_files": "按文件名/glob 或内容搜索工作区；pattern+content 表示先按 pattern 限定文件，再在其中搜索 content；path 只做精确存在/stat 查询（不执行 pattern/content 搜索）；限定搜索目录用 root。",
+    "search_files": "按文件名/glob 或内容搜索当前工作区；默认排除 .tmp-ci/.backup/.worktrees 等旁路副本，需审这些副本时显式 root 到对应目录。pattern+content 表示先限定文件再搜内容。root 只接受搜索根目录，不能填文件路径；查单个已知文件内容用 root=<父目录> + pattern=<文件名> + content=<关键词>，或直接 read_file。path 只做精确存在/stat，不执行内容搜索。",
     "schedule": "注册一次或周期提醒；wake 仅是当前真人 run 签发的一次性同会话续跑，不可递归唤醒。",
     "schedule_cancel": "按 schedule 返回的 sid 取消已注册提醒。",
     "web_fetch": "抓取 URL 并提取网页正文；反爬/JS 壳失败会如实返回 recovery 信息。",
