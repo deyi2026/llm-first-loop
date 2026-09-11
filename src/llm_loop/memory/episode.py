@@ -80,6 +80,20 @@ def stable_episode_ref(session_id: str, user_message: Message, user_seq: int) ->
     return f"episode:{sid}:{user_seq}:{digest}"
 
 
+def stable_delegated_span_ref(session_id: str, user_message: Message, user_seq: int) -> str:
+    """Return a deterministic ref for one delegated/non-human run."""
+
+    sid = _validate_session_id(session_id)
+    ts_ns = int(float(getattr(user_message, "ts", 0.0) or 0.0) * 1_000_000_000)
+    md = user_message.metadata if isinstance(user_message.metadata, dict) else {}
+    raw = (
+        f"{sid}\0{user_seq}\0{ts_ns}\0{str(getattr(user_message, 'content', '') or '')}"
+        f"\0{str(md.get('ingress_entry') or '')}"
+    ).encode("utf-8", "replace")
+    digest = hashlib.sha256(raw).hexdigest()[:20]
+    return f"delegated:{sid}:{user_seq}:{digest}"
+
+
 def stable_tool_span_ref(
     session_id: str,
     user_message: Message,
@@ -804,6 +818,105 @@ class EpisodeStore:
             "terminal_reason": reason,
             "question": question,
             "final_answer": "",
+            "tool_names": tool_names,
+            "message_count": len(snapshots),
+            "chars": sum(len(str(m.get("content") or "")) for m in snapshots),
+            "transcript_sha256": transcript_sha256,
+            "messages": snapshots,
+        }
+        path = self._path(sid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = (json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
+            "utf-8"
+        )
+        with path.open("ab") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        return EpisodeIndexResult(ref=ref, created=True)
+
+    def index_delegated_span(
+        self,
+        session_id: str,
+        *,
+        ref: str,
+        user_seq: int,
+        terminal_seq: int,
+        raw_messages: list[Message],
+    ) -> EpisodeIndexResult:
+        """Persist a completed delegated run without claiming human resolution.
+
+        The first user-shaped row is program-delegated rather than genuine human
+        authority, so ordinary episode indexing intentionally rejects it.  Keep a
+        separate entry kind on the same append-only retrieval surface.
+        """
+
+        sid = _validate_session_id(session_id)
+        if not ref.startswith("delegated:"):
+            raise ValueError("delegated span ref 必须以 delegated: 开头")
+        if not raw_messages:
+            raise ValueError("delegated span 缺少消息")
+        first = raw_messages[0]
+        first_md = first.metadata if isinstance(first.metadata, dict) else {}
+        terminal = raw_messages[-1]
+        terminal_md = terminal.metadata if isinstance(terminal.metadata, dict) else {}
+        if first.role != "user" or first_md.get("ingress_delegated") is not True:
+            raise ValueError("delegated span 缺少 delegated ingress")
+        if (
+            terminal.role != "assistant"
+            or terminal.tool_calls
+            or terminal_md.get("answer_origin") != "model"
+            or str(terminal_md.get("run_end_reason") or "") != "completed"
+            or terminal_md.get("episode_resolution_candidate") is not True
+        ):
+            raise ValueError("delegated span 缺少 completed model terminal")
+
+        snapshots: list[dict[str, Any]] = [
+            {
+                "role": "user",
+                "content": str(first.content or ""),
+                "source": str(first.source),
+                "ts": float(first.ts or 0.0),
+                "delegated": True,
+            }
+        ]
+        snapshots.extend(
+            snap
+            for message in raw_messages[1:]
+            if (snap := _snapshot_message(message)) is not None
+        )
+        if len(snapshots) < 2 or snapshots[-1].get("role") != "assistant":
+            raise ValueError("delegated span 缺少可检索 terminal")
+        transcript = _render_transcript(snapshots)
+        transcript_sha256 = hashlib.sha256(transcript.encode("utf-8", "replace")).hexdigest()
+        existing = self.get(sid, ref)
+        if existing is not None:
+            if (
+                str(existing.get("transcript_sha256") or "") != transcript_sha256
+                or str(existing.get("entry_kind") or "") != "delegated_span"
+            ):
+                raise ValueError(f"delegated span ref collision: {ref}")
+            return EpisodeIndexResult(ref=ref, created=False)
+
+        tool_names = list(
+            dict.fromkeys(
+                str(m.get("tool_name") or "")
+                for m in snapshots
+                if m.get("role") == "tool" and str(m.get("tool_name") or "")
+            )
+        )
+        indexed_at = _now()
+        entry: dict[str, Any] = {
+            "schema": EPISODE_SCHEMA,
+            "entry_kind": "delegated_span",
+            "ref": ref,
+            "session_id": sid,
+            "resolved_at": indexed_at,
+            "indexed_at": indexed_at,
+            "user_seq": int(user_seq),
+            "terminal_seq": int(terminal_seq),
+            "question": str(snapshots[0].get("content") or ""),
+            "final_answer": str(snapshots[-1].get("content") or ""),
             "tool_names": tool_names,
             "message_count": len(snapshots),
             "chars": sum(len(str(m.get("content") or "")) for m in snapshots),

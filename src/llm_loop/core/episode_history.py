@@ -22,6 +22,7 @@ from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
 from llm_loop.memory.episode import (
     EpisodeStore,
     stable_closed_tool_span_ref,
+    stable_delegated_span_ref,
     stable_episode_ref,
     stable_tool_span_ref,
 )
@@ -39,6 +40,9 @@ CONSUMED_TOOL_SPAN_STATE_KEY = "tool_span_state"
 CONSUMED_TOOL_SPAN_STATE = "consumed"
 CLOSED_TOOL_SPAN_REF_KEY = "closed_tool_span_ref"
 CLOSED_TOOL_SPAN_STATE = "closed"
+DELEGATED_SPAN_REF_KEY = "delegated_span_ref"
+DELEGATED_SPAN_STATE_KEY = "delegated_span_state"
+DELEGATED_SPAN_STATE = "closed"
 
 _DURABLE_USER_RE = re.compile(
     r"(?:以后|今后|从现在开始|往后|后续(?:都|一律|始终)|始终|永远|长期|不要再|"
@@ -80,6 +84,15 @@ def is_closed_tool_span_message(message: Message) -> bool:
     return bool(closed_tool_span_ref(message))
 
 
+def delegated_span_ref(message: Message) -> str:
+    return str(_metadata(message).get(DELEGATED_SPAN_REF_KEY) or "")
+
+
+def is_closed_delegated_span_message(message: Message) -> bool:
+    md = _metadata(message)
+    return bool(delegated_span_ref(message)) and md.get(DELEGATED_SPAN_STATE_KEY) == DELEGATED_SPAN_STATE
+
+
 def provider_message_visible(message: Message) -> bool:
     """Return whether one persisted message belongs in default provider history."""
 
@@ -96,6 +109,7 @@ def provider_message_visible(message: Message) -> bool:
     return not (
         is_consumed_tool_span_message(message)
         or is_closed_tool_span_message(message)
+        or is_closed_delegated_span_message(message)
         or is_resolved_episode_message(message)
     )
 
@@ -1231,6 +1245,80 @@ def _mark_closed_tool_indices(messages: list[Message], indices: list[int], ref: 
         md[CLOSED_TOOL_SPAN_REF_KEY] = ref
         md[CONSUMED_TOOL_SPAN_STATE_KEY] = CLOSED_TOOL_SPAN_STATE
         message.metadata = md
+
+
+def backfill_completed_delegated_spans(store: EpisodeStore | None, session: Any) -> list[str]:
+    """Durably retire completed delegated runs from later human provider views.
+
+    Delegated user-shaped ingress is intentionally excluded from genuine-human
+    episode lifecycle. Without a parallel closed lifecycle, a completed scheduled
+    run can survive forever while newer resolved human episodes retire around it.
+    Selection is mechanical only: delegated provenance plus a completed model
+    terminal before the next user-shaped ingress.
+    """
+
+    if store is None:
+        return []
+    messages: list[Message] = list(getattr(session, "messages", []) or [])
+    session_id = str(getattr(session, "session_id", "") or "")
+    refs: list[str] = []
+    starts = [
+        idx
+        for idx, message in enumerate(messages)
+        if message.role == "user" and _metadata(message).get("ingress_delegated") is True
+    ]
+    for start in starts:
+        existing = delegated_span_ref(messages[start])
+        if existing and is_closed_delegated_span_message(messages[start]):
+            refs.append(existing)
+            continue
+        end = next(
+            (
+                idx
+                for idx in range(start + 1, len(messages))
+                if messages[idx].role == "user"
+                and (
+                    is_human_user_message(messages[idx])
+                    or _metadata(messages[idx]).get("ingress_delegated") is True
+                )
+            ),
+            len(messages),
+        )
+        terminal = next(
+            (
+                idx
+                for idx in range(end - 1, start, -1)
+                if _completed_model_answer(messages[idx])
+            ),
+            None,
+        )
+        if terminal is None:
+            continue
+        ref = stable_delegated_span_ref(session_id, messages[start], start)
+        try:
+            store.index_delegated_span(
+                session_id,
+                ref=ref,
+                user_seq=start,
+                terminal_seq=terminal,
+                raw_messages=messages[start : terminal + 1],
+            )
+        except Exception:  # noqa: BLE001 - durable failure means keep provider-visible
+            logger.warning(
+                "delegated span 索引失败（保留 provider 可见）: sid=%s start=%d terminal=%d",
+                session_id,
+                start,
+                terminal,
+                exc_info=True,
+            )
+            continue
+        for idx in range(start, terminal + 1):
+            md = dict(_metadata(messages[idx]))
+            md[DELEGATED_SPAN_REF_KEY] = ref
+            md[DELEGATED_SPAN_STATE_KEY] = DELEGATED_SPAN_STATE
+            messages[idx].metadata = md
+        refs.append(ref)
+    return refs
 
 
 def _closed_attempt_event_ranges(

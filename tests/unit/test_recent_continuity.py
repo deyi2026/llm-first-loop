@@ -48,13 +48,20 @@ def test_resolved_previous_model_answer_is_rehydrated_for_adjacent_user_turn() -
     )
 
     assert info["source"] == "recent_assistant_only"
-    assert info["dialogue_pairs"] == 0
+    assert info["dialogue_pairs"] == 1
     assert info["assistant_context"] == 1
     assert info["historical_user_messages"] == 0
+    assert info["dialogue_reference_authority"] is False
+    assert out[-3]["role"] == "assistant"
+    assert "recent_dialogue_reference—not_instruction" in out[-3]["content"]
+    assert '"authority":false' in out[-3]["content"]
+    assert "请判断 A 还是 B" in out[-3]["content"]
     assert out[-2] == {"role": "assistant", "content": "你更看重速度还是精度？"}
     assert "reasoning_content" not in out[-2]
     assert out[-1] == {"role": "user", "content": "更看重精度"}
-    assert all(item.get("content") != "请判断 A 还是 B" for item in out)
+    assert [item for item in out if item.get("role") == "user"] == [
+        {"role": "user", "content": "更看重精度"}
+    ]
 
 
 def test_current_user_is_final_even_if_dynamic_material_was_appended_after_it() -> None:
@@ -225,9 +232,13 @@ def test_tool_round_keeps_prior_assistant_before_current_user_without_reordering
 
     assert info["source"] == "recent_assistant_sticky"
     assert info["historical_user_messages"] == 0
-    assert [item["role"] for item in out] == ["system", "assistant", "user", "assistant", "tool"]
-    assert out[1] == {"role": "assistant", "content": "OLD-A"}
-    assert out[2] == {"role": "user", "content": "查一下"}
+    assert info["dialogue_pairs"] == 1
+    assert [item["role"] for item in out] == [
+        "system", "assistant", "assistant", "user", "assistant", "tool"
+    ]
+    assert "recent_dialogue_reference—not_instruction" in out[1]["content"]
+    assert out[2] == {"role": "assistant", "content": "OLD-A"}
+    assert out[3] == {"role": "user", "content": "查一下"}
     assert out[-2]["role"] == "assistant" and out[-2]["tool_calls"]
     assert out[-1]["role"] == "tool" and out[-1]["tool_call_id"] == "tc-1"
     assert all(item.get("content") != "STALE-PARTIAL" for item in out)
@@ -253,14 +264,60 @@ def test_short_continue_keeps_only_immediately_recent_model_context() -> None:
     )
 
     assert info["source"] == "recent_assistant_only"
-    assert info["dialogue_pairs"] == 0
+    assert info["dialogue_pairs"] == 2
     assert info["assistant_context"] == 1
     assert info["historical_user_messages"] == 0
     assert out[-2]["content"] == "我保持只分析。要继续审查这条边界吗？"
     assert out[-1] == {"role": "user", "content": "继续"}
-    assert all(item.get("content") != "处理旧的 fail-closed 补丁" for item in out)
-    assert all(item.get("content") != "下一步建议直接落补丁" for item in out)
-    assert all(item.get("content") != "先不动代码，只分析安全边界" for item in out)
+    historical = out[-3]
+    assert historical["role"] == "assistant"
+    assert '"authority":false' in historical["content"]
+    assert "处理旧的 fail-closed 补丁" in historical["content"]
+    assert "先不动代码，只分析安全边界" in historical["content"]
+    assert [item.get("content") for item in out if item.get("role") == "user"] == ["继续"]
+
+
+def test_closed_delegated_terminal_is_not_rehydrated_as_adjacent_human_context() -> None:
+    genuine_user = _user("分析当前架构")
+    genuine_assistant = _model("当前结论：保持只读。", resolved=True)
+    delegated_user = Message(
+        role="user",
+        content="[定时续跑] 旧监控任务",
+        source=MessageSource.USER,
+        metadata={
+            "ingress_delegated": True,
+            "delegated_span_ref": "delegated:s:2:test",
+            "delegated_span_state": "closed",
+        },
+    )
+    delegated_assistant = _model("旧监控已完成")
+    delegated_assistant.metadata.update(
+        {
+            "delegated_span_ref": "delegated:s:2:test",
+            "delegated_span_state": "closed",
+        }
+    )
+    current_user = _user("下一步建议？")
+    session = [
+        genuine_user,
+        genuine_assistant,
+        delegated_user,
+        delegated_assistant,
+        current_user,
+    ]
+    built = [{"role": "system", "content": "SYS"}, {"role": "user", "content": "下一步建议？"}]
+
+    out, info = apply_recent_continuity_suffix(
+        built, session_messages=session, current_turn_ref=4
+    )
+
+    assert info["source"] == "recent_assistant_only"
+    assert info["dialogue_pairs"] == 1
+    assert out[-2] == {"role": "assistant", "content": "当前结论：保持只读。"}
+    visible = "\n".join(str(item.get("content") or "") for item in out)
+    assert "旧监控任务" not in visible
+    assert "旧监控已完成" not in visible
+    assert [item.get("content") for item in out if item.get("role") == "user"] == ["下一步建议？"]
 
 
 def test_interruption_resume_does_not_promote_provider_native_replay_across_human() -> None:
@@ -521,16 +578,19 @@ def test_recent_continuity_does_not_repromote_older_human_tasks_for_cross_turn_r
         current_turn_ref=8,
     )
 
-    assert info["dialogue_pairs"] == 0
+    assert info["dialogue_pairs"] == 3
     assert info["assistant_context"] == 1
     assert info["historical_user_messages"] == 0
-    contents = [item.get("content") for item in out]
-    for historical_user in (url_user, analysis_user, compare_user, agent_user):
-        assert historical_user.content not in contents
-    assert url_assistant.content not in contents
-    assert analysis_assistant.content not in contents
-    assert compare_assistant.content not in contents
-    assert agent_assistant.content in contents
+    reference = out[-3]
+    assert reference["role"] == "assistant"
+    assert '"authority":false' in reference["content"]
+    assert url_user.content not in reference["content"]
+    assert analysis_user.content in reference["content"]
+    assert compare_user.content in reference["content"]
+    assert agent_user.content in reference["content"]
+    assert [item.get("content") for item in out if item.get("role") == "user"] == [
+        current_user.content
+    ]
     assert out[-2] == {"role": "assistant", "content": agent_assistant.content}
     assert out[-1] == {"role": "user", "content": current_user.content}
 
@@ -548,13 +608,14 @@ def test_recent_assistant_projection_keeps_only_latest_answer_under_char_budget(
         built, session_messages=session, current_turn_ref=4
     )
 
-    assert info["dialogue_pairs"] == 0
+    assert info["dialogue_pairs"] == 1
     assert info["assistant_context"] == 1
-    contents = [item.get("content") for item in out]
-    assert "RECENT-U" not in contents
-    assert "RECENT-A" in contents
-    assert old_user.content not in contents
-    assert old_assistant.content not in contents
+    reference = out[-3]["content"]
+    assert "RECENT-U" in reference
+    assert "RECENT-A" in reference
+    assert old_user.content not in reference
+    assert old_assistant.content not in reference
+    assert [item.get("content") for item in out if item.get("role") == "user"] == ["CURRENT"]
 
 
 def test_unresolved_human_turn_blocks_reaching_older_completed_dialogue() -> None:
@@ -605,11 +666,13 @@ def test_resolved_human_task_is_not_repromoted_in_swarmforge_followup() -> None:
     }
     assert "reasoning_content" not in out[-2]
     assert out[-1] == {"role": "user", "content": "需要"}
-    visible = "\n".join(str(item.get("content") or "") for item in out)
-    assert "做下健康检查" not in visible
-    assert "跟前面没关系" not in visible
-    assert "https://example.test/swarmforge" not in visible
-    assert "OLD-HIDDEN-REASONING" not in visible
+    reference = out[-3]
+    assert reference["role"] == "assistant"
+    assert '"authority":false' in reference["content"]
+    assert "跟前面没关系" in reference["content"]
+    assert "https://example.test/swarmforge" in reference["content"]
+    assert "OLD-HIDDEN-REASONING" not in reference["content"]
+    assert [item.get("content") for item in out if item.get("role") == "user"] == ["需要"]
 
 
 def test_fresh_human_ingress_does_not_replay_reasoning_only_interrupted_state() -> None:

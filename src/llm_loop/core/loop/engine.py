@@ -547,6 +547,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         try:
             from llm_loop.core.episode_history import (
                 backfill_closed_tool_attempts,
+                backfill_completed_delegated_spans,
                 backfill_completed_episodes,
                 backfill_consumed_tool_spans,
             )
@@ -558,6 +559,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             # event-proven closed raw tool protocol retire from the default provider
             # view; it is indexed as closed (not consumed/resolved) first.
             if not bool(getattr(ingress, "delegated", False)):
+                backfill_completed_delegated_spans(self.episode_store, sess)
                 backfill_closed_tool_attempts(
                     self.episode_store, sess, event_store=self._event_store
                 )

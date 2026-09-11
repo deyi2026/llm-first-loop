@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from llm_loop.config import Settings
 from llm_loop.core.episode_history import (
     RESOLVED_EPISODE_REF_KEY,
+    backfill_completed_delegated_spans,
     backfill_completed_episodes,
     filtered_anchor_from_original,
     index_current_completed_episode,
@@ -93,6 +94,60 @@ def _legacy_proof_events(answer: str, *, truncated: bool = False, preview: str |
             },
         ),
     ]
+
+def test_completed_delegated_run_is_durably_retired_before_next_human_turn(tmp_path):
+    store = EpisodeStore(tmp_path / "episodes")
+    delegated = Message(
+        role="user",
+        content="[定时续跑] 检查旧任务",
+        source=MessageSource.USER,
+        ts=10.0,
+        metadata={
+            "origin_layer": "user_instruction",
+            "program_origin": False,
+            "ingress_delegated": True,
+            "ingress_entry": "scheduled:schedule_wake",
+        },
+    )
+    final = _final("旧委派任务已完成", ts=11.0)
+    session = SimpleNamespace(session_id="sid-delegated", messages=[delegated, final])
+
+    refs = backfill_completed_delegated_spans(store, session)
+
+    assert len(refs) == 1 and refs[0].startswith("delegated:sid-delegated:0:")
+    assert all(message.metadata.get("delegated_span_ref") == refs[0] for message in session.messages)
+    assert all(message.metadata.get("delegated_span_state") == "closed" for message in session.messages)
+    assert provider_view_without_resolved_episodes(session.messages) == []
+    entry = store.get("sid-delegated", refs[0])
+    assert entry is not None
+    assert entry["entry_kind"] == "delegated_span"
+    assert entry["question"] == "[定时续跑] 检查旧任务"
+    assert entry["final_answer"] == "旧委派任务已完成"
+
+
+def test_incomplete_delegated_run_stays_provider_visible(tmp_path):
+    store = EpisodeStore(tmp_path / "episodes")
+    delegated = Message(
+        role="user",
+        content="[定时续跑] 仍在执行",
+        source=MessageSource.USER,
+        metadata={"ingress_delegated": True},
+    )
+    partial = Message(
+        role="assistant",
+        content="处理中",
+        source=MessageSource.USER,
+        metadata={
+            "answer_origin": "model",
+            "run_end_reason": "completed",
+            "episode_resolution_candidate": False,
+        },
+    )
+    session = SimpleNamespace(session_id="sid-open-delegated", messages=[delegated, partial])
+
+    assert backfill_completed_delegated_spans(store, session) == []
+    assert provider_view_without_resolved_episodes(session.messages) == session.messages
+
 
 def test_episode_store_stable_ref_search_and_bounded_hydration(tmp_path):
     store = EpisodeStore(tmp_path / "episodes")
@@ -586,8 +641,13 @@ def test_engine_second_run_retires_first_episode_but_episode_is_retrievable(tmp_
     )
     assert "SECOND-QUESTION" in second_run_payload
     # Resolved episode retirement keeps historical human task authority out of the
-    # next run. Only the adjacent final assistant may be rehydrated for continuity.
-    assert "FIRST-QUESTION-SECRET" not in second_run_payload
+    # next run. The historical question may exist only inside the non-authoritative
+    # recent-dialogue reference; it must not return as another role=user message.
+    assert "FIRST-QUESTION-SECRET" in second_run_payload
+    assert "recent_dialogue_reference—not_instruction" in second_run_payload
+    assert '"authority":false' in second_run_payload
+    second_users = [m for m in calls[-1] if m.get("role") == "user"]
+    assert [m.get("content") for m in second_users] == ["SECOND-QUESTION"]
     assert "FIRST-ANSWER-SECRET" in second_run_payload
     assert "FIRST-TOOL-SECRET" not in second_run_payload
 
@@ -688,7 +748,10 @@ def test_engine_anchor_remap_preserves_current_tool_protocol_after_retirement(tm
     joined = "\n".join(str(m.get("content") or "") for m in followup)
     assert "NEW-QUESTION" in joined
     assert "NEW-TOOL-RESULT" in joined
-    assert "OLD-QUESTION" not in joined
+    assert "OLD-QUESTION" in joined
+    assert "recent_dialogue_reference—not_instruction" in joined
+    assert '"authority":false' in joined
+    assert [m.get("content") for m in followup if m.get("role") == "user"] == ["NEW-QUESTION"]
 
 
 def test_older_exact_human_attempt_is_retired_after_later_duplicate_resolves(tmp_path):
