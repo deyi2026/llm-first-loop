@@ -2,6 +2,12 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.11 — Runtime identity independent of operator sandbox（2026-09-11）
+
+- **运行身份解耦**：常驻 Web/Feishu 服务不再继承发起 restart 的 MCP Console/IDE/CI 临时 `HOME`/`TMPDIR`；启动器恢复当前 Unix 账户 HOME 与 macOS 原生 user temp，再由 LFL 自身 CatastrophicGuard / EXEC_MODE / approval / EXEC_SANDBOX / workspace scope 实施安全边界。
+- **DSH 发现修复**：修正 `restart_mirror.sh` 先设置、随后又误 `unset DSH_HOME` 的启动 bug；镜像继续使用 `data/dsh-home` 隔离 DSH profile/session，同时从真实账户 `~/.local/dsh/bin` 发现已安装 DSH。真实 DSH v0.1.1-rc.2 canary 已返回 `DSH_RUNTIME_OK`。
+- **回滚边界**：`v0.6.10` 已正式发布且保持不可移动；本修复作为独立 patch 版本，若异常可回滚至 `v0.6.10`。
+
 ## v0.6.10 — Honest sensing, scoped recovery and bounded working set（2026-09-11）
 
 - **失败回执去策略化**：工具不可用时只返回当前状态、原因、PATH/Schema/权限/资源等可机械证明的事实，不再由程序在 failure receipt 中指定安装依赖、切换工具/模型或重试策略；模型保留修复路径与任务策略判断权。
