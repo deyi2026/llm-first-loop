@@ -12,6 +12,7 @@ import hashlib
 import json
 import threading
 import uuid
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,10 +47,6 @@ from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 MAX_DEPTH = 3
 MAX_ITERATIONS = HARD_CAP_MAX_ITERATIONS
 
-# fork 继承切片预算（DSH 借鉴 022-A）: 最近消息条数 / 单条字符 / 总字符
-_INHERIT_MAX_MSGS = 6
-_INHERIT_MSG_CHARS = 800
-_INHERIT_MAX_CHARS = 3000
 _PARENT_CONTEXT_ARTIFACT_CHUNK_CHARS = 12_000
 
 # 子代理深度属于程序控制面，不允许模型通过 tool arguments 自报/篡改。
@@ -124,8 +121,12 @@ class SubAgentRunner:
         tool_execution_root: str | None = None,
         artifact_store: WorkspaceArtifactStore | None = None,
         provider_call_coordinator: ProviderCallCoordinator | None = None,
+        llm_resolver: Callable[[str], LLMClient] | None = None,
+        parent_session_provider: Callable[[str], Session | None] | None = None,
     ) -> None:
         self.llm = llm
+        self._llm_resolver = llm_resolver
+        self._parent_session_provider = parent_session_provider
         self.registry = registry
         self.session_store = session_store
         self.max_depth = max_depth
@@ -161,6 +162,16 @@ class SubAgentRunner:
         self._max_handles = 128
         self._message_seq = 0
         self._recover_topology_index()
+
+    def _resolve_child_llm(self, model_ref: str) -> tuple[LLMClient, str]:
+        """Resolve an explicit/mechanically inherited model without choosing semantics."""
+
+        ref = str(model_ref or "").strip()
+        if not ref:
+            return self.llm, ""
+        if self._llm_resolver is None:
+            raise ValueError("subagent model routing unavailable in this runner")
+        return self._llm_resolver(ref), ref
 
     def _recover_topology_index(self) -> None:
         """Rebuild read-only durable topology; never recreate an active worker."""
@@ -702,11 +713,13 @@ class SubAgentRunner:
         max_rounds: int | None,
         acceptance: list[str] | None,
         cancel_event: threading.Event,
+        llm_client: LLMClient | None = None,
+        model_label: str = "",
         startup_event: threading.Event | None = None,
         startup_state: dict[str, object] | None = None,
     ) -> SubAgentResult:
         """在已登记的 child sid 上执行迷你循环；不负责 topology cleanup。"""
-        from llm_loop.core.run_context import current_session_id
+        from llm_loop.core.run_context import current_model_label, current_session_id
 
         # copy_context() in start()/recursive calls already carries the parent's
         # current_tool_discovery_scope. Do not overwrite it with a child-specific
@@ -714,6 +727,7 @@ class SubAgentRunner:
         # explicit parent scope. None therefore remains the full registered tool plane.
         old_ctx_sid = current_session_id.get()
         _depth_tok = _CURRENT_SUBAGENT_DEPTH.set(depth)
+        _model_tok = current_model_label.set(model_label) if model_label else None
         try:
             current_session_id.set(sid)
             # Child execution has the same whole-run ownership invariant as LoopEngine.
@@ -822,6 +836,8 @@ class SubAgentRunner:
                             depth,
                             max_rounds=max_rounds,
                             cancel_event=cancel_event,
+                            llm_client=llm_client,
+                            model_label=model_label,
                         )
                     except BaseException as exc:  # noqa: BLE001 - persist exact failure then preserve API
                         failed = SubAgentResult(
@@ -859,6 +875,8 @@ class SubAgentRunner:
                     )
                     self._refresh_topology_state(sid)
         finally:
+            if _model_tok is not None:
+                current_model_label.reset(_model_tok)
             _CURRENT_SUBAGENT_DEPTH.reset(_depth_tok)
             current_session_id.set(old_ctx_sid)
 
@@ -900,6 +918,7 @@ class SubAgentRunner:
         max_rounds: int | None = None,
         inherit: bool = False,
         acceptance: list[str] | None = None,
+        model: str = "",
     ) -> dict:
         """启动 background child 并立即返回 handle snapshot，不等待 child 结算。"""
         if depth >= self.max_depth:
@@ -911,7 +930,26 @@ class SubAgentRunner:
                 "detail": f"递归深度超限（已达上限 {self.max_depth}）",
             }
 
-        from llm_loop.core.run_context import current_session_id
+        from llm_loop.core.run_context import current_model_label, current_session_id
+
+        requested_model = str(model or "").strip()
+        inherited_model = (
+            str(current_model_label.get() or "").strip()
+            if self._llm_resolver is not None
+            else ""
+        )
+        child_model_ref = requested_model or inherited_model
+        try:
+            child_llm, child_model_label = self._resolve_child_llm(child_model_ref)
+        except Exception as exc:  # noqa: BLE001 - reject before reserving child resources
+            return {
+                "accepted": False,
+                "child_id": "",
+                "state": "refused",
+                "depth": depth,
+                "model": child_model_ref,
+                "detail": f"child_model_unavailable:{type(exc).__name__}:{exc}",
+            }
 
         parent_sid = current_session_id.get()
         if inherit:
@@ -945,6 +983,8 @@ class SubAgentRunner:
                         cancel_event=cancel_event,
                         startup_event=startup_event,
                         startup_state=startup_state,
+                        llm_client=child_llm,
+                        model_label=child_model_label,
                     )
                 except BaseException as exc:  # noqa: BLE001 — background thread 必须形成真实 terminal
                     if not startup_event.is_set():
@@ -1027,6 +1067,7 @@ class SubAgentRunner:
             "child_id": sid,
             "state": "running",
             "depth": depth,
+            "model": child_model_label,
             "detail": "child 已启动，父代理可继续决策并通过 agent_message 中途 steer",
         }
 
@@ -1220,15 +1261,16 @@ class SubAgentRunner:
         max_rounds: int | None = None,
         inherit: bool = False,
         acceptance: list[str] | None = None,
+        model: str = "",
     ) -> SubAgentResult:
         """执行子代理任务（父代理调用 depth=0，子代理内部递归自增）.
 
         max_rounds: 节点级轮次预算（P3-4 DAG 节点预算）；None = 构造器 max_iterations。
-        inherit (DSH 借鉴 022-A, fork 继承): True 时自动从当前会话（父会话）切片最近
-        上下文注入子代理，省手动提取要点；与 context 手动要点可并存（合并注入）。
+        inherit: True 时只提供父会话 exact context artifact ref，不自动注入父 turn；
+        child 可按需读取。与 context 手动要点可并存。
         acceptance (2026-08-18, 对齐 dsh_task 协议 v2): 验收清单——注入子代理系统提示，
         完成时逐项自检输出 完成/未完成/原因，分歧显性化（父级保留最终裁决权）。
-        诚实标注: 切片为最近消息原文（非摘要），按条数/字符预算截断。
+        model: 显式 provider/model；省略时 production runner 机械继承父 run 当前模型。
         """
         if depth >= self.max_depth:
             return SubAgentResult(
@@ -1241,11 +1283,32 @@ class SubAgentRunner:
                 depth=depth,
             )
 
-        # DSH 借鉴 022-A: fork 继承——切换子会话前读取父会话切片（current_session_id 仍指向父）
+        from llm_loop.core.run_context import current_model_label, current_session_id
+
+        requested_model = str(model or "").strip()
+        inherited_model = (
+            str(current_model_label.get() or "").strip()
+            if self._llm_resolver is not None
+            else ""
+        )
+        child_model_ref = requested_model or inherited_model
+        try:
+            child_llm, child_model_label = self._resolve_child_llm(child_model_ref)
+        except Exception as exc:  # noqa: BLE001 - reject before child/provider/tool execution
+            return SubAgentResult(
+                final_answer=(
+                    "[状态: failure] 子代理模型不可用，未启动任何 child/provider/tool 动作: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+                outcome="refused",
+                refused=True,
+                depth=depth,
+            )
+
+        # Resolve retrieval-only inheritance before current_session_id switches to child.
         if inherit:
             context = self._inherit_parent_context(context)
 
-        from llm_loop.core.run_context import current_session_id
         parent_sid = current_session_id.get()
         sid, cancel_event, sess = self._reserve_child(parent_sid)
         try:
@@ -1258,6 +1321,8 @@ class SubAgentRunner:
                 max_rounds=max_rounds,
                 acceptance=acceptance,
                 cancel_event=cancel_event,
+                llm_client=child_llm,
+                model_label=child_model_label,
             )
             finalized = self._finalize_child(sid, parent_sid, result)
             assert finalized is not None
@@ -1311,6 +1376,8 @@ class SubAgentRunner:
         depth: int,
         max_rounds: int | None = None,
         cancel_event: threading.Event | None = None,
+        llm_client: LLMClient | None = None,
+        model_label: str = "",
     ) -> SubAgentResult:
         """子代理循环本体（会话注入/恢复由 run 包裹；拆出保证 finally 覆盖全部返回路径）."""
         effective_rounds = (
@@ -1323,6 +1390,7 @@ class SubAgentRunner:
         truncated = False
         llm_error_count = 0
         last_llm_error = ""
+        active_llm = llm_client or self.llm
 
         while rounds < effective_rounds:
             if cancel_event is not None and cancel_event.is_set():
@@ -1374,7 +1442,7 @@ class SubAgentRunner:
             _provider_call_coordinator = self.provider_call_coordinator
             _provider_call = (
                 _provider_call_coordinator.open_shadow_call_for_client(
-                    self.llm,
+                    active_llm,
                     session_id=sess.session_id,
                     idempotency_key=f"subagent:{sess.session_id}:round:{rounds}",
                     owner_ref=f"subagent:{sess.session_id}:round:{rounds}",
@@ -1388,8 +1456,10 @@ class SubAgentRunner:
             try:
                 resp = subagent_provider_chat(
                     self,
-                    self.llm,
-                    lambda _msgs=msgs, _schemas=sub_schemas: self.llm.chat(_msgs, tools=_schemas),
+                    active_llm,
+                    lambda _msgs=msgs, _schemas=sub_schemas: active_llm.chat(
+                        _msgs, tools=_schemas
+                    ),
                     {},
                     owner_ref=f"subagent:{sess.session_id}:round:{rounds}",
                     provider_call=_provider_call,
@@ -1436,6 +1506,7 @@ class SubAgentRunner:
                         content=answer,
                         source=MessageSource.USER,
                         reasoning_content=resp.reasoning_content,
+                        model_used=model_label,
                         metadata=(
                             {"provider_replay": resp.provider_replay}
                             if resp.provider_replay
@@ -1471,6 +1542,7 @@ class SubAgentRunner:
                         content=answer,
                         source=MessageSource.USER,
                         reasoning_content=resp.reasoning_content,
+                        model_used=model_label,
                         metadata=(
                             {"provider_replay": resp.provider_replay}
                             if resp.provider_replay
@@ -1514,6 +1586,7 @@ class SubAgentRunner:
                     for tc in resp.tool_calls
                 ],
                 reasoning_content=resp.reasoning_content,
+                model_used=model_label,
                 metadata=(
                     {"provider_replay": resp.provider_replay}
                     if resp.provider_replay
@@ -1763,59 +1836,39 @@ class SubAgentRunner:
         return record.ref, len(text), len(rows) + 1
 
     def _inherit_parent_context(self, context: str) -> str:
-        """父会话切片: 最近消息原文注入（条数/字符预算截断），fail-open.
-
-        读取 current_session_id（此时仍指向父会话）→ 切片最近消息 → 格式化为
-        '[role] content' 追加到 context。失败/空会话 → 原样返回（不阻断）。
-        """
+        """Expose exact parent context as retrieval-only; never auto-inline parent turns."""
         from llm_loop.core.run_context import current_session_id
 
         parent_sid = current_session_id.get()
         if not parent_sid:
             return context
         try:
-            parent_sess = self.session_store.load(parent_sid)
+            parent_sess = (
+                self._parent_session_provider(parent_sid)
+                if self._parent_session_provider is not None
+                else None
+            )
+            if parent_sess is None:
+                parent_sess = self.session_store.load(parent_sid)
             msgs = list(parent_sess.messages)
         except Exception:  # noqa: BLE001 — fail-open: 继承失败不阻断子代理
             return context
-        exact_ref = ""
-        exact_chars = 0
-        exact_lines = 0
+        if not msgs:
+            return context
         try:
             exact_ref, exact_chars, exact_lines = self._capture_parent_context_artifact(
                 parent_sid, msgs
             )
         except Exception:  # noqa: BLE001 — exact-ref aid is fail-open
-            exact_ref = ""
-        # 取最近 _INHERIT_MAX_MSGS 条、总字符 ≤ _INHERIT_MAX_CHARS、单条截断
-        parts: list[str] = []
-        total = 0
-        for m in reversed(msgs):
-            role = getattr(m, "role", "?")
-            content = str(getattr(m, "content", "") or "")
-            if not content.strip():
-                continue
-            if len(content) > _INHERIT_MSG_CHARS:
-                content = content[:_INHERIT_MSG_CHARS] + "…（截断）"
-            line = f"[{role}] {content}"
-            if total + len(line) > _INHERIT_MAX_CHARS:
-                break
-            parts.append(line)
-            total += len(line)
-            if len(parts) >= _INHERIT_MAX_MSGS:
-                break
-        if not parts:
             return context
-        exact_fact = ""
-        if exact_ref:
-            exact_fact = (
-                f"exact_parent_context_ref={exact_ref} exact_chars={exact_chars} "
-                f"exact_lines={exact_lines} representation=storage_transcript_without_private_reasoning\n"
-                f"read_contract=read_file(path='{exact_ref}', offset=<line>, limit=<lines>)\n"
-            )
+        if not exact_ref:
+            return context
         inherit_block = (
-            "【fork 继承·父会话最近上下文（原文切片，非摘要）】\n"
-            + exact_fact
-            + "\n".join(reversed(parts))
+            "【fork 继承·父会话上下文引用（retrieval-only，不自动展开）】\n"
+            f"exact_parent_context_ref={exact_ref} exact_chars={exact_chars} "
+            f"exact_lines={exact_lines} "
+            "representation=storage_transcript_without_private_reasoning "
+            "retrieval_only=true inline_parent_messages=0\n"
+            f"read_contract=read_file(path='{exact_ref}', offset=<line>, limit=<lines>)"
         )
         return f"{context}\n\n{inherit_block}" if context.strip() else inherit_block

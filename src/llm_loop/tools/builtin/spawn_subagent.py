@@ -38,8 +38,18 @@ class SpawnSubAgentTool:
             },
             "inherit": {
                 "type": "boolean",
-                "description": "fork 继承（可选，默认 false）：自动注入父会话最近上下文切片"
-                               "（原文非摘要，条数/字符预算截断），省手动提取；可与 context 并存",
+                "description": (
+                    "fork 继承（可选，默认 false）：不自动注入父会话 turn；仅提供去除私有 "
+                    "reasoning/provider replay 的 exact parent-context artifact ref，由 child 按需读取；"
+                    "可与 context 并存。"
+                ),
+            },
+            "model": {
+                "type": "string",
+                "description": (
+                    "可选 provider/model。省略时机械继承当前父 run 的实际模型；填写时由现有"
+                    "模型注册表校验/路由，程序不替模型选择厂家。"
+                ),
             },
             "acceptance": {
                 "type": "array",
@@ -70,6 +80,7 @@ class SpawnSubAgentTool:
         depth = next_subagent_depth()
         from llm_loop.tools.arg_coerce import coerce_str_list
         acceptance = coerce_str_list(kwargs.get("acceptance"))
+        model = str(kwargs.get("model", "") or "").strip()
 
         if not task:
             return ToolResult(
@@ -81,7 +92,12 @@ class SpawnSubAgentTool:
 
         try:
             started = self._runner.start(
-                task=task, context=context, depth=depth, inherit=inherit, acceptance=acceptance
+                task=task,
+                context=context,
+                depth=depth,
+                inherit=inherit,
+                acceptance=acceptance,
+                model=model,
             )
         except Exception as exc:  # noqa: BLE001 — 子代理异常如实回传
             return ToolResult(
@@ -104,7 +120,8 @@ class SpawnSubAgentTool:
 
         child_id = str(started.get("child_id", ""))
         parts = [
-            f"[状态: success] child_state=running child_id={child_id} depth={started.get('depth', depth)}",
+            f"[状态: success] child_state=running child_id={child_id} "
+            f"depth={started.get('depth', depth)} model={started.get('model', '') or 'legacy_default'}",
             "子代理已在后台启动；本回执不是任务结算。",
             f"中途纠偏: agent_message(target_id='{child_id}', content='...')",
             f"查询/等待: subagent_result(child_id='{child_id}', wait_seconds=0..30)",

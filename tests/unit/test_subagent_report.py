@@ -469,39 +469,72 @@ def test_agent_message_rejects_non_adjacent_sender(build_test_engine):
 
 
 # ── DSH 借鉴 022-A: fork 继承（父会话切片注入）──
-def test_inherit_injects_parent_context(build_test_engine, tmp_path, monkeypatch):
-    """inherit=True: 父会话最近消息切片注入子代理 context."""
+def test_inherit_exposes_parent_context_as_retrieval_only_without_inline_turns(
+    build_test_engine, tmp_path, monkeypatch
+):
+    """inherit=True exposes an exact ref but never auto-inlines old/current parent turns."""
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     engine, fake = build_test_engine([])
+    from llm_loop.workspace.artifacts import WorkspaceArtifactStore
+
     runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
+        llm=fake,
+        registry=engine.registry,
+        session_store=engine.session,
+        artifact_store=WorkspaceArtifactStore(tmp_path / "artifacts-data"),
+        llm_resolver=lambda _ref: fake,
     )
-    # 造父会话: 2 条消息（用户 + 助手）
     parent_sid = "parent-fork-test"
     psess = engine.session.load(parent_sid)
     from llm_loop.core.message import Message, MessageSource
 
-    psess.messages.append(Message(role="user", content="用户原始问题: 如何优化缓存", source=MessageSource.USER))
-    psess.messages.append(Message(role="assistant", content="初步分析: 命中率低", source=MessageSource.SYSTEM))
+    psess.messages.append(
+        Message(role="user", content="OLD-TASK-USER: 如何优化缓存", source=MessageSource.USER)
+    )
+    psess.messages.append(
+        Message(
+            role="assistant",
+            content="OLD-TASK-ANSWER: 初步分析命中率低",
+            source=MessageSource.USER,
+            reasoning_content="PRIVATE-REASONING",
+        )
+    )
+    psess.messages.append(
+        Message(
+            role="user",
+            content="CURRENT-PARENT-ORCHESTRATION: spawn another child",
+            source=MessageSource.USER,
+        )
+    )
     engine.session.save(psess)
-    # current_session_id 指向父会话（模拟主循环中）
-    from llm_loop.core.run_context import current_session_id
+    from llm_loop.core.run_context import (
+        current_model_label,
+        current_session_id,
+        current_workspace_root,
+    )
 
-    tok = current_session_id.set(parent_sid)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sid_tok = current_session_id.set(parent_sid)
+    model_tok = current_model_label.set("minimax/MiniMax-M3")
+    ws_tok = current_workspace_root.set(str(workspace.resolve()))
     try:
         fake._responses = [LLMResponse(content="子代理完成", tool_calls=[], provider="fake")]
-        result = runner.run(task="分析缓存问题", depth=0, inherit=True)
+        result = runner.run(task="CHILD-DELEGATED-TASK", depth=0, inherit=True)
     finally:
-        current_session_id.reset(tok)
+        current_workspace_root.reset(ws_tok)
+        current_model_label.reset(model_tok)
+        current_session_id.reset(sid_tok)
 
     assert result.truncated is False
-    # 子代理 LLM 收到的首条 user 消息应含继承切片
-    assert fake.calls  # 至少一次调用
-    # 从 fake 捕获的消息断言（FakeLLM.calls 结构见 test_subagent.py）
-    first_msgs = fake.calls[0]["messages"]
-    joined = " ".join(str(m) for m in first_msgs)
-    assert "fork 继承" in joined or "父会话最近上下文" in joined
-    assert "用户原始问题" in joined and "初步分析" in joined
+    joined = " ".join(str(m) for m in fake.calls[0]["messages"])
+    assert "CHILD-DELEGATED-TASK" in joined
+    assert "exact_parent_context_ref=artifact://v1/" in joined
+    assert "inline_parent_messages=0" in joined
+    assert "OLD-TASK-USER" not in joined
+    assert "OLD-TASK-ANSWER" not in joined
+    assert "CURRENT-PARENT-ORCHESTRATION" not in joined
+    assert "PRIVATE-REASONING" not in joined
 
 
 def test_inherit_false_no_parent_context(build_test_engine, tmp_path, monkeypatch):
@@ -550,11 +583,16 @@ def test_inherit_fail_open_no_parent_session(build_test_engine, tmp_path, monkey
 
 
 def test_spawn_tool_inherit_param(build_test_engine, tmp_path, monkeypatch):
-    """spawn_subagent(inherit=True) 参数透传 + 回执成功."""
+    """spawn_subagent(inherit=True) exposes only retrieval ref, never raw parent turns."""
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     engine, fake = build_test_engine([])
+    from llm_loop.workspace.artifacts import WorkspaceArtifactStore
+
     runner = SubAgentRunner(
-        llm=fake, registry=engine.registry, session_store=engine.session
+        llm=fake,
+        registry=engine.registry,
+        session_store=engine.session,
+        artifact_store=WorkspaceArtifactStore(tmp_path / "artifacts-data"),
     )
     parent_sid = "parent-spawn"
     psess = engine.session.load(parent_sid)
@@ -562,15 +600,17 @@ def test_spawn_tool_inherit_param(build_test_engine, tmp_path, monkeypatch):
 
     psess.messages.append(Message(role="user", content="父上下文要点XYZ", source=MessageSource.USER))
     engine.session.save(psess)
-    from llm_loop.core.run_context import current_session_id
+    from llm_loop.core.run_context import current_session_id, current_workspace_root
 
-    tok = current_session_id.set(parent_sid)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sid_tok = current_session_id.set(parent_sid)
+    ws_tok = current_workspace_root.set(str(workspace.resolve()))
     try:
         fake._responses = [LLMResponse(content="子代理完成", tool_calls=[], provider="fake")]
         tool = SpawnSubAgentTool(runner)
         r = tool.execute(task="fork 任务", inherit=True)
         assert r.status.name == "SUCCESS", r.content
-        # spawn is nonblocking; direct parent waits through the actual handle.
         import re
 
         from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
@@ -582,9 +622,12 @@ def test_spawn_tool_inherit_param(build_test_engine, tmp_path, monkeypatch):
         )
         assert terminal.status.name == "SUCCESS"
     finally:
-        current_session_id.reset(tok)
+        current_workspace_root.reset(ws_tok)
+        current_session_id.reset(sid_tok)
     joined = " ".join(str(m) for m in fake.calls[0]["messages"])
-    assert "父上下文要点XYZ" in joined
+    assert "exact_parent_context_ref=artifact://v1/" in joined
+    assert "inline_parent_messages=0" in joined
+    assert "父上下文要点XYZ" not in joined
 
 
 def test_inherit_exposes_exact_parent_context_artifact_without_private_reasoning(

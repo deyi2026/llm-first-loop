@@ -1456,6 +1456,12 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     # 子代理继承父工具执行域；不因 child 身份维护第二套静态工具能力表。
     # 轮数默认跟随 operator/main resource budget；有限 recursion depth 仍是并发资源边界。
+    def _subagent_parent_session(parent_sid: str):
+        # spawn_subagent runs inside the parent's live run. Until the normal run save,
+        # the in-memory Session is the current mechanical source of truth.
+        with engine._run_state_mgr.guard:
+            return engine._run_sessions.get(parent_sid)
+
     subagent_runner = SubAgentRunner(
         llm=llm,
         registry=registry,
@@ -1464,6 +1470,8 @@ def build_engine(settings: Settings) -> LoopEngine:
         tool_execution_root=str(settings.audit_dir / "tool_execution"),
         artifact_store=_artifact_store,
         provider_call_coordinator=provider_call_coordinator,
+        llm_resolver=model_pool.get_client,
+        parent_session_provider=_subagent_parent_session,
     )
     # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。
