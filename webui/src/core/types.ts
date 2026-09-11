@@ -4,6 +4,46 @@ export interface ToolCallInfo {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+  /** Mechanical execution status when the backend has it (e.g. done.tool_calls). */
+  status?: string;
+}
+
+export type ToolActivityStatus =
+  | "running"
+  | "completed"
+  | "success"
+  | "failure"
+  | "error"
+  | "blocked"
+  | "unauthorized"
+  | "timeout"
+  | "cancelled"
+  | "interrupted"
+  | "unknown";
+
+export interface ToolRoundEvent {
+  tool_call_id?: string;
+  tool_name?: string;
+  round_index?: number;
+  args_summary?: string;
+}
+
+export interface ToolResultEvent {
+  tool_call_id?: string;
+  tool_name?: string;
+  status?: string;
+  duration_ms?: number | null;
+}
+
+export interface ToolActivity {
+  id: string;
+  name: string;
+  status: ToolActivityStatus;
+  roundIndex?: number;
+  argsSummary?: string;
+  arguments?: Record<string, unknown>;
+  resultContent?: string;
+  durationMs?: number;
 }
 
 export interface ToolCallDelta {
@@ -29,8 +69,13 @@ export interface ChatMessage {
   attachments?: AttachmentFact[];
   reasoningContent?: string | null;
   toolCalls?: ToolCallInfo[] | null;
+  /** UI-only projection of tool lifecycle; never persisted back into session history. */
+  toolActivities?: ToolActivity[];
   toolCallId?: string | null;
   toolName?: string | null;
+  /** Exact persisted tool-result status for role=tool history rows. */
+  toolStatus?: string | null;
+  toolDurationMs?: number | null;
   note?: string | null;
   /** 服务端消息时间戳（epoch 秒）；展示时按浏览器/操作系统本地时区转换 */
   ts?: number;
@@ -76,7 +121,8 @@ export interface HistoryMessage {
   reasoning_content?: string | null;
   tool_call_id?: string | null;
   tool_name?: string | null;
-  status?: string;
+  status?: string | null;
+  duration_ms?: number | null;
   tool_calls?: ToolCallInfo[];
   model_used?: string;
   tokens_in?: number;

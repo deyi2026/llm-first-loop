@@ -1,5 +1,5 @@
 // Web V2：流式对话客户端（协议对齐后端 /api/v1/chat/stream：
-// data: 帧类型 answer_delta / reasoning_delta / tool_round / done(终态) / error(终态)；
+// data: 帧类型 answer_delta / reasoning_delta / tool_round / tool_result / done(终态) / error(终态)；
 // 读流异常 = 连接中断（保留已生成内容，不 throw 穿透）；支持 AbortController 停止）
 
 import type {
@@ -11,13 +11,16 @@ import type {
   StreamOutcome,
   ToolCallDelta,
   ToolCallInfo,
+  ToolResultEvent,
+  ToolRoundEvent,
   UploadResult,
 } from "./types";
 
 export interface StreamHandlers {
   onAnswerDelta?: (text: string) => void;
   onReasoningDelta?: (text: string) => void;
-  onToolRound?: (data: unknown) => void;
+  onToolRound?: (data: ToolRoundEvent) => void;
+  onToolResult?: (data: ToolResultEvent) => void;
   onToolCallDeltas?: (deltas: ToolCallDelta[]) => void;
 }
 
@@ -79,7 +82,8 @@ export async function streamChatRequest(
       const d = evt.data as Record<string, unknown> | undefined;
       if (evt.type === "answer_delta") handlers.onAnswerDelta?.(String(d?.data ?? ""));
       else if (evt.type === "reasoning_delta") handlers.onReasoningDelta?.(String(d?.data ?? ""));
-      else if (evt.type === "tool_round") handlers.onToolRound?.(d);
+      else if (evt.type === "tool_round") handlers.onToolRound?.((d ?? {}) as ToolRoundEvent);
+      else if (evt.type === "tool_result") handlers.onToolResult?.((d ?? {}) as ToolResultEvent);
       else if (evt.type === "tool_call_deltas" && Array.isArray(d?.deltas)) {
         toolAccum = toolAccum.concat(d.deltas as ToolCallDelta[]);
         handlers.onToolCallDeltas?.(toolAccum);
@@ -348,7 +352,7 @@ function normalizeToolCalls(raw: unknown): ToolCallInfo[] | null {
       }
     }
     if (!id && name) id = name;
-    out.push({ id, name, arguments: args });
+    out.push({ id, name, arguments: args, status: typeof r.status === "string" ? r.status : undefined });
   }
   return out.length > 0 ? out : null;
 }
@@ -364,6 +368,8 @@ export function toChatMessage(m: HistoryMessage): ChatMessage {
     toolCalls: normalizeToolCalls(m.tool_calls),
     toolCallId: m.tool_call_id ?? null,
     toolName: m.tool_name ?? null,
+    toolStatus: m.status ?? null,
+    toolDurationMs: typeof m.duration_ms === "number" ? m.duration_ms : null,
     note: null,
     model_used: m.model_used ?? "",
     tokens_in: m.tokens_in ?? 0,

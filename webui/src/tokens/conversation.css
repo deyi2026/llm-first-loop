@@ -406,6 +406,159 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* ── Tool Activity：产品级实时工具过程（协议事实的 UI projection） ── */
+.v2-tool-activity {
+  display: flex;
+  flex-direction: column;
+  max-width: min(720px, 100%);
+  margin: 2px 0 6px;
+  border-radius: var(--dsw-radius-md);
+}
+
+.v2-tool-activity-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.v2-tool-activity-toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.v2-tool-activity-summary-icon,
+.v2-tool-activity-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.v2-tool-activity-summary-icon.running,
+.v2-tool-activity-icon.running {
+  color: var(--dsw-alias-label-secondary);
+  animation: v2-tool-pulse 1.25s ease-in-out infinite;
+}
+
+.v2-tool-activity-summary-icon.done,
+.v2-tool-activity-icon.ok {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.v2-tool-activity-summary-icon.issue,
+.v2-tool-activity-icon.err,
+.v2-tool-activity-icon.warn {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.v2-tool-activity-summary-icon.neutral,
+.v2-tool-activity-icon.neutral {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+@keyframes v2-tool-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.86); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.v2-tool-activity-list {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0 0 8px;
+  padding-left: 12px;
+  border-left: 1px solid var(--dsw-alias-border-l1);
+}
+
+.v2-tool-activity-row {
+  min-width: 0;
+}
+
+.v2-tool-activity-row-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 5px 8px 5px 0;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.v2-tool-activity-row-toggle:hover {
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 55%, transparent);
+}
+
+.v2-tool-activity-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.v2-tool-activity-name {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.v2-tool-activity-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.v2-tool-activity-status {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.v2-tool-activity-status.ok { color: var(--dsw-alias-state-success-primary); }
+.v2-tool-activity-status.err { color: var(--dsw-alias-state-error-primary); }
+.v2-tool-activity-status.warn { color: var(--dsw-alias-state-warn-primary); }
+.v2-tool-activity-status.running { color: var(--dsw-alias-label-secondary); }
+
+.v2-tool-activity-detail {
+  margin: 0 8px 8px 26px;
+  padding: 8px 10px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-markdown-code-block);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 17px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.v2-tool-activity-detail code {
+  font: inherit;
+  background: none;
+  padding: 0;
+}
+
 /* ── 工具回执（彩色状态，非灰） ── */
 .v2-tool-receipt {
   display: flex;

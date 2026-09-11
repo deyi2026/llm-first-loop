@@ -143,6 +143,117 @@ describe("conversation stream ownership", () => {
     await run2;
   });
 
+
+  it("tool_round 只表示运行中；模型分片不猜成功，exact tool_result 才收敛终态", async () => {
+    h.streamChatRequest.mockImplementationOnce(async (_body, handlers: any) => {
+      handlers.onToolRound?.({
+        tool_call_id: "c1",
+        tool_name: "read_file",
+        round_index: 1,
+        args_summary: '{"path":"README.md"}',
+      });
+      let msg = conversationStore.getState().messages.at(-1);
+      expect(msg?.toolActivities?.[0]).toMatchObject({ id: "c1", name: "read_file", status: "running" });
+
+      handlers.onReasoningDelta?.("继续判断");
+      msg = conversationStore.getState().messages.at(-1);
+      expect(msg?.toolActivities?.[0]?.status).toBe("running");
+
+      handlers.onToolResult?.({
+        tool_call_id: "c1",
+        tool_name: "read_file",
+        status: "failure",
+        duration_ms: 12.5,
+      });
+      msg = conversationStore.getState().messages.at(-1);
+      expect(msg?.toolActivities?.[0]).toMatchObject({ status: "failure", durationMs: 12.5 });
+
+      // Later provider text and a replayed start event cannot rewrite an exact terminal fact.
+      handlers.onAnswerDelta?.("继续");
+      handlers.onToolRound?.({
+        tool_call_id: "c1",
+        tool_name: "read_file",
+        round_index: 1,
+        args_summary: '{"path":"README.md"}',
+      });
+      msg = conversationStore.getState().messages.at(-1);
+      expect(msg?.toolActivities?.[0]?.status).toBe("failure");
+
+      handlers.onToolRound?.({
+        tool_call_id: "c2",
+        tool_name: "search_text",
+        round_index: 2,
+        args_summary: '{"query":"needle"}',
+      });
+      return {
+        ok: true,
+        errorType: null,
+        error: null,
+        data: {
+          session_id: "s1",
+          final_answer: "done",
+          tool_calls: [
+            { id: "c1", name: "read_file", arguments: { path: "README.md" }, status: "failure" },
+            { id: "c2", name: "search_text", arguments: { query: "needle" }, status: "failure" },
+          ],
+        },
+      } satisfies StreamOutcome;
+    });
+
+    await sendMessage("A", []);
+    const msg = conversationStore.getState().messages.at(-1);
+    expect(msg?.toolActivities).toHaveLength(2);
+    expect(msg?.toolActivities?.[0]?.status).toBe("failure");
+    expect(msg?.toolActivities?.[1]?.status).toBe("failure");
+  });
+
+  it("同一 round 的多个工具在执行前都保持 running，不把前一个误判为完成", async () => {
+    h.streamChatRequest.mockImplementationOnce(async (_body, handlers: any) => {
+      handlers.onToolRound?.({ tool_call_id: "c1", tool_name: "read_file", round_index: 1, args_summary: '{"path":"a"}' });
+      handlers.onToolRound?.({ tool_call_id: "c2", tool_name: "read_file", round_index: 1, args_summary: '{"path":"b"}' });
+      const live = conversationStore.getState().messages.at(-1)?.toolActivities;
+      expect(live?.map((item) => item.status)).toEqual(["running", "running"]);
+      return {
+        ok: true, errorType: null, error: null,
+        data: { final_answer: "done", tool_calls: [
+          { id: "c1", name: "read_file", arguments: { path: "a" }, status: "success" },
+          { id: "c2", name: "read_file", arguments: { path: "b" }, status: "success" },
+        ] },
+      } satisfies StreamOutcome;
+    });
+    await sendMessage("A", []);
+  });
+
+  it("旧后端只有 tool_round + done 且无status时只收敛为中性completed，不伪装success", async () => {
+    h.streamChatRequest.mockImplementationOnce(async (_body, handlers: any) => {
+      handlers.onToolRound?.({ tool_call_id: "legacy-c1", tool_name: "read_file", round_index: 1 });
+      return {
+        ok: true, errorType: null, error: null,
+        data: { final_answer: "done", tool_calls: [
+          { id: "legacy-c1", name: "read_file", arguments: { path: "legacy" } },
+        ] },
+      } satisfies StreamOutcome;
+    });
+    await sendMessage("legacy", []);
+    expect(conversationStore.getState().messages.at(-1)?.toolActivities?.[0]?.status).toBe("completed");
+  });
+
+  it("流中断时仍在 running 的工具如实标成 interrupted", async () => {
+    h.streamChatRequest.mockImplementationOnce(async (_body, handlers: any) => {
+      handlers.onToolRound?.({ tool_call_id: "c1", tool_name: "execute_command", round_index: 1 });
+      return {
+        ok: false,
+        errorType: "network",
+        error: { detail: "连接中断，已保留已生成内容" },
+        data: null,
+      } satisfies StreamOutcome;
+    });
+
+    await sendMessage("A", []);
+    const msg = conversationStore.getState().messages.at(-1);
+    expect(msg?.toolActivities?.[0]?.status).toBe("interrupted");
+  });
+
   it("空正文 done 保留已流式 reasoning，并展示 fallback/推理实际状态", async () => {
     h.streamChatRequest.mockImplementationOnce(async (_body, handlers: any) => {
       handlers.onReasoningDelta?.("已收到推理");

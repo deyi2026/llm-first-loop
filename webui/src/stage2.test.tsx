@@ -5,6 +5,7 @@ import { render, screen, fireEvent, cleanup, waitFor, within } from "@testing-li
 import { renderMarkdown, highlightCode } from "./core/markdown";
 import { MessageItem } from "./components/conversation/MessageItem";
 import { Composer } from "./components/conversation/Composer";
+import { projectToolActivityMessages } from "./core/toolActivity";
 
 describe("renderMarkdown", () => {
   it("GFM 基础渲染", () => {
@@ -153,19 +154,74 @@ describe("MessageItem", () => {
     expect(body.querySelector("math")).toBeNull();
   });
 
-  it("工具链折叠 + 工具参数展开", () => {
+  it("工具活动：执行中自动展开；完成后默认折叠；普通界面不暴露 tool_call_id", () => {
+    const { rerender } = render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "",
+          streaming: true,
+          toolCalls: [{ id: "c1-secret-id", name: "read_file", arguments: { path: "/tmp/a" } }],
+          toolActivities: [{ id: "c1-secret-id", name: "read_file", status: "running", argsSummary: '{"path":"/tmp/a"}' }],
+        }}
+      />
+    );
+    expect(screen.getByTestId("tool-activity")).toBeInTheDocument();
+    expect(screen.getByText(/正在使用工具/)).toBeInTheDocument();
+    expect(screen.getByText("读取文件")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("c1-secret-id");
+
+    rerender(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "完成",
+          streaming: false,
+          toolCalls: [{ id: "c1-secret-id", name: "read_file", arguments: { path: "/tmp/a" } }],
+          toolActivities: [{ id: "c1-secret-id", name: "read_file", status: "success", arguments: { path: "/tmp/a" } }],
+        }}
+      />
+    );
+    expect(screen.getByText("使用了 1 个工具")).toBeInTheDocument();
+    expect(screen.queryByText("读取文件")).not.toBeInTheDocument();
+  });
+
+  it("旧backend无exact status的completed保持中性，不渲染成功色", () => {
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "done",
+          toolActivities: [{ id: "legacy-c1", name: "read_file", status: "completed" }],
+        }}
+      />
+    );
+    expect(screen.getByTestId("tool-activity").querySelector(".v2-tool-activity-summary-icon.neutral")).not.toBeNull();
+    expect(screen.queryByText("成功")).not.toBeInTheDocument();
+  });
+
+  it("孤立legacy tool receipt仍从旧文本fallback识别中断，不伪装unknown", () => {
+    render(
+      <MessageItem
+        msg={{ role: "tool", content: "[执行中断] legacy receipt", toolCallId: "legacy-orphan", toolName: "read_file" }}
+      />
+    );
+    expect(screen.getByText("已中断")).toBeInTheDocument();
+  });
+
+  it("工具活动：失败项保持展开且清楚显示失败", () => {
     render(
       <MessageItem
         msg={{
           role: "assistant",
           content: "",
-          toolCalls: [{ id: "c1", name: "read_file", arguments: { path: "/tmp/a" } }],
+          toolActivities: [{ id: "c1", name: "execute_command", status: "failure", resultContent: "[状态: failure] exit 1" }],
         }}
       />
     );
-    expect(screen.getByTestId("tool-chain")).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("tool-chain").querySelector("button")!);
-    expect(screen.getByText("read_file")).toBeInTheDocument();
+    expect(screen.getByText("工具执行有异常 · 1 个工具")).toBeInTheDocument();
+    expect(screen.getByText("运行命令")).toBeInTheDocument();
+    expect(screen.getByText("失败")).toBeInTheDocument();
   });
 
   it("出产物：edit_file 工具调用 → 文件 chips 即时可见", () => {
@@ -209,6 +265,40 @@ describe("MessageItem", () => {
     await waitFor(() => expect(screen.getByTestId("file-preview")).toBeInTheDocument());
     expect(screen.getByText("print(1)")).toBeInTheDocument();
     vi.unstubAllGlobals();
+  });
+});
+
+
+describe("tool activity history projection", () => {
+  it("按 exact tool_call_id 合并调用和回执；原消息不变；孤儿回执不吞掉", () => {
+    const raw = [
+      { role: "assistant" as const, content: "", toolCalls: [{ id: "c1", name: "read_file", arguments: { path: "README.md" } }] },
+      { role: "tool" as const, content: "[状态: success] ok", toolCallId: "c1" },
+      { role: "tool" as const, content: "[状态: failure] orphan", toolCallId: "other" },
+      { role: "assistant" as const, content: "done" },
+    ];
+    const projected = projectToolActivityMessages(raw);
+    expect(raw).toHaveLength(4);
+    expect(projected).toHaveLength(3);
+    expect(projected[0].msg.toolActivities?.[0]).toMatchObject({ id: "c1", status: "success" });
+    expect(projected[1].msg.role).toBe("tool");
+    expect(projected[1].msg.toolCallId).toBe("other");
+  });
+
+  it("结构化 tool status 优先于矛盾回执文本；legacy 文本仅作 fallback", () => {
+    const structured = projectToolActivityMessages([
+      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "read_file", arguments: {} }] },
+      { role: "tool", content: "[状态: success] stale text", toolCallId: "c1", toolName: "read_file", toolStatus: "failure", toolDurationMs: 12.5 },
+    ]);
+    expect(structured[0].msg.toolActivities?.[0]).toMatchObject({
+      id: "c1", status: "failure", durationMs: 12.5,
+    });
+
+    const legacy = projectToolActivityMessages([
+      { role: "assistant", content: "", toolCalls: [{ id: "c2", name: "read_file", arguments: {} }] },
+      { role: "tool", content: "[状态: success] legacy", toolCallId: "c2" },
+    ]);
+    expect(legacy[0].msg.toolActivities?.[0]?.status).toBe("success");
   });
 });
 

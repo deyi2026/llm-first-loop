@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageItem, extractProducedPaths } from "./MessageItem";
 import { loadEarlierHistory, useConversation } from "../../core/conversation";
 import { sessionStore } from "../../core/stores";
+import { projectToolActivityMessages } from "../../core/toolActivity";
 import { zh } from "../../i18n/zh";
 
 export function MessageList() {
@@ -11,17 +12,20 @@ export function MessageList() {
   const [atBottom, setAtBottom] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // 展示层机械聚合 assistant(tool_calls) ↔ tool(receipt)。原始历史数组保持不变。
+  const projectedMessages = useMemo(() => projectToolActivityMessages(conv.messages), [conv.messages]);
+
   // 会话级出产物集合（对齐 DSH turn 级 deliverables）：跨消息累积 edit_file 路径，
   // 供最终回答正文中的路径引用可点击打开（编辑与引用通常在不同消息）
   const producedPaths = useMemo(() => {
     const out: string[] = [];
-    for (const m of conv.messages) {
+    for (const { msg: m } of projectedMessages) {
       for (const p of extractProducedPaths(m.toolCalls)) {
         if (!out.includes(p)) out.push(p);
       }
     }
     return new Set(out);
-  }, [conv.messages]);
+  }, [projectedMessages]);
 
   const updateBottom = () => {
     const el = scrollRef.current;
@@ -65,9 +69,9 @@ export function MessageList() {
           ↑ {zh.loadEarlier}
         </button>
       )}
-      {conv.messages.map((m, i) => (
+      {projectedMessages.map(({ msg: m, originalIndex }) => (
         <MessageItem
-          key={i}
+          key={`${originalIndex}:${m.role}:${m.sourceIndex ?? "live"}`}
           msg={m}
           index={m.sourceIndex}
           sessionId={sessionStore.getState().currentSessionId ?? undefined}
