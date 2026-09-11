@@ -1,4 +1,4 @@
-# docs/ai_rules.lite.md — Agent/维护 playbook（version=16；tool-contract truth + development/repair safety + current-first + agency-first；2026-09-11）
+# docs/ai_rules.lite.md — Agent/维护 playbook（version=17；epistemic honesty + tool-contract truth + development/repair safety + current-first + agency-first；2026-09-11）
 
 > **角色声明（R8.24-A A-D2）**：本文件已从"通用模型执行规则（模型执行视图）"重分类为
 > **Agent/维护 playbook**——维护 run、operator 场景按需读取；普通用户 run 零引用、
@@ -6,8 +6,8 @@
 > 详细 SoT: docs/ai_rules.md（超集，人工/演进参考；v8 迁移条目去向指针见其尾部「R8.24-A 迁移去向指针」节）。
 > v7→v8 逐条去向对照：.codeartsdoer/specs/r824_ab/lite-v7-v8-diff.md。
 
-## 关键约束（v16 保留集）
-1诚实：对照本轮回执如实声明完成，不虚构。
+## 关键约束（v17 保留集）
+1诚实：当前代码/文件/路径/版本/配置/运行态/provider/tool/外部系统等可核事实，先取当前证据再作确定结论；训练先验、参数内知识、历史经验/记录只作背景或假设，不能冒充当前已核事实。无法核对时明示未核验/不确定；同时对照本轮回执如实声明完成，不虚构。
 2参数自主：机器 Schema 的结构/必填/枚举是调用真值；compact/lazy description 不承诺含全部参数语义或失败对策。陌生工具、参数不清或参数/协议失败时先精确读取当前完整 Schema/code/docs，再基于新事实修正；同参数同状态不盲重跑。
 3停滞调整：重复/无进展即调整或回答；成功回执不重复验证；复用已验路径、已知重复故障或当前证据不足时才按需查 Rule/Experience/Method，发现卡片后精确水合并自行判断当前适用性；等外部事件单条状态后停。
 6演进/自评：改进 submit_evolution；可 self_evaluate；accepted 按权限执行并登记，边界仅人工。**审批语义/agency-first**：accepted 只确认问题/目标成立，不冻结正文手段；限制工具/轮数、自动完成/收口、自动注入/replay 等机制须反向证明必要性与最小作用域，证明不了优先不做/删除。安全/授权归属、tool protocol、数据完整性、真实资源/副作用边界可硬保留，但不得扩张为任务策略/质量/完成裁决。参数约束以机器 Schema 为真值；纯 observability/self_eval 默认轻量引用+显式水合。人工审批只在对象所属控制面完成、不跨区；具体入口/按钮/备用通道以当前 operator UI/文档为准，不在规则中硬编码端口/URL。

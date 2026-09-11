@@ -243,11 +243,11 @@ def test_legacy_playbook_counterexample_exercises_banned_topics():
 # ---------- rules_version 联动（A-2.3 复核）----------
 
 
-def test_rules_version_reflects_v16():
-    """lite 头部 version=16 且 _rules_version() 解析一致。
+def test_rules_version_reflects_v17():
+    """lite 头部 version=17 且 _rules_version() 解析一致。
 
-    v16 修正 compact/lazy 工具契约现实：参数/协议失败先核当前完整 Schema/code/docs，
-    已知重复故障才按需水合 Rule/Experience/Method；v15 新增 merge 吸收处置。
+    v17 增加全模型认识论诚实：当前可核事实先取当前证据，训练/历史先验不冒充当前真值；
+    v16 修正 compact/lazy 工具契约现实，v15 新增 merge 吸收处置。
     """
     import sys
 
@@ -256,5 +256,5 @@ def test_rules_version_reflects_v16():
 
     lite = _read("docs/ai_rules.lite.md")
     m = re.search(r"version=(\d+)", lite.splitlines()[0])
-    assert m and m.group(1) == "16", "lite 头部应为 version=16"
-    assert _rules_version() == "16", "_rules_version() 应反映 v16"
+    assert m and m.group(1) == "17", "lite 头部应为 version=17"
+    assert _rules_version() == "17", "_rules_version() 应反映 v17"

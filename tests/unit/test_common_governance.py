@@ -18,7 +18,9 @@ def test_common_governance_encodes_reusable_anti_drift_invariants():
     expected = (
         "保持目标约束",
         "区分事实/假设",
-        "先取真实证据，不猜",
+        "训练先验/历史知识只作假设",
+        "先取当前证据",
+        "无法核对就明示未核验",
         "未获成功回执不得声称完成",
         "参数失败时先核当前 Schema/代码/文档再修正",
         "已验证经验/方法并核适用性",
@@ -29,6 +31,14 @@ def test_common_governance_encodes_reusable_anti_drift_invariants():
     )
     for item in expected:
         assert item in prompt
+
+
+def test_epistemic_honesty_is_universal_not_local_model_guidance():
+    prompt = build_system_prompt()
+    for current_fact in ("当前代码", "文件", "路径", "版本", "运行态", "配置", "外部接口"):
+        assert current_fact in prompt
+    for local_only in ("Ornith", "Qwen", "cognilocal", "GLM", "MiniMax", "DeepSeek"):
+        assert local_only not in prompt
 
 
 def test_current_truth_and_authority_remain_primary():
