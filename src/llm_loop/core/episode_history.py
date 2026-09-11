@@ -463,6 +463,12 @@ def evidence_candidate_set_digest(groups: tuple[AtomicEvidenceGroup, ...]) -> st
 
 
 _WORKING_STATE_CHECKPOINT_VERSION = 1
+_CHECKPOINT_TRUNCATION_REASONS = {
+    "length",
+    "max_token",
+    "max_tokens",
+    "max_tokens_reached",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -510,6 +516,7 @@ def build_working_state_checkpoint(
     state_char_limit: int,
     selected_raw_char_limit: int,
     selection_finish_reason: str = "stop",
+    selection_transport_truncated: bool | None = None,
 ) -> dict[str, Any]:
     """Build a restart-safe checkpoint from a model selection without semantic judgment.
 
@@ -536,8 +543,26 @@ def build_working_state_checkpoint(
     if stats.selected_raw_chars > selected_raw_char_limit:
         raise ValueError("working-state selected raw evidence exceeds resource limit")
     finish_reason = str(selection_finish_reason or "")
-    if finish_reason != "stop":
-        raise ValueError("working-state selection must finish normally before persistence")
+    finish_reason_key = finish_reason.strip().lower()
+    if finish_reason_key in _CHECKPOINT_TRUNCATION_REASONS:
+        raise ValueError(
+            "working-state selection must finish normally before persistence "
+            "(transport truncated)"
+        )
+    if selection_transport_truncated is not None and not isinstance(
+        selection_transport_truncated, bool
+    ):
+        raise ValueError("working-state selection transport completeness must be boolean")
+    if selection_transport_truncated is True:
+        raise ValueError(
+            "working-state selection must finish normally before persistence "
+            "(transport truncated)"
+        )
+    if selection_transport_truncated is None and finish_reason_key != "stop":
+        raise ValueError(
+            "working-state selection requires explicit transport completeness "
+            "for a non-stop finish reason"
+        )
     by_id = {group.descriptor.evidence_id: group for group in groups}
     selected_groups = [by_id[evidence_id] for evidence_id in stats.selected_ids]
     return {
@@ -562,6 +587,11 @@ def build_working_state_checkpoint(
         "selected_raw_chars": stats.selected_raw_chars,
         "selected_raw_char_limit": selected_raw_char_limit,
         "selection_finish_reason": finish_reason,
+        # Keep exact provider stop reason separate from normalized transport
+        # completeness.  A complete tool-call response may end as ``tool_calls``;
+        # only a caller with an explicit mechanical transport fact may persist a
+        # non-``stop`` checkpoint.
+        "selection_transport_truncated": False,
         "selection_complete": True,
     }
 
@@ -642,10 +672,22 @@ def resolve_working_state_checkpoint(
         return reject("state_size_mismatch")
     if checkpoint.get("selected_raw_chars") != selected_raw_chars:
         return reject("selected_size_mismatch")
-    if str(checkpoint.get("selection_finish_reason") or "") != "stop":
-        return reject("selection_finish_reason")
     if checkpoint.get("selection_complete") is not True:
         return reject("selection_incomplete")
+    finish_reason = str(checkpoint.get("selection_finish_reason") or "")
+    finish_reason_key = finish_reason.strip().lower()
+    if finish_reason_key in _CHECKPOINT_TRUNCATION_REASONS:
+        return reject("selection_finish_reason")
+    transport_truncated = checkpoint.get("selection_transport_truncated")
+    if transport_truncated is None:
+        # v1 checkpoints written before the transport-completeness field are
+        # backward compatible only for the historically qualified ``stop`` case.
+        if finish_reason_key != "stop":
+            return reject("selection_transport_unknown")
+    elif not isinstance(transport_truncated, bool):
+        return reject("selection_transport_shape")
+    elif transport_truncated:
+        return reject("selection_transport_truncated")
     return WorkingStateCheckpointResolution(
         eligible=True,
         reason="eligible",

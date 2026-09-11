@@ -113,6 +113,64 @@ def test_truncated_selection_is_not_persisted_as_checkpoint():
         )
 
 
+def test_nontruncated_tool_call_transport_can_persist_with_explicit_fact():
+    messages = _messages()
+    checkpoint = build_working_state_checkpoint(
+        session_id="s1",
+        messages=messages,
+        provider_id="deepseek",
+        model="deepseek/model",
+        selected_ids=["e1"],
+        state_text="tool-call checkpoint",
+        state_char_limit=1024,
+        selected_raw_char_limit=20000,
+        selection_finish_reason="tool_calls",
+        selection_transport_truncated=False,
+    )
+
+    assert checkpoint["selection_finish_reason"] == "tool_calls"
+    assert checkpoint["selection_transport_truncated"] is False
+    resolved = resolve_working_state_checkpoint(
+        checkpoint,
+        session_id="s1",
+        messages=messages,
+        provider_id="deepseek",
+        model="deepseek/model",
+    )
+    assert resolved.eligible is True
+
+
+def test_nonstop_checkpoint_requires_explicit_transport_completeness():
+    with pytest.raises(ValueError, match="explicit transport completeness"):
+        build_working_state_checkpoint(
+            session_id="s1",
+            messages=_messages(),
+            provider_id="deepseek",
+            model="deepseek/model",
+            selected_ids=["e1"],
+            state_text="tool-call checkpoint",
+            state_char_limit=1024,
+            selected_raw_char_limit=20000,
+            selection_finish_reason="tool_calls",
+        )
+
+
+def test_explicit_transport_truncation_is_never_persisted():
+    with pytest.raises(ValueError, match="transport truncated"):
+        build_working_state_checkpoint(
+            session_id="s1",
+            messages=_messages(),
+            provider_id="deepseek",
+            model="deepseek/model",
+            selected_ids=["e1"],
+            state_text="partial tool-call checkpoint",
+            state_char_limit=1024,
+            selected_raw_char_limit=20000,
+            selection_finish_reason="tool_calls",
+            selection_transport_truncated=True,
+        )
+
+
 def test_provider_truncation_takes_recovery_ownership_after_s1_boundary_advances():
     messages = _messages()
     checkpoint = _checkpoint(messages)
