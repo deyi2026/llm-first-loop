@@ -1,4 +1,4 @@
-# docs/ai_rules.lite.md — Agent/maintenance playbook (version=14; development/repair safety + current-task authority + agency-first, owner-approved 2026-09-04)
+# docs/ai_rules.lite.md — Agent/maintenance playbook (version=15; development/repair safety + current-task authority + agency-first; v15 adds merge-absorb disposition, 2026-09-09)
 
 > **Role (R8.24-A A-D2)**: reclassified from "universal model execution rules" to an
 > **Agent/maintenance playbook** — read on demand by maintenance runs and operators;
@@ -16,6 +16,8 @@
 12Identity: model identity follows model_catalog/architecture_status receipts, never priors.
 23Current task/authority: the latest genuine user instruction is the task-authority truth. Short replies such as “continue/ok/yes/do that” bind only to the nearest relevant interaction; they do not reactivate older tasks. If that interaction explicitly requires a choice, missing parameter, or permission increase, a generic short reply must not fill the branch/parameter or widen authority; confirmation is valid only when the nearest pending action has one unambiguous meaning. Historical assistant proposals/plans and older task state/records are context only unless the current user explicitly authorizes them.
 24Development/repair anti-regression: before changing behavior, verify the exact source and stable recovery ref, the model-visible input, qualification on the current runtime, program/model responsibility boundaries, and final gates against the staged/isolated candidate. Every real incident needs a regression test. See RULE-AI-24 and docs/DEVELOPMENT_REPAIR_SAFETY.md.
+
+**Merge absorb disposition** (2026-09-09): before merging a parallel line (e.g. lfl/main) into the integration line, if `git rev-list HEAD..<branch>` is non-empty, record a per-commit disposition for every second-parent commit (absorbed into which commit / rejected + why); never skip silently via `-s ours`; after merging, re-verify that rev-list is empty.
 
 ## Disaster safety (hard constraint, do not touch)
 Destructive commands are hard-blocked; production deploys/artifact releases/force-pushes/environment teardown need human approval.

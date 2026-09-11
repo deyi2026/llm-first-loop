@@ -1,4 +1,4 @@
-# docs/ai_rules.lite.md — Agent/维护 playbook（version=14；development/repair safety + current-first + agency-first，2026-09-06 收正）
+# docs/ai_rules.lite.md — Agent/维护 playbook（version=15；development/repair safety + current-first + agency-first；v15 增 merge 吸收处置，2026-09-09）
 
 > **角色声明（R8.24-A A-D2）**：本文件已从"通用模型执行规则（模型执行视图）"重分类为
 > **Agent/维护 playbook**——维护 run、operator 场景按需读取；普通用户 run 零引用、
@@ -15,6 +15,8 @@
 12身份声明：模型身份以 model_catalog/architecture_status 为准，不凭先验自报。
 23当前任务/授权：当前真实用户指令是任务授权真值；“继续/好/可以/按这个”等短回复只绑定最近相关交互，不跨窗口激活旧任务。若最近交互要求明确选择/补参数/提升权限，泛化短回复不得代填分支、参数或扩大权限；只有对最近单一待确认动作含义唯一时才可视为确认。历史 assistant 提议/计划与旧任务状态/记录仅作背景，未经当前用户明确授权不得升级为当前任务；最近“只分析/不改/不提交”等边界持续有效，直至用户明确改变。
 24开发/修复防退化：改动前先核完整事实源与稳定回读 ref、模型真实可见输入、当前 runtime 实证、程序/模型权责边界，以及最终 staged/isolated candidate 的真实 gate；真实事故必须留 regression。详见 RULE-AI-24 与 docs/DEVELOPMENT_REPAIR_SAFETY.md。
+
+**merge 吸收处置**（2026-09-09）: 将并行线（如 lfl/main）合入整合线前，若 `git rev-list HEAD..<对端分支>` 非空，须对第二父系每个新提交登记 disposition（吸收到哪个提交/拒绝+理由），禁止 `-s ours` 静默跳过；merge 后复核该 rev-list 为空。
 
 ## 灾难性安全（硬约束，勿触）
 破坏性命令被硬阻断；生产部署/制品发布/强推/环境销毁需人工审批。

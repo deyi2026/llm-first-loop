@@ -243,10 +243,10 @@ def test_legacy_playbook_counterexample_exercises_banned_topics():
 # ---------- rules_version 联动（A-2.3 复核）----------
 
 
-def test_rules_version_reflects_v14():
-    """lite 头部 version=14 且 _rules_version() 解析一致。
+def test_rules_version_reflects_v15():
+    """lite 头部 version=15 且 _rules_version() 解析一致。
 
-    v14 在 v13 基础上新增 RULE-AI-24 开发/修复防退化契约；v13 在 B-G5/R8.24-C 已满足后退休迁移期 Rule21，并收正 current-first 检索/SOP 下沉。
+    v15 在 v14 基础上新增 merge 吸收处置（并行线合入整合线的第二父系逐提交 disposition，禁止 -s ours 静默跳过）；v14 新增 RULE-AI-24 开发/修复防退化契约。
     """
     import sys
 
@@ -255,5 +255,5 @@ def test_rules_version_reflects_v14():
 
     lite = _read("docs/ai_rules.lite.md")
     m = re.search(r"version=(\d+)", lite.splitlines()[0])
-    assert m and m.group(1) == "14", "lite 头部应为 version=14"
-    assert _rules_version() == "14", "_rules_version() 应反映 v14"
+    assert m and m.group(1) == "15", "lite 头部应为 version=15"
+    assert _rules_version() == "15", "_rules_version() 应反映 v15"
