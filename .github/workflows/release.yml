@@ -1,6 +1,7 @@
-# GitHub Release 记录（B11 发布节奏制度化）
-# tag v* 推送时: ① 先跑门禁（pytest/ruff/pyright）确认发版基线 ② 生成 Release（草稿, 人工确认发布）。
-# 配合 release-drafter（PR 合并自动维护 draft）: 发布前人工核对 draft 内容, 或直接由本流程生成。
+# GitHub Release 唯一写入口（B11 发布节奏制度化）
+# tag v* 推送时: ① 先跑门禁（pytest/ruff/pyright）确认发版基线 ② 生成与该 tag 同名的 Release 草稿，人工确认后发布。
+# 重要：仓库不得再启用第二个 Draft Release writer。Release Drafter 曾在多个 draft 并存时选中 v0.6.12 后按 NEXT_PATCH_VERSION 将其改写为 v0.6.10；
+# 因此 tag-based release.yml 是 Release 对象的 single writer，发布说明由 GitHub generate_release_notes + CHANGELOG 提供。
 name: Release
 
 on:
