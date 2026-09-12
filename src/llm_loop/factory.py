@@ -80,8 +80,8 @@ from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.builtin.read_image import ReadImageTool
 from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
 from llm_loop.tools.builtin.search_files import SearchFilesTool
-from llm_loop.tools.builtin.source_synopsis import SourceSynopsisTool
 from llm_loop.tools.builtin.smx_perceive import SmxPerceiveTool
+from llm_loop.tools.builtin.source_synopsis import SourceSynopsisTool
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
