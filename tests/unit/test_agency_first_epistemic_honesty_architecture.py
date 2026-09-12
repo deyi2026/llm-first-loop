@@ -11,8 +11,9 @@ def _design() -> str:
 def test_agency_first_architecture_defines_epistemic_honesty() -> None:
     text = _design()
 
+    assert "R9 Prefix Stability as a Mechanical Resource Boundary" in text
     assert "R8 Runtime Identity Boundary" in text
-    assert "R7 的诚实感官与连续性继续有效" in text
+    assert "R7 诚实感官/连续性继续有效" in text
     assert "## 1.5 认识论诚实" in text
     assert "当前可核事实" in text
     assert "训练先验不是证据" in text
@@ -31,6 +32,13 @@ def test_agency_first_architecture_defines_epistemic_honesty() -> None:
     assert "这些值不得因为一次 restart/deploy 动作而无意变成" in text
     assert "不能用 operator 的临时沙箱替代这些 LFL 安全机制" in text
     assert "DSH_HOME=<mirror>/data/dsh-home" in text
+    assert "## 1.8 Provider Prefix 稳定是机械表示职责" in text
+    assert "Stable Compaction Frontier" in text
+    assert "事件重放与当前进程不能拥有两套不同的 compaction 世界" in text
+    assert "soft result count" in text
+    assert "不新增第二套 coalescer" in text
+    assert "healthy comparable hit" in text
+    assert "structural warmup" in text
 
 
 def test_epistemic_honesty_is_provider_agnostic_without_new_semantic_gate() -> None:

@@ -1,11 +1,11 @@
 # LFL 修复与优化总书：LLM Agency First（模型能力优先）
 
-> 状态：**R8 / P1-A + P1-B + P1-C 已验证完成**（修订记录见附录 A）
+> 状态：**R9 / P1-A + P1-B + P1-C 已验证完成**（修订记录见附录 A）
 > 日期：2026-09-03
 > 适用范围：LFL 的工具发现与投影、工具执行循环、停滞/熔断、任务恢复授权、Prompt Eligibility、动态注入、错误回执、本地/远程模型工具路由，以及后续所有修复、优化、功能新增。
 > 核心裁决：**程序的职责是提供能力、事实、边界和可恢复性，不是替模型做推理，不是用规则替代模型判断，也不能以“稳定/省 token/防犯错”为由制造模型无法完成任务的结构性障碍。**
 > 本文是后续相关设计与代码评审的上位原则。与旧规则冲突时，旧规则必须重新证明必要性；不能证明则修改、降级为观测或删除。
-> 当前修订：**R8 Runtime Identity Boundary**——R7 的诚实感官与连续性继续有效；新增“运维调用方环境不是 LFL 运行身份”边界：MCP Console、IDE、CI 或其它 operator 通道可以为自己的执行使用沙箱 HOME/TMPDIR/PATH，但常驻 LFL Web/Feishu 服务不得被动继承这些临时身份。服务启动必须恢复宿主账户运行身份，再由 LFL 自身的 CatastrophicGuard / EXEC_MODE / approval / EXEC_SANDBOX / workspace scope 独立实施安全边界；DSH 等子系统可另有显式、可审计的专用数据根。该边界不扩大模型权限，只消除“由谁重启服务决定模型看到哪个 HOME/PATH”的非确定性。
+> 当前修订：**R9 Prefix Stability as a Mechanical Resource Boundary**——R8 Runtime Identity Boundary 与 R7 诚实感官/连续性继续有效；新增 provider-prefix 稳定边界：已确定的机械历史表示在 contract 未变化时应保持稳定，compaction 的 live Session 状态必须与 event replay 一致，避免同一源消息反复改写；working-set receipt fold 只有在粗字节压力、足够机械净收益或硬结果数上限到达时才改写旧前缀。缓存命中优化不得演变成“哪条证据重要/可删”的语义裁决，也不得为了追逐命中率破坏最新未决工具链、证据可恢复性或任务可达性。
 
 ---
 
@@ -185,7 +185,7 @@ event log 与 live session 前缀不一致时，程序不得猜测哪条旧历�
 
 在一个长 active episode 中，已经被后续模型轮次看过、且拥有稳定 EvidenceRef/可恢复来源的旧 tool result，可以机械替换为 protocol-preserving receipt；原始证据仍可精确水合。最新未暴露/未决 tool chain 保持原文，不可恢复的 failure/error/timeout 事实也不得为了省 token 直接丢弃。
 
-折叠必须兼顾 provider 前缀稳定：禁止恢复已被实测否决的“每轮一暴露就重写旧前缀”方案。当前边界采用**粗字节批次 + 已暴露 pending-result 数量上限**双机械阈值；两者只回答“表示层积压是否过大”，不回答“哪条证据重要/是否足够/任务是否完成”。模型仍拥有证据相关性、充分性和收口判断权。
+折叠必须兼顾 provider 前缀稳定：禁止恢复已被实测否决的“每轮一暴露就重写旧前缀”方案。当前边界采用**粗字节批次 + soft result count × 最小净节省 + hard result count**的纯机械迟滞：64K 级粗批次保持已验证的低频 rewrite；soft count 只有在 raw→receipt 真正节省足够字符时才提前折叠；hard count 只作为大量小结果积压的资源兜底。它们只回答“表示层积压/改写收益是否越过资源边界”，不回答“哪条证据重要/是否足够/任务是否完成”。模型仍拥有证据相关性、充分性和收口判断权。
 
 ## 1.7 运维沙箱不是 LFL Runtime 身份（R8）
 
@@ -196,6 +196,42 @@ LFL 的 operator/维护通道与 LFL 常驻 runtime 是两个不同安全域。M
 DSH 等外部执行子系统可以使用独立、显式、可审计的数据根。例如镜像运行时固定 `DSH_HOME=<mirror>/data/dsh-home`，用于隔离 profile/session；二进制发现则使用宿主账户已安装的 `~/.local/dsh/bin`。这类显式子系统隔离与把整个 LFL runtime 偶然塞进 operator sandbox 是两回事。
 
 2026-09-11 事故证据：由 MCP Console 调用 `restart_mirror.sh` 后，8903 曾实际继承 `HOME=<mcp-console>/home`、`TMPDIR=<mcp-console>/tmp`，且 `_prep_dsh_env()` 先 export 镜像 `DSH_HOME` 又在同函数中 unset，最终 `dsh_task` 将真实已安装的 DSH 误报为 unavailable。修复后 8903 的 `HOME` 恢复宿主账户、`TMPDIR` 恢复 macOS user temp，`DSH_HOME` 保持镜像专用目录，PATH 可发现宿主 DSH；LFL 自身安全策略不变。
+
+## 1.8 Provider Prefix 稳定是机械表示职责（R9）
+
+Provider cache 是否命中首先取决于**前一请求已经出现过的 provider-input 前缀是否仍保持相同表示**。因此 LFL 可以、也应该机械治理 prefix churn，但这个权力只存在于表示/资源层，不能扩张成证据价值判断。
+
+### 1.8.1 Stable Compaction Frontier：同一 contract 下不重复改写
+
+一次 history compaction 已经把某些原始 Session `msg_seq` 标记为当前 provider/model/budget contract 下已 compact 后，该事实必须同时存在于当前 live Session 与 durable event replay。后续同一 contract 的 build 不能因为上一轮在 provider-view copy（例如 tool receipt）上完成了 compaction，就再次把同一原始消息当成“尚未 compact”。
+
+因此 `message.cache_compacted` 的事件真值与 live `sess.messages` marker 必须同步；反方向也一样：当 provider/model/budget contract 变化触发 `history.compaction_state_reset` 时，live Session 必须像 replay 一样清掉该 provider 的旧 marker，再只把当前 build 真正重新 compact 的精确 `msg_seq` 标回。**事件重放与当前进程不能拥有两套不同的 compaction 世界。**
+
+### 1.8.2 Prefix rewrite 需要机械收益迟滞
+
+“已有 12 个小 tool result”本身不能证明值得立即重写已缓存前缀。一次 receipt fold 会使旧 provider 输入发生离散变化，因此应同时考虑机械资源收益：
+
+- 大块 raw result 达到 coarse byte batch，可直接折叠；
+- 达到 soft result count 时，只有 raw→receipt 的实际字符净节省达到机械下限才折叠；
+- hard result count 只防止大量小结果无限积压；
+- 最新未暴露/未决 tool chain 与不可恢复失败事实继续按 R7 规则保留。
+
+这些阈值不是“证据重要性分数”，也不能按文件名、工具类型、模型猜测或任务语义区别对待。
+
+### 1.8.3 必须动时，同一 build 一次动完；不新增第二套 coalescer
+
+当前 pipeline 已先形成 working-set provider projection，再进入 history compaction；两者在同一 build 同时越过机械边界时，本来就会汇聚成**一个最终 provider request**。因此 R9 不再增加另一套“语义 coalescing controller”。真正需要修的是跨 build 的重复改写：live/replay marker 分裂、低收益 count-only fold、stale marker 重复 reset 等。
+
+在这些根因消除后，若仍有多个必要 mutation 落在同一 build，它们自然由最终 request assembly 合并；若没有越过资源边界，则保持 append-only/stable prefix。
+
+### 1.8.4 观测必须区分 cache engine 与 prefix mutation
+
+缓存健康至少区分两类事实：
+
+- **healthy comparable hit**：provider/model/system/tools/epoch 可比较时，缓存引擎对稳定前缀的真实复用；
+- **structural warmup**：new run、prompt shrink、compaction epoch 或其它真实 prefix mutation 后的预期冷启动。
+
+不能把一次必要 compaction 后的低命中误报成 cache engine regression，也不能用“平均命中率很高”掩盖频繁 prefix rewrite。常态 `request.meta/usage` 记录低成本因果事实；需要深挖当前 OpenAI-compatible provider 路径时，可显式启用发送前 payload trace，记录完整 request-object 指纹、消息公共前缀、首个分叉消息及 tools/params shape 变化。该 trace 默认关闭、纯观测、fail-open，不进入 prompt，不参与模型路由或完成裁决；没有覆盖到的 wire protocol 不得据此假称已观测其最终 HTTP body。
 
 ---
 
