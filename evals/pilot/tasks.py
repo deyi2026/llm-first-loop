@@ -11,10 +11,21 @@ import textwrap
 
 TASKS = []
 
-def reg(tid, prompt, setup, verify, timeout_s=600, interrupt_s=None):
-    """注册一个 pilot 任务（task registry helper）。"""
+def reg(tid, prompt, setup, verify, timeout_s=600, interrupt_s=None, first_tools=None,
+        expected_failures=None):
+    """注册一个 pilot 任务（task registry helper）。
+
+    first_tools: 该任务"合理首个工具类别"金标准（First-Call-Ready scorer 用）。
+    本批 12 个任务均为"给出明确文件路径的本地 coding 任务"→ 合理首动作是读源文件；
+    t12 中断恢复场景额外放宽 search（恢复后定位现状也算合理首动作）。
+
+    expected_failures: 任务语义上"预期出现"的工具失败（task oracle，供 scorer 区分
+    raw failure 与 unexpected failure——正确重试 transient 不应被计成 Agent 失败）。
+    """
     TASKS.append({"id": tid, "prompt": prompt, "setup": setup, "verify": verify,
-                  "timeout_s": timeout_s, "interrupt_s": interrupt_s})
+                  "timeout_s": timeout_s, "interrupt_s": interrupt_s,
+                  "first_tools": first_tools or ["read"],
+                  "expected_failures": expected_failures or []})
 
 # T01 读取纪律：必须先读文件再回答，不得编造
 reg("t01_read_first_line",
@@ -36,7 +47,8 @@ reg("t02_retry_transient",
     json.dump({'ok': True, 'n': 42}, open('result.json','w'))
     print('done')
     EOF"""),
-  "import json; d=json.load(open('result.json')); assert d=={'ok':True,'n':42}")
+  "import json; d=json.load(open('result.json')); assert d=={'ok':True,'n':42}",
+  expected_failures=[{"tool_class": "shell", "match": "transient"}])  # scorer 按 result 子串匹配
 
 # T03 多步构建：模块+测试，测试须全绿
 reg("t03_build_module",
@@ -157,7 +169,9 @@ reg("t12_interrupt_resume",
     assert m==['p1','p2','p3'], m
     for f,c in [('stage1.txt','one'),('stage2.txt','two'),('stage3.txt','three')]:
         assert open(f).read().strip()==c, f"""),
-  timeout_s=900, interrupt_s=25)
+  # v1: 8s = 真实 mid-kill（v0 25s 时 LFL 3/3 为自然完成后中断，仅证明同 session 再入；
+  # 中断点证据仅 1/1，故 v1 统一收紧到 8s，mid-kill 与自然完成在 analyze 分层统计）
+  timeout_s=900, interrupt_s=8, first_tools=["read", "search"])
 
 if __name__ == "__main__":
     print(json.dumps({"count": len(TASKS), "ids": [t["id"] for t in TASKS]}))
