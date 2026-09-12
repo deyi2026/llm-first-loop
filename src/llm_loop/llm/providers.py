@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.config import Settings
+from llm_loop.llm.model_ids import canonical_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -127,23 +128,62 @@ class ProviderRegistry:
         支持:
         - "provider/model" 全限定: 直接按字段匹配
         - 裸模型名: 在所有 provider 中唯一匹配则解析; 歧义/未知抛 ValueError 列候选
+        - 双命名归一（2026-09-12）: exact 未命中时, 同一物理模型的别名形态
+          （LM Studio 绝对路径 ↔ HF org/name）唯一则解析; 多候选仍拒绝（fail-loud）
         """
         if "/" in model_ref:
             pid, mid = model_ref.split("/", 1)
             spec = self.providers.get(pid)
             if spec is None:
-                raise ValueError(f"未知 provider: {pid}")
+                # 2026-09-12: 引用可能是裸的 org/name 或 LM Studio 路径形态
+                # （如 "ornith-ai/X" 或 "/Users/.../.lmstudio/models/org/X"）,
+                # 它们含 "/" 但不是 provider 前缀。pid 未知时把**整串**按裸名解析,
+                # 唯一命中才接受, 否则保持原"未知 provider"错误语义。
+                try:
+                    return self._resolve_bare(model_ref)
+                except ValueError:
+                    raise ValueError(f"未知 provider: {pid}") from None
             if mid not in spec.models:
-                raise ValueError(f"provider '{pid}' 不存在模型 '{mid}'")
+                # 归一回退（限定 provider 内）: 引用形态与注册形态不同但规范形态相同
+                canonical_ref = canonical_model_id(mid)
+                within = [
+                    m for m in spec.models if canonical_model_id(m) == canonical_ref
+                ]
+                if len(within) == 1:
+                    return pid, within[0]
+                listed = ", ".join(sorted(spec.models)) or "(无)"
+                raise ValueError(
+                    f"provider '{pid}' 不存在模型 '{mid}'"
+                    f"（规范形态 '{canonical_ref}' 候选: {listed}）"
+                )
             return pid, mid
 
-        # 裸名查找: 跨 provider 扫描
+        return self._resolve_bare(model_ref)
+
+    def _resolve_bare(self, model_ref: str) -> tuple[str, str]:
+        """裸模型名解析（跨 provider）: exact 优先 → 规范归一回退 → 歧义/未知拒绝."""
         matches: list[tuple[str, str]] = []
         for pid, spec in self.providers.items():
             if model_ref in spec.models:
                 matches.append((pid, model_ref))
 
         if not matches:
+            # 归一回退（跨 provider）: 别名形态与注册形态不同但规范形态相同
+            canonical_ref = canonical_model_id(model_ref)
+            alias_matches: list[tuple[str, str]] = [
+                (pid, mid)
+                for pid, spec in self.providers.items()
+                for mid in spec.models
+                if canonical_model_id(mid) == canonical_ref
+            ]
+            if len(alias_matches) == 1:
+                return alias_matches[0]
+            if len(alias_matches) > 1:
+                listed = ", ".join(f"{p}/{m}" for p, m in alias_matches)
+                raise ValueError(
+                    f"模型 '{model_ref}'（规范形态 '{canonical_ref}'）"
+                    f"存在多个注册条目: {listed}，请用全限定名"
+                )
             candidates = [f"{p}/{m}" for p, s in self.providers.items() for m in s.models]
             raise ValueError(
                 f"模型 '{model_ref}' 不在注册表中。候选: {', '.join(candidates) or '(无)'}"
@@ -191,14 +231,22 @@ class ProviderRegistry:
                 tags.append(f"max_tokens={spec.max_tokens}")
             tag_str = (" " + " ".join(tags)) if tags else ""
             lines.append(f"[{pid}] base_url={spec.base_url}{tag_str}")
+            shown_canonical: set[str] = set()
             for mid, mspec in spec.models.items():
                 capable, control = self.reasoning_contract(pid, mid)
+                canon = canonical_model_id(mid)
+                if canon in shown_canonical and canon != mid:
+                    # 同一物理模型的别名形态: 只显示一行别名指向, 不重复规格
+                    lines.append(f"  - {mid} → alias of {canon}")
+                    continue
+                shown_canonical.add(canon)
+                alias_note = "" if canon == mid else f", canonical={canon}"
                 lines.append(
                     f"  - {mid}: context={mspec.context}, "
                     f"max_input_tokens={mspec.max_input_tokens or spec.max_input_tokens or 'physical'}, "
                     f"max_tokens={mspec.max_tokens or spec.max_tokens or 'global'}, "
                     f"reasoning_capable={'✓' if capable else '✗'}, "
-                    f"reasoning_control={control}, cost={mspec.cost_tier}"
+                    f"reasoning_control={control}, cost={mspec.cost_tier}{alias_note}"
                 )
         if self.degraded:
             lines.append(f"[degraded: {self.degraded_reason}]")

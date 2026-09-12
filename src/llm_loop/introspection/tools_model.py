@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.llm.model_ids import canonical_model_id
 from llm_loop.llm.pool import ModelClientPool
 
 MODEL_CATALOG_TOOL_DEF: dict = {
@@ -122,10 +123,17 @@ def run_model_catalog(
     # 按 provider 分组列出, 标记当前会话模型所在 provider
     for pid, spec in registry.providers.items():
         lines.append(f"  [{pid}] base_url={spec.base_url}")
+        shown_canonical: set[str] = set()
         for mid, mspec in spec.models.items():
             reasoning_capable, reasoning_control = registry.reasoning_contract(pid, mid)
             is_current = pid == current_pid and mid == current_mid
             mark = " ← 当前" if is_current else ""
+            canon = canonical_model_id(mid)
+            if canon in shown_canonical and canon != mid:
+                lines.append(f"    - {mid}: → alias of {canon}{mark}")
+                continue
+            shown_canonical.add(canon)
+            alias_note = "" if canon == mid else f", canonical={canon}"
             caps = []
             if mspec.reasoning:
                 caps.append("reasoning")
@@ -140,7 +148,7 @@ def run_model_catalog(
                 f"reasoning_control={reasoning_control}, "
                 f"reasoning_replay={mspec.reasoning_replay}, "
                 f"runtime_identity={mspec.runtime_identity}, "
-                f"cost={mspec.cost_tier}{cap_str}{mark}"
+                f"cost={mspec.cost_tier}{alias_note}{cap_str}{mark}"
             )
     if not session_override and default_registry is not registry:
         lines.append(
