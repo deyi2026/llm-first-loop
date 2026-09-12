@@ -154,6 +154,33 @@ def test_compact_contract_keeps_versioned_edit_discovery_path():
     assert "参数/协议失败" in defs["get_tool_schema"]["description"]
 
 
+def test_compact_contract_keeps_first_call_task_and_evidence_bounds():
+    """First-call-ready facts must survive lazy projection instead of forcing avoidable retries."""
+    reg = ToolRegistry()
+    for name in ("list_evidence", "task_create", "task_update"):
+        reg.register(_FakeTool(name))
+    defs = {row["name"]: row for row in reg.schemas(lazy=True)}
+
+    list_desc = defs["list_evidence"]["description"]
+    assert "limit 1..20" in list_desc
+    assert "scope=recent/recovery" in list_desc
+
+    create_desc = defs["task_create"]["description"]
+    assert "get_goal" in create_desc
+    assert "不得猜" in create_desc
+    assert "create_goal" in create_desc
+    assert "同 Goal 已存在 task_id" in create_desc
+    assert "acceptance 必填" in create_desc
+
+    update_desc = defs["task_update"]["description"]
+    assert "pending→in_progress" in update_desc
+    assert "不能直接 pending→done" in update_desc
+    assert "in_progress→done" in update_desc
+    assert "blocked_reason" in update_desc
+    assert "evidence_refs" in update_desc
+    assert "confirm=true" in update_desc
+
+
 def test_compact_contract_keeps_skill_discovery_trigger_without_forcing_selection():
     """Failure replay: compacting must not erase the only cue that reusable Skills exist."""
     reg = ToolRegistry()

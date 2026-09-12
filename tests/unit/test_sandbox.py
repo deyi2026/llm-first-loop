@@ -105,3 +105,56 @@ def test_execute_default_none_zero_regression(monkeypatch, tmp_path):
     assert r.status == ToolResultStatus.SUCCESS
     assert popen.call_args.kwargs["shell"] is True
     assert "已启用 bwrap 沙箱" not in r.content
+
+
+# ---- docker 后端（2026-09-12）----
+
+def test_sandbox_mode_docker(monkeypatch):
+    monkeypatch.setenv("EXEC_SANDBOX", "docker")
+    assert sandbox_mode() == "docker"
+
+
+def test_docker_argv_structure():
+    from llm_loop.tools.sandbox import docker_argv
+    argv = docker_argv("echo hi", "/tmp/w")
+    assert argv[:3] == ["docker", "run", "--rm"]
+    assert "--network=none" in argv
+    assert "--read-only" in argv
+    assert "--cap-drop" in argv and "ALL" in argv
+    assert "--tmpfs" in argv and "/tmp:rw,size=64m" in argv
+    assert "--volume" in argv and "/tmp/w:/tmp/w:rw" in argv
+    assert argv[-3:] == ["sh", "-c", "echo hi"]
+
+
+def test_docker_argv_image_env(monkeypatch):
+    from llm_loop.tools.sandbox import docker_argv
+    monkeypatch.setenv("EXEC_SANDBOX_IMAGE", "alpine:3.20")
+    argv = docker_argv("true", "/w")
+    assert "alpine:3.20" in argv
+
+
+def test_sandbox_argv_docker_ok(monkeypatch):
+    monkeypatch.setenv("EXEC_SANDBOX", "docker")
+    with mock.patch("llm_loop.tools.sandbox.shutil.which", return_value="/usr/local/bin/docker"):
+        argv, note = sandbox_argv("echo hi", "/w")
+    assert argv is not None and argv[0] == "docker"
+    assert "docker" in note
+
+
+def test_sandbox_argv_docker_missing_fail_closed(monkeypatch):
+    monkeypatch.setenv("EXEC_SANDBOX", "docker")
+    with (
+        mock.patch("llm_loop.tools.sandbox.shutil.which", return_value=None),
+        pytest.raises(RuntimeError) as ei,
+    ):
+        sandbox_argv("echo hi", "/w")
+    assert "fail-closed" in str(ei.value) and "docker" in str(ei.value)
+
+
+def test_sandbox_argv_workdir_made_absolute(monkeypatch):
+    monkeypatch.setenv("EXEC_SANDBOX", "docker")
+    import os as _os
+    with mock.patch("llm_loop.tools.sandbox.shutil.which", return_value="/usr/local/bin/docker"):
+        argv, _ = sandbox_argv("true", "rel/dir")
+    vol_i = argv.index("--volume") + 1
+    assert _os.path.isabs(argv[vol_i].split(":")[0])
