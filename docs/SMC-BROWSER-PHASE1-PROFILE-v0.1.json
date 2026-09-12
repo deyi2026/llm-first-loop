@@ -1,0 +1,834 @@
+{
+  "schema": "smc.browser_phase1_profile.v0.1",
+  "profile_id": "browser-phase1-v0.1",
+  "domain": "browser",
+  "phase": 1,
+  "implementation_status": "spec_only_not_implemented",
+  "profiles": [
+    "smc-perception-v0.1",
+    "smc-manipulation-v0.1"
+  ],
+  "schema_file": "docs/SMC-BROWSER-PHASE1-SCHEMA-v0.1.json",
+  "surface": {
+    "model_surface": "smc_browser_phase1_only",
+    "legacy_direct_model_tools": [],
+    "legacy_backend_only_tools": [
+      "playwright_exec",
+      "playwright_test"
+    ],
+    "intervention_if_model_direct_legacy_tool": true,
+    "allowed_model_target_types": [
+      "semantic_id",
+      "semantic_scope_ref",
+      "grounding_ref"
+    ],
+    "forbidden_model_locator_types": [
+      "css_selector",
+      "xpath",
+      "coordinate",
+      "cdp_node_id",
+      "ax_index",
+      "native_handle"
+    ],
+    "program_strategy_fields_forbidden": true
+  },
+  "scope_model": {
+    "kinds": [
+      "runtime",
+      "page",
+      "document",
+      "frame"
+    ],
+    "id_uniqueness": "runtime_session",
+    "parent_rules": {
+      "runtime": null,
+      "page": "runtime",
+      "document": "page",
+      "frame": "document_or_frame"
+    },
+    "navigation_changes_document_generation": true,
+    "frame_navigation_changes_frame_generation": true,
+    "adapter_restart_invalidates_prior_runtime_namespace": true,
+    "content_similarity_can_preserve_identity_without_unique_basis": false
+  },
+  "sensors": {
+    "active": [
+      "dom",
+      "ax"
+    ],
+    "vision": "explicit_only_deferred_phase2",
+    "silent_source_priority": false,
+    "sensor_contract_id": "browser-dom-ax-v0.1",
+    "blind_spot_vocabulary": [
+      "closed_shadow_root",
+      "cross_origin_frame",
+      "canvas",
+      "webgl",
+      "dom_unavailable",
+      "ax_unavailable",
+      "ax_truncated",
+      "permission_denied",
+      "projection_cap"
+    ]
+  },
+  "conflict_contract": {
+    "wire": "coverage.conflicts",
+    "unresolved_canonical_value": null,
+    "preserve_source_value_grounding": true,
+    "force_identity_fusion_on_ambiguity": false,
+    "mechanical_resolution_requires_predeclared_task_independent_basis": true
+  },
+  "field_vocabulary": {
+    "kinds": [
+      "document",
+      "frame",
+      "region",
+      "button",
+      "link",
+      "input",
+      "select",
+      "option",
+      "checkbox",
+      "radio",
+      "text",
+      "image",
+      "dialog",
+      "list",
+      "listitem",
+      "table",
+      "row",
+      "cell",
+      "form",
+      "heading",
+      "generic",
+      "unknown"
+    ],
+    "attributes": [
+      "role",
+      "name",
+      "tag",
+      "input_type",
+      "value_text",
+      "href",
+      "dom_region",
+      "text"
+    ],
+    "state": [
+      "exists",
+      "enabled",
+      "visible",
+      "checked",
+      "selected",
+      "expanded",
+      "focused",
+      "editable",
+      "readonly",
+      "required",
+      "busy"
+    ],
+    "relations": [
+      "parent",
+      "child",
+      "contains",
+      "labelled_by",
+      "described_by",
+      "owns"
+    ]
+  },
+  "predicate_vocabulary": {
+    "natural_language_predicate": false,
+    "evaluation_results": [
+      "satisfied",
+      "unsatisfied",
+      "indeterminate"
+    ],
+    "evaluation_modes": [
+      "single_sample",
+      "polling",
+      "event_driven"
+    ],
+    "properties": {
+      "exists": {
+        "operators": [
+          "eq"
+        ],
+        "value_type": "boolean",
+        "negative_requires_complete_coverage": true
+      },
+      "enabled": {
+        "operators": [
+          "eq"
+        ],
+        "value_type": "boolean",
+        "negative_requires_complete_coverage": false
+      },
+      "visible": {
+        "operators": [
+          "eq"
+        ],
+        "value_type": "boolean",
+        "negative_requires_complete_coverage": false
+      },
+      "checked": {
+        "operators": [
+          "eq"
+        ],
+        "value_type": "boolean",
+        "negative_requires_complete_coverage": false
+      },
+      "selected": {
+        "operators": [
+          "eq"
+        ],
+        "value_type": "boolean",
+        "negative_requires_complete_coverage": false
+      },
+      "expanded": {
+        "operators": [
+          "eq"
+        ],
+        "value_type": "boolean",
+        "negative_requires_complete_coverage": false
+      },
+      "focused": {
+        "operators": [
+          "eq"
+        ],
+        "value_type": "boolean",
+        "negative_requires_complete_coverage": false
+      },
+      "editable": {
+        "operators": [
+          "eq"
+        ],
+        "value_type": "boolean",
+        "negative_requires_complete_coverage": false
+      },
+      "url": {
+        "operators": [
+          "eq",
+          "contains",
+          "prefix",
+          "suffix"
+        ],
+        "value_type": "string",
+        "negative_requires_complete_coverage": false
+      },
+      "name": {
+        "operators": [
+          "eq",
+          "contains",
+          "prefix",
+          "suffix"
+        ],
+        "value_type": "string",
+        "negative_requires_complete_coverage": false
+      },
+      "value_text": {
+        "operators": [
+          "eq",
+          "contains",
+          "prefix",
+          "suffix"
+        ],
+        "value_type": "string",
+        "negative_requires_complete_coverage": false
+      },
+      "document_ready_state": {
+        "operators": [
+          "eq"
+        ],
+        "value_type": "string",
+        "value_enum": [
+          "loading",
+          "interactive",
+          "complete"
+        ],
+        "negative_requires_complete_coverage": false
+      },
+      "object_count": {
+        "operators": [
+          "eq",
+          "ge",
+          "le"
+        ],
+        "value_type": "integer",
+        "negative_requires_complete_coverage": true
+      }
+    },
+    "sampling_facts": [
+      "interval_ms",
+      "sample_count",
+      "observer_error_count",
+      "observed_at",
+      "deadline"
+    ]
+  },
+  "verb_contracts": {
+    "observe": {
+      "operation_class": "observe",
+      "idempotency_class": "read_only",
+      "atomicity_class": "best_effort",
+      "version_precondition": "not_applicable",
+      "version_scopes": [],
+      "target_kinds": [
+        "page",
+        "document",
+        "frame",
+        "region"
+      ],
+      "args_schema": "observe_args",
+      "silent_retry_allowed": false
+    },
+    "hydrate": {
+      "operation_class": "observe",
+      "idempotency_class": "read_only",
+      "atomicity_class": "atomic",
+      "version_precondition": "not_applicable",
+      "version_scopes": [],
+      "target_kinds": [
+        "page",
+        "document",
+        "frame",
+        "semantic_object"
+      ],
+      "args_schema": "hydrate_args",
+      "silent_retry_allowed": false
+    },
+    "diff": {
+      "operation_class": "observe",
+      "idempotency_class": "read_only",
+      "atomicity_class": "atomic",
+      "version_precondition": "not_applicable",
+      "version_scopes": [],
+      "target_kinds": [
+        "page",
+        "document",
+        "frame"
+      ],
+      "args_schema": "diff_args",
+      "silent_retry_allowed": false
+    },
+    "wait": {
+      "operation_class": "observe",
+      "idempotency_class": "read_only",
+      "atomicity_class": "best_effort",
+      "version_precondition": "not_applicable",
+      "version_scopes": [],
+      "target_kinds": [
+        "semantic_object",
+        "page",
+        "document",
+        "frame"
+      ],
+      "args_schema": "wait_args",
+      "silent_retry_allowed": false
+    },
+    "assert": {
+      "operation_class": "observe",
+      "idempotency_class": "read_only",
+      "atomicity_class": "best_effort",
+      "version_precondition": "not_applicable",
+      "version_scopes": [],
+      "target_kinds": [
+        "semantic_object",
+        "page",
+        "document",
+        "frame"
+      ],
+      "args_schema": "assert_args",
+      "silent_retry_allowed": false
+    },
+    "click": {
+      "operation_class": "mutate",
+      "idempotency_class": "unknown",
+      "atomicity_class": "single_dispatch",
+      "version_precondition": "required",
+      "version_scopes": [
+        "object",
+        "snapshot"
+      ],
+      "target_kinds": [
+        "semantic_object"
+      ],
+      "args_schema": "click_args",
+      "silent_retry_allowed": false
+    },
+    "fill": {
+      "operation_class": "mutate",
+      "idempotency_class": "unknown",
+      "atomicity_class": "single_dispatch",
+      "version_precondition": "required",
+      "version_scopes": [
+        "object",
+        "snapshot"
+      ],
+      "target_kinds": [
+        "semantic_object"
+      ],
+      "args_schema": "fill_args",
+      "silent_retry_allowed": false
+    },
+    "select": {
+      "operation_class": "mutate",
+      "idempotency_class": "unknown",
+      "atomicity_class": "single_dispatch",
+      "version_precondition": "required",
+      "version_scopes": [
+        "object",
+        "snapshot"
+      ],
+      "target_kinds": [
+        "semantic_object"
+      ],
+      "args_schema": "select_args",
+      "silent_retry_allowed": false
+    },
+    "navigate": {
+      "operation_class": "mutate",
+      "idempotency_class": "unknown",
+      "atomicity_class": "single_dispatch",
+      "version_precondition": "required",
+      "version_scopes": [
+        "resource",
+        "snapshot"
+      ],
+      "target_kinds": [
+        "page"
+      ],
+      "args_schema": "navigate_args",
+      "silent_retry_allowed": false
+    },
+    "scroll": {
+      "operation_class": "mutate",
+      "idempotency_class": "unknown",
+      "atomicity_class": "single_dispatch",
+      "version_precondition": "required",
+      "version_scopes": [
+        "object",
+        "snapshot"
+      ],
+      "target_kinds": [
+        "semantic_object",
+        "page",
+        "document",
+        "frame",
+        "region"
+      ],
+      "args_schema": "scroll_args",
+      "silent_retry_allowed": false
+    }
+  },
+  "diff_contract": {
+    "semantics": [
+      "snapshot_pair_net",
+      "event_stream"
+    ],
+    "comparability_dimensions": [
+      "domain",
+      "scope_ref",
+      "document_generation",
+      "sensor_contract"
+    ],
+    "scope_relations": [
+      "same",
+      "compatible",
+      "changed",
+      "unknown"
+    ],
+    "incomplete_created_removed_are_null": true,
+    "changed_may_be_lower_bound_with_field_completeness_false": true,
+    "empty_snapshot_pair_proves_no_transient_event": false
+  },
+  "retry_contract": {
+    "automatic_protocol_retry": "disabled_v0.1",
+    "polling_samples_are_retries": false,
+    "model_explicit_repeat_uses_new_action_id": true,
+    "future_retry_requires_auditable_mechanical_idempotency_basis": true
+  },
+  "receipt_contract": {
+    "append_only": true,
+    "receipt_seq": "strictly_monotonic_per_action_id",
+    "terminal_overwrites_prior_receipt": false,
+    "status_is_task_completion": false,
+    "silent_recovery_sequence": false,
+    "statuses": [
+      "running",
+      "ok",
+      "failed",
+      "rejected"
+    ],
+    "retry_facts_required": [
+      "attempt_count",
+      "automatic_retry_performed",
+      "mechanism",
+      "reason"
+    ]
+  },
+  "grounding_contract": {
+    "availability_states": [
+      "available",
+      "expired",
+      "unavailable",
+      "unauthorized"
+    ],
+    "silent_similar_state_refetch": false,
+    "retention_must_be_declared": true,
+    "same_grounding_ref_never_rebinds_to_new_state": true
+  },
+  "boundary_event_vocabulary": [
+    "navigation_started",
+    "navigation_committed",
+    "scope_changed",
+    "new_page",
+    "new_window",
+    "download_started",
+    "dialog_opened",
+    "permission_prompt"
+  ],
+  "qualification_gate_map": {
+    "B0": {
+      "spec_requirement": "SMC-only model surface; legacy Playwright direct model access absent or counted as intervention.",
+      "implementation_required_later": true
+    },
+    "B1": {
+      "spec_requirement": "runtime/page/document/frame scope hierarchy, generation and invalidation are explicit.",
+      "implementation_required_later": true
+    },
+    "B2": {
+      "spec_requirement": "snapshot binds sensor contract, integrity, completeness/projection and hydratable grounding.",
+      "implementation_required_later": true
+    },
+    "B3": {
+      "spec_requirement": "identity policy is task-invariant and refuses ambiguous replacement rebinding.",
+      "implementation_required_later": true
+    },
+    "B4": {
+      "spec_requirement": "DOM/AX observations are source-qualified; C28 conflict wire is canonical.",
+      "implementation_required_later": true
+    },
+    "B5": {
+      "spec_requirement": "diff semantics/comparability/field completeness are explicit.",
+      "implementation_required_later": true
+    },
+    "B6": {
+      "spec_requirement": "actions accept semantic targets only; backend locators are not model-facing.",
+      "implementation_required_later": true
+    },
+    "B7": {
+      "spec_requirement": "dispatch re-resolves identity and checks expected_version/version_scope.",
+      "implementation_required_later": true
+    },
+    "B8": {
+      "spec_requirement": "idempotency/atomicity/retry facts are fixed by verb contract and auditable.",
+      "implementation_required_later": true
+    },
+    "B9": {
+      "spec_requirement": "receipts are append-only and revisioned by monotonic receipt_seq.",
+      "implementation_required_later": true
+    },
+    "B10": {
+      "spec_requirement": "Predicate vocabulary is structured, typed and tri-state with sampling facts.",
+      "implementation_required_later": true
+    },
+    "B11": {
+      "spec_requirement": "blind spots and boundary events are explicit; vision is never auto-triggered.",
+      "implementation_required_later": true
+    },
+    "B12": {
+      "spec_requirement": "closed surface rejects strategy fields, best-candidate recovery and task relevance authority.",
+      "implementation_required_later": false
+    },
+    "B13": {
+      "spec_requirement": "all non-DEFERRED R3 Phase1 scenarios map to deterministic implementation fixtures before qualification.",
+      "implementation_required_later": true
+    },
+    "B14": {
+      "spec_requirement": "committed candidate must pass focused/adjacent/static/security/full repo qualification.",
+      "implementation_required_later": true
+    }
+  },
+  "r3_phase1_fixture_map": {
+    "R3-01": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-02": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-03": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-04": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-05": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-06": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-07": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-08": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-09": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-10": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-11": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-12": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-13": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-15": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-16": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-17": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-18": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-19": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-20": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-21": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-22": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-23": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-24": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-25": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-26": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-27": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-28": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-30": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-31": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    },
+    "R3-32": {
+      "required": "deterministic_fixture_before_browser_qualification"
+    }
+  },
+  "non_claims": [
+    "browser_adapter_implemented",
+    "browser_implementation_conformant",
+    "live_dom_ax_qualified",
+    "vision_actionability_qualified",
+    "native_ui_qualified"
+  ],
+  "examples": {
+    "semantic_object": {
+      "schema": "smc.semantic_object.v0.1",
+      "domain": "browser",
+      "scope_ref": "br:page:p1/document:d1/frame:main",
+      "id": "el_checkout_submit",
+      "kind": "button",
+      "attributes": {
+        "role": "button",
+        "name": "提交订单",
+        "tag": "button",
+        "input_type": null,
+        "value_text": null,
+        "href": null,
+        "dom_region": "form/footer",
+        "text": "提交订单"
+      },
+      "state": {
+        "exists": true,
+        "enabled": true,
+        "visible": true,
+        "checked": null,
+        "selected": null,
+        "expanded": null,
+        "focused": false,
+        "editable": false,
+        "readonly": null,
+        "required": null,
+        "busy": false
+      },
+      "relations": [],
+      "coverage": {
+        "status": "complete",
+        "sources": [
+          "dom",
+          "ax"
+        ],
+        "blind_spots": [],
+        "conflicts": []
+      },
+      "grounding_ref": "grounding:browser:snap_001#el_checkout_submit",
+      "observed_version": "docv:1"
+    },
+    "world_snapshot": {
+      "schema": "smc.world_snapshot.v0.1",
+      "domain": "browser",
+      "snapshot_id": "snap_browser_001",
+      "scope": {
+        "scope_ref": "br:page:p1/document:d1/frame:main",
+        "kind": "frame",
+        "parent_scope_ref": "br:page:p1/document:d1",
+        "runtime_generation": 1,
+        "page_generation": 1,
+        "document_generation": 1,
+        "frame_generation": 1
+      },
+      "observed_at": "2026-09-13T01:20:00+08:00",
+      "sensor_contract": {
+        "id": "browser-dom-ax-v0.1",
+        "active_sources": [
+          "dom",
+          "ax"
+        ],
+        "vision": "explicit_only_deferred_phase2"
+      },
+      "completeness": {
+        "complete": true,
+        "reasons": []
+      },
+      "projection": {
+        "representation": "overview",
+        "complete": false,
+        "full_ref": "grounding:browser:snap_001/objects"
+      },
+      "budget": {
+        "object_cap": 5000,
+        "relation_cap": 10000,
+        "token_estimate": 1200
+      },
+      "grounding_version": "docv:1",
+      "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "objects_ref": "grounding:browser:snap_001/objects",
+      "grounding_refs": {
+        "dom": "grounding:browser:snap_001/dom",
+        "ax": "grounding:browser:snap_001/ax"
+      }
+    },
+    "semantic_diff": {
+      "schema": "smc.semantic_diff.v0.1",
+      "domain": "browser",
+      "from_version": "docv:1",
+      "to_version": "docv:2",
+      "from_scope_ref": "br:page:p1/document:d1/frame:main",
+      "to_scope_ref": "br:page:p1/document:d1/frame:main",
+      "from_sensor_contract": "browser-dom-ax-v0.1",
+      "to_sensor_contract": "browser-dom-ax-v0.1",
+      "diff_semantics": "snapshot_pair_net",
+      "comparable": true,
+      "scope_relation": "same",
+      "created": [],
+      "removed": [],
+      "changed": [
+        {
+          "id": "el_checkout_submit",
+          "fields": [
+            "state.enabled"
+          ]
+        }
+      ],
+      "completeness": {
+        "complete": true,
+        "reasons": []
+      },
+      "field_completeness": {
+        "created": true,
+        "removed": true,
+        "changed": true
+      },
+      "reason": null,
+      "full_list_ref": "grounding:browser:diff_001"
+    },
+    "predicate": {
+      "schema": "smc.predicate.v0.1",
+      "domain": "browser",
+      "scope_ref": "br:page:p1/document:d1/frame:main",
+      "target": "el_checkout_submit",
+      "property": "visible",
+      "operator": "eq",
+      "value": true
+    },
+    "semantic_action": {
+      "schema": "smc.semantic_action.v0.1",
+      "domain": "browser",
+      "scope_ref": "br:page:p1/document:d1/frame:main",
+      "action_id": "act_001",
+      "verb": "click",
+      "target_id": "el_checkout_submit",
+      "args": {},
+      "operation_class": "mutate",
+      "idempotency_class": "unknown",
+      "atomicity_class": "single_dispatch",
+      "expected_version": "docv:1",
+      "version_scope": "object",
+      "version_precondition": "required"
+    },
+    "action_receipt": {
+      "schema": "smc.action_receipt.v0.1",
+      "domain": "browser",
+      "scope_ref": "br:page:p1/document:d1/frame:main",
+      "action_id": "act_001",
+      "receipt_id": "rcp_act_001_1",
+      "receipt_seq": 1,
+      "verb": "click",
+      "operation_class": "mutate",
+      "idempotency_class": "unknown",
+      "atomicity_class": "single_dispatch",
+      "target_id": "el_checkout_submit",
+      "status": "ok",
+      "before_version": "docv:1",
+      "after_version": "docv:2",
+      "observed_effects": {
+        "diff_ref": "grounding:browser:diff_001",
+        "scope_transition_ref": null,
+        "provisional": false
+      },
+      "boundary_events": [],
+      "grounding_refs": {
+        "before": "grounding:browser:snap_001",
+        "after": "grounding:browser:snap_002",
+        "dispatch": "grounding:browser:act_001"
+      },
+      "completeness": {
+        "complete": true,
+        "reasons": []
+      },
+      "predicate_result": null,
+      "retry": {
+        "attempt_count": 1,
+        "automatic_retry_performed": false,
+        "mechanism": null,
+        "reason": null
+      }
+    }
+  }
+}

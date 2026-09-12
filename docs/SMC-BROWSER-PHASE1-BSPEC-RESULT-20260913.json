@@ -1,0 +1,98 @@
+{
+  "schema": "smc.browser_phase1_bspec_result.v0.1",
+  "date": "2026-09-13",
+  "baseline_head": "5f19eb9457024b98f51dac02ed8ca6705e046b40",
+  "status": "qualified_candidate",
+  "rulings": {
+    "spec_profile_conformance": "PASS",
+    "closed_wire_schema_conformance": "PASS",
+    "authority_negative_tests": "PASS",
+    "browser_implementation_conformance": "NOT_TESTED",
+    "r3_phase1_implementation_fixtures": "NOT_IMPLEMENTED_OBLIGATION_FROZEN",
+    "phase2_vision_actionability": "DEFERRED",
+    "phase3_native_ui": "DEFERRED"
+  },
+  "core_artifacts": {
+    "docs/SMC-BROWSER-PHASE1-PROFILE-v0.1.md": "40673778e97103e5f7860d9dfe687bc5d3b445d8e7699a9e8d1094f9949f7934",
+    "docs/SMC-BROWSER-PHASE1-PROFILE-v0.1.json": "e7365fb48b3cc1b6fc5d0efc3e983c0e72f29d9686ade705f4a7242171220d0d",
+    "docs/SMC-BROWSER-PHASE1-SCHEMA-v0.1.json": "ba810509fbb31e91dc15e4a04982fdfdacff6bdc2e408606aa90ceeba961d83c",
+    "tests/unit/test_smc_browser_phase1_spec_v01.py": "c9244ee9be003f829f96d2e6a2fdf8a1b6e013132e20cb27d9495fd5d53a4ee6"
+  },
+  "tdd": [
+    {
+      "stage": "RED_1",
+      "evidence": "profile JSON absent -> FileNotFoundError"
+    },
+    {
+      "stage": "GREEN_1",
+      "tests": "17/17"
+    },
+    {
+      "stage": "RED_2",
+      "evidence": "retry_contract absent from exact profile contract"
+    },
+    {
+      "stage": "GREEN_2",
+      "tests": "20/20"
+    },
+    {
+      "stage": "FINAL_MACHINE_LINT",
+      "tests": "21/21"
+    }
+  ],
+  "validation": {
+    "direct_tests": "21/21 PASS",
+    "combined_adjacent_tests": "75/75 PASS",
+    "ruff": "PASS",
+    "pyright": "0 errors / 0 warnings / 0 informations",
+    "py_compile": "PASS",
+    "json_parse": "PASS",
+    "diff_check": "PASS",
+    "privacy_scan": "PASS",
+    "security": "PASS (1625 files)",
+    "full_ci_gate": {
+      "status": "PASS",
+      "exit_code": 0,
+      "ruff": "PASS",
+      "env_pin": "536 test files / 0 undeclared dependents",
+      "src_pyright": "0 errors / 0 warnings / 0 informations",
+      "tier0": "PASS",
+      "xdist_full": "PASS"
+    }
+  },
+  "profile_facts": {
+    "scope_kinds": [
+      "runtime",
+      "page",
+      "document",
+      "frame"
+    ],
+    "active_sensors": [
+      "dom",
+      "ax"
+    ],
+    "vision": "explicit_only_deferred_phase2",
+    "verbs": [
+      "observe",
+      "hydrate",
+      "diff",
+      "wait",
+      "assert",
+      "click",
+      "fill",
+      "select",
+      "navigate",
+      "scroll"
+    ],
+    "automatic_protocol_retry": "disabled_v0.1",
+    "r3_phase1_obligations": 30,
+    "qualification_gates": 15
+  },
+  "non_claims": [
+    "browser_adapter_implemented",
+    "browser_implementation_conformant",
+    "live_dom_ax_qualified",
+    "vision_actionability_qualified",
+    "native_ui_qualified"
+  ]
+}

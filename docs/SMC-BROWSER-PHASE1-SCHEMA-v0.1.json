@@ -1,0 +1,1564 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://llm-first-loop.local/schema/smc-browser-phase1-v0.1.json",
+  "title": "SMC Browser Phase 1 closed model-facing schema v0.1",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/semantic_object"
+    },
+    {
+      "$ref": "#/$defs/world_snapshot"
+    },
+    {
+      "$ref": "#/$defs/semantic_diff"
+    },
+    {
+      "$ref": "#/$defs/predicate"
+    },
+    {
+      "$ref": "#/$defs/semantic_action"
+    },
+    {
+      "$ref": "#/$defs/action_receipt"
+    }
+  ],
+  "$defs": {
+    "completeness": {
+      "title": "Completeness",
+      "type": "object",
+      "required": [
+        "complete",
+        "reasons"
+      ],
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "projection": {
+      "title": "Projection",
+      "type": "object",
+      "required": [
+        "representation",
+        "complete",
+        "full_ref"
+      ],
+      "properties": {
+        "representation": {
+          "type": "string",
+          "enum": [
+            "overview",
+            "objects",
+            "full"
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "full_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "browser_scope": {
+      "title": "BrowserScope",
+      "type": "object",
+      "required": [
+        "scope_ref",
+        "kind",
+        "parent_scope_ref",
+        "runtime_generation",
+        "page_generation",
+        "document_generation",
+        "frame_generation"
+      ],
+      "properties": {
+        "scope_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "page",
+            "document",
+            "frame"
+          ]
+        },
+        "parent_scope_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runtime_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "page_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "document_generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "frame_generation": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "sensor_contract": {
+      "title": "BrowserSensorContract",
+      "type": "object",
+      "required": [
+        "id",
+        "active_sources",
+        "vision"
+      ],
+      "properties": {
+        "id": {
+          "const": "browser-dom-ax-v0.1"
+        },
+        "active_sources": {
+          "const": [
+            "dom",
+            "ax"
+          ]
+        },
+        "vision": {
+          "const": "explicit_only_deferred_phase2"
+        }
+      },
+      "additionalProperties": false
+    },
+    "conflict_observation": {
+      "title": "ConflictObservation",
+      "type": "object",
+      "required": [
+        "source",
+        "value",
+        "grounding_ref"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "dom",
+            "ax"
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grounding_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "field_conflict": {
+      "title": "FieldConflict",
+      "type": "object",
+      "required": [
+        "field",
+        "observations",
+        "resolution",
+        "derivation_basis"
+      ],
+      "properties": {
+        "field": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observations": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/conflict_observation"
+          }
+        },
+        "resolution": {
+          "type": "string",
+          "enum": [
+            "unresolved",
+            "mechanically_derived"
+          ]
+        },
+        "derivation_basis": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "identity_conflict": {
+      "title": "IdentityConflict",
+      "type": "object",
+      "required": [
+        "identity_mapping",
+        "observations",
+        "resolution",
+        "derivation_basis"
+      ],
+      "properties": {
+        "identity_mapping": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observations": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/conflict_observation"
+          }
+        },
+        "resolution": {
+          "type": "string",
+          "enum": [
+            "unresolved",
+            "mechanically_derived"
+          ]
+        },
+        "derivation_basis": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "coverage": {
+      "title": "Coverage",
+      "type": "object",
+      "required": [
+        "status",
+        "sources",
+        "blind_spots",
+        "conflicts"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unknown"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "dom",
+              "ax"
+            ]
+          }
+        },
+        "blind_spots": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "closed_shadow_root",
+              "cross_origin_frame",
+              "canvas",
+              "webgl",
+              "dom_unavailable",
+              "ax_unavailable",
+              "ax_truncated",
+              "permission_denied",
+              "projection_cap"
+            ]
+          }
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/field_conflict"
+              },
+              {
+                "$ref": "#/$defs/identity_conflict"
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "attributes": {
+      "title": "BrowserAttributes",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tag": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "href": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dom_region": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "state": {
+      "title": "BrowserState",
+      "type": "object",
+      "required": [],
+      "properties": {
+        "exists": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "enabled": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "visible": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "checked": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "selected": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "expanded": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "focused": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "editable": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "readonly": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "required": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "busy": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "relation": {
+      "title": "BrowserRelation",
+      "type": "object",
+      "required": [
+        "type",
+        "target_id"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "parent",
+            "child",
+            "contains",
+            "labelled_by",
+            "described_by",
+            "owns"
+          ]
+        },
+        "target_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "semantic_object": {
+      "title": "SemanticObject",
+      "type": "object",
+      "required": [
+        "schema",
+        "domain",
+        "scope_ref",
+        "id",
+        "kind",
+        "attributes",
+        "state",
+        "relations",
+        "coverage",
+        "grounding_ref",
+        "observed_version"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.semantic_object.v0.1"
+        },
+        "domain": {
+          "const": "browser"
+        },
+        "scope_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "document",
+            "frame",
+            "region",
+            "button",
+            "link",
+            "input",
+            "select",
+            "option",
+            "checkbox",
+            "radio",
+            "text",
+            "image",
+            "dialog",
+            "list",
+            "listitem",
+            "table",
+            "row",
+            "cell",
+            "form",
+            "heading",
+            "generic",
+            "unknown"
+          ]
+        },
+        "attributes": {
+          "$ref": "#/$defs/attributes"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "relations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relation"
+          }
+        },
+        "coverage": {
+          "$ref": "#/$defs/coverage"
+        },
+        "grounding_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "budget": {
+      "title": "BrowserBudget",
+      "type": "object",
+      "required": [
+        "object_cap",
+        "relation_cap",
+        "token_estimate"
+      ],
+      "properties": {
+        "object_cap": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "relation_cap": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "token_estimate": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "snapshot_grounding_refs": {
+      "title": "SnapshotGroundingRefs",
+      "type": "object",
+      "required": [
+        "dom",
+        "ax"
+      ],
+      "properties": {
+        "dom": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ax": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "world_snapshot": {
+      "title": "WorldSnapshot",
+      "type": "object",
+      "required": [
+        "schema",
+        "domain",
+        "snapshot_id",
+        "scope",
+        "observed_at",
+        "sensor_contract",
+        "completeness",
+        "projection",
+        "budget",
+        "grounding_version",
+        "content_sha256",
+        "objects_ref",
+        "grounding_refs"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.world_snapshot.v0.1"
+        },
+        "domain": {
+          "const": "browser"
+        },
+        "snapshot_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "$ref": "#/$defs/browser_scope"
+        },
+        "observed_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sensor_contract": {
+          "$ref": "#/$defs/sensor_contract"
+        },
+        "completeness": {
+          "$ref": "#/$defs/completeness"
+        },
+        "projection": {
+          "$ref": "#/$defs/projection"
+        },
+        "budget": {
+          "$ref": "#/$defs/budget"
+        },
+        "grounding_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "objects_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "grounding_refs": {
+          "$ref": "#/$defs/snapshot_grounding_refs"
+        }
+      },
+      "additionalProperties": false
+    },
+    "changed_object": {
+      "title": "ChangedObject",
+      "type": "object",
+      "required": [
+        "id",
+        "fields"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "field_completeness": {
+      "title": "FieldCompleteness",
+      "type": "object",
+      "required": [
+        "created",
+        "removed",
+        "changed"
+      ],
+      "properties": {
+        "created": {
+          "type": "boolean"
+        },
+        "removed": {
+          "type": "boolean"
+        },
+        "changed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "semantic_diff": {
+      "title": "SemanticDiff",
+      "type": "object",
+      "required": [
+        "schema",
+        "domain",
+        "from_version",
+        "to_version",
+        "from_scope_ref",
+        "to_scope_ref",
+        "from_sensor_contract",
+        "to_sensor_contract",
+        "diff_semantics",
+        "comparable",
+        "scope_relation",
+        "created",
+        "removed",
+        "changed",
+        "completeness",
+        "field_completeness",
+        "reason",
+        "full_list_ref"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.semantic_diff.v0.1"
+        },
+        "domain": {
+          "const": "browser"
+        },
+        "from_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from_scope_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to_scope_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from_sensor_contract": {
+          "const": "browser-dom-ax-v0.1"
+        },
+        "to_sensor_contract": {
+          "const": "browser-dom-ax-v0.1"
+        },
+        "diff_semantics": {
+          "type": "string",
+          "enum": [
+            "snapshot_pair_net",
+            "event_stream"
+          ]
+        },
+        "comparable": {
+          "type": "boolean"
+        },
+        "scope_relation": {
+          "type": "string",
+          "enum": [
+            "same",
+            "compatible",
+            "changed",
+            "unknown"
+          ]
+        },
+        "created": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "removed": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "changed": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/changed_object"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completeness": {
+          "$ref": "#/$defs/completeness"
+        },
+        "field_completeness": {
+          "$ref": "#/$defs/field_completeness"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "full_list_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "predicate": {
+      "title": "Predicate",
+      "type": "object",
+      "required": [
+        "schema",
+        "domain",
+        "scope_ref",
+        "target",
+        "property",
+        "operator",
+        "value"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.predicate.v0.1"
+        },
+        "domain": {
+          "const": "browser"
+        },
+        "scope_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "property": {
+          "type": "string",
+          "enum": [
+            "exists",
+            "enabled",
+            "visible",
+            "checked",
+            "selected",
+            "expanded",
+            "focused",
+            "editable",
+            "url",
+            "name",
+            "value_text",
+            "document_ready_state",
+            "object_count"
+          ]
+        },
+        "operator": {
+          "type": "string",
+          "enum": [
+            "eq",
+            "contains",
+            "prefix",
+            "suffix",
+            "ge",
+            "le"
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "observe_args": {
+      "title": "ObserveArgs",
+      "type": "object",
+      "required": [
+        "projection"
+      ],
+      "properties": {
+        "projection": {
+          "type": "string",
+          "enum": [
+            "overview",
+            "objects",
+            "full"
+          ]
+        },
+        "object_cap": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "hydrate_args": {
+      "title": "HydrateArgs",
+      "type": "object",
+      "required": [
+        "grounding_ref"
+      ],
+      "properties": {
+        "grounding_ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "diff_args": {
+      "title": "DiffArgs",
+      "type": "object",
+      "required": [
+        "from_version",
+        "to_version"
+      ],
+      "properties": {
+        "from_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "wait_args": {
+      "title": "WaitArgs",
+      "type": "object",
+      "required": [
+        "predicate",
+        "timeout_ms",
+        "interval_ms"
+      ],
+      "properties": {
+        "predicate": {
+          "$ref": "#/$defs/predicate"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "interval_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "assert_args": {
+      "title": "AssertArgs",
+      "type": "object",
+      "required": [
+        "predicate"
+      ],
+      "properties": {
+        "predicate": {
+          "$ref": "#/$defs/predicate"
+        }
+      },
+      "additionalProperties": false
+    },
+    "click_args": {
+      "title": "ClickArgs",
+      "type": "object",
+      "required": [],
+      "properties": {},
+      "additionalProperties": false
+    },
+    "fill_args": {
+      "title": "FillArgs",
+      "type": "object",
+      "required": [
+        "text",
+        "mode"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "replace",
+            "append"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "select_args": {
+      "title": "SelectArgs",
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "properties": {
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "navigate_args": {
+      "title": "NavigateArgs",
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "scroll_args": {
+      "title": "ScrollArgs",
+      "type": "object",
+      "required": [
+        "delta_pages"
+      ],
+      "properties": {
+        "delta_pages": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "semantic_action": {
+      "title": "SemanticAction",
+      "type": "object",
+      "required": [
+        "schema",
+        "domain",
+        "scope_ref",
+        "action_id",
+        "verb",
+        "target_id",
+        "args",
+        "operation_class",
+        "idempotency_class",
+        "atomicity_class",
+        "expected_version",
+        "version_scope",
+        "version_precondition"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.semantic_action.v0.1"
+        },
+        "domain": {
+          "const": "browser"
+        },
+        "scope_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verb": {
+          "type": "string",
+          "enum": [
+            "observe",
+            "hydrate",
+            "diff",
+            "wait",
+            "assert",
+            "click",
+            "fill",
+            "select",
+            "navigate",
+            "scroll"
+          ]
+        },
+        "target_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/observe_args"
+            },
+            {
+              "$ref": "#/$defs/hydrate_args"
+            },
+            {
+              "$ref": "#/$defs/diff_args"
+            },
+            {
+              "$ref": "#/$defs/wait_args"
+            },
+            {
+              "$ref": "#/$defs/assert_args"
+            },
+            {
+              "$ref": "#/$defs/click_args"
+            },
+            {
+              "$ref": "#/$defs/fill_args"
+            },
+            {
+              "$ref": "#/$defs/select_args"
+            },
+            {
+              "$ref": "#/$defs/navigate_args"
+            },
+            {
+              "$ref": "#/$defs/scroll_args"
+            }
+          ]
+        },
+        "operation_class": {
+          "type": "string",
+          "enum": [
+            "observe",
+            "probe",
+            "mutate"
+          ]
+        },
+        "idempotency_class": {
+          "type": "string",
+          "enum": [
+            "read_only",
+            "idempotent",
+            "non_idempotent",
+            "unknown"
+          ]
+        },
+        "atomicity_class": {
+          "type": "string",
+          "enum": [
+            "atomic",
+            "single_dispatch",
+            "best_effort",
+            "unknown"
+          ]
+        },
+        "expected_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version_scope": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "object",
+                "resource",
+                "snapshot"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version_precondition": {
+          "type": "string",
+          "enum": [
+            "required",
+            "unsupported",
+            "not_applicable"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "observed_effects": {
+      "title": "ObservedEffects",
+      "type": "object",
+      "required": [
+        "diff_ref",
+        "scope_transition_ref",
+        "provisional"
+      ],
+      "properties": {
+        "diff_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope_transition_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provisional": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "boundary_event": {
+      "title": "BoundaryEvent",
+      "type": "object",
+      "required": [
+        "event",
+        "scope_ref",
+        "detector",
+        "complete"
+      ],
+      "properties": {
+        "event": {
+          "type": "string",
+          "enum": [
+            "navigation_started",
+            "navigation_committed",
+            "scope_changed",
+            "new_page",
+            "new_window",
+            "download_started",
+            "dialog_opened",
+            "permission_prompt"
+          ]
+        },
+        "scope_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detector": {
+          "type": "string",
+          "minLength": 1
+        },
+        "complete": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "receipt_grounding_refs": {
+      "title": "ReceiptGroundingRefs",
+      "type": "object",
+      "required": [
+        "before",
+        "after",
+        "dispatch"
+      ],
+      "properties": {
+        "before": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "after": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dispatch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "predicate_result": {
+      "title": "PredicateResult",
+      "type": "object",
+      "required": [
+        "result",
+        "evaluation_mode",
+        "observed_at",
+        "deadline",
+        "interval_ms",
+        "sample_count",
+        "observer_error_count"
+      ],
+      "properties": {
+        "result": {
+          "type": "string",
+          "enum": [
+            "satisfied",
+            "unsatisfied",
+            "indeterminate"
+          ]
+        },
+        "evaluation_mode": {
+          "type": "string",
+          "enum": [
+            "single_sample",
+            "polling",
+            "event_driven"
+          ]
+        },
+        "observed_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deadline": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "interval_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "observer_error_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "retry": {
+      "title": "RetryFacts",
+      "type": "object",
+      "required": [
+        "attempt_count",
+        "automatic_retry_performed",
+        "mechanism",
+        "reason"
+      ],
+      "properties": {
+        "attempt_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "automatic_retry_performed": {
+          "type": "boolean"
+        },
+        "mechanism": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "action_receipt": {
+      "title": "ActionReceipt",
+      "type": "object",
+      "required": [
+        "schema",
+        "domain",
+        "scope_ref",
+        "action_id",
+        "receipt_id",
+        "receipt_seq",
+        "verb",
+        "operation_class",
+        "idempotency_class",
+        "atomicity_class",
+        "target_id",
+        "status",
+        "before_version",
+        "after_version",
+        "observed_effects",
+        "boundary_events",
+        "grounding_refs",
+        "completeness",
+        "predicate_result",
+        "retry"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.action_receipt.v0.1"
+        },
+        "domain": {
+          "const": "browser"
+        },
+        "scope_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "receipt_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "receipt_seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "verb": {
+          "type": "string",
+          "enum": [
+            "observe",
+            "hydrate",
+            "diff",
+            "wait",
+            "assert",
+            "click",
+            "fill",
+            "select",
+            "navigate",
+            "scroll"
+          ]
+        },
+        "operation_class": {
+          "type": "string",
+          "enum": [
+            "observe",
+            "probe",
+            "mutate"
+          ]
+        },
+        "idempotency_class": {
+          "type": "string",
+          "enum": [
+            "read_only",
+            "idempotent",
+            "non_idempotent",
+            "unknown"
+          ]
+        },
+        "atomicity_class": {
+          "type": "string",
+          "enum": [
+            "atomic",
+            "single_dispatch",
+            "best_effort",
+            "unknown"
+          ]
+        },
+        "target_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "running",
+            "ok",
+            "failed",
+            "rejected"
+          ]
+        },
+        "before_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "after_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed_effects": {
+          "$ref": "#/$defs/observed_effects"
+        },
+        "boundary_events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/boundary_event"
+          }
+        },
+        "grounding_refs": {
+          "$ref": "#/$defs/receipt_grounding_refs"
+        },
+        "completeness": {
+          "$ref": "#/$defs/completeness"
+        },
+        "predicate_result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/predicate_result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retry": {
+          "$ref": "#/$defs/retry"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
