@@ -32,7 +32,7 @@ LLM 生于文本语义流：它的推理、记忆、泛化全部发生在语义�
 
 | LFL 语义 | 操控域对应 |
 |---|---|
-| 感官 | 把物理渲染状态（DOM/树/像素）翻译成任务相关语义事实 |
+| 感官 | 把物理渲染状态（DOM/树/像素）翻译成任务无关、可回验的机械语义事实；任务相关性由模型判断 |
 | 手脚 | 把语义动作翻译成物理操作（坐标、事件、系统调用） |
 | 不替 AI 决策 | 不替模型选元素、排序任务、判断页面"哪个重要" |
 
@@ -64,7 +64,7 @@ LLM 生于文本语义流：它的推理、记忆、泛化全部发生在语义�
 
 - **分工**：程序做确定性（遍历、坐标、等待、断言、缓存、去重），模型做模糊性（语义匹配、规划、异常解释、恢复策略）。
 - **增量**：世界状态不重述，只报 diff；每轮只推进「本步→结果→下一步」（对应方法总则④增量推理）。
-- **给对信息而非少给信息**：token 效率的本质是任务相关子集 + 增量变化，不是把信息压到失真。
+- **给对信息而非少给信息**：token 效率来自模型显式查询得到的子集 + 增量变化，不是程序替模型判断“哪些对任务相关”，更不是把信息压到失真。
 
 **违反后果**：全屏视觉语义化把 token 负担加倍赚回来（视觉语义化本身比直接给截图更贵）——语义化必须只花在结构信号（DOM/树）拿不到的地方。
 
@@ -86,7 +86,7 @@ LLM 生于文本语义流：它的推理、记忆、泛化全部发生在语义�
 | 弱项 | 程序接管方式 |
 |---|---|
 | 精确空间坐标计算 | 程序把语义元素解析为坐标，模型永不碰 x,y |
-| 全量信息串行扫描 | 程序裁剪 + 去重 + diff，模型只看任务相关子集 |
+| 全量信息串行扫描 | 程序按模型显式 scope/filter 做分页/去重/diff；任务相关子集由模型查询选择 |
 | 精确计数与位置记忆 | 程序维护稳定 ID 与结构索引 |
 | 长时一致性 | 程序维护快照、版本与水合（回验）通道 |
 
@@ -98,18 +98,18 @@ LLM 生于文本语义流：它的推理、记忆、泛化全部发生在语义�
 
 ```
 {id: "el_a3f2", role: "button", name: "提交订单",
- state: "enabled", hint: "表单底部右侧，视觉为蓝色主按钮",
- coverage: "dom+tree",        // 接地可信度：哪些感官覆盖了它
+ state: {enabled: true}, attributes: {dom_region: "form/footer"},
+ coverage: {sources: ["dom", "ax"], blind_spots: [], conflicts: []},
  version: "snap_9c1d"}        // 绑定的接地快照版本
 ```
 
 - `id` 稳定（见②）；`state` 是机械事实（enabled/disabled/checked…）；
-- `hint` 只描述**是什么**（位置、外观语义），不描述**该不该点**；
-- `coverage` 标注盲区：`"tree-unreachable"` 的元素要么不出现并明示盲区范围，要么标 `coverage: "vision-only"`。
+- 自由文本 `hint` 默认不由程序生成；若存在，只能是可回验原始标签/描述或带 provenance 的模型解释，不能出现“主按钮/更重要/更值得点”等任务或显著性判断；
+- `coverage` 标注 sources / blind_spots / conflicts：DOM/AX/vision 冲突不得静默择一；未机械消解时 canonical field 为 unknown/null 并保留各 source grounding。
 
 **② 标识契约——稳定语义 ID**
 
-模型全程用 ID 引用元素；程序保证同一物理元素跨轮次 ID 不变（DOM 结构相似性追踪），ID 可随时水合回验到原始接地。这是 LFL EvidenceRef 模式在操控域的同构推广。
+模型全程用 ID 引用元素；程序只在物理身份连续性可机械唯一确认时延续同一 ID，且 ID 可随时水合回验到原始接地。DOM 结构相似性只能作为预先声明、任务无关的 identity basis/ambiguity fact；若出现多个相似候选或 identity 无法唯一确认，旧 ID 必须 unresolved/retired 或分配新 ID，不能“最相似即继承”。这是 LFL EvidenceRef 模式在操控域的同构推广。
 
 **③ 动作契约——语义动词 + 语义对象**
 
@@ -117,8 +117,8 @@ LLM 生于文本语义流：它的推理、记忆、泛化全部发生在语义�
 click(id="el_a3f2")
 fill(id="el_b71", text="...", mode="replace")
 select(id="el_c09", value="中国")
-scroll(target="semantic:下一屏", scope="region:main")
-wait(until="element el_d55 visible" | "url contains /success", timeout_ms=8000)
+scroll(target_id="region_main", delta_pages=1)
+wait(predicate={target:"el_d55", property:"visible", operator:"eq", value:true}, timeout_ms=8000)
 read(region="form:checkout", depth="raw")     // 三级缩放的第三级：回原始接地
 ```
 
@@ -135,19 +135,19 @@ read(region="form:checkout", depth="raw")     // 三级缩放的第三级：回�
 
 原则：**拉为主、推为辅、增量优先、分层缩放、断言优先**。
 
-1. **拉模式主导**：模型按需查询语义视图（`observe(scope, filter)`），程序不主动倾倒整屏。推送仅限会话级重大事件（页面跳转、对话框弹出、崩溃）。
-2. **增量 diff**：状态不重述。模型第二轮问「checkout 表单里还有什么没填」，程序只答新增/变化，不重发整个表单。
-3. **三级缩放**：概览（页面语义摘要：类型+区域+关键状态）→ 展开（区域/元素组卡片）→ 原始接地（DOM 片段/截图）。模型按需下钻，默认停在能决策的最低层级。同构于 LFL `source_synopsis`（模型自写摘要绑定原文 SHA，程序只存取不生成）。
+1. **拉模式主导**：模型按需查询语义视图（`observe(scope, filter)`），程序不主动倾倒整屏。推送只允许域规格预先声明、任务无关的事件类（如页面导航、对话框打开、浏览器崩溃），不得由程序临场判断“重大/重要”。
+2. **增量 diff**：状态不重述。模型显式给 scope/filter 或 from/to version 后，程序只返回该机械查询覆盖内的新增/变化；程序不从“还有什么没填”等任务语义自行推断过滤条件。
+3. **三级缩放**：概览（页面结构类型+区域+域规格预声明状态字段）→ 展开（区域/元素组卡片）→ 原始接地（DOM/AX 片段/截图）。模型按需下钻；投影层只做机械分页/字段投影，不能替模型生成“关键状态/最重要元素”摘要。同构于 LFL `source_synopsis` 的边界：模型可写解释，程序只存取并绑定 grounding。
 4. **断言优先**：能验证的交给程序（`wait`/`assert`），把模型从「轮询-观察-判断」循环里解放出来——模型只在断言失败时介入解释。
 5. **按需补盲**：vision 只用于树盲区（canvas、动态渲染），且由模型显式请求（`read(depth="raw")` 或 `observe(scope, mode="vision")`），不做全屏视觉语义化。
 6. **预算可见**：感知成本（卡片数/token 估算/快照年龄）作为事实维度随工具返回，模型可预判再决定下钻深度（同构 `architecture_status.context_usage` 的赋能模式）。
 
 ## 四、交互效率的最高形态
 
-1. **原子默认，组合可选**：单动作原子（可验证、可归因、可回滚）；程序提供批量提交但**每步独立回执**（同构 `workflow_run` DAG——依赖执行、逐步结算，不合并掩盖中间失败）。
-2. **幂等语义重试**：语义动作天然幂等可重试——`click(el)` 重试还是点它；程序负责重解析选择器，不要求模型记住「上次点到哪了」。
-3. **失败语义化**：报错是语义事实（「提交按钮已禁用」「el_a3f2 已从 DOM 消失，相似候选: …」），不是渲染事实（「screenshot changed」「timeout」）。失败回执必须携带**模型下一步可用的信息**。
-4. **乐观并发**：动作携带 `expected_state`/快照 version，元素状态与预期不符 → 拒绝执行 + 返回当前状态卡片（同构 `edit_file` 的 `expected_snapshot_ref` 乐观锁——防止模型基于过期解释操作）。
+1. **单 dispatch 默认，原子性显式**：每个 SemanticAction 独立结算；是否真正 atomic 必须由 `atomicity_class` 机械声明。Browser/OS 常见 click/send 最多是 `single_dispatch`，失败后也可能已有副作用；程序提供线性批量提交时仍须**每步独立回执**，不合并掩盖中间状态。
+2. **重试必须有机械安全证明**：Semantic ID 稳定不等于动作幂等。`click/submit/send` 默认不得因 transport ambiguity 静默 replay；只有 `read_only/idempotent` 或有明确 idempotency/exactly-once 机制时才可做协议级重试，并把 attempt/reason/mechanism 写入回执。
+3. **失败事实化，不给恢复策略**：回执报告「target 已失效/identity unresolved」「DOM enabled 与 AX enabled 冲突」「dispatch 已发生但 post-observation 不完整」等当前事实；不得自动给“最相似候选”、推荐下一步、替代 target 或恢复序列。模型需要时可显式查询当前对象/grounding。
+4. **乐观并发**：动作携带 `expected_version + version_scope`；dispatch 前重新解析 target identity 并核对版本，过期/歧义 → `rejected` + 当前机械状态/版本事实（同构 `edit_file.expected_snapshot_ref`），不能静默换 locator。
 5. **等待显式化**：见动作契约③——等待条件语义化声明，程序轮询，超时回执携带超时时刻的状态 diff。
 6. **回执即证据**：每次动作回执持久化为可回验记录（谁、何时、对哪个 ID、什么结果、绑定哪个快照版本）——操控历史可审计（同构 Evidence 持久化与 action_trace）。
 
@@ -157,10 +157,10 @@ read(region="form:checkout", depth="raw")     // 三级缩放的第三级：回�
 
 | # | 承诺 | 判据 |
 |---|---|---|
-| SLA-1 | ID 稳定与可水合 | 同一物理元素跨轮同 ID；任意 ID 可回验到接地快照 |
-| SLA-2 | diff 忠实 | 报告的变化真实发生；未报告的变化不得静默发生 |
-| SLA-3 | 动作原子性 | 要么完成且回执，要么失败且如实报告已发生的副作用 |
-| SLA-4 | 回验通道常开 | 任意时刻可取原始接地（DOM 片段/截图），无场景禁用 |
+| SLA-1 | ID 稳定与可水合 | 仅在物理身份连续性可机械唯一确认时延续同 ID；歧义显式；有效引用可回验到绑定接地 |
+| SLA-2 | diff 忠实 | 在声明 scope + sensor/completeness + diff_semantics 内已捕获且属于该语义的变化不得静默漏报；snapshot net diff 不冒充事件历史 |
+| SLA-3 | 动作副作用诚实 / 原子性显式 | `atomicity_class` 如实；失败/超时仍报告已观察副作用与边界事件，不把“调用失败”写成“世界未改变” |
+| SLA-4 | 回验通道在声明窗口内常开 | 在声明 validity/retention + 权限范围内可取同一原始接地；失效/过期/未授权显式，不静默重取相似新状态 |
 | SLA-5 | 盲区与降级显式 | 不可达=标注；语义化失败=异常回执；永不静默空集 |
 | SLA-6 | 硬边界最小且只做安全/授权/原子性/协议 | 对应 STACK L1 白名单；不越界做策略/完成裁决 |
 
@@ -171,7 +171,7 @@ read(region="form:checkout", depth="raw")     // 三级缩放的第三级：回�
 | LFL 已验证机制（现行 schema） | 语义操控框架对应物 |
 |---|---|
 | EvidenceRef + `read_evidence` 水合 | 语义 ID + 接地回验（②④） |
-| `edit_file` 的 `snapshot_ref`/`expected_snapshot_ref` | 乐观并发动作 `expected_state`（四-4） |
+| `edit_file` 的 `snapshot_ref`/`expected_snapshot_ref` | 乐观并发动作 `expected_version + version_scope`（四-4） |
 | `source_synopsis`（摘要绑定原文 SHA，程序只存取） | 语义快照绑定接地版本；三级缩放（三-3） |
 | `workflow_run` DAG（依赖执行、逐步回执） | 组合动作（四-1） |
 | `architecture_status.context_usage` | 感知预算可见（三-6） |
@@ -211,11 +211,11 @@ read(region="form:checkout", depth="raw")     // 三级缩放的第三级：回�
 └────────────────────────────────────────────────────────┘
 信息流向：L1 采集 → L2 翻译 → L3 裁剪 → L4 决策；
 动作流向：L4 语义动作 → L1 物理执行；
-回验流向：L4 任意时刻 → L1 原始接地（跨层直达）。
+回验流向：L4 在声明 validity/retention + 权限窗口内 → L1 同一原始接地（跨层直达）；窗口外显式 expired/unavailable/unauthorized。
 ```
 
 - **Phase 0 契约规范**：先写工具 schema（感知/动作/反馈契约即工具定义），schema 即契约、即测试基线（LFL 方法：契约先行）。
-- **Phase 1 浏览器域**：DOM 接地最完整、语义化规则化程度最高（role/name/state 大多可直接从 DOM 取），先在此验证四层与 SLA。Playwright/CDP 类驱动。
+- **Phase 1 浏览器域**：DOM + AX 结构接地相对完整，role/name/state 必须 source-qualified 且冲突显式；先在此验证 identity/scope/TOCTOU/diff/receipt 与 SLA。Playwright/CDP 类驱动，但 CSS/XPath/CDP node id/AX index 只允许作为 adapter 内部 locator，不进入模型面的 Semantic ID。
 - **Phase 2 视觉补盲**：canvas/动态内容的按需 vision 语义化（模型显式请求才触发），验证「语义化只花在盲区」的成本边界。
 - **Phase 3 OS 域**：Windows UIA / macOS AXAPI / Linux AT-SPI 分平台接地层实现；**语义层契约跨域不变**（这正是「程序是服务」的检验——换介质不换契约）。
 

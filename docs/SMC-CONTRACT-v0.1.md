@@ -123,10 +123,10 @@ SMX 当前 `display_truncated` 与 LFL Evidence `projection_complete` 是这一�
   "domain": "browser",
   "scope_ref": "page:checkout-tab-1",
   "kind": "button",
-  "attributes": {"name": "提交订单", "hint": "表单底部右侧；DOM/视觉接地显示为主操作按钮"},
+  "attributes": {"name": "提交订单", "dom_region": "form/footer"},
   "state": {"enabled": true},
   "relations": [],
-  "coverage": {"status": "complete", "sources": ["dom", "ax"], "blind_spots": []},
+  "coverage": {"status": "complete", "sources": ["dom", "ax"], "blind_spots": [], "conflicts": []},
   "grounding_ref": "snap_9c1d#el_a3f2",
   "observed_version": "snap_9c1d"
 }
@@ -135,9 +135,9 @@ SMX 当前 `display_truncated` 与 LFL Evidence `projection_complete` 是这一�
 - `id`：adapter-issued 稳定语义 ID，在该 ID 声明的 lifetime/scope 内，同一物理对象跨轮 observation 保持不变并可水合回接地（= 契约②，SLA-1）。ID 的域内分配/回收算法属适配器实现自由，但稳定性是 MUST。**若物理身份连续性无法机械唯一确认，MUST NOT 把旧 ID 静默重新绑定给相似新对象；必须返回 identity ambiguous/unresolved 或分配新 ID。**
 - `scope_ref`：对象所属 runtime/page/window/workspace 等语义作用域的稳定引用。ID 即使在 runtime/session 内全局唯一也 MUST 显式给 scope_ref，避免调用方靠 ID 编码猜作用域；scope 迁移若改变对象身份语义，必须产生新 observation/identity 事实。
 - adapter 的 identity 追踪策略 MUST 预先写进域规格并与任务语义无关；若使用结构相似性等 heuristic，只能输出可回验的 identity basis/ambiguity facts，不能因为“这个对象对当前任务看起来更像”而复用旧 ID。
-- `attributes`：只描述**是什么**（位置、外观/可访问性语义、机械属性），MUST NOT 出现"该不该操作"类字段。`hint` 同 DESIGN 契约①：只能来自可追溯接地或模型显式保存的解释；程序不得把未接地的视觉/任务推断伪装成事实 hint。
-- `state`：机械事实（enabled/disabled/checked/visible/size/exists…），来源必须是 adapter 规格预先声明的可程序判定接地信号，不得按任务临场选择更“合意”的来源或掺入推断；多源冲突必须作为冲突事实暴露，而不是静默择一。
-- `coverage`：对象级**接地覆盖事实**，统一结构为 `status=complete|partial|unknown`、`sources=[...]`、`blind_spots=[...]`。`complete` 只表示满足该 adapter 预先声明的 sensor/coverage contract，**不等于掌握物理世界全部真相**。来源名由 adapter 规格固定（FS 可为 `stat`，Browser 可为 `dom/ax/vision`）；不得把 `not_found` 之类观察结果混成 coverage，也不得把“某来源存在”自动等同于 `complete`。canvas/WebGL 等结构盲区若只由视觉接地，可表示 `sources=["vision"], status="partial"` 并列出结构盲区。这是 SLA-5 的对象级落点。
+- `attributes`：只描述**是什么**（位置、外观/可访问性语义、机械属性），MUST NOT 出现"该不该操作"类字段。Browser v0.1 SHOULD 避免程序生成自由文本 `hint`；若确需保留，只能来自可追溯接地的原始标签/描述或模型显式保存的解释，并携带 provenance。程序不得把“主操作”“最相关”“更值得点击”等视觉显著性/任务判断伪装成事实 hint。
+- `state`：机械事实（enabled/disabled/checked/visible/size/exists…），来源必须是 adapter 规格预先声明的可程序判定接地信号，不得按任务临场选择更“合意”的来源或掺入推断。若多个已声明 sensor 对同一 canonical field 给出冲突值，MUST NOT 静默择一：未能按预先声明、任务无关且可复算的规则机械消解时，该 canonical field MUST 为 `null`，并在 `coverage.conflicts` 保留每个 source 的 value + grounding_ref。若 DOM↔AX/vision 的对象对应关系本身无法唯一确认，MUST NOT 为了合并卡片而猜测 identity；应保留独立对象或显式 identity unresolved/conflict。
+- `coverage`：对象级**接地覆盖事实**，统一结构为 `status=complete|partial|unknown`、`sources=[...]`、`blind_spots=[...]`、`conflicts=[...]`。`conflicts` 在无冲突时可为空；当已声明的多个 sensor 对同一 canonical attribute/state/identity mapping 产生不一致时 MUST 非空，每项至少给 `field`（或 `identity_mapping`）、`observations=[{source,value,grounding_ref}]` 与 `resolution=unresolved|mechanically_derived`（若为 mechanically_derived，还必须说明预先声明的 derivation/basis，且不得丢掉原始冲突 observation）。`complete` 只表示满足该 adapter 预先声明的 sensor/coverage contract，**不表示各 sensor 相互一致，也不等于掌握物理世界全部真相**。来源名由 adapter 规格固定（FS 可为 `stat`，Browser 可为 `dom/ax/vision`）；不得把 `not_found` 之类观察结果混成 coverage，也不得把“某来源存在”自动等同于 `complete`。canvas/WebGL 等结构盲区若只由视觉接地，可表示 `sources=["vision"], status="partial"` 并列出结构盲区。这是 SLA-5 的对象级落点。
 - `relations`：由接地结构机械支持的关系事实（父子/同组/包含等），无策略含义。视觉上“看起来靠近/像同组”若需模型解释，不得由 adapter 冒充机械 relation。
 - `grounding_ref` / `observed_version`：回验寻址与版本绑定（P4-1）。对象卡片一旦发布，其 `id + observed_version + grounding_ref` 语义必须固定；后续状态变化通过新 observation/version 表达，不允许就地改写旧卡后仍宣称旧引用有效。
 
@@ -147,7 +147,7 @@ SMX 当前 `display_truncated` 与 LFL Evidence `projection_complete` 是这一�
 |---|---|---|---|
 | Shell/FS（SMX） | 当前实现只有绝对路径 **location key**，尚非合同意义的物理对象 stable ID（rename/path reuse 会破坏同一性） | `file` / `{size, mtime, type}`（smx 快照 entries `{t,s,m}`） | `sources=[stat]`；预算/遍历错误由 snapshot completeness 表达 |
 | LFL 文件域 | path 是 location；`snapshot_ref` 是 immutable content/version grounding ref，二者组合提供版本前置先例，但不是跨 rename 的物理对象 ID | 文件内容行 | `sources=[file_bytes]` |
-| Browser（纸面） | `el_a3f2`（需 DOM 相似性追踪分配） | role/name/state | 本对象的主战场（canvas/WebGL/aria-hidden） |
+| Browser（纸面） | `el_a3f2`（仅在物理身份连续性可机械唯一确认时延续；相似性只能提供 basis/ambiguity facts） | role/name/state | DOM/AX/vision 多源 coverage/conflict 是本对象的主战场 |
 
 ### ② WorldSnapshot —— 世界快照
 
@@ -403,7 +403,7 @@ P0 的静态部分作为 **structural lint，不是完整 agency proof**。至�
 - identity ambiguity：旧节点消失后出现多个相似节点时，旧 ID 必须 unresolved/retired，不能“最相似即继承”；验证 N14。
 - identity task-invariance：同一 DOM 演化在不同用户任务描述下必须产生同样 ID continuity 结果；任务语义不得影响 identity matcher。
 - `coverage`：canvas/WebGL → `vision-only` 是否足以承载动作（视觉接地的点击精度）；aria-hidden 元素的归类。
-- `state` 机械性：DOM 属性与 AX 树冲突时以何者为准（须写进适配器规格，不得临场推断）。
+- `state` 机械性：DOM 属性与 AX 树冲突时不得静默“选一个为准”；须按 `coverage.conflicts` 暴露 source-qualified observations。仅当域规格预先声明了任务无关、可复算的机械 derivation 时，才可同时给 canonical derived value，并保留原冲突事实。
 - `expected_version` 粒度：以 `version_scope=object|resource|snapshot` 显式声明；验证对象级与页面级版本不会被混用。
 - `idempotency_class`：`click/submit/send/download` 等 verb 是否可机械分类；`unknown/non_idempotent` 的 transport failure 不得自动 replay。重点验证“稳定 ID”不会被误解成“重复动作安全”。
 - `atomicity_class`：页面动作最多是 single_dispatch 还是确有 atomic guarantee；失败/超时时是否仍能报告已观察副作用，避免把“调用失败”误写成“世界没变化”。
@@ -415,9 +415,11 @@ P0 的静态部分作为 **structural lint，不是完整 agency proof**。至�
 
 ---
 
-## 6. Domain-0 conformance 盲区 / 已知 GAP（防"全绿"误读）
+## 6. Domain-0 conformance 盲区 / 已知 GAP（历史基线，防"全绿"误读）
 
-R1 的 `PASS` **只**证明当前探针实际覆盖到的合同断言；当前预计会同时存在若干 GAP。GAP 不等于方向失败，而是 Domain-0 与上位合同的真实距离。以下在 shell 域是"免费"、"缺席"或当前实现尚未补齐的：
+> **状态注记（2026-09-13）**：本节 G1–G16 表记录的是 2026-09-12 SMC-ADAPT-SMX **之前**的 R1 基线，用于保留合同为何产生这些约束的 provenance；不得把表内“当前实现”措辞当成 09-13 runtime 现状。后续权威状态见 `docs/SMC-ADAPT-SMX-v0.1-RESULT-20260913.md/json`：P0–P8 measured probes 已 9 PASS / 0 GAP；仍未由 Domain-0 证明的核心考场是 G1–G5、G8 与 Browser 跨域充分性。
+
+R1 的 `PASS` **只**证明探针实际覆盖到的合同断言；基线中的 GAP 不等于方向失败，而是当时 Domain-0 与上位合同的真实距离。以下表格保留为历史证据：
 
 | # | 盲区 | 原因 | 真正的考场 |
 |---|---|---|---|
@@ -475,10 +477,13 @@ R1 的 `PASS` **只**证明当前探针实际覆盖到的合同断言；当前�
 | C25 | 分离 observation completeness 与 projection completeness | token/display 裁剪只影响模型本轮看多少，不能伪装成传感器盲区；真实 observation gap 也不能伪装成“只是没展开” | P4/P5 + LFL Evidence precedent |
 | C26 | 增加 `operation_class=observe|probe|mutate` 并修正 profile 边界 | wait/assert 需要可审计 Action/Receipt，但 perception profile 又不应拥有世界修改权；probe（如 TCP connect）也不能假装纯读 | §0.1 + P2 |
 | C27 | 回验 raw grounding 与 canonical contract projection 明确分层 | “可回验”不代表 raw 层天然满足高层完整性语义；full hydrate 必须保留 canonical=false/原始边界，不能重新注入已知伪差分 | §2.0 + G16 |
+| C28 | `coverage.conflicts` 标准化多感官冲突 wire | R3 Browser 反例：DOM/AX/vision 可对同一 enabled/visible/name/identity mapping 给出冲突；只写“必须暴露”而无公共 wire 会迫使跨域调用方猜 adapter 私有 extension。未机械消解时 canonical field=null，保留全部 source/value/grounding | R3-09/R3-10 + P2/P3 |
 
 ---
 
 ## 8. 冻结兼容与实施顺序
+
+> **历史治理注记（2026-09-13）**：本节原始顺序记录 09-12 冻结期约束。其后已完成 SMX focused v1.2 re-freeze/正式 30-run、SMC-ADAPT-SMX P4→P7→P2→P8→P5→P0 与 committed-state qualification；当前事实以 `docs/SMC-ADAPT-SMX-v0.1-RESULT-20260913.md/json` 及 R3 Browser 报告为准。本节旧 v1.1 条目保留作 provenance，不重新冒充待执行计划。
 
 - **本文档本身是 docs-only 工件**：不触碰任何冻结代码。2026-09-12 本轮复核：`tools/smx/smx.py`、`src/llm_loop/tools/builtin/smx_perceive.py`、`src/llm_loop/tools/registry.py` 三个 SMX 核心锚当前 SHA 仍与 `dba31bd7:evals/pilot/smx_focused_v1_1.json` 一致；`registry.py` 的 `35fa47c9` 修改早于冻结锚生成，锚定捕获的是修改后状态。
 - **但“SMX 三核心锚一致”不等于 SMX focused v1.1 全冻结集一致。** 本文评审过程中 convergence HEAD 被并发推进到 `226a9010`；该提交属于**另一条 AgentPilot v1.1 108-run 治理线**，并修改了 `evals/pilot/analyze.py`。该文件同时也是 **SMX focused v1.1** `source_sha256` 冻结清单成员（冻结值 `33de85e20ae6e42a3336372f8253c543a9504330985f9a80d6cb191a9da5d0c1`）。因此当前 convergence HEAD 已满足 SMX focused 协议 invalidation 条件 `frozen_hash_changed`，**不得直接拿当前 HEAD 执行并称为原 frozen SMX focused v1.1 30-run**。这不表示 SMX 30-run 已执行；只是当前 HEAD 不再等于它的冻结源码集合。

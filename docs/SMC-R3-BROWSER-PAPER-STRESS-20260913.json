@@ -1,0 +1,406 @@
+{
+  "schema": "smc.r3_browser_paper_stress.v0.1",
+  "date": "2026-09-13",
+  "baseline_head": "a433b57925d89ba67edcf601910867700ab22bb6",
+  "mode": "paper_stress_no_browser_production_code_no_model_run_no_service_restart",
+  "initial_contract_counts": {
+    "PASS": 28,
+    "CONTRACT_CHANGE_NEEDED": 2,
+    "DEFERRED": 2
+  },
+  "contract_amendments": [
+    {
+      "id": "C28",
+      "status": "applied_docs_only",
+      "summary": "standardize coverage.conflicts for multi-sensor value/identity conflicts; unresolved canonical field is null; preserve source/value/grounding_ref"
+    }
+  ],
+  "post_amendment_ruling": {
+    "browser_phase1_paper_spec_sufficiency": "PASS",
+    "browser_implementation_conformance": "NOT_TESTED",
+    "phase2_vision_actionability": "DEFERRED",
+    "phase3_native_ui": "DEFERRED",
+    "claim": "SMC v0.1 after C28 is sufficient to specify Browser Phase 1, but no Browser adapter implementation has been qualified."
+  },
+  "scenarios": [
+    {
+      "id": "R3-01",
+      "scenario": "SPA reorder preserves physical node",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "同一 backend/DOM identity 在同 document 内仅重排；合同允许延续 ID，要求可水合 grounding。",
+      "implementation_or_disposition": "Browser identity tracker 尚未实现。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-02",
+      "scenario": "React rerender replaces node with same role/name",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "相似语义不证明物理同一；新对象或 unresolved，N14 阻止静默继承旧 ID。",
+      "implementation_or_disposition": "需 deterministic fixture 证明替换后不误绑。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-03",
+      "scenario": "duplicate candidates after old node disappears",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "多个相似候选时 identity ambiguous；不得 best-match 自动重绑。",
+      "implementation_or_disposition": "需 2+ 同 role/name 候选 fixture。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-04",
+      "scenario": "identity task-invariance",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "identity policy 必须预声明且与用户任务文字无关；同 DOM 演化在不同任务下结果相同。",
+      "implementation_or_disposition": "需同一 trace + 不同 task prompt 的 deterministic identity replay。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-05",
+      "scenario": "two tabs with identical content",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "ID runtime/session 唯一且显式 scope_ref，页面内容相同不能导致跨 tab alias。",
+      "implementation_or_disposition": "需 page/window scope registry。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-06",
+      "scenario": "iframe scope and frame navigation",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "frame/document 可作为 Browser domain scope hierarchy；frame 导航导致 scope/version 变化，旧 target 不能穿透。",
+      "implementation_or_disposition": "需 Browser domain scope spec 明确 page/document/frame parentage。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-07",
+      "scenario": "full navigation on same tab",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "先判 scope_relation/comparability；新 document 不得解释成旧页面对象全删+新页面全建。",
+      "implementation_or_disposition": "需 navigation generation + comparable=false/changed fixture。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-08",
+      "scenario": "adapter/browser restart invalidates old IDs",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "v0.1 只要求 runtime/session 生命周期；namespace reset 后旧 ID 必须 expired/unavailable，不得碰巧复用。",
+      "implementation_or_disposition": "需 runtime_generation/namespace token。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-09",
+      "scenario": "DOM vs AX conflict on canonical state",
+      "contract_verdict_initial": "CONTRACT_CHANGE_NEEDED",
+      "implementation_verdict": "GAP",
+      "contract_reason": "原合同只写“冲突必须暴露”但无公共 wire；R3 证明 enabled/visible/name 等冲突会迫使跨域调用方猜 extension。",
+      "implementation_or_disposition": "已以 C28 增加 coverage.conflicts；未消解 canonical field=null，保留每个 source/value/grounding_ref。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-10",
+      "scenario": "DOM↔AX object fusion ambiguity",
+      "contract_verdict_initial": "CONTRACT_CHANGE_NEEDED",
+      "implementation_verdict": "GAP",
+      "contract_reason": "同一 DOM node 与多个 AX node、或反向映射不唯一时，不能强行融合成一张卡；原公共 wire 不足。",
+      "implementation_or_disposition": "C28 同时要求 identity_mapping conflict 显式；不唯一则保留独立对象或 unresolved。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-11",
+      "scenario": "aria-hidden / DOM-present but AX-absent",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "不是“谁为准”，而是 source-qualified observation + coverage/conflict；是否对任务有用由模型判断。",
+      "implementation_or_disposition": "需 DOM/AX sensor contract 与字段词汇表。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-12",
+      "scenario": "open/closed shadow DOM coverage",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "可达结构进入声明 sensor coverage；closed/unreachable 区域形成 blind_spot，不得静默空集。",
+      "implementation_or_disposition": "需 shadow-root scope/coverage fixture。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-13",
+      "scenario": "canvas/WebGL structural blind spot",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "Phase1 可诚实报告 tree blind spot 与 vision capability/cost；不得自动触发 vision。",
+      "implementation_or_disposition": "Phase1 只需 blind-spot honesty；视觉识别质量不在本项。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-14",
+      "scenario": "vision-only semantic target actionability",
+      "contract_verdict_initial": "DEFERRED",
+      "implementation_verdict": "DEFERRED",
+      "contract_reason": "视觉对象的稳定 identity、坐标接地精度、遮挡/缩放后的动作安全需真实 Phase2 视觉实验，paper test 不能证明。",
+      "implementation_or_disposition": "Phase2；v0.1 只固定显式请求、coverage/cost、无自动 vision。",
+      "contract_verdict_after_amendment": "DEFERRED"
+    },
+    {
+      "id": "R3-15",
+      "scenario": "spatial relations from geometry vs inferred grouping",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "父子/包含/几何 bbox 可机械关系；“看起来同组/更靠近所以相关”仍属模型解释。",
+      "implementation_or_disposition": "需 Browser relation vocabulary，只发布可复算 geometry/structure facts。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-16",
+      "scenario": "projection truncation vs observation completeness",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "对象已捕获但未投影 ≠ sensor 没看到；projection 与 completeness 两轴已能表达。",
+      "implementation_or_disposition": "需 DOM/AX snapshot pagination/hydrate。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-17",
+      "scenario": "stale target / TOCTOU before click",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "dispatch 前必须重新解析 target identity 并核 expected_version；旧 locator 命中替代节点仍应 rejected。",
+      "implementation_or_disposition": "需 observe→replace→click race fixture。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-18",
+      "scenario": "object/page version granularity",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "expected_version + version_scope 能区分 object/resource/snapshot；不支持时明确 unsupported。",
+      "implementation_or_disposition": "需 Browser verb/version capability table。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-19",
+      "scenario": "click/submit transport ambiguity",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "稳定 ID 不等于幂等；non_idempotent/unknown 不得静默 replay。",
+      "implementation_or_disposition": "需 transport-failure-after-dispatch fault injection。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-20",
+      "scenario": "click fails after partial side effect",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "atomicity_class 必须如实；single_dispatch/best_effort 失败后仍报告已观察副作用，不能声称世界没变。",
+      "implementation_or_disposition": "需 onclick side effect + navigation/error fixture。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-21",
+      "scenario": "popup / download / new-window boundary events",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "动作原 scope 不回写；新 window/download/permission 等以 boundary_events + 新 scope/snapshot 表达。",
+      "implementation_or_disposition": "需 popup/download fixture。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-22",
+      "scenario": "async action receipt revisions",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "同 action_id 的 receipt_seq 单调唯一、旧 receipt immutable；running→terminal 新增 revision。",
+      "implementation_or_disposition": "现 Browser adapter/append-only receipt store 尚无实现。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-23",
+      "scenario": "virtualized list negative predicate",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "未加载/分页区域使“不存在/不可见”缺足够 coverage 时应 indeterminate；正向 witness 可 satisfied。",
+      "implementation_or_disposition": "需 virtualized list + scroll coverage fixture。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-24",
+      "scenario": "transient condition between polling samples",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "polling unsatisfied 仅表示采样点未见；event_driven 才可声明更强时间语义。",
+      "implementation_or_disposition": "需 interval/sample_count/error facts。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-25",
+      "scenario": "SPA churn snapshot-pair diff",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "diff_semantics=snapshot_pair_net 只证明净变化；中间 detach/reattach 不得被说成未发生。",
+      "implementation_or_disposition": "需 MutationObserver/event-stream 与 snapshot-pair 对照 fixture。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-26",
+      "scenario": "sensor contract differs between snapshots",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "diff comparability 必须含 sensor/coverage contract；DOM-only 与 DOM+AX 不可直接做完整对象集合差。",
+      "implementation_or_disposition": "需 sensor_contract/version 纳入 snapshot scope/comparability。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-27",
+      "scenario": "history.pushState URL change in same document",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "document 可保持同 scope，URL/state 作为 mechanically changed field；是否代表任务阶段变化由模型判断。",
+      "implementation_or_disposition": "需 same-document navigation fixture。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-28",
+      "scenario": "cross-origin iframe partially observable",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "权限/介质限制进入 coverage/completeness；不可达不能冒充空 frame。",
+      "implementation_or_disposition": "需 cross-origin frame sensor capability fixture。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-29",
+      "scenario": "native browser chrome / OS permission dialog",
+      "contract_verdict_initial": "DEFERRED",
+      "implementation_verdict": "DEFERRED",
+      "contract_reason": "Browser DOM adapter 不能假装覆盖浏览器 chrome/系统对话框；应报告 blind spot/boundary，实际操控属 Phase3 OS/Computer Use 域。",
+      "implementation_or_disposition": "Phase3。",
+      "contract_verdict_after_amendment": "DEFERRED"
+    },
+    {
+      "id": "R3-30",
+      "scenario": "legacy playwright_exec dual-interface contamination",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "SMC 实验臂必须禁用模型直连 playwright_exec 或记为 intervention；否则模型可绕过 Semantic ID/receipt contract。",
+      "implementation_or_disposition": "现 legacy tool 保留为 L1 backend/独立 E2E 资产，不升级为 SMC 模型面。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-31",
+      "scenario": "model-facing CSS/XPath/AX index locator",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "N15 已禁止 ephemeral locator 作为 target_id；CSS/XPath/CDP/AX index 只允许 adapter 内部解析。",
+      "implementation_or_disposition": "现 playwright_exec 仍 selector-facing，因此不是 SMC adapter。",
+      "contract_verdict_after_amendment": "PASS"
+    },
+    {
+      "id": "R3-32",
+      "scenario": "program-generated salient hint / task-relevance filtering",
+      "contract_verdict_initial": "PASS",
+      "implementation_verdict": "GAP",
+      "contract_reason": "核心 P2/P3/N1/N10 已禁止；R3 发现 DESIGN 示例仍有“蓝色主按钮/关键状态/任务相关子集”漂移，已 docs-only 对齐。",
+      "implementation_or_disposition": "Browser adapter 不得生成主按钮/最佳候选/重要性摘要；显式 query/filter 由模型给出。",
+      "contract_verdict_after_amendment": "PASS"
+    }
+  ],
+  "browser_phase1_minimum_qualification": [
+    {
+      "gate": "B0",
+      "name": "surface isolation",
+      "requirement": "声明 smc-manipulation-v0.1；实验臂模型面只暴露 SMC Browser surface。legacy playwright_exec 若保留只作内部 backend/独立 E2E，模型直连必须禁用或计 intervention。"
+    },
+    {
+      "gate": "B1",
+      "name": "scope model",
+      "requirement": "runtime/session 内 Semantic ID 唯一；显式 page/document/frame scope_ref 与 parent relation；navigation/restart 产生可见 generation/失效事实。"
+    },
+    {
+      "gate": "B2",
+      "name": "grounded snapshot",
+      "requirement": "WorldSnapshot 绑定 observed_at、sensor_contract、content/integrity grounding、observation completeness 与 projection completeness；DOM/AX raw grounding 可按声明 retention 水合。"
+    },
+    {
+      "gate": "B3",
+      "name": "identity continuity",
+      "requirement": "identity matcher 任务无关；reorder 同物理对象延续 ID；replacement/duplicate ambiguity 不误绑；旧 ID stale/retired 可机械检测。"
+    },
+    {
+      "gate": "B4",
+      "name": "multi-sensor honesty",
+      "requirement": "DOM/AX source-qualified；coverage.conflicts 按 C28 输出；未消解冲突 canonical field=null；identity mapping ambiguity 不强融。"
+    },
+    {
+      "gate": "B5",
+      "name": "diff semantics",
+      "requirement": "SemanticDiff 显式 snapshot_pair_net/event_stream；比较前核 domain/scope/document/sensor contract；incomplete/changed fields 按 field_completeness 诚实降级。"
+    },
+    {
+      "gate": "B6",
+      "name": "semantic actions",
+      "requirement": "click/fill/select/navigate/scroll 等只接受 Semantic ID/semantic root；model-facing 禁 CSS/XPath/coordinate/CDP/AX index；operation_class 固定于 verb contract。"
+    },
+    {
+      "gate": "B7",
+      "name": "TOCTOU/version",
+      "requirement": "dispatch 前重新解析 identity + expected_version/version_scope；stale/ambiguous 拒绝，不静默换 locator/target。"
+    },
+    {
+      "gate": "B8",
+      "name": "retry/atomicity",
+      "requirement": "每 verb 暴露 idempotency_class/atomicity_class；non_idempotent/unknown transport ambiguity 不 replay；任何允许 retry 都可审计；失败仍报告已观察副作用。"
+    },
+    {
+      "gate": "B9",
+      "name": "append-only receipts",
+      "requirement": "ActionReceipt 持久可回验；同 action_id receipt_seq 唯一单调；running/terminal revision 不覆盖旧 receipt；before/after version 与 boundary_events 齐全。"
+    },
+    {
+      "gate": "B10",
+      "name": "predicate honesty",
+      "requirement": "structured Predicate vocabulary；satisfied/unsatisfied/indeterminate；negative 需足够 coverage；polling/event mode、interval/sample/error facts 可见。"
+    },
+    {
+      "gate": "B11",
+      "name": "blind spots/boundaries",
+      "requirement": "shadow/cross-origin/canvas/native chrome 等不可达显式；new-window/download/dialog/permission 等固定机械事件可见；Phase1 不自动调用 vision。"
+    },
+    {
+      "gate": "B12",
+      "name": "authority lint",
+      "requirement": "模型面对象/回执无 recommended/best/priority/completion/recovery sequence/“相似候选自动替代”等策略字段；程序不生成任务相关裁剪或重要性摘要。"
+    },
+    {
+      "gate": "B13",
+      "name": "deterministic adversarial suite",
+      "requirement": "至少把 R3-01..R3-32 中 Phase1 非 DEFERRED 场景变成 deterministic fixture；每项有 ground-truth oracle，不依赖 LLM 评分。"
+    },
+    {
+      "gate": "B14",
+      "name": "repo qualification",
+      "requirement": "focused + adjacent + schema/authority + security + Pyright/Ruff + full ci_gate committed-state 全绿；不得以 legacy Playwright 通过代替 SMC conformance。"
+    }
+  ],
+  "legacy_browser_facts": {
+    "smc_browser_adapter_present": false,
+    "playwright_exec_model_surface": "legacy selector/python script surface, not SMC",
+    "playwright_exec_state": "independent subprocess/browser session per call",
+    "axtree_text": "CDP Accessibility.getFullAXTree flattened text, capped at 500 lines / 20000 chars",
+    "allowed_reuse": "L1/backend mechanics and safety assets only; no promotion of selector/index to Semantic ID"
+  },
+  "non_claims": [
+    "No Browser SMC production adapter implemented",
+    "No live DOM/AX Browser conformance run",
+    "No model/browser A/B run",
+    "No Phase2 vision actionability qualification",
+    "No Phase3 native browser chrome/OS UI qualification"
+  ]
+}
