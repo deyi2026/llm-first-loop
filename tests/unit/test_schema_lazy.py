@@ -115,6 +115,7 @@ def test_compact_contract_keeps_load_bearing_search_and_evidence_semantics():
     reg = ToolRegistry()
     reg.register(_FakeTool("search_files"))
     reg.register(_FakeTool("read_evidence"))
+    reg.register(_FakeTool("search_evidence"))
     defs = {row["name"]: row for row in reg.schemas(lazy=True)}
 
     assert "pattern+content" in defs["search_files"]["description"]
@@ -157,13 +158,40 @@ def test_compact_contract_keeps_versioned_edit_discovery_path():
 def test_compact_contract_keeps_first_call_task_and_evidence_bounds():
     """First-call-ready facts must survive lazy projection instead of forcing avoidable retries."""
     reg = ToolRegistry()
-    for name in ("list_evidence", "task_create", "task_update"):
-        reg.register(_FakeTool(name))
+    list_tool = _FakeTool("list_evidence")
+    list_tool.parameters = {
+        "type": "object",
+        "properties": {"limit": {"type": "integer", "description": "FULL list limit prose"}},
+    }
+    search_tool = _FakeTool("search_evidence")
+    search_tool.parameters = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "FULL query prose"},
+            "limit": {"type": "integer", "description": "FULL search limit prose"},
+        },
+        "required": ["query"],
+    }
+    update_tool = _FakeTool("task_update")
+    update_tool.parameters = {
+        "type": "object",
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": ["pending", "in_progress", "blocked", "done", "failed", "cancelled"],
+                "description": "FULL status prose",
+            },
+        },
+    }
+    for tool in (list_tool, search_tool, _FakeTool("task_create"), update_tool):
+        reg.register(tool)
     defs = {row["name"]: row for row in reg.schemas(lazy=True)}
 
-    list_desc = defs["list_evidence"]["description"]
-    assert "limit 1..20" in list_desc
-    assert "scope=recent/recovery" in list_desc
+    assert "scope=recent/recovery" in defs["list_evidence"]["description"]
+    assert "1..20" in defs["list_evidence"]["parameters"]["properties"]["limit"]["description"]
+    assert "最多 20" in defs["search_evidence"]["parameters"]["properties"]["limit"]["description"]
+    # Unreviewed parameter prose is still stripped from lazy transport.
+    assert "description" not in defs["search_evidence"]["parameters"]["properties"]["query"]
 
     create_desc = defs["task_create"]["description"]
     assert "get_goal" in create_desc
@@ -173,12 +201,12 @@ def test_compact_contract_keeps_first_call_task_and_evidence_bounds():
     assert "acceptance 必填" in create_desc
 
     update_desc = defs["task_update"]["description"]
-    assert "pending→in_progress" in update_desc
-    assert "不能直接 pending→done" in update_desc
-    assert "in_progress→done" in update_desc
     assert "blocked_reason" in update_desc
     assert "evidence_refs" in update_desc
     assert "confirm=true" in update_desc
+    status_desc = defs["task_update"]["parameters"]["properties"]["status"]["description"]
+    assert "pending" in status_desc and "不能直接 done" in status_desc
+    assert "in_progress" in status_desc and "blocked/failed" in status_desc
 
 
 def test_compact_contract_keeps_skill_discovery_trigger_without_forcing_selection():

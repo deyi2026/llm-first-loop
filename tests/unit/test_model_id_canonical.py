@@ -8,12 +8,13 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from llm_loop.llm.model_ids import canonical_model_id, is_alias_form
 from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
 
-from pathlib import Path
 PATH_FORM = str(Path.home() / ".lmstudio" / "models" / "ornith-ai" / "Ornith-1.5-35B-A3B-MLX")
 HF_FORM = "ornith-ai/Ornith-1.5-35B-A3B-MLX"
 

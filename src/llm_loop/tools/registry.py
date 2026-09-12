@@ -51,7 +51,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "read_evidence": "按 EvidenceRef 分页恢复已取得证据；range_type=text_char 表示 Unicode 字符，line 表示 Evidence 行；start 为 0-based；limit 1..4000；不重新执行原工具。freshness/currentness 仅指 source 版本，不判断内容对当前任务是否适用。",
     "search_evidence": "检索当前会话已持久化 Evidence，返回片段与稳定 EvidenceRef；不重新执行 source。命中为历史 observation；source currentness≠task applicability，结合 acquired_at/当前证据自主判断。",
     "search_archive": "兼容检索历史/归档 Evidence，返回稳定 ref；全文用 read_evidence。命中为历史 observation；source currentness≠task applicability，结合 acquired_at/当前证据自主判断。",
-    "list_evidence": "列出当前会话 Evidence、acquired_at 与稳定 ref；limit 1..20（默认 10），scope=recent/recovery。freshness 仅表示 source 版本状态，不判断任务适用性。",
+    "list_evidence": "列出当前会话 Evidence、acquired_at 与稳定 ref；scope=recent/recovery。freshness 仅表示 source 版本状态，不判断任务适用性。",
     "read_file": "读取已知路径的本地文本文件或 artifact://v1/... immutable snapshot；目录/关键词定位用 search_files。若后续计划 edit_file，必须本次 snapshot=true 取得 snapshot_ref。",
     "read_image": "读取本地图片并返回结构化视觉与元信息证据；需要图片路径。",
     "smx_perceive": "smx 感知层（opt-in，默认不注册）：wait 谓词轮询（file_exists/gone/contains、port_open 仅 loopback）+ snapshot/diff 目录净变更 + smx 回执查询；只感知不执行，执行走 execute_command。",
@@ -111,6 +111,25 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "workflow_run": "编排 parallel/pipeline/DAG 子任务；按依赖执行并传递前序结果。",
     "dsh_task": "在隔离进程/会话中委派 DeepSeek Harness 任务；不会自动继承当前会话历史。",
     "dsh_session_read": "读取 DSH 最近 session 的事件日志，查看中间推理、工具调用与结果。",
+}
+
+# Lazy schema normally strips parameter prose. Keep only parameter-local mechanical
+# facts whose omission has a reproduced first-call failure and whose compact form has
+# a positive real-model A/B. This is not a strategy/routing table: it does not hide
+# tools, choose tools, or change execution semantics.
+_COMPACT_PARAMETER_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    "list_evidence": {
+        "limit": "整数 1..20；单次最多 20。用户要更多时本轮也不得超过 20。",
+    },
+    "search_evidence": {
+        "limit": "整数 1..20；单次最多 20。用户要更多时本轮也不得超过 20。",
+    },
+    "task_update": {
+        "status": (
+            "目标状态。若当前 task=pending，只能先转 in_progress/cancelled/failed，不能直接 done；"
+            "in_progress 才可转 done/blocked/cancelled/failed；blocked/failed 可回 in_progress。"
+        ),
+    },
 }
 
 
@@ -590,13 +609,21 @@ class ToolRegistry:
 
     @staticmethod
     def _lazy_parameters(t) -> dict:
-        """lazy 参数骨架：递归保留调用结构/合法值，删除说明文本。"""
+        """lazy 参数骨架：保留调用结构/合法值和少量已验证参数局部机械事实。"""
         params = getattr(t, "parameters", {}) or {}
         skeleton = ToolRegistry._lazy_schema_skeleton(params)
         if not skeleton:
             return {"type": "object", "properties": {}}
         skeleton.setdefault("type", "object")
         skeleton.setdefault("properties", {})
+        name = str(getattr(t, "name", "") or "")
+        compact_param_desc = _COMPACT_PARAMETER_DESCRIPTIONS.get(name, {})
+        properties = skeleton.get("properties")
+        if isinstance(properties, dict):
+            for param_name, description in compact_param_desc.items():
+                spec = properties.get(param_name)
+                if isinstance(spec, dict) and description.strip():
+                    spec["description"] = description.strip()
         return skeleton
 
     def index_schemas(self, desc_chars: int = 80) -> list[dict]:
