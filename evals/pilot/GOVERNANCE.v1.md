@@ -113,3 +113,15 @@ v1→v1.1（同任务集 t01–t12）：lfl t06 2/3→3/3；caliber C 中位 32.
 
 ### 9.4 审计中发现并修复的 analyzer 显示 bug
 analyze.py L85 读取不存在的顶层键 `session_continuity`（行内真名 `resume_session_continuity`）→ 连续性恒显 0/3。一行修复随本提交入库；原始行字段证据见 9.3；不改数据、不涉 runner 钉扎。
+
+## §10 v1.1 redo（用户裁决 A：重跑）——预声明，先于数据生成落库
+
+- **授权**：用户 22:18 指令 "A" = §9.2 处置选项一（重跑 ~50min 新 workdir）。
+- **根因修复（针对 §9.1 gate 破因）**：v1.1 的 lfl 臂经 `REPO/.venv` editable `.pth`（纯路径型）解析到**活仓库 src**，主线合并即污染被测代码。redo 改为**不可变冻结**：`git worktree --detach /private/tmp/lfl-freeze-1437be74`（commit 1437be74，tree `a2476684aca1aa1183935b66fc417ab8cbbd626e`），矩阵进程 `PYTHONPATH=<freeze>/src` 优先于 site-packages `.pth`，shadow 测试已验证 llm_loop 解析到冻结副本（回执 22:22）。da 臂用 `evals/pilot/.venv-da` + 写入 ws 的 adapter、cline 为外部 CLI，均不依赖仓库工作树，无需冻结。
+- **代码身份声明**：被测 lfl 代码 = 冻结 worktree @ 1437be74（与 v1.1 manifest 声明的 `lfl_commit=1437be74` 一致）。redo manifest 的 `lfl_commit` 字段将记录运行时仓库 HEAD（环境事实），以本节冻结声明为准。runner 仍从主仓库运行（run_pilot/tasks/telemetry 在 1437be74↔HEAD 间无差异，差异仅 GOVERNANCE/analyze 文档层）。
+- **redo gate（替代 §9.1 的 HEAD-drift 致死条款，条件强于原条款）**：
+  - G1 冻结身份不变：完成时 `git -C /private/tmp/lfl-freeze-1437be74 rev-parse HEAD == 1437be74` 且 tree sha 仍为 `a2476684…`；
+  - G2 108 行齐且每行 `plan_sha256 == 570be8c6…`（同 seed=20260912 latin-square，计划必须逐字节复现 v1.1）；
+  - G3 redo workdir 内 invocation 记录 freeze/plan sha 自洽；
+  - G4 主线漂移**降级为环境注记**（代码已隔离），gate4 合并不再构成 gate FAIL。
+- workdir `/private/tmp/agentpilot-v11-redo-20260912/`；启动回执（含 PYTHONPATH 的进程环境、PID）记入本节附录。预计 ~55 分钟，完成后跑 analyze（226a9010 修正版）并回填 §10 结果表。
