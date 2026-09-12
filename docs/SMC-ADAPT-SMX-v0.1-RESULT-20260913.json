@@ -1,0 +1,84 @@
+{
+  "schema": "smc-adapt-smx-result-v0.1",
+  "date": "2026-09-13",
+  "contract": "docs/SMC-CONTRACT-v0.1.md",
+  "historical_baseline": "docs/SMC-CONFORMANCE-v0.1-20260912.md",
+  "code_tip": "79156fb5",
+  "interpretation": "measured_probe_conformance_not_maturity_score",
+  "r1_baseline": {
+    "pass": 3,
+    "gap": 6,
+    "fail": 0
+  },
+  "r1_post_adapt": {
+    "pass": 9,
+    "gap": 0,
+    "fail": 0
+  },
+  "r2": {
+    "pass": 5,
+    "gap": 0,
+    "fail": 0
+  },
+  "adaptation_order": [
+    "P4",
+    "P7",
+    "P2",
+    "P8",
+    "P5",
+    "P0"
+  ],
+  "commits": {
+    "P4": "af87c8c1",
+    "P7": "5114326b",
+    "P2": "eeee6a7b",
+    "P8": "477f2e18",
+    "P5": "b780b4d6",
+    "P0": "79156fb5"
+  },
+  "probe_status": {
+    "P0": "PASS",
+    "P1": "PASS",
+    "P2": "PASS",
+    "P3": "PASS",
+    "P4": "PASS",
+    "P5": "PASS",
+    "P6": "PASS",
+    "P7": "PASS",
+    "P8": "PASS"
+  },
+  "lfl_precedent_status": {
+    "L1": "PASS",
+    "L2": "PASS",
+    "L3": "PASS",
+    "L4": "PASS",
+    "L5": "PASS"
+  },
+  "residual_contract_gaps": [
+    "G1 physical object identity continuity",
+    "G2 canonical mutation SemanticAction wire",
+    "G3 object-level multi-sensor coverage",
+    "G4 high-frequency stale/identity pressure",
+    "G5 spatial relations",
+    "G8 async ActionReceipt append-only revision history",
+    "cross-domain G11 diff semantics sufficiency"
+  ],
+  "validation": {
+    "focused_conformance_schema": "54/54 PASS",
+    "adjacent_bundle": "PASS",
+    "whole_tree_security": "PASS (1621 tracked files)",
+    "ci_gate": "exit 0",
+    "repo_ruff": "PASS",
+    "env_pin": "535 files / 0 undeclared",
+    "src_pyright": "0 errors / 0 warnings / 0 informations",
+    "tier0": "PASS",
+    "xdist_full": "PASS"
+  },
+  "experiment_governance": {
+    "smx_focused_v1_2_rerun": false,
+    "v1_2_behavioral_credit_for_adaptation": false,
+    "next_behavioral_protocol_requires_new_version": true,
+    "smx_opt_in_unchanged": true
+  },
+  "final_ruling": "SMC v0.1 已通过 Domain-0 可机械化与 LFL 先例验证；尚未通过 R3 Browser 跨域充分性验证。"
+}
