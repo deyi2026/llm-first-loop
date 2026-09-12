@@ -1,0 +1,928 @@
+{
+  "schema": 1,
+  "protocol": "agentpilot-smx-focused-v1.2",
+  "status": "completed_qualified_with_execution_manifest_capture_deviation",
+  "repo_head": "34df2dce736708aeb27281306a318100510c97f8",
+  "evidence": {
+    "results_sha256": "1775db0f722a2526485bf2ea30e032fc6dd7d379f3a160c037f38dacdc56c952",
+    "execution_manifest_file_sha256": "9848d78622250609bbd53c22cd83e570f0ce35689ff2942d0ec39d732f162e79",
+    "execution_manifest_declared_sha256": "d97bd0a3d84fb603c5181024e0c5385e7d0e84fa9e85ea1bccf69e7a6983b0b6",
+    "plan_file_sha256": "2f925980a5715ce7ccbd95c9c8c9f6df74c8b44c1e71b90c905a574284f47027",
+    "wrapper_sha256": "57e5a881ba062e23a2e83800050b854c405c8f4e53e66975b3d1d7e628310606",
+    "formal_workdir_basename": "smx-focused-v12-formal-b-20260913",
+    "independent_rejudge": "30/30 PASS"
+  },
+  "matrix": {
+    "rows": 30,
+    "plan_indices_complete": true,
+    "status_counts": {
+      "PASS": 30
+    },
+    "arms": {
+      "lfl_smx_on": 15,
+      "lfl_smx_off": 15
+    },
+    "tasks": {
+      "sx_wait_existing_writer": 6,
+      "sx_background_worker": 6,
+      "ap_t09_big_file_line": 6,
+      "ap_t06_log_count": 6,
+      "sx_bulk_rename_diff": 6
+    },
+    "first_mechanical_valid_round_1": 30
+  },
+  "adoption": {
+    "positive_on_runs": 9,
+    "adopted": 5,
+    "gate_minimum": 5,
+    "gate_pass": true,
+    "by_task": {
+      "sx_wait_existing_writer": {
+        "adopted": 3,
+        "total": 3
+      },
+      "sx_background_worker": {
+        "adopted": 2,
+        "total": 3
+      },
+      "sx_bulk_rename_diff": {
+        "adopted": 0,
+        "total": 3
+      }
+    },
+    "negative_control_smx_calls": 0
+  },
+  "wait_adopted_pairs": [
+    {
+      "task": "sx_wait_existing_writer",
+      "repeat": 1,
+      "off": {
+        "rounds": 8,
+        "sleep_calls": 1,
+        "post_trigger_observation_calls": 1,
+        "wall_s": 52.4,
+        "tool_calls": 9
+      },
+      "on": {
+        "rounds": 7,
+        "sleep_calls": 0,
+        "post_trigger_observation_calls": 1,
+        "wall_s": 48.2,
+        "tool_calls": 7,
+        "smx_calls": 1
+      },
+      "delta_on_minus_off": {
+        "rounds": -1,
+        "sleep_calls": -1,
+        "post_trigger_observation_calls": 0,
+        "wall_s": -4.2,
+        "tool_calls": -2
+      }
+    },
+    {
+      "task": "sx_wait_existing_writer",
+      "repeat": 2,
+      "off": {
+        "rounds": 6,
+        "sleep_calls": 1,
+        "post_trigger_observation_calls": 1,
+        "wall_s": 42.4,
+        "tool_calls": 6
+      },
+      "on": {
+        "rounds": 7,
+        "sleep_calls": 0,
+        "post_trigger_observation_calls": 1,
+        "wall_s": 49.4,
+        "tool_calls": 7,
+        "smx_calls": 1
+      },
+      "delta_on_minus_off": {
+        "rounds": 1,
+        "sleep_calls": -1,
+        "post_trigger_observation_calls": 0,
+        "wall_s": 7.0,
+        "tool_calls": 1
+      }
+    },
+    {
+      "task": "sx_wait_existing_writer",
+      "repeat": 3,
+      "off": {
+        "rounds": 5,
+        "sleep_calls": 1,
+        "post_trigger_observation_calls": 1,
+        "wall_s": 33.2,
+        "tool_calls": 5
+      },
+      "on": {
+        "rounds": 6,
+        "sleep_calls": 0,
+        "post_trigger_observation_calls": 1,
+        "wall_s": 44.8,
+        "tool_calls": 6,
+        "smx_calls": 1
+      },
+      "delta_on_minus_off": {
+        "rounds": 1,
+        "sleep_calls": -1,
+        "post_trigger_observation_calls": 0,
+        "wall_s": 11.6,
+        "tool_calls": 1
+      }
+    },
+    {
+      "task": "sx_background_worker",
+      "repeat": 1,
+      "off": {
+        "rounds": 6,
+        "sleep_calls": 1,
+        "post_trigger_observation_calls": 1,
+        "wall_s": 49.7,
+        "tool_calls": 6
+      },
+      "on": {
+        "rounds": 6,
+        "sleep_calls": 0,
+        "post_trigger_observation_calls": 1,
+        "wall_s": 55.5,
+        "tool_calls": 7,
+        "smx_calls": 1
+      },
+      "delta_on_minus_off": {
+        "rounds": 0,
+        "sleep_calls": -1,
+        "post_trigger_observation_calls": 0,
+        "wall_s": 5.8,
+        "tool_calls": 1
+      }
+    },
+    {
+      "task": "sx_background_worker",
+      "repeat": 2,
+      "off": {
+        "rounds": 11,
+        "sleep_calls": 2,
+        "post_trigger_observation_calls": 5,
+        "wall_s": 105.1,
+        "tool_calls": 11
+      },
+      "on": {
+        "rounds": 6,
+        "sleep_calls": 0,
+        "post_trigger_observation_calls": 1,
+        "wall_s": 60.6,
+        "tool_calls": 7,
+        "smx_calls": 1
+      },
+      "delta_on_minus_off": {
+        "rounds": -5,
+        "sleep_calls": -2,
+        "post_trigger_observation_calls": -4,
+        "wall_s": -44.5,
+        "tool_calls": -4
+      }
+    }
+  ],
+  "wait_summary": {
+    "pairs": 5,
+    "round_delta_on_minus_off": [
+      -1,
+      1,
+      1,
+      0,
+      -5
+    ],
+    "round_delta_median": 0,
+    "round_direction": {
+      "on_better": 2,
+      "flat": 1,
+      "on_worse": 2
+    },
+    "sleep_delta_on_minus_off": [
+      -1,
+      -1,
+      -1,
+      -1,
+      -2
+    ],
+    "off_sleep_total": 6,
+    "on_sleep_total": 0,
+    "post_trigger_observation_delta_on_minus_off": [
+      0,
+      0,
+      0,
+      0,
+      -4
+    ],
+    "off_post_trigger_observations_total": 9,
+    "on_post_trigger_observations_total": 5,
+    "wall_delta_on_minus_off_s": [
+      -4.2,
+      7.0,
+      11.6,
+      5.8,
+      -44.5
+    ],
+    "wall_delta_median_s": 5.8,
+    "verdict": "mixed_partial_support_sleep_elimination_not_general_round_or_latency_gain"
+  },
+  "diff_summary": {
+    "on_runs": 3,
+    "adopted": 0,
+    "gate": "treatment_absent_for_diff_domain",
+    "verdict": "not_evaluable"
+  },
+  "negative_controls": {
+    "pairs": [
+      {
+        "task": "ap_t06_log_count",
+        "repeat": 1,
+        "off": {
+          "status": "PASS",
+          "rounds": 3,
+          "wall_s": 13.0,
+          "smx_calls": 0
+        },
+        "on": {
+          "status": "PASS",
+          "rounds": 5,
+          "wall_s": 22.5,
+          "smx_calls": 0
+        },
+        "delta_on_minus_off": {
+          "rounds": 2,
+          "wall_s": 9.5
+        }
+      },
+      {
+        "task": "ap_t06_log_count",
+        "repeat": 2,
+        "off": {
+          "status": "PASS",
+          "rounds": 4,
+          "wall_s": 12.8,
+          "smx_calls": 0
+        },
+        "on": {
+          "status": "PASS",
+          "rounds": 3,
+          "wall_s": 12.7,
+          "smx_calls": 0
+        },
+        "delta_on_minus_off": {
+          "rounds": -1,
+          "wall_s": -0.1
+        }
+      },
+      {
+        "task": "ap_t06_log_count",
+        "repeat": 3,
+        "off": {
+          "status": "PASS",
+          "rounds": 3,
+          "wall_s": 13.9,
+          "smx_calls": 0
+        },
+        "on": {
+          "status": "PASS",
+          "rounds": 4,
+          "wall_s": 20.0,
+          "smx_calls": 0
+        },
+        "delta_on_minus_off": {
+          "rounds": 1,
+          "wall_s": 6.1
+        }
+      },
+      {
+        "task": "ap_t09_big_file_line",
+        "repeat": 1,
+        "off": {
+          "status": "PASS",
+          "rounds": 3,
+          "wall_s": 19.6,
+          "smx_calls": 0
+        },
+        "on": {
+          "status": "PASS",
+          "rounds": 4,
+          "wall_s": 29.2,
+          "smx_calls": 0
+        },
+        "delta_on_minus_off": {
+          "rounds": 1,
+          "wall_s": 9.6
+        }
+      },
+      {
+        "task": "ap_t09_big_file_line",
+        "repeat": 2,
+        "off": {
+          "status": "PASS",
+          "rounds": 2,
+          "wall_s": 13.4,
+          "smx_calls": 0
+        },
+        "on": {
+          "status": "PASS",
+          "rounds": 3,
+          "wall_s": 13.9,
+          "smx_calls": 0
+        },
+        "delta_on_minus_off": {
+          "rounds": 1,
+          "wall_s": 0.5
+        }
+      },
+      {
+        "task": "ap_t09_big_file_line",
+        "repeat": 3,
+        "off": {
+          "status": "PASS",
+          "rounds": 4,
+          "wall_s": 18.7,
+          "smx_calls": 0
+        },
+        "on": {
+          "status": "PASS",
+          "rounds": 3,
+          "wall_s": 16.1,
+          "smx_calls": 0
+        },
+        "delta_on_minus_off": {
+          "rounds": -1,
+          "wall_s": -2.6
+        }
+      }
+    ],
+    "all_status_pass": true,
+    "smx_calls": 0,
+    "wall_delta_on_minus_off_s": [
+      9.5,
+      -0.1,
+      6.1,
+      9.6,
+      0.5,
+      -2.6
+    ],
+    "wall_delta_median_s": 3.3,
+    "round_delta_on_minus_off": [
+      2,
+      -1,
+      1,
+      1,
+      1,
+      -1
+    ],
+    "round_delta_median": 1.0,
+    "verdict": "functional_non_regression_passed_but_nonzero_attention_schema_cost_signal"
+  },
+  "reliability": {
+    "off_pass": "15/15",
+    "on_pass": "15/15",
+    "raw_tool_failures_total": 5,
+    "raw_tool_failures_off": 2,
+    "raw_tool_failures_on": 3,
+    "unexpected_failures": 5,
+    "repaired_failures": 5,
+    "failure_catalog": [
+      {
+        "plan_index": 0,
+        "arm": "lfl_smx_on",
+        "task": "sx_wait_existing_writer",
+        "kind": "premature_missing_artifact_probe",
+        "repaired": true,
+        "note": "pre-trigger compound probe read progress/result before they existed; later trigger+wait+read succeeded"
+      },
+      {
+        "plan_index": 9,
+        "arm": "lfl_smx_on",
+        "task": "ap_t06_log_count",
+        "kind": "platform_command_option_incompatibility",
+        "repaired": true,
+        "note": "BSD cat rejected -A; od -c verified file on next turn"
+      },
+      {
+        "plan_index": 10,
+        "arm": "lfl_smx_on",
+        "task": "sx_background_worker",
+        "kind": "poll_after_nonmaterialized_background_launch",
+        "repaired": true,
+        "note": "poll/list command exited 1 with no out dir; job state inspected, worker relaunched with valid output path, task completed"
+      },
+      {
+        "plan_index": 12,
+        "arm": "lfl_smx_off",
+        "task": "sx_bulk_rename_diff",
+        "kind": "shell_process_substitution_syntax",
+        "repaired": true,
+        "note": "process-substitution expression rejected by /bin/sh; simpler verification command succeeded"
+      },
+      {
+        "plan_index": 18,
+        "arm": "lfl_smx_off",
+        "task": "ap_t09_big_file_line",
+        "kind": "nonexistent_tool_write_file",
+        "repaired": true,
+        "note": "write_file is not registered; execute_command wrote exact content and read_file verified it"
+      }
+    ],
+    "verdict": "insufficient_ceiling_not_reliability_qualification"
+  },
+  "runtime_consistency": {
+    "request_meta_events": 193,
+    "unique_reasoning_configs": 1,
+    "reasoning_config": [
+      "cognilocal/ornith-1.5-35b-a3b-mlx",
+      null,
+      "auto",
+      true,
+      "chat_template",
+      true,
+      null,
+      "high"
+    ],
+    "unique_generation_contracts": 1,
+    "generation_contract": {
+      "max_tokens": 16000,
+      "min_p": 0.0,
+      "model": "ornith-1.5-35b-a3b-mlx",
+      "provider": "cognilocal",
+      "reasoning_split": false,
+      "send_tool_choice": true,
+      "temperature": 0.0,
+      "top_k": 0,
+      "top_p": 1.0,
+      "wire_protocol": "openai"
+    },
+    "source_tree_fingerprints": [
+      "f41e5465bffbe582b87a5d433061626280fad57ef4ebb8af7523608b4c1b05c5"
+    ],
+    "tool_registry_fingerprints": {
+      "off": "de2331ddd104a3cf461e7d5f7ec708673e389385043c8dd368fb68e70951f1bb",
+      "on": "80038c065b272224b0b951d477ad66138ddaaaee3d9239b5da6b7739d290c772"
+    },
+    "request_tool_counts": {
+      "lfl_smx_on:64": 96,
+      "lfl_smx_off:63": 97
+    },
+    "budget_variants": {
+      "lfl_smx_on:schema_reserve=25039:effective=140561": 96,
+      "lfl_smx_off:schema_reserve=24145:effective=141455": 97
+    },
+    "model_pid_start": 38473,
+    "model_pid_end": 38473,
+    "observed_runtime_drift": false
+  },
+  "qualification_notes": [
+    {
+      "id": "Q1",
+      "kind": "execution_manifest_capture_deviation",
+      "detail": "required sampling_config/reasoning_config were not materialized as explicit resolved values in execution_manifest; runtime_contract env-only fields were null. All 193 request.meta events independently record one identical reasoning config and one identical generation_contract, with only the intended arm tool-registry fingerprint/count difference. Treat as a governance capture deviation, not observed causal invalidation; next executor must persist resolved contract before first model call."
+    },
+    {
+      "id": "Q2",
+      "kind": "external_executor_addendum",
+      "detail": "v1.2 froze protocol/plan/sources but no runnable focused executor existed. A thin /private/tmp wrapper was created before model execution, dry-self-checked, SHA-pinned in the execution manifest, and held immutable for the 30-run matrix. The first wrapper revision false-positive concurrency guard exited before manifest/model call and its failed workdir was not reused. Next protocol should commit/freeze the executor itself."
+    },
+    {
+      "id": "Q3",
+      "kind": "background_job_telemetry_blind_spot",
+      "detail": "composite shell background launch can return a successful outer tool receipt even when child startup/redirection does not materialize task outputs; rows 2/10 expose this. Raw tool_failure_count therefore does not cover every child-start failure mode."
+    }
+  ],
+  "rows": [
+    {
+      "plan_index": 0,
+      "arm": "lfl_smx_on",
+      "task": "sx_wait_existing_writer",
+      "repeat": 3,
+      "status": "PASS",
+      "wall_s": 44.8,
+      "rounds": 6,
+      "tool_calls": 6,
+      "smx_calls": 1,
+      "sleep_calls": 0,
+      "raw_tool_failures": 1,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 1,
+      "arm": "lfl_smx_off",
+      "task": "sx_wait_existing_writer",
+      "repeat": 3,
+      "status": "PASS",
+      "wall_s": 33.2,
+      "rounds": 5,
+      "tool_calls": 5,
+      "smx_calls": 0,
+      "sleep_calls": 1,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 2,
+      "arm": "lfl_smx_off",
+      "task": "sx_background_worker",
+      "repeat": 2,
+      "status": "PASS",
+      "wall_s": 105.1,
+      "rounds": 11,
+      "tool_calls": 11,
+      "smx_calls": 0,
+      "sleep_calls": 2,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 3,
+      "arm": "lfl_smx_on",
+      "task": "sx_background_worker",
+      "repeat": 2,
+      "status": "PASS",
+      "wall_s": 60.6,
+      "rounds": 6,
+      "tool_calls": 7,
+      "smx_calls": 1,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 4,
+      "arm": "lfl_smx_on",
+      "task": "ap_t09_big_file_line",
+      "repeat": 1,
+      "status": "PASS",
+      "wall_s": 29.2,
+      "rounds": 4,
+      "tool_calls": 4,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 5,
+      "arm": "lfl_smx_off",
+      "task": "ap_t09_big_file_line",
+      "repeat": 1,
+      "status": "PASS",
+      "wall_s": 19.6,
+      "rounds": 3,
+      "tool_calls": 3,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 6,
+      "arm": "lfl_smx_off",
+      "task": "ap_t06_log_count",
+      "repeat": 3,
+      "status": "PASS",
+      "wall_s": 13.9,
+      "rounds": 3,
+      "tool_calls": 3,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 7,
+      "arm": "lfl_smx_on",
+      "task": "ap_t06_log_count",
+      "repeat": 3,
+      "status": "PASS",
+      "wall_s": 20.0,
+      "rounds": 4,
+      "tool_calls": 4,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 8,
+      "arm": "lfl_smx_off",
+      "task": "ap_t06_log_count",
+      "repeat": 1,
+      "status": "PASS",
+      "wall_s": 13.0,
+      "rounds": 3,
+      "tool_calls": 3,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 9,
+      "arm": "lfl_smx_on",
+      "task": "ap_t06_log_count",
+      "repeat": 1,
+      "status": "PASS",
+      "wall_s": 22.5,
+      "rounds": 5,
+      "tool_calls": 5,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 1,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 10,
+      "arm": "lfl_smx_on",
+      "task": "sx_background_worker",
+      "repeat": 3,
+      "status": "PASS",
+      "wall_s": 113.0,
+      "rounds": 9,
+      "tool_calls": 9,
+      "smx_calls": 0,
+      "sleep_calls": 2,
+      "raw_tool_failures": 1,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 11,
+      "arm": "lfl_smx_off",
+      "task": "sx_background_worker",
+      "repeat": 3,
+      "status": "PASS",
+      "wall_s": 115.8,
+      "rounds": 11,
+      "tool_calls": 11,
+      "smx_calls": 0,
+      "sleep_calls": 3,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 12,
+      "arm": "lfl_smx_off",
+      "task": "sx_bulk_rename_diff",
+      "repeat": 3,
+      "status": "PASS",
+      "wall_s": 41.0,
+      "rounds": 6,
+      "tool_calls": 6,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 1,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 13,
+      "arm": "lfl_smx_on",
+      "task": "sx_bulk_rename_diff",
+      "repeat": 3,
+      "status": "PASS",
+      "wall_s": 40.4,
+      "rounds": 6,
+      "tool_calls": 6,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 14,
+      "arm": "lfl_smx_on",
+      "task": "ap_t09_big_file_line",
+      "repeat": 2,
+      "status": "PASS",
+      "wall_s": 13.9,
+      "rounds": 3,
+      "tool_calls": 3,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 15,
+      "arm": "lfl_smx_off",
+      "task": "ap_t09_big_file_line",
+      "repeat": 2,
+      "status": "PASS",
+      "wall_s": 13.4,
+      "rounds": 2,
+      "tool_calls": 2,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 16,
+      "arm": "lfl_smx_off",
+      "task": "sx_bulk_rename_diff",
+      "repeat": 2,
+      "status": "PASS",
+      "wall_s": 31.9,
+      "rounds": 5,
+      "tool_calls": 5,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 17,
+      "arm": "lfl_smx_on",
+      "task": "sx_bulk_rename_diff",
+      "repeat": 2,
+      "status": "PASS",
+      "wall_s": 38.3,
+      "rounds": 7,
+      "tool_calls": 7,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 18,
+      "arm": "lfl_smx_off",
+      "task": "ap_t09_big_file_line",
+      "repeat": 3,
+      "status": "PASS",
+      "wall_s": 18.7,
+      "rounds": 4,
+      "tool_calls": 4,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 1,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 19,
+      "arm": "lfl_smx_on",
+      "task": "ap_t09_big_file_line",
+      "repeat": 3,
+      "status": "PASS",
+      "wall_s": 16.1,
+      "rounds": 3,
+      "tool_calls": 3,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 20,
+      "arm": "lfl_smx_on",
+      "task": "sx_wait_existing_writer",
+      "repeat": 2,
+      "status": "PASS",
+      "wall_s": 49.4,
+      "rounds": 7,
+      "tool_calls": 7,
+      "smx_calls": 1,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 21,
+      "arm": "lfl_smx_off",
+      "task": "sx_wait_existing_writer",
+      "repeat": 2,
+      "status": "PASS",
+      "wall_s": 42.4,
+      "rounds": 6,
+      "tool_calls": 6,
+      "smx_calls": 0,
+      "sleep_calls": 1,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 22,
+      "arm": "lfl_smx_off",
+      "task": "sx_background_worker",
+      "repeat": 1,
+      "status": "PASS",
+      "wall_s": 49.7,
+      "rounds": 6,
+      "tool_calls": 6,
+      "smx_calls": 0,
+      "sleep_calls": 1,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 23,
+      "arm": "lfl_smx_on",
+      "task": "sx_background_worker",
+      "repeat": 1,
+      "status": "PASS",
+      "wall_s": 55.5,
+      "rounds": 6,
+      "tool_calls": 7,
+      "smx_calls": 1,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 24,
+      "arm": "lfl_smx_off",
+      "task": "sx_bulk_rename_diff",
+      "repeat": 1,
+      "status": "PASS",
+      "wall_s": 31.1,
+      "rounds": 5,
+      "tool_calls": 5,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 25,
+      "arm": "lfl_smx_on",
+      "task": "sx_bulk_rename_diff",
+      "repeat": 1,
+      "status": "PASS",
+      "wall_s": 30.8,
+      "rounds": 5,
+      "tool_calls": 5,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 26,
+      "arm": "lfl_smx_on",
+      "task": "ap_t06_log_count",
+      "repeat": 2,
+      "status": "PASS",
+      "wall_s": 12.7,
+      "rounds": 3,
+      "tool_calls": 3,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 27,
+      "arm": "lfl_smx_off",
+      "task": "ap_t06_log_count",
+      "repeat": 2,
+      "status": "PASS",
+      "wall_s": 12.8,
+      "rounds": 4,
+      "tool_calls": 4,
+      "smx_calls": 0,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 28,
+      "arm": "lfl_smx_on",
+      "task": "sx_wait_existing_writer",
+      "repeat": 1,
+      "status": "PASS",
+      "wall_s": 48.2,
+      "rounds": 7,
+      "tool_calls": 7,
+      "smx_calls": 1,
+      "sleep_calls": 0,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    },
+    {
+      "plan_index": 29,
+      "arm": "lfl_smx_off",
+      "task": "sx_wait_existing_writer",
+      "repeat": 1,
+      "status": "PASS",
+      "wall_s": 52.4,
+      "rounds": 8,
+      "tool_calls": 9,
+      "smx_calls": 0,
+      "sleep_calls": 1,
+      "raw_tool_failures": 0,
+      "first_mechanical_valid_round": 1
+    }
+  ],
+  "next_recommendation": {
+    "smc_adapt_priority": [
+      "P4",
+      "P7",
+      "P2",
+      "P8",
+      "P5",
+      "P0"
+    ],
+    "reason": "P4 predicate/wait is empirically adopted (5/6 wait ON); diff path P7/P2 had 0/3 adoption, so correctness work remains important but lacks behavioral uptake evidence. Keep SMX opt-in; do not default-enable from this pilot."
+  }
+}
