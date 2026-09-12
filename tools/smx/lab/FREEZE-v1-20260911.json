@@ -1,0 +1,30 @@
+{
+ "frozen_at": "2026-09-11T22:09:16+0800",
+ "note": "gate-0 freeze; any change after this invalidates the round",
+ "files": {
+  "harness.sh": "eb3f20f58c4fa57402dca1fdbca9a7e4f2ffe874875351b63fe5cf7055c4d902",
+  "metrics.py": "9ac1b0159065c6e0c7af56ca066bdedbbbd31313b4a4bb741e78f886a986855e",
+  "selftest.sh": "58fc93a5d2da75ef2795c5427b611b8c9a84e2825d0adb371c5a5de4b453eb92",
+  "PROTOCOL-20260911.md": "302ecf72f5d3da7caac4bdcc20673ffd28ab9964d81ce10092b36c37566c4835",
+  "config.card": "b3a12bf238367e05e14e3ac2ccc821e3789f0aadcedb7cc9b603df6084ee3c3f",
+  "config-b.card": "ade1caa68f3263c6f658f4fe49d6997aaaa87eb738f8ac43ccd719ca63af80e8",
+  "tasks/T1/setup.sh": "206fa6997f3882617c579a77fe32221647d8301e20476f3d8cf0d9bc8fa857c9",
+  "tasks/T1/judge.sh": "ce64ab53883654cad56c9e01ae65e32a1fb9217d1b0a0928045a4e58d2d0a35c",
+  "tasks/T1/task.md": "b507cf9ee4bec5be1b91474051048dceab978dd48ef9b6817d1ae45566699a05",
+  "tasks/T2/setup.sh": "218d434f62e4604cd137be994484cc8bc2148d12612dc6ad9b1089138c1e3862",
+  "tasks/T2/judge.sh": "366956694e7cb785d9a9d8d2ea6a4d0791602db2f6c8698c8e26b184dbda25d9",
+  "tasks/T2/task.md": "a8374f95f434d3260a1e0f9ee53db6eca048f77bd3c1062691e91d41df2d9499",
+  "tasks/T3/setup.sh": "20127fb214166e0396d0f4fc3832fdecc095a7b42254e3360efde57000e3a54c",
+  "tasks/T3/judge.sh": "873210debc30a6d0187ab8de5cdb6bf5cf5504fe85b9baa8aee9e0509f4998e6",
+  "tasks/T3/task.md": "0352424d9dea7418513b90df4d255aa4dc29a88e7b7769dca733fc8c6dab8115",
+  "tasks/T4/setup.sh": "03c6c3d7a45ffcfa8c01de11bceb36380ffbd8b61323277bba096a57f2c59204",
+  "tasks/T4/judge.sh": "6d80e23bc222e5a9941f095b386895a8fd5940346073774c38c560859f08492f",
+  "tasks/T4/task.md": "3f4cb3cfca261e4805affa7dff5e057eeb372166c701055d7f5e30d7ef0aa061",
+  "tasks/T5/setup.sh": "927dc7f3f47253e3a532091089751f2ee9bfb8a39d7cff74f87edfb3c729ea0e",
+  "tasks/T5/judge.sh": "dfc7db4482bc9bd8fdbffc044b4f1cac486b10d3801d707c0399acc3dcdb6e31",
+  "tasks/T5/task.md": "d96126c0a4da4971db214815c9785c6dc5b317faf9cade06d0aaa72ff27c6728",
+  "tasks/T6/setup.sh": "4a978e6b4d4af93a6efdcfe45df3bc0499d761f53ff328304a9c90aa4fcf985c",
+  "tasks/T6/judge.sh": "12972177ef6c1d33648ee391719313338b5cb3de34d492e248e65555d49a63a7",
+  "tasks/T6/task.md": "fcb999b52e57227671cee3a40e725ccb63ce5714c7584080bbfc4103e57b2518"
+ }
+}

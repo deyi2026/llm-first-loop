@@ -54,6 +54,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "list_evidence": "列出当前会话最近 Evidence、acquired_at 与稳定 ref；freshness 仅表示 source 版本状态，不判断任务适用性。",
     "read_file": "读取已知路径的本地文本文件或 artifact://v1/... immutable snapshot；目录/关键词定位用 search_files。若后续计划 edit_file，必须本次 snapshot=true 取得 snapshot_ref。",
     "read_image": "读取本地图片并返回结构化视觉与元信息证据；需要图片路径。",
+    "smx_perceive": "smx 感知层（opt-in，默认不注册）：wait 谓词轮询（file_exists/gone/contains、port_open 仅 loopback）+ snapshot/diff 目录净变更 + smx 回执查询；只感知不执行，执行走 execute_command。",
     "inspect_code": "解析 Python 文件/目录 AST，列类、函数、签名与 imports；实现正文用 read_file。",
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",

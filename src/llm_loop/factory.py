@@ -81,6 +81,7 @@ from llm_loop.tools.builtin.read_image import ReadImageTool
 from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
 from llm_loop.tools.builtin.search_files import SearchFilesTool
 from llm_loop.tools.builtin.source_synopsis import SourceSynopsisTool
+from llm_loop.tools.builtin.smx_perceive import SmxPerceiveTool
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
@@ -810,6 +811,17 @@ def build_engine(settings: Settings) -> LoopEngine:
     )
     # EVO-20260820-5d0a7b99: 图像转结构化文本证据（元信息 + 内容识别，借鉴 DSH rc.8 工具层视觉）
     _register_basic("read_image", ReadImageTool())
+    # EVO-20260912-10818cb5: smx 感知层 opt-in（wait 谓词轮询 + snapshot/diff + 回执查询；
+    # 执行面不并入，维持经 execute_command；LFL_SMX_PERCEIVE 为空 → 不注册）
+    if settings.smx_perceive_path:
+        _register_basic(
+            "smx_perceive",
+            SmxPerceiveTool(
+                smx_path=settings.smx_perceive_path,
+                data_dir=settings.data_dir,
+                max_wait_s=max(1.0, float(settings.tool_timeout_s) - 5.0),
+            ),
+        )
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
     _register_basic("inspect_code", InspectCodeTool())
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
