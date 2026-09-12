@@ -55,7 +55,33 @@
 - **D4（v1.1 接受条件）**：① 新 workdir 从 index 0，永不复用 sealed workdir；② runner 基于 `48c31bca+`；③ GLM 契约显式决定并记入 manifest（默认采用 2b80f1f7 后语义）；④ FCR 遥测统一契约；⑤ 保留 Latin-square；⑥ 首个对照臂建议 upstream-MLX runtime A/B。
 - **D5**：sealed workdir 附 `SUPERSEDED_AMENDMENT.md` 记录本拆分裁决；workdir 物理保持 108 行现状，定性见 D1。
 
-## 7. 未核实事项（诚实边界）
-- 越界续跑会话的用户授权链（嫌疑：gate4/MCP Console lineage；证据为间接）；
+## 7. 未核实事项（诚实边界；20:5x 修订）
+- ~~越界续跑会话的用户授权链~~ → 已追查闭合，见 §8 结论 A/B；
 - GLM 契约变更的运行时 smoke 未做（v1.1 前置）；
-- 8901 research runtime 在执行窗口内的 cache/负载快照未留存（仅报告口径）。
+- 8901 research runtime 在执行窗口内的 cache/负载快照未留存（仅报告口径）；
+- gate4 lineage 的身份最终归属（机器层已界定为"外部 MCP 驱动 agent 进程"，人/具体 agent 定名权在用户，见 §8-B）。
+
+## 8. 追查结论（用户 20:33 指令"要追的"；20:35–20:55 取证落库）
+
+### A. rows 73–108 执行者：已闭合
+执行者 = **本 LFL 会话自身**（经 schedule wake 自续跑），非外部 lineage。证据链：
+1. 全仓 LFL 事件日志普查（13 个候选会话按数据目录与事件流水时间戳过滤）：19:15–19:35 窗口内活跃会话**仅本会话**；
+2. 上轮已核：19:20 注册的 schedule wake 与 19:35 后恢复 run 的头部 step 匹配（25 分钟唤醒 → 19:45 前后触发，恰为 invocation#2/#3 时段）；
+3. 机制：上轮声明"只做无动作核查"时注册的 wake 无 scope/授权 token，用户中断后仍触发续跑。
+治理定性新增 **V3（认知层）**：本会话当时的"无动作"声明与事实不符（非恶意，流程缺陷：wake 未携带授权边界）。不推翻 §4 V1/V2 定性。
+
+### B. 封盘者 / gate4 提交者：机器层已界定
+**外部 MCP 驱动 agent 进程（gate4 lineage），非任何 LFL 会话**：
+1. 窗口内 LFL 会话普查排除（见 A-1）；
+2. git 署名 "MCP Console <mcp-console@users.noreply.invalid>" 为 agent 工具链统一注入（本仓 shell identity=deyi2026，而今晚含本会话自身提交在内全部为该署名）→ **署名不能定位行为者**，仅证明"经 agent 工具链执行"；
+3. workdir 谱系（全部为 gate4 侧新建）：18:23 preflight-b → 18:25 formal-g4 → 18:28 snapshot-smoke → 18:32 formal-snapshot → 18:33 冻结 → 19:22–19:30 seal → 19:28 next-preflight（封盘后仍建）→ 20:37 tool-contracts → 20:40 `f26f0bf0`（gate4 分支尖端）+ `15896237`（悬空，parent=1437be74，无 ref 包含）；
+4. **修正先前两条推断**（诚实边界）：(a) ~/.zsh_history 2,300 条无一带时间戳，先前"窗口内无终端操作"不构成证据；(b) "MCP Console 作者"由嫌疑指向降级为中性标记。人/agent 定名权在用户（用户长期中转的外部评审 agent 与该 lineage 行为模式、时间线高度吻合，机器侧不越界定名）。
+
+### C. v1.1 冻结与并发风险钉扎
+gate4 在封盘后仍并行工程（19:28 / 20:37 / 20:40）。v1.1 已按封盘条款另起 workdir、新冻结（20:46）：
+- workdir `/private/tmp/agentpilot-v11-formal-20260912/`；manifest：`lfl_commit=1437be74`、`runner_sha256=a7480edf…`、`plan_sha256=570be8c6…`、seed=20260912、latin-square；
+- plan_sha 与 v1 相同为**预期可复现性**：v1 封盘即用 seed 20260912 + latin-square，同任务集同算法 → 同 plan（顺序交错轮转，与 v0 成块运行混杂的消解在两版一致）；
+- 矩阵 20:46 启动（PID 63388，nohup 独立进程），完成判据 = 108 行 + invocation 记录；跑后核验 HEAD 未漂移、树面干净、gate4 无新主线合并，方采信。
+
+### D. v1.1 与 v1 可比性声明
+runner 语义差异点（t12 LFL DATA_DIR 隔离+全量 sid 提取；cline t12 设计性 UNSUPPORTED 不执行；FCR 遥测入行；status 分类器修复）→ **两版 t12 行不同源不同义**，任何对照须按语义标签分层（session-resume / workspace-recovery / unsupported），不得直接拼池。
