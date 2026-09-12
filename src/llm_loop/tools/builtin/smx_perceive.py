@@ -114,6 +114,8 @@ class SmxPerceiveTool:
                 raise FileNotFoundError(f"smx 实现不存在: {p}")
             self._smx_sha = hashlib.sha256(p.read_bytes()).hexdigest()[:8]
             spec = importlib.util.spec_from_file_location("lfl_smx_glue", p)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"无法为冻结实现创建模块 spec: {p}")
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)  # 模块级仅常量与函数定义，无副作用
             self._mod = mod
@@ -144,9 +146,12 @@ class SmxPerceiveTool:
                 return self._fail("[参数错误] file_contains 须为 [PATH, TEXT] 二元组")
             argv += ["--file-contains", fc[0], fc[1]]
         elif pred == "port_open":
+            raw_port = kw.get("port_open")
+            if raw_port is None or isinstance(raw_port, bool) or not isinstance(raw_port, (int, str)):
+                return self._fail("[参数错误] port_open 须为整数端口")
             try:
-                port = int(kw.get("port_open"))
-            except (TypeError, ValueError):
+                port = int(raw_port)
+            except ValueError:
                 return self._fail("[参数错误] port_open 须为整数端口")
             if not 1 <= port <= 65535:
                 return self._fail("[参数错误] port_open 越界（1..65535）")
