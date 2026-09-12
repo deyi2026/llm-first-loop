@@ -85,3 +85,31 @@ gate4 在封盘后仍并行工程（19:28 / 20:37 / 20:40）。v1.1 已按封盘
 
 ### D. v1.1 与 v1 可比性声明
 runner 语义差异点（t12 LFL DATA_DIR 隔离+全量 sid 提取；cline t12 设计性 UNSUPPORTED 不执行；FCR 遥测入行；status 分类器修复）→ **两版 t12 行不同源不同义**，任何对照须按语义标签分层（session-resume / workspace-recovery / unsupported），不得直接拼池。
+
+## 9. v1.1 完成检查点（21:37 验收：gate FAIL，不予正式采信）
+
+### 9.1 完成事实（均机械核验）
+- 108/108 落盘（末行 cline t12 21:37:02），PID 63388 自然退出，run.log 打出三方汇总；
+- 全 108 行 `plan_sha256=570be8c6…` 一致；`runner_sha256=a7480edf…` 钉扎复核仍成立；
+- 执行窗口（20:46–21:37）内 `evals/pilot/` 无代码变更（仅本文档历次追加）。
+
+### 9.2 验收门：两项条件均破
+1. **HEAD 漂移**：要求仍=`1437be74`，实际=`35fa47c9`。谱系：`d67748b1`（纯文档）→ `35fa47c9`（src+tests；作者时间 20:40:09，gate4 tool-contracts 窗口），~20:55:30 fast-forward 进主线；
+2. **gate4 有新主线合并**：`35fa47c9` 恰在矩阵窗口内入主线。署名 MCP Console，按 §8-B-2 署名不能定名行为者。
+- 漂移内容定性：edit_file 错误路径文案、execute_command `python:127` 观测串、**read_evidence 紧凑描述文本（进入模型可见 schema）**。无机制改动；但模型可见工具描述属 code-under-test → 严格冻结对 20:55:30 后的 LFL 行失效；
+- 影响范围：仅 lfl 臂（src/llm_loop）。30/36 lfl 行 post-drift（全 PASS）、6 行 pre-drift；t12 lfl r2 pre-drift，r1/r3 post-drift，`resume_session_continuity=True` 在漂移两侧均成立 → 连续性结论对漂移稳健。da/cline 臂用各自 harness，不受影响；
+- **裁决**：按 §8-C 采信条款，v1.1 标记 **gate-failed 观察数据**，不得作为正式 v1.1 对照发布。处置两选项（重跑 ~50min 新 workdir，或降级采信+漂移注记）**留待用户裁决**；本会话不再启动新评测。
+
+### 9.3 v1.1 结果观察值（修正后 analyzer；gate-failed 注记下引用）
+| 项 | lfl | da | cline |
+|---|---|---|---|
+| status | 36/36 PASS | 36/36 PASS | 33 PASS + 3 UNSUPPORTED(unsupported-headless-resume, dur=None) |
+| task-level（excl. invalid） | 36/36 | 36/36 | 33/33 |
+| t12 语义 | session-resume ×3，**resume_session_continuity=3/3**（sid 逐位前缀匹配 c62532e3/332b8cc1/7b5f23c2） | new-session-same-workspace-by-design ×3 | unsupported ×3 |
+| caliber C 时延 med/mean/p90 (n=33) | 16.4 / 19.3 / 31.7 | 24.5 / 29.9 / 49.3 | 32.3 / 33.7 / 44.7 |
+| FCR | selection 18/33，first_call_ready 18/33，directness 0.55，fail_raw 0.36/run，ttfmv 4.91s | selection 7/33，directness 0.21，fail_raw 0 | ok_signal=False（原始遥测缺失；scorer selection 11/33） |
+
+v1→v1.1（同任务集 t01–t12）：lfl t06 2/3→3/3；caliber C 中位 32.8→16.4 / 39.9→24.5 / 51.9→32.3，三方同步下降 38–50%（成因未核：机器/服务端缓存与负载状态；**非**漂移提交所致——da/cline 不经 src/llm_loop 且同步下降）。t12 连续性 3/3 复现 v1 封盘 §3.3 结论（P0-1 修复可复现）。
+
+### 9.4 审计中发现并修复的 analyzer 显示 bug
+analyze.py L85 读取不存在的顶层键 `session_continuity`（行内真名 `resume_session_continuity`）→ 连续性恒显 0/3。一行修复随本提交入库；原始行字段证据见 9.3；不改数据、不涉 runner 钉扎。

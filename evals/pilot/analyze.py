@@ -82,7 +82,7 @@ for a in agents:
     sem = defaultdict(int)
     for r in t12:
         sem[r.get("resume_semantics", "?")] += 1
-    cont = sum(1 for r in t12 if r.get("session_continuity"))
+    cont = sum(1 for r in t12 if r.get("resume_session_continuity"))
     rd = [r.get("resume_dur") for r in t12
           if r.get("resume_dur") is not None and r["status"] == "PASS"]
     line = (f"{a}: n={len(t12)} interrupted={len(interr)} natural-completed={len(nat)} "
