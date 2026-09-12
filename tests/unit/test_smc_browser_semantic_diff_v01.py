@@ -86,13 +86,16 @@ def test_model_surface_adds_only_readonly_diff_arguments(tmp_path: Path) -> None
         session_id_getter=lambda: "s1",
     )
     props = tool.parameters["properties"]
-    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff"]
+    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
     assert set(props) == {
         "action",
         "projection_limit",
         "grounding_ref",
         "from_version",
         "to_version",
+        "predicate",
+        "timeout_ms",
+        "interval_ms",
     }
     surface = {str(key).lower() for key in props}
     surface.update(str(value).lower() for value in props["action"]["enum"])
@@ -102,8 +105,10 @@ def test_model_surface_adds_only_readonly_diff_arguments(tmp_path: Path) -> None
         "coordinate",
         "click",
         "fill",
+        "select",
         "navigate",
         "reload",
+        "scroll",
         "script",
         "code",
         "url",

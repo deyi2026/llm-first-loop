@@ -32,6 +32,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from llm_loop.browser.predicate import evaluate_predicate as evaluate_browser_predicate
+
 _SENSOR_CONTRACT = {
     "id": "browser-dom-ax-v0.1",
     "active_sources": ["dom", "ax"],
@@ -558,6 +560,7 @@ class _SessionState:
         self.page_documents: dict[str, tuple[str, int]] = {}
         self.frame_documents: dict[tuple[str, str], tuple[str, int]] = {}
         self.identity_map: dict[tuple[int, int, int | None, str], str] = {}
+        self.stable_semantic_scopes: dict[str, str] = {}
         self.next_page_generation = 1
 
 
@@ -1171,6 +1174,55 @@ class BrowserPerceptionAdapter:
             },
         }
 
+    @staticmethod
+    def _scope_observations(
+        *,
+        raw_capture: dict[str, Any],
+        scope_facts: list[dict[str, Any]],
+        frame_scopes: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """Bind scope-level sensor facts to exact opaque scope refs.
+
+        These facts remain private grounding.  They exist so a later Predicate
+        evaluation can mechanically ask about the exact observed scope without
+        exposing URLs as target selectors or evaluating model-supplied script.
+        """
+
+        observations: dict[str, dict[str, Any]] = {}
+        main_url = str(raw_capture.get("url") or "") or None
+        main_ready = raw_capture.get("document_ready_state")
+        if main_ready not in {"loading", "interactive", "complete"}:
+            main_ready = None
+        for fact in scope_facts:
+            if fact.get("kind") not in {"page", "document"}:
+                continue
+            ref = str(fact.get("scope_ref") or "")
+            if ref:
+                observations[ref] = {
+                    "kind": str(fact.get("kind") or ""),
+                    "url": main_url,
+                    "document_ready_state": main_ready,
+                }
+
+        frames_by_token = {
+            str(frame.get("frame_token") or ""): frame
+            for frame in list(raw_capture.get("frames") or [])
+            if isinstance(frame, dict) and frame.get("frame_token")
+        }
+        for frame_token, scope in frame_scopes.items():
+            ref = str(scope.get("scope_ref") or "")
+            frame = frames_by_token.get(frame_token) or {}
+            ready = frame.get("document_ready_state")
+            if ready not in {"loading", "interactive", "complete"}:
+                ready = None
+            if ref:
+                observations[ref] = {
+                    "kind": "frame",
+                    "url": str(frame.get("url") or "") or None,
+                    "document_ready_state": ready,
+                }
+        return observations
+
     def snapshot(
         self,
         session_id: str,
@@ -1224,9 +1276,20 @@ class BrowserPerceptionAdapter:
         dom_ref = f"{_GROUNDING_PREFIX}{snapshot_id}/sensor/dom"
         ax_ref = f"{_GROUNDING_PREFIX}{snapshot_id}/sensor/ax"
         sensor_grounding = self._sensor_grounding(dom_sensor, ax_sensor, dom_nodes, ax_nodes)
+        scope_observations = self._scope_observations(
+            raw_capture=raw_capture,
+            scope_facts=scope_facts,
+            frame_scopes=frame_scopes,
+        )
+        for obj in objects_sorted:
+            semantic_id = str(obj.get("id") or "")
+            grounding = build.object_grounding.get(semantic_id) or {}
+            if grounding.get("identity_basis") != "snapshot_local_ax_identity":
+                state.stable_semantic_scopes[semantic_id] = str(obj.get("scope_ref") or "")
         content_sha = _sha256(
             {
                 "scopes": scope_facts,
+                "scope_observations": scope_observations,
                 "sensor_contract": _SENSOR_CONTRACT,
                 "completeness": completeness,
                 "objects": _content_hash_object_basis(
@@ -1277,6 +1340,7 @@ class BrowserPerceptionAdapter:
                 "document_token": document_token,
                 "frames": raw_capture.get("frames") or [],
                 "identity": build.private_identity,
+                "scope_observations": scope_observations,
             },
         }
         self.store.persist(session_id, bundle)
@@ -1472,6 +1536,24 @@ class BrowserPerceptionAdapter:
         if persisted_ref != full_list_ref:
             raise RuntimeError("Browser diff grounding ref mismatch")
         return semantic_diff
+
+    def evaluate_predicate(
+        self,
+        session_id: str,
+        snapshot_id: str,
+        predicate: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Evaluate one closed Browser Predicate against one exact observation."""
+
+        bundle = self.store.load_snapshot_bundle(session_id, snapshot_id)
+        state = self._state(session_id)
+        return evaluate_browser_predicate(
+            bundle=bundle,
+            predicate=predicate,
+            known_stable_scope=lambda semantic_id: state.stable_semantic_scopes.get(
+                semantic_id
+            ),
+        )
 
     def hydrate(self, session_id: str, grounding_ref: str) -> dict[str, Any]:
         return self.store.hydrate(session_id, grounding_ref)
