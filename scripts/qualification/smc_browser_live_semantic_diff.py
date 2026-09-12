@@ -273,6 +273,40 @@ def run_live(*, chrome: str, evidence_dir: Path) -> dict[str, Any]:
                 else "FAIL"
             )
 
+            # Mechanically manufacture an incomplete observation without changing
+            # the production host/config: this qualification-only adapter has a
+            # one-object capture budget, so both snapshots must declare truncation.
+            partial_adapter = BrowserPerceptionAdapter(
+                store=BrowserPerceptionStore(evidence_dir / "truncated-grounding"),
+                capture_node_cap=1,
+            )
+            partial_tool = BrowserPerceiveTool(
+                adapter=partial_adapter,
+                backend=host,
+                session_id_getter=lambda: session_id,
+            )
+            partial_before = _snapshot(partial_tool)
+            _mutate_same_document(controller)
+            partial_after = _snapshot(partial_tool)
+            partial_diff = _diff(partial_tool, partial_before, partial_after)
+            partial_reasons = set(
+                (partial_diff.get("completeness") or {}).get("reasons", [])
+            )
+            checks["truncated_created_removed_unknown"] = (
+                "PASS"
+                if partial_diff.get("comparable") is True
+                and partial_diff.get("created") is None
+                and partial_diff.get("removed") is None
+                and any("truncated" in str(reason) for reason in partial_reasons)
+                else "FAIL"
+            )
+            checks["truncated_field_completeness_false"] = (
+                "PASS"
+                if partial_diff.get("field_completeness")
+                == {"created": False, "removed": False, "changed": False}
+                else "FAIL"
+            )
+
             safety = {
                 "mock_keychain_enabled": "PASS",
                 "basic_password_store_enabled": "PASS",
