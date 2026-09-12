@@ -1266,7 +1266,10 @@ class LLMClient:
             payload["min_p"] = self.min_p
         # 请求级 reasoning 模式：auto/off/on。
         # - auto: 不做内容启发式判断；本地尊重 server/operator 默认，远端保持既有
-        #   thinking_mode 默认语义。
+        #   thinking_mode 默认语义。对于 reasoning_control=always_on_effort 的模型，
+        #   effort 是独立于 thinking on/off 的 operator 配置：auto 不发送 thinking
+        #   开关，但仍应发送已配置/请求级 reasoning_effort，避免静默退回 provider
+        #   默认（GLM-5.3 Coding Plan 默认 max）。
         # - on/off: 仅在 provider 元数据确认支持时显式控制。
         # 这样“模型支持 reasoning”与“本次是否启用 reasoning”不再混为一谈。
         (
@@ -1302,21 +1305,20 @@ class LLMClient:
                 payload["reasoning_effort"] = (
                     current_reasoning_effort.get() or self.reasoning_effort
                 )
-        elif (
-            _reasoning_control == "always_on_effort"
-            and _reasoning_supported
-            and _reasoning_requested is not None
-        ):
+        elif _reasoning_control == "always_on_effort" and _reasoning_supported:
             # GLM-5.3-class contract: reasoning cannot be disabled. Provider docs
             # prescribe enabled+low as the migration equivalent of the old disabled
             # intent. Keep requested=False in telemetry; do not lie that reasoning
-            # was actually disabled. auto sends nothing and preserves provider max.
-            payload["thinking"] = {"type": "enabled"}
-            payload["reasoning_effort"] = (
-                (current_reasoning_effort.get() or self.reasoning_effort)
-                if _reasoning_requested
-                else "low"
-            )
+            # was actually disabled. In auto, leave thinking ownership with the
+            # provider but still honor the independent operator/request effort.
+            _effective_effort = current_reasoning_effort.get() or self.reasoning_effort
+            if _reasoning_requested is None:
+                payload["reasoning_effort"] = _effective_effort
+            else:
+                payload["thinking"] = {"type": "enabled"}
+                payload["reasoning_effort"] = (
+                    _effective_effort if _reasoning_requested else "low"
+                )
         # 本地 provider（api_key 为空）不发 Authorization 头
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:

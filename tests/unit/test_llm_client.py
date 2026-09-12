@@ -491,8 +491,8 @@ def test_reasoning_capable_does_not_imply_control_protocol():
     assert all("chat_template_kwargs" not in payload for payload in payloads)
 
 
-def test_always_on_effort_maps_off_to_low_without_sending_disabled():
-    """GLM-5.3: off intent must not emit provider-invalid thinking.type=disabled."""
+def test_always_on_effort_honors_effort_in_auto_and_maps_off_to_low():
+    """GLM-5.3: auto keeps thinking provider-owned but honors configured effort."""
     from llm_loop.core.run_context import current_reasoning_mode
 
     payloads = []
@@ -521,7 +521,7 @@ def test_always_on_effort_maps_off_to_low_without_sending_disabled():
                 current_reasoning_mode.reset(token)
 
     assert "thinking" not in payloads[0]
-    assert "reasoning_effort" not in payloads[0]
+    assert payloads[0]["reasoning_effort"] == "high"
     assert payloads[1]["thinking"] == {"type": "enabled"}
     assert payloads[1]["reasoning_effort"] == "low"
     assert payloads[2]["thinking"] == {"type": "enabled"}
