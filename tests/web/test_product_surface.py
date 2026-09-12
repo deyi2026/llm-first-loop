@@ -94,6 +94,46 @@ def test_continuity_status_never_returns_model_text_or_reasoning(
     assert "SECRET REASONING" not in serialized
 
 
+def test_continuity_status_uses_hot_event_snapshot(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    engine, _ = build_test_engine([])
+    sid = engine.session.create()
+    events = EventStore(tmp_path / "events-cache", enabled=True)
+    engine.session._event_store = events
+    events.append(sid, "request.meta", {"model": "m"})
+    assert events.read_cached(sid)
+
+    def _no_full_replay(_sid: str):
+        raise AssertionError("continuity polling must not full-replay a hot EventStore")
+
+    monkeypatch.setattr(events, "read", _no_full_replay)
+    resp = _client(engine).get(f"/api/v1/sessions/{sid}/continuity")
+    assert resp.status_code == 200
+    assert resp.json()["available"] is True
+
+
+def test_jobs_status_uses_hot_event_snapshot(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    engine, _ = build_test_engine([])
+    sid = engine.session.create()
+    events = EventStore(tmp_path / "jobs-cache", enabled=True)
+    engine.session._event_store = events
+    reg = JobRegistry(event_store=events)
+    JobRegistry._instance = reg
+    job_id = reg.create(_KillableProc(), "sleep-like", session_id=sid)
+    assert events.read_cached(sid)
+
+    def _no_full_replay(_sid: str):
+        raise AssertionError("jobs polling must not full-replay a hot EventStore")
+
+    monkeypatch.setattr(events, "read", _no_full_replay)
+    resp = _client(engine).get(f"/api/v1/sessions/{sid}/jobs")
+    assert resp.status_code == 200
+    assert [row["job_id"] for row in resp.json()["jobs"]] == [job_id]
+
+
 def test_capability_manifest_reflects_registered_routes(build_test_engine) -> None:
     engine, _ = build_test_engine([])
     resp = _client(engine).get("/api/v1/capabilities")

@@ -125,7 +125,7 @@ def _queue_claim_state(engine: Any, session_id: str, queue_id: str) -> str:
     if store is None or getattr(store, "enabled", False) is False:
         return "unknown"
     try:
-        events = store.read(session_id)
+        events = getattr(store, "read_cached", store.read)(session_id)
         if int(getattr(store, "last_read_skipped", 0) or 0) > 0:
             return "unknown"
     except Exception:  # noqa: BLE001 - corrupt/unreadable evidence cannot authorize replay
@@ -2148,7 +2148,7 @@ def session_continuity_status(session_id: str, request: Request) -> Response:
             content={"available": False, "open": False, "reason": "event_store_unavailable"}
         )
     try:
-        events = list(estore.read(session_id) or [])
+        events = list(getattr(estore, "read_cached", estore.read)(session_id) or [])
     except Exception as exc:  # noqa: BLE001 - status is read-only/fail-open
         return UTF8JSONResponse(
             status_code=500,

@@ -1,7 +1,7 @@
 // 阶段 2：markdown/高亮/消息/输入区 单元与冒烟测试
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
 import { renderMarkdown, highlightCode } from "./core/markdown";
 import { MessageItem } from "./components/conversation/MessageItem";
 import { Composer } from "./components/conversation/Composer";
@@ -120,6 +120,18 @@ describe("MessageItem", () => {
     expect(footer.textContent).toContain("—— kimi/k3");
     expect(footer.textContent).toContain("12.3k入");
     expect(footer.textContent).toContain("678出");
+  });
+
+  it("流式等待提示只陈述等待事实，不臆测首 token 或同会话排队阶段", async () => {
+    vi.useFakeTimers();
+    render(<MessageItem msg={{ role: "assistant", content: "", streaming: true, streamStartedAt: Date.now() - 6_000 }} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    const hint = screen.getByTestId("thinking-hint");
+    expect(hint.textContent).toContain("已等待");
+    expect(hint.textContent).toContain("正在处理");
+    expect(hint.textContent).not.toContain("首 token");
+    expect(hint.textContent).not.toContain("同会话串行排队");
+    vi.useRealTimers();
   });
 
   it("助手消息：无模型/token 时不渲染页脚", () => {

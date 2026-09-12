@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ContinuityBanner } from "./components/conversation/ContinuityBanner";
 import { RightPanel } from "./components/layout/RightPanel";
 import { sessionStore, themeStore } from "./core/stores";
@@ -30,6 +30,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -96,6 +97,39 @@ describe("product right panel", () => {
     await waitFor(() => expect(killCalls).toBe(1));
     await waitFor(() => expect(screen.queryByRole("button", { name: "停止任务" })).toBeNull());
   });
+
+  it("jobs 轮询单飞：慢请求期间不按 2s 周期叠加", async () => {
+    vi.useFakeTimers();
+    let jobCalls = 0;
+    let resolveFirst: ((response: Response) => void) | null = null;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/models")) return Promise.resolve(new Response(JSON.stringify(MODEL_CATALOG), { status: 200 }));
+      if (url.includes("/auth/status")) return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+      if (url.endsWith("/api/v1/sessions/s1/jobs")) {
+        jobCalls += 1;
+        if (jobCalls === 1) {
+          return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+        }
+        return Promise.resolve(new Response(JSON.stringify({ jobs: [] }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    }));
+
+    render(<RightPanel open={true} />);
+    fireEvent.click(screen.getByRole("button", { name: "后台任务" }));
+    await Promise.resolve();
+    expect(jobCalls).toBe(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+    expect(jobCalls).toBe(1);
+
+    await act(async () => {
+      resolveFirst?.(new Response(JSON.stringify({ jobs: [] }), { status: 200 }));
+      await Promise.resolve();
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(jobCalls).toBe(2);
+  });
 });
 
 describe("restart continuity banner", () => {
@@ -129,5 +163,35 @@ describe("restart continuity banner", () => {
     const { container } = render(<ContinuityBanner sessionId="s1" />);
     await waitFor(() => expect(screen.queryByTestId("continuity-banner")).toBeNull());
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("continuity 轮询单飞：上一次未完成时不叠加新请求", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    let resolveFirst: ((response: Response) => void) | null = null;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (!url.includes("/continuity")) {
+        return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+      }
+      calls += 1;
+      if (calls === 1) {
+        return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+      }
+      return Promise.resolve(new Response(JSON.stringify({ available: true, open: false }), { status: 200 }));
+    }));
+
+    render(<ContinuityBanner sessionId="s1" />);
+    await Promise.resolve();
+    expect(calls).toBe(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+    expect(calls).toBe(1);
+
+    await act(async () => {
+      resolveFirst?.(new Response(JSON.stringify({ available: true, open: false }), { status: 200 }));
+      await Promise.resolve();
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(calls).toBe(2);
   });
 });

@@ -14,6 +14,7 @@ import shutil
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,6 +64,15 @@ class EventStore:
         # P1-1: 会话级稳定锁的进程内回退（fcntl 不可用时）与锁表守护
         self._fallback_locks: dict[str, threading.Lock] = {}
         self._fallback_locks_guard = threading.Lock()
+        # Web 状态面（continuity/jobs/queue claim）会高频读取同一 append-only 会话。
+        # 大会话若每次都 JSON 全量 replay，会在多标签页轮询下形成 CPU/GIL 放大。
+        # 这里只缓存“已解析的机械事件事实”，不做任何语义判断；同进程 append 直接
+        # 增量延长缓存，跨进程 append 由 last_seq 失配触发一次重建。最多保留两个
+        # 热会话，避免把 EventStore 变成无界内存副本。
+        self._read_cache: OrderedDict[str, tuple[int, int, list[Event]]] = OrderedDict()
+        self._read_cache_lock = threading.RLock()
+        self._read_cache_build_locks: dict[str, threading.Lock] = {}
+        self._read_cache_max_sessions = 2
 
     def set_rotate_manager(self, manager: Any | None) -> None:
         """接线滚动管理器（P1-1：append/run 末自动检查滚动；None 解除接线）."""
@@ -214,6 +224,7 @@ class EventStore:
                 removed += sum(1 for p in seg_dir.rglob("*") if p.is_file())
                 shutil.rmtree(seg_dir)
             self._rotate_checked_at.pop(session_id, None)
+        self._invalidate_read_cache(session_id)
         return removed
 
     def append(
@@ -255,7 +266,89 @@ class EventStore:
             except OSError as exc:
                 logger.warning("事件日志写入失败（fail-open）: %s: %s", p, exc)
                 return None
+        if event is not None:
+            self._extend_read_cache(event)
         return event
+
+    def _invalidate_read_cache(self, session_id: str) -> None:
+        with self._read_cache_lock:
+            self._read_cache.pop(session_id, None)
+            self._read_cache_build_locks.pop(session_id, None)
+
+    def _read_cache_build_lock(self, session_id: str) -> threading.Lock:
+        with self._read_cache_lock:
+            return self._read_cache_build_locks.setdefault(session_id, threading.Lock())
+
+    def _extend_read_cache(self, event: Event) -> None:
+        """Append one same-process event to an already-hot parsed snapshot.
+
+        This is purely mechanical cache maintenance. Any seq gap invalidates the cache so
+        the next reader rebuilds from the durable EventStore rather than guessing.
+        """
+        sid = event.session_id
+        with self._read_cache_lock:
+            cached = self._read_cache.get(sid)
+            if cached is None:
+                return
+            last_seq, skipped, events = cached
+            if event.seq != last_seq + 1:
+                self._read_cache.pop(sid, None)
+                return
+            events.append(event)
+            self._read_cache[sid] = (event.seq, skipped, events)
+            self._read_cache.move_to_end(sid)
+
+    def _store_read_cache(
+        self, session_id: str, events: list[Event], *, skipped: int
+    ) -> None:
+        last_seq = events[-1].seq if events else 0
+        with self._read_cache_lock:
+            self._read_cache[session_id] = (last_seq, skipped, list(events))
+            self._read_cache.move_to_end(session_id)
+            while len(self._read_cache) > self._read_cache_max_sessions:
+                self._read_cache.popitem(last=False)
+
+    def read_cached(self, session_id: str) -> list[Event]:
+        """Return an exact point-in-time event snapshot with bounded parsed replay cache.
+
+        ``read()`` remains the uncached canonical replay primitive. This hot-path variant
+        is for repeated mechanical status reads. The cache is valid only while the durable
+        tail seq is unchanged. Same-process append keeps it incrementally exact; external
+        writers are detected by ``last_seq`` and cause one single-flight rebuild.
+        """
+        try:
+            session_id = _validate_session_id(session_id)
+        except ValueError:
+            self.last_read_skipped = 0
+            return []
+
+        durable_last = self.last_seq(session_id)
+        with self._read_cache_lock:
+            cached = self._read_cache.get(session_id)
+            if cached is not None and cached[0] == durable_last:
+                self._read_cache.move_to_end(session_id)
+                self.last_read_skipped = cached[1]
+                return list(cached[2])
+
+        build_lock = self._read_cache_build_lock(session_id)
+        with build_lock:
+            durable_last = self.last_seq(session_id)
+            with self._read_cache_lock:
+                cached = self._read_cache.get(session_id)
+                if cached is not None and cached[0] == durable_last:
+                    self._read_cache.move_to_end(session_id)
+                    self.last_read_skipped = cached[1]
+                    return list(cached[2])
+
+            events = self.read(session_id)
+            skipped = int(self.last_read_skipped or 0)
+            # If a cross-process writer appended while the rebuild was reading, do not
+            # publish a stale cache entry. Returning the point-in-time read is no weaker
+            # than the historical read() contract; the next poll rebuilds immediately.
+            after_last = self.last_seq(session_id)
+            if (events[-1].seq if events else 0) == after_last:
+                self._store_read_cache(session_id, events, skipped=skipped)
+            return events
 
     @staticmethod
     def _tail_last_seq(path: Path) -> int:
@@ -386,6 +479,7 @@ class EventStore:
         )
         f.write(serialize_event(new_event) + "\n")
         f.flush()
+        self._extend_read_cache(new_event)
         return new_event
 
     def read(self, session_id: str) -> list[Event]:

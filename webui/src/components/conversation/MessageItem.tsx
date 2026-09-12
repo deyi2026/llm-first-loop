@@ -351,7 +351,7 @@ function StreamingHint({ startedAt }: { startedAt: number | null }) {
   return (
     <div className="v2-thinking-hint" data-testid="thinking-hint">
       {zh.thinkingHint}
-      {elapsed >= 5 ? `（已等待 ${elapsed}s，首 token 生成中，同会话串行排队中）` : ""}
+      {elapsed >= 5 ? `（已等待 ${elapsed}s，正在处理）` : ""}
     </div>
   );
 }

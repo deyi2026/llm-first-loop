@@ -1,6 +1,6 @@
 // Web V2：跨会话连续性横幅（目标/任务/续跑状态；后端无该能力时不渲染）
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchContinuityStatus, type ContinuityFact } from "../../core/api";
 import { useCapabilities } from "../../core/capabilities";
 
@@ -8,20 +8,35 @@ export function ContinuityBanner({ sessionId }: { sessionId: string }) {
   const caps = useCapabilities();
   const [fact, setFact] = useState<ContinuityFact | null>(null);
   const [details, setDetails] = useState(false);
+  const inFlightSession = useRef<string | null>(null);
+  const activeSession = useRef(sessionId);
+  activeSession.current = sessionId;
 
   const refresh = useCallback(async () => {
-    if (!sessionId) return;
-    const next = await fetchContinuityStatus(sessionId);
-    setFact(next);
+    if (!sessionId || inFlightSession.current === sessionId) return;
+    inFlightSession.current = sessionId;
+    try {
+      const next = await fetchContinuityStatus(sessionId);
+      if (activeSession.current === sessionId) setFact(next);
+    } finally {
+      if (inFlightSession.current === sessionId) inFlightSession.current = null;
+    }
   }, [sessionId]);
 
   useEffect(() => {
     setFact(null);
     setDetails(false);
     if (!sessionId || !caps.continuity) return;
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 5000);
-    return () => window.clearInterval(timer);
+    const poll = () => {
+      if (!document.hidden) void refresh();
+    };
+    poll();
+    const timer = window.setInterval(poll, 5000);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", poll);
+    };
   }, [sessionId, caps.continuity, refresh]);
 
   const counts = useMemo(() => {

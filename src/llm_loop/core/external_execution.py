@@ -189,25 +189,48 @@ class ExternalExecutionJournal:
         store = self.event_store
         if not self.enabled or store is None or not session_id or not store.exists(session_id):
             return ()
-        launched_ids: list[str] = []
+        launched: dict[str, Any] = {}
+        cancelled: dict[str, Any] = {}
         terminal_ids: set[str] = set()
-        for event in store.read(session_id) or []:
+        order: list[str] = []
+        for event in getattr(store, "read_cached", store.read)(session_id) or []:
             payload = dict(getattr(event, "payload", None) or {})
             job_id = str(payload.get("job_id") or "")
             if not job_id:
                 continue
             etype = str(getattr(event, "type", ""))
-            if etype == EVENT_EXTERNAL_EXECUTION_LAUNCHED and job_id not in launched_ids:
-                launched_ids.append(job_id)
+            if etype == EVENT_EXTERNAL_EXECUTION_LAUNCHED and job_id not in launched:
+                launched[job_id] = event
+                order.append(job_id)
+            elif etype == EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED:
+                cancelled[job_id] = event
             elif etype == EVENT_EXTERNAL_EXECUTION_TERMINAL:
                 terminal_ids.add(job_id)
+
         states: list[ExternalExecutionState] = []
-        for job_id in launched_ids:
+        for job_id in order:
             if job_id in terminal_ids:
                 continue
-            state = self.state(session_id, job_id)
-            if state is not None and not state.terminal_seq:
-                states.append(state)
+            launch = launched[job_id]
+            cancel = cancelled.get(job_id)
+            lp = dict(getattr(launch, "payload", None) or {})
+            cp = dict(getattr(cancel, "payload", None) or {}) if cancel is not None else {}
+            states.append(
+                ExternalExecutionState(
+                    job_id=job_id,
+                    session_id=session_id,
+                    workspace_root=str(lp.get("workspace_root") or ""),
+                    executor=str(lp.get("executor") or ""),
+                    command_sha256=str(lp.get("command_sha256") or ""),
+                    pid=int(lp.get("pid") or 0),
+                    pgid=int(lp.get("pgid") or 0),
+                    state="running",
+                    cancel_requested=cancel is not None,
+                    cancel_reason=str(cp.get("reason") or ""),
+                    launch_seq=int(getattr(launch, "seq", 0) or 0),
+                    cancel_seq=int(getattr(cancel, "seq", 0) or 0) if cancel is not None else 0,
+                )
+            )
         return tuple(states)
 
     def state(self, session_id: str, job_id: str) -> ExternalExecutionState | None:
@@ -218,7 +241,7 @@ class ExternalExecutionJournal:
         launch: Any | None = None
         terminal: Any | None = None
         cancel: Any | None = None
-        for event in store.read(session_id) or []:
+        for event in getattr(store, "read_cached", store.read)(session_id) or []:
             payload = dict(getattr(event, "payload", None) or {})
             if str(payload.get("job_id") or "") != job_id:
                 continue

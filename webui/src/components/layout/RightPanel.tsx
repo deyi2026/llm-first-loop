@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
 import {
   fetchAuthStatus,
@@ -29,6 +29,9 @@ export function RightPanel({ open }: { open: boolean }) {
   const [jobs, setJobs] = useState<JobFact[]>([]);
   const [jobError, setJobError] = useState("");
   const [jobBusy, setJobBusy] = useState<string | null>(null);
+  const jobsInFlightSession = useRef<string | null>(null);
+  const activeSession = useRef(currentSessionId);
+  activeSession.current = currentSessionId;
 
   const loadSettings = useCallback(async () => {
     const [models, authStatus] = await Promise.all([fetchModels(), fetchAuthStatus()]);
@@ -41,7 +44,14 @@ export function RightPanel({ open }: { open: boolean }) {
       setJobs([]);
       return;
     }
-    setJobs(await fetchSessionJobs(currentSessionId));
+    if (jobsInFlightSession.current === currentSessionId) return;
+    jobsInFlightSession.current = currentSessionId;
+    try {
+      const next = await fetchSessionJobs(currentSessionId);
+      if (activeSession.current === currentSessionId) setJobs(next);
+    } finally {
+      if (jobsInFlightSession.current === currentSessionId) jobsInFlightSession.current = null;
+    }
   }, [currentSessionId]);
 
   useEffect(() => {
@@ -50,9 +60,16 @@ export function RightPanel({ open }: { open: boolean }) {
 
   useEffect(() => {
     if (!open || tab !== "jobs" || !caps.jobs) return;
-    void loadJobs();
-    const timer = window.setInterval(() => void loadJobs(), 2000);
-    return () => window.clearInterval(timer);
+    const poll = () => {
+      if (!document.hidden) void loadJobs();
+    };
+    poll();
+    const timer = window.setInterval(poll, 2000);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", poll);
+    };
   }, [open, tab, caps.jobs, loadJobs]);
 
   if (!open) return null;
