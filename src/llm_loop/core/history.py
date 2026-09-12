@@ -266,6 +266,34 @@ def _mark_cache_compacted_for(
     return (not was_marked) or scope_changed
 
 
+def mark_cache_compacted_for(
+    message: Message,
+    provider_id: str,
+    *,
+    model_ref: str = "",
+    effective_budget: int | None = None,
+) -> bool:
+    """Persist one provider-scoped compaction marker on the canonical live message.
+
+    ``build_history_messages`` can operate on provider-view copies (for example the
+    active tool working-set receipt projection).  Marking only those copies makes
+    the current live Session forget the compaction until a future event-log replay,
+    so later rounds may compact the same source bytes again and churn the provider
+    prefix.  This public mechanical helper lets the postprocess layer mirror the
+    already-emitted exact ``msg_seq`` marker onto the canonical Session message.
+
+    The helper carries no relevance/retention policy; it only applies the same
+    provider/model/budget marker contract used by the compactor and replay path.
+    """
+
+    return _mark_cache_compacted_for(
+        message,
+        provider_id,
+        model_ref=model_ref,
+        effective_budget=effective_budget,
+    )
+
+
 def clear_cache_compacted_for(message: Message, provider_id: str) -> bool:
     """Remove one provider's stale prompt-view marker while preserving other providers."""
     if not provider_id:

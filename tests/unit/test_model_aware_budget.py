@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from llm_loop.core.message import Message, MessageSource, ToolCall
+from llm_loop.core.message import Message, MessageSource, ToolCall, ToolResultStatus
 from llm_loop.core.prompt_build.stages.history_pipeline import _anchor_for_current_contract
 
 from .test_model_attribution import (  # noqa: F401
@@ -170,6 +170,88 @@ def test_engine_clears_legacy_marker_once_on_actual_session_messages(
 
     engine._build_llm_messages(  # noqa: SLF001
         reloaded,
+        [],
+        max_chars=540_000,
+        planned_label="kimi/k3",
+        registry_snapshot=registry,
+    )
+    assert engine._run_state().cache_prefix_epoch == epoch_after_first  # noqa: SLF001
+
+
+def test_engine_clears_stale_marker_from_live_tool_when_provider_view_uses_receipt(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Compaction reset must clear canonical tool state even when ingress uses a copy."""
+    monkeypatch.setenv("KIMI_API_KEY", "k")
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "4096")
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "0")
+    settings = _settings(
+        tmp_path,
+        model_providers_raw=_K256_JSON,
+        llm_model="k3-256k",
+        history_max_chars=1_000_000,
+    )
+    fake = _FakeLLMClient("k3")
+    pool = _make_pool(settings, fake, cached={"kimi": fake})
+    engine = _make_engine(tmp_path, pool, settings)
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    sess.model_override = "kimi/k3"
+    sess.messages.extend(
+        [
+            Message(role="user", content="task", source=MessageSource.USER),
+            Message(
+                role="assistant",
+                content="inspect",
+                source=MessageSource.USER,
+                tool_calls=[
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                    }
+                ],
+                metadata={"answer_origin": "model"},
+            ),
+            Message(
+                role="tool",
+                content="X" * 5000,
+                source=MessageSource.TOOL,
+                tool_call_id="c1",
+                status=ToolResultStatus.SUCCESS,
+                tool_name="read_file",
+                metadata={
+                    "cache_compacted_for": ["kimi"],
+                    "recoverability_status": "recorded",
+                    "evidence_ref": "evidence://v1/stale-copy",
+                    "evidence_representation": "full",
+                    "evidence_projection_complete": True,
+                },
+            ),
+            Message(
+                role="assistant",
+                content="continue",
+                source=MessageSource.USER,
+                metadata={"answer_origin": "model"},
+            ),
+        ]
+    )
+    engine.session.save(sess)
+
+    registry = pool.registry_snapshot()
+    engine._build_llm_messages(  # noqa: SLF001
+        sess,
+        [],
+        max_chars=540_000,
+        planned_label="kimi/k3",
+        registry_snapshot=registry,
+    )
+    epoch_after_first = engine._run_state().cache_prefix_epoch  # noqa: SLF001
+    assert "cache_compacted_for" not in sess.messages[2].metadata
+
+    engine._build_llm_messages(  # noqa: SLF001
+        sess,
         [],
         max_chars=540_000,
         planned_label="kimi/k3",

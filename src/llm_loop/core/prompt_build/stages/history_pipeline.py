@@ -8,6 +8,7 @@ postprocess（锚点事件/降级记账）。调 history 现函数，Phase 7 前
 from dataclasses import dataclass
 from typing import Any
 
+from llm_loop.core.history import clear_cache_compacted_for
 from llm_loop.core.prompt_build.stages.history_budget_prep import run_history_budget_prep
 from llm_loop.core.prompt_build.stages.history_postprocess import run_history_postprocess
 from llm_loop.core.prompt_build.stages.history_projection import run_history_projection
@@ -168,6 +169,16 @@ def run_history_pipeline(
     compact_view_box = _proj.compact_view_box
     compaction_state_reset = legacy_anchor_reset or _proj.reopened_marker_count > 0
     if compaction_state_reset:
+        # Keep the live Session state byte-for-byte aligned with replay semantics.
+        # EVENT_HISTORY_COMPACTION_STATE_RESET clears every marker for this provider
+        # during event replay; doing less in the current process leaves stale markers
+        # behind whenever ingress/history worked on provider-view copies (for example
+        # tool-result receipts).  The current build's newly compacted exact msg_seq
+        # markers are re-applied below by run_history_postprocess under the new
+        # model/budget contract.
+        if provider_id:
+            for _message in getattr(sess, "messages", []):
+                clear_cache_compacted_for(_message, provider_id)
         event_append(
             sess.session_id,
             EVENT_HISTORY_COMPACTION_STATE_RESET,

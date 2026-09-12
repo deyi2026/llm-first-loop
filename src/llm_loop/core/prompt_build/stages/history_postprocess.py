@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from llm_loop.core.episode_history import original_anchor_from_filtered
+from llm_loop.core.history import mark_cache_compacted_for
 from llm_loop.event_log.model import EVENT_HISTORY_COMPACTION
 
 logger = logging.getLogger(__name__)
@@ -57,8 +58,20 @@ def run_history_postprocess(
     )
     # Replay fidelity: msg_seq comes from exact source provenance captured at the
     # compaction site and mapped through the eligibility-filtered projection. Never
-    # guess message identity from role/content/ts here.
+    # guess message identity from role/content/ts here.  The event is durable truth,
+    # but the current process may keep using this live Session for many more tool
+    # rounds without replaying it. Mirror the same exact marker into that canonical
+    # live message now; otherwise compaction performed on provider-view receipt copies
+    # is forgotten until restart/replay and the same source span can be rewritten on
+    # every build.
     for _msg_seq in cache_compacted_source_box:
+        if 0 <= _msg_seq < len(sess.messages):
+            mark_cache_compacted_for(
+                sess.messages[_msg_seq],
+                provider_id,
+                model_ref=resolved_label,
+                effective_budget=effective_budget,
+            )
         event_append(
             sess.session_id,
             "message.cache_compacted",
