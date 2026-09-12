@@ -125,3 +125,29 @@ analyze.py L85 读取不存在的顶层键 `session_continuity`（行内真名 `
   - G3 redo workdir 内 invocation 记录 freeze/plan sha 自洽；
   - G4 主线漂移**降级为环境注记**（代码已隔离），gate4 合并不再构成 gate FAIL。
 - workdir `/private/tmp/agentpilot-v11-redo-20260912/`；启动回执（含 PYTHONPATH 的进程环境、PID）记入本节附录。预计 ~55 分钟，完成后跑 analyze（226a9010 修正版）并回填 §10 结果表。
+
+## §11 v1.1 redo#2（用户裁决：定时 2026-09-13 04:00，先检查后跑）——预声明
+
+- **授权**：用户 2026-09-12 23:12:16 指令"定时到明天凌晨4点再跑吧，那时要检查清楚再跑"。默认执行 §10 方案一（全量 108 重跑）；若 04:00 前用户改口（如只补 LFL 臂），以新指令为准。
+- **redo#1 定性补记**：LFL-arm-invalid（36× INFRA，根因 LLM_API_KEY 未注入冻结环境）；DA 36/36 PASS、Cline 33 PASS + 3× UNSUPPORTED（t12）数据留档 `/private/tmp/agentpilot-v11-redo-20260912/`，仅作旁证，不采信为正式 v1.1。
+- **环境修复已预验证（23:1x 回执，本会话）**：
+  1. `set -a; source REPO/.env; set +a` + `PYTHONPATH=/private/tmp/lfl-freeze-1437be74/src` 组合下，`import llm_loop` 解析至冻结树（`/private/tmp/lfl-freeze-1437be74/src/llm_loop/`）且 `LLM_API_KEY` 在进程环境可见；
+  2. plan-only 复现：redo2 workdir manifest `execution_plan_sha256 == 570be8c6…`，108 项，与 v1.1/redo#1 逐字节一致。
+- **workdir**：`/private/tmp/agentpilot-v11-redo2-20260913/`（manifest 已由 plan-only 冻结）。
+- **04:00 预检清单（全绿才启动；任一红→停止并等待用户裁决，不自行改配置重试）**：
+  - P1 唤醒时刻 04:00±15min（本节 schedule 唤醒，非他源触发）；
+  - P2 8901 存活且 `/v1/models` 含 `ornith-ai/Ornith-1.5-35B-A3B-MLX`；
+  - P3 冻结树 `HEAD==1437be74…` 且 `git status --porcelain` 为空；
+  - P4 redo2 workdir 无 `results.jsonl`（未被启动过）且 manifest plan_sha==`570be8c6…`；
+  - P5 无残留 run_pilot/agentpilot 矩阵进程；
+  - P6 `.env` 含 `LLM_API_KEY` 且注入 smoke（§11 组合 import 断言）通过。
+- **启动命令（预声明，不可临场改动）**：
+  ```
+  cd REPO/evals/pilot
+  set -a; source REPO/.env; set +a
+  PYTHONPATH=/private/tmp/lfl-freeze-1437be74/src REPO/.venv/bin/python run_pilot.py \
+    --workdir /private/tmp/agentpilot-v11-redo2-20260913 --interrupt --latin-square --seed 20260912
+  ```
+- **早期熔断（新增 G-pre，针对 redo#1 gate 盲区）**：矩阵启动后监控至**第一个 lfl 行**落盘；若其 `status=INFRA_FAIL 且 dur<1s` → kill 矩阵进程、记 FAIL 留档、等用户裁决；不重试、不降级、不继续消耗槽位。
+- **完成收尾**：矩阵自然结束后注册收尾唤醒，执行 G1–G4（§10 定义）+ **G5：lfl 36 行零亚秒 INFRA（臂级有效性）**。全绿 → analyze（226a9010）落库、回填 §11 结果表并 commit；任一红 → 记 FAIL 等裁决。
+- **边界**：凌晨唤醒 run 仅限本节预声明动作；不得扩大到矩阵外任务；不得修改 runner/冻结树/manifest/启动参数；不得在无用户新授权下重复发起 redo#3。
