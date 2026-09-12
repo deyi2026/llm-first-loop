@@ -332,6 +332,17 @@ def with_ws(prompt: str, ws: Path) -> str:
     统一在 prompt 中给出绝对工作目录。"""
     return f"工作目录（绝对路径）：{ws.resolve()}。所有文件读写与命令都应针对此目录下的文件（可用绝对路径）。任务：{prompt}"
 
+def _merge_resume_result(rec: dict, resume_result: dict) -> None:
+    """Merge one resume attempt without double-prefixing already-qualified semantics."""
+    rec.update({
+        f"resume_{k}": v
+        for k, v in resume_result.items()
+        if k != "resume_semantics"
+    })
+    if "resume_semantics" in resume_result:
+        rec["resume_semantics"] = resume_result["resume_semantics"]
+
+
 def run_one(agent: str, task: dict, run_idx: int, base: Path, interrupt: bool) -> dict:
     ws = base / f"{task['id']}__{agent}__r{run_idx}__{uuid.uuid4().hex[:6]}"
     ws.mkdir(parents=True)
@@ -402,7 +413,7 @@ def run_one(agent: str, task: dict, run_idx: int, base: Path, interrupt: bool) -
             # 不再计入 session-resume 维度。
             r2 = run_da(t2, ws, task["timeout_s"])
             r2["resume_semantics"] = "new-session-same-workspace-by-design"
-        rec.update({f"resume_{k}": v for k, v in r2.items()})
+        _merge_resume_result(rec, r2)
         # 完整 wall clock = 中断前固定时长 + 恢复段（v0 的 analyze 只取 resume_dur，系统偏低）。
         # UNSUPPORTED 不执行恢复段 → resume_dur=None：宁缺毋假，dur 亦置 None，不生成伪时长。
         if rec.get("resume_dur") is None:
