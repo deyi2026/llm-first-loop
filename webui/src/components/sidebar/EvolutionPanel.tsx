@@ -28,6 +28,13 @@ interface EvoDetail extends EvoItem {
   reason_history?: { reason: string; at: string }[];
 }
 
+interface EvoDiff {
+  id: string;
+  impact_files?: string[];
+  actions?: Record<string, unknown>[];
+  note?: string;
+}
+
 const STATUS_LABEL: Record<string, string> = {
   pending_review: "待审批",
   accepted: "已接受",
@@ -63,6 +70,12 @@ export function EvolutionPanel() {
   const [tab, setTab] = useState("pending_review");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [detail, setDetail] = useState<Record<string, EvoDetail>>({});
+  const [viewerSummary, setViewerSummary] = useState<EvoItem | null>(null);
+  const [viewerDetail, setViewerDetail] = useState<EvoDetail | null>(null);
+  const [viewerDiff, setViewerDiff] = useState<EvoDiff | null>(null);
+  const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerError, setViewerError] = useState("");
+  const [viewerDiffMessage, setViewerDiffMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionMsg, setActionMsg] = useState("");
   const [confirmMsg, setConfirmMsg] = useState("");
@@ -94,6 +107,53 @@ export function EvolutionPanel() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d && setDetail((prev) => ({ ...prev, [id]: d })))
       .catch(() => undefined);
+  };
+
+  const openViewer = (item: EvoItem) => {
+    setViewerSummary(item);
+    setViewerDetail(null);
+    setViewerDiff(null);
+    setViewerError("");
+    setViewerDiffMessage("");
+    setViewerLoading(true);
+
+    void (async () => {
+      try {
+        const detailResp = await fetch(`/api/v1/evolution/detail?id=${encodeURIComponent(item.id)}`);
+        const detailBody = await detailResp.json().catch(() => ({}));
+        if (!detailResp.ok) {
+          throw new Error(String(detailBody.detail || detailBody.message || `详情读取失败(${detailResp.status})`));
+        }
+        const fullDetail = detailBody as EvoDetail;
+        setViewerDetail(fullDetail);
+        setDetail((prev) => ({ ...prev, [item.id]: fullDetail }));
+
+        try {
+          const diffResp = await fetch(`/api/v1/evolution/diff?id=${encodeURIComponent(item.id)}`);
+          const diffBody = await diffResp.json().catch(() => ({}));
+          if (diffResp.ok) {
+            setViewerDiff(diffBody as EvoDiff);
+          } else {
+            setViewerDiffMessage(String(diffBody.detail || diffBody.message || "暂无关联改动摘要。"));
+          }
+        } catch (err) {
+          setViewerDiffMessage(`改动摘要读取失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+      } catch (err) {
+        setViewerError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setViewerLoading(false);
+      }
+    })();
+  };
+
+  const closeViewer = () => {
+    setViewerSummary(null);
+    setViewerDetail(null);
+    setViewerDiff(null);
+    setViewerError("");
+    setViewerDiffMessage("");
+    setViewerLoading(false);
   };
 
   const review = (id: string, decision: string, reason: string, extraConfirm = false) => {
@@ -265,6 +325,19 @@ export function EvolutionPanel() {
               </div>
               <div className="v2-evo-summary">{it.content}</div>
               {it.impact_hint && <div className="v2-evo-impact">📎 影响面：{it.impact_hint}</div>}
+              <div className="v2-evo-card-actions">
+                <button
+                  type="button"
+                  className="v2-evo-btn ghost"
+                  data-testid={`evo-view-${it.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openViewer(it);
+                  }}
+                >
+                  查看详情
+                </button>
+              </div>
               {expanded === it.id && (
                 <div className="v2-evo-detail" data-testid="evo-detail">
                   {it.requires_human && <div className="v2-evo-note">⚠ 需人工确认（涉边界，禁止批量）</div>}
@@ -316,6 +389,154 @@ export function EvolutionPanel() {
           ))
         )}
       </div>
+
+      {/* 完整建议审阅层：只读读取既有 detail/diff API，审批仍走原 review 契约。 */}
+      {viewerSummary && (
+        <div
+          className="v2-evo-modal"
+          data-testid="evo-detail-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`演进建议 ${viewerSummary.id} 详情`}
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) closeViewer();
+          }}
+        >
+          <div className="v2-evo-modal-box v2-evo-detail-box">
+            <div className="v2-evo-detail-head">
+              <div>
+                <div className="v2-evo-modal-title">演进建议 · {viewerSummary.id}</div>
+                <div className="v2-evo-detail-meta">
+                  <span style={{ color: STATUS_COLOR[viewerDetail?.status ?? viewerSummary.status] ?? "inherit" }}>
+                    {STATUS_LABEL[viewerDetail?.status ?? viewerSummary.status] ?? (viewerDetail?.status ?? viewerSummary.status)}
+                  </span>
+                  {(viewerDetail?.priority ?? viewerSummary.priority) && (
+                    <span>优先级：{viewerDetail?.priority ?? viewerSummary.priority}</span>
+                  )}
+                  <span>{fmtTs(viewerDetail?.ts ?? viewerSummary.ts)}</span>
+                </div>
+              </div>
+              <button type="button" className="v2-icon-btn" onClick={closeViewer} aria-label="关闭演进建议详情">✕</button>
+            </div>
+
+            <div className="v2-evo-detail-scroll">
+              {viewerLoading && <div className="v2-tree-loading">正在读取完整内容…</div>}
+              {viewerError && (
+                <div className="v2-evo-action-msg" role="alert" data-testid="evo-detail-error">
+                  ⚠️ {viewerError}
+                </div>
+              )}
+              {viewerDetail && (
+                <>
+                  {viewerDetail.requires_human && (
+                    <div className="v2-evo-note">⚠ 需人工确认（涉边界，禁止批量）</div>
+                  )}
+                  <section className="v2-evo-detail-section">
+                    <h4>建议内容</h4>
+                    <div className="v2-evo-detail-content" data-testid="evo-detail-content">
+                      {viewerDetail.content || "（无正文）"}
+                    </div>
+                  </section>
+                  <div className="v2-evo-detail-grid">
+                    <section className="v2-evo-detail-section">
+                      <h4>作用域</h4>
+                      <div>{viewerDetail.scope || "—"}</div>
+                    </section>
+                    <section className="v2-evo-detail-section">
+                      <h4>影响范围</h4>
+                      <div>{viewerDetail.impact_scope || viewerSummary.impact_hint || "—"}</div>
+                    </section>
+                  </div>
+                  <section className="v2-evo-detail-section">
+                    <h4>证据 / 依据</h4>
+                    <div className="v2-evo-detail-content">{viewerDetail.evidence || "（未附证据文本）"}</div>
+                  </section>
+                  <section className="v2-evo-detail-section">
+                    <h4>影响文件</h4>
+                    {(viewerDetail.impact_files?.length ?? 0) > 0 ? (
+                      <ul className="v2-evo-detail-list">
+                        {(viewerDetail.impact_files ?? []).map((path) => <li key={path}>{path}</li>)}
+                      </ul>
+                    ) : <div>（无文件清单）</div>}
+                  </section>
+                  <section className="v2-evo-detail-section">
+                    <h4>关联改动摘要</h4>
+                    {viewerDiff ? (
+                      <>
+                        {viewerDiff.note && <div className="v2-evo-hint">{viewerDiff.note}</div>}
+                        {(viewerDiff.actions?.length ?? 0) > 0 ? (
+                          <div className="v2-evo-diff-actions" data-testid="evo-diff-actions">
+                            {(viewerDiff.actions ?? []).map((action, index) => (
+                              <pre key={index} className="v2-evo-diff-action">{JSON.stringify(action, null, 2)}</pre>
+                            ))}
+                          </div>
+                        ) : <div>（无 action 摘要）</div>}
+                      </>
+                    ) : <div className="v2-evo-hint">{viewerDiffMessage || "正在读取改动摘要…"}</div>}
+                  </section>
+                  {(viewerDetail.reason_history?.length ?? 0) > 0 && (
+                    <section className="v2-evo-detail-section">
+                      <h4>理由历史</h4>
+                      <ul className="v2-evo-detail-list">
+                        {(viewerDetail.reason_history ?? []).map((entry, index) => (
+                          <li key={`${entry.at}-${index}`}>{fmtTs(entry.at)} · {entry.reason}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+                  <section className="v2-evo-detail-section">
+                    <h4>状态时间</h4>
+                    <div className="v2-evo-detail-meta v2-evo-detail-meta-wrap">
+                      {viewerDetail.reviewed_at && <span>审批：{fmtTs(viewerDetail.reviewed_at)}</span>}
+                      {viewerDetail.executed_at && <span>执行：{fmtTs(viewerDetail.executed_at)}</span>}
+                      {viewerDetail.verified_at && <span>验证：{fmtTs(viewerDetail.verified_at)}</span>}
+                      {!viewerDetail.reviewed_at && !viewerDetail.executed_at && !viewerDetail.verified_at && <span>尚无后续状态时间</span>}
+                    </div>
+                    {viewerDetail.status === "rejected" && viewerDetail.rejected_reason && (
+                      <div className="v2-evo-note reject-reason">拒绝理由：{viewerDetail.rejected_reason}</div>
+                    )}
+                  </section>
+                </>
+              )}
+            </div>
+            <div className="v2-evo-modal-actions v2-evo-detail-actions">
+              {viewerDetail?.status === "pending_review" && (
+                <>
+                  <button
+                    type="button"
+                    className="v2-evo-btn approve"
+                    data-testid="evo-detail-approve"
+                    disabled={busy}
+                    onClick={() => {
+                      setRejectReason("");
+                      setExtraConfirmChecked(false);
+                      setConfirmMsg("");
+                      setConfirm({ id: viewerDetail.id, decision: "accepted", requires_human: viewerDetail.requires_human });
+                    }}
+                  >
+                    ✅ 批准
+                  </button>
+                  <button
+                    type="button"
+                    className="v2-evo-btn reject"
+                    data-testid="evo-detail-reject"
+                    disabled={busy}
+                    onClick={() => {
+                      setRejectReason("");
+                      setExtraConfirmChecked(false);
+                      setConfirmMsg("");
+                      setConfirm({ id: viewerDetail.id, decision: "rejected", requires_human: viewerDetail.requires_human });
+                    }}
+                  >
+                    ❌ 拒绝
+                  </button>
+                </>
+              )}
+              <button type="button" className="v2-evo-btn ghost" onClick={closeViewer}>关闭</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 二次确认弹层 */}
       {confirm && (
@@ -381,6 +602,7 @@ export function EvolutionPanel() {
                       setRejectReason("");
                       setExtraConfirmChecked(false);
                       setConfirmMsg("");
+                      if (viewerSummary?.id === confirm.id) closeViewer();
                     }
                   });
                 }}
