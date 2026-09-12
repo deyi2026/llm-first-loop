@@ -52,7 +52,8 @@ class SmxPerceiveTool:
         "satisfied=true/false/null 分别表示满足/有效采样至超时未满足/观察错误或覆盖不足而不可判，"
         "回执给 interval/sample_count/observer_error_count，false 不证明采样间隙从未瞬时成立；"
         "snapshot=目录树快照落盘返回 snap_id 并绑定 capture-time roots/depth scope；"
-        "diff=先机械校验两端 scope comparability，再给可比快照净变更，不可比时 counts=null；"
+        "diff=先机械校验 scope comparability；可比但 observation 不完整时 created/deleted=null，"
+        "modified 仅保留 observed lower-bound 并用 field_completeness 标明非全集；"
         "receipt=按 run_id 查 smx 回执摘要。"
         "何时用: 后台命令启动后等待完成标志/端口就绪（替代 sleep+重读）、命令前后净变更取证、查询 smx 回执。"
         "执行动作（跑命令）一律走 execute_command，本工具不执行任何命令。"
@@ -325,6 +326,13 @@ class SmxPerceiveTool:
                 "created": None,
                 "deleted": None,
                 "modified": None,
+                "field_completeness": {
+                    "created": False,
+                    "deleted": False,
+                    "modified": False,
+                    "total_changes": False,
+                },
+                "modified_semantics": "unknown_incomparable_scope",
                 "diff_complete": False,
                 "meta": {"baseline": base_meta, "current": after_meta},
                 "display_rows": [],
@@ -352,6 +360,13 @@ class SmxPerceiveTool:
             "created": None if incomplete else len(d["created"]),
             "deleted": None if incomplete else len(d["deleted"]),
             "modified": len(d["modified"]),
+            "field_completeness": {
+                "created": not incomplete,
+                "deleted": not incomplete,
+                "modified": not incomplete,
+                "total_changes": not incomplete,
+            },
+            "modified_semantics": "observed_lower_bound" if incomplete else "complete",
             "diff_complete": not incomplete,
             "meta": {"baseline": base_meta, "current": after_meta},
             "display_rows": rows,
@@ -360,8 +375,11 @@ class SmxPerceiveTool:
             "smx_sha": self._smx_sha,
         }
         if incomplete:
-            payload["warning"] = ("快照不完整（budget 截断或遍历异常）：created/deleted 不可判，"
-                                  "已置 null 并抑制 ± 行；请增大 budget 后重拍重比")
+            payload["warning"] = (
+                "快照不完整（budget 截断或遍历异常）：created/deleted 不可判，已置 null 并抑制 ± 行；"
+                "modified 仅为已观察交集中的真实 lower-bound，不保证 exhaustive。"
+                "是否增大 budget 重拍由模型决定"
+            )
         return self._ok(payload)
 
     def _receipt(self, kw: dict) -> ToolResult:

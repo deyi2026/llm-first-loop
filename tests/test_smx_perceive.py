@@ -210,10 +210,17 @@ def test_diff_truncated_budget_never_reports_deleted(tool, tmp_path):
     for i in range(110):
         (work / f"f{i:03d}.txt").write_text("x")
     s1 = _payload(tool.execute(action="snapshot", roots=[str(work)], budget=5000))["snapshot_id"]
+    (work / "f000.txt").write_text("changed")
     s2 = _payload(tool.execute(action="snapshot", roots=[str(work)], budget=100))["snapshot_id"]
     d = _payload(tool.execute(action="diff", since=s1, current=s2))
     assert d["diff_complete"] is False
     assert d["deleted"] is None and d["created"] is None and d["total_changes"] is None
+    assert d["modified"] >= 1
+    assert d["field_completeness"] == {
+        "created": False, "deleted": False, "modified": False, "total_changes": False
+    }
+    assert d["modified_semantics"] == "observed_lower_bound"
+    assert any(r.startswith("~") and "f000.txt" in r for r in d["display_rows"])
     assert not any(r.startswith(("+", "-")) for r in d["display_rows"])
     assert any(m.get("truncated") for m in d["meta"]["current"])
     assert "warning" in d

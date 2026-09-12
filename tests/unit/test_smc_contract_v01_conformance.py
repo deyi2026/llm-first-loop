@@ -70,7 +70,7 @@ class ProbeResult:
 EXPECTED_MATRIX = {
     "P0": "GAP",
     "P1": "PASS",
-    "P2": "GAP",
+    "P2": "PASS",
     "P3": "PASS",
     "P4": "PASS",
     "P5": "GAP",
@@ -187,6 +187,10 @@ def probe_p1(tmp_path: Path) -> ProbeResult:
     assert diff["created"] >= 1
     assert diff["deleted"] >= 1
     assert diff["modified"] >= 1
+    assert diff["field_completeness"] == {
+        "created": True, "deleted": True, "modified": True, "total_changes": True
+    }
+    assert diff["modified_semantics"] == "complete"
     assert any(row.startswith("+") and "created.txt" in row for row in rows)
     assert any(row.startswith("-") and "delete.txt" in row for row in rows)
     assert any(row.startswith("~") and "change.txt" in row for row in rows)
@@ -205,6 +209,7 @@ def probe_p2(tmp_path: Path) -> ProbeResult:
     for idx in range(110):
         (work / f"f{idx:03d}.txt").write_text("x", encoding="utf-8")
     full = _snapshot(tool, work, budget=5000)
+    (work / "f000.txt").write_text("changed", encoding="utf-8")
     truncated = _snapshot(tool, work, budget=100)
     diff = _json_result(
         tool.execute(
@@ -219,16 +224,21 @@ def probe_p2(tmp_path: Path) -> ProbeResult:
     assert diff["deleted"] is None
     assert diff["total_changes"] is None
     assert not any(str(row).startswith(("+", "-")) for row in diff["display_rows"])
-    assert isinstance(diff["modified"], int)
-    assert "field_completeness" not in diff
+    assert isinstance(diff["modified"], int) and diff["modified"] >= 1
+    assert diff["field_completeness"] == {
+        "created": False, "deleted": False, "modified": False, "total_changes": False
+    }
+    assert diff["modified_semantics"] == "observed_lower_bound"
+    assert any(str(row).startswith("~") and "f000.txt" in row for row in diff["display_rows"])
     return ProbeResult(
         "P2",
-        "GAP",
-        "False +/- facts are suppressed, but modified is an unlabeled lower-bound count.",
+        "PASS",
+        "Incomplete snapshots null potentially false +/- facts while labeling observed modified facts as non-exhaustive lower bounds.",
         {
             "created_deleted_unknown": True,
             "false_plus_minus_suppressed": True,
-            "modified_has_field_completeness": False,
+            "modified_lower_bound_preserved": True,
+            "modified_has_field_completeness": True,
         },
     )
 
