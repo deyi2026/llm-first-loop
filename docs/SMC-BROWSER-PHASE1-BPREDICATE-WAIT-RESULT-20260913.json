@@ -1,0 +1,119 @@
+{
+  "schema": "smc.browser_predicate_wait_result.v0.1",
+  "stage": "B-PREDICATE-WAIT",
+  "status": "PASS",
+  "date": "2026-09-13",
+  "baseline_commit": "93182e1b356b049e604f60627799df766d28257f",
+  "implementation_commit": "aecf93aedb2babea3b7db48e3cf60cf8e8be6511",
+  "formal_live_result_sha256": "b613a90a67c355f36230217dcc9d9dd8c999fcc2e4e8604c7e35c839d78ce3dd",
+  "environment": {
+    "browser": "Google Chrome 152.0.7977.84",
+    "mock_keychain": true,
+    "password_store_basic": true,
+    "llm_invoked": false,
+    "services_restarted": false
+  },
+  "implementation_hashes": {
+    "scripts/qualification/smc_browser_live_predicate_wait.py": "c00647311b7fe8266d0a7f2a577e002ba00b88c8e4b3ab5c97717c5852ebdfe2",
+    "src/llm_loop/browser/predicate.py": "44a1e395ac869d464e95584335de7fd362d80e0ede852faa13b7557855007343",
+    "src/llm_loop/browser/perception.py": "93610bd87d2e8db964a53cf9b095acf404e4c40e2e1f37fcf67ace007d281c7d",
+    "src/llm_loop/tools/builtin/browser_perceive.py": "587976b55c1ac6dc50e60cf13ceb211f9f2264d53f97d3ca27eedbe79f9f9d29",
+    "tests/unit/test_smc_browser_predicate_wait_v01.py": "2fe398de058666c04b837bbfd927e3ceb06b9ca854cffe78c35792a70e6f701b",
+    "tests/unit/test_smc_browser_perception_v01.py": "03070ef64551ba0fdd1b216ff2bc7a4b5e9aac31c1c766e29776c2e6fbb25b7a",
+    "tests/unit/test_smc_browser_semantic_diff_v01.py": "6b05e1cff78a2fb72f50e1b6c59769aaf2f88bc49002175c96c83050d8f66557"
+  },
+  "model_surface": {
+    "browser_perceive_actions": [
+      "snapshot",
+      "hydrate",
+      "diff",
+      "wait"
+    ],
+    "wait_args": [
+      "predicate",
+      "timeout_ms",
+      "interval_ms"
+    ],
+    "assert_exposed": false,
+    "mutation_visible": false,
+    "action_receipt_visible": false,
+    "natural_language_predicate": false
+  },
+  "predicate_contract": {
+    "closed_typed_vocabulary_matches_bspec": true,
+    "results": [
+      "satisfied",
+      "unsatisfied",
+      "indeterminate"
+    ],
+    "scope_is_hard_boundary": true,
+    "unknown_property_operator_or_type_rejected": true,
+    "snapshot_local_or_unknown_identity_absence_is_indeterminate": true,
+    "negative_absence_requires_complete_coverage": true,
+    "object_count_partial_coverage_uses_lower_bound_logic": true,
+    "unobserved_property_is_indeterminate": true,
+    "url_mechanically_observed": true,
+    "document_ready_state_current_sensor": "accepted_by_contract_but_unobserved_indeterminate"
+  },
+  "wait_contract": {
+    "evaluation_mode_qualified": "polling",
+    "poll_samples_are_not_action_retries": true,
+    "timeout_unsatisfied_is_tool_success": true,
+    "observer_errors_counted": true,
+    "observer_error_then_valid_sample_can_recover": true,
+    "only_observer_errors_yield_indeterminate": true,
+    "interval_and_timeout_bounds_rejected_not_clamped": true,
+    "automatic_retry_or_recovery_strategy": false,
+    "task_completion_judgment": false,
+    "canonical_action_receipt": false
+  },
+  "formal_live": {
+    "status": "PASS",
+    "behavior_checks_passed": 9,
+    "behavior_checks_total": 9,
+    "safety_checks_passed": 6,
+    "safety_checks_total": 6,
+    "checks": {
+      "complete_coverage_proves_live_absence": "PASS",
+      "live_enabled_transition_satisfied": "PASS",
+      "observer_error_then_recovery": "PASS",
+      "partial_coverage_count_is_indeterminate": "PASS",
+      "predicate_result_sampling_facts_visible": "PASS",
+      "stable_identity_preserved_across_wait": "PASS",
+      "timeout_unsatisfied_is_observation": "PASS",
+      "unobserved_ready_state_is_indeterminate": "PASS",
+      "wait_has_no_action_receipt_fields": "PASS"
+    },
+    "safety": {
+      "assert_not_exposed_in_this_stage": "PASS",
+      "basic_password_store_enabled": "PASS",
+      "mock_keychain_enabled": "PASS",
+      "model_surface_has_no_mutation": "PASS",
+      "production_host_exact_target_bound": "PASS",
+      "security_agent_not_spawned": "PASS"
+    }
+  },
+  "verification": {
+    "direct_predicate_wait_tests": "18/18 PASS",
+    "expanded_adjacent_tests": "133/133 PASS",
+    "ruff": "PASS",
+    "py_compile": "PASS",
+    "src_pyright": "0 errors / 0 warnings / 0 informations",
+    "env_pin": "541 test files / 0 violations",
+    "tier0": "PASS",
+    "full_pytest": "PASS",
+    "full_ci_gate": "exit 0",
+    "whole_tree_security_pre_result_docs": "1653 files PASS",
+    "whole_tree_security_final_candidate": "1655 files PASS"
+  },
+  "not_claimed": {
+    "assert_model_action": "NOT_EXPOSED_THIS_STAGE",
+    "event_driven_wait": "NOT_QUALIFIED",
+    "staleness_version_pressure": "NOT_STARTED",
+    "mutation_dispatch": "NOT_STARTED",
+    "action_receipt": "NOT_STARTED",
+    "cross_url_page_navigate": "NOT_QUALIFIED",
+    "vision_phase2": "DEFERRED"
+  },
+  "next_gate": "B-STALE-VERSION-PRESSURE"
+}
