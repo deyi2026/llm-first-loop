@@ -455,9 +455,21 @@ _PREFIX_TRACE_STATE: dict[tuple[str, str], list[tuple[str, int]]] = {}
 usage.cached_tokens 对齐分析。不落盘自身（进程重启冷启动=首轮无理论值，正常）。
 """
 
+_PREFIX_TRACE_SHAPE_STATE: dict[tuple[str, str], tuple[str, str]] = {}
+"""Deep-trace-only previous (tools fingerprint, top-level params fingerprint)."""
+
 
 def _trace_payload_fingerprint(
-    payload: dict[str, Any], messages: list[dict], *, session_id: str, provider: str, model: str
+    payload: dict[str, Any],
+    messages: list[dict],
+    *,
+    session_id: str,
+    provider: str,
+    model: str,
+    run_round: int | None = None,
+    stable_prefix_fp: str = "",
+    cache_prefix_epoch: int | None = None,
+    compaction_epoch: int | None = None,
 ) -> None:
     """[临时诊断 2026-08-27] 请求分段指纹追踪——定位轮间前缀漂移段（缓存命中暴跌排查）.
 
@@ -482,12 +494,15 @@ def _trace_payload_fingerprint(
             return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16]
 
         def _hw(obj: Any) -> str:
-            """wire 级哈希：不排序、ensure_ascii=True——与 httpx json= 实际发出的字节一致.
+            """Insertion-order-sensitive JSON-input hash, not a claim about HTTP bytes.
 
-            键插入序漂移（canonical sort_keys 哈希会掩盖）在此层现形。
+            ``httpx(..., json=payload)`` may choose its own separators/encoding details.
+            This fingerprint deliberately hashes the exact Python request object in
+            insertion order so key-order drift remains visible without pretending the
+            diagnostic captured transport-body bytes.
             """
-            wire = json.dumps(obj)  # httpx 默认序列化行为（插入序 + ASCII 转义）
-            return hashlib.sha256(wire.encode("utf-8")).hexdigest()[:16]
+            json_input = json.dumps(obj)
+            return hashlib.sha256(json_input.encode("utf-8")).hexdigest()[:16]
 
         def _type_tag(a: Any) -> str:
             if isinstance(a, str):
@@ -512,14 +527,23 @@ def _trace_payload_fingerprint(
             return "flat_no_args"
 
         top = {k: v for k, v in payload.items() if k not in ("messages", "tools")}
+        tools_wire = _hw(payload.get("tools") or [])
+        params_wire = _hw(top)
         record = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "session_id": session_id,
             "provider": provider,
             "model": model,
+            "run_round": run_round,
+            "stable_prefix_fp": stable_prefix_fp,
+            "cache_prefix_epoch": cache_prefix_epoch,
+            "compaction_epoch": compaction_epoch,
+            "payload_canonical_hash": _h(payload),
+            "payload_json_input_hash": _hw(payload),
             "tools_hash": _h(payload.get("tools") or []),
-            "tools_wire": _hw(payload.get("tools") or []),
+            "tools_wire": tools_wire,
             "tools_n": len(payload.get("tools") or []),
+            "params_json_input_hash": params_wire,
             "params": {
                 k: (_h(v) if isinstance(v, dict | list) else v) for k, v in sorted(top.items())
             },
@@ -543,13 +567,41 @@ def _trace_payload_fingerprint(
             _key = (session_id, model)
             _cur = [(mm["w"], mm["chars"]) for mm in record["msgs"]]
             _prev = _PREFIX_TRACE_STATE.get(_key)
+            _prev_shape = _PREFIX_TRACE_SHAPE_STATE.get(_key)
             if _prev is not None:
                 k = 0
                 while k < len(_cur) and k < len(_prev) and _cur[k][0] == _prev[k][0]:
                     k += 1
                 record["prefix_hit_msgs"] = k
                 record["prefix_hit_chars"] = sum(c for _, c in _cur[:k])
+                record["previous_message_count"] = len(_prev)
+                record["current_message_count"] = len(_cur)
+                record["first_divergent_message"] = (
+                    k if k < min(len(_cur), len(_prev)) else None
+                )
+                record["messages_append_only"] = bool(
+                    k == len(_prev) and len(_cur) >= len(_prev)
+                )
+                if _prev_shape is not None:
+                    tools_changed = tools_wire != _prev_shape[0]
+                    params_changed = params_wire != _prev_shape[1]
+                    record["tools_changed"] = tools_changed
+                    record["params_changed"] = params_changed
+                    message_rewrite = not record["messages_append_only"]
+                    if not tools_changed and not params_changed and not message_rewrite:
+                        mutation_scope = "append_only"
+                    else:
+                        changed_axes = []
+                        if message_rewrite:
+                            changed_axes.append("messages")
+                        if tools_changed:
+                            changed_axes.append("tools")
+                        if params_changed:
+                            changed_axes.append("params")
+                        mutation_scope = "+".join(changed_axes) or "unknown"
+                    record["mutation_scope"] = mutation_scope
             _PREFIX_TRACE_STATE[_key] = _cur
+            _PREFIX_TRACE_SHAPE_STATE[_key] = (tools_wire, params_wire)
         except Exception:  # noqa: BLE001 — 埋点 fail-open
             pass
         # GPT 审计批次3: 默认路径跟 LFL_DATA_DIR（测试隔离不再污染生产 data/audit）
@@ -1277,6 +1329,10 @@ class LLMClient:
             session_id=(guard_context.session_id if guard_context else "") or "__global__",
             provider=self.provider,
             model=payload.get("model", "") or self.model,
+            run_round=(guard_context.run_round if guard_context else None),
+            stable_prefix_fp=(guard_context.stable_prefix_fp if guard_context else ""),
+            cache_prefix_epoch=(guard_context.cache_prefix_epoch if guard_context else None),
+            compaction_epoch=(guard_context.compaction_epoch if guard_context else None),
         )
 
         acc = _StreamAcc()
