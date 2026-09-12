@@ -29,11 +29,15 @@ from llm_loop.memory.episode import (
 
 logger = logging.getLogger(__name__)
 
-# A second, count-based mechanical bound prevents many small already-exposed results
-# from sitting raw forever just below the coarse byte threshold.  Twelve preserves the
-# previously qualified coarse-fold scale (roughly 12-13 groups in the exact-T2 runs)
-# while bounding small-result accumulation without returning to per-round rewrites.
-_WORKING_SET_PENDING_RESULT_CAP = 12
+# Count-based hysteresis complements the coarse byte threshold. The soft cap is not
+# itself permission to rewrite the provider prefix: once reached, raw->receipt
+# conversion must save a meaningful mechanical number of chars. A larger hard cap
+# remains as the bounded-result safety valve so a long stream of small tool results
+# cannot grow back to the 60+ pending-results incident shape. None of these thresholds
+# judge evidence relevance/sufficiency; they only compare representation size/count.
+_WORKING_SET_PENDING_RESULT_SOFT_CAP = 12
+_WORKING_SET_PENDING_RESULT_HARD_CAP = 32
+_WORKING_SET_MIN_NET_GAIN_CHARS = 16_384
 
 
 RESOLVED_EPISODE_REF_KEY = "resolved_episode_ref"
@@ -145,6 +149,51 @@ def _working_set_grace_groups() -> int:
     except ValueError:
         value = 0
     return max(0, min(value, 64))
+
+
+def _working_set_soft_result_cap() -> int:
+    raw = (
+        os.environ.get(
+            "LFL_TOOL_WORKING_SET_SOFT_RESULT_CAP",
+            str(_WORKING_SET_PENDING_RESULT_SOFT_CAP),
+        )
+        or str(_WORKING_SET_PENDING_RESULT_SOFT_CAP)
+    ).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = _WORKING_SET_PENDING_RESULT_SOFT_CAP
+    return max(1, min(value, 1024))
+
+
+def _working_set_hard_result_cap(*, soft_cap: int) -> int:
+    raw = (
+        os.environ.get(
+            "LFL_TOOL_WORKING_SET_HARD_RESULT_CAP",
+            str(_WORKING_SET_PENDING_RESULT_HARD_CAP),
+        )
+        or str(_WORKING_SET_PENDING_RESULT_HARD_CAP)
+    ).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = _WORKING_SET_PENDING_RESULT_HARD_CAP
+    return max(soft_cap, min(value, 4096))
+
+
+def _working_set_min_net_gain_chars() -> int:
+    raw = (
+        os.environ.get(
+            "LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS",
+            str(_WORKING_SET_MIN_NET_GAIN_CHARS),
+        )
+        or str(_WORKING_SET_MIN_NET_GAIN_CHARS)
+    ).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = _WORKING_SET_MIN_NET_GAIN_CHARS
+    return max(0, min(value, 1_048_576))
 
 
 def _is_model_followup(message: Message) -> bool:
@@ -754,10 +803,16 @@ class ToolWorkingSetProjectionStats:
     grace_groups: int
     grace_raw_chars: int
     grace_results: int
+    soft_result_cap: int
+    hard_result_cap: int
+    min_net_gain_chars: int
     pending_raw_chars: int
+    pending_receipt_chars: int
+    pending_net_gain_chars: int
     pending_results: int
     latest_raw_chars: int
     fold_boundaries: tuple[int, ...]
+    fold_triggers: tuple[str, ...]
 
 
 def project_active_tool_working_set_with_stats(
@@ -775,6 +830,11 @@ def project_active_tool_working_set_with_stats(
     enabled = _working_set_receipts_enabled()
     batch_chars = _working_set_batch_chars() if enabled else 0
     grace_groups = _working_set_grace_groups() if enabled else 0
+    soft_result_cap = _working_set_soft_result_cap() if enabled else 0
+    hard_result_cap = (
+        _working_set_hard_result_cap(soft_cap=soft_result_cap) if enabled else 0
+    )
+    min_net_gain_chars = _working_set_min_net_gain_chars() if enabled else 0
     raw_tool_chars = sum(len(message.content or "") for message in messages if message.role == "tool")
     if not enabled or not messages:
         return messages, ToolWorkingSetProjectionStats(
@@ -788,10 +848,16 @@ def project_active_tool_working_set_with_stats(
             grace_groups=grace_groups,
             grace_raw_chars=0,
             grace_results=0,
+            soft_result_cap=soft_result_cap,
+            hard_result_cap=hard_result_cap,
+            min_net_gain_chars=min_net_gain_chars,
             pending_raw_chars=0,
+            pending_receipt_chars=0,
+            pending_net_gain_chars=0,
             pending_results=0,
             latest_raw_chars=0,
             fold_boundaries=(),
+            fold_triggers=(),
         )
     human_starts = [idx for idx, message in enumerate(messages) if is_human_user_message(message)]
     if not human_starts:
@@ -806,10 +872,16 @@ def project_active_tool_working_set_with_stats(
             grace_groups=grace_groups,
             grace_raw_chars=0,
             grace_results=0,
+            soft_result_cap=soft_result_cap,
+            hard_result_cap=hard_result_cap,
+            min_net_gain_chars=min_net_gain_chars,
             pending_raw_chars=0,
+            pending_receipt_chars=0,
+            pending_net_gain_chars=0,
             pending_results=0,
             latest_raw_chars=0,
             fold_boundaries=(),
+            fold_triggers=(),
         )
     projected = list(messages)
     preserve_requested = {str(item) for item in preserve_group_digests if str(item)}
@@ -830,12 +902,14 @@ def project_active_tool_working_set_with_stats(
             }
     pending: list[tuple[int, Message]] = []
     pending_chars = 0
+    pending_receipt_chars = 0
     pending_group_count = 0
     grace_queue: list[tuple[list[tuple[int, Message]], int]] = []
     folded_results = 0
     folded_groups = 0
     receipt_chars = 0
     fold_boundaries: list[int] = []
+    fold_triggers: list[str] = []
     latest_raw_chars = 0
     for group in _collect_active_tool_group_spans(messages):
         group_raw_chars = sum(len(messages[idx].content or "") for idx in group.result_indices)
@@ -859,19 +933,32 @@ def project_active_tool_working_set_with_stats(
                 promoted_receipts, promoted_chars = grace_queue.pop(0)
                 pending.extend(promoted_receipts)
                 pending_chars += promoted_chars
+                pending_receipt_chars += sum(
+                    len(receipt.content or "") for _idx, receipt in promoted_receipts
+                )
                 pending_group_count += 1
-                if pending and (
-                    pending_chars >= batch_chars
-                    or len(pending) >= _WORKING_SET_PENDING_RESULT_CAP
+                pending_net_gain = pending_chars - pending_receipt_chars
+                fold_trigger = ""
+                if pending_chars >= batch_chars:
+                    fold_trigger = "coarse_bytes"
+                elif len(pending) >= hard_result_cap:
+                    fold_trigger = "hard_result_cap"
+                elif (
+                    len(pending) >= soft_result_cap
+                    and pending_net_gain >= min_net_gain_chars
                 ):
+                    fold_trigger = "soft_cap_net_gain"
+                if pending and fold_trigger:
                     for idx, receipt in pending:
                         projected[idx] = receipt
                         receipt_chars += len(receipt.content or "")
                     folded_results += len(pending)
                     folded_groups += pending_group_count
                     fold_boundaries.append(group.end_exclusive)
+                    fold_triggers.append(fold_trigger)
                     pending = []
                     pending_chars = 0
+                    pending_receipt_chars = 0
                     pending_group_count = 0
     projected_tool_chars = sum(
         len(message.content or "") for message in projected if message.role == "tool"
@@ -889,10 +976,16 @@ def project_active_tool_working_set_with_stats(
         grace_groups=grace_groups,
         grace_raw_chars=grace_raw_chars,
         grace_results=grace_results,
+        soft_result_cap=soft_result_cap,
+        hard_result_cap=hard_result_cap,
+        min_net_gain_chars=min_net_gain_chars,
         pending_raw_chars=pending_chars,
+        pending_receipt_chars=pending_receipt_chars,
+        pending_net_gain_chars=pending_chars - pending_receipt_chars,
         pending_results=len(pending),
         latest_raw_chars=latest_raw_chars,
         fold_boundaries=tuple(fold_boundaries),
+        fold_triggers=tuple(fold_triggers),
     )
 
 

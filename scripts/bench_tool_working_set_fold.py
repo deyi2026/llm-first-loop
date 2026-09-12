@@ -82,6 +82,9 @@ def run_case(
     *,
     batch_chars: int,
     grace_groups: int,
+    soft_result_cap: int,
+    hard_result_cap: int,
+    min_net_gain_chars: int,
     rounds: int,
     raw_chars_per_result: int,
     closure_marker_round: int,
@@ -89,6 +92,9 @@ def run_case(
     os.environ["LFL_TOOL_WORKING_SET_RECEIPTS"] = "1"
     os.environ["LFL_TOOL_WORKING_SET_BATCH_CHARS"] = str(batch_chars)
     os.environ["LFL_TOOL_WORKING_SET_GRACE_GROUPS"] = str(grace_groups)
+    os.environ["LFL_TOOL_WORKING_SET_SOFT_RESULT_CAP"] = str(soft_result_cap)
+    os.environ["LFL_TOOL_WORKING_SET_HARD_RESULT_CAP"] = str(hard_result_cap)
+    os.environ["LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS"] = str(min_net_gain_chars)
     messages = [Message(role="user", content="synthetic task", source=MessageSource.USER)]
     previous_wire = _wire(messages)
     previous_folded = 0
@@ -117,8 +123,12 @@ def run_case(
                 "grace_raw_chars": stats.grace_raw_chars,
                 "grace_results": stats.grace_results,
                 "pending_raw_chars": stats.pending_raw_chars,
+                "pending_receipt_chars": stats.pending_receipt_chars,
+                "pending_net_gain_chars": stats.pending_net_gain_chars,
+                "pending_results": stats.pending_results,
                 "latest_raw_chars": stats.latest_raw_chars,
                 "fold_boundaries": list(stats.fold_boundaries),
+                "fold_triggers": list(stats.fold_triggers),
                 "prev_wire_chars": len(previous_wire),
                 "wire_chars": len(current_wire),
                 "lcp_chars": prefix_chars,
@@ -135,6 +145,9 @@ def run_case(
     return {
         "batch_chars": batch_chars,
         "grace_groups": grace_groups,
+        "soft_result_cap": soft_result_cap,
+        "hard_result_cap": hard_result_cap,
+        "min_net_gain_chars": min_net_gain_chars,
         "rounds": rounds,
         "raw_chars_per_result": raw_chars_per_result,
         "closure_marker_round": closure_marker_round,
@@ -148,6 +161,7 @@ def run_case(
         ),
         "new_fold_count": len(fold_rows),
         "fold_rounds": [row["round"] for row in fold_rows],
+        "fold_triggers": [row["fold_triggers"] for row in fold_rows],
         "fold_prefix_retained": [
             row["prefix_retained_ratio"] for row in fold_rows
         ],
@@ -169,6 +183,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch-chars", type=int, nargs="+", default=[16384, 32768, 65536, 131072])
     parser.add_argument("--grace-groups", type=int, nargs="+", default=[0, 1, 2, 3, 4])
+    parser.add_argument("--soft-result-cap", type=int, default=12)
+    parser.add_argument("--hard-result-cap", type=int, default=32)
+    parser.add_argument("--min-net-gain-chars", type=int, default=16384)
     parser.add_argument("--rounds", type=int, default=18)
     parser.add_argument("--raw-chars", type=int, default=12000)
     parser.add_argument("--closure-marker-round", type=int, default=8)
@@ -177,6 +194,9 @@ def main() -> None:
         run_case(
             batch_chars=batch,
             grace_groups=grace,
+            soft_result_cap=args.soft_result_cap,
+            hard_result_cap=args.hard_result_cap,
+            min_net_gain_chars=args.min_net_gain_chars,
             rounds=args.rounds,
             raw_chars_per_result=args.raw_chars,
             closure_marker_round=args.closure_marker_round,

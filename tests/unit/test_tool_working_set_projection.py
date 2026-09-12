@@ -197,9 +197,12 @@ def test_working_set_stats_report_only_mechanical_projection_facts(monkeypatch):
     assert stats.folded_results == 2
     assert stats.folded_groups == 2
     assert stats.pending_raw_chars == 0
+    assert stats.pending_receipt_chars == 0
+    assert stats.pending_net_gain_chars == 0
     assert stats.pending_results == 0
     assert stats.latest_raw_chars == 5000
     assert stats.fold_boundaries == (5,)
+    assert stats.fold_triggers == ("coarse_bytes",)
     assert stats.projected_tool_chars < stats.raw_tool_chars
     assert stats.receipt_chars == len(projected[2].content) + len(projected[4].content)
     assert projected[6].content == "C" * 5000
@@ -223,6 +226,8 @@ def test_working_set_stats_expose_small_incomplete_batch_without_folding(monkeyp
     assert stats.folded_results == 0
     assert stats.folded_groups == 0
     assert stats.pending_raw_chars == 5000
+    assert stats.pending_receipt_chars > 0
+    assert stats.pending_net_gain_chars == 5000 - stats.pending_receipt_chars
     assert stats.pending_results == 1
     assert stats.latest_raw_chars == 5000
     assert stats.fold_boundaries == ()
@@ -230,8 +235,8 @@ def test_working_set_stats_expose_small_incomplete_batch_without_folding(monkeyp
     assert projected[4].content == "B" * 5000
 
 
-def test_long_active_episode_bounds_small_pending_results_without_per_round_folding(monkeypatch):
-    """Many small closed groups are bounded even when bytes stay below the coarse threshold."""
+def test_soft_result_cap_defers_low_gain_small_results_without_prefix_rewrite(monkeypatch):
+    """Soft count pressure alone must not rewrite a prefix for a small byte saving."""
     from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
 
     monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
@@ -249,17 +254,75 @@ def test_long_active_episode_bounds_small_pending_results_without_per_round_fold
     projected, stats = project_active_tool_working_set_with_stats(messages)
 
     assert stats.raw_tool_chars == 20000
-    assert stats.folded_groups == 12
-    assert stats.folded_results == 12
-    assert stats.pending_results == 6
-    assert stats.pending_results < 12
+    assert stats.soft_result_cap == 12
+    assert stats.hard_result_cap == 32
+    assert stats.min_net_gain_chars == 16384
+    assert stats.folded_groups == 0
+    assert stats.folded_results == 0
+    assert stats.pending_results == 18
+    assert stats.pending_results > stats.soft_result_cap
+    assert stats.pending_results < stats.hard_result_cap
+    assert stats.pending_net_gain_chars < stats.min_net_gain_chars
+    assert stats.grace_results == 1
+    assert stats.latest_raw_chars == 1000
+    assert projected[2].content == "B" * 1000
+    assert stats.fold_triggers == ()
+    assert "tool_result_receipt" not in projected[-3].content
+    assert "tool_result_receipt" not in projected[-1].content
+
+
+def test_hard_result_cap_still_bounds_long_small_result_episode(monkeypatch):
+    """A hard mechanical count valve prevents a return to 60+ raw pending results."""
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "65536")
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "1")
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS", "1048576")
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 37):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(65 + idx % 26) * 1000, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(messages)
+
+    assert stats.raw_tool_chars == 36000
+    assert stats.folded_results == 32
+    assert stats.folded_groups == 32
+    assert stats.fold_triggers == ("hard_result_cap",)
+    assert stats.pending_results == 2
     assert stats.grace_results == 1
     assert stats.latest_raw_chars == 1000
     assert "tool_result_receipt" in projected[2].content
-    # Pending tail + one configured grace group + newest unexposed group remain raw;
-    # unlike the rejected per-round prototype, the prefix is not rewritten every round.
-    assert "tool_result_receipt" not in projected[-3].content
-    assert "tool_result_receipt" not in projected[-1].content
+
+
+def test_soft_result_cap_folds_when_net_saving_is_material(monkeypatch):
+    """Soft cap may fold before 64K when the raw->receipt byte saving is large."""
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "65536")
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "1")
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 16):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(65 + idx % 26) * 2000, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(messages)
+
+    assert stats.raw_tool_chars == 30000
+    assert stats.folded_results >= stats.soft_result_cap
+    assert stats.fold_triggers == ("soft_cap_net_gain",)
+    assert stats.fold_boundaries
+    assert stats.projected_tool_chars < stats.raw_tool_chars
 
 
 def test_working_set_grace_keeps_recent_exposed_groups_raw(monkeypatch):

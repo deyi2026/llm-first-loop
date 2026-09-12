@@ -311,10 +311,16 @@ def run_ingress_prelude(
                     f"grace_groups={_working_set_stats.grace_groups};"
                     f"grace_raw_chars={_working_set_stats.grace_raw_chars};"
                     f"grace_results={_working_set_stats.grace_results};"
+                    f"soft_result_cap={_working_set_stats.soft_result_cap};"
+                    f"hard_result_cap={_working_set_stats.hard_result_cap};"
+                    f"min_net_gain_chars={_working_set_stats.min_net_gain_chars};"
                     f"pending_raw_chars={_working_set_stats.pending_raw_chars};"
+                    f"pending_receipt_chars={_working_set_stats.pending_receipt_chars};"
+                    f"pending_net_gain_chars={_working_set_stats.pending_net_gain_chars};"
                     f"pending_results={_working_set_stats.pending_results};"
                     f"latest_raw_chars={_working_set_stats.latest_raw_chars};"
                     f"fold_boundaries={','.join(str(x) for x in _working_set_stats.fold_boundaries)};"
+                    f"fold_triggers={','.join(_working_set_stats.fold_triggers)};"
                     "prompt_chars=0"
                 ),
             )
@@ -324,6 +330,14 @@ def run_ingress_prelude(
         "projected_tool_chars": int(_working_set_stats.projected_tool_chars or 0),
         "folded_results": int(_working_set_stats.folded_results or 0),
         "folded_groups": int(_working_set_stats.folded_groups or 0),
+        "fold_triggers": list(_working_set_stats.fold_triggers),
+        "pending_results": int(_working_set_stats.pending_results or 0),
+        "pending_raw_chars": int(_working_set_stats.pending_raw_chars or 0),
+        "pending_receipt_chars": int(_working_set_stats.pending_receipt_chars or 0),
+        "pending_net_gain_chars": int(_working_set_stats.pending_net_gain_chars or 0),
+        "soft_result_cap": int(_working_set_stats.soft_result_cap or 0),
+        "hard_result_cap": int(_working_set_stats.hard_result_cap or 0),
+        "min_net_gain_chars": int(_working_set_stats.min_net_gain_chars or 0),
     }
     return IngressPreludeOutcome(
         resolved_label=resolved_label,
