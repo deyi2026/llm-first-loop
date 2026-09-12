@@ -388,3 +388,10 @@ Browser Phase 1 的第一批实现测试应优先打在 Domain-0 无法证明的
 6. navigation/scope-change diff comparability。
 
 这比继续给 SMX 增加更多 shell predicate 更符合 Semantic Manipulation Framework 的主目标。
+
+## Revision provenance
+
+- The first uncommitted `docs/SMC-CONTRACT-v0.1.md` draft contained 338 lines.
+- Adversarial contract review expanded the normative contract to the committed 515-line form (`docs(smc): define semantic manipulation contract v0.1`).
+- A later 516-line untracked copy in the main worktree was mechanically compared with the committed form: after trimming trailing newlines the contents were identical; the only difference was one extra EOF newline. That untracked duplicate was deleted before convergence integration.
+- This history is provenance only; the 338-line draft is not reconstructed or treated as a competing normative contract.
