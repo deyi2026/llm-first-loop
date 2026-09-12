@@ -117,7 +117,12 @@ def test_readonly_cdp_host_is_loopback_only_and_blocks_mutation() -> None:
         CdpReadOnlyBrowserHost("http://example.com:9222")
 
     session = _ReadOnlyCdpSession(_FakeWs())
-    for method in ("Page.navigate", "Runtime.evaluate", "Input.dispatchMouseEvent"):
+    for method in (
+        "Page.navigate",
+        "Page.reload",
+        "Runtime.evaluate",
+        "Input.dispatchMouseEvent",
+    ):
         with pytest.raises(PermissionError, match="read-only"):
             session.send(method, {})
 
