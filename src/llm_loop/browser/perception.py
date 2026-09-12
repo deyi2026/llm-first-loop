@@ -390,6 +390,40 @@ class BrowserPerceptionStore:
             raise ValueError("snapshot unavailable: expired")
         return bundle
 
+    def _inspect_snapshot_for_versioning(
+        self, session_id: str, snapshot_id: str
+    ) -> dict[str, Any]:
+        """Return mechanical availability/retention facts without recapture or rebinding."""
+        bundle, load_error = self._load(snapshot_id)
+        if bundle is None:
+            return {
+                "availability": "unavailable",
+                "reason": load_error or "unavailable",
+                "bundle": None,
+                "expires_at_epoch": None,
+                "seconds_until_expiry": None,
+            }
+        if bundle.get("owner_session_sha256") != _session_hash(session_id):
+            return {
+                "availability": "unauthorized",
+                "reason": "session_scope",
+                "bundle": None,
+                "expires_at_epoch": None,
+                "seconds_until_expiry": None,
+            }
+        retention = bundle.get("retention") or {}
+        expires_at = float(retention.get("expires_at_epoch") or 0)
+        now = float(self._now())
+        remaining = max(0.0, expires_at - now)
+        availability = "expired" if now > expires_at else "available"
+        return {
+            "availability": availability,
+            "reason": None if availability == "available" else "retention_expired",
+            "bundle": bundle if availability == "available" else None,
+            "expires_at_epoch": expires_at,
+            "seconds_until_expiry": remaining,
+        }
+
     def _load_diff(
         self, from_version: str, to_version: str
     ) -> tuple[dict[str, Any] | None, str | None]:
@@ -1536,6 +1570,195 @@ class BrowserPerceptionAdapter:
         if persisted_ref != full_list_ref:
             raise RuntimeError("Browser diff grounding ref mismatch")
         return semantic_diff
+
+    def assess_version_precondition(
+        self,
+        session_id: str,
+        *,
+        expected_version: str,
+        observed_version: str,
+        version_scope: str,
+        scope_ref: str,
+        target_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Compare two explicit observations for a future mutation precondition.
+
+        This method never captures, refreshes, retries, or rebinds a target.  It only
+        compares already-persisted Browser observations supplied by the caller.
+        """
+        if version_scope not in {"object", "resource", "snapshot"}:
+            raise ValueError("version_scope must be object, resource, or snapshot")
+        if not expected_version or not observed_version:
+            raise ValueError("expected_version and observed_version are required")
+        if not scope_ref:
+            raise ValueError("scope_ref is required")
+        if version_scope == "object" and not target_id:
+            raise ValueError("target_id is required for object version scope")
+
+        expected_info = self.store._inspect_snapshot_for_versioning(
+            session_id, expected_version
+        )
+        observed_info = self.store._inspect_snapshot_for_versioning(
+            session_id, observed_version
+        )
+        expected_availability = str(expected_info["availability"])
+        observed_availability = str(observed_info["availability"])
+        pressure_present = (
+            expected_availability == "available"
+            and observed_availability == "available"
+            and expected_version != observed_version
+        )
+
+        def response(
+            result: str, reason: str, comparable: bool | None
+        ) -> dict[str, Any]:
+            return {
+                "schema": "smc.browser_version_assessment.v0.1",
+                "domain": "browser",
+                "version_scope": version_scope,
+                "scope_ref": scope_ref,
+                "target_id": target_id,
+                "expected_version": expected_version,
+                "observed_version": observed_version,
+                "expected_availability": expected_availability,
+                "observed_availability": observed_availability,
+                "result": result,
+                "reason": reason,
+                "comparable": comparable,
+                "pressure": {
+                    "present": pressure_present,
+                    "expected_expires_at_epoch": expected_info["expires_at_epoch"],
+                    "observed_expires_at_epoch": observed_info["expires_at_epoch"],
+                    "expected_seconds_until_expiry": expected_info[
+                        "seconds_until_expiry"
+                    ],
+                    "observed_seconds_until_expiry": observed_info[
+                        "seconds_until_expiry"
+                    ],
+                },
+                "automatic_refresh_performed": False,
+                "silent_rebind_performed": False,
+            }
+
+        if expected_availability != "available":
+            return response(
+                "indeterminate",
+                f"expected_version_{expected_availability}",
+                None,
+            )
+        if observed_availability != "available":
+            return response(
+                "indeterminate",
+                f"observed_version_{observed_availability}",
+                None,
+            )
+
+        expected_bundle = expected_info["bundle"] or {}
+        observed_bundle = observed_info["bundle"] or {}
+        expected_snapshot = expected_bundle.get("snapshot") or {}
+        observed_snapshot = observed_bundle.get("snapshot") or {}
+        expected_scope = expected_snapshot.get("scope") or {}
+        observed_scope = observed_snapshot.get("scope") or {}
+        expected_scope_facts = list(expected_bundle.get("scope_facts") or [])
+        observed_scope_facts = list(observed_bundle.get("scope_facts") or [])
+
+        expected_refs = {str(item.get("scope_ref") or "") for item in expected_scope_facts}
+        if scope_ref not in expected_refs:
+            return response("indeterminate", "scope_not_in_expected_version", None)
+
+        expected_page = next(
+            (item for item in expected_scope_facts if item.get("kind") == "page"), None
+        )
+        observed_page = next(
+            (item for item in observed_scope_facts if item.get("kind") == "page"), None
+        )
+        if expected_page is None or observed_page is None:
+            return response("indeterminate", "page_lineage_unknown", None)
+
+        page_lineage_same = all(
+            expected_page.get(key) == observed_page.get(key)
+            for key in ("scope_ref", "runtime_generation", "page_generation")
+        )
+        document_generation_same = (
+            expected_scope.get("document_generation")
+            == observed_scope.get("document_generation")
+        )
+
+        if version_scope == "resource" and scope_ref != str(
+            expected_page.get("scope_ref") or ""
+        ):
+            return response("indeterminate", "resource_scope_mismatch", None)
+
+        if version_scope == "object":
+            expected_grounding = (expected_bundle.get("object_grounding") or {}).get(
+                target_id or ""
+            )
+            if not isinstance(expected_grounding, dict):
+                return response("indeterminate", "target_not_in_expected_version", None)
+            if expected_grounding.get("identity_basis") == "snapshot_local_ax_identity":
+                return response("indeterminate", "target_identity_unstable", None)
+            expected_object = expected_grounding.get("semantic_object") or {}
+            if str(expected_object.get("scope_ref") or "") != scope_ref:
+                return response("indeterminate", "target_scope_mismatch", None)
+
+        if expected_version == observed_version:
+            return response("match", "exact_version", True)
+
+        if not page_lineage_same:
+            return response("stale", "page_generation_changed", False)
+        if not document_generation_same:
+            return response("stale", "document_generation_changed", False)
+
+        if version_scope == "object":
+            observed_grounding = (observed_bundle.get("object_grounding") or {}).get(
+                target_id or ""
+            )
+            if not isinstance(observed_grounding, dict):
+                complete = bool(
+                    (observed_snapshot.get("completeness") or {}).get("complete")
+                )
+                if not complete:
+                    return response(
+                        "indeterminate", "target_not_observed_incomplete", True
+                    )
+                return response("stale", "target_absent_in_observed_version", True)
+            if observed_grounding.get("identity_basis") == "snapshot_local_ax_identity":
+                return response("indeterminate", "target_identity_unstable", True)
+            observed_object = observed_grounding.get("semantic_object") or {}
+            if str(observed_object.get("scope_ref") or "") != scope_ref:
+                return response("stale", "target_scope_changed", True)
+
+            changed_fields = _semantic_changed_fields(expected_object, observed_object)
+            if changed_fields:
+                return response("stale", "object_changed_same_generation", True)
+            return response("match", "object_unchanged_new_observation", True)
+
+        if version_scope == "resource":
+            expected_resource = next(
+                (
+                    item
+                    for item in list(expected_bundle.get("objects") or [])
+                    if item.get("kind") == "document"
+                ),
+                None,
+            )
+            observed_resource = next(
+                (
+                    item
+                    for item in list(observed_bundle.get("objects") or [])
+                    if item.get("kind") == "document"
+                ),
+                None,
+            )
+            if not isinstance(expected_resource, dict) or not isinstance(
+                observed_resource, dict
+            ):
+                return response("indeterminate", "resource_facts_unobserved", True)
+            if _semantic_changed_fields(expected_resource, observed_resource):
+                return response("stale", "resource_changed_same_generation", True)
+            return response("match", "resource_unchanged_new_observation", True)
+
+        return response("stale", "different_snapshot_same_generation", True)
 
     def evaluate_predicate(
         self,
