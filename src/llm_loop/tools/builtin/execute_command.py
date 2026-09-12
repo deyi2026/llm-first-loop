@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import signal
 import subprocess
 import threading
@@ -56,6 +58,34 @@ def _scrubbed_env() -> dict[str, str]:
         else:
             scrubbed[k] = v
     return scrubbed
+
+
+def _python_runtime_fact(
+    command: str, returncode: int | None, stderr: str, env: dict[str, str]
+) -> str | None:
+    """Return a narrow current-runtime fact for an exact missing `python` executable.
+
+    This is observability only: never rewrite/retry the command and never infer that
+    python3 is semantically the right replacement.
+    """
+    if returncode != 127 or "not found" not in (stderr or "").lower():
+        return None
+    try:
+        parts = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    if not parts or parts[0] != "python":
+        return None
+    path_env = env.get("PATH")
+    if shutil.which("python", path=path_env) is not None:
+        return None
+    python3 = shutil.which("python3", path=path_env)
+    if not python3:
+        return None
+    return (
+        "[runtime_fact] python available=false; "
+        f"python3 available=true path={python3}"
+    )
 
 
 
@@ -284,6 +314,9 @@ class ExecuteCommandTool:
             parts.append(stdout.rstrip())
         if stderr:
             parts.append(f"[stderr] {stderr.rstrip()}")
+        runtime_fact = _python_runtime_fact(command, proc.returncode, stderr, env)
+        if runtime_fact:
+            parts.append(runtime_fact)
         content = "\n".join(parts) if parts else "（命令执行成功，无输出）"
 
         status = ToolResultStatus.SUCCESS if proc.returncode == 0 else ToolResultStatus.FAILURE

@@ -207,7 +207,8 @@ class EditFileTool:
         if self.require_version_precondition and not dry_run and not expected_snapshot_ref:
             return self._fail(
                 "当前 edit_file 实例要求 expected_snapshot_ref 版本前置条件；本次未写入。"
-                "请先 read_file(snapshot=true) 获取当前文件 snapshot_ref 后重试。",
+                f"[file_contract] required_call=read_file path={path_str!r} snapshot=true; "
+                "required_result=snapshot_ref; retry_field=expected_snapshot_ref",
                 "VersionPreconditionRequired",
             )
 

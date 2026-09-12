@@ -36,6 +36,7 @@ _OWNER_HIDDEN = "当前会话无权访问该 Evidence，或该 Evidence 不存�
 class EvidenceReadTool:
     name = "read_evidence"
     description = (
+        "仅接受 evidence:// EvidenceRef；普通文件请用 read_file。"
         "按稳定 EvidenceRef 精确恢复此前已获取的工具观察，不重新执行原工具。"
         "适用于上下文压缩/截断后恢复原证据；必须分页读取，不能传 workspace/session。"
     )

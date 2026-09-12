@@ -48,7 +48,7 @@ _LAZY_SCHEMA_VALIDATION_KEYS = ("minimum", "maximum", "maxLength")
 # load-bearing authorization/protocol fact.  Full descriptions remain available via
 # ``schemas(lazy=False)`` / exact ``get_tool_schema``.
 _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
-    "read_evidence": "按 EvidenceRef 分页恢复已取得证据；range_type=text_char 表示 Unicode 字符，line 表示 Evidence 行；start 为 0-based；limit 1..4000；不重新执行原工具。freshness/currentness 仅指 source 版本，不判断内容对当前任务是否适用。",
+    "read_evidence": "仅接受 evidence:// 引用；普通文件用 read_file。分页恢复已取得证据；range_type=text_char 表示 Unicode 字符，line 表示 Evidence 行；start 为 0-based；limit 1..4000；不重新执行原工具。freshness/currentness 仅指 source 版本，不判断内容对当前任务是否适用。",
     "search_evidence": "检索当前会话已持久化 Evidence，返回片段与稳定 EvidenceRef；不重新执行 source。命中为历史 observation；source currentness≠task applicability，结合 acquired_at/当前证据自主判断。",
     "search_archive": "兼容检索历史/归档 Evidence，返回稳定 ref；全文用 read_evidence。命中为历史 observation；source currentness≠task applicability，结合 acquired_at/当前证据自主判断。",
     "list_evidence": "列出当前会话 Evidence、acquired_at 与稳定 ref；scope=recent/recovery。freshness 仅表示 source 版本状态，不判断任务适用性。",

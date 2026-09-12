@@ -28,6 +28,10 @@ def test_capable_edit_schema_requires_version_ref_while_bare_legacy_stays_option
     rejected = strict.execute(path=str(strict_path), old_string="old", new_string="new")
     assert rejected.status.value == "error"
     assert rejected.error_type == "VersionPreconditionRequired"
+    assert "required_call=read_file" in rejected.content
+    assert f"path={str(strict_path)!r}" in rejected.content
+    assert "snapshot=true" in rejected.content
+    assert "retry_field=expected_snapshot_ref" in rejected.content
     assert strict_path.read_text(encoding="utf-8") == "old\n"
 
     legacy_path = tmp_path / "legacy-direct.txt"

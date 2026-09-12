@@ -55,6 +55,53 @@ def test_execute_command_empty():
     assert r.status == ToolResultStatus.FAILURE
 
 
+
+def test_execute_command_python_missing_surfaces_mechanical_python3_fact():
+    """127 +真实 PATH 探测仅补环境事实，不改写或自动重试命令。"""
+    tool = ExecuteCommandTool()
+
+    class _FakePopen:
+        pid = 1234567
+        returncode = 127
+
+        def communicate(self, timeout=None):
+            return "", "/bin/sh: python: command not found"
+
+    def _which(name, path=None):
+        return None if name == "python" else "/usr/bin/python3" if name == "python3" else None
+
+    with (
+        mock.patch("subprocess.Popen", return_value=_FakePopen()),
+        mock.patch("llm_loop.tools.builtin.execute_command.shutil.which", side_effect=_which),
+    ):
+        r = tool.execute(command="python -c 'print(1)'")
+
+    assert r.status == ToolResultStatus.FAILURE
+    assert "[runtime_fact]" in r.content
+    assert "python available=false" in r.content
+    assert "python3 available=true" in r.content
+    assert "/usr/bin/python3" in r.content
+
+
+def test_execute_command_python_fact_not_added_without_mechanical_proof():
+    tool = ExecuteCommandTool()
+
+    class _FakePopen:
+        pid = 1234567
+        returncode = 127
+
+        def communicate(self, timeout=None):
+            return "", "/bin/sh: python: command not found"
+
+    with (
+        mock.patch("subprocess.Popen", return_value=_FakePopen()),
+        mock.patch("llm_loop.tools.builtin.execute_command.shutil.which", return_value=None),
+    ):
+        r = tool.execute(command="python -c 'print(1)'")
+
+    assert r.status == ToolResultStatus.FAILURE
+    assert "[runtime_fact]" not in r.content
+
 def test_tool_protocol_implementable():
     """Tool 协议可实现（FR-TOOL-03）: 自定义工具满足协议."""
 
