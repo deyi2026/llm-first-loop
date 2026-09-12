@@ -286,6 +286,10 @@ class Settings:
     mcp_servers_raw: str = ""  # P3-1: MCP_SERVERS JSON（stdio MCP 服务器列表）
     # EVO-20260912-10818cb5: smx 感知层 opt-in（LFL_SMX_PERCEIVE=smx.py 路径；空=默认不注册该工具）
     smx_perceive_path: str = ""
+    # SMC Browser Phase 1 live perception: 显式 loopback CDP endpoint 才注册；
+    # target_id 为空仅允许 endpoint 恰好一个 page，防程序替操作者猜 tab。
+    browser_perception_cdp_url: str = ""
+    browser_perception_target_id: str = ""
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
     exec_mode: str = ""
@@ -617,6 +621,12 @@ def load_settings() -> Settings:
         tool_max_output_chars=_env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
         mcp_servers_raw=os.environ.get("MCP_SERVERS", "").strip(),  # P3-1 MCP stdio 服务器
         smx_perceive_path=os.environ.get("LFL_SMX_PERCEIVE", "").strip(),  # EVO-20260912-10818cb5 smx 感知层 opt-in
+        browser_perception_cdp_url=os.environ.get(
+            "LFL_BROWSER_PERCEPTION_CDP_URL", ""
+        ).strip(),
+        browser_perception_target_id=os.environ.get(
+            "LFL_BROWSER_PERCEPTION_TARGET_ID", ""
+        ).strip(),
         exec_mode=_env_exec_mode("EXEC_MODE"),
         exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),
         run_mode=_env_run_mode("RUN_MODE"),

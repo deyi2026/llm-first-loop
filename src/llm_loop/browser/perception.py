@@ -128,6 +128,59 @@ def _content_fact_basis(value: Any) -> Any:
     return value
 
 
+def _content_hash_object_basis(
+    objects: list[dict[str, Any]],
+    object_grounding: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Canonicalize per-snapshot local IDs for content hashing only.
+
+    Snapshot-local AX cards intentionally receive a fresh Semantic ID on every
+    observation because no cross-snapshot physical identity has been proved.  That
+    freshness must remain visible to the model, but it is adapter-generated
+    reference identity rather than an observation fact.  For ``content_sha256`` we
+    therefore replace only those local IDs with deterministic, content-local aliases.
+    Stable DOM/backend identities are left untouched so a real physical replacement
+    still changes the content hash even when role/name happen to match.
+    """
+    local_ids = {
+        semantic_id
+        for semantic_id, grounding in object_grounding.items()
+        if grounding.get("identity_basis") == "snapshot_local_ax_identity"
+    }
+    if not local_ids:
+        return _content_fact_basis(objects)
+
+    groups: dict[str, list[str]] = {}
+    for obj in objects:
+        semantic_id = str(obj.get("id") or "")
+        if semantic_id not in local_ids:
+            continue
+        seed = {
+            key: value
+            for key, value in _content_fact_basis(obj).items()
+            if key != "id"
+        }
+        fingerprint = _sha256(seed)
+        groups.setdefault(fingerprint, []).append(semantic_id)
+
+    aliases: dict[str, str] = {}
+    for fingerprint, semantic_ids in sorted(groups.items()):
+        for index, semantic_id in enumerate(sorted(semantic_ids)):
+            aliases[semantic_id] = f"snapshot_local:{fingerprint[:20]}:{index}"
+
+    def normalize(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: normalize(child) for key, child in value.items()}
+        if isinstance(value, list):
+            return [normalize(child) for child in value]
+        if isinstance(value, str) and value in aliases:
+            return aliases[value]
+        return value
+
+    normalized = [normalize(_content_fact_basis(obj)) for obj in objects]
+    return sorted(normalized, key=lambda item: str(item.get("id") or ""))
+
+
 def _session_hash(session_id: str) -> str:
     return hashlib.sha256(session_id.encode("utf-8")).hexdigest()
 
@@ -1007,7 +1060,10 @@ class BrowserPerceptionAdapter:
                 "scopes": scope_facts,
                 "sensor_contract": _SENSOR_CONTRACT,
                 "completeness": completeness,
-                "objects": _content_fact_basis(objects_sorted),
+                "objects": _content_hash_object_basis(
+                    objects_sorted,
+                    build.object_grounding,
+                ),
                 "sensor_grounding": sensor_grounding,
             }
         )
@@ -1087,6 +1143,15 @@ def _rare_string_values(raw: Any, strings: list[str]) -> dict[int, str]:
 def _string(strings: list[str], index: Any) -> str:
     if isinstance(index, int) and 0 <= index < len(strings):
         return strings[index]
+    return ""
+
+
+def _string_index_or_literal(strings: list[str], value: Any) -> str:
+    """Resolve CDP StringIndex while retaining deterministic fixture compatibility."""
+    if isinstance(value, int):
+        return _string(strings, value)
+    if isinstance(value, str):
+        return value
     return ""
 
 
@@ -1210,7 +1275,9 @@ class PlaywrightPageCaptureBackend:
         document_token = str(main_frame["loader_id"])
         strings = [str(value) for value in dom_doc.get("strings") or []]
         documents = list(dom_doc.get("documents") or [])
-        captured_frame_ids = {str(doc.get("frameId") or "") for doc in documents}
+        captured_frame_ids = {
+            _string_index_or_literal(strings, doc.get("frameId")) for doc in documents
+        }
         main_origin = _origin(main_url)
 
         frames: list[dict[str, Any]] = []
@@ -1244,7 +1311,7 @@ class PlaywrightPageCaptureBackend:
             parent_indexes = list(nodes.get("parentIndex") or [])
             backend_ids = list(nodes.get("backendNodeId") or [])
             attributes = list(nodes.get("attributes") or [])
-            frame_id = str(document.get("frameId") or "")
+            frame_id = _string_index_or_literal(strings, document.get("frameId"))
             frame_token = None if frame_id == main_frame_id else (f"frame:{frame_id}" if frame_id else None)
             shadow_types = _rare_string_values(nodes.get("shadowRootType"), strings)
             for idx in range(len(node_names)):

@@ -338,6 +338,31 @@ def test_content_sha_is_stable_for_same_mechanical_observation(tmp_path: Path) -
     assert first["snapshot"]["content_sha256"] == second["snapshot"]["content_sha256"]
 
 
+def test_content_sha_normalizes_snapshot_local_ax_identity_without_stabilizing_it(
+    tmp_path: Path,
+) -> None:
+    raw = json.loads(json.dumps(FIXTURES["base"]))
+    raw["ax"]["nodes"].append(
+        {
+            "ax_id": "ax-inline-only",
+            "physical_id": "",
+            "frame_token": None,
+            "kind": "text",
+            "attributes": {"name": "AX Inline Only"},
+            "state": {"exists": True},
+        }
+    )
+    adapter = _adapter(tmp_path)
+
+    first = adapter.snapshot("s1", raw)
+    second = adapter.snapshot("s1", raw)
+    first_local = _by_name(first, "AX Inline Only")
+    second_local = _by_name(second, "AX Inline Only")
+
+    assert first_local["id"] != second_local["id"], "snapshot-local AX identity must stay local"
+    assert first["snapshot"]["content_sha256"] == second["snapshot"]["content_sha256"]
+
+
 class _FixtureBackend:
     def __init__(self, fixture: dict[str, Any]) -> None:
         self.fixture = fixture
