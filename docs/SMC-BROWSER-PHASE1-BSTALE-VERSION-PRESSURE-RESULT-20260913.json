@@ -1,0 +1,67 @@
+{
+  "schema": "smc.browser_bstale_version_pressure_result.v0.1",
+  "date": "2026-09-13",
+  "status": "PASS",
+  "baseline_commit": "234bfce44958a5b74913d6fa82dc346d89cfcfee",
+  "implementation_commit": "d83e9e09843fe27fded38bc2c2617a3e181d7d5b",
+  "contract": {
+    "model_surface_expanded": false,
+    "explicit_expected_and_observed_versions": true,
+    "automatic_latest_selection": false,
+    "automatic_refresh_performed": false,
+    "silent_rebind_performed": false,
+    "result_states": ["match", "stale", "indeterminate"],
+    "version_scopes": ["object", "resource", "snapshot"],
+    "availability_states": ["available", "expired", "unavailable", "unauthorized"],
+    "pressure_does_not_imply_stale": true,
+    "stale_does_not_imply_unavailable": true
+  },
+  "scope_semantics": {
+    "snapshot": "different observation identity is stale after lineage checks",
+    "object": "stable Semantic ID object facts are compared; unrelated observation change does not stale the object",
+    "resource": "page/document lineage and document resource facts are compared"
+  },
+  "retention_pressure_fields": [
+    "expected_expires_at_epoch",
+    "observed_expires_at_epoch",
+    "expected_seconds_until_expiry",
+    "observed_seconds_until_expiry"
+  ],
+  "unit": {
+    "passed": 14,
+    "total": 14
+  },
+  "live": {
+    "status": "PASS",
+    "behavior_passed": 13,
+    "behavior_total": 13,
+    "safety_passed": 6,
+    "safety_total": 6,
+    "total_passed": 19,
+    "total": 19,
+    "result_sha256": "51268ff3b5b9e31a92a167425a18746e01310749fa4b3b0f3c19dd2613d2d2ae"
+  },
+  "implementation_hashes": {
+    "scripts/qualification/smc_browser_live_version_pressure.py": "67364d82ac4cd92225d562f8940c064d8b23fda21a1bec4ef191ae00487dafee",
+    "src/llm_loop/browser/perception.py": "c917bafdd8c0da54d02855e3ad5677764adf16bf8aaa9744aa1fb43f4e068d90",
+    "tests/unit/test_smc_browser_version_pressure_v01.py": "2d448315e6ca156f9800b28e1b5e551363dbc240b938c1b2d9bb5e27673911aa"
+  },
+  "verification": {
+    "expanded_browser_smc_adjacency": "PASS",
+    "ruff": "PASS",
+    "py_compile": "PASS",
+    "diff_check": "PASS",
+    "whole_tree_security": "1655 files PASS",
+    "full_ci_gate": "PASS",
+    "final_committed_state": "PENDING_RESULT_DOC_COMMIT"
+  },
+  "not_claimed": {
+    "mutation_dispatch": "NOT_STARTED",
+    "action_receipt": "NOT_STARTED",
+    "model_facing_version_guard_verb": "NOT_EXPOSED",
+    "semantic_freshness_or_task_value": "NOT_JUDGED",
+    "latest_is_best": "NOT_JUDGED",
+    "capacity_based_automatic_gc_policy": "NOT_IMPLEMENTED_NOT_QUALIFIED",
+    "event_driven_pressure_feed": "NOT_QUALIFIED"
+  }
+}
