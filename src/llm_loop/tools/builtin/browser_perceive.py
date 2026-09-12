@@ -24,7 +24,8 @@ class BrowserPerceiveTool:
     description = (
         "SMC Browser Phase 1 只读感知。snapshot=读取 host 已绑定的当前页面 DOM+AX，返回"
         "WorldSnapshot + SemanticObject；不会打开 URL、导航、点击、输入、滚动、执行脚本或自动重试。"
-        "hydrate=按精确 GroundingRef 水合该次历史 observation；ref 过期/跨 session/不可用会如实返回。"
+        "hydrate=按精确 GroundingRef 水合该次历史 observation；diff=仅比较两张已落盘 exact snapshot，"
+        "不会重抓当前页面，也不会按名称/角色猜测对象对应关系。ref 过期/跨 session/不可用会如实返回。"
         "模型面只出现 Semantic ID/scope/GroundingRef，不暴露 CSS/XPath/坐标/CDP node id/AX index。"
     )
     parameters = {
@@ -32,8 +33,11 @@ class BrowserPerceiveTool:
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["snapshot", "hydrate"],
-                "description": "snapshot=当前已绑定页面只读 DOM+AX 感知；hydrate=精确水合 grounding_ref",
+                "enum": ["snapshot", "hydrate", "diff"],
+                "description": (
+                    "snapshot=当前已绑定页面只读 DOM+AX 感知；"
+                    "hydrate=精确水合 grounding_ref；diff=比较两张 exact snapshot"
+                ),
             },
             "projection_limit": {
                 "type": "integer",
@@ -44,6 +48,14 @@ class BrowserPerceiveTool:
             "grounding_ref": {
                 "type": "string",
                 "description": "hydrate 的精确 grounding://browser/v0.1/... 引用",
+            },
+            "from_version": {
+                "type": "string",
+                "description": "diff 起点的精确 Browser snapshot_id",
+            },
+            "to_version": {
+                "type": "string",
+                "description": "diff 终点的精确 Browser snapshot_id",
             },
         },
         "required": ["action"],
@@ -91,6 +103,34 @@ class BrowserPerceiveTool:
             return self._json_result(
                 {"action": "hydrate", **self._adapter.hydrate(session_id, ref)}
             )
+        if action == "diff":
+            from_version = str(kwargs.get("from_version") or "").strip()
+            to_version = str(kwargs.get("to_version") or "").strip()
+            if not from_version or not to_version:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=(
+                        "[browser_perceive:diff] from_version/to_version 必须都是精确 Browser snapshot_id。"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            try:
+                return self._json_result(
+                    self._adapter.diff(session_id, from_version, to_version)
+                )
+            except Exception as exc:  # noqa: BLE001 - exact diff failure must remain visible.
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    content=(
+                        "[browser_perceive:diff] exact snapshot diff failed; "
+                        f"error_type={type(exc).__name__}; error={exc}"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                    error_type=type(exc).__name__,
+                    error_detail=str(exc),
+                )
         if action == "snapshot":
             if self._backend is None:
                 return ToolResult(
@@ -135,7 +175,7 @@ class BrowserPerceiveTool:
                 )
         return ToolResult(
             status=ToolResultStatus.FAILURE,
-            content="[browser_perceive] action 必须是 snapshot 或 hydrate。",
+            content="[browser_perceive] action 必须是 snapshot、hydrate 或 diff。",
             tool_call_id="",
             tool_name=self.name,
         )

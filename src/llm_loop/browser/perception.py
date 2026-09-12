@@ -181,6 +181,55 @@ def _content_hash_object_basis(
     return sorted(normalized, key=lambda item: str(item.get("id") or ""))
 
 
+def _diff_value_basis(value: Any) -> Any:
+    """Canonicalize unordered contract facts while stripping per-snapshot refs."""
+    value = _content_fact_basis(value)
+    if isinstance(value, dict):
+        return {key: _diff_value_basis(child) for key, child in sorted(value.items())}
+    if isinstance(value, list):
+        normalized = [_diff_value_basis(child) for child in value]
+        return sorted(normalized, key=lambda item: _json_bytes(item))
+    return value
+
+
+def _semantic_object_diff_basis(obj: dict[str, Any]) -> dict[str, Any]:
+    """Return only model-visible semantic facts that may mechanically change."""
+    return {
+        "scope_ref": obj.get("scope_ref"),
+        "kind": obj.get("kind"),
+        "attributes": _diff_value_basis(obj.get("attributes") or {}),
+        "state": _diff_value_basis(obj.get("state") or {}),
+        "relations": _diff_value_basis(obj.get("relations") or []),
+        "coverage": _diff_value_basis(obj.get("coverage") or {}),
+    }
+
+
+def _semantic_changed_fields(
+    before: dict[str, Any], after: dict[str, Any]
+) -> list[str]:
+    """Report the smallest declared Browser object fields observed to differ."""
+    left = _semantic_object_diff_basis(before)
+    right = _semantic_object_diff_basis(after)
+    changed: list[str] = []
+    for field in ("scope_ref", "kind"):
+        if left[field] != right[field]:
+            changed.append(field)
+    for group in ("attributes", "state"):
+        left_group = left[group]
+        right_group = right[group]
+        for key in sorted(set(left_group) | set(right_group)):
+            if left_group.get(key) != right_group.get(key):
+                changed.append(f"{group}.{key}")
+    if left["relations"] != right["relations"]:
+        changed.append("relations")
+    left_coverage = left["coverage"]
+    right_coverage = right["coverage"]
+    for key in sorted(set(left_coverage) | set(right_coverage)):
+        if left_coverage.get(key) != right_coverage.get(key):
+            changed.append(f"coverage.{key}")
+    return changed
+
+
 def _session_hash(session_id: str) -> str:
     return hashlib.sha256(session_id.encode("utf-8")).hexdigest()
 
@@ -269,6 +318,13 @@ class BrowserPerceptionStore:
             raise ValueError("invalid Browser snapshot id")
         return self.root / "snapshots" / f"{snapshot_id}.json"
 
+    def _diff_path(self, from_version: str, to_version: str) -> Path:
+        if _SNAPSHOT_RE.fullmatch(from_version) is None:
+            raise ValueError("invalid Browser diff from_version")
+        if _SNAPSHOT_RE.fullmatch(to_version) is None:
+            raise ValueError("invalid Browser diff to_version")
+        return self.root / "diffs" / f"{from_version}--{to_version}.json"
+
     def persist(self, session_id: str, bundle: dict[str, Any]) -> None:
         if not session_id:
             raise ValueError("session_id is required")
@@ -319,6 +375,88 @@ class BrowserPerceptionStore:
             return None, "integrity_error"
         return doc, None
 
+    def load_snapshot_bundle(self, session_id: str, snapshot_id: str) -> dict[str, Any]:
+        """Load one exact immutable snapshot for mechanical adapter-side operations."""
+        bundle, load_error = self._load(snapshot_id)
+        if bundle is None:
+            raise ValueError(f"snapshot unavailable: {load_error or 'unavailable'}")
+        if bundle.get("owner_session_sha256") != _session_hash(session_id):
+            raise PermissionError("snapshot session scope mismatch")
+        retention = bundle.get("retention") or {}
+        expires_at = float(retention.get("expires_at_epoch") or 0)
+        if self._now() > expires_at:
+            raise ValueError("snapshot unavailable: expired")
+        return bundle
+
+    def _load_diff(
+        self, from_version: str, to_version: str
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        try:
+            path = self._diff_path(from_version, to_version)
+        except ValueError:
+            return None, "invalid_diff_ref"
+        if not path.is_file():
+            return None, "not_found"
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except OSError:
+            return None, "read_error"
+        except json.JSONDecodeError:
+            return None, "invalid_json"
+        expected = doc.get("bundle_sha256")
+        actual = _sha256({k: v for k, v in doc.items() if k != "bundle_sha256"})
+        if not isinstance(expected, str) or expected != actual:
+            return None, "integrity_error"
+        return doc, None
+
+    def persist_diff(
+        self,
+        session_id: str,
+        *,
+        from_version: str,
+        to_version: str,
+        semantic_diff: dict[str, Any],
+        expires_at_epoch: float,
+    ) -> str:
+        """Persist one canonical diff immutably and return its exact GroundingRef."""
+        path = self._diff_path(from_version, to_version)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ref = f"{_GROUNDING_PREFIX}{to_version}/diff/{from_version}"
+        if path.exists():
+            existing, load_error = self._load_diff(from_version, to_version)
+            if existing is None:
+                raise ValueError(f"existing diff grounding invalid: {load_error}")
+            if existing.get("owner_session_sha256") != _session_hash(session_id):
+                raise PermissionError("diff grounding session scope mismatch")
+            if existing.get("canonical_diff") != semantic_diff:
+                raise ValueError("existing diff grounding conflicts with canonical diff")
+            return ref
+        now = float(self._now())
+        doc = {
+            "schema": "smc.browser_diff_grounding.v0.1",
+            "from_version": from_version,
+            "to_version": to_version,
+            "canonical_diff": semantic_diff,
+            "owner_session_sha256": _session_hash(session_id),
+            "retention": {
+                "policy": "source_snapshot_min_ttl",
+                "stored_at_epoch": now,
+                "expires_at_epoch": float(expires_at_epoch),
+            },
+        }
+        doc["bundle_sha256"] = _sha256(doc)
+        tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}-{secrets.token_hex(4)}")
+        try:
+            tmp.write_text(
+                json.dumps(doc, ensure_ascii=False, sort_keys=True, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(tmp, path)
+        finally:
+            with suppress(FileNotFoundError):
+                tmp.unlink()
+        return ref
+
     @staticmethod
     def _parse_ref(ref: str) -> tuple[str, list[str]] | None:
         if not ref.startswith(_GROUNDING_PREFIX):
@@ -354,10 +492,39 @@ class BrowserPerceptionStore:
             }
 
         content: Any | None = None
+        response_retention = retention
         if parts == ["objects"]:
             content = bundle.get("objects")
         elif parts == ["scopes"]:
             content = bundle.get("scope_facts")
+        elif (
+            len(parts) == 2
+            and parts[0] == "diff"
+            and _SNAPSHOT_RE.fullmatch(parts[1]) is not None
+        ):
+            diff_doc, diff_error = self._load_diff(parts[1], snapshot_id)
+            if diff_doc is None:
+                return {
+                    "grounding_ref": ref,
+                    "availability": "unavailable",
+                    "reason": diff_error or "unavailable",
+                }
+            if diff_doc.get("owner_session_sha256") != _session_hash(session_id):
+                return {
+                    "grounding_ref": ref,
+                    "availability": "unauthorized",
+                    "reason": "session_scope",
+                }
+            diff_retention = diff_doc.get("retention") or {}
+            diff_expires_at = float(diff_retention.get("expires_at_epoch") or 0)
+            if self._now() > diff_expires_at:
+                return {
+                    "grounding_ref": ref,
+                    "availability": "expired",
+                    "expires_at_epoch": diff_expires_at,
+                }
+            response_retention = diff_retention
+            content = diff_doc.get("canonical_diff")
         elif len(parts) == 2 and parts[0] == "sensor" and parts[1] in {"dom", "ax"}:
             content = (bundle.get("sensor_grounding") or {}).get(parts[1])
         elif len(parts) == 2 and parts[0] == "object" and _SEMANTIC_ID_RE.fullmatch(parts[1]):
@@ -377,8 +544,10 @@ class BrowserPerceptionStore:
             "content_sha256": _sha256(content),
             "content": content,
             "retention": {
-                "policy": retention.get("policy"),
-                "expires_at_epoch": expires_at,
+                "policy": response_retention.get("policy"),
+                "expires_at_epoch": float(
+                    response_retention.get("expires_at_epoch") or expires_at
+                ),
             },
         }
 
@@ -1123,6 +1292,186 @@ class BrowserPerceptionAdapter:
                 "complete": len(objects_sorted) <= projection_limit,
             },
         }
+
+    @staticmethod
+    def _diff_scope_relation(
+        from_snapshot: dict[str, Any], to_snapshot: dict[str, Any]
+    ) -> str:
+        from_scope = from_snapshot.get("scope") or {}
+        to_scope = to_snapshot.get("scope") or {}
+        required = (
+            "scope_ref",
+            "runtime_generation",
+            "page_generation",
+            "document_generation",
+        )
+        if any(from_scope.get(key) is None or to_scope.get(key) is None for key in required):
+            return "unknown"
+        if all(from_scope.get(key) == to_scope.get(key) for key in required):
+            return "same"
+        return "changed"
+
+    def diff(
+        self,
+        session_id: str,
+        from_version: str,
+        to_version: str,
+    ) -> dict[str, Any]:
+        """Compare two exact Browser snapshots without recapture or semantic matching."""
+        before_bundle = self.store.load_snapshot_bundle(session_id, from_version)
+        after_bundle = self.store.load_snapshot_bundle(session_id, to_version)
+        before = before_bundle.get("snapshot") or {}
+        after = after_bundle.get("snapshot") or {}
+        before_scope = before.get("scope") or {}
+        after_scope = after.get("scope") or {}
+        before_sensor = before.get("sensor_contract") or {}
+        after_sensor = after.get("sensor_contract") or {}
+        from_sensor_id = str(before_sensor.get("id") or "")
+        to_sensor_id = str(after_sensor.get("id") or "")
+        scope_relation = self._diff_scope_relation(before, after)
+
+        comparability_reasons: list[str] = []
+        if before.get("domain") != "browser" or after.get("domain") != "browser":
+            comparability_reasons.append("domain_changed")
+        if scope_relation != "same":
+            comparability_reasons.append(
+                "scope_unknown" if scope_relation == "unknown" else "scope_changed"
+            )
+        if before_scope.get("document_generation") != after_scope.get("document_generation"):
+            comparability_reasons.append("document_generation_changed")
+        before_frames = {
+            str(frame.get("frame_token") or ""): str(frame.get("document_token") or "")
+            for frame in list((before_bundle.get("private_capture") or {}).get("frames") or [])
+            if frame.get("frame_token") and frame.get("document_token")
+        }
+        after_frames = {
+            str(frame.get("frame_token") or ""): str(frame.get("document_token") or "")
+            for frame in list((after_bundle.get("private_capture") or {}).get("frames") or [])
+            if frame.get("frame_token") and frame.get("document_token")
+        }
+        frame_scope_changed = any(
+            before_frames[token] != after_frames[token]
+            for token in set(before_frames) & set(after_frames)
+        )
+        if frame_scope_changed:
+            comparability_reasons.append("frame_scope_changed")
+            scope_relation = "changed"
+        if before_sensor != after_sensor:
+            comparability_reasons.append("sensor_contract_changed")
+        comparable = not comparability_reasons
+
+        before_complete = before.get("completeness") or {"complete": False, "reasons": []}
+        after_complete = after.get("completeness") or {"complete": False, "reasons": []}
+        completeness_reasons = [
+            f"from:{reason}" for reason in list(before_complete.get("reasons") or [])
+        ]
+        completeness_reasons.extend(
+            f"to:{reason}" for reason in list(after_complete.get("reasons") or [])
+        )
+        completeness_reasons.extend(comparability_reasons)
+        observation_complete = bool(before_complete.get("complete")) and bool(
+            after_complete.get("complete")
+        )
+
+        before_grounding = before_bundle.get("object_grounding") or {}
+        after_grounding = after_bundle.get("object_grounding") or {}
+        unstable_before = {
+            str(semantic_id)
+            for semantic_id, grounding in before_grounding.items()
+            if isinstance(grounding, dict)
+            and grounding.get("identity_basis") == "snapshot_local_ax_identity"
+        }
+        unstable_after = {
+            str(semantic_id)
+            for semantic_id, grounding in after_grounding.items()
+            if isinstance(grounding, dict)
+            and grounding.get("identity_basis") == "snapshot_local_ax_identity"
+        }
+        identity_complete = not unstable_before and not unstable_after
+        if comparable and observation_complete and not identity_complete:
+            completeness_reasons.append("identity_unstable_objects")
+
+        completeness_reasons = sorted(set(completeness_reasons))
+        exhaustive = comparable and observation_complete and identity_complete
+
+        created: list[str] | None
+        removed: list[str] | None
+        changed: list[dict[str, Any]] | None
+        if comparable:
+            before_objects = {
+                str(obj.get("id")): obj
+                for obj in list(before_bundle.get("objects") or [])
+                if obj.get("id")
+            }
+            after_objects = {
+                str(obj.get("id")): obj
+                for obj in list(after_bundle.get("objects") or [])
+                if obj.get("id")
+            }
+            stable_before = set(before_objects) - unstable_before
+            stable_after = set(after_objects) - unstable_after
+            changed = []
+            for semantic_id in sorted(stable_before & stable_after):
+                fields = _semantic_changed_fields(
+                    before_objects[semantic_id], after_objects[semantic_id]
+                )
+                if fields:
+                    changed.append({"id": semantic_id, "fields": fields})
+            if observation_complete:
+                created = sorted(stable_after - stable_before)
+                removed = sorted(stable_before - stable_after)
+            else:
+                created = None
+                removed = None
+        else:
+            created = None
+            removed = None
+            changed = None
+
+        full_list_ref = f"{_GROUNDING_PREFIX}{to_version}/diff/{from_version}"
+        semantic_diff = {
+            "schema": "smc.semantic_diff.v0.1",
+            "domain": "browser",
+            "from_version": from_version,
+            "to_version": to_version,
+            "from_scope_ref": str(before_scope.get("scope_ref") or ""),
+            "to_scope_ref": str(after_scope.get("scope_ref") or ""),
+            "from_sensor_contract": from_sensor_id,
+            "to_sensor_contract": to_sensor_id,
+            "diff_semantics": "snapshot_pair_net",
+            "comparable": comparable,
+            "scope_relation": scope_relation,
+            "created": created,
+            "removed": removed,
+            "changed": changed,
+            "completeness": {
+                "complete": exhaustive,
+                "reasons": completeness_reasons,
+            },
+            "field_completeness": {
+                "created": exhaustive,
+                "removed": exhaustive,
+                "changed": exhaustive,
+            },
+            "reason": ";".join(completeness_reasons) if completeness_reasons else None,
+            "full_list_ref": full_list_ref,
+        }
+        before_expiry = float(
+            (before_bundle.get("retention") or {}).get("expires_at_epoch") or 0
+        )
+        after_expiry = float(
+            (after_bundle.get("retention") or {}).get("expires_at_epoch") or 0
+        )
+        persisted_ref = self.store.persist_diff(
+            session_id,
+            from_version=from_version,
+            to_version=to_version,
+            semantic_diff=semantic_diff,
+            expires_at_epoch=min(before_expiry, after_expiry),
+        )
+        if persisted_ref != full_list_ref:
+            raise RuntimeError("Browser diff grounding ref mismatch")
+        return semantic_diff
 
     def hydrate(self, session_id: str, grounding_ref: str) -> dict[str, Any]:
         return self.store.hydrate(session_id, grounding_ref)
