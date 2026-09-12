@@ -1,0 +1,94 @@
+{
+  "schema": "smc.browser_phase1_blive_perception_result.v0.1",
+  "date": "2026-09-13",
+  "bspec_baseline": "fec0c7740252b58be98c166dc1b592ceddd2ce4d",
+  "bperception_baseline": "e9d3af6a0e2b6c310ad3abb142efb14b88acdd77",
+  "implementation_commit": "37d195500a4264d767c8e24edf5437f4c8ef3a33",
+  "status": "PARTIAL_PASS",
+  "browser": {
+    "product": "Google Chrome",
+    "version": "152.0.7977.84",
+    "qualification_mode": "isolated_headless_remote_debugging",
+    "external_websites_used": false
+  },
+  "rulings": {
+    "factory_opt_in_registration": "PASS",
+    "loopback_only_cdp": "PASS",
+    "production_surface_snapshot_hydrate_only": "PASS",
+    "production_cdp_read_only_allowlist": "PASS",
+    "real_cdp_dom_ax_capture": "PASS",
+    "same_document_live_churn": "PASS",
+    "stable_physical_identity": "PASS",
+    "duplicate_name_no_alias": "PASS",
+    "old_grounding_exact_after_world_change": "PASS",
+    "persistent_exact_target": "PASS",
+    "persistent_same_websocket": "PASS",
+    "target_disappearance_no_silent_rebind": "PASS",
+    "canvas_blind_spot": "PASS",
+    "navigation_document_generation": "NOT_QUALIFIED_HEADLESS_ENV",
+    "independent_system_browser_runtime_navigation": "PASS_NOT_SUBSTITUTE_FOR_PRODUCTION_HOST"
+  },
+  "live_found_and_fixed": [
+    {
+      "issue": "DOMSnapshot.Document.frameId is StringIndex in real Chrome",
+      "resolution": "resolve through DOMSnapshot strings table; retain deterministic literal compatibility"
+    },
+    {
+      "issue": "snapshot-local AX Semantic IDs caused false content hash drift",
+      "resolution": "normalize snapshot-local IDs only inside content hash basis; keep model-facing IDs snapshot-local"
+    }
+  ],
+  "live_success_run": {
+    "model_surface": ["snapshot", "hydrate"],
+    "first_object_count": 16,
+    "after_churn_object_count": 19,
+    "same_document_repeat_content_hash_stable": true,
+    "old_grounding_after_churn": "available_exact_old_snapshot",
+    "closed_target_behavior": "explicit_error_no_rebind"
+  },
+  "navigation_gap": {
+    "isolated_page_level_page_navigate": "TIMEOUT",
+    "isolated_browser_level_flattened_page_navigate": "TIMEOUT",
+    "runtime_evaluate_same_environment": "PASS",
+    "dom_snapshot_same_environment": "PASS",
+    "accessibility_tree_same_environment": "PASS",
+    "system_browser_runtime_navigation": "PASS",
+    "disposition": "do_not_promote_to_navigation_PASS; do_not_add_hidden_navigation_or_retry_to_production_host"
+  },
+  "validation": {
+    "blive_direct": "4/4 PASS",
+    "bperception_direct": "45/45 PASS",
+    "combined_adjacent": "132/132 PASS",
+    "ruff": "PASS",
+    "pyright": "0 errors / 0 warnings / 0 informations",
+    "py_compile": "PASS",
+    "diff_check": "PASS",
+    "staged_security": "7/7 files PASS",
+    "full_ci_gate": {
+      "status": "PASS",
+      "exit_code": 0,
+      "env_pin": "538 test files / 0 undeclared dependents",
+      "tier0": "PASS",
+      "xdist_full": "PASS"
+    }
+  },
+  "implementation_sha256": {
+    "src/llm_loop/browser/cdp_host.py": "02f5dc6ed9086434d3a5dbaae1ea6ab101b14aeb4e4870520de98f6eb6fdbf5a",
+    "src/llm_loop/browser/perception.py": "4eb06f7785072c67ed67c7510b97582708fdd99e816926a4dd16fd2fa7561d14",
+    "src/llm_loop/config.py": "2e894b53241299bc35a1a9b00d83e4e31314458298ad727a1ead06f1ac067df9",
+    "src/llm_loop/factory.py": "172e71126b0aafa72db35f1455b0c394d8dda23b75136ae21ac59f245ee94fff",
+    "src/llm_loop/tools/registry.py": "8b0015eae4128b6ad4a72caddf4e45d847c240ba1f73b03c894b5bb2333027fc",
+    "tests/unit/test_smc_browser_live_perception_v01.py": "8c0fdea5a973016589a9a7b5a99ac64978640de88c6ba409205d559fd74f2b19",
+    "tests/unit/test_smc_browser_perception_v01.py": "f98ff8a6bb928ffe5bc9535b9038b42b9c9080199009044613a0bf5b56d34621"
+  },
+  "non_claims": [
+    "full_live_browser_phase1_qualified",
+    "production_host_navigation_qualified",
+    "external_website_ecosystem_qualified",
+    "browser_mutation_implemented",
+    "vision_actionability_qualified",
+    "native_browser_chrome_or_os_ui_qualified",
+    "browser_perceive_default_enabled"
+  ],
+  "next_gate": "B-LIVE-NAVIGATION with independent reliable control plane while production host remains read-only"
+}
