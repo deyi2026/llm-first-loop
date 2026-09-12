@@ -47,15 +47,24 @@ aecf93aedb2babea3b7db48e3cf60cf8e8be6511
 feat(smc): add Browser predicate wait
 ```
 
+独立审计修复提交：
+
+```text
+720403245e3a9eb6751f742b0c9db58a39c88ec1
+fix(smc): enforce Browser wait deadline
+```
+
+独立复核发现原实现会在 sleep 恰好抵达 monotonic deadline 后再启动一次 capture；若条件只在该边界才成立，会被错误记为 `satisfied`。该缺陷已用 fake-clock regression 先红后绿修复：首样本仍立即执行，但任何后续 polling sample 都不得在 `time.monotonic() >= deadline` 时启动。
+
 ### File hashes
 
 | File | SHA-256 |
 |---|---|
-| `scripts/qualification/smc_browser_live_predicate_wait.py` | `c00647311b7fe8266d0a7f2a577e002ba00b88c8e4b3ab5c97717c5852ebdfe2` |
+| `scripts/qualification/smc_browser_live_predicate_wait.py` | `baa0e7403e72cb92f574010d45416f81862fec80c182d53ef1c04e40e0d3ce44` |
 | `src/llm_loop/browser/predicate.py` | `44a1e395ac869d464e95584335de7fd362d80e0ede852faa13b7557855007343` |
 | `src/llm_loop/browser/perception.py` | `93610bd87d2e8db964a53cf9b095acf404e4c40e2e1f37fcf67ace007d281c7d` |
-| `src/llm_loop/tools/builtin/browser_perceive.py` | `587976b55c1ac6dc50e60cf13ceb211f9f2264d53f97d3ca27eedbe79f9f9d29` |
-| `tests/unit/test_smc_browser_predicate_wait_v01.py` | `2fe398de058666c04b837bbfd927e3ceb06b9ca854cffe78c35792a70e6f701b` |
+| `src/llm_loop/tools/builtin/browser_perceive.py` | `66df811f29981772ceadd205ecbb3cc608e11d324572602fae1a218d7d2e8039` |
+| `tests/unit/test_smc_browser_predicate_wait_v01.py` | `22d46c7ba0899c285817433e09d1e464a6456672718d6c71d4c7080a8375fa41` |
 | `tests/unit/test_smc_browser_perception_v01.py` | `03070ef64551ba0fdd1b216ff2bc7a4b5e9aac31c1c766e29776c2e6fbb25b7a` |
 | `tests/unit/test_smc_browser_semantic_diff_v01.py` | `6b05e1cff78a2fb72f50e1b6c59769aaf2f88bc49002175c96c83050d8f66557` |
 
@@ -166,7 +175,7 @@ read-only capture
 → Predicate evaluation
 ```
 
-sample 是 observation，不是 action retry。
+sample 是 observation，不是 action retry。首样本立即执行；后续 sample 只有在 monotonic deadline 尚未到达时才能启动。sleep 抵达 deadline 不会授权“最后多采一次”。
 
 ### 4.1 Timeout is fact, not tool failure
 
@@ -250,15 +259,15 @@ Formal result：
 
 ```text
 status:   PASS
-behavior: 9 / 9 PASS
-safety:   6 / 6 PASS
-total:   15 / 15 PASS
+behavior: 12 / 12 PASS
+safety:    7 / 7 PASS
+total:    19 / 19 PASS
 ```
 
 Formal result SHA-256：
 
 ```text
-b613a90a67c355f36230217dcc9d9dd8c999fcc2e4e8604c7e35c839d78ce3dd
+41b7ca20d9bbc938b4c0254660fddc16a15c78aac56da1f7eff90bae01732828
 ```
 
 ### Behavior checks
@@ -272,6 +281,9 @@ b613a90a67c355f36230217dcc9d9dd8c999fcc2e4e8604c7e35c839d78ce3dd
 | unobserved ready-state is indeterminate | PASS |
 | partial coverage object-count is indeterminate | PASS |
 | observer error then valid sample recovers | PASS |
+| Predicate already true satisfies on initial sample | PASS |
+| same-target reload invalidates old Predicate scope | PASS |
+| same-name replacement does not silently rebind old target | PASS |
 | PredicateResult sampling facts visible | PASS |
 | wait has no ActionReceipt fields | PASS |
 
@@ -285,14 +297,15 @@ b613a90a67c355f36230217dcc9d9dd8c999fcc2e4e8604c7e35c839d78ce3dd
 | production host exact-target bound | PASS |
 | model surface has no mutation | PASS |
 | `assert` not exposed in this stage | PASS |
+| wait cancel not exposed in v0.1 contract | PASS |
 
 ## 7. Test and repository qualification
 
 实际执行：
 
 ```text
-direct Predicate/wait tests:       18 / 18 PASS
-expanded Browser/SMC adjacency:   133 / 133 PASS
+direct Predicate/wait tests:       19 / 19 PASS
+expanded Browser/SMC adjacency:   134 / 134 PASS
 ```
 
 Expanded adjacency 包含 Browser live navigation/perception、perception、SemanticDiff、B-SPEC、SMC contract 与 schema-lazy。
@@ -307,7 +320,7 @@ env-pin:     541 test files / 0 violations
 tier0:       PASS
 full pytest: PASS
 full ci_gate: exit 0
-whole-tree security before result docs: 1653 files PASS
+whole-tree security before result docs: 1655 files PASS
 whole-tree security final candidate: 1655 files PASS
 ```
 
@@ -324,7 +337,9 @@ whole-tree security final candidate: 1655 files PASS
 3. 不完整 coverage 不会制造否定结论；
 4. observer error 不会被静默吞掉；
 5. 当前 sensor 未观测 ready-state 时不会伪造结果；
-6. wait 没有 mutation、没有任务完成判断、没有 ActionReceipt 冒名。
+6. wait 没有 mutation、没有任务完成判断、没有 ActionReceipt 冒名；
+7. reload 后旧 scope/旧 Semantic ID 不会按同名对象 silent rebind；
+8. deadline 后不会再启动额外 polling sample。
 
 ## 9. What this stage does NOT prove
 
@@ -333,6 +348,7 @@ whole-tree security final candidate: 1655 files PASS
 ```text
 assert model action:              NOT_EXPOSED_THIS_STAGE
 event-driven wait:                NOT_QUALIFIED
+wait cancellation/cancel token:    NOT_EXPOSED_V0_1
 staleness / version pressure:     NOT_STARTED
 mutation dispatch:                NOT_STARTED
 ActionReceipt:                    NOT_STARTED

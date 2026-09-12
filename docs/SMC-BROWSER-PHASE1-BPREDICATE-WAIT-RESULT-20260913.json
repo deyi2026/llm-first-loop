@@ -5,7 +5,7 @@
   "date": "2026-09-13",
   "baseline_commit": "93182e1b356b049e604f60627799df766d28257f",
   "implementation_commit": "aecf93aedb2babea3b7db48e3cf60cf8e8be6511",
-  "formal_live_result_sha256": "b613a90a67c355f36230217dcc9d9dd8c999fcc2e4e8604c7e35c839d78ce3dd",
+  "formal_live_result_sha256": "41b7ca20d9bbc938b4c0254660fddc16a15c78aac56da1f7eff90bae01732828",
   "environment": {
     "browser": "Google Chrome 152.0.7977.84",
     "mock_keychain": true,
@@ -14,11 +14,11 @@
     "services_restarted": false
   },
   "implementation_hashes": {
-    "scripts/qualification/smc_browser_live_predicate_wait.py": "c00647311b7fe8266d0a7f2a577e002ba00b88c8e4b3ab5c97717c5852ebdfe2",
+    "scripts/qualification/smc_browser_live_predicate_wait.py": "baa0e7403e72cb92f574010d45416f81862fec80c182d53ef1c04e40e0d3ce44",
     "src/llm_loop/browser/predicate.py": "44a1e395ac869d464e95584335de7fd362d80e0ede852faa13b7557855007343",
     "src/llm_loop/browser/perception.py": "93610bd87d2e8db964a53cf9b095acf404e4c40e2e1f37fcf67ace007d281c7d",
-    "src/llm_loop/tools/builtin/browser_perceive.py": "587976b55c1ac6dc50e60cf13ceb211f9f2264d53f97d3ca27eedbe79f9f9d29",
-    "tests/unit/test_smc_browser_predicate_wait_v01.py": "2fe398de058666c04b837bbfd927e3ceb06b9ca854cffe78c35792a70e6f701b",
+    "src/llm_loop/tools/builtin/browser_perceive.py": "66df811f29981772ceadd205ecbb3cc608e11d324572602fae1a218d7d2e8039",
+    "tests/unit/test_smc_browser_predicate_wait_v01.py": "22d46c7ba0899c285817433e09d1e464a6456672718d6c71d4c7080a8375fa41",
     "tests/unit/test_smc_browser_perception_v01.py": "03070ef64551ba0fdd1b216ff2bc7a4b5e9aac31c1c766e29776c2e6fbb25b7a",
     "tests/unit/test_smc_browser_semantic_diff_v01.py": "6b05e1cff78a2fb72f50e1b6c59769aaf2f88bc49002175c96c83050d8f66557"
   },
@@ -65,14 +65,16 @@
     "interval_and_timeout_bounds_rejected_not_clamped": true,
     "automatic_retry_or_recovery_strategy": false,
     "task_completion_judgment": false,
-    "canonical_action_receipt": false
+    "canonical_action_receipt": false,
+    "no_sample_started_at_or_after_deadline": true,
+    "cancel_model_surface": "not_exposed_v0.1"
   },
   "formal_live": {
     "status": "PASS",
-    "behavior_checks_passed": 9,
-    "behavior_checks_total": 9,
-    "safety_checks_passed": 6,
-    "safety_checks_total": 6,
+    "behavior_checks_passed": 12,
+    "behavior_checks_total": 12,
+    "safety_checks_passed": 7,
+    "safety_checks_total": 7,
     "checks": {
       "complete_coverage_proves_live_absence": "PASS",
       "live_enabled_transition_satisfied": "PASS",
@@ -82,7 +84,10 @@
       "stable_identity_preserved_across_wait": "PASS",
       "timeout_unsatisfied_is_observation": "PASS",
       "unobserved_ready_state_is_indeterminate": "PASS",
-      "wait_has_no_action_receipt_fields": "PASS"
+      "wait_has_no_action_receipt_fields": "PASS",
+      "initial_sample_can_satisfy_immediately": "PASS",
+      "reload_invalidates_old_predicate_scope": "PASS",
+      "same_name_replacement_is_not_silent_rebind": "PASS"
     },
     "safety": {
       "assert_not_exposed_in_this_stage": "PASS",
@@ -90,12 +95,13 @@
       "mock_keychain_enabled": "PASS",
       "model_surface_has_no_mutation": "PASS",
       "production_host_exact_target_bound": "PASS",
-      "security_agent_not_spawned": "PASS"
+      "security_agent_not_spawned": "PASS",
+      "wait_cancel_not_exposed_in_v01": "PASS"
     }
   },
   "verification": {
-    "direct_predicate_wait_tests": "18/18 PASS",
-    "expanded_adjacent_tests": "133/133 PASS",
+    "direct_predicate_wait_tests": "19/19 PASS",
+    "expanded_adjacent_tests": "134/134 PASS",
     "ruff": "PASS",
     "py_compile": "PASS",
     "src_pyright": "0 errors / 0 warnings / 0 informations",
@@ -103,7 +109,7 @@
     "tier0": "PASS",
     "full_pytest": "PASS",
     "full_ci_gate": "exit 0",
-    "whole_tree_security_pre_result_docs": "1653 files PASS",
+    "whole_tree_security_pre_result_docs": "1655 files PASS",
     "whole_tree_security_final_candidate": "1655 files PASS"
   },
   "not_claimed": {
@@ -113,7 +119,15 @@
     "mutation_dispatch": "NOT_STARTED",
     "action_receipt": "NOT_STARTED",
     "cross_url_page_navigate": "NOT_QUALIFIED",
-    "vision_phase2": "DEFERRED"
+    "vision_phase2": "DEFERRED",
+    "wait_cancellation": "NOT_EXPOSED_V0_1"
   },
-  "next_gate": "B-STALE-VERSION-PRESSURE"
+  "next_gate": "B-STALE-VERSION-PRESSURE",
+  "audit_fix_commit": "720403245e3a9eb6751f742b0c9db58a39c88ec1",
+  "final_code_commit": "720403245e3a9eb6751f742b0c9db58a39c88ec1",
+  "audit_correction": {
+    "supersedes_result_commit": "e5fa9325f2772ee33e077225a286703309b3c249",
+    "finding": "wait could start one extra poll sample at the monotonic deadline after sleeping to the deadline",
+    "disposition": "fixed by deadline-before-resample gate with deterministic regression; live qualification expanded and rerun"
+  }
 }
