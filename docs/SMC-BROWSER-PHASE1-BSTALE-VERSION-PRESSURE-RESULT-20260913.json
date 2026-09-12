@@ -53,7 +53,11 @@
     "diff_check": "PASS",
     "whole_tree_security": "1655 files PASS",
     "full_ci_gate": "PASS",
-    "final_committed_state": "PENDING_RESULT_DOC_COMMIT"
+    "result_doc_candidate_commit": "74009656f719e75bdd19b96b2972ab99101f3a45",
+    "result_doc_candidate_live": "19/19 PASS",
+    "result_doc_candidate_whole_tree_security": "1659 files PASS",
+    "result_doc_candidate_full_ci_gate": "PASS",
+    "final_committed_state": "PASS_AT_RESULT_DOC_CANDIDATE"
   },
   "not_claimed": {
     "mutation_dispatch": "NOT_STARTED",

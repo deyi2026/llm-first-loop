@@ -249,6 +249,26 @@ full ci_gate:                       PASS
 
 `ci_gate` 覆盖 Ruff + env-pin + Pyright + tier0 + full xdist。
 
+### 8.1 Result-doc committed-state verification
+
+包含本结果 MD/JSON 的 committed candidate：
+
+```text
+74009656f719e75bdd19b96b2972ab99101f3a45
+```
+
+提交态重新执行：
+
+```text
+live qualification:                 19 / 19 PASS
+expanded Browser/SMC adjacency:     PASS
+whole-tree security:                1659 files PASS
+full ci_gate:                       PASS
+live result SHA256:                 51268ff3b5b9e31a92a167425a18746e01310749fa4b3b0f3c19dd2613d2d2ae
+```
+
+因此本报告中的实现、证据 hash 与阶段边界已经经过包含报告本身的 committed-state 复验。
+
 ## 9. 明确未声称
 
 ```text
