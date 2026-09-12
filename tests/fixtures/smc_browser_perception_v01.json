@@ -1,0 +1,213 @@
+{
+  "base": {
+    "page_token": "page-a",
+    "document_token": "doc-a1",
+    "url": "https://example.test/a",
+    "observed_at": "2026-09-13T01:00:00Z",
+    "frames": [],
+    "dom": {
+      "available": true,
+      "truncated": false,
+      "blind_spots": [],
+      "nodes": [
+        {
+          "physical_id": "n-root",
+          "parent_id": null,
+          "frame_token": null,
+          "kind": "document",
+          "attributes": {"role": "document", "name": "Example", "tag": "html", "href": "https://example.test/a"},
+          "state": {"exists": true, "visible": true}
+        },
+        {
+          "physical_id": "n-submit",
+          "parent_id": "n-root",
+          "frame_token": null,
+          "kind": "button",
+          "attributes": {"role": "button", "name": "Submit", "tag": "button", "text": "Submit"},
+          "state": {"exists": true, "enabled": true, "visible": true}
+        },
+        {
+          "physical_id": "n-cancel",
+          "parent_id": "n-root",
+          "frame_token": null,
+          "kind": "button",
+          "attributes": {"role": "button", "name": "Cancel", "tag": "button", "text": "Cancel"},
+          "state": {"exists": true, "enabled": true, "visible": true}
+        }
+      ]
+    },
+    "ax": {
+      "available": true,
+      "truncated": false,
+      "blind_spots": [],
+      "nodes": [
+        {"ax_id": "ax-root", "physical_id": "n-root", "frame_token": null, "kind": "document", "attributes": {"role": "document", "name": "Example"}, "state": {"exists": true}},
+        {"ax_id": "ax-submit", "physical_id": "n-submit", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Submit"}, "state": {"exists": true, "enabled": true, "visible": true}},
+        {"ax_id": "ax-cancel", "physical_id": "n-cancel", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Cancel"}, "state": {"exists": true, "enabled": true, "visible": true}}
+      ]
+    }
+  },
+  "reorder": {
+    "page_token": "page-a",
+    "document_token": "doc-a1",
+    "url": "https://example.test/a",
+    "observed_at": "2026-09-13T01:00:01Z",
+    "frames": [],
+    "dom": {
+      "available": true,
+      "truncated": false,
+      "blind_spots": [],
+      "nodes": [
+        {"physical_id": "n-root", "parent_id": null, "frame_token": null, "kind": "document", "attributes": {"role": "document", "name": "Example", "tag": "html", "href": "https://example.test/a"}, "state": {"exists": true, "visible": true}},
+        {"physical_id": "n-cancel", "parent_id": "n-root", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Cancel", "tag": "button", "text": "Cancel"}, "state": {"exists": true, "enabled": true, "visible": true}},
+        {"physical_id": "n-submit", "parent_id": "n-root", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Submit", "tag": "button", "text": "Submit"}, "state": {"exists": true, "enabled": true, "visible": true}}
+      ]
+    },
+    "ax": {
+      "available": true,
+      "truncated": false,
+      "blind_spots": [],
+      "nodes": [
+        {"ax_id": "ax-root", "physical_id": "n-root", "frame_token": null, "kind": "document", "attributes": {"role": "document", "name": "Example"}, "state": {"exists": true}},
+        {"ax_id": "ax-cancel", "physical_id": "n-cancel", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Cancel"}, "state": {"exists": true, "enabled": true, "visible": true}},
+        {"ax_id": "ax-submit", "physical_id": "n-submit", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Submit"}, "state": {"exists": true, "enabled": true, "visible": true}}
+      ]
+    }
+  },
+  "replacement": {
+    "page_token": "page-a",
+    "document_token": "doc-a1",
+    "url": "https://example.test/a",
+    "observed_at": "2026-09-13T01:00:02Z",
+    "frames": [],
+    "dom": {
+      "available": true,
+      "truncated": false,
+      "blind_spots": [],
+      "nodes": [
+        {"physical_id": "n-root", "parent_id": null, "frame_token": null, "kind": "document", "attributes": {"role": "document", "name": "Example", "tag": "html", "href": "https://example.test/a"}, "state": {"exists": true, "visible": true}},
+        {"physical_id": "n-submit-new", "parent_id": "n-root", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Submit", "tag": "button", "text": "Submit"}, "state": {"exists": true, "enabled": true, "visible": true}},
+        {"physical_id": "n-submit-copy", "parent_id": "n-root", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Submit", "tag": "button", "text": "Submit"}, "state": {"exists": true, "enabled": true, "visible": true}}
+      ]
+    },
+    "ax": {
+      "available": true,
+      "truncated": false,
+      "blind_spots": [],
+      "nodes": [
+        {"ax_id": "ax-root", "physical_id": "n-root", "frame_token": null, "kind": "document", "attributes": {"role": "document", "name": "Example"}, "state": {"exists": true}},
+        {"ax_id": "ax-submit-new", "physical_id": "n-submit-new", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Submit"}, "state": {"exists": true, "enabled": true, "visible": true}},
+        {"ax_id": "ax-submit-copy", "physical_id": "n-submit-copy", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Submit"}, "state": {"exists": true, "enabled": true, "visible": true}}
+      ]
+    }
+  },
+  "conflict": {
+    "page_token": "page-conflict",
+    "document_token": "doc-conflict",
+    "url": "https://example.test/conflict",
+    "observed_at": "2026-09-13T01:01:00Z",
+    "frames": [],
+    "dom": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"physical_id": "n-x", "parent_id": null, "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Save", "tag": "button"}, "state": {"exists": true, "enabled": true, "visible": true}}
+    ]},
+    "ax": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"ax_id": "ax-x", "physical_id": "n-x", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Save"}, "state": {"exists": true, "enabled": false, "visible": true}}
+    ]}
+  },
+  "fusion_ambiguity": {
+    "page_token": "page-amb",
+    "document_token": "doc-amb",
+    "url": "https://example.test/amb",
+    "observed_at": "2026-09-13T01:02:00Z",
+    "frames": [],
+    "dom": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"physical_id": "n-y", "parent_id": null, "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Run", "tag": "button"}, "state": {"exists": true, "enabled": true}}
+    ]},
+    "ax": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"ax_id": "ax-y1", "physical_id": "n-y", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Run"}, "state": {"exists": true, "enabled": true}},
+      {"ax_id": "ax-y2", "physical_id": "n-y", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Run duplicate"}, "state": {"exists": true, "enabled": true}}
+    ]}
+  },
+  "aria_hidden": {
+    "page_token": "page-hidden",
+    "document_token": "doc-hidden",
+    "url": "https://example.test/hidden",
+    "observed_at": "2026-09-13T01:03:00Z",
+    "frames": [],
+    "dom": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"physical_id": "n-hidden", "parent_id": null, "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Hidden", "tag": "button"}, "state": {"exists": true, "visible": true}}
+    ]},
+    "ax": {"available": true, "truncated": false, "blind_spots": [], "nodes": []}
+  },
+  "blindspots": {
+    "page_token": "page-blind",
+    "document_token": "doc-blind",
+    "url": "https://example.test/blind",
+    "observed_at": "2026-09-13T01:04:00Z",
+    "frames": [
+      {"frame_token": "frame-cross", "document_token": "frame-doc-1", "parent_frame_token": null, "same_origin": false, "captured": false, "url": "https://other.test/frame"}
+    ],
+    "dom": {"available": true, "truncated": false, "blind_spots": ["closed_shadow_root", "canvas"], "nodes": [
+      {"physical_id": "n-canvas", "parent_id": null, "frame_token": null, "kind": "generic", "attributes": {"tag": "canvas"}, "state": {"exists": true, "visible": true}}
+    ]},
+    "ax": {"available": true, "truncated": false, "blind_spots": [], "nodes": []}
+  },
+  "frame_v1": {
+    "page_token": "page-frame",
+    "document_token": "doc-frame-main",
+    "url": "https://example.test/frame",
+    "observed_at": "2026-09-13T01:05:00Z",
+    "frames": [
+      {"frame_token": "frame-1", "document_token": "frame-doc-1", "parent_frame_token": null, "same_origin": true, "captured": true, "url": "https://example.test/inner-a"}
+    ],
+    "dom": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"physical_id": "n-inner", "parent_id": null, "frame_token": "frame-1", "kind": "button", "attributes": {"role": "button", "name": "Inner", "tag": "button"}, "state": {"exists": true, "enabled": true}}
+    ]},
+    "ax": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"ax_id": "ax-inner", "physical_id": "n-inner", "frame_token": "frame-1", "kind": "button", "attributes": {"role": "button", "name": "Inner"}, "state": {"exists": true, "enabled": true}}
+    ]}
+  },
+  "frame_v2": {
+    "page_token": "page-frame",
+    "document_token": "doc-frame-main",
+    "url": "https://example.test/frame",
+    "observed_at": "2026-09-13T01:05:01Z",
+    "frames": [
+      {"frame_token": "frame-1", "document_token": "frame-doc-2", "parent_frame_token": null, "same_origin": true, "captured": true, "url": "https://example.test/inner-b"}
+    ],
+    "dom": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"physical_id": "n-inner-2", "parent_id": null, "frame_token": "frame-1", "kind": "button", "attributes": {"role": "button", "name": "Inner", "tag": "button"}, "state": {"exists": true, "enabled": true}}
+    ]},
+    "ax": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"ax_id": "ax-inner-2", "physical_id": "n-inner-2", "frame_token": "frame-1", "kind": "button", "attributes": {"role": "button", "name": "Inner"}, "state": {"exists": true, "enabled": true}}
+    ]}
+  },
+  "navigate": {
+    "page_token": "page-a",
+    "document_token": "doc-a2",
+    "url": "https://example.test/b",
+    "observed_at": "2026-09-13T01:06:00Z",
+    "frames": [],
+    "dom": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"physical_id": "n-submit", "parent_id": null, "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Submit", "tag": "button"}, "state": {"exists": true, "enabled": true}}
+    ]},
+    "ax": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"ax_id": "ax-submit-nav", "physical_id": "n-submit", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Submit"}, "state": {"exists": true, "enabled": true}}
+    ]}
+  },
+  "push_state": {
+    "page_token": "page-a",
+    "document_token": "doc-a1",
+    "url": "https://example.test/a?step=2",
+    "observed_at": "2026-09-13T01:07:00Z",
+    "frames": [],
+    "dom": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"physical_id": "n-root", "parent_id": null, "frame_token": null, "kind": "document", "attributes": {"role": "document", "name": "Example", "tag": "html", "href": "https://example.test/a?step=2"}, "state": {"exists": true, "visible": true}},
+      {"physical_id": "n-submit", "parent_id": "n-root", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Submit", "tag": "button"}, "state": {"exists": true, "enabled": true}}
+    ]},
+    "ax": {"available": true, "truncated": false, "blind_spots": [], "nodes": [
+      {"ax_id": "ax-root", "physical_id": "n-root", "frame_token": null, "kind": "document", "attributes": {"role": "document", "name": "Example"}, "state": {"exists": true}},
+      {"ax_id": "ax-submit", "physical_id": "n-submit", "frame_token": null, "kind": "button", "attributes": {"role": "button", "name": "Submit"}, "state": {"exists": true, "enabled": true}}
+    ]}
+  }
+}
