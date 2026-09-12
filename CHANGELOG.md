@@ -2,6 +2,14 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.12 — Stable provider prefixes and cache-efficient working sets（2026-09-12）
+
+- **Sticky compaction frontier**：修复 active run 中 provider-view receipt 副本与 canonical Session 的 compaction marker 分裂；`message.cache_compacted` / `history.compaction_state_reset` 现在在 live Session 与 event replay 保持同一机械语义，避免同一源消息在后续 build 被重复 compact/reset、反复改写 provider 前缀。
+- **低收益 rewrite 迟滞**：保留已验证的 64K coarse working-set batch 与 grace 机制；12-result soft cap 只有在 raw→receipt 实际净节省达到 16K 时才提前 fold，32-result hard cap 作为大量小结果机械兜底。真实 2026-09-11 GLM 事故 human-turn 离线重放中，working-set fold 事件由 5 次降到 2 次（-60%），最终 tool 投影仅由 28,131 增至 29,927 chars。
+- **Compaction 重放实证**：同一真实事故轨迹在 40K 压力离线重放，首轮 compact 102 个 source messages 后 live markers 同步为 102；第二轮同 provider/model/budget 新增 compact=0、overlap=0，证明 stable frontier 不依赖进程重启/replay 才生效。
+- **可归因缓存观测**：常态 `request.meta` 增加 fold trigger、pending raw/receipt/net-gain 等低成本机械事实；显式 `LLM_PAYLOAD_TRACE=1` 时，OpenAI-compatible 发送前 deep trace 记录完整 request-object 指纹、消息公共前缀/首个分叉消息、tools/params shape 变化及 cache/compaction epoch。trace 默认关闭、fail-open，不进入 prompt，也不参与路由/完成判断。
+- **架构边界 R9**：正式定义 “Prefix Stability as a Mechanical Resource Boundary”：程序可以冻结机械表示、控制改写频率和物理资源水位，但不得据此判断哪条证据重要、充分或应该删除。`v0.6.11` 已发布且保持不可移动；本修复作为独立 patch 版本，可回滚到 `v0.6.11`。
+
 ## v0.6.11 — Runtime identity independent of operator sandbox（2026-09-11）
 
 - **运行身份解耦**：常驻 Web/Feishu 服务不再继承发起 restart 的 MCP Console/IDE/CI 临时 `HOME`/`TMPDIR`；启动器恢复当前 Unix 账户 HOME 与 macOS 原生 user temp，再由 LFL 自身 CatastrophicGuard / EXEC_MODE / approval / EXEC_SANDBOX / workspace scope 实施安全边界。

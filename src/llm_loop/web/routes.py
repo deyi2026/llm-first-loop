@@ -294,7 +294,7 @@ router.include_router(file_router)
 from llm_loop.feishu.approval import approve, reject  # noqa: E402
 
 SERVICE_NAME = "llm-first-loop-web"
-SERVICE_VERSION = "0.6.11"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
+SERVICE_VERSION = "0.6.12"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
 
 
 class UTF8JSONResponse(JSONResponse):
