@@ -8,6 +8,7 @@ from typing import Any
 
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.browser.predicate import PREDICATE_SPECS, predicate_parameter_schema
+from llm_loop.tools.builtin import browser_perceive as browser_perceive_module
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -593,3 +594,41 @@ def test_wait_bounds_are_rejected_not_silently_clamped(tmp_path: Path) -> None:
     assert too_long.status.value == "failure"
     assert too_sparse.status.value == "failure"
     assert backend.calls == 0
+
+
+def test_wait_never_starts_a_poll_sample_at_or_after_deadline(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    adapter = _adapter(tmp_path)
+    seed = adapter.snapshot("s1", _disabled_submit_fixture())
+    submit = _dom_object_named(seed, "Submit")
+    predicate = _predicate(
+        scope_ref=submit["scope_ref"],
+        target=submit["id"],
+        property_name="enabled",
+        operator="eq",
+        value=True,
+    )
+    backend = _SequenceBackend([_disabled_submit_fixture(), FIXTURES["base"]])
+    tool = BrowserPerceiveTool(
+        adapter=adapter,
+        backend=backend,
+        session_id_getter=lambda: "s1",
+    )
+    clock = {"now": 0.0}
+
+    monkeypatch.setattr(browser_perceive_module.time, "monotonic", lambda: clock["now"])
+
+    def fake_sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    monkeypatch.setattr(browser_perceive_module.time, "sleep", fake_sleep)
+
+    result = tool.execute(action="wait", predicate=predicate, timeout_ms=10, interval_ms=10)
+
+    assert result.status.value == "success"
+    payload = json.loads(result.content)
+    assert payload["predicate_result"]["result"] == "unsatisfied"
+    assert payload["predicate_result"]["sample_count"] == 1
+    assert backend.calls == 1
+    assert clock["now"] == 0.01

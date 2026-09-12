@@ -167,6 +167,11 @@ class BrowserPerceiveTool:
         }
 
         while True:
+            # The first sample is immediate.  Subsequent poll samples may start
+            # only while the monotonic wait budget is still open; sleeping to
+            # the deadline must not authorize one extra post-deadline capture.
+            if sample_count > 0 and time.monotonic() >= deadline_mono:
+                break
             sample_count += 1
             try:
                 raw = self._backend.capture()

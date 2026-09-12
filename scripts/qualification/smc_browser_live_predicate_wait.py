@@ -26,7 +26,9 @@ try:
     from scripts.qualification.smc_browser_live_navigation import (
         _Controller,
         _free_loopback_port,
+        _main_frame,
         _security_agent_pids,
+        _wait_loader_change,
         _wait_page,
         chrome_args,
     )
@@ -34,7 +36,9 @@ except ModuleNotFoundError:  # direct script entrypoint
     from smc_browser_live_navigation import (  # type: ignore[import-not-found]
         _Controller,
         _free_loopback_port,
+        _main_frame,
         _security_agent_pids,
+        _wait_loader_change,
         _wait_page,
         chrome_args,
     )
@@ -179,6 +183,7 @@ def run_live(*, chrome: str, evidence_dir: Path) -> dict[str, Any]:
             if not target_id or not ws_url:
                 raise RuntimeError("qualification target missing identity/websocket")
             controller = _Controller(ws_url)
+            controller.call("Page.enable")
             controller.call("Runtime.enable")
             _set_initial_dom(controller)
 
@@ -199,6 +204,28 @@ def run_live(*, chrome: str, evidence_dir: Path) -> dict[str, Any]:
             document_scope = str(seed["snapshot"]["scope"]["scope_ref"])
 
             checks: dict[str, str] = {}
+
+            # A predicate already true at entry must terminate on the initial sample.
+            immediate_wait = _wait(
+                tool,
+                _predicate(
+                    scope_ref=document_scope,
+                    target=document_scope,
+                    property_name="url",
+                    operator="contains",
+                    value="about:blank",
+                ),
+                timeout_ms=1_000,
+                interval_ms=50,
+            )
+            immediate_result = dict(immediate_wait.get("predicate_result") or {})
+            checks["initial_sample_can_satisfy_immediately"] = (
+                "PASS"
+                if immediate_result.get("result") == "satisfied"
+                and immediate_result.get("sample_count") == 1
+                and immediate_result.get("observer_error_count") == 0
+                else "FAIL"
+            )
 
             # One observer failure followed by a valid sample must remain visible
             # without turning the wait into a tool error.
@@ -388,6 +415,46 @@ def run_live(*, chrome: str, evidence_dir: Path) -> dict[str, Any]:
                 else "FAIL"
             )
 
+            # A same-target full-document reload must invalidate the old document
+            # scope.  Recreating a same-name object must not silently rebind the
+            # old predicate target to the new generation.
+            frame_before_reload = _main_frame(controller)
+            loader_before_reload = str(frame_before_reload.get("loaderId") or "")
+            controller.call("Page.reload", {"ignoreCache": True})
+            _wait_loader_change(controller, loader_before_reload)
+            _set_initial_dom(controller)
+            after_reload = _snapshot(tool)
+            replacement = _dom_object(adapter, session_id, after_reload, "Stable")
+            replacement_scope = str(replacement.get("scope_ref") or "")
+            old_target_wait = _wait(
+                tool,
+                _predicate(
+                    scope_ref=stable_scope,
+                    target=stable_id,
+                    property_name="exists",
+                    operator="eq",
+                    value=True,
+                ),
+                timeout_ms=80,
+                interval_ms=20,
+            )
+            old_target_result = dict(old_target_wait.get("predicate_result") or {})
+            old_target_observation = dict(old_target_wait.get("observation") or {})
+            checks["reload_invalidates_old_predicate_scope"] = (
+                "PASS"
+                if old_target_result.get("result") == "indeterminate"
+                and old_target_observation.get("reason") == "scope_not_observed"
+                and replacement_scope != stable_scope
+                else "FAIL"
+            )
+            checks["same_name_replacement_is_not_silent_rebind"] = (
+                "PASS"
+                if replacement.get("id") != stable_id
+                and old_target_observation.get("target") == stable_id
+                and old_target_observation.get("scope_ref") == stable_scope
+                else "FAIL"
+            )
+
             action_values = {
                 str(value).lower()
                 for value in tool.parameters["properties"]["action"]["enum"]
@@ -416,6 +483,12 @@ def run_live(*, chrome: str, evidence_dir: Path) -> dict[str, Any]:
                 ),
                 "assert_not_exposed_in_this_stage": (
                     "PASS" if "assert" not in action_values else "FAIL"
+                ),
+                "wait_cancel_not_exposed_in_v01": (
+                    "PASS"
+                    if "cancel" not in action_values
+                    and "cancel" not in tool.parameters["properties"]
+                    else "FAIL"
                 ),
             }
             all_values = list(checks.values()) + list(safety.values())
