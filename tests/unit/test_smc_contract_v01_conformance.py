@@ -76,7 +76,7 @@ EXPECTED_MATRIX = {
     "P5": "GAP",
     "P6": "PASS",
     "P7": "PASS",
-    "P8": "GAP",
+    "P8": "PASS",
     "L1": "PASS",
     "L2": "PASS",
     "L3": "PASS",
@@ -492,13 +492,26 @@ def probe_p8(tmp_path: Path) -> ProbeResult:
         tool.execute(action="receipt", run_id=raw["run_id"], root=str(root), full=True)
     )
     assert hydrated["scope"]["truncated_any"] is True
-    assert "canonical" not in hydrated["diff"]
+    assert hydrated["canonical"] is False
+    assert hydrated["representation"] == "raw_smx_receipt"
+    assert hydrated["diff"]["canonical"] is False
+    assert hydrated["diff"]["representation"] == "raw_smx_diff"
     assert isinstance(hydrated["diff"]["counts"]["created"], int)
+
+    summary = _json_result(
+        tool.execute(action="receipt", run_id=raw["run_id"], root=str(root), full=False)
+    )
+    assert summary["canonical"] is False
+    assert summary["representation"] == "raw_smx_receipt_summary"
     return ProbeResult(
         "P8",
-        "GAP",
-        "full=true hydrates raw CLI diff/counts without canonical=false separation under truncation.",
-        {"raw_hydration_reachable": True, "canonical_false_marker": False},
+        "PASS",
+        "Receipt hydration preserves raw CLI evidence while explicitly separating it from canonical SMC projections.",
+        {
+            "raw_hydration_reachable": True,
+            "canonical_false_marker": True,
+            "raw_diff_canonical_false": True,
+        },
     )
 
 

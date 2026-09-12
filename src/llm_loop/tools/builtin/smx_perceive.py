@@ -54,7 +54,7 @@ class SmxPerceiveTool:
         "snapshot=目录树快照落盘返回 snap_id 并绑定 capture-time roots/depth scope；"
         "diff=先机械校验 scope comparability；可比但 observation 不完整时 created/deleted=null，"
         "modified 仅保留 observed lower-bound 并用 field_completeness 标明非全集；"
-        "receipt=按 run_id 查 smx 回执摘要。"
+        "receipt=按 run_id 查 raw smx 回执，full/raw 均明确 canonical=false。"
         "何时用: 后台命令启动后等待完成标志/端口就绪（替代 sleep+重读）、命令前后净变更取证、查询 smx 回执。"
         "执行动作（跑命令）一律走 execute_command，本工具不执行任何命令。"
         "局限: wait 谓词同一调用仅一个；快照受 depth/budget 截断（回执如实标注）。"
@@ -396,11 +396,26 @@ class SmxPerceiveTool:
         except (json.JSONDecodeError, OSError) as e:
             return self._fail(f"[回执读取失败] {p}: {e}")
         if bool(kw.get("full")):
+            # Raw CLI receipt hydration is evidence, not a canonical SMC projection.
+            # Annotate the in-memory response only; never rewrite the stored receipt.
+            rcp["canonical"] = False
+            rcp["representation"] = "raw_smx_receipt"
+            rcp["grounding"] = {
+                "kind": "smx_cli_receipt",
+                "run_id": rcp.get("run_id", rid),
+                "canonical": False,
+            }
+            raw_diff = rcp.get("diff")
+            if isinstance(raw_diff, dict):
+                raw_diff["canonical"] = False
+                raw_diff["representation"] = "raw_smx_diff"
             rcp["_receipt_path"] = str(p)
             return self._ok(rcp)
         diff = rcp.get("diff") or {}
         summary = {
             "action": "receipt",
+            "canonical": False,
+            "representation": "raw_smx_receipt_summary",
             "run_id": rcp.get("run_id", rid),
             "kind": rcp.get("kind"),
             "cmd": rcp.get("cmd"),
@@ -412,7 +427,7 @@ class SmxPerceiveTool:
             "diff_counts": {k: len(v) for k, v in diff.items() if isinstance(v, list)},
             "at": rcp.get("at"),
             "receipt_path": str(p),
-            "hint": "full=true 可取全量",
+            "hint": "full=true 可取 raw 全量；raw receipt/diff 明确 canonical=false",
         }
         return self._ok(summary)
 
