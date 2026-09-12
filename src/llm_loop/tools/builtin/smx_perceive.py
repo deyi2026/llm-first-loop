@@ -51,7 +51,7 @@ class SmxPerceiveTool:
         "wait=条件谓词离散轮询（file_exists/file_gone/file_contains/port_open，仅 loopback）；"
         "satisfied=true/false/null 分别表示满足/有效采样至超时未满足/观察错误或覆盖不足而不可判，"
         "回执给 interval/sample_count/observer_error_count，false 不证明采样间隙从未瞬时成立；"
-        "snapshot=目录树快照落盘返回 snap_id 并绑定 capture-time roots/depth scope；"
+        "snapshot=目录树快照落盘返回 snap_id、capture-time scope 与独立 content_sha256；"
         "diff=先机械校验 scope comparability；可比但 observation 不完整时 created/deleted=null，"
         "modified 仅保留 observed lower-bound 并用 field_completeness 标明非全集；"
         "receipt=按 run_id 查 raw smx 回执，full/raw 均明确 canonical=false。"
@@ -125,6 +125,19 @@ class SmxPerceiveTool:
             self._mod = mod
         return self._mod
 
+    @staticmethod
+    def _snapshot_content_sha256(doc: dict) -> str:
+        """Hash captured snapshot content, excluding random identity and the token itself."""
+        basis = {
+            key: value
+            for key, value in doc.items()
+            if key not in {"snapshot_id", "content_sha256"}
+        }
+        blob = json.dumps(
+            basis, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(blob).hexdigest()
+
     def _load_snap(self, snap_id: str) -> dict:
         sid = str(snap_id or "").strip()
         if not _SNAP_ID_RE.fullmatch(sid):
@@ -132,7 +145,21 @@ class SmxPerceiveTool:
         p = self._store / f"{sid}.json"
         if not p.is_file():
             raise FileNotFoundError(f"快照不存在: {p}")
-        return json.loads(p.read_text(encoding="utf-8"))
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        if doc.get("snapshot_id") != sid:
+            raise ValueError(
+                f"snapshot integrity mismatch: requested={sid!r} stored={doc.get('snapshot_id')!r}"
+            )
+        token = doc.get("content_sha256")
+        if token is not None:
+            if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{64}", token):
+                raise ValueError(f"snapshot integrity token invalid: {sid}")
+            actual = self._snapshot_content_sha256(doc)
+            if actual != token:
+                raise ValueError(
+                    f"snapshot integrity mismatch: {sid} expected={token} actual={actual}"
+                )
+        return doc
 
     @staticmethod
     def _snapshot_scope(doc: dict) -> dict | None:
@@ -269,7 +296,9 @@ class SmxPerceiveTool:
             "scope": {"roots": sorted(roots), "depth": depth},
             "meta": meta,
             "entries": entries,
+            "content_sha256_basis": "canonical_snapshot_content_v1",
         }
+        doc["content_sha256"] = self._snapshot_content_sha256(doc)
         (self._store / f"{sid}.json").write_text(
             json.dumps(doc, ensure_ascii=False, sort_keys=True), encoding="utf-8"
         )
@@ -279,6 +308,8 @@ class SmxPerceiveTool:
             "entries": len(entries),
             "roots_meta": meta,
             "scope": doc["scope"],
+            "content_sha256": doc["content_sha256"],
+            "content_sha256_basis": doc["content_sha256_basis"],
             "store_path": str(self._store / f"{sid}.json"),
             "smx_sha": self._smx_sha,
         })

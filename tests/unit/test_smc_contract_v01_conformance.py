@@ -73,7 +73,7 @@ EXPECTED_MATRIX = {
     "P2": "PASS",
     "P3": "PASS",
     "P4": "PASS",
-    "P5": "GAP",
+    "P5": "PASS",
     "P6": "PASS",
     "P7": "PASS",
     "P8": "PASS",
@@ -370,21 +370,45 @@ def probe_p5(tmp_path: Path) -> ProbeResult:
     tool = _smx_tool(tmp_path)
     work = tmp_path / "p5"
     work.mkdir()
+    (work / "source.txt").write_text("stable", encoding="utf-8")
     snap = _snapshot(tool, work)
     stored = Path(snap["store_path"])
     assert stored.is_file()
     loaded = json.loads(stored.read_text(encoding="utf-8"))
     assert loaded["snapshot_id"] == snap["snapshot_id"]
-    assert tool._load_snap(snap["snapshot_id"])["snapshot_id"] == snap["snapshot_id"]  # noqa: SLF001
+    assert isinstance(snap["content_sha256"], str) and len(snap["content_sha256"]) == 64
+    assert loaded["content_sha256"] == snap["content_sha256"]
+    assert loaded["content_sha256_basis"] == "canonical_snapshot_content_v1"
+    verified = tool._load_snap(snap["snapshot_id"])  # noqa: SLF001
+    assert verified["content_sha256"] == snap["content_sha256"]
 
-    integrity_keys = {"content_sha256", "snapshot_sha256", "blob_sha256", "grounding_version"}
-    has_integrity_token = bool(integrity_keys & set(snap)) or bool(integrity_keys & set(loaded))
-    assert has_integrity_token is False
+    # Independent verifier: hash canonical stored content without identity/token fields.
+    basis = {
+        key: value for key, value in loaded.items()
+        if key not in {"snapshot_id", "content_sha256"}
+    }
+    expected = hashlib.sha256(
+        json.dumps(
+            basis, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    assert expected == snap["content_sha256"]
+
+    loaded["entries"]["tampered"] = {"t": "f", "s": 1, "m": 0}
+    stored.write_text(json.dumps(loaded, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    with pytest.raises(ValueError, match="integrity"):
+        tool._load_snap(snap["snapshot_id"])  # noqa: SLF001
+
     return ProbeResult(
         "P5",
-        "GAP",
-        "Snapshot IDs hydrate to stored observations, but the model-facing snapshot has no independent content-integrity token.",
-        {"hydration_reachable": True, "content_integrity_token": False},
+        "PASS",
+        "Snapshot hydration carries an independently recomputable content SHA and rejects tampered stored observations.",
+        {
+            "hydration_reachable": True,
+            "content_integrity_token": True,
+            "independent_recompute_matches": True,
+            "tamper_rejected": True,
+        },
     )
 
 
