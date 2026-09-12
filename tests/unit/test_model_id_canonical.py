@@ -103,3 +103,38 @@ class TestCatalogDedupe:
         # 完整规格行只出现一次, 另一条以 alias 行呈现（同一物理模型展示去重）
         assert len(full_lines) == 1
         assert len(alias_lines) == 1 and f"→ alias of {HF_FORM}" in alias_lines[0]
+
+
+# ---- 短名桥接（唯一匹配守卫）: HF/路径形态 → 注册短名 ----
+
+def test_loose_key_basic():
+    from llm_loop.llm.model_ids import loose_key
+    assert loose_key(HF_FORM) == "ornith-1.5-35b-a3b-mlx"
+    assert loose_key(PATH_FORM) == "ornith-1.5-35b-a3b-mlx"
+    assert loose_key("ornith-1.5-35b-a3b-mlx") == "ornith-1.5-35b-a3b-mlx"
+
+
+class TestShortnameBridge:
+    def test_scoped_hf_form_bridges_to_shortname(self):
+        reg = _registry({"ornith-1.5-35b-a3b-mlx": ModelSpec(), "qwen3.8-27b-cog": ModelSpec()})
+        assert reg.resolve(f"lmstudio/{HF_FORM}") == ("lmstudio", "ornith-1.5-35b-a3b-mlx")
+        assert reg.resolve(f"lmstudio/{PATH_FORM}") == ("lmstudio", "ornith-1.5-35b-a3b-mlx")
+
+    def test_bare_forms_bridge_cross_provider(self):
+        reg = _registry({"ornith-1.5-35b-a3b-mlx": ModelSpec()})
+        assert reg.resolve(HF_FORM) == ("lmstudio", "ornith-1.5-35b-a3b-mlx")
+
+    def test_ambiguity_rejected(self):
+        reg = ProviderRegistry(providers={
+            "p1": ProviderSpec(id="p1", base_url="http://a/v1", api_key_env="X",
+                               models={"ornith-1.5-35b-a3b-mlx": ModelSpec()}),
+            "p2": ProviderSpec(id="p2", base_url="http://b/v1", api_key_env="X",
+                               models={"Ornith-1.5-35B-A3B-MLX": ModelSpec()}),
+        })
+        with pytest.raises(ValueError, match="全限定名"):
+            reg.resolve(HF_FORM)
+
+    def test_no_match_fails_loud_with_candidates(self):
+        reg = _registry({"qwen3.8-27b-cog": ModelSpec()})
+        with pytest.raises(ValueError, match="不在注册表中"):
+            reg.resolve(HF_FORM)

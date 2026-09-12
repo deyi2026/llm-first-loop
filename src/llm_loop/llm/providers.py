@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.config import Settings
-from llm_loop.llm.model_ids import canonical_model_id
+from llm_loop.llm.model_ids import canonical_model_id, loose_key
 
 logger = logging.getLogger(__name__)
 
@@ -141,8 +141,11 @@ class ProviderRegistry:
                 # 唯一命中才接受, 否则保持原"未知 provider"错误语义。
                 try:
                     return self._resolve_bare(model_ref)
-                except ValueError:
-                    raise ValueError(f"未知 provider: {pid}") from None
+                except ValueError as bare_err:
+                    # 保持"未知 provider"语义（既有契约）, 但带上裸名解析的具体错误,
+                    # 避免吞掉短名桥接的歧义/候选信息。
+                    detail = str(bare_err).splitlines()[0]
+                    raise ValueError(f"未知 provider: {pid}（{detail}）") from None
             if mid not in spec.models:
                 # 归一回退（限定 provider 内）: 引用形态与注册形态不同但规范形态相同
                 canonical_ref = canonical_model_id(mid)
@@ -151,6 +154,14 @@ class ProviderRegistry:
                 ]
                 if len(within) == 1:
                     return pid, within[0]
+                # 短名桥接（唯一匹配守卫）: 服务端 /v1/models 的 HF/路径形态
+                # 与注册短名（org 段剥离 + casefold 后一致）唯一对应时解析。
+                # 例: 注册 "ornith-1.5-35b-a3b-mlx" ← 引用 "ornith-ai/Ornith-1.5-35B-A3B-MLX"
+                if len(within) == 0:
+                    loose = loose_key(mid)
+                    within_loose = [m for m in spec.models if loose_key(m) == loose]
+                    if len(within_loose) == 1:
+                        return pid, within_loose[0]
                 listed = ", ".join(sorted(spec.models)) or "(无)"
                 raise ValueError(
                     f"provider '{pid}' 不存在模型 '{mid}'"
@@ -183,6 +194,21 @@ class ProviderRegistry:
                 raise ValueError(
                     f"模型 '{model_ref}'（规范形态 '{canonical_ref}'）"
                     f"存在多个注册条目: {listed}，请用全限定名"
+                )
+            # 短名桥接（唯一匹配守卫）: HF/路径形态 → 注册短名
+            loose = loose_key(model_ref)
+            loose_matches: list[tuple[str, str]] = [
+                (pid, mid)
+                for pid, spec in self.providers.items()
+                for mid in spec.models
+                if loose_key(mid) == loose
+            ]
+            if len(loose_matches) == 1:
+                return loose_matches[0]
+            if len(loose_matches) > 1:
+                listed = ", ".join(f"{p}/{m}" for p, m in loose_matches)
+                raise ValueError(
+                    f"模型 '{model_ref}' 短名桥接命中多个条目: {listed}，请用全限定名"
                 )
             candidates = [f"{p}/{m}" for p, s in self.providers.items() for m in s.models]
             raise ValueError(

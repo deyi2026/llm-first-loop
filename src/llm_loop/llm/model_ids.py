@@ -39,6 +39,18 @@ def canonical_model_id(model_id: str) -> str:
     return model_id
 
 
+def loose_key(model_id: str) -> str:
+    """形态桥接键: 取末段 org/name 的 name, casefold.
+
+    用于把服务端 /v1/models 的 HF/路径形态桥接到注册短名:
+    "ornith-ai/Ornith-1.5-35B-A3B-MLX" → "ornith-1.5-35b-a3b-mlx".
+    仅作**唯一匹配守卫**下的桥接键, 不单独用于展示或注册.
+    """
+    canonical = canonical_model_id(model_id)
+    name = canonical.rsplit("/", 1)[-1] if "/" in canonical else canonical
+    return name.casefold()
+
+
 def is_alias_form(model_id: str) -> bool:
     """True = 该 ID 是别名形态（非其自身规范形态）."""
     return canonical_model_id(model_id) != model_id
