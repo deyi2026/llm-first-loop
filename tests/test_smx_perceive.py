@@ -146,6 +146,8 @@ def test_wait_description_exposes_tristate_and_sampling_semantics(tool):
     assert "sample_count" in tool.description
     assert "observer_error_count" in tool.description
     assert "采样间隙" in tool.description
+    assert "nested smc canonical projection" in tool.description
+    assert "canonical=false" in tool.description
 
 
 # ---------- snapshot / diff ----------
@@ -268,3 +270,134 @@ def test_receipt_missing_run(tool, tmp_path):
 def test_opt_in_default_off():
     f = next(f for f in dataclasses.fields(Settings) if f.name == "smx_perceive_path")
     assert f.default == ""
+
+
+def test_smc_snapshot_projection_is_canonical_without_breaking_legacy_envelope(tool, tmp_path):
+    work = tmp_path / "smc-snapshot"
+    work.mkdir()
+    (work / "a.txt").write_text("a")
+    payload = _payload(tool.execute(action="snapshot", roots=[str(work)], depth=2, budget=5000))
+
+    # Legacy envelope remains available.
+    assert payload["action"] == "snapshot"
+    assert payload["snapshot_id"].startswith("snap-")
+
+    smc = payload["smc"]
+    assert smc["schema"] == "smc.world_snapshot.v0.1"
+    assert smc["domain"] == "shell"
+    assert smc["snapshot_id"] == payload["snapshot_id"]
+    assert smc["scope"] == {"roots": [str(work.resolve())], "depth": 2, "filters": []}
+    assert smc["observed_at"]
+    assert smc["completeness"] == {"complete": True, "reasons": []}
+    assert smc["budget"]["entries"] >= 2
+    assert smc["budget"]["budget_cap"] == 5000
+    assert smc["budget"]["est_tokens"] is None
+    assert smc["grounding_version"] == payload["content_sha256"]
+    assert smc["projection"]["representation"] == "overview"
+    assert smc["projection"]["complete"] is False
+    assert smc["projection"]["full_ref"] == payload["store_path"]
+    assert smc["objects_ref"] == payload["store_path"]
+
+
+def test_smc_diff_projection_uses_full_mechanical_lists_and_snapshot_pair_semantics(tool, tmp_path):
+    work = tmp_path / "smc-diff"
+    work.mkdir()
+    (work / "keep.txt").write_text("v1")
+    (work / "gone.txt").write_text("gone")
+    s1 = _payload(tool.execute(action="snapshot", roots=[str(work)]))["snapshot_id"]
+    (work / "keep.txt").write_text("version-two")
+    (work / "gone.txt").unlink()
+    (work / "new.txt").write_text("new")
+    s2 = _payload(tool.execute(action="snapshot", roots=[str(work)]))["snapshot_id"]
+
+    payload = _payload(tool.execute(action="diff", since=s1, current=s2))
+    smc = payload["smc"]
+    assert smc["schema"] == "smc.semantic_diff.v0.1"
+    assert smc["domain"] == "shell"
+    assert smc["from_version"] == s1
+    assert smc["to_version"] == s2
+    assert smc["diff_semantics"] == "snapshot_pair_net"
+    assert smc["comparable"] is True
+    assert smc["scope_relation"] == "same"
+    assert any(x.endswith("/new.txt") for x in smc["created"])
+    assert any(x.endswith("/gone.txt") for x in smc["removed"])
+    changed = next(x for x in smc["changed"] if x["path"].endswith("/keep.txt"))
+    assert set(changed["changed"]) >= {"s", "m"}
+    assert smc["completeness"] == {"complete": True, "reasons": []}
+    assert smc["field_completeness"] == {"created": True, "removed": True, "changed": True}
+
+
+def test_smc_incomplete_diff_keeps_changed_lower_bound_and_nulls_false_difference_claims(tool, tmp_path):
+    work = tmp_path / "smc-incomplete"
+    work.mkdir()
+    for idx in range(110):
+        (work / f"f{idx:03d}.txt").write_text("x")
+    s1 = _payload(tool.execute(action="snapshot", roots=[str(work)], budget=5000))["snapshot_id"]
+    (work / "f000.txt").write_text("changed")
+    s2 = _payload(tool.execute(action="snapshot", roots=[str(work)], budget=100))["snapshot_id"]
+
+    smc = _payload(tool.execute(action="diff", since=s1, current=s2))["smc"]
+    assert smc["created"] is None and smc["removed"] is None
+    assert any(x["path"].endswith("/f000.txt") for x in smc["changed"])
+    assert smc["completeness"]["complete"] is False
+    assert smc["completeness"]["reasons"]
+    assert smc["field_completeness"] == {"created": False, "removed": False, "changed": False}
+
+
+def test_smc_wait_projection_is_action_receipt_with_mechanical_predicate(tool, tmp_path):
+    missing = tmp_path / "never.flag"
+    payload = _payload(
+        tool.execute(
+            action="wait",
+            file_exists=str(missing),
+            root=str(tmp_path),
+            timeout=0.5,
+            interval=0.1,
+        )
+    )
+    assert payload["satisfied"] is False  # legacy envelope preserved
+
+    smc = payload["smc"]
+    required = {
+        "schema", "domain", "scope_ref", "action_id", "receipt_id", "receipt_seq", "verb",
+        "operation_class", "idempotency_class", "atomicity_class", "target_id", "status",
+        "before_version", "after_version", "observed_effects", "boundary_events",
+        "grounding_refs", "completeness", "predicate_result", "predicate",
+    }
+    assert required <= set(smc)
+    assert smc["schema"] == "smc.action_receipt.v0.1"
+    assert smc["domain"] == "shell"
+    assert smc["verb"] == "wait"
+    assert smc["operation_class"] == "observe"
+    assert smc["status"] == "ok"  # unsatisfied predicate is not a tool failure
+    assert smc["predicate_result"]["result"] == "unsatisfied"
+    pred = smc["predicate"]
+    assert pred == {
+        "schema": "smc.predicate.v0.1",
+        "domain": "shell",
+        "scope_ref": smc["scope_ref"],
+        "target": str(missing.resolve()),
+        "property": "exists",
+        "operator": "eq",
+        "value": True,
+    }
+
+
+def test_smc_wait_port_probe_declares_probe_operation_class(tool):
+    # Port 1 is expected closed locally; predicate result itself is not the assertion here.
+    payload = _payload(tool.execute(action="wait", port_open=1, host="127.0.0.1", timeout=0.5, interval=0.1))
+    assert payload["smc"]["operation_class"] == "probe"
+    assert payload["smc"]["predicate"]["property"] == "connectable"
+
+
+def test_raw_receipt_hydration_remains_noncanonical_and_has_no_smc_projection(tool, tmp_path):
+    root = tmp_path / "raw-receipt"
+    run = root / ".smx" / "runs" / "run-raw-1"
+    run.mkdir(parents=True)
+    (run / "receipt.json").write_text(
+        json.dumps({"run_id": "run-raw-1", "kind": "exec", "diff": {"created": ["x"]}})
+    )
+    payload = _payload(tool.execute(action="receipt", run_id="run-raw-1", root=str(root), full=True))
+    assert payload["canonical"] is False
+    assert payload["representation"] == "raw_smx_receipt"
+    assert "smc" not in payload

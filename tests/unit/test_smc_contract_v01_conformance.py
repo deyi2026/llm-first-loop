@@ -68,7 +68,7 @@ class ProbeResult:
 
 
 EXPECTED_MATRIX = {
-    "P0": "GAP",
+    "P0": "PASS",
     "P1": "PASS",
     "P2": "PASS",
     "P3": "PASS",
@@ -120,7 +120,8 @@ def probe_p0(tmp_path: Path) -> ProbeResult:
     tool = _smx_tool(tmp_path)
     work = tmp_path / "p0"
     work.mkdir()
-    payload = _snapshot(tool, work)
+    (work / "a.txt").write_text("a", encoding="utf-8")
+    snap = _snapshot(tool, work)
 
     provider_keys = _all_keys(tool.parameters)
     banned_strategy_keys = {
@@ -140,22 +141,68 @@ def probe_p0(tmp_path: Path) -> ProbeResult:
         "receipt",
     }
 
-    canonical_snapshot_wire = (
-        payload.get("schema") == "smc.world_snapshot.v0.1"
-        and payload.get("domain") == "shell"
-        and "scope" in payload
-        and "completeness" in payload
-        and "grounding_version" in payload
+    world = snap["smc"]
+    assert world["schema"] == "smc.world_snapshot.v0.1"
+    assert world["domain"] == "shell"
+    assert {
+        "schema", "domain", "snapshot_id", "scope", "observed_at",
+        "completeness", "budget", "grounding_version", "projection", "objects_ref",
+    } <= set(world)
+
+    (work / "b.txt").write_text("b", encoding="utf-8")
+    snap2 = _snapshot(tool, work)
+    diff = _json_result(
+        tool.execute(action="diff", since=snap["snapshot_id"], current=snap2["snapshot_id"])
+    )["smc"]
+    assert diff["schema"] == "smc.semantic_diff.v0.1"
+    assert {
+        "schema", "domain", "from_version", "to_version", "diff_semantics",
+        "comparable", "scope_relation", "created", "removed", "changed",
+        "completeness", "field_completeness",
+    } <= set(diff)
+
+    wait = _json_result(
+        tool.execute(
+            action="wait",
+            file_exists=str(tmp_path / "never.flag"),
+            root=str(tmp_path),
+            timeout=0.5,
+            interval=0.1,
+        )
+    )["smc"]
+    assert wait["schema"] == "smc.action_receipt.v0.1"
+    assert {
+        "schema", "domain", "scope_ref", "action_id", "receipt_id", "receipt_seq",
+        "verb", "operation_class", "idempotency_class", "atomicity_class",
+        "target_id", "status", "before_version", "after_version", "observed_effects",
+        "boundary_events", "grounding_refs", "completeness", "predicate_result", "predicate",
+    } <= set(wait)
+    assert wait["predicate"]["schema"] == "smc.predicate.v0.1"
+
+    raw_root = tmp_path / "p0-raw"
+    raw_dir = raw_root / ".smx" / "runs" / "run-p0-raw"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "receipt.json").write_text(
+        json.dumps({"run_id": "run-p0-raw", "kind": "exec", "diff": {"created": ["x"]}}),
+        encoding="utf-8",
     )
-    assert canonical_snapshot_wire is False
+    raw = _json_result(
+        tool.execute(action="receipt", run_id="run-p0-raw", root=str(raw_root), full=True)
+    )
+    assert raw["canonical"] is False
+    assert "smc" not in raw
+
     return ProbeResult(
         "P0",
-        "GAP",
-        "Provider surface has no hidden command/strategy channel, but current output is pre-SMC wire.",
+        "PASS",
+        "Legacy SMX transport remains compatible while nested canonical WorldSnapshot, SemanticDiff and wait ActionReceipt/Predicate projections satisfy SMC v0.1 requiredness.",
         {
             "structural_lint": "PASS",
             "actions": ["wait", "snapshot", "diff", "receipt"],
-            "canonical_snapshot_wire": False,
+            "canonical_world_snapshot": True,
+            "canonical_semantic_diff": True,
+            "canonical_wait_action_receipt": True,
+            "raw_receipt_remains_noncanonical": True,
         },
     )
 

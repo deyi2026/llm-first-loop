@@ -70,6 +70,8 @@ def test_smx_compact_contract_keeps_tristate_wait_semantics():
     assert "satisfied=true/false/null" in row["description"]
     assert "sample_count" in row["description"]
     assert "observer_error_count" in row["description"]
+    assert "nested smc canonical projection" in row["description"]
+    assert "canonical=false" in row["description"]
     assert "只感知不执行" in row["description"]
 
 
