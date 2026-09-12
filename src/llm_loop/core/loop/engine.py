@@ -578,6 +578,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             # Mechanical provenance only. It is persisted in Message/Event metadata and is
             # never rendered into provider-visible message content or tool schemas.
             _user_metadata["human_turn_queue_id"] = raw_queue_id
+        raw_source_id = (user_metadata or {}).get("human_turn_source_id")
+        if isinstance(raw_source_id, str) and 0 < len(raw_source_id) <= 256:
+            # Transport identity only (e.g. Feishu message_id).  It is never rendered into
+            # provider-visible prose; append-only retraction uses it as an exact target key.
+            _user_metadata["human_turn_source_id"] = raw_source_id
         # Provenance/ingress are program-owned truth; arbitrary caller metadata never enters a
         # genuine human message through this transport-only extension.
         _user_metadata.update(origin_metadata(InjectionLayer.USER_INSTRUCTION))

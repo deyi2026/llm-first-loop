@@ -316,6 +316,152 @@ class SessionStore:
         """Read-only event-log dependency used by crash-safe execution helpers."""
         return self._event_store
 
+    def retract_message_by_source_id(
+        self,
+        source_id: str,
+        *,
+        session_id_hint: str = "",
+        actor: str = "unknown",
+        reason: str = "source_recalled",
+        retracted_at: str = "",
+    ) -> dict[str, Any]:
+        """Append exact-source retraction declarations without erasing source history.
+
+        One upstream message may mechanically exist in multiple forked sessions. Exact source
+        identity is therefore fanned out to every matching session rather than guessed down to
+        one branch. This path never acquires the whole-session management lease: a recall may
+        arrive while a run is active; current execution is not retroactively cancelled.
+        """
+        from llm_loop.core.message_retraction import HUMAN_TURN_SOURCE_ID_KEY
+        from llm_loop.event_log.model import EVENT_MESSAGE_RETRACTED
+
+        source_id = str(source_id or "").strip()
+        if not source_id:
+            return {"status": "invalid_source", "session_id": "", "session_ids": [], "event_id": ""}
+        store = self._event_store
+        if store is None or getattr(store, "enabled", False) is False:
+            return {"status": "event_store_unavailable", "session_id": "", "session_ids": [], "event_id": ""}
+
+        candidates = {
+            p.stem
+            for p in self._dir.glob("*.json")
+            if p.name != self._SHARED_SESSION_FILE
+        }
+        if session_id_hint:
+            candidates.add(session_id_hint)
+
+        matches_by_sid: dict[str, list[Any]] = {}
+        already_by_sid: dict[str, Any] = {}
+        for sid in sorted(candidates):
+            try:
+                events = store.read(sid)
+            except Exception:
+                continue
+            for event in events:
+                payload = getattr(event, "payload", {}) or {}
+                if (
+                    getattr(event, "type", "") == EVENT_MESSAGE_RETRACTED
+                    and str(payload.get("source_id") or "") == source_id
+                ):
+                    already_by_sid[sid] = event
+                if getattr(event, "type", "") != "message.appended":
+                    continue
+                metadata = payload.get("metadata") if isinstance(payload, dict) else None
+                if (
+                    str(payload.get("role") or "") == "user"
+                    and isinstance(metadata, dict)
+                    and str(metadata.get(HUMAN_TURN_SOURCE_ID_KEY) or "") == source_id
+                ):
+                    matches_by_sid.setdefault(sid, []).append(event)
+
+        target_sids = sorted(matches_by_sid)
+        if not target_sids:
+            return {"status": "not_found", "session_id": "", "session_ids": [], "event_id": ""}
+
+        appended_events: list[Any] = []
+        for sid in target_sids:
+            if sid in already_by_sid:
+                continue
+            message_event = matches_by_sid[sid][0]
+            payload = getattr(message_event, "payload", {}) or {}
+            appended = store.append(
+                sid,
+                EVENT_MESSAGE_RETRACTED,
+                {
+                    "source_id": source_id,
+                    "msg_seq": payload.get("index"),
+                    "actor": str(actor or "unknown"),
+                    "reason": str(reason or "source_recalled"),
+                    "retracted_at": str(retracted_at or ""),
+                },
+            )
+            if appended is None:
+                return {
+                    "status": "write_failed",
+                    "session_id": sid,
+                    "session_ids": target_sids,
+                    "event_id": "",
+                }
+            appended_events.append(appended)
+
+        if appended_events:
+            return {
+                "status": "retracted",
+                "session_id": target_sids[0],
+                "session_ids": target_sids,
+                "event_id": str(getattr(appended_events[0], "event_id", "") or ""),
+            }
+        first = already_by_sid[target_sids[0]]
+        return {
+            "status": "already_retracted",
+            "session_id": target_sids[0],
+            "session_ids": target_sids,
+            "event_id": str(getattr(first, "event_id", "") or ""),
+        }
+
+    def _apply_message_retraction_overlay(self, session: Session) -> Session:
+        """Project append-only retractions over the legacy/default JSON read path."""
+        store = self._event_store
+        if store is None or getattr(store, "enabled", False) is False:
+            return session
+        try:
+            events = store.read(session.session_id)
+        except Exception:
+            return session
+        if not events:
+            return session
+
+        from llm_loop.core.message_retraction import (
+            HUMAN_TURN_SOURCE_ID_KEY,
+            RETRACTED_MARKER,
+            project_retracted_metadata,
+        )
+        from llm_loop.event_log.model import EVENT_MESSAGE_RETRACTED
+
+        changed = False
+        for event in events:
+            if getattr(event, "type", "") != EVENT_MESSAGE_RETRACTED:
+                continue
+            payload = getattr(event, "payload", {}) or {}
+            source_id = str(payload.get("source_id") or "")
+            matches = [
+                message
+                for message in session.messages
+                if message.role == "user"
+                and str((message.metadata or {}).get(HUMAN_TURN_SOURCE_ID_KEY) or "") == source_id
+            ]
+            if not source_id or not matches:
+                continue
+            for target in matches:
+                target.content = RETRACTED_MARKER
+                target.metadata = project_retracted_metadata(
+                    target.metadata, payload, event_id=str(getattr(event, "event_id", "") or "")
+                )
+            changed = True
+        if changed:
+            session.working_state_checkpoint = None
+        return session
+
     def prepare_root(self, sessions_dir: str | Path) -> Path:
         """预创建/验证会话根；失败时不改变当前SessionStore状态。"""
         target = Path(sessions_dir)
@@ -1047,7 +1193,7 @@ class SessionStore:
                 "event_log 读路径 replay 失败，回退 session JSON（fail-open）: %s",
                 session_id,
             )
-        return self._load_from_json(session_id)
+        return self._apply_message_retraction_overlay(self._load_from_json(session_id))
 
     def _load_from_event_log(self, session_id: str) -> Session | None:
         """从事件日志 replay 重建 Session（失败返回 None，由调用方回退）."""

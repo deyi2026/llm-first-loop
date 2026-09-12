@@ -289,7 +289,21 @@ def _truncate_events(events: list, fork_point: int) -> list:
     if first_dropped_seq is None:
         return list(events)
 
-    return [e for e in events if e.seq < first_dropped_seq]
+    # Late append-only retraction declarations target earlier message identity and must
+    # follow that inherited message even when the declaration itself was appended after a
+    # later message that the fork drops. Otherwise a partial fork would resurrect withdrawn
+    # content. This is mechanical msg_seq reachability, not semantic relevance.
+    inherited = [e for e in events if e.seq < first_dropped_seq]
+    inherited.extend(
+        e
+        for e in events
+        if e.seq >= first_dropped_seq
+        and e.type == "message.retracted"
+        and isinstance(e.payload.get("msg_seq"), int)
+        and int(e.payload["msg_seq"]) < fork_point
+    )
+    inherited.sort(key=lambda e: e.seq)
+    return inherited
 
 
 def _default_branch_summary(parent: Any, fork_point: int) -> str:

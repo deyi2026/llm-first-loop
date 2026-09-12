@@ -7,6 +7,7 @@
 - **Release 单写者**：退役会在 main push 时改写既有 draft 的 Release Drafter；tag 触发的 `release.yml` 成为唯一 GitHub Release writer，并继续使用 GitHub 自动生成发布说明。
 - **长粘贴 Composer**：输入框可机械扩展至 `min(40vh, 420px)`；单次粘贴 ≥20,000 字符时原文无损转为现有 `text/plain` durable attachment，保留用户任务指令并提供“恢复到输入框”，不做自动摘要或语义筛选。
 - **演进审批可查阅**：左侧演进审批项可打开完整 detail/diff 审阅层，展示全文、scope/evidence、影响文件、action 摘要、理由历史和状态时间，并复用既有 CAS / `requires_human` / 拒绝理由审批契约。
+- **撤回分级**：Feishu `message_recalled_v1` 从 no-op 升级为机械撤回：尚在 bridge 入站队列、未被 worker claim 的消息直接物理移除；已 claim/已运行的消息不伪装“未发生”，而是按不可变 `feishu:<message_id>` 追加 `message.retracted` 事实，后续 JSON/read replay/fork 上下文统一投影为 `[RETRACTED]`，同时保留原始 `message.appended` 审计。撤回与 `/stop` 保持正交，不由程序擅自等价为中断。
 - **版本边界**：`v0.6.12` tag 保持不可移动；本版本建立新的 patch 边界，异常可回滚到 `v0.6.12`。
 
 ## v0.6.12 — Stable provider prefixes and cache-efficient working sets（2026-09-12）

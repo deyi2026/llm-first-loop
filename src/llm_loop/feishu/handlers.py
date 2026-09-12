@@ -236,6 +236,41 @@ class FeishuMessageHandler:
             return
         self._run_with_processing_actions(msg, self._run_text, text)
 
+    def handle_recall(self, fact: dict) -> dict:
+        """Apply one Feishu recall fact without equating recall with run cancellation."""
+        message_id = str(fact.get("message_id") or "")
+        if not message_id:
+            return {"status": "invalid_source", "session_id": "", "event_id": ""}
+        if bool(fact.get("queue_removed")):
+            result = {"status": "queue_withdrawn", "session_id": "", "event_id": ""}
+        else:
+            result = self._engine.session.retract_message_by_source_id(
+                f"feishu:{message_id}",
+                session_id_hint=str(fact.get("session_id_hint") or ""),
+                actor="unknown",  # SDK recalled_v1 exposes no actor/open_id; never fabricate one.
+                reason=f"feishu_recalled:{str(fact.get('recall_type') or 'unknown')}",
+                retracted_at=str(fact.get("recall_time") or ""),
+            )
+        try:
+            _write_audit_line(
+                self._audit_path,
+                {
+                    "ts": time.time(),
+                    "message_id": message_id,
+                    "kind": "message_recall",
+                    "chat_id": str(fact.get("chat_id") or ""),
+                    "sender_id": "",
+                    "detail": (
+                        f"status={result.get('status', 'unknown')};"
+                        f"recall_type={str(fact.get('recall_type') or '')};"
+                        f"session_id={str(result.get('session_id') or '')[:8]}"
+                    ),
+                },
+            )
+        except OSError as exc:
+            logger.warning("撤回审计落盘失败（fail-open）: %s", exc)
+        return result
+
     def _try_handle_approval_command(self, msg: FeishuMessage, text: str) -> bool:
         """EVO-20260817: 飞书文本指令审批（替代终端 evolve-review，方案 A）.
 
@@ -538,7 +573,16 @@ class FeishuMessageHandler:
             # agent_trace_leak 3.7: 人类输入通道签发 ingress 凭据（B2 双因子判定）
             from llm_loop.core.trace_leak.ingress_token import issue_ingress
 
-            result = self._engine.run(sid, text, ingress=issue_ingress("feishu"))
+            result = self._engine.run(
+                sid,
+                text,
+                ingress=issue_ingress("feishu"),
+                user_metadata=(
+                    {"human_turn_source_id": f"feishu:{msg.message_id}"}
+                    if msg.message_id
+                    else None
+                ),
+            )
         finally:
             if hasattr(self._engine, "set_action_observer"):
                 self._engine.set_action_observer(None)

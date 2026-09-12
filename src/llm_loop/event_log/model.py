@@ -17,6 +17,7 @@ from typing import Any
 
 EVENT_SESSION_CREATED = "session.created"
 EVENT_MESSAGE_APPENDED = "message.appended"
+EVENT_MESSAGE_RETRACTED = "message.retracted"
 EVENT_CONTEXT_COMPRESSED = "context.compressed"
 EVENT_MESSAGE_CACHE_COMPACTED = "message.cache_compacted"
 EVENT_HISTORY_COMPACTION = "history.compaction"
@@ -214,6 +215,19 @@ REGISTRY.register(
             "tool_calls": "assistant 工具声明",
             "reasoning_content": "assistant 思考链",
             "metadata": "截断/降级标注等",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_MESSAGE_RETRACTED,
+        version=1,
+        fields={
+            "source_id": "机械来源消息 ID（例如 feishu:<message_id>）",
+            "msg_seq": "目标 user 消息在会话中的序号（审计/一致性辅助）",
+            "actor": "撤回事件可观察到的发起者；未知时如实为 unknown",
+            "reason": "机械撤回原因/来源类型，不作语义判断",
+            "retracted_at": "上游撤回时间原值或本地 ISO 时间",
         },
     )
 )

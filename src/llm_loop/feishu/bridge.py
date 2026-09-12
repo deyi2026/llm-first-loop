@@ -211,6 +211,7 @@ class _WsConnector:
         notifier: InterruptionNotifier | None = None,
         store: CompensationStore | None = None,
         current_sid_fn: Callable[[], str] | None = None,
+        on_recall: Callable[[dict], Any] | None = None,
     ) -> None:
         self._config = config
         self._on_message = on_message
@@ -222,6 +223,13 @@ class _WsConnector:
         self._notifier = notifier
         self._store = store
         self._current_sid_fn = current_sid_fn
+        self._on_recall = on_recall
+        # Recall races are coordinated independently from the message queue lock. Once a
+        # worker claims an item it is no longer queue-withdrawable; later recall becomes an
+        # append-only declaration. Deferred facts retry after that worker finishes so the
+        # ingress event is guaranteed to exist before exact-source lookup.
+        self._retraction_lock = threading.Lock()
+        self._deferred_recall_facts: dict[str, dict] = {}
         self._stop = False
         self._reconnect_count = 0  # SDK on_reconnecting 计数（心跳可观测）
         self._lock_held_since: float | None = None  # SDK 锁首次观测为持有的时刻
@@ -266,7 +274,7 @@ class _WsConnector:
             .register_p2_im_message_message_read_v1(self._ignore_event)
             .register_p2_im_message_reaction_created_v1(self._ignore_event)
             .register_p2_im_message_reaction_deleted_v1(self._ignore_event)
-            .register_p2_im_message_recalled_v1(self._ignore_event)
+            .register_p2_im_message_recalled_v1(self._handle_recall_event)
             .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(self._ignore_event)
             .build()
         )
@@ -274,6 +282,81 @@ class _WsConnector:
     def _ignore_event(self, data, ctx=None) -> None:
         """已知无需处理事件的空处理器（已读回执/表情回复/进入会话），消除未注册告警."""
         logger.debug("飞书事件已忽略（无需处理类型）: %s", type(data).__name__)
+
+    @staticmethod
+    def _queued_message_id(payload: dict | None) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        event = payload.get("event") or {}
+        message = event.get("message") or {}
+        return str(message.get("message_id") or "")
+
+    def _remove_queued_message(self, message_id: str) -> bool:
+        """Physically remove not-yet-claimed receive events matching one Feishu message id."""
+        if not message_id:
+            return False
+        q = self._msg_queue
+        removed = 0
+        # queue.Queue has no public arbitrary-delete API. Its mutex + deque are the standard
+        # mechanical primitives behind get/put; mutate under that same mutex and preserve
+        # unfinished_tasks/not_full accounting. No message content is inspected.
+        with q.mutex:
+            kept = []
+            while q.queue:
+                item = q.queue.popleft()
+                if item is not None and self._queued_message_id(item) == message_id:
+                    removed += 1
+                    continue
+                kept.append(item)
+            q.queue.extend(kept)
+            if removed:
+                q.unfinished_tasks = max(0, q.unfinished_tasks - removed)
+                q.not_full.notify_all()
+        return removed > 0
+
+    def _dispatch_recall_fact(self, fact: dict) -> dict | None:
+        callback = self._on_recall
+        if callback is None:
+            return None
+        try:
+            result = callback(dict(fact))
+            return result if isinstance(result, dict) else None
+        except Exception as exc:  # noqa: BLE001 — recall callback must not break WS loop
+            logger.exception("飞书撤回处理异常（fail-open）: %s", exc)
+            return {"status": "callback_error"}
+
+    def _handle_recall_event(self, data, ctx=None) -> None:
+        """Handle im.message.recalled_v1 as queue withdrawal or durable declaration."""
+        try:
+            import lark_oapi as lark
+
+            raw = lark.JSON.marshal(data)
+            payload = raw if isinstance(raw, dict) else json.loads(raw or "{}")
+            event = payload.get("event") if isinstance(payload, dict) else None
+            event = event if isinstance(event, dict) else {}
+            message_id = str(event.get("message_id") or "")
+            if not message_id:
+                logger.warning("飞书撤回事件缺少 message_id，无法机械定位")
+                return
+
+            queue_removed = self._remove_queued_message(message_id)
+            with self._retraction_lock:
+                processing = self._processing_msg_id == message_id
+            sid_hint = self._current_sid() if processing else ""
+            fact = {
+                "message_id": message_id,
+                "chat_id": str(event.get("chat_id") or ""),
+                "recall_time": str(event.get("recall_time") or ""),
+                "recall_type": str(event.get("recall_type") or ""),
+                "queue_removed": queue_removed,
+                "session_id_hint": sid_hint,
+            }
+            result = self._dispatch_recall_fact(fact)
+            if not queue_removed and (result or {}).get("status") in {"not_found", "write_failed"}:
+                with self._retraction_lock:
+                    self._deferred_recall_facts[message_id] = fact
+        except Exception as exc:  # noqa: BLE001 — callback exception must not break SDK loop
+            logger.exception("飞书撤回事件解析异常（fail-open）: %s", exc)
 
     def _handle_event(self, data, ctx=None) -> None:
         """lark 事件对象 → payload dict → 提交队列（P1-2-R2: 立即返回，不阻塞 SDK loop）.
@@ -513,8 +596,9 @@ class _WsConnector:
         header = payload.get("header") or {}
         event = payload.get("event") or {}
         message = event.get("message") or {}
-        mid = message.get("message_id", "")
-        self._processing_msg_id = mid or header.get("event_id", "")
+        mid = str(message.get("message_id", "") or "")
+        with self._retraction_lock:
+            self._processing_msg_id = mid or str(header.get("event_id", "") or "")
         self._processing_since = time.time()
         self._processing_timeout_reported = False
         # 回复目标（对齐 handlers reply_receive_id 推导：chat_id 优先，私聊用 sender open_id）
@@ -533,9 +617,25 @@ class _WsConnector:
         except Exception as exc:  # noqa: BLE001 — worker 永不因单条消息崩溃
             logger.exception("飞书消息处理异常（worker）: %s", exc)
         finally:
-            self._processing_msg_id = ""
+            deferred = None
+            with self._retraction_lock:
+                if mid:
+                    deferred = self._deferred_recall_facts.pop(mid, None)
+                self._processing_msg_id = ""
             self._processing_since = None
             self._last_processed_ts = time.time()
+            if deferred is not None:
+                # The worker has now crossed a terminal boundary, so the exact ingress event
+                # is durable and global source-id lookup can no longer race admission.
+                deferred = dict(deferred)
+                deferred["session_id_hint"] = ""
+                result = self._dispatch_recall_fact(deferred)
+                if (result or {}).get("status") in {"not_found", "write_failed"}:
+                    logger.warning(
+                        "飞书撤回声明延迟重试仍未落盘: message_id=%s status=%s",
+                        mid,
+                        (result or {}).get("status", "unknown"),
+                    )
 
     # ── M47 看门狗（假死兜底）──
     def _install_sdk_callbacks(self, client: Any) -> None:
@@ -802,6 +902,7 @@ class FeishuWsBridge:
             notifier=self._notifier,
             store=self._compensation_store,
             current_sid_fn=self._current_processing_sid,
+            on_recall=self._on_message_recalled,
         )
         self._thread = threading.Thread(target=self._run_loop, name="feishu-ws", daemon=True)
         self._thread.start()
@@ -921,6 +1022,17 @@ class FeishuWsBridge:
         }
         hint = hints.get(rec.interrupt_cause, hints[CRASH])
         return f"（程序提示）上一条任务处理未完成（原因：{rec.interrupt_cause}）。{hint}"
+
+    def _on_message_recalled(self, fact: dict) -> dict:
+        """Delegate mechanical recall facts to the handler; never infer user intent."""
+        handler = self._handler
+        if handler is None:
+            return {"status": "handler_unavailable"}
+        fn = getattr(handler, "handle_recall", None)
+        if not callable(fn):
+            return {"status": "handler_unavailable"}
+        result = fn(fact)
+        return result if isinstance(result, dict) else {"status": "unknown"}
 
     def is_healthy(self) -> bool:
         return self._running and self._thread is not None and self._thread.is_alive()

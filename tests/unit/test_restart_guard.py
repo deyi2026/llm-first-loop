@@ -64,7 +64,7 @@ class _StubEngine:
     def _record_action(self, phase: str, action_type: str, detail: str) -> None:
         self.audits.append((phase, action_type, detail))
 
-    def run(self, sid: str, text: str, ingress=None):  # noqa: ANN001, ANN201
+    def run(self, sid: str, text: str, ingress=None, user_metadata=None):  # noqa: ANN001, ANN201
         self.audits.append(("run", "run_started", sid))  # run 启动痕迹（6c 审计序锚点）
         self.ran.append((sid, text))
         return SimpleNamespace(

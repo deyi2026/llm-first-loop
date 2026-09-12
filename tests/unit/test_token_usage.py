@@ -166,7 +166,7 @@ def test_feishu_footer_includes_tokens(tmp_path) -> None:
     class _StubEngine:
         session = session_store
 
-        def run(self, sid, text, model=None, reasoning_effort=None, *, ingress=None):
+        def run(self, sid, text, model=None, reasoning_effort=None, *, ingress=None, user_metadata=None):
             return SimpleNamespace(
                 session_id=sid,
                 final_answer="回答",

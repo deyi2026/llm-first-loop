@@ -195,6 +195,7 @@ def test_event_handler_registers_noop_processors(monkeypatch):
     import lark_oapi as lark
 
     registered: list[str] = []
+    callbacks: dict[str, object] = {}
 
     class _FakeBuilder:
         def register_p2_im_message_receive_v1(self, fn):
@@ -215,6 +216,7 @@ def test_event_handler_registers_noop_processors(monkeypatch):
 
         def register_p2_im_message_recalled_v1(self, fn):
             registered.append("recalled")
+            callbacks["recalled"] = fn
             return self
 
         def register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(self, fn):
@@ -237,9 +239,11 @@ def test_event_handler_registers_noop_processors(monkeypatch):
     bridge = _WsConnector(config=_cfg(), on_message=Mock(), has_token=lambda: True)
     handler = bridge._build_event_handler()
     assert handler == "handler"
-    # 已读回执 / 表情创建 / 表情删除 / 撤回消息 / 进入会话 均注册 no-op（cf6d9a78 + M51 补 recalled）
-    for expected in ("message_read", "reaction_created", "reaction_deleted", "recalled", "access_event"):
+    # 已读/表情/进入会话仍为 no-op；撤回已升级为真实机械处理器。
+    for expected in ("message_read", "reaction_created", "reaction_deleted", "access_event"):
         assert expected in registered, f"{expected} 未注册 no-op 处理器"
+    assert "recalled" in registered
+    assert getattr(callbacks["recalled"], "__name__", "") == "_handle_recall_event"
     # 消息接收仍走真实处理
     assert "receive" in registered
 

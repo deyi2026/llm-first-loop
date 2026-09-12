@@ -147,7 +147,12 @@ class Message:
             return d
         wire_content = self.content
         if self.role == "user":
-            wire_content = _project_user_attachments(self.content, self.metadata or {})
+            from llm_loop.core.message_retraction import RETRACTED_MARKER, is_retracted_metadata
+
+            if is_retracted_metadata(self.metadata):
+                wire_content = RETRACTED_MARKER
+            else:
+                wire_content = _project_user_attachments(self.content, self.metadata or {})
         d: dict = {"role": self.role, "content": wire_content}
         if self.role == "assistant" and self.tool_calls:
             d["tool_calls"] = self.tool_calls

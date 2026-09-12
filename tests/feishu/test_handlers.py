@@ -806,7 +806,7 @@ def test_run_text_footer_tool_count(build_test_engine, tmp_path, monkeypatch):
 
         # agent_trace_leak 3.7: handlers._run_text 以 ingress= kwarg 调用
         # （生产签名见 lifecycle.run），Stub 对齐签名
-        def run(self, sid, text, model=None, reasoning_effort=None, *, ingress=None):
+        def run(self, sid, text, model=None, reasoning_effort=None, *, ingress=None, user_metadata=None):
             return SimpleNamespace(
                 session_id=sid,
                 final_answer="带工具回答",
@@ -848,7 +848,7 @@ def test_run_text_footer_no_tool_no_count(build_test_engine, tmp_path):
     class _StubEngine:
         session = None
 
-        def run(self, sid, text, model=None, reasoning_effort=None, *, ingress=None):
+        def run(self, sid, text, model=None, reasoning_effort=None, *, ingress=None, user_metadata=None):
             return SimpleNamespace(
                 session_id=sid,
                 final_answer="无工具回答",

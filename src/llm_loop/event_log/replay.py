@@ -17,6 +17,7 @@ from __future__ import annotations
 from llm_loop.event_log.model import (
     EVENT_HISTORY_COMPACTION_STATE_RESET,
     EVENT_MESSAGE_CACHE_COMPACTED,
+    EVENT_MESSAGE_RETRACTED,
     REGISTRY,
     Event,
 )
@@ -149,6 +150,30 @@ def replay_session(events: list[Event]) -> dict:
             messages_by_index[idx] = msg
         elif event.type == "session.meta_changed":
             _apply_meta_change(view, event.payload)
+        elif event.type == EVENT_MESSAGE_RETRACTED:
+            from llm_loop.core.message_retraction import (
+                HUMAN_TURN_SOURCE_ID_KEY,
+                RETRACTED_MARKER,
+                project_retracted_metadata,
+            )
+
+            source_id = str(event.payload.get("source_id") or "")
+            matches = [
+                message
+                for message in messages_by_index.values()
+                if str((message.get("metadata") or {}).get(HUMAN_TURN_SOURCE_ID_KEY) or "")
+                == source_id
+                and str(message.get("role") or "") == "user"
+            ]
+            if source_id and matches:
+                for target in matches:
+                    target["content"] = RETRACTED_MARKER
+                    target["metadata"] = project_retracted_metadata(
+                        target.get("metadata"), event.payload, event_id=event.event_id
+                    )
+                # A model-authored working-state snapshot may carry facts from the withdrawn
+                # turn.  It is exact-transcript state, so mechanically invalidate it.
+                view["working_state_checkpoint"] = None
         elif event.type == "context.compressed":
             compressed_refs.append(
                 {
