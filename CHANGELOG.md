@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.13 — Web reviewability and release single-writer boundary（2026-09-12）
+
+- **Release 单写者**：退役会在 main push 时改写既有 draft 的 Release Drafter；tag 触发的 `release.yml` 成为唯一 GitHub Release writer，并继续使用 GitHub 自动生成发布说明。
+- **长粘贴 Composer**：输入框可机械扩展至 `min(40vh, 420px)`；单次粘贴 ≥20,000 字符时原文无损转为现有 `text/plain` durable attachment，保留用户任务指令并提供“恢复到输入框”，不做自动摘要或语义筛选。
+- **演进审批可查阅**：左侧演进审批项可打开完整 detail/diff 审阅层，展示全文、scope/evidence、影响文件、action 摘要、理由历史和状态时间，并复用既有 CAS / `requires_human` / 拒绝理由审批契约。
+- **版本边界**：`v0.6.12` tag 保持不可移动；本版本建立新的 patch 边界，异常可回滚到 `v0.6.12`。
+
 ## v0.6.12 — Stable provider prefixes and cache-efficient working sets（2026-09-12）
 
 - **Sticky compaction frontier**：修复 active run 中 provider-view receipt 副本与 canonical Session 的 compaction marker 分裂；`message.cache_compacted` / `history.compaction_state_reset` 现在在 live Session 与 event replay 保持同一机械语义，避免同一源消息在后续 build 被重复 compact/reset、反复改写 provider 前缀。

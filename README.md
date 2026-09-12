@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.12 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.13 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
 
 大模型是核心，所有动作围绕大模型展开。架构核心 = **消息进 → 理解 → 行动 → 真诚回答 → 记住**。
 
@@ -110,7 +110,7 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 - **人工审批流**（T5a）：EXEC_MODE 拦截项在 CLI 交互模式可经终端确认放行（`_cli_approval_prompt`，无终端 fail-closed 拒绝）；审批审计落盘 `data/audit/approval_audit.jsonl`（decision/tool/参数摘要，不含密钥）；灾难性安全硬阻断不可审批
 - **symlink 写防护**（T5b）：edit_file 写路径含符号链接（自身/父目录）拒绝写入防越界（fail-closed + realpath 引导）；read_file 读 symlink 如实标注不拒绝
 - **评测体系**（T4）：固定评测集 `tests/eval_sets/scenarios_v1.json`（6 场景，判定口径源自内部实证基线）+ 运行器 `scripts/run_eval.py`（真实 LLM / `--dry` 管道验证，判定 + Wilson CI + 报告落盘 `docs/metrics/`）+ CI nightly 自动运行
-- **CI + 版本**（T7/B11）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；语义化版本 v0.6.12；Release Drafter（PR 标题自动归类 changelog）+ tag 触发门禁复核 + Release 草稿（发布节奏制度化）
+- **CI + 版本**（T7/B11）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；语义化版本 v0.6.13；tag 触发门禁复核 + 单写者 Release 草稿 + GitHub 自动生成发布说明（发布节奏制度化）
 - **插件化 Skill**（B3）：`skills/<name>/SKILL.md` 目录自动扫描（`SKILLS_DIR`，默认 ./skills），AI 经 `skill_list`/`skill_load` 发现并加载外部技能执行——外部开发者零代码扩展框架能力；损坏/缺失文件 fail-open 跳过；仓库自带示例技能（`skills/`：notebook-session/incident-report）可直接 `skill_list` 发现体验
 - **Method Learning v1**：`search_records(kind=method)` 渐进发现/精确水合，支持 Teacher/Candidate/qualified/active/hold 等生命周期与独立 qualification；运行时 candidate 默认写 `data/methods/`，不自动注入 prompt。`METHOD_REFLECTION_MODE=auto` 可在 run 完成后基于可观察 friction 做隔离 self-distill，默认 `off`。
 - **Learning Plane 装配**（DESIGN-20260910 §6）：`LEARNING_PLANE_ENABLED=1` 时 `engine.learning_journal` 注入（工厂/直接构造两路径反查断链=0），episode 完成后 LearningJournal 落 durable 队列，LearningPlane 后台消费执行 ReflectionRun（前台运行让位：进程内注册表 + 跨进程 `*.run.lock` 探测，requeue 不忙等），candidate 经 MethodStore 写入并带运行时推导 provenance（真实 episode ref + learning job ref）；默认关闭零行为变化；method qualification 的 verdict（pass/fail/mixed/insufficient）判定权在模型——程序只证 episode 身份与 provenance（qualification episode ≠ source episode 防自证），旧 verdict ≠ 当前源真相，适用性由模型按当前任务自主判断
