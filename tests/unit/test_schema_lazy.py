@@ -63,6 +63,16 @@ def test_schemas_lazy_index_compact():
         assert d["parameters"]["required"] == ["a"]
 
 
+def test_smx_compact_contract_keeps_tristate_wait_semantics():
+    reg = ToolRegistry()
+    reg.register(_FakeTool("smx_perceive"))
+    row = reg.schemas(lazy=True)[0]
+    assert "satisfied=true/false/null" in row["description"]
+    assert "sample_count" in row["description"]
+    assert "observer_error_count" in row["description"]
+    assert "只感知不执行" in row["description"]
+
+
 def test_lazy_index_smaller_than_full():
     """lazy 索引体积显著小于全量（期望效果：上下文占用可控）."""
     reg = _reg()

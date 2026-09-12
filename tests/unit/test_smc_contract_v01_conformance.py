@@ -72,7 +72,7 @@ EXPECTED_MATRIX = {
     "P1": "PASS",
     "P2": "GAP",
     "P3": "PASS",
-    "P4": "GAP",
+    "P4": "PASS",
     "P5": "GAP",
     "P6": "PASS",
     "P7": "GAP",
@@ -286,6 +286,7 @@ def probe_p4(tmp_path: Path) -> ProbeResult:
         tool.execute(action="wait", file_exists=str(existing), timeout=0.5, interval=0.1)
     )
     assert satisfied["satisfied"] is True
+    assert satisfied["predicate_result"]["result"] == "satisfied"
 
     timeout_result = _json_result(
         tool.execute(
@@ -296,11 +297,16 @@ def probe_p4(tmp_path: Path) -> ProbeResult:
         )
     )
     assert timeout_result["satisfied"] is False
+    assert timeout_result["predicate_result"]["result"] == "unsatisfied"
+    assert timeout_result["evaluation_mode"] == "polling"
+    assert timeout_result["interval"] == 0.1
+    assert timeout_result["sample_count"] >= 2
+    assert timeout_result["observer_error_count"] == 0
+    assert timeout_result["predicate_result"]["sampling_semantics"] == "discrete_samples_only"
 
     denied = tool.execute(action="wait", port_open=80, host="example.com", timeout=0.5)
     assert denied.status is ToolResultStatus.FAILURE
 
-    # Observer error is currently folded into ordinary false/timeout.
     directory = tmp_path / "not-a-file"
     directory.mkdir()
     observer_error = _json_result(
@@ -311,10 +317,12 @@ def probe_p4(tmp_path: Path) -> ProbeResult:
             interval=0.1,
         )
     )
-    assert observer_error["satisfied"] is False
+    assert observer_error["satisfied"] is None
+    assert observer_error["predicate_result"]["result"] == "indeterminate"
+    assert observer_error["observer_error_count"] == observer_error["sample_count"]
+    assert observer_error["predicate_result"]["coverage_complete"] is False
     assert "读取失败" in observer_error["detail"]
 
-    # Partial coverage is also currently folded into false: needle is beyond FC_CAP.
     cap = int(tool._load_smx().FC_CAP)  # noqa: SLF001
     capped_file = tmp_path / "capped.bin"
     with capped_file.open("wb") as fh:
@@ -328,22 +336,22 @@ def probe_p4(tmp_path: Path) -> ProbeResult:
             interval=0.1,
         )
     )
-    assert capped["satisfied"] is False
+    assert capped["satisfied"] is None
+    assert capped["predicate_result"]["result"] == "indeterminate"
+    assert capped["predicate_result"]["coverage_complete"] is False
     assert "capped" in capped["detail"]
 
-    sampling_keys = {"evaluation_mode", "interval", "sample_count", "observer_error_count"}
-    assert sampling_keys.isdisjoint(timeout_result)
     return ProbeResult(
         "P4",
-        "GAP",
-        "Wait works mechanically, but tri-state observer errors, capped-negative honesty and sampling facts are missing.",
+        "PASS",
+        "Wait exposes tri-state predicate evaluation, partial-negative honesty and polling sampling facts.",
         {
             "satisfied_path": True,
-            "timeout_is_observation": True,
+            "timeout_is_unsatisfied_observation": True,
             "nonloopback_rejected": True,
-            "observer_error_is_indeterminate": False,
-            "partial_negative_is_indeterminate": False,
-            "sampling_facts_visible": False,
+            "observer_error_is_indeterminate": True,
+            "partial_negative_is_indeterminate": True,
+            "sampling_facts_visible": True,
         },
     )
 

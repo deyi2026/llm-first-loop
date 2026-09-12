@@ -542,11 +542,44 @@ def bg_scope_meta(bg):
         return []
 
 
+def _wait_sample(result, detail, *, coverage_complete=True, observer_error=False):
+    """One mechanical predicate observation; no task-level interpretation."""
+    return {
+        "result": result,
+        "satisfied": True if result == "satisfied" else (False if result == "unsatisfied" else None),
+        "detail": detail,
+        "coverage_complete": bool(coverage_complete),
+        "observer_error": bool(observer_error),
+    }
+
+
 def check_wait(args):
     if args.file_exists:
-        return os.path.exists(args.file_exists), ("file_exists: %s" % args.file_exists)
+        try:
+            os.stat(args.file_exists)
+        except FileNotFoundError:
+            return _wait_sample("unsatisfied", f"file_exists: {args.file_exists}")
+        except OSError as e:
+            return _wait_sample(
+                "indeterminate",
+                f"file_exists: 观察失败 {args.file_exists} ({e.errno})",
+                coverage_complete=False,
+                observer_error=True,
+            )
+        return _wait_sample("satisfied", f"file_exists: {args.file_exists}")
     if args.file_gone:
-        return not os.path.exists(args.file_gone), ("file_gone: %s" % args.file_gone)
+        try:
+            os.stat(args.file_gone)
+        except FileNotFoundError:
+            return _wait_sample("satisfied", f"file_gone: {args.file_gone}")
+        except OSError as e:
+            return _wait_sample(
+                "indeterminate",
+                f"file_gone: 观察失败 {args.file_gone} ({e.errno})",
+                coverage_complete=False,
+                observer_error=True,
+            )
+        return _wait_sample("unsatisfied", f"file_gone: {args.file_gone}")
     if args.file_contains:
         p, text = args.file_contains
         try:
@@ -554,17 +587,37 @@ def check_wait(args):
                 data = f.read(FC_CAP + 1)
             capped = len(data) > FC_CAP
             ok = text in data[:FC_CAP].decode("utf-8", errors="replace")
-            return ok, ("file_contains: %s :: %r%s" % (
-                p, text, " (capped 8MiB, 尾部未检)" if capped else ""))
+            detail = (
+                f"file_contains: {p} :: {text!r}"
+                f"{' (capped 8MiB, 尾部未检)' if capped else ''}"
+            )
+            if ok:
+                # 正向 witness 足以证明 contains，即使尾部未扫描；coverage 事实仍如实为 partial。
+                return _wait_sample("satisfied", detail, coverage_complete=not capped)
+            if capped:
+                # 未命中 + 尾部未观察不能证明“不包含”。
+                return _wait_sample("indeterminate", detail, coverage_complete=False)
+            return _wait_sample("unsatisfied", detail)
         except OSError as e:
-            return False, ("file_contains: 读取失败 %s (%s)" % (p, e.errno))
+            return _wait_sample(
+                "indeterminate",
+                f"file_contains: 读取失败 {p} ({e.errno})",
+                coverage_complete=False,
+                observer_error=True,
+            )
     if args.port_open is not None:
         try:
             with socket.create_connection((args.host, args.port_open), timeout=1.0):
-                return True, ("port_open: %s:%s" % (args.host, args.port_open))
+                return _wait_sample("satisfied", f"port_open: {args.host}:{args.port_open}")
         except OSError as e:
-            return False, ("port_open: %s:%s (%s)" % (args.host, args.port_open, e.__class__.__name__))
-    return False, "no_predicate"
+            # loopback connect 的拒绝/超时是本次离散 probe 的有效 negative observation。
+            return _wait_sample(
+                "unsatisfied",
+                f"port_open: {args.host}:{args.port_open} ({e.__class__.__name__})",
+            )
+    return _wait_sample(
+        "indeterminate", "no_predicate", coverage_complete=False, observer_error=True
+    )
 
 
 def cmd_wait(args):
@@ -578,26 +631,53 @@ def cmd_wait(args):
             "port_open": args.port_open, "host": args.host}
     t0 = time.time()
     deadline = t0 + args.timeout
-    ok, detail = False, ""
+    sample_count = 0
+    observer_error_count = 0
+    sample = _wait_sample(
+        "indeterminate", "not_sampled", coverage_complete=False, observer_error=True
+    )
     while True:
-        ok, detail = check_wait(args)
-        if ok or time.time() >= deadline:
+        sample = check_wait(args)
+        sample_count += 1
+        if sample["observer_error"]:
+            observer_error_count += 1
+        now = time.time()
+        if sample["result"] == "satisfied" or now >= deadline:
             break
-        time.sleep(args.interval)
+        time.sleep(min(args.interval, max(0.0, deadline - now)))
     waited_ms = round((time.time() - t0) * 1000, 1)
+    observed_at = now_iso()
+    deadline_at = datetime.fromtimestamp(deadline).astimezone().isoformat(timespec="milliseconds")
     root = os.path.abspath(args.root or os.getcwd())
     run_id = new_run_id()
     rd = run_dir(root, run_id)
+    predicate_result = {
+        "result": sample["result"],
+        "satisfied": sample["satisfied"],
+        "evaluation_mode": "polling",
+        "observed_at": observed_at,
+        "deadline": deadline_at,
+        "interval": args.interval,
+        "sample_count": sample_count,
+        "observer_error_count": observer_error_count,
+        "coverage_complete": sample["coverage_complete"],
+        "sampling_semantics": "discrete_samples_only",
+    }
     rcp = {"schema": SCHEMA, "kind": "wait", "run_id": run_id,
            "condition": json.dumps(cond, ensure_ascii=False),
-           "satisfied": ok, "waited_ms": waited_ms, "timeout_s": args.timeout,
-           "detail": detail, "at": now_iso(), "diff": None,
-           "note": "wait 为纯观察动作：不修改世界状态，无 diff；smx 仅读取元数据/探测端口"}
+           "satisfied": sample["satisfied"], "waited_ms": waited_ms, "timeout_s": args.timeout,
+           "detail": sample["detail"], "at": observed_at, "diff": None,
+           "evaluation_mode": "polling", "interval": args.interval,
+           "sample_count": sample_count, "observer_error_count": observer_error_count,
+           "predicate_result": predicate_result,
+           "note": ("wait 为纯观察动作：不修改世界状态，无 diff；polling 为离散采样，"
+                    "unsatisfied 只表示有效采样点未观察到成立，不证明采样间隙从未瞬时成立")}
     rpath = os.path.join(rd, "receipt.json")
     with open(rpath, "w", encoding="utf-8") as f:
         json.dump(rcp, f, sort_keys=True, ensure_ascii=False, indent=1)
     emit(rcp, args.json, rpath)
-    return 0 if ok else 2
+    # 兼容既有 CLI: 仅 satisfied 返回 0；unsatisfied/indeterminate 都是 predicate 非成功，返回 2。
+    return 0 if sample["result"] == "satisfied" else 2
 
 
 def cmd_show(args):

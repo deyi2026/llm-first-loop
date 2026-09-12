@@ -1,6 +1,6 @@
 """EVO-20260912-10818cb5 胶水层测试: smx_perceive 三面（wait/snapshot-diff/receipt）+ 安全拒绝.
 
-冻结实现 tools/smx/smx.py 不改；本文件只测胶水层:
+SMX focused v1.2 已封盘后，本文件同时覆盖 Domain-0 wait 观察语义与 LFL 胶水层:
 - wait 满足/超时语义（超时=正常观测 satisfied=false，非工具故障）
 - loopback 与 run_id 白名单的胶水层预拒绝（smx 内部还有第二道）
 - snapshot/diff 净变更（复用冻结 take_snapshot/diff_pair）
@@ -50,6 +50,82 @@ def test_wait_timeout_is_observation_not_failure(tool, tmp_path):
     assert p["satisfied"] is False and p.get("waited_ms", 0) >= 500
 
 
+def test_wait_observer_error_is_indeterminate_with_sampling_facts(tool, tmp_path):
+    directory = tmp_path / "not-a-file"
+    directory.mkdir()
+    res = tool.execute(
+        action="wait",
+        file_contains=[str(directory), "needle"],
+        timeout=0.5,
+        interval=0.1,
+        root=str(tmp_path),
+    )
+    assert res.status == ToolResultStatus.SUCCESS
+    p = _payload(res)
+    assert p["satisfied"] is None
+    assert p["predicate_result"]["result"] == "indeterminate"
+    assert p["evaluation_mode"] == "polling"
+    assert p["interval"] == 0.1
+    assert p["sample_count"] >= 1
+    assert p["observer_error_count"] == p["sample_count"]
+    assert p["predicate_result"]["observer_error_count"] == p["observer_error_count"]
+    assert "读取失败" in p["detail"]
+
+
+def test_wait_capped_negative_is_indeterminate_but_positive_witness_is_satisfied(tool, tmp_path):
+    cap = int(tool._load_smx().FC_CAP)  # noqa: SLF001
+    target = tmp_path / "large.bin"
+    with target.open("wb") as fh:
+        fh.write(b"WITNESS\n")
+        fh.write(b"A" * cap)
+        fh.write(b"NEEDLE_AFTER_CAP")
+
+    negative = _payload(
+        tool.execute(
+            action="wait",
+            file_contains=[str(target), "NEEDLE_AFTER_CAP"],
+            timeout=0.5,
+            interval=0.1,
+            root=str(tmp_path),
+        )
+    )
+    assert negative["satisfied"] is None
+    assert negative["predicate_result"]["result"] == "indeterminate"
+    assert negative["predicate_result"]["coverage_complete"] is False
+    assert "capped" in negative["detail"]
+
+    positive = _payload(
+        tool.execute(
+            action="wait",
+            file_contains=[str(target), "WITNESS"],
+            timeout=0.5,
+            interval=0.1,
+            root=str(tmp_path),
+        )
+    )
+    assert positive["satisfied"] is True
+    assert positive["predicate_result"]["result"] == "satisfied"
+    assert positive["predicate_result"]["coverage_complete"] is False
+
+
+def test_wait_timeout_reports_unsatisfied_sampling_semantics(tool, tmp_path):
+    p = _payload(
+        tool.execute(
+            action="wait",
+            file_exists=str(tmp_path / "never.flag"),
+            timeout=0.5,
+            interval=0.1,
+            root=str(tmp_path),
+        )
+    )
+    assert p["satisfied"] is False
+    assert p["predicate_result"]["result"] == "unsatisfied"
+    assert p["evaluation_mode"] == "polling"
+    assert p["sample_count"] >= 2
+    assert p["observer_error_count"] == 0
+    assert p["predicate_result"]["sampling_semantics"] == "discrete_samples_only"
+
+
 def test_wait_nonloopback_host_rejected(tool):
     res = tool.execute(action="wait", port_open=80, host="example.com", timeout=1)
     assert res.status == ToolResultStatus.FAILURE and "安全拒绝" in res.content
@@ -63,6 +139,13 @@ def test_wait_two_predicates_rejected(tool, tmp_path):
 def test_wait_no_command_surface(tool):
     assert "command" not in json.dumps(tool.parameters["properties"])
     assert "cmd" not in tool.parameters["properties"]
+
+
+def test_wait_description_exposes_tristate_and_sampling_semantics(tool):
+    assert "satisfied=true/false/null" in tool.description
+    assert "sample_count" in tool.description
+    assert "observer_error_count" in tool.description
+    assert "采样间隙" in tool.description
 
 
 # ---------- snapshot / diff ----------

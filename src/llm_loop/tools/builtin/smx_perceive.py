@@ -48,8 +48,10 @@ class SmxPerceiveTool:
     name = "smx_perceive"
     description = (
         "smx 感知层工具（opt-in，默认不注册；仅感知不执行）。四动作: "
-        "wait=条件谓词轮询（file_exists/file_gone/file_contains/port_open，仅 loopback，满足即返回回执，"
-        "超时返回 satisfied=false 不算失败）；snapshot=目录树快照落盘返回 snap_id；"
+        "wait=条件谓词离散轮询（file_exists/file_gone/file_contains/port_open，仅 loopback）；"
+        "satisfied=true/false/null 分别表示满足/有效采样至超时未满足/观察错误或覆盖不足而不可判，"
+        "回执给 interval/sample_count/observer_error_count，false 不证明采样间隙从未瞬时成立；"
+        "snapshot=目录树快照落盘返回 snap_id；"
         "diff=快照 vs 当前（或两个快照）净变更；receipt=按 run_id 查 smx 回执摘要。"
         "何时用: 后台命令启动后等待完成标志/端口就绪（替代 sleep+重读）、命令前后净变更取证、查询 smx 回执。"
         "执行动作（跑命令）一律走 execute_command，本工具不执行任何命令。"
