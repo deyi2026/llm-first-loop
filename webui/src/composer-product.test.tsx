@@ -257,6 +257,89 @@ describe("product composer", () => {
     expect(ta.value).not.toContain("img");
   });
 
+  it("超长文本粘贴无损转为附件，输入框指令不被重复发送", async () => {
+    let uploadFilename = "";
+    let uploadData = "";
+    let sentBody: Record<string, unknown> | null = null;
+    vi.stubGlobal("fetch", baseFetch((url, init) => {
+      if (url.includes("/api/v1/upload")) {
+        const uploadBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        uploadFilename = String(uploadBody.filename ?? "");
+        uploadData = String(uploadBody.data ?? "");
+        return new Response(JSON.stringify({
+          status: "ok",
+          attachment_ref: REF_A,
+          source_filename: uploadFilename,
+          content_type: "text",
+          size_bytes: 20_000,
+        }), { status: 200 });
+      }
+      if (url.includes("/api/v1/chat/stream")) {
+        sentBody = JSON.parse(String(init?.body ?? "{}"));
+        return new Response(doneStream(), { status: 200 });
+      }
+      return undefined;
+    }));
+    render(<Composer />);
+    const ta = screen.getByTestId("composer-input") as HTMLTextAreaElement;
+    const longText = "x".repeat(20_000);
+    fireEvent.change(ta, { target: { value: "请分析这个附件" } });
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    fireEvent.paste(ta, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => type === "text/plain" ? longText : "",
+      },
+    });
+
+    await waitFor(() => expect(uploadFilename).not.toBe(""));
+    expect(uploadFilename).toMatch(/^pasted-text-\d+\.txt$/);
+    expect(uploadData).toBe(btoa(longText));
+    expect(ta.value).toBe("请分析这个附件");
+    expect(screen.getByTestId("composer-hint").textContent).toContain("已作为文本附件添加");
+    await waitFor(() => expect(screen.getByText(/^pasted-text-/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("发送"));
+    await waitFor(() => expect(sentBody).not.toBeNull());
+    expect(sentBody).toMatchObject({
+      message: "请分析这个附件",
+      attachments: [{ ref: REF_A }],
+    });
+    expect(JSON.stringify(sentBody)).not.toContain(longText);
+  });
+
+  it("超长粘贴附件可撤销并把原文恢复到当前光标位置", async () => {
+    vi.stubGlobal("fetch", baseFetch((url) => {
+      if (url.includes("/api/v1/upload")) {
+        return new Response(JSON.stringify({
+          status: "ok",
+          attachment_ref: REF_A,
+          source_filename: "pasted-text.txt",
+          content_type: "text",
+          size_bytes: 20_000,
+        }), { status: 200 });
+      }
+      return undefined;
+    }));
+    render(<Composer />);
+    const ta = screen.getByTestId("composer-input") as HTMLTextAreaElement;
+    const longText = "y".repeat(20_000);
+    fireEvent.change(ta, { target: { value: "任务：" } });
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    fireEvent.paste(ta, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => type === "text/plain" ? longText : "",
+      },
+    });
+    await waitFor(() => expect(screen.getByText("恢复到输入框")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("恢复到输入框"));
+    await waitFor(() => expect(ta.value).toBe(`任务：${longText}`));
+    expect(screen.queryByText("恢复到输入框")).toBeNull();
+    expect(screen.getByTestId("composer-hint").textContent).toContain("已恢复到输入框");
+  });
+
   it("超过10MB在浏览器端直接报错且不发 upload 请求", async () => {
     let uploadCalls = 0;
     vi.stubGlobal("fetch", baseFetch((url) => {

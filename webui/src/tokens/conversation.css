@@ -844,7 +844,8 @@
   font-size: 14px;
   line-height: 22px;
   color: var(--dsw-alias-label-primary);
-  max-height: 180px;
+  max-height: min(40vh, 420px);
+  overflow-y: auto;
 }
 
 .v2-composer-input::placeholder {
@@ -932,6 +933,20 @@
   height: 24px;
   border-radius: 4px;
   object-fit: cover;
+}
+
+.v2-attachment-restore {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-brand-primary-new-color);
+  font: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.v2-attachment-restore:hover {
+  text-decoration: underline;
 }
 
 .v2-attachment-name {

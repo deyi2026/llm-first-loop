@@ -335,14 +335,19 @@ describe("Composer", () => {
     });
     render(<Composer />);
     const ta = screen.getByTestId("composer-input") as HTMLTextAreaElement;
-    // 模拟粘贴大内容 → autoGrow 增高
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", { value: 1000, configurable: true });
+    Object.defineProperty(ta, "scrollHeight", { value: 800, configurable: true });
+    // 中等长度内容仍留在 textarea，且可扩到 40vh（本例 400px），不再卡死在旧 180px。
     fireEvent.change(ta, { target: { value: "长内容\n".repeat(30) } });
+    expect(ta.style.height).toBe("400px");
     // 发送后高度应复位（空内容 → 内联高度清除，恢复 CSS 默认）
     fireEvent.click(screen.getByText("发送"));
     await waitFor(() => {
       expect((ta as HTMLTextAreaElement).style.height).toBe("");
     });
     expect((ta as HTMLTextAreaElement).value).toBe("");
+    Object.defineProperty(window, "innerHeight", { value: originalInnerHeight, configurable: true });
   });
 
   it("/ 唤起命令面板", () => {

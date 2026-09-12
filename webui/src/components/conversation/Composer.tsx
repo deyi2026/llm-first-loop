@@ -14,6 +14,21 @@ import type { ComposerAttachment } from "./composerTypes";
 import { DictationButton } from "./DictationButton";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const LONG_PASTE_ATTACHMENT_CHARS = 20_000;
+const COMPOSER_MAX_HEIGHT_PX = 420;
+const COMPOSER_MIN_DYNAMIC_HEIGHT_PX = 180;
+
+function composerMaxHeight(): number {
+  if (typeof window === "undefined") return COMPOSER_MAX_HEIGHT_PX;
+  return Math.min(
+    COMPOSER_MAX_HEIGHT_PX,
+    Math.max(COMPOSER_MIN_DYNAMIC_HEIGHT_PX, Math.floor(window.innerHeight * 0.4))
+  );
+}
+
+function pastedTextFilename(): string {
+  return `pasted-text-${Date.now()}.txt`;
+}
 
 function newAttachmentId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `att-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -196,7 +211,7 @@ export function Composer() {
       return;
     }
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 180) + "px";
+    el.style.height = Math.min(el.scrollHeight, composerMaxHeight()) + "px";
   };
 
   // text 变化（含发送/命令清空）后按渲染结果复位高度——
@@ -334,7 +349,7 @@ export function Composer() {
     });
   };
 
-  const processFile = async (file: File) => {
+  const processFile = async (file: File, options?: { restorableText?: string }) => {
     const id = newAttachmentId();
     if (file.size > MAX_UPLOAD_BYTES) {
       setAttachments((prev) => [
@@ -346,13 +361,21 @@ export function Composer() {
           status: "error",
           detail: `文件超过 10MB 上限（${(file.size / (1024 * 1024)).toFixed(1)}MB）。`,
           size_bytes: file.size,
+          restorable_text: options?.restorableText,
         },
       ]);
       return;
     }
     setAttachments((prev) => [
       ...prev,
-      { id, filename: file.name, result_text: "", status: "pending", size_bytes: file.size },
+      {
+        id,
+        filename: file.name,
+        result_text: "",
+        status: "pending",
+        size_bytes: file.size,
+        restorable_text: options?.restorableText,
+      },
     ]);
     try {
       const dataUrl = await readDataUrl(file);
@@ -405,7 +428,33 @@ export function Composer() {
     for (const file of files) void processFile(file);
   };
 
+  const queueLongPaste = (pastedText: string) => {
+    const file = new File([pastedText], pastedTextFilename(), { type: "text/plain" });
+    void processFile(file, { restorableText: pastedText });
+    if (file.size > MAX_UPLOAD_BYTES) {
+      flashHint("粘贴内容超过 10MB 附件上限；原文未丢失，可从附件卡恢复到输入框。");
+      return;
+    }
+    flashHint(`内容较长（${pastedText.length.toLocaleString()} 字符），已作为文本附件添加（原文未修改）。`);
+  };
 
+  const restoreAttachmentText = (attachment: ComposerAttachment) => {
+    const restored = attachment.restorable_text;
+    if (!restored) return;
+    const textarea = taRef.current;
+    const start = textarea?.selectionStart ?? text.length;
+    const end = textarea?.selectionEnd ?? start;
+    setText((current) => `${current.slice(0, start)}${restored}${current.slice(end)}`);
+    setAttachments((prev) => prev.filter((item) => item.id !== attachment.id));
+    flashHint("已恢复到输入框，可继续修改。");
+    window.setTimeout(() => {
+      const current = taRef.current;
+      if (!current) return;
+      const caret = start + restored.length;
+      current.focus();
+      current.setSelectionRange(caret, caret);
+    }, 0);
+  };
 
   return (
     <div className="v2-composer" data-testid="composer">
@@ -419,6 +468,16 @@ export function Composer() {
                 {a.status === "pending" ? "（处理中…）" : ""}
                 {a.status === "degraded" || a.status === "error" ? "（降级/失败）" : ""}
               </span>
+              {a.restorable_text ? (
+                <button
+                  type="button"
+                  className="v2-attachment-restore"
+                  onClick={() => restoreAttachmentText(a)}
+                  title="把这段原文恢复到输入框"
+                >
+                  恢复到输入框
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="v2-icon-btn"
@@ -497,6 +556,12 @@ export function Composer() {
             if (files.length) {
               event.preventDefault();
               queueFiles(files);
+              return;
+            }
+            const pastedText = event.clipboardData.getData("text/plain");
+            if (caps.attachments && pastedText.length >= LONG_PASTE_ATTACHMENT_CHARS) {
+              event.preventDefault();
+              queueLongPaste(pastedText);
             }
           }}
           rows={1}
