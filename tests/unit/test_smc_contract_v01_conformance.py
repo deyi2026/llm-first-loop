@@ -75,7 +75,7 @@ EXPECTED_MATRIX = {
     "P4": "PASS",
     "P5": "GAP",
     "P6": "PASS",
-    "P7": "GAP",
+    "P7": "PASS",
     "P8": "GAP",
     "L1": "PASS",
     "L2": "PASS",
@@ -427,14 +427,35 @@ def probe_p7(tmp_path: Path) -> ProbeResult:
             current=s_right["snapshot_id"],
         )
     )
-    assert diff["diff_complete"] is True
-    assert diff["created"] >= 1 and diff["deleted"] >= 1
-    assert "comparable" not in diff and "scope_relation" not in diff
+    assert diff["comparable"] is False
+    assert diff["scope_relation"] == "different_roots"
+    assert diff["created"] is None and diff["deleted"] is None and diff["modified"] is None
+    assert diff["total_changes"] is None and diff["display_rows"] == []
+    assert diff["diff_complete"] is False
+
+    same_root_1 = _snapshot(tool, left)
+    (left / "new.txt").write_text("new", encoding="utf-8")
+    same_root_2 = _snapshot(tool, left)
+    comparable = _json_result(
+        tool.execute(
+            action="diff",
+            since=same_root_1["snapshot_id"],
+            current=same_root_2["snapshot_id"],
+        )
+    )
+    assert comparable["comparable"] is True
+    assert comparable["scope_relation"] == "same_scope"
+    assert comparable["created"] == 1
+
     return ProbeResult(
         "P7",
-        "GAP",
-        "Diff accepts snapshots from different roots without a comparability/scope-relation guard.",
-        {"scope_comparability_visible": False, "different_roots_diffed_as_changes": True},
+        "PASS",
+        "Diff exposes capture-time scope comparability and suppresses change claims across different roots/depth.",
+        {
+            "scope_comparability_visible": True,
+            "different_roots_rejected_as_incomparable": True,
+            "same_scope_diff_preserved": True,
+        },
     )
 
 

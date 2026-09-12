@@ -172,6 +172,36 @@ def test_diff_between_two_snapshots_shows_deleted(tool, tmp_path):
     assert d["deleted"] == 1 and any("-old.txt" in r for r in d["display_rows"])
 
 
+def test_diff_between_different_snapshot_scopes_is_explicitly_incomparable(tool, tmp_path):
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    (left / "a.txt").write_text("a")
+    (right / "b.txt").write_text("b")
+    s1 = _payload(tool.execute(action="snapshot", roots=[str(left)], depth=2))["snapshot_id"]
+    s2 = _payload(tool.execute(action="snapshot", roots=[str(right)], depth=2))["snapshot_id"]
+    d = _payload(tool.execute(action="diff", since=s1, current=s2))
+    assert d["comparable"] is False
+    assert d["scope_relation"] == "different_roots"
+    assert d["created"] is None and d["deleted"] is None and d["modified"] is None
+    assert d["total_changes"] is None
+    assert d["display_rows"] == []
+    assert d["diff_complete"] is False
+
+
+def test_diff_same_roots_but_different_depth_is_incomparable(tool, tmp_path):
+    work = tmp_path / "depth"
+    (work / "nested").mkdir(parents=True)
+    (work / "nested" / "x.txt").write_text("x")
+    s1 = _payload(tool.execute(action="snapshot", roots=[str(work)], depth=1))["snapshot_id"]
+    s2 = _payload(tool.execute(action="snapshot", roots=[str(work)], depth=2))["snapshot_id"]
+    d = _payload(tool.execute(action="diff", since=s1, current=s2))
+    assert d["comparable"] is False
+    assert d["scope_relation"] == "different_depth"
+    assert d["created"] is None and d["deleted"] is None and d["modified"] is None
+
+
 def test_diff_truncated_budget_never_reports_deleted(tool, tmp_path):
     # P1 回归: budget 截断侧的 ±差集不可判（110 文件 + 根 = 111 条目 > budget 100）。
     # 旧行为会把 11 个被预算裁剪掉的文件误报为 deleted；修复后必须降级为 null(unknown)。

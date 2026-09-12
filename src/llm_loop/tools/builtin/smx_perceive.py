@@ -51,8 +51,9 @@ class SmxPerceiveTool:
         "wait=条件谓词离散轮询（file_exists/file_gone/file_contains/port_open，仅 loopback）；"
         "satisfied=true/false/null 分别表示满足/有效采样至超时未满足/观察错误或覆盖不足而不可判，"
         "回执给 interval/sample_count/observer_error_count，false 不证明采样间隙从未瞬时成立；"
-        "snapshot=目录树快照落盘返回 snap_id；"
-        "diff=快照 vs 当前（或两个快照）净变更；receipt=按 run_id 查 smx 回执摘要。"
+        "snapshot=目录树快照落盘返回 snap_id 并绑定 capture-time roots/depth scope；"
+        "diff=先机械校验两端 scope comparability，再给可比快照净变更，不可比时 counts=null；"
+        "receipt=按 run_id 查 smx 回执摘要。"
         "何时用: 后台命令启动后等待完成标志/端口就绪（替代 sleep+重读）、命令前后净变更取证、查询 smx 回执。"
         "执行动作（跑命令）一律走 execute_command，本工具不执行任何命令。"
         "局限: wait 谓词同一调用仅一个；快照受 depth/budget 截断（回执如实标注）。"
@@ -132,6 +133,53 @@ class SmxPerceiveTool:
             raise FileNotFoundError(f"快照不存在: {p}")
         return json.loads(p.read_text(encoding="utf-8"))
 
+    @staticmethod
+    def _snapshot_scope(doc: dict) -> dict | None:
+        """Return capture-time mechanical scope identity, never task relevance."""
+        scope = doc.get("scope")
+        if isinstance(scope, dict):
+            roots = scope.get("roots")
+            depth = scope.get("depth")
+            if (isinstance(roots, list) and roots
+                    and all(isinstance(x, str) and x for x in roots)
+                    and isinstance(depth, (int, str)) and not isinstance(depth, bool)):
+                try:
+                    return {"roots": sorted(roots), "depth": int(depth)}
+                except ValueError:
+                    return None
+        # Backward compatibility is safe only for absolute stored roots. Relative roots
+        # cannot be re-resolved under a later cwd without silently changing scope.
+        params = doc.get("params") or {}
+        roots = params.get("roots")
+        depth = params.get("depth")
+        if (isinstance(roots, list) and roots
+                and all(isinstance(x, str) and x and Path(x).is_absolute() for x in roots)
+                and isinstance(depth, (int, str)) and not isinstance(depth, bool)):
+            try:
+                return {
+                    "roots": sorted(str(Path(x).resolve(strict=False)) for x in roots),
+                    "depth": int(depth),
+                }
+            except (ValueError, OSError):
+                return None
+        return None
+
+    @classmethod
+    def _scope_relation(cls, base: dict, current: dict) -> tuple[bool, str]:
+        left = cls._snapshot_scope(base)
+        right = cls._snapshot_scope(current)
+        if left is None or right is None:
+            return False, "unknown_scope"
+        roots_same = left["roots"] == right["roots"]
+        depth_same = left["depth"] == right["depth"]
+        if roots_same and depth_same:
+            return True, "same_scope"
+        if not roots_same and not depth_same:
+            return False, "different_roots_and_depth"
+        if not roots_same:
+            return False, "different_roots"
+        return False, "different_depth"
+
     # ---------- 四动作 ----------
     def _wait(self, kw: dict) -> ToolResult:
         preds = [k for k in ("file_exists", "file_gone", "file_contains", "port_open")
@@ -200,7 +248,9 @@ class SmxPerceiveTool:
         roots_in = kw.get("roots") or []
         if not isinstance(roots_in, (list, tuple)) or not all(isinstance(r, str) and r for r in roots_in):
             return self._fail("[参数错误] roots 须为非空字符串列表（缺省=当前目录）")
-        roots = [str(Path(r).expanduser()) for r in roots_in] or [str(Path.cwd())]
+        roots = [
+            str(Path(r).expanduser().resolve(strict=False)) for r in roots_in
+        ] or [str(Path.cwd().resolve(strict=False))]
         depth = int(_clamp(kw.get("depth"), 1, 6, 2))
         budget = int(_clamp(kw.get("budget"), 100, 20000, 5000))
         entries, meta = mod.take_snapshot(
@@ -215,6 +265,7 @@ class SmxPerceiveTool:
             "at": datetime.now(UTC).isoformat(timespec="seconds"),
             "smx_sha": self._smx_sha,
             "params": {"roots": roots, "depth": depth, "budget": budget},
+            "scope": {"roots": sorted(roots), "depth": depth},
             "meta": meta,
             "entries": entries,
         }
@@ -226,6 +277,7 @@ class SmxPerceiveTool:
             "snapshot_id": sid,
             "entries": len(entries),
             "roots_meta": meta,
+            "scope": doc["scope"],
             "store_path": str(self._store / f"{sid}.json"),
             "smx_sha": self._smx_sha,
         })
@@ -256,8 +308,34 @@ class SmxPerceiveTool:
             after_entries, after_meta = mod.take_snapshot(
                 [(f"r{i}", p) for i, p in enumerate(roots)], depth, budget
             )
+            cur = {
+                "params": {"roots": roots, "depth": depth, "budget": budget},
+                "scope": base.get("scope") or self._snapshot_scope(base),
+            }
             scope_note = "live(按基线参数现拍)"
         base_meta = base.get("meta", [])
+        comparable, scope_relation = self._scope_relation(base, cur)
+        if not comparable:
+            return self._ok({
+                "action": "diff",
+                "baseline": base.get("snapshot_id"),
+                "current": scope_note,
+                "comparable": False,
+                "scope_relation": scope_relation,
+                "created": None,
+                "deleted": None,
+                "modified": None,
+                "diff_complete": False,
+                "meta": {"baseline": base_meta, "current": after_meta},
+                "display_rows": [],
+                "display_truncated": False,
+                "total_changes": None,
+                "smx_sha": self._smx_sha,
+                "warning": (
+                    "两次 observation scope 不可机械比较；未生成 created/deleted/modified。"
+                    "由模型决定是否以同一 scope 重新观察。"
+                ),
+            })
         d = mod.diff_pair(base.get("entries", {}), after_entries)
         rows, truncated, total = mod.changed_display(d, base.get("params", {}).get("roots", ["."])[0], cap=40)
         # 完整性纪律(P1): 任一侧截断/遍历异常时，±差集可能只是 budget 裁剪伪影，
@@ -269,6 +347,8 @@ class SmxPerceiveTool:
             "action": "diff",
             "baseline": base.get("snapshot_id"),
             "current": scope_note,
+            "comparable": True,
+            "scope_relation": scope_relation,
             "created": None if incomplete else len(d["created"]),
             "deleted": None if incomplete else len(d["deleted"]),
             "modified": len(d["modified"]),
