@@ -9,7 +9,11 @@ from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPercept
 from llm_loop.browser.predicate import validate_predicate
 from llm_loop.tools.builtin import browser_wait as browser_wait_module
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
-from llm_loop.tools.builtin.browser_wait import BrowserWaitObjectTool, BrowserWaitScopeTool
+from llm_loop.tools.builtin.browser_wait import (
+    BrowserPredicateWaiter,
+    BrowserWaitObjectTool,
+    BrowserWaitScopeTool,
+)
 from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS, ToolRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -551,3 +555,231 @@ def test_typed_wait_property_target_kind_mismatch_is_impossible_on_provider_surf
     assert "target_kind_mismatch" in scope_bad.content
     assert "target_kind_mismatch" in object_bad.content
     assert backend.calls == 0
+
+
+
+def _wait_facts(result: Any) -> dict[str, Any]:
+    payload = json.loads(result.content)
+    predicate_result = payload["predicate_result"]
+    observation = payload["observation"]
+    return {
+        "result": predicate_result["result"],
+        "sample_count": predicate_result["sample_count"],
+        "observer_error_count": predicate_result["observer_error_count"],
+        "observation_result": observation["result"],
+        "reason": observation.get("reason"),
+        "observed_value": observation.get("observed_value"),
+        "coverage_complete": observation.get("coverage_complete"),
+    }
+
+
+def test_v06_typed_object_wait_is_deterministically_equivalent_to_canonical_wait(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    adapter = _adapter(tmp_path)
+    seed = adapter.snapshot("s1", _disabled_submit_fixture())
+    submit = _by_name(seed, "Submit")
+    request = {
+        "object_ref": submit["grounding_ref"],
+        "property": "enabled",
+        "operator": "eq",
+        "value": True,
+        "timeout_ms": 100,
+        "interval_ms": 1,
+    }
+    compiler = BrowserWaitObjectTool(
+        adapter=adapter,
+        backend=None,
+        session_id_getter=lambda: "s1",
+    )
+    predicate = compiler.compile_predicate("s1", request)
+    clock = {"now": 0.0}
+    monkeypatch.setattr(browser_wait_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        browser_wait_module.time,
+        "time",
+        lambda: 1_700_000_000.0 + clock["now"],
+    )
+    monkeypatch.setattr(
+        browser_wait_module.time,
+        "sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+
+    canonical = BrowserPredicateWaiter(
+        adapter=adapter,
+        backend=_SequenceBackend([_disabled_submit_fixture(), FIXTURES["base"]]),
+    ).wait(
+        "s1",
+        predicate=predicate,
+        timeout_ms=100,
+        interval_ms=1,
+        tool_name="canonical",
+    )
+    clock["now"] = 0.0
+    typed = BrowserWaitObjectTool(
+        adapter=adapter,
+        backend=_SequenceBackend([_disabled_submit_fixture(), FIXTURES["base"]]),
+        session_id_getter=lambda: "s1",
+    ).execute(**request)
+
+    assert _wait_facts(typed) == _wait_facts(canonical)
+    assert _wait_facts(typed) == {
+        "result": "satisfied",
+        "sample_count": 2,
+        "observer_error_count": 0,
+        "observation_result": "satisfied",
+        "reason": None,
+        "observed_value": True,
+        "coverage_complete": True,
+    }
+
+
+def test_v06_typed_wait_preserves_canonical_indeterminate_and_coverage_semantics(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    clock = {"now": 0.0}
+    monkeypatch.setattr(browser_wait_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        browser_wait_module.time,
+        "time",
+        lambda: 1_700_000_000.0 + clock["now"],
+    )
+    monkeypatch.setattr(
+        browser_wait_module.time,
+        "sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+
+    scope_adapter = _adapter(tmp_path / "scope-case")
+    scope_seed = scope_adapter.snapshot("s1", FIXTURES["base"])
+    scope_request = {
+        "scope_ref": scope_seed["snapshot"]["scope"]["scope_ref"],
+        "property": "url",
+        "operator": "eq",
+        "value": "https://never.invalid/",
+        "timeout_ms": 1,
+        "interval_ms": 1,
+    }
+    scope_compiler = BrowserWaitScopeTool(
+        adapter=scope_adapter, backend=None, session_id_getter=lambda: "s1"
+    )
+    scope_predicate = scope_compiler.compile_predicate("s1", scope_request)
+    canonical_scope = BrowserPredicateWaiter(
+        adapter=scope_adapter,
+        backend=_SequenceBackend([FIXTURES["navigate"]]),
+    ).wait(
+        "s1",
+        predicate=scope_predicate,
+        timeout_ms=1,
+        interval_ms=1,
+        tool_name="canonical",
+    )
+    clock["now"] = 0.0
+    typed_scope = BrowserWaitScopeTool(
+        adapter=scope_adapter,
+        backend=_SequenceBackend([FIXTURES["navigate"]]),
+        session_id_getter=lambda: "s1",
+    ).execute(**scope_request)
+    assert _wait_facts(typed_scope) == _wait_facts(canonical_scope)
+    assert _wait_facts(typed_scope)["result"] == "indeterminate"
+    assert _wait_facts(typed_scope)["reason"] == "scope_not_observed"
+
+    object_adapter = _adapter(tmp_path / "coverage-case")
+    object_seed = object_adapter.snapshot("s1", FIXTURES["base"])
+    submit = _by_name(object_seed, "Submit")
+    partial_raw = deepcopy(FIXTURES["base"])
+    partial_raw["dom"]["nodes"] = [
+        node for node in partial_raw["dom"]["nodes"] if node.get("physical_id") != "n-submit"
+    ]
+    partial_raw["ax"]["nodes"] = [
+        node for node in partial_raw["ax"]["nodes"] if node.get("physical_id") != "n-submit"
+    ]
+    partial_raw["dom"]["truncated"] = True
+    object_request = {
+        "object_ref": submit["grounding_ref"],
+        "property": "exists",
+        "operator": "eq",
+        "value": False,
+        "timeout_ms": 1,
+        "interval_ms": 1,
+    }
+    object_compiler = BrowserWaitObjectTool(
+        adapter=object_adapter, backend=None, session_id_getter=lambda: "s1"
+    )
+    object_predicate = object_compiler.compile_predicate("s1", object_request)
+    clock["now"] = 0.0
+    canonical_object = BrowserPredicateWaiter(
+        adapter=object_adapter,
+        backend=_SequenceBackend([partial_raw]),
+    ).wait(
+        "s1",
+        predicate=object_predicate,
+        timeout_ms=1,
+        interval_ms=1,
+        tool_name="canonical",
+    )
+    clock["now"] = 0.0
+    typed_object = BrowserWaitObjectTool(
+        adapter=object_adapter,
+        backend=_SequenceBackend([partial_raw]),
+        session_id_getter=lambda: "s1",
+    ).execute(**object_request)
+    assert _wait_facts(typed_object) == _wait_facts(canonical_object)
+    assert _wait_facts(typed_object)["result"] == "indeterminate"
+    assert "coverage" in str(_wait_facts(typed_object)["reason"])
+
+
+def test_v06_typed_wait_preserves_canonical_observer_error_accounting(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    adapter = _adapter(tmp_path)
+    seed = adapter.snapshot("s1", FIXTURES["base"])
+    scope_ref = seed["snapshot"]["scope"]["scope_ref"]
+    request = {
+        "scope_ref": scope_ref,
+        "property": "url",
+        "operator": "eq",
+        "value": "https://example.test/a",
+        "timeout_ms": 100,
+        "interval_ms": 1,
+    }
+    compiler = BrowserWaitScopeTool(
+        adapter=adapter, backend=None, session_id_getter=lambda: "s1"
+    )
+    predicate = compiler.compile_predicate("s1", request)
+    clock = {"now": 0.0}
+    monkeypatch.setattr(browser_wait_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        browser_wait_module.time,
+        "time",
+        lambda: 1_700_000_000.0 + clock["now"],
+    )
+    monkeypatch.setattr(
+        browser_wait_module.time,
+        "sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+    sequence: list[dict[str, Any] | BaseException] = [
+        RuntimeError("synthetic outage"),
+        FIXTURES["base"],
+    ]
+    canonical = BrowserPredicateWaiter(
+        adapter=adapter, backend=_SequenceBackend(sequence)
+    ).wait(
+        "s1",
+        predicate=predicate,
+        timeout_ms=100,
+        interval_ms=1,
+        tool_name="canonical",
+    )
+    clock["now"] = 0.0
+    typed = BrowserWaitScopeTool(
+        adapter=adapter,
+        backend=_SequenceBackend(sequence),
+        session_id_getter=lambda: "s1",
+    ).execute(**request)
+
+    assert _wait_facts(typed) == _wait_facts(canonical)
+    assert _wait_facts(typed)["observer_error_count"] == 1
+    assert _wait_facts(typed)["result"] == "satisfied"
