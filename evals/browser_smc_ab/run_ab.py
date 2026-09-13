@@ -83,6 +83,24 @@ def _model_server_fact() -> dict[str, Any]:
     }
 
 
+def _provider_contract() -> dict[str, Any]:
+    doc = json.loads(PROVIDERS.read_text(encoding="utf-8"))
+    providers = doc.get("providers", doc) if isinstance(doc, dict) else {}
+    provider = providers.get("cognilocal", {}) if isinstance(providers, dict) else {}
+    models = provider.get("models") or {}
+    model = models.get("ornith-1.5-35b-a3b-mlx", {}) if isinstance(models, dict) else {}
+    return {
+        "timeout_s": provider.get("timeout_s"),
+        "max_input_tokens": provider.get("max_input_tokens"),
+        "max_tokens": provider.get("max_tokens"),
+        "temperature": model.get("temperature"),
+        "top_p": model.get("top_p"),
+        "top_k": model.get("top_k"),
+        "min_p": model.get("min_p"),
+        "wire_protocol": model.get("wire_protocol"),
+    }
+
+
 def _playwright_fact() -> dict[str, Any]:
     from playwright.sync_api import sync_playwright
 
@@ -139,8 +157,8 @@ def _base_env(run_dir: Path, arm: str) -> dict[str, str]:
             "LLM_THINKING_MODE": "on",
             "LLM_REASONING_EFFORT": "medium",
             "LLM_MAX_ITERATIONS": "12",
-            "LLM_TIMEOUT_S": "90",
-            "LLM_MAX_TOKENS": "4096",
+            "LLM_TIMEOUT_S": "1800",
+            "LLM_MAX_TOKENS": "16000",
             "MODEL_FALLBACKS": "",
             "RUN_MODE": "standard",
             "TOOL_SCHEMA_LAZY": "1",
@@ -189,6 +207,19 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
     server = _model_server_fact()
     if not server["prompt_concurrency_1"] or not server["decode_concurrency_1"]:
         raise RuntimeError("8901 concurrency identity is not the frozen single-run configuration")
+    provider_contract = _provider_contract()
+    expected_provider_contract = {
+        "timeout_s": 1800,
+        "max_input_tokens": 184000,
+        "max_tokens": 16000,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "top_k": 0,
+        "min_p": 0.0,
+        "wire_protocol": "openai",
+    }
+    if provider_contract != expected_provider_contract:
+        raise RuntimeError(f"cognilocal provider contract drift: {provider_contract}")
     surfaces = {arm: _surface_manifest(arm, tmp_root) for arm in ARMS}
     for arm, surface in surfaces.items():
         if not surface.get("exact") or set(surface.get("names") or []) != set(ARMS[arm]["allowed_tools"]):
@@ -215,6 +246,7 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
         "plan_rows": len(plan),
         "model_ref": MODEL_REF,
         "model_server": server,
+        "provider_contract": provider_contract,
         "legacy_playwright": _playwright_fact(),
         "surfaces": surfaces,
         "source_sha256": {str(path.relative_to(REPO)): _sha_file(path) for path in source_paths},
@@ -226,8 +258,8 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
             "thinking_mode": "on",
             "reasoning_effort": "medium",
             "max_iterations": 12,
-            "llm_timeout_s": 90,
-            "max_tokens": 4096,
+            "llm_timeout_s": 1800,
+            "max_tokens": 16000,
             "tool_schema_lazy": True,
             "fallbacks": 0,
             "extract_enabled": False,

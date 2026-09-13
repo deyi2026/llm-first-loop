@@ -24,8 +24,9 @@ SMC uses one exact loopback CDP target and persistent fresh-profile Chrome for t
 - thinking: on; effort: medium
 - temperature/model sampling: provider registry value (currently deterministic temperature 0.0)
 - max iterations: 12
-- model timeout: 90 s/request
-- max output: 4096 tokens
+- **effective provider timeout: 1800 s/request** (`cognilocal` provider contract; this overrides the generic env fallback)
+- **effective max output: 16000 tokens** (`cognilocal` provider contract; this overrides the generic env fallback)
+- effective max input: 184000 tokens
 - tool schema lazy: on
 - model fallbacks: disabled
 - extraction: disabled
@@ -34,6 +35,8 @@ SMC uses one exact loopback CDP target and persistent fresh-profile Chrome for t
 - legacy environment precondition: Playwright Python `1.58.0`, Chromium revision `1208`, and the matching headless shell are present in the experiment interpreter environment. This environment-only repair is frozen in the execution manifest and does not change legacy tool semantics.
 
 Only one measured model run may use 8901 at a time. A run refuses to start while an unrelated established 8901 client exists. No second local model may be loaded.
+
+The execution manifest mechanically parses `data/providers.json` and refuses to run unless the effective `cognilocal/ornith-1.5-35b-a3b-mlx` contract is exactly: timeout=1800, max_input_tokens=184000, max_tokens=16000, temperature=0.0, top_p=1.0, top_k=0, min_p=0.0, wire_protocol=openai. Generic `LLM_TIMEOUT_S` / `LLM_MAX_TOKENS` are set to the same values to avoid a misleading shadow configuration.
 
 ## 4. Five deterministic tasks
 

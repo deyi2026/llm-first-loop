@@ -10,6 +10,7 @@ sys.path.insert(0, str(HERE))
 from analyze import analyze  # noqa: E402
 from fixture_server import FixtureServer  # noqa: E402
 from protocol import ARMS, SEED, TASKS, build_plan, judge, plan_sha256, smoke_gate  # noqa: E402
+from run_ab import _provider_contract  # noqa: E402
 
 
 def test_plan_is_20_rows_paired_and_smoke_prefix_is_three_complete_blocks() -> None:
@@ -38,6 +39,19 @@ def test_arm_surfaces_are_exact_and_do_not_offer_cross_treatment_browser_tools()
     assert set(ARMS["legacy"]["allowed_tools"]) == {"playwright_exec", "playwright_test", "get_tool_schema"}
     assert not set(ARMS["smc"]["allowed_tools"]) & {"playwright_exec", "playwright_test"}
     assert not set(ARMS["legacy"]["allowed_tools"]) & {"browser_perceive", "browser_action"}
+
+
+def test_effective_cognilocal_provider_contract_is_frozen() -> None:
+    assert _provider_contract() == {
+        "timeout_s": 1800,
+        "max_input_tokens": 184000,
+        "max_tokens": 16000,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "top_k": 0,
+        "min_p": 0.0,
+        "wire_protocol": "openai",
+    }
 
 
 def test_task_prompts_do_not_name_treatment_tools_or_locators() -> None:
