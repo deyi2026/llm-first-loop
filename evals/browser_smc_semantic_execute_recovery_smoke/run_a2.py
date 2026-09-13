@@ -158,6 +158,10 @@ def _base_env(run_dir: Path) -> dict[str, str]:
             "RUN_MODE": "standard",
             "TOOL_SCHEMA_LAZY": "1",
             "DATA_DIR": str(data_dir),
+            # FC2-A qualification requires the same production truncation path that
+            # emits evidence:// recovery_ref facts; freeze it here rather than
+            # inheriting a caller shell/.env state.
+            "EVIDENCE_MODE": "enforce",
             "EXTRACT_ENABLED": "0",
             "SUMMARY_MODE": "off",
             "METHOD_REFLECTION_MODE": "off",

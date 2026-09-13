@@ -24,6 +24,10 @@ SHARED_TOOLS = [
     "browser_wait_object_state",
     "browser_wait_object_text",
     "get_tool_schema",
+    # FC2-A exact recovery closure: production truncated Evidence receipts can name
+    # an evidence:// recovery_ref. Expose only the exact hydrator; the model still
+    # decides whether/when to call it. No search/list/ranking/fallback is added.
+    "read_evidence",
 ]
 ARMS: dict[str, dict[str, Any]] = {
     "semantic_execute": {
