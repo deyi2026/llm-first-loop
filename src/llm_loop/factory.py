@@ -74,6 +74,7 @@ from llm_loop.tools.builtin.agent_message import AgentMessageTool
 from llm_loop.tools.builtin.browser_action import BrowserActionTool
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
+from llm_loop.tools.builtin.browser_semantic_operation import BrowserSemanticOperationTool
 from llm_loop.tools.builtin.browser_wait import (
     BrowserWaitObjectStateTool,
     BrowserWaitObjectTextTool,
@@ -887,11 +888,18 @@ def build_engine(settings: Settings) -> LoopEngine:
                     session_id_getter=lambda: current_session_id_ctx.get() or registry._session_id,
                 ),
             )
+            _browser_semantic_execute = BrowserSemanticExecuteTool(
+                perception=_browser_adapter,
+                action_adapter=_browser_action_adapter,
+                session_id_getter=lambda: current_session_id_ctx.get() or registry._session_id,
+            )
+            _register_basic("browser_semantic_execute", _browser_semantic_execute)
             _register_basic(
-                "browser_semantic_execute",
-                BrowserSemanticExecuteTool(
+                "browser_semantic_operation",
+                BrowserSemanticOperationTool(
                     perception=_browser_adapter,
-                    action_adapter=_browser_action_adapter,
+                    capture_backend=_browser_host,
+                    semantic_execute=_browser_semantic_execute,
                     session_id_getter=lambda: current_session_id_ctx.get() or registry._session_id,
                 ),
             )
