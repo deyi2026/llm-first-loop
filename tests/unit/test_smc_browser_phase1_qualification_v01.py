@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
+from llm_loop.browser.action import _MUTATION_CONTRACT
+from llm_loop.tools.builtin.browser_action import BrowserActionTool
 from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -24,7 +27,10 @@ R3_PHASE1_EVIDENCE: dict[str, tuple[str, ...]] = {
     "R3-13": ("tests/unit/test_smc_browser_perception_v01.py::test_structural_blindspots_and_cross_origin_frame_are_explicit",),
     "R3-15": ("tests/unit/test_smc_browser_perception_v01.py::test_relations_are_structural_only",),
     "R3-16": ("tests/unit/test_smc_browser_perception_v01.py::test_projection_cap_does_not_corrupt_observation_completeness_and_full_hydrates",),
-    "R3-17": ("tests/unit/test_smc_browser_action_v01.py::test_stale_precondition_rejects_before_dispatch",),
+    "R3-17": (
+        "tests/unit/test_smc_browser_action_v01.py::test_stale_precondition_rejects_before_dispatch",
+        "tests/unit/test_smc_browser_action_v01.py::test_all_mutation_snapshot_scopes_rejected_before_capture",
+    ),
     "R3-18": (
         "tests/unit/test_smc_browser_version_pressure_v01.py::test_object_scope_ignores_unrelated_same_document_change_but_pressure_is_visible",
         "tests/unit/test_smc_browser_version_pressure_v01.py::test_resource_scope_uses_document_resource_facts",
@@ -81,6 +87,7 @@ B0_B13_EVIDENCE: dict[str, tuple[str, ...]] = {
     ),
     "B6": (
         "tests/unit/test_smc_browser_action_v01.py::test_all_five_frozen_verbs_accept_only_profile_version_scopes",
+        "tests/unit/test_smc_browser_action_v01.py::test_all_mutation_snapshot_scopes_rejected_before_capture",
         "tests/unit/test_smc_browser_cdp_action_host_v01.py::test_click_fill_select_scroll_are_fixed_internal_calls_not_model_scripts",
     ),
     "B7": (
@@ -170,8 +177,39 @@ def test_bqual_lazy_provider_surface_describes_full_qualified_browser_contract()
     for boundary in (
         "exact Semantic ID",
         "expected_version",
+        "object mutation=object",
+        "navigate=resource",
         "单次 dispatch",
         "不自动 retry/rebind",
         "不等于任务完成",
     ):
         assert boundary in mutate
+
+
+def test_mutation_version_scope_contract_is_aligned_across_runtime_profile_and_model_surface() -> None:
+    expected = {
+        "click": {"object"},
+        "fill": {"object"},
+        "select": {"object"},
+        "navigate": {"resource"},
+        "scroll": {"object"},
+    }
+    runtime = {
+        verb: set(_MUTATION_CONTRACT[verb]["version_scopes"])
+        for verb in expected
+    }
+    profile_doc = json.loads(
+        (ROOT / "docs/SMC-BROWSER-PHASE1-PROFILE-v0.1.json").read_text(encoding="utf-8")
+    )
+    profile = {
+        verb: set(profile_doc["verb_contracts"][verb]["version_scopes"])
+        for verb in expected
+    }
+    model_surface = set(
+        BrowserActionTool.parameters["properties"]["version_scope"]["enum"]
+    )
+
+    assert runtime == expected
+    assert profile == expected
+    assert model_surface == {"object", "resource"}
+    assert "snapshot" not in model_surface

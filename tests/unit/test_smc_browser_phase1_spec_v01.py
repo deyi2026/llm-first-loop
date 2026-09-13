@@ -289,7 +289,19 @@ def test_verb_contracts_fix_operation_retry_atomicity_and_versions() -> None:
     assert verbs["click"]["idempotency_class"] == "unknown"
     assert verbs["navigate"]["idempotency_class"] == "unknown"
     assert verbs["scroll"]["target_kinds"] == ["semantic_object"]
-    assert set(verbs["scroll"]["version_scopes"]) == {"object", "snapshot"}
+    for name in {"click", "fill", "select", "scroll"}:
+        assert verbs[name]["version_scopes"] == ["object"]
+    assert verbs["navigate"]["version_scopes"] == ["resource"]
+
+
+def test_model_facing_semantic_action_schema_does_not_offer_snapshot_mutation_scope() -> None:
+    schema = _load(SCHEMA_PATH)
+    action_schema = schema["$defs"]["semantic_action"]
+    version_scope = action_schema["properties"]["version_scope"]
+    string_branch = next(
+        branch for branch in version_scope["anyOf"] if branch.get("type") == "string"
+    )
+    assert string_branch["enum"] == ["object", "resource"]
 
 
 def test_all_model_facing_object_schemas_are_recursively_closed() -> None:

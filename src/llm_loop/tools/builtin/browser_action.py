@@ -20,6 +20,8 @@ class BrowserActionTool:
         "SMC Browser Phase 1 写操作（显式 opt-in）。仅支持 click/fill/select/navigate/scroll。"
         "必须提交完整 SemanticAction v0.1 与 expected_version/version_scope；runtime 会在 dispatch 前"
         "重新只读观察、核对 exact Semantic ID/version，只在机械 match 时单次 dispatch。"
+        "click/fill/select/scroll 的 version_scope 固定为 object；navigate 固定为 resource；"
+        "snapshot 是只读 observation/version 语义，不是 mutation precondition scope。"
         "stale/indeterminate/identity ambiguity 会 rejected；同一 action_id 不会再次执行。"
         "所有 mutation idempotency=unknown、atomicity=single_dispatch，绝不自动 retry/replay/rebind。"
         "ActionReceipt 只表示机械执行/观察事实，不代表任务完成或语义成功。"
@@ -38,7 +40,11 @@ class BrowserActionTool:
             "idempotency_class": {"type": "string", "enum": ["unknown"]},
             "atomicity_class": {"type": "string", "enum": ["single_dispatch"]},
             "expected_version": {"type": "string", "minLength": 1},
-            "version_scope": {"type": "string", "enum": ["object", "resource", "snapshot"]},
+            "version_scope": {
+                "type": "string",
+                "enum": ["object", "resource"],
+                "description": "click/fill/select/scroll=object；navigate=resource",
+            },
             "version_precondition": {"type": "string", "enum": ["required"]},
         },
         "required": [

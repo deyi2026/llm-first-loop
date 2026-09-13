@@ -381,9 +381,34 @@ old.replaceWith(repl); 'ok';
             )
             twin_clicks = int(_evaluate(controller, "window.__twinClicks"))
 
-            # navigate through production actuator to a loopback HTTP resource.
+            # The real-model smoke exposed a mechanically impossible mutation choice:
+            # snapshot scope is strict across observations, while mutation always
+            # performs a fresh pre-dispatch observation.  Keep snapshot as read-only
+            # version semantics, but reject it as a mutation precondition before any
+            # physical dispatch.
             snap = _snapshot(perceive)
             page_scope = next(item for item in snap["scope_facts"] if item.get("kind") == "page")
+            snapshot_scope_url_before = str(
+                controller.call("Page.getFrameTree")["frameTree"]["frame"].get("url") or ""
+            )
+            snapshot_scope_receipt = _payload(
+                action_tool.execute(
+                    **_action(
+                        snap,
+                        action_id="live-snapshot-mutation-scope",
+                        verb="navigate",
+                        target_id=str(page_scope["scope_ref"]),
+                        scope_ref=str(page_scope["scope_ref"]),
+                        args={"url": next_url},
+                        version_scope="snapshot",
+                    )
+                )
+            )
+            snapshot_scope_url_after = str(
+                controller.call("Page.getFrameTree")["frameTree"]["frame"].get("url") or ""
+            )
+
+            # navigate through production actuator to a loopback HTTP resource.
             loader_before = str(
                 controller.call("Page.getFrameTree")["frameTree"]["frame"].get("loaderId") or ""
             )
@@ -463,6 +488,14 @@ old.replaceWith(repl); 'ok';
                 "same_name_replacement_never_rebound": (
                     "PASS" if replacement_receipt.get("status") == "rejected" and twin_clicks == 0 else "FAIL"
                 ),
+                "snapshot_mutation_scope_rejected_without_navigation": (
+                    "PASS"
+                    if snapshot_scope_receipt.get("status") == "rejected"
+                    and "version_scope_mismatch"
+                    in (snapshot_scope_receipt.get("completeness") or {}).get("reasons", [])
+                    and snapshot_scope_url_after == snapshot_scope_url_before
+                    else "FAIL"
+                ),
                 "popup_boundary_event_visible_without_target_rebind": (
                     "PASS"
                     if popup_receipt.get("status") == "ok"
@@ -507,7 +540,7 @@ old.replaceWith(repl); 'ok';
                         for aid in (
                             "live-transport-ambiguity", "live-popup-boundary", "live-click",
                             "live-fill", "live-select", "live-scroll", "live-stale",
-                            "live-replacement", "live-navigate",
+                            "live-replacement", "live-snapshot-mutation-scope", "live-navigate",
                         )
                         for receipt in receipts.list_action(sid, aid)
                     )
@@ -532,6 +565,12 @@ old.replaceWith(repl); 'ok';
                 "mutation_actuator_exact_target_bound": "PASS" if actuator.bound_target_id == target_id else "FAIL",
                 "model_surface_has_no_physical_locator_or_script": (
                     "PASS" if model_keys.isdisjoint(forbidden_model_keys) else "FAIL"
+                ),
+                "model_surface_does_not_offer_snapshot_mutation_scope": (
+                    "PASS"
+                    if (action_tool.parameters.get("properties", {}).get("version_scope", {}).get("enum"))
+                    == ["object", "resource"]
+                    else "FAIL"
                 ),
                 "fill_plaintext_absent_from_action_store": "PASS" if fill_value not in action_store_text else "FAIL",
                 "dispatch_grounding_hides_physical_target": "PASS" if "physical_target" not in fill_dispatch and fill_dispatch.get("physical_target_sha256") else "FAIL",

@@ -525,13 +525,24 @@ automatic_protocol_retry = disabled_v0.1
 - stale/ambiguous → rejected；
 - 禁止静默换 selector/target。
 
-第一版 version scopes：
+Browser 的只读 version assessment 仍保留三种机械粒度：
 
 ```text
 object / resource / snapshot
 ```
 
-具体 verb 允许哪些 scope 由 machine profile 固定。
+但 Phase 1 mutation precondition 不能把 `snapshot` 当作 dispatch scope。mutation 在
+dispatch 前必须 fresh observe；strict snapshot 语义又要求不同 observation identity
+判 stale，因此 `snapshot` mutation scope 会把一个规格允许的动作机械地变成不可执行。
+真实模型 smoke 已在三个独立任务中重复触发这一冲突。Phase 1 v0.1 因此收窄为：
+
+```text
+click / fill / select / scroll -> object
+navigate                       -> resource
+```
+
+这不是放宽 stale，而是删除不可满足的 mutation 类型组合。`snapshot` 继续用于只读
+observation / diff / historical version facts。
 
 ---
 
@@ -599,10 +610,11 @@ object / resource / snapshot
 
 Phase 1 v0.1 的 `scroll` target 仅为 `semantic_object`。早期 Profile 草案曾把
 `page / document / frame / region` 一并列为 target kinds，但这些 semantic root
-没有与 `object | snapshot` version scope 自洽的 dispatch guard：`object` guard
+没有与 Phase 1 mutation version scope 自洽的 dispatch guard：`object` guard
 只对 SemanticObject 有定义，而 strict `snapshot` guard 在 pre-dispatch fresh
-observation 后必须把不同 snapshot identity 判为 stale。B-QUAL 因此收窄这一
-机械类型错误，不通过放宽 B-STALE 语义来伪造 root-level scroll 支持；后者若要
+observation 后必须把不同 snapshot identity 判为 stale。B-QUAL 先收窄 target kind，
+后续 real-model smoke 又证明 `snapshot` mutation scope 本身不可用，因此本 Profile
+进一步收窄这一机械类型错误，不通过放宽 B-STALE 语义来伪造 root-level scroll 支持；后者若要
 开放，必须单独冻结 scope/resource version contract 后重新资格化。
 
 没有任何一个 args shape 接受 selector / XPath / x/y / node id / AX index。

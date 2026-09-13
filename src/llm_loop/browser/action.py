@@ -20,11 +20,11 @@ from urllib.parse import urlparse
 from llm_loop.browser.perception import BrowserPerceptionAdapter
 
 _MUTATION_CONTRACT: dict[str, dict[str, Any]] = {
-    "click": {"version_scopes": {"object", "snapshot"}, "args": set()},
-    "fill": {"version_scopes": {"object", "snapshot"}, "args": {"text", "mode"}},
-    "select": {"version_scopes": {"object", "snapshot"}, "args": {"value"}},
-    "navigate": {"version_scopes": {"resource", "snapshot"}, "args": {"url"}},
-    "scroll": {"version_scopes": {"object", "snapshot"}, "args": {"delta_pages"}},
+    "click": {"version_scopes": {"object"}, "args": set()},
+    "fill": {"version_scopes": {"object"}, "args": {"text", "mode"}},
+    "select": {"version_scopes": {"object"}, "args": {"value"}},
+    "navigate": {"version_scopes": {"resource"}, "args": {"url"}},
+    "scroll": {"version_scopes": {"object"}, "args": {"delta_pages"}},
 }
 _TERMINAL = frozenset({"ok", "failed", "rejected"})
 

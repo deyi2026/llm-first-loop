@@ -1211,8 +1211,7 @@
               "type": "string",
               "enum": [
                 "object",
-                "resource",
-                "snapshot"
+                "resource"
               ]
             },
             {

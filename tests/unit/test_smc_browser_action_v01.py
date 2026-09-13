@@ -269,6 +269,41 @@ def test_all_five_frozen_verbs_accept_only_profile_version_scopes(tmp_path: Path
     assert [call["verb"] for call in actuator.calls] == [x[0] for x in cases]
 
 
+def test_all_mutation_snapshot_scopes_rejected_before_capture(tmp_path: Path) -> None:
+    perception, _, backend, actuator, action = _stack(tmp_path, [FIXTURES["base"]])
+    first = perception.snapshot("s1", FIXTURES["base"])
+    target = _by_name(first, "Submit")
+    page = next(scope for scope in first["scope_facts"] if scope["kind"] == "page")
+    cases = [
+        ("click", {}, target["id"], target["scope_ref"]),
+        ("fill", {"text": "x", "mode": "replace"}, target["id"], target["scope_ref"]),
+        ("select", {"value": "v"}, target["id"], target["scope_ref"]),
+        ("navigate", {"url": "http://127.0.0.1/example"}, page["scope_ref"], page["scope_ref"]),
+        ("scroll", {"delta_pages": 1}, target["id"], target["scope_ref"]),
+    ]
+    for index, (verb, args, target_id, scope_ref) in enumerate(cases):
+        req = {
+            "schema": "smc.semantic_action.v0.1",
+            "domain": "browser",
+            "scope_ref": scope_ref,
+            "action_id": f"snapshot-scope-{verb}-{index}",
+            "verb": verb,
+            "target_id": target_id,
+            "args": args,
+            "operation_class": "mutate",
+            "idempotency_class": "unknown",
+            "atomicity_class": "single_dispatch",
+            "expected_version": first["snapshot"]["snapshot_id"],
+            "version_scope": "snapshot",
+            "version_precondition": "required",
+        }
+        result = action.execute("s1", req)
+        assert result["status"] == "rejected", (verb, result)
+        assert "version_scope_mismatch" in result["completeness"]["reasons"], (verb, result)
+    assert backend.calls == 0
+    assert actuator.calls == []
+
+
 def test_receipts_use_exact_closed_canonical_field_set(tmp_path: Path) -> None:
     perception, receipts, _, _, action = _stack(tmp_path, [FIXTURES["base"]])
     first = perception.snapshot("s1", FIXTURES["base"])
@@ -308,19 +343,15 @@ def test_navigation_rejects_script_and_local_file_schemes_before_capture(tmp_pat
     assert actuator.calls == []
 
 
-def test_snapshot_scope_still_requires_exact_target_scope(tmp_path: Path) -> None:
+def test_object_mutation_rejects_resource_scope_before_capture(tmp_path: Path) -> None:
     perception, _, backend, actuator, action = _stack(tmp_path, [FIXTURES["base"]])
     first = perception.snapshot("s1", FIXTURES["base"])
     req = _click_action(first, action_id="scope-mismatch")
-    req["version_scope"] = "snapshot"
-    req["scope_ref"] = next(scope["scope_ref"] for scope in first["scope_facts"] if scope["kind"] == "page")
+    req["version_scope"] = "resource"
     result = action.execute("s1", req)
     assert result["status"] == "rejected"
-    assert any(
-        reason.startswith("version_precondition_") or reason == "target_scope_mismatch"
-        for reason in result["completeness"]["reasons"]
-    )
-    assert backend.calls == 1
+    assert "version_scope_mismatch" in result["completeness"]["reasons"]
+    assert backend.calls == 0
     assert actuator.calls == []
 
 
@@ -340,7 +371,7 @@ def test_dispatch_grounding_is_durable_session_fenced_and_privacy_safe(tmp_path:
     assert receipts.hydrate_dispatch_grounding("s2", "grounded") is None
 
 
-def test_navigate_requires_exact_page_semantic_root_even_for_snapshot_scope(tmp_path: Path) -> None:
+def test_navigate_requires_exact_page_semantic_root_under_resource_scope(tmp_path: Path) -> None:
     perception, _, _, actuator, action = _stack(tmp_path, [FIXTURES["base"]])
     first = perception.snapshot("s1", FIXTURES["base"])
     target = _by_name(first, "Submit")
@@ -350,7 +381,7 @@ def test_navigate_requires_exact_page_semantic_root_even_for_snapshot_scope(tmp_
         "verb": "navigate", "target_id": target["id"], "args": {"url": "http://127.0.0.1/a"},
         "operation_class": "mutate", "idempotency_class": "unknown",
         "atomicity_class": "single_dispatch", "expected_version": first["snapshot"]["snapshot_id"],
-        "version_scope": "snapshot", "version_precondition": "required",
+        "version_scope": "resource", "version_precondition": "required",
     }
     result = action.execute("s1", req)
     assert result["status"] == "rejected"
