@@ -139,6 +139,18 @@ describe("MessageItem", () => {
     expect(screen.queryByTestId("msg-footer")).not.toBeInTheDocument();
   });
 
+  it("流式 reasoning 一到达就自动展开并显示实时游标，历史消息仍可默认折叠", () => {
+    render(
+      <MessageItem
+        msg={{ role: "assistant", content: "", reasoningContent: "正在分析当前证据", streaming: true }}
+      />
+    );
+    const block = screen.getByTestId("think-block");
+    expect(block.querySelector(".v2-think-body")?.textContent).toContain("正在分析当前证据");
+    expect(block.querySelector(".v2-think-cursor")).not.toBeNull();
+    expect(block.querySelector("button")?.textContent).toContain("▾");
+  });
+
   it("助手消息：正文 + 思考块默认折叠", () => {
     render(
       <MessageItem

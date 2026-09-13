@@ -469,15 +469,94 @@ def test_eventbus_replay_history():
     assert third["data"] == "!"
 
 
-def test_eventbus_replay_bounded():
-    """重放缓冲有界（_HISTORY_MAX 内），超限丢弃最旧."""
+def test_eventbus_replay_reasoning_is_lossless_past_legacy_history_limit():
+    """长 reasoning 重连必须保留完整前缀，不能按 500 个原始 delta 截头。"""
+    from llm_loop.llm.client import StreamDelta
+
     bus = EventBus()
+    expected = []
     for i in range(EventBus._HISTORY_MAX + 50):
-        bus.emit({"type": "answer_delta", "data": str(i)})
+        piece = f"r{i}|"
+        expected.append(piece)
+        bus.emit({"type": "delta", "delta": StreamDelta(reasoning=piece)})
+
     q = bus.subscribe()
-    # 应只回放最近 _HISTORY_MAX 条（丢弃最旧 50）
-    first = q.get(timeout=1.0)
-    assert int(first["data"]) == 50  # 0-49 被丢弃
+    replayed = []
+    while not q.empty():
+        event = q.get_nowait()
+        assert event["type"] == "delta"
+        delta = event["delta"]
+        assert not delta.text
+        assert delta.tool_round is None
+        assert delta.tool_result is None
+        replayed.append(delta.reasoning or "")
+
+    assert "".join(replayed) == "".join(expected)
+
+
+def test_eventbus_replay_spills_long_reasoning_and_preserves_tool_boundaries():
+    """长 replay 溢出内存阈值后仍保序；工具事实不与 reasoning 合并。"""
+    from llm_loop.llm.client import StreamDelta, ToolResultInfo, ToolRoundInfo
+
+    bus = EventBus()
+    before = "甲" * (EventBus._REPLAY_SPOOL_MAX_BYTES // 2)
+    after = "乙" * (EventBus._REPLAY_SPOOL_MAX_BYTES // 2)
+    bus.emit({"type": "delta", "delta": StreamDelta(reasoning=before)})
+    bus.emit({
+        "type": "delta",
+        "delta": StreamDelta(
+            tool_round=ToolRoundInfo(
+                tool_name="read_file",
+                round_index=3,
+                args_summary='{"path":"x"}',
+                tool_call_id="call-1",
+            )
+        ),
+    })
+    bus.emit({
+        "type": "delta",
+        "delta": StreamDelta(
+            tool_result=ToolResultInfo(
+                tool_name="read_file",
+                tool_call_id="call-1",
+                status="success",
+                duration_ms=12.5,
+            )
+        ),
+    })
+    bus.emit({"type": "delta", "delta": StreamDelta(reasoning=after)})
+
+    assert getattr(bus._replay, "_rolled", False) is True
+    q = bus.subscribe()
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+
+    reasoning = []
+    controls = []
+    for event in events:
+        delta = event["delta"]
+        if delta.reasoning:
+            reasoning.append(delta.reasoning)
+        elif delta.tool_round is not None:
+            controls.append(("round", delta.tool_round.tool_call_id))
+        elif delta.tool_result is not None:
+            controls.append(("result", delta.tool_result.tool_call_id))
+
+    assert "".join(reasoning) == before + after
+    assert controls == [("round", "call-1"), ("result", "call-1")]
+
+
+def test_eventbus_replay_more_than_subscriber_limit_keeps_oldest_fact():
+    """大量不可合并控制事实的重放也不能因 live queue 上限再次截头。"""
+    bus = EventBus()
+    total = EventBus._SUBSCRIBER_MAX + 77
+    for i in range(total):
+        bus.emit({"type": "control", "index": i})
+
+    q = bus.subscribe()
+    assert q.qsize() == total
+    assert q.get_nowait() == {"type": "control", "index": 0}
 
 
 def test_eventbus_replay_after_subscribe_live_only():

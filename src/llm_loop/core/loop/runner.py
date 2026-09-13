@@ -18,9 +18,12 @@
 from __future__ import annotations
 
 import contextvars
+import copy
 import logging
 import os
+import pickle
 import queue
+import tempfile
 import threading
 import time
 import uuid
@@ -113,50 +116,227 @@ class RunHandle:
 
 
 class EventBus:
-    """每 run 事件总线：订阅者队列集合 + 广播（thread-safe）+ 重放缓冲.
+    """Per-run event bus with live broadcast and lossless active-run replay.
 
-    emit 对当前订阅者逐一 put（快照副本，避免遍历中变更）；订阅者退出 unsubscribe
-    后不再接收；单个订阅者 put 失败不影响其余（fail-open）。
+    Live subscribers receive the original event objects immediately.  Replay history is
+    different: provider streams can emit hundreds or thousands of tiny reasoning/text
+    deltas, so retaining a Python object per delta both wastes RAM and made the old
+    ``_HISTORY_MAX=500`` policy truncate the beginning of long reasoning on reconnect.
 
-    EVO-20260818（DSH 014 REFRESH-LIVE-CONTENT）: 重放缓冲——run 期间保留有界 delta
-    历史（_history，上限 _HISTORY_MAX 条），subscribe 时先回放历史再实时。刷新/切回
-    场景：新订阅者先收到已生成内容（中间状态可见），再收实时 delta。
-    缓存影响：重放只进响应不落盘、不改历史序列 → 前缀缓存零影响。
+    The replay source of truth is therefore a short-lived ``SpooledTemporaryFile``:
+    small runs stay in memory up to a fixed byte ceiling, larger runs spill to an
+    anonymous temporary file.  A reconnect reads that mechanical event stream in order
+    and coalesces only adjacent *pure* text or *pure* reasoning deltas into bounded
+    chunks.  Tool progress/results keep their own event boundaries and terminal events
+    remain independent.  Nothing here is persisted into conversation history or fed
+    back to the model prompt.
     """
 
-    _HISTORY_MAX = 500  # 重放历史上限
-    _SUBSCRIBER_MAX = 1024  # 单慢消费者上限；done 含完整终态，可安全丢最旧 delta
+    # Compatibility marker for the historical truncation boundary.  It is intentionally
+    # no longer a retention cap; regression tests cross it to prove prefixes survive.
+    _HISTORY_MAX = 500
+    _SUBSCRIBER_MAX = 1024
+    _REPLAY_SPOOL_MAX_BYTES = 256 * 1024
+    _REPLAY_CHUNK_CHARS = 64 * 1024
+    _TERMINAL_TYPES = frozenset({"done", "error"})
 
     def __init__(self) -> None:
         self._subs: set[queue.Queue] = set()
         self._guard = threading.Lock()
-        self._history: list[dict] = []
+        self._replay = tempfile.SpooledTemporaryFile(  # noqa: SIM115 - run-scoped; close() is explicit
+            max_size=self._REPLAY_SPOOL_MAX_BYTES,
+            mode="w+b",
+        )
+        self._terminal_event: dict | None = None
+        self._replay_write_errors = 0
 
     @staticmethod
     def _put_latest(q: queue.Queue, event: dict) -> None:
-        """非阻塞写队列；满时丢最旧，保证最新事件（尤其 done/error）可进入。"""
+        """Non-blocking live delivery; a slow live consumer keeps the newest facts."""
         try:
             q.put_nowait(event)
             return
         except queue.Full:
-            logger.debug("事件总线订阅者队列已满，准备淘汰最旧事件")
+            logger.debug("event bus subscriber queue full; evicting oldest live event")
         try:
             q.get_nowait()
         except queue.Empty:
-            logger.debug("事件总线满队列在淘汰前已被消费者取空")
+            logger.debug("event bus queue drained while evicting oldest event")
         try:
             q.put_nowait(event)
         except queue.Full:
-            # 极窄并发窗口：消费者/生产者同时竞争时 fail-open，不能阻塞后台 run。
-            logger.warning("事件总线慢消费者队列持续满，丢弃最新非关键事件")
+            logger.warning("event bus subscriber queue stayed full; newest live event dropped")
+
+    @staticmethod
+    def _pure_stream_delta(event: dict) -> tuple[str, str, Any] | None:
+        """Return (channel, content, delta) only for mechanically merge-safe deltas."""
+        if event.get("type") != "delta":
+            return None
+        delta = event.get("delta")
+        if delta is None:
+            return None
+        if getattr(delta, "tool_round", None) is not None:
+            return None
+        if getattr(delta, "tool_result", None) is not None:
+            return None
+        text = str(getattr(delta, "text", "") or "")
+        reasoning = str(getattr(delta, "reasoning", "") or "")
+        if text and not reasoning:
+            return ("text", text, delta)
+        if reasoning and not text:
+            return ("reasoning", reasoning, delta)
+        return None
+
+    @staticmethod
+    def _merged_delta_event(template: Any, channel: str, content: str) -> dict:
+        """Copy the original delta type while changing only one text-bearing field."""
+        delta = copy.copy(template)
+        if channel == "text":
+            delta.text = content
+            delta.reasoning = None
+        else:
+            delta.text = ""
+            delta.reasoning = content
+        return {"type": "delta", "delta": delta}
+
+    def _append_replay_locked(self, event: dict) -> None:
+        """Append one nonterminal replay fact without making live delivery depend on it."""
+        try:
+            pickle.dump(event, self._replay, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception:  # noqa: BLE001 - replay observability must not kill the run
+            self._replay_write_errors += 1
+            logger.exception("event bus replay spool write failed; live delivery continues")
+
+    def _replay_frame_count_locked(self) -> int:
+        """Count compacted replay frames without materializing replay text in RAM."""
+        end = self._replay.tell()
+        self._replay.seek(0)
+        count = 0
+        pending_channel: str | None = None
+        pending_chars = 0
+
+        def flush_pending() -> None:
+            nonlocal count, pending_channel, pending_chars
+            if pending_channel is not None and pending_chars > 0:
+                count += (pending_chars + self._REPLAY_CHUNK_CHARS - 1) // self._REPLAY_CHUNK_CHARS
+            pending_channel = None
+            pending_chars = 0
+
+        try:
+            while self._replay.tell() < end:
+                try:
+                    event = pickle.load(self._replay)
+                except EOFError:
+                    break
+                pure = self._pure_stream_delta(event)
+                if pure is None:
+                    flush_pending()
+                    count += 1
+                    continue
+                channel, content, _template = pure
+                if pending_channel is not None and pending_channel != channel:
+                    flush_pending()
+                if pending_channel is None:
+                    pending_channel = channel
+                pending_chars += len(content)
+            flush_pending()
+            if self._terminal_event is not None:
+                count += 1
+            return count
+        finally:
+            self._replay.seek(end)
+
+    def _replay_into_queue_locked(self, q: queue.Queue) -> None:
+        """Replay the current spool snapshot in order with bounded text/reasoning chunks."""
+        end = self._replay.tell()
+        self._replay.seek(0)
+
+        pending_channel: str | None = None
+        pending_template: Any = None
+        pending_parts: list[str] = []
+        pending_chars = 0
+
+        def flush_pending() -> None:
+            nonlocal pending_channel, pending_template, pending_parts, pending_chars
+            if pending_channel is None or pending_template is None or not pending_parts:
+                pending_channel = None
+                pending_template = None
+                pending_parts = []
+                pending_chars = 0
+                return
+            self._put_latest(
+                q,
+                self._merged_delta_event(
+                    pending_template,
+                    pending_channel,
+                    "".join(pending_parts),
+                ),
+            )
+            pending_channel = None
+            pending_template = None
+            pending_parts = []
+            pending_chars = 0
+
+        def append_piece(channel: str, content: str, template: Any) -> None:
+            nonlocal pending_channel, pending_template, pending_parts, pending_chars
+            if pending_channel is not None and pending_channel != channel:
+                flush_pending()
+            if pending_channel is None:
+                pending_channel = channel
+                pending_template = template
+
+            remaining = content
+            while remaining:
+                room = self._REPLAY_CHUNK_CHARS - pending_chars
+                if room <= 0:
+                    flush_pending()
+                    pending_channel = channel
+                    pending_template = template
+                    room = self._REPLAY_CHUNK_CHARS
+                piece = remaining[:room]
+                pending_parts.append(piece)
+                pending_chars += len(piece)
+                remaining = remaining[room:]
+                if pending_chars >= self._REPLAY_CHUNK_CHARS:
+                    flush_pending()
+                    if remaining:
+                        pending_channel = channel
+                        pending_template = template
+
+        try:
+            while self._replay.tell() < end:
+                try:
+                    event = pickle.load(self._replay)
+                except EOFError:
+                    break
+                pure = self._pure_stream_delta(event)
+                if pure is not None:
+                    channel, content, template = pure
+                    append_piece(channel, content, template)
+                    continue
+                flush_pending()
+                self._put_latest(q, event)
+            flush_pending()
+            if self._terminal_event is not None:
+                self._put_latest(q, self._terminal_event)
+        finally:
+            # emit() always appends at EOF; restore the write cursor after snapshot replay.
+            self._replay.seek(end)
 
     def subscribe(self) -> queue.Queue:
-        q: queue.Queue = queue.Queue(maxsize=self._SUBSCRIBER_MAX)
         with self._guard:
+            # Count after mechanical compaction, not raw provider fragments.  Replay gets
+            # enough queue headroom to be lossless while live slow-consumer headroom stays
+            # bounded at the existing _SUBSCRIBER_MAX beyond that snapshot.
+            replay_frames = self._replay_frame_count_locked()
+            q: queue.Queue = queue.Queue(
+                maxsize=max(self._SUBSCRIBER_MAX, replay_frames + self._SUBSCRIBER_MAX)
+            )
+            # Holding the guard across replay establishes strict history-before-live order:
+            # emit() cannot interleave a new event between the replay snapshot and adding
+            # this queue to the live subscriber set.
+            self._replay_into_queue_locked(q)
             self._subs.add(q)
-            # 重放历史最大 500 < subscriber 1024，不会在初始回放阶段截断。
-            for evt in self._history:
-                self._put_latest(q, evt)
         return q
 
     def unsubscribe(self, q: queue.Queue) -> None:
@@ -165,16 +345,26 @@ class EventBus:
 
     def emit(self, event: dict) -> None:
         with self._guard:
-            # 缓冲写入（有界：超限丢弃最旧）
-            self._history.append(event)
-            if len(self._history) > self._HISTORY_MAX:
-                self._history = self._history[-self._HISTORY_MAX:]
+            if event.get("type") in self._TERMINAL_TYPES:
+                # One bounded terminal fact avoids serializing an arbitrary LoopResult while
+                # preserving the narrow race where resume subscribes just after completion.
+                self._terminal_event = event
+            else:
+                self._append_replay_locked(event)
             subs = list(self._subs)
         for q in subs:
             try:
                 self._put_latest(q, event)
-            except Exception:  # noqa: BLE001 — 单订阅者失败不影响其余
-                logger.warning("事件总线 put 失败（忽略）", exc_info=True)
+            except Exception:  # noqa: BLE001 — one subscriber never affects the run
+                logger.warning("event bus put failed (ignored)", exc_info=True)
+
+    def close(self) -> None:
+        """Release ephemeral replay storage after the run leaves the active registry."""
+        with self._guard:
+            try:
+                self._replay.close()
+            except Exception:  # noqa: BLE001 - cleanup only
+                logger.debug("event bus replay spool close failed", exc_info=True)
 
 
 class BackgroundRunner:
@@ -576,6 +766,7 @@ class BackgroundRunner:
                 handle.status = "done"
                 handle.finished_at = time.time()
                 self._registry.pop(session_id, None)
+            bus.close()
         except Exception as exc:  # noqa: BLE001 — 后台异常如实广播，不泄漏线程
             logger.exception("后台 run 失败: session=%s", session_id)
             err = f"{type(exc).__name__}: {exc}"
@@ -594,6 +785,7 @@ class BackgroundRunner:
                 handle.error = err
                 handle.finished_at = time.time()
                 self._registry.pop(session_id, None)
+            bus.close()
         finally:
             self._worker_idents.discard(threading.get_ident())
 

@@ -98,7 +98,9 @@ function Markdown({
 }
 
 function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean }) {
-  const [open, setOpen] = useState(false);
+  // The block mounts on the first reasoning delta. Make live reasoning visible immediately;
+  // historical reasoning remains collapsed by default, and the user can still close a live block.
+  const [open, setOpen] = useState(Boolean(streaming));
   const len = text.length;
   return (
     <div className="v2-think" data-testid="think-block">

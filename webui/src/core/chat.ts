@@ -17,6 +17,7 @@ import type {
 } from "./types";
 
 export interface StreamHandlers {
+  onRunStarted?: (data: { session_id?: string; run_generation?: string }) => void;
   onAnswerDelta?: (text: string) => void;
   onReasoningDelta?: (text: string) => void;
   onToolRound?: (data: ToolRoundEvent) => void;
@@ -24,8 +25,21 @@ export interface StreamHandlers {
   onToolCallDeltas?: (deltas: ToolCallDelta[]) => void;
 }
 
+export interface StreamChatRequestBody {
+  message: string;
+  session_id?: string | null;
+  model?: string | null;
+  resume?: boolean;
+  run_generation?: string;
+  reasoning_mode?: string;
+  reasoning_effort?: string | null;
+  attachments?: { ref: string }[];
+  new_session?: boolean;
+  queue_id?: string;
+}
+
 export async function streamChatRequest(
-  body: { message: string; session_id?: string | null; model?: string | null; resume?: boolean; reasoning_mode?: string },
+  body: StreamChatRequestBody,
   handlers: StreamHandlers,
   signal?: AbortSignal
 ): Promise<StreamOutcome> {
@@ -80,7 +94,9 @@ export async function streamChatRequest(
         continue;
       }
       const d = evt.data as Record<string, unknown> | undefined;
-      if (evt.type === "answer_delta") handlers.onAnswerDelta?.(String(d?.data ?? ""));
+      if (evt.type === "run_started") {
+        handlers.onRunStarted?.((d ?? {}) as { session_id?: string; run_generation?: string });
+      } else if (evt.type === "answer_delta") handlers.onAnswerDelta?.(String(d?.data ?? ""));
       else if (evt.type === "reasoning_delta") handlers.onReasoningDelta?.(String(d?.data ?? ""));
       else if (evt.type === "tool_round") handlers.onToolRound?.((d ?? {}) as ToolRoundEvent);
       else if (evt.type === "tool_result") handlers.onToolResult?.((d ?? {}) as ToolResultEvent);
@@ -417,9 +433,11 @@ export function formatTokens(n: number | undefined | null): string {
 /** 后台 run 状态查询（EVO 后台 run）：running/done + 起止时间（前端刷新/切换后恢复可见性）. */
 export interface StreamStatus {
   running: boolean;
+  /** Exact BackgroundRunner generation. Resume must bind this value; never attach by session id alone. */
+  run_generation?: string;
   detail?: string;
-  started_at?: string;
-  finished_at?: string;
+  started_at?: number;
+  finished_at?: number | null;
 }
 
 export async function fetchStreamStatus(sessionId: string): Promise<StreamStatus | null> {

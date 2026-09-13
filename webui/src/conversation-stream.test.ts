@@ -24,6 +24,7 @@ vi.mock("./core/chat", async (importOriginal) => {
 
 import {
   conversationStore,
+  checkBackgroundRun,
   loadHistory,
   sendMessage,
   stopStreaming,
@@ -77,6 +78,79 @@ describe("conversation stream ownership", () => {
     sessionStore.setCurrentSession("");
     resetConversation();
     vi.unstubAllGlobals();
+  });
+
+  it("fresh run 网络断流后只用 run_started 的 exact generation 续联，不猜 latest", async () => {
+    h.streamChatRequest
+      .mockImplementationOnce(async (_body: Record<string, unknown>, handlers: any) => {
+        handlers.onRunStarted?.({ session_id: "s1", run_generation: "gen-fresh-1" });
+        handlers.onReasoningDelta?.("断流前推理");
+        return {
+          ok: false,
+          errorType: "network",
+          error: { detail: "连接中断，已保留已生成内容" },
+          data: null,
+        } satisfies StreamOutcome;
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        errorType: null,
+        error: null,
+        data: { session_id: "s1", final_answer: "done", reasoning_content: "完整推理" },
+      } satisfies StreamOutcome);
+
+    await sendMessage("A", []);
+    expect(h.streamChatRequest).toHaveBeenCalledTimes(2);
+    expect(h.streamChatRequest.mock.calls[1]?.[0]).toMatchObject({
+      message: "resume",
+      session_id: "s1",
+      resume: true,
+      run_generation: "gen-fresh-1",
+    });
+  });
+
+  it("刷新/切回后台 run 时 resume 必须精确携带 status 的 run_generation", async () => {
+    h.fetchStreamStatus.mockResolvedValueOnce({ running: true, run_generation: "gen-live-1" });
+    h.streamChatRequest.mockResolvedValueOnce({
+      ok: true,
+      errorType: null,
+      error: null,
+      data: { session_id: "s1", final_answer: "done", reasoning_content: "实时推理" },
+    } satisfies StreamOutcome);
+
+    await checkBackgroundRun("s1");
+    expect(h.streamChatRequest).toHaveBeenCalledTimes(1);
+    expect(h.streamChatRequest.mock.calls[0]?.[0]).toMatchObject({
+      message: "resume",
+      session_id: "s1",
+      resume: true,
+      run_generation: "gen-live-1",
+    });
+  });
+
+  it("非 Web ingress 会话被 409 拒绝后，下一条机械进入新 Web session，不重复撞旧会话", async () => {
+    sessionStore.setNewSessionPending(false);
+    h.streamChatRequest.mockResolvedValueOnce({
+      ok: false,
+      errorType: "http",
+      error: { error: "session_ingress_mismatch", detail: "该会话来自其他入口" },
+      data: null,
+    } satisfies StreamOutcome);
+
+    await sendMessage("A", []);
+    expect(sessionStore.getState().currentSessionId).toBe("s1");
+    expect(sessionStore.getState().newSessionPending).toBe(true);
+    expect(conversationStore.getState().lastError).toContain("该会话来自其他入口");
+
+    h.streamChatRequest.mockResolvedValueOnce({
+      ok: true, errorType: null, error: null,
+      data: { session_id: "s-new", final_answer: "ok" },
+    } satisfies StreamOutcome);
+    await sendMessage("B", []);
+    expect(h.streamChatRequest.mock.calls[1]?.[0]).toMatchObject({
+      session_id: "s1",
+      new_session: true,
+    });
   });
 
   it("切 s1→s2 只 detach s1 SSE，不发送 cancel", async () => {

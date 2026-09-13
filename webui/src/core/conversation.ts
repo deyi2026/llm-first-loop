@@ -240,7 +240,10 @@ export async function checkBackgroundRun(sessionId: string): Promise<void> {
   if (sessionStore.getState().currentSessionId !== sessionId) return;
   if (!status || !status.running) return;
   conversationStore.setState({ backgroundRunning: true });
-  const resumed = await resumeBackgroundStream(sessionId);
+  // FC2-C run identity: resume must bind the exact generation returned by status.
+  // Missing generation fails closed to polling; never subscribe to "whatever run is current".
+  const runGeneration = typeof status.run_generation === "string" ? status.run_generation.trim() : "";
+  const resumed = runGeneration ? await resumeBackgroundStream(sessionId, runGeneration) : false;
   if (sessionStore.getState().currentSessionId !== sessionId) return;
   if (resumed) return; // 订阅成功——流式接管（done 后自动重载）
   // 回退：轮询直到完成（订阅失败/不支持——run 已结束或网络异常）
@@ -263,35 +266,51 @@ export async function checkBackgroundRun(sessionId: string): Promise<void> {
 
 /** 对齐 DSH（2026-08-18）: 刷新/切回时后台 run 进行中 → resume 订阅已有 run——
  *  后端重放已生成 delta（EventBus 有界缓冲 c3c6c6d）+ 实时流式；done 后重载完整结果。 */
-async function resumeBackgroundStream(sessionId: string): Promise<boolean> {
+async function resumeBackgroundStream(
+  sessionId: string,
+  runGeneration: string,
+  reuseCurrentStreamingMessage = false
+): Promise<boolean> {
   const controller = new AbortController();
   resumeAbort = controller;
   resumeSessionId = sessionId;
   try {
-    // 流式占位（重放内容实时渲染——同正常发送路径）
+    // 刷新/切回：新建流式占位；网络断流续联：复用原 streaming message，
+    // replay 从头机械重建该消息，避免临时出现两个 assistant 气泡。
     const cur = conversationStore.getState();
-    const placeholder: ChatMessage = {
-      role: "assistant",
-      content: "",
-      reasoningContent: "",
-      toolCalls: null,
-      note: null,
-      streaming: true,
-      streamStartedAt: Date.now(),
-      tokens_in: 0,
-      tokens_out: 0,
-      tokens_cache_hit: 0,
-    };
-    conversationStore.setState({
-      messages: [...cur.messages, placeholder],
-      streaming: true,
-      streamingIndex: cur.messages.length,
-      lastError: null,
-    });
+    if (reuseCurrentStreamingMessage) {
+      if (cur.streamingIndex < 0) return false;
+      conversationStore.setState({ streaming: true, backgroundRunning: true, lastError: null });
+      patchStreaming({
+        content: "",
+        reasoningContent: "",
+        note: "连接中断，正在恢复…",
+        streaming: true,
+      });
+    } else {
+      const placeholder: ChatMessage = {
+        role: "assistant",
+        content: "",
+        reasoningContent: "",
+        toolCalls: null,
+        note: null,
+        streaming: true,
+        streamStartedAt: Date.now(),
+        tokens_in: 0,
+        tokens_out: 0,
+        tokens_cache_hit: 0,
+      };
+      conversationStore.setState({
+        messages: [...cur.messages, placeholder],
+        streaming: true,
+        streamingIndex: cur.messages.length,
+        lastError: null,
+      });
+    }
     const acc = { answer: "", reasoning: "" };
     const sid = sessionId;
     const outcome = await streamChatRequest(
-      { message: "resume", session_id: sid, resume: true },
+      { message: "resume", session_id: sid, resume: true, run_generation: runGeneration },
       {
         onAnswerDelta: (d) => {
           // 会话守卫：当前会话已切换 → 停止渲染（防串写）
@@ -333,11 +352,17 @@ async function resumeBackgroundStream(sessionId: string): Promise<boolean> {
       void loadHistory(sessionId); // 终态 → 重载完整结果（含工具调用）
       return true;
     }
-    // 失败（run 已结束/网络）→ 移除占位、回退轮询
-    conversationStore.setState({
-      messages: conversationStore.getState().messages.slice(0, -1),
-      streaming: false,
-    });
+    // 失败（run 已结束/网络）：刷新路径移除自己的占位；同消息续联则把控制权
+    // 交回原 sendMessage，由它用断流前累积内容收敛为 interrupted。
+    if (reuseCurrentStreamingMessage) {
+      conversationStore.setState({ backgroundRunning: false });
+    } else {
+      conversationStore.setState({
+        messages: conversationStore.getState().messages.slice(0, -1),
+        streaming: false,
+        backgroundRunning: false,
+      });
+    }
     return false;
   } catch {
     if (resumeAbort === controller) {
@@ -407,6 +432,10 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
   // 空串归一为 null：新工作区/新会话无会话时后端按"新建会话"处理
   // （不可在此 return，否则新工作区发消息被静默拦截）
   const sessionId = sessionStore.getState().currentSessionId || null;
+  // Fresh new_session 的真实 session_id 直到 run_started 才由后端产生。后续流 owner、
+  // Stop/cancel 与断流续联都跟随这个机械事实，而不是永远绑定发送前的 null。
+  let ownerSessionId: string | null = sessionId;
+  let runGeneration = "";
   // 本地发送即将写入/产生新消息：停空闲轮询防竞态（基线由完成后的重载路径重建）
   stopIdlePoll();
   // 附件以服务端 opaque ref 作为唯一授权引用；不再把提取全文拼进 human message。
@@ -463,25 +492,37 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
   };
   const controller = new AbortController();
   abortCtrl = controller;
-  abortSessionId = sessionId;
+  abortSessionId = ownerSessionId;
   const acc = { answer: "", reasoning: "" };
 
   const outcome = await streamChatRequest(
     body,
     {
+      onRunStarted: (event) => {
+        const sid = typeof event.session_id === "string" ? event.session_id : "";
+        const generation = typeof event.run_generation === "string" ? event.run_generation : "";
+        if (!sid || !generation) return;
+        if (ownerSessionId && sid !== ownerSessionId) return;
+        ownerSessionId = sid;
+        runGeneration = generation;
+        // Update abort ownership before publishing the new session id; the session-store
+        // subscriber must not mistake this mechanical bind for a user session switch.
+        abortSessionId = sid;
+        if (sessionStore.getState().currentSessionId !== sid) sessionStore.setCurrentSession(sid);
+      },
       onAnswerDelta: (d) => {
         // 会话守卫（2026-08-23 多会话串扰修复）: 当前会话已切换 → 停止渲染（防 A 串写 B 视图）
-        if (sessionStore.getState().currentSessionId !== sessionId) return;
+        if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
         acc.answer += d;
         patchStreaming({ content: acc.answer });
       },
       onReasoningDelta: (d) => {
-        if (sessionStore.getState().currentSessionId !== sessionId) return;
+        if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
         acc.reasoning += d;
         patchStreaming({ reasoningContent: acc.reasoning });
       },
       onToolRound: (event: ToolRoundEvent) => {
-        if (sessionStore.getState().currentSessionId !== sessionId) return;
+        if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
         const current = conversationStore.getState();
         const active = current.streamingIndex >= 0
           ? current.messages[current.streamingIndex]?.toolActivities
@@ -489,7 +530,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
         patchStreaming({ toolActivities: startToolActivity(active, event), note: null });
       },
       onToolResult: (event: ToolResultEvent) => {
-        if (sessionStore.getState().currentSessionId !== sessionId) return;
+        if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
         const current = conversationStore.getState();
         const active = current.streamingIndex >= 0
           ? current.messages[current.streamingIndex]?.toolActivities
@@ -505,12 +546,12 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
   }
 
   // 终态守卫: 会话已切换 → 不写回（防 A 完成时把结果写进 B 视图）
-  if (sessionStore.getState().currentSessionId !== sessionId) {
+  if (sessionStore.getState().currentSessionId !== ownerSessionId) {
     return;
   }
 
   // 终态守卫: 会话已切换 → 不写回（防 A 完成时把结果写进 B 视图）
-  if (sessionStore.getState().currentSessionId !== sessionId) {
+  if (sessionStore.getState().currentSessionId !== ownerSessionId) {
     return;
   }
 
@@ -518,6 +559,21 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
   const liveActivities = st.streamingIndex >= 0
     ? st.messages[st.streamingIndex]?.toolActivities
     : undefined;
+
+  // Network loss is not a model/run failure. If this exact stream already yielded a
+  // run_started receipt, reconnect only to that generation and rebuild the same message
+  // from EventBus replay. User Stop/abort is never auto-resumed.
+  if (
+    !outcome.ok &&
+    outcome.errorType === "network" &&
+    !controller.signal.aborted &&
+    ownerSessionId &&
+    runGeneration
+  ) {
+    const resumed = await resumeBackgroundStream(ownerSessionId, runGeneration, true);
+    if (resumed) return;
+  }
+
   const finalize = (msg: ChatMessage) => {
     conversationStore.setState({
       messages: [...st.messages.slice(0, st.streamingIndex), msg, ...st.messages.slice(st.streamingIndex + 1)],
@@ -579,7 +635,12 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     }
   } else {
     const detail = outcome.error?.detail ?? "服务内部错误。";
-    const note = outcome.errorType === "network" ? detail : `[程序异常] ${detail}`;
+    const errorCode = outcome.error?.error ?? "";
+    // Cross-ingress refusal is an intentional safety boundary, not a program exception.
+    // Preserve the visible explanation on the old session; only the *next* human send
+    // carries new_session=true, so no user message is silently replayed or auto-routed.
+    const ingressMismatch = errorCode === "session_ingress_mismatch";
+    const note = outcome.errorType === "network" || ingressMismatch ? detail : `[程序异常] ${detail}`;
     finalize({
       role: "assistant",
       content: acc.answer || "",
@@ -590,6 +651,10 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
       ts: Date.now() / 1000,
     });
     conversationStore.setState({ lastError: note });
+    if (ingressMismatch) {
+      sessionStore.setNewSessionPending(true);
+      return;
+    }
     // 队列路径必有 sessionId（claim 项即来自该会话）；null 时跳过——后端 reaper 兜底
     if (opts?.queueId && sessionId) {
       if (outcome.error?.error === "session_busy") {
