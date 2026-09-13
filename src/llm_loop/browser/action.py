@@ -29,6 +29,20 @@ _MUTATION_CONTRACT: dict[str, dict[str, Any]] = {
 _TERMINAL = frozenset({"ok", "failed", "rejected"})
 
 
+_ARGS_NORMALIZATION_RULES = {"verb_wrapper_unwrap"}
+
+
+def _valid_args_normalization(field: Any) -> bool:
+    """Machine-authored receipt field; never part of the model-owned surface."""
+    if not isinstance(field, dict) or set(field) != {"applied", "rule"}:
+        return False
+    if not isinstance(field["applied"], bool):
+        return False
+    if field["applied"]:
+        return isinstance(field["rule"], str) and field["rule"] in _ARGS_NORMALIZATION_RULES
+    return field["rule"] is None
+
+
 def _session_hash(session_id: str) -> str:
     return hashlib.sha256(session_id.encode("utf-8")).hexdigest()
 
@@ -266,6 +280,7 @@ class BrowserActionAdapter:
             "verb",
             "target_id",
             "args",
+            "args_normalization",
             "operation_class",
             "idempotency_class",
             "atomicity_class",
@@ -298,6 +313,8 @@ class BrowserActionAdapter:
         args = action.get("args")
         if not isinstance(args, dict) or set(args) != contract["args"]:
             return "args_contract_mismatch"
+        if not _valid_args_normalization(action.get("args_normalization")):
+            return "args_normalization_mismatch"
         if verb == "fill" and str(args.get("mode")) not in {"replace", "append"}:
             return "fill_mode_invalid"
         if verb in {"fill", "select", "navigate"}:
@@ -330,6 +347,11 @@ class BrowserActionAdapter:
             "idempotency_class": str(action.get("idempotency_class") or "unknown"),
             "atomicity_class": str(action.get("atomicity_class") or "single_dispatch"),
             "target_id": str(action.get("target_id") or "invalid"),
+            "args_normalization": (
+                dict(action["args_normalization"])
+                if _valid_args_normalization(action.get("args_normalization"))
+                else {"applied": False, "rule": None}
+            ),
             "status": "rejected",
             "before_version": None,
             "after_version": None,

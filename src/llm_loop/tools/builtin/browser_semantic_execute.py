@@ -94,7 +94,9 @@ class BrowserSemanticExecuteTool:
         return f"sact-{hashlib.sha256(wire).hexdigest()[:24]}"
 
     @staticmethod
-    def _normalize_request(request: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+    def _normalize_request(
+        request: dict[str, Any],
+    ) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
         if set(request) != {"verb", "target_ref", "args"}:
             raise BrowserSemanticExecuteCompileError("semantic_execute_fields_mismatch")
         verb = str(request.get("verb") or "").strip()
@@ -106,13 +108,23 @@ class BrowserSemanticExecuteTool:
         args = request.get("args")
         if not isinstance(args, dict):
             raise BrowserSemanticExecuteCompileError("args_must_be_object")
-        return verb, target_ref, dict(args)
+        args = dict(args)
+        # Deterministic mechanical normalization (FC1 fix, 2026-09-13 ruling): the fully
+        # unambiguous wrapper shape {"<verb>": {canonical args}} is unwrapped by the
+        # compiler. Everything else (multi-key, extra top-level keys, non-dict wrapper
+        # value, inner keys outside the verb contract) stays fail-closed and is rejected
+        # by the adapter as before. The value is carried verbatim; nothing is guessed.
+        args_normalization = {"applied": False, "rule": None}
+        if set(args) == {verb} and isinstance(args[verb], dict):
+            args = dict(args[verb])
+            args_normalization = {"applied": True, "rule": "verb_wrapper_unwrap"}
+        return verb, target_ref, args, args_normalization
 
     def compile_request(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
         """Mechanically compile one already-selected exact ref; never recapture or choose."""
         if not session_id:
             raise BrowserSemanticExecuteCompileError("session_id_missing")
-        verb, target_ref, args = self._normalize_request(request)
+        verb, target_ref, args, args_normalization = self._normalize_request(request)
         hydrated = self._perception.hydrate(session_id, target_ref)
         availability = str(hydrated.get("availability") or "unavailable")
         if availability != "available":
@@ -157,6 +169,7 @@ class BrowserSemanticExecuteTool:
             "verb": verb,
             "target_id": target_id,
             "args": args,
+            "args_normalization": dict(args_normalization),
             "operation_class": "mutate",
             "idempotency_class": "unknown",
             "atomicity_class": "single_dispatch",

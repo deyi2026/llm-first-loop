@@ -776,6 +776,7 @@
       "verb": "click",
       "target_id": "el_checkout_submit",
       "args": {},
+      "args_normalization": {"applied": false, "rule": null},
       "operation_class": "mutate",
       "idempotency_class": "unknown",
       "atomicity_class": "single_dispatch",

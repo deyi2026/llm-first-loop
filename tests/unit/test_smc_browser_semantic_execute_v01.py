@@ -109,6 +109,7 @@ def test_compiler_derives_object_action_from_exact_grounding_ref_only(tmp_path: 
         "verb": "click",
         "target_id": target["id"],
         "args": {},
+        "args_normalization": {"applied": False, "rule": None},
         "operation_class": "mutate",
         "idempotency_class": "unknown",
         "atomicity_class": "single_dispatch",

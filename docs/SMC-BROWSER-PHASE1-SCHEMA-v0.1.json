@@ -1098,6 +1098,7 @@
         "verb",
         "target_id",
         "args",
+        "args_normalization",
         "operation_class",
         "idempotency_class",
         "atomicity_class",
@@ -1172,6 +1173,27 @@
               "$ref": "#/$defs/scroll_args"
             }
           ]
+        },
+        "args_normalization": {
+          "title": "ArgsNormalization",
+          "description": "Machine-authored mechanical-receipt field. The semantic compiler applies the deterministic verb_wrapper_unwrap rule (args == {<verb>: {canonical args}} is unwrapped verbatim); applied=false means args passed through unchanged. Never part of the model-owned request surface.",
+          "type": "object",
+          "required": [
+            "applied",
+            "rule"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "applied": {
+              "type": "boolean"
+            },
+            "rule": {
+              "enum": [
+                "verb_wrapper_unwrap",
+                null
+              ]
+            }
+          }
         },
         "operation_class": {
           "type": "string",

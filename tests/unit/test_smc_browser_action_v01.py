@@ -77,6 +77,7 @@ def _click_action(first: dict[str, Any], *, action_id: str = "act-1") -> dict[st
         "verb": "click",
         "target_id": target["id"],
         "args": {},
+        "args_normalization": {"applied": False, "rule": None},
         "operation_class": "mutate",
         "idempotency_class": "unknown",
         "atomicity_class": "single_dispatch",
@@ -211,6 +212,7 @@ def test_receipt_does_not_persist_sensitive_fill_plaintext(tmp_path: Path) -> No
         "verb": "fill",
         "target_id": target["id"],
         "args": {"text": "secret-value-123", "mode": "replace"},
+        "args_normalization": {"applied": False, "rule": None},
         "operation_class": "mutate",
         "idempotency_class": "unknown",
         "atomicity_class": "single_dispatch",
@@ -257,6 +259,7 @@ def test_all_five_frozen_verbs_accept_only_profile_version_scopes(tmp_path: Path
             "verb": verb,
             "target_id": target_id,
             "args": args,
+            "args_normalization": {"applied": False, "rule": None},
             "operation_class": "mutate",
             "idempotency_class": "unknown",
             "atomicity_class": "single_dispatch",
@@ -290,6 +293,7 @@ def test_all_mutation_snapshot_scopes_rejected_before_capture(tmp_path: Path) ->
             "verb": verb,
             "target_id": target_id,
             "args": args,
+            "args_normalization": {"applied": False, "rule": None},
             "operation_class": "mutate",
             "idempotency_class": "unknown",
             "atomicity_class": "single_dispatch",
@@ -311,7 +315,7 @@ def test_receipts_use_exact_closed_canonical_field_set(tmp_path: Path) -> None:
     expected = {
         "schema", "domain", "scope_ref", "action_id", "receipt_id", "receipt_seq",
         "verb", "operation_class", "idempotency_class", "atomicity_class", "target_id",
-        "status", "before_version", "after_version", "observed_effects", "boundary_events",
+        "args_normalization", "status", "before_version", "after_version", "observed_effects", "boundary_events",
         "grounding_refs", "completeness", "predicate_result", "retry",
     }
     for receipt in receipts.list_action("s1", "act-1"):
@@ -379,6 +383,7 @@ def test_navigate_requires_exact_page_semantic_root_under_resource_scope(tmp_pat
         "schema": "smc.semantic_action.v0.1", "domain": "browser",
         "scope_ref": first["snapshot"]["scope"]["scope_ref"], "action_id": "bad-nav-target",
         "verb": "navigate", "target_id": target["id"], "args": {"url": "http://127.0.0.1/a"},
+        "args_normalization": {"applied": False, "rule": None},
         "operation_class": "mutate", "idempotency_class": "unknown",
         "atomicity_class": "single_dispatch", "expected_version": first["snapshot"]["snapshot_id"],
         "version_scope": "resource", "version_precondition": "required",
