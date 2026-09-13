@@ -781,6 +781,9 @@ class _EventsMixin:
         return (
             lambda: sess.model_override,
             lambda value: self._set_session_override(sess, value),
+            lambda registry_snapshot, target_model: self._routing._advance_run_routing_epoch(
+                registry_snapshot, target_model
+            ),
         )
 
     def _resolve_current_episode_ref(self, session_id: str) -> str:

@@ -178,6 +178,7 @@ def run_switch_model(
     args: dict,
     *,
     session_get_override: Callable[[], str | None] | None = None,
+    routing_transition: Callable[[Any, str], None] | None = None,
 ) -> ToolResult:
     """switch_model: 切换会话级 model_override + 审计落盘 + 如实回执.
 
@@ -227,8 +228,11 @@ def run_switch_model(
         current_override = getattr(ctx, "session_model_override", None) if ctx else None
     from_label = current_override if current_override else pool.get_default_model()
 
-    # 特殊语义: model="default" → 清除 override 回装配默认
+    # 特殊语义: model="default" → 清除 override 回装配默认。default client 本身
+    # 绑定 startup registry，因此本次 epoch transition 也必须绑定同一 startup contract；
+    # 不能借“切回 default”顺带把外部 hot reload 变成隐式授权。
     if model_ref.lower() == "default":
+        transition_registry = pool.default_registry_snapshot()
         if session_set_override is not None:
             try:
                 session_set_override(None)
@@ -239,6 +243,8 @@ def run_switch_model(
                     tool_call_id="",
                     tool_name="switch_model",
                 )
+        if routing_transition is not None:
+            routing_transition(transition_registry, "default")
         if audit is not None:
             audit(
                 "switch_model",
@@ -324,6 +330,12 @@ def run_switch_model(
                 tool_call_id="",
                 tool_name="switch_model",
             )
+
+    # The exact registry used above is the only authority allowed to advance the active
+    # run routing epoch. A background provider-admin/refresh without this explicit model
+    # action therefore remains invisible to later rounds of the current run.
+    if routing_transition is not None:
+        routing_transition(registry, to_label)
 
     # 审计落盘（who/when/from→to/reason; 复用 corrections.py 现有 _audit 通道）
     if audit is not None:

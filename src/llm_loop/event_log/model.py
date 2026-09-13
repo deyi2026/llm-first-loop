@@ -693,6 +693,9 @@ REGISTRY.register(
             "provider_structure_fp": "messages+tools 主要 provider-visible 结构的一次性 SHA256 短指纹",
             "runtime_snapshot": "启动时进程/source/config/tool surface 机械身份快照；不进入 prompt",
             "generation_contract": "该 attempt 的有效 generation/wire 客户端事实",
+            "routing_epoch": "当前run模型路由代次；仅显式switch_model成功可推进",
+            "routing_registry_fp": "当前run绑定的ProviderRegistry机械短指纹；不含凭据值",
+            "routing_transition": "run_start或显式switch_model目标；机械来源事实",
             "influence": "请求构建阶段机械 effect 摘要；不含完整 prompt/语义根因判断",
         },
     )

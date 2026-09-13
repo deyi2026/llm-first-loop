@@ -59,6 +59,9 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
         binding = _resolve_binding(host.ctx)
         getter = binding[0] if binding is not None else None
         setter = binding[1] if binding is not None else host.ctx.session_set_override
+        routing_transition = (
+            binding[2] if isinstance(binding, tuple) and len(binding) >= 3 else None
+        )
         return run_switch_model(
             host.ctx,
             host.ctx.model_pool,
@@ -66,6 +69,7 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
             host.audit,
             args,
             session_get_override=getter,
+            routing_transition=routing_transition,
         )
 
     return None

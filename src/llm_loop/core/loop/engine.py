@@ -498,6 +498,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # cross-run blocked/prewarm/no-progress 决策状态。
         _bucket = self._run_state()
         _bucket.fallback_receipt = None
+        self._routing._begin_run_routing_epoch()
         _bucket.stagnation_state = {
             "fp": None,
             "count": 0,
@@ -920,6 +921,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     _provider_visible_chars = _history_chars + _reasoning_chars
                     _provider_structure_fp = ""
                 _message_shape = provider_message_shape(messages)
+                _routing_identity = self._routing._routing_identity()
                 self._event_append(
                     session_id,
                     "request.meta",
@@ -965,6 +967,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             else {}
                         ),
                         "generation_contract": effective_generation_contract(llm_client),
+                        "routing_epoch": _routing_identity["epoch"],
+                        "routing_registry_fp": _routing_identity["registry_fp"],
+                        "routing_transition": _routing_identity["transition"],
                         "influence": dict(self._run_state().last_request_influence or {}),
                     },
                 )

@@ -9,8 +9,10 @@ move 自 engine.py 内联路由段与守卫段（327-368）及辅助方法（648
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
 from llm_loop.feedback.honesty import model_unavailable_text
@@ -55,6 +57,58 @@ class RoutingService:
     def __init__(self, host: LoopEngine) -> None:
         self._host = host
 
+    @staticmethod
+    def _registry_fingerprint(registry: Any) -> str:
+        """Return a stable secret-free fingerprint for one ProviderRegistry snapshot."""
+        if registry is None:
+            return ""
+        try:
+            raw = json.dumps(
+                asdict(registry),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            return ""
+        return hashlib.sha256(raw).hexdigest()[:24]
+
+    def _begin_run_routing_epoch(self) -> None:
+        """Latch dynamic/default registry identity once for a newly admitted run."""
+        bucket = self._host._run_state()
+        current = self._pool_registry_snapshot()
+        default = self._pool_default_registry_snapshot()
+        bucket.routing_epoch_active = True
+        bucket.routing_epoch = 0
+        bucket.routing_registry_snapshot = current
+        bucket.routing_default_registry_snapshot = default
+        bucket.routing_registry_fp = self._registry_fingerprint(current)
+        bucket.routing_transition = "run_start"
+
+    def _advance_run_routing_epoch(self, registry_snapshot: Any, target_model: str) -> None:
+        """Advance only for an explicit successful switch_model using its exact snapshot."""
+        bucket = self._host._run_state()
+        if (
+            not bucket.routing_epoch_active
+            or not self._host._run_state_mgr.bound_session_id()
+        ):
+            # Out-of-run switch commands only update durable session override; the next
+            # real run will establish epoch 0 from then-current operator configuration.
+            return
+        bucket.routing_epoch += 1
+        bucket.routing_registry_snapshot = registry_snapshot
+        bucket.routing_registry_fp = self._registry_fingerprint(registry_snapshot)
+        bucket.routing_transition = f"switch_model:{target_model}"
+
+    def _routing_identity(self) -> dict[str, Any]:
+        bucket = self._host._run_state()
+        return {
+            "epoch": int(bucket.routing_epoch),
+            "registry_fp": str(bucket.routing_registry_fp or ""),
+            "transition": str(bucket.routing_transition or ""),
+        }
+
     def _pool_registry_snapshot(self) -> Any:
         """读取current registry快照；兼容仅暴露 `.registry` 的旧duck pool。"""
         pool = self._host.llm_pool
@@ -78,9 +132,19 @@ class RoutingService:
     def _round_registry_snapshots(
         self, model: str | None, sess
     ) -> tuple[Any, Any, Any]:
-        """返回(current, default-startup, planning)三个本轮不可变快照。"""
-        current = self._pool_registry_snapshot()
-        default = self._pool_default_registry_snapshot()
+        """Return the run-latched current/default/planning snapshots.
+
+        Outside an active run retain the historical direct-call behavior for tests/admin
+        helpers. During a run, provider-admin/refresh may replace the global registry but
+        cannot silently alter a later round; only switch_model advances the routing epoch.
+        """
+        bucket = self._host._run_state()
+        if bucket.routing_epoch_active and self._host._run_state_mgr.bound_session_id():
+            current = bucket.routing_registry_snapshot
+            default = bucket.routing_default_registry_snapshot
+        else:
+            current = self._pool_registry_snapshot()
+            default = self._pool_default_registry_snapshot()
         planning = current if model is not None or bool(sess.model_override) else default
         return current, default, planning
 

@@ -86,6 +86,15 @@ class _RunState:
     compact_event_was_compacted: bool = False
     # P2-B: one bounded structural ERR1210 transform opportunity per run.
     err1210_run_seq: int = 0
+    # Context Integrity / Routing Epoch: operator registry reloads are allowed globally,
+    # but a live run keeps one exact dynamic-routing snapshot until an explicit successful
+    # switch_model advances the epoch. These facts are prompt-neutral mechanical state.
+    routing_epoch_active: bool = False
+    routing_epoch: int = 0
+    routing_registry_snapshot: Any = None
+    routing_default_registry_snapshot: Any = None
+    routing_registry_fp: str = ""
+    routing_transition: str = ""
 
 
 @dataclass

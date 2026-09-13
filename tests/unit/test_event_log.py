@@ -470,6 +470,9 @@ def test_request_meta_event_written_per_round(tmp_path):
     assert "reasoning_capable" in metas[0].payload
     assert "reasoning_control" in metas[0].payload
     assert "reasoning_supported" in metas[0].payload
+    assert metas[0].payload["routing_epoch"] == 0
+    assert "routing_registry_fp" in metas[0].payload
+    assert metas[0].payload["routing_transition"] == "run_start"
     assert metas[0].payload["reasoning_chars"] == 0
     assert metas[1].payload["reasoning_chars"] == len("PLAN-ABC")
     for meta in metas:
