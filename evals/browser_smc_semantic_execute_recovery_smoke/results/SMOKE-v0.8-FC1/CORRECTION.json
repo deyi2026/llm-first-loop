@@ -1,0 +1,697 @@
+{
+  "all_rows_covered": true,
+  "malformed_result_records": 0,
+  "navigate_ok_rows": 6,
+  "partial_checkpoint_total": 479,
+  "rows": [
+    {
+      "facts": {
+        "coverage": "available_prefix",
+        "decided_but_not_dispatched_rounds": 0,
+        "event_log_sha256": "fa362c8e86e640743b8692584fe48751b68078f735ccd07009097a045839146d",
+        "malformed_records": 0,
+        "navigate_ok_count": 1,
+        "normalized_terminal_action_count": 1,
+        "object_ok_count": 0,
+        "partial_checkpoint_count": 44,
+        "partial_only_loop_rounds": 0,
+        "receipt_source_sha256": [
+          "88326e864527281980ea85462c1d7eefff9afd17a86822a0b14b743fef323cbf"
+        ],
+        "rounds": [
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T10:59:45.229777+00:00",
+            "last_partial_at": "2026-09-13T10:59:48.674680+00:00",
+            "partial_count": 3,
+            "round": 1
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T10:59:49.448467+00:00",
+            "last_partial_at": "2026-09-13T10:59:50.532869+00:00",
+            "partial_count": 2,
+            "round": 2
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T10:59:51.918097+00:00",
+            "last_partial_at": "2026-09-13T10:59:57.942205+00:00",
+            "partial_count": 6,
+            "round": 3
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T10:59:59.421238+00:00",
+            "last_partial_at": "2026-09-13T11:00:06.890489+00:00",
+            "partial_count": 7,
+            "round": 4
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:00:07.767213+00:00",
+            "last_partial_at": "2026-09-13T11:00:12.715456+00:00",
+            "partial_count": 4,
+            "round": 5
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:00:13.640039+00:00",
+            "last_partial_at": "2026-09-13T11:00:15.626203+00:00",
+            "partial_count": 2,
+            "round": 6
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:00:17.034593+00:00",
+            "last_partial_at": "2026-09-13T11:00:24.061274+00:00",
+            "partial_count": 7,
+            "round": 7
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:00:24.992240+00:00",
+            "last_partial_at": "2026-09-13T11:00:28.688891+00:00",
+            "partial_count": 3,
+            "round": 8
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:00:29.447015+00:00",
+            "last_partial_at": "2026-09-13T11:00:32.759412+00:00",
+            "partial_count": 2,
+            "round": 9
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:00:33.849854+00:00",
+            "last_partial_at": "2026-09-13T11:00:37.105166+00:00",
+            "partial_count": 2,
+            "round": 10
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:00:56.048714+00:00",
+            "last_partial_at": "2026-09-13T11:00:58.016063+00:00",
+            "partial_count": 2,
+            "round": 11
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:00:59.738964+00:00",
+            "last_partial_at": "2026-09-13T11:01:04.904225+00:00",
+            "partial_count": 4,
+            "round": 12
+          }
+        ],
+        "run_end_observed": true,
+        "terminal_action_count": 1
+      },
+      "index": 1,
+      "run_id": "01-click_commit-r1-semantic_execute",
+      "status": "TASK_FAIL"
+    },
+    {
+      "facts": {
+        "coverage": "available_prefix",
+        "decided_but_not_dispatched_rounds": 0,
+        "event_log_sha256": "4e02099490f507fb9eb3b50f7a5f33482ba58eb935ccc68ae0c687a158d9377c",
+        "malformed_records": 0,
+        "navigate_ok_count": 1,
+        "normalized_terminal_action_count": 1,
+        "object_ok_count": 2,
+        "partial_checkpoint_count": 48,
+        "partial_only_loop_rounds": 0,
+        "receipt_source_sha256": [
+          "1b6a84dfe43258aa4efede2333e3d86e142c9a42f80edab745427d9f0b61cb20",
+          "5088ec61001dd0e3818263844ab1e539815d9a848dfa6d87c6a220ac7705ddf4",
+          "6a03420ac52242fd22eb76083d7e460bed3a119ab93ffe5271461361f97edda7"
+        ],
+        "rounds": [
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:01:07.285364+00:00",
+            "last_partial_at": "2026-09-13T11:01:09.317078+00:00",
+            "partial_count": 2,
+            "round": 1
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:01:10.066844+00:00",
+            "last_partial_at": "2026-09-13T11:01:11.367312+00:00",
+            "partial_count": 2,
+            "round": 2
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:01:12.782427+00:00",
+            "last_partial_at": "2026-09-13T11:01:18.452799+00:00",
+            "partial_count": 5,
+            "round": 3
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:01:19.368783+00:00",
+            "last_partial_at": "2026-09-13T11:01:23.055804+00:00",
+            "partial_count": 3,
+            "round": 4
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": false,
+            "first_partial_at": "2026-09-13T11:01:37.459347+00:00",
+            "last_partial_at": "2026-09-13T11:01:38.475017+00:00",
+            "partial_count": 2,
+            "round": 5
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:01:40.784828+00:00",
+            "last_partial_at": "2026-09-13T11:01:53.586707+00:00",
+            "partial_count": 12,
+            "round": 6
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:01:54.638278+00:00",
+            "last_partial_at": "2026-09-13T11:02:00.152341+00:00",
+            "partial_count": 5,
+            "round": 7
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:02:01.153327+00:00",
+            "last_partial_at": "2026-09-13T11:02:07.664549+00:00",
+            "partial_count": 4,
+            "round": 8
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:02:09.341879+00:00",
+            "last_partial_at": "2026-09-13T11:02:14.738453+00:00",
+            "partial_count": 4,
+            "round": 9
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:02:15.862959+00:00",
+            "last_partial_at": "2026-09-13T11:02:20.933169+00:00",
+            "partial_count": 3,
+            "round": 10
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:02:22.081006+00:00",
+            "last_partial_at": "2026-09-13T11:02:25.679814+00:00",
+            "partial_count": 3,
+            "round": 11
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:02:27.005911+00:00",
+            "last_partial_at": "2026-09-13T11:02:31.805074+00:00",
+            "partial_count": 3,
+            "round": 12
+          }
+        ],
+        "run_end_observed": true,
+        "terminal_action_count": 3
+      },
+      "index": 2,
+      "run_id": "02-fill_submit-r1-semantic_execute",
+      "status": "PASS"
+    },
+    {
+      "facts": {
+        "coverage": "available_prefix",
+        "decided_but_not_dispatched_rounds": 0,
+        "event_log_sha256": "3ef74932101a2f8c4809644b6c681b40ef6b405ecdf5c09c23ce7ebca7275aa7",
+        "malformed_records": 0,
+        "navigate_ok_count": 1,
+        "normalized_terminal_action_count": 1,
+        "object_ok_count": 0,
+        "partial_checkpoint_count": 69,
+        "partial_only_loop_rounds": 0,
+        "receipt_source_sha256": [
+          "05dce6b770d70772b02f66324a74883010ef53a7ff0b4a3d7a7162303a2a161b"
+        ],
+        "rounds": [
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:02:34.142276+00:00",
+            "last_partial_at": "2026-09-13T11:02:39.569402+00:00",
+            "partial_count": 4,
+            "round": 1
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": false,
+            "first_partial_at": "2026-09-13T11:02:40.381196+00:00",
+            "last_partial_at": "2026-09-13T11:02:41.398965+00:00",
+            "partial_count": 2,
+            "round": 2
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:02:44.671996+00:00",
+            "last_partial_at": "2026-09-13T11:02:55.919752+00:00",
+            "partial_count": 10,
+            "round": 3
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": false,
+            "first_partial_at": "2026-09-13T11:02:57.046426+00:00",
+            "last_partial_at": "2026-09-13T11:02:59.062157+00:00",
+            "partial_count": 3,
+            "round": 4
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:03:02.242068+00:00",
+            "last_partial_at": "2026-09-13T11:03:06.767726+00:00",
+            "partial_count": 4,
+            "round": 5
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:03:07.606432+00:00",
+            "last_partial_at": "2026-09-13T11:03:10.776415+00:00",
+            "partial_count": 3,
+            "round": 6
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:03:13.368781+00:00",
+            "last_partial_at": "2026-09-13T11:03:22.587407+00:00",
+            "partial_count": 8,
+            "round": 7
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:03:25.374463+00:00",
+            "last_partial_at": "2026-09-13T11:03:45.737779+00:00",
+            "partial_count": 19,
+            "round": 8
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:03:46.666694+00:00",
+            "last_partial_at": "2026-09-13T11:03:52.379999+00:00",
+            "partial_count": 3,
+            "round": 9
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:03:53.194599+00:00",
+            "last_partial_at": "2026-09-13T11:03:56.041686+00:00",
+            "partial_count": 3,
+            "round": 10
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:03:58.944394+00:00",
+            "last_partial_at": "2026-09-13T11:04:04.353644+00:00",
+            "partial_count": 5,
+            "round": 11
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:04:07.433483+00:00",
+            "last_partial_at": "2026-09-13T11:04:14.215103+00:00",
+            "partial_count": 5,
+            "round": 12
+          }
+        ],
+        "run_end_observed": true,
+        "terminal_action_count": 1
+      },
+      "index": 3,
+      "run_id": "03-delayed_wait-r1-semantic_execute",
+      "status": "TASK_FAIL"
+    },
+    {
+      "facts": {
+        "coverage": "available_prefix",
+        "decided_but_not_dispatched_rounds": 0,
+        "event_log_sha256": "b9da785d8014bb1117a524b45acf04fdb0ddaba6b06340b36cf932250560b2bf",
+        "malformed_records": 0,
+        "navigate_ok_count": 1,
+        "normalized_terminal_action_count": 1,
+        "object_ok_count": 0,
+        "partial_checkpoint_count": 214,
+        "partial_only_loop_rounds": 1,
+        "receipt_source_sha256": [
+          "714bd8f6c39505d939bce0d277c62e1b6dd100c5090cc623480e27586aee4f2c"
+        ],
+        "rounds": [
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:04:19.482149+00:00",
+            "last_partial_at": "2026-09-13T11:04:24.188748+00:00",
+            "partial_count": 4,
+            "round": 1
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:04:25.142911+00:00",
+            "last_partial_at": "2026-09-13T11:04:26.676960+00:00",
+            "partial_count": 2,
+            "round": 2
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:04:29.145570+00:00",
+            "last_partial_at": "2026-09-13T11:04:48.627194+00:00",
+            "partial_count": 17,
+            "round": 3
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": false,
+            "first_partial_at": "2026-09-13T11:04:50.078301+00:00",
+            "last_partial_at": "2026-09-13T11:04:52.107551+00:00",
+            "partial_count": 3,
+            "round": 4
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:04:55.888458+00:00",
+            "last_partial_at": "2026-09-13T11:05:05.990051+00:00",
+            "partial_count": 9,
+            "round": 5
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:05:08.763996+00:00",
+            "last_partial_at": "2026-09-13T11:05:16.573182+00:00",
+            "partial_count": 6,
+            "round": 6
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:05:17.474338+00:00",
+            "last_partial_at": "2026-09-13T11:05:28.082342+00:00",
+            "partial_count": 11,
+            "round": 7
+          },
+          {
+            "dispatch_declared": false,
+            "draft_observed": false,
+            "first_partial_at": "2026-09-13T11:05:31.174136+00:00",
+            "last_partial_at": "2026-09-13T11:08:14.791550+00:00",
+            "partial_count": 162,
+            "round": 8
+          }
+        ],
+        "run_end_observed": false,
+        "terminal_action_count": 1
+      },
+      "index": 4,
+      "run_id": "04-delayed_wait-r2-semantic_execute",
+      "status": "TIMEOUT"
+    },
+    {
+      "facts": {
+        "coverage": "available_prefix",
+        "decided_but_not_dispatched_rounds": 0,
+        "event_log_sha256": "0aabdf66e34c99b6cfbdeaf1339b4bfab2e196b0c7054d137acd99f57bf83750",
+        "malformed_records": 0,
+        "navigate_ok_count": 1,
+        "normalized_terminal_action_count": 3,
+        "object_ok_count": 2,
+        "partial_checkpoint_count": 54,
+        "partial_only_loop_rounds": 0,
+        "receipt_source_sha256": [
+          "779c1238759323e0929b59328748002ee9ea31727615bfa32aa293d4100fc844",
+          "86090a0cf9b07e5e2894d2947a85859665155e9062b290883c55b0cb3d52f0ef",
+          "acee2322221f80b7865dae43effa6a1ae0b0e68d9f5b424aab6942aeb8c58bac"
+        ],
+        "rounds": [
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:08:17.985224+00:00",
+            "last_partial_at": "2026-09-13T11:08:21.592442+00:00",
+            "partial_count": 4,
+            "round": 1
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:08:23.804257+00:00",
+            "last_partial_at": "2026-09-13T11:08:31.423696+00:00",
+            "partial_count": 6,
+            "round": 2
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:08:32.506751+00:00",
+            "last_partial_at": "2026-09-13T11:08:34.704038+00:00",
+            "partial_count": 3,
+            "round": 3
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:08:37.359523+00:00",
+            "last_partial_at": "2026-09-13T11:08:43.963172+00:00",
+            "partial_count": 5,
+            "round": 4
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:08:45.213400+00:00",
+            "last_partial_at": "2026-09-13T11:08:47.561233+00:00",
+            "partial_count": 3,
+            "round": 5
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:08:50.309267+00:00",
+            "last_partial_at": "2026-09-13T11:08:56.821251+00:00",
+            "partial_count": 5,
+            "round": 6
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:08:57.860930+00:00",
+            "last_partial_at": "2026-09-13T11:09:05.546665+00:00",
+            "partial_count": 7,
+            "round": 7
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:09:06.977038+00:00",
+            "last_partial_at": "2026-09-13T11:09:18.430860+00:00",
+            "partial_count": 10,
+            "round": 8
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:09:19.868603+00:00",
+            "last_partial_at": "2026-09-13T11:09:23.900925+00:00",
+            "partial_count": 3,
+            "round": 9
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:09:25.035965+00:00",
+            "last_partial_at": "2026-09-13T11:09:30.138103+00:00",
+            "partial_count": 4,
+            "round": 10
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:09:31.298949+00:00",
+            "last_partial_at": "2026-09-13T11:09:35.291639+00:00",
+            "partial_count": 2,
+            "round": 11
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": false,
+            "first_partial_at": "2026-09-13T11:09:36.515607+00:00",
+            "last_partial_at": "2026-09-13T11:09:37.534059+00:00",
+            "partial_count": 2,
+            "round": 12
+          }
+        ],
+        "run_end_observed": true,
+        "terminal_action_count": 3
+      },
+      "index": 5,
+      "run_id": "05-fill_submit-r2-semantic_execute",
+      "status": "PASS"
+    },
+    {
+      "facts": {
+        "coverage": "available_prefix",
+        "decided_but_not_dispatched_rounds": 0,
+        "event_log_sha256": "ba38afc8ac6800d1c1a87cb4f62c44d5651df613d432e974473e06c0bc4dfe0a",
+        "malformed_records": 0,
+        "navigate_ok_count": 1,
+        "normalized_terminal_action_count": 1,
+        "object_ok_count": 0,
+        "partial_checkpoint_count": 50,
+        "partial_only_loop_rounds": 0,
+        "receipt_source_sha256": [
+          "1aa00200e5661a3ffc560bc96f41af8d6addfe66ed487e66041cf929612c8020"
+        ],
+        "rounds": [
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:09:43.422262+00:00",
+            "last_partial_at": "2026-09-13T11:09:47.144137+00:00",
+            "partial_count": 3,
+            "round": 1
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:09:47.814058+00:00",
+            "last_partial_at": "2026-09-13T11:09:49.240166+00:00",
+            "partial_count": 2,
+            "round": 2
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:09:51.766817+00:00",
+            "last_partial_at": "2026-09-13T11:10:01.062429+00:00",
+            "partial_count": 8,
+            "round": 3
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:10:01.946081+00:00",
+            "last_partial_at": "2026-09-13T11:10:04.811044+00:00",
+            "partial_count": 2,
+            "round": 4
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:10:05.871330+00:00",
+            "last_partial_at": "2026-09-13T11:10:11.417237+00:00",
+            "partial_count": 5,
+            "round": 5
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:10:12.228271+00:00",
+            "last_partial_at": "2026-09-13T11:10:16.106949+00:00",
+            "partial_count": 3,
+            "round": 6
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:10:16.911563+00:00",
+            "last_partial_at": "2026-09-13T11:10:19.145178+00:00",
+            "partial_count": 2,
+            "round": 7
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:10:21.870690+00:00",
+            "last_partial_at": "2026-09-13T11:10:32.329196+00:00",
+            "partial_count": 8,
+            "round": 8
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:10:38.689922+00:00",
+            "last_partial_at": "2026-09-13T11:10:45.512577+00:00",
+            "partial_count": 5,
+            "round": 9
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:10:46.661117+00:00",
+            "last_partial_at": "2026-09-13T11:10:51.243550+00:00",
+            "partial_count": 3,
+            "round": 10
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:11:04.553776+00:00",
+            "last_partial_at": "2026-09-13T11:11:06.134683+00:00",
+            "partial_count": 2,
+            "round": 11
+          },
+          {
+            "dispatch_declared": true,
+            "draft_observed": true,
+            "first_partial_at": "2026-09-13T11:11:07.579985+00:00",
+            "last_partial_at": "2026-09-13T11:11:15.425319+00:00",
+            "partial_count": 7,
+            "round": 12
+          }
+        ],
+        "run_end_observed": true,
+        "terminal_action_count": 1
+      },
+      "index": 6,
+      "run_id": "06-click_commit-r2-semantic_execute",
+      "status": "TASK_FAIL"
+    }
+  ],
+  "rows_partial_only_loop": 1,
+  "schema": "smc.fc1.observation_audit.v1",
+  "source_results_sha256": "325591bf4bc02c9e3d6d42b18ea871d3f6a44ee330e8dc3601e14a81a8d7546b"
+}
