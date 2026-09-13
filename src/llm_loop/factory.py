@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from llm_loop.browser.action import BrowserActionAdapter, BrowserActionReceiptStore
+from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.config import Settings
@@ -69,6 +71,7 @@ from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
 from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.builtin.agent_message import AgentMessageTool
+from llm_loop.tools.builtin.browser_action import BrowserActionTool
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
@@ -843,6 +846,25 @@ def build_engine(settings: Settings) -> LoopEngine:
                 session_id_getter=lambda: current_session_id_ctx.get() or registry._session_id,
             ),
         )
+        # Mutation capability is independently opt-in.  Perception alone never grants writes.
+        if settings.browser_action_enabled:
+            _browser_actuator = CdpBrowserMutationActuator(
+                settings.browser_perception_cdp_url,
+                target_id=settings.browser_perception_target_id,
+            )
+            _browser_action_adapter = BrowserActionAdapter(
+                perception=_browser_adapter,
+                receipt_store=BrowserActionReceiptStore(Path(settings.data_dir) / "browser_action"),
+                capture_backend=_browser_host,
+                actuator=_browser_actuator,
+            )
+            _register_basic(
+                "browser_action",
+                BrowserActionTool(
+                    adapter=_browser_action_adapter,
+                    session_id_getter=lambda: current_session_id_ctx.get() or registry._session_id,
+                ),
+            )
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
     _register_basic("inspect_code", InspectCodeTool())
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）

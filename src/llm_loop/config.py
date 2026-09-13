@@ -290,6 +290,8 @@ class Settings:
     # target_id 为空仅允许 endpoint 恰好一个 page，防程序替操作者猜 tab。
     browser_perception_cdp_url: str = ""
     browser_perception_target_id: str = ""
+    # Mutation is a separate capability grant: perception opt-in never implies write access.
+    browser_action_enabled: bool = False
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
     exec_mode: str = ""
@@ -627,6 +629,7 @@ def load_settings() -> Settings:
         browser_perception_target_id=os.environ.get(
             "LFL_BROWSER_PERCEPTION_TARGET_ID", ""
         ).strip(),
+        browser_action_enabled=_env_bool("LFL_BROWSER_ACTION_ENABLED", False),
         exec_mode=_env_exec_mode("EXEC_MODE"),
         exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),
         run_mode=_env_run_mode("RUN_MODE"),

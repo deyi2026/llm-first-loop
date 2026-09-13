@@ -100,14 +100,17 @@ def test_live_browser_opt_in_settings_default_off_and_env(monkeypatch: pytest.Mo
     fields = {field.name: field for field in dataclasses.fields(Settings)}
     assert fields["browser_perception_cdp_url"].default == ""
     assert fields["browser_perception_target_id"].default == ""
+    assert fields["browser_action_enabled"].default is False
 
     monkeypatch.setenv("LFL_BROWSER_PERCEPTION_CDP_URL", "http://127.0.0.1:9222")
     monkeypatch.setenv("LFL_BROWSER_PERCEPTION_TARGET_ID", "target-1")
+    monkeypatch.setenv("LFL_BROWSER_ACTION_ENABLED", "1")
     monkeypatch.setenv("LLM_API_KEY", "k")
     monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/v1")
     settings = load_settings()
     assert settings.browser_perception_cdp_url == "http://127.0.0.1:9222"
     assert settings.browser_perception_target_id == "target-1"
+    assert settings.browser_action_enabled is True
 
 
 def test_readonly_cdp_host_is_loopback_only_and_blocks_mutation() -> None:
@@ -205,3 +208,40 @@ def test_factory_registers_browser_perceive_only_when_explicitly_opted_in(
     )
     tool = engine.registry.get("browser_perceive")
     assert tool._backend is fake_host
+
+
+def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import llm_loop.factory as factory
+
+    fake_read = mock.Mock()
+    fake_write = mock.Mock()
+    monkeypatch.setattr(factory, "CdpReadOnlyBrowserHost", mock.Mock(return_value=fake_read))
+    monkeypatch.setattr(factory, "CdpBrowserMutationActuator", mock.Mock(return_value=fake_write))
+
+    perception_only = factory.build_engine(
+        _settings(
+            tmp_path,
+            browser_perception_cdp_url="http://127.0.0.1:9222",
+            browser_perception_target_id="target-1",
+            browser_action_enabled=False,
+        )
+    )
+    assert "browser_perceive" in perception_only.registry.names()
+    assert "browser_action" not in perception_only.registry.names()
+    factory.CdpBrowserMutationActuator.assert_not_called()
+
+    enabled = factory.build_engine(
+        _settings(
+            tmp_path,
+            browser_perception_cdp_url="http://127.0.0.1:9222",
+            browser_perception_target_id="target-1",
+            browser_action_enabled=True,
+        )
+    )
+    assert "browser_perceive" in enabled.registry.names()
+    assert "browser_action" in enabled.registry.names()
+    factory.CdpBrowserMutationActuator.assert_called_once_with(
+        "http://127.0.0.1:9222", target_id="target-1"
+    )
+    tool = enabled.registry.get("browser_action")
+    assert tool._adapter.actuator is fake_write
