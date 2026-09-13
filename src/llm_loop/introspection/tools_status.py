@@ -141,6 +141,7 @@ _DEFAULT_DIMS = [
     "pending_actions",
     "exception_log",
     "rules_version",
+    "knowledge_health",
     "program_faults",
 ]
 
@@ -161,6 +162,7 @@ _ALL_DIMS = [
     "model_fallback",
     "pending_actions",
     "recovery",
+    "knowledge_health",
     "program_faults",
     "causality",
 ]

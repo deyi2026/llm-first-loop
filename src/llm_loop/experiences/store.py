@@ -13,6 +13,7 @@ import hashlib
 import logging
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -63,8 +64,15 @@ def _skip_trace(filename: str, exc: BaseException) -> None:
 class ExperienceStore:
     """经验库存储组件（操作 experiences/ 目录）。"""
 
-    def __init__(self, experiences_dir: str | Path, *, embedder: Any | None = None) -> None:
+    def __init__(
+        self,
+        experiences_dir: str | Path,
+        *,
+        embedder: Any | None = None,
+        write_guard: Callable[[], bool] | None = None,
+    ) -> None:
         self._dir = Path(experiences_dir)
+        self._write_guard = write_guard
         self._embedder = embedder  # T5: 可选 embedder 注入（None 时走关键词匹配，零回归）
         # 文档向量只缓存机械可验证的输入→输出；query 向量每次现算。
         # filename 作为槽位可让同一经验内容变化时原位替换，避免陈旧 hash 无限累积。
@@ -75,6 +83,17 @@ class ExperienceStore:
             "skipped": 0,
             "scan_error": None,
         }
+
+
+    def _require_write_safe(self) -> None:
+        if self._write_guard is None:
+            return
+        try:
+            allowed = bool(self._write_guard())
+        except Exception as exc:  # noqa: BLE001 — health failure must fail closed for mutation
+            raise PermissionError("knowledge store quarantined: write health unavailable") from exc
+        if not allowed:
+            raise PermissionError("knowledge store quarantined: mutation disabled")
 
     @property
     def last_experience_diagnostics(self) -> dict:
@@ -97,6 +116,7 @@ class ExperienceStore:
 
     def save(self, doc: ExperienceDocument) -> str:
         """写入经验文档；返回文件名。冲突时抛 FileExistsError（不覆盖）。"""
+        self._require_write_safe()
         self._dir.mkdir(parents=True, exist_ok=True)
         date_str = datetime.now().strftime("%Y%m%d")
         slug = self.sanitize_slug(doc.title)
@@ -363,6 +383,7 @@ class ExperienceStore:
 
         写入段零变化：降级形态 source 经 to_md round-trip 保留原形态（design §2.1.3-3）。
         """
+        self._require_write_safe()
         self._reset_diagnostics()
         path = self._safe_path(experience_id)
         if path is None or not path.exists():

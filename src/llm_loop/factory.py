@@ -67,6 +67,8 @@ from llm_loop.resources.provider_settlement import ProviderCallSettlementJournal
 from llm_loop.resources.transport_observation import ShadowTransportRecorder
 from llm_loop.runtime.causal_diagnose import diagnose_event_store
 from llm_loop.runtime.causality import build_runtime_causal_snapshot
+from llm_loop.runtime.knowledge_health import inspect_knowledge_health
+from llm_loop.runtime.paths import RuntimePaths, resolve_runtime_paths
 from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
 from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
@@ -997,6 +999,33 @@ def build_engine(settings: Settings) -> LoopEngine:
             archive_dir=settings.archive_dir,
         )
 
+
+    # Persistent Knowledge path identity.  Production load_settings supplies the
+    # exact RuntimePaths object; direct Settings construction in tests/factories is
+    # normalized here without making cwd authoritative for mutable state.
+    _runtime_paths = settings._extra.get("runtime_paths")
+    if not isinstance(_runtime_paths, RuntimePaths):
+        _path_env: dict[str, str] = {}
+        if settings.experiences_dir not in {"", "./experiences", "experiences"}:
+            _path_env["EXPERIENCES_DIR"] = settings.experiences_dir
+        if settings.methods_dir not in {"", "./data/methods", "data/methods"}:
+            _path_env["METHODS_DIR"] = settings.methods_dir
+        if settings.method_seed_dir not in {"", "./methods", "methods"}:
+            _path_env["METHOD_SEED_DIR"] = settings.method_seed_dir
+        if settings.skills_dir not in {"", "./skills", "skills"}:
+            _path_env["SKILLS_DIR"] = settings.skills_dir
+        if settings.docs_dir not in {"", "./docs", "docs"}:
+            _path_env["DOCS_DIR"] = settings.docs_dir
+        _runtime_paths = resolve_runtime_paths(
+            data_dir=settings.data_dir,
+            code_root=Path(__file__).resolve().parents[2],
+            env=_path_env,
+            data_dir_explicit=False,
+        )
+
+    def _knowledge_health_snapshot() -> dict[str, Any]:
+        return inspect_knowledge_health(_runtime_paths)
+
     # 架构自省（M17 FR-REVIEW-AI-05: config_status 闭包含演进状态摘要，fail-open;
     # M18 AA10: memory_stats_fn 补记忆真实数据）
     status_provider = ArchitectureStatusProvider(
@@ -1016,6 +1045,8 @@ def build_engine(settings: Settings) -> LoopEngine:
         # spec 5.3.1/D6: 路由三元组（进程级一次解析，随审计行顺带落盘）
         route_fn=lambda: get_route_context().__dict__,
     )
+
+    status_provider.set_knowledge_health_fn(_knowledge_health_snapshot)
 
     # spec 6.5.4/D6: route.missing 留痕回调接既有审计单口（C-G1 遗留接线，恰一次）
     set_route_audit_fn(status_provider.record_action)
@@ -1095,10 +1126,17 @@ def build_engine(settings: Settings) -> LoopEngine:
     # P1-2: 经验库装配（fail-open，目录不存在时检索如实返回未命中）
     from llm_loop.experiences.store import ExperienceStore
 
+    def _knowledge_write_guard() -> bool:
+        return bool(_knowledge_health_snapshot().get("writes_enabled"))
+
     experience_store = ExperienceStore(
-        settings.experiences_dir, embedder=embedder
+        _runtime_paths.experiences_dir, embedder=embedder, write_guard=_knowledge_write_guard
     )  # T5: 注入 embedder 供语义检索
-    method_store = MethodStore(settings.methods_dir, seed_dir=settings.method_seed_dir)
+    method_store = MethodStore(
+        _runtime_paths.methods_dir,
+        seed_dir=_runtime_paths.method_seed_dir,
+        write_guard=_knowledge_write_guard,
+    )
     searcher = RecordSearcher(
         audit_dir=settings.audit_dir,
         memory_store=memory,
@@ -1141,7 +1179,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     # P2-3: docs/ 文档语义检索装配（fail-open，不阻断启动）
     try:
         docs_searcher = DocsSearcher(
-            docs_dir=settings.docs_dir,
+            docs_dir=str(_runtime_paths.docs_dir),
             semantic_retriever=semantic_retriever,
         )
 
@@ -1186,7 +1224,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     corrections._recovery_sessions_dir_fn = lambda: session_store.root  # noqa: SLF001 — workspace动态根
     corrections._recovery_session_store = session_store  # noqa: SLF001 — 复用全局sid归属/原子恢复
     corrections._recovery_memory_dir = settings.memory_dir  # noqa: SLF001
-    corrections._skills_dir = settings.skills_dir or None  # noqa: SLF001 — B3: 插件化 Skill 目录注入
+    corrections._skills_dir = str(_runtime_paths.skills_dir) or None  # noqa: SLF001 — B3: 插件化 Skill 目录注入
     status_provider.set_recovery_status_fn(backup_store.status_summary)
 
     # 自省/修正/检索工具注册进 ToolRegistry（LLM 可见）

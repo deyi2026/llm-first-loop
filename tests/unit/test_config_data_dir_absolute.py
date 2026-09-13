@@ -2,7 +2,7 @@
 
 背景: data_dir 默认 "./data" 相对路径随进程 cwd 漂移——主区服务进程 cwd=镜像目录时
 演进建议落镜像 data/audit/，主区 web 审阅页看不到（EVO-20260829-6a78d4bb/06c96021 实例）。
-修复后: 默认值 = 基于包位置的绝对路径（代码所在区=数据所在区），不随 cwd 漂移。
+修复后: 主工作区默认仍锚定包位置；linked worktree 的 load_settings 默认共享 Git common root/data，且不随 cwd 漂移。
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 
 from llm_loop.config import _DEFAULT_DATA_DIR, Settings, load_settings
+from llm_loop.runtime.paths import discover_git_common_root
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -43,10 +44,12 @@ def test_data_dir_survives_cwd_drift(tmp_path, monkeypatch):
     after = load_settings().data_dir
     assert before == after, f"data_dir 随 cwd 漂移: {before} -> {after}"
     assert Path(after).is_absolute()
-    # audit/sessions 等派生目录同样锚定
+    # audit/sessions 等 mutable state 同样锚定；linked worktree 默认共享
+    # Git common root，而不是在 sidecar 内悄悄生成第二套 data。
     s = load_settings()
-    assert Path(s.audit_dir) == _PROJECT_ROOT / "data" / "audit"
-    assert Path(s.sessions_dir) == _PROJECT_ROOT / "data" / "sessions"
+    state_code_root = discover_git_common_root(_PROJECT_ROOT) or _PROJECT_ROOT
+    assert Path(s.audit_dir) == state_code_root / "data" / "audit"
+    assert Path(s.sessions_dir) == state_code_root / "data" / "sessions"
 
 
 def test_env_data_dir_override_still_wins(tmp_path, monkeypatch):

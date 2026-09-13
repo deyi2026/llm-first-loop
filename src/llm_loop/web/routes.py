@@ -1410,6 +1410,7 @@ def health() -> dict:
         "service": SERVICE_NAME,
         "version": SERVICE_VERSION,
         "build": identity.get("build_identity", {}),
+        "knowledge": identity.get("knowledge", {}),
         "identity": identity,
     }
 

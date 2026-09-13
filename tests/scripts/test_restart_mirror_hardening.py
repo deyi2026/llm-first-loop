@@ -80,3 +80,20 @@ def test_restart_port_frozen_for_post_unset_use():
     body = src.split("\ncase ", 1)[1]
     assert 'unset WEB_PORT' in src
     assert '"$WEB_PORT"' not in body  # case 分支不得再引用可被 unset 的 WEB_PORT
+
+
+def test_restart_runs_knowledge_preflight_before_any_stop():
+    src = _src()
+    assert "_knowledge_preflight()" in src
+    assert "llm_loop.runtime.knowledge_health --preflight --initialize-baseline" in src
+    assert "env -u DATA_DIR -u LFL_DATA_DIR -u EXPERIENCES_DIR -u METHODS_DIR" in src
+    case_body = src.split("\ncase ", 1)[1]
+    for branch, stop_token in (
+        ("web)", '_stop_web "$RESTART_PORT"'),
+        ("feishu)", "_feishu_stop"),
+        ("all)", '_stop_web "$RESTART_PORT"'),
+    ):
+        body = case_body.split(branch, 1)[1]
+        body = body.split(";;", 1)[0]
+        assert "_knowledge_preflight" in body
+        assert body.index("_knowledge_preflight") < body.index(stop_token)

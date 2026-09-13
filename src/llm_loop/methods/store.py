@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -105,9 +106,26 @@ class MethodRecord:
 class MethodStore:
     """Two-tier Method store: reviewed seed assets plus private runtime overlays."""
 
-    def __init__(self, methods_dir: str | Path, *, seed_dir: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        methods_dir: str | Path,
+        *,
+        seed_dir: str | Path | None = None,
+        write_guard: Callable[[], bool] | None = None,
+    ) -> None:
         self._dir = Path(methods_dir)
         self._seed_dir = Path(seed_dir) if seed_dir is not None else None
+        self._write_guard = write_guard
+
+    def _require_write_safe(self) -> None:
+        if self._write_guard is None:
+            return
+        try:
+            allowed = bool(self._write_guard())
+        except Exception as exc:  # noqa: BLE001 — health failure must fail closed for mutation
+            raise PermissionError("knowledge store quarantined: write health unavailable") from exc
+        if not allowed:
+            raise PermissionError("knowledge store quarantined: mutation disabled")
 
     @staticmethod
     def _safe_id(value: str) -> str:
@@ -253,6 +271,7 @@ class MethodStore:
         evaluator: str = "model",
     ) -> dict[str, Any]:
         """Append a bounded qualification declaration without changing lifecycle status."""
+        self._require_write_safe()
         record = self.get(method_ref)
         if record is None:
             raise FileNotFoundError(method_ref)
@@ -316,6 +335,7 @@ class MethodStore:
         Activating a candidate directly is rejected. A method must first pass through qualified,
         so a same-episode self-distillation cannot become active in one write.
         """
+        self._require_write_safe()
         record = self.get(method_ref)
         if record is None:
             raise FileNotFoundError(method_ref)
@@ -371,6 +391,7 @@ class MethodStore:
         parent_ref: str = "",
     ) -> MethodRecord:
         """Persist semantic content supplied by the model; never overwrite or auto-promote."""
+        self._require_write_safe()
         if parent_ref and self.get(parent_ref) is None:
             raise ValueError(f"parent_ref not found: {parent_ref}")
         checked_teachers: list[str] = []

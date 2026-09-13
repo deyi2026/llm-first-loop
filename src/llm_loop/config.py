@@ -18,7 +18,8 @@ from llm_loop.codearts.config import CodeArtsSettings
 # 根因: 相对路径随进程 cwd 漂移——主区服务进程 cwd=镜像目录时，EvolutionStore/会话/审计
 # 落盘镜像区（实例: EVO-20260829-6a78d4bb/06c96021 落镜像 data/audit/，主区 web 审阅页看不到）。
 # 绝对化后: 代码所在区=数据所在区，两区天然隔离，不随 cwd 漂移。显式 DATA_DIR env/传参不受影响。
-_DEFAULT_DATA_DIR = str(Path(__file__).resolve().parents[2] / "data")
+_CODE_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_DATA_DIR = str(_CODE_ROOT / "data")
 
 logger = logging.getLogger(__name__)
 
@@ -607,7 +608,16 @@ def load_settings() -> Settings:
     if not os.environ.get("RETRIEVE_SEMANTIC_TOP_K", "").strip():
         _auto_adaptive_keys.add("retrieve_semantic_top_k")
 
-    return Settings(
+    from llm_loop.runtime.paths import resolve_runtime_paths
+
+    _data_dir_raw = str(os.environ.get("DATA_DIR", "") or "").strip()
+    _resolved_paths = resolve_runtime_paths(
+        data_dir=_data_dir_raw or None,
+        code_root=_CODE_ROOT,
+        env=os.environ,
+        data_dir_explicit=bool(_data_dir_raw),
+    )
+    settings = Settings(
         llm_api_key=api_key,
         llm_base_url=base_url,
         llm_model=model,
@@ -617,7 +627,7 @@ def load_settings() -> Settings:
         llm_timeout_s=float(_env_int("LLM_TIMEOUT_S", 120)),
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 16000),  # 2026-08-15 显式输出预算
         llm_wire_protocol=os.environ.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
-        data_dir=os.environ.get("DATA_DIR", _DEFAULT_DATA_DIR).strip(),
+        data_dir=str(_resolved_paths.data_dir),
         evidence_mode=_env_evidence_mode("EVIDENCE_MODE"),
         evidence_manifest_limit=_env_int("EVIDENCE_MANIFEST_LIMIT", 8),
         # D1 事件日志（EVENT_LOG_ENABLED / EVENT_LOGS_DIR 透传）
@@ -665,12 +675,12 @@ def load_settings() -> Settings:
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
         status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),
         archive_enabled=_env_bool("ARCHIVE_ENABLED", True),
-        experiences_dir=os.environ.get("EXPERIENCES_DIR", "./experiences").strip(),
-        methods_dir=os.environ.get("METHODS_DIR", "./data/methods").strip(),
-        method_seed_dir=os.environ.get("METHOD_SEED_DIR", "./methods").strip(),
+        experiences_dir=str(_resolved_paths.experiences_dir),
+        methods_dir=str(_resolved_paths.methods_dir),
+        method_seed_dir=str(_resolved_paths.method_seed_dir),
         learning_plane_enabled=os.environ.get("LEARNING_PLANE_ENABLED", "0").strip() in {"1", "true", "yes", "on"},
-        skills_dir=os.environ.get("SKILLS_DIR", "./skills").strip(),  # B3: 插件化 Skill 目录
-        docs_dir=os.environ.get("DOCS_DIR", "./docs").strip(),
+        skills_dir=str(_resolved_paths.skills_dir),  # B3: tracked Skill follows CODE_ROOT
+        docs_dir=str(_resolved_paths.docs_dir),
         archive_max_entries=_env_int("ARCHIVE_MAX_ENTRIES", 0),
         archive_ttl_days=_env_int("ARCHIVE_TTL_DAYS", 0),
         archive_segment_bytes=_env_int(
@@ -744,6 +754,8 @@ def load_settings() -> Settings:
         invalid_fallbacks=tuple(_fallback_notes),
         auto_adaptive_keys=frozenset(_auto_adaptive_keys),
     )
+    settings._extra["runtime_paths"] = _resolved_paths
+    return settings
 
 
 # CR-R1: COG_RUNTIME_* 三态解析（origin/main 移植；适配 ours _raw_env/_note_invalid_fallback）

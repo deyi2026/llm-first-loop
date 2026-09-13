@@ -160,6 +160,38 @@ def _provider_info(
     return info
 
 
+
+def _knowledge_runtime_paths(ec: EffectiveConfig, report: IdentityReport):
+    """Resolve knowledge paths with the same dotenv-before-service semantics as runtime config."""
+    from .paths import resolve_runtime_paths
+    from .resolver import parse_env_file
+
+    values = dict(os.environ)
+    try:
+        dotenv = parse_env_file(ec.env_file)
+    except Exception:
+        dotenv = {}
+    for key in (
+        "DATA_DIR",
+        "EXPERIENCES_DIR",
+        "METHODS_DIR",
+        "METHOD_SEED_DIR",
+        "SKILLS_DIR",
+        "DOCS_DIR",
+    ):
+        if not str(values.get(key, "") or "").strip():
+            raw = str(dotenv.get(key, "") or "").strip()
+            if raw:
+                values[key] = raw
+    data_dir_explicit = bool(str(values.get("DATA_DIR", "") or "").strip())
+    return resolve_runtime_paths(
+        data_dir=report.data_dir,
+        code_root=report.workspace_root,
+        env=values,
+        data_dir_explicit=data_dir_explicit,
+    )
+
+
 def build_manifest(service: str, ec: EffectiveConfig,
                    report: IdentityReport) -> dict:
     """合并身份事实 + 配置指纹 + providers 各来源/effective hashes。"""
@@ -174,6 +206,10 @@ def build_manifest(service: str, ec: EffectiveConfig,
     max_input_tokens = meta.get("max_input_tokens", provider_meta.get("max_input_tokens", ""))
     max_tokens = meta.get("max_tokens", provider_meta.get("max_tokens", v.get("LLM_MAX_TOKENS", "")))
     build_identity = compute_build_identity(report.workspace_root)
+    from .knowledge_health import inspect_knowledge_health
+
+    _knowledge_paths = _knowledge_runtime_paths(ec, report)
+    _knowledge_health = inspect_knowledge_health(_knowledge_paths)
     return {
         # —— 服务与进程 ——
         "service": service,
@@ -202,6 +238,7 @@ def build_manifest(service: str, ec: EffectiveConfig,
         "config_sources": ec.sources,
         "config_hash": config_hash(ec),
         "ignored_shell_env": sorted(ec.ignored_shell_env),
+        "knowledge_health": _knowledge_health,
         # —— providers 漂移治理（P0.6）——
         **providers_hashes(report.data_dir, model_providers_raw=model_providers_raw),
     }
@@ -234,7 +271,17 @@ def default_data_dir() -> str:
     """与 identity.compute_identity 同口径（DATA_DIR env → workspace/data）。"""
     import llm_loop as _lfl
     ws = Path(_lfl.__file__).resolve().parents[2]  # __init__.py → llm_loop → src → workspace
-    return os.environ.get("DATA_DIR") or str(ws / "data")
+    from .paths import resolve_runtime_paths
+
+    raw = str(os.environ.get("DATA_DIR", "") or "").strip()
+    return str(
+        resolve_runtime_paths(
+            data_dir=raw or None,
+            code_root=ws,
+            env=os.environ,
+            data_dir_explicit=bool(raw),
+        ).data_dir
+    )
 
 
 def health_identity(data_dir: str | Path | None = None) -> dict:
@@ -248,6 +295,7 @@ def health_identity(data_dir: str | Path | None = None) -> dict:
         "provider": m.get("provider_id", ""),
         "config_hash": m.get("config_hash", ""),
         "build_identity": m.get("build_identity", {}),
+        "knowledge": m.get("knowledge_health", {}),
     }
 
 
@@ -266,6 +314,21 @@ def write_runtime_manifest(service: str, data_dir: str | Path | None = None) -> 
 
         report = compute_identity()
         ec = resolve_effective(service)
-        return write_manifest(build_manifest(service, ec, report), data_dir or default_data_dir())
+        manifest = build_manifest(service, ec, report)
+        target_data_dir = data_dir or report.data_dir
+        from .knowledge_health import (
+            ensure_knowledge_baseline,
+            inspect_knowledge_health,
+            write_recovery_receipt,
+        )
+
+        paths = _knowledge_runtime_paths(ec, report)
+        ensure_knowledge_baseline(paths, manifest.get("knowledge_health", {}))
+        manifest["knowledge_health"] = inspect_knowledge_health(paths)
+        out = write_manifest(manifest, target_data_dir)
+        write_recovery_receipt(
+            target_data_dir, paths, manifest.get("knowledge_health", {}), service=service
+        )
+        return out
     except Exception:  # noqa: BLE001 — R3 语义: fail-open 不阻断启动
         return None

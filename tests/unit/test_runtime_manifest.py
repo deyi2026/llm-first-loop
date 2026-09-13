@@ -241,3 +241,24 @@ def test_dry_run_does_not_write_manifest(tmp_path, monkeypatch, capsys):
     assert not (tmp_path / "data" / "runtime" / "runtime_manifest.json").exists()
     out = capsys.readouterr().out
     assert "config_hash" in out  # 预览内容含指纹
+
+
+def test_manifest_and_health_identity_expose_knowledge_health(tmp_path, monkeypatch):
+    _mk(tmp_path, ["LLM_MODEL=glm/glm-5.3"])
+    (tmp_path / "experiences").mkdir()
+    (tmp_path / "experiences" / "EXPERIENCE-20260913-known.md").write_text("x", encoding="utf-8")
+    (tmp_path / "methods" / "seed").mkdir(parents=True)
+    (tmp_path / "methods" / "seed" / "METHOD.md").write_text("x", encoding="utf-8")
+    (tmp_path / "skills" / "probe").mkdir(parents=True)
+    (tmp_path / "skills" / "probe" / "SKILL.md").write_text("x", encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "ai_rules.md").write_text("## RULE-AI-00\nprobe\n", encoding="utf-8")
+    monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
+    report = compute_identity()
+    ec = resolve_effective("web", workspace_root=tmp_path)
+    manifest = build_manifest("web", ec, report)
+    assert manifest["knowledge_health"]["status"] == "healthy"
+    assert manifest["knowledge_health"]["stores"]["experience"]["records"] == 1
+    write_manifest(manifest, report.data_dir)
+    ident = health_identity(report.data_dir)
+    assert ident["knowledge"]["status"] == "healthy"

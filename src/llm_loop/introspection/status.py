@@ -125,6 +125,7 @@ class ArchitectureStatusProvider:
         self._pending_actions_fn: Callable[[], dict] | None = None
         # P2-2: 备份状态回调（AI 经 architecture_status.recovery 感知待恢复备份）
         self._recovery_status_fn: Callable[[], dict] | None = None
+        self._knowledge_health_fn: Callable[[], dict] | None = None
         # EVO-20260818（spec §5.4.1-2）: 缓存健康/cache_guard 快照回调（未注入 → None 零回归）
         self._cache_health_fn: Callable[[], dict | None] | None = None
         self._cache_guard_fn: Callable[[str], dict | None] | None = None  # session 透传（grill-me Q11）
@@ -438,6 +439,27 @@ class ArchitectureStatusProvider:
         """
         self._recovery_status_fn = fn
 
+
+    def set_knowledge_health_fn(self, fn) -> None:
+        """Inject prompt-neutral Knowledge/Activation-store health facts."""
+        self._knowledge_health_fn = fn
+
+    def _knowledge_health_snapshot(self) -> dict:
+        fn = self._knowledge_health_fn
+        if fn is None:
+            return {"status": "unknown", "writes_enabled": False, "note": "数据源未注入"}
+        try:
+            value = fn()
+            return value if isinstance(value, dict) else {
+                "status": "unknown", "writes_enabled": False, "note": "健康源返回非对象"
+            }
+        except Exception as exc:  # noqa: BLE001 — mutation safety requires visible fail-closed state
+            return {
+                "status": "unknown",
+                "writes_enabled": False,
+                "note": f"Knowledge健康读取失败（{type(exc).__name__}: {exc}）",
+            }
+
     def set_cache_health_fn(self, fn) -> None:
         """注入 cache_health 快照回调（EVO-20260818 spec §5.4.1-2）.
 
@@ -549,6 +571,7 @@ class ArchitectureStatusProvider:
             "pending_actions": self._pending_actions(),
             # P2-2: 备份状态（AI 经 architecture_status.recovery 感知待恢复备份）
             "recovery": self._recovery_status(),
+            "knowledge_health": self._knowledge_health_snapshot(),
             # R2/A6: 程序故障计数（fail-open 聚合，AI 可感知"程序故障率"）
             "causality": _causality,
             "program_faults": dict(self._program_faults),

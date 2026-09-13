@@ -430,6 +430,18 @@ sys.exit(0 if d.get('pid') == $pid and d.get('state') == 'connected' else 1)
   fi
 }
 
+
+_knowledge_preflight() {
+  _log "Knowledge health preflight..."
+  if env -u DATA_DIR -u LFL_DATA_DIR -u EXPERIENCES_DIR -u METHODS_DIR -u METHOD_SEED_DIR -u SKILLS_DIR -u DOCS_DIR \
+    PYTHONPATH="$MIRROR_DIR/src" "$VENV_PY" -m llm_loop.runtime.knowledge_health --preflight --initialize-baseline; then
+    _log "✅ Knowledge health preflight PASS"
+    return 0
+  fi
+  _log "✗ Knowledge health preflight FAILED；拒绝停止现有服务，避免在错误/分叉 store 上重启"
+  return 1
+}
+
 _status() {
   echo "=== 镜像服务状态 ==="
   local web_pid feishu_pid
@@ -451,6 +463,7 @@ _status() {
 
 case "${1:-web}" in
   web)     _restart_precheck
+           _knowledge_preflight || { _write_receipt web "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _stop_web "$RESTART_PORT"; then
              _rc=1
@@ -461,6 +474,7 @@ case "${1:-web}" in
            _write_receipt web "$_rc" "port=$RESTART_PORT"
            exit "$_rc" ;;
   feishu)  _restart_precheck
+           _knowledge_preflight || { _write_receipt feishu "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _feishu_stop; then
              _rc=1
@@ -471,6 +485,7 @@ case "${1:-web}" in
            _write_receipt feishu "$_rc" ""
            exit "$_rc" ;;
   all)     _restart_precheck
+           _knowledge_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }
            # 修2(2026-09-09): 失败补偿——web 停/启失败不再 && 短路吞掉 feishu 恢复；
            # 各服务按自身停止成败独立决定是否重启（停失败强启=制造双进程，禁止）。
            _rc=0; _web_stopped=0; _feishu_stopped=0

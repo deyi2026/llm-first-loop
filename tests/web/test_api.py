@@ -128,6 +128,7 @@ def test_health_no_llm_call(build_test_engine, fake_settings):
     assert body["service"] == "llm-first-loop-web"
     assert body["version"] == SERVICE_VERSION
     assert isinstance(body["build"], dict)
+    assert isinstance(body["knowledge"], dict)
     assert len(fake.calls) == 0  # 健康检查不调 LLM
 
 

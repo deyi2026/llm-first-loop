@@ -102,7 +102,16 @@ def compute_identity(mode: str | None = None) -> IdentityReport:
     expected_src = (workspace / "src").resolve()
     ok = expected_src == module.parent or expected_src in module.parents
 
-    data_dir = os.environ.get("DATA_DIR") or str(workspace / "data")
+    from .paths import resolve_runtime_paths
+
+    data_dir_raw = str(os.environ.get("DATA_DIR", "") or "").strip()
+    runtime_paths = resolve_runtime_paths(
+        data_dir=data_dir_raw or None,
+        code_root=workspace,
+        env=os.environ,
+        data_dir_explicit=bool(data_dir_raw),
+    )
+    data_dir = str(runtime_paths.data_dir)
     config_candidates = [workspace / ".env", Path.home() / ".llm_loop" / ".env"]
     providers_candidates = [
         Path(data_dir) / "providers.local.json",
