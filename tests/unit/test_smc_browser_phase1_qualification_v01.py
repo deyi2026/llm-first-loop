@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -153,3 +155,23 @@ def test_bqual_b0_b13_each_have_deterministic_implementation_evidence() -> None:
             path = ROOT / relpath
             assert path.is_file(), (gate, relpath)
             assert function_name in _test_functions(path), (gate, nodeid)
+
+
+def test_bqual_lazy_provider_surface_describes_full_qualified_browser_contract() -> None:
+    perceive = _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"]
+    for action in ("snapshot", "hydrate", "diff", "wait"):
+        assert action in perceive
+    for boundary in ("不导航", "不执行 mutation", "selector"):
+        assert boundary in perceive
+
+    mutate = _COMPACT_TOOL_DESCRIPTIONS["browser_action"]
+    for verb in ("click", "fill", "select", "navigate", "scroll"):
+        assert verb in mutate
+    for boundary in (
+        "exact Semantic ID",
+        "expected_version",
+        "单次 dispatch",
+        "不自动 retry/rebind",
+        "不等于任务完成",
+    ):
+        assert boundary in mutate
