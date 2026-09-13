@@ -41,6 +41,8 @@ class BrowserPerceiveTool:
         "超时未满足是 observation，不是工具故障；感官/coverage 不足返回 indeterminate。"
         "ref 过期/跨 session/不可用会如实返回。"
         "模型面只出现 Semantic ID/scope/GroundingRef，不暴露 CSS/XPath/坐标/CDP node id/AX index。"
+        "通用语义操作方法可按需 search_records(kind=method, query=method:method-semantic-operation) 精确水合；"
+        "是否加载和如何应用由模型决定。"
     )
     parameters = {
         "type": "object",

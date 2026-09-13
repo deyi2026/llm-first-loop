@@ -271,6 +271,7 @@ def test_repository_seed_methods_are_complete() -> None:
     cards = store.list("", 50)
     refs = {c["key"] for c in cards}
     expected = {
+        "method:method-semantic-operation",
         "method:method-root-cause",
         "method:method-repo-api-discovery",
         "method:method-ab-experiment",
