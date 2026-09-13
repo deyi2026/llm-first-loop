@@ -19,6 +19,7 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
+from llm_loop.browser.method_card import SEMANTIC_OPERATION_METHOD_CARD
 from llm_loop.core.message import (
     Message,
     MessageSource,
@@ -55,8 +56,8 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "read_file": "读取已知路径的本地文本文件或 artifact://v1/... immutable snapshot；目录/关键词定位用 search_files。若后续计划 edit_file，必须本次 snapshot=true 取得 snapshot_ref。",
     "read_image": "读取本地图片并返回结构化视觉与元信息证据；需要图片路径。",
     "smx_perceive": "smx 感知层（opt-in）：wait 用 satisfied=true/false/null+sample_count/observer_error_count；snapshot 绑定 scope/content_sha256；diff 给 comparable/field_completeness；wait/snapshot/diff 另附 nested smc canonical projection；receipt raw grounding 标 canonical=false；只感知不执行。",
-    "browser_perceive": "Browser SMC Phase 1 只读感知（opt-in loopback CDP host）：snapshot/hydrate/diff/wait；DOM+AX→WorldSnapshot/SemanticObject，wait=结构化 Predicate 轮询；冲突/coverage/scope/grounding 如实返回；不导航、不执行 mutation，不暴露 selector/坐标/CDP node id/AX index。通用操作方法按需 search_records(kind=method, query=method:method-semantic-operation)。",
-    "browser_action": "Browser SMC Phase 1 写操作：click/fill/select/navigate/scroll；使用 snapshot 的 exact Semantic ID/scope + expected_version，object mutation=object，navigate=resource，snapshot 不作为 mutation version_scope；dispatch 前机械复核；单次 dispatch，不自动 retry/rebind；ActionReceipt 只表示机械事实，不等于任务完成。通用方法按需 search_records(kind=method, query=method:method-semantic-operation)。",
+    "browser_perceive": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 只读感知（opt-in loopback CDP host）：snapshot/hydrate/diff/wait；DOM+AX→WorldSnapshot/SemanticObject，wait=结构化 Predicate 轮询；冲突/coverage/scope/grounding 如实返回；不导航、不执行 mutation，不暴露 selector/坐标/CDP node id/AX index。",
+    "browser_action": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 写操作：click/fill/select/navigate/scroll；使用 snapshot 的 exact Semantic ID/scope + expected_version，object mutation=object，navigate=resource，snapshot 不作为 mutation version_scope；dispatch 前机械复核；单次 dispatch，不自动 retry/rebind；ActionReceipt 只表示机械事实，不等于任务完成。",
     "inspect_code": "解析 Python 文件/目录 AST，列类、函数、签名与 imports；实现正文用 read_file。",
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
@@ -71,7 +72,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_goal": "读取当前 durable Goal 与最近 checkpoints；只返回已记录事实，不替模型决定下一步。",
     "task_frontier": "读取当前 Goal 的 Task 图状态/frontier；程序记结构，模型决定如何推进。",
     "architecture_status": "读取 LFL 运行时状态、缓存、异常、配置与动作轨迹；不作为用户任务 Goal 事实源。",
-    "search_records": "按 kind/query 检索记录。episode=已解决/退休片段，非当前任务；experience/lesson 分开 discovery，共用 stable experience:<id> 精确水合；kind=synopsis 返回模型自写摘要轻量卡和 stable ref，完整摘要/原文用 source_synopsis；kind=rule 返回 RULE-AI 卡片，RULE-AI-xx 精确水合规则正文；kind=method 返回 Method 卡片/精确正文。历史适用性由模型判断。",
+    "search_records": "按 kind/query 检索记录。kind=method 时普通词（如 navigate）做 discovery；仅把检索结果返回的完整 method:<id> stable ref 原样用于 exact hydration，不要猜 method:<关键词>。episode=已解决/退休片段，非当前任务；experience/lesson 分开 discovery，共用 stable experience:<id> 精确水合；kind=synopsis 返回模型自写摘要轻量卡和 stable ref，完整摘要/原文用 source_synopsis；kind=rule 返回 RULE-AI 卡片，RULE-AI-xx 精确水合规则正文。历史适用性由模型判断。",
     "event_stream": "按时间顺序读取运行事件；默认仅当前 session 且保留 session_id，跨会话审计必须显式 scope=workspace。",
     "search_docs": "检索 docs/ Markdown 文档并返回路径、标题、摘要与相关性。",
     "adjust_strategy": "调整白名单运行参数 max_iterations/timeout_s/history_budget，受全局硬上限约束。",

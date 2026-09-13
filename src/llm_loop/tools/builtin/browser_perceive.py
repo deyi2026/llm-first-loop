@@ -13,6 +13,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from llm_loop.browser.method_card import SEMANTIC_OPERATION_METHOD_CARD
 from llm_loop.browser.perception import BrowserPerceptionAdapter
 from llm_loop.browser.predicate import predicate_parameter_schema, validate_predicate
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -34,6 +35,8 @@ class BrowserCaptureBackend(Protocol):
 class BrowserPerceiveTool:
     name = "browser_perceive"
     description = (
+        SEMANTIC_OPERATION_METHOD_CARD
+        + " "
         "SMC Browser Phase 1 只读感知。snapshot=读取 host 已绑定的当前页面 DOM+AX，返回"
         "WorldSnapshot + SemanticObject；不会打开 URL、导航、点击、输入、滚动、执行脚本或自动重试。"
         "hydrate=按精确 GroundingRef 水合该次历史 observation；diff=仅比较两张已落盘 exact snapshot，"
@@ -41,8 +44,8 @@ class BrowserPerceiveTool:
         "超时未满足是 observation，不是工具故障；感官/coverage 不足返回 indeterminate。"
         "ref 过期/跨 session/不可用会如实返回。"
         "模型面只出现 Semantic ID/scope/GroundingRef，不暴露 CSS/XPath/坐标/CDP node id/AX index。"
-        "通用语义操作方法可按需 search_records(kind=method, query=method:method-semantic-operation) 精确水合；"
-        "是否加载和如何应用由模型决定。"
+        "完整方法可按 method_ref 用 search_records(kind=method, query=<exact ref>) 精确水合；"
+        "是否加载完整方法和如何应用由模型决定。"
     )
     parameters = {
         "type": "object",

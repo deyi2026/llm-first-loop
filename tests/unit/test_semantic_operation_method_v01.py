@@ -4,6 +4,7 @@ from pathlib import Path
 
 from llm_loop.methods.store import MethodStore
 from llm_loop.tools.builtin.browser_action import BrowserActionTool
+from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
 from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,16 +60,24 @@ def test_semantic_operation_method_teaches_facts_not_target_policy() -> None:
         assert forbidden_authority not in body
 
 
-def test_browser_action_surfaces_point_to_method_without_inlining_it() -> None:
-    compact = _COMPACT_TOOL_DESCRIPTIONS["browser_action"]
-    full = BrowserActionTool.description
-    assert METHOD_REF in compact
-    assert METHOD_REF in full
-    assert "search_records" in compact
-    assert "search_records" in full
-    # The provider-stable tool contract only carries the pointer, not the Method body.
-    assert "Observe -> Ground" not in compact
-    assert "Observe -> Ground" not in full
+def test_browser_surfaces_carry_compact_method_card_and_exact_ref() -> None:
+    surfaces = (
+        _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"],
+        _COMPACT_TOOL_DESCRIPTIONS["browser_action"],
+        BrowserPerceiveTool.description,
+        BrowserActionTool.description,
+    )
+    for surface in surfaces:
+        assert METHOD_REF in surface
+        assert "Observe -> Ground -> Scope -> Act -> Receipt -> Verify" in surface
+        assert "object" in surface
+        assert "resource" in surface
+        assert "receipt ok != task complete" in surface
+    # Keep the always-visible card compact; detailed recovery remains progressive disclosure.
+    for surface in surfaces:
+        assert "expected_version_unavailable" not in surface
+        assert "resource_scope_mismatch" not in surface
+        assert "args_contract_mismatch" not in surface
 
 
 def test_semantic_operation_method_is_not_universal_prompt_injection() -> None:

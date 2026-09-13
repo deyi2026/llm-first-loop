@@ -61,7 +61,7 @@ _SEARCH_ARCHIVE_TOOL_DEF: dict[str, Any] = {
 
 _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
     "name": "search_records",
-    "description": "检索持久记录与按需知识索引：运行审计、memory、archive、experience、lesson、self_eval、resolved/truncated episode、synopsis、rule 等。episode 表示已解决/退休的对话片段，不代表当前活动任务；experience=正向/legacy 经验 discovery，lesson=失败/未验证/已证伪教训；两者 exact 内容均用 stable experience:<id> 水合。当前 Goal/Task 状态用 get_goal/task_frontier。历史命中仍需检查时间与当前适用性；method 为 Method Learning 索引。",
+    "description": "检索持久记录与按需知识索引：运行审计、memory、archive、experience、lesson、self_eval、resolved/truncated episode、synopsis、rule 等。episode 表示已解决/退休的对话片段，不代表当前活动任务；experience=正向/legacy 经验 discovery，lesson=失败/未验证/已证伪教训；两者 exact 内容均用 stable experience:<id> 水合。当前 Goal/Task 状态用 get_goal/task_frontier。历史命中仍需检查时间与当前适用性。kind=method 时普通关键词用于 discovery；method:<id> 仅用于把搜索结果已经返回的 stable Method ref 原样精确水合，不要猜 method:<关键词>。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -95,7 +95,7 @@ _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
             },
             "query": {
                 "type": "string",
-                "description": "关键词（空则返回该 kind 最近记录）",
+                "description": "关键词（空则返回该 kind 最近记录）。kind=method: discovery 用普通词；仅已知且由结果返回的完整 method:<id> stable ref 用于 exact hydration。",
             },
             "limit": {
                 "type": "integer",

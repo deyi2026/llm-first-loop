@@ -644,9 +644,18 @@ def _finalize_search_records(
                 tool_call_id="",
                 tool_name="search_records",
             )
+        miss = f"[search_records] 未找到匹配 '{query}' 的记录（不伪造结果）。"
+        if kind == "method" and query.startswith("method:"):
+            discovery = query.removeprefix("method:").strip()
+            if discovery:
+                miss += (
+                    "\n[Method 查询语义] method: 仅用于已返回的 stable ref 精确水合；"
+                    f"当前 ref 不存在。若你是在发现方法，请改用普通关键词 query=\"{discovery}\"；"
+                    "程序不会把 exact miss 静默改写成 discovery，也不会替你选择 Method。"
+                )
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
-            content=f"[search_records] 未找到匹配 '{query}' 的记录（不伪造结果）。",
+            content=miss,
             tool_call_id="",
             tool_name="search_records",
         )

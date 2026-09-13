@@ -171,6 +171,32 @@ def test_record_searcher_method_kind_and_renderer_hydrate_exact(tmp_path: Path) 
     assert "status=active" in result.content
 
 
+def test_method_exact_miss_teaches_discovery_without_silent_fallback(tmp_path: Path) -> None:
+    root = tmp_path / "methods"
+    _seed_method(root, "semantic-operation", status="active", body="browser navigate method")
+    searcher = RecordSearcher(audit_dir=tmp_path / "audit", method_store=MethodStore(root))
+
+    exact_miss = run_search_records(
+        _Ctx(),
+        lambda **kwargs: searcher.search(**kwargs),
+        {"kind": "method", "query": "method:navigate", "limit": 10},
+        lambda: "",
+    )
+    assert "未找到匹配 'method:navigate'" in exact_miss.content
+    assert "method: 仅用于已返回的 stable ref" in exact_miss.content
+    assert 'query="navigate"' in exact_miss.content
+    assert "method:semantic-operation" not in exact_miss.content
+
+    discovery = run_search_records(
+        _Ctx(),
+        lambda **kwargs: searcher.search(**kwargs),
+        {"kind": "method", "query": "navigate", "limit": 10},
+        lambda: "",
+    )
+    assert "method:semantic-operation" in discovery.content
+    assert "projection_complete=False" not in discovery.content
+
+
 def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
     host = _Host(store)
