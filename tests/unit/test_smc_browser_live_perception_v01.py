@@ -228,6 +228,7 @@ def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeyp
     )
     assert "browser_perceive" in perception_only.registry.names()
     assert "browser_action" not in perception_only.registry.names()
+    assert "browser_semantic_execute" not in perception_only.registry.names()
     factory.CdpBrowserMutationActuator.assert_not_called()
 
     enabled = factory.build_engine(
@@ -240,6 +241,7 @@ def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeyp
     )
     assert "browser_perceive" in enabled.registry.names()
     assert "browser_action" in enabled.registry.names()
+    assert "browser_semantic_execute" in enabled.registry.names()
     factory.CdpBrowserMutationActuator.assert_called_once_with(
         "http://127.0.0.1:9222", target_id="target-1"
     )

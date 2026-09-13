@@ -58,6 +58,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "smx_perceive": "smx 感知层（opt-in）：wait 用 satisfied=true/false/null+sample_count/observer_error_count；snapshot 绑定 scope/content_sha256；diff 给 comparable/field_completeness；wait/snapshot/diff 另附 nested smc canonical projection；receipt raw grounding 标 canonical=false；只感知不执行。",
     "browser_perceive": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 只读感知（opt-in loopback CDP host）：snapshot/hydrate/diff/wait；DOM+AX→WorldSnapshot/SemanticObject，wait=结构化 Predicate 轮询；冲突/coverage/scope/grounding 如实返回；不导航、不执行 mutation，不暴露 selector/坐标/CDP node id/AX index。",
     "browser_action": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 写操作：click/fill/select/navigate/scroll；使用 snapshot 的 exact Semantic ID/scope + expected_version，object mutation=object，navigate=resource，snapshot 不作为 mutation version_scope；dispatch 前机械复核；单次 dispatch，不自动 retry/rebind；ActionReceipt 只表示机械事实，不等于任务完成。",
+    "browser_semantic_execute": "Browser 语义执行：先 browser_perceive snapshot，模型选 exact GroundingRef；对象 target_ref=SemanticObject.grounding_ref，navigate target_ref=resource_ref；args: click={}，fill={text,mode(replace|append)}，select={value}，navigate={url}，scroll={delta_pages}；工具内部编译 scope/version/action_id 后单次执行；读 ActionReceipt，再 snapshot 验证；不自动 retry/rebind，receipt ok 不等于任务完成。",
     "inspect_code": "解析 Python 文件/目录 AST，列类、函数、签名与 imports；实现正文用 read_file。",
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
@@ -121,6 +122,10 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
 # a positive real-model A/B. This is not a strategy/routing table: it does not hide
 # tools, choose tools, or change execution semantics.
 _COMPACT_PARAMETER_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    "browser_semantic_execute": {
+        "target_ref": "对象动作=当前 SemanticObject.grounding_ref；navigate=当前 snapshot result 的 resource_ref；必须 exact，不猜名称。",
+        "args": "click={}；fill={text,mode} mode=replace|append；select={value}；navigate={url}；scroll={delta_pages}。",
+    },
     "list_evidence": {
         "limit": "整数 1..20；单次最多 20。用户要更多时本轮也不得超过 20。",
     },

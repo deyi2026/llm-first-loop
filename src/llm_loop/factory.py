@@ -73,6 +73,7 @@ from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.builtin.agent_message import AgentMessageTool
 from llm_loop.tools.builtin.browser_action import BrowserActionTool
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
+from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
 from llm_loop.tools.builtin.edit_file import EditFileTool
@@ -862,6 +863,14 @@ def build_engine(settings: Settings) -> LoopEngine:
                 "browser_action",
                 BrowserActionTool(
                     adapter=_browser_action_adapter,
+                    session_id_getter=lambda: current_session_id_ctx.get() or registry._session_id,
+                ),
+            )
+            _register_basic(
+                "browser_semantic_execute",
+                BrowserSemanticExecuteTool(
+                    perception=_browser_adapter,
+                    action_adapter=_browser_action_adapter,
                     session_id_getter=lambda: current_session_id_ctx.get() or registry._session_id,
                 ),
             )

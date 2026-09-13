@@ -565,6 +565,8 @@ class BrowserPerceptionStore:
             content = (bundle.get("sensor_grounding") or {}).get(parts[1])
         elif len(parts) == 2 and parts[0] == "object" and _SEMANTIC_ID_RE.fullmatch(parts[1]):
             content = (bundle.get("object_grounding") or {}).get(parts[1])
+        elif parts == ["resource", "page"]:
+            content = bundle.get("resource_grounding")
         elif (
             len(parts) == 3
             and parts[0] == "source"
@@ -712,6 +714,10 @@ class BrowserPerceptionAdapter:
     @staticmethod
     def _object_ref(snapshot_id: str, semantic_id: str) -> str:
         return f"{_GROUNDING_PREFIX}{snapshot_id}/object/{semantic_id}"
+
+    @staticmethod
+    def _resource_ref(snapshot_id: str) -> str:
+        return f"{_GROUNDING_PREFIX}{snapshot_id}/resource/page"
 
     @staticmethod
     def _merge_fields(
@@ -1307,8 +1313,18 @@ class BrowserPerceptionAdapter:
         projection_limit = max(1, min(int(projection_limit), 500))
         objects_ref = f"{_GROUNDING_PREFIX}{snapshot_id}/objects"
         scopes_ref = f"{_GROUNDING_PREFIX}{snapshot_id}/scopes"
+        resource_ref = self._resource_ref(snapshot_id)
         dom_ref = f"{_GROUNDING_PREFIX}{snapshot_id}/sensor/dom"
         ax_ref = f"{_GROUNDING_PREFIX}{snapshot_id}/sensor/ax"
+        page_scope = next(item for item in scope_facts if item.get("kind") == "page")
+        resource_grounding = {
+            "schema": "smc.browser_resource_grounding.v0.1",
+            "domain": "browser",
+            "kind": "page",
+            "scope_ref": str(page_scope["scope_ref"]),
+            "grounding_ref": resource_ref,
+            "observed_version": snapshot_id,
+        }
         sensor_grounding = self._sensor_grounding(dom_sensor, ax_sensor, dom_nodes, ax_nodes)
         scope_observations = self._scope_observations(
             raw_capture=raw_capture,
@@ -1368,6 +1384,7 @@ class BrowserPerceptionAdapter:
             "objects": objects_sorted,
             "sensor_grounding": sensor_grounding,
             "object_grounding": build.object_grounding,
+            "resource_grounding": resource_grounding,
             "source_grounding": build.source_grounding,
             "private_capture": {
                 "page_token": page_token,
@@ -1383,6 +1400,7 @@ class BrowserPerceptionAdapter:
             "snapshot": snapshot,
             "scope_facts": scope_facts,
             "scope_facts_ref": scopes_ref,
+            "resource_ref": resource_ref,
             "objects": objects_sorted[:projection_limit],
             "objects_projection": {
                 "returned": min(len(objects_sorted), projection_limit),

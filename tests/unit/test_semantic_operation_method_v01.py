@@ -5,6 +5,7 @@ from pathlib import Path
 from llm_loop.methods.store import MethodStore
 from llm_loop.tools.builtin.browser_action import BrowserActionTool
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
+from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
 from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,13 +35,18 @@ def test_semantic_operation_method_is_provider_agnostic_and_exactly_hydratable()
 def test_semantic_operation_method_teaches_facts_not_target_policy() -> None:
     body = _method_body()
     for marker in (
-        "Observe -> Ground -> Scope -> Act -> Receipt -> Re-observe/Verify",
-        "object.id -> target_id",
-        "object.scope_ref -> scope_ref",
-        "snapshot.snapshot_id -> expected_version",
-        "navigate",
-        "version_scope=resource",
-        "version_scope=object",
+        "Observe -> Ground -> Execute -> Receipt -> Re-observe/Verify",
+        "browser_semantic_execute",
+        "target_ref",
+        "SemanticObject.grounding_ref",
+        "resource_ref",
+        "工具内部",
+        "target_id",
+        "scope_ref",
+        "expected_version",
+        "version_scope",
+        "action_id",
+        "Commit",
         "expected_version_unavailable",
         "resource_scope_mismatch",
         "args_contract_mismatch",
@@ -61,20 +67,22 @@ def test_semantic_operation_method_teaches_facts_not_target_policy() -> None:
 
 
 def test_browser_surfaces_carry_compact_method_card_and_exact_ref() -> None:
-    surfaces = (
+    card_surfaces = (
         _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"],
         _COMPACT_TOOL_DESCRIPTIONS["browser_action"],
         BrowserPerceiveTool.description,
         BrowserActionTool.description,
+        BrowserSemanticExecuteTool.description,
     )
-    for surface in surfaces:
+    for surface in card_surfaces:
         assert METHOD_REF in surface
-        assert "Observe -> Ground -> Scope -> Act -> Receipt -> Verify" in surface
-        assert "object" in surface
-        assert "resource" in surface
+        assert "Observe -> Ground -> Execute -> Receipt -> Re-observe/Verify" in surface
         assert "receipt ok != task complete" in surface
+    semantic_surface = _COMPACT_TOOL_DESCRIPTIONS["browser_semantic_execute"]
+    for marker in ("snapshot", "GroundingRef", "target_ref", "resource_ref", "ActionReceipt"):
+        assert marker in semantic_surface
     # Keep the always-visible card compact; detailed recovery remains progressive disclosure.
-    for surface in surfaces:
+    for surface in card_surfaces:
         assert "expected_version_unavailable" not in surface
         assert "resource_scope_mismatch" not in surface
         assert "args_contract_mismatch" not in surface

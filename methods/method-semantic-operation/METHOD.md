@@ -1,65 +1,58 @@
 ---
 name: method-semantic-operation
 method_id: method-semantic-operation
-description: 使用 SMC/语义操作工具处理“观察世界、定位语义对象、带版本前置执行动作、读取机械回执、重新观察并验证任务状态”时使用。该方法不替模型选择目标、不自动重试/rebind，也不把 ActionReceipt 当作任务完成；当前首个资格化 domain profile 是 Browser Phase 1。
+description: 使用 SMC/语义操作工具处理“观察世界、选择语义对象、执行动作、读取机械回执、重新观察并验证任务状态”时使用。Browser 的机械编译已经内置在 browser_semantic_execute 工具中；该方法不替模型选择目标、不自动重试/rebind，也不把 ActionReceipt 当作任务完成。
 status: active
 ---
 # Semantic Operation Method
 
-本方法教的是**如何消费语义操作协议中的机械事实**，不是替你决定任务策略。
+本方法教的是**怎样使用语义执行工具**，不是教模型手工拼底层 SemanticAction，也不是让程序替模型决定目标或任务完成。
 
 核心循环：
 
-`Observe -> Ground -> Scope -> Act -> Receipt -> Re-observe/Verify`
+`Observe -> Ground -> Execute -> Receipt -> Re-observe/Verify`
 
-程序负责提供当前 snapshot、SemanticObject、scope/version、grounding、ActionReceipt 与硬边界；**模型选择**要操作哪个对象、为什么操作、何时已经满足用户任务。
+程序负责提供 observation、GroundingRef、机械编译、版本前置、ActionReceipt 与硬边界；**模型选择**要操作哪个对象、执行哪个 verb、传什么业务参数，以及什么时候用户任务已经满足。
 
-## 1. Observe：先取得当前世界事实
+## 1. Observe：先看当前世界
 
-先读取当前 observation，再基于当前 observation 行动。不要把旧消息里的对象名、旧 snapshot id、旧 grounding 当成仍然有效。
+Browser 中先调用：
 
-Browser Phase 1 中：
+`browser_perceive(action=snapshot)`
 
-- `browser_perceive(action=snapshot)` 取得当前 `snapshot.snapshot_id`、`scope_facts` 和 projected `objects`；
-- projection 不完整时，用返回的 exact grounding ref `hydrate`，不要用名称猜缺失对象；
-- `diff` / `wait` 是只读事实工具，不会替你执行 mutation。
+它返回当前 `snapshot`、projected `objects`、每个对象的 exact `SemanticObject.grounding_ref`，以及当前页面的 model-facing snapshot result `resource_ref`。
 
-## 2. Ground：从 observation 选择语义实体
+不要从旧消息里的按钮名、旧 snapshot、旧 ref 直接行动。页面可能已经变化。
 
-先根据用户目标和当前世界事实选择语义对象，再使用它已经给出的稳定语义标识。不要构造 selector、XPath、坐标、CDP node id 或其它 backend locator。
+## 2. Ground：模型只选择 exact GroundingRef
 
-Browser object mutation 的最小事实映射：
+根据用户目标和当前 observation，模型自己选择目标：
 
-- `object.id -> target_id`
-- `object.scope_ref -> scope_ref`
-- `snapshot.snapshot_id -> expected_version`
+- `click/fill/select/scroll`：选择当前 `SemanticObject.grounding_ref`；
+- `navigate`：使用当前 snapshot 返回的 `resource_ref`。
 
-对象是否是用户真正想操作的对象，由模型根据当前任务和 observation 判断；程序不做 task relevance 排序。
+不要构造 selector、XPath、坐标、CDP node id，也不要按名称自己发明一个 ref。
 
-## 3. Scope：把动作绑定到正确的版本域
+对象是不是用户真正想操作的对象，仍由模型判断；目标选择权不属于工具，工具也不做 task relevance 排序或“最佳目标”选择。
 
-版本前置是 TOCTOU 保护，不是任务语义。
+## 3. Execute：调用 browser_semantic_execute
 
-Browser Phase 1 当前 profile：
+模型只提交：
 
-- `click/fill/select/scroll`：`version_scope=object`
-- `navigate`：`version_scope=resource`
-- mutation 不使用 `version_scope=snapshot`
+- `verb`
+- `target_ref`
+- `args`
 
-对象动作使用该对象所在 observation 的 `snapshot.snapshot_id -> expected_version`。`navigate` 使用当前 **page scope** 作为语义根：page `scope_ref` 同时作为 `target_id` 与 `scope_ref`，并使用当前 `snapshot.snapshot_id -> expected_version`。
+例如点击 Commit：
 
-不要把 document/object scope 冒充 page resource scope，也不要自己发明 expected_version。
+1. `browser_perceive(action=snapshot)`；
+2. 在返回的 SemanticObject 中找到符合用户意图的 `Commit` 对象；
+3. 取它已经返回的 `SemanticObject.grounding_ref`；
+4. 调用 `browser_semantic_execute(verb=click, target_ref=<Commit grounding ref>, args={})`；
+5. 读取 ActionReceipt；
+6. 再 `browser_perceive(action=snapshot)`，根据当前页面事实判断任务是否真的完成。
 
-## 4. Act：一次提交一个明确 SemanticAction
-
-先确定当前要做的一个动作，再提交一次。Browser Phase 1 的固定机械事实是：
-
-- `schema=smc.semantic_action.v0.1`
-- `domain=browser`
-- `operation_class=mutate`
-- `idempotency_class=unknown`
-- `atomicity_class=single_dispatch`
-- `version_precondition=required`
+这就是标准的一次“带着做一遍”。
 
 verb-specific args：
 
@@ -69,58 +62,79 @@ verb-specific args：
 - `navigate`: `{"url": <http/https URL>}`
 - `scroll`: `{"delta_pages": <number>}`，Phase 1 仅 semantic-object scroll
 
-每个显式动作使用新的 `action_id`。不要因为没有看到期望结果就复用 action_id 或自动 replay。
+## 4. 工具内部做什么：机械编译，不做语义决策
 
-## 5. Receipt：把 ActionReceipt 当机械事实，不当任务结论
+`browser_semantic_execute` 工具内部会从 exact ref 机械恢复并派生底层 SemanticAction 所需字段，包括：
 
-`ActionReceipt status=ok` 只说明该 action 已按机械合同 dispatch/观察完成，**不等于任务完成**，也不等于页面达到了用户想要的语义结果。
+- `target_id`
+- `scope_ref`
+- `expected_version`
+- `version_scope`
+- `action_id`
+- `schema/domain/operation_class/idempotency_class/atomicity_class/version_precondition`
 
-- `status=ok`：读取 `after_version`、`observed_effects`、`boundary_events`、`completeness`；若还需继续任务，再决定是否 re-observe。
-- `status=rejected`：动作没有获得合法 dispatch 条件。先解释 rejection 暴露的缺失事实，不要把 rejection 当成“换个目标再试”的指令。
-- `status=failed`：dispatch/transport 的机械结果失败或不确定；不要假定没有副作用，也不要静默 replay。
+对象动作机械绑定 object scope；navigate 机械绑定 page resource scope。模型不再手工填写这些字段。
 
-## 6. 常见 rejection 的最小解释
+同一个 exact `target_ref + verb + args` 会得到同一个确定性 `action_id`。因此重复提交同一 exact request 会被现有 single-dispatch 防重机制拒绝，而不是再次执行物理动作。若世界变化后任务仍需下一动作，应重新 Observe，由模型重新选择当前 ref；工具不会自动 retry、replay、latest 或 rebind。
 
-这些不是固定 recovery workflow；它们只说明下一步判断前缺什么机械事实。
+## 5. Receipt：ActionReceipt 是执行事实，不是任务结论
+
+`ActionReceipt status=ok` 只说明该动作经过当前机械合同执行/观察，**不等于任务完成**，也不证明页面已经达到用户想要的语义结果。
+
+- `status=ok`：读取 `after_version`、`observed_effects`、`boundary_events`、`completeness`，再决定是否需要重新观察；
+- `status=rejected`：当前动作没有满足合法 dispatch 条件，不要把它理解成“自动换目标再试”；
+- `status=failed`：执行结果失败或不确定，不要假定没有副作用，也不要静默 replay。
+
+## 6. 常见 rejection / compile rejection 怎么理解
+
+这些只说明缺了什么机械事实，不是固定 recovery 脚本。
+
+### `target_ref_unavailable` / `target_ref_expired` / `target_ref_unauthorized`
+
+当前 exact ref 不能被本 session 合法使用。重新 Observe 取得当前 observation；不要猜 ref，不要跨 session 复用。
+
+### `target_ref_projection_mismatch`
+
+verb 与 ref 类型不匹配，例如对象动作拿了 page resource ref，或 navigate 拿了 object ref。重新检查当前 observation 中已经返回的 ref 类型。
 
 ### `expected_version_unavailable`
 
-你提供的 expected version 不能支持当前 precondition。重新取得当前 observation / exact grounding，确认所选对象或资源来自哪个 snapshot；不要猜 version。
+底层版本前置无法支持当前 dispatch。重新 Observe；不要自己编 expected version。工具会从新的 exact ref 机械派生版本。
 
 ### `resource_scope_mismatch`
 
-你给出的 resource scope 与 expected version 中记录的资源不是同一个。重新读取当前 page/scope facts，并让 page `scope_ref`、target 和 expected version 来自同一 observation。不要仅因这个 rejection 再 navigate 一次。
+当前 page resource 与 version grounding 不一致。重新 Observe 并使用当前 snapshot 的 `resource_ref`；不要因为这个 rejection 自动再 navigate 一次。
 
 ### `args_contract_mismatch`
 
-verb 的 args key 不符合 closed contract。读取当前 `browser_action` schema 或本 Method 的 verb args，修正参数结构；不要通过换目标绕过 schema 错误。
+verb 的 `args` 不符合 closed contract。按 `browser_semantic_execute` 工具描述修正参数结构，不要换目标绕过参数错误。
 
 ### stale / identity / target mismatch
 
-世界已经变化、目标不在 expected observation、或 identity 无法稳定解析。不要名称匹配后自动 rebind；重新 Observe，再由模型选择当前对象。
+世界已变化、目标不再属于 expected observation，或 identity 无法稳定解析。不要按名称自动 rebind；重新 Observe，再由模型选择当前对象。
 
 ### `document_generation_changed` / `scope_changed`
 
-这是动作后观察到的机械边界变化。旧对象 grounding 可能已经属于上一代 document/scope；若任务还没结束，先 Re-observe，不要假定旧 target 继续有效。
+这是动作后观察到的机械边界变化。旧对象 ref 可能属于上一代 document/scope；如果任务还没结束，先 Re-observe。
 
-## 7. Re-observe / Verify：用当前世界验证用户任务
+## 7. Re-observe / Verify：模型判断用户任务是否完成
 
-如果 action 改变了页面、document generation、scope，或你需要确认副作用，重新取得当前事实。最终“任务是否完成”由模型根据用户要求和当前页面事实判断，而不是由 receipt status、工具 success 或程序 heuristic 裁决。
+动作之后若页面、document、scope 或目标状态可能变化，调用新的 snapshot。最终“任务是否完成”由模型根据用户要求和**当前页面事实**判断，而不是由 receipt status、ToolResult success 或程序 heuristic 裁决。
 
 ## 停止条件
 
-可以结束当前任务，当模型已有足够当前事实支持用户要求已经满足，并且没有必要的未决 mechanical ambiguity。不要为了“确认一下”无界重复 snapshot；也不要在当前事实不足时因为某个 tool call `success` 就宣称完成。
+当当前事实足以支持用户要求已经满足，并且没有必要的未决机械不确定性，可以结束。不要为了“确认一下”无限 snapshot；也不要因为一次 tool success 就直接宣布完成。
 
 ## 反模式
 
+- 模型手工拼 `target_id/scope_ref/expected_version/version_scope/action_id`；
 - 从按钮文字猜 selector/XPath/坐标；
-- 用旧 snapshot 的对象去操作已换代 document；
-- `resource_scope_mismatch` 后重复 navigate，而不先修正 resource grounding；
-- `expected_version_unavailable` 时自己编 version；
+- 用旧 ref 操作已经换代的 document；
 - rejected 后自动换目标、自动 retry、自动 rebind；
-- `ActionReceipt status=ok` 就直接宣称整个任务完成；
-- 把 Method 当强制步骤：若当前事实已经足够，可直接执行最短合法路径。
+- `resource_scope_mismatch` 后盲目重复 navigate；
+- `ActionReceipt status=ok` 就宣布整个任务完成；
+- 把 Method 当强制步骤；当前事实足够时应走最短合法路径。
 
 ## 方法边界
 
-本 Method 是 provider-agnostic 的操作方法，不依赖某个模型家族。它不改变 SMC runtime，不新增权限，不放宽 stale/version/identity 规则，不提供自动 recovery。未来其它 SMC domain 应复用 `Observe -> Ground -> Scope -> Act -> Receipt -> Re-observe/Verify` 核心循环，并由各自冻结的 domain profile 提供真实 verb/scope/args 机械合同。
+本 Method provider-agnostic，不依赖具体 provider 或 model family。Browser 的 SemanticAction 机械编译封装在工具内部，但 stale/version/identity/single-dispatch 边界仍由已有 runtime 执行器负责。该工具不新增权限；目标选择权和任务完成判断权都留给模型，也不存在自动 recovery。
