@@ -13,8 +13,8 @@ import random
 from dataclasses import dataclass
 from typing import Any
 
-SCHEMA = "smc.browser_real_model_ab.v0.2"
-SEED = 2026091302
+SCHEMA = "smc.browser_real_model_ab.v0.3"
+SEED = 2026091303
 MODEL_REF = "cognilocal/ornith-1.5-35b-a3b-mlx"
 SMOKE_PAIR_BLOCKS = (
     ("click_commit", 1),

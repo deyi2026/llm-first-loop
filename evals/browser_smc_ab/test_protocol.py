@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
@@ -21,12 +23,12 @@ from protocol import (  # noqa: E402
     plan_sha256,
     smoke_gate,
 )
-from run_ab import _provider_contract  # noqa: E402
+from run_ab import _pending_rows, _provider_contract  # noqa: E402
 
 
 def test_plan_is_20_rows_paired_and_smoke_prefix_is_three_complete_blocks() -> None:
-    assert SCHEMA == "smc.browser_real_model_ab.v0.2"
-    assert SEED == 2026091302
+    assert SCHEMA == "smc.browser_real_model_ab.v0.3"
+    assert SEED == 2026091303
     plan = build_plan()
     assert len(plan) == 20
     assert [row["index"] for row in plan] == list(range(1, 21))
@@ -41,7 +43,7 @@ def test_plan_is_20_rows_paired_and_smoke_prefix_is_three_complete_blocks() -> N
         assert {row["arm"] for row in rows} == {"smc", "legacy"}
         assert len({(row["task_id"], row["repeat"]) for row in rows}) == 1
 
-    frozen = json.loads((HERE / "PLAN.v0.2.json").read_text(encoding="utf-8"))
+    frozen = json.loads((HERE / "PLAN.v0.3.json").read_text(encoding="utf-8"))
     assert frozen["seed"] == SEED
     assert frozen["plan_sha256"] == plan_sha256(plan)
     assert frozen["rows"] == plan
@@ -67,6 +69,17 @@ def test_runner_is_standalone_importable_outside_repo_cwd(tmp_path: Path) -> Non
     )
     assert proc.returncode == 0, proc.stderr
     assert "--workdir" in proc.stdout
+    assert "--max-new-rows" in proc.stdout
+
+
+def test_pending_rows_bounds_each_controller_invocation_without_changing_plan() -> None:
+    plan = build_plan()
+    done = {1, 2, 3}
+    pending = _pending_rows(plan[:6], done, 1)
+    assert [row["index"] for row in pending] == [4]
+    assert [row["index"] for row in _pending_rows(plan[:6], done, 2)] == [4, 5]
+    with pytest.raises(ValueError, match="max_new_rows"):
+        _pending_rows(plan[:6], done, 0)
 
 
 def test_effective_cognilocal_provider_contract_is_frozen() -> None:

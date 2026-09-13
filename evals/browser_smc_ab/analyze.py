@@ -76,7 +76,7 @@ def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
         paired.append(item)
     smc_rows = [row for row in rows if row.get("arm") == "smc"]
     return {
-        "schema": "smc.browser_real_model_ab.analysis.v0.2",
+        "schema": "smc.browser_real_model_ab.analysis.v0.3",
         "total_runs": len(rows),
         "arms": {arm: _summary(rows, arm) for arm in ("smc", "legacy")},
         "paired": paired,

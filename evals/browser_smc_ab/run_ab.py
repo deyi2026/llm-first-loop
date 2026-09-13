@@ -201,7 +201,9 @@ def _surface_manifest(arm: str, tmp_root: Path) -> dict[str, Any]:
     return json.loads(result_path.read_text(encoding="utf-8"))["surface"]
 
 
-def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, Any]:
+def execution_manifest(
+    plan: list[dict[str, Any]], tmp_root: Path, *, max_new_rows: int = 1
+) -> dict[str, Any]:
     dirty = _tracked_dirty()
     if dirty:
         raise RuntimeError(f"tracked working tree is dirty before model execution: {dirty}")
@@ -227,8 +229,9 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
             raise RuntimeError(f"surface mismatch arm={arm}: {surface}")
     source_paths = [
         HERE / "protocol.py",
-        HERE / "PROTOCOL.v0.2.md",
-        HERE / "PLAN.v0.2.json",
+        HERE / "PROTOCOL.v0.3.md",
+        HERE / "PLAN.v0.3.json",
+        HERE / "EXECUTION.v0.2.INVALID.json",
         HERE / "fixture_server.py",
         HERE / "worker.py",
         HERE / "run_ab.py",
@@ -271,8 +274,18 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
             "extract_enabled": False,
             "summary_mode": "off",
             "method_reflection_mode": "off",
+            "max_new_rows_per_invocation": max_new_rows,
         },
     }
+
+
+def _pending_rows(
+    selected: list[dict[str, Any]], done: set[int], max_new_rows: int
+) -> list[dict[str, Any]]:
+    if max_new_rows < 1:
+        raise ValueError("max_new_rows must be >= 1")
+    pending = [row for row in selected if int(row["index"]) not in done]
+    return pending[:max_new_rows]
 
 
 def _start_smc_chrome(run_dir: Path) -> tuple[subprocess.Popen[bytes], str, str, set[int]]:
@@ -394,14 +407,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workdir", required=True)
     parser.add_argument("--phase", choices=("smoke", "remainder", "all"), default="smoke")
+    parser.add_argument("--max-new-rows", type=int, default=1)
     args = parser.parse_args()
+    if args.max_new_rows < 1:
+        parser.error("--max-new-rows must be >= 1")
     root = Path(args.workdir).resolve()
     root.mkdir(parents=True, exist_ok=True)
     plan = build_plan()
     plan_path = root / "plan.json"
     plan_path.write_text(json.dumps(plan, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
-    manifest = execution_manifest(plan, root)
+    manifest = execution_manifest(plan, root, max_new_rows=args.max_new_rows)
     manifest_path = root / "execution-manifest.json"
     if manifest_path.exists():
         existing = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -425,9 +441,7 @@ def main() -> int:
     else:
         selected = list(plan)
 
-    for row in selected:
-        if int(row["index"]) in done:
-            continue
+    for row in _pending_rows(selected, done, args.max_new_rows):
         record = run_row(row, root, manifest)
         with results_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")

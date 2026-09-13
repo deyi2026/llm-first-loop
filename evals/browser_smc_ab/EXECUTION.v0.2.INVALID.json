@@ -1,0 +1,19 @@
+{
+  "schema": "smc.browser_real_model_ab.v0.2.execution_invalidation",
+  "status": "INVALID_CONTROLLER_TIMEOUT",
+  "counted_as_formal_smoke": false,
+  "completed_result_rows": 5,
+  "aborted_plan_index": 6,
+  "aborted_task_id": "delayed_wait",
+  "aborted_arm": "smc",
+  "reason": "outer_controller_timeout_before_worker_terminal_result",
+  "raw_evidence_preserved_externally": true,
+  "protocol_or_runtime_tuned_after_observation": false,
+  "completed_diagnostic_rows": [
+    {"index": 1, "task_id": "click_commit", "arm": "smc", "status": "TASK_FAIL", "oracle_pass": false, "rounds": 12, "smc_ok_receipts": 0, "smc_scope_blockers": 0},
+    {"index": 2, "task_id": "click_commit", "arm": "legacy", "status": "TASK_FAIL", "oracle_pass": false, "rounds": 12},
+    {"index": 3, "task_id": "fill_submit", "arm": "legacy", "status": "PASS", "oracle_pass": true, "rounds": 10},
+    {"index": 4, "task_id": "fill_submit", "arm": "smc", "status": "TASK_FAIL", "oracle_pass": false, "rounds": 12, "smc_ok_receipts": 0, "smc_scope_blockers": 0},
+    {"index": 5, "task_id": "delayed_wait", "arm": "legacy", "status": "PASS", "oracle_pass": true, "rounds": 5}
+  ]
+}
