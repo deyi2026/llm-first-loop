@@ -1,0 +1,203 @@
+{
+  "git_head": "c42c90436af4cca1b2c319c55d05c3d30223912d",
+  "model_ref": "cognilocal/ornith-1.5-35b-a3b-mlx",
+  "model_server": {
+    "command_sha256": "2bee17c3fb687fb9224f0f72cac6738c607515a3ba92b90ae867995dd7b85fcf",
+    "decode_concurrency_1": true,
+    "max_tokens_16000": true,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "pid": 50390,
+    "prompt_concurrency_1": true
+  },
+  "plan_rows": 6,
+  "plan_sha256": "490c1e2cd1b9377468eb07dc06d05b8950faf10db4b61748ff89af1005b8f878",
+  "provider_contract": {
+    "max_input_tokens": 184000,
+    "max_tokens": 16000,
+    "min_p": 0.0,
+    "temperature": 0.0,
+    "timeout_s": 1800,
+    "top_k": 0,
+    "top_p": 1.0,
+    "wire_protocol": "openai"
+  },
+  "runtime": {
+    "extract_enabled": false,
+    "fallbacks": 0,
+    "llm_timeout_s": 1800,
+    "max_iterations": 12,
+    "max_tokens": 16000,
+    "method_reflection_mode": "off",
+    "reasoning_effort": "medium",
+    "serial_model_runs": true,
+    "summary_mode": "off",
+    "thinking_mode": "on",
+    "tool_schema_lazy": true,
+    "worker_timeout_s": 240
+  },
+  "schema": "smc.browser_semantic_execute_typed_wait_a2.v0.6.execution_manifest",
+  "seed": 2026091311,
+  "source_sha256": {
+    "evals/browser_smc_semantic_execute_recovery_smoke/PLAN.v0.6-A2.json": "0e8d6809c9eaf7cce52daf8c5d3cd0495de7c06109f7504226ff6ce8b0f573c4",
+    "evals/browser_smc_semantic_execute_recovery_smoke/PROTOCOL.v0.6-A2.md": "c216b0969b38223d2fbc8b09cba6cf8f812fb84fcf83f80b3fadeb4a233fa5e7",
+    "evals/browser_smc_semantic_execute_recovery_smoke/fixture_server.py": "87696076cea84d4e93f172d07a1499755dbc647f396ff115a9d64571740b72a3",
+    "evals/browser_smc_semantic_execute_recovery_smoke/protocol.py": "91255873a726e0737368ba3c63e6c24db9ed751ebdc20a1e20ed731acfdcbdd4",
+    "evals/browser_smc_semantic_execute_recovery_smoke/run_a2.py": "73378d74dd879663353cf2be4a4e221b2877b548411c5849b452cd99c25ce4de",
+    "evals/browser_smc_semantic_execute_recovery_smoke/worker.py": "76c2117ee5e8275e295511466567ca572e5e57e72a25ce9d9c4a9a186e21d0c2",
+    "scripts/qualification/smc_browser_live_semantic_execute.py": "c169cde81f94c6f819e81d1d808656bafd2d5dec08e1a0bebdfc56d4d459a532",
+    "src/llm_loop/browser/action.py": "c35a85288e177aa17ef8ac3d15719d2df4a73742fbc541fd29d14371860acafa",
+    "src/llm_loop/browser/cdp_action_host.py": "229e83caac450fb7285a6d75fc5d4a0dbc23fd5e5201bfb92b600a4ad34c778d",
+    "src/llm_loop/browser/cdp_host.py": "8facb765161d3f9c11e5377adf3ef9d9c7c9b671e508b9a669598f8917c9ebdf",
+    "src/llm_loop/browser/method_card.py": "368cd77be24c5e9c0de0a34e40347a0241d4ba78d8eb8e4166b55238a45fe6f4",
+    "src/llm_loop/browser/perception.py": "81004b15b9d8dff6ef90dda81353f91f1b3ff6fe09a26db328b155223eefe5cb",
+    "src/llm_loop/tools/builtin/browser_perceive.py": "d180b7880813b74b9a7c5fbda3e120576fa2657d53bd8fc4274d1cc08e4be072",
+    "src/llm_loop/tools/builtin/browser_semantic_execute.py": "6b4aa0ee04c214245e0c9ecd14794a22701e1e29f18e06ea36b6fec0323ebe3f",
+    "src/llm_loop/tools/builtin/browser_wait.py": "cf8c4830c0233df80920f6ee9d2ea8a414fd8a7558bdfb1d421770248fcd77f8",
+    "src/llm_loop/tools/registry.py": "220977a1f023d035c4f3be7d13d70ef942fb247a5c198b45d4c28b88849c4418"
+  },
+  "surfaces": {
+    "semantic_execute": {
+      "exact": true,
+      "json_chars": 6098,
+      "mutation_description_sha256": "e4a505cd5ab8d6827668f48e4b3a10bc5bbd63340545330d921e4eaae940b73e",
+      "mutation_parameter_names": [
+        "args",
+        "target_ref",
+        "verb"
+      ],
+      "mutation_tool": "browser_semantic_execute",
+      "names": [
+        "browser_perceive",
+        "browser_semantic_execute",
+        "browser_wait_object_state",
+        "browser_wait_object_text",
+        "browser_wait_scope_count",
+        "browser_wait_scope_ready",
+        "browser_wait_scope_url",
+        "get_tool_schema"
+      ],
+      "object_state_properties": [
+        "exists",
+        "enabled",
+        "checked",
+        "selected",
+        "expanded",
+        "focused",
+        "editable"
+      ],
+      "object_state_value_schema": {
+        "type": "boolean"
+      },
+      "old_generic_wait_present": false,
+      "perceive_actions": [
+        "snapshot",
+        "hydrate",
+        "diff"
+      ],
+      "perceive_has_predicate": false,
+      "ready_state_schema": {
+        "enum": [
+          "loading",
+          "interactive",
+          "complete"
+        ],
+        "type": "string"
+      },
+      "scope_count_schema": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "semantic_usage_visible": true,
+      "sha256": "e62e0d60cc7df63982a31c009da0e094aa2f5d65dbd9c3cba2b7993d2a013a4f",
+      "tool_sha256": {
+        "browser_perceive": "a1f3d195dbde096d73a441dfe23d3fc388e6adb0d9cc3216f002848b93a947b1",
+        "browser_semantic_execute": "b998e3d37d388aecc3c4acce7593cdc609f2b547cde5c8449d685bb7360833d2",
+        "browser_wait_object_state": "94ef49bd8223e4145cb033f0a531964c29c66f2c1c4debfb5a81f8b4c56c219d",
+        "browser_wait_object_text": "5eb198f0b04653da62480c79a14640aadc70f3b19e1d9174f15a4097f7078b39",
+        "browser_wait_scope_count": "4f37ffca2323b3f8b6e49e7995e12f3ef14fbf86de9a6dd12f4a1038c295e032",
+        "browser_wait_scope_ready": "f4f2ec322542313a8879e18a4ee5382330ded4f63c6751a2e45ae305d7f3786f",
+        "browser_wait_scope_url": "40704f19ff359f9a5556b44c98df0f0668c2a8a588af779715d3a68bda3a5151",
+        "get_tool_schema": "fe584b7c2a0d39ea553bcaf12cfa5f8d6eef3c764c1ab6b62c2312b7a1a1b4b0"
+      },
+      "wait_interval": {
+        "browser_wait_object_state": {
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "browser_wait_object_text": {
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "browser_wait_scope_count": {
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "browser_wait_scope_ready": {
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "browser_wait_scope_url": {
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "wait_required": {
+        "browser_wait_object_state": [
+          "interval_ms",
+          "object_ref",
+          "property",
+          "timeout_ms",
+          "value"
+        ],
+        "browser_wait_object_text": [
+          "interval_ms",
+          "object_ref",
+          "operator",
+          "property",
+          "timeout_ms",
+          "value"
+        ],
+        "browser_wait_scope_count": [
+          "count",
+          "interval_ms",
+          "operator",
+          "scope_ref",
+          "timeout_ms"
+        ],
+        "browser_wait_scope_ready": [
+          "interval_ms",
+          "scope_ref",
+          "state",
+          "timeout_ms"
+        ],
+        "browser_wait_scope_url": [
+          "interval_ms",
+          "operator",
+          "scope_ref",
+          "timeout_ms",
+          "value"
+        ]
+      }
+    }
+  },
+  "task_prompt_sha256": {
+    "click_commit": "823e7cb25a1f2f234412564a93ed221956bdbcb4214aff1d67a78fd9296c6f2d",
+    "delayed_wait": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "fill_submit": "d80607ace4193874d8b7deddc2988f8b6562443b99b54455e48163cc4a6ff9e2"
+  },
+  "tracked_dirty": false,
+  "treatment": {
+    "legacy_full_action_in_gate": false,
+    "method_discovery_tool_exposed": false,
+    "mode": "semantic_execute_plus_mechanically_typed_wait_a2",
+    "mutation_tool": "browser_semantic_execute",
+    "v05_fixture_identity_preserved": true,
+    "v05_plan_identity_preserved": true,
+    "v05_prompt_identity_preserved": true
+  }
+}
