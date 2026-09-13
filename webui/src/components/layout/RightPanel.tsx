@@ -214,7 +214,8 @@ function SettingsView({
         <h3>连接与安全</h3>
         <div className="v2-kv">
           <span className="k">服务</span><span className="v">{conn.service || "—"}</span>
-          <span className="k">版本</span><span className="v">{conn.version || "—"}</span>
+          <span className="k">发布版本</span><span className="v">{conn.version ? `v${conn.version}` : "—"}</span>
+          <span className="k">运行构建</span><span className="v">{conn.build || (conn.version ? `v${conn.version}` : "—")}</span>
           <span className="k">连接</span><span className="v">{conn.ok ? zh.statusConnected : zh.statusDisconnected}</span>
           <span className="k">浏览器登录</span><span className="v">{auth?.authenticated ? "已验证" : auth?.browser_login ? "未验证" : "未启用"}</span>
         </div>

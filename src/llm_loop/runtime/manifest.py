@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .build_identity import compute_build_identity
 from .identity import IdentityReport
 from .resolver import EffectiveConfig
 
@@ -172,6 +173,7 @@ def build_manifest(service: str, ec: EffectiveConfig,
     meta = pinfo.get("model_meta") or {}
     max_input_tokens = meta.get("max_input_tokens", provider_meta.get("max_input_tokens", ""))
     max_tokens = meta.get("max_tokens", provider_meta.get("max_tokens", v.get("LLM_MAX_TOKENS", "")))
+    build_identity = compute_build_identity(report.workspace_root)
     return {
         # —— 服务与进程 ——
         "service": service,
@@ -185,6 +187,8 @@ def build_manifest(service: str, ec: EffectiveConfig,
         "llm_loop_module": report.llm_loop_module,
         "identity_ok": report.ok,
         "identity_mode": report.mode,
+        # —— release / development build 身份（机械事实，不参与策略）——
+        "build_identity": build_identity,
         # —— effective 配置（R2，已脱敏）——
         "model_ref": model_ref,
         "provider_id": pinfo["provider_id"],
@@ -243,6 +247,7 @@ def health_identity(data_dir: str | Path | None = None) -> dict:
         "model": m.get("model_ref", ""),
         "provider": m.get("provider_id", ""),
         "config_hash": m.get("config_hash", ""),
+        "build_identity": m.get("build_identity", {}),
     }
 
 

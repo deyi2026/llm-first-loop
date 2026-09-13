@@ -19,10 +19,23 @@ export async function api<T = unknown>(
   }
 }
 
+export interface BuildIdentityInfo {
+  release_version?: string;
+  expected_release_tag?: string;
+  nearest_release_tag?: string;
+  commits_since_release_tag?: number | null;
+  git_head?: string;
+  git_short?: string;
+  git_dirty?: boolean;
+  release_exact?: boolean;
+  display?: string;
+}
+
 export interface HealthInfo {
   status?: string;
   service?: string;
   version?: string;
+  build?: BuildIdentityInfo;
 }
 
 export interface SessionMeta {

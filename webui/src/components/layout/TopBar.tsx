@@ -13,7 +13,7 @@ export function TopBar({
   onToggleSidebar: () => void;
   onShowFiles?: () => void;
 }) {
-  const { ok, version, checked } = useConnection();
+  const { ok, version, build, checked } = useConnection();
   const [browserAuthenticated, setBrowserAuthenticated] = useState(false);
 
   useEffect(() => {
@@ -76,7 +76,7 @@ export function TopBar({
         <span className="v2-status-dot" />
         <span>
           {!checked ? "…" : ok ? zh.statusConnected : zh.statusDisconnected}
-          {ok && version ? ` · v${version}` : ""}
+          {ok && (build || version) ? ` · ${build || `v${version}`}` : ""}
         </span>
       </div>
     </header>
@@ -86,11 +86,14 @@ export function TopBar({
 // 连接轮询写入（与组件解耦，避免循环引用）
 import { connStore } from "../../core/stores";
 
-function connStoreSet(info: { service?: string; version?: string } | null): void {
+function connStoreSet(
+  info: { service?: string; version?: string; build?: { display?: string } } | null
+): void {
   connStore.set({
     ok: info !== null,
     service: info?.service ?? "",
     version: info?.version ?? "",
+    build: info?.build?.display ?? "",
     checked: true,
   });
 }

@@ -21,7 +21,7 @@ from llm_loop.runtime.resolver import resolve_effective
 
 # design P0.5 字段清单（验收断言用，逐项必须存在）
 P05_FIELDS = [
-    "workspace_root", "git_head", "python_executable", "llm_loop_module",
+    "workspace_root", "git_head", "python_executable", "llm_loop_module", "build_identity",
     "service", "pid", "model_ref", "provider_id", "provider_endpoint_host",
     "history_budget_chars", "max_input_tokens", "max_tokens",
     "data_dir", "config_sources", "config_hash",
@@ -197,6 +197,7 @@ def test_write_read_roundtrip_and_health_identity(tmp_path, monkeypatch):
     assert ident["model"] == "glm/glm-5.3"
     assert ident["provider"] == "glm"
     assert ident["config_hash"] == m["config_hash"]
+    assert ident["build_identity"] == m["build_identity"]
 
 
 def test_launch_writes_manifest_end_to_end(tmp_path, monkeypatch, capsys):

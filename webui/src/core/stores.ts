@@ -210,20 +210,28 @@ export function useTheme(): { preference: ThemePreference; dark: boolean } {
 }
 
 // ── 连接状态 store（/health 轮询） ──
-const connStoreRaw = createStore<{ ok: boolean; service: string; version: string; checked: boolean }>({
+export interface ConnectionState {
+  ok: boolean;
+  service: string;
+  version: string;
+  build: string;
+  checked: boolean;
+}
+
+const connStoreRaw = createStore<ConnectionState>({
   ok: false,
   service: "",
   version: "",
+  build: "",
   checked: false,
 });
 
 export const connStore = {
   getState: connStoreRaw.getState,
-  set: (v: Partial<{ ok: boolean; service: string; version: string; checked: boolean }>) =>
-    connStoreRaw.setState(v),
+  set: (v: Partial<ConnectionState>) => connStoreRaw.setState(v),
   subscribe: connStoreRaw.subscribe,
 };
 
-export function useConnection(): { ok: boolean; service: string; version: string; checked: boolean } {
+export function useConnection(): ConnectionState {
   return useSyncExternalStore(connStore.subscribe, () => connStore.getState());
 }

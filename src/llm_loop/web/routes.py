@@ -1263,9 +1263,13 @@ def root() -> Response:
 @router.get("/api/info")
 def api_info() -> dict:
     """API 信息端点（JSON 服务信息，供程序/调试使用）."""
+    from llm_loop.runtime.manifest import health_identity
+
+    identity = health_identity()
     return {
         "service": SERVICE_NAME,
         "version": SERVICE_VERSION,
+        "build": identity.get("build_identity", {}),
         "endpoints": {
             "POST /api/v1/chat": "对话（body: {message, session_id?, model?}）",
             "GET /api/v1/sessions": "会话列表",
@@ -1400,11 +1404,13 @@ def health() -> dict:
     """
     from llm_loop.runtime.manifest import health_identity
 
+    identity = health_identity()
     return {
         "status": "ok",
         "service": SERVICE_NAME,
         "version": SERVICE_VERSION,
-        "identity": health_identity(),
+        "build": identity.get("build_identity", {}),
+        "identity": identity,
     }
 
 

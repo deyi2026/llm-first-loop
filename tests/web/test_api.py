@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from llm_loop.web import build_app
+from llm_loop.web.routes import SERVICE_VERSION
 
 
 def _make_client(engine):
@@ -125,6 +126,8 @@ def test_health_no_llm_call(build_test_engine, fake_settings):
     body = resp.json()
     assert body["status"] == "ok"
     assert body["service"] == "llm-first-loop-web"
+    assert body["version"] == SERVICE_VERSION
+    assert isinstance(body["build"], dict)
     assert len(fake.calls) == 0  # 健康检查不调 LLM
 
 
@@ -140,6 +143,8 @@ def test_root_returns_service_info(build_test_engine, fake_settings, tmp_path, m
     info = client.get("/api/info")
     assert info.status_code == 200
     assert info.json()["service"] == "llm-first-loop-web"
+    assert info.json()["version"] == SERVICE_VERSION
+    assert isinstance(info.json()["build"], dict)
 
 
 def test_list_sessions(build_test_engine, fake_settings):
