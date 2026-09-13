@@ -9,7 +9,9 @@ from typing import Any
 
 SCHEMA = "smc.browser_semantic_execute_typed_wait_a2.v0.6"
 SEED = 2026091311
-MODEL_REF = "cognilocal/ornith-1.5-35b-a3b-mlx"
+# Same weight file as v0.7; the 8901 registry name changed after a service restart
+# (v0.7 ran as cognilocal/ornith-1.5-35b-a3b-mlx). Recorded as env fact, not protocol change.
+MODEL_REF = "ornith-ai/Ornith-1.5-35B-A3B-MLX"
 
 SHARED_TOOLS = [
     "browser_perceive",
