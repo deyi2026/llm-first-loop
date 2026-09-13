@@ -9,11 +9,22 @@ sys.path.insert(0, str(HERE))
 
 from analyze import analyze  # noqa: E402
 from fixture_server import FixtureServer  # noqa: E402
-from protocol import ARMS, SEED, TASKS, build_plan, judge, plan_sha256, smoke_gate  # noqa: E402
+from protocol import (  # noqa: E402
+    ARMS,
+    SCHEMA,
+    SEED,
+    TASKS,
+    build_plan,
+    judge,
+    plan_sha256,
+    smoke_gate,
+)
 from run_ab import _provider_contract  # noqa: E402
 
 
 def test_plan_is_20_rows_paired_and_smoke_prefix_is_three_complete_blocks() -> None:
+    assert SCHEMA == "smc.browser_real_model_ab.v0.2"
+    assert SEED == 2026091302
     plan = build_plan()
     assert len(plan) == 20
     assert [row["index"] for row in plan] == list(range(1, 21))
@@ -28,7 +39,7 @@ def test_plan_is_20_rows_paired_and_smoke_prefix_is_three_complete_blocks() -> N
         assert {row["arm"] for row in rows} == {"smc", "legacy"}
         assert len({(row["task_id"], row["repeat"]) for row in rows}) == 1
 
-    frozen = json.loads((HERE / "PLAN.v0.1.json").read_text(encoding="utf-8"))
+    frozen = json.loads((HERE / "PLAN.v0.2.json").read_text(encoding="utf-8"))
     assert frozen["seed"] == SEED
     assert frozen["plan_sha256"] == plan_sha256(plan)
     assert frozen["rows"] == plan
@@ -97,11 +108,55 @@ def test_smoke_gate_requires_both_arm_adoption_and_clean_mechanics() -> None:
                     "legacy_physical_exec_count": 1 if arm == "legacy" else 0,
                     "fallback_used": False,
                     "surface_exact": True,
+                    "receipt_facts": (
+                        {
+                            "ok_count": 1,
+                            "scope_blocker_count": 0,
+                        }
+                        if arm == "smc"
+                        else {}
+                    ),
+                },
+                "oracle": {"pass": True},
+            }
+        )
+    gate = smoke_gate(rows)
+    assert gate["pass"] is True
+    assert gate["smc_successful_physical_dispatch"] == 3
+    assert gate["smc_scope_blocker_count"] == 0
+    assert gate["smc_task_pass"] == 3
+    rows[0]["worker"]["surface_exact"] = False
+    assert smoke_gate(rows)["pass"] is False
+
+
+def test_smoke_gate_stops_on_old_version_scope_blocker_or_zero_dispatch() -> None:
+    rows = []
+    for arm in ("smc", "legacy") * 3:
+        rows.append(
+            {
+                "smoke": True,
+                "arm": arm,
+                "status": "PASS",
+                "oracle": {"pass": True},
+                "worker": {
+                    "smc_adopted": arm == "smc",
+                    "legacy_physical_exec_count": 1 if arm == "legacy" else 0,
+                    "fallback_used": False,
+                    "surface_exact": True,
+                    "receipt_facts": (
+                        {"ok_count": 1, "scope_blocker_count": 0}
+                        if arm == "smc"
+                        else {}
+                    ),
                 },
             }
         )
-    assert smoke_gate(rows)["pass"] is True
-    rows[0]["worker"]["surface_exact"] = False
+    smc_rows = [row for row in rows if row["arm"] == "smc"]
+    for row in smc_rows:
+        row["worker"]["receipt_facts"]["ok_count"] = 0
+    assert smoke_gate(rows)["pass"] is False
+    smc_rows[0]["worker"]["receipt_facts"]["ok_count"] = 1
+    smc_rows[0]["worker"]["receipt_facts"]["scope_blocker_count"] = 1
     assert smoke_gate(rows)["pass"] is False
 
 

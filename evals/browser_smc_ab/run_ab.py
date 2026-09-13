@@ -226,6 +226,8 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
             raise RuntimeError(f"surface mismatch arm={arm}: {surface}")
     source_paths = [
         HERE / "protocol.py",
+        HERE / "PROTOCOL.v0.2.md",
+        HERE / "PLAN.v0.2.json",
         HERE / "fixture_server.py",
         HERE / "worker.py",
         HERE / "run_ab.py",
@@ -235,6 +237,9 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
         REPO / "src/llm_loop/tools/builtin/browser_action.py",
         REPO / "src/llm_loop/browser/action.py",
         REPO / "src/llm_loop/browser/cdp_action_host.py",
+        REPO / "docs/SMC-BROWSER-PHASE1-PROFILE-v0.1.json",
+        REPO / "docs/SMC-BROWSER-PHASE1-SCHEMA-v0.1.json",
+        REPO / "docs/SMC-BROWSER-PHASE1-MUTATION-SCOPE-CORRECTION-20260913.json",
         REPO / "scripts/qualification/smc_browser_live_navigation.py",
     ]
     return {

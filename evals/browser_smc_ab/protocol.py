@@ -13,8 +13,8 @@ import random
 from dataclasses import dataclass
 from typing import Any
 
-SCHEMA = "smc.browser_real_model_ab.v0.1"
-SEED = 20260913
+SCHEMA = "smc.browser_real_model_ab.v0.2"
+SEED = 2026091302
 MODEL_REF = "cognilocal/ornith-1.5-35b-a3b-mlx"
 SMOKE_PAIR_BLOCKS = (
     ("click_commit", 1),
@@ -182,9 +182,27 @@ def smoke_gate(records: list[dict[str, Any]]) -> dict[str, Any]:
     legacy_rows = [row for row in smoke if row.get("arm") == "legacy"]
     smc_adopt = sum(bool((row.get("worker") or {}).get("smc_adopted")) for row in smc_rows)
     legacy_adopt = sum(bool((row.get("worker") or {}).get("legacy_physical_exec_count")) for row in legacy_rows)
+    smc_dispatch = sum(
+        int(((row.get("worker") or {}).get("receipt_facts") or {}).get("ok_count") or 0)
+        for row in smc_rows
+    )
+    smc_scope_blockers = sum(
+        int(((row.get("worker") or {}).get("receipt_facts") or {}).get("scope_blocker_count") or 0)
+        for row in smc_rows
+    )
+    smc_task_pass = sum(bool((row.get("oracle") or {}).get("pass")) for row in smc_rows)
     model_ok = complete and all(not (row.get("worker") or {}).get("fallback_used") for row in smoke)
     surface_ok = complete and all(bool((row.get("worker") or {}).get("surface_exact")) for row in smoke)
-    passed = infra_valid and model_ok and surface_ok and smc_adopt >= 2 and legacy_adopt >= 2
+    passed = (
+        infra_valid
+        and model_ok
+        and surface_ok
+        and smc_adopt >= 2
+        and legacy_adopt >= 2
+        and smc_dispatch >= 1
+        and smc_scope_blockers == 0
+        and smc_task_pass >= 1
+    )
     return {
         "pass": passed,
         "complete_rows": len(smoke),
@@ -196,4 +214,10 @@ def smoke_gate(records: list[dict[str, Any]]) -> dict[str, Any]:
         "smc_adoption_required": 2,
         "legacy_adoption": legacy_adopt,
         "legacy_adoption_required": 2,
+        "smc_successful_physical_dispatch": smc_dispatch,
+        "smc_successful_physical_dispatch_required": 1,
+        "smc_scope_blocker_count": smc_scope_blockers,
+        "smc_scope_blocker_required": 0,
+        "smc_task_pass": smc_task_pass,
+        "smc_task_pass_required": 1,
     }

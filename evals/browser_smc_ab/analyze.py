@@ -76,7 +76,7 @@ def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
         paired.append(item)
     smc_rows = [row for row in rows if row.get("arm") == "smc"]
     return {
-        "schema": "smc.browser_real_model_ab.analysis.v0.1",
+        "schema": "smc.browser_real_model_ab.analysis.v0.2",
         "total_runs": len(rows),
         "arms": {arm: _summary(rows, arm) for arm in ("smc", "legacy")},
         "paired": paired,
@@ -84,6 +84,8 @@ def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "automatic_retry_true_total": sum(int(((row.get("worker") or {}).get("receipt_facts") or {}).get("automatic_retry_true_count") or 0) for row in smc_rows),
             "receipt_rejected_total": sum(int(((row.get("worker") or {}).get("receipt_facts") or {}).get("rejected_count") or 0) for row in smc_rows),
             "receipt_failed_total": sum(int(((row.get("worker") or {}).get("receipt_facts") or {}).get("failed_count") or 0) for row in smc_rows),
+            "receipt_ok_total": sum(int(((row.get("worker") or {}).get("receipt_facts") or {}).get("ok_count") or 0) for row in smc_rows),
+            "scope_blocker_total": sum(int(((row.get("worker") or {}).get("receipt_facts") or {}).get("scope_blocker_count") or 0) for row in smc_rows),
             "security_agent_spawned_runs": sum(bool(row.get("security_agent_spawned")) for row in smc_rows),
         },
         "limitations": [

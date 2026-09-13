@@ -87,6 +87,7 @@ def _receipt_facts(data_dir: Path) -> dict[str, Any]:
     root = data_dir / "browser_action"
     terminal: list[dict[str, Any]] = []
     retry_true = 0
+    scope_blockers = 0
     if root.is_dir():
         for path in root.rglob("receipts.jsonl"):
             try:
@@ -99,6 +100,13 @@ def _receipt_facts(data_dir: Path) -> dict[str, Any]:
                 except json.JSONDecodeError:
                     continue
                 retry = doc.get("retry") or {}
+                completeness = doc.get("completeness") or {}
+                reasons = [str(reason) for reason in (completeness.get("reasons") or [])]
+                scope_blockers += sum(
+                    "version_scope_mismatch" in reason
+                    or "different_snapshot_same_generation" in reason
+                    for reason in reasons
+                )
                 retry_true += int(retry.get("automatic_retry_performed") is True)
                 if doc.get("status") in {"ok", "failed", "rejected"}:
                     terminal.append(
@@ -107,7 +115,8 @@ def _receipt_facts(data_dir: Path) -> dict[str, Any]:
                             "verb": doc.get("verb"),
                             "retry_reason": retry.get("reason"),
                             "boundary_events": [e.get("event") for e in (doc.get("boundary_events") or []) if isinstance(e, dict)],
-                            "completeness_complete": bool((doc.get("completeness") or {}).get("complete")),
+                            "completeness_complete": bool(completeness.get("complete")),
+                            "completeness_reasons": reasons,
                         }
                     )
     return {
@@ -117,6 +126,7 @@ def _receipt_facts(data_dir: Path) -> dict[str, Any]:
         "ok_count": sum(row["status"] == "ok" for row in terminal),
         "failed_count": sum(row["status"] == "failed" for row in terminal),
         "rejected_count": sum(row["status"] == "rejected" for row in terminal),
+        "scope_blocker_count": scope_blockers,
     }
 
 
