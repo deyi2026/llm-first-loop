@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import json
 import logging
 import os
@@ -649,7 +650,10 @@ class ToolRegistry:
 
     @staticmethod
     def _lazy_parameters(t) -> dict:
-        """lazy 参数骨架：保留调用结构/合法值和少量已验证参数局部机械事实。"""
+        """lazy 参数骨架：默认稳定投影；复杂工具可显式提供首调闭合 schema。"""
+        explicit = getattr(t, "lazy_parameters", None)
+        if isinstance(explicit, dict) and explicit:
+            return copy.deepcopy(explicit)
         params = getattr(t, "parameters", {}) or {}
         skeleton = ToolRegistry._lazy_schema_skeleton(params)
         if not skeleton:

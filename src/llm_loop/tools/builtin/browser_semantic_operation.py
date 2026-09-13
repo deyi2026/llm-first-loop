@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from llm_loop.browser.perception import BrowserPerceptionAdapter
+from llm_loop.browser.perception import SEMANTIC_OBJECT_KINDS, BrowserPerceptionAdapter
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
 from llm_loop.tools.builtin.browser_wait import BrowserWaitObjectTool
@@ -31,6 +31,103 @@ class BrowserSemanticOperationContractError(ValueError):
     """Closed-contract failure before an undeclared side effect can occur."""
 
 
+def _strip_first_call_schema(spec: Any) -> Any:
+    """Strip prose while preserving the executable schema facts used by FC2-C."""
+    if isinstance(spec, list):
+        return [_strip_first_call_schema(item) for item in spec]
+    if not isinstance(spec, dict):
+        return spec
+    keep_scalar = {
+        "type",
+        "const",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+        "additionalProperties",
+    }
+    out = {key: value for key, value in spec.items() if key in keep_scalar}
+    enum = spec.get("enum")
+    if isinstance(enum, list):
+        out["enum"] = list(enum)
+    required = spec.get("required")
+    if isinstance(required, list):
+        out["required"] = list(required)
+    properties = spec.get("properties")
+    if isinstance(properties, dict):
+        out["properties"] = {
+            str(name): _strip_first_call_schema(child)
+            for name, child in properties.items()
+            if isinstance(child, dict)
+        }
+    items = spec.get("items")
+    if isinstance(items, dict):
+        out["items"] = _strip_first_call_schema(items)
+    for key in ("oneOf", "anyOf"):
+        variants = spec.get(key)
+        if isinstance(variants, list):
+            out[key] = [_strip_first_call_schema(item) for item in variants]
+    return out
+
+
+def _const_to_singleton_enum(spec: Any) -> Any:
+    """Use the already-qualified lazy enum vocabulary instead of adding const to provider wire."""
+    if isinstance(spec, list):
+        return [_const_to_singleton_enum(item) for item in spec]
+    if not isinstance(spec, dict):
+        return spec
+    out = {key: _const_to_singleton_enum(value) for key, value in spec.items() if key != "const"}
+    if "const" in spec:
+        out.setdefault("type", "string")
+        out["enum"] = [spec["const"]]
+    return out
+
+
+def _build_first_call_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
+    """Derive a compact three-branch call grammar from the six-branch full contract."""
+    schema = _strip_first_call_schema(parameters)
+    clauses = schema["properties"]["clauses"]
+    branches = clauses["items"]["oneOf"]
+    object_mutations = [
+        branch
+        for branch in branches
+        if branch["properties"].get("kind", {}).get("const") == "mutate"
+        and branch["properties"].get("verb", {}).get("const") != "navigate"
+    ]
+    navigate = next(
+        branch
+        for branch in branches
+        if branch["properties"].get("verb", {}).get("const") == "navigate"
+    )
+    wait = next(
+        branch
+        for branch in branches
+        if branch["properties"].get("kind", {}).get("const") == "wait"
+    )
+    if len(object_mutations) != 4:
+        raise RuntimeError("bounded semantic operation object-mutation schema drift")
+
+    object_mutation = _const_to_singleton_enum(object_mutations[0])
+    object_mutation["properties"]["verb"] = {
+        "type": "string",
+        "enum": [branch["properties"]["verb"]["const"] for branch in object_mutations],
+    }
+    object_mutation["properties"]["args"] = {
+        "anyOf": [
+            _const_to_singleton_enum(branch["properties"]["args"])
+            for branch in object_mutations
+        ]
+    }
+    clauses["items"]["oneOf"] = [
+        object_mutation,
+        _const_to_singleton_enum(navigate),
+        _const_to_singleton_enum(wait),
+    ]
+    return schema
+
+
 class BrowserSemanticOperationTool:
     name = "browser_semantic_operation"
     description = (
@@ -45,7 +142,7 @@ class BrowserSemanticOperationTool:
     _IDENTITY_SCHEMA = {
         "type": "object",
         "properties": {
-            "kind": {"type": "string", "enum": ["button", "textbox", "select", "link", "text", "region", "document"]},
+            "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
             "role": {"type": "string", "minLength": 1},
             "name": {"type": "string", "minLength": 1},
         },
@@ -181,6 +278,7 @@ class BrowserSemanticOperationTool:
         "additionalProperties": False,
     }
 
+    lazy_parameters = _build_first_call_parameters(parameters)
 
     def __init__(
         self,

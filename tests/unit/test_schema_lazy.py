@@ -277,3 +277,52 @@ def test_lazy_schema_does_not_copy_unreviewed_validator_keywords():
         "type": "string",
         "maxLength": 9,
     }
+
+
+class _FirstCallSchemaTool(_FakeTool):
+    def __init__(self):
+        super().__init__("first_call_schema_tool")
+        self.lazy_parameters = {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 2,
+                    "items": {
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {"kind": {"const": "alpha"}},
+                                "required": ["kind"],
+                                "additionalProperties": False,
+                            },
+                            {
+                                "type": "object",
+                                "properties": {"kind": {"const": "beta"}},
+                                "required": ["kind"],
+                                "additionalProperties": False,
+                            },
+                        ]
+                    },
+                }
+            },
+            "required": ["items"],
+            "additionalProperties": False,
+        }
+
+
+def test_tool_local_lazy_parameters_override_is_opt_in_and_full_schema_is_unchanged():
+    reg = ToolRegistry()
+    tool = _FirstCallSchemaTool()
+    full_before = json.loads(json.dumps(tool.parameters))
+    reg.register(tool)
+
+    lazy = reg.schemas(lazy=True)[0]["parameters"]
+    assert lazy == tool.lazy_parameters
+    assert lazy["properties"]["items"]["items"]["oneOf"][0]["properties"]["kind"] == {
+        "const": "alpha"
+    }
+    lazy["required"].append("mutated_by_test")
+    assert "mutated_by_test" not in tool.lazy_parameters["required"]
+    assert reg.schemas(lazy=False)[0]["parameters"] == full_before

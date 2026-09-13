@@ -63,7 +63,7 @@ _STATE_FIELDS = {
     "required",
     "busy",
 }
-_KINDS = {
+SEMANTIC_OBJECT_KINDS = (
     "document",
     "frame",
     "region",
@@ -86,7 +86,8 @@ _KINDS = {
     "heading",
     "generic",
     "unknown",
-}
+)
+_KINDS = frozenset(SEMANTIC_OBJECT_KINDS)
 _BLIND_SPOTS = {
     "closed_shadow_root",
     "cross_origin_frame",

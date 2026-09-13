@@ -9,9 +9,14 @@ from llm_loop.browser.action import (
     BrowserActionReceiptStore,
     BrowserDispatchResult,
 )
-from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
+from llm_loop.browser.perception import (
+    SEMANTIC_OBJECT_KINDS,
+    BrowserPerceptionAdapter,
+    BrowserPerceptionStore,
+)
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
 from llm_loop.tools.builtin.browser_semantic_operation import BrowserSemanticOperationTool
+from llm_loop.tools.registry import ToolRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = json.loads((ROOT / "tests/fixtures/smc_browser_perception_v01.json").read_text())
@@ -236,3 +241,61 @@ def test_provider_schema_is_recursively_closed_and_verb_specific() -> None:
     assert mutate["select"]["properties"]["args"]["required"] == ["value"]
     assert mutate["scroll"]["properties"]["args"]["required"] == ["delta_pages"]
     assert mutate["navigate"]["properties"]["args"]["required"] == ["url"]
+
+
+def test_identity_kind_schema_reuses_canonical_semantic_object_vocabulary() -> None:
+    schema = BrowserSemanticOperationTool.parameters
+    branches = schema["properties"]["clauses"]["items"]["oneOf"]
+    object_kind_enums: list[list[str]] = []
+    for branch in branches:
+        target = branch["properties"].get("target")
+        if not isinstance(target, dict):
+            continue
+        identity = (target.get("properties") or {}).get("identity")
+        if not isinstance(identity, dict):
+            continue
+        object_kind_enums.append(identity["properties"]["kind"]["enum"])
+
+    assert object_kind_enums
+    assert all(tuple(enum) == SEMANTIC_OBJECT_KINDS for enum in object_kind_enums)
+    assert "input" in SEMANTIC_OBJECT_KINDS
+    assert "textbox" not in SEMANTIC_OBJECT_KINDS
+
+
+def test_lazy_provider_surface_preserves_bounded_operation_first_call_contract() -> None:
+    reg = ToolRegistry()
+    reg.register(BrowserSemanticOperationTool.__new__(BrowserSemanticOperationTool))
+    params = reg.schemas(lazy=True)[0]["parameters"]
+
+    assert params["additionalProperties"] is False
+    clauses = params["properties"]["clauses"]
+    assert clauses["type"] == "array"
+    assert clauses["minItems"] == 1
+    assert clauses["maxItems"] == 8
+    branches = clauses["items"]["oneOf"]
+    assert len(branches) == 3
+    assert all(branch["additionalProperties"] is False for branch in branches)
+    assert all("const" not in json.dumps(branch, sort_keys=True) for branch in branches)
+
+    object_mutation = next(
+        branch
+        for branch in branches
+        if set(branch["properties"].get("verb", {}).get("enum") or [])
+        == {"click", "fill", "select", "scroll"}
+    )
+    assert object_mutation["properties"]["kind"]["enum"] == ["mutate"]
+    assert len(object_mutation["properties"]["args"]["anyOf"]) == 4
+    navigate = next(
+        branch
+        for branch in branches
+        if branch["properties"].get("verb", {}).get("enum") == ["navigate"]
+    )
+    assert navigate["properties"]["target"]["properties"]["kind"]["enum"] == ["page"]
+    wait = next(
+        branch for branch in branches if branch["properties"]["kind"]["enum"] == ["wait"]
+    )
+    assert "verb" not in wait["properties"]
+    identity_kind = (
+        object_mutation["properties"]["target"]["properties"]["identity"]["properties"]["kind"]
+    )
+    assert tuple(identity_kind["enum"]) == SEMANTIC_OBJECT_KINDS
