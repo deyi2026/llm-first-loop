@@ -57,6 +57,19 @@ class _LocalHandler(BaseHTTPRequestHandler):
         return
 
 
+class _AmbiguousAfterRealDispatch:
+    """Qualification-only fault injector: real dispatch, then lose acknowledgement."""
+
+    def __init__(self, inner: CdpBrowserMutationActuator) -> None:
+        self.inner = inner
+        self.calls = 0
+
+    def dispatch(self, **kwargs: Any):
+        self.calls += 1
+        self.inner.dispatch(**kwargs)
+        raise TimeoutError("qualification injected acknowledgement loss after real dispatch")
+
+
 def _payload(result: Any) -> dict[str, Any]:
     status = getattr(getattr(result, "status", None), "value", "")
     if status != "success":
@@ -88,6 +101,8 @@ def _seed_dom(controller: _Controller) -> None:
 document.body.innerHTML = `
   <main id="root">
     <button id="act" aria-label="ActionButton">ActionButton</button>
+    <button id="amb" aria-label="AmbiguousButton">AmbiguousButton</button>
+    <button id="popup" aria-label="PopupButton">PopupButton</button>
     <input id="input" aria-label="InputBox" value="" />
     <select id="select" aria-label="Choice"><option value="a">A</option><option value="b">B</option></select>
     <button id="twin" aria-label="Twin">Twin</button>
@@ -95,8 +110,14 @@ document.body.innerHTML = `
     <button id="scroll" aria-label="ScrollTarget">ScrollTarget</button>
   </main>`;
 window.__clicks = 0;
+window.__ambiguousClicks = 0;
 window.__twinClicks = 0;
 document.getElementById('act').addEventListener('click', () => { window.__clicks += 1; });
+document.getElementById('amb').addEventListener('click', function () {
+  window.__ambiguousClicks += 1;
+  this.disabled = true;
+});
+document.getElementById('popup').addEventListener('click', () => { window.open('/popup', '_blank'); });
 document.getElementById('twin').addEventListener('click', () => { window.__twinClicks += 1; });
 'ok';
 """.strip(),
@@ -189,6 +210,53 @@ def run_live(*, chrome: str, evidence_dir: Path) -> dict[str, Any]:
             action_tool = BrowserActionTool(
                 adapter=action_adapter,
                 session_id_getter=lambda: sid,
+            )
+
+            # Real Chrome dispatch followed by deterministic acknowledgement loss.
+            snap = _snapshot(perceive)
+            ambiguous_obj = _dom_object(perception, sid, snap, "AmbiguousButton")
+            ambiguous_fault = _AmbiguousAfterRealDispatch(actuator)
+            ambiguous_adapter = BrowserActionAdapter(
+                perception=perception,
+                receipt_store=receipts,
+                capture_backend=read_host,
+                actuator=ambiguous_fault,
+            )
+            ambiguous_tool = BrowserActionTool(
+                adapter=ambiguous_adapter,
+                session_id_getter=lambda: sid,
+            )
+            ambiguous_receipt = _payload(
+                ambiguous_tool.execute(
+                    **_action(
+                        snap,
+                        action_id="live-transport-ambiguity",
+                        verb="click",
+                        target_id=str(ambiguous_obj["id"]),
+                        scope_ref=str(ambiguous_obj["scope_ref"]),
+                        args={},
+                        version_scope="object",
+                    )
+                )
+            )
+            ambiguous_clicks = int(_evaluate(controller, "window.__ambiguousClicks"))
+            ambiguous_disabled = bool(_evaluate(controller, "document.getElementById('amb').disabled"))
+
+            # Real popup boundary: exact original target remains bound; new page/window is evidence only.
+            snap = _snapshot(perceive)
+            popup_obj = _dom_object(perception, sid, snap, "PopupButton")
+            popup_receipt = _payload(
+                action_tool.execute(
+                    **_action(
+                        snap,
+                        action_id="live-popup-boundary",
+                        verb="click",
+                        target_id=str(popup_obj["id"]),
+                        scope_ref=str(popup_obj["scope_ref"]),
+                        args={},
+                        version_scope="object",
+                    )
+                )
             )
 
             # click + duplicate
@@ -361,6 +429,22 @@ old.replaceWith(repl); 'ok';
 
             checks = {
                 "click_single_dispatch_applied": "PASS" if click_receipt.get("status") == "ok" and clicks_after_first == 1 else "FAIL",
+                "real_transport_ambiguity_dispatch_applied_once": (
+                    "PASS"
+                    if ambiguous_receipt.get("status") == "failed"
+                    and ambiguous_fault.calls == 1
+                    and ambiguous_clicks == 1
+                    and ambiguous_disabled
+                    else "FAIL"
+                ),
+                "real_transport_ambiguity_reports_post_effect_without_replay": (
+                    "PASS"
+                    if ambiguous_receipt.get("after_version")
+                    and (ambiguous_receipt.get("observed_effects") or {}).get("diff_ref")
+                    and (ambiguous_receipt.get("retry") or {}).get("automatic_retry_performed") is False
+                    and "dispatch_outcome_ambiguous" in (ambiguous_receipt.get("completeness") or {}).get("reasons", [])
+                    else "FAIL"
+                ),
                 "duplicate_action_id_rejected_without_second_click": (
                     "PASS"
                     if duplicate_receipt.get("status") == "rejected"
@@ -378,6 +462,17 @@ old.replaceWith(repl); 'ok';
                 ),
                 "same_name_replacement_never_rebound": (
                     "PASS" if replacement_receipt.get("status") == "rejected" and twin_clicks == 0 else "FAIL"
+                ),
+                "popup_boundary_event_visible_without_target_rebind": (
+                    "PASS"
+                    if popup_receipt.get("status") == "ok"
+                    and any(
+                        event.get("event") in {"new_window", "new_page"}
+                        for event in popup_receipt.get("boundary_events") or []
+                    )
+                    and read_host.bound_target_id == target_id
+                    and actuator.bound_target_id == target_id
+                    else "FAIL"
                 ),
                 "navigate_single_dispatch_acknowledged": (
                     "PASS"
@@ -409,7 +504,11 @@ old.replaceWith(repl); 'ok';
                     "PASS"
                     if all(
                         (receipt.get("retry") or {}).get("automatic_retry_performed") is False
-                        for aid in ("live-click", "live-fill", "live-select", "live-scroll", "live-stale", "live-replacement", "live-navigate")
+                        for aid in (
+                            "live-transport-ambiguity", "live-popup-boundary", "live-click",
+                            "live-fill", "live-select", "live-scroll", "live-stale",
+                            "live-replacement", "live-navigate",
+                        )
                         for receipt in receipts.list_action(sid, aid)
                     )
                     else "FAIL"

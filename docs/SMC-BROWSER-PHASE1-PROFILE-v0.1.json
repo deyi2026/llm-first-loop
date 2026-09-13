@@ -409,11 +409,7 @@
         "snapshot"
       ],
       "target_kinds": [
-        "semantic_object",
-        "page",
-        "document",
-        "frame",
-        "region"
+        "semantic_object"
       ],
       "args_schema": "scroll_args",
       "silent_retry_allowed": false

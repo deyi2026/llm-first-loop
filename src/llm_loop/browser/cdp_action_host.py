@@ -21,7 +21,13 @@ from llm_loop.browser.cdp_host import (
     _validate_loopback_ws_url,
 )
 
-_ALLOWED = frozenset({"DOM.resolveNode", "Runtime.callFunctionOn", "Page.navigate"})
+_ALLOWED = frozenset({"DOM.resolveNode", "Runtime.callFunctionOn", "Page.enable", "Page.navigate"})
+
+_BOUNDARY_EVENT_METHODS = {
+    "Page.windowOpen": "new_window",
+    "Page.downloadWillBegin": "download_started",
+    "Page.javascriptDialogOpening": "dialog_opened",
+}
 
 
 class _WebSocketLike(Protocol):
@@ -40,6 +46,7 @@ class _MutationCdpSession:
         self._timeout_s = float(timeout_s)
         self._request_id = 0
         self._lock = threading.Lock()
+        self._events: list[dict[str, Any]] = []
 
     def send(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if method not in _ALLOWED:
@@ -51,7 +58,11 @@ class _MutationCdpSession:
             while True:
                 raw = self._websocket.recv(timeout=self._timeout_s)
                 message = json.loads(raw)
-                if not isinstance(message, dict) or message.get("id") != request_id:
+                if not isinstance(message, dict):
+                    continue
+                if message.get("id") != request_id:
+                    if isinstance(message.get("method"), str):
+                        self._events.append(message)
                     continue
                 if "error" in message:
                     error = message.get("error") or {}
@@ -63,6 +74,11 @@ class _MutationCdpSession:
                 if not isinstance(result, dict):
                     raise RuntimeError("CDP mutation response missing object result")
                 return result
+
+    def pop_events(self) -> list[dict[str, Any]]:
+        events = list(self._events)
+        self._events.clear()
+        return events
 
 
 class CdpBrowserMutationActuator:
@@ -85,6 +101,7 @@ class CdpBrowserMutationActuator:
         self._websocket: _WebSocketLike | None = None
         self._session: _MutationCdpSession | None = None
         self._dispatch_lock = threading.Lock()
+        self._page_events_enabled = False
 
     @property
     def bound_target_id(self) -> str:
@@ -127,7 +144,58 @@ class CdpBrowserMutationActuator:
             websocket = self._ws_connect(websocket_url)
             self._websocket = websocket
             self._session = _MutationCdpSession(websocket)
+        if not self._page_events_enabled:
+            self._session.send("Page.enable")
+            self._session.pop_events()
+            self._page_events_enabled = True
         return self._session
+
+    def _page_target_ids(self) -> set[str]:
+        return {
+            str(item.get("id") or "")
+            for item in self._http_get_json(f"{self.debug_base_url}/json/list")
+            if str(item.get("type") or "") == "page" and str(item.get("id") or "")
+        }
+
+    def _boundary_events(
+        self,
+        session: _MutationCdpSession,
+        *,
+        before_page_ids: set[str],
+    ) -> tuple[dict[str, Any], ...]:
+        events: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw in session.pop_events():
+            method = str(raw.get("method") or "")
+            event_name = _BOUNDARY_EVENT_METHODS.get(method)
+            if event_name is None:
+                continue
+            key = (event_name, method)
+            if key in seen:
+                continue
+            seen.add(key)
+            events.append(
+                {
+                    "event": event_name,
+                    "scope_ref": None,
+                    "detector": method,
+                    "complete": False,
+                }
+            )
+        for target_id in sorted(self._page_target_ids() - before_page_ids):
+            key = ("new_page", target_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            events.append(
+                {
+                    "event": "new_page",
+                    "scope_ref": None,
+                    "detector": "TargetList.new_page_id",
+                    "complete": False,
+                }
+            )
+        return tuple(events)
 
     @staticmethod
     def _backend_node_id(physical_target: str | None) -> int:
@@ -166,8 +234,10 @@ class CdpBrowserMutationActuator:
     def dispatch(self, *, verb: str, physical_target: str | None, args: dict[str, Any]) -> BrowserDispatchResult:
         with self._dispatch_lock:
             session = self._ensure_session()
+            before_page_ids = self._page_target_ids()
             if verb == "navigate":
                 session.send("Page.navigate", {"url": str(args["url"])})
+                detected = self._boundary_events(session, before_page_ids=before_page_ids)
                 return BrowserDispatchResult(
                     acknowledged=True,
                     boundary_events=(
@@ -177,7 +247,8 @@ class CdpBrowserMutationActuator:
                             "detector": "Page.navigate_ack",
                             "complete": False,
                         },
-                    ),
+                    )
+                    + detected,
                     completeness_reasons=("boundary_detector_non_exhaustive",),
                 )
 
@@ -207,9 +278,10 @@ class CdpBrowserMutationActuator:
                 )
             else:
                 raise ValueError(f"unsupported Browser mutation verb: {verb}")
+            detected = self._boundary_events(session, before_page_ids=before_page_ids)
             return BrowserDispatchResult(
                 acknowledged=True,
-                boundary_events=(),
+                boundary_events=detected,
                 completeness_reasons=("boundary_detector_non_exhaustive",),
             )
 
@@ -217,5 +289,6 @@ class CdpBrowserMutationActuator:
         websocket = self._websocket
         self._session = None
         self._websocket = None
+        self._page_events_enabled = False
         if websocket is not None:
             websocket.close()

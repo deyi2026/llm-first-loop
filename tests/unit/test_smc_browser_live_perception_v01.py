@@ -245,3 +245,25 @@ def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeyp
     )
     tool = enabled.registry.get("browser_action")
     assert tool._adapter.actuator is fake_write
+
+
+def test_bqual_ptc_experiment_arm_exposes_smc_browser_without_legacy_playwright(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import llm_loop.factory as factory
+
+    monkeypatch.setattr(factory, "CdpReadOnlyBrowserHost", mock.Mock(return_value=mock.Mock()))
+    monkeypatch.setattr(factory, "CdpBrowserMutationActuator", mock.Mock(return_value=mock.Mock()))
+    engine = factory.build_engine(
+        _settings(
+            tmp_path,
+            run_mode="ptc",
+            browser_perception_cdp_url="http://127.0.0.1:9222",
+            browser_perception_target_id="target-1",
+            browser_action_enabled=True,
+        )
+    )
+    names = set(engine.registry.names())
+    assert {"browser_perceive", "browser_action"}.issubset(names)
+    assert "playwright_exec" not in names
+    assert "playwright_test" not in names

@@ -22,6 +22,8 @@ class _FakeWs:
             result = {"object": {"objectId": "obj-1"}}
         elif method == "Runtime.callFunctionOn" or method == "Runtime.evaluate":
             result = {"result": {"type": "undefined"}}
+        elif method == "Page.enable":
+            result = {}
         elif method == "Page.navigate":
             result = {"frameId": "main"}
         else:
@@ -65,6 +67,7 @@ def test_click_fill_select_scroll_are_fixed_internal_calls_not_model_scripts() -
     host.dispatch(verb="scroll", physical_target="dom:2", args={"delta_pages": 1})
     methods = [req["method"] for req in ws.requests]
     assert methods == [
+        "Page.enable",
         "DOM.resolveNode", "Runtime.callFunctionOn",
         "DOM.resolveNode", "Runtime.callFunctionOn",
         "DOM.resolveNode", "Runtime.callFunctionOn",
@@ -78,10 +81,45 @@ def test_click_fill_select_scroll_are_fixed_internal_calls_not_model_scripts() -
 def test_navigate_is_single_page_navigate_and_reports_non_exhaustive_boundary_fact() -> None:
     host, ws = _host()
     result = host.dispatch(verb="navigate", physical_target=None, args={"url": "http://127.0.0.1/b"})
-    assert [req["method"] for req in ws.requests] == ["Page.navigate"]
+    assert [req["method"] for req in ws.requests] == ["Page.enable", "Page.navigate"]
     assert result.acknowledged is True
     assert result.boundary_events[0]["event"] == "navigation_started"
     assert result.boundary_events[0]["complete"] is False
+    assert "boundary_detector_non_exhaustive" in result.completeness_reasons
+
+
+def test_page_boundary_events_are_mechanical_and_non_exhaustive() -> None:
+    class _EventWs(_FakeWs):
+        def send(self, payload: str) -> None:
+            req = json.loads(payload)
+            if req["method"] == "Runtime.callFunctionOn":
+                self.pending.extend(
+                    [
+                        json.dumps({"method": "Page.windowOpen", "params": {"url": "about:blank"}}),
+                        json.dumps({"method": "Page.downloadWillBegin", "params": {"url": "http://127.0.0.1/file"}}),
+                        json.dumps({"method": "Page.javascriptDialogOpening", "params": {"type": "alert"}}),
+                    ]
+                )
+            super().send(payload)
+
+    ws = _EventWs()
+    targets = [{
+        "id": "target-1", "type": "page", "url": "http://127.0.0.1/a",
+        "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/target-1",
+    }]
+    host = CdpBrowserMutationActuator(
+        "http://127.0.0.1:9222",
+        target_id="target-1",
+        http_get_json=lambda url: json.loads(json.dumps(targets)),
+        ws_connect=lambda url: ws,
+    )
+    result = host.dispatch(verb="click", physical_target="dom:2", args={})
+    assert {event["event"] for event in result.boundary_events} == {
+        "new_window",
+        "download_started",
+        "dialog_opened",
+    }
+    assert all(event["complete"] is False for event in result.boundary_events)
     assert "boundary_detector_non_exhaustive" in result.completeness_reasons
 
 

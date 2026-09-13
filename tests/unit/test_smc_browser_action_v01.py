@@ -162,6 +162,36 @@ def test_actuator_error_is_failed_never_retried_and_post_observation_still_attem
     assert [x["status"] for x in receipts.list_action("s1", "act-1")] == ["running", "failed"]
 
 
+def test_transport_ambiguity_after_partial_effect_reports_observed_side_effect_without_replay(
+    tmp_path: Path,
+) -> None:
+    changed = json.loads(json.dumps(FIXTURES["base"]))
+    for source in ("dom", "ax"):
+        for node in changed[source]["nodes"]:
+            if node.get("physical_id") == "n-submit":
+                node.setdefault("state", {})["enabled"] = False
+    perception, receipts, backend, actuator, action = _stack(
+        tmp_path,
+        [FIXTURES["base"], changed],
+        actuator=_Actuator(TimeoutError("ack lost after dispatch")),
+    )
+    first = perception.snapshot("s1", FIXTURES["base"])
+    result = action.execute("s1", _click_action(first, action_id="partial-effect"))
+
+    assert result["status"] == "failed"
+    assert len(actuator.calls) == 1
+    assert backend.calls == 2
+    assert result["after_version"] is not None
+    assert result["observed_effects"]["diff_ref"] is not None
+    assert result["observed_effects"]["provisional"] is True
+    assert result["retry"]["automatic_retry_performed"] is False
+    assert "dispatch_outcome_ambiguous" in result["completeness"]["reasons"]
+    assert [x["status"] for x in receipts.list_action("s1", "partial-effect")] == [
+        "running",
+        "failed",
+    ]
+
+
 def test_session_fence_blocks_receipt_history(tmp_path: Path) -> None:
     perception, receipts, _, _, action = _stack(tmp_path, [FIXTURES["base"]])
     first = perception.snapshot("s1", FIXTURES["base"])

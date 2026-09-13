@@ -597,6 +597,14 @@ object / resource / snapshot
 {"delta_pages": 1}
 ```
 
+Phase 1 v0.1 的 `scroll` target 仅为 `semantic_object`。早期 Profile 草案曾把
+`page / document / frame / region` 一并列为 target kinds，但这些 semantic root
+没有与 `object | snapshot` version scope 自洽的 dispatch guard：`object` guard
+只对 SemanticObject 有定义，而 strict `snapshot` guard 在 pre-dispatch fresh
+observation 后必须把不同 snapshot identity 判为 stale。B-QUAL 因此收窄这一
+机械类型错误，不通过放宽 B-STALE 语义来伪造 root-level scroll 支持；后者若要
+开放，必须单独冻结 scope/resource version contract 后重新资格化。
+
 没有任何一个 args shape 接受 selector / XPath / x/y / node id / AX index。
 
 ---

@@ -288,6 +288,8 @@ def test_verb_contracts_fix_operation_retry_atomicity_and_versions() -> None:
         assert verbs[name]["silent_retry_allowed"] is False
     assert verbs["click"]["idempotency_class"] == "unknown"
     assert verbs["navigate"]["idempotency_class"] == "unknown"
+    assert verbs["scroll"]["target_kinds"] == ["semantic_object"]
+    assert set(verbs["scroll"]["version_scopes"]) == {"object", "snapshot"}
 
 
 def test_all_model_facing_object_schemas_are_recursively_closed() -> None:

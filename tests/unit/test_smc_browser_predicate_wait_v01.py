@@ -485,6 +485,7 @@ def test_wait_timeout_unsatisfied_is_successful_observation_not_tool_failure(tmp
     assert result.status.value == "success"
     payload = json.loads(result.content)
     assert payload["predicate_result"]["result"] == "unsatisfied"
+    assert payload["predicate_result"]["evaluation_mode"] == "polling"
     assert payload["predicate_result"]["sample_count"] >= 1
 
 

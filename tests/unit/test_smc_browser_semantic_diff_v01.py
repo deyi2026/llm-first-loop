@@ -7,6 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from llm_loop.browser import perception as perception_module
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
 
@@ -291,6 +292,27 @@ def test_frame_generation_change_is_incomparable_not_child_mass_churn(tmp_path: 
     assert diff["removed"] is None
     assert diff["changed"] is None
     assert "frame_scope_changed" in str(diff["reason"])
+
+
+def test_sensor_contract_change_makes_snapshot_pair_incomparable(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    before = adapter.snapshot("s1", FIXTURES["base"])
+    after = adapter.snapshot("s1", FIXTURES["reorder"])
+    after_id = _snapshot_id(after)
+    path = adapter.store.root / "snapshots" / f"{after_id}.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc["snapshot"]["sensor_contract"]["id"] = "browser-dom-ax-test-changed"
+    doc["bundle_sha256"] = perception_module._sha256(
+        {key: value for key, value in doc.items() if key != "bundle_sha256"}
+    )
+    path.write_text(json.dumps(doc, ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+
+    diff = adapter.diff("s1", _snapshot_id(before), after_id)
+    assert diff["comparable"] is False
+    assert diff["created"] is None
+    assert diff["removed"] is None
+    assert diff["changed"] is None
+    assert "sensor_contract_changed" in diff["completeness"]["reasons"]
 
 
 def test_diff_is_session_fenced_and_tool_does_not_need_capture_backend(tmp_path: Path) -> None:
