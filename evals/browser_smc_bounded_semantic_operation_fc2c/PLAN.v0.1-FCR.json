@@ -1,0 +1,12 @@
+{
+  "schema": "smc.browser_bounded_semantic_operation_fc2c.fcr.v0.1.plan",
+  "model": "cognilocal/ornith-1.5-35b-a3b-mlx",
+  "rows": 6,
+  "repeats_per_task": 2,
+  "tasks": ["navigate_page", "fill_input", "wait_button"],
+  "surface": ["browser_semantic_operation"],
+  "tool_execution": false,
+  "get_tool_schema_exposed": false,
+  "read_evidence_exposed": false,
+  "gate": "6/6 first tool declaration must satisfy the external task-specific oracle; each task 2/2; zero tool executions"
+}
