@@ -35,3 +35,7 @@ def test_fc2_runner_freezes_evidence_enforce_for_recovery_refs(tmp_path):
 
     env = run_a2._base_env(tmp_path)
     assert env["EVIDENCE_MODE"] == "enforce"
+
+
+def test_fc2_protocol_has_distinct_schema_identity():
+    assert protocol.SCHEMA == "smc.browser_semantic_execute_exact_recovery_fc2.v0.1"

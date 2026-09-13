@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-SCHEMA = "smc.browser_semantic_execute_typed_wait_a2.v0.6"
+SCHEMA = "smc.browser_semantic_execute_exact_recovery_fc2.v0.1"
 SEED = 2026091311
 # MODEL_REF must equal the name the provider reports in responses (worker model_used check).
 # v0.7 ran as cognilocal/ornith-1.5-35b-a3b-mlx and the 8901 chat/completions responses still
