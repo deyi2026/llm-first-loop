@@ -87,11 +87,17 @@ def _safe_trace(trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-def _tool_wait_results(data_dir: Path, session_id: str) -> list[dict[str, Any]]:
+def _tool_wait_results(
+    data_dir: Path, session_id: str
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     path = data_dir / "event_logs" / f"{session_id}.jsonl"
     rows: list[dict[str, Any]] = []
+    diagnostics = {
+        "missing_predicate_failure_count": 0,
+        "scope_target_mismatch_failure_count": 0,
+    }
     if not path.is_file():
-        return rows
+        return rows, diagnostics
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             event = json.loads(line)
@@ -101,9 +107,19 @@ def _tool_wait_results(data_dir: Path, session_id: str) -> list[dict[str, Any]]:
             continue
         payload = event.get("payload") or {}
         tool_name = str(payload.get("tool_name") or "")
-        if payload.get("role") != "tool" or tool_name not in _WAIT_TOOLS:
+        if payload.get("role") != "tool":
             continue
         content = str(payload.get("content") or "")
+        lowered = content.lower()
+        diagnostics["missing_predicate_failure_count"] += int(
+            "predicate must be a structured object" in lowered
+            or "predicate 必须" in content
+        )
+        diagnostics["scope_target_mismatch_failure_count"] += int(
+            "scope predicate target must equal its exact scope_ref" in lowered
+        )
+        if tool_name not in _WAIT_TOOLS:
+            continue
         parsed: dict[str, Any] = {}
         pos = content.find("{")
         if pos >= 0:
@@ -123,7 +139,7 @@ def _tool_wait_results(data_dir: Path, session_id: str) -> list[dict[str, Any]]:
                 "observer_error_count": int(predicate_result.get("observer_error_count") or 0),
             }
         )
-    return rows
+    return rows, diagnostics
 
 
 def _surface(engine: Any) -> dict[str, Any]:
@@ -204,7 +220,7 @@ def main() -> int:
                 and bool(row.get("has_predicate"))
                 for row in trace
             )
-            wait_results = _tool_wait_results(Path(settings.data_dir), sid)
+            wait_results, wait_diagnostics = _tool_wait_results(Path(settings.data_dir), sid)
             first_result = wait_results[0] if wait_results else {}
             payload.update(
                 {
@@ -231,6 +247,7 @@ def main() -> int:
                     ),
                     "legacy_wait_misuse_count": legacy_misuse,
                     "snapshot_predicate_count": snapshot_predicate,
+                    **wait_diagnostics,
                     "mutation_call_count": sum(row["name"] in MUTATION_TOOLS for row in trace),
                     "get_tool_schema_count": sum(row["name"] == "get_tool_schema" for row in trace),
                 }

@@ -380,6 +380,8 @@ def run_row(row: dict[str, Any], root: Path, manifest: dict[str, Any]) -> dict[s
                 and int(worker.get("typed_wait_failure_count") or 0) == 0
                 and int(worker.get("legacy_wait_misuse_count") or 0) == 0
                 and int(worker.get("snapshot_predicate_count") or 0) == 0
+                and int(worker.get("missing_predicate_failure_count") or 0) == 0
+                and int(worker.get("scope_target_mismatch_failure_count") or 0) == 0
                 and int(worker.get("mutation_call_count") or 0) == 0
             )
             else "TASK_FAIL"

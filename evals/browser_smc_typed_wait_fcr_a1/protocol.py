@@ -95,6 +95,12 @@ def smoke_gate(records: list[dict[str, Any]]) -> dict[str, Any]:
             "typed_wait_failure_count": int(w.get("typed_wait_failure_count") or 0),
             "legacy_wait_misuse_count": int(w.get("legacy_wait_misuse_count") or 0),
             "snapshot_predicate_count": int(w.get("snapshot_predicate_count") or 0),
+            "missing_predicate_failure_count": int(
+                w.get("missing_predicate_failure_count") or 0
+            ),
+            "scope_target_mismatch_failure_count": int(
+                w.get("scope_target_mismatch_failure_count") or 0
+            ),
             "mutation_call_count": int(w.get("mutation_call_count") or 0),
         }
         check["pass"] = (
@@ -105,6 +111,8 @@ def smoke_gate(records: list[dict[str, Any]]) -> dict[str, Any]:
             and check["typed_wait_failure_count"] == 0
             and check["legacy_wait_misuse_count"] == 0
             and check["snapshot_predicate_count"] == 0
+            and check["missing_predicate_failure_count"] == 0
+            and check["scope_target_mismatch_failure_count"] == 0
             and check["mutation_call_count"] == 0
         )
         row_checks.append(check)
