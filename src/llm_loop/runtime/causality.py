@@ -123,6 +123,102 @@ def effective_generation_contract(client: Any) -> dict[str, Any]:
     }
 
 
+def background_run_generation_fact(engine: Any, session_id: str) -> dict[str, str]:
+    """Observe exact BackgroundRunner generation without granting resume authority.
+
+    No/disabled runner or no active background handle means this provider request is not
+    mechanically bound to a background generation. Observation faults stay explicit as
+    ``unknown``; they never become permission to resume/rebind.
+    """
+    runner = getattr(engine, "runner", None)
+    if runner is None or not bool(getattr(runner, "enabled", False)):
+        return {"state": "not_background", "generation": ""}
+    getter = getattr(runner, "get_handle", None)
+    if not callable(getter):
+        return {"state": "unknown", "generation": ""}
+    try:
+        snap = getter(session_id)
+    except Exception:  # noqa: BLE001 - observability only
+        return {"state": "unknown", "generation": ""}
+    if snap is None:
+        return {"state": "not_background", "generation": ""}
+    if not isinstance(snap, dict):
+        return {"state": "unknown", "generation": ""}
+    generation = str(snap.get("run_generation") or "")
+    if generation and str(snap.get("status") or "") == "running":
+        return {"state": "bound", "generation": generation}
+    return {"state": "unknown", "generation": ""}
+
+
+def build_run_integrity_receipt(
+    *,
+    session_id: str,
+    background_run: dict[str, Any],
+    origin_ingress_channel: str,
+    current_ingress_channel: str,
+    current_ingress_entry: str,
+    workspace_epoch: int,
+    queue_id: str,
+    routing_identity: dict[str, Any],
+    provider: str,
+    model: str,
+    generation_contract: dict[str, Any],
+    provider_call_id: str,
+    attempt_id: str,
+    system_fp: str,
+    tools_fp: str,
+    runtime_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a thin immutable mechanical identity receipt for one provider attempt.
+
+    This function classifies no task/content state and carries no admission/completion
+    authority.  It only copies already-established run/request facts into one audit view.
+    """
+    state = str(background_run.get("state") or "unknown")
+    if state not in {"bound", "not_background", "unknown"}:
+        state = "unknown"
+    generation = (
+        str(background_run.get("generation") or "") if state == "bound" else ""
+    )
+    actual_provider = str(provider or "")
+    actual_model = str(model or "")
+    contract = dict(generation_contract or {})
+    contract["provider"] = actual_provider
+    contract["model"] = actual_model
+    runtime = runtime_snapshot if isinstance(runtime_snapshot, dict) else {}
+    try:
+        epoch = int(routing_identity.get("epoch") or 0)
+    except (TypeError, ValueError):
+        epoch = 0
+    try:
+        ws_epoch = int(workspace_epoch)
+    except (TypeError, ValueError):
+        ws_epoch = 0
+    return {
+        "schema": "run-integrity/v1",
+        "session_id": str(session_id or ""),
+        "background_run_generation": generation,
+        "run_generation_state": state,
+        "origin_ingress_channel": str(origin_ingress_channel or ""),
+        "current_ingress_channel": str(current_ingress_channel or ""),
+        "current_ingress_entry": str(current_ingress_entry or ""),
+        "workspace_epoch": ws_epoch,
+        "queue_id": str(queue_id or ""),
+        "routing_epoch": epoch,
+        "routing_registry_fp": str(routing_identity.get("registry_fp") or ""),
+        "routing_transition": str(routing_identity.get("transition") or ""),
+        "provider": actual_provider,
+        "model": actual_model,
+        "generation_contract": contract,
+        "provider_call_id": str(provider_call_id or ""),
+        "attempt_id": str(attempt_id or ""),
+        "system_fp": str(system_fp or ""),
+        "tools_fp": str(tools_fp or ""),
+        "runtime_snapshot_id": str(runtime.get("snapshot_id") or ""),
+        "tool_registry_fp": str(runtime.get("tool_registry_fp") or ""),
+    }
+
+
 
 def provider_message_shape(messages: list[dict]) -> dict[str, int]:
     """Return cheap provider-message shape facts without serializing message content."""

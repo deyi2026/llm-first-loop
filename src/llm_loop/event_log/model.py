@@ -696,6 +696,7 @@ REGISTRY.register(
             "routing_epoch": "当前run模型路由代次；仅显式switch_model成功可推进",
             "routing_registry_fp": "当前run绑定的ProviderRegistry机械短指纹；不含凭据值",
             "routing_transition": "run_start或显式switch_model目标；机械来源事实",
+            "run_integrity_receipt": "run-integrity/v1：当前provider attempt已存在机械身份事实的prompt-neutral聚合视图；无task/污染裁决权",
             "influence": "请求构建阶段机械 effect 摘要；不含完整 prompt/语义根因判断",
         },
     )

@@ -246,6 +246,7 @@ def test_registry_covers_registered_types_with_fields():
     request_meta_spec = REGISTRY.spec(EVENT_REQUEST_META)
     assert request_meta_spec is not None
     assert {"history_chars", "reasoning_chars", "provider_visible_chars"} <= set(request_meta_spec.fields)
+    assert "run_integrity_receipt" in request_meta_spec.fields
     checkpoint_spec = REGISTRY.spec(EVENT_LLM_PARTIAL_CHECKPOINT)
     assert checkpoint_spec is not None
     assert {
@@ -473,6 +474,18 @@ def test_request_meta_event_written_per_round(tmp_path):
     assert metas[0].payload["routing_epoch"] == 0
     assert "routing_registry_fp" in metas[0].payload
     assert metas[0].payload["routing_transition"] == "run_start"
+    receipt = metas[0].payload["run_integrity_receipt"]
+    assert receipt["schema"] == "run-integrity/v1"
+    assert receipt["session_id"] == result.session_id
+    assert receipt["run_generation_state"] == "not_background"
+    assert receipt["background_run_generation"] == ""
+    assert receipt["routing_epoch"] == metas[0].payload["routing_epoch"]
+    assert receipt["routing_registry_fp"] == metas[0].payload["routing_registry_fp"]
+    assert receipt["provider_call_id"] == metas[0].payload["provider_call_id"]
+    assert receipt["attempt_id"] == metas[0].payload["attempt_id"]
+    assert receipt["system_fp"]
+    assert receipt["tools_fp"]
+    assert "task_completion" not in receipt
     assert metas[0].payload["reasoning_chars"] == 0
     assert metas[1].payload["reasoning_chars"] == len("PLAN-ABC")
     for meta in metas:

@@ -126,6 +126,11 @@ def test_engine_multiround_dynamic_route_ignores_silent_reload_until_next_run(
     new_client = _FakeLLMClient("deepseek-v4-pro")
     pool = _make_pool(settings, default, cached={"deepseek": old_client})
     engine = _make_engine(tmp_path, pool, settings)
+    from llm_loop.event_log.store import EventStore
+
+    event_store = EventStore(tmp_path / "routing-receipt-events")
+    engine._event_store = event_store  # noqa: SLF001 - integration audit sink
+    engine.session._event_store = event_store  # noqa: SLF001 - keep dual track aligned
     old_registry = pool.registry_snapshot()
     new_registry = _replacement_registry()
     call_no = 0
@@ -169,6 +174,19 @@ def test_engine_multiround_dynamic_route_ignores_silent_reload_until_next_run(
     second = engine.run(sid, "run-two", model="deepseek/deepseek-v4-pro")
     assert second.final_answer == "new-registry-route"
     assert len(new_client.calls) == 1
+
+    metas = [event for event in event_store.read(sid) if event.type == "request.meta"]
+    assert len(metas) == 3
+    first_receipts = [meta.payload["run_integrity_receipt"] for meta in metas[:2]]
+    next_receipt = metas[2].payload["run_integrity_receipt"]
+    assert [receipt["routing_epoch"] for receipt in first_receipts] == [0, 0]
+    assert first_receipts[0]["routing_registry_fp"] == first_receipts[1]["routing_registry_fp"]
+    assert next_receipt["routing_epoch"] == 0
+    assert next_receipt["routing_registry_fp"] != first_receipts[0]["routing_registry_fp"]
+    for meta in metas:
+        receipt = meta.payload["run_integrity_receipt"]
+        assert receipt["routing_epoch"] == meta.payload["routing_epoch"]
+        assert receipt["routing_registry_fp"] == meta.payload["routing_registry_fp"]
 
 
 def test_failed_switch_model_does_not_advance_routing_epoch(tmp_path, monkeypatch) -> None:

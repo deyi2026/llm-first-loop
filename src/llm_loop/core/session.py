@@ -268,7 +268,7 @@ def _make_title(first_user_content: str) -> str:
     return text[:30]
 
 
-def _first_human_ingress_channel(messages: list[Any]) -> str:
+def first_human_ingress_channel(messages: list[Any]) -> str:
     """Return the first durable human-ingress channel without inferring from Session.channel.
 
     ``Session.channel`` historically defaulted to ``web`` even for sessions created by
@@ -1513,7 +1513,7 @@ class SessionStore:
             # M56: pinned/channel 透传
             pinned=session.pinned,
             channel=session.channel,
-            origin_channel=_first_human_ingress_channel(session.messages),
+            origin_channel=first_human_ingress_channel(session.messages),
         )
 
     def list_sessions(self, include_archived: bool = False) -> list[SessionMeta]:
@@ -1569,7 +1569,7 @@ class SessionStore:
                     # M56: pinned/channel 透传（缺省向后兼容）
                     pinned=bool(data.get("pinned", False)),
                     channel=data.get("channel", "web"),
-                    origin_channel=_first_human_ingress_channel(messages),
+                    origin_channel=first_human_ingress_channel(messages),
                 )
                 new_cache[p] = (fkey, meta)
             if meta.status == _ARCHIVED and not include_archived:
@@ -1851,7 +1851,7 @@ class SessionStore:
                     last_message_preview=preview,
                     pinned=bool(data.get("pinned", False)),
                     channel=data.get("channel", "web"),
-                    origin_channel=_first_human_ingress_channel(messages),
+                    origin_channel=first_human_ingress_channel(messages),
                 )
             )
         metas.sort(key=lambda m: m.updated_at, reverse=True)

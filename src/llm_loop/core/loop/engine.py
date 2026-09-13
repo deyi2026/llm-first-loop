@@ -71,7 +71,7 @@ from llm_loop.core.run_context import (
 from llm_loop.core.run_context import (
     current_reasoning_mode as _current_reasoning_mode,
 )
-from llm_loop.core.session import SessionStore
+from llm_loop.core.session import SessionStore, first_human_ingress_channel
 from llm_loop.core.trace_leak import leak_events
 from llm_loop.core.trace_leak.invariant import (
     correct_mislabeled_metadata,
@@ -95,7 +95,12 @@ from llm_loop.resources.provider_settlement import (
     ProviderCallOutcome,
     ProviderCallPurpose,
 )
-from llm_loop.runtime.causality import effective_generation_contract, provider_message_shape
+from llm_loop.runtime.causality import (
+    background_run_generation_fact,
+    build_run_integrity_receipt,
+    effective_generation_contract,
+    provider_message_shape,
+)
 from llm_loop.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -922,6 +927,38 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     _provider_structure_fp = ""
                 _message_shape = provider_message_shape(messages)
                 _routing_identity = self._routing._routing_identity()
+                _runtime_snapshot_dict = (
+                    self._runtime_causal_snapshot.to_dict()
+                    if self._runtime_causal_snapshot is not None
+                    else {}
+                )
+                _turn_md: dict[str, Any] = {}
+                _turn_ref = self._run_state().current_turn_ref
+                if _turn_ref is not None and 0 <= _turn_ref < len(sess.messages):
+                    _raw_md = getattr(sess.messages[_turn_ref], "metadata", None)
+                    if isinstance(_raw_md, dict):
+                        _turn_md = _raw_md
+                _actual_provider = str(getattr(llm_client, "provider", "") or "")
+                _actual_model = str(chat_model_arg or getattr(llm_client, "model", "") or "")
+                _generation_contract = effective_generation_contract(llm_client)
+                _run_integrity_receipt = build_run_integrity_receipt(
+                    session_id=session_id,
+                    background_run=background_run_generation_fact(self, session_id),
+                    origin_ingress_channel=first_human_ingress_channel(sess.messages),
+                    current_ingress_channel=str(_turn_md.get("ingress_channel") or ""),
+                    current_ingress_entry=str(_turn_md.get("ingress_entry") or ""),
+                    workspace_epoch=int(getattr(self, "_workspace_epoch", 0) or 0),
+                    queue_id=str(_turn_md.get("human_turn_queue_id") or ""),
+                    routing_identity=_routing_identity,
+                    provider=_actual_provider,
+                    model=_actual_model,
+                    generation_contract=_generation_contract,
+                    provider_call_id=str(getattr(_provider_call, "call_id", "") or ""),
+                    attempt_id=str(_primary_attempt_id or ""),
+                    system_fp=self._run_state().cache_gate_system_fp,
+                    tools_fp=self._run_state().cache_gate_tools_fp,
+                    runtime_snapshot=_runtime_snapshot_dict,
+                )
                 self._event_append(
                     session_id,
                     "request.meta",
@@ -961,12 +998,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         "attempt_kind": "primary",
                         "attempt_index": 0,
                         "provider_structure_fp": _provider_structure_fp,
-                        "runtime_snapshot": (
-                            self._runtime_causal_snapshot.to_dict()
-                            if self._runtime_causal_snapshot is not None
-                            else {}
-                        ),
-                        "generation_contract": effective_generation_contract(llm_client),
+                        "runtime_snapshot": _runtime_snapshot_dict,
+                        "generation_contract": _generation_contract,
+                        "run_integrity_receipt": _run_integrity_receipt,
                         "routing_epoch": _routing_identity["epoch"],
                         "routing_registry_fp": _routing_identity["registry_fp"],
                         "routing_transition": _routing_identity["transition"],

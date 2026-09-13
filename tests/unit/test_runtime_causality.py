@@ -103,6 +103,9 @@ def test_causal_recording_is_provider_payload_neutral(tmp_path: Path) -> None:
     assert "allowed_input_tokens" in meta.payload["input_budget"]
     assert meta.payload["input_budget"]["effective_history_budget_chars"] == meta.payload["budget"]
     assert "tool_schema_reserve_chars" in meta.payload["input_budget"]
+    assert meta.payload["run_integrity_receipt"]["schema"] == "run-integrity/v1"
+    assert all("run_integrity_receipt" not in message for message in with_events[0])
+    assert all("run_integrity_receipt" not in tool for tool in with_events[1])
 
 
 def test_runtime_snapshot_is_startup_only_and_prompt_neutral(tmp_path: Path) -> None:

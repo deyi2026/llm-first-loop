@@ -145,6 +145,38 @@ def test_chat_stream_initial_background_run_emits_generation_before_model_deltas
     assert events[-1]["type"] == "done"
 
 
+def test_background_request_meta_receipt_binds_exact_run_generation(
+    build_test_engine, tmp_path
+):
+    from llm_loop.core.loop.runner import BackgroundRunner
+    from llm_loop.event_log.store import EventStore
+
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("receipt-background")
+    event_store = EventStore(tmp_path / "receipt-events")
+    engine._event_store = event_store  # noqa: SLF001 - wire real audit sink for integration
+    engine.session._event_store = event_store  # noqa: SLF001 - keep session/event dual track aligned
+    engine.runner = BackgroundRunner(engine, enabled=True)
+
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat/stream", json={"message": "identity receipt"})
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    started = next(event["data"] for event in events if event["type"] == "run_started")
+    done = next(event["data"] for event in events if event["type"] == "done")
+    meta = next(
+        event for event in event_store.read(done["session_id"]) if event.type == "request.meta"
+    )
+    receipt = meta.payload["run_integrity_receipt"]
+
+    assert receipt["run_generation_state"] == "bound"
+    assert receipt["background_run_generation"] == started["run_generation"]
+    assert receipt["origin_ingress_channel"] == "web"
+    assert receipt["current_ingress_channel"] == "web"
+    assert receipt["current_ingress_entry"] == "web"
+    assert receipt["workspace_epoch"] == engine._workspace_epoch  # noqa: SLF001
+
+
 def test_chat_stream_emits_deltas_then_done(build_test_engine):
     engine, _ = build_test_engine([])
     engine.llm_pool.default_client = StreamingFakeLLM("你好世界")
