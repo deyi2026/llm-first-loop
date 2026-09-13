@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -50,6 +52,21 @@ def test_arm_surfaces_are_exact_and_do_not_offer_cross_treatment_browser_tools()
     assert set(ARMS["legacy"]["allowed_tools"]) == {"playwright_exec", "playwright_test", "get_tool_schema"}
     assert not set(ARMS["smc"]["allowed_tools"]) & {"playwright_exec", "playwright_test"}
     assert not set(ARMS["legacy"]["allowed_tools"]) & {"browser_perceive", "browser_action"}
+
+
+def test_runner_is_standalone_importable_outside_repo_cwd(tmp_path: Path) -> None:
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    proc = subprocess.run(
+        [sys.executable, str(HERE / "run_ab.py"), "--help"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "--workdir" in proc.stdout
 
 
 def test_effective_cognilocal_provider_contract_is_frozen() -> None:

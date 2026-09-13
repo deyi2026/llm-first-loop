@@ -21,6 +21,7 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(REPO))
 
 from fixture_server import FixtureServer  # noqa: E402
 from protocol import (  # noqa: E402
