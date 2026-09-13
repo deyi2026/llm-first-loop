@@ -35,6 +35,12 @@ from protocol import (  # noqa: E402
     smoke_gate,
 )
 
+from evals.browser_smc_semantic_execute_recovery_smoke.observations import (  # noqa: E402
+    atomic_json,
+    declared_round,
+    finalize_worker,
+    run_profile,
+)
 from scripts.qualification.smc_browser_live_navigation import (  # noqa: E402
     _free_loopback_port,
     _security_agent_pids,
@@ -46,6 +52,8 @@ CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 WORKER = HERE / "worker.py"
 PROVIDERS = REPO / "data" / "providers.json"
 MODEL_PORT = 8901
+RUNTIME_REPO = REPO
+PROFILE = run_profile("repeat12")
 V05_PLAN_SHA256 = "490c1e2cd1b9377468eb07dc06d05b8950faf10db4b61748ff89af1005b8f878"
 V05_FIXTURE_SHA256 = "87696076cea84d4e93f172d07a1499755dbc647f396ff115a9d64571740b72a3"
 V05_PROMPT_SHA256 = {
@@ -73,9 +81,7 @@ def _tracked_dirty() -> list[str]:
 def _model_server_fact() -> dict[str, Any]:
     lines = subprocess.check_output(["ps", "-axo", "pid=,command="], text=True).splitlines()
     candidates = [
-        line.strip()
-        for line in lines
-        if "mlx_lm.server" in line and f"--port {MODEL_PORT}" in line
+        line.strip() for line in lines if "mlx_lm.server" in line and f"--port {MODEL_PORT}" in line
     ]
     if len(candidates) != 1:
         raise RuntimeError(
@@ -134,17 +140,18 @@ def _base_env(run_dir: Path) -> dict[str, str]:
     shutil.copy2(PROVIDERS, data_dir / "providers.json")
     env = dict(os.environ)
     old_pp = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = os.pathsep.join(
-        [str(REPO / "src"), str(REPO), old_pp]
-    ).rstrip(os.pathsep)
+    env["PYTHONPATH"] = os.pathsep.join([str(RUNTIME_REPO / "src"), str(REPO), old_pp]).rstrip(
+        os.pathsep
+    )
     env.update(
         {
             "LLM_API_KEY": "local-eval",
+            "SMC_EXPECTED_RUNTIME_ROOT": str(RUNTIME_REPO),
             "LLM_BASE_URL": "http://127.0.0.1:8901/v1",
             "LLM_MODEL": MODEL_REF,
             "LLM_THINKING_MODE": "on",
             "LLM_REASONING_EFFORT": "medium",
-            "LLM_MAX_ITERATIONS": "12",
+            "LLM_MAX_ITERATIONS": str(PROFILE["max_iterations"]),
             "LLM_TIMEOUT_S": "1800",
             "LLM_MAX_TOKENS": "16000",
             "MODEL_FALLBACKS": "",
@@ -155,7 +162,7 @@ def _base_env(run_dir: Path) -> dict[str, str]:
             "SUMMARY_MODE": "off",
             "METHOD_REFLECTION_MODE": "off",
             "METHODS_DIR": str(data_dir / "methods"),
-            "METHOD_SEED_DIR": str(REPO / "methods"),
+            "METHOD_SEED_DIR": str(RUNTIME_REPO / "methods"),
             "RUNNER_BACKGROUND": "0",
             "LFL_SMX_PERCEIVE": "",
             "MCP_SERVERS": "",
@@ -195,6 +202,8 @@ def _surface_manifest(arm: str, tmp_root: Path) -> dict[str, Any]:
     if proc.returncode != 0:
         raise RuntimeError(f"surface worker failed arm={arm}: {proc.stderr[-500:]}")
     doc = json.loads(result_path.read_text(encoding="utf-8"))
+    if doc.get("resolved_max_iterations") != PROFILE["max_iterations"]:
+        raise RuntimeError("worker resolved round ceiling differs from manifest")
     return dict(doc["surface"])
 
 
@@ -202,6 +211,18 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
     dirty = _tracked_dirty()
     if dirty:
         raise RuntimeError(f"tracked working tree is dirty before model execution: {dirty}")
+    runtime_head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=RUNTIME_REPO, text=True
+    ).strip()
+    runtime_dirty = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=RUNTIME_REPO, text=True
+    ).strip()
+    if runtime_dirty:
+        raise RuntimeError("runtime source tree is dirty")
+    runtime_paths = subprocess.check_output(
+        ["git", "ls-files", "src", "methods"], cwd=RUNTIME_REPO, text=True
+    ).splitlines()
+    runtime_hashes = {p: _sha_file(RUNTIME_REPO / p) for p in runtime_paths}
     server = _model_server_fact()
     if not server["prompt_concurrency_1"] or not server["decode_concurrency_1"]:
         raise RuntimeError("8901 concurrency identity is not the frozen single-run configuration")
@@ -250,7 +271,13 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
         "browser_wait_scope_url": {"scope_ref", "operator", "value", "timeout_ms", "interval_ms"},
         "browser_wait_scope_ready": {"scope_ref", "state", "timeout_ms", "interval_ms"},
         "browser_wait_scope_count": {"scope_ref", "operator", "count", "timeout_ms", "interval_ms"},
-        "browser_wait_object_state": {"object_ref", "property", "value", "timeout_ms", "interval_ms"},
+        "browser_wait_object_state": {
+            "object_ref",
+            "property",
+            "value",
+            "timeout_ms",
+            "interval_ms",
+        },
         "browser_wait_object_text": {
             "object_ref",
             "property",
@@ -290,10 +317,13 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
     source_paths = [
         HERE / "protocol.py",
         HERE / "PROTOCOL.v0.6-A2.md",
+        HERE / "PROTOCOL.v0.8-REPEAT-DIAGNOSTIC.md",
         HERE / "PLAN.v0.6-A2.json",
         HERE / "fixture_server.py",
         HERE / "worker.py",
         HERE / "run_a2.py",
+        HERE / "observations.py",
+        HERE / "audit_observations.py",
         REPO / "src/llm_loop/tools/builtin/browser_semantic_execute.py",
         REPO / "src/llm_loop/tools/builtin/browser_perceive.py",
         REPO / "src/llm_loop/tools/builtin/browser_wait.py",
@@ -308,6 +338,9 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
     return {
         "schema": SCHEMA + ".execution_manifest",
         "git_head": _git("rev-parse", "HEAD"),
+        "runtime_git_head": runtime_head,
+        "runtime_source_sha256": runtime_hashes,
+        "experiment_profile": dict(PROFILE),
         "tracked_dirty": False,
         "seed": SEED,
         "plan_sha256": current_plan_sha,
@@ -325,14 +358,12 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
             "v05_fixture_identity_preserved": True,
             "v05_prompt_identity_preserved": True,
         },
-        "source_sha256": {
-            str(path.relative_to(REPO)): _sha_file(path) for path in source_paths
-        },
+        "source_sha256": {str(path.relative_to(REPO)): _sha_file(path) for path in source_paths},
         "task_prompt_sha256": current_prompt_sha,
         "runtime": {
             "thinking_mode": "on",
             "reasoning_effort": "medium",
-            "max_iterations": 12,
+            "max_iterations": PROFILE["max_iterations"],
             "llm_timeout_s": 1800,
             "worker_timeout_s": 240,
             "max_tokens": 16000,
@@ -408,6 +439,9 @@ def run_row(row: dict[str, Any], root: Path, manifest: dict[str, Any]) -> dict[s
         raise RuntimeError("git identity drift before measured run")
     if _model_server_fact() != manifest["model_server"]:
         raise RuntimeError("8901 model server identity/config drift before measured run")
+    for path, expected in manifest["runtime_source_sha256"].items():
+        if _sha_file(RUNTIME_REPO / path) != expected:
+            raise RuntimeError(f"runtime source drift: {path}")
     _wait_idle_or_fail()
     task_id = str(row["task_id"])
     arm = str(row["arm"])
@@ -423,6 +457,19 @@ def run_row(row: dict[str, Any], root: Path, manifest: dict[str, Any]) -> dict[s
     oracle: dict[str, Any] = {"pass": False, "missing": True}
     try:
         with FixtureServer(task_id) as fixture:
+            original_record = fixture.state.record
+
+            def record_with_observation(event: dict[str, Any]) -> None:
+                original_record(event)
+                observation = {
+                    "round": declared_round(run_dir),
+                    "oracle": judge(task_id, fixture.state.snapshot()),
+                }
+                with (run_dir / "oracle-observations.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(observation, sort_keys=True) + "\n")
+                    handle.flush()
+
+            fixture.state.record = record_with_observation
             env = _base_env(run_dir)
             chrome_proc, debug_base, target_id, before_security = _start_smc_chrome(run_dir)
             env["LFL_BROWSER_PERCEPTION_CDP_URL"] = debug_base
@@ -445,13 +492,12 @@ def run_row(row: dict[str, Any], root: Path, manifest: dict[str, Any]) -> dict[s
                     env=env,
                     capture_output=True,
                     text=True,
-                    timeout=240,
+                    timeout=PROFILE["worker_timeout_s"],
                 )
                 worker_rc = proc.returncode
             except subprocess.TimeoutExpired:
                 worker_rc = None
-            if result_path.is_file():
-                worker_payload = json.loads(result_path.read_text(encoding="utf-8"))
+            worker_payload = finalize_worker(run_dir, timed_out=worker_rc is None)
             oracle = judge(task_id, fixture.state.snapshot())
     finally:
         _stop_process(chrome_proc)
@@ -475,12 +521,10 @@ def run_row(row: dict[str, Any], root: Path, manifest: dict[str, Any]) -> dict[s
         "status": status,
         "oracle": oracle,
         "worker_rc": worker_rc,
-        "worker": {
-            key: value for key, value in worker_payload.items() if key != "surface"
-        }
+        "worker": {key: value for key, value in worker_payload.items() if key != "surface"}
         | {
             "surface_sha256": surface.get("sha256"),
-            "surface_exact": bool(surface.get("exact")),
+            "surface_exact": surface.get("exact") if surface else None,
             "surface_json_chars": surface.get("json_chars"),
         },
         "security_agent_spawned": security_agent_spawned,
@@ -489,10 +533,15 @@ def run_row(row: dict[str, Any], root: Path, manifest: dict[str, Any]) -> dict[s
 
 
 def main() -> int:
+    global RUNTIME_REPO, PROFILE
     parser = argparse.ArgumentParser()
     parser.add_argument("--workdir", required=True)
     parser.add_argument("--max-new-rows", type=int, default=1)
+    parser.add_argument("--runtime-root", type=Path, default=REPO)
+    parser.add_argument("--profile", choices=["repeat12", "diagnostic16"], default="repeat12")
     args = parser.parse_args()
+    RUNTIME_REPO = args.runtime_root.resolve()
+    PROFILE = run_profile(args.profile)
     if args.max_new_rows < 0:
         parser.error("--max-new-rows must be >= 0")
     root = Path(args.workdir).resolve()
@@ -546,6 +595,24 @@ def main() -> int:
         )
     if len(existing_rows) == len(plan):
         gate = smoke_gate(existing_rows)
+        if not PROFILE["qualification_eligible"]:
+            atomic_json(
+                root / "diagnostic-summary.json",
+                {
+                    "qualification_eligible": False,
+                    "profile": dict(PROFILE),
+                    "task_pass": sum(bool(row["oracle"].get("pass")) for row in existing_rows),
+                    "timeout_rows": sum(row["status"] == "TIMEOUT" for row in existing_rows),
+                    "rows": [
+                        {"index": row["index"], "status": row["status"]} for row in existing_rows
+                    ],
+                },
+            )
+            print(
+                json.dumps({"diagnostic_complete": True, "qualification_eligible": False}),
+                flush=True,
+            )
+            return 0
         (root / "smoke-gate.json").write_text(
             json.dumps(gate, sort_keys=True, indent=2) + "\n", encoding="utf-8"
         )

@@ -7,6 +7,7 @@ import argparse
 import collections
 import hashlib
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -15,8 +16,11 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(REPO))
 
 from protocol import ARMS, MODEL_REF  # noqa: E402
+
+from evals.browser_smc_semantic_execute_recovery_smoke.observations import atomic_json  # noqa: E402
 
 _TYPED_WAIT_TOOLS = {
     "browser_wait_scope_url",
@@ -66,9 +70,7 @@ _WAIT_REQUIRED = {
 
 
 def _sha(value: Any) -> str:
-    raw = json.dumps(
-        value, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":")
-    )
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -347,8 +349,7 @@ def _receipt_facts(data_dir: Path) -> dict[str, Any]:
         "automatic_retry_true_count": retry_true,
         "ok_count": sum(row["status"] == "ok" for row in terminal),
         "object_ok_count": sum(
-            row["status"] == "ok"
-            and row["verb"] in {"click", "fill", "select", "scroll"}
+            row["status"] == "ok" and row["verb"] in {"click", "fill", "select", "scroll"}
             for row in terminal
         ),
         "navigate_ok_count": sum(
@@ -381,9 +382,7 @@ def _surface(engine: Any, arm: str) -> dict[str, Any]:
     }
     target_ref_desc = str(
         (
-            ((mutation_schema.get("parameters") or {}).get("properties") or {}).get(
-                "target_ref"
-            )
+            ((mutation_schema.get("parameters") or {}).get("properties") or {}).get("target_ref")
             or {}
         ).get("description")
         or ""
@@ -406,35 +405,41 @@ def _surface(engine: Any, arm: str) -> dict[str, Any]:
             name: (params.get("properties") or {}).get("interval_ms")
             for name, params in wait_params.items()
         },
-        "ready_state_schema": (
-            wait_params["browser_wait_scope_ready"].get("properties") or {}
-        ).get("state"),
+        "ready_state_schema": (wait_params["browser_wait_scope_ready"].get("properties") or {}).get(
+            "state"
+        ),
         "object_state_value_schema": (
             wait_params["browser_wait_object_state"].get("properties") or {}
         ).get("value"),
         "object_state_properties": list(
             (
-                (wait_params["browser_wait_object_state"].get("properties") or {}).get(
-                    "property"
-                )
+                (wait_params["browser_wait_object_state"].get("properties") or {}).get("property")
                 or {}
             ).get("enum")
             or []
         ),
-        "scope_count_schema": (
-            wait_params["browser_wait_scope_count"].get("properties") or {}
-        ).get("count"),
+        "scope_count_schema": (wait_params["browser_wait_scope_count"].get("properties") or {}).get(
+            "count"
+        ),
         "old_generic_wait_present": bool(set(names) & _OLD_GENERIC_WAIT_TOOLS),
         "semantic_usage_visible": (
             mutation_tool == "browser_semantic_execute"
             and all(
                 marker in mutation_desc
                 for marker in (
-                    "snapshot", "GroundingRef", "target_ref", "resource_ref", "ActionReceipt",
-                    "没有 snapshot/ref 不要调用", "不要把 URL 当 target_ref",
+                    "snapshot",
+                    "GroundingRef",
+                    "target_ref",
+                    "resource_ref",
+                    "ActionReceipt",
+                    "没有 snapshot/ref 不要调用",
+                    "不要把 URL 当 target_ref",
                 )
             )
-            and all(marker in target_ref_desc for marker in ("先 snapshot", "resource_ref", "不要把 URL"))
+            and all(
+                marker in target_ref_desc
+                for marker in ("先 snapshot", "resource_ref", "不要把 URL")
+            )
         ),
     }
 
@@ -447,9 +452,17 @@ def main() -> int:
     parser.add_argument("--surface-only", action="store_true")
     args = parser.parse_args()
 
+    import llm_loop
     from llm_loop.config import load_settings
     from llm_loop.core.trace_leak.ingress_token import issue_ingress
     from llm_loop.factory import build_engine
+
+    expected_root = os.environ.get("SMC_EXPECTED_RUNTIME_ROOT")
+    if (
+        expected_root
+        and Path(llm_loop.__file__).resolve().parents[2] != Path(expected_root).resolve()
+    ):
+        raise RuntimeError("worker imported a different runtime source root")
 
     settings = load_settings()
     engine = build_engine(settings)
@@ -458,10 +471,12 @@ def main() -> int:
         "arm": args.arm,
         "configured_model": MODEL_REF,
         "mutation_tool": ARMS[args.arm]["mutation_tool"],
+        "resolved_max_iterations": settings.max_iterations,
     }
     try:
         surface = _surface(engine, args.arm)
         payload["surface"] = surface
+        atomic_json(Path(args.result_json).with_name("worker-startup.json"), payload)
         if args.surface_only:
             payload["status"] = "SURFACE_ONLY"
         else:
@@ -561,10 +576,7 @@ def main() -> int:
 
     out = Path(args.result_json)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    atomic_json(out, payload)
     return 0 if payload.get("status") in {"RUN_OK", "SURFACE_ONLY"} else 1
 
 
