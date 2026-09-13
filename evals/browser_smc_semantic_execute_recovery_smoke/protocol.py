@@ -9,9 +9,12 @@ from typing import Any
 
 SCHEMA = "smc.browser_semantic_execute_typed_wait_a2.v0.6"
 SEED = 2026091311
-# Same weight file as v0.7; the 8901 registry name changed after a service restart
-# (v0.7 ran as cognilocal/ornith-1.5-35b-a3b-mlx). Recorded as env fact, not protocol change.
-MODEL_REF = "ornith-ai/Ornith-1.5-35B-A3B-MLX"
+# MODEL_REF must equal the name the provider reports in responses (worker model_used check).
+# v0.7 ran as cognilocal/ornith-1.5-35b-a3b-mlx and the 8901 chat/completions responses still
+# report that name even though /v1/models registers the alias ornith-ai/Ornith-1.5-35B-A3B-MLX.
+# Using the registry alias made every v0.8-FC1 row gate-INVALID; reverting to the self-consistent
+# v0.7 name. Same weight file, same service (pid checked); env fact, not protocol change.
+MODEL_REF = "cognilocal/ornith-1.5-35b-a3b-mlx"
 
 SHARED_TOOLS = [
     "browser_perceive",
