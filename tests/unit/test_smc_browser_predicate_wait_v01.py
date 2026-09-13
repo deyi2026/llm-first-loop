@@ -8,8 +8,13 @@ from typing import Any
 
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.browser.predicate import PREDICATE_SPECS, predicate_parameter_schema
-from llm_loop.tools.builtin import browser_perceive as browser_perceive_module
+from llm_loop.tools.builtin import browser_wait as browser_wait_module
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
+from llm_loop.tools.builtin.browser_wait import (
+    BrowserPredicateWaiter,
+    BrowserWaitObjectTool,
+    BrowserWaitScopeTool,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = json.loads(
@@ -121,78 +126,68 @@ class _SequenceBackend:
         return deepcopy(item)
 
 
-def test_model_surface_adds_only_structured_readonly_wait_contract(tmp_path: Path) -> None:
+class _CanonicalWaitTool:
+    """Test-only adapter for the frozen canonical Predicate polling semantics."""
+
+    def __init__(
+        self,
+        *,
+        adapter: BrowserPerceptionAdapter,
+        backend: _SequenceBackend | None,
+        session_id_getter: Any,
+    ) -> None:
+        self._waiter = BrowserPredicateWaiter(adapter=adapter, backend=backend)
+        self._session_id_getter = session_id_getter
+
+    def execute(self, **kwargs: Any):
+        assert kwargs.pop("action", None) == "wait"
+        return self._waiter.wait(
+            str(self._session_id_getter() or ""),
+            predicate=kwargs.get("predicate"),
+            timeout_ms=kwargs.get("timeout_ms"),
+            interval_ms=kwargs.get("interval_ms"),
+            tool_name="browser_wait_canonical_test",
+        )
+
+
+def test_model_surface_splits_readonly_wait_from_general_perception(tmp_path: Path) -> None:
     tool = BrowserPerceiveTool(
         adapter=_adapter(tmp_path),
         backend=None,
         session_id_getter=lambda: "s1",
     )
     props = tool.parameters["properties"]
+    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff"]
+    assert set(props) == {"action", "projection_limit", "grounding_ref", "from_version", "to_version"}
 
-    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
-    assert set(props) == {
-        "action",
-        "projection_limit",
-        "grounding_ref",
-        "from_version",
-        "to_version",
-        "predicate",
-        "timeout_ms",
-        "interval_ms",
+    scope = BrowserWaitScopeTool.parameters
+    obj = BrowserWaitObjectTool.parameters
+    assert set(scope["properties"]["property"]["enum"]) == {
+        name for name, spec in PREDICATE_SPECS.items() if spec["target_kind"] == "scope"
     }
-    predicate_schema = props["predicate"]
-    assert predicate_schema["type"] == "object"
-    assert predicate_schema["additionalProperties"] is False
-    assert set(predicate_schema["required"]) == {
-        "schema",
-        "domain",
-        "scope_ref",
-        "target",
-        "property",
-        "operator",
-        "value",
+    assert set(obj["properties"]["property"]["enum"]) == {
+        name for name, spec in PREDICATE_SPECS.items() if spec["target_kind"] == "semantic_object"
     }
-    assert set(predicate_schema["properties"]["property"]["enum"]) == set(
-        PROFILE["predicate_vocabulary"]["properties"]
-    )
-    assert "assert" not in props["action"]["enum"]
-    for forbidden in ("click", "fill", "select", "navigate", "scroll", "script"):
-        assert forbidden not in props["action"]["enum"]
 
 
-def test_wait_first_call_contract_survives_compact_and_lazy_surfaces(tmp_path: Path) -> None:
+def test_wait_first_call_contract_survives_compact_and_lazy_typed_surfaces(tmp_path: Path) -> None:
     from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS, ToolRegistry
 
-    compact = _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"]
-    for marker in (
-        "wait 仅用于真实时间条件",
-        "scope predicate",
-        "target=scope_ref",
-        "interval_ms=1..5000",
-    ):
-        assert marker in compact
+    assert "wait" not in BrowserPerceiveTool.parameters["properties"]["action"]["enum"]
+    assert "target=scope_ref" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_scope"]
+    assert "GroundingRef" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_object"]
 
-    tool = BrowserPerceiveTool(
-        adapter=_adapter(tmp_path),
-        backend=None,
-        session_id_getter=lambda: "s1",
-    )
+    adapter = _adapter(tmp_path)
     reg = ToolRegistry()
-    reg.register(tool)
-    lazy = reg.schemas(lazy=True)[0]
-    predicate_desc = lazy["parameters"]["properties"]["predicate"]["description"]
-    interval_desc = lazy["parameters"]["properties"]["interval_ms"]["description"]
-    assert "scope predicate" in predicate_desc
-    assert "target=scope_ref" in predicate_desc
-    assert "exact scope_ref" in predicate_desc
-    assert "1..5000" in interval_desc
-    assert "整数" in interval_desc
-
-    full = tool.description
-    assert "wait 仅用于真实时间条件" in full
-    assert "scope predicate" in full
-    assert "target=scope_ref" in full
-
+    reg.register(BrowserWaitScopeTool(adapter=adapter, backend=None, session_id_getter=lambda: "s1"))
+    reg.register(BrowserWaitObjectTool(adapter=adapter, backend=None, session_id_getter=lambda: "s1"))
+    lazy = {row["name"]: row for row in reg.schemas(lazy=True)}
+    assert lazy["browser_wait_scope"]["parameters"]["properties"]["interval_ms"] == {
+        "type": "integer", "minimum": 1, "maximum": 5000
+    }
+    assert lazy["browser_wait_object"]["parameters"]["properties"]["interval_ms"] == {
+        "type": "integer", "minimum": 1, "maximum": 5000
+    }
 
 def test_runtime_predicate_vocabulary_matches_frozen_bspec_profile_and_schema() -> None:
     expected = PROFILE["predicate_vocabulary"]["properties"]
@@ -225,7 +220,7 @@ def test_predicate_runtime_rejects_unknown_or_mistyped_contract_before_capture(
 ) -> None:
     adapter = _adapter(tmp_path)
     backend = _SequenceBackend([FIXTURES["base"]])
-    tool = BrowserPerceiveTool(
+    tool = _CanonicalWaitTool(
         adapter=adapter,
         backend=backend,
         session_id_getter=lambda: "s1",
@@ -248,7 +243,7 @@ def test_predicate_runtime_rejects_unknown_or_mistyped_contract_before_capture(
 def test_integer_predicate_does_not_accept_boolean_value(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)
     backend = _SequenceBackend([FIXTURES["base"]])
-    tool = BrowserPerceiveTool(
+    tool = _CanonicalWaitTool(
         adapter=adapter,
         backend=backend,
         session_id_getter=lambda: "s1",
@@ -474,7 +469,7 @@ def test_wait_polls_observation_until_satisfied_and_returns_bspec_predicate_resu
         value=True,
     )
     backend = _SequenceBackend([_disabled_submit_fixture(), FIXTURES["base"]])
-    tool = BrowserPerceiveTool(
+    tool = _CanonicalWaitTool(
         adapter=adapter,
         backend=backend,
         session_id_getter=lambda: "s1",
@@ -508,7 +503,7 @@ def test_wait_timeout_unsatisfied_is_successful_observation_not_tool_failure(tmp
         operator="eq",
         value="Never this name",
     )
-    tool = BrowserPerceiveTool(
+    tool = _CanonicalWaitTool(
         adapter=adapter,
         backend=_SequenceBackend([FIXTURES["base"]]),
         session_id_getter=lambda: "s1",
@@ -535,7 +530,7 @@ def test_wait_observer_error_is_counted_and_later_valid_sample_can_recover(tmp_p
         value=True,
     )
     backend = _SequenceBackend([RuntimeError("synthetic observer outage"), FIXTURES["base"]])
-    tool = BrowserPerceiveTool(
+    tool = _CanonicalWaitTool(
         adapter=adapter,
         backend=backend,
         session_id_getter=lambda: "s1",
@@ -562,7 +557,7 @@ def test_wait_with_only_observer_failures_returns_indeterminate_not_error(tmp_pa
         value=True,
     )
     backend = _SequenceBackend([RuntimeError("synthetic observer outage")])
-    tool = BrowserPerceiveTool(
+    tool = _CanonicalWaitTool(
         adapter=adapter,
         backend=backend,
         session_id_getter=lambda: "s1",
@@ -588,7 +583,7 @@ def test_wait_requires_readonly_backend_and_never_falls_back_to_mutation(tmp_pat
         operator="eq",
         value=True,
     )
-    tool = BrowserPerceiveTool(
+    tool = _CanonicalWaitTool(
         adapter=adapter,
         backend=None,
         session_id_getter=lambda: "s1",
@@ -613,7 +608,7 @@ def test_wait_bounds_are_rejected_not_silently_clamped(tmp_path: Path) -> None:
         value=True,
     )
     backend = _SequenceBackend([FIXTURES["base"]])
-    tool = BrowserPerceiveTool(
+    tool = _CanonicalWaitTool(
         adapter=adapter,
         backend=backend,
         session_id_getter=lambda: "s1",
@@ -645,19 +640,19 @@ def test_wait_never_starts_a_poll_sample_at_or_after_deadline(
         value=True,
     )
     backend = _SequenceBackend([_disabled_submit_fixture(), FIXTURES["base"]])
-    tool = BrowserPerceiveTool(
+    tool = _CanonicalWaitTool(
         adapter=adapter,
         backend=backend,
         session_id_getter=lambda: "s1",
     )
     clock = {"now": 0.0}
 
-    monkeypatch.setattr(browser_perceive_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(browser_wait_module.time, "monotonic", lambda: clock["now"])
 
     def fake_sleep(seconds: float) -> None:
         clock["now"] += seconds
 
-    monkeypatch.setattr(browser_perceive_module.time, "sleep", fake_sleep)
+    monkeypatch.setattr(browser_wait_module.time, "sleep", fake_sleep)
 
     result = tool.execute(action="wait", predicate=predicate, timeout_ms=10, interval_ms=10)
 

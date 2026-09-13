@@ -67,16 +67,13 @@ def test_model_surface_is_read_only_and_has_no_backend_locator_parameters(tmp_pa
 
     assert tool.name == "browser_perceive"
     props = tool.parameters["properties"]
-    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
+    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff"]
     assert set(props) == {
         "action",
         "projection_limit",
         "grounding_ref",
         "from_version",
         "to_version",
-        "predicate",
-        "timeout_ms",
-        "interval_ms",
     }
     model_surface_tokens = {str(key).lower() for key in props}
     model_surface_tokens.update(str(value).lower() for value in props["action"]["enum"])

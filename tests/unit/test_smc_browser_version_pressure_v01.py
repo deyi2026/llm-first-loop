@@ -412,7 +412,7 @@ def test_version_assessment_does_not_expand_model_surface(tmp_path: Path) -> Non
         session_id_getter=lambda: "s1",
     )
     props = tool.parameters["properties"]
-    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
+    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff"]
     assert "expected_version" not in props
     assert "observed_version" not in props
     assert "version_scope" not in props

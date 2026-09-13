@@ -166,10 +166,14 @@ def test_bqual_b0_b13_each_have_deterministic_implementation_evidence() -> None:
 
 def test_bqual_lazy_provider_surface_describes_full_qualified_browser_contract() -> None:
     perceive = _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"]
-    for action in ("snapshot", "hydrate", "diff", "wait"):
+    for action in ("snapshot", "hydrate", "diff"):
         assert action in perceive
     for boundary in ("不导航", "不执行 mutation", "selector"):
         assert boundary in perceive
+    assert "browser_wait_scope" in perceive
+    assert "browser_wait_object" in perceive
+    assert "target=scope_ref" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_scope"]
+    assert "GroundingRef" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_object"]
 
     mutate = _COMPACT_TOOL_DESCRIPTIONS["browser_action"]
     for verb in ("click", "fill", "select", "navigate", "scroll"):
