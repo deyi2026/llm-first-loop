@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.13 ｜ **Status**: Open-source framework-ization (Track B) in progress ｜ **中文版**: [README.md](README.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.14 ｜ **Status**: Open-source framework-ization (Track B) in progress ｜ **中文版**: [README.md](README.md)
 
 The LLM is the core, and every action revolves around it. Architecture core = **message in → understand → act → answer honestly → remember**.
 

@@ -2,6 +2,15 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.14 — Runtime integrity and truthful development build identity（2026-09-13）
+
+- **Release / build 身份分层**：正式语义版本继续由 `pyproject.toml` / Web `SERVICE_VERSION` / README / CHANGELOG / release tag 一致性约束；未打 tag 的开发构建不再冒充最后一个 release，启动 manifest 机械记录 expected/nearest release tag、距最近 tag 的 commit 数、Git SHA、tracked dirty 与 exact-release 事实，Web `/health` / `/api/info` 和 V2 顶栏/设置页显示真实 build identity。
+- **会话与模型防串线**：Web resume 绑定精确 run generation；同 run 路由 registry 以 routing epoch 冻结，显式模型切换仍由模型拥有；provider-native 隐藏 replay 只在 exact provider/model/generation contract 下复用；运行时增加薄 `Run Integrity Receipt` 汇总既有机械身份事实，不根据回答文本、system fingerprint 或祖先历史做语义污染裁决。
+- **Web 长会话连续性**：EventStore 热读缓存和前端 single-flight/hidden-tab 抑制消除大事件日志轮询风暴；active-run reasoning/text replay 改为 lossless bounded-spool + 相邻纯流片段机械合并，重连保留完整推理进展而不把 tool/terminal 事件混写。
+- **Provider / Tool 机械契约**：模型 ID 支持 HF/本地路径/注册短名的唯一归一；lazy schema 保留被真实 first-call 失败证明必要的参数上限/状态机事实；工具失败回执只提供当前能力、Schema、PATH、权限等机械事实，不替模型指定语义修复策略。
+- **Browser Semantic Operations 底座**：补齐 Browser Phase 1 perception、SemanticDiff、typed predicate wait、version pressure、mutation receipt 与 bounded semantic operation 的机械边界；否定推断要求完整 coverage，snapshot-local identity 不伪装稳定世界对象，wait timeout 作为 observation 而非自动失败/重试。
+- **版本边界**：`v0.6.13` tag 保持不可移动；本版本建立后续 patch 边界。候选在正式 tag 前仍显示 `v0.6.14-dev.<distance>+g<sha>`，只有 exact `v0.6.14` tag 且 tracked source clean 时才显示纯 `v0.6.14`。
+
 ## v0.6.13 — Web reviewability and release single-writer boundary（2026-09-12）
 
 - **Release 单写者**：退役会在 main push 时改写既有 draft 的 Release Drafter；tag 触发的 `release.yml` 成为唯一 GitHub Release writer，并继续使用 GitHub 自动生成发布说明。
