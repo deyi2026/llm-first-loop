@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+"""One fresh LFL semantic_execute confirmatory run."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent.parent
+sys.path.insert(0, str(HERE))
+
+from protocol import ARMS, MODEL_REF  # noqa: E402
+
+
+def _sha(value: Any) -> str:
+    raw = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":")
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _safe_error(exc: Exception) -> str:
+    return str(exc).replace(str(Path.cwd()), "<run_dir>").replace(str(REPO), "<repo>")[:500]
+
+
+def _parse_args(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str):
+        try:
+            value = json.loads(raw)
+            return dict(value) if isinstance(value, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _target_ref_kind(value: str) -> str:
+    if value.endswith("/resource/page"):
+        return "resource"
+    if "/object/" in value:
+        return "object"
+    return "other"
+
+
+def _safe_tool_trace(
+    trace: list[dict[str, Any]], arm: str
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    rows: list[dict[str, Any]] = []
+    counts = {
+        "smc_perceive": 0,
+        "semantic_execute": 0,
+        "mutation_failures": 0,
+        "get_tool_schema": 0,
+    }
+    mutation_tool = str(ARMS[arm]["mutation_tool"])
+    for index, call in enumerate(trace, start=1):
+        name = str(call.get("name") or "")
+        args = _parse_args(call.get("arguments"))
+        status = str(call.get("status") or "")
+        row: dict[str, Any] = {
+            "index": index,
+            "name": name,
+            "status": status,
+            "arg_keys": sorted(args),
+            "args_sha256": _sha(args),
+            "args_chars": len(json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)),
+        }
+        if name == "browser_perceive":
+            counts["smc_perceive"] += 1
+            row["action"] = str(args.get("action") or "")
+        elif name == "browser_semantic_execute":
+            counts["semantic_execute"] += 1
+            row["verb"] = str(args.get("verb") or "")
+            row["target_ref_kind"] = _target_ref_kind(str(args.get("target_ref") or ""))
+            verb_args = args.get("args")
+            row["verb_arg_keys"] = sorted(verb_args) if isinstance(verb_args, dict) else []
+        elif name == "get_tool_schema":
+            counts["get_tool_schema"] += 1
+        if name == mutation_tool and status != "success":
+            counts["mutation_failures"] += 1
+        rows.append(row)
+    return rows, counts
+
+
+def _receipt_facts(data_dir: Path) -> dict[str, Any]:
+    root = data_dir / "browser_action"
+    terminal: list[dict[str, Any]] = []
+    retry_true = 0
+    scope_blockers = 0
+    reason_counts: dict[str, int] = {}
+    if root.is_dir():
+        for path in root.rglob("receipts.jsonl"):
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                try:
+                    doc = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                retry = doc.get("retry") or {}
+                completeness = doc.get("completeness") or {}
+                reasons = [str(reason) for reason in (completeness.get("reasons") or [])]
+                for reason in reasons:
+                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                scope_blockers += sum(
+                    "version_scope_mismatch" in reason
+                    or "different_snapshot_same_generation" in reason
+                    or "expected_version_unavailable" in reason
+                    or "resource_scope_mismatch" in reason
+                    for reason in reasons
+                )
+                retry_true += int(retry.get("automatic_retry_performed") is True)
+                if doc.get("status") in {"ok", "failed", "rejected"}:
+                    terminal.append(
+                        {
+                            "status": doc.get("status"),
+                            "verb": doc.get("verb"),
+                            "completeness_reasons": reasons,
+                        }
+                    )
+    return {
+        "terminal_count": len(terminal),
+        "automatic_retry_true_count": retry_true,
+        "ok_count": sum(row["status"] == "ok" for row in terminal),
+        "object_ok_count": sum(
+            row["status"] == "ok"
+            and row["verb"] in {"click", "fill", "select", "scroll"}
+            for row in terminal
+        ),
+        "navigate_ok_count": sum(
+            row["status"] == "ok" and row["verb"] == "navigate" for row in terminal
+        ),
+        "failed_count": sum(row["status"] == "failed" for row in terminal),
+        "rejected_count": sum(row["status"] == "rejected" for row in terminal),
+        "scope_blocker_count": scope_blockers,
+        "reason_counts": dict(sorted(reason_counts.items())),
+    }
+
+
+def _surface(engine: Any, arm: str) -> dict[str, Any]:
+    allowed = set(ARMS[arm]["allowed_tools"])
+    for name in list(engine.registry.names()):
+        if name not in allowed:
+            engine.registry.unregister(name)
+    names = engine.registry.names()
+    schemas = engine.registry.schemas(lazy=True)
+    tool_sha256 = {str(row["name"]): _sha(row) for row in schemas}
+    mutation_tool = str(ARMS[arm]["mutation_tool"])
+    mutation_schema = next(row for row in schemas if row.get("name") == mutation_tool)
+    mutation_props = sorted((mutation_schema.get("parameters") or {}).get("properties") or {})
+    mutation_desc = str(mutation_schema.get("description") or "")
+    perceive_schema = next(row for row in schemas if row.get("name") == "browser_perceive")
+    perceive_desc = str(perceive_schema.get("description") or "")
+    perceive_props = (perceive_schema.get("parameters") or {}).get("properties") or {}
+    predicate_desc = str((perceive_props.get("predicate") or {}).get("description") or "")
+    interval_desc = str((perceive_props.get("interval_ms") or {}).get("description") or "")
+    target_ref_desc = str((((mutation_schema.get("parameters") or {}).get("properties") or {}).get("target_ref") or {}).get("description") or "")
+    return {
+        "names": names,
+        "exact": set(names) == allowed,
+        "sha256": _sha(schemas),
+        "json_chars": len(json.dumps(schemas, ensure_ascii=False, sort_keys=True)),
+        "tool_sha256": tool_sha256,
+        "mutation_tool": mutation_tool,
+        "mutation_parameter_names": mutation_props,
+        "mutation_description_sha256": hashlib.sha256(mutation_desc.encode("utf-8")).hexdigest(),
+        "perceive_fcr_visible": all(
+            marker in perceive_desc
+            for marker in ("wait 仅用于真实时间条件", "target=scope_ref", "interval_ms=1..5000")
+        ) and all(
+            marker in predicate_desc
+            for marker in ("scope predicate", "target=scope_ref", "exact scope_ref")
+        ) and "1..5000" in interval_desc,
+        "semantic_usage_visible": (
+            mutation_tool == "browser_semantic_execute"
+            and all(
+                marker in mutation_desc
+                for marker in (
+                    "snapshot", "GroundingRef", "target_ref", "resource_ref", "ActionReceipt",
+                    "没有 snapshot/ref 不要调用", "不要把 URL 当 target_ref",
+                )
+            )
+            and all(marker in target_ref_desc for marker in ("先 snapshot", "resource_ref", "不要把 URL"))
+        ),
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--arm", choices=sorted(ARMS), required=True)
+    parser.add_argument("--prompt", default="")
+    parser.add_argument("--result-json", required=True)
+    parser.add_argument("--surface-only", action="store_true")
+    args = parser.parse_args()
+
+    from llm_loop.config import load_settings
+    from llm_loop.core.trace_leak.ingress_token import issue_ingress
+    from llm_loop.factory import build_engine
+
+    settings = load_settings()
+    engine = build_engine(settings)
+    started = time.monotonic()
+    payload: dict[str, Any] = {
+        "arm": args.arm,
+        "configured_model": MODEL_REF,
+        "mutation_tool": ARMS[args.arm]["mutation_tool"],
+    }
+    try:
+        surface = _surface(engine, args.arm)
+        payload["surface"] = surface
+        if args.surface_only:
+            payload["status"] = "SURFACE_ONLY"
+        else:
+            sid = engine.session.create()
+            result = engine.run(sid, args.prompt, ingress=issue_ingress("cli"))
+            trace, counts = _safe_tool_trace(list(result.tool_calls or []), args.arm)
+            receipts = _receipt_facts(Path(settings.data_dir))
+            mutation_count = counts["semantic_execute"]
+            invalid_target_ref_failure_count = sum(
+                row.get("name") == "browser_semantic_execute"
+                and row.get("status") != "success"
+                and row.get("target_ref_kind") == "other"
+                for row in trace
+            )
+            wait_contract_failure_count = sum(
+                row.get("name") == "browser_perceive"
+                and row.get("action") == "wait"
+                and row.get("status") != "success"
+                for row in trace
+            )
+            payload.update(
+                {
+                    "status": "RUN_OK",
+                    "session_sha256": hashlib.sha256(sid.encode("utf-8")).hexdigest(),
+                    "rounds": result.rounds,
+                    "tool_calls": trace,
+                    "tool_call_count": len(trace),
+                    "tokens_in": result.tokens_in,
+                    "tokens_out": result.tokens_out,
+                    "cache_hit_tokens": result.tokens_cache_hit,
+                    "truncated": bool(result.truncated),
+                    "model_used": result.model_used,
+                    "fallback_used": bool(result.fallback_receipt),
+                    "final_answer_chars": len(result.final_answer or ""),
+                    "final_answer_sha256": hashlib.sha256(
+                        (result.final_answer or "").encode("utf-8")
+                    ).hexdigest(),
+                    "smc_perceive_count": counts["smc_perceive"],
+                    "mutation_call_count": mutation_count,
+                    "mutation_failure_call_count": counts["mutation_failures"],
+                    "get_tool_schema_count": counts["get_tool_schema"],
+                    "smc_adopted": counts["smc_perceive"] > 0 and mutation_count > 0,
+                    "invalid_target_ref_failure_count": invalid_target_ref_failure_count,
+                    "wait_contract_failure_count": wait_contract_failure_count,
+                    "receipt_facts": receipts,
+                }
+            )
+    except Exception as exc:  # noqa: BLE001
+        payload.update(
+            {
+                "status": "WORKER_ERROR",
+                "error_type": type(exc).__name__,
+                "error": _safe_error(exc),
+            }
+        )
+    finally:
+        payload["wall_s"] = round(time.monotonic() - started, 3)
+        engine.close()
+
+    out = Path(args.result_json)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return 0 if payload.get("status") in {"RUN_OK", "SURFACE_ONLY"} else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
