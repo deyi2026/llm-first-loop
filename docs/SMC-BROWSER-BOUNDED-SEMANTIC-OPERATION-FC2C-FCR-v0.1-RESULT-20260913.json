@@ -1,0 +1,167 @@
+{
+  "aggregate": {
+    "cache_hit_tokens": 6258,
+    "tokens_in": 9440,
+    "tokens_out": 810,
+    "tool_execution_total": 0,
+    "wall_s": 29.516
+  },
+  "evidence_hashes": {
+    "execution-manifest.json": {
+      "bytes": 3067,
+      "sha256": "dc632bd9dd211251a276a4638ac096da4629521c878155ee0e053b0852e91721"
+    },
+    "fcr-gate.json": {
+      "bytes": 509,
+      "sha256": "3e98f35af10f77e11c3cae70386cb166991242ee2d97bfe8116f5f4a2b57e867"
+    },
+    "plan.json": {
+      "bytes": 965,
+      "sha256": "6a1ff04233e5af4d8893ea6c1fcd7c4d37f7c7845097825340ddc62dd2a44dfe"
+    },
+    "results.jsonl": {
+      "bytes": 6126,
+      "sha256": "909f4f1dc90518484b97afc0b9610649f266485adb3d0882104a1d18049882a2"
+    }
+  },
+  "experiment_commit": "d13e07aad5baf389805092ed94385ab00b6bfb5c",
+  "gate": {
+    "browser_runtime_in_gate": false,
+    "complete_rows": 6,
+    "expected_rows": 6,
+    "first_call_pass": 4,
+    "first_call_pass_required": 6,
+    "pass": false,
+    "per_task_pass": {
+      "fill_input": 2,
+      "navigate_page": 2,
+      "wait_button": 0
+    },
+    "per_task_pass_required": 2,
+    "schema": "smc.browser_bounded_semantic_operation_fc2c.fcr.v0.1.gate",
+    "status_counts": {
+      "FCR_FAIL": 2,
+      "PASS": 4
+    },
+    "task_completion_in_gate": false,
+    "tool_execution_required": 0,
+    "tool_execution_total": 0
+  },
+  "implementation_commit": "c6c3f612ae634d19d333ef047ecbd9109f9f8453",
+  "not_claimed": [
+    "browser_task_completion",
+    "browser_runtime_execution",
+    "grounding_live_page",
+    "mutation_dispatch",
+    "wait_sensor_runtime",
+    "cloud_provider_compatibility"
+  ],
+  "root_cause": {
+    "canonical_identity_vocabulary": "CLOSED_BY_LIVE_FCR_FILL_INPUT_2_OF_2",
+    "remove_only_empty_verb_counterfactual": "2_OF_2_ORACLE_PASS",
+    "wait_first_call_boundary": "OPEN",
+    "wait_observed_extra_field": "verb",
+    "wait_observed_extra_value": "",
+    "wait_rows_same_shape": true
+  },
+  "rows": [
+    {
+      "cache_hit_tokens": 0,
+      "first_tool_args_sha256": "96c25ccf4a86cccc725fb15a7189740fe2b67f8c033230215e087daac98d3698",
+      "index": 1,
+      "oracle": {
+        "pass": true,
+        "reason": null
+      },
+      "repeat": 1,
+      "status": "PASS",
+      "task_id": "navigate_page",
+      "tokens_in": 1566,
+      "tokens_out": 86,
+      "tool_execution_count": 0,
+      "wall_s": 6.313
+    },
+    {
+      "cache_hit_tokens": 0,
+      "first_tool_args_sha256": "67955cbb8535305e6ae33d7ca5592d6e0f3044cb714acbc7a82354638b4015ef",
+      "index": 2,
+      "oracle": {
+        "pass": true,
+        "reason": null
+      },
+      "repeat": 1,
+      "status": "PASS",
+      "task_id": "fill_input",
+      "tokens_in": 1578,
+      "tokens_out": 133,
+      "tool_execution_count": 0,
+      "wall_s": 4.661
+    },
+    {
+      "cache_hit_tokens": 1541,
+      "first_tool_args_sha256": "c05fde0adac3d0730103cdd2a56aba54e0855559bd4792ba38941b1504aab9c6",
+      "index": 3,
+      "oracle": {
+        "pass": false,
+        "reason": "wait_button_contract"
+      },
+      "repeat": 1,
+      "status": "FCR_FAIL",
+      "task_id": "wait_button",
+      "tokens_in": 1576,
+      "tokens_out": 186,
+      "tool_execution_count": 0,
+      "wall_s": 5.663
+    },
+    {
+      "cache_hit_tokens": 1575,
+      "first_tool_args_sha256": "c05fde0adac3d0730103cdd2a56aba54e0855559bd4792ba38941b1504aab9c6",
+      "index": 4,
+      "oracle": {
+        "pass": false,
+        "reason": "wait_button_contract"
+      },
+      "repeat": 2,
+      "status": "FCR_FAIL",
+      "task_id": "wait_button",
+      "tokens_in": 1576,
+      "tokens_out": 186,
+      "tool_execution_count": 0,
+      "wall_s": 5.457
+    },
+    {
+      "cache_hit_tokens": 1577,
+      "first_tool_args_sha256": "67955cbb8535305e6ae33d7ca5592d6e0f3044cb714acbc7a82354638b4015ef",
+      "index": 5,
+      "oracle": {
+        "pass": true,
+        "reason": null
+      },
+      "repeat": 2,
+      "status": "PASS",
+      "task_id": "fill_input",
+      "tokens_in": 1578,
+      "tokens_out": 133,
+      "tool_execution_count": 0,
+      "wall_s": 3.889
+    },
+    {
+      "cache_hit_tokens": 1565,
+      "first_tool_args_sha256": "96c25ccf4a86cccc725fb15a7189740fe2b67f8c033230215e087daac98d3698",
+      "index": 6,
+      "oracle": {
+        "pass": true,
+        "reason": null
+      },
+      "repeat": 2,
+      "status": "PASS",
+      "task_id": "navigate_page",
+      "tokens_in": 1566,
+      "tokens_out": 86,
+      "tool_execution_count": 0,
+      "wall_s": 3.533
+    }
+  ],
+  "schema": "smc.browser_bounded_semantic_operation_fc2c.fcr.v0.1.result",
+  "status": "NOT_QUALIFIED_BY_FC2C_FCR_V0.1"
+}
