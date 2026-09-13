@@ -15,6 +15,7 @@ from analyze import analyze  # noqa: E402
 from fixture_server import FixtureServer  # noqa: E402
 from protocol import (  # noqa: E402
     ARMS,
+    MODEL_REF,
     SCHEMA,
     SEED,
     TASKS,
@@ -23,7 +24,7 @@ from protocol import (  # noqa: E402
     plan_sha256,
     smoke_gate,
 )
-from run_ab import _pending_rows, _provider_contract  # noqa: E402
+from run_ab import _classify_run_status, _pending_rows, _provider_contract  # noqa: E402
 
 
 def test_plan_is_20_rows_paired_and_smoke_prefix_is_three_complete_blocks() -> None:
@@ -80,6 +81,43 @@ def test_pending_rows_bounds_each_controller_invocation_without_changing_plan() 
     assert [row["index"] for row in _pending_rows(plan[:6], done, 2)] == [4, 5]
     with pytest.raises(ValueError, match="max_new_rows"):
         _pending_rows(plan[:6], done, 0)
+
+
+def test_run_status_preserves_timeout_and_infra_precedence_before_surface_validation() -> None:
+    manifest_surface = {"sha256": "expected"}
+    assert (
+        _classify_run_status(
+            oracle_pass=False,
+            worker_rc=None,
+            worker_payload={},
+            surface={},
+            allowed_tools={"browser_action"},
+            manifest_surface=manifest_surface,
+        )
+        == "TIMEOUT"
+    )
+    assert (
+        _classify_run_status(
+            oracle_pass=False,
+            worker_rc=1,
+            worker_payload={"status": "WORKER_ERROR"},
+            surface={},
+            allowed_tools={"browser_action"},
+            manifest_surface=manifest_surface,
+        )
+        == "INFRA_FAIL"
+    )
+    assert (
+        _classify_run_status(
+            oracle_pass=True,
+            worker_rc=0,
+            worker_payload={"status": "RUN_OK", "model_used": MODEL_REF, "fallback_used": False},
+            surface={"names": ["browser_action"], "sha256": "wrong"},
+            allowed_tools={"browser_action"},
+            manifest_surface=manifest_surface,
+        )
+        == "INVALID"
+    )
 
 
 def test_effective_cognilocal_provider_contract_is_frozen() -> None:

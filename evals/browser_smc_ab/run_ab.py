@@ -319,6 +319,32 @@ def _stop_process(process: subprocess.Popen[Any] | None) -> None:
         process.wait(timeout=3.0)
 
 
+def _classify_run_status(
+    *,
+    oracle_pass: bool,
+    worker_rc: int | None,
+    worker_payload: dict[str, Any],
+    surface: dict[str, Any],
+    allowed_tools: set[str],
+    manifest_surface: dict[str, Any],
+) -> str:
+    """Classify execution health before treatment validity or task outcome."""
+
+    if worker_rc is None:
+        return "TIMEOUT"
+    if worker_payload.get("status") != "RUN_OK":
+        return "INFRA_FAIL"
+    if set(surface.get("names") or []) != allowed_tools:
+        return "INVALID"
+    if surface.get("sha256") != manifest_surface.get("sha256"):
+        return "INVALID"
+    if worker_payload.get("fallback_used"):
+        return "INVALID"
+    if worker_payload.get("model_used") not in {None, "", MODEL_REF}:
+        return "INVALID"
+    return "PASS" if oracle_pass else "TASK_FAIL"
+
+
 def run_row(row: dict[str, Any], root: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     if _git("rev-parse", "HEAD") != manifest["git_head"] or _tracked_dirty():
         raise RuntimeError("git identity drift before measured run")
@@ -365,20 +391,15 @@ def run_row(row: dict[str, Any], root: Path, manifest: dict[str, Any]) -> dict[s
         _stop_process(chrome_proc)
 
     security_agent_spawned = bool(_security_agent_pids() - before_security) if arm == "smc" else False
-    status = "PASS" if oracle.get("pass") and worker_payload.get("status") == "RUN_OK" else "TASK_FAIL"
-    if worker_rc is None:
-        status = "TIMEOUT"
-    elif worker_payload.get("status") != "RUN_OK":
-        status = "INFRA_FAIL"
     surface = worker_payload.get("surface") or {}
-    if set(surface.get("names") or []) != set(ARMS[arm]["allowed_tools"]):
-        status = "INVALID"
-    if surface.get("sha256") != manifest["surfaces"][arm]["sha256"]:
-        status = "INVALID"
-    if worker_payload.get("fallback_used"):
-        status = "INVALID"
-    if worker_payload.get("model_used") not in {None, "", MODEL_REF}:
-        status = "INVALID"
+    status = _classify_run_status(
+        oracle_pass=bool(oracle.get("pass")),
+        worker_rc=worker_rc,
+        worker_payload=worker_payload,
+        surface=surface,
+        allowed_tools=set(ARMS[arm]["allowed_tools"]),
+        manifest_surface=manifest["surfaces"][arm],
+    )
     return {
         **row,
         "schema": SCHEMA + ".run",
