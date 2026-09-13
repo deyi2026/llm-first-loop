@@ -1,0 +1,171 @@
+{
+  "analysis": {
+    "arms": {
+      "legacy": {
+        "cache_hit_tokens": {
+          "mean": 15401.0,
+          "median": 14753.0,
+          "observed": 3
+        },
+        "infra_fail": 0,
+        "rounds": {
+          "mean": 8.333,
+          "median": 8.0,
+          "observed": 3
+        },
+        "runs": 3,
+        "status_pass": 3,
+        "task_pass": 3,
+        "tokens_in": {
+          "mean": 18956.0,
+          "median": 18318.0,
+          "observed": 3
+        },
+        "tokens_out": {
+          "mean": 1612.667,
+          "median": 1467.0,
+          "observed": 3
+        },
+        "tool_calls": {
+          "mean": 7.333,
+          "median": 7.0,
+          "observed": 3
+        },
+        "wall_s": {
+          "mean": 77.236,
+          "median": 75.836,
+          "observed": 3
+        }
+      },
+      "smc": {
+        "cache_hit_tokens": {
+          "mean": 71595.667,
+          "median": 75355.0,
+          "observed": 3
+        },
+        "infra_fail": 0,
+        "rounds": {
+          "mean": 11.667,
+          "median": 12.0,
+          "observed": 3
+        },
+        "runs": 3,
+        "status_pass": 0,
+        "task_pass": 0,
+        "tokens_in": {
+          "mean": 85157.0,
+          "median": 88967.0,
+          "observed": 3
+        },
+        "tokens_out": {
+          "mean": 2813.0,
+          "median": 2819.0,
+          "observed": 3
+        },
+        "tool_calls": {
+          "mean": 11.667,
+          "median": 12.0,
+          "observed": 3
+        },
+        "wall_s": {
+          "mean": 108.089,
+          "median": 109.482,
+          "observed": 3
+        }
+      }
+    },
+    "limitations": [
+      "paired directional evidence only; no significance claim",
+      "cache/token telemetry is descriptive because provider tool-schema prefixes differ by arm",
+      "task success comes only from predeclared loopback external-state oracles"
+    ],
+    "paired": [
+      {
+        "legacy_pass": true,
+        "repeat": 1,
+        "rounds_delta_smc_minus_legacy": 4,
+        "smc_pass": false,
+        "task_id": "click_commit",
+        "tokens_in_delta_smc_minus_legacy": 70649,
+        "tokens_out_delta_smc_minus_legacy": 1213,
+        "tool_calls_delta_smc_minus_legacy": 5
+      },
+      {
+        "legacy_pass": true,
+        "repeat": 1,
+        "rounds_delta_smc_minus_legacy": 5,
+        "smc_pass": false,
+        "task_id": "delayed_wait",
+        "tokens_in_delta_smc_minus_legacy": 59754,
+        "tokens_out_delta_smc_minus_legacy": 831,
+        "tool_calls_delta_smc_minus_legacy": 6
+      },
+      {
+        "legacy_pass": true,
+        "repeat": 1,
+        "rounds_delta_smc_minus_legacy": 1,
+        "smc_pass": false,
+        "task_id": "fill_submit",
+        "tokens_in_delta_smc_minus_legacy": 68200,
+        "tokens_out_delta_smc_minus_legacy": 1557,
+        "tool_calls_delta_smc_minus_legacy": 2
+      }
+    ],
+    "schema": "smc.browser_real_model_ab.analysis.v0.1",
+    "smc_safety": {
+      "automatic_retry_true_total": 0,
+      "receipt_failed_total": 0,
+      "receipt_rejected_total": 9,
+      "security_agent_spawned_runs": 0
+    },
+    "total_runs": 6
+  },
+  "completed_runs": 6,
+  "decision": "Do not run the remaining 14 v0.1 rows. Preserve v0.1 as pre-fix evidence; require an explicit contract correction/requalification before a new real-model protocol version.",
+  "formal_smoke_gate": {
+    "complete_rows": 6,
+    "expected_rows": 6,
+    "infra_valid": true,
+    "legacy_adoption": 3,
+    "legacy_adoption_required": 2,
+    "model_no_fallback": true,
+    "pass": true,
+    "smc_adoption": 3,
+    "smc_adoption_required": 2,
+    "surface_exact": true
+  },
+  "git_head": "44a5c559cbc90743a448ce1b8e2b9f09f63e46d5",
+  "legacy_duplicate_side_effect_facts": [
+    {
+      "save_count": 2,
+      "task_id": "fill_submit"
+    }
+  ],
+  "non_claims": [
+    "no statistical significance claim",
+    "no claim that legacy is generally safe or efficient",
+    "no Phase2/vision/native UI conclusion"
+  ],
+  "plan_sha256": "109e705ef9e011a1de30f75002096749d8ba997203614f319086ec0564062689",
+  "root_cause_evidence": {
+    "deterministic_snapshot_scope_distinct_observation_is_stale": "tests/unit/test_smc_browser_version_pressure_v01.py:test_snapshot_scope_treats_distinct_observation_as_stale",
+    "navigate_allows_snapshot_scope": "src/llm_loop/browser/action.py:26",
+    "observed_same_reason_across_all_three_smc_tasks": true,
+    "runtime_observed_version_from_fresh_capture": "src/llm_loop/browser/action.py:433",
+    "runtime_predispatch_capture": "src/llm_loop/browser/action.py:418"
+  },
+  "schema": "smc.browser_real_model_ab.smoke_result.v0.1",
+  "smc_automatic_retry_true_total": 0,
+  "smc_terminal_rejection_reasons": {
+    "duplicate_action_id": 1,
+    "expected_version_missing": 1,
+    "version_precondition_stale:different_snapshot_same_generation": 7
+  },
+  "status": "STOP_EXPANSION_USABILITY_BLOCKER",
+  "task_pass": {
+    "legacy": 3,
+    "legacy_total": 3,
+    "smc": 0,
+    "smc_total": 3
+  }
+}

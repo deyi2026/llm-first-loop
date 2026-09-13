@@ -1,0 +1,87 @@
+{
+  "git_head": "44a5c559cbc90743a448ce1b8e2b9f09f63e46d5",
+  "legacy_playwright": {
+    "chromium_basename": "Google Chrome for Testing",
+    "chromium_revision": 1208,
+    "headless_shell_present": true,
+    "package_version": "1.58.0"
+  },
+  "model_ref": "cognilocal/ornith-1.5-35b-a3b-mlx",
+  "model_server": {
+    "command_sha256": "2bee17c3fb687fb9224f0f72cac6738c607515a3ba92b90ae867995dd7b85fcf",
+    "decode_concurrency_1": true,
+    "max_tokens_16000": true,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "pid": 47009,
+    "prompt_concurrency_1": true
+  },
+  "plan_rows": 20,
+  "plan_sha256": "109e705ef9e011a1de30f75002096749d8ba997203614f319086ec0564062689",
+  "provider_contract": {
+    "max_input_tokens": 184000,
+    "max_tokens": 16000,
+    "min_p": 0.0,
+    "temperature": 0.0,
+    "timeout_s": 1800,
+    "top_k": 0,
+    "top_p": 1.0,
+    "wire_protocol": "openai"
+  },
+  "runtime": {
+    "extract_enabled": false,
+    "fallbacks": 0,
+    "llm_timeout_s": 1800,
+    "max_iterations": 12,
+    "max_tokens": 16000,
+    "method_reflection_mode": "off",
+    "reasoning_effort": "medium",
+    "summary_mode": "off",
+    "thinking_mode": "on",
+    "tool_schema_lazy": true
+  },
+  "schema": "smc.browser_real_model_ab.v0.1.execution_manifest",
+  "seed": 20260913,
+  "source_sha256": {
+    "evals/browser_smc_ab/analyze.py": "a663b9bdb1d5fa8930a7ec800bc93ff4f61f252ac7c6a082e73abe525724314c",
+    "evals/browser_smc_ab/fixture_server.py": "87696076cea84d4e93f172d07a1499755dbc647f396ff115a9d64571740b72a3",
+    "evals/browser_smc_ab/protocol.py": "c695160865844395f14b7b3be4df27c5129e82927b1085041b7dc38425cd09d6",
+    "evals/browser_smc_ab/run_ab.py": "3f799d8b885f70b5b1ad0e2bfbe81082c5a50492ca35946b3a0ea5db9366dc8e",
+    "evals/browser_smc_ab/worker.py": "e4c918de0ea4f7e62206667b79ee8d8022654bc4b3297a42510b94310f4d3445",
+    "scripts/qualification/smc_browser_live_navigation.py": "f78e75f4c0266362c58c86b5242447443efa8c5a24ec85b60d57d8db4a019b94",
+    "src/llm_loop/browser/action.py": "38d7cb3134b89be31f659e80c3988e70d9bfd52d827b8bc455df2a3d2878c23b",
+    "src/llm_loop/browser/cdp_action_host.py": "229e83caac450fb7285a6d75fc5d4a0dbc23fd5e5201bfb92b600a4ad34c778d",
+    "src/llm_loop/tools/builtin/browser_action.py": "d0425a5e528f1aa485cf49a47fa05dff72982d134243c794041df9927eeb7818",
+    "src/llm_loop/tools/builtin/browser_perceive.py": "66df811f29981772ceadd205ecbb3cc608e11d324572602fae1a218d7d2e8039",
+    "src/llm_loop/tools/registry.py": "49343455b4af147e676c8df6dfb7cff845fb31678d69e62a4c676e0645d328f8"
+  },
+  "surfaces": {
+    "legacy": {
+      "exact": true,
+      "json_chars": 807,
+      "names": [
+        "get_tool_schema",
+        "playwright_exec",
+        "playwright_test"
+      ],
+      "sha256": "0447fefc8bf4ddf0177824ccd7565c9c8cb02d331d99e117afac379f11be47f0"
+    },
+    "smc": {
+      "exact": true,
+      "json_chars": 2798,
+      "names": [
+        "browser_action",
+        "browser_perceive",
+        "get_tool_schema"
+      ],
+      "sha256": "b6d24dc8d9e2da5fbf653b9381c39fa6db51fff2df35278af4802cc3614ecbb9"
+    }
+  },
+  "task_prompt_sha256": {
+    "click_commit": "823e7cb25a1f2f234412564a93ed221956bdbcb4214aff1d67a78fd9296c6f2d",
+    "delayed_wait": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "fill_submit": "d80607ace4193874d8b7deddc2988f8b6562443b99b54455e48163cc4a6ff9e2",
+    "replacement_click": "b1811e434d36e117aa6ed4f05861b113e96a053168e1ea7718ae0528a04bf65d",
+    "select_submit": "5b67bfa5527c1f9e2bbfc0a733daf89e460ce8383cd54ac3a9360928d9c6c696"
+  },
+  "tracked_dirty": false
+}

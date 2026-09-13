@@ -1,0 +1,12 @@
+{
+  "complete_rows": 6,
+  "expected_rows": 6,
+  "infra_valid": true,
+  "legacy_adoption": 3,
+  "legacy_adoption_required": 2,
+  "model_no_fallback": true,
+  "pass": true,
+  "smc_adoption": 3,
+  "smc_adoption_required": 2,
+  "surface_exact": true
+}
