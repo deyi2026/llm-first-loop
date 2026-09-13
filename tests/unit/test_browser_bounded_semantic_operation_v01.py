@@ -272,6 +272,11 @@ def test_lazy_provider_surface_preserves_bounded_operation_first_call_contract()
     assert clauses["type"] == "array"
     assert clauses["minItems"] == 1
     assert clauses["maxItems"] == 8
+    assert clauses["description"] == (
+        "Exact clause fields: mutate={kind,verb,target,args}; "
+        "wait={kind,target,property,operator,value,timeout_ms,interval_ms}; "
+        "wait has no verb/args."
+    )
     branches = clauses["items"]["oneOf"]
     assert len(branches) == 3
     assert all(branch["additionalProperties"] is False for branch in branches)

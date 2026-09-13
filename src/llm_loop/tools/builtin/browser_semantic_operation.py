@@ -108,6 +108,22 @@ def _build_first_call_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
     )
     if len(object_mutations) != 4:
         raise RuntimeError("bounded semantic operation object-mutation schema drift")
+    mutate_required = list(object_mutations[0].get("required") or [])
+    if not mutate_required or any(
+        list(branch.get("required") or []) != mutate_required
+        for branch in [*object_mutations, navigate]
+    ):
+        raise RuntimeError("bounded semantic operation mutate field-set drift")
+    wait_required = list(wait.get("required") or [])
+    wait_properties = wait.get("properties") or {}
+    if not wait_required or "verb" in wait_properties or "args" in wait_properties:
+        raise RuntimeError("bounded semantic operation wait field-set drift")
+    clauses["description"] = (
+        "Exact clause fields: "
+        f"mutate={{{','.join(mutate_required)}}}; "
+        f"wait={{{','.join(wait_required)}}}; "
+        "wait has no verb/args."
+    )
 
     object_mutation = _const_to_singleton_enum(object_mutations[0])
     object_mutation["properties"]["verb"] = {
