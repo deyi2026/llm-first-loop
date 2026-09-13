@@ -221,6 +221,8 @@ def test_semantic_execute_compact_description_teaches_the_minimum_call_path() ->
         "再 snapshot",
         "不自动 retry/rebind",
         "不等于任务完成",
+        "没有 snapshot/ref 不要调用",
+        "不要把 URL 当 target_ref",
     ):
         assert marker in compact
 
@@ -235,6 +237,12 @@ def test_semantic_execute_compact_description_teaches_the_minimum_call_path() ->
         )
     )
     lazy = reg.schemas(lazy=True)[0]
-    assert "SemanticObject.grounding_ref" in lazy["parameters"]["properties"]["target_ref"]["description"]
-    assert "resource_ref" in lazy["parameters"]["properties"]["target_ref"]["description"]
-    assert "fill={text,mode}" in lazy["parameters"]["properties"]["args"]["description"]
+    target_ref_desc = lazy["parameters"]["properties"]["target_ref"]["description"]
+    assert "SemanticObject.grounding_ref" in target_ref_desc
+    assert "resource_ref" in target_ref_desc
+    assert "先 snapshot" in target_ref_desc
+    assert "不要把 URL" in target_ref_desc
+    args_desc = lazy["parameters"]["properties"]["args"]["description"]
+    assert "fill={text,mode}" in args_desc
+    assert "click={}" in args_desc
+    assert "navigate={url}" in args_desc

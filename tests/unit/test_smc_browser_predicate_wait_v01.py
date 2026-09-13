@@ -160,6 +160,40 @@ def test_model_surface_adds_only_structured_readonly_wait_contract(tmp_path: Pat
         assert forbidden not in props["action"]["enum"]
 
 
+def test_wait_first_call_contract_survives_compact_and_lazy_surfaces(tmp_path: Path) -> None:
+    from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS, ToolRegistry
+
+    compact = _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"]
+    for marker in (
+        "wait 仅用于真实时间条件",
+        "scope predicate",
+        "target=scope_ref",
+        "interval_ms=1..5000",
+    ):
+        assert marker in compact
+
+    tool = BrowserPerceiveTool(
+        adapter=_adapter(tmp_path),
+        backend=None,
+        session_id_getter=lambda: "s1",
+    )
+    reg = ToolRegistry()
+    reg.register(tool)
+    lazy = reg.schemas(lazy=True)[0]
+    predicate_desc = lazy["parameters"]["properties"]["predicate"]["description"]
+    interval_desc = lazy["parameters"]["properties"]["interval_ms"]["description"]
+    assert "scope predicate" in predicate_desc
+    assert "target=scope_ref" in predicate_desc
+    assert "exact scope_ref" in predicate_desc
+    assert "1..5000" in interval_desc
+    assert "整数" in interval_desc
+
+    full = tool.description
+    assert "wait 仅用于真实时间条件" in full
+    assert "scope predicate" in full
+    assert "target=scope_ref" in full
+
+
 def test_runtime_predicate_vocabulary_matches_frozen_bspec_profile_and_schema() -> None:
     expected = PROFILE["predicate_vocabulary"]["properties"]
     runtime = {

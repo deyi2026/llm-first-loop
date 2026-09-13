@@ -56,9 +56,9 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "read_file": "读取已知路径的本地文本文件或 artifact://v1/... immutable snapshot；目录/关键词定位用 search_files。若后续计划 edit_file，必须本次 snapshot=true 取得 snapshot_ref。",
     "read_image": "读取本地图片并返回结构化视觉与元信息证据；需要图片路径。",
     "smx_perceive": "smx 感知层（opt-in）：wait 用 satisfied=true/false/null+sample_count/observer_error_count；snapshot 绑定 scope/content_sha256；diff 给 comparable/field_completeness；wait/snapshot/diff 另附 nested smc canonical projection；receipt raw grounding 标 canonical=false；只感知不执行。",
-    "browser_perceive": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 只读感知（opt-in loopback CDP host）：snapshot/hydrate/diff/wait；DOM+AX→WorldSnapshot/SemanticObject，wait=结构化 Predicate 轮询；冲突/coverage/scope/grounding 如实返回；不导航、不执行 mutation，不暴露 selector/坐标/CDP node id/AX index。",
+    "browser_perceive": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 只读感知（opt-in loopback CDP host）：snapshot/hydrate/diff/wait；DOM+AX→WorldSnapshot/SemanticObject。wait 仅用于真实时间条件，不替代 snapshot/execute；scope predicate 必须 target=scope_ref=当前 observation 的 exact scope_ref；interval_ms=1..5000 整数；冲突/coverage/scope/grounding 如实返回；不导航、不执行 mutation，不暴露 selector/坐标/CDP node id/AX index。",
     "browser_action": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 写操作：click/fill/select/navigate/scroll；使用 snapshot 的 exact Semantic ID/scope + expected_version，object mutation=object，navigate=resource，snapshot 不作为 mutation version_scope；dispatch 前机械复核；单次 dispatch，不自动 retry/rebind；ActionReceipt 只表示机械事实，不等于任务完成。",
-    "browser_semantic_execute": "Browser 语义执行：先 browser_perceive snapshot，模型选 exact GroundingRef；对象 target_ref=SemanticObject.grounding_ref，navigate target_ref=resource_ref；args: click={}，fill={text,mode(replace|append)}，select={value}，navigate={url}，scroll={delta_pages}；工具内部编译 scope/version/action_id 后单次执行；读 ActionReceipt，再 snapshot 验证；不自动 retry/rebind，receipt ok 不等于任务完成。",
+    "browser_semantic_execute": "Browser 语义执行：必须先 browser_perceive snapshot 并取得 exact GroundingRef/resource_ref；没有 snapshot/ref 不要调用，不要把 URL 当 target_ref。对象 target_ref=SemanticObject.grounding_ref，navigate target_ref=resource_ref；args: click={}，fill={text,mode(replace|append)}，select={value}，navigate={url}，scroll={delta_pages}；工具内部编译 scope/version/action_id 后单次执行；读 ActionReceipt，再 snapshot 验证；不自动 retry/rebind，receipt ok 不等于任务完成。",
     "inspect_code": "解析 Python 文件/目录 AST，列类、函数、签名与 imports；实现正文用 read_file。",
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
@@ -122,8 +122,12 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
 # a positive real-model A/B. This is not a strategy/routing table: it does not hide
 # tools, choose tools, or change execution semantics.
 _COMPACT_PARAMETER_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    "browser_perceive": {
+        "predicate": "wait 的 structured Predicate；scope predicate 必须 target=scope_ref=当前 observation 的 exact scope_ref；object predicate target=exact SemanticObject ID。",
+        "interval_ms": "wait polling 间隔；整数 1..5000；polling 不是 action retry。",
+    },
     "browser_semantic_execute": {
-        "target_ref": "对象动作=当前 SemanticObject.grounding_ref；navigate=当前 snapshot result 的 resource_ref；必须 exact，不猜名称。",
+        "target_ref": "先 snapshot；对象动作=当前 SemanticObject.grounding_ref；navigate=当前 snapshot result 的 resource_ref；必须 exact；不要把 URL/名称/scope_ref 当 target_ref。",
         "args": "click={}；fill={text,mode} mode=replace|append；select={value}；navigate={url}；scroll={delta_pages}。",
     },
     "list_evidence": {

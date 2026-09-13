@@ -29,10 +29,11 @@ class BrowserSemanticExecuteTool:
     name = "browser_semantic_execute"
     description = (
         SEMANTIC_OPERATION_METHOD_CARD
-        + " 用法：先 browser_perceive(action=snapshot) 观察；模型按用户意图选择一个 exact "
+        + " 用法：必须先 browser_perceive(action=snapshot) 观察并取得 exact ref；没有 snapshot/ref 不要调用。"
+        "模型按用户意图选择一个 exact "
         "GroundingRef；对象操作调用 browser_semantic_execute(verb=click|fill|select|scroll, "
         "target_ref=<SemanticObject.grounding_ref>, args=<verb 参数>)；navigate 使用该 snapshot "
-        "返回的 resource_ref。读取 ActionReceipt 后，再 browser_perceive(action=snapshot) "
+        "返回的 resource_ref；不要把 URL、名称或 scope_ref 猜作 target_ref。读取 ActionReceipt 后，再 browser_perceive(action=snapshot) "
         "Re-observe/Verify。例：点击 Commit 时，先从 snapshot 选择 Commit 对象的 GroundingRef，"
         "再调用 verb=click,target_ref=<该ref>,args={}。fill args={text,mode}，mode=replace|append；"
         "select args={value}；navigate args={url}；scroll args={delta_pages}。工具内部只把模型已选择的"
@@ -51,8 +52,8 @@ class BrowserSemanticExecuteTool:
                 "type": "string",
                 "minLength": 1,
                 "description": (
-                    "对象操作传最近一次 observation 中被模型选定 SemanticObject.grounding_ref；"
-                    "navigate 传该 snapshot 的 resource_ref。必须是 exact ref，不按名称猜测。"
+                    "先 snapshot；对象操作传当前 observation 中被模型选定 SemanticObject.grounding_ref；"
+                    "navigate 传该 snapshot 的 resource_ref。必须是 exact ref；不要把 URL、名称或 scope_ref 当 target_ref。"
                 ),
             },
             "args": {

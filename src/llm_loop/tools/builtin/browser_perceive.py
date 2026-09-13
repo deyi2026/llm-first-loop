@@ -41,7 +41,8 @@ class BrowserPerceiveTool:
         "WorldSnapshot + SemanticObject；不会打开 URL、导航、点击、输入、滚动、执行脚本或自动重试。"
         "hydrate=按精确 GroundingRef 水合该次历史 observation；diff=仅比较两张已落盘 exact snapshot，"
         "不会重抓当前页面，也不会按名称/角色猜测对象对应关系。wait=对 structured Predicate 做只读轮询；"
-        "超时未满足是 observation，不是工具故障；感官/coverage 不足返回 indeterminate。"
+        "wait 仅用于真实时间条件，不替代 snapshot/execute；scope predicate 必须 target=scope_ref，且两者都取当前 observation 的 exact scope_ref；"
+        "interval_ms 必须为整数 1..5000。超时未满足是 observation，不是工具故障；感官/coverage 不足返回 indeterminate。"
         "ref 过期/跨 session/不可用会如实返回。"
         "模型面只出现 Semantic ID/scope/GroundingRef，不暴露 CSS/XPath/坐标/CDP node id/AX index。"
         "完整方法可按 method_ref 用 search_records(kind=method, query=<exact ref>) 精确水合；"
@@ -88,7 +89,7 @@ class BrowserPerceiveTool:
                 "type": "integer",
                 "minimum": 1,
                 "maximum": _MAX_INTERVAL_MS,
-                "description": "wait polling 采样间隔；采样不是 action retry",
+                "description": "wait polling 采样间隔；必须为整数 1..5000；采样不是 action retry",
             },
         },
         "required": ["action"],
