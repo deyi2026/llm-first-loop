@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from llm_loop.core.loop.runner import (
     BackgroundRunner,
     EventBus,
+    RunGenerationMismatchError,
     RunHandle,
 )
 
@@ -205,8 +206,11 @@ def test_resume_subscribes_existing_run():
     r = BackgroundRunner(eng)
     h1, q1 = r.start("s1", "hi")
     assert h1 is not None
+    assert h1.run_generation
     # resume 订阅（模拟刷新/切回）
-    h2, q2 = r.start("s1", "", resume=True)
+    h2, q2 = r.start(
+        "s1", "", resume=True, expected_run_generation=h1.run_generation
+    )
     assert h2 is None and q2 is not None
     # 两个订阅者都收到全部事件（广播）
     evs1 = _drain(q1, 9)  # 8 delta + done
@@ -218,8 +222,57 @@ def test_resume_subscribes_existing_run():
         time.sleep(0.01)
     assert h1.status == "done"
     # done 后 resume → 无 handle → (None, None)
-    h3, q3 = r.start("s1", "", resume=True)
+    h3, q3 = r.start(
+        "s1", "", resume=True, expected_run_generation=h1.run_generation
+    )
     assert h3 is None and q3 is None
+
+
+def test_resume_rejects_stale_or_missing_run_generation_before_subscribe():
+    """resume 必须精确绑定本次 run；同 session 的旧标签页不能订阅后续 generation。"""
+    eng = FakeEngine(deltas=20, delay=0.02)
+    r = BackgroundRunner(eng)
+    h1, q1 = r.start("s-generation", "first")
+    assert h1 is not None and q1 is not None and h1.run_generation
+
+    for expected in (None, "stale-generation"):
+        try:
+            r.start(
+                "s-generation",
+                "",
+                resume=True,
+                expected_run_generation=expected,
+            )
+        except RunGenerationMismatchError as exc:
+            assert exc.actual_run_generation == h1.run_generation
+        else:  # pragma: no cover - safety assertion
+            raise AssertionError("resume generation mismatch must fail closed")
+
+    _h2, q2 = r.start(
+        "s-generation",
+        "",
+        resume=True,
+        expected_run_generation=h1.run_generation,
+    )
+    assert q2 is not None
+    r.unsubscribe("s-generation", q2)
+    _drain(q1, 21)
+
+
+def test_new_run_generation_changes_when_same_session_runs_again():
+    eng = FakeEngine(deltas=1, delay=0.01)
+    r = BackgroundRunner(eng)
+    h1, q1 = r.start("s-reuse", "first")
+    assert h1 is not None and q1 is not None
+    _drain(q1, 2)
+    deadline = time.time() + 5
+    while r.is_running("s-reuse") and time.time() < deadline:
+        time.sleep(0.01)
+
+    h2, q2 = r.start("s-reuse", "second")
+    assert h2 is not None and q2 is not None
+    assert h2.run_generation and h2.run_generation != h1.run_generation
+    _drain(q2, 2)
 
 
 def test_disabled_returns_none():
@@ -232,6 +285,7 @@ def test_disabled_returns_none():
 def test_handle_snapshot_readonly():
     handle = RunHandle(session_id="s1")
     snap = handle.snapshot()
+    assert snap["run_generation"] == handle.run_generation
     snap["status"] = "hacked"
     assert handle.status == "running"  # 快照修改不影响原 handle
 
@@ -382,7 +436,12 @@ def test_resume_after_done_returns_none(monkeypatch):
     with r._guard:
         # 手动把 handle 放回 registry（模拟 done 后未 pop 的窗口）
         r._registry["sess-d"] = handle
-    handle2, q2 = r.start("sess-d", "hi", resume=True)
+    handle2, q2 = r.start(
+        "sess-d",
+        "hi",
+        resume=True,
+        expected_run_generation=handle.run_generation,
+    )
     assert handle2 is None and q2 is None, "终态 run 不应可订阅"
     # 清理
     with r._guard:

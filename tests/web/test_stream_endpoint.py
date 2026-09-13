@@ -27,7 +27,12 @@ def test_resume_without_background_runner_never_executes_placeholder(build_test_
 
     resp = client.post(
         "/api/v1/chat/stream",
-        json={"message": "（恢复连接）", "session_id": sid, "resume": True},
+        json={
+            "message": "（恢复连接）",
+            "session_id": sid,
+            "resume": True,
+            "run_generation": "no-active-run",
+        },
     )
 
     assert resp.status_code == 200
@@ -68,6 +73,76 @@ def _parse_sse(text: str) -> list[dict]:
             if line.startswith("data: "):
                 events.append(json.loads(line[6:]))
     return events
+
+
+def test_chat_stream_resume_requires_run_generation_at_schema_boundary(build_test_engine):
+    engine, fake = build_test_engine([{"content": "must-not-run"}])
+    sid = engine.session.create()
+    client = _make_client(engine)
+
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "（恢复连接）", "session_id": sid, "resume": True},
+    )
+
+    assert resp.status_code == 422
+    assert len(fake.calls) == 0
+
+
+def test_chat_stream_resume_rejects_stale_run_generation_before_subscribe(build_test_engine):
+    engine, _ = build_test_engine([])
+    sid = engine.session.create()
+
+    class _ResumeRunner:
+        enabled = True
+
+        def __init__(self) -> None:
+            self.start_calls = 0
+
+        def get_handle(self, session_id):
+            return {
+                "session_id": session_id,
+                "run_generation": "generation-current",
+                "status": "running",
+                "started_at": 1.0,
+            }
+
+        def start(self, *args, **kwargs):
+            self.start_calls += 1
+            raise AssertionError("stale resume must be rejected before runner.start")
+
+    runner = _ResumeRunner()
+    engine.runner = runner
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={
+            "message": "（恢复连接）",
+            "session_id": sid,
+            "resume": True,
+            "run_generation": "generation-stale",
+        },
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "run_generation_mismatch"
+    assert resp.json()["actual_run_generation"] == "generation-current"
+    assert runner.start_calls == 0
+
+
+def test_chat_stream_initial_background_run_emits_generation_before_model_deltas(build_test_engine):
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("hello")
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    engine.runner = BackgroundRunner(engine, enabled=True)
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    assert events[0]["type"] == "run_started"
+    generation = events[0]["data"]["run_generation"]
+    assert isinstance(generation, str) and generation
+    assert events[-1]["type"] == "done"
 
 
 def test_chat_stream_emits_deltas_then_done(build_test_engine):

@@ -15,6 +15,7 @@ const state = {
   hasMoreHistory: false, // D2: 是否还有更早历史消息（懒加载）
   loadedHistoryCount: 0, // D2: 已加载历史消息条数（offset 基准）
   retryRequest: null, // D2 断流重试: 最近一次流式请求体（重试复用）
+  runGenerationBySession: new Map(), // 精确后台run身份；resume禁止按session猜“当前最新run”
   declarationIndex: new Map(), // P3-1: 页面级声明暂存（session_id → Map<toolCallId, {id,name,arguments}>，不落盘）
 };
 

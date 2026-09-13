@@ -22,7 +22,11 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-from llm_loop.core.loop.runner import QueuedIngressDurabilityError, SessionBusyError
+from llm_loop.core.loop.runner import (
+    QueuedIngressDurabilityError,
+    RunGenerationMismatchError,
+    SessionBusyError,
+)
 from llm_loop.core.session import SessionExternalResourceBusyError, SessionMutationBusyError
 from llm_loop.feedback.honesty import (
     append_feedback,
@@ -641,6 +645,7 @@ def _stream_background(
     reasoning_mode: str | None = None,
     *,
     resume: bool = False,
+    expected_run_generation: str | None = None,
     before_start: Callable[[Any], None] | None = None,
     expected_workspace_epoch: int | None = None,
     user_metadata: dict[str, Any] | None = None,
@@ -668,6 +673,8 @@ def _stream_background(
             "expected_workspace_epoch": expected_workspace_epoch,
             "ingress": None if resume else issue_ingress("web"),
         }
+        if resume:
+            start_kwargs["expected_run_generation"] = expected_run_generation
         if not resume and user_metadata is not None:
             start_kwargs["user_metadata"] = user_metadata
         if not resume and queue_terminal is not None:
@@ -676,6 +683,29 @@ def _stream_background(
     except WorkspaceChangedError as exc:
         yield _sse("error", {"error": "workspace_changed", "detail": str(exc)})
         return
+    except RunGenerationMismatchError as exc:
+        # TOCTOU closure: route preflight may race a terminal/new run transition;
+        # runner rechecks under its registry lock and returns a typed mechanical fault.
+        yield _sse(
+            "error",
+            {
+                "error": "run_generation_mismatch",
+                "detail": "恢复目标已不是原运行代次；拒绝订阅新的 run。",
+                "expected_run_generation": exc.expected_run_generation,
+                "actual_run_generation": exc.actual_run_generation,
+            },
+        )
+        return
+    if handle is not None:
+        # First provider-independent receipt.  The browser records this before any model
+        # delta so a later reconnect can name the exact execution instead of "latest".
+        yield _sse(
+            "run_started",
+            {
+                "session_id": session_id,
+                "run_generation": handle.run_generation,
+            },
+        )
     if q is None:
         if resume:
             # DSH 017 ② 语义区分：resume 场景无进行中 run（已结束/不存在）→
@@ -856,6 +886,27 @@ def chat_stream(
                 },
             )
 
+    # resume identity preflight: never interpret "the current run for this session" as
+    # the caller's run.  This closes the ordinary stale-tab case before StreamingResponse
+    # is committed; BackgroundRunner repeats the check under its own lock for TOCTOU.
+    _resume_requested = bool(getattr(payload, "resume", False))
+    _expected_run_generation = getattr(payload, "run_generation", None)
+    _resume_runner = getattr(engine, "runner", None)
+    if _resume_requested and _resume_runner is not None and _resume_runner.enabled:
+        _resume_snap = _resume_runner.get_handle(session_id)
+        if _resume_snap is not None:
+            _actual_run_generation = str(_resume_snap.get("run_generation") or "")
+            if str(_expected_run_generation or "") != _actual_run_generation:
+                return UTF8JSONResponse(
+                    status_code=409,
+                    content={
+                        "error": "run_generation_mismatch",
+                        "detail": "恢复目标已不是原运行代次；Web 不会订阅同会话的后续 run。",
+                        "expected_run_generation": str(_expected_run_generation or ""),
+                        "actual_run_generation": _actual_run_generation,
+                    },
+                )
+
     # Web 模型选择只在请求成功接单后持久化。未知模型不写 session，
     # 仍交本次 per-call 路由生成“模型不可用”反馈；busy/resume 必须零副作用。
     _persist_model_ref = _canonical_persist_model(engine, payload.model)
@@ -893,6 +944,7 @@ def chat_stream(
                 reasoning_effort=payload.reasoning_effort,
                 reasoning_mode=payload.reasoning_mode,
                 resume=_resume,
+                expected_run_generation=_expected_run_generation if _resume else None,
                 before_start=_before_start,
                 expected_workspace_epoch=workspace_epoch,
                 user_metadata=(

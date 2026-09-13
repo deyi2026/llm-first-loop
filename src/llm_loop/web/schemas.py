@@ -34,6 +34,12 @@ class ChatRequest(BaseModel):
         description="reasoning 模式：auto=尊重 provider/operator 默认，off/on=本请求显式关闭/开启",
     )
     resume: bool = Field(default=False, description="EVO 后台 run：true=不提交新 run，订阅已有 run（刷新/切回）")
+    run_generation: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="resume 的精确后台 run generation；防旧标签页订阅同 session 的后续 run",
+    )
     queue_id: str | None = Field(
         default=None,
         description="排队派发标记：本次 run 承接该排队项，run 终态时回写队列状态（completed/failed）",
@@ -45,6 +51,8 @@ class ChatRequest(BaseModel):
             raise ValueError("message 或 attachments 至少提供一项")
         if self.resume and self.attachments:
             raise ValueError("resume 仅用于恢复订阅，不能携带新的 attachments")
+        if self.resume and not self.run_generation:
+            raise ValueError("resume 必须携带精确 run_generation")
         return self
 
 

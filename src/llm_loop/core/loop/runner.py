@@ -23,6 +23,7 @@ import os
 import queue
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -57,6 +58,21 @@ class QueuedIngressDurabilityError(RuntimeError):
     """Queued human ingress could not cross its mandatory durable EventStore boundary."""
 
 
+class RunGenerationMismatchError(RuntimeError):
+    """A resume request did not name the exact currently-running generation."""
+
+    def __init__(
+        self, *, expected_run_generation: str | None, actual_run_generation: str
+    ) -> None:
+        self.expected_run_generation = str(expected_run_generation or "")
+        self.actual_run_generation = str(actual_run_generation or "")
+        super().__init__(
+            "resume run generation mismatch: "
+            f"expected={self.expected_run_generation or '<missing>'} "
+            f"actual={self.actual_run_generation or '<missing>'}"
+        )
+
+
 @dataclass
 class RunHandle:
     """一次后台 run 的句柄（状态仅 registry 锁内变更；对外用 snapshot 只读快照）.
@@ -65,6 +81,9 @@ class RunHandle:
     """
 
     session_id: str
+    # Fresh per execution, never derived from session id or timestamps.  Reconnect/resume
+    # must bind this exact generation so an old tab cannot subscribe to a later run.
+    run_generation: str = field(default_factory=lambda: uuid.uuid4().hex)
     status: str = "running"  # running | done | error
     started_at: float = field(default_factory=time.time)
     finished_at: float | None = None
@@ -82,6 +101,7 @@ class RunHandle:
     def snapshot(self) -> dict:
         return {
             "session_id": self.session_id,
+            "run_generation": self.run_generation,
             "status": self.status,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
@@ -396,6 +416,7 @@ class BackgroundRunner:
         reasoning_mode: str | None = None,
         *,
         resume: bool = False,
+        expected_run_generation: str | None = None,
         before_start: Callable[[Any], None] | None = None,
         expected_workspace_epoch: int | None = None,
         ingress: object | None = None,
@@ -405,8 +426,9 @@ class BackgroundRunner:
         """注册 + 起后台线程；返回 (handle, queue)，调用方订阅消费.
 
         - resume=False（默认）: 同会话已有 running → (None, None)（调用方按 session_busy 处理）
-        - resume=True: 同会话已有 running → 返回 (None, 新订阅队列)（重连订阅已有 run，
-          刷新/切回会话场景；done 后 handle 已移除 → 返回 (None, None)）
+        - resume=True: 同会话已有 running 且 expected_run_generation 精确匹配 →
+          返回 (None, 新订阅队列)；缺失/不匹配 fail-closed，绝不订阅该 session 的
+          "当前最新 run"。done 后 handle 已移除 → 返回 (None, None)。
         - disabled → (None, None)
         - ingress: R8.24-D D-D2（DT-1.3④盘点补齐）——后台 run 的 user 写入同样
           需要人类通道凭据（web 通道由 routes 调用方签发传入；fail-closed 下
@@ -438,6 +460,12 @@ class BackgroundRunner:
                         # 终态 handle 不再可订阅（调用方按"无进行中 run"处理）。
                         if existing.status in ("done", "error"):
                             return None, None
+                        expected = str(expected_run_generation or "")
+                        if not expected or expected != existing.run_generation:
+                            raise RunGenerationMismatchError(
+                                expected_run_generation=expected_run_generation,
+                                actual_run_generation=existing.run_generation,
+                            )
                         return None, existing._bus.subscribe()
                     return None, None
                 # EVO-20260817 审查 P0-3: 同步 run 活跃时拒绝后台 start（双向互斥闭环）

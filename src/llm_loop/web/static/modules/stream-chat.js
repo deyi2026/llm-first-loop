@@ -1,4 +1,4 @@
-async function streamChatRequest(body, onDelta, onReasoningDelta, onToolRound) {
+async function streamChatRequest(body, onDelta, onReasoningDelta, onToolRound, onRunStarted) {
   let resp;
   try {
     resp = await fetch("/api/v1/chat/stream", {
@@ -38,7 +38,8 @@ async function streamChatRequest(body, onDelta, onReasoningDelta, onToolRound) {
       if (!dataLine) continue;
       let evt;
       try { evt = JSON.parse(dataLine.slice(6)); } catch { continue; }
-      if (evt.type === "answer_delta") onDelta(evt.data && evt.data.data);
+      if (evt.type === "run_started") { if (onRunStarted) onRunStarted(evt.data); }
+      else if (evt.type === "answer_delta") onDelta(evt.data && evt.data.data);
       else if (evt.type === "reasoning_delta") { if (onReasoningDelta) onReasoningDelta(evt.data && evt.data.data); }
       else if (evt.type === "tool_round") { if (onToolRound) onToolRound(evt.data); }
       else if (evt.type === "done") { doneData = evt.data; finished = true; break; }
@@ -141,12 +142,22 @@ async function runStreamChat(body, loading, opts = {}) {
     if (isMessagesAtBottom()) {
       els.messages.scrollTop = els.messages.scrollHeight;
     }
+  }, (runStarted) => {
+    const sid = runStarted && typeof runStarted.session_id === "string" ? runStarted.session_id : "";
+    const generation = runStarted && typeof runStarted.run_generation === "string" ? runStarted.run_generation : "";
+    if (sid && generation) {
+      // First mechanical receipt arrives before model deltas.  Keep it separate from
+      // retryRequest so an ordinary retry never accidentally carries resume authority.
+      state.currentSessionId = sid;
+      state.runGenerationBySession.set(sid, generation);
+    }
   });
 
   if (result.ok && result.data) {
     const data = result.data;
     resumeAttempts = 0; // 续联成功：重置计数
     state.currentSessionId = data.session_id;
+    if (data.session_id) state.runGenerationBySession.delete(data.session_id);
     // P3-1: done 终态暂存声明侧事实（session_id 键控，合并写入不覆盖既有键，纯页面内存态）
     if (data.session_id && Array.isArray(data.tool_calls)) {
       let sessionDecls = state.declarationIndex.get(data.session_id);
@@ -221,14 +232,23 @@ async function runStreamChat(body, loading, opts = {}) {
     state.pendingNewSession = true;
     state.retryRequest = null;
     loadSessions();
+  } else if (result.status === 409 && result.error && result.error.error === "run_generation_mismatch") {
+    if (loading) loading.remove();
+    const sid = body && body.session_id ? body.session_id : state.currentSessionId;
+    if (sid) state.runGenerationBySession.delete(sid);
+    state.retryRequest = null;
+    addMessage("error", result.error.detail || "恢复目标已不是原运行代次；未自动接管同会话的后续 run。请刷新会话状态。");
   } else {
     // D2: 网络/引擎错误区分提示 + 可重试（不静默重连，fail-open ≠ fail-silent）
     if (loading) loading.remove();
     const isNetwork = result.errorType === "network";
     const detail = result.error && result.error.detail ? result.error.detail : "服务内部错误。";
     const note = `${isNetwork ? "" : "[程序异常] "}${detail}`;
-    // 自动续联：网络中断 → resume 订阅续收（后台 run 继续执行；上限 2 次防递归风暴）
-    if (isNetwork && state.retryRequest && state.retryRequest.session_id && resumeAttempts < 2) {
+    // 自动续联只允许使用本次流开始时收到的精确 generation。若连 run_started
+    // 都没收到就断网，宁可停下让用户重试，也不向 status 查询“当前最新 run”来猜。
+    const resumeSid = (body && body.session_id) || state.currentSessionId;
+    const resumeGeneration = resumeSid ? state.runGenerationBySession.get(resumeSid) : null;
+    if (isNetwork && resumeSid && resumeGeneration && resumeAttempts < 2) {
       resumeAttempts += 1;
       const rnote = document.createElement("div");
       rnote.className = "reconnect-note";
@@ -237,8 +257,12 @@ async function runStreamChat(body, loading, opts = {}) {
       els.messages.scrollTop = els.messages.scrollHeight;
       setTimeout(async () => {
         try { if (rnote.parentNode) rnote.parentNode.removeChild(rnote); } catch { /* ignore */ }
-        // resume 请求体：同会话订阅已有 run（不提交新 run，message 占位不会被消费）
-        await runStreamChat({ ...state.retryRequest, resume: true }, null, { resume: true });
+        await runStreamChat({
+          message: "（恢复连接）",
+          session_id: resumeSid,
+          resume: true,
+          run_generation: resumeGeneration,
+        }, null, { resume: true });
       }, 1500);
       return;
     }
@@ -289,12 +313,23 @@ async function checkResumeOnLoad() {
     st = await r.json();
   } catch { /* fail-open：状态不可达时不阻塞首屏 */ return; }
   if (!st || !st.running) return;
+  const generation = typeof st.run_generation === "string" ? st.run_generation : "";
+  if (!generation) {
+    addMessage("error", "检测到后台 run，但缺少精确 run generation；为避免误接管，不自动恢复。请刷新后重试。");
+    return;
+  }
+  state.runGenerationBySession.set(sid, generation);
   const loading = el("div", "message assistant loading", "该会话正在生成中，正在恢复…");
   els.messages.appendChild(loading);
   els.messages.scrollTop = els.messages.scrollHeight;
   try {
-    // resume 订阅：message 传占位（后端 resume 分支不消费 message）
-    await runStreamChat({ message: "（恢复连接）", session_id: sid, resume: true }, loading, { resume: true });
+    // resume 订阅：精确绑定 status 刚返回的当前 generation。
+    await runStreamChat({
+      message: "（恢复连接）",
+      session_id: sid,
+      resume: true,
+      run_generation: generation,
+    }, loading, { resume: true });
   } catch {
     try { if (loading.parentNode) loading.parentNode.removeChild(loading); } catch { /* ignore */ }
   }
