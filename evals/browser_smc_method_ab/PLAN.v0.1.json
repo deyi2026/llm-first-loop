@@ -1,0 +1,182 @@
+[
+  {
+    "arm": "method_off",
+    "index": 1,
+    "pair_block": 1,
+    "prompt_template_sha256": "823e7cb25a1f2f234412564a93ed221956bdbcb4214aff1d67a78fd9296c6f2d",
+    "repeat": 1,
+    "smoke": true,
+    "task_id": "click_commit"
+  },
+  {
+    "arm": "method_on",
+    "index": 2,
+    "pair_block": 1,
+    "prompt_template_sha256": "823e7cb25a1f2f234412564a93ed221956bdbcb4214aff1d67a78fd9296c6f2d",
+    "repeat": 1,
+    "smoke": true,
+    "task_id": "click_commit"
+  },
+  {
+    "arm": "method_on",
+    "index": 3,
+    "pair_block": 2,
+    "prompt_template_sha256": "d80607ace4193874d8b7deddc2988f8b6562443b99b54455e48163cc4a6ff9e2",
+    "repeat": 1,
+    "smoke": true,
+    "task_id": "fill_submit"
+  },
+  {
+    "arm": "method_off",
+    "index": 4,
+    "pair_block": 2,
+    "prompt_template_sha256": "d80607ace4193874d8b7deddc2988f8b6562443b99b54455e48163cc4a6ff9e2",
+    "repeat": 1,
+    "smoke": true,
+    "task_id": "fill_submit"
+  },
+  {
+    "arm": "method_on",
+    "index": 5,
+    "pair_block": 3,
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 1,
+    "smoke": true,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "method_off",
+    "index": 6,
+    "pair_block": 3,
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 1,
+    "smoke": true,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "method_on",
+    "index": 7,
+    "pair_block": 4,
+    "prompt_template_sha256": "5b67bfa5527c1f9e2bbfc0a733daf89e460ce8383cd54ac3a9360928d9c6c696",
+    "repeat": 2,
+    "smoke": false,
+    "task_id": "select_submit"
+  },
+  {
+    "arm": "method_off",
+    "index": 8,
+    "pair_block": 4,
+    "prompt_template_sha256": "5b67bfa5527c1f9e2bbfc0a733daf89e460ce8383cd54ac3a9360928d9c6c696",
+    "repeat": 2,
+    "smoke": false,
+    "task_id": "select_submit"
+  },
+  {
+    "arm": "method_off",
+    "index": 9,
+    "pair_block": 5,
+    "prompt_template_sha256": "823e7cb25a1f2f234412564a93ed221956bdbcb4214aff1d67a78fd9296c6f2d",
+    "repeat": 2,
+    "smoke": false,
+    "task_id": "click_commit"
+  },
+  {
+    "arm": "method_on",
+    "index": 10,
+    "pair_block": 5,
+    "prompt_template_sha256": "823e7cb25a1f2f234412564a93ed221956bdbcb4214aff1d67a78fd9296c6f2d",
+    "repeat": 2,
+    "smoke": false,
+    "task_id": "click_commit"
+  },
+  {
+    "arm": "method_on",
+    "index": 11,
+    "pair_block": 6,
+    "prompt_template_sha256": "5b67bfa5527c1f9e2bbfc0a733daf89e460ce8383cd54ac3a9360928d9c6c696",
+    "repeat": 1,
+    "smoke": false,
+    "task_id": "select_submit"
+  },
+  {
+    "arm": "method_off",
+    "index": 12,
+    "pair_block": 6,
+    "prompt_template_sha256": "5b67bfa5527c1f9e2bbfc0a733daf89e460ce8383cd54ac3a9360928d9c6c696",
+    "repeat": 1,
+    "smoke": false,
+    "task_id": "select_submit"
+  },
+  {
+    "arm": "method_on",
+    "index": 13,
+    "pair_block": 7,
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 2,
+    "smoke": false,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "method_off",
+    "index": 14,
+    "pair_block": 7,
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 2,
+    "smoke": false,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "method_off",
+    "index": 15,
+    "pair_block": 8,
+    "prompt_template_sha256": "b1811e434d36e117aa6ed4f05861b113e96a053168e1ea7718ae0528a04bf65d",
+    "repeat": 1,
+    "smoke": false,
+    "task_id": "replacement_click"
+  },
+  {
+    "arm": "method_on",
+    "index": 16,
+    "pair_block": 8,
+    "prompt_template_sha256": "b1811e434d36e117aa6ed4f05861b113e96a053168e1ea7718ae0528a04bf65d",
+    "repeat": 1,
+    "smoke": false,
+    "task_id": "replacement_click"
+  },
+  {
+    "arm": "method_off",
+    "index": 17,
+    "pair_block": 9,
+    "prompt_template_sha256": "b1811e434d36e117aa6ed4f05861b113e96a053168e1ea7718ae0528a04bf65d",
+    "repeat": 2,
+    "smoke": false,
+    "task_id": "replacement_click"
+  },
+  {
+    "arm": "method_on",
+    "index": 18,
+    "pair_block": 9,
+    "prompt_template_sha256": "b1811e434d36e117aa6ed4f05861b113e96a053168e1ea7718ae0528a04bf65d",
+    "repeat": 2,
+    "smoke": false,
+    "task_id": "replacement_click"
+  },
+  {
+    "arm": "method_off",
+    "index": 19,
+    "pair_block": 10,
+    "prompt_template_sha256": "d80607ace4193874d8b7deddc2988f8b6562443b99b54455e48163cc4a6ff9e2",
+    "repeat": 2,
+    "smoke": false,
+    "task_id": "fill_submit"
+  },
+  {
+    "arm": "method_on",
+    "index": 20,
+    "pair_block": 10,
+    "prompt_template_sha256": "d80607ace4193874d8b7deddc2988f8b6562443b99b54455e48163cc4a6ff9e2",
+    "repeat": 2,
+    "smoke": false,
+    "task_id": "fill_submit"
+  }
+]
