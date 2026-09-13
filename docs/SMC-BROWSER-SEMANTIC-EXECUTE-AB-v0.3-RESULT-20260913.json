@@ -1,0 +1,119 @@
+{
+  "schema": "smc.browser_semantic_execute_ab.result.v0.3",
+  "date": "2026-09-13",
+  "verdict": "SMOKE_GATE_FAIL",
+  "model_usability": "NOT_QUALIFIED",
+  "default_enablement": "NOT_QUALIFIED",
+  "cloud_canary": "NOT_RUN_BY_GATE",
+  "protocol_commit": "0e79a9857a3cbcc90a7b192843a958994005704a",
+  "implementation_commit": "b313f9bb5e689aa935cdc081d83f5dca7d7af3a7",
+  "mechanical_live_qualification": {
+    "status": "PASS",
+    "report_commit": "abf97bb6c2f7b9495cfd2ed588ffa6aa0959f1e6",
+    "behavior": "12/12",
+    "safety": "7/7"
+  },
+  "evidence_sha256": {
+    "results_jsonl": "41340d60a1a4501296ea74979175fcfdbf520d1faaaa22af086994ee7142c1e1",
+    "smoke_gate_json": "37dfa458d3a5bda2b8db48c4b784ab5f8c3a5bb8c43cf50af828412a2ebeda1b",
+    "execution_manifest_json": "9035d155e50e4acbcd14af913b01e9487da1d2017956e947fbf852a2e3acbcb6",
+    "plan_json": "7015d6bf3176b73674a048e4ff5a082a9e7b5321c6aef2b4c20710dd630d379d",
+    "analysis_json": "037473868e94d3cdc324d40896e94ddd23428eb8c0e9556a2be195e2f91b1182"
+  },
+  "frozen_gate": {
+    "pass": false,
+    "complete_rows": 6,
+    "expected_rows": 6,
+    "infra_valid": false,
+    "surface_exact": false,
+    "model_no_fallback": true,
+    "security_agent_spawned": false,
+    "full_action_smc_adoption": 2,
+    "semantic_execute_smc_adoption": 2,
+    "full_action_task_pass": 0,
+    "semantic_execute_task_pass": 1,
+    "semantic_execute_task_pass_required": 2,
+    "semantic_execute_object_ok_receipts": 2,
+    "semantic_execute_navigate_ok_receipts": 2,
+    "semantic_execute_scope_blockers": 0,
+    "automatic_retry_true_total": 0
+  },
+  "completed_run_mechanics": {
+    "full_action": {
+      "task_pass": "0/3",
+      "completed_worker_rows": 2,
+      "receipt_ok_total": 2,
+      "object_ok_total": 0,
+      "receipt_rejected_total": 6,
+      "scope_blocker_total": 6,
+      "mean_rounds": 12.0,
+      "mean_tokens_in": 111969.0,
+      "mean_tokens_out": 3160.0
+    },
+    "semantic_execute": {
+      "task_pass": "1/3",
+      "completed_worker_rows": 2,
+      "receipt_ok_total": 4,
+      "object_ok_total": 2,
+      "receipt_rejected_total": 1,
+      "scope_blocker_total": 0,
+      "mean_rounds": 11.0,
+      "mean_tokens_in": 92520.0,
+      "mean_tokens_out": 1897.5
+    }
+  },
+  "paired_findings": {
+    "click_commit": "semantic_execute PASS; full_action TASK_FAIL",
+    "fill_submit": "both TASK_FAIL; semantic_execute reached real navigate+fill while full_action never reached object mutation",
+    "delayed_wait": "both TIMEOUT at the frozen 240s worker limit"
+  },
+  "timeout_forensics": {
+    "full_action": {
+      "durable_tool_calls": 9,
+      "browser_action_calls": 1,
+      "browser_perceive_calls": 8,
+      "wait_calls": 4,
+      "durable_action_receipts": 1,
+      "receipt_result": "navigate rejected: version_precondition_indeterminate:expected_version_unavailable"
+    },
+    "semantic_execute": {
+      "durable_tool_calls": 7,
+      "browser_semantic_execute_calls": 1,
+      "browser_perceive_calls": 5,
+      "wait_calls": 3,
+      "get_tool_schema_calls": 1,
+      "durable_action_receipts": 0,
+      "first_compile_result": "target_ref_unavailable:invalid_ref"
+    }
+  },
+  "first_call_ready_findings": [
+    "semantic_execute attempts used a non-GroundingRef target before obtaining a snapshot",
+    "browser_perceive wait attempts used a scope predicate target that was not the exact scope_ref",
+    "browser_perceive wait attempts used interval_ms outside the mechanical 1..5000 range"
+  ],
+  "next_hypothesis": {
+    "type": "tool_local_mechanical_contract_only",
+    "changes_to_test": [
+      "add compact parameter-local target_ref guidance: use only an exact current GroundingRef returned by snapshot; URL/name/text are not target_ref",
+      "preserve verb-specific args facts at the semantic_execute parameter level",
+      "add compact parameter-local wait predicate scope_ref and interval_ms mechanical bounds",
+      "keep the worked Observe -> Ground -> Execute -> Receipt -> Re-observe/Verify example inside the tool description"
+    ],
+    "forbidden_shortcuts": [
+      "automatic target selection",
+      "automatic snapshot/latest selection",
+      "automatic retry/replay",
+      "automatic rebind",
+      "program-side task completion judgment",
+      "universal prompt expansion",
+      "forced Method search"
+    ]
+  },
+  "limitations": [
+    "three paired tasks are directional smoke evidence, not a significance study",
+    "surface_exact is false only because timeout rows have no terminal worker payload; exact committed-state preflight verified both frozen surfaces before measured execution",
+    "means for rounds/tokens use only the two rows per arm with terminal worker telemetry",
+    "wall time and cache are descriptive because all rows share one sequential local model server",
+    "mechanical live PASS does not imply model usability PASS"
+  ]
+}
