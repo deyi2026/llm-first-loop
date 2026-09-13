@@ -1,0 +1,443 @@
+{
+  "aggregate": {
+    "arms": {
+      "full_action": {
+        "cache_hit_tokens": {
+          "mean": 76164.0,
+          "median": 76164.0,
+          "observed": 1
+        },
+        "infra_fail": 2,
+        "mutation_failure_calls": 0,
+        "rounds": {
+          "mean": 12.0,
+          "median": 12.0,
+          "observed": 1
+        },
+        "runs": 3,
+        "smc_adopted": 1,
+        "status_pass": 0,
+        "task_pass": 0,
+        "tokens_in": {
+          "mean": 88567.0,
+          "median": 88567.0,
+          "observed": 1
+        },
+        "tokens_out": {
+          "mean": 4726.0,
+          "median": 4726.0,
+          "observed": 1
+        },
+        "tool_calls": {
+          "mean": 14.0,
+          "median": 14.0,
+          "observed": 1
+        },
+        "wall_s": {
+          "mean": 225.387,
+          "median": 240.905,
+          "observed": 3
+        }
+      },
+      "semantic_execute": {
+        "cache_hit_tokens": {
+          "mean": 85892.333,
+          "median": 84964.0,
+          "observed": 3
+        },
+        "infra_fail": 0,
+        "mutation_failure_calls": 3,
+        "rounds": {
+          "mean": 10.333,
+          "median": 11.0,
+          "observed": 3
+        },
+        "runs": 3,
+        "smc_adopted": 3,
+        "status_pass": 3,
+        "task_pass": 3,
+        "tokens_in": {
+          "mean": 113858.0,
+          "median": 110258.0,
+          "observed": 3
+        },
+        "tokens_out": {
+          "mean": 1724.0,
+          "median": 1650.0,
+          "observed": 3
+        },
+        "tool_calls": {
+          "mean": 9.333,
+          "median": 10.0,
+          "observed": 3
+        },
+        "wall_s": {
+          "mean": 91.933,
+          "median": 88.813,
+          "observed": 3
+        }
+      }
+    },
+    "limitations": [
+      "three paired tasks are a directional smoke, not a statistical significance study",
+      "the intended intervention is the whole mutation interface contract: full SemanticAction tool versus thin semantic_execute tool",
+      "browser_perceive and get_tool_schema are held identical across arms",
+      "Method discovery/search is intentionally unavailable so this tests the tool's own usage description",
+      "task success is judged only by predeclared loopback external-state oracles",
+      "cache and wall-time are descriptive because all rows share one sequential local model server"
+    ],
+    "mechanics": {
+      "full_action": {
+        "automatic_retry_true_total": 0,
+        "navigate_ok_total": 0,
+        "object_ok_total": 0,
+        "receipt_failed_total": 0,
+        "receipt_ok_total": 0,
+        "receipt_rejected_total": 2,
+        "rejection_reasons": {
+          "version_precondition_indeterminate:expected_version_unavailable": 2
+        },
+        "scope_blocker_total": 2,
+        "security_agent_spawned_runs": 0
+      },
+      "semantic_execute": {
+        "automatic_retry_true_total": 0,
+        "navigate_ok_total": 3,
+        "object_ok_total": 4,
+        "receipt_failed_total": 0,
+        "receipt_ok_total": 7,
+        "receipt_rejected_total": 0,
+        "rejection_reasons": {
+          "action_in_progress": 7,
+          "boundary_detector_non_exhaustive": 7,
+          "document_generation_changed": 3,
+          "identity_unstable_objects": 4,
+          "scope_changed": 3
+        },
+        "scope_blocker_total": 0,
+        "security_agent_spawned_runs": 0
+      }
+    },
+    "paired": [
+      {
+        "full_action_pass": false,
+        "repeat": 1,
+        "rounds_delta_semantic_minus_full": null,
+        "semantic_execute_pass": true,
+        "task_id": "click_commit",
+        "tokens_in_delta_semantic_minus_full": null,
+        "tokens_out_delta_semantic_minus_full": null,
+        "tool_calls_delta_semantic_minus_full": null,
+        "wall_s_delta_semantic_minus_full": -152.1
+      },
+      {
+        "full_action_pass": false,
+        "repeat": 1,
+        "rounds_delta_semantic_minus_full": null,
+        "semantic_execute_pass": true,
+        "task_id": "delayed_wait",
+        "tokens_in_delta_semantic_minus_full": null,
+        "tokens_out_delta_semantic_minus_full": null,
+        "tool_calls_delta_semantic_minus_full": null,
+        "wall_s_delta_semantic_minus_full": -139.372
+      },
+      {
+        "full_action_pass": false,
+        "repeat": 1,
+        "rounds_delta_semantic_minus_full": -1.0,
+        "semantic_execute_pass": true,
+        "task_id": "fill_submit",
+        "tokens_in_delta_semantic_minus_full": 39249.0,
+        "tokens_out_delta_semantic_minus_full": -2815.0,
+        "tool_calls_delta_semantic_minus_full": -4.0,
+        "wall_s_delta_semantic_minus_full": -108.891
+      }
+    ],
+    "schema": "smc.browser_semantic_execute_fcr_ab.analysis.v0.4",
+    "total_runs": 6
+  },
+  "date": "2026-09-13",
+  "evidence_sha256": {
+    "analysis": "796a5cacbdb4363bd208e56edb7aebeda0dda92af189d3905d3fb54a093a6c73",
+    "execution_manifest": "594acdc2c25da9f4fee346cfbd8c8a21cbe88f52eb5314efad5d7a1cba03d482",
+    "plan_file": "7015d6bf3176b73674a048e4ff5a082a9e7b5321c6aef2b4c20710dd630d379d",
+    "results_jsonl": "20137b426fb2903e22e8f0ed02f0ea2ba0b5b93a3e1aa66a840b27824cfce624",
+    "smoke_gate": "f0aa2f90029d0e33dfa09bc67bea02b74eb2a82cdcfc724566eb9787765b25a5"
+  },
+  "frozen_runtime": {
+    "decode_concurrency": 1,
+    "fallbacks": 0,
+    "fresh_session_data_chrome_each_row": true,
+    "max_input_tokens": 184000,
+    "max_iterations": 12,
+    "max_output_tokens": 16000,
+    "model": "cognilocal/ornith-1.5-35b-a3b-mlx",
+    "prompt_concurrency": 1,
+    "reasoning_effort": "medium",
+    "serial_rows": true,
+    "temperature": 0.0,
+    "thinking": "on",
+    "worker_timeout_s": 240
+  },
+  "gate": {
+    "automatic_retry_required": 0,
+    "automatic_retry_true_total": 0,
+    "comparative_improvement_is_gate": false,
+    "complete_rows": 6,
+    "expected_rows": 6,
+    "full_action_smc_adoption": 1,
+    "full_action_task_pass": 0,
+    "infra_valid": false,
+    "model_no_fallback": true,
+    "pass": false,
+    "security_agent_spawned": false,
+    "semantic_execute_navigate_ok_receipts": 3,
+    "semantic_execute_navigate_ok_required": 2,
+    "semantic_execute_object_ok_receipts": 4,
+    "semantic_execute_object_ok_required": 1,
+    "semantic_execute_scope_blockers": 0,
+    "semantic_execute_scope_blockers_required": 0,
+    "semantic_execute_smc_adoption": 3,
+    "semantic_execute_task_pass": 3,
+    "semantic_execute_task_pass_required": 2,
+    "smc_adoption_required_each_arm": 2,
+    "surface_exact": false
+  },
+  "identity": {
+    "implementation_commit": "62a3b50a7a4f50ac8c3e8d42cb0f010435f33cfd",
+    "measured_head": "ea282591eba846b8e1ebc9743618d73479dd5ff0",
+    "mechanical_live_harness_commit": "fd812123a8ad0fe5e844a2fc7f0d2e17ceccd3be",
+    "mechanical_live_report_commit": "abf97bb6c2f7b9495cfd2ed588ffa6aa0959f1e6",
+    "preflight_guard_commit": "ea282591eba846b8e1ebc9743618d73479dd5ff0",
+    "protocol_commit": "b516f08b4abb754583dd5f8c794bffe937b31220",
+    "protocol_plan_sha256": "8f3bab36fdd4836a1bc5e27a1256b944d43c17ce3d51e3678924af2cf10dc8d0",
+    "semantic_execute_implementation_commit": "b313f9bb5e689aa935cdc081d83f5dca7d7af3a7",
+    "v03_result_commit": "13fa713dbcbc6893cf92f0448456b8a69dd848b7"
+  },
+  "non_claims": [
+    "No statistical significance or universal performance claim from three task pairs.",
+    "No cloud-provider qualification because the frozen local smoke gate failed.",
+    "No automatic target selection, snapshot/latest, retry/replay, rebind, or task-completion authority was added.",
+    "No universal prompt expansion and no provider-specific semantic rewrite was added."
+  ],
+  "residual_fcr_findings": [
+    "All three semantic_execute treatment rows still made one pre-snapshot navigate call with a non-GroundingRef target_ref; the tool rejected it mechanically with target_ref_unavailable:invalid_ref and no dispatch.",
+    "The fill_submit semantic row still made one invalid wait scope predicate call: scope predicate target must equal its exact scope_ref.",
+    "No semantic treatment row produced an old scope/version blocker receipt, automatic retry, fallback, or SecurityAgent spawn."
+  ],
+  "rows": {
+    "click_commit": {
+      "full_action": {
+        "cache_hit_tokens": null,
+        "mutation_calls": null,
+        "mutation_failure_calls": null,
+        "navigate_ok": null,
+        "object_ok": null,
+        "oracle": {
+          "commit_count": 0,
+          "pass": false
+        },
+        "receipt_ok": null,
+        "receipt_rejected": null,
+        "rounds": null,
+        "scope_blockers": null,
+        "security_agent_spawned": false,
+        "status": "TIMEOUT",
+        "tokens_in": null,
+        "tokens_out": null,
+        "tool_calls": null,
+        "wall_s": 240.913
+      },
+      "semantic_execute": {
+        "cache_hit_tokens": 84964,
+        "mutation_calls": 3,
+        "mutation_failure_calls": 1,
+        "navigate_ok": 1,
+        "object_ok": 1,
+        "oracle": {
+          "commit_count": 1,
+          "pass": true
+        },
+        "receipt_ok": 2,
+        "receipt_rejected": 0,
+        "rounds": 11,
+        "scope_blockers": 0,
+        "security_agent_spawned": false,
+        "status": "PASS",
+        "tokens_in": 110258,
+        "tokens_out": 1611,
+        "tool_calls": 10,
+        "wall_s": 88.813
+      }
+    },
+    "delayed_wait": {
+      "full_action": {
+        "cache_hit_tokens": null,
+        "mutation_calls": null,
+        "mutation_failure_calls": null,
+        "navigate_ok": null,
+        "object_ok": null,
+        "oracle": {
+          "early_click_count": 0,
+          "pass": false,
+          "ready_click_count": 0
+        },
+        "receipt_ok": null,
+        "receipt_rejected": null,
+        "rounds": null,
+        "scope_blockers": null,
+        "security_agent_spawned": false,
+        "status": "TIMEOUT",
+        "tokens_in": null,
+        "tokens_out": null,
+        "tool_calls": null,
+        "wall_s": 240.905
+      },
+      "semantic_execute": {
+        "cache_hit_tokens": 73706,
+        "mutation_calls": 3,
+        "mutation_failure_calls": 1,
+        "navigate_ok": 1,
+        "object_ok": 1,
+        "oracle": {
+          "early_click_count": 0,
+          "pass": true,
+          "ready_click_count": 1
+        },
+        "receipt_ok": 2,
+        "receipt_rejected": 0,
+        "rounds": 9,
+        "scope_blockers": 0,
+        "security_agent_spawned": false,
+        "status": "PASS",
+        "tokens_in": 103500,
+        "tokens_out": 1650,
+        "tool_calls": 8,
+        "wall_s": 101.533
+      }
+    },
+    "fill_submit": {
+      "full_action": {
+        "cache_hit_tokens": 76164,
+        "mutation_calls": 2,
+        "mutation_failure_calls": 0,
+        "navigate_ok": 0,
+        "object_ok": 0,
+        "oracle": {
+          "pass": false,
+          "save_count": 0,
+          "value_length": 0,
+          "value_match": false,
+          "value_sha256": null
+        },
+        "receipt_ok": 0,
+        "receipt_rejected": 2,
+        "rounds": 12,
+        "scope_blockers": 2,
+        "security_agent_spawned": false,
+        "status": "TASK_FAIL",
+        "tokens_in": 88567,
+        "tokens_out": 4726,
+        "tool_calls": 14,
+        "wall_s": 194.343
+      },
+      "semantic_execute": {
+        "cache_hit_tokens": 99007,
+        "mutation_calls": 4,
+        "mutation_failure_calls": 1,
+        "navigate_ok": 1,
+        "object_ok": 2,
+        "oracle": {
+          "pass": true,
+          "save_count": 1,
+          "value_length": 7,
+          "value_match": true,
+          "value_sha256": "29e0589ac27fb3d4b531c4e56c34c2c09ea1246b7106315b5d181ef1e2600e9a"
+        },
+        "receipt_ok": 3,
+        "receipt_rejected": 0,
+        "rounds": 11,
+        "scope_blockers": 0,
+        "security_agent_spawned": false,
+        "status": "PASS",
+        "tokens_in": 127816,
+        "tokens_out": 1911,
+        "tool_calls": 10,
+        "wall_s": 85.452
+      }
+    }
+  },
+  "ruling": {
+    "cloud_canary": "NOT_RUN_BY_GATE",
+    "default_enablement": "NOT_QUALIFIED_BY_CURRENT_GATE",
+    "predeclared_smoke_gate": "FAIL",
+    "reason": "Two full_action control rows timed out at the frozen 240s limit, so infra_valid/surface_exact and full_action adoption requirements were not satisfied even though all semantic_execute treatment rows completed and passed.",
+    "semantic_execute_runtime_mechanics": "PASS",
+    "semantic_execute_task_oracle": "3/3 PASS",
+    "tool_local_fcr_hypothesis": "DIRECTIONALLY_SUPPORTED"
+  },
+  "schema": "smc.browser_semantic_execute_fcr_ab.result.v0.4",
+  "timeout_partial_forensics": {
+    "click_commit_full_action": [
+      {
+        "automatic_retry": false,
+        "reason": "navigate_page_target_mismatch",
+        "status": "rejected",
+        "verb": "navigate"
+      },
+      {
+        "automatic_retry": false,
+        "reason": "args_contract_mismatch",
+        "status": "rejected",
+        "verb": "navigate"
+      }
+    ],
+    "delayed_wait_full_action": [
+      {
+        "automatic_retry": false,
+        "reason": "expected_version_missing",
+        "status": "rejected",
+        "verb": "navigate"
+      }
+    ],
+    "note": "Timeout partial receipts are durable evidence from rows without terminal worker telemetry and therefore are not included in aggregate worker receipt counts."
+  },
+  "v03_to_v04_directional": {
+    "semantic_infra_fail": {
+      "v0.3": 1,
+      "v0.4": 0
+    },
+    "semantic_median_input_tokens": {
+      "v0.3": 92520.0,
+      "v0.4": 110258.0
+    },
+    "semantic_median_wall_s": {
+      "v0.3": 123.621,
+      "v0.4": 88.813
+    },
+    "semantic_navigate_ok": {
+      "v0.3": 2,
+      "v0.4": 3
+    },
+    "semantic_object_ok": {
+      "v0.3": 2,
+      "v0.4": 4
+    },
+    "semantic_receipt_ok": {
+      "v0.3": 4,
+      "v0.4": 7
+    },
+    "semantic_rejected_receipts": {
+      "v0.3": 1,
+      "v0.4": 0
+    },
+    "semantic_scope_blockers": {
+      "v0.3": 0,
+      "v0.4": 0
+    },
+    "semantic_task_pass": {
+      "v0.3": "1/3",
+      "v0.4": "3/3"
+    }
+  }
+}
