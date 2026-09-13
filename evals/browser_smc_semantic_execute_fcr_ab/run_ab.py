@@ -223,6 +223,9 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
             "semantic_execute"
         ]["tool_sha256"].get(shared):
             raise RuntimeError(f"shared tool surface drift: {shared}")
+    for arm, surface in surfaces.items():
+        if not surface.get("perceive_fcr_visible"):
+            raise RuntimeError(f"browser_perceive FCR contract missing arm={arm}")
     if set(surfaces["semantic_execute"]["mutation_parameter_names"]) != {
         "verb",
         "target_ref",
