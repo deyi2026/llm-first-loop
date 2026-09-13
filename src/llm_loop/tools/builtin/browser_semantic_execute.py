@@ -184,7 +184,13 @@ class BrowserSemanticExecuteTool:
                 status=ToolResultStatus.FAILURE,
                 content=(
                     "[browser_semantic_execute] exact semantic compile rejected; "
-                    f"reason={exc}; no mutation dispatched; no automatic retry/rebind."
+                    f"reason={exc}; no mutation dispatched; no automatic retry/rebind. "
+                    "RECOVERY CONTRACT (this is a rejection of your declared action, "
+                    "NOT an unmet wait condition; do not answer it with any wait tool): "
+                    "(1) call browser_perceive(action=snapshot) on the current scope; "
+                    "(2) from that snapshot result take resource_ref for verb=navigate "
+                    "or the target SemanticObject.grounding_ref for object verbs; "
+                    "(3) re-dispatch this same verb with that exact ref and the same args."
                 ),
                 tool_call_id="",
                 tool_name=self.name,
