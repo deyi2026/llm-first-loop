@@ -13,6 +13,7 @@ import pytest
 
 from llm_loop.llm.client import GuardRequestContext, LLMClient
 from llm_loop.llm.errors import LLMHTTPError, LLMTimeoutError
+from llm_loop.runtime.causality import effective_generation_contract
 
 
 def _client(**overrides) -> LLMClient:
@@ -158,8 +159,11 @@ def test_chat_reasoning_details_cumulative_is_not_double_counted():
         )
     assert resp.reasoning_content == "思考过程"
     assert resp.content == "答案"
+    replay_client = _client(provider="minimax")
     assert resp.provider_replay == {
         "provider": "minimax",
+        "model": "m",
+        "generation_contract": effective_generation_contract(replay_client),
         "fields": {
             "reasoning_details": [
                 {"type": "reasoning.text", "text": "思考过程"}
@@ -188,7 +192,11 @@ def test_stream_state_hook_gets_opaque_reasoning_and_non_executable_tool_draft()
         )
 
     assert observed
-    assert observed[0]["provider_replay"]["fields"]["reasoning_details"][0]["signature"] == "sig-1"
+    replay = observed[0]["provider_replay"]
+    assert replay["provider"] == "minimax"
+    assert replay["model"] == "m"
+    assert replay["generation_contract"] == effective_generation_contract(_client(provider="minimax"))
+    assert replay["fields"]["reasoning_details"][0]["signature"] == "sig-1"
     draft_states = [s for s in observed if s.get("tool_call_drafts")]
     assert draft_states
     first_draft = draft_states[0]["tool_call_drafts"][0]
@@ -201,12 +209,15 @@ def test_provider_replay_projects_only_to_matching_provider():
     """Opaque replay 不跨 provider 泄漏；匹配 provider 使用原生字段。"""
     lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
     details = [{"type": "reasoning.text", "text": "raw"}]
+    replay_client = _client(provider="minimax")
     message = {
         "role": "assistant",
         "content": "old",
         "reasoning_content": "raw",
         "_provider_replay": {
             "provider": "minimax",
+            "model": "m",
+            "generation_contract": effective_generation_contract(replay_client),
             "fields": {"reasoning_details": details},
         },
     }
@@ -243,6 +254,8 @@ def test_provider_replay_survives_cross_provider_projection_and_returns_to_origi
         "reasoning_content": "raw",
         "_provider_replay": {
             "provider": "minimax",
+            "model": "m",
+            "generation_contract": effective_generation_contract(_client(provider="minimax")),
             "fields": {"reasoning_details": details},
         },
     }
@@ -325,6 +338,9 @@ def test_reasoning_split_uses_native_replay_when_tool_history_has_reasoning_deta
         "data: [DONE]",
     ]
     details = [{"type": "reasoning.text", "text": "native", "signature": "sig"}]
+    scope_client = _client(provider="minimax", reasoning_split=True)
+    replay_contract = effective_generation_contract(scope_client)
+    scope_client.close()
     messages = [
         {
             "role": "assistant",
@@ -339,6 +355,8 @@ def test_reasoning_split_uses_native_replay_when_tool_history_has_reasoning_deta
             ],
             "_provider_replay": {
                 "provider": "minimax",
+                "model": "m",
+                "generation_contract": replay_contract,
                 "fields": {"reasoning_details": details},
             },
         },

@@ -44,6 +44,7 @@ from llm_loop.llm.errors import (
     LLMTimeoutError,
 )
 from llm_loop.llm.schemas import ToolCallDeltaAggregator
+from llm_loop.runtime.causality import effective_generation_contract
 
 logger = logging.getLogger(__name__)
 
@@ -338,6 +339,7 @@ def _finish_response(
     provider: str,
     client: LLMClient | None = None,
     guard_context: GuardRequestContext | None = None,
+    actual_model: str | None = None,
 ) -> LLMResponse:
     raw_calls = agg.finish()
     tool_calls: list[ToolCall] = [
@@ -380,8 +382,11 @@ def _finish_response(
         prompt_cache_hit_tokens=acc.prompt_cache_hit_tokens,
         reasoning_tokens=acc.reasoning_tokens,
         provider_replay=(
-            {"provider": provider, "fields": dict(acc.provider_replay_fields)}
-            if acc.provider_replay_fields
+            client._provider_replay_envelope(
+                acc.provider_replay_fields,
+                model=str(actual_model or client.model or ""),
+            )
+            if acc.provider_replay_fields and client is not None
             else None
         ),
     )
@@ -1042,12 +1047,13 @@ class LLMClient:
 
         异常按类型抛出 LLMError 子类，由循环如实反馈。
         """
-        # Convert internal provider replay markers into exact wire fields before
-        # guard/fingerprint/context accounting. Replay state from another
-        # provider is stripped instead of leaking across model switches.
-        messages = self._project_provider_replay(messages)
         protocol = self.wire_protocol
         actual_model = self.model if model is None else model
+        # Convert internal provider replay markers into exact wire fields before
+        # guard/fingerprint/context accounting. Native replay is authorized only by
+        # an exact provider+model+generation-contract match; visible assistant state
+        # remains ordinary history when that hidden transport scope does not match.
+        messages = self._project_provider_replay(messages, model=actual_model)
         # 每请求 guard 快照：显式上下文优先；legacy 直接调用仍从兼容字段构造一次
         # 局部快照，后续整个流（含终态 telemetry）都不再读取共享 per-request 字段。
         _guard_ctx = guard_context or GuardRequestContext(
@@ -1153,13 +1159,40 @@ class LLMClient:
             )
         return result
 
-    def _project_provider_replay(self, messages: list[dict]) -> list[dict]:
-        """Project internal transport markers at the final provider boundary.
+    def _provider_replay_contract(self, model: str | None = None) -> dict[str, Any]:
+        """Return the exact secret-free generation contract for native replay scope."""
+        actual_model = str(model or self.model or "")
+        contract = dict(effective_generation_contract(self))
+        # Per-call model override is a real wire identity axis; the shared helper sees
+        # client.model, so replace only this mechanical field with the actual request model.
+        contract["model"] = actual_model
+        contract["provider"] = str(self.provider or "")
+        return contract
 
-        Provider replay remains provider-scoped. Human message timestamps are persisted
-        epoch facts rendered using the host OS timezone. Neither internal marker is ever
-        sent to a provider as a non-standard field.
+    def _provider_replay_envelope(
+        self, fields: dict[str, Any], *, model: str | None = None
+    ) -> dict[str, Any]:
+        """Bind opaque provider-native fields to the exact transport generation scope."""
+        actual_model = str(model or self.model or "")
+        return {
+            "provider": str(self.provider or ""),
+            "model": actual_model,
+            "generation_contract": self._provider_replay_contract(actual_model),
+            "fields": dict(fields),
+        }
+
+    def _project_provider_replay(
+        self, messages: list[dict], *, model: str | None = None
+    ) -> list[dict]:
+        """Project exact-scoped native replay at the final provider boundary.
+
+        Legacy/provider-only records remain durable evidence but have no authority to
+        recreate hidden native state.  Scope mismatch never removes visible assistant
+        content or normalized reasoning; it only withholds opaque provider-native fields.
+        The source message is never mutated.
         """
+        actual_model = str(model or self.model or "")
+        expected_contract = self._provider_replay_contract(actual_model)
         out: list[dict] = []
         for message in messages:
             replay = message.get("_provider_replay")
@@ -1187,18 +1220,23 @@ class LLMClient:
                         f"[message_time system_local={local_time}]\n"
                         + str(m.get("content") or "")
                     )
-            if (
+            replay_scope_matches = bool(
                 m.get("role") == "assistant"
                 and isinstance(replay, dict)
-                and str(replay.get("provider") or "") == self.provider
-            ):
+                and str(replay.get("provider") or "") == str(self.provider or "")
+                and str(replay.get("model") or "") == actual_model
+                and isinstance(replay.get("generation_contract"), dict)
+                and replay.get("generation_contract") == expected_contract
+            )
+            if replay_scope_matches and isinstance(replay, dict):
                 fields = replay.get("fields")
                 if isinstance(fields, dict):
                     details = fields.get("reasoning_details")
                     if details is not None:
                         m["reasoning_details"] = details
                         # reasoning_content is the normalized display form of the
-                        # same state. Prefer the exact provider-native structure.
+                        # same state. Prefer exact provider-native structure only inside
+                        # the matching replay scope.
                         m.pop("reasoning_content", None)
             out.append(m)
         return out
@@ -1448,10 +1486,9 @@ class LLMClient:
                         _emit_stream_state(
                             guard_context,
                             provider=self.provider,
-                            provider_replay={
-                                "provider": self.provider,
-                                "fields": dict(acc.provider_replay_fields),
-                            },
+                            provider_replay=self._provider_replay_envelope(
+                                acc.provider_replay_fields, model=str(payload["model"])
+                            ),
                             tool_call_drafts=agg.snapshot(),
                         )
                     # OpenAI-compatible reasoning field dialects differ by server.
@@ -1473,10 +1510,9 @@ class LLMClient:
                             guard_context,
                             provider=self.provider,
                             provider_replay=(
-                                {
-                                    "provider": self.provider,
-                                    "fields": dict(acc.provider_replay_fields),
-                                }
+                                self._provider_replay_envelope(
+                                    acc.provider_replay_fields, model=str(payload["model"])
+                                )
                                 if acc.provider_replay_fields
                                 else None
                             ),
@@ -1516,7 +1552,10 @@ class LLMClient:
                 raise
             except httpx.HTTPError as exc:
                 raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
-        return _finish_response(acc, agg, self.provider, client=self, guard_context=guard_context)
+        return _finish_response(
+            acc, agg, self.provider, client=self, guard_context=guard_context,
+            actual_model=str(payload["model"]),
+        )
 
     # ── Anthropic Messages API（wire_protocol=anthropic，P3-5） ──
     def _anthropic_cache_enabled(self) -> bool:
@@ -1656,7 +1695,10 @@ class LLMClient:
             raise
         except httpx.HTTPError as exc:
             raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
-        return _finish_response(acc, agg, self.provider, client=self, guard_context=guard_context)
+        return _finish_response(
+            acc, agg, self.provider, client=self, guard_context=guard_context,
+            actual_model=str(payload["model"]),
+        )
 
     # ── Google Gemini API（wire_protocol=google，P3-5） ──
     def _stream_google(
@@ -1749,7 +1791,10 @@ class LLMClient:
             raise
         except httpx.HTTPError as exc:
             raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
-        return _finish_response(acc, agg, self.provider, client=self, guard_context=guard_context)
+        return _finish_response(
+            acc, agg, self.provider, client=self, guard_context=guard_context,
+            actual_model=model_id,
+        )
 
     # ── LM Studio /api/v1/chat（wire_protocol=lms-chat，EVO-20260817 用户需求） ──
     def _stream_lms_chat(
