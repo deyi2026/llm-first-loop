@@ -649,3 +649,39 @@ def test_delete_session_cleanup_failure_returns_500(build_test_engine, fake_sett
     assert resp.status_code == 500
     assert resp.json()["error"] == "delete_failed"
     assert engine.session.exists(sid)
+
+
+def test_web_rejects_reuse_of_cli_origin_session(build_test_engine, fake_settings):
+    """Production regression: a CLI/eval probe session must not be adopted by Web."""
+    from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
+    engine, _ = build_test_engine([{"content": "probe-ok"}, {"content": "web-should-not-run"}])
+    sid = engine.session.create()
+    cli_result = engine.run(sid, "Reply with exactly: ok", ingress=issue_ingress("cli"))
+    assert cli_result.final_answer == "probe-ok"
+
+    client = _make_client(engine)
+    response = client.post(
+        "/api/v1/chat",
+        json={"message": "real web turn", "session_id": sid},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "session_ingress_mismatch"
+    stored = engine.session.load(sid)
+    assert [m.content for m in stored.messages if m.role == "user"] == ["Reply with exactly: ok"]
+
+
+def test_session_list_marks_cli_origin_as_not_web_reusable(build_test_engine, fake_settings):
+    from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
+    engine, _ = build_test_engine([{"content": "probe-ok"}])
+    sid = engine.session.create()
+    engine.run(sid, "probe", ingress=issue_ingress("cli"))
+
+    item = next(
+        row for row in _make_client(engine).get("/api/v1/sessions").json()["sessions"]
+        if row["session_id"] == sid
+    )
+    assert item["origin_channel"] == "cli"
+    assert item["web_reusable"] is False

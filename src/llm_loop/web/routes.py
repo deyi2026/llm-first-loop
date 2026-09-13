@@ -355,6 +355,43 @@ def _get_session_lock(request: Request, session_id: str) -> threading.Lock | Non
         return lock
 
 
+def _web_session_reusable_meta(meta: Any | None) -> bool:
+    """Mechanical ingress ownership boundary for Web session adoption.
+
+    Web and Feishu are intentionally cross-surface compatible. CLI/eval/other human
+    ingress channels are not implicitly adoptable by Web. Legacy sessions without a
+    durable first-ingress fact fall back to the historical top-level channel.
+    """
+
+    if meta is None:
+        return False
+    origin = str(getattr(meta, "origin_channel", "") or "").strip()
+    if origin:
+        return origin in {"web", "feishu"}
+    channel = str(getattr(meta, "channel", "") or "").strip()
+    return channel == "web" or channel.startswith("feishu:")
+
+
+def _web_session_reusable(engine: Any, session_id: str) -> bool:
+    try:
+        return _web_session_reusable_meta(engine.session.get_meta(session_id))
+    except Exception:  # noqa: BLE001 - reuse check fails closed; caller can create a clean Web session
+        return False
+
+
+def _session_ingress_mismatch_response(session_id: str) -> Response:
+    return UTF8JSONResponse(
+        status_code=409,
+        content={
+            "error": "session_ingress_mismatch",
+            "detail": (
+                f"会话 {session_id} 的首个人类 ingress 不属于 Web/飞书可共享边界；"
+                "为避免诊断/CLI 上下文污染，Web 不会接管该会话。请新建 Web 会话。"
+            ),
+        },
+    )
+
+
 def _resolve_session_id_locked(engine: Any, request: Request, explicit_sid: str | None) -> str:
     """P2-3: 会话解析原子段（模块级 guard 内完成，闭合"无 sid 并发首聊双建会话"竞态）.
 
@@ -368,7 +405,7 @@ def _resolve_session_id_locked(engine: Any, request: Request, explicit_sid: str 
         # 跨端共享当前会话：无 session_id 时复用共享当前（Web/飞书同一上下文）；
         # 无共享或共享会话已删则新建并设为共享当前
         shared = engine.session.get_shared_current()
-        if shared is not None:
+        if shared is not None and _web_session_reusable(engine, shared):
             return shared
         session_id = engine.session.create()
         engine.session.set_shared_current(session_id)
@@ -420,6 +457,8 @@ def chat(
                             "detail": session_not_found_message(payload.session_id),
                         },
                     )
+                if not _web_session_reusable(engine, payload.session_id):
+                    return _session_ingress_mismatch_response(payload.session_id)
                 session_id = payload.session_id
             else:
                 session_id = _resolve_session_id_locked(engine, request, None)
@@ -787,6 +826,8 @@ def chat_stream(
                             "detail": session_not_found_message(payload.session_id),
                         },
                     )
+                if not _web_session_reusable(engine, payload.session_id):
+                    return _session_ingress_mismatch_response(payload.session_id)
                 session_id = payload.session_id
             else:
                 session_id = _resolve_session_id_locked(engine, request, None)
@@ -1785,6 +1826,8 @@ def list_sessions(request: Request, include_archived: bool = False) -> SessionLi
             last_message_preview=m.last_message_preview,
             pinned=m.pinned,      # M56: 置顶透传
             channel=m.channel,    # M56: 来源通道透传
+            origin_channel=m.origin_channel,
+            web_reusable=_web_session_reusable_meta(m),
         )
         for m in metas
     ]

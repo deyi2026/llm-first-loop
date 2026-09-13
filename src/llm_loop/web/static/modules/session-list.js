@@ -77,9 +77,12 @@ function renderSessions() {
     };
     item.appendChild(delBtn);
     const title = el("div", "session-title", s.title || "未命名");
-    // M56 来源标签（飞书会话标注；Web 端不标）
-    if (s.channel && s.channel !== "web") {
+    // 机械来源标签：顶层 channel 是旧展示字段，origin_channel 才是首个人类 ingress 真值。
+    const origin = s.origin_channel || "";
+    if (origin === "feishu" || (s.channel || "").startsWith("feishu:")) {
       title.appendChild(el("span", "session-channel", "飞书"));
+    } else if (origin && origin !== "web") {
+      title.appendChild(el("span", "session-channel", origin.toUpperCase()));
     }
     const meta = el(
       "div",

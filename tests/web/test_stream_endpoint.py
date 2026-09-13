@@ -447,3 +447,21 @@ def test_chat_stream_rejects_session_if_workspace_changes_before_background_admi
     assert events[-1]["data"]["error"] == "workspace_changed"
     assert (root_a / f"{sid}.json").exists()
     assert not (engine.settings.sessions_dir / "epoch-b" / f"{sid}.json").exists()
+
+
+def test_chat_stream_rejects_cli_origin_session_before_run(build_test_engine):
+    from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
+    engine, fake = build_test_engine([{"content": "probe-ok"}, {"content": "must-not-run"}])
+    sid = engine.session.create()
+    engine.run(sid, "probe", ingress=issue_ingress("cli"))
+    calls_before = len(fake.calls)
+
+    response = _make_client(engine).post(
+        "/api/v1/chat/stream",
+        json={"message": "web turn", "session_id": sid},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "session_ingress_mismatch"
+    assert len(fake.calls) == calls_before

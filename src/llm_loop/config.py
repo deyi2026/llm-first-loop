@@ -591,6 +591,15 @@ def load_settings() -> Settings:
             + "。请参考 .env.example 配置 LLM_API_KEY / LLM_BASE_URL（LLM_MODEL 缺省默认 deepseek-flash）。"
         )
 
+    # Local qualification/probe runs use a deliberately non-secret sentinel key.
+    # Such runs must never fall through to the repository's production DATA_DIR:
+    # an unisolated Engine can create durable sessions and contaminate Web history.
+    if api_key == "local-eval" and not os.environ.get("DATA_DIR", "").strip():
+        raise ValueError(
+            "local-eval 资格化/探测必须显式设置 DATA_DIR 到隔离目录；"
+            "拒绝使用默认生产数据目录。"
+        )
+
     # T3: 记录 env 未显式设置的可自适应配置项（消费方据此走自适应，env 显式设置时走固定值）
     _auto_adaptive_keys: set[str] = set()
     if not os.environ.get("MEMORY_TOP_K", "").strip():

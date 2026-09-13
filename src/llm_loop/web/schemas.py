@@ -130,7 +130,9 @@ class SessionMetaItem(BaseModel):
     status: str
     last_message_preview: str = ""
     pinned: bool = False   # M56: 置顶（Web 端列表置顶优先）
-    channel: str = "web"   # M56: 来源通道（web / feishu:p2p:* / feishu:group:*）
+    channel: str = "web"   # M56: 展示/跨端来源（web / feishu:p2p:* / feishu:group:*）
+    origin_channel: str = ""  # 第一条真实 human ingress 的机械来源（web/feishu/cli/...）
+    web_reusable: bool = True  # Web 是否可继续写入；列表可浏览但不代表可跨 ingress 接管
 
 
 class SessionListResponse(BaseModel):

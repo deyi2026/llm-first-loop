@@ -134,7 +134,8 @@ class SessionMeta:
     last_message_preview: str
     # M56（Web/飞书会话同步）: 缺省向后兼容
     pinned: bool = False   # 置顶
-    channel: str = "web"   # 来源通道
+    channel: str = "web"   # 当前展示/跨端来源通道（旧字段，向后兼容）
+    origin_channel: str = ""  # 第一条真实 human ingress 的机械来源；不从顶层 channel 猜
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -265,6 +266,29 @@ def _make_title(first_user_content: str) -> str:
     if not text:
         return ""
     return text[:30]
+
+
+def _first_human_ingress_channel(messages: list[Any]) -> str:
+    """Return the first durable human-ingress channel without inferring from Session.channel.
+
+    ``Session.channel`` historically defaulted to ``web`` even for sessions created by
+    CLI/eval code.  The per-message ingress credential is the mechanical provenance
+    truth and must win when deciding whether another surface may adopt the session.
+    """
+
+    for message in messages:
+        if isinstance(message, dict):
+            role = str(message.get("role") or "")
+            metadata = message.get("metadata")
+        else:
+            role = str(getattr(message, "role", "") or "")
+            metadata = getattr(message, "metadata", None)
+        if role != "user" or not isinstance(metadata, dict):
+            continue
+        channel = str(metadata.get("ingress_channel") or "").strip()
+        if channel:
+            return channel
+    return ""
 
 
 class SessionStore:
@@ -1489,6 +1513,7 @@ class SessionStore:
             # M56: pinned/channel 透传
             pinned=session.pinned,
             channel=session.channel,
+            origin_channel=_first_human_ingress_channel(session.messages),
         )
 
     def list_sessions(self, include_archived: bool = False) -> list[SessionMeta]:
@@ -1544,6 +1569,7 @@ class SessionStore:
                     # M56: pinned/channel 透传（缺省向后兼容）
                     pinned=bool(data.get("pinned", False)),
                     channel=data.get("channel", "web"),
+                    origin_channel=_first_human_ingress_channel(messages),
                 )
                 new_cache[p] = (fkey, meta)
             if meta.status == _ARCHIVED and not include_archived:
@@ -1823,6 +1849,9 @@ class SessionStore:
                     message_count=len(messages),
                     status=data.get("status", _ACTIVE),
                     last_message_preview=preview,
+                    pinned=bool(data.get("pinned", False)),
+                    channel=data.get("channel", "web"),
+                    origin_channel=_first_human_ingress_channel(messages),
                 )
             )
         metas.sort(key=lambda m: m.updated_at, reverse=True)

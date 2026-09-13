@@ -285,3 +285,29 @@ def test_load_settings_learning_plane_default_off(monkeypatch):
     monkeypatch.setenv("LEARNING_PLANE_ENABLED", "1")
     s2 = load_settings()
     assert s2.learning_plane_enabled is True
+
+
+def test_local_eval_requires_explicit_data_dir(monkeypatch):
+    """Local qualification/probe mode must never fall through to production DATA_DIR."""
+    from llm_loop.config import load_settings
+
+    monkeypatch.setenv("LLM_API_KEY", "local-eval")
+    monkeypatch.setenv("LLM_BASE_URL", "http://127.0.0.1:8901/v1")
+    monkeypatch.setenv("LLM_MODEL", "cognilocal/ornith-1.5-35b-a3b-mlx")
+    monkeypatch.delenv("DATA_DIR", raising=False)
+
+    import pytest
+
+    with pytest.raises(ValueError, match="local-eval.*DATA_DIR"):
+        load_settings()
+
+
+def test_local_eval_accepts_explicit_isolated_data_dir(monkeypatch, tmp_path):
+    from llm_loop.config import load_settings
+
+    monkeypatch.setenv("LLM_API_KEY", "local-eval")
+    monkeypatch.setenv("LLM_BASE_URL", "http://127.0.0.1:8901/v1")
+    monkeypatch.setenv("LLM_MODEL", "cognilocal/ornith-1.5-35b-a3b-mlx")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "isolated"))
+
+    assert load_settings().data_dir == str(tmp_path / "isolated")

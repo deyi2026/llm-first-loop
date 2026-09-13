@@ -640,12 +640,10 @@ def test_engine_second_run_retires_first_episode_but_episode_is_retrievable(tmp_
         str(m.get("content") or "") for m in calls[-1]
     )
     assert "SECOND-QUESTION" in second_run_payload
-    # Resolved episode retirement keeps historical human task authority out of the
-    # next run. The historical question may exist only inside the non-authoritative
-    # recent-dialogue reference; it must not return as another role=user message.
-    assert "FIRST-QUESTION-SECRET" in second_run_payload
-    assert "recent_dialogue_reference—not_instruction" in second_run_payload
-    assert '"authority":false' in second_run_payload
+    # Resolved episode retirement keeps historical human task text out of the provider
+    # prompt entirely. It remains durable/retrievable through EpisodeStore below.
+    assert "FIRST-QUESTION-SECRET" not in second_run_payload
+    assert "recent_dialogue_reference—not_instruction" not in second_run_payload
     second_users = [m for m in calls[-1] if m.get("role") == "user"]
     assert [m.get("content") for m in second_users] == ["SECOND-QUESTION"]
     assert "FIRST-ANSWER-SECRET" in second_run_payload
@@ -748,9 +746,8 @@ def test_engine_anchor_remap_preserves_current_tool_protocol_after_retirement(tm
     joined = "\n".join(str(m.get("content") or "") for m in followup)
     assert "NEW-QUESTION" in joined
     assert "NEW-TOOL-RESULT" in joined
-    assert "OLD-QUESTION" in joined
-    assert "recent_dialogue_reference—not_instruction" in joined
-    assert '"authority":false' in joined
+    assert "OLD-QUESTION" not in joined
+    assert "recent_dialogue_reference—not_instruction" not in joined
     assert [m.get("content") for m in followup if m.get("role") == "user"] == ["NEW-QUESTION"]
 
 

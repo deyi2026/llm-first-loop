@@ -13,12 +13,14 @@ async function init() {
   try {
     const r = await api("/api/v1/session/current");
     if (r.status === 200 && r.data.current) {
-      target = state.sessions.find((s) => s.session_id === r.data.current) || null;
+      target = state.sessions.find(
+        (s) => s.session_id === r.data.current && s.web_reusable !== false
+      ) || null;
     }
   } catch {
     /* fail-open */
   }
-  if (!target) target = state.sessions[0];
+  if (!target) target = state.sessions.find((s) => s.web_reusable !== false) || null;
   if (target) {
     selectSession(target.session_id);
     checkResumeOnLoad(); // 2026-08-17 刷新恢复：有后台 run 进行中则自动续收

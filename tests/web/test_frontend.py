@@ -3,6 +3,8 @@
 用例：HTML 存在性 / root 返回 HTML / /static 静态资源可达 / /api/info / 前端页面关键元素。
 """
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from llm_loop.web import build_app
@@ -69,3 +71,12 @@ def test_api_info_returns_json(build_test_engine, fake_settings):
     body = resp.json()
     assert body["service"] == "llm-first-loop-web"
     assert "api/v1/chat" in str(body["endpoints"])
+
+
+def test_frontend_skips_non_web_reusable_session_on_init():
+    root = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static" / "modules"
+    init_src = (root / "command-upload-model.js").read_text(encoding="utf-8")
+    stream_src = (root / "stream-chat.js").read_text(encoding="utf-8")
+    assert "s.web_reusable !== false" in init_src
+    assert "session_ingress_mismatch" in stream_src
+    assert "state.pendingNewSession = true" in stream_src

@@ -214,6 +214,13 @@ async function runStreamChat(body, loading, opts = {}) {
     if (loading) loading.remove();
     addMessage("error", (result.data && result.data.detail) || "会话不存在，请新建会话。");
     state.currentSessionId = null;
+  } else if (result.status === 409 && result.error && result.error.error === "session_ingress_mismatch") {
+    if (loading) loading.remove();
+    addMessage("error", result.error.detail || "该会话来自其他入口，Web 不会接管；下一条消息将进入新会话。");
+    state.currentSessionId = null;
+    state.pendingNewSession = true;
+    state.retryRequest = null;
+    loadSessions();
   } else {
     // D2: 网络/引擎错误区分提示 + 可重试（不静默重连，fail-open ≠ fail-silent）
     if (loading) loading.remove();
