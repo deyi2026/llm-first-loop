@@ -1,0 +1,172 @@
+{
+  "aggregate": {
+    "cache_hit_tokens": 6414,
+    "tokens_in": 9674,
+    "tokens_out": 880,
+    "tool_execution_total": 0,
+    "wall_s": 25.938
+  },
+  "evidence_hashes": {
+    "execution-manifest.json": {
+      "bytes": 3083,
+      "sha256": "d792f80dab89a8b8759c8c80ff187f8c6748fe651671a298a85bd3f5b9c491b2"
+    },
+    "fcr-gate.json": {
+      "bytes": 489,
+      "sha256": "adb2fcf3ddda6b1bd17a55bed75413dc43850feec0d8cbdbcafff1c33f2750bd"
+    },
+    "plan.json": {
+      "bytes": 965,
+      "sha256": "6a1ff04233e5af4d8893ea6c1fcd7c4d37f7c7845097825340ddc62dd2a44dfe"
+    },
+    "results.jsonl": {
+      "bytes": 6020,
+      "sha256": "6263c5576aa80b49bef4c2d33a9a469476bd1e1679a89609c60a7293b9634733"
+    }
+  },
+  "experiment_commit": "e54ce3ce791ef6bba4cb65c670051d4e16545466",
+  "gate": {
+    "browser_runtime_in_gate": false,
+    "complete_rows": 6,
+    "expected_rows": 6,
+    "first_call_pass": 6,
+    "first_call_pass_required": 6,
+    "pass": true,
+    "per_task_pass": {
+      "fill_input": 2,
+      "navigate_page": 2,
+      "wait_button": 2
+    },
+    "per_task_pass_required": 2,
+    "schema": "smc.browser_bounded_semantic_operation_fc2c.fcr.v0.2.gate",
+    "status_counts": {
+      "PASS": 6
+    },
+    "task_completion_in_gate": false,
+    "tool_execution_required": 0,
+    "tool_execution_total": 0
+  },
+  "implementation_commit": "3c1899de437b1d2b5f8a69cb25863263410440b7",
+  "not_claimed": [
+    "browser_task_completion",
+    "browser_runtime_execution",
+    "live_grounding",
+    "mutation_dispatch",
+    "wait_sensor_runtime",
+    "cloud_provider_compatibility"
+  ],
+  "per_task": {
+    "fill_input": 2,
+    "navigate_page": 2,
+    "wait_button": 2
+  },
+  "rows": [
+    {
+      "cache_hit_tokens": 0,
+      "first_tool_args_sha256": "96c25ccf4a86cccc725fb15a7189740fe2b67f8c033230215e087daac98d3698",
+      "index": 1,
+      "oracle": {
+        "pass": true,
+        "reason": null
+      },
+      "repeat": 1,
+      "status": "PASS",
+      "task_id": "navigate_page",
+      "tokens_in": 1605,
+      "tokens_out": 86,
+      "tool_execution_count": 0,
+      "wall_s": 5.201
+    },
+    {
+      "cache_hit_tokens": 0,
+      "first_tool_args_sha256": "67955cbb8535305e6ae33d7ca5592d6e0f3044cb714acbc7a82354638b4015ef",
+      "index": 2,
+      "oracle": {
+        "pass": true,
+        "reason": null
+      },
+      "repeat": 1,
+      "status": "PASS",
+      "task_id": "fill_input",
+      "tokens_in": 1617,
+      "tokens_out": 130,
+      "tool_execution_count": 0,
+      "wall_s": 4.002
+    },
+    {
+      "cache_hit_tokens": 1580,
+      "first_tool_args_sha256": "c979cf5d30b93f22fc47056348fbfc808f0ca57beea996373924776e6ea751b2",
+      "index": 3,
+      "oracle": {
+        "pass": true,
+        "reason": null
+      },
+      "repeat": 1,
+      "status": "PASS",
+      "task_id": "wait_button",
+      "tokens_in": 1615,
+      "tokens_out": 224,
+      "tool_execution_count": 0,
+      "wall_s": 5.428
+    },
+    {
+      "cache_hit_tokens": 1614,
+      "first_tool_args_sha256": "c979cf5d30b93f22fc47056348fbfc808f0ca57beea996373924776e6ea751b2",
+      "index": 4,
+      "oracle": {
+        "pass": true,
+        "reason": null
+      },
+      "repeat": 2,
+      "status": "PASS",
+      "task_id": "wait_button",
+      "tokens_in": 1615,
+      "tokens_out": 224,
+      "tool_execution_count": 0,
+      "wall_s": 5.625
+    },
+    {
+      "cache_hit_tokens": 1616,
+      "first_tool_args_sha256": "67955cbb8535305e6ae33d7ca5592d6e0f3044cb714acbc7a82354638b4015ef",
+      "index": 5,
+      "oracle": {
+        "pass": true,
+        "reason": null
+      },
+      "repeat": 2,
+      "status": "PASS",
+      "task_id": "fill_input",
+      "tokens_in": 1617,
+      "tokens_out": 130,
+      "tool_execution_count": 0,
+      "wall_s": 3.348
+    },
+    {
+      "cache_hit_tokens": 1604,
+      "first_tool_args_sha256": "96c25ccf4a86cccc725fb15a7189740fe2b67f8c033230215e087daac98d3698",
+      "index": 6,
+      "oracle": {
+        "pass": true,
+        "reason": null
+      },
+      "repeat": 2,
+      "status": "PASS",
+      "task_id": "navigate_page",
+      "tokens_in": 1605,
+      "tokens_out": 86,
+      "tool_execution_count": 0,
+      "wall_s": 2.334
+    }
+  ],
+  "schema": "smc.browser_bounded_semantic_operation_fc2c.fcr.v0.2.result",
+  "status": "QUALIFIED_FCR_ONLY_BY_FC2C_V0.2",
+  "treatment_delta_from_v0_1": {
+    "branch_reordered": false,
+    "normalization_added": false,
+    "plan_sha256_unchanged": "c802cf5137511c28a6875421ab18233c7976b79c12f82a10e5af380e4559d59c",
+    "provider_visible_change": "mechanically derived exact clause field-set description; wait explicitly has no verb/args",
+    "runtime_full_schema_changed": false,
+    "v0_1_first_call_pass": "4/6",
+    "v0_2_first_call_pass": "6/6"
+  }
+}
