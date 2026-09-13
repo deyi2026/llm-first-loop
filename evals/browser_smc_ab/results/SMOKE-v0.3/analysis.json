@@ -1,0 +1,123 @@
+{
+  "arms": {
+    "legacy": {
+      "cache_hit_tokens": {
+        "mean": 12388.667,
+        "median": 10359.0,
+        "observed": 3
+      },
+      "infra_fail": 0,
+      "rounds": {
+        "mean": 7.0,
+        "median": 7.0,
+        "observed": 3
+      },
+      "runs": 3,
+      "status_pass": 3,
+      "task_pass": 3,
+      "tokens_in": {
+        "mean": 15969.667,
+        "median": 13289.0,
+        "observed": 3
+      },
+      "tokens_out": {
+        "mean": 1193.333,
+        "median": 1322.0,
+        "observed": 3
+      },
+      "tool_calls": {
+        "mean": 6.0,
+        "median": 6.0,
+        "observed": 3
+      },
+      "wall_s": {
+        "mean": 110.129,
+        "median": 147.597,
+        "observed": 3
+      }
+    },
+    "smc": {
+      "cache_hit_tokens": {
+        "mean": 65976.0,
+        "median": 65976.0,
+        "observed": 2
+      },
+      "infra_fail": 1,
+      "rounds": {
+        "mean": 12.0,
+        "median": 12.0,
+        "observed": 2
+      },
+      "runs": 3,
+      "status_pass": 0,
+      "task_pass": 0,
+      "tokens_in": {
+        "mean": 77548.5,
+        "median": 77548.5,
+        "observed": 2
+      },
+      "tokens_out": {
+        "mean": 2975.0,
+        "median": 2975.0,
+        "observed": 2
+      },
+      "tool_calls": {
+        "mean": 12.0,
+        "median": 12.0,
+        "observed": 2
+      },
+      "wall_s": {
+        "mean": 189.709,
+        "median": 240.532,
+        "observed": 3
+      }
+    }
+  },
+  "limitations": [
+    "paired directional evidence only; no significance claim",
+    "cache/token telemetry is descriptive because provider tool-schema prefixes differ by arm",
+    "task success comes only from predeclared loopback external-state oracles"
+  ],
+  "paired": [
+    {
+      "legacy_pass": true,
+      "repeat": 1,
+      "rounds_delta_smc_minus_legacy": null,
+      "smc_pass": false,
+      "task_id": "click_commit",
+      "tokens_in_delta_smc_minus_legacy": null,
+      "tokens_out_delta_smc_minus_legacy": null,
+      "tool_calls_delta_smc_minus_legacy": null
+    },
+    {
+      "legacy_pass": true,
+      "repeat": 1,
+      "rounds_delta_smc_minus_legacy": 5,
+      "smc_pass": false,
+      "task_id": "delayed_wait",
+      "tokens_in_delta_smc_minus_legacy": 63625,
+      "tokens_out_delta_smc_minus_legacy": 1994,
+      "tool_calls_delta_smc_minus_legacy": 6
+    },
+    {
+      "legacy_pass": true,
+      "repeat": 1,
+      "rounds_delta_smc_minus_legacy": 3,
+      "smc_pass": false,
+      "task_id": "fill_submit",
+      "tokens_in_delta_smc_minus_legacy": 51324,
+      "tokens_out_delta_smc_minus_legacy": 1244,
+      "tool_calls_delta_smc_minus_legacy": 4
+    }
+  ],
+  "schema": "smc.browser_real_model_ab.analysis.v0.3",
+  "smc_safety": {
+    "automatic_retry_true_total": 0,
+    "receipt_failed_total": 0,
+    "receipt_ok_total": 1,
+    "receipt_rejected_total": 6,
+    "scope_blocker_total": 0,
+    "security_agent_spawned_runs": 0
+  },
+  "total_runs": 6
+}

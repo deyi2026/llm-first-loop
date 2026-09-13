@@ -1,0 +1,18 @@
+{
+  "complete_rows": 6,
+  "expected_rows": 6,
+  "infra_valid": false,
+  "legacy_adoption": 3,
+  "legacy_adoption_required": 2,
+  "model_no_fallback": true,
+  "pass": false,
+  "smc_adoption": 2,
+  "smc_adoption_required": 2,
+  "smc_scope_blocker_count": 0,
+  "smc_scope_blocker_required": 0,
+  "smc_successful_physical_dispatch": 1,
+  "smc_successful_physical_dispatch_required": 1,
+  "smc_task_pass": 0,
+  "smc_task_pass_required": 1,
+  "surface_exact": false
+}
