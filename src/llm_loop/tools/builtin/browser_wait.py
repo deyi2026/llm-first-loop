@@ -29,6 +29,18 @@ _OBJECT_PROPERTIES = tuple(
     if spec.get("target_kind") == "semantic_object"
 )
 _OPERATORS = ("eq", "contains", "prefix", "suffix", "ge", "le")
+_STRING_OPERATORS = ("eq", "contains", "prefix", "suffix")
+_COUNT_OPERATORS = ("eq", "ge", "le")
+_OBJECT_STATE_PROPERTIES = (
+    "exists",
+    "enabled",
+    "checked",
+    "selected",
+    "expanded",
+    "focused",
+    "editable",
+)
+_OBJECT_TEXT_PROPERTIES = ("name", "value_text")
 _COMMON_REQUEST_FIELDS = {
     "property",
     "operator",
@@ -91,6 +103,83 @@ def _wait_parameter_schema(*, ref_name: str, properties: tuple[str, ...]) -> dic
         ],
         "additionalProperties": False,
     }
+
+
+def _time_fields() -> dict[str, dict[str, Any]]:
+    return {
+        "timeout_ms": {"type": "integer", "minimum": 1, "maximum": _MAX_WAIT_MS},
+        "interval_ms": {"type": "integer", "minimum": 1, "maximum": _MAX_INTERVAL_MS},
+    }
+
+
+def _compile_scope_predicate(
+    *, scope_ref: str, property_name: str, operator: str, value: Any
+) -> dict[str, Any]:
+    if not scope_ref:
+        raise ValueError("scope_ref_missing")
+    predicate = {
+        "schema": "smc.predicate.v0.1",
+        "domain": "browser",
+        "scope_ref": scope_ref,
+        "target": scope_ref,
+        "property": property_name,
+        "operator": operator,
+        "value": value,
+    }
+    validation_error = validate_predicate(predicate)
+    if validation_error is not None:
+        raise ValueError(validation_error)
+    return predicate
+
+
+def _hydrate_object_identity(
+    adapter: BrowserPerceptionAdapter, session_id: str, object_ref: str
+) -> tuple[str, str]:
+    if not object_ref:
+        raise ValueError("object_ref_missing")
+    hydrated = adapter.hydrate(session_id, object_ref)
+    availability = str(hydrated.get("availability") or "unavailable")
+    if availability != "available":
+        reason = str(hydrated.get("reason") or availability)
+        raise ValueError(f"object_ref_{availability}:{reason}")
+    content = hydrated.get("content")
+    if not isinstance(content, dict):
+        raise ValueError("object_ref_projection_mismatch")
+    semantic_object = content.get("semantic_object")
+    if not isinstance(semantic_object, dict):
+        raise ValueError("object_ref_projection_mismatch")
+    if str(semantic_object.get("grounding_ref") or "") != object_ref:
+        raise ValueError("object_ref_identity_mismatch")
+    target = str(semantic_object.get("id") or "").strip()
+    scope_ref = str(semantic_object.get("scope_ref") or "").strip()
+    if not target or not scope_ref:
+        raise ValueError("object_ref_incomplete")
+    return target, scope_ref
+
+
+def _compile_object_predicate(
+    *,
+    adapter: BrowserPerceptionAdapter,
+    session_id: str,
+    object_ref: str,
+    property_name: str,
+    operator: str,
+    value: Any,
+) -> dict[str, Any]:
+    target, scope_ref = _hydrate_object_identity(adapter, session_id, object_ref)
+    predicate = {
+        "schema": "smc.predicate.v0.1",
+        "domain": "browser",
+        "scope_ref": scope_ref,
+        "target": target,
+        "property": property_name,
+        "operator": operator,
+        "value": value,
+    }
+    validation_error = validate_predicate(predicate)
+    if validation_error is not None:
+        raise ValueError(validation_error)
+    return predicate
 
 
 class BrowserPredicateWaiter:
@@ -418,3 +507,259 @@ class BrowserWaitObjectTool(_BrowserTypedWaitTool):
         if validation_error is not None:
             raise ValueError(validation_error)
         return predicate
+
+
+class _BrowserNarrowWaitTool:
+    """Provider-facing wait base whose semantic value has one unambiguous JSON type."""
+
+    name: str
+    parameters: dict[str, Any]
+
+    def __init__(
+        self,
+        *,
+        adapter: BrowserPerceptionAdapter,
+        backend: BrowserCaptureBackend | None,
+        session_id_getter: Callable[[], str],
+    ) -> None:
+        self._adapter = adapter
+        self._waiter = BrowserPredicateWaiter(adapter=adapter, backend=backend)
+        self._session_id_getter = session_id_getter
+
+    def _failure(self, reason: str) -> ToolResult:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=f"[{self.name}] semantic predicate compile rejected; reason={reason}; no polling started.",
+            tool_call_id="",
+            tool_name=self.name,
+            error_type="BrowserPredicateCompileError",
+            error_detail=reason,
+        )
+
+    def _times(self, request: dict[str, Any]) -> tuple[int, int]:
+        expected = set(self.parameters.get("required") or [])
+        if set(request) != expected:
+            raise ValueError("wait_fields_mismatch")
+        timeout_ms, timeout_error = _bounded_wait_int(
+            request.get("timeout_ms"), name="timeout_ms", maximum=_MAX_WAIT_MS
+        )
+        if timeout_error is not None or timeout_ms is None:
+            raise ValueError(timeout_error or "timeout_ms_invalid")
+        interval_ms, interval_error = _bounded_wait_int(
+            request.get("interval_ms"), name="interval_ms", maximum=_MAX_INTERVAL_MS
+        )
+        if interval_error is not None or interval_ms is None:
+            raise ValueError(interval_error or "interval_ms_invalid")
+        return timeout_ms, interval_ms
+
+    def _compile_predicate(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def compile_predicate(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        if not session_id:
+            raise ValueError("session_id_missing")
+        self._times(dict(request))
+        return self._compile_predicate(session_id, dict(request))
+
+    def execute_request(self, session_id: str, request: dict[str, Any]) -> ToolResult:
+        try:
+            timeout_ms, interval_ms = self._times(request)
+            predicate = self._compile_predicate(session_id, request)
+        except ValueError as exc:
+            return self._failure(str(exc))
+        return self._waiter.wait(
+            session_id,
+            predicate=predicate,
+            timeout_ms=timeout_ms,
+            interval_ms=interval_ms,
+            tool_name=self.name,
+        )
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        session_id = str(self._session_id_getter() or "").strip()
+        if not session_id:
+            return self._failure("session_id_missing")
+        return self.execute_request(session_id, dict(kwargs))
+
+
+class BrowserWaitScopeUrlTool(_BrowserNarrowWaitTool):
+    name = "browser_wait_scope_url"
+    description = (
+        "Browser只读URL条件等待：模型选择当前observation的exact scope_ref、字符串比较方式和值；"
+        "程序固定property=url并机械编译target=scope_ref。"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "scope_ref": {"type": "string", "minLength": 1},
+            "operator": {"type": "string", "enum": list(_STRING_OPERATORS)},
+            "value": {"type": "string"},
+            **_time_fields(),
+        },
+        "required": ["scope_ref", "operator", "value", "timeout_ms", "interval_ms"],
+        "additionalProperties": False,
+    }
+
+    def _compile_predicate(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        del session_id
+        value = request.get("value")
+        if not isinstance(value, str):
+            raise ValueError("predicate value type mismatch for url: expected string")
+        operator = str(request.get("operator") or "")
+        if operator not in _STRING_OPERATORS:
+            raise ValueError(f"predicate operator mismatch for url: {operator!r}")
+        return _compile_scope_predicate(
+            scope_ref=str(request.get("scope_ref") or "").strip(),
+            property_name="url",
+            operator=operator,
+            value=value,
+        )
+
+
+class BrowserWaitScopeReadyTool(_BrowserNarrowWaitTool):
+    name = "browser_wait_scope_ready"
+    description = (
+        "Browser只读document readiness等待：模型选择当前主页面/文档的exact scope_ref和"
+        "loading|interactive|complete；程序固定document_ready_state eq。"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "scope_ref": {"type": "string", "minLength": 1},
+            "state": {"type": "string", "enum": ["loading", "interactive", "complete"]},
+            **_time_fields(),
+        },
+        "required": ["scope_ref", "state", "timeout_ms", "interval_ms"],
+        "additionalProperties": False,
+    }
+
+    def _compile_predicate(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        del session_id
+        state = request.get("state")
+        if state not in {"loading", "interactive", "complete"}:
+            raise ValueError("document_ready_state must be loading|interactive|complete")
+        return _compile_scope_predicate(
+            scope_ref=str(request.get("scope_ref") or "").strip(),
+            property_name="document_ready_state",
+            operator="eq",
+            value=state,
+        )
+
+
+class BrowserWaitScopeCountTool(_BrowserNarrowWaitTool):
+    name = "browser_wait_scope_count"
+    description = (
+        "Browser只读对象计数等待：模型选择exact scope_ref、eq/ge/le和非负整数count；"
+        "程序固定property=object_count并机械编译。"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "scope_ref": {"type": "string", "minLength": 1},
+            "operator": {"type": "string", "enum": list(_COUNT_OPERATORS)},
+            "count": {"type": "integer", "minimum": 0},
+            **_time_fields(),
+        },
+        "required": ["scope_ref", "operator", "count", "timeout_ms", "interval_ms"],
+        "additionalProperties": False,
+    }
+
+    def _compile_predicate(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        del session_id
+        count = request.get("count")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError("count must be integer >=0")
+        operator = str(request.get("operator") or "")
+        if operator not in _COUNT_OPERATORS:
+            raise ValueError(f"predicate operator mismatch for object_count: {operator!r}")
+        return _compile_scope_predicate(
+            scope_ref=str(request.get("scope_ref") or "").strip(),
+            property_name="object_count",
+            operator=operator,
+            value=count,
+        )
+
+
+class BrowserWaitObjectStateTool(_BrowserNarrowWaitTool):
+    name = "browser_wait_object_state"
+    description = (
+        "Browser只读对象布尔状态等待：模型选择exact object_ref、状态property和boolean value；"
+        "程序exact hydrate对象并固定operator=eq。"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "object_ref": {"type": "string", "minLength": 1},
+            "property": {"type": "string", "enum": list(_OBJECT_STATE_PROPERTIES)},
+            "value": {"type": "boolean"},
+            **_time_fields(),
+        },
+        "required": ["object_ref", "property", "value", "timeout_ms", "interval_ms"],
+        "additionalProperties": False,
+    }
+
+    def _compile_predicate(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        property_name = str(request.get("property") or "")
+        if property_name not in _OBJECT_STATE_PROPERTIES:
+            raise ValueError("predicate_property_target_kind_mismatch")
+        value = request.get("value")
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"predicate value type mismatch for {property_name}: expected boolean"
+            )
+        return _compile_object_predicate(
+            adapter=self._adapter,
+            session_id=session_id,
+            object_ref=str(request.get("object_ref") or "").strip(),
+            property_name=property_name,
+            operator="eq",
+            value=value,
+        )
+
+
+class BrowserWaitObjectTextTool(_BrowserNarrowWaitTool):
+    name = "browser_wait_object_text"
+    description = (
+        "Browser只读对象文本等待：模型选择exact object_ref、name/value_text、字符串比较方式和值；"
+        "程序exact hydrate并机械编译canonical Predicate。"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "object_ref": {"type": "string", "minLength": 1},
+            "property": {"type": "string", "enum": list(_OBJECT_TEXT_PROPERTIES)},
+            "operator": {"type": "string", "enum": list(_STRING_OPERATORS)},
+            "value": {"type": "string"},
+            **_time_fields(),
+        },
+        "required": [
+            "object_ref",
+            "property",
+            "operator",
+            "value",
+            "timeout_ms",
+            "interval_ms",
+        ],
+        "additionalProperties": False,
+    }
+
+    def _compile_predicate(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        property_name = str(request.get("property") or "")
+        if property_name not in _OBJECT_TEXT_PROPERTIES:
+            raise ValueError("predicate_property_target_kind_mismatch")
+        operator = str(request.get("operator") or "")
+        if operator not in _STRING_OPERATORS:
+            raise ValueError(f"predicate operator mismatch for {property_name}: {operator!r}")
+        value = request.get("value")
+        if not isinstance(value, str):
+            raise ValueError(
+                f"predicate value type mismatch for {property_name}: expected string"
+            )
+        return _compile_object_predicate(
+            adapter=self._adapter,
+            session_id=session_id,
+            object_ref=str(request.get("object_ref") or "").strip(),
+            property_name=property_name,
+            operator=operator,
+            value=value,
+        )

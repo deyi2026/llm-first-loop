@@ -1933,6 +1933,24 @@ class PlaywrightPageCaptureBackend:
             },
         )
         ax_doc = cdp.send("Accessibility.getFullAXTree")
+        ready_reader = getattr(cdp, "read_document_ready_state", None)
+        if callable(ready_reader):
+            document_ready_state = ready_reader()
+        else:
+            ready_doc = cdp.send(
+                "Runtime.evaluate",
+                {
+                    "expression": "document.readyState",
+                    "returnByValue": True,
+                    "awaitPromise": False,
+                    "userGesture": False,
+                    "throwOnSideEffect": True,
+                },
+            )
+            remote = ready_doc.get("result") or {}
+            document_ready_state = remote.get("value") if isinstance(remote, dict) else None
+        if document_ready_state not in {"loading", "interactive", "complete"}:
+            raise RuntimeError("Browser document.readyState observation unavailable")
 
         target_id = str((target.get("targetInfo") or {}).get("targetId") or "")
         flattened_frames = self._flatten_frames(frame_tree_doc.get("frameTree") or {})
@@ -2103,6 +2121,7 @@ class PlaywrightPageCaptureBackend:
             "page_token": page_token,
             "document_token": document_token,
             "url": main_url,
+            "document_ready_state": document_ready_state,
             "observed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "frames": frames,
             "dom": {

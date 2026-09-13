@@ -28,7 +28,8 @@ class BrowserPerceiveTool:
         "SMC Browser Phase 1 只读感知。snapshot=读取 host 已绑定的当前页面 DOM+AX，返回"
         "WorldSnapshot + SemanticObject；hydrate=按精确 GroundingRef 水合历史 observation；"
         "diff=仅比较两张已落盘 exact snapshot。该工具不 wait、不导航、不点击/输入/滚动、"
-        "不执行脚本或自动重试；wait 使用 typed browser_wait_scope/browser_wait_object。"
+        "不执行模型提供的脚本或自动重试；wait 使用 typed browser_wait_scope_url/"
+        "scope_ready/scope_count/object_state/object_text。"
         "ref 过期/跨 session/不可用会如实返回。模型面不暴露 CSS/XPath/坐标/CDP node id/AX index。"
     )
     parameters = {

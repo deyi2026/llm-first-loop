@@ -170,10 +170,10 @@ def test_bqual_lazy_provider_surface_describes_full_qualified_browser_contract()
         assert action in perceive
     for boundary in ("不导航", "不执行 mutation", "selector"):
         assert boundary in perceive
-    assert "browser_wait_scope" in perceive
-    assert "browser_wait_object" in perceive
-    assert "target=scope_ref" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_scope"]
-    assert "GroundingRef" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_object"]
+    for wait_kind in ("scope_url", "scope_ready", "scope_count", "object_state", "object_text"):
+        assert wait_kind in perceive
+    assert "target=scope_ref" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_scope_url"]
+    assert "boolean value" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_object_state"]
 
     mutate = _COMPACT_TOOL_DESCRIPTIONS["browser_action"]
     for verb in ("click", "fill", "select", "navigate", "scroll"):

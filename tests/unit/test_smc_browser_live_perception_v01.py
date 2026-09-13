@@ -71,6 +71,15 @@ class _FakeWs:
                     }
                 ]
             }
+        elif method == "Runtime.evaluate":
+            assert req["params"] == {
+                "expression": "document.readyState",
+                "returnByValue": True,
+                "awaitPromise": False,
+                "userGesture": False,
+                "throwOnSideEffect": True,
+            }
+            result = {"result": {"type": "string", "value": "complete"}}
         else:
             raise AssertionError(f"unexpected CDP method: {method}")
         self.pending.append(json.dumps({"id": req["id"], "result": result}))
@@ -161,6 +170,7 @@ def test_cdp_host_persists_exact_target_and_never_silently_rebinds() -> None:
     )
     first = host.capture()
     assert first["page_token"] == "target:target-1"
+    assert first["document_ready_state"] == "complete"
     assert first["dom"]["nodes"][0]["frame_token"] is None
     assert host.bound_target_id == "target-1"
     assert len(sockets) == 1
@@ -202,8 +212,15 @@ def test_factory_registers_browser_perceive_only_when_explicitly_opted_in(
     )
     engine = factory.build_engine(settings)
     assert "browser_perceive" in engine.registry.names()
-    assert "browser_wait_scope" in engine.registry.names()
-    assert "browser_wait_object" in engine.registry.names()
+    assert {
+        "browser_wait_scope_url",
+        "browser_wait_scope_ready",
+        "browser_wait_scope_count",
+        "browser_wait_object_state",
+        "browser_wait_object_text",
+    }.issubset(engine.registry.names())
+    assert "browser_wait_scope" not in engine.registry.names()
+    assert "browser_wait_object" not in engine.registry.names()
     factory.CdpReadOnlyBrowserHost.assert_called_once_with(
         "http://127.0.0.1:9222",
         target_id="target-1",
@@ -229,8 +246,15 @@ def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeyp
         )
     )
     assert "browser_perceive" in perception_only.registry.names()
-    assert "browser_wait_scope" in perception_only.registry.names()
-    assert "browser_wait_object" in perception_only.registry.names()
+    assert {
+        "browser_wait_scope_url",
+        "browser_wait_scope_ready",
+        "browser_wait_scope_count",
+        "browser_wait_object_state",
+        "browser_wait_object_text",
+    }.issubset(perception_only.registry.names())
+    assert "browser_wait_scope" not in perception_only.registry.names()
+    assert "browser_wait_object" not in perception_only.registry.names()
     assert "browser_action" not in perception_only.registry.names()
     assert "browser_semantic_execute" not in perception_only.registry.names()
     factory.CdpBrowserMutationActuator.assert_not_called()
@@ -244,8 +268,15 @@ def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeyp
         )
     )
     assert "browser_perceive" in enabled.registry.names()
-    assert "browser_wait_scope" in enabled.registry.names()
-    assert "browser_wait_object" in enabled.registry.names()
+    assert {
+        "browser_wait_scope_url",
+        "browser_wait_scope_ready",
+        "browser_wait_scope_count",
+        "browser_wait_object_state",
+        "browser_wait_object_text",
+    }.issubset(enabled.registry.names())
+    assert "browser_wait_scope" not in enabled.registry.names()
+    assert "browser_wait_object" not in enabled.registry.names()
     assert "browser_action" in enabled.registry.names()
     assert "browser_semantic_execute" in enabled.registry.names()
     factory.CdpBrowserMutationActuator.assert_called_once_with(

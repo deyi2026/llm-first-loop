@@ -2,8 +2,10 @@
 
 The host binds one exact loopback Chrome page target and exposes only the four
 mechanical observation methods consumed by ``PlaywrightPageCaptureBackend``.  It
-never navigates, evaluates JavaScript, dispatches input, or silently rebinds to a
-different tab when the selected target disappears.
+never navigates, dispatches input, evaluates model/user supplied JavaScript, or
+silently rebinds to a different tab when the selected target disappears.  One
+fixed internal ``document.readyState`` probe is allowed as a mechanical sensor
+fact; callers cannot use the generic CDP surface to evaluate arbitrary script.
 
 Despite the backend class name, no Playwright Python dependency is required here:
 small page/context shims present the same ``new_cdp_session`` shape to the existing
@@ -32,6 +34,13 @@ _READ_ONLY_CDP_METHODS = frozenset(
     }
 )
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_DOCUMENT_READY_STATE_PARAMS: dict[str, Any] = {
+    "expression": "document.readyState",
+    "returnByValue": True,
+    "awaitPromise": False,
+    "userGesture": False,
+    "throwOnSideEffect": True,
+}
 
 
 class _WebSocketLike(Protocol):
@@ -87,9 +96,7 @@ class _ReadOnlyCdpSession:
         self._request_id = 0
         self._lock = threading.Lock()
 
-    def send(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        if method not in _READ_ONLY_CDP_METHODS:
-            raise PermissionError(f"CDP method is not in read-only perception surface: {method}")
+    def _request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         with self._lock:
             self._request_id += 1
             request_id = self._request_id
@@ -114,6 +121,21 @@ class _ReadOnlyCdpSession:
                 if not isinstance(result, dict):
                     raise RuntimeError("CDP observation response missing object result")
                 return result
+
+    def send(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method not in _READ_ONLY_CDP_METHODS:
+            raise PermissionError(f"CDP method is not in read-only perception surface: {method}")
+        return self._request(method, params)
+
+    def read_document_ready_state(self) -> str:
+        """Read one fixed DOM readiness fact without exposing script evaluation."""
+
+        result = self._request("Runtime.evaluate", dict(_DOCUMENT_READY_STATE_PARAMS))
+        remote = result.get("result") or {}
+        value = remote.get("value") if isinstance(remote, dict) else None
+        if value not in {"loading", "interactive", "complete"}:
+            raise RuntimeError("Browser document.readyState observation returned invalid value")
+        return str(value)
 
 
 class _CdpContextShim:

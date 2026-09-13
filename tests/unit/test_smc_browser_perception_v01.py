@@ -433,6 +433,15 @@ class _FakeCdp:
 
     def send(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         self.calls.append(method)
+        if method == "Runtime.evaluate":
+            assert params == {
+                "expression": "document.readyState",
+                "returnByValue": True,
+                "awaitPromise": False,
+                "userGesture": False,
+                "throwOnSideEffect": True,
+            }
+            return {"result": {"type": "string", "value": "complete"}}
         if method == "Target.getTargetInfo":
             return {"targetInfo": {"targetId": "target-1"}}
         if method == "Page.getFrameTree":
@@ -487,7 +496,9 @@ def test_playwright_backend_uses_only_read_only_capture_methods() -> None:
         "Page.getFrameTree",
         "DOMSnapshot.captureSnapshot",
         "Accessibility.getFullAXTree",
+        "Runtime.evaluate",
     ]
+    assert raw["document_ready_state"] == "complete"
     assert raw["dom"]["available"] is True
     assert raw["ax"]["available"] is True
     assert raw["dom"]["nodes"][1]["attributes"]["name"] == "Go"

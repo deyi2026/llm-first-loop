@@ -56,9 +56,14 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "read_file": "读取已知路径的本地文本文件或 artifact://v1/... immutable snapshot；目录/关键词定位用 search_files。若后续计划 edit_file，必须本次 snapshot=true 取得 snapshot_ref。",
     "read_image": "读取本地图片并返回结构化视觉与元信息证据；需要图片路径。",
     "smx_perceive": "smx 感知层（opt-in）：wait 用 satisfied=true/false/null+sample_count/observer_error_count；snapshot 绑定 scope/content_sha256；diff 给 comparable/field_completeness；wait/snapshot/diff 另附 nested smc canonical projection；receipt raw grounding 标 canonical=false；只感知不执行。",
-    "browser_perceive": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 只读感知（opt-in loopback CDP host）：snapshot/hydrate/diff；DOM+AX→WorldSnapshot/SemanticObject。wait 使用 typed browser_wait_scope/browser_wait_object；不导航、不执行 mutation，不暴露 selector/坐标/CDP node id/AX index。",
+    "browser_perceive": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 只读感知（opt-in loopback CDP host）：snapshot/hydrate/diff；DOM+AX→WorldSnapshot/SemanticObject。wait 使用 typed scope_url/scope_ready/scope_count/object_state/object_text；不导航、不执行 mutation，不暴露 selector/坐标/CDP node id/AX index。",
     "browser_wait_scope": "Browser 只读 scope wait：传当前 observation 的 exact scope_ref + property/operator/value + timeout_ms/interval_ms；property 仅 scope 类。工具机械编译 schema/domain/target=scope_ref 后轮询；不 mutation/retry/latest/rebind，不判断任务完成。",
     "browser_wait_object": "Browser 只读 object wait：传当前 SemanticObject GroundingRef（object_ref）+ property/operator/value + timeout_ms/interval_ms；工具 exact hydrate 并机械派生 Semantic ID/scope；不名称匹配/fallback/retry/latest/rebind，不判断任务完成。",
+    "browser_wait_scope_url": "Browser只读URL等待：exact scope_ref + operator(eq|contains|prefix|suffix) + string value；程序固定property=url与target=scope_ref，不retry/latest/rebind。",
+    "browser_wait_scope_ready": "Browser只读文档就绪等待：exact主页面/文档scope_ref + state(loading|interactive|complete)；程序固定document_ready_state eq，不retry/latest/rebind。",
+    "browser_wait_scope_count": "Browser只读对象计数等待：exact scope_ref + operator(eq|ge|le) + integer count>=0；程序固定property=object_count，不retry/latest/rebind。",
+    "browser_wait_object_state": "Browser只读对象状态等待：exact object_ref + state property + boolean value；程序exact hydrate并固定operator=eq，不名称匹配/retry/rebind。",
+    "browser_wait_object_text": "Browser只读对象文本等待：exact object_ref + property(name|value_text) + string operator/value；程序exact hydrate，不名称匹配/retry/rebind。",
     "browser_action": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 写操作：click/fill/select/navigate/scroll；使用 snapshot 的 exact Semantic ID/scope + expected_version，object mutation=object，navigate=resource，snapshot 不作为 mutation version_scope；dispatch 前机械复核；单次 dispatch，不自动 retry/rebind；ActionReceipt 只表示机械事实，不等于任务完成。",
     "browser_semantic_execute": "Browser 语义执行：必须先 browser_perceive snapshot 并取得 exact GroundingRef/resource_ref；没有 snapshot/ref 不要调用，不要把 URL 当 target_ref。对象 target_ref=SemanticObject.grounding_ref，navigate target_ref=resource_ref；args: click={}，fill={text,mode(replace|append)}，select={value}，navigate={url}，scroll={delta_pages}；工具内部编译 scope/version/action_id 后单次执行；读 ActionReceipt，再 snapshot 验证；不自动 retry/rebind，receipt ok 不等于任务完成。",
     "inspect_code": "解析 Python 文件/目录 AST，列类、函数、签名与 imports；实现正文用 read_file。",
@@ -129,6 +134,21 @@ _COMPACT_PARAMETER_DESCRIPTIONS: dict[str, dict[str, str]] = {
     },
     "browser_wait_object": {
         "object_ref": "来自当前 Browser observation 的 exact SemanticObject.grounding_ref；工具只 exact hydrate，不按名称查找或 rebind。",
+    },
+    "browser_wait_scope_url": {
+        "scope_ref": "来自当前 Browser observation 的 exact scope_ref；程序固定 Predicate target=scope_ref。",
+    },
+    "browser_wait_scope_ready": {
+        "scope_ref": "来自当前主页面/文档 observation 的 exact scope_ref；程序读取固定 document.readyState 感知事实。",
+    },
+    "browser_wait_scope_count": {
+        "scope_ref": "来自当前 Browser observation 的 exact scope_ref；count 是非负整数。",
+    },
+    "browser_wait_object_state": {
+        "object_ref": "当前 SemanticObject.grounding_ref；value 是 JSON boolean，不是字符串 true/false。",
+    },
+    "browser_wait_object_text": {
+        "object_ref": "当前 SemanticObject.grounding_ref；value 是字符串。",
     },
     "browser_semantic_execute": {
         "target_ref": "先 snapshot；对象动作=当前 SemanticObject.grounding_ref；navigate=当前 snapshot result 的 resource_ref；必须 exact；不要把 URL/名称/scope_ref 当 target_ref。",
