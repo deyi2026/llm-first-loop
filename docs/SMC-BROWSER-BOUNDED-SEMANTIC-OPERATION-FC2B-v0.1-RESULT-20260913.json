@@ -1,0 +1,367 @@
+{
+  "aggregate": {
+    "action_auto_retry": 0,
+    "cache_hit_tokens": 280388,
+    "direct_atomic_calls": 0,
+    "exact_match_ambiguous": 0,
+    "exact_match_zero": 7,
+    "fallback_rows": 0,
+    "get_tool_schema_calls": 7,
+    "operation_auto_retry": 0,
+    "operation_calls": 31,
+    "operation_errors": 0,
+    "operation_failures": 14,
+    "operation_halted": 7,
+    "operation_unparsed": 14,
+    "per_task_pass": {
+      "click_commit": 1,
+      "delayed_wait": 2,
+      "fill_submit": 0
+    },
+    "read_evidence_calls": 27,
+    "rounds": 67,
+    "scope_blockers": 0,
+    "security_agent_rows": 0,
+    "task_completion_violations": 0,
+    "task_pass": 3,
+    "task_total": 6,
+    "tokens_in": 333541,
+    "tokens_out": 11489,
+    "tool_calls": 65,
+    "wait_clause_satisfied": 2,
+    "wall_s": 487.425
+  },
+  "date": "2026-09-13",
+  "evidence": {
+    "execution-manifest.json": {
+      "bytes": 50683,
+      "sha256": "8e8ce90598328a50955ba12b6a20b4e0319955814c4d062fa3351db69e5877cb"
+    },
+    "plan.json": {
+      "bytes": 1213,
+      "sha256": "6e07cb857f2adc9047755411c01856623d1112212ba8dd84d3e8b834554f629c"
+    },
+    "qualification-gate.json": {
+      "bytes": 3106,
+      "sha256": "daf5e4c62ce783d767ce7d7d77414b75c22c1a6364951cc970933c4a4557c876"
+    },
+    "results.jsonl": {
+      "bytes": 33267,
+      "sha256": "563c9c67538b0f41b0d4e6394e96879b086a33613375e8791a9772986aa1163c"
+    }
+  },
+  "experiment_commit": "3e7c1dfa9cf28d067151249cd734331b075799b7",
+  "findings": {
+    "bounded_button_path": {
+      "auto_retry": 0,
+      "delayed_wait_pass": "2/2",
+      "scope_blockers": 0,
+      "wait_then_click_observed": true
+    },
+    "canonical_identity_vocabulary_mismatch": {
+      "fc2b_kind_enum": [
+        "button",
+        "textbox",
+        "select",
+        "link",
+        "text",
+        "region",
+        "document"
+      ],
+      "input_representable_as_required_kind": false,
+      "observed_object": "Project code",
+      "perception_kind": "input",
+      "perception_role": "textbox",
+      "source_fact": "Browser perception canonical _KINDS includes input; FC2-B _IDENTITY_SCHEMA.kind enum does not."
+    },
+    "first_operation_failure_rows": 6,
+    "first_operation_shapes": [
+      {
+        "clause_kinds": [
+          "browser"
+        ],
+        "index": 1,
+        "status": "failure",
+        "task_id": "click_commit"
+      },
+      {
+        "clause_kinds": [
+          "browser"
+        ],
+        "index": 2,
+        "status": "failure",
+        "task_id": "fill_submit"
+      },
+      {
+        "clause_kinds": [
+          "browser"
+        ],
+        "index": 3,
+        "status": "failure",
+        "task_id": "delayed_wait"
+      },
+      {
+        "clause_kinds": [
+          "page"
+        ],
+        "index": 4,
+        "status": "failure",
+        "task_id": "delayed_wait"
+      },
+      {
+        "clause_kinds": [
+          "browser",
+          "action"
+        ],
+        "index": 5,
+        "status": "failure",
+        "task_id": "fill_submit"
+      },
+      {
+        "clause_kinds": [
+          "page"
+        ],
+        "index": 6,
+        "status": "failure",
+        "task_id": "click_commit"
+      }
+    ]
+  },
+  "gate": {
+    "action_automatic_retry_true": 0,
+    "direct_atomic_browser_calls": 0,
+    "infra_valid": true,
+    "mechanical_rows_all_pass": false,
+    "model_no_fallback": true,
+    "operation_automatic_retry_true": 0,
+    "operation_halted_total": 7,
+    "operation_tool_failures": 14,
+    "operation_unparsed_results": 14,
+    "pass": false,
+    "per_task_pass": {
+      "click_commit": 1,
+      "delayed_wait": 2,
+      "fill_submit": 0
+    },
+    "per_task_pass_required": 2,
+    "scope_blockers": 0,
+    "security_agent_spawned": false,
+    "surface_exact": true,
+    "task_completion_violations": 0,
+    "task_pass": 3,
+    "task_pass_required": 6
+  },
+  "implementation_commit": "5789d767199d570893cba3304b8e463f6c36bcb7",
+  "nonclaims": [
+    "A 3/6 task result is not qualification.",
+    "Button-only success does not qualify input/select/general Browser operations.",
+    "No causal performance claim is made from one six-row local-model matrix.",
+    "No cloud provider is qualified by this result."
+  ],
+  "protocol": {
+    "fixture_sha256": "87696076cea84d4e93f172d07a1499755dbc647f396ff115a9d64571740b72a3",
+    "model_ref": "cognilocal/ornith-1.5-35b-a3b-mlx",
+    "plan_sha256": "e45dae3f0715a6c0bfe444a8a7116d5028d1b0d2f3b7a52d45e0404ebadc6639",
+    "provider_contract": {
+      "max_input_tokens": 184000,
+      "max_tokens": 16000,
+      "min_p": 0.0,
+      "temperature": 0.0,
+      "timeout_s": 1800,
+      "top_k": 0,
+      "top_p": 1.0,
+      "wire_protocol": "openai"
+    },
+    "rows": 6,
+    "runtime": {
+      "evidence_mode": "enforce",
+      "extract_enabled": false,
+      "fallbacks": 0,
+      "llm_timeout_s": 1800,
+      "max_iterations": 12,
+      "max_tokens": 16000,
+      "method_reflection_mode": "off",
+      "reasoning_effort": "medium",
+      "serial_model_runs": true,
+      "summary_mode": "off",
+      "thinking_mode": "on",
+      "tool_schema_lazy": true,
+      "worker_timeout_s": 240
+    },
+    "surface_names": [
+      "browser_semantic_operation",
+      "get_tool_schema",
+      "read_evidence"
+    ],
+    "surface_sha256_full": "88f6274e2b51a2f8de37302f6cf934b6b72fe718549a438f9c0795dc48483622",
+    "surface_sha256_lazy": "c0153f3a84243893b2532b5ec1dc26100107a5d21e3fa6575910b069e9f1c0ec"
+  },
+  "rows": [
+    {
+      "action_auto_retry": 0,
+      "direct_atomic_calls": 0,
+      "exact_match_ambiguous": 0,
+      "exact_match_zero": 0,
+      "get_tool_schema_calls": 2,
+      "index": 1,
+      "navigate_ok": 1,
+      "object_ok": 0,
+      "operation_calls": 3,
+      "operation_errors": 0,
+      "operation_failures": 2,
+      "operation_halted": 0,
+      "operation_unparsed": 2,
+      "oracle_pass": false,
+      "read_evidence_calls": 7,
+      "repeat": 1,
+      "rounds": 12,
+      "scope_blockers": 0,
+      "security_agent_spawned": false,
+      "status": "TASK_FAIL",
+      "task_id": "click_commit",
+      "tool_calls": 12,
+      "wait_clause_satisfied": 0,
+      "wall_s": 58.925
+    },
+    {
+      "action_auto_retry": 0,
+      "direct_atomic_calls": 0,
+      "exact_match_ambiguous": 0,
+      "exact_match_zero": 4,
+      "get_tool_schema_calls": 1,
+      "index": 2,
+      "navigate_ok": 1,
+      "object_ok": 0,
+      "operation_calls": 7,
+      "operation_errors": 0,
+      "operation_failures": 2,
+      "operation_halted": 4,
+      "operation_unparsed": 2,
+      "oracle_pass": false,
+      "read_evidence_calls": 4,
+      "repeat": 1,
+      "rounds": 12,
+      "scope_blockers": 0,
+      "security_agent_spawned": false,
+      "status": "TASK_FAIL",
+      "task_id": "fill_submit",
+      "tool_calls": 12,
+      "wait_clause_satisfied": 0,
+      "wall_s": 114.109
+    },
+    {
+      "action_auto_retry": 0,
+      "direct_atomic_calls": 0,
+      "exact_match_ambiguous": 0,
+      "exact_match_zero": 0,
+      "get_tool_schema_calls": 1,
+      "index": 3,
+      "navigate_ok": 1,
+      "object_ok": 1,
+      "operation_calls": 4,
+      "operation_errors": 0,
+      "operation_failures": 1,
+      "operation_halted": 0,
+      "operation_unparsed": 1,
+      "oracle_pass": true,
+      "read_evidence_calls": 3,
+      "repeat": 1,
+      "rounds": 9,
+      "scope_blockers": 0,
+      "security_agent_spawned": false,
+      "status": "PASS",
+      "task_id": "delayed_wait",
+      "tool_calls": 8,
+      "wait_clause_satisfied": 1,
+      "wall_s": 52.112
+    },
+    {
+      "action_auto_retry": 0,
+      "direct_atomic_calls": 0,
+      "exact_match_ambiguous": 0,
+      "exact_match_zero": 0,
+      "get_tool_schema_calls": 1,
+      "index": 4,
+      "navigate_ok": 1,
+      "object_ok": 1,
+      "operation_calls": 4,
+      "operation_errors": 0,
+      "operation_failures": 2,
+      "operation_halted": 0,
+      "operation_unparsed": 2,
+      "oracle_pass": true,
+      "read_evidence_calls": 4,
+      "repeat": 2,
+      "rounds": 10,
+      "scope_blockers": 0,
+      "security_agent_spawned": false,
+      "status": "PASS",
+      "task_id": "delayed_wait",
+      "tool_calls": 9,
+      "wait_clause_satisfied": 1,
+      "wall_s": 105.358
+    },
+    {
+      "action_auto_retry": 0,
+      "direct_atomic_calls": 0,
+      "exact_match_ambiguous": 0,
+      "exact_match_zero": 1,
+      "get_tool_schema_calls": 1,
+      "index": 5,
+      "navigate_ok": 1,
+      "object_ok": 0,
+      "operation_calls": 6,
+      "operation_errors": 0,
+      "operation_failures": 4,
+      "operation_halted": 1,
+      "operation_unparsed": 4,
+      "oracle_pass": false,
+      "read_evidence_calls": 5,
+      "repeat": 2,
+      "rounds": 12,
+      "scope_blockers": 0,
+      "security_agent_spawned": false,
+      "status": "TASK_FAIL",
+      "task_id": "fill_submit",
+      "tool_calls": 12,
+      "wait_clause_satisfied": 0,
+      "wall_s": 85.566
+    },
+    {
+      "action_auto_retry": 0,
+      "direct_atomic_calls": 0,
+      "exact_match_ambiguous": 0,
+      "exact_match_zero": 2,
+      "get_tool_schema_calls": 1,
+      "index": 6,
+      "navigate_ok": 1,
+      "object_ok": 1,
+      "operation_calls": 7,
+      "operation_errors": 0,
+      "operation_failures": 3,
+      "operation_halted": 2,
+      "operation_unparsed": 3,
+      "oracle_pass": true,
+      "read_evidence_calls": 4,
+      "repeat": 2,
+      "rounds": 12,
+      "scope_blockers": 0,
+      "security_agent_spawned": false,
+      "status": "PASS",
+      "task_id": "click_commit",
+      "tool_calls": 12,
+      "wait_clause_satisfied": 0,
+      "wall_s": 71.355
+    }
+  ],
+  "ruling": {
+    "cloud_qualification_run": false,
+    "gate_modified_after_measurement": false,
+    "next_protocol_started": false,
+    "production_change_after_measurement": false,
+    "recommendation": "Close FC2-B v0.1 as FAIL. A future separately authorized protocol should align identity kind vocabulary with canonical SemanticObject kinds and reduce first-call schema/progressive-disclosure friction before a fresh full matrix.",
+    "selective_row_replay": false
+  },
+  "schema": "smc.browser_bounded_semantic_operation_fc2.result.v0.1",
+  "status": "NOT_QUALIFIED_BY_FC2B_V0.1"
+}
