@@ -522,7 +522,7 @@ def test_eventstore_disabled_runner_keeps_legacy_same_process_mailbox(tmp_path) 
 
 def test_a2_cancel_does_not_cancel_a1_background_child(tmp_path) -> None:
     """P3: a new run's lifecycle cancel must not claim an older run's child resource."""
-    store, _events = _store(tmp_path)
+    store, events = _store(tmp_path)
     llm = _BlockingLLM()
     runner = _runner(llm, store)
     parent = "parent-cross-run-cancel"
@@ -549,3 +549,32 @@ def test_a2_cancel_does_not_cancel_a1_background_child(tmp_path) -> None:
     finally:
         llm.release.set()
         _wait_terminal(runner, parent, child)
+
+    # Gate3: the A1 child may finish after A2 has started, but that late completion is
+    # durable child history only. It must not become an A2 pending obligation or write a
+    # result event into the parent session as if A2 had produced/collected it.
+    sid_token = current_session_id.set(parent)
+    gen_token = current_run_generation.set("run-A2")
+    try:
+        assert runner.pending_obligations(parent) == []
+        assert runner.cancel_parent(parent) == 0
+    finally:
+        current_run_generation.reset(gen_token)
+        current_session_id.reset(sid_token)
+
+    snapshot = runner.delivery_snapshot(child)
+    assert snapshot is not None
+    assert snapshot["parent_id"] == parent
+    assert snapshot["result_available"] is True
+    assert snapshot["result_id"]
+    child_result_events = [
+        event for event in events.read(child) if event.type == EVENT_SUBAGENT_RESULT_AVAILABLE
+    ]
+    assert len(child_result_events) == 1
+    assert child_result_events[0].payload["result"]["final_answer"] == "CHILD-FINAL"
+    parent_result_events = (
+        [event for event in events.read(parent) if event.type == EVENT_SUBAGENT_RESULT_AVAILABLE]
+        if events.exists(parent)
+        else []
+    )
+    assert parent_result_events == []
