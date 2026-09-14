@@ -19,7 +19,7 @@ from llm_loop.core.history import (
     project_exact_duplicate_tool_groups,
 )
 from llm_loop.core.message import Message
-from llm_loop.core.reference_injection import is_human_user_message
+from llm_loop.core.reference_injection import is_active_run_ingress_message
 
 
 def _map_compacted_source_indices(
@@ -113,7 +113,7 @@ def run_history_projection(
         reopened_marker_count = len(stale_markers)
         for m in stale_markers:
             clear_cache_compacted_for(m, cache_archive_provider)
-    _current_human_message: Message | None = None
+    _current_ingress_message: Message | None = None
     if current_turn_ref is not None:
         try:
             _current_filtered_pos = filtered_indices.index(current_turn_ref)
@@ -123,9 +123,9 @@ def run_history_projection(
         if (
             _current_filtered_pos >= 0
             and 0 <= _current_local_pos < len(base)
-            and is_human_user_message(base[_current_local_pos])
+            and is_active_run_ingress_message(base[_current_local_pos])
         ):
-            _current_human_message = base[_current_local_pos]
+            _current_ingress_message = base[_current_local_pos]
 
     built = build_history_messages(
         base,
@@ -190,13 +190,14 @@ def run_history_projection(
         cache_protected_prefix_chars=cache_protected_prefix_chars,
         compact_view_stats=compact_view_box,
         require_archive_success=getattr(registry, "evidence_mode", "off") == "enforce",
-        # Initial ingress and every tool-followup round of that same genuine human
-        # turn share one wire invariant: the exact current human message must remain
-        # provider-visible even when surrounding atomic tool groups are compacted.
+        # Initial ingress and every tool-followup round of the same active run share
+        # one wire invariant: the exact current ingress must remain provider-visible
+        # even when surrounding atomic tool groups are compacted. Human provenance is
+        # intentionally not conflated with delegated run anchoring.
         # `filtered_indices` is an exact original-Session index map, so this adds no
         # semantic task/relevance judgement.
         preserve_last_human_exact=r6_ingress_truth is not None,
-        preserve_human_message=_current_human_message,
+        preserve_active_ingress_message=_current_ingress_message,
         current_turn_ref=current_turn_ref,
     )
     duplicate_tool_projection_stats: dict[str, int | bool] = {

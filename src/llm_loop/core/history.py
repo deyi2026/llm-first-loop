@@ -25,7 +25,10 @@ from llm_loop.core.injection_labels import (
     STATUS_LABEL,
 )
 from llm_loop.core.message import Message, MessageSource, ToolCall
-from llm_loop.core.reference_injection import is_human_user_message
+from llm_loop.core.reference_injection import (
+    is_active_run_ingress_message,
+    is_human_user_message,
+)
 
 
 def _message_time_marker(m: Message) -> float | None:
@@ -669,8 +672,9 @@ def build_history_messages(
     # 输出容器——大裁/折叠发生后填充真实触发/目标/结果参数，供 deterministic replay；
     # 供调用方（build.py）写 breaker 审计事件 view_not_shrinking_after_compact（drop<5% 时）。
     require_archive_success: bool = False,  # ERC enforce: hidden bytes must be durable before shrink
-    preserve_last_human_exact: bool = False,  # R6 initial ingress: never replace current human truth with a compact surrogate
-    preserve_human_message: Message | None = None,  # exact active-human identity from filtered Session mapping
+    preserve_last_human_exact: bool = False,  # legacy R6 fallback: preserve latest genuine human when no exact ingress is supplied
+    preserve_active_ingress_message: Message | None = None,  # exact active-run ingress identity from filtered Session mapping
+    preserve_human_message: Message | None = None,  # compatibility alias for older direct callers
     current_turn_ref: int | None = None,  # G6-v2: render source-attached boundary facts only in owning human turn
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
@@ -690,28 +694,50 @@ def build_history_messages(
     # 后续 projection 用 prefix_len + filtered_indices 映射回 Session 真正 msg_seq，
     # message.cache_compacted 不再依赖 role/content/ts fuzzy resolve。
     _source_index_by_id = {id(m): i for i, m in enumerate(session_messages)}
-    # Active-human wire invariant: when the caller identifies this build as belonging
-    # to a genuine current human turn, freeze that exact persisted Message identity
-    # before anchor/marker filtering. Provider compaction may retire surrounding tool
-    # groups, but must not erase the human turn that gives those groups protocol
-    # context (GLM rejects assistant/tool-only histories with HTTP 1214).
-    _preserved_human: Message | None = None
-    _preserved_human_source_index: int | None = None
+    # Active-run wire invariant: human provenance and provider protocol anchoring are
+    # different facts.  Freeze the exact persisted current-run ingress identity before
+    # anchor/marker filtering.  It may be a genuine human message or an explicitly
+    # delegated user-shaped continuation; neither case grants semantic authority to
+    # the program.  GLM rejects assistant/tool-only histories with HTTP 1214.
+    _preserved_ingress: Message | None = None
+    _preserved_ingress_source_index: int | None = None
+    _requested_ingress = preserve_active_ingress_message or preserve_human_message
     if (
-        preserve_human_message is not None
-        and id(preserve_human_message) in _source_index_by_id
-        and is_human_user_message(preserve_human_message)
-        and not _is_injected_block(preserve_human_message)
+        _requested_ingress is not None
+        and id(_requested_ingress) in _source_index_by_id
+        and is_active_run_ingress_message(_requested_ingress)
+        and not _is_injected_block(_requested_ingress)
     ):
-        _preserved_human = preserve_human_message
-        _preserved_human_source_index = _source_index_by_id[id(preserve_human_message)]
+        _preserved_ingress = _requested_ingress
+        _preserved_ingress_source_index = _source_index_by_id[id(_requested_ingress)]
     elif preserve_last_human_exact:
         for _idx in range(len(session_messages) - 1, -1, -1):
             _candidate = session_messages[_idx]
             if is_human_user_message(_candidate) and not _is_injected_block(_candidate):
-                _preserved_human = _candidate
-                _preserved_human_source_index = _idx
+                _preserved_ingress = _candidate
+                _preserved_ingress_source_index = _idx
                 break
+    _active_ingress_wire_ref = (
+        str(
+            current_turn_ref
+            if current_turn_ref is not None
+            else _preserved_ingress_source_index
+        )
+        if _preserved_ingress is not None
+        else ""
+    )
+
+    def _provider_dict(m: Message) -> dict:
+        """Serialize one message and carry exact active-ingress identity to final validation.
+
+        ``_active_run_ingress_ref`` is transport-internal only.  LLMClient strips it
+        after the final provider-structure validation; it must never reach an external
+        provider payload.
+        """
+        d = _provider_message_dict(m, current_turn_ref)
+        if m is _preserved_ingress and _active_ingress_wire_ref:
+            d["_active_run_ingress_ref"] = _active_ingress_wire_ref
+        return d
     if compacted_out is not None:
         compacted_out[:] = [False]
     if cache_compacted_out is not None:
@@ -791,20 +817,20 @@ def build_history_messages(
 
     # P1-10: 窗口锚定——起点固定（锚点前的消息已归档, 不再参与构建/重复归档）
     # A previously bad compaction may already have advanced the persisted anchor past
-    # the active human. Re-open only as far as that exact identity; provider markers
+    # the active run ingress. Re-open only as far as that exact identity; provider markers
     # still suppress every other already-compacted message.
     if (
-        _preserved_human_source_index is not None
-        and history_anchor > _preserved_human_source_index
+        _preserved_ingress_source_index is not None
+        and history_anchor > _preserved_ingress_source_index
     ):
-        history_anchor = _preserved_human_source_index
+        history_anchor = _preserved_ingress_source_index
     if history_anchor > 0 and history_anchor < len(session_messages):
         session_messages = session_messages[history_anchor:]
         if cache_archive_provider:
             session_messages = [
                 m
                 for m in session_messages
-                if m is _preserved_human or not _marker_active(m)
+                if m is _preserved_ingress or not _marker_active(m)
             ]
         # 2026-08-16 锚点对齐工具轮边界（现场：tool_call_id is not found 根因）：
         # 锚点落在声明↔回执组内会把声明裁掉、留下孤儿回执（API 拒绝）。
@@ -837,7 +863,7 @@ def build_history_messages(
         session_messages = [
             m
             for m in session_messages
-            if m is _preserved_human or not _marker_active(m)
+            if m is _preserved_ingress or not _marker_active(m)
         ]
         total_chars = sum(_wire_size(m, current_turn_ref) for m in session_messages)
 
@@ -864,7 +890,7 @@ def build_history_messages(
             # system 区 → 前缀不因耗尽注入持续分叉（缓存 MISS 收敛）
             if skip_injected_system and m.role == "system" and (m.metadata or {}).get("consumed"):
                 continue
-            _d = _provider_message_dict(m, current_turn_ref)
+            _d = _provider_dict(m)
             _append_or_merge(_d, dynamic=_is_dynamic_inject(m))
         return _repair_tool_call_pairing(out)
 
@@ -907,18 +933,17 @@ def build_history_messages(
         if any(mm.role == "user" and not _is_injected_block(mm) for mm in atomic_groups[_gi]):
             _anchor_group_idx = _gi
             break
-    # R6: the current ingress human text is a semantic invariant, not a compression source.
-    # When requested by LoopEngine initial-ingress build, keep the final real-user atomic group
-    # byte-for-byte even if it alone exceeds history budget; routing/context guard may then reject
-    # the oversized request explicitly. Silent trim/archive substitution would change the user's task.
-    _exact_human_group: list[Message] | None = None
-    if _preserved_human is not None:
+    # The current run ingress is a provider-structural invariant, not a compression
+    # source. Keep its exact atomic group byte-for-byte even if surrounding tool groups
+    # compact. Hard physical overflow remains the routing/context guard's responsibility.
+    _exact_ingress_group: list[Message] | None = None
+    if _preserved_ingress is not None:
         for _group in atomic_groups:
-            if any(mm is _preserved_human for mm in _group):
-                _exact_human_group = _group
+            if any(mm is _preserved_ingress for mm in _group):
+                _exact_ingress_group = _group
                 break
     elif preserve_last_human_exact and _anchor_group_idx is not None:
-        _exact_human_group = atomic_groups[_anchor_group_idx]
+        _exact_ingress_group = atomic_groups[_anchor_group_idx]
 
     # 2026-09-03 cache-boundary P1: 上轮 provider 已确认命中的 prefix 是 mandatory head。
     # 双口径（消息数 + chars）都向 atomic-group 末端取整：宁可多保护一组，也不能拆开
@@ -1052,7 +1077,7 @@ def build_history_messages(
             for _pos, (_group_idx, _group) in enumerate(
                 zip(_kept_group_indices, kept_groups, strict=True)
             ):
-                if _exact_human_group is not None and _group is _exact_human_group:
+                if _exact_ingress_group is not None and _group is _exact_ingress_group:
                     continue
                 if _group_idx in _anchor_protected_groups and _anchor_protect_valid:
                     break
@@ -1069,7 +1094,7 @@ def build_history_messages(
         for _gi in range(len(atomic_groups) - 1, head_count - 1, -1):
             group = atomic_groups[_gi]
             group_len = sum(_wire_size(mm, current_turn_ref) for mm in group)
-            if _exact_human_group is not None and group is _exact_human_group:
+            if _exact_ingress_group is not None and group is _exact_ingress_group:
                 kept_groups.insert(0, group)
                 archive_budget -= group_len
                 continue  # R6: exact human truth may pierce history budget; routing owns hard model limit
@@ -1139,7 +1164,7 @@ def build_history_messages(
                 _cache_boundary_mode = "epoch_reset"
             _preserved_head_group: list[Message] | None = None
             for g in head_groups:
-                if _exact_human_group is not None and g is _exact_human_group:
+                if _exact_ingress_group is not None and g is _exact_ingress_group:
                     _preserved_head_group = g
                     continue
                 archived.extend(g)
@@ -1157,7 +1182,7 @@ def build_history_messages(
                     (
                         _pos
                         for _pos, _group in enumerate(kept_groups)
-                        if _exact_human_group is None or _group is not _exact_human_group
+                        if _exact_ingress_group is None or _group is not _exact_ingress_group
                     ),
                     None,
                 )
@@ -1210,10 +1235,10 @@ def build_history_messages(
     # EVO-20260817-9d3e1f2c: 缓存友好压缩——头部保留（head_count>0）时锚点不动
     # （提交前缀稳定命中，只归档中段）；仅头部也被归档（head_count=0）才前移。
     if anchor_out is not None:
-        if _preserved_human is not None and any(m is _preserved_human for m in kept_flat):
+        if _preserved_ingress is not None and any(m is _preserved_ingress for m in kept_flat):
             # Provider markers represent non-contiguous retired groups after the current
-            # human; advancing the contiguous anchor by archived-count would skip that
-            # human on the next round and recreate the 1214 state.
+            # run ingress; advancing the contiguous anchor by archived-count would skip
+            # that ingress on the next round and recreate the 1214 state.
             anchor_out.append(history_anchor)
         elif head_count > 0:
             anchor_out.append(history_anchor)
@@ -1246,9 +1271,9 @@ def build_history_messages(
         # 否则 system 落在消息中间 → qwen 系模板(9B/27B) 报
         # "System message must be at the beginning" (HTTP 400/500)。
         if m.role == "system":
-            _append_or_merge(_provider_message_dict(m, current_turn_ref), dynamic=_is_dynamic_inject(m))
+            _append_or_merge(_provider_dict(m), dynamic=_is_dynamic_inject(m))
         else:
-            _d = _provider_message_dict(m, current_turn_ref)
+            _d = _provider_dict(m)
             out.append(_d)
     # Compaction is representation-only: archived source bytes remain durable and
     # recoverable through explicit search/read paths. The runtime does not synthesize

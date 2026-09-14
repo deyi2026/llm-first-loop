@@ -41,6 +41,7 @@ from llm_loop.llm.errors import (
     LLMError,
     LLMHTTPError,
     LLMNetworkError,
+    LLMProjectionError,
     LLMTimeoutError,
 )
 from llm_loop.llm.schemas import ToolCallDeltaAggregator
@@ -148,12 +149,117 @@ class GuardRequestContext:
     cache_prefix_epoch: int | None = None
     compaction_epoch: int | None = None
     breaker_active: bool = False  # P0（2026-08-25）: 压缩风暴熔断冻结期（规则 F 降级协调）
+    # Provider-projection ownership facts.  They are request-scoped mechanical
+    # expectations only; delegated ingress remains delegated and is never relabelled
+    # as human truth.  The corresponding internal message marker is stripped before
+    # transport.
+    active_run_ingress_ref: str = ""
+    active_run_ingress_kind: str = "none"
+    structure_state_hook: Callable[[dict[str, Any]], None] | None = field(
+        default=None, repr=False, compare=False
+    )
     # Optional request-scoped observer for provider-native in-flight state.  It is
     # deliberately carried on the immutable request context rather than shared client
     # state so concurrent sessions cannot cross-write crash-recovery checkpoints.
     stream_state_hook: Callable[[dict[str, Any]], None] | None = field(
         default=None, repr=False, compare=False
     )
+
+
+def provider_structure_violations(
+    messages: list[dict], *, expected_active_ingress_ref: str = ""
+) -> list[str]:
+    """Return mechanical provider-wire violations without semantic judgement."""
+    violations: list[str] = []
+    expected_ref = str(expected_active_ingress_ref or "")
+    marked: list[tuple[int, dict]] = []
+    seen_non_system = False
+    pending_ids: list[str] = []
+
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            violations.append(f"message_not_object:{index}")
+            continue
+        role = str(message.get("role") or "")
+        marker = str(message.get("_active_run_ingress_ref") or "")
+        if marker:
+            marked.append((index, message))
+
+        if role == "system":
+            if seen_non_system:
+                violations.append(f"system_after_non_system:{index}")
+        else:
+            seen_non_system = True
+
+        if role == "assistant":
+            if pending_ids:
+                violations.append(
+                    "tool_results_missing_before_next_message:" + ",".join(pending_ids)
+                )
+                pending_ids = []
+            tool_calls = message.get("tool_calls") or []
+            ids: list[str] = []
+            for call_index, tool_call in enumerate(tool_calls):
+                if not isinstance(tool_call, dict):
+                    violations.append(f"tool_call_not_object:{index}:{call_index}")
+                    continue
+                call_id = str(tool_call.get("id") or "")
+                if not call_id:
+                    violations.append(f"tool_call_id_missing:{index}:{call_index}")
+                    continue
+                if call_id in ids:
+                    violations.append(f"tool_call_id_duplicate:{call_id}")
+                ids.append(call_id)
+            pending_ids = ids
+            continue
+
+        if role == "tool":
+            tool_call_id = str(message.get("tool_call_id") or "")
+            if not pending_ids:
+                violations.append(f"orphan_tool_result:{index}:{tool_call_id or '?'}")
+            elif tool_call_id in pending_ids:
+                pending_ids.remove(tool_call_id)
+            else:
+                violations.append(f"orphan_tool_result:{index}:{tool_call_id or '?'}")
+            continue
+
+        if pending_ids:
+            violations.append(
+                "tool_results_interrupted_before_completion:" + ",".join(pending_ids)
+            )
+            pending_ids = []
+
+    if pending_ids:
+        violations.append("tool_results_missing_at_tail:" + ",".join(pending_ids))
+
+    if expected_ref:
+        matching = [
+            (index, message)
+            for index, message in marked
+            if str(message.get("_active_run_ingress_ref") or "") == expected_ref
+        ]
+        if not matching:
+            violations.append(f"active_run_ingress_missing:{expected_ref}")
+        elif len(matching) > 1:
+            violations.append(f"active_run_ingress_duplicate:{expected_ref}:{len(matching)}")
+        else:
+            index, message = matching[0]
+            if message.get("role") != "user":
+                violations.append(f"active_run_ingress_wrong_role:{index}")
+            if not str(message.get("content") or "").strip():
+                violations.append(f"active_run_ingress_empty:{index}")
+        foreign_markers = [
+            marker
+            for _, message in marked
+            if (marker := str(message.get("_active_run_ingress_ref") or ""))
+            and marker != expected_ref
+        ]
+        if foreign_markers:
+            violations.append("active_run_ingress_foreign_marker:" + ",".join(foreign_markers))
+    elif marked:
+        violations.append("active_run_ingress_unexpected_marker")
+
+    return violations
 
 
 def _emit_stream_state(
@@ -1034,6 +1140,64 @@ class LLMClient:
             )
         return compacted
 
+    @staticmethod
+    def _provider_structure_violations(
+        messages: list[dict], *, expected_active_ingress_ref: str = ""
+    ) -> list[str]:
+        """Compatibility wrapper for callers that previously reached the class helper."""
+        return provider_structure_violations(
+            messages, expected_active_ingress_ref=expected_active_ingress_ref
+        )
+
+    def _validate_and_strip_provider_structure(
+        self,
+        messages: list[dict],
+        *,
+        guard_context: GuardRequestContext | None,
+    ) -> list[dict]:
+        """Validate the final internal wire shape and remove transport-only markers."""
+        expected_ref = (
+            str(guard_context.active_run_ingress_ref or "")
+            if guard_context is not None
+            else ""
+        )
+        ingress_kind = (
+            str(guard_context.active_run_ingress_kind or "none")
+            if guard_context is not None
+            else "none"
+        )
+        violations = provider_structure_violations(
+            messages, expected_active_ingress_ref=expected_ref
+        )
+        hook = guard_context.structure_state_hook if guard_context is not None else None
+        if hook is not None:
+            try:
+                hook(
+                    {
+                        "valid": not violations,
+                        "violations": list(violations),
+                        "active_run_ingress_ref": expected_ref,
+                        "active_run_ingress_kind": ingress_kind,
+                    }
+                )
+            except Exception:  # noqa: BLE001 — observability must not alter projection authority
+                logger.debug("provider structure telemetry hook failed", exc_info=True)
+        if violations:
+            raise LLMProjectionError(
+                "provider projection failed structural validation: " + "; ".join(violations),
+                violations=violations,
+                provider=self.provider,
+            )
+        stripped: list[dict] = []
+        for message in messages:
+            if "_active_run_ingress_ref" not in message:
+                stripped.append(message)
+                continue
+            clean = dict(message)
+            clean.pop("_active_run_ingress_ref", None)
+            stripped.append(clean)
+        return stripped
+
     def chat_stream(
         self,
         messages: list[dict],
@@ -1118,6 +1282,9 @@ class LLMClient:
             # 云端 provider 零接触（cache_tag 非标字段，GLM 1210 前科）。
             if tagging_enabled_for(getattr(self, "base_url", None)):
                 messages = apply_cognitive_cache_tags(messages)
+        messages = self._validate_and_strip_provider_structure(
+            messages, guard_context=_guard_ctx
+        )
         try:
             if protocol == "anthropic":
                 result = yield from self._stream_anthropic(

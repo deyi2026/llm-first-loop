@@ -1,0 +1,55 @@
+{
+  "schema": "err1214-delegated-compaction/v1",
+  "privacy": "content-redacted; exact protocol roles, message seq, content lengths, delegated provenance, compaction facts and tool-pair cardinality retained",
+  "provider": "glm/glm-5.3",
+  "active_turn_ref": 537,
+  "ingress": {
+    "msg_seq": 537,
+    "role": "user",
+    "content_chars": 151,
+    "metadata": {
+      "origin_layer": "user_instruction",
+      "program_origin": false,
+      "ingress_channel": "web",
+      "ingress_entry": "scheduled:schedule_wake",
+      "ingress_delegated": true
+    }
+  },
+  "archived_span": [
+    {"msg_seq": 537, "role": "user", "content_chars": 151, "tool_call_count": 0},
+    {"msg_seq": 538, "role": "assistant", "content_chars": 0, "tool_call_count": 2},
+    {"msg_seq": 539, "role": "tool", "content_chars": 534, "tool_result_ordinal": 0},
+    {"msg_seq": 540, "role": "tool", "content_chars": 72, "tool_result_ordinal": 1},
+    {"msg_seq": 541, "role": "assistant", "content_chars": 98, "tool_call_count": 2},
+    {"msg_seq": 542, "role": "tool", "content_chars": 434, "tool_result_ordinal": 0},
+    {"msg_seq": 543, "role": "tool", "content_chars": 800, "tool_result_ordinal": 1},
+    {"msg_seq": 544, "role": "assistant", "content_chars": 0, "tool_call_count": 2},
+    {"msg_seq": 545, "role": "tool", "content_chars": 233, "tool_result_ordinal": 0},
+    {"msg_seq": 546, "role": "tool", "content_chars": 3230, "tool_result_ordinal": 1},
+    {"msg_seq": 547, "role": "assistant", "content_chars": 139, "tool_call_count": 2},
+    {"msg_seq": 548, "role": "tool", "content_chars": 350, "tool_result_ordinal": 0},
+    {"msg_seq": 549, "role": "tool", "content_chars": 355, "tool_result_ordinal": 1}
+  ],
+  "compaction_observation": {
+    "round_before": 32,
+    "round_after": 33,
+    "pre_history_chars": 83366,
+    "pre_chars": 83746,
+    "post_chars": 72828,
+    "effective_budget_chars": 85519,
+    "compact_ratio": 0.85,
+    "trigger_limit_chars": 72691,
+    "archived_count": 13,
+    "archived_group_count": 5,
+    "atomic_group_count": 33,
+    "anchor_before": 0,
+    "anchor_after": 550,
+    "anchor_moved": true
+  },
+  "provider_failure": {
+    "status_code": 400,
+    "provider_code": "1214",
+    "provider_total_ms": 220.8270828705281,
+    "provider_truncated": null
+  }
+}

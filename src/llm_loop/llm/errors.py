@@ -40,6 +40,25 @@ class LLMProtocolError(LLMError):
     """响应协议解析失败（流式/字段缺失等）."""
 
 
+class LLMProjectionError(LLMProtocolError):
+    """Local provider-request projection violated a mechanical wire invariant.
+
+    This error is raised before the HTTP transport is entered.  It represents a
+    harness projection defect/pressure state, not a provider response and not a
+    model semantic failure.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        violations: list[str] | tuple[str, ...],
+        provider: str = "",
+    ) -> None:
+        super().__init__(message, provider=provider)
+        self.violations = tuple(str(item) for item in violations)
+
+
 class LLMEmptyResponseError(LLMError):
     """Terminal response contained no visible text/tool call; preserve transport facts."""
 

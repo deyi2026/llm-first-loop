@@ -65,6 +65,7 @@ from llm_loop.core.loop.tool_exec import (
 )
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt_eligibility import LEGACY_PROGRAM_FINAL_MARKER
+from llm_loop.core.reference_injection import is_active_run_ingress_message
 from llm_loop.core.run_context import (
     current_reasoning_effort as _current_reasoning_effort,
 )
@@ -81,8 +82,14 @@ from llm_loop.feedback.honesty import max_iterations_feedback
 from llm_loop.feedback.validator import DeclarationValidator, build_discrepancy_feedback
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.status import ArchitectureStatusProvider
-from llm_loop.llm.client import GuardRequestContext, LLMClient, LLMResponse, StreamDelta
-from llm_loop.llm.errors import LLMError
+from llm_loop.llm.client import (
+    GuardRequestContext,
+    LLMClient,
+    LLMResponse,
+    StreamDelta,
+    provider_structure_violations,
+)
+from llm_loop.llm.errors import LLMError, LLMProjectionError
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.memory.store import MemoryStore
 from llm_loop.resources.contracts import ExecutionClass, ServicePriority
@@ -815,6 +822,64 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             if getattr(self, "_last_history_compacted", False):
                 truncation_noted = True
 
+            # Current run ingress is provider-protocol ownership, not human provenance.
+            # Bind the exact persisted turn identity for both genuine-human and explicit
+            # delegated ingress without changing either message's provenance.
+            _active_run_ingress_ref = ""
+            _active_run_ingress_kind = "none"
+            _active_turn_ref = self._run_state().current_turn_ref
+            if (
+                _active_turn_ref is not None
+                and 0 <= _active_turn_ref < len(sess.messages)
+                and is_active_run_ingress_message(sess.messages[_active_turn_ref])
+            ):
+                _active_run_ingress_ref = str(_active_turn_ref)
+                _active_md = getattr(sess.messages[_active_turn_ref], "metadata", None)
+                _active_run_ingress_kind = (
+                    "delegated"
+                    if isinstance(_active_md, dict)
+                    and _active_md.get("ingress_delegated") is True
+                    else "human"
+                )
+
+            # Ingress-only preflight runs before a provider call identity/transport is
+            # opened.  The full validator intentionally remains in LLMClient after its
+            # existing provider replay/tool sanitization so repairable legacy tool-pair
+            # shapes are not prematurely blocked here.
+            if isinstance(llm_client, LLMClient) and _active_run_ingress_ref:
+                _preflight_violations = [
+                    item
+                    for item in provider_structure_violations(
+                        messages,
+                        expected_active_ingress_ref=_active_run_ingress_ref,
+                    )
+                    if item.startswith("active_run_ingress_")
+                ]
+                if _preflight_violations:
+                    self._event_append(
+                        session_id,
+                        "provider.structure.validated",
+                        {
+                            "round": rounds,
+                            "stage": "pre_transport_ingress",
+                            "valid": False,
+                            "violations": _preflight_violations,
+                            "active_run_ingress_ref": _active_run_ingress_ref,
+                            "active_run_ingress_kind": _active_run_ingress_kind,
+                        },
+                    )
+                    self._record_action(
+                        "action.llm_decide",
+                        "projection_invalid",
+                        ";".join(_preflight_violations)[:200],
+                    )
+                    _run_end_reason = "projection_invalid"
+                    final_answer = (
+                        "[上下文投影失败] 当前 run 的协议入口在 provider 请求发送前缺失；"
+                        "已阻止发送，未用旧请求或伪造摘要替代。"
+                    )
+                    break
+
             # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）
             # 供 architecture_status.context_usage.breakdown 注入；last_build_info 入桶保留。
             from llm_loop.core.history import compute_breakdown_from_dicts
@@ -854,6 +919,17 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 if _provider_call_coordinator is not None
                 else None
             )
+
+            def _structure_state_hook(state: dict[str, Any]) -> None:
+                self._event_append(
+                    session_id,
+                    "provider.structure.validated",
+                    {
+                        "round": rounds,
+                        "stage": "final_client_projection",
+                        **dict(state),
+                    },
+                )
             # HARNESS-02(2026-08-14): 每轮请求快照进事件日志（fail-open）——routing/fallback
             # 可能中途换模型，事件回放据此确知"当时用的哪个模型/挂了哪些工具/预算多少"，
             # 对 self_evaluate 溯源与回放诊断有帮助
@@ -908,12 +984,20 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 _reasoning_chars = sum(
                     len(str(m.get("reasoning_content", "") or "")) for m in messages
                 )
+                _provider_meta_messages = [
+                    (
+                        {k: v for k, v in m.items() if k != "_active_run_ingress_ref"}
+                        if "_active_run_ingress_ref" in m
+                        else m
+                    )
+                    for m in messages
+                ]
                 try:
                     # Major provider-visible structures only: message payload + tool schemas.
                     # This deliberately excludes transport-only headers/credentials while making
                     # hidden historical reasoning visible in telemetry.
                     _provider_structure_json = json.dumps(
-                        {"messages": messages, "tools": tools_param},
+                        {"messages": _provider_meta_messages, "tools": tools_param},
                         ensure_ascii=False,
                         separators=(",", ":"),
                         default=str,
@@ -925,7 +1009,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 except (TypeError, ValueError):
                     _provider_visible_chars = _history_chars + _reasoning_chars
                     _provider_structure_fp = ""
-                _message_shape = provider_message_shape(messages)
+                _message_shape = provider_message_shape(_provider_meta_messages)
                 _routing_identity = self._routing._routing_identity()
                 _runtime_snapshot_dict = (
                     self._runtime_causal_snapshot.to_dict()
@@ -1004,6 +1088,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         "routing_epoch": _routing_identity["epoch"],
                         "routing_registry_fp": _routing_identity["registry_fp"],
                         "routing_transition": _routing_identity["transition"],
+                        "active_run_ingress_ref": _active_run_ingress_ref,
+                        "active_run_ingress_kind": _active_run_ingress_kind,
                         "influence": dict(self._run_state().last_request_influence or {}),
                     },
                 )
@@ -1042,6 +1128,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             stable_prefix_fp=self._run_state().cache_gate_stable_fp,
                             cache_prefix_epoch=self._run_state().cache_prefix_epoch,
                             compaction_epoch=self._run_state().compact_event_seq,
+                            active_run_ingress_ref=_active_run_ingress_ref,
+                            active_run_ingress_kind=_active_run_ingress_kind,
+                            structure_state_hook=_structure_state_hook,
                             stream_state_hook=cap.on_provider_state,
                         )
                         if isinstance(llm_client, LLMClient)
@@ -1130,6 +1219,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             stable_prefix_fp=self._run_state().cache_gate_stable_fp,
                             cache_prefix_epoch=self._run_state().cache_prefix_epoch,
                             compaction_epoch=self._run_state().compact_event_seq,
+                            active_run_ingress_ref=_active_run_ingress_ref,
+                            active_run_ingress_kind=_active_run_ingress_kind,
+                            structure_state_hook=_structure_state_hook,
                         )
                     resp = foreground_task_provider_chat(
                         self,
@@ -1168,6 +1260,22 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     _run_end_reason = "cancelled"
                     final_answer = _CANCELLED_ANSWER
                     resp = None
+                    break
+                if isinstance(exc, LLMProjectionError):
+                    if _provider_call_coordinator is not None:
+                        _provider_call_coordinator.settle_shadow_call(
+                            _provider_call, ProviderCallOutcome.BLOCKED_BEFORE_TRANSPORT
+                        )
+                    self._record_action(
+                        "action.llm_decide", "projection_invalid", str(exc)[:200]
+                    )
+                    if self.status:
+                        self.status.record_exception("projection_invalid", exc)
+                    _run_end_reason = "projection_invalid"
+                    final_answer = (
+                        "[上下文投影失败] provider wire 未通过机械结构校验；"
+                        "已在外部请求前阻止继续，本轮未复用陈旧 provider projection。"
+                    )
                     break
                 # 拷问⑥（2026-08-18）: cache_guard BLOCK——直接如实反馈 AI
                 # （不重试/不走 overflow reinject——重试同样被拦=浪费循环；AI 需先
