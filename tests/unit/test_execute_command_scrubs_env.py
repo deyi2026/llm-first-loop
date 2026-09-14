@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from llm_loop.core.message import ToolCall, ToolResultStatus
-from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
+from llm_loop.tools.builtin.execute_command import ExecuteCommandTool, _workspace_python_env
 from llm_loop.tools.registry import ToolRegistry
 
 
@@ -98,3 +99,60 @@ def test_control_plane_env_scrubbed():
         assert probe == "False", f"控制面路径泄露: {probe}"
     finally:
         restore()
+
+
+def _make_lfl_tree(root: Path, *, with_venv: bool) -> None:
+    (root / "src" / "llm_loop").mkdir(parents=True)
+    (root / "pyproject.toml").write_text('[project]\nname = "llm-first-loop"\n', encoding="utf-8")
+    if with_venv:
+        python = root / ".venv" / "bin" / "python"
+        python.parent.mkdir(parents=True)
+        python.write_text("#!/bin/sh\n", encoding="utf-8")
+        python.chmod(0o755)
+
+
+def test_lfl_workdir_pins_bare_python_to_project_venv(tmp_path):
+    """普通 checkout 内 bare python/python3/pytest 应优先使用项目 venv。"""
+    root = tmp_path / "repo"
+    _make_lfl_tree(root, with_venv=True)
+    env = {"PATH": "/usr/bin:/bin", "PYTHONPATH": "/old/src"}
+
+    pinned = _workspace_python_env(env, str(root / "src"), "python3 -m pytest")
+
+    assert pinned["PATH"].split(os.pathsep)[0] == str(root / ".venv" / "bin")
+    assert pinned["PYTHONPATH"].split(os.pathsep)[0] == str(root / "src")
+    assert env == {"PATH": "/usr/bin:/bin", "PYTHONPATH": "/old/src"}
+
+
+def test_linked_worktree_reuses_main_venv_but_runs_worktree_src(tmp_path):
+    """linked worktree 无 .venv 时复用主树 venv，但代码身份仍绑定当前 worktree。"""
+    main = tmp_path / "repo"
+    worktree = main / ".worktrees" / "candidate"
+    _make_lfl_tree(main, with_venv=True)
+    _make_lfl_tree(worktree, with_venv=False)
+    nested = worktree / "tests"
+    nested.mkdir()
+
+    pinned = _workspace_python_env({"PATH": "/usr/bin"}, str(nested), "pytest -q")
+
+    assert pinned["PATH"].split(os.pathsep)[0] == str(main / ".venv" / "bin")
+    assert pinned["PYTHONPATH"].split(os.pathsep)[0] == str(worktree / "src")
+
+
+def test_non_lfl_workdir_keeps_host_python_environment(tmp_path):
+    """别的项目/临时目录不能被 LFL 的 venv 规则污染。"""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    env = {"PATH": "/usr/local/bin:/usr/bin", "PYTHONPATH": "/custom"}
+
+    assert _workspace_python_env(env, str(plain), "python3 -c pass") == env
+
+
+def test_lfl_workdir_does_not_pin_after_shell_cd_or_explicit_python_path(tmp_path):
+    """显式跨目录/绝对解释器属于调用者选择，不能被 LFL venv 环境重写。"""
+    root = tmp_path / "repo"
+    _make_lfl_tree(root, with_venv=True)
+    env = {"PATH": "/usr/bin", "PYTHONPATH": "/custom"}
+
+    assert _workspace_python_env(env, str(root), "cd /tmp && python3 -c pass") == env
+    assert _workspace_python_env(env, str(root), "/usr/bin/python3 -c pass") == env

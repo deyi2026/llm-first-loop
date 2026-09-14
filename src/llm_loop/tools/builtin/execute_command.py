@@ -60,6 +60,78 @@ def _scrubbed_env() -> dict[str, str]:
     return scrubbed
 
 
+def _is_lfl_source_root(path: Path) -> bool:
+    """Return whether *path* is mechanically recognizable as an LFL source checkout."""
+    return (path / "pyproject.toml").is_file() and (path / "src" / "llm_loop").is_dir()
+
+
+def _is_bare_python_tool_command(command: str) -> bool:
+    """Return whether the shell starts with a bare project-Python tool executable."""
+    try:
+        parts = shlex.split(command, posix=True)
+    except ValueError:
+        return False
+    while parts and "=" in parts[0] and parts[0].split("=", 1)[0].isidentifier():
+        parts.pop(0)
+    if not parts or "/" in parts[0]:
+        return False
+    return parts[0] in {"python", "python3", "pip", "pip3", "pytest", "ruff", "pyright"}
+
+
+def _workspace_python_env(
+    env: dict[str, str], workdir: str | None, command: str
+) -> dict[str, str]:
+    """Pin bare Python/tool resolution to the active LFL checkout when possible.
+
+    Linked git worktrees intentionally do not carry their own ``.venv``. In that
+    case the nearest ancestor LFL checkout with ``.venv/bin/python`` supplies the
+    interpreter, while ``PYTHONPATH`` stays pinned to the *current* worktree's
+    ``src`` so an editable install cannot silently execute code from the main tree.
+
+    Binding is deliberately narrow: only a bare Python/project-tool executable at
+    the start of the shell command is pinned. Commands that explicitly name an
+    interpreter path or first ``cd``/delegate to another shell keep the host env,
+    preventing the LFL venv from leaking into a different project.
+    """
+    if not workdir or not _is_bare_python_tool_command(command):
+        return env
+    try:
+        start = Path(workdir).expanduser().resolve()
+    except OSError:
+        return env
+
+    project_root: Path | None = None
+    for candidate in (start, *start.parents):
+        if _is_lfl_source_root(candidate):
+            project_root = candidate
+            break
+    if project_root is None:
+        return env
+
+    venv_bin: Path | None = None
+    for candidate in (project_root, *project_root.parents):
+        if not _is_lfl_source_root(candidate):
+            continue
+        python_bin = candidate / ".venv" / "bin" / "python"
+        if python_bin.is_file() and os.access(python_bin, os.X_OK):
+            venv_bin = python_bin.parent
+            break
+    if venv_bin is None:
+        return env
+
+    pinned = dict(env)
+    venv_bin_s = str(venv_bin)
+    path_parts = [p for p in pinned.get("PATH", "").split(os.pathsep) if p]
+    pinned["PATH"] = os.pathsep.join([venv_bin_s, *(p for p in path_parts if p != venv_bin_s)])
+
+    src_s = str(project_root / "src")
+    pythonpath_parts = [p for p in pinned.get("PYTHONPATH", "").split(os.pathsep) if p]
+    pinned["PYTHONPATH"] = os.pathsep.join(
+        [src_s, *(p for p in pythonpath_parts if p != src_s)]
+    )
+    return pinned
+
+
 def _python_runtime_fact(
     command: str, returncode: int | None, stderr: str, env: dict[str, str]
 ) -> str | None:
@@ -189,6 +261,7 @@ class ExecuteCommandTool:
         try:
             # C: 环境事实注入——子进程可见 LLM_EXEC_CWD（当前实际工作目录），模型可感知执行环境
             env = _scrubbed_env()
+            env = _workspace_python_env(env, workdir, command)
             env["LLM_EXEC_CWD"] = workdir or os.getcwd()
             if run_bg:
                 # A: 后台任务（对齐 Harness ctx.jobs）——Popen 不阻塞，登记 JobRegistry 供 job_output/job_kill
