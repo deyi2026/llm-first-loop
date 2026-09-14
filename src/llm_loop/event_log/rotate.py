@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
@@ -50,9 +51,13 @@ class RotateManager:
         self._rotate_days = rotate_days
         self._rotate_on_session_end = rotate_on_session_end
 
-    def size_triggered(self, path: Path) -> bool:
+    def size_triggered(self, path: str | os.PathLike[str]) -> bool:
         """大小触发判定（stat 廉价，供 EventStore.append 每次追加内联检查）."""
-        return self._rotate_bytes > 0 and path.exists() and path.stat().st_size >= self._rotate_bytes
+        return (
+            self._rotate_bytes > 0
+            and os.path.exists(path)
+            and os.path.getsize(path) >= self._rotate_bytes
+        )
 
     def check_and_rotate(self, session_id: str) -> list[SegmentInfo]:
         """检测触发条件 → 触发滚动（关闭当前段为归档段 + 创建新活跃段）.
@@ -72,17 +77,17 @@ class RotateManager:
 
         # 单文件形态：检查是否需要迁移为多段
         single_path = self._store._path(session_id)  # noqa: SLF001
-        if not single_path.exists():
+        if not os.path.exists(single_path):
             return []
         if self._should_rotate_file(single_path):
             return self._migrate_to_segments(session_id)
         return []
 
-    def _should_rotate_file(self, path: Path) -> bool:
+    def _should_rotate_file(self, path: str | os.PathLike[str]) -> bool:
         """检测文件是否触发滚动条件."""
-        if not path.exists():
+        if not os.path.exists(path):
             return False
-        size = path.stat().st_size
+        size = os.path.getsize(path)
         if self._rotate_bytes > 0 and size >= self._rotate_bytes:
             return True
         if self._rotate_days > 0:
@@ -103,11 +108,12 @@ class RotateManager:
         single_path = self._store._path(session_id)  # noqa: SLF001
         seg_dir = self._store._segment_dir(session_id)  # noqa: SLF001
         try:
-            seg_dir.mkdir(parents=True, exist_ok=True)
-            archived = seg_dir / "1.jsonl"
-            shutil.move(str(single_path), str(archived))
-            active = seg_dir / "2.jsonl"
-            active.touch()
+            os.makedirs(seg_dir, exist_ok=True)
+            archived = os.path.join(seg_dir, "1.jsonl")
+            shutil.move(single_path, archived)
+            active = os.path.join(seg_dir, "2.jsonl")
+            with open(active, "a", encoding="utf-8"):
+                pass
         except OSError as exc:
             logger.warning("滚动迁移失败（fail-open）: %s", exc)
             return []
@@ -116,13 +122,24 @@ class RotateManager:
     def _rotate_multi_segment(self, session_id: str) -> list[SegmentInfo]:
         """多段形态滚动：关闭活跃段 + 创建新活跃段."""
         seg_dir = self._store._segment_dir(session_id)  # noqa: SLF001
-        segments = sorted(seg_dir.glob("*.jsonl"), key=lambda p: int(p.stem))
+        try:
+            segments = sorted(
+                (
+                    entry.path
+                    for entry in os.scandir(seg_dir)
+                    if entry.is_file() and entry.name.endswith(".jsonl")
+                ),
+                key=self._store._segment_seq,  # noqa: SLF001
+            )
+        except FileNotFoundError:
+            segments = []
         if not segments:
             return []
-        next_seq = int(segments[-1].stem) + 1
-        new_active = seg_dir / f"{next_seq}.jsonl"
+        next_seq = self._store._segment_seq(segments[-1]) + 1  # noqa: SLF001
+        new_active = os.path.join(seg_dir, f"{next_seq}.jsonl")
         try:
-            new_active.touch()
+            with open(new_active, "a", encoding="utf-8"):
+                pass
         except OSError as exc:
             logger.warning("新段创建失败（fail-open）: %s", exc)
             return []
@@ -135,23 +152,33 @@ class RotateManager:
             session_id = _validate_session_id(session_id)
         except ValueError:
             return []
-        seg_dir = Path(event_logs_dir) / session_id
-        if not seg_dir.is_dir():
+        seg_dir = os.path.join(os.fspath(event_logs_dir), session_id)
+        if not os.path.isdir(seg_dir):
             return []
-        segments = sorted(seg_dir.glob("*.jsonl"), key=lambda p: int(p.stem))
+        segments = sorted(
+            (
+                entry.path
+                for entry in os.scandir(seg_dir)
+                if entry.is_file() and entry.name.endswith(".jsonl")
+            ),
+            key=lambda p: int(os.path.splitext(os.path.basename(p))[0]),
+        )
         result: list[SegmentInfo] = []
-        max_seq = int(segments[-1].stem) if segments else 0
+        max_seq = (
+            int(os.path.splitext(os.path.basename(segments[-1]))[0]) if segments else 0
+        )
         for p in segments:
             events = RotateManager._read_events_from_file_static(p)
+            seq = int(os.path.splitext(os.path.basename(p))[0])
             result.append(
                 SegmentInfo(
                     session_id=session_id,
-                    segment_seq=int(p.stem),
+                    segment_seq=seq,
                     event_count=len(events),
                     ts_first=events[0].ts if events else "",
                     ts_last=events[-1].ts if events else "",
-                    size_bytes=p.stat().st_size,
-                    is_active=int(p.stem) == max_seq,
+                    size_bytes=os.path.getsize(p),
+                    is_active=seq == max_seq,
                 )
             )
         return result
@@ -175,16 +202,16 @@ class RotateManager:
             events = [e for e in events if lo_ts <= e.ts <= hi_ts]
         return events
 
-    def _read_events_from_file(self, path: Path) -> list:
+    def _read_events_from_file(self, path: str | os.PathLike[str]) -> list:
         return self._read_events_from_file_static(path)
 
     @staticmethod
-    def _read_events_from_file_static(path: Path) -> list:
+    def _read_events_from_file_static(path: str | os.PathLike[str]) -> list:
         from llm_loop.event_log.model import parse_event_line
 
         events = []
         try:
-            with path.open("r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 for raw in f:
                     line = raw.strip()
                     if not line:

@@ -65,11 +65,13 @@ def test_old_json_missing_fields_backward_compat(tmp_path):
     store = _store(tmp_path)
     sid = store.create()
     p = store._path(sid)  # noqa: SLF001
-    raw = json.loads(p.read_text(encoding="utf-8"))
+    with open(p, encoding="utf-8") as f:
+        raw = json.load(f)
     raw.pop("pinned")
     raw.pop("channel")
     raw["version"] = 3
-    p.write_text(json.dumps(raw), encoding="utf-8")
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(raw, f)
     sess = store.load(sid)
     assert sess.pinned is False
     assert sess.channel == "web"

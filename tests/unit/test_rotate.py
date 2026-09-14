@@ -39,8 +39,8 @@ def test_rotate_size_threshold(tmp_path):
     # 多段目录结构
     assert es._is_multi_segment(sid)  # noqa: SLF001
     seg_dir = es._segment_dir(sid)  # noqa: SLF001
-    assert (seg_dir / "1.jsonl").exists()
-    assert (seg_dir / "2.jsonl").exists()
+    assert (Path(seg_dir) / "1.jsonl").exists()
+    assert (Path(seg_dir) / "2.jsonl").exists()
 
 
 def test_rotate_cross_segment_replay(tmp_path):

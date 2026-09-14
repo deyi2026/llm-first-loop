@@ -55,7 +55,7 @@ def test_read_path_event_log_fallback_on_missing(tmp_path):
     event_store, session_store = _build_stores(tmp_path, "session_json")
     sid = _seed(session_store)
     # 删除事件日志
-    event_store._path(sid).unlink()  # noqa: SLF001
+    Path(event_store._path(sid)).unlink()  # noqa: SLF001
     session_store._read_path_source = "event_log"  # noqa: SLF001
     # 应回退到 session JSON
     session = session_store.load(sid)
@@ -67,7 +67,7 @@ def test_read_path_event_log_fallback_on_corrupt(tmp_path):
     event_store, session_store = _build_stores(tmp_path, "session_json")
     sid = _seed(session_store)
     # 损坏事件日志
-    event_store._path(sid).write_text("not json\n", encoding="utf-8")  # noqa: SLF001
+    Path(event_store._path(sid)).write_text("not json\n", encoding="utf-8")  # noqa: SLF001
     session_store._read_path_source = "event_log"  # noqa: SLF001
     session = session_store.load(sid)
     assert len(session.messages) == 2

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import threading
 import time
@@ -54,6 +55,10 @@ class EventStore:
         self, event_logs_dir: str | Path, *, enabled: bool = True, hook_chain: Any | None = None
     ) -> None:
         self._dir = Path(event_logs_dir)
+        # Python 3.13 pathlib interns parsed path components. Session ids are
+        # high-cardinality runtime data, so dynamic session paths below use os.path
+        # instead of retaining every historical id in the interpreter intern table.
+        self._dir_fs = os.fspath(self._dir)
         self._enabled = enabled
         self._hook_chain = hook_chain
         # 最近一次 read 如实跳过的损坏行数（供调用方标注，不伪造）
@@ -109,30 +114,54 @@ class EventStore:
     def enabled(self) -> bool:
         return self._enabled
 
-    def _path(self, session_id: str) -> Path:
+    def _path(self, session_id: str) -> str:
         """单文件形态路径（D1 既有）."""
         session_id = _validate_session_id(session_id)
-        return self._dir / f"{session_id}.jsonl"
+        return os.path.join(self._dir_fs, f"{session_id}.jsonl")
 
-    def _segment_dir(self, session_id: str) -> Path:
+    def _segment_dir(self, session_id: str) -> str:
         """多段形态目录路径."""
         session_id = _validate_session_id(session_id)
-        return self._dir / session_id
+        return os.path.join(self._dir_fs, session_id)
 
     def _is_multi_segment(self, session_id: str) -> bool:
         """检测是否为多段形态（目录存在）."""
-        return self._segment_dir(session_id).is_dir()
+        return os.path.isdir(self._segment_dir(session_id))
 
-    def _active_segment_path(self, session_id: str) -> Path:
+    @staticmethod
+    def _segment_seq(path: str) -> int:
+        return int(os.path.splitext(os.path.basename(path))[0])
+
+    def _active_segment_path(self, session_id: str) -> str:
         """多段形态活跃段路径（最大 segment_seq 文件）."""
         seg_dir = self._segment_dir(session_id)
-        segments = sorted(seg_dir.glob("*.jsonl"), key=lambda p: int(p.stem))
-        return segments[-1] if segments else seg_dir / "1.jsonl"
+        try:
+            segments = sorted(
+                (
+                    entry.path
+                    for entry in os.scandir(seg_dir)
+                    if entry.is_file() and entry.name.endswith(".jsonl")
+                ),
+                key=self._segment_seq,
+            )
+        except FileNotFoundError:
+            segments = []
+        return segments[-1] if segments else os.path.join(seg_dir, "1.jsonl")
 
-    def _all_segment_paths(self, session_id: str) -> list[Path]:
+    def _all_segment_paths(self, session_id: str) -> list[str]:
         """多段形态全部段路径（按 segment_seq 递增）."""
         seg_dir = self._segment_dir(session_id)
-        return sorted(seg_dir.glob("*.jsonl"), key=lambda p: int(p.stem))
+        try:
+            return sorted(
+                (
+                    entry.path
+                    for entry in os.scandir(seg_dir)
+                    if entry.is_file() and entry.name.endswith(".jsonl")
+                ),
+                key=self._segment_seq,
+            )
+        except FileNotFoundError:
+            return []
 
     def _ensure_dir(self) -> bool:
         try:
@@ -150,7 +179,7 @@ class EventStore:
         仅锁获取阶段处理OSError；yield体业务I/O异常必须原样传播，不能误标成锁故障。
         """
         session_id = _validate_session_id(session_id)
-        lock_path = self._dir / f"{session_id}.lock"
+        lock_path = os.path.join(self._dir_fs, f"{session_id}.lock")
         try:
             import fcntl
         except ImportError:
@@ -162,7 +191,9 @@ class EventStore:
 
         lock_file = None
         try:
-            lock_file = lock_path.open("a")
+            lock_file = open(  # noqa: SIM115 - lock spans generator yield; closed in finally
+                lock_path, "a", encoding="utf-8"
+            )
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         except OSError as exc:
             if lock_file is not None:
@@ -235,7 +266,7 @@ class EventStore:
             session_id = _validate_session_id(session_id)
         except ValueError:
             return False
-        return self._path(session_id).exists() or self._is_multi_segment(session_id)
+        return os.path.exists(self._path(session_id)) or self._is_multi_segment(session_id)
 
     def delete_session(self, session_id: str) -> int:
         """物理删除单会话全部事件数据；保留稳定锁文件，失败向上抛。"""
@@ -243,12 +274,12 @@ class EventStore:
         removed = 0
         with self._session_flock(session_id, strict=True):
             single = self._path(session_id)
-            if single.exists():
-                single.unlink()
+            if os.path.exists(single):
+                os.unlink(single)
                 removed += 1
             seg_dir = self._segment_dir(session_id)
-            if seg_dir.exists():
-                removed += sum(1 for p in seg_dir.rglob("*") if p.is_file())
+            if os.path.exists(seg_dir):
+                removed += sum(len(files) for _root, _dirs, files in os.walk(seg_dir))
                 shutil.rmtree(seg_dir)
             with self._rotate_checked_guard:
                 self._rotate_checked_at.pop(session_id, None)
@@ -289,7 +320,7 @@ class EventStore:
             else:
                 p = self._path(session_id)
             try:
-                with p.open("a+", encoding="utf-8") as f:
+                with open(p, "a+", encoding="utf-8") as f:
                     event = self._append_locked(f, session_id, event_type, payload)
             except OSError as exc:
                 logger.warning("事件日志写入失败（fail-open）: %s: %s", p, exc)
@@ -379,7 +410,7 @@ class EventStore:
             return events
 
     @staticmethod
-    def _tail_last_seq(path: Path) -> int:
+    def _tail_last_seq(path: str | os.PathLike[str]) -> int:
         """append-only 事件文件尾部最后一条事件的 seq（O(1)，不扫描全文件）.
 
         P1-7(2026-08-15, 性能): 原实现为求最大 seq 逐行扫描整个文件——大会话
@@ -391,7 +422,7 @@ class EventStore:
         调用方持有的会话级 flock 保证。
         """
         try:
-            with path.open("rb") as f:
+            with open(path, "rb") as f:
                 f.seek(0, 2)
                 size = f.tell()
                 if size == 0:
@@ -487,7 +518,7 @@ class EventStore:
             else:
                 p = self._path(session_id)
             try:
-                with p.open("a+", encoding="utf-8") as f:
+                with open(p, "a+", encoding="utf-8") as f:
                     new_event = self._append_event_locked(f, session_id, event)
             except OSError as exc:
                 logger.warning("事件日志写入失败（fail-open）: %s: %s", p, exc)
@@ -526,7 +557,7 @@ class EventStore:
             skipped = 0
             for p in self._all_segment_paths(session_id):
                 try:
-                    with p.open("r", encoding="utf-8") as f:
+                    with open(p, encoding="utf-8") as f:
                         for raw in f:
                             line = raw.strip()
                             if not line:
@@ -543,12 +574,12 @@ class EventStore:
             return events
         # 单文件形态（D1 既有）
         p = self._path(session_id)
-        if not p.exists():
+        if not os.path.exists(p):
             return []
         events: list[Event] = []
         skipped = 0
         try:
-            with p.open("r", encoding="utf-8") as f:
+            with open(p, encoding="utf-8") as f:
                 for raw in f:
                     line = raw.strip()
                     if not line:

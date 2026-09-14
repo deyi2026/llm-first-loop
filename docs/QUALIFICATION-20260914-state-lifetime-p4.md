@@ -45,13 +45,18 @@ P4 的目标不是“运行结束后清空一切”，而是把状态分成两�
 
 | count | RunState buckets | Event cache | cold-read locks | rotate cache | terminal jobs | identity cache | topology cache | threads | tracemalloc current | RSS (KiB, diagnostic) |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 100 | 32 | 2 | 0 | 32 | 32 | 32 | 32 | 1 | 110,795 B | 85,920 |
-| 1,000 | 32 | 2 | 0 | 32 | 32 | 32 | 32 | 1 | 3,958,081 B | 89,696 |
-| 10,000 | 32 | 2 | 0 | 32 | 32 | 32 | 32 | 1 | 3,958,944 B | 89,712 |
+| 100 | 32 | 2 | 0 | 32 | 32 | 32 | 32 | 1 | 110,795 B | 152,400 |
+| 1,000 | 32 | 2 | 0 | 32 | 32 | 32 | 32 | 1 | 112,994 B | 152,400 |
+| 10,000 | 32 | 2 | 0 | 32 | 32 | 32 | 32 | 1 | 113,857 B | 152,400 |
 
 关键结果：达到容量后，1K → 10K 额外 9,000 个 identity 只让 `tracemalloc current` 增加 **863 B**；所有被纳入 gate 的强引用容器完全不再增长。RSS 只作平台/allocator 诊断，不作为正确性硬阈值。
 
-另做真实 durable Session 文件压力：实际创建并落盘 10,000 个 Session/identity facts，在 100/1K/10K 检查点执行 `list_sessions()` + GC。磁盘 Session 数按历史增长到 10K，identity verified 与 SessionMeta RAM cache 均保持 qualification window `<=32`。这验证了“durable history 可增长，但 RAM 不得靠强引用复制历史”的边界。
+另做真实 durable Session 文件压力：实际创建并落盘 10,000 个 Session/identity facts，在 100/1K/10K 检查点执行 `list_sessions()`，释放调用方持有的完整结果后再 GC。磁盘 Session 数按历史增长到 10K，identity verified 与 SessionMeta RAM cache 均保持 qualification window `<=32`；`tracemalloc current` 为 **57,752 B → 65,143 B → 90,783 B**，1K → 10K 仅增加 **25,640 B**。完整 `list_sessions()` 返回 10K 个 `SessionMeta` 时的瞬时峰值允许按结果集基数增长，但结果释放后不得被 store/cache 继续强引用。
+
+两个 follow-up 反例使 hard Gate 从原先宽松的 4 MiB 收紧到 **256 KiB**：
+
+1. **Python 3.13 `pathlib` retention**：最初 `EventStore.read_cached(unique_sid)` 在 1K→10K 会触发 `pathlib/_local.py` 的 process-global 常驻台阶；继续审计后，`SessionStore` 首次 owner claim 也有同类固定-root `Path.resolve()/iterdir()` 热路径。EventStore/RotateManager 的高基数动态 session 路径现统一使用 `os.path` / `os.scandir` / builtin `open`；SessionStore 的 owner/session/run lock、session JSON、identity JSON 和 owner-claim workspace scan 也移出高频 pathlib 解析。修后 EventStore 主 Gate 回到 **+863 B**，10K 个不同 Session 首次创建 standalone trace 为 1K=34,794 B、10K=61,860 B（**+27,066 B**），不再出现 `pathlib/_local.py` 增长。
+2. **SessionMeta OrderedDict high-water**：旧 `list_sessions()` 虽最终只保留 32/512 条 cache，却会先把本轮全部文件灌入全局 `_SESSION_META_CACHE` 再统一 pop，10K 列表后 final len 很小但 OrderedDict 内部容量仍保留约 10K 高水位。现改为构建过程中按同一 LRU limit 即时裁剪，最终“最近 N 条”语义不变，cache 从未膨胀到全历史规模。
 
 ## 4. Lifecycle / Recovery Gates
 
@@ -68,8 +73,9 @@ P4 的目标不是“运行结束后清空一切”，而是把状态分成两�
 - P4 lifecycle release 扩大矩阵：**148/148 PASS**。
 - P4 + continuity/recovery 相邻矩阵：**185/185 PASS**。
 - Provider settlement / resource projection / rotate wiring / external execution / BackgroundRunner：**83/83 PASS**。
+- P4 post-qualification Session/Event/fork/read-path/rotate/migration/M52/M60/plateau follow-up：**186/186 PASS**。
 - 100→1K→10K ephemeral plateau：**PASS**。
-- 10K real durable Session growth vs RAM-cache plateau：**PASS**。
+- 10K real durable Session growth vs RAM-cache plateau：**PASS**（1K→10K `tracemalloc current` **+25,640 B**，hard gate `<256 KiB`）。
 - Ruff：PASS。
 - `py_compile`：PASS。
 - Pyright：**0 errors / 0 warnings / 0 informations**。

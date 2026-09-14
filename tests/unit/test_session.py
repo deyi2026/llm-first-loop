@@ -341,7 +341,8 @@ def test_session_corrupt_file_backed_up(tmp_path):
     store = _store(tmp_path)
     sid = "corrupt-session"
     p = store._path(sid)  # noqa: SLF001 — 测试直写存储层
-    p.write_text("{broken json!!", encoding="utf-8")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("{broken json!!")
     sess = store.load(sid)
     assert sess.session_id == sid  # fail-open 返回空会话
     backup = tmp_path / "sessions" / "corrupt-session.corrupt.json"

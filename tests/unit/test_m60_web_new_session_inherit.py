@@ -42,6 +42,12 @@ def _result_mock(sid: str) -> mock.Mock:
         reasoning_supported=False,
         reasoning_effective=False,
         reasoning_tokens=None,
+        history_compacted=False,
+        provider_output_truncated=False,
+        run_incomplete=False,
+        projection_validator_failed=False,
+        projection_rebuilt=False,
+        projection_cannot_fit=False,
     )
 
 
@@ -114,7 +120,8 @@ def test_chat_new_session_corrupt_shared_fail_open_none(tmp_path):
     store, captured = _setup(tmp_path)
     old_sid = store.create(model_override=_INHERIT_MODEL)
     store.set_shared_current(old_sid)
-    store._path(old_sid).write_text("{broken", encoding="utf-8")  # noqa: SLF001
+    with open(store._path(old_sid), "w", encoding="utf-8") as f:  # noqa: SLF001
+        f.write("{broken")
 
     client = TestClient(build_app(engine=_engine(store, captured)))
     resp = client.post("/api/v1/chat", json={"message": "hi", "new_session": True})

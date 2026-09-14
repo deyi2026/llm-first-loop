@@ -62,14 +62,16 @@ def test_payload_trace_diagnostic_state_is_bounded(tmp_path, monkeypatch) -> Non
 
 def test_workspace_store_process_locks_release_with_store_lifetime(tmp_path) -> None:
     """P4: process lock coordination must not retain every historical data root."""
+    gc.collect()
+    baseline = len(workspace_store_mod._PROCESS_LOCKS)  # noqa: SLF001
     stores = []
     for i in range(64):
         stores.append(WorkspaceStore(tmp_path / f"data-{i:03d}"))
-    assert len(workspace_store_mod._PROCESS_LOCKS) == 64  # noqa: SLF001
+    assert len(workspace_store_mod._PROCESS_LOCKS) == baseline + 64  # noqa: SLF001
 
     stores.clear()
     gc.collect()
-    assert len(workspace_store_mod._PROCESS_LOCKS) == 0  # noqa: SLF001
+    assert len(workspace_store_mod._PROCESS_LOCKS) <= baseline  # noqa: SLF001
 
 
 def test_run_state_idle_buckets_plateau_but_active_sessions_are_never_evicted() -> None:
@@ -151,25 +153,48 @@ def test_session_meta_cache_is_bounded_even_when_listing_many_durable_sessions(
 def test_100_1k_10k_durable_sessions_grow_on_disk_while_ram_caches_plateau(
     tmp_path, monkeypatch
 ) -> None:
-    """P4: durable session files may scale to 10K while reconstructible RAM caches stay fixed."""
+    """P4: 10K durable sessions may grow on disk without mirroring history in process RAM."""
     monkeypatch.setattr(session_mod, "_SESSION_META_CACHE_MAX", 32, raising=False)
     with session_mod._SESSION_META_CACHE_LOCK:  # noqa: SLF001
         session_mod._SESSION_META_CACHE.clear()  # noqa: SLF001
 
     store = SessionStore(tmp_path / "workspace-a" / "sessions", identity_root=tmp_path)
     store._identity_cache_max = 32  # noqa: SLF001 - qualification-sized recent window
+    current_bytes: dict[int, int] = {}
+    tracemalloc.start()
+    try:
+        for i in range(1, 10_001):
+            store.create()
+            if i not in {100, 1_000, 10_000}:
+                continue
 
-    for i in range(1, 10_001):
-        store.create()
-        if i not in {100, 1_000, 10_000}:
-            continue
+            # Exercise the real metadata listing path, then release the 10K-item result
+            # before sampling process retention.  The returned list itself is caller-
+            # owned result data, not a SessionStore cache.
+            metas = store.list_sessions()
+            assert len(metas) == i
+            del metas
+            gc.collect()
 
-        gc.collect()
-        assert len(store.list_sessions()) == i
-        assert len(store._identity_verified) <= 32  # noqa: SLF001
-        with session_mod._SESSION_META_CACHE_LOCK:  # noqa: SLF001
-            assert len(session_mod._SESSION_META_CACHE) <= 32  # noqa: SLF001
-        assert len(list(store.root.glob("*.json"))) == i
+            assert len(store._identity_verified) <= 32  # noqa: SLF001
+            with session_mod._SESSION_META_CACHE_LOCK:  # noqa: SLF001
+                assert len(session_mod._SESSION_META_CACHE) <= 32  # noqa: SLF001
+            with os.scandir(store.root) as entries:
+                disk_sessions = sum(
+                    1
+                    for entry in entries
+                    if entry.is_file()
+                    and entry.name.endswith(".json")
+                    and entry.name != store._SHARED_SESSION_FILE  # noqa: SLF001
+                )
+            assert disk_sessions == i
+            current_bytes[i] = tracemalloc.get_traced_memory()[0]
+    finally:
+        tracemalloc.stop()
+
+    # By 1K both reconstructible caches are at capacity.  9K more durable identities
+    # must not recreate the Python 3.13 pathlib high-cardinality retention regression.
+    assert current_bytes[10_000] - current_bytes[1_000] < 256 * 1024
 
 
 def test_engine_retires_per_session_runtime_hints_with_run_state_lru(build_test_engine) -> None:
@@ -281,7 +306,7 @@ def test_100_1k_10k_ephemeral_state_plateaus(tmp_path, monkeypatch, capsys) -> N
     # allocator high-water behavior is platform dependent.
     assert int(checkpoints[10_000]["tracemalloc_current"] or 0) - int(
         checkpoints[1_000]["tracemalloc_current"] or 0
-    ) < 4 * 1024 * 1024
+    ) < 256 * 1024
     print({"p4_plateau": checkpoints})
     captured = capsys.readouterr().out
     assert "p4_plateau" in captured

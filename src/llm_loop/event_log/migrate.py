@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -160,7 +161,7 @@ def run_migration(
         # 强制/修复：清除既有事件文件后重建
         if force and store.exists(sid):
             try:
-                store._path(sid).unlink()  # noqa: SLF001 — 修复语义需重建
+                os.unlink(store._path(sid))  # noqa: SLF001 — 修复语义需重建
             except OSError as exc:
                 failed.append({"session_id": sid, "reason": f"清除既有事件失败: {exc}"})
                 continue

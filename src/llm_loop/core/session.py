@@ -40,7 +40,7 @@ _ARCHIVED = "archived"
 
 # 会话元数据缓存（2026-09-07 CPU 修复）：绝对路径 → ((mtime_ns, size), SessionMeta)。
 # 供 _list_sessions_in 复用未变化文件的解析结果；文件落盘 mtime 必变，天然失效。
-_SESSION_META_CACHE: OrderedDict[Path, tuple[tuple[int, int], SessionMeta]] = OrderedDict()
+_SESSION_META_CACHE: OrderedDict[str, tuple[tuple[int, int], SessionMeta]] = OrderedDict()
 _SESSION_META_CACHE_LOCK = threading.Lock()
 _SESSION_META_CACHE_MAX = 512
 
@@ -315,9 +315,12 @@ class SessionStore:
     ) -> None:
         self._dir = Path(sessions_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._dir_fs = os.path.abspath(os.fspath(self._dir))
         self._identity_root_pinned = identity_root is not None
         self._identity_root = Path(identity_root) if identity_root is not None else self._dir
         self._identity_root.mkdir(parents=True, exist_ok=True)
+        self._identity_root_fs = os.path.abspath(os.fspath(self._identity_root))
+        self._identity_dir_fs = os.path.join(self._identity_root_fs, ".identity")
         self._identity_verified: OrderedDict[str, None] = OrderedDict()
         self._identity_cache_max = 512
         self._identity_cache_guard = threading.Lock()
@@ -530,8 +533,11 @@ class SessionStore:
     def activate_prepared_root(self, sessions_dir: str | Path) -> None:
         """激活已准备好的会话根；不执行文件系统I/O。"""
         self._dir = Path(sessions_dir)
+        self._dir_fs = os.path.abspath(os.fspath(self._dir))
         if not self._identity_root_pinned:
             self._identity_root = self._dir
+            self._identity_root_fs = self._dir_fs
+            self._identity_dir_fs = os.path.join(self._identity_root_fs, ".identity")
         with self._identity_cache_guard:
             self._identity_verified.clear()
         self._fallback_locks.clear()
@@ -552,15 +558,21 @@ class SessionStore:
         return self._identity_root
 
     def _identity_owner_key(self) -> str:
-        base = self._identity_root.resolve()
-        current = self._dir.resolve()
+        base = os.path.realpath(self._identity_root_fs)
+        current = os.path.realpath(self._dir_fs)
         try:
-            rel = current.relative_to(base)
+            if os.path.commonpath((base, current)) != base:
+                raise ValueError("session root outside identity root")
+            rel = os.path.relpath(current, base)
         except ValueError as exc:
             raise SessionIdConflictError(
                 f"当前会话根 {current} 越出 identity_root {base}，拒绝声明 session_id"
             ) from exc
-        return "." if rel == Path(".") else rel.as_posix()
+        return "." if rel == "." else rel.replace(os.sep, "/")
+
+    def _identity_path(self, session_id: str) -> str:
+        session_id = _validate_session_id(session_id)
+        return os.path.join(self._identity_dir_fs, f"{session_id}.json")
 
     def _identity_history_in_use(self, session_id: str) -> bool:
         """无session JSON时检查全局Event/Archive历史是否已占用该sid；探针异常fail-closed。"""
@@ -578,39 +590,39 @@ class SessionStore:
     def _legacy_identity_owners(self, session_id: str) -> list[str]:
         """首次引入owner tombstone时从现有session JSON推断历史归属。"""
         session_id = _validate_session_id(session_id)
-        base = self._identity_root.resolve()
+        base = os.path.realpath(self._identity_root_fs)
         owners: list[str] = []
-        base_file = base / f"{session_id}.json"
-        if base_file.is_file():
+        base_file = os.path.join(base, f"{session_id}.json")
+        if os.path.isfile(base_file):
             owners.append(".")
         try:
-            children = list(base.iterdir())
+            children = list(os.scandir(base))
         except OSError as exc:
             raise SessionIdConflictError(f"无法扫描session_id全局归属: {exc}") from exc
         for child in children:
             if child.name == ".identity":
                 continue
             try:
-                resolved = child.resolve()
-                resolved.relative_to(base)
+                resolved = os.path.realpath(child.path)
+                if os.path.commonpath((base, resolved)) != base:
+                    continue
             except (OSError, ValueError):
                 continue
-            if not resolved.is_dir():
+            if not os.path.isdir(resolved):
                 continue
-            if (resolved / f"{session_id}.json").is_file():
-                owners.append(resolved.relative_to(base).as_posix())
+            if os.path.isfile(os.path.join(resolved, f"{session_id}.json")):
+                owners.append(os.path.relpath(resolved, base).replace(os.sep, "/"))
         return sorted(set(owners))
 
     @contextmanager
     def _identity_lock(self, session_id: str) -> Iterator[None]:
         """跨workspace/跨进程稳定per-sid锁；owner claim不可fail-open。"""
         session_id = _validate_session_id(session_id)
-        identity_dir = self._identity_root / ".identity"
         try:
-            identity_dir.mkdir(parents=True, exist_ok=True)
+            os.makedirs(self._identity_dir_fs, exist_ok=True)
         except OSError as exc:
             raise SessionIdConflictError(f"session_id归属锁目录不可用: {exc}") from exc
-        lock_path = identity_dir / f"{session_id}.lock"
+        lock_path = os.path.join(self._identity_dir_fs, f"{session_id}.lock")
         try:
             import fcntl
         except ImportError:
@@ -622,7 +634,9 @@ class SessionStore:
             return
         lock_file = None
         try:
-            lock_file = lock_path.open("a", encoding="utf-8")
+            lock_file = open(  # noqa: SIM115 - lock spans generator yield; closed in finally
+                lock_path, "a", encoding="utf-8"
+            )
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         except OSError as exc:
             if lock_file is not None:
@@ -639,33 +653,36 @@ class SessionStore:
             finally:
                 lock_file.close()
 
-    def _durable_replace_text(self, path: Path, content: str) -> None:
+    def _durable_replace_text(self, path: str | os.PathLike[str], content: str) -> None:
         """durable原子替换：文件fsync + rename + 父目录fsync；任一步失败均向上抛。"""
-        tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        path_fs = os.fspath(path)
+        parent = os.path.dirname(path_fs) or "."
+        name = os.path.basename(path_fs)
+        tmp = os.path.join(parent, f".{name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         dir_fd: int | None = None
         try:
-            with tmp.open("w", encoding="utf-8") as f:
+            with open(tmp, "w", encoding="utf-8") as f:
                 f.write(content)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp, path)
+            os.replace(tmp, path_fs)
             flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
             try:
-                dir_fd = os.open(path.parent, flags)
+                dir_fd = os.open(parent, flags)
                 os.fsync(dir_fd)
             except OSError as exc:
                 # 目录fsync并非所有平台/文件系统可用；文件本体已fsync+replace，
                 # 此处只降级崩溃耐久性，不能让明确支持的非POSIX fallback完全不可用。
                 logger.warning(
                     "durable replace父目录fsync不可用（写入已完成，耐久性降级）: %s: %s",
-                    path.parent,
+                    parent,
                     exc,
                 )
         finally:
             if dir_fd is not None:
                 os.close(dir_fd)
             with suppress(OSError):
-                tmp.unlink(missing_ok=True)
+                os.unlink(tmp)
 
     def _check_identity_read(self, session_id: str) -> None:
         """只读验证现有全局归属；不存在于任何workspace的sid不得因读取被claim。"""
@@ -673,12 +690,12 @@ class SessionStore:
         if self._identity_was_verified(session_id):
             return
         with self._identity_lock(session_id):
-            identity_dir = self._identity_root / ".identity"
-            owner_path = identity_dir / f"{session_id}.json"
+            owner_path = self._identity_path(session_id)
             current_owner = self._identity_owner_key()
-            if owner_path.exists():
+            if os.path.exists(owner_path):
                 try:
-                    record = json.loads(owner_path.read_text(encoding="utf-8"))
+                    with open(owner_path, encoding="utf-8") as f:
+                        record = json.load(f)
                     owner = str(record["owner"])
                 except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
                     raise SessionIdConflictError(
@@ -724,12 +741,12 @@ class SessionStore:
         if self._identity_was_verified(session_id):
             return
         with self._identity_lock(session_id):
-            identity_dir = self._identity_root / ".identity"
-            owner_path = identity_dir / f"{session_id}.json"
+            owner_path = self._identity_path(session_id)
             current_owner = self._identity_owner_key()
-            if owner_path.exists():
+            if os.path.exists(owner_path):
                 try:
-                    record = json.loads(owner_path.read_text(encoding="utf-8"))
+                    with open(owner_path, encoding="utf-8") as f:
+                        record = json.load(f)
                     owner = str(record["owner"])
                 except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
                     raise SessionIdConflictError(
@@ -773,10 +790,11 @@ class SessionStore:
         self._forget_identity_verified(session_id)
         self._ensure_identity_owner(session_id, allow_deleted=True)
         with self._identity_lock(session_id):
-            owner_path = self._identity_root / ".identity" / f"{session_id}.json"
+            owner_path = self._identity_path(session_id)
             current_owner = self._identity_owner_key()
             try:
-                record = json.loads(owner_path.read_text(encoding="utf-8"))
+                with open(owner_path, encoding="utf-8") as f:
+                    record = json.load(f)
                 owner = str(record["owner"])
             except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
                 raise SessionIdConflictError(
@@ -815,7 +833,7 @@ class SessionStore:
         self._ensure_identity_owner(session_id)
         with self.management_lease(session_id), self._session_lock(session_id):
             p = self._path(session_id)
-            if p.exists() and not overwrite:
+            if os.path.exists(p) and not overwrite:
                 raise FileExistsError(f"正式位置已有会话: {session_id}")
             self._durable_replace_text(p, content)
 
@@ -831,7 +849,7 @@ class SessionStore:
         打开文件描述符互斥）。持锁路径内部必须走 ``_save_locked``。
         """
         session_id = _validate_session_id(session_id)
-        lock_path = self._dir / f"{session_id}.lock"
+        lock_path = os.path.join(self._dir_fs, f"{session_id}.lock")
         try:
             import fcntl
         except ImportError:
@@ -842,7 +860,9 @@ class SessionStore:
             return
         lock_file = None
         try:
-            lock_file = lock_path.open("a", encoding="utf-8")
+            lock_file = open(  # noqa: SIM115 - lock spans generator yield; closed in finally
+                lock_path, "a", encoding="utf-8"
+            )
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         except OSError as exc:
             if lock_file is not None:
@@ -872,7 +892,7 @@ class SessionStore:
         """
         session_id = _validate_session_id(session_id)
         session_id = _validate_session_id(session_id)
-        lock_path = self._dir / f"{session_id}.run.lock"
+        lock_path = os.path.join(self._dir_fs, f"{session_id}.run.lock")
         try:
             import fcntl
         except ImportError:
@@ -888,7 +908,7 @@ class SessionStore:
             return
 
         try:
-            with lock_path.open("a", encoding="utf-8") as f:
+            with open(lock_path, "a", encoding="utf-8") as f:
                 try:
                     fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except OSError as exc:
@@ -998,7 +1018,7 @@ class SessionStore:
         run busy。真正 load→modify→write 仍由 `<sid>.lock` 的排他锁保证顺序一致。
         """
         session_id = _validate_session_id(session_id)
-        lock_path = self._dir / f"{session_id}.run.lock"
+        lock_path = os.path.join(self._dir_fs, f"{session_id}.run.lock")
         try:
             import fcntl
         except ImportError:
@@ -1015,7 +1035,7 @@ class SessionStore:
             return
 
         try:
-            with lock_path.open("a", encoding="utf-8") as f:
+            with open(lock_path, "a", encoding="utf-8") as f:
                 try:
                     fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
                 except OSError as exc:
@@ -1052,7 +1072,7 @@ class SessionStore:
                 yield
             return
         try:
-            with lock_path.open("a", encoding="utf-8") as f:
+            with open(lock_path, "a", encoding="utf-8") as f:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
                 try:
                     yield
@@ -1190,9 +1210,9 @@ class SessionStore:
         except OSError:
             pass  # fail-open（共享会话写入失败不阻断 Web/飞书主链路）
 
-    def _path(self, session_id: str) -> Path:
+    def _path(self, session_id: str) -> str:
         session_id = _validate_session_id(session_id)
-        return self._dir / f"{session_id}.json"
+        return os.path.join(self._dir_fs, f"{session_id}.json")
 
     def save(self, session: Session) -> None:
         """保存会话；本轮显式 run-owned 快照复用独占 lease，其余写先取管理门。
@@ -1241,21 +1261,18 @@ class SessionStore:
                 session.title = _make_title(first_user.content)
         # 原子写（tmp+rename）：Web/飞书跨进程共享会话时防半写损坏/交错覆盖
         p = self._path(session.session_id)
+        payload = json.dumps(session.to_dict(), ensure_ascii=False, indent=2)
         try:
-            tmp = p.with_suffix(".tmp")
-            tmp.write_text(
-                json.dumps(session.to_dict(), ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            tmp.replace(p)
+            tmp = os.path.splitext(p)[0] + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(payload)
+            os.replace(tmp, p)
         except OSError as exc:
             # P0-4: 原子写失败回退直写（持锁内，无并发写者撕裂面；读者仍有瞬时窗口，
             # 如实 warning 不再静默——该路径现实不可达，仅跨设备 rename 等极端场景）
             logger.warning("会话原子写失败，回退直写（fail-open）: %s: %s", p, exc)
-            p.write_text(
-                json.dumps(session.to_dict(), ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(payload)
         # D1 兜底（防御层）: 事件日志缺失时生成 session.created + 消息事件（fail-open）
         self._event_backfill(session)
 
@@ -1346,10 +1363,11 @@ class SessionStore:
     def _load_from_json(self, session_id: str) -> Session:
         """从 session JSON 加载会话（既有 load 逻辑，零回归）."""
         p = self._path(session_id)
-        if not p.exists():
+        if not os.path.exists(p):
             return Session(session_id=session_id)
         try:
-            data = json.loads(p.read_text(encoding="utf-8"))
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
             messages = [_message_from_dict(m) for m in data.get("messages", [])]
             return Session(
                 session_id=data.get("session_id", session_id),
@@ -1384,8 +1402,11 @@ class SessionStore:
         except (json.JSONDecodeError, KeyError, ValueError):
             # 如实降级：文件损坏时备份原始文件（不覆盖丢数据），返回新会话（不伪造恢复）
             try:
-                backup = p.with_suffix(".corrupt.json")
-                backup.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
+                backup = os.path.splitext(p)[0] + ".corrupt.json"
+                with open(p, encoding="utf-8") as src, open(
+                    backup, "w", encoding="utf-8"
+                ) as dst:
+                    dst.write(src.read())
             except OSError:
                 pass  # 备份失败尽力而为
             return Session(session_id=session_id)
@@ -1574,7 +1595,7 @@ class SessionStore:
 
     def exists(self, session_id: str) -> bool:
         try:
-            return self._path(session_id).exists()
+            return os.path.exists(self._path(session_id))
         except ValueError:
             return False
 
@@ -1613,14 +1634,28 @@ class SessionStore:
         save 落盘必然更新 mtime）。本轮回收未出现文件对应条目，防删文件泄漏。
         """
         metas: list[SessionMeta] = []
-        new_cache: dict[Path, tuple[tuple[int, int], SessionMeta]] = {}
-        seen_paths: set[Path] = set()
-        for p in sorted(target.glob("*.json")):
-            if p.name == self._SHARED_SESSION_FILE:
+        target_fs = os.path.abspath(os.fspath(target))
+        cache_limit = max(1, int(_SESSION_META_CACHE_MAX))
+        new_cache: OrderedDict[str, tuple[tuple[int, int], SessionMeta]] = OrderedDict()
+        seen_paths: set[str] = set()
+        try:
+            entries = sorted(
+                (
+                    entry
+                    for entry in os.scandir(target_fs)
+                    if entry.is_file() and entry.name.endswith(".json")
+                ),
+                key=lambda entry: entry.name,
+            )
+        except OSError:
+            entries = []
+        for entry in entries:
+            if entry.name == self._SHARED_SESSION_FILE:
                 continue  # 工作区分区后共享会话文件在会话目录内，排除（非会话文件）
+            p = entry.path
             seen_paths.add(p)
             try:
-                st = p.stat()
+                st = entry.stat()
                 fkey = (st.st_mtime_ns, st.st_size)
             except OSError:
                 continue
@@ -1631,14 +1666,17 @@ class SessionStore:
                 new_cache[p] = cached
             else:
                 try:
-                    data = json.loads(p.read_text(encoding="utf-8"))
+                    with open(p, encoding="utf-8") as f:
+                        data = json.load(f)
                 except (json.JSONDecodeError, OSError):
                     continue
                 status = data.get("status", _ACTIVE)
                 messages = data.get("messages", [])
                 preview = messages[-1].get("content", "")[:80] if messages else ""
                 meta = SessionMeta(
-                    session_id=data.get("session_id", p.stem),
+                    session_id=data.get(
+                        "session_id", os.path.splitext(entry.name)[0]
+                    ),
                     title=data.get("title") or "未命名",
                     created_at=data.get("created_at", ""),
                     updated_at=data.get("updated_at", data.get("created_at", "")),
@@ -1651,17 +1689,20 @@ class SessionStore:
                     origin_channel=first_human_ingress_channel(messages),
                 )
                 new_cache[p] = (fkey, meta)
+            new_cache.move_to_end(p)
+            while len(new_cache) > cache_limit:
+                new_cache.popitem(last=False)
             if meta.status == _ARCHIVED and not include_archived:
                 continue
             metas.append(meta)
         with _SESSION_META_CACHE_LOCK:
             for cached_path in list(_SESSION_META_CACHE):
-                if cached_path.parent == target and cached_path not in seen_paths:
+                if os.path.dirname(cached_path) == target_fs and cached_path not in seen_paths:
                     _SESSION_META_CACHE.pop(cached_path, None)
             for cached_path, cached_value in new_cache.items():
                 _SESSION_META_CACHE[cached_path] = cached_value
                 _SESSION_META_CACHE.move_to_end(cached_path)
-            while len(_SESSION_META_CACHE) > max(1, int(_SESSION_META_CACHE_MAX)):
+            while len(_SESSION_META_CACHE) > cache_limit:
                 _SESSION_META_CACHE.popitem(last=False)
         # M56: 置顶会话优先（同置顶级别内保持 updated_at 降序；稳定排序保证相对序不变）
         metas.sort(key=lambda m: m.updated_at, reverse=True)
@@ -1823,7 +1864,7 @@ class SessionStore:
             return False
         with self.management_lease(session_id):
             p = self._path(session_id)
-            if not p.exists():
+            if not os.path.exists(p):
                 return False
             blocker_fn = self._delete_resource_blocker_fn
             if blocker_fn is not None:
@@ -1846,7 +1887,7 @@ class SessionStore:
                     event_delete = getattr(self._event_store, "delete_session", None)
                     if callable(event_delete):
                         event_delete(session_id)
-                    p.unlink()
+                    os.unlink(p)
                 # owner tombstone与稳定lock/run.lock故意保留：旧sid不可跨workspace重新分配。
                 return True
             except Exception:  # noqa: BLE001 — destructive cleanup失败必须如实返回false

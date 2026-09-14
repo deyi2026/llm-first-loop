@@ -58,6 +58,7 @@ def test_old_session_corrupt_fail_open_to_none(tmp_path):
     store, smap = _setup(tmp_path)
     key = "p:user-a"
     old_sid = smap.get_or_create(key)
-    store._path(old_sid).write_text("{broken", encoding="utf-8")  # noqa: SLF001
+    with open(store._path(old_sid), "w", encoding="utf-8") as f:  # noqa: SLF001
+        f.write("{broken")
     new_sid = smap.get_or_create(key, force_new=True, inherit_model_override=True)
     assert store.load(new_sid).model_override is None

@@ -137,7 +137,7 @@ def test_source_unchanged(tmp_path):
         session_store,
         [_user_msg("a"), _assistant_msg("b"), _user_msg("c")],
     )
-    src_path = event_store._path(sid)  # noqa: SLF001
+    src_path = Path(event_store._path(sid))  # noqa: SLF001
     src_hash_before = _file_hash(src_path)
     src_mtime_before = src_path.stat().st_mtime_ns
     fork_session(event_store, session_store, sid, fork_point=2)
@@ -165,7 +165,7 @@ def test_physical_copy_independent(tmp_path):
     )
     report = fork_session(event_store, session_store, sid, fork_point=2)
     # 删除源会话事件日志
-    event_store._path(sid).unlink()  # noqa: SLF001
+    Path(event_store._path(sid)).unlink()  # noqa: SLF001
     # 新会话仍可 replay
     new_events = event_store.read(report.new_session_id)
     view = replay_session(new_events)
