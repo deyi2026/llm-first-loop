@@ -113,9 +113,16 @@ def run_create_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     if explicit_sid:
         sid = explicit_sid
     else:
-        from llm_loop.introspection.tools_status import current_session_id
+        from llm_loop.introspection.tools_status import bound_session_id
 
-        sid = current_session_id(ctx)
+        sid = bound_session_id()
+        if not sid:
+            return ToolResult(
+                ToolResultStatus.FAILURE,
+                "[会话归属不可用] 当前执行没有可证明的 session binding；未创建 Goal。",
+                "",
+                "create_goal",
+            )
     g = store.create(objective, session_id=sid)
     return ToolResult(
         ToolResultStatus.SUCCESS,
@@ -168,9 +175,10 @@ def run_get_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
         if gid:
             g = store.get(gid)
         else:
-            from llm_loop.introspection.tools_status import current_session_id
+            from llm_loop.introspection.tools_status import bound_session_id
 
-            g = store.get(prefer_session_id=current_session_id(ctx))
+            sid = bound_session_id()
+            g = store.get(prefer_session_id=sid, strict_session=True) if sid else None
     except GoalStoreCorruptionError as exc:
         return ToolResult(
             ToolResultStatus.FAILURE,

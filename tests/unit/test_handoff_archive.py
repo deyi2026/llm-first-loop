@@ -21,12 +21,17 @@ def _make_ctx(session_id: str, archive: ArchiveStore) -> MagicMock:
 
 def test_handoff_now_archives_to_current_session():
     """handoff_now 后, 当前会话档案可检索到交接内容. """
+    from llm_loop.core.run_context import current_session_id
+
     with tempfile.TemporaryDirectory() as td:
         store = ArchiveStore(Path(td) / "archives")
         ctx = _make_ctx("sess-test-001", store)
         audit = MagicMock()
-
-        result = run_handoff_now(ctx, audit, {"urgency": "high"})
+        token = current_session_id.set("sess-test-001")
+        try:
+            result = run_handoff_now(ctx, audit, {"urgency": "high"})
+        finally:
+            current_session_id.reset(token)
 
         assert result.status == ToolResultStatus.SUCCESS
         # 档案里应有 handoff 条目
@@ -36,6 +41,17 @@ def test_handoff_now_archives_to_current_session():
         assert hit.get("source") == "handoff"
         assert hit.get("tool_name") == "handoff_now"
         assert "Handoff" in hit.get("content_preview", "")
+
+
+def test_handoff_missing_context_does_not_archive_to_shared_ctx_session():
+    """P2: stale ctx.session_id must never authorize an archive mutation."""
+    with tempfile.TemporaryDirectory() as td:
+        store = ArchiveStore(Path(td) / "archives")
+        ctx = _make_ctx("stale-session-B", store)
+
+        _archive_handoff(ctx, "P2 missing-context handoff")
+
+        assert store.search("stale-session-B", "P2 missing-context", limit=5) == []
 
 
 def test_handoff_archive_fail_open():

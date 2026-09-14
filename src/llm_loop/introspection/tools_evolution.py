@@ -81,14 +81,23 @@ def run_submit_evolution(
                 "（可能拼写错误），建议核对 eval_id 或先调用 self_evaluate 生成。"
             )
     requested_scope = str(args.get("scope", "global") or "global")
-    from llm_loop.introspection.tools_status import current_session_id
+    from llm_loop.introspection.tools_status import bound_session_id
+
+    sid = bound_session_id()
+    if not sid:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[会话归属不可用] 当前执行没有可证明的 session binding；演进建议未落盘。",
+            tool_call_id="",
+            tool_name="submit_evolution",
+        )
 
     suggestion = ctx.evolution_store.submit(
         content=content,
         evidence=evidence,
         impact_scope=str(args.get("impact_scope", "")),
         priority=str(args.get("priority", "medium")),
-        session_id=current_session_id(ctx),
+        session_id=sid,
         eval_id=eval_id,
         scope=requested_scope,
     )

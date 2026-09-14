@@ -65,6 +65,31 @@ def test_evolution_summary_empty_dir(tmp_path):
     assert "error" not in es
 
 
+def test_change_log_hook_missing_context_does_not_borrow_registry_last_session(
+    tmp_path, monkeypatch
+):
+    """P2: mutation audit attribution is exact-bound; missing context stays unknown."""
+    from llm_loop.core.message import ToolCall
+    from llm_loop.factory import build_engine
+
+    engine = build_engine(_settings(tmp_path))  # type: ignore[arg-type]
+    engine.registry.set_session_id("stale-session-B")
+    captured: list[str] = []
+    monkeypatch.setattr(
+        "llm_loop.introspection.proc_version.record_change_log",
+        lambda _tool, _detail, session_id="": captured.append(session_id),
+    )
+    hook = next(
+        h
+        for h in engine.registry._pre_execute_hooks  # noqa: SLF001 - authority regression
+        if getattr(h, "__name__", "") == "_change_log_hook"
+    )
+
+    hook(ToolCall(id="tc-change-log", name="execute_command", arguments={"cmd": "true"}))
+
+    assert captured == [""]
+
+
 def test_evolution_summary_read_fail_open(tmp_path):
     """store.list 抛 OSError → evolution_summary.error 字段如实标注（fail-open 不抛穿）."""
     from llm_loop.factory import _build_config_status_with_evolution

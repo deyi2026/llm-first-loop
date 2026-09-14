@@ -76,6 +76,8 @@ def run_model_catalog(
     ctx: Any,
     pool: ModelClientPool | None,
     session_override: str | None,
+    *,
+    session_binding_known: bool = True,
 ) -> ToolResult:
     """model_catalog: 列出可用模型 + 当前会话模型 + degraded 标注（只读）.
 
@@ -99,7 +101,9 @@ def run_model_catalog(
     default_model = pool.get_default_model()
     current_pid = ""
     current_mid = ""
-    if session_override:
+    if not session_binding_known:
+        current_model = "unknown"
+    elif session_override:
         current_model = session_override
         try:
             current_pid, current_mid = registry.resolve(session_override)
@@ -113,7 +117,11 @@ def run_model_catalog(
             current_model = f"{current_pid}/{current_mid}"
         except ValueError:
             pass
-    current_source = "会话覆盖" if session_override else "默认装配"
+    current_source = (
+        "归属不可用"
+        if not session_binding_known
+        else ("会话覆盖" if session_override else "默认装配")
+    )
 
     lines: list[str] = []
     lines.append(f"[状态: 成功] 当前会话模型: {current_model}（{current_source}）")
@@ -222,8 +230,16 @@ def run_switch_model(
     if session_get_override is not None:
         try:
             current_override = session_get_override()
-        except Exception:  # noqa: BLE001 — getter异常回退旧ctx兼容路径
-            current_override = getattr(ctx, "session_model_override", None) if ctx else None
+        except Exception as exc:  # noqa: BLE001 — exact binding read must fail closed
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    "[会话归属不可用] 当前 session override 读取失败；"
+                    f"模型切换未执行: {exc}"
+                ),
+                tool_call_id="",
+                tool_name="switch_model",
+            )
     else:
         current_override = getattr(ctx, "session_model_override", None) if ctx else None
     from_label = current_override if current_override else pool.get_default_model()

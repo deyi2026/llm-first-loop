@@ -275,6 +275,65 @@ def test_switch_model_active_binding_uses_session_getter_for_from_label(
     assert "deepseek/deepseek-v4-pro → default" not in result.content
 
 
+def test_switch_model_missing_context_does_not_use_shared_session_setter(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P2: missing ContextVar must not mutate the last session bound into shared ctx."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
+    pool = _build_pool(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
+    ctx = _build_ctx(pool)
+    stale_writes: list[str | None] = []
+    ctx.session_model_override = "deepseek/deepseek-v4-pro"
+    ctx.session_set_override = stale_writes.append
+    ctx.session_binding_resolver = lambda _sid: pytest.fail(
+        "resolver must not be called without an exact current session"
+    )
+    corrections = _build_corrections(ctx, tmp_path)
+
+    result = corrections.execute(
+        "switch_model", {"model": "default", "reason": "missing-context authority test"}
+    )
+
+    assert result.status.value == "failure"
+    assert stale_writes == []
+    assert "session" in result.content.lower()
+    assert "归属" in result.content or "绑定" in result.content
+
+
+def test_switch_model_broken_exact_getter_does_not_fallback_to_shared_override(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P2: a broken exact binding is unknown authority, never permission to use shared residue."""
+    from llm_loop.core.run_context import current_session_id
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
+    pool = _build_pool(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
+    ctx = _build_ctx(pool)
+    stale_writes: list[str | None] = []
+    ctx.session_model_override = "deepseek/deepseek-v4-pro"
+    ctx.session_set_override = stale_writes.append
+
+    def _broken_binding(_sid: str):
+        def _get() -> str | None:
+            raise RuntimeError("binding read failed")
+
+        return _get, stale_writes.append
+
+    ctx.session_binding_resolver = _broken_binding
+    corrections = _build_corrections(ctx, tmp_path)
+    token = current_session_id.set("session-a")
+    try:
+        result = corrections.execute(
+            "switch_model", {"model": "default", "reason": "broken binding authority test"}
+        )
+    finally:
+        current_session_id.reset(token)
+
+    assert result.status.value == "failure"
+    assert stale_writes == []
+    assert "读取失败" in result.content
+
+
 def test_switch_model_success_writes_session_and_audit(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """成功路径: override 落会话 + 审计记录 + 回执文案含 from→to + reasoning 能力标注."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
@@ -927,6 +986,8 @@ def test_corrections_execute_dispatch_model_catalog(tmp_path) -> None:
 
 def test_corrections_execute_dispatch_switch_model(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """CorrectionToolRegistry.execute('switch_model', ...) 端到端通 + 审计."""
+    from llm_loop.core.run_context import current_session_id
+
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
     settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
     pool = _build_pool(settings)
@@ -936,12 +997,21 @@ def test_corrections_execute_dispatch_switch_model(tmp_path, monkeypatch: pytest
     ctx = _build_ctx(pool)
     reg = _build_corrections(ctx, audit_dir)
     ctx.session_model_override = None
-    ctx.session_set_override = lambda v: None
-
-    result = reg.execute(
-        "switch_model", {"model": "deepseek-v4-pro", "reason": "dispatch 测试"}
+    holder = {"value": None}
+    ctx.session_binding_resolver = lambda _sid: (
+        lambda: holder["value"],
+        lambda v: holder.__setitem__("value", v),
     )
+
+    token = current_session_id.set("dispatch-session")
+    try:
+        result = reg.execute(
+            "switch_model", {"model": "deepseek-v4-pro", "reason": "dispatch 测试"}
+        )
+    finally:
+        current_session_id.reset(token)
     assert result.status.value == "success"
+    assert holder["value"] == "deepseek/deepseek-v4-pro"
     # 审计
     log = audit_dir / "self_correction_log.jsonl"
     assert log.exists()

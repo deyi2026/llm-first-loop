@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from llm_loop.core.message import ToolResult
+from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.introspection.registry_host import RegistryHost
 from llm_loop.introspection.tools_model import (
     MODEL_CATALOG_TOOL_DEF,
@@ -19,7 +19,8 @@ from llm_loop.introspection.tools_model import (
 def _resolve_binding(ctx: Any):
     """P0-5: 经 contextvar 解析本会话 override 绑定（并发 run 隔离）.
 
-    Returns: (getter, setter) 或 None（无解析器/会话不活跃 → 调用方回退 ctx 环境字段）。
+    Returns: (getter, setter) 或 None。模型可调用 registry 把 None 视为
+    ``session ownership unknown`` 并 fail closed；不得回退 shared ctx 最近值。
     """
     resolver = getattr(ctx, "session_binding_resolver", None)
     if resolver is None:
@@ -31,7 +32,7 @@ def _resolve_binding(ctx: Any):
         if not sid:
             return None
         return resolver(sid)
-    except Exception:  # noqa: BLE001 — 解析失败回退环境字段（零回归）
+    except Exception:  # noqa: BLE001 — 解析失败 = ownership unknown，调用方 fail closed
         return None
 
 
@@ -44,11 +45,18 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
         from llm_loop.introspection.tools_model import run_model_catalog
 
         binding = _resolve_binding(host.ctx)
-        current_override = binding[0]() if binding is not None else host.ctx.session_model_override
+        binding_known = binding is not None
+        current_override = None
+        if binding is not None:
+            try:
+                current_override = binding[0]()
+            except Exception:  # noqa: BLE001 — catalog stays read-only, current owner becomes unknown
+                binding_known = False
         result = run_model_catalog(
             host.ctx,
             host.ctx.model_pool,
             current_override,
+            session_binding_known=binding_known,
         )
         host.audit("model_catalog", args, result.status.value)
         return result
@@ -57,8 +65,18 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
         from llm_loop.introspection.tools_model import run_switch_model
 
         binding = _resolve_binding(host.ctx)
-        getter = binding[0] if binding is not None else None
-        setter = binding[1] if binding is not None else host.ctx.session_set_override
+        if binding is None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    "[会话归属不可用] 当前执行没有可证明的 session binding；"
+                    "未读取或调用 shared session override，模型切换未执行。"
+                ),
+                tool_call_id="",
+                tool_name="switch_model",
+            )
+        getter = binding[0]
+        setter = binding[1]
         routing_transition = (
             binding[2] if isinstance(binding, tuple) and len(binding) >= 3 else None
         )

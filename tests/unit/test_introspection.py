@@ -3,11 +3,23 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from typing import Any
 
 from llm_loop.core.message import ToolResultStatus
+from llm_loop.core.run_context import current_session_id
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
 from llm_loop.introspection.status import ArchitectureStatusProvider
+
+
+def _bound_call(fn: Callable[..., Any], *args: Any, sid: str = "s1", **kwargs: Any) -> Any:
+    """Run one model-facing tool call with an exact execution session binding."""
+    token = current_session_id.set(sid)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        current_session_id.reset(token)
 
 
 def test_status_snapshot_eight_dimensions():
@@ -244,7 +256,8 @@ def test_submit_evolution_receipt_level0_same_as_before(tmp_path):
     store = EvolutionStore(tmp_path / "audit")
     ctx = CorrectionContext(evolution_store=store, evolve_local_exec=0, session_id="s1")
     reg = CorrectionToolRegistry(ctx)
-    r = reg.execute(
+    r = _bound_call(
+        reg.execute,
         "submit_evolution",
         {"content": "优化记忆检索", "impact_scope": "memory/", "priority": "medium"},
     )
@@ -260,14 +273,16 @@ def test_submit_evolution_receipt_by_level(tmp_path):
     store = EvolutionStore(tmp_path / "audit")
 
     ctx1 = CorrectionContext(evolution_store=store, evolve_local_exec=1)
-    r1 = CorrectionToolRegistry(ctx1).execute(
+    r1 = _bound_call(
+        CorrectionToolRegistry(ctx1).execute,
         "submit_evolution", {"content": "优化超时", "impact_scope": "timeout_s"}
     )
     assert r1.status == ToolResultStatus.SUCCESS
     assert "白名单局部执行" in r1.content
 
     ctx2 = CorrectionContext(evolution_store=store, evolve_local_exec=2)
-    r2 = CorrectionToolRegistry(ctx2).execute(
+    r2 = _bound_call(
+        CorrectionToolRegistry(ctx2).execute,
         "submit_evolution", {"content": "优化超时", "impact_scope": "timeout_s"}
     )
     assert r2.status == ToolResultStatus.SUCCESS
@@ -280,7 +295,8 @@ def test_submit_evolution_receipt_boundary(tmp_path):
 
     store = EvolutionStore(tmp_path / "audit")
     ctx = CorrectionContext(evolution_store=store, evolve_local_exec=2)
-    r = CorrectionToolRegistry(ctx).execute(
+    r = _bound_call(
+        CorrectionToolRegistry(ctx).execute,
         "submit_evolution", {"content": "调整安全策略", "impact_scope": "safety"}
     )
     assert r.status == ToolResultStatus.SUCCESS
@@ -320,7 +336,7 @@ def test_self_evaluate_tool(tmp_path):
     evaluator = SelfEvaluator(status_provider=None, audit_dir=tmp_path / "audit")
     ctx = CorrectionContext(evaluator=evaluator, session_id="s1")
     reg = CorrectionToolRegistry(ctx)
-    r = reg.execute("self_evaluate", {"trigger": "manual"})
+    r = _bound_call(reg.execute, "self_evaluate", {"trigger": "manual"})
     assert r.status == ToolResultStatus.SUCCESS
     assert "[自我评估]" in r.content
     assert "success_rate" in r.content
@@ -366,7 +382,8 @@ def test_submit_evolution_eval_id_bidirectional(tmp_path):
         evolution_store=store, evaluator=evaluator, session_id="s1", evolve_local_exec=0
     )
     reg = CorrectionToolRegistry(ctx)
-    r = reg.execute(
+    r = _bound_call(
+        reg.execute,
         "submit_evolution",
         {
             "content": "基于评估优化超时参数",
@@ -607,7 +624,12 @@ def test_self_evaluate_success_jit_declares_submit_evolution():
             return SimpleNamespace(eval_id="SE-JIT", metrics=[])
 
     ctx = SimpleNamespace(evaluator=_Evaluator(), session_id="s1")
-    r = run_self_evaluate(ctx, lambda *a, **k: None, {"trigger": "manual"})
+    r = _bound_call(
+        run_self_evaluate,
+        ctx,
+        lambda *a, **k: None,
+        {"trigger": "manual"},
+    )
     assert r.status.value == "success"
     assert "submit_evolution" in r.content
     assert r.capability_requirements == ("submit_evolution",)
@@ -631,7 +653,8 @@ def test_submit_evolution_eval_id_hint(tmp_path):
 
     store = EvolutionStore(tmp_path / "audit")
     ctx = CorrectionContext(evolution_store=store)
-    r = run_submit_evolution(
+    r = _bound_call(
+        run_submit_evolution,
         ctx,
         lambda *a, **k: None,
         {"content": "优化超时", "impact_scope": "timeout_s", "evidence": "eval:SE-NOPE"},
@@ -659,7 +682,8 @@ def test_submit_evolution_scope_session_receipt(tmp_path):
 
     store = EvolutionStore(tmp_path / "audit")
     ctx = CorrectionContext(evolution_store=store)
-    r = run_submit_evolution(
+    r = _bound_call(
+        run_submit_evolution,
         ctx,
         lambda *a, **k: None,
         {"content": "本轮临时调参", "impact_scope": "运行参数", "scope": "session"},
@@ -681,7 +705,8 @@ def test_submit_evolution_scope_boundary_override_receipt(tmp_path):
 
     store = EvolutionStore(tmp_path / "audit")
     ctx = CorrectionContext(evolution_store=store)
-    r = run_submit_evolution(
+    r = _bound_call(
+        run_submit_evolution,
         ctx,
         lambda *a, **k: None,
         {"content": "改安全边界", "impact_scope": "安全边界", "scope": "session"},
@@ -700,7 +725,8 @@ def test_submit_evolution_default_scope_global_receipt(tmp_path):
 
     store = EvolutionStore(tmp_path / "audit")
     ctx = CorrectionContext(evolution_store=store)
-    r = run_submit_evolution(
+    r = _bound_call(
+        run_submit_evolution,
         ctx,
         lambda *a, **k: None,
         {"content": "优化超时", "impact_scope": "timeout_s"},

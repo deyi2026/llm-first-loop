@@ -255,6 +255,22 @@ def current_session_id(ctx: Any) -> str:
     return getattr(ctx, "session_id", "") or ""
 
 
+def bound_session_id() -> str:
+    """Return only the session explicitly bound to the current execution context.
+
+    P2 Missing-Context Authority: shared ``CorrectionContext.session_id`` is a
+    diagnostic/back-compat last-writer field and must never authorize mutation or
+    implicit current-session state selection.  Authority-bearing callers use this
+    helper and fail closed when it returns an empty string.
+    """
+    try:
+        from llm_loop.core.run_context import current_session_id as _sid_var
+
+        return str(_sid_var.get() or "")
+    except Exception:  # noqa: BLE001 — missing execution context is explicit unknown
+        return ""
+
+
 def run_search_archive(ctx: Any, archive: Any, args: dict, session_id_fn: Any, summarizer: Any = None) -> ToolResult:
     """search_archive: 检索被压缩的历史/超长结果（T22）.
 

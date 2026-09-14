@@ -234,7 +234,14 @@ def run_task_frontier(ctx: Any, host: Any, args: dict) -> ToolResult:
         goal_id = ""
     if not goal_id:
         try:
-            g = GoalStore(audit).get(prefer_session_id=_current_sid(ctx))
+            from llm_loop.introspection.tools_status import bound_session_id
+
+            sid = bound_session_id()
+            g = (
+                GoalStore(audit).get(prefer_session_id=sid, strict_session=True)
+                if sid
+                else None
+            )
         except GoalStoreCorruptionError:
             g = None
         goal_id = str((g or {}).get("id", "")) if g else ""

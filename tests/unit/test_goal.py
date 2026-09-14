@@ -329,8 +329,8 @@ def test_get_goal_prefers_current_session_active_before_global_latest(tmp_path):
     assert goal_b.objective not in result.content
 
 
-def test_get_goal_without_local_active_keeps_cross_session_fallback(tmp_path):
-    """当前session无active Goal时仍可回退全局active，保留跨会话续做能力。"""
+def test_get_goal_without_local_active_does_not_cross_session(tmp_path):
+    """P2: implicit current Goal is session-bound; another session is not a fallback authority."""
     from llm_loop.core.run_context import current_session_id
     from llm_loop.introspection.tools_goal import run_get_goal
 
@@ -345,7 +345,24 @@ def test_get_goal_without_local_active_keeps_cross_session_fallback(tmp_path):
         current_session_id.reset(token)
 
     assert result.status.value == "success"
-    assert global_goal.objective in result.content
+    assert global_goal.objective not in result.content
+    assert "无活动目标" in result.content
+
+
+def test_get_goal_missing_context_does_not_borrow_shared_ctx_session(tmp_path):
+    """P2: no ContextVar means implicit current ownership is unknown, not ctx.last-writer."""
+    from llm_loop.introspection.tools_goal import run_get_goal
+
+    store = _store(tmp_path)
+    stale = store.create("STALE-SHARED-CTX-GOAL", session_id="session-B")
+    host = SimpleNamespace(audit_dir=tmp_path)
+    ctx = SimpleNamespace(session_id="session-B")
+
+    result = run_get_goal(ctx, host, {})
+
+    assert result.status.value == "success"
+    assert stale.objective not in result.content
+    assert "无活动目标" in result.content
 
 
 def test_goal_cross_process_create_and_checkpoint_are_lossless(tmp_path):
@@ -420,6 +437,7 @@ def test_goal_implicit_get_refuses_newer_corrupt_record(tmp_path):
 
 def test_run_get_goal_reports_corruption_instead_of_resuming_old_goal(tmp_path):
     """工具层遇损坏GoalStore必须fail-closed，不得把较旧Goal伪装成当前恢复目标。"""
+    from llm_loop.core.run_context import current_session_id
     from llm_loop.introspection.tools_goal import run_get_goal
 
     store = _store(tmp_path)
@@ -430,7 +448,11 @@ def test_run_get_goal_reports_corruption_instead_of_resuming_old_goal(tmp_path):
 
     host = SimpleNamespace(audit_dir=tmp_path)
     ctx = SimpleNamespace(session_id="session-A")
-    result = run_get_goal(ctx, host, {})
+    token = current_session_id.set("session-A")
+    try:
+        result = run_get_goal(ctx, host, {})
+    finally:
+        current_session_id.reset(token)
 
     assert result.status.value == "failure"
     assert "存储损坏" in result.content

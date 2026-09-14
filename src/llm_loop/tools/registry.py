@@ -408,11 +408,17 @@ class ToolRegistry:
         The return value is model-honesty authority: callers may only claim
         ``search_archive`` recovery after this method returns True.
         """
-        if self._archive_store is None or not self._session_id:
+        try:
+            from llm_loop.core.run_context import current_session_id
+
+            session_id = str(current_session_id.get() or "")
+        except Exception:  # noqa: BLE001 — archive mutation requires exact owner
+            session_id = ""
+        if self._archive_store is None or not session_id:
             return False
         try:
             self._archive_store.archive(
-                self._session_id,
+                session_id,
                 role="tool",
                 source="tool",
                 content=full_content,

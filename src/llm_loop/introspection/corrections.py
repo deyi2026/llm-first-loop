@@ -83,8 +83,9 @@ class CorrectionContext:
     model_pool: Any | None = None
     session_set_override: Callable[[str | None], None] | None = None  # switch_model 写入 override
     session_model_override: str | None = None  # 当前会话级覆盖（审计 from→to）
-    # P0-5(2026-08-15): 每会话绑定解析器（contextvar 定位本会话 sess 的
-    # override getter/setter；并发 run 不互踩。None = 无解析器，回退上方环境字段）
+    # P0-5/P2: 每会话绑定解析器（contextvar 定位本会话 sess 的 override
+    # getter/setter；并发 run 不互踩）。模型侧 registry 缺 binding 时必须 fail closed；
+    # 上方 shared 字段仅保留给持有显式 Session 的 CLI/飞书 control-plane 兼容路径。
     session_binding_resolver: Callable[[str], Any] | None = None
     # Learning Plane P0: 当前真实 human turn 的机械 Episode identity 解析器。
     # 仅由活跃 Engine run 装配；不得回退 latest historical episode，也不接受模型自报 ref。

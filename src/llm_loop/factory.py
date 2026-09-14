@@ -469,7 +469,7 @@ def build_engine(settings: Settings) -> LoopEngine:
             )
 
         def _evidence_owner() -> OwnerScope:
-            sid = current_session_id.get() or registry._session_id
+            sid = current_session_id.get()
             return _evidence_owner_for_session(sid)
 
         evidence_owner_resolver = _evidence_owner
@@ -723,7 +723,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     def _resolve_synopsis_source(source_ref: str) -> SourceSnapshot:
         ref = str(source_ref or "").strip()
         scope = runtime_workspace_base()
-        sid = current_session_id_ctx.get() or registry._session_id
+        sid = current_session_id_ctx.get()
         if ref.startswith("attachment://"):
             if _attachment_store_for_tools is None:
                 raise SynopsisError("attachment store 当前不可用。")
@@ -855,7 +855,7 @@ def build_engine(settings: Settings) -> LoopEngine:
             BrowserPerceiveTool(
                 adapter=_browser_adapter,
                 backend=_browser_host,
-                session_id_getter=lambda: current_session_id_ctx.get() or registry._session_id,
+                session_id_getter=lambda: current_session_id_ctx.get(),
             ),
         )
         for wait_tool_type in (
@@ -868,7 +868,7 @@ def build_engine(settings: Settings) -> LoopEngine:
             wait_tool = wait_tool_type(
                 adapter=_browser_adapter,
                 backend=_browser_host,
-                session_id_getter=lambda: current_session_id_ctx.get() or registry._session_id,
+                session_id_getter=lambda: current_session_id_ctx.get(),
             )
             _register_basic(wait_tool.name, wait_tool)
         # Mutation capability is independently opt-in.  Perception alone never grants writes.
@@ -887,13 +887,13 @@ def build_engine(settings: Settings) -> LoopEngine:
                 "browser_action",
                 BrowserActionTool(
                     adapter=_browser_action_adapter,
-                    session_id_getter=lambda: current_session_id_ctx.get() or registry._session_id,
+                    session_id_getter=lambda: current_session_id_ctx.get(),
                 ),
             )
             _browser_semantic_execute = BrowserSemanticExecuteTool(
                 perception=_browser_adapter,
                 action_adapter=_browser_action_adapter,
-                session_id_getter=lambda: current_session_id_ctx.get() or registry._session_id,
+                session_id_getter=lambda: current_session_id_ctx.get(),
             )
             _register_basic("browser_semantic_execute", _browser_semantic_execute)
             _register_basic(
@@ -902,7 +902,7 @@ def build_engine(settings: Settings) -> LoopEngine:
                     perception=_browser_adapter,
                     capture_backend=_browser_host,
                     semantic_execute=_browser_semantic_execute,
-                    session_id_getter=lambda: current_session_id_ctx.get() or registry._session_id,
+                    session_id_getter=lambda: current_session_id_ctx.get(),
                 ),
             )
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
@@ -965,7 +965,9 @@ def build_engine(settings: Settings) -> LoopEngine:
             "append_file",
         ):
             record_change_log(
-                call.name, f"arguments={str(call.arguments)[:200]}", session_id=registry._session_id
+                call.name,
+                f"arguments={str(call.arguments)[:200]}",
+                session_id=str(current_session_id_ctx.get() or ""),
             )
 
     registry.add_pre_execute_hook(_change_log_hook)

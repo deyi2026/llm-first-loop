@@ -158,6 +158,7 @@ def test_memory_reference_does_not_authorize_prompt_projection(build_test_engine
 def test_task_frontier_current_alias_resolves_active_goal(build_test_engine):
     from types import SimpleNamespace
 
+    from llm_loop.core.run_context import current_session_id
     from llm_loop.introspection.tools_task import run_task_frontier
 
     engine, _fake = build_test_engine([])
@@ -165,7 +166,34 @@ def test_task_frontier_current_alias_resolves_active_goal(build_test_engine):
     goal, _tasks = _seed_active_goal(engine, sid)
     ctx = SimpleNamespace(session_id=sid)
     host = SimpleNamespace(audit_dir=Path(engine.settings.data_dir) / "audit")
-    result = run_task_frontier(ctx, host, {"goal_id": "current"})
+    token = current_session_id.set(sid)
+    try:
+        result = run_task_frontier(ctx, host, {"goal_id": "current"})
+    finally:
+        current_session_id.reset(token)
     assert result.status.value == "success"
     assert "goal current" not in result.content
     assert "IN-PROGRESS-0" in result.content
+
+
+def test_task_frontier_current_does_not_cross_session(build_test_engine):
+    """P2: implicit current task graph must not borrow another session's Goal."""
+    from types import SimpleNamespace
+
+    from llm_loop.core.run_context import current_session_id
+    from llm_loop.introspection.tools_task import run_task_frontier
+
+    engine, _fake = build_test_engine([])
+    sid_b = engine.session.create()
+    _seed_active_goal(engine, sid_b)
+    ctx = SimpleNamespace(session_id=sid_b)  # shared last-writer residue
+    host = SimpleNamespace(audit_dir=Path(engine.settings.data_dir) / "audit")
+    token = current_session_id.set("session-A-with-no-goal")
+    try:
+        result = run_task_frontier(ctx, host, {"goal_id": "current"})
+    finally:
+        current_session_id.reset(token)
+
+    assert result.status.value == "success"
+    assert "[无任务图] 当前无活动 goal" in result.content
+    assert "IN-PROGRESS-0" not in result.content

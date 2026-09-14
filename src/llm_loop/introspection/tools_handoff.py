@@ -139,7 +139,11 @@ def _archive_handoff(ctx: Any, doc: str) -> None:
         archive = getattr(ctx, "archive", None)
         if archive is None:
             return
-        session_id = getattr(ctx, "session_id", "") or ""
+        from llm_loop.introspection.tools_status import bound_session_id
+
+        session_id = bound_session_id()
+        if not session_id:
+            return
         archive.archive(
             session_id,
             role="system",

@@ -53,10 +53,19 @@ def run_self_evaluate(ctx: Any, audit: Any, args: dict) -> ToolResult:
             tool_call_id="",
             tool_name="self_evaluate",
         )
-    from llm_loop.introspection.tools_status import current_session_id
+    from llm_loop.introspection.tools_status import bound_session_id
+
+    sid = bound_session_id()
+    if not sid:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[会话归属不可用] 当前执行没有可证明的 session binding；自我评估未执行。",
+            tool_call_id="",
+            tool_name="self_evaluate",
+        )
 
     try:
-        report = evaluator.evaluate(session_id=current_session_id(ctx), trigger=trigger)
+        report = evaluator.evaluate(session_id=sid, trigger=trigger)
     except Exception as exc:  # noqa: BLE001 — 评估异常如实降级（fail-open）
         return ToolResult(
             status=ToolResultStatus.FAILURE,

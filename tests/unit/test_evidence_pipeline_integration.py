@@ -6,6 +6,7 @@ import pytest
 
 from llm_loop.config import Settings
 from llm_loop.core.message import ToolCall, ToolResultStatus
+from llm_loop.core.run_context import current_session_id
 from llm_loop.factory import build_engine
 from llm_loop.tools.pipeline import PipelineConfig, ToolExecutionPipeline
 from llm_loop.tools.registry import ToolRegistry
@@ -78,27 +79,32 @@ def test_factory_current_production_pipeline_subset_builds_with_enforce_and_pres
         extract_enabled=False,
     )
     engine = build_engine(settings)
-    engine.registry.set_session_id("r12-factory-session")
     assert engine.registry.evidence_mode == "enforce"
     assert engine.registry._pipeline is not None
     assert engine.registry._pipeline.config.materialize is True
 
     path = tmp_path / "pipeline-evidence.txt"
     path.write_text("head\nR12-TARGET\ntail\n", encoding="utf-8")
-    first = engine.registry.execute(
-        ToolCall(id="r12-1", name="read_file", arguments={"path": str(path), "full": True})
-    )
-    assert first.status is ToolResultStatus.SUCCESS
-    assert first.evidence_ref
-    assert first.source_execution_performed is True
-    assert "recover=read_evidence" in first.content
-
-    second = engine.registry.execute(
-        ToolCall(
-            id="r12-2", name="read_file", arguments={"path": str(path), "offset": 0, "limit": 2}
+    sid_token = current_session_id.set("r12-factory-session")
+    try:
+        first = engine.registry.execute(
+            ToolCall(id="r12-1", name="read_file", arguments={"path": str(path), "full": True})
         )
-    )
-    assert second.status is ToolResultStatus.SUCCESS
-    assert second.source_resolution_mode == "evidence_reuse"
-    assert second.source_execution_performed is False
-    assert second.evidence_ref == first.evidence_ref
+        assert first.status is ToolResultStatus.SUCCESS
+        assert first.evidence_ref
+        assert first.source_execution_performed is True
+        assert "recover=read_evidence" in first.content
+
+        second = engine.registry.execute(
+            ToolCall(
+                id="r12-2",
+                name="read_file",
+                arguments={"path": str(path), "offset": 0, "limit": 2},
+            )
+        )
+        assert second.status is ToolResultStatus.SUCCESS
+        assert second.source_resolution_mode == "evidence_reuse"
+        assert second.source_execution_performed is False
+        assert second.evidence_ref == first.evidence_ref
+    finally:
+        current_session_id.reset(sid_token)
