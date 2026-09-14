@@ -123,3 +123,51 @@ def test_launch_dry_run(tmp_path, capsys, monkeypatch):
     assert rc == 0
     assert "glm/glm-5.3" in out
     assert '"service": "web"' in out
+
+
+
+def test_dual_root_default_resolver_uses_runtime_root_dotenv(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "runtime"
+    code_root = tmp_path / "code"
+    runtime_root.mkdir()
+    code_root.mkdir()
+    _make_env_file(runtime_root, [
+        "LLM_MODEL=glm/glm-5.3",
+        "WEB_PORT=8903",
+        "HISTORY_MAX_CHARS=1000000",
+    ])
+    # Reproduce launch order: root dotenv has already populated os.environ, while
+    # source identity points at a clean worktree with no .env of its own.
+    monkeypatch.setenv("LFL_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(code_root))
+    monkeypatch.setenv("LLM_MODEL", "glm/glm-5.3")
+    monkeypatch.setenv("WEB_PORT", "8903")
+    monkeypatch.setenv("HISTORY_MAX_CHARS", "1000000")
+
+    ec = resolve_effective("web")
+
+    assert ec.workspace_root == str(runtime_root)
+    assert ec.env_file == str(runtime_root / ".env")
+    assert ec.values["LLM_MODEL"] == "glm/glm-5.3"
+    assert ec.values["WEB_PORT"] == "8903"
+    assert ec.values["HISTORY_MAX_CHARS"] == "1000000"
+    assert ec.sources["LLM_MODEL"] == "dotenv"
+    assert "LLM_MODEL" not in ec.ignored_shell_env
+
+
+def test_explicit_workspace_root_still_overrides_dual_root_env(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "runtime"
+    code_root = tmp_path / "code"
+    explicit_root = tmp_path / "explicit"
+    for root in (runtime_root, code_root, explicit_root):
+        root.mkdir()
+    _make_env_file(runtime_root, ["LLM_MODEL=glm/runtime"])
+    _make_env_file(explicit_root, ["LLM_MODEL=glm/explicit"])
+    monkeypatch.setenv("LFL_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(code_root))
+
+    ec = resolve_effective("web", env={}, workspace_root=explicit_root)
+
+    assert ec.workspace_root == str(explicit_root)
+    assert ec.values["LLM_MODEL"] == "glm/explicit"
+    assert ec.sources["LLM_MODEL"] == "dotenv"

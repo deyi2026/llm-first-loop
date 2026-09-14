@@ -169,6 +169,12 @@ def resolve_effective(
 
 
 def _default_workspace() -> Path:
+    # Dual-root runtime: configuration belongs to the operational/runtime root,
+    # while LFL_WORKSPACE_ROOT identifies the exact source checkout.  Preserve
+    # the historical single-root contract when no explicit runtime root exists.
+    runtime_root = os.environ.get("LFL_RUNTIME_ROOT")
+    if runtime_root:
+        return Path(runtime_root).expanduser().resolve()
     env = os.environ.get("LFL_WORKSPACE_ROOT")
     if env:
         return Path(env).expanduser().resolve()
