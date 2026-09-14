@@ -100,6 +100,7 @@ def test_generator_close_releases_run_lease(build_test_engine):
     with other.run_lease(sid) as acquired:
         assert acquired is True, "GeneratorExit/finally 必须释放整轮 lease"
     assert sid not in engine._run_sessions, "GeneratorExit后也必须释放in-memory Session绑定"  # noqa: SLF001
+    assert engine._run_state_mgr.active_session_count() == 0  # noqa: SLF001
 
 
 def test_management_mutations_reject_active_run(tmp_path):

@@ -17,7 +17,9 @@ import logging
 import os
 import re
 import shutil
+import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -572,14 +574,16 @@ def _maybe_rotate_trace_file(path: str) -> str:
     return path
 
 
-_PREFIX_TRACE_STATE: dict[tuple[str, str], list[tuple[str, int]]] = {}
+_PREFIX_TRACE_MAX_KEYS = 128
+_PREFIX_TRACE_LOCK = threading.Lock()
+_PREFIX_TRACE_STATE: OrderedDict[tuple[str, str], list[tuple[str, int]]] = OrderedDict()
 """FR-3 前缀命中埋点状态: (session_id, model) → 上轮 wire 消息序列 [(wire哈希, chars)].
 
 进程内增量比对（NFR-2: O(消息数) 非 O(全字节)）；trace 行落盘后供离线与
 usage.cached_tokens 对齐分析。不落盘自身（进程重启冷启动=首轮无理论值，正常）。
 """
 
-_PREFIX_TRACE_SHAPE_STATE: dict[tuple[str, str], tuple[str, str]] = {}
+_PREFIX_TRACE_SHAPE_STATE: OrderedDict[tuple[str, str], tuple[str, str]] = OrderedDict()
 """Deep-trace-only previous (tools fingerprint, top-level params fingerprint)."""
 
 
@@ -690,42 +694,51 @@ def _trace_payload_fingerprint(
         try:
             _key = (session_id, model)
             _cur = [(mm["w"], mm["chars"]) for mm in record["msgs"]]
-            _prev = _PREFIX_TRACE_STATE.get(_key)
-            _prev_shape = _PREFIX_TRACE_SHAPE_STATE.get(_key)
-            if _prev is not None:
-                k = 0
-                while k < len(_cur) and k < len(_prev) and _cur[k][0] == _prev[k][0]:
-                    k += 1
-                record["prefix_hit_msgs"] = k
-                record["prefix_hit_chars"] = sum(c for _, c in _cur[:k])
-                record["previous_message_count"] = len(_prev)
-                record["current_message_count"] = len(_cur)
-                record["first_divergent_message"] = (
-                    k if k < min(len(_cur), len(_prev)) else None
-                )
-                record["messages_append_only"] = bool(
-                    k == len(_prev) and len(_cur) >= len(_prev)
-                )
-                if _prev_shape is not None:
-                    tools_changed = tools_wire != _prev_shape[0]
-                    params_changed = params_wire != _prev_shape[1]
-                    record["tools_changed"] = tools_changed
-                    record["params_changed"] = params_changed
-                    message_rewrite = not record["messages_append_only"]
-                    if not tools_changed and not params_changed and not message_rewrite:
-                        mutation_scope = "append_only"
-                    else:
-                        changed_axes = []
-                        if message_rewrite:
-                            changed_axes.append("messages")
-                        if tools_changed:
-                            changed_axes.append("tools")
-                        if params_changed:
-                            changed_axes.append("params")
-                        mutation_scope = "+".join(changed_axes) or "unknown"
-                    record["mutation_scope"] = mutation_scope
-            _PREFIX_TRACE_STATE[_key] = _cur
-            _PREFIX_TRACE_SHAPE_STATE[_key] = (tools_wire, params_wire)
+            with _PREFIX_TRACE_LOCK:
+                _prev = _PREFIX_TRACE_STATE.get(_key)
+                _prev_shape = _PREFIX_TRACE_SHAPE_STATE.get(_key)
+                if _prev is not None:
+                    k = 0
+                    while k < len(_cur) and k < len(_prev) and _cur[k][0] == _prev[k][0]:
+                        k += 1
+                    record["prefix_hit_msgs"] = k
+                    record["prefix_hit_chars"] = sum(c for _, c in _cur[:k])
+                    record["previous_message_count"] = len(_prev)
+                    record["current_message_count"] = len(_cur)
+                    record["first_divergent_message"] = (
+                        k if k < min(len(_cur), len(_prev)) else None
+                    )
+                    record["messages_append_only"] = bool(
+                        k == len(_prev) and len(_cur) >= len(_prev)
+                    )
+                    if _prev_shape is not None:
+                        tools_changed = tools_wire != _prev_shape[0]
+                        params_changed = params_wire != _prev_shape[1]
+                        record["tools_changed"] = tools_changed
+                        record["params_changed"] = params_changed
+                        message_rewrite = not record["messages_append_only"]
+                        if not tools_changed and not params_changed and not message_rewrite:
+                            mutation_scope = "append_only"
+                        else:
+                            changed_axes = []
+                            if message_rewrite:
+                                changed_axes.append("messages")
+                            if tools_changed:
+                                changed_axes.append("tools")
+                            if params_changed:
+                                changed_axes.append("params")
+                            mutation_scope = "+".join(changed_axes) or "unknown"
+                        record["mutation_scope"] = mutation_scope
+                _PREFIX_TRACE_STATE[_key] = _cur
+                _PREFIX_TRACE_STATE.move_to_end(_key)
+                _PREFIX_TRACE_SHAPE_STATE[_key] = (tools_wire, params_wire)
+                _PREFIX_TRACE_SHAPE_STATE.move_to_end(_key)
+                while len(_PREFIX_TRACE_STATE) > _PREFIX_TRACE_MAX_KEYS:
+                    stale_key, _ = _PREFIX_TRACE_STATE.popitem(last=False)
+                    _PREFIX_TRACE_SHAPE_STATE.pop(stale_key, None)
+                while len(_PREFIX_TRACE_SHAPE_STATE) > _PREFIX_TRACE_MAX_KEYS:
+                    stale_key, _ = _PREFIX_TRACE_SHAPE_STATE.popitem(last=False)
+                    _PREFIX_TRACE_STATE.pop(stale_key, None)
         except Exception:  # noqa: BLE001 — 埋点 fail-open
             pass
         # GPT 审计批次3: 默认路径跟 LFL_DATA_DIR（测试隔离不再污染生产 data/audit）

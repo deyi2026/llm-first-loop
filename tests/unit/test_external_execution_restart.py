@@ -87,6 +87,33 @@ def test_terminal_watcher_persists_exact_exit_code_for_fresh_runtime(tmp_path, m
     assert fresh["local_handle"] is False
 
 
+def test_terminal_handle_eviction_preserves_durable_status(tmp_path, monkeypatch) -> None:
+    """P4: RAM handle retention is bounded while durable terminal truth remains queryable."""
+    events = EventStore(tmp_path / "events", enabled=True)
+    reg = _fresh_registry(events)
+    reg._max_terminal_jobs = 2  # noqa: SLF001 - deterministic small cache
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path / "data"))
+    jobs: list[str] = []
+    for i in range(4):
+        job_id = reg.create(
+            _FakeProc(exit_code=i),
+            f"cmd-{i}",
+            session_id="owner-evict",
+            workspace_root=str(tmp_path),
+            executor="execute_command",
+        )
+        jobs.append(job_id)
+        reg._watch_completion(job_id)  # noqa: SLF001 - deterministic watcher transition
+
+    assert reg.get(jobs[0]) is None
+    recovered = reg.snapshot(jobs[0], session_id="owner-evict")
+    assert recovered is not None
+    assert recovered["local_handle"] is False
+    assert recovered["durable"] is True
+    assert recovered["exit_code"] == 0
+    assert recovered["state"] == "completed"
+
+
 def test_durable_launch_failure_cannot_return_success_or_leave_unowned_process(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

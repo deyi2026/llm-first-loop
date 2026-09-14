@@ -376,6 +376,57 @@ def test_stop_broadcasts_cancelled_terminal():
     assert handle.status in ("done", "error")
 
 
+def test_stop_timeout_keeps_still_running_handle_visible(monkeypatch):
+    """P4: forced cleanup timeout must not hide a worker that is still alive."""
+    import llm_loop.core.loop.runner as runner_mod
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _BlockedEngine(FakeEngine):
+        def run_stream(self, session_id: str, user_text: str, model: str | None = None):
+            entered.set()
+            assert release.wait(timeout=5.0)
+            if False:  # pragma: no cover - keep generator shape
+                yield None
+            return SimpleNamespace(session_id=session_id, final_answer="done", rounds=0, tool_calls=0)
+
+    monkeypatch.setattr(runner_mod, "_RUN_CLEANUP_SHUTDOWN_TIMEOUT_SEC", 0.02)
+    r = BackgroundRunner(_BlockedEngine())
+    handle, _q = r.start("sess-stuck", "hi")
+    assert handle is not None
+    assert entered.wait(timeout=1.0)
+    try:
+        result = asyncio.run(r.stop("sess-stuck", operator="ops"))
+        assert result["status"] == "shutdown_timeout"
+        assert r.is_running("sess-stuck") is True
+        assert handle.status == "running"
+    finally:
+        release.set()
+        deadline = time.time() + 2
+        while r.is_running("sess-stuck") and time.time() < deadline:
+            time.sleep(0.01)
+        assert r.is_running("sess-stuck") is False
+
+
+def test_sequential_background_runs_release_registry_workers_and_replay_spools():
+    """P4: completed background runs leave no runner-owned registry/worker/spool state."""
+    r = BackgroundRunner(FakeEngine(deltas=1))
+    handles: list[RunHandle] = []
+    for i in range(100):
+        handle, q = r.start(f"plateau-{i:04d}", "hi")
+        assert handle is not None and q is not None
+        handles.append(handle)
+        events = _drain(q, 2)
+        assert events[-1]["type"] == "done"
+    deadline = time.time() + 2
+    while (r.has_running() or r._worker_idents) and time.time() < deadline:  # noqa: SLF001
+        time.sleep(0.01)
+    assert r.has_running() is False
+    assert r._worker_idents == set()  # noqa: SLF001
+    assert all(handle._bus._replay.closed for handle in handles)  # noqa: SLF001
+
+
 def test_inspect_stale_runs_detects_idle_only():
     """巡检：仅超过阈值无活跃的 run 被列为残留；活跃 run 不受影响."""
     eng = FakeEngine(deltas=100, delay=0.05)

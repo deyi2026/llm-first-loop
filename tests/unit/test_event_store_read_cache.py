@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -59,8 +60,11 @@ def test_delete_session_invalidates_hot_cache(tmp_path) -> None:
     sid = "session-cache-delete"
     store.append(sid, "message.appended", {"index": 0})
     assert store.read_cached(sid)
+    store._note_rotate_checked(sid, time.monotonic())  # noqa: SLF001
 
     store.delete_session(sid)
+    assert sid not in store._read_cache  # noqa: SLF001
+    assert sid not in store._rotate_checked_at  # noqa: SLF001
     assert store.read_cached(sid) == []
 
 
@@ -87,3 +91,32 @@ def test_concurrent_cold_read_cached_is_single_flight(tmp_path, monkeypatch) -> 
 
     assert results == [8] * 8
     assert calls == 1
+
+
+def test_read_cache_build_lock_table_plateaus_across_many_sessions(tmp_path) -> None:
+    """P4: per-session single-flight locks are ephemeral, not an all-session index."""
+    store = EventStore(tmp_path / "events", enabled=True)
+
+    for i in range(100):
+        assert store.read_cached(f"session-{i:04d}") == []
+
+    gc.collect()
+    assert len(store._read_cache) <= store._read_cache_max_sessions  # noqa: SLF001
+    assert len(store._read_cache_build_locks) <= store._read_cache_max_sessions  # noqa: SLF001
+
+
+def test_rotate_throttle_metadata_plateaus_across_many_sessions(tmp_path) -> None:
+    """P4: per-session rotate timestamps are bounded performance hints, not durable truth."""
+
+    class _RotateManager:
+        def check_and_rotate(self, session_id: str) -> None:  # noqa: ARG002
+            return None
+
+    store = EventStore(tmp_path / "events", enabled=True)
+    store._rotate_checked_at_max_sessions = 8  # noqa: SLF001 - deterministic small gate
+    store.set_rotate_manager(_RotateManager())
+
+    for i in range(64):
+        store.check_rotate(f"session-{i:04d}")
+
+    assert len(store._rotate_checked_at) <= 8  # noqa: SLF001

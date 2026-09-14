@@ -16,6 +16,7 @@ import os
 import signal
 import threading
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -65,6 +66,10 @@ class JobRegistry:
 
     def __init__(self, *, event_store: Any | None = None) -> None:
         self._jobs: dict[str, JobEntry] = {}
+        self._terminal_order: list[str] = []
+        # Recent terminal output remains queryable for convenience, but completed
+        # process handles are not durable truth and must not accumulate forever.
+        self._max_terminal_jobs = 128
         self._lock = threading.Lock()
         self._seq = 0
         self._creating = 0
@@ -348,6 +353,25 @@ class JobRegistry:
             entry.exit_code = exit_code
             entry.terminal_durable = terminal_durable
         self._notify_completion(job_id)
+        self._retain_terminal_handle(job_id)
+
+    def _retain_terminal_handle(self, job_id: str) -> None:
+        """Keep only a bounded recent terminal-handle cache; active jobs are never evicted."""
+        with self._lock:
+            if job_id not in self._jobs:
+                return
+            with suppress(ValueError):
+                self._terminal_order.remove(job_id)
+            self._terminal_order.append(job_id)
+            while len(self._terminal_order) > max(0, int(self._max_terminal_jobs)):
+                victim = self._terminal_order.pop(0)
+                entry = self._jobs.get(victim)
+                if entry is None:
+                    continue
+                # Only completion watchers enter this order.  Re-check the mechanical
+                # terminal flags so a future lifecycle change cannot evict live work.
+                if entry.done or entry.killed:
+                    self._jobs.pop(victim, None)
 
     @staticmethod
     def _signal_proc(proc: Any) -> None:

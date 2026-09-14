@@ -562,7 +562,29 @@ class BackgroundRunner:
                         break
                 time.sleep(0.05)
             with self._guard:
-                self._registry.pop(run_id, None)
+                h = self._registry.get(run_id)
+                still_running = h is not None and h.status == "running"
+                if not still_running:
+                    self._registry.pop(run_id, None)
+
+            if still_running:
+                # Python cannot safely kill an arbitrary blocked worker thread.  Hiding
+                # its handle would turn a still-live run (and its EventBus/spool) into an
+                # unobservable orphan.  Keep exact lifecycle truth registered; the worker
+                # will remove itself and close the bus if/when it actually reaches a
+                # cancellation/terminal boundary.
+                record_action = getattr(self._engine, "_record_action", None)
+                if callable(record_action):
+                    try:
+                        record_action("runner", "stop_timeout", f"{run_id} operator={operator}")
+                    except Exception:  # noqa: BLE001
+                        logger.debug("runner.stop timeout 审计写入 fail-open")
+                logger.warning("runner.stop 超时，保留仍运行handle: run=%s", run_id)
+                return {
+                    "run_id": run_id,
+                    "status": "shutdown_timeout",
+                    "operator": operator,
+                }
 
             # 惰性移除 session 分桶（monitor / guard）
             monitor = getattr(self._engine, "_cache_monitor", None)

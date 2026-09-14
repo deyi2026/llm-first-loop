@@ -21,6 +21,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from weakref import WeakValueDictionary
 
 try:
     import fcntl
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 _REGISTRY_NAME = "workspaces.json"
 _REGISTRY_VERSION = 2
-_PROCESS_LOCKS: dict[str, threading.RLock] = {}
+_PROCESS_LOCKS: WeakValueDictionary[str, threading.RLock] = WeakValueDictionary()
 _PROCESS_LOCKS_GUARD = threading.Lock()
 
 

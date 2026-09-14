@@ -12,6 +12,7 @@ import hashlib
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
@@ -178,7 +179,8 @@ class ProviderCallSettlementJournal:
         self._clock = clock
         self._projection_sink = projection_sink
         self._lock = threading.RLock()
-        self._loaded_sessions: set[str] = set()
+        self._max_cached_calls = 128
+        self._call_order: OrderedDict[str, None] = OrderedDict()
         self._calls: dict[str, ProviderCallIdentity] = {}
         self._last_attempt_id: dict[str, str] = {}
         self._opened_attempts: dict[str, dict[str, Any]] = {}
@@ -198,47 +200,77 @@ class ProviderCallSettlementJournal:
         with suppress(Exception):
             sink.ingest_event(event)
 
-    def _hydrate_session_locked(self, session_id: str) -> None:
-        if session_id in self._loaded_sessions:
+    def _drop_call_cache_locked(self, call_id: str) -> None:
+        self._calls.pop(call_id, None)
+        self._last_attempt_id.pop(call_id, None)
+        self._settled_calls.pop(call_id, None)
+        for attempt_id, payload in list(self._opened_attempts.items()):
+            if str(payload.get("call_id") or "") == call_id:
+                self._opened_attempts.pop(attempt_id, None)
+        for attempt_id, payload in list(self._settled_attempts.items()):
+            if str(payload.get("call_id") or "") == call_id:
+                self._settled_attempts.pop(attempt_id, None)
+
+    def _remember_call_locked(self, call_id: str) -> None:
+        self._call_order[call_id] = None
+        self._call_order.move_to_end(call_id)
+        while len(self._call_order) > max(1, int(self._max_cached_calls)):
+            victim, _ = self._call_order.popitem(last=False)
+            self._drop_call_cache_locked(victim)
+
+    def _hydrate_call_locked(self, session_id: str, call_id: str) -> None:
+        """Read through durable EventStore for one logical call only.
+
+        Provider facts are append-only durable history.  Runtime caches must therefore be
+        bounded by recent logical calls, never by all calls/sessions ever observed.
+        """
+        if call_id in self._call_order:
+            self._call_order.move_to_end(call_id)
             return
+        self._drop_call_cache_locked(call_id)
+        found = False
         events = self._event_store.read(session_id) if self.enabled else []
         for event in events:
             payload = event.payload if isinstance(event.payload, dict) else {}
             event_type = str(event.type or "")
+            if str(payload.get("call_id") or "") != call_id:
+                continue
+            found = True
             if event_type == self.CALL_OPENED:
                 call = self._call_from_payload(session_id, payload)
                 if call is not None:
-                    self._calls.setdefault(call.call_id, call)
+                    self._calls[call.call_id] = call
             elif event_type == self.TRANSPORT_OPENED:
                 attempt_id = str(payload.get("attempt_id") or "")
-                call_id = str(payload.get("call_id") or "")
                 if attempt_id and call_id:
-                    self._opened_attempts.setdefault(attempt_id, dict(payload))
+                    self._opened_attempts[attempt_id] = dict(payload)
                     self._last_attempt_id[call_id] = attempt_id
             elif event_type == self.TRANSPORT_SETTLED:
                 attempt_id = str(payload.get("attempt_id") or "")
-                call_id = str(payload.get("call_id") or "")
                 if attempt_id and call_id:
-                    self._settled_attempts.setdefault(attempt_id, dict(payload))
+                    self._settled_attempts[attempt_id] = dict(payload)
                     self._last_attempt_id[call_id] = attempt_id
             elif event_type == self.CALL_SETTLED:
-                call_id = str(payload.get("call_id") or "")
                 if call_id:
-                    self._settled_calls.setdefault(call_id, dict(payload))
-        self._loaded_sessions.add(session_id)
+                    self._settled_calls[call_id] = dict(payload)
+        if found:
+            self._remember_call_locked(call_id)
 
     @staticmethod
     def _call_from_payload(
         session_id: str, payload: Mapping[str, Any]
     ) -> ProviderCallIdentity | None:
         try:
+            raw_priority = payload.get("service_priority")
+            if raw_priority is None:
+                return None
             return ProviderCallIdentity(
                 call_id=_require_text("call_id", str(payload.get("call_id") or "")),
                 session_id=session_id,
                 idempotency_key="",
                 owner_ref=_require_text("owner_ref", str(payload.get("owner_ref") or "")),
                 execution_class=ExecutionClass(str(payload.get("execution_class") or "")),
-                service_priority=ServicePriority(int(str(payload.get("service_priority") or ""))),
+                service_priority=ServicePriority(int(raw_priority)),
                 purpose=ProviderCallPurpose(str(payload.get("purpose") or "")),
                 created_at=float(payload.get("created_at") or 0.0),
                 origin_run_generation=str(payload.get("origin_run_generation") or ""),
@@ -266,7 +298,7 @@ class ProviderCallSettlementJournal:
         origin_run_generation = str(current_run_generation.get() or "")
         call_id = _call_id(session_id, idempotency_key, origin_run_generation)
         with self._lock:
-            self._hydrate_session_locked(session_id)
+            self._hydrate_call_locked(session_id, call_id)
             existing = self._calls.get(call_id)
             if existing is not None:
                 if (
@@ -313,6 +345,7 @@ class ProviderCallSettlementJournal:
             written = self._event_store.append(session_id, self.CALL_OPENED, payload) if self.enabled else None
             if written is not None:
                 self._calls[call_id] = call
+                self._remember_call_locked(call_id)
                 self._project_written_event(written)
             return call
 
@@ -329,7 +362,7 @@ class ProviderCallSettlementJournal:
         if site.site_index < 0:
             raise ValueError("site_index must be >= 0")
         with self._lock:
-            self._hydrate_session_locked(site.call.session_id)
+            self._hydrate_call_locked(site.call.session_id, site.call.call_id)
             parent = self._last_attempt_id.get(site.call.call_id)
             attempt = ProviderTransportAttempt(
                 call_id=site.call.call_id,
@@ -385,7 +418,7 @@ class ProviderCallSettlementJournal:
         """Append one terminal transport settlement; duplicate attempt IDs are idempotent."""
 
         with self._lock:
-            self._hydrate_session_locked(session_id)
+            self._hydrate_call_locked(session_id, attempt.call_id)
             existing = self._settled_attempts.get(attempt.attempt_id)
             candidate = {
                 **self._attempt_identity_payload(attempt),
@@ -469,7 +502,7 @@ class ProviderCallSettlementJournal:
         if call is None:
             return None
         with self._lock:
-            self._hydrate_session_locked(call.session_id)
+            self._hydrate_call_locked(call.session_id, call.call_id)
             existing = self._settled_calls.get(call.call_id)
             if existing is not None:
                 if existing.get("outcome") != outcome.value:
@@ -497,7 +530,7 @@ class ProviderCallSettlementJournal:
             call_id = str(call)
             sid = _require_text("session_id", str(session_id or ""))
         with self._lock:
-            self._hydrate_session_locked(sid)
+            self._hydrate_call_locked(sid, call_id)
             opened = [row for row in self._opened_attempts.values() if row.get("call_id") == call_id]
             settled = [row for row in self._settled_attempts.values() if row.get("call_id") == call_id]
             # Dict insertion order mirrors EventStore seq order both live and after hydration.

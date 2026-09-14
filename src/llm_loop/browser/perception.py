@@ -25,12 +25,15 @@ import re
 import secrets
 import threading
 import time
-from collections.abc import Callable
-from contextlib import suppress
+from collections import OrderedDict
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from weakref import WeakValueDictionary
 
 from llm_loop.browser.predicate import evaluate_predicate as evaluate_browser_predicate
 
@@ -103,6 +106,24 @@ _GROUNDING_PREFIX = "grounding://browser/v0.1/"
 _SNAPSHOT_RE = re.compile(r"bsnap-[1-9][0-9]*-[0-9a-f]{16}")
 _SEMANTIC_ID_RE = re.compile(r"el_[0-9a-f]{20}")
 _RELATION_CAP_FACTOR = 4
+
+
+def _serialized_browser_session_state(
+    method: Callable[..., dict[str, Any]],
+) -> Callable[..., dict[str, Any]]:
+    """Serialize one Browser session operation and pin its live mechanical state."""
+
+    @wraps(method)
+    def wrapped(
+        self: BrowserPerceptionAdapter,
+        session_id: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        with self._session_state_operation(session_id):
+            return method(self, session_id, *args, **kwargs)
+
+    return wrapped
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -320,6 +341,66 @@ class BrowserPerceptionStore:
         if _SNAPSHOT_RE.fullmatch(snapshot_id) is None:
             raise ValueError("invalid Browser snapshot id")
         return self.root / "snapshots" / f"{snapshot_id}.json"
+
+    def _session_state_path(self, session_id: str) -> Path:
+        return self.root / "session_state" / f"{_session_hash(session_id)}.json"
+
+    def persist_session_state(self, session_id: str, state: dict[str, Any]) -> None:
+        """Persist only mechanical Browser identity/version state for RAM-cache recovery."""
+        if not session_id:
+            raise ValueError("session_id is required")
+        path = self._session_state_path(session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        now = float(self._now())
+        doc: dict[str, Any] = {
+            "schema": "smc.browser_session_state.v0.1",
+            "owner_session_sha256": _session_hash(session_id),
+            "runtime_generation": self.runtime_generation,
+            "runtime_nonce_sha256": hashlib.sha256(self.runtime_nonce.encode("utf-8")).hexdigest(),
+            "stored_at_epoch": now,
+            "expires_at_epoch": now + self.retention_seconds,
+            "state": state,
+        }
+        doc["state_sha256"] = _sha256({k: v for k, v in doc.items() if k != "state_sha256"})
+        tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}-{secrets.token_hex(4)}")
+        try:
+            tmp.write_text(
+                json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            os.replace(tmp, path)
+        finally:
+            with suppress(FileNotFoundError):
+                tmp.unlink()
+
+    def load_session_state(self, session_id: str) -> dict[str, Any] | None:
+        """Load exact current-runtime mechanical state; corrupt/expired state fails closed."""
+        if not session_id:
+            raise ValueError("session_id is required")
+        path = self._session_state_path(session_id)
+        if not path.is_file():
+            return None
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("browser session state unavailable") from exc
+        expected = str(doc.get("state_sha256") or "")
+        actual = _sha256({k: v for k, v in doc.items() if k != "state_sha256"})
+        if not expected or expected != actual:
+            raise RuntimeError("browser session state integrity error")
+        if doc.get("owner_session_sha256") != _session_hash(session_id):
+            raise PermissionError("browser session state scope mismatch")
+        nonce_sha = hashlib.sha256(self.runtime_nonce.encode("utf-8")).hexdigest()
+        if int(doc.get("runtime_generation") or -1) != self.runtime_generation or str(
+            doc.get("runtime_nonce_sha256") or ""
+        ) != nonce_sha:
+            return None
+        if float(self._now()) > float(doc.get("expires_at_epoch") or 0.0):
+            raise RuntimeError("browser session state expired")
+        state = doc.get("state")
+        if not isinstance(state, dict):
+            raise RuntimeError("browser session state invalid")
+        return dict(state)
 
     def _diff_path(self, from_version: str, to_version: str) -> Path:
         if _SNAPSHOT_RE.fullmatch(from_version) is None:
@@ -600,6 +681,67 @@ class _SessionState:
         self.stable_semantic_scopes: dict[str, str] = {}
         self.next_page_generation = 1
 
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "page_generations": dict(self.page_generations),
+            "page_documents": {
+                token: [document, generation]
+                for token, (document, generation) in self.page_documents.items()
+            },
+            "frame_documents": [
+                [page, frame, document, generation]
+                for (page, frame), (document, generation) in self.frame_documents.items()
+            ],
+            "identity_map": [
+                [page_generation, document_generation, frame_generation, physical_key, semantic_id]
+                for (
+                    page_generation,
+                    document_generation,
+                    frame_generation,
+                    physical_key,
+                ), semantic_id in self.identity_map.items()
+            ],
+            "stable_semantic_scopes": dict(self.stable_semantic_scopes),
+            "next_page_generation": self.next_page_generation,
+        }
+
+    @classmethod
+    def from_wire(cls, raw: dict[str, Any]) -> _SessionState:
+        state = cls()
+        try:
+            state.page_generations = {
+                str(token): int(generation)
+                for token, generation in dict(raw.get("page_generations") or {}).items()
+            }
+            state.page_documents = {
+                str(token): (str(value[0]), int(value[1]))
+                for token, value in dict(raw.get("page_documents") or {}).items()
+                if isinstance(value, list) and len(value) == 2
+            }
+            state.frame_documents = {
+                (str(row[0]), str(row[1])): (str(row[2]), int(row[3]))
+                for row in list(raw.get("frame_documents") or [])
+                if isinstance(row, list) and len(row) == 4
+            }
+            state.identity_map = {
+                (
+                    int(row[0]),
+                    int(row[1]),
+                    None if row[2] is None else int(row[2]),
+                    str(row[3]),
+                ): str(row[4])
+                for row in list(raw.get("identity_map") or [])
+                if isinstance(row, list) and len(row) == 5
+            }
+            state.stable_semantic_scopes = {
+                str(semantic_id): str(scope_ref)
+                for semantic_id, scope_ref in dict(raw.get("stable_semantic_scopes") or {}).items()
+            }
+            state.next_page_generation = max(1, int(raw.get("next_page_generation") or 1))
+        except (TypeError, ValueError, IndexError) as exc:
+            raise RuntimeError("browser session state invalid") from exc
+        return state
+
 
 @dataclass
 class _ObjectBuild:
@@ -618,17 +760,91 @@ class BrowserPerceptionAdapter:
         *,
         store: BrowserPerceptionStore,
         capture_node_cap: int = 20_000,
+        max_session_states: int = 128,
     ) -> None:
         if capture_node_cap < 1:
             raise ValueError("capture_node_cap must be >= 1")
         self.store = store
         self.capture_node_cap = int(capture_node_cap)
-        self._sessions: dict[str, _SessionState] = {}
+        self._max_session_states = max(1, int(max_session_states))
+        self._sessions: OrderedDict[str, _SessionState] = OrderedDict()
+        self._session_state_guard = threading.RLock()
+        self._session_state_locks: WeakValueDictionary[str, threading.RLock] = (
+            WeakValueDictionary()
+        )
+        self._active_session_states: dict[str, int] = {}
+
+    def _session_state_lock(self, session_id: str) -> threading.RLock:
+        with self._session_state_guard:
+            lock = self._session_state_locks.get(session_id)
+            if lock is None:
+                lock = threading.RLock()
+                self._session_state_locks[session_id] = lock
+            return lock
+
+    @contextmanager
+    def _session_state_operation(self, session_id: str) -> Iterator[None]:
+        if not session_id:
+            raise ValueError("session_id is required")
+        lock = self._session_state_lock(session_id)
+        with lock:
+            with self._session_state_guard:
+                self._active_session_states[session_id] = (
+                    self._active_session_states.get(session_id, 0) + 1
+                )
+            try:
+                yield
+            finally:
+                with self._session_state_guard:
+                    remaining = self._active_session_states.get(session_id, 0) - 1
+                    if remaining > 0:
+                        self._active_session_states[session_id] = remaining
+                    else:
+                        self._active_session_states.pop(session_id, None)
+                    self._prune_session_states_locked()
+
+    def _prune_session_states_locked(self) -> None:
+        while len(self._sessions) > self._max_session_states:
+            victim = next(
+                (
+                    (candidate_id, candidate_state)
+                    for candidate_id, candidate_state in self._sessions.items()
+                    if self._active_session_states.get(candidate_id, 0) == 0
+                ),
+                None,
+            )
+            if victim is None:
+                # All over-capacity entries are actively owned. Temporary overflow is
+                # safer than persisting/evicting a state that an in-flight operation
+                # may still mutate; the releasing operation prunes immediately.
+                return
+            session_id, state = victim
+            # Persist exact mechanical lineage before releasing the strong reference.
+            # If persistence fails, keep the state resident rather than silently reset
+            # generations and risk aliasing old Browser grounding identities.
+            self.store.persist_session_state(session_id, state.to_wire())
+            self._sessions.pop(session_id, None)
+
+    def _prune_session_states(self) -> None:
+        with self._session_state_guard:
+            self._prune_session_states_locked()
 
     def _state(self, session_id: str) -> _SessionState:
         if not session_id:
             raise ValueError("session_id is required")
-        return self._sessions.setdefault(session_id, _SessionState())
+        with self._session_state_guard:
+            state = self._sessions.get(session_id)
+            if state is None:
+                restored = self.store.load_session_state(session_id)
+                state = (
+                    _SessionState.from_wire(restored)
+                    if restored is not None
+                    else _SessionState()
+                )
+                self._sessions[session_id] = state
+            self._sessions.move_to_end(session_id)
+            self._prune_session_states_locked()
+            return state
 
     def _page_and_document_generation(
         self, state: _SessionState, page_token: str, document_token: str
@@ -1264,6 +1480,7 @@ class BrowserPerceptionAdapter:
                 }
         return observations
 
+    @_serialized_browser_session_state
     def snapshot(
         self,
         session_id: str,
@@ -1396,6 +1613,7 @@ class BrowserPerceptionAdapter:
             },
         }
         self.store.persist(session_id, bundle)
+        self.store.persist_session_state(session_id, state.to_wire())
         return {
             "action": "snapshot",
             "snapshot": snapshot,
@@ -1779,6 +1997,7 @@ class BrowserPerceptionAdapter:
 
         return response("stale", "different_snapshot_same_generation", True)
 
+    @_serialized_browser_session_state
     def evaluate_predicate(
         self,
         session_id: str,

@@ -17,6 +17,7 @@ import re
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -114,7 +115,7 @@ class MemoryExtractor:
         self.timeout_s = timeout_s
         self._audit_dir = Path(audit_dir) if audit_dir else None
         self.provider_call_coordinator = provider_call_coordinator
-        self._last_trigger_ts: dict[str, float] = {}
+        self._last_trigger_ts: OrderedDict[str, float] = OrderedDict()
         self._lock = threading.Lock()
 
     # ── 触发判定 ──
@@ -136,12 +137,19 @@ class MemoryExtractor:
             return False
         now = time.monotonic()
         with self._lock:
+            cutoff = now - max(0.0, float(self.cooldown_s))
+            while self._last_trigger_ts:
+                oldest_sid, oldest_ts = next(iter(self._last_trigger_ts.items()))
+                if oldest_ts > cutoff:
+                    break
+                self._last_trigger_ts.pop(oldest_sid, None)
             last = self._last_trigger_ts.get(session_id)
             if meta.message_count < self.interval_msgs or (
                 last is not None and (now - last) < self.cooldown_s
             ):
                 return False
             self._last_trigger_ts[session_id] = now
+            self._last_trigger_ts.move_to_end(session_id)
         self._run_async(session_id, trigger="interval")
         return True
 

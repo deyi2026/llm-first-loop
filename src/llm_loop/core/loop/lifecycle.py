@@ -51,6 +51,38 @@ logger = logging.getLogger(__name__)
 
 
 class _RunEntrypointMixin:
+    def _retire_runtime_session_state(self, session_id: str) -> None:
+        """Drop evicted process-local session hints while preserving every durable SoT."""
+        sid = str(session_id or "")
+        if not sid:
+            return
+        for attr in (
+            "_cache_last_model_by_session",
+            "_err1210_attempted",
+            "_last_request_msg_count_by_session",
+        ):
+            mapping = getattr(self, attr, None)
+            if isinstance(mapping, dict):
+                mapping.pop(sid, None)
+        monitor = getattr(self, "_cache_monitor", None)
+        if monitor is not None:
+            try:
+                monitor.reset_session(sid)
+            except Exception:  # noqa: BLE001 - retirement is best-effort process hygiene
+                logger.debug("runtime state retirement cache monitor fail-open", exc_info=True)
+        guard = getattr(self, "_cache_guard", None)
+        if guard is not None:
+            try:
+                guard.reset_session(sid)
+            except Exception:  # noqa: BLE001 - retirement is best-effort process hygiene
+                logger.debug("runtime state retirement cache guard fail-open", exc_info=True)
+        validator = getattr(self, "validator", None)
+        if validator is not None and callable(getattr(validator, "reset_session", None)):
+            try:
+                validator.reset_session(sid)
+            except Exception:  # noqa: BLE001 - advisory validator state is reconstructible
+                logger.debug("runtime state retirement validator fail-open", exc_info=True)
+
     # ── 主入口 ──
     def run_stream(
         self, session_id: str, user_text: str, model: str | None = None,
@@ -143,6 +175,7 @@ class _RunEntrypointMixin:
                 _current_session_id.reset(sid_token)
 
         try:
+            self._run_state_mgr.activate(session_id)
             if not _run_stack.enter_context(self.session.run_lease(session_id)):
                 from llm_loop.core.loop.runner import SessionBusyError
 
@@ -188,6 +221,8 @@ class _RunEntrypointMixin:
             # inner 已完成/关闭：当前run的in-memory Session绑定不再需要，立即释放整段历史引用。
             with self._run_state_mgr.guard:
                 self._run_sessions.pop(session_id, None)
+            for retired_sid in self._run_state_mgr.release(session_id):
+                self._retire_runtime_session_state(retired_sid)
             if _run_save_token is not None:
                 self.session._deactivate_run_save_token(session_id, _run_save_token)
             _run_stack.close()

@@ -6,7 +6,8 @@ import time
 import pytest
 
 from llm_loop.core.run_context import current_session_id
-from llm_loop.core.session import SessionStore
+from llm_loop.core.session import Session, SessionStore
+from llm_loop.core.subagent_topology import SubAgentTopologyJournal
 from llm_loop.event_log.store import EventStore
 from llm_loop.llm.client import LLMResponse
 from llm_loop.subagent.runner import SubAgentRunner
@@ -338,3 +339,44 @@ def test_reserve_save_loss_fails_closed_before_provider_execution(
 
     assert started["accepted"] is False
     assert llm.calls == 0
+
+
+def test_restart_topology_cache_is_bounded_and_old_children_recover_on_demand(tmp_path) -> None:
+    """P4: durable child history lives in Session/Event, not an all-child RAM index."""
+    store = _store(tmp_path)
+    assert store.event_store is not None
+    topology = SubAgentTopologyJournal(store.event_store)
+    parent = "parent-plateau"
+    children: list[str] = []
+    for i in range(160):
+        child = f"subagent_{i:012d}"
+        generation = f"generation-{i}"
+        children.append(child)
+        store.save(Session(session_id=child, parent_id=parent))
+        assert topology.linked(child_id=child, parent_id=parent, generation=generation, depth=0)
+        assert topology.generation_started(
+            child_id=child,
+            parent_id=parent,
+            generation=generation,
+            owner_id="owner-plateau",
+            depth=0,
+        )
+        assert topology.terminal(
+            child_id=child,
+            parent_id=parent,
+            generation=generation,
+            depth=0,
+            outcome="completed",
+        )
+
+    recovered = _runner(_FinalLLM(), store)
+    assert len(recovered._durable_topology) <= recovered._max_handles  # noqa: SLF001
+
+    # The oldest child need not stay resident; durable truth must still be queryable.
+    oldest = children[0]
+    recovered._durable_topology.pop(oldest, None)  # noqa: SLF001 - force read-through path
+    assert recovered.parent_of(oldest) == parent
+    snapshot = recovered.topology_snapshot(oldest)
+    assert snapshot is not None
+    assert snapshot["terminal"] is True
+    assert snapshot["outcome"] == "completed"

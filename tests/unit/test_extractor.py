@@ -106,6 +106,38 @@ def test_cooldown_first_trigger_when_monotonic_starts_at_zero(tmp_path):
         assert ex.maybe_trigger(sid) is False  # 冷却内（now - last = 0 < 600）
 
 
+def test_cooldown_timestamp_state_retires_after_semantic_expiry(tmp_path, monkeypatch):
+    """P4: cooldown hints retain only the live cooldown window, not all historical sessions."""
+    import llm_loop.memory.extractor as extractor_mod
+
+    store = SessionStore(tmp_path / "sessions")
+    s1 = _mk_session(store, 25)
+    s2 = _mk_session(store, 25)
+    s3 = _mk_session(store, 25)
+    ex = extractor_mod.MemoryExtractor(
+        llm_client=_FakeLLMExtract(),
+        memory=MemoryStore(tmp_path / "memory"),
+        session_store=store,
+        interval_msgs=20,
+        cooldown_s=600,
+        audit_dir=tmp_path / "audit",
+    )
+    monkeypatch.setattr(ex, "_run_async", lambda *args, **kwargs: None)
+    now = [1.0]
+    monkeypatch.setattr(extractor_mod.time, "monotonic", lambda: now[0])
+
+    assert ex.maybe_trigger(s1) is True
+    now[0] = 2.0
+    assert ex.maybe_trigger(s2) is True
+    assert len(ex._last_trigger_ts) == 2  # noqa: SLF001
+
+    # At t=700 both prior timestamps are already semantically expired under the
+    # existing 600s cooldown rule, so retiring them cannot change trigger behavior.
+    now[0] = 700.0
+    assert ex.maybe_trigger(s3) is True
+    assert list(ex._last_trigger_ts) == [s3]  # noqa: SLF001
+
+
 def test_extract_same_structure_and_dedup(tmp_path):
     """同构解析 + 指纹去重（即时沉淀 + 独立提取不重复）."""
     store = SessionStore(tmp_path / "sessions")

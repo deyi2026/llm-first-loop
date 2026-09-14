@@ -15,6 +15,7 @@ RunState 显式状态流的桶侧 authority（design T6-A/T6-B-2）：
 from __future__ import annotations
 
 import threading
+from collections import OrderedDict
 
 from llm_loop.core.loop.runstate import _RunState
 from llm_loop.core.run_context import current_session_id as _current_session_id
@@ -23,17 +24,63 @@ from llm_loop.core.run_context import current_session_id as _current_session_id
 class RunStateManager:
     """会话状态桶管理器（自足服务：无 host 依赖）."""
 
-    def __init__(self) -> None:
-        self._buckets: dict[str, _RunState] = {}
+    def __init__(self, *, max_idle_buckets: int = 128) -> None:
+        # Cross-turn runtime facts are useful for recently active sessions, but they are
+        # reconstructible process state rather than durable Session/Event truth.  Keep a
+        # bounded idle LRU while pinning every currently active session regardless of the
+        # configured idle capacity.
+        self._buckets: OrderedDict[str, _RunState] = OrderedDict()
+        self._active_sessions: set[str] = set()
+        self._max_idle_buckets = max(1, int(max_idle_buckets))
         # 原 engine._run_states_guard（P0-5）：桶表 + run 绑定表共用一致性锁
         self.guard = threading.Lock()
         self.last_active_sid: str = ""
+
+    def _prune_idle_locked(self) -> tuple[str, ...]:
+        evicted: list[str] = []
+        while sum(1 for sid in self._buckets if sid not in self._active_sessions) > self._max_idle_buckets:
+            victim = next(
+                (sid for sid in self._buckets if sid not in self._active_sessions),
+                None,
+            )
+            if victim is None:
+                break
+            self._buckets.pop(victim, None)
+            evicted.append(victim)
+        if self.last_active_sid in evicted:
+            self.last_active_sid = next(reversed(self._buckets), "")
+        return tuple(evicted)
+
+    def activate(self, session_id: str) -> None:
+        """Pin one admitted session so capacity pressure can never evict an active run."""
+        sid = str(session_id or "")
+        with self.guard:
+            self.last_active_sid = sid
+            self._active_sessions.add(sid)
+            self._buckets.setdefault(sid, _RunState())
+            self._buckets.move_to_end(sid)
+
+    def release(self, session_id: str) -> tuple[str, ...]:
+        """Unpin a finished run and return idle session ids retired by the bounded LRU."""
+        sid = str(session_id or "")
+        with self.guard:
+            self._active_sessions.discard(sid)
+            if sid in self._buckets:
+                self._buckets.move_to_end(sid)
+            return self._prune_idle_locked()
+
+    def active_session_count(self) -> int:
+        with self.guard:
+            return len(self._active_sessions)
 
     def bucket(self) -> _RunState:
         """当前执行上下文的会话状态桶；无上下文回退最近活跃会话桶（out-of-run 复查）."""
         sid = _current_session_id.get() or self.last_active_sid
         with self.guard:
-            return self._buckets.setdefault(sid, _RunState())
+            bucket = self._buckets.setdefault(sid, _RunState())
+            self._buckets.move_to_end(sid)
+            self._prune_idle_locked()
+            return bucket
 
     def bound_session_id(self) -> str:
         """Return only the session explicitly bound to the current run context.

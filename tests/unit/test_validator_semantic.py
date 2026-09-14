@@ -87,6 +87,23 @@ def test_audit_matched_by_field(tmp_path):
     assert records[-1].get("tool_call_ids") == ["c1"]
 
 
+def test_recent_receipt_session_cache_plateaus() -> None:
+    """P4: advisory cross-round receipts keep only a bounded recent-session window."""
+    from llm_loop.core.run_context import current_session_id
+
+    validator = DeclarationValidator(max_recent_sessions=8)
+    for i in range(64):
+        token = current_session_id.set(f"session-{i:04d}")
+        try:
+            validator.check("已读取文件 x.txt", [_tool_msg("读取 x.txt 成功")])
+        finally:
+            current_session_id.reset(token)
+    assert len(validator._recent_by_session) <= 8  # noqa: SLF001
+
+    validator.reset_session("session-0063")
+    assert "session-0063" not in validator._recent_by_session  # noqa: SLF001
+
+
 # ── T28: 摘要回填 ──
 def test_archive_update_summary(tmp_path):
     """update_summary 回填成功 + summary_source 落盘可区分."""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import os
 import threading
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import llm_loop.workspace.file_service as file_service_mod
 from llm_loop.core.message import ToolCall
 from llm_loop.core.run_context import current_workspace_root
 from llm_loop.tools.builtin.read_file import ReadFileTool
@@ -40,6 +42,17 @@ def _provenance(workspace: Path, operation: str = "op-observe") -> FileArtifactP
         tool_name="read_file",
         effect_kind="file_observation",
     )
+
+
+def test_process_path_lock_table_releases_unused_paths() -> None:
+    """P4: path-scoped coordination locks live only while an operation owns them."""
+    for i in range(1000):
+        lock = file_service_mod._process_lock(f"/tmp/lfl-lock-{i}")  # noqa: SLF001
+        with lock:
+            pass
+    del lock
+    gc.collect()
+    assert len(file_service_mod._PROCESS_LOCKS) == 0  # noqa: SLF001
 
 
 def test_t06_snapshot_keeps_full_bytes_while_returning_selected_range(tmp_path: Path) -> None:

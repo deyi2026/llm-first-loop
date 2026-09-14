@@ -89,6 +89,34 @@ def test_logical_provider_call_identity_is_scoped_by_origin_run_generation(tmp_p
     assert [payload["origin_run_generation"] for payload in opened] == ["run-A1", "run-A2"]
 
 
+def test_provider_call_runtime_cache_is_bounded_and_evicted_call_rehydrates(tmp_path):
+    """P4: durable provider history must not require all logical calls to stay in RAM."""
+    store, journal, _recorder = _journal(tmp_path)
+    journal._max_cached_calls = 8  # noqa: SLF001 - deterministic small plateau gate
+    first = None
+    for i in range(64):
+        call = _call(journal, key=f"task:s1:turn:{i}:round:1")
+        if first is None:
+            first = call
+        assert journal.settle_call(call, ProviderCallOutcome.SUCCESS) is not None
+
+    assert first is not None
+    assert len(journal._calls) <= 8  # noqa: SLF001
+    assert len(journal._settled_calls) <= 8  # noqa: SLF001
+
+    # Evicted RAM state must read through the append-only EventStore. Re-opening the
+    # same idempotency identity returns the durable logical call and never appends a
+    # second CALL_OPENED fact.
+    reopened = _call(journal, key="task:s1:turn:0:round:1")
+    assert reopened.call_id == first.call_id
+    assert journal.snapshot_call(reopened)["call_settled"] is True
+    opened = [
+        event for event in store.read("s1")
+        if event.type == journal.CALL_OPENED and event.payload.get("call_id") == first.call_id
+    ]
+    assert len(opened) == 1
+
+
 def test_a1_fallback_settles_late_without_mutating_a2_provider_call(tmp_path):
     """P3 Gate2: a late A1 fallback remains A1 history after A2 routes to another provider."""
     from llm_loop.core.run_context import current_run_generation

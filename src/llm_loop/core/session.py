@@ -14,6 +14,8 @@ import logging
 import os
 import threading
 import uuid
+import weakref
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
@@ -38,8 +40,9 @@ _ARCHIVED = "archived"
 
 # 会话元数据缓存（2026-09-07 CPU 修复）：绝对路径 → ((mtime_ns, size), SessionMeta)。
 # 供 _list_sessions_in 复用未变化文件的解析结果；文件落盘 mtime 必变，天然失效。
-_SESSION_META_CACHE: dict[Path, tuple[tuple[int, int], SessionMeta]] = {}
+_SESSION_META_CACHE: OrderedDict[Path, tuple[tuple[int, int], SessionMeta]] = OrderedDict()
 _SESSION_META_CACHE_LOCK = threading.Lock()
+_SESSION_META_CACHE_MAX = 512
 
 
 def _validate_session_id(session_id: str) -> str:
@@ -315,15 +318,21 @@ class SessionStore:
         self._identity_root_pinned = identity_root is not None
         self._identity_root = Path(identity_root) if identity_root is not None else self._dir
         self._identity_root.mkdir(parents=True, exist_ok=True)
-        self._identity_verified: set[str] = set()
+        self._identity_verified: OrderedDict[str, None] = OrderedDict()
+        self._identity_cache_max = 512
+        self._identity_cache_guard = threading.Lock()
         self._identity_history_exists_fn = identity_history_exists_fn
         self._delete_sidecars_fn = delete_sidecars_fn
         self._delete_resource_blocker_fn = delete_resource_blocker_fn
         self._event_store = event_store
         self._read_path_source = read_path_source
         # P0-4(2026-08-15): 非 POSIX 平台 flock 不可得时的进程内回退锁表
-        self._fallback_locks: dict[str, threading.Lock] = {}
-        self._fallback_run_gates: dict[str, _FallbackRunGate] = {}
+        self._fallback_locks: weakref.WeakValueDictionary[str, threading.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+        self._fallback_run_gates: weakref.WeakValueDictionary[str, _FallbackRunGate] = (
+            weakref.WeakValueDictionary()
+        )
         self._fallback_locks_guard = threading.Lock()
         # run 内 save 的显式所有权：仅绑定到本轮 load 出来的 Session 对象。
         # 不依赖 ContextVar（ASGI 生成器可跨 Context resume），也不会序列化到 JSON。
@@ -333,6 +342,26 @@ class SessionStore:
         # never a substitute capability.
         self._run_save_generations: dict[str, str] = {}
         self._run_save_tokens_guard = threading.Lock()
+
+    def _remember_identity_verified(self, session_id: str) -> None:
+        """Bound the process-local verified-id cache; durable identity files remain SoT."""
+        with self._identity_cache_guard:
+            self._identity_verified[session_id] = None
+            self._identity_verified.move_to_end(session_id)
+            while len(self._identity_verified) > max(1, int(self._identity_cache_max)):
+                self._identity_verified.popitem(last=False)
+
+    def _identity_was_verified(self, session_id: str) -> bool:
+        """Touch one cached verification fact without weakening durable ownership checks."""
+        with self._identity_cache_guard:
+            if session_id not in self._identity_verified:
+                return False
+            self._identity_verified.move_to_end(session_id)
+            return True
+
+    def _forget_identity_verified(self, session_id: str) -> None:
+        with self._identity_cache_guard:
+            self._identity_verified.pop(session_id, None)
 
     @property
     def root(self) -> Path:
@@ -503,7 +532,8 @@ class SessionStore:
         self._dir = Path(sessions_dir)
         if not self._identity_root_pinned:
             self._identity_root = self._dir
-        self._identity_verified.clear()
+        with self._identity_cache_guard:
+            self._identity_verified.clear()
         self._fallback_locks.clear()
         self._fallback_run_gates.clear()
         self._fallback_locks_guard = threading.Lock()
@@ -640,7 +670,7 @@ class SessionStore:
     def _check_identity_read(self, session_id: str) -> None:
         """只读验证现有全局归属；不存在于任何workspace的sid不得因读取被claim。"""
         session_id = _validate_session_id(session_id)
-        if session_id in self._identity_verified:
+        if self._identity_was_verified(session_id):
             return
         with self._identity_lock(session_id):
             identity_dir = self._identity_root / ".identity"
@@ -662,7 +692,7 @@ class SessionStore:
                     raise SessionIdConflictError(
                         f"session_id {session_id} 已被其他工作区占用（owner={owner}）"
                     )
-                self._identity_verified.add(session_id)
+                self._remember_identity_verified(session_id)
                 return
 
             owners = self._legacy_identity_owners(session_id)
@@ -686,12 +716,12 @@ class SessionStore:
                 raise SessionIdConflictError(
                     f"session_id {session_id} 已被其他工作区占用（owner={owner}）"
                 )
-            self._identity_verified.add(session_id)
+            self._remember_identity_verified(session_id)
 
     def _ensure_identity_owner(self, session_id: str, *, allow_deleted: bool = False) -> None:
         """声明/验证session_id的稳定workspace归属；删除session也不释放全局ID。"""
         session_id = _validate_session_id(session_id)
-        if session_id in self._identity_verified:
+        if self._identity_was_verified(session_id):
             return
         with self._identity_lock(session_id):
             identity_dir = self._identity_root / ".identity"
@@ -707,7 +737,7 @@ class SessionStore:
                     ) from exc
                 if record.get("deleted_at"):
                     if allow_deleted and owner == current_owner:
-                        self._identity_verified.discard(session_id)
+                        self._forget_identity_verified(session_id)
                         return
                     raise SessionDeletedError(
                         f"session_id {session_id} 已删除且不可恢复/复用"
@@ -735,12 +765,12 @@ class SessionStore:
                     raise SessionIdConflictError(
                         f"session_id {session_id} 已被其他工作区占用（owner={owner}）"
                     )
-            self._identity_verified.add(session_id)
+            self._remember_identity_verified(session_id)
 
     def _mark_identity_deleted(self, session_id: str) -> None:
         """durable写删除tombstone；幂等，且删除后所有read/save/restore均fail-closed。"""
         session_id = _validate_session_id(session_id)
-        self._identity_verified.discard(session_id)
+        self._forget_identity_verified(session_id)
         self._ensure_identity_owner(session_id, allow_deleted=True)
         with self._identity_lock(session_id):
             owner_path = self._identity_root / ".identity" / f"{session_id}.json"
@@ -761,7 +791,7 @@ class SessionStore:
                 self._durable_replace_text(
                     owner_path, json.dumps(record, ensure_ascii=False)
                 )
-            self._identity_verified.discard(session_id)
+            self._forget_identity_verified(session_id)
 
     def claim_session_id(self, session_id: str) -> None:
         """显式声明新session的全局ID归属；供fork在写child EventStore前建立不变量。"""
@@ -1628,7 +1658,11 @@ class SessionStore:
             for cached_path in list(_SESSION_META_CACHE):
                 if cached_path.parent == target and cached_path not in seen_paths:
                     _SESSION_META_CACHE.pop(cached_path, None)
-            _SESSION_META_CACHE.update(new_cache)
+            for cached_path, cached_value in new_cache.items():
+                _SESSION_META_CACHE[cached_path] = cached_value
+                _SESSION_META_CACHE.move_to_end(cached_path)
+            while len(_SESSION_META_CACHE) > max(1, int(_SESSION_META_CACHE_MAX)):
+                _SESSION_META_CACHE.popitem(last=False)
         # M56: 置顶会话优先（同置顶级别内保持 updated_at 降序；稳定排序保证相对序不变）
         metas.sort(key=lambda m: m.updated_at, reverse=True)
         metas.sort(key=lambda m: not m.pinned)

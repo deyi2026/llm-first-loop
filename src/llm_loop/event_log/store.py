@@ -14,6 +14,7 @@ import shutil
 import threading
 import time
 import uuid
+import weakref
 from collections import OrderedDict
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -60,9 +61,13 @@ class EventStore:
         # P1-1: 滚动管理器（None = 不自动滚动，零回归；set_rotate_manager 显式接线）
         self._rotate_manager: Any | None = None
         # P1-1: append 路径滚动检查节流（天级触发需读文件，30s 粒度足够）
-        self._rotate_checked_at: dict[str, float] = {}
+        self._rotate_checked_at: OrderedDict[str, float] = OrderedDict()
+        self._rotate_checked_at_max_sessions = 512
+        self._rotate_checked_guard = threading.Lock()
         # P1-1: 会话级稳定锁的进程内回退（fcntl 不可用时）与锁表守护
-        self._fallback_locks: dict[str, threading.Lock] = {}
+        self._fallback_locks: weakref.WeakValueDictionary[str, threading.Lock] = (
+            weakref.WeakValueDictionary()
+        )
         self._fallback_locks_guard = threading.Lock()
         # Web 状态面（continuity/jobs/queue claim）会高频读取同一 append-only 会话。
         # 大会话若每次都 JSON 全量 replay，会在多标签页轮询下形成 CPU/GIL 放大。
@@ -71,12 +76,34 @@ class EventStore:
         # 热会话，避免把 EventStore 变成无界内存副本。
         self._read_cache: OrderedDict[str, tuple[int, int, list[Event]]] = OrderedDict()
         self._read_cache_lock = threading.RLock()
-        self._read_cache_build_locks: dict[str, threading.Lock] = {}
+        # Single-flight locks are only coordination objects for currently executing
+        # cold reads.  The parsed cache above is the bounded retention surface; keeping
+        # one strong lock per session would silently turn this table into an all-session
+        # index.  Weak values preserve concurrent callers' shared lock while allowing
+        # it to disappear as soon as no read owns it.
+        self._read_cache_build_locks: weakref.WeakValueDictionary[str, threading.Lock] = (
+            weakref.WeakValueDictionary()
+        )
         self._read_cache_max_sessions = 2
 
     def set_rotate_manager(self, manager: Any | None) -> None:
         """接线滚动管理器（P1-1：append/run 末自动检查滚动；None 解除接线）."""
         self._rotate_manager = manager
+
+    def _note_rotate_checked(self, session_id: str, checked_at: float) -> None:
+        """Bound the day-trigger throttle cache; eviction only causes an extra safe check."""
+        with self._rotate_checked_guard:
+            self._rotate_checked_at[session_id] = checked_at
+            self._rotate_checked_at.move_to_end(session_id)
+            while len(self._rotate_checked_at) > max(1, int(self._rotate_checked_at_max_sessions)):
+                self._rotate_checked_at.popitem(last=False)
+
+    def _last_rotate_checked(self, session_id: str) -> float:
+        with self._rotate_checked_guard:
+            checked_at = float(self._rotate_checked_at.get(session_id, 0.0))
+            if session_id in self._rotate_checked_at:
+                self._rotate_checked_at.move_to_end(session_id)
+            return checked_at
 
     @property
     def enabled(self) -> bool:
@@ -164,7 +191,7 @@ class EventStore:
         try:
             with self._session_flock(session_id):
                 rm.check_and_rotate(session_id)  # 锁内检查+迁移（审计 #9 竞态闭合）
-            self._rotate_checked_at[session_id] = time.monotonic()
+            self._note_rotate_checked(session_id, time.monotonic())
         except Exception:  # noqa: BLE001 — 滚动失败不影响主流程
             logger.warning("事件日志滚动检查失败（fail-open）: sid=%s", session_id, exc_info=True)
 
@@ -181,9 +208,9 @@ class EventStore:
             )
             size_hit = rm.size_triggered(p)
             now = time.monotonic()
-            if size_hit or now - self._rotate_checked_at.get(session_id, 0.0) >= 30.0:
+            if size_hit or now - self._last_rotate_checked(session_id) >= 30.0:
                 rm.check_and_rotate(session_id)  # 调用方已持会话锁
-                self._rotate_checked_at[session_id] = now
+                self._note_rotate_checked(session_id, now)
         except Exception:  # noqa: BLE001
             logger.warning("事件日志滚动检查失败（fail-open）: sid=%s", session_id, exc_info=True)
 
@@ -223,7 +250,8 @@ class EventStore:
             if seg_dir.exists():
                 removed += sum(1 for p in seg_dir.rglob("*") if p.is_file())
                 shutil.rmtree(seg_dir)
-            self._rotate_checked_at.pop(session_id, None)
+            with self._rotate_checked_guard:
+                self._rotate_checked_at.pop(session_id, None)
         self._invalidate_read_cache(session_id)
         return removed
 

@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import uuid
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -104,6 +105,7 @@ class DeclarationValidator:
         semantic_matcher: Callable[[str, str], float] | None = None,
         semantic_threshold: float = 0.75,
         recent_window: int = 3,
+        max_recent_sessions: int = 128,
     ) -> None:
         self._audit_dir = Path(audit_dir) if audit_dir else None
         self._semantic_matcher = semantic_matcher  # P1: 轻量语义匹配（默认 None → 纯关键词/路径）
@@ -111,16 +113,25 @@ class DeclarationValidator:
         # EVO-20260820-409f3f60: 近 N 轮回执窗口（按会话隔离）——压缩/归档移出内存的
         # 早期轮次成功回执，从历史缓存补证，区分"跨轮引用"与"真实不诚实"。
         self._recent_window = max(1, int(recent_window))
-        self._recent_by_session: dict[str, deque[list[str]]] = {}
+        self._max_recent_sessions = max(1, int(max_recent_sessions))
+        self._recent_by_session: OrderedDict[str, deque[list[str]]] = OrderedDict()
+        self._recent_guard = threading.Lock()
 
-    def _session_buf(self) -> deque[list[str]]:
-        """当前会话的近 N 轮回执缓存（deque maxlen=recent_window）."""
-        sid = _current_session_id.get() or ""
+    def _session_buf_locked(self, sid: str) -> deque[list[str]]:
+        """Return/create one session buffer while ``_recent_guard`` is held."""
         buf = self._recent_by_session.get(sid)
         if buf is None:
             buf = deque(maxlen=self._recent_window)
             self._recent_by_session[sid] = buf
+        self._recent_by_session.move_to_end(sid)
+        while len(self._recent_by_session) > self._max_recent_sessions:
+            self._recent_by_session.popitem(last=False)
         return buf
+
+    def reset_session(self, session_id: str) -> None:
+        """Retire reconstructible cross-round receipt hints for one inactive session."""
+        with self._recent_guard:
+            self._recent_by_session.pop(str(session_id or ""), None)
 
     def check(
         self,
@@ -157,8 +168,10 @@ class DeclarationValidator:
 
         # EVO-20260820-409f3f60: 近 N 轮历史回执（跨轮引用补证）——压缩/归档可能已把
         # 更早轮次 tool 消息移出会话消息，从本校验器维护的滚动窗口补证。
-        buf = self._session_buf()
-        history: list[str] = [r for past in buf for r in past]
+        sid = _current_session_id.get() or ""
+        with self._recent_guard:
+            buf = self._session_buf_locked(sid)
+            history: list[str] = [r for past in buf for r in past]
 
         discrepancies: list[str] = []
         matched_by: list[str] = []
@@ -185,7 +198,8 @@ class DeclarationValidator:
 
         # 本轮成功回执滚入近 N 轮窗口（供下轮跨轮引用补证）
         if receipts:
-            buf.append(receipts)
+            with self._recent_guard:
+                self._session_buf_locked(sid).append(receipts)
 
         result = DeclarationCheckResult(
             consistent=not discrepancies,

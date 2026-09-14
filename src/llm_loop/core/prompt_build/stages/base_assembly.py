@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -30,7 +31,9 @@ logger = logging.getLogger(__name__)
 # 门禁侧只见折叠后单指纹、无原因字段（主仓现状），归因只能发生在调用点折叠前。
 # before/after 采集：before = 修复前语义下的保守干预分布（空间成本）；
 # after = 双轴语义下的干预分布。无 before 则「保守口径在为多少空间买单」无分母。
-_axis_probe_prev: dict[str, tuple[str, str]] = {}
+_AXIS_PROBE_MAX_SESSIONS = 512
+_axis_probe_prev: OrderedDict[str, tuple[str, str]] = OrderedDict()
+_axis_probe_guard = threading.Lock()
 _axis_change_stats: dict[str, int] = {
     "system_axis": 0,
     "tools_axis": 0,
@@ -60,7 +63,8 @@ def request_prefix_events(limit: int | None = None) -> list[dict[str, str]]:
 
 def reset_axis_probe() -> None:
     """采集窗口/测试重置。"""
-    _axis_probe_prev.clear()
+    with _axis_probe_guard:
+        _axis_probe_prev.clear()
     _prefix_events.clear()
     _axis_change_stats.update(
         {
@@ -75,8 +79,12 @@ def reset_axis_probe() -> None:
 def _probe_axis_change(session_id: str, base_fp: str, tools_fp: str) -> None:
     """fail-open：任何异常不得影响装配与门禁。"""
     try:
-        prev = _axis_probe_prev.get(session_id)
-        _axis_probe_prev[session_id] = (base_fp, tools_fp)
+        with _axis_probe_guard:
+            prev = _axis_probe_prev.get(session_id)
+            _axis_probe_prev[session_id] = (base_fp, tools_fp)
+            _axis_probe_prev.move_to_end(session_id)
+            while len(_axis_probe_prev) > _AXIS_PROBE_MAX_SESSIONS:
+                _axis_probe_prev.popitem(last=False)
         if prev is None:
             _prefix_events.append(
                 {

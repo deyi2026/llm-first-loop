@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import runpy
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +162,95 @@ def test_adapter_restart_increments_runtime_generation_and_rekeys_ids(tmp_path: 
     second = _adapter(tmp_path).snapshot("s1", FIXTURES["base"])
     assert second["snapshot"]["scope"]["runtime_generation"] > first["snapshot"]["scope"]["runtime_generation"]
     assert _by_name(first, "Submit")["id"] != _by_name(second, "Submit")["id"]
+
+
+def test_session_state_lru_restores_generation_and_stable_identity(tmp_path: Path) -> None:
+    """P4: RAM eviction must read through exact mechanical state, never reset generations."""
+    store = BrowserPerceptionStore(tmp_path / "browser", retention_seconds=60)
+    adapter = BrowserPerceptionAdapter(store=store, max_session_states=1)
+
+    before = adapter.snapshot("s1", FIXTURES["base"])
+    before_submit = _by_name(before, "Submit")
+    before_generation = before["snapshot"]["scope"]["document_generation"]
+    before_scope = before_submit["scope_ref"]
+
+    # A different session forces s1 out of the one-entry RAM cache.
+    adapter.snapshot("s2", FIXTURES["base"])
+    assert list(adapter._sessions) == ["s2"]  # noqa: SLF001
+
+    # Same physical document after read-through recovery keeps the exact mechanical
+    # generation and stable semantic identity/scope.
+    pushed = adapter.snapshot("s1", FIXTURES["push_state"])
+    pushed_submit = _by_name(pushed, "Submit")
+    assert pushed["snapshot"]["scope"]["document_generation"] == before_generation
+    assert pushed_submit["id"] == before_submit["id"]
+    assert pushed_submit["scope_ref"] == before_scope
+    assert adapter._sessions["s1"].stable_semantic_scopes[before_submit["id"]] == before_scope  # noqa: SLF001
+
+    # A real document transition still increments after the eviction/recovery cycle.
+    navigated = adapter.snapshot("s1", FIXTURES["navigate"])
+    assert navigated["snapshot"]["scope"]["document_generation"] > before_generation
+    assert _by_name(navigated, "Submit")["id"] != before_submit["id"]
+    assert len(adapter._sessions) <= 1  # noqa: SLF001
+
+
+def test_active_session_state_is_not_evicted_or_forked_by_concurrent_snapshot(
+    tmp_path: Path,
+) -> None:
+    """P4: an in-flight session state cannot be evicted/reloaded into a second writer."""
+    store = BrowserPerceptionStore(tmp_path / "browser", retention_seconds=60)
+    adapter = BrowserPerceptionAdapter(store=store, max_session_states=1)
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+    call_guard = threading.Lock()
+    s1_calls = 0
+    original = adapter._build_scope_facts  # noqa: SLF001
+
+    def blocking_build(*args: Any, **kwargs: Any):
+        nonlocal s1_calls
+        if kwargs.get("session_id") == "s1":
+            with call_guard:
+                s1_calls += 1
+                current = s1_calls
+            if current == 1:
+                first_entered.set()
+                assert release_first.wait(timeout=2.0)
+            else:
+                second_entered.set()
+        return original(*args, **kwargs)
+
+    adapter._build_scope_facts = blocking_build  # type: ignore[method-assign]  # noqa: SLF001
+    results: dict[str, dict[str, Any]] = {}
+    failures: list[BaseException] = []
+
+    def run_snapshot(label: str, raw: dict[str, Any]) -> None:
+        try:
+            results[label] = adapter.snapshot("s1", raw)
+        except BaseException as exc:  # noqa: BLE001 - thread failure surfaced below
+            failures.append(exc)
+
+    first = threading.Thread(target=run_snapshot, args=("first", FIXTURES["base"]))
+    first.start()
+    assert first_entered.wait(timeout=2.0)
+
+    # A different session may run concurrently, but must not evict the active s1 state.
+    adapter.snapshot("s2", FIXTURES["base"])
+    assert "s1" in adapter._sessions  # noqa: SLF001
+
+    # A second writer for the same session must wait for the first operation, not reload
+    # a sidecar copy while the first writer still owns the live state object.
+    second = threading.Thread(target=run_snapshot, args=("second", FIXTURES["navigate"]))
+    second.start()
+    assert not second_entered.wait(timeout=0.1)
+
+    release_first.set()
+    first.join(timeout=2.0)
+    second.join(timeout=2.0)
+    assert not first.is_alive() and not second.is_alive()
+    assert failures == []
+    assert second_entered.is_set()
+    assert results["second"]["snapshot"]["scope"]["document_generation"] > results["first"]["snapshot"]["scope"]["document_generation"]
 
 
 def test_dom_ax_field_conflict_becomes_null_with_source_grounding(tmp_path: Path) -> None:

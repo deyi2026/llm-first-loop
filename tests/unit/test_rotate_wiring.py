@@ -104,3 +104,12 @@ def test_check_rotate_public_hook(tmp_path):
     es.check_rotate(sid)  # 显式调用幂等（append 接线可能已触发，二次调用不多滚）
     segs = RotateManager.list_segments(tmp_path / "event_logs", sid)
     assert segs, "check_rotate 后仍无段信息"
+
+
+def test_rotate_throttle_cache_plateaus_across_many_sessions(tmp_path):
+    """P4: day-trigger throttling is a bounded optimization, not an all-session RAM index."""
+    es, _rm, _ss = _build(tmp_path, rotate_bytes=10_000_000)
+    es._rotate_checked_at_max_sessions = 8  # noqa: SLF001 - deterministic small plateau gate
+    for i in range(64):
+        es.check_rotate(f"session-{i:04d}")
+    assert len(es._rotate_checked_at) <= 8  # noqa: SLF001

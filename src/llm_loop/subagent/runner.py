@@ -12,6 +12,7 @@ import hashlib
 import json
 import threading
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -155,14 +156,14 @@ class SubAgentRunner:
         self._parent_by_child: dict[str, str] = {}
         # P3: parent session alone is insufficient across sequential runs of the same session.
         self._parent_run_generation_by_child: dict[str, str] = {}
-        self._durable_topology: dict[str, SubAgentTopologyState] = {}
+        self._max_handles = 128
+        self._durable_topology: OrderedDict[str, SubAgentTopologyState] = OrderedDict()
         self._local_generation_by_child: dict[str, str] = {}
         self._cancel_events: dict[str, threading.Event] = {}
         self._agent_inbox: dict[str, list[tuple[int, str, str]]] = {}
         self._messages_to_parent: dict[str, list[str]] = {}
         self._handles: dict[str, _SubAgentHandle] = {}
         self._handle_order: list[str] = []
-        self._max_handles = 128
         self._message_seq = 0
         self._recover_topology_index()
 
@@ -177,36 +178,49 @@ class SubAgentRunner:
         return self._llm_resolver(ref), ref
 
     def _recover_topology_index(self) -> None:
-        """Rebuild read-only durable topology; never recreate an active worker."""
-        recovered: dict[str, SubAgentTopologyState] = {}
-        try:
-            candidates = sorted(self.session_store.root.glob("subagent_*.json"))
-        except OSError:
-            candidates = []
-        for path in candidates:
-            state = self._topology_journal.recover(path.stem)
-            if state is None or not state.parent_id:
-                continue
-            # Durable direct-parent authority requires two independent mechanical facts:
-            # the child Session parent_id and the append-only topology edge must agree.
-            # Mismatch/corruption fails closed to "unknown", never broadens adjacency.
-            try:
-                session_parent = str(self.session_store.load(path.stem).parent_id or "")
-            except Exception:  # noqa: BLE001 - recovery is read-only and fail-closed
-                continue
-            if session_parent != state.parent_id:
-                continue
-            recovered[state.child_id] = state
+        """Use lazy durable topology recovery; never materialize an all-child RAM index."""
+        # EventStore + child Session are the durable sources of truth.  Eagerly scanning
+        # every historical child at startup made memory and startup cost scale with all
+        # prior work.  Read paths recover one requested child and populate the bounded
+        # cache below; no active worker/mailbox is ever fabricated.
+        return None
+
+    def _cache_durable_topology(self, state: SubAgentTopologyState) -> None:
         with self._children_guard:
-            self._durable_topology.update(recovered)
+            self._durable_topology[state.child_id] = state
+            self._durable_topology.move_to_end(state.child_id)
+            while len(self._durable_topology) > self._max_handles:
+                self._durable_topology.popitem(last=False)
+
+    def _durable_state(self, child_id: str) -> SubAgentTopologyState | None:
+        """Read-through bounded topology cache with Session/Event parent cross-check."""
+        sid = str(child_id or "")
+        if not sid:
+            return None
+        with self._children_guard:
+            cached = self._durable_topology.get(sid)
+            if cached is not None:
+                self._durable_topology.move_to_end(sid)
+                return cached
+        state = self._topology_journal.recover(sid)
+        if state is None or not state.parent_id:
+            return None
+        try:
+            session_parent = str(self.session_store.load(sid).parent_id or "")
+        except Exception:  # noqa: BLE001 - recovery is read-only and fail-closed
+            return None
+        if session_parent != state.parent_id:
+            return None
+        self._cache_durable_topology(state)
+        return state
 
     def _refresh_topology_state(self, child_id: str) -> SubAgentTopologyState | None:
         state = self._topology_journal.recover(child_id)
-        with self._children_guard:
-            if state is None:
+        if state is None:
+            with self._children_guard:
                 self._durable_topology.pop(child_id, None)
-            else:
-                self._durable_topology[child_id] = state
+        else:
+            self._cache_durable_topology(state)
         return state
 
     def topology_snapshot(self, child_session_id: str) -> dict[str, object] | None:
@@ -216,7 +230,9 @@ class SubAgentRunner:
             return None
         with self._children_guard:
             handle = self._handles.get(sid)
-            durable = self._durable_topology.get(sid)
+        durable = None if handle is not None else self._durable_state(sid)
+        with self._children_guard:
+            handle = self._handles.get(sid)
             if handle is not None:
                 parent_id = handle.parent_id
                 generation = handle.generation
@@ -337,9 +353,9 @@ class SubAgentRunner:
             return None
         with self._children_guard:
             handle = self._handles.get(sid)
-            durable = self._durable_topology.get(sid)
-            generation = handle.generation if handle is not None else (durable.generation if durable else "")
-            parent_id = handle.parent_id if handle is not None else (durable.parent_id if durable else "")
+        durable = None if handle is not None else self._durable_state(sid)
+        generation = handle.generation if handle is not None else (durable.generation if durable else "")
+        parent_id = handle.parent_id if handle is not None else (durable.parent_id if durable else "")
         if not generation or not parent_id:
             return None
         try:
@@ -453,8 +469,8 @@ class SubAgentRunner:
             active = self._parent_by_child.get(child_session_id, "")
             if active:
                 return active
-            durable = self._durable_topology.get(child_session_id)
-            return durable.parent_id if durable is not None else ""
+        durable = self._durable_state(child_session_id)
+        return durable.parent_id if durable is not None else ""
 
     def send_current_message(self, target_id: str, content: str) -> tuple[bool, str, str]:
         """以当前运行会话为 sender，向直接 parent/child 投递消息。
@@ -1125,15 +1141,10 @@ class SubAgentRunner:
             return False, "缺少 child_id", {}
         with self._children_guard:
             handle = self._handles.get(sid)
-            durable = self._durable_topology.get(sid)
-            if handle is None:
-                if durable is None:
-                    return False, "child handle 不存在、已淘汰且无durable topology", {}
-                if durable.parent_id != requester:
-                    return False, "仅直接 parent 可以读取该 child", {}
-                generation = durable.generation
-                parent_id = durable.parent_id
-            else:
+        durable = None if handle is not None else self._durable_state(sid)
+        with self._children_guard:
+            handle = self._handles.get(sid)
+            if handle is not None:
                 if handle.parent_id != requester:
                     return False, "仅直接 parent 可以读取该 child handle", {}
                 generation = handle.generation
@@ -1149,6 +1160,13 @@ class SubAgentRunner:
                 has_unseen_report = len(reports_now) > handle.seen_reports
                 if running and not has_unseen_report:
                     activity_event.clear()
+            else:
+                if durable is None:
+                    return False, "child handle 不存在、已淘汰且无durable topology", {}
+                if durable.parent_id != requester:
+                    return False, "仅直接 parent 可以读取该 child", {}
+                generation = durable.generation
+                parent_id = durable.parent_id
 
         if handle is None:
             assert durable is not None
@@ -1178,9 +1196,6 @@ class SubAgentRunner:
             activity_event.wait(timeout=bounded_wait)
         with self._children_guard:
             handle = self._handles.get(sid)
-            # A terminal handle may be pruned while the caller waits. Re-enter the
-            # durable path without fabricating activity.
-            durable = self._durable_topology.get(sid) if handle is None else None
             if handle is not None:
                 result = handle.result
                 if self._delivery_journal.enabled:
@@ -1208,6 +1223,9 @@ class SubAgentRunner:
                     "result": result,
                     "local_active": handle.state == "running",
                 }
+        # A terminal handle may be pruned while the caller waits. Re-enter the durable
+        # read-through path without fabricating activity or requiring it to stay cached.
+        durable = self._durable_state(sid)
         if durable is None or durable.parent_id != requester:
             return False, "child handle 已淘汰且durable topology不可用", {}
         report_rows = self._delivery_journal.reports(sid, durable.generation)
@@ -1242,9 +1260,9 @@ class SubAgentRunner:
             return False
         with self._children_guard:
             handle = self._handles.get(child_id)
-            durable = self._durable_topology.get(child_id)
-            expected_parent = handle.parent_id if handle is not None else (durable.parent_id if durable else "")
-            expected_generation = handle.generation if handle is not None else (durable.generation if durable else "")
+        durable = None if handle is not None else self._durable_state(child_id)
+        expected_parent = handle.parent_id if handle is not None else (durable.parent_id if durable else "")
+        expected_generation = handle.generation if handle is not None else (durable.generation if durable else "")
         if expected_parent != parent_id or expected_generation != generation:
             return False
         result_record = self._delivery_journal.result(child_id, generation)

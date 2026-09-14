@@ -14,6 +14,7 @@ import hashlib
 import os
 import tempfile
 import threading
+import weakref
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ UTF8_BOM = b"\xef\xbb\xbf"
 FILE_CONTRACT_VERSION = 1
 
 _PROCESS_LOCKS_GUARD = threading.Lock()
-_PROCESS_LOCKS: dict[str, threading.RLock] = {}
+_PROCESS_LOCKS: weakref.WeakValueDictionary[str, threading.RLock] = weakref.WeakValueDictionary()
 
 
 def detect_line_ending(text: str) -> str:

@@ -110,3 +110,15 @@ def test_prefix_events_limit_takes_recent() -> None:
     all_events = ba.request_prefix_events()
     assert recent == all_events[-2:]
     assert recent[0]["system_fp"] == "sys-3"[:8]
+
+
+def test_axis_probe_session_cache_plateaus() -> None:
+    """P4: diagnostic axis attribution must not become an all-session RAM index."""
+    old_max = ba._AXIS_PROBE_MAX_SESSIONS  # noqa: SLF001
+    ba._AXIS_PROBE_MAX_SESSIONS = 8  # noqa: SLF001
+    try:
+        for i in range(64):
+            ba._probe_axis_change(f"session-{i:04d}", "sys", "tools")  # noqa: SLF001
+        assert len(ba._axis_probe_prev) <= 8  # noqa: SLF001
+    finally:
+        ba._AXIS_PROBE_MAX_SESSIONS = old_max  # noqa: SLF001
