@@ -63,7 +63,13 @@ class ChatResponse(BaseModel):
     verification_note: str | None = None
     rounds: int = 0
     tool_calls: list[dict] = []
-    truncated: bool = False
+    truncated: bool = False  # Compatibility aggregate; use the independent facts below.
+    history_compacted: bool = False
+    provider_output_truncated: bool = False
+    run_incomplete: bool = False
+    projection_validator_failed: bool = False
+    projection_rebuilt: bool = False
+    projection_cannot_fit: bool = False
     model_used: str = ""  # M51: 实际生成回复的模型标签（provider/model）
     fallback_receipt: dict[str, str] | None = None  # current-user runtime fact; never prompt history
     tokens_in: int = 0  # M52: 本轮 prompt tokens（0 = provider 未提供）

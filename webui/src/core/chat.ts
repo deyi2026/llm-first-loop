@@ -398,7 +398,9 @@ export function toChatMessage(m: HistoryMessage): ChatMessage {
 /** done 终态 → 助手消息注释（模型/token 页脚由 MessageItem 结构化渲染，此处不含） */
 export function buildAssistantNote(data: ChatDoneData): string | null {
   const note: string[] = [];
-  if (data.truncated) note.push("（回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。）");
+  const outputTruncated = data.provider_output_truncated ?? data.truncated ?? false;
+  if (outputTruncated) note.push("（回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。）");
+  else if (data.run_incomplete) note.push("（本轮未完整收口，请查看具体原因。）");
   if (data.verification_note) note.push(data.verification_note);
   if (data.fallback_receipt) {
     const from = data.fallback_receipt.from ?? "";

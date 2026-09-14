@@ -99,6 +99,12 @@ export interface ChatDoneData {
   tool_calls?: ToolCallInfo[];
   reasoning_content?: string | null;
   truncated?: boolean;
+  history_compacted?: boolean;
+  provider_output_truncated?: boolean;
+  run_incomplete?: boolean;
+  projection_validator_failed?: boolean;
+  projection_rebuilt?: boolean;
+  projection_cannot_fit?: boolean;
   verification_note?: string | null;
   model_used?: string;
   tokens_in?: number;

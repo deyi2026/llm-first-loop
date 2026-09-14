@@ -12,7 +12,11 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from llm_loop.core.history import build_history_messages, validate_tool_call_pairing
+from llm_loop.core.history import (
+    build_conservative_active_run_projection,
+    build_history_messages,
+    validate_tool_call_pairing,
+)
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
 from llm_loop.core.prompt_build.stages.history_projection import run_history_projection
 from llm_loop.core.reference_injection import (
@@ -21,7 +25,6 @@ from llm_loop.core.reference_injection import (
 )
 from llm_loop.llm.client import GuardRequestContext, LLMClient
 from llm_loop.llm.errors import LLMProjectionError
-
 
 _INCIDENT_FIXTURE = (
     Path(__file__).parents[1] / "fixtures" / "err1214_delegated_compaction_v1.json"
@@ -314,6 +317,110 @@ def test_final_provider_validator_blocks_missing_expected_active_ingress() -> No
     assert "active_run_ingress_missing:537" in states[-1]["violations"]
 
 
+def test_conservative_rebuild_retires_only_older_complete_groups() -> None:
+    current = Message(
+        role="user",
+        content="DELEGATED",
+        source=MessageSource.USER,
+        metadata={
+            "origin_layer": "user_instruction",
+            "program_origin": False,
+            "ingress_delegated": True,
+        },
+    )
+    older = _tool_group(1)
+    newest = _tool_group(2)
+    base = [current, *older, *newest]
+    # Enough for system + ingress + newest complete atomic group, but not both tool groups.
+    mandatory_chars = len("SYS") + len(current.content) + sum(
+        len(message.content) + len(str(message.tool_calls or "")) for message in newest
+    )
+    outcome = build_conservative_active_run_projection(
+        base=base,
+        filtered_indices=list(range(len(base))),
+        system_prompt="SYS",
+        current_turn_ref=0,
+        max_chars=mandatory_chars + 20,
+    )
+
+    assert outcome.state == "rebuilt"
+    assert outcome.retired_groups == 1
+    assert outcome.total_groups == 3
+    assert outcome.messages[0] == {"role": "system", "content": "SYS"}
+    assert outcome.messages[1]["role"] == "user"
+    assert outcome.messages[1]["content"] == "DELEGATED"
+    assert outcome.messages[1]["_active_run_ingress_ref"] == "0"
+    rebuilt = list(outcome.messages)
+    assert validate_tool_call_pairing(rebuilt) == []
+    rebuilt_ids = {
+        call["id"]
+        for message in rebuilt
+        for call in (message.get("tool_calls") or [])
+    }
+    assert rebuilt_ids == {"call-2"}
+
+
+def test_conservative_rebuild_reports_projection_cannot_fit_without_mutating_truth() -> None:
+    current = Message(
+        role="user",
+        content="U" * 900,
+        source=MessageSource.USER,
+        metadata={
+            "origin_layer": "user_instruction",
+            "program_origin": False,
+            "ingress_delegated": True,
+        },
+    )
+    newest = _tool_group(9)
+    metadata_before = dict(current.metadata)
+    outcome = build_conservative_active_run_projection(
+        base=[current, *newest],
+        filtered_indices=list(range(1 + len(newest))),
+        system_prompt="SYS",
+        current_turn_ref=0,
+        max_chars=100,
+    )
+
+    assert outcome.state == "projection_cannot_fit"
+    assert outcome.messages == ()
+    assert outcome.projected_chars > outcome.budget_chars
+    assert current.content == "U" * 900
+    assert current.metadata == metadata_before
+    assert "_active_run_ingress_ref" not in current.metadata
+
+
+def test_conservative_rebuild_fails_closed_on_incomplete_current_atomic_group() -> None:
+    current = Message(
+        role="user",
+        content="DELEGATED",
+        source=MessageSource.USER,
+        metadata={"origin_layer": "user_instruction", "ingress_delegated": True},
+    )
+    incomplete = Message(
+        role="assistant",
+        content="",
+        source=MessageSource.USER,
+        tool_calls=[
+            {
+                "id": "call-a",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{}"},
+            }
+        ],
+    )
+    outcome = build_conservative_active_run_projection(
+        base=[current, incomplete],
+        filtered_indices=[0, 1],
+        system_prompt="SYS",
+        current_turn_ref=0,
+        max_chars=10_000,
+    )
+
+    assert outcome.state == "current_atomic_group_incomplete"
+    assert outcome.messages == ()
+    assert "not_exactly_closed" in outcome.detail
+
+
 def test_tool_followup_compaction_keeps_current_human_and_still_makes_progress() -> None:
     """A long current-turn tool chain must compact around, never through, its human ingress."""
     current = Message(
@@ -577,3 +684,180 @@ def test_head_downgrade_cannot_archive_active_human() -> None:
     assert all(message is not current for message in archived)
     assert archived, "head downgrade should still retire other atomic groups"
     assert validate_tool_call_pairing(built) == []
+
+
+def _parallel_tool_group(index: int) -> list[Message]:
+    call_ids = [f"parallel-{index}-a", f"parallel-{index}-b"]
+    return [
+        Message(
+            role="assistant",
+            content="",
+            source=MessageSource.USER,
+            tool_calls=[
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                }
+                for call_id in call_ids
+            ],
+        ),
+        *[
+            Message(
+                role="tool",
+                content=("P" if ordinal == 0 else "Q") * 260,
+                source=MessageSource.TOOL,
+                tool_call_id=call_id,
+                tool_name="read_file",
+                status=ToolResultStatus.SUCCESS,
+            )
+            for ordinal, call_id in enumerate(call_ids)
+        ],
+    ]
+
+
+def _project_for_t_matrix(
+    base: list[Message], *, current_turn_ref: int, sess_anchor: int = 0, session_id: str
+):
+    return run_history_projection(
+        base=base,
+        system_prompt="SYS",
+        filtered_indices=list(range(len(base))),
+        sess_anchor=sess_anchor,
+        prefix_len=0,
+        session_id=session_id,
+        max_chars=1_100,
+        runtime_history_budget_value=1_100,
+        compact_ratio=0.85,
+        archive_sink=lambda _sid, _message: None,
+        settings=SimpleNamespace(exact_duplicate_tool_fold=False),
+        provider_id="glm",
+        resolved_label="glm/glm-5.3",
+        reasoning_tail=0,
+        r6_ingress_truth=None,
+        registry=SimpleNamespace(evidence_mode="off"),
+        cache_monitor=_CacheMonitor(),
+        effective_budget=1_100,
+        current_turn_ref=current_turn_ref,
+    )
+
+
+def test_t3_delegated_active_ingress_survives_three_followup_compaction_builds() -> None:
+    """T3: N+1/N+2/N+3 builds cannot advance history past the active delegated ingress."""
+    current = Message(
+        role="user",
+        content="[定时续跑·先前真人授权的程序委派·非新真人输入] CONTINUE",
+        source=MessageSource.USER,
+        metadata={"ingress_delegated": True, "ingress_channel": "schedule_wake"},
+    )
+    base = [current]
+    for index in range(5):
+        base.extend(_tool_group(index))
+
+    anchor = 0
+    for round_index in range(3):
+        projection = _project_for_t_matrix(
+            base,
+            current_turn_ref=0,
+            sess_anchor=anchor,
+            session_id=f"err1214-t3-{round_index}",
+        )
+        assert any(
+            item.get("role") == "user" and item.get("content") == current.content
+            for item in projection.built
+        )
+        assert validate_tool_call_pairing(projection.built) == []
+        # With identity filtered_indices/prefix=0, a persisted anchor must never pass
+        # the exact active ingress at source index 0.
+        anchor = projection.anchor_box[0] if projection.anchor_box else anchor
+        assert anchor == 0
+        base.extend(_tool_group(10 + round_index))
+
+
+def test_t5_delegated_no_tool_projection_keeps_active_ingress() -> None:
+    """T5: a delegated continuation that only needs text remains a legal user-anchored wire."""
+    current = Message(
+        role="user",
+        content="[定时续跑·先前真人授权的程序委派·非新真人输入] TEXT-ONLY",
+        source=MessageSource.USER,
+        metadata={"ingress_delegated": True, "ingress_channel": "schedule_wake"},
+    )
+    base = [Message(role="assistant", content="H" * 700, source=MessageSource.USER), current]
+    projection = _project_for_t_matrix(
+        base, current_turn_ref=1, session_id="err1214-t5-text-only"
+    )
+    users = [item for item in projection.built if item.get("role") == "user"]
+    assert [item.get("content") for item in users] == [current.content]
+    assert validate_tool_call_pairing(projection.built) == []
+
+
+def test_t6_delegated_parallel_tool_group_stays_atomic_under_compaction() -> None:
+    """T6: delegated active ingress and all parallel tool_call results remain structurally paired."""
+    current = Message(
+        role="user",
+        content="[定时续跑·先前真人授权的程序委派·非新真人输入] PARALLEL",
+        source=MessageSource.USER,
+        metadata={"ingress_delegated": True, "ingress_channel": "schedule_wake"},
+    )
+    base = [current]
+    for index in range(4):
+        base.extend(_tool_group(index))
+    parallel = _parallel_tool_group(9)
+    base.extend(parallel)
+
+    projection = _project_for_t_matrix(
+        base, current_turn_ref=0, session_id="err1214-t6-parallel"
+    )
+    assert any(item.get("content") == current.content for item in projection.built)
+    assert validate_tool_call_pairing(projection.built) == []
+    projected_ids = {
+        item.get("tool_call_id")
+        for item in projection.built
+        if item.get("role") == "tool"
+    }
+    assert {"parallel-9-a", "parallel-9-b"}.issubset(projected_ids)
+
+
+def test_t7_new_human_turn_retires_old_delegated_ingress_protection() -> None:
+    """T7: after handoff, only the new human is active; old delegated ingress may retire normally."""
+    old_delegated = Message(
+        role="user",
+        content="OLD-DELEGATED-" + "D" * 420,
+        source=MessageSource.USER,
+        metadata={"ingress_delegated": True, "ingress_channel": "schedule_wake"},
+    )
+    base = [old_delegated]
+    for index in range(4):
+        base.extend(_tool_group(index))
+    new_human_index = len(base)
+    new_human = Message(role="user", content="NEW-HUMAN", source=MessageSource.USER)
+    base.append(new_human)
+    base.extend(_tool_group(20))
+
+    archived: list[Message] = []
+    projection = run_history_projection(
+        base=base,
+        system_prompt="SYS",
+        filtered_indices=list(range(len(base))),
+        sess_anchor=0,
+        prefix_len=0,
+        session_id="err1214-t7-human-takeover",
+        max_chars=1_100,
+        runtime_history_budget_value=1_100,
+        compact_ratio=0.85,
+        archive_sink=lambda _sid, message: archived.append(message),
+        settings=SimpleNamespace(exact_duplicate_tool_fold=False),
+        provider_id="glm",
+        resolved_label="glm/glm-5.3",
+        reasoning_tail=0,
+        r6_ingress_truth=None,
+        registry=SimpleNamespace(evidence_mode="off"),
+        cache_monitor=_CacheMonitor(),
+        effective_budget=1_100,
+        current_turn_ref=new_human_index,
+    )
+    assert any(item.get("content") == "NEW-HUMAN" for item in projection.built)
+    assert old_delegated in archived or all(
+        item.get("content") != old_delegated.content for item in projection.built
+    )
+    assert validate_tool_call_pairing(projection.built) == []

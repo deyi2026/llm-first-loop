@@ -24,6 +24,8 @@ from llm_loop.core.episode_history import provider_message_visible
 # EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
 # 与 engine.py 顶部 re-export 同模式；stable_digest 既有模块级使用
 from llm_loop.core.history import (
+    ConservativeProjectionOutcome,
+    build_conservative_active_run_projection,
     is_cache_compacted_for,
     projection_check,  # noqa: F401 (history 工具, 函数内使用)
     projection_ver,  # noqa: F401 (history 工具, 函数内使用)
@@ -419,6 +421,40 @@ class _BuildMixin:
             )
         except Exception:  # noqa: BLE001 — fail-open
             return None
+
+    def _build_conservative_active_run_messages(
+        self,
+        sess,
+        *,
+        max_chars: int,
+        model: str | None = None,
+        planned_label: str | None = None,
+    ) -> ConservativeProjectionOutcome:
+        """Side-effect-free rebuild from current durable Session truth.
+
+        This recovery path intentionally bypasses persisted history anchors/compact
+        markers/archive sinks and does not reuse a previous provider projection.  It
+        re-runs only the read-only ingress/eligibility/scrub stages, then mechanically
+        keeps the exact active ingress plus newest complete atomic groups.
+        """
+        decision = BuildDecision()
+        _pre = run_ingress_prelude(
+            decision=decision,
+            sess=sess,
+            planned_label=planned_label,
+            model=model,
+            planned_model_label=self._planned_model_label,
+            current_turn_ref=self._run_state().current_turn_ref,
+            record_action=lambda *_args, **_kwargs: None,
+            event_append=lambda *_args, **_kwargs: None,
+        )
+        return build_conservative_active_run_projection(
+            base=_pre.base,
+            filtered_indices=_pre.base_original_indices,
+            system_prompt=_pre.system_prompt,
+            current_turn_ref=self._run_state().current_turn_ref,
+            max_chars=max_chars,
+        )
 
     def _build_llm_messages(
         self,

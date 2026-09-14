@@ -108,7 +108,11 @@ class RunFinalizer:
         llm_ms_total: float,
         ttft_first_ms: float | None,
         model_used: str,
-        truncation_noted: bool,
+        history_compacted: bool,
+        provider_output_truncated: bool,
+        projection_validator_failed: bool,
+        projection_rebuilt: bool,
+        projection_cannot_fit: bool,
         verification_note: str | None,
         _run_started_at: float,
     ) -> tuple[str, str]:
@@ -137,8 +141,11 @@ class RunFinalizer:
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             tokens_cache_hit=tokens_cache_hit,
-            truncation_noted=truncation_noted,
-            provider_truncated=bool(resp is not None and resp.truncated),
+            history_compacted=history_compacted,
+            provider_output_truncated=provider_output_truncated,
+            projection_validator_failed=projection_validator_failed,
+            projection_rebuilt=projection_rebuilt,
+            projection_cannot_fit=projection_cannot_fit,
             _run_started_at=_run_started_at,
         )
         return final_answer, _run_end_reason
@@ -373,8 +380,11 @@ class RunFinalizer:
         tokens_in: int,
         tokens_out: int,
         tokens_cache_hit: int,
-        truncation_noted: bool,
-        provider_truncated: bool,
+        history_compacted: bool,
+        provider_output_truncated: bool,
+        projection_validator_failed: bool,
+        projection_rebuilt: bool,
+        projection_cannot_fit: bool,
         _run_started_at: float,
     ) -> str:
         self._host._phase("done")
@@ -407,6 +417,7 @@ class RunFinalizer:
         # DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 DSH turn/end reason）——
         # 统一出口落盘，结束原因/轮数/token 汇总/耗时一次可查（fail-open 不阻断）
         _run_end_event = None
+        _run_incomplete = _run_end_reason != "completed" or provider_output_truncated
         try:
             _run_end_event = self._host._event_append(
                 session_id,
@@ -421,7 +432,16 @@ class RunFinalizer:
                     "cache_hit": tokens_cache_hit,
                     "duration_ms": int((time.monotonic() - _run_started_at) * 1000),
                     "model_used": model_used,
-                    "truncated": truncation_noted,
+                    # Compatibility aggregate now means incomplete output/run only.
+                    # History compaction is an input-representation fact and must not
+                    # masquerade as provider output loss.
+                    "truncated": _run_incomplete,
+                    "history_compacted": bool(history_compacted),
+                    "provider_output_truncated": bool(provider_output_truncated),
+                    "run_incomplete": bool(_run_incomplete),
+                    "projection_validator_failed": bool(projection_validator_failed),
+                    "projection_rebuilt": bool(projection_rebuilt),
+                    "projection_cannot_fit": bool(projection_cannot_fit),
                     "answer_preview": (final_answer or "")[:200],
                     **self._host._kpi_snapshot(),
                 },
@@ -440,11 +460,11 @@ class RunFinalizer:
         # 索引行（独立文件、非退休型、幂等键=(session_id, run_end 事件 seq)），
         # 修复"中断 run 在 episode 检索面结构性不可见"。completed 不写；fail-open
         # 不阻断收尾（存档见 run.end 事件）。
-        if _run_end_reason != "completed" or provider_truncated:
+        if _run_end_reason != "completed" or provider_output_truncated:
             try:
                 _index_reason = (
                     "provider_truncated"
-                    if _run_end_reason == "completed" and provider_truncated
+                    if _run_end_reason == "completed" and provider_output_truncated
                     else _run_end_reason
                 )
                 self._index_truncated_run(

@@ -587,8 +587,10 @@ class FeishuMessageHandler:
             if hasattr(self._engine, "set_action_observer"):
                 self._engine.set_action_observer(None)
         answer = result.final_answer or "(空回答)"
-        if result.truncated:
+        if getattr(result, "provider_output_truncated", result.truncated):
             answer += "\n（回答被截断）"
+        elif getattr(result, "run_incomplete", False):
+            answer += "\n（本轮未完整收口，请查看具体原因）"
         if result.verification_note:
             answer += f"\n[声明提示] {result.verification_note}"
         # 停止收口恢复指引分流（3.6，design D5）：仅 user_stop 取消在飞书端追加指引；

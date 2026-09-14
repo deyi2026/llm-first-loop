@@ -12,9 +12,12 @@ from __future__ import annotations
 import json
 import threading
 import time
+from unittest import mock
 
+import pytest
 from fastapi.testclient import TestClient
 
+from llm_loop.core.loop import LoopResult
 from llm_loop.web import build_app
 from tests.unit.test_stream_equivalence import StreamingFakeLLM
 
@@ -47,6 +50,12 @@ CHAT_RESPONSE_FIELDS = [
     "rounds",
     "tool_calls",
     "truncated",
+    "history_compacted",
+    "provider_output_truncated",
+    "run_incomplete",
+    "projection_validator_failed",
+    "projection_rebuilt",
+    "projection_cannot_fit",
     "model_used",
     "fallback_receipt",
     "tokens_in",
@@ -73,6 +82,56 @@ def _parse_sse(text: str) -> list[dict]:
             if line.startswith("data: "):
                 events.append(json.loads(line[6:]))
     return events
+
+
+@pytest.mark.parametrize("delivery", ["sync", "stream", "background"])
+def test_completion_facts_survive_every_delivery_path(build_test_engine, delivery):
+    engine, _ = build_test_engine([])
+    sid = engine.session.create()
+    result = LoopResult(
+        session_id=sid, final_answer="context pressure", truncated=True,
+        history_compacted=True, provider_output_truncated=False, run_incomplete=True,
+        projection_validator_failed=True, projection_rebuilt=False, projection_cannot_fit=True,
+    )
+    client = _make_client(engine)
+    endpoint = "/api/v1/chat" if delivery == "sync" else "/api/v1/chat/stream"
+    if delivery == "sync":
+        with mock.patch.object(engine, "_run_with_acquired", return_value=result):
+            response = client.post(endpoint, json={"message": "hi", "session_id": sid})
+    elif delivery == "stream":
+        engine.runner = None
+
+        def _return_result(*_args, **_kwargs):
+            if False:
+                yield None
+            return result
+
+        with mock.patch.object(engine, "_run_stream_with_acquired", side_effect=_return_result):
+            response = client.post(endpoint, json={"message": "hi", "session_id": sid})
+    else:
+        import queue
+        from types import SimpleNamespace
+
+        from llm_loop.core.loop.runner import BackgroundRunner
+
+        engine.runner = BackgroundRunner(engine, enabled=True)
+        q = queue.Queue()
+        q.put({"type": "done", "result": result})
+        handle = SimpleNamespace(run_generation="test-generation")
+        with (
+            mock.patch.object(engine.runner, "start", return_value=(handle, q)),
+            mock.patch.object(engine.runner, "unsubscribe"),
+        ):
+            response = client.post(endpoint, json={"message": "hi", "session_id": sid})
+    assert response.status_code == 200
+    data = response.json() if delivery == "sync" else next(
+        event["data"] for event in _parse_sse(response.text) if event["type"] == "done"
+    )
+    for field in (
+        "truncated", "history_compacted", "provider_output_truncated", "run_incomplete",
+        "projection_validator_failed", "projection_rebuilt", "projection_cannot_fit",
+    ):
+        assert data[field] is getattr(result, field), (delivery, field)
 
 
 def test_chat_stream_resume_requires_run_generation_at_schema_boundary(build_test_engine):

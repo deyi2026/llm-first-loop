@@ -50,8 +50,10 @@ def _run_single(engine, text: str, session_id: str | None = None) -> None:
 
         stats += f" tokens={format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
     print(stats)
-    if result.truncated:
-        print("[提示] 本次发生上下文截断")
+    if getattr(result, "provider_output_truncated", result.truncated):
+        print("[提示] 模型输出被截断，已生成内容保留在对话中")
+    elif getattr(result, "run_incomplete", False):
+        print("[提示] 本轮未完整收口，请查看具体原因")
     if result.verification_note:
         print(f"[校验] {result.verification_note.splitlines()[0][:100]}")
     print(result.final_answer)

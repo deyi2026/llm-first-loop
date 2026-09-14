@@ -168,6 +168,12 @@ class LoopResult:
     rounds: int = 0
     tool_calls: list[dict] = field(default_factory=list)  # 工具声明轨迹（审计）
     truncated: bool = False
+    history_compacted: bool = False
+    provider_output_truncated: bool = False
+    run_incomplete: bool = False
+    projection_validator_failed: bool = False
+    projection_rebuilt: bool = False
+    projection_cannot_fit: bool = False
     # M51: 实际生成本次回复的模型标签（provider/model 全限定，如实透传；降级后为降级模型 ref）
     model_used: str = ""
     # M52: 本次 run 的 token 用量（工具循环多次调用累加；provider 未返回 usage 时为 0，如实不伪造）
@@ -679,7 +685,13 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
 
         final_answer = ""
         verification_note: str | None = None
-        truncation_noted = False
+        history_compacted_noted = False
+        provider_output_truncated = False
+        projection_validator_failed = False
+        projection_rebuilt_noted = False
+        projection_cannot_fit_noted = False
+        _projection_rebuild_requested = False
+        _projection_rebuild_round = -1
         rounds = 0
         # DSH 借鉴(2026-08-17): run 结束原因（统一出口 run.end 事件用；各结束分支标记，
         # 默认 completed——未标记即正常完成。fail-open 不阻断）
@@ -810,17 +822,24 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 _budget_info["tool_schema_reserve_chars"] = _tool_schema_chars
                 _budget_info["effective_budget"] = effective_budget
                 self._run_state().last_budget_info = _budget_info
-            messages = self._build_llm_messages(
-                sess,
-                _turn_memory_msgs,
-                max_chars=effective_budget,
-                model=model,
-                planned_label=planned_label,
-                registry_snapshot=_planning_registry,
-            )
+            # A final-client rejection has not sent bytes. Re-enter this same
+            # logical round using current durable truth, bypassing the projection
+            # that failed; never retry a saved provider wire.
+            if _projection_rebuild_requested:
+                messages = []
+                _projection_rebuild_requested = False
+            else:
+                messages = self._build_llm_messages(
+                    sess,
+                    _turn_memory_msgs,
+                    max_chars=effective_budget,
+                    model=model,
+                    planned_label=planned_label,
+                    registry_snapshot=_planning_registry,
+                )
             self._kpi_accumulate_inject()
             if getattr(self, "_last_history_compacted", False):
-                truncation_noted = True
+                history_compacted_noted = True
 
             # Current run ingress is provider-protocol ownership, not human provenance.
             # Bind the exact persisted turn identity for both genuine-human and explicit
@@ -856,6 +875,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     if item.startswith("active_run_ingress_")
                 ]
                 if _preflight_violations:
+                    projection_validator_failed = True
                     self._event_append(
                         session_id,
                         "provider.structure.validated",
@@ -868,17 +888,94 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             "active_run_ingress_kind": _active_run_ingress_kind,
                         },
                     )
-                    self._record_action(
-                        "action.llm_decide",
-                        "projection_invalid",
-                        ";".join(_preflight_violations)[:200],
+                    _projection_rebuild_round = rounds
+                    _rebuild = self._build_conservative_active_run_messages(
+                        sess,
+                        max_chars=effective_budget,
+                        model=model,
+                        planned_label=planned_label,
                     )
-                    _run_end_reason = "projection_invalid"
-                    final_answer = (
-                        "[上下文投影失败] 当前 run 的协议入口在 provider 请求发送前缺失；"
-                        "已阻止发送，未用旧请求或伪造摘要替代。"
+                    self._event_append(
+                        session_id,
+                        "provider.projection.rebuild",
+                        {
+                            "round": rounds,
+                            "state": _rebuild.state,
+                            "trigger_violations": _preflight_violations,
+                            "projected_chars": _rebuild.projected_chars,
+                            "budget_chars": _rebuild.budget_chars,
+                            "total_groups": _rebuild.total_groups,
+                            "retired_groups": _rebuild.retired_groups,
+                            "detail": _rebuild.detail,
+                            "active_run_ingress_ref": _active_run_ingress_ref,
+                            "active_run_ingress_kind": _active_run_ingress_kind,
+                        },
                     )
-                    break
+                    if _rebuild.state == "rebuilt":
+                        _rebuilt_messages = list(_rebuild.messages)
+                        _rebuilt_violations = [
+                            item
+                            for item in provider_structure_violations(
+                                _rebuilt_messages,
+                                expected_active_ingress_ref=_active_run_ingress_ref,
+                            )
+                            if item.startswith("active_run_ingress_")
+                        ]
+                        if not _rebuilt_violations:
+                            messages = _rebuilt_messages
+                            projection_rebuilt_noted = True
+                            self._record_action(
+                                "action.llm_decide",
+                                "projection_rebuilt",
+                                (
+                                    f"retired_groups={_rebuild.retired_groups};"
+                                    f"chars={_rebuild.projected_chars}/{_rebuild.budget_chars}"
+                                ),
+                            )
+                            _influence = dict(self._run_state().last_request_influence or {})
+                            _influence["conservative_rebuild"] = {
+                                "state": "rebuilt",
+                                "retired_groups": _rebuild.retired_groups,
+                                "projected_chars": _rebuild.projected_chars,
+                                "budget_chars": _rebuild.budget_chars,
+                            }
+                            self._run_state().last_request_influence = _influence
+                        else:
+                            _rebuild = type(_rebuild)(
+                                state="projection_invalid",
+                                messages=(),
+                                projected_chars=_rebuild.projected_chars,
+                                budget_chars=_rebuild.budget_chars,
+                                total_groups=_rebuild.total_groups,
+                                retired_groups=_rebuild.retired_groups,
+                                detail=";".join(_rebuilt_violations),
+                            )
+
+                    if _rebuild.state != "rebuilt":
+                        if _rebuild.state == "projection_cannot_fit":
+                            projection_cannot_fit_noted = True
+                            self._record_action(
+                                "action.llm_decide",
+                                "projection_cannot_fit",
+                                _rebuild.detail[:200],
+                            )
+                            _run_end_reason = "projection_cannot_fit"
+                            final_answer = (
+                                "[上下文压力] 当前 run 的最小合法 provider 投影仍超过可提交预算；"
+                                "已停止发送，未删除当前入口、未复用旧请求、未伪造摘要。"
+                            )
+                        else:
+                            self._record_action(
+                                "action.llm_decide",
+                                "projection_invalid",
+                                (_rebuild.detail or ";".join(_preflight_violations))[:200],
+                            )
+                            _run_end_reason = "projection_invalid"
+                            final_answer = (
+                                "[上下文投影失败] 无法从当前 durable state 重建合法 provider 请求；"
+                                "已阻止发送，未用旧请求或伪造摘要替代。"
+                            )
+                        break
 
             # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）
             # 供 architecture_status.context_usage.breakdown 注入；last_build_info 入桶保留。
@@ -920,12 +1017,12 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 else None
             )
 
-            def _structure_state_hook(state: dict[str, Any]) -> None:
+            def _structure_state_hook(state: dict[str, Any], *, _round: int = rounds) -> None:
                 self._event_append(
                     session_id,
                     "provider.structure.validated",
                     {
-                        "round": rounds,
+                        "round": _round,
                         "stage": "final_client_projection",
                         **dict(state),
                     },
@@ -1262,10 +1359,18 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     resp = None
                     break
                 if isinstance(exc, LLMProjectionError):
+                    projection_validator_failed = True
                     if _provider_call_coordinator is not None:
                         _provider_call_coordinator.settle_shadow_call(
                             _provider_call, ProviderCallOutcome.BLOCKED_BEFORE_TRANSPORT
                         )
+                    if _active_run_ingress_ref and _projection_rebuild_round != rounds:
+                        # At most one rebuild per logical model round. A second
+                        # rejection remains fail-closed, with no provider fallback.
+                        _projection_rebuild_requested = True
+                        rounds -= 1
+                        resp = None
+                        continue
                     self._record_action(
                         "action.llm_decide", "projection_invalid", str(exc)[:200]
                     )
@@ -1470,6 +1575,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             # Cast only communicates that control-flow
             # invariant to static analysis; it does not change runtime behavior.
             resp = cast(LLMResponse, resp)
+            provider_output_truncated = provider_output_truncated or bool(resp.truncated)
             self._tool_cycle._reachability_record_response(resp)
             self._record_action(
                 "action.llm_decide", "llm_response", self._tool_cycle._resp_summary(resp)
@@ -1650,8 +1756,6 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 self._notify_action("answer")
                 # M41 修复: 回答被截断（truncated=True）时不执行声明-回执校验——
                 # 不完整内容校验不可靠（会误报"声明与回执不符"），截断如实透传标注
-                if resp.truncated:
-                    truncation_noted = True
                 # ── 声明-回执轻量提醒（T38: 诚实性交 AI 自主，程序仅提供事实提醒，不强制更正重入）──
                 if final_answer.strip() and not resp.truncated:
                     tool_msgs = [m for m in sess.messages if m.role == "tool"]
@@ -1768,7 +1872,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             llm_ms_total=llm_ms_total,
             ttft_first_ms=ttft_first_ms,
             model_used=model_used,
-            truncation_noted=truncation_noted,
+            history_compacted=history_compacted_noted,
+            provider_output_truncated=provider_output_truncated,
+            projection_validator_failed=projection_validator_failed,
+            projection_rebuilt=projection_rebuilt_noted,
+            projection_cannot_fit=projection_cannot_fit_noted,
             verification_note=verification_note,
             _run_started_at=_run_started_at,
         )
@@ -1777,13 +1885,20 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         self._method_learning.post_run(
             session_id, sess, rounds, tool_trace, _run_end_reason, final_answer or "", model_used
         )
+        _run_incomplete = _run_end_reason != "completed" or provider_output_truncated
         return LoopResult(
             session_id=session_id,
             final_answer=final_answer,
             verification_note=verification_note,
             rounds=rounds,
             tool_calls=tool_trace,
-            truncated=truncation_noted,
+            truncated=_run_incomplete,
+            history_compacted=history_compacted_noted,
+            provider_output_truncated=provider_output_truncated,
+            run_incomplete=_run_incomplete,
+            projection_validator_failed=projection_validator_failed,
+            projection_rebuilt=projection_rebuilt_noted,
+            projection_cannot_fit=projection_cannot_fit_noted,
             model_used=model_used,
             tokens_in=tokens_in,
             tokens_out=tokens_out,

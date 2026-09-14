@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from llm_loop.core.injection_labels import (
@@ -150,6 +151,187 @@ def _provider_message_dict(m: Message, current_turn_ref: int | None) -> dict:
     if boundary_block:
         d["content"] = str(d.get("content") or "") + boundary_block
     return d
+
+
+@dataclass(frozen=True, slots=True)
+class ConservativeProjectionOutcome:
+    """Side-effect-free current-run projection rebuilt from durable Session truth."""
+
+    state: str
+    messages: tuple[dict, ...]
+    projected_chars: int
+    budget_chars: int
+    total_groups: int
+    retired_groups: int
+    detail: str = ""
+
+
+def build_conservative_active_run_projection(
+    *,
+    base: list[Message],
+    filtered_indices: list[int],
+    system_prompt: str,
+    current_turn_ref: int | None,
+    max_chars: int,
+) -> ConservativeProjectionOutcome:
+    """Rebuild the smallest mechanically valid current-run provider view.
+
+    The function is deliberately pure: it does not archive, mutate compact markers,
+    advance persisted anchors, emit events, or reuse a previous provider wire.  Input
+    ``base`` must already be the provider-eligible view derived from current durable
+    Session truth.  Selection is mechanical only: exact active ingress plus newest
+    complete atomic groups, retiring older complete groups from oldest to newest when
+    the request budget requires it.
+    """
+    budget = max(0, int(max_chars or 0))
+    if current_turn_ref is None or current_turn_ref not in filtered_indices:
+        return ConservativeProjectionOutcome(
+            state="active_run_ingress_unavailable",
+            messages=(),
+            projected_chars=0,
+            budget_chars=budget,
+            total_groups=0,
+            retired_groups=0,
+            detail="current_turn_ref_not_in_provider_eligible_view",
+        )
+    local_pos = filtered_indices.index(current_turn_ref)
+    if not (0 <= local_pos < len(base)):
+        return ConservativeProjectionOutcome(
+            state="active_run_ingress_unavailable",
+            messages=(),
+            projected_chars=0,
+            budget_chars=budget,
+            total_groups=0,
+            retired_groups=0,
+            detail="current_turn_ref_mapping_out_of_range",
+        )
+    active_ingress = base[local_pos]
+    if not is_active_run_ingress_message(active_ingress):
+        return ConservativeProjectionOutcome(
+            state="active_run_ingress_unavailable",
+            messages=(),
+            projected_chars=0,
+            budget_chars=budget,
+            total_groups=0,
+            retired_groups=0,
+            detail="mapped_current_turn_is_not_active_run_ingress",
+        )
+
+    current_run = list(base[local_pos:])
+    groups: list[list[Message]] = []
+    i = 0
+    while i < len(current_run):
+        message = current_run[i]
+        if message.role == "assistant" and message.tool_calls:
+            declared = [
+                str(call.get("id") or "")
+                for call in message.tool_calls
+                if isinstance(call, dict)
+            ]
+            if not declared or any(not call_id for call_id in declared) or len(set(declared)) != len(declared):
+                return ConservativeProjectionOutcome(
+                    state="current_atomic_group_invalid",
+                    messages=(),
+                    projected_chars=0,
+                    budget_chars=budget,
+                    total_groups=len(groups),
+                    retired_groups=0,
+                    detail="assistant_tool_call_ids_invalid",
+                )
+            group = [message]
+            j = i + 1
+            while j < len(current_run) and current_run[j].role == "tool":
+                group.append(current_run[j])
+                j += 1
+            receipts = [str(item.tool_call_id or "") for item in group[1:]]
+            if len(receipts) != len(declared) or set(receipts) != set(declared):
+                return ConservativeProjectionOutcome(
+                    state="current_atomic_group_incomplete",
+                    messages=(),
+                    projected_chars=0,
+                    budget_chars=budget,
+                    total_groups=len(groups) + 1,
+                    retired_groups=0,
+                    detail="assistant_tool_calls_not_exactly_closed_by_tool_receipts",
+                )
+            groups.append(group)
+            i = j
+            continue
+        if message.role == "tool":
+            return ConservativeProjectionOutcome(
+                state="current_atomic_group_invalid",
+                messages=(),
+                projected_chars=0,
+                budget_chars=budget,
+                total_groups=len(groups) + 1,
+                retired_groups=0,
+                detail="orphan_tool_result_in_current_run",
+            )
+        groups.append([message])
+        i += 1
+
+    if not groups or len(groups[0]) != 1 or groups[0][0] is not active_ingress:
+        return ConservativeProjectionOutcome(
+            state="active_run_ingress_unavailable",
+            messages=(),
+            projected_chars=0,
+            budget_chars=budget,
+            total_groups=len(groups),
+            retired_groups=0,
+            detail="active_ingress_not_first_current_run_group",
+        )
+
+    def _group_chars(group: list[Message]) -> int:
+        return sum(_wire_size(message, current_turn_ref) for message in group)
+
+    system_chars = len(system_prompt or "")
+    group_chars = [_group_chars(group) for group in groups]
+    mandatory = {0}
+    if len(groups) > 1:
+        mandatory.add(len(groups) - 1)
+    mandatory_chars = system_chars + sum(group_chars[index] for index in mandatory)
+    if budget > 0 and mandatory_chars > budget:
+        return ConservativeProjectionOutcome(
+            state="projection_cannot_fit",
+            messages=(),
+            projected_chars=mandatory_chars,
+            budget_chars=budget,
+            total_groups=len(groups),
+            retired_groups=max(0, len(groups) - len(mandatory)),
+            detail="system_plus_active_ingress_plus_latest_atomic_group_exceeds_budget",
+        )
+
+    selected = set(mandatory)
+    used = mandatory_chars
+    for index in range(len(groups) - 2, 0, -1):
+        size = group_chars[index]
+        if budget > 0 and used + size > budget:
+            # Keep one contiguous newest suffix after the exact ingress.  Once a
+            # newer complete group no longer fits, every still-older group retires;
+            # do not punch semantic-looking holes based on group size.
+            break
+        selected.add(index)
+        used += size
+
+    out: list[dict] = []
+    if system_prompt:
+        out.append({"role": "system", "content": system_prompt})
+    ingress_ref = str(current_turn_ref)
+    for index in sorted(selected):
+        for message in groups[index]:
+            d = _provider_message_dict(message, current_turn_ref)
+            if message is active_ingress:
+                d["_active_run_ingress_ref"] = ingress_ref
+            out.append(d)
+
+    return ConservativeProjectionOutcome(
+        state="rebuilt",
+        messages=tuple(out),
+        projected_chars=used,
+        budget_chars=budget,
+        total_groups=len(groups),
+        retired_groups=max(0, len(groups) - len(selected)),
+    )
 
 # EVO-20260816-380f1c2e: 压缩目标比例（裁到预算×此值，留缓冲降低断点频率）。
 # 2026-09-03 P0: 不能在模块 import 时读取 env。Web 入口会先 import factory/history，

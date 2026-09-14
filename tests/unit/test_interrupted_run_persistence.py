@@ -789,13 +789,21 @@ def test_history_compaction_flag_does_not_create_provider_truncation_index(tmp_p
         tokens_in=1,
         tokens_out=1,
         tokens_cache_hit=0,
-        truncation_noted=True,
-        provider_truncated=False,
+        history_compacted=True,
+        provider_output_truncated=False,
+        projection_validator_failed=False,
+        projection_rebuilt=False,
+        projection_cannot_fit=False,
         _run_started_at=0.0,
     )
 
     assert answer == "done"
     host.episode_store.index_truncated_run.assert_not_called()
+    run_end_payload = host._event_append.call_args.args[2]
+    assert run_end_payload["history_compacted"] is True
+    assert run_end_payload["provider_output_truncated"] is False
+    assert run_end_payload["run_incomplete"] is False
+    assert run_end_payload["truncated"] is False
 
 
 def test_llm_interrupted_event_persists_terminal_transport_and_timing(tmp_path) -> None:
