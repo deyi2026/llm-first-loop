@@ -14,6 +14,7 @@ from llm_loop.runtime.identity import (
     RuntimeIdentityError,
     check_identity,
     compute_identity,
+    enforce_identity,
 )
 
 HERE_ROOT = Path(__file__).resolve().parents[2]          # 当前测试所在仓库根（动态推导）
@@ -97,3 +98,38 @@ def test_invalid_mode_falls_back_to_shadow(monkeypatch):
     monkeypatch.setenv("RUNTIME_IDENTITY_MODE", "bogus-mode")
     monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(HERE_ROOT))
     assert compute_identity().mode == "shadow"
+
+
+
+def test_dual_root_identity_separates_source_workspace_from_runtime_cwd(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    (runtime_root / ".env").write_text("WEB_PORT=48903\n", encoding="utf-8")
+    monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(HERE_ROOT))
+    monkeypatch.setenv("LFL_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("RUNTIME_IDENTITY_MODE", "enforce")
+    monkeypatch.chdir(runtime_root)
+
+    report = enforce_identity(runtime_root)
+
+    assert report.ok is True
+    assert report.workspace_root == str(HERE_ROOT.resolve())
+    assert report.detail["runtime_root"] == str(runtime_root.resolve())
+    assert report.config_file == str((runtime_root / ".env").resolve())
+    assert report.llm_loop_module.startswith(str(HERE_ROOT / "src"))
+
+
+def test_dual_root_identity_rejects_wrong_runtime_cwd(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "runtime-root"
+    wrong_root = tmp_path / "wrong-root"
+    runtime_root.mkdir()
+    wrong_root.mkdir()
+    monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(HERE_ROOT))
+    monkeypatch.setenv("LFL_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("RUNTIME_IDENTITY_MODE", "enforce")
+    monkeypatch.chdir(wrong_root)
+
+    with pytest.raises(RuntimeIdentityError) as ei:
+        enforce_identity(wrong_root)
+    assert ei.value.report.detail["runtime_root"] == str(runtime_root.resolve())
+    assert ei.value.report.detail["cwd_match"] is False

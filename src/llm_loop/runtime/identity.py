@@ -87,6 +87,17 @@ def _find_workspace_root() -> Path:
     return p
 
 
+def _find_runtime_root(workspace: Path) -> Path:
+    """Return the operational CWD/config root, distinct from source workspace when explicit.
+
+    Normal launches keep the historical single-root contract.  Gate-E canaries may
+    load an exact clean source worktree while retaining the canonical mirror CWD/data
+    root; that split is authorized only by an explicit ``LFL_RUNTIME_ROOT``.
+    """
+    env = (os.environ.get("LFL_RUNTIME_ROOT") or "").strip()
+    return Path(env).expanduser().resolve() if env else workspace
+
+
 def _mode() -> str:
     m = (os.environ.get("RUNTIME_IDENTITY_MODE") or "shadow").strip().lower()
     return m if m in ("shadow", "enforce") else "shadow"
@@ -98,6 +109,7 @@ def compute_identity(mode: str | None = None) -> IdentityReport:
 
     mode = mode or _mode()
     workspace = _find_workspace_root()
+    runtime_root = _find_runtime_root(workspace)
     module = Path(llm_loop.__file__).resolve()
     expected_src = (workspace / "src").resolve()
     ok = expected_src == module.parent or expected_src in module.parents
@@ -112,10 +124,12 @@ def compute_identity(mode: str | None = None) -> IdentityReport:
         data_dir_explicit=bool(data_dir_raw),
     )
     data_dir = str(runtime_paths.data_dir)
-    config_candidates = [workspace / ".env", Path.home() / ".llm_loop" / ".env"]
+    config_candidates = [runtime_root / ".env", Path.home() / ".llm_loop" / ".env"]
     providers_candidates = [
         Path(data_dir) / "providers.local.json",
         Path(data_dir) / "providers.json",
+        runtime_root / "data" / "providers.local.json",
+        runtime_root / "data" / "providers.json",
         workspace / "data" / "providers.local.json",
         workspace / "data" / "providers.json",
     ]
@@ -133,6 +147,7 @@ def compute_identity(mode: str | None = None) -> IdentityReport:
         ok=ok,
         detail={
             "expected_src": str(expected_src),
+            "runtime_root": str(runtime_root),
             "pythonpath_set": bool(os.environ.get("PYTHONPATH")),
             "pythonpath": os.environ.get("PYTHONPATH", ""),
         },
@@ -154,9 +169,9 @@ def enforce_identity(workspace: Path | None = None) -> IdentityReport:
     """R1 服务入口严格守卫（2026-08-30 重写——半改工作区丢失的未提交 API）.
 
     与 check_identity 的差异：除模块归属核验（resolve(llm_loop) ∈ workspace/src）
-    外，追加 CWD 锚定核验——传入 workspace（服务启动目录，通常 Path.cwd()）必须
-    与身份计算的实际 workspace_root 一致。共享 venv/PYTHONPATH 串区（模块来自
-    别区而 CWD 在本区）会被此层捕获。
+    外，追加 CWD 锚定核验。默认单根模式下 runtime root=workspace root；显式
+    ``LFL_RUNTIME_ROOT`` 时允许 source workspace 与运行/配置 CWD 分离，但传入的
+    启动目录仍必须精确等于 runtime root。共享 venv/PYTHONPATH 串区仍会被捕获。
 
     - shadow（默认）: stderr 告警不阻断，返回 ok=False 的 report
     - enforce: 违规 raise RuntimeIdentityError（拒绝启动）
@@ -165,11 +180,15 @@ def enforce_identity(workspace: Path | None = None) -> IdentityReport:
 
     report = compute_identity()
     expected = (workspace if workspace is not None else Path.cwd()).resolve()
-    cwd_match = Path(report.workspace_root).resolve() == expected
+    runtime_root = Path(
+        str(report.detail.get("runtime_root") or report.workspace_root)
+    ).resolve()
+    cwd_match = runtime_root == expected
     if report.ok and cwd_match:
         return report
     detail = dict(report.detail)
     detail["expected_workspace"] = str(expected)
+    detail["runtime_root"] = str(runtime_root)
     detail["cwd_match"] = cwd_match
     bad = dataclasses.replace(report, ok=False, detail=detail)
     if report.mode == "enforce":

@@ -16,6 +16,21 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _source_workspace() -> Path | None:
+    """Explicit source workspace for dual-root runtime identity, else legacy CWD."""
+    raw = (os.environ.get("LFL_WORKSPACE_ROOT") or "").strip()
+    return Path(raw).expanduser().resolve() if raw else None
+
+
+def _git_command(*args: str) -> list[str]:
+    cmd = ["git"]
+    source = _source_workspace()
+    if source is not None:
+        cmd.extend(["-C", str(source)])
+    cmd.extend(args)
+    return cmd
+
+
 def _audit_dir() -> Path:
     return Path(os.environ.get("DATA_DIR", "./data")) / "audit"
 
@@ -24,7 +39,7 @@ def git_head() -> str:
     """当前代码 git HEAD（短 hash；非 git 仓库/不可用返回 no-git，如实标注）."""
     try:
         r = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+            _git_command("rev-parse", "--short", "HEAD"),
             capture_output=True,
             text=True,
             timeout=3,
@@ -38,7 +53,7 @@ def workspace_dirty() -> bool:
     """工作区是否含未提交改动（git status --short 非空=True；异常如实降级 False，不阻断）."""
     try:
         r = subprocess.run(
-            ["git", "status", "--short"],
+            _git_command("status", "--short"),
             capture_output=True,
             text=True,
             timeout=3,
@@ -52,7 +67,7 @@ def workspace_diff_summary(max_chars: int = 120) -> str:
     """工作区未提交改动摘要（git status --short 前 N 字符；无改动/异常返回空串）."""
     try:
         r = subprocess.run(
-            ["git", "status", "--short"],
+            _git_command("status", "--short"),
             capture_output=True,
             text=True,
             timeout=3,

@@ -98,3 +98,21 @@ def test_workspace_dirty_clean_and_dirty(tmp_path, monkeypatch):
     (tmp_path / "dirty.txt").write_text("x", encoding="utf-8")
     assert proc_version.workspace_dirty() is True
     assert "dirty.txt" in proc_version.workspace_diff_summary()
+
+
+
+def test_git_identity_follows_explicit_source_workspace_not_runtime_cwd(tmp_path, monkeypatch):
+    import subprocess
+    from pathlib import Path
+
+    source_root = Path(__file__).resolve().parents[2]
+    expected = subprocess.run(
+        ["git", "-C", str(source_root), "rev-parse", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(source_root))
+
+    assert proc_version.git_head() == expected

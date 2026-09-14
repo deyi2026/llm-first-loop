@@ -52,19 +52,52 @@
 
 set -euo pipefail
 
-MIRROR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$MIRROR_DIR"
+# Gate E dual-root: operational state/config may remain on the canonical mirror root
+# while an exact clean linked worktree supplies the code bytes.  With no overrides,
+# both roots collapse to SCRIPT_ROOT and historical behavior is byte-for-byte in scope.
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+_resolve_root() {
+  local raw="$1" label="$2"
+  [[ -d "$raw" ]] || { echo "[mirror] ✗ $label 不存在: $raw" >&2; return 2; }
+  (cd "$raw" && pwd -P)
+}
+RUNTIME_ROOT="$(_resolve_root "${LFL_RESTART_RUNTIME_ROOT:-$SCRIPT_ROOT}" RUNTIME_ROOT)"
+CODE_ROOT="$(_resolve_root "${LFL_RESTART_CODE_ROOT:-$SCRIPT_ROOT}" CODE_ROOT)"
+MIRROR_DIR="$RUNTIME_ROOT"  # compatibility alias: every operational path stays canonical
+DUAL_ROOT=0
+[[ "$RUNTIME_ROOT" != "$CODE_ROOT" ]] && DUAL_ROOT=1
 
-VENV_PY="$MIRROR_DIR/.venv/bin/python"
+_validate_restart_roots() {
+  [[ "$DUAL_ROOT" -eq 1 ]] || return 0
+  [[ -x "$RUNTIME_ROOT/.venv/bin/python" ]] || { echo "[mirror] ✗ dual-root 拒绝: runtime .venv 缺失" >&2; return 2; }
+  [[ -f "$RUNTIME_ROOT/.env" ]] || { echo "[mirror] ✗ dual-root 拒绝: runtime .env 缺失" >&2; return 2; }
+  [[ -d "$CODE_ROOT/src/llm_loop" ]] || { echo "[mirror] ✗ dual-root 拒绝: code src/llm_loop 缺失" >&2; return 2; }
+
+  local runtime_common code_common dirty
+  runtime_common="$(git -C "$RUNTIME_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  code_common="$(git -C "$CODE_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  [[ -n "$runtime_common" && -n "$code_common" ]] || { echo "[mirror] ✗ dual-root 拒绝: root 必须都是 Git worktree" >&2; return 2; }
+  runtime_common="$(cd "$runtime_common" 2>/dev/null && pwd -P)" || return 2
+  code_common="$(cd "$code_common" 2>/dev/null && pwd -P)" || return 2
+  [[ "$runtime_common" == "$code_common" ]] || { echo "[mirror] ✗ dual-root 拒绝: git-common-dir 不一致" >&2; return 2; }
+
+  dirty="$(git -C "$CODE_ROOT" status --porcelain --untracked-files=normal 2>/dev/null || echo __git_status_failed__)"
+  [[ -z "$dirty" ]] || { echo "[mirror] ✗ dual-root 拒绝: CODE_ROOT 必须 clean" >&2; return 2; }
+  git -C "$CODE_ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || { echo "[mirror] ✗ dual-root 拒绝: CODE_ROOT HEAD 不可解析" >&2; return 2; }
+}
+_validate_restart_roots
+cd "$RUNTIME_ROOT"
+
+VENV_PY="$RUNTIME_ROOT/.venv/bin/python"
 # R2（RUNTIME-SOT-WIRE）: 业务配置经 runtime resolver 查询（.env 权威 + 跨区污染
 # 防御——外部 shell 残留 WEB_PORT=8902 不压过镜像 .env 的 8903）。
 # 修复(2026-08-29): ①查询必须带 PYTHONPATH=镜像 src——shell 环境常残留主区 PYTHONPATH
 # （DSH harness 注入），不带则跑主区 resolver 对镜像语义输出空、exit 0；
 # ②成功但输出为空也要兜底——$(cmd || echo x) 只兜命令失败兜不了空串成功
 # （实证: WEB_PORT="" → "port 无监听进程"假停机 + 新进程绑 8903 撞旧进程 Errno 48）。
-WEB_PORT="$(PYTHONPATH="$MIRROR_DIR/src" "$VENV_PY" -m llm_loop.runtime.resolver WEB_PORT 2>/dev/null || true)"
+WEB_PORT="$(LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" "$VENV_PY" -m llm_loop.runtime.resolver WEB_PORT 2>/dev/null || true)"
 WEB_PORT="${WEB_PORT:-8903}"
-WEB_HOST="$(PYTHONPATH="$MIRROR_DIR/src" "$VENV_PY" -m llm_loop.runtime.resolver WEB_HOST 2>/dev/null || true)"
+WEB_HOST="$(LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" "$VENV_PY" -m llm_loop.runtime.resolver WEB_HOST 2>/dev/null || true)"
 WEB_HOST="${WEB_HOST:-127.0.0.1}"
 # RESTART_PORT: 冻结端口值——_start_web/_start_feishu 内部会 unset WEB_PORT/WEB_HOST
 # （防启动 shell 残留值压过 .env），但 case 分支与回执在启动之后仍需端口值
@@ -335,18 +368,20 @@ RECEIPT_JSON="$MIRROR_DIR/data/restart-receipt.json"   # 最新一次（覆盖�
 RECEIPT_LOG="$MIRROR_DIR/data/restart-receipt.log"     # 历史（追加）
 _write_receipt() {
   local action="$1" rc="$2" detail="${3:-}"
-  local head web_pid feishu_pid
-  head="$(git -C "$MIRROR_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')"
+  local head head_full web_pid feishu_pid
+  head="$(git -C "$CODE_ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
+  head_full="$(git -C "$CODE_ROOT" rev-parse HEAD 2>/dev/null || echo '?')"
   web_pid="$(_port_pid "$RESTART_PORT" || true)"
   feishu_pid="$(_feishu_pids 2>/dev/null | head -1 || true)"
-  "$VENV_PY" - "$RECEIPT_JSON" "$RECEIPT_LOG" "$action" "$rc" "$head" "$detail" "$web_pid" "$feishu_pid" <<'PY' 2>/dev/null || { _log "⚠️ 回执落盘失败（不影响服务状态）"; return 0; }
+  "$VENV_PY" - "$RECEIPT_JSON" "$RECEIPT_LOG" "$action" "$rc" "$head" "$head_full" "$detail" "$web_pid" "$feishu_pid" <<'PY' 2>/dev/null || { _log "⚠️ 回执落盘失败（不影响服务状态）"; return 0; }
 import datetime, json, sys
-jpath, lpath, action, rc, head, detail, web_pid, feishu_pid = sys.argv[1:9]
+jpath, lpath, action, rc, head, head_full, detail, web_pid, feishu_pid = sys.argv[1:10]
 rec = {
     "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
     "action": action,
     "rc": int(rc),
     "git_head": head,
+    "git_head_full": head_full,
     "web_pid": int(web_pid) if web_pid.strip().isdigit() else None,
     "feishu_pid": int(feishu_pid) if feishu_pid.strip().isdigit() else None,
     "detail": detail,
@@ -376,7 +411,7 @@ _start_web() {
   # 且覆盖 shell 残留的主区 PYTHONPATH）。
   # 修3(2026-09-09): 启动改走 _spawn_detached（可移植 setsid+execvp）——nohup+&
   # 不换进程组，宿主 shell 超时 killpg 会被整树波及（execute_command.py:108-109 实证）。
-  PYTHONPATH="$MIRROR_DIR/src" _spawn_detached data/web.log "$VENV_PY" -m llm_loop.web
+  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/web.log "$VENV_PY" -m llm_loop.web
   local pid=$!
   for _ in $(seq 1 30); do
     if curl -sf --max-time 2 "http://$check_host:$check_port/auth/status" >/dev/null 2>&1; then
@@ -397,7 +432,7 @@ _start_feishu() {
   # PYTHONPATH=镜像 src 显式注入（协议 §3，同 _start_web 注释）。
   unset WEB_PORT WEB_HOST LFL_DATA_DIR DATA_DIR
   # 修3(2026-09-09): 同 _start_web——经 _spawn_detached 脱离进程组再 exec。
-  PYTHONPATH="$MIRROR_DIR/src" _spawn_detached data/feishu.log "$VENV_PY" -m llm_loop.feishu
+  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/feishu.log "$VENV_PY" -m llm_loop.feishu
   local pid=$!
   # 校验: 预检失败会立即退出；WS 连接成功后心跳文件写 state=connected。
   # 心跳文件优先（权威；lsof 查 feishu.cn 连接有时序误报）。WS 握手含 token 获取+
@@ -434,7 +469,7 @@ sys.exit(0 if d.get('pid') == $pid and d.get('state') == 'connected' else 1)
 _knowledge_preflight() {
   _log "Knowledge health preflight..."
   if env -u DATA_DIR -u LFL_DATA_DIR -u EXPERIENCES_DIR -u METHODS_DIR -u METHOD_SEED_DIR -u SKILLS_DIR -u DOCS_DIR \
-    PYTHONPATH="$MIRROR_DIR/src" "$VENV_PY" -m llm_loop.runtime.knowledge_health --preflight --initialize-baseline; then
+    LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" "$VENV_PY" -m llm_loop.runtime.knowledge_health --preflight --initialize-baseline; then
     _log "✅ Knowledge health preflight PASS"
     return 0
   fi

@@ -7,8 +7,10 @@
 - 修4 回执落盘（_write_receipt → data/restart-receipt.{json,log}）
 - 修5 stop 判定源：web=端口∪argv 且等 PID 退出；feishu=心跳 pid（新鲜度门）∪argv
 """
+import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "restart_mirror.sh"
@@ -97,3 +99,99 @@ def test_restart_runs_knowledge_preflight_before_any_stop():
         body = body.split(";;", 1)[0]
         assert "_knowledge_preflight" in body
         assert body.index("_knowledge_preflight") < body.index(stop_token)
+
+
+# ── Gate E dual-root official canary support ──
+
+def test_dual_root_contract_keeps_runtime_state_and_code_identity_separate():
+    src = _src()
+    assert 'SCRIPT_ROOT=' in src
+    assert 'LFL_RESTART_RUNTIME_ROOT' in src
+    assert 'LFL_RESTART_CODE_ROOT' in src
+    assert 'RUNTIME_ROOT=' in src
+    assert 'CODE_ROOT=' in src
+    assert 'VENV_PY="$RUNTIME_ROOT/.venv/bin/python"' in src
+    assert 'cd "$RUNTIME_ROOT"' in src
+    assert 'PYTHONPATH="$CODE_ROOT/src"' in src
+    assert 'LFL_WORKSPACE_ROOT="$CODE_ROOT"' in src
+    assert 'LFL_RUNTIME_ROOT="$RUNTIME_ROOT"' in src
+
+
+def test_dual_root_override_fails_closed_on_dirty_or_foreign_code_root():
+    src = _src()
+    assert '_validate_restart_roots' in src
+    body = src.split('_validate_restart_roots()', 1)[1].split('\n}', 1)[0]
+    assert 'git-common-dir' in body
+    assert 'status --porcelain' in body
+    assert 'CODE_ROOT' in body and 'RUNTIME_ROOT' in body
+    assert '拒绝' in body
+
+
+def test_restart_receipt_uses_code_root_and_records_exact_sha():
+    src = _src()
+    body = src.split('_write_receipt()', 1)[1].split('\n}', 1)[0]
+    assert 'git -C "$CODE_ROOT" rev-parse --short HEAD' in body
+    assert 'git -C "$CODE_ROOT" rev-parse HEAD' in body
+    assert 'git_head_full' in body
+
+
+
+def _init_dual_root_fixture(tmp_path: Path) -> tuple[Path, Path]:
+    runtime_root = tmp_path / "runtime"
+    code_root = tmp_path / "code"
+    runtime_root.mkdir()
+    subprocess.run(["git", "init", "-q", str(runtime_root)], check=True)
+    subprocess.run(["git", "-C", str(runtime_root), "config", "user.email", "dual-root@test"], check=True)
+    subprocess.run(["git", "-C", str(runtime_root), "config", "user.name", "dual-root-test"], check=True)
+    (runtime_root / "pyproject.toml").write_text("[project]\nname='dual-root-fixture'\nversion='0'\n", encoding="utf-8")
+    (runtime_root / "src").mkdir()
+    # The git fixture only needs a tracked source entry; status must remain clean.
+    os.symlink(str(_SCRIPT.parents[1] / "src" / "llm_loop"), runtime_root / "src" / "llm_loop")
+    subprocess.run(["git", "-C", str(runtime_root), "add", "pyproject.toml", "src/llm_loop"], check=True)
+    subprocess.run(["git", "-C", str(runtime_root), "commit", "-qm", "fixture"], check=True)
+    subprocess.run(["git", "-C", str(runtime_root), "worktree", "add", "-q", "--detach", str(code_root), "HEAD"], check=True)
+
+    (runtime_root / ".venv" / "bin").mkdir(parents=True)
+    os.symlink(sys.executable, runtime_root / ".venv" / "bin" / "python")
+    (runtime_root / ".env").write_text("WEB_PORT=48903\nWEB_HOST=127.0.0.1\n", encoding="utf-8")
+    (runtime_root / "data").mkdir()
+    return runtime_root, code_root
+
+
+def _run_dual_status(runtime_root: Path, code_root: Path) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["LFL_RESTART_RUNTIME_ROOT"] = str(runtime_root)
+    env["LFL_RESTART_CODE_ROOT"] = str(code_root)
+    return subprocess.run(
+        ["bash", str(_SCRIPT), "status"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+def test_dual_root_status_accepts_clean_same_repo_and_rejects_dirty_or_foreign(tmp_path):
+    runtime_root, code_root = _init_dual_root_fixture(tmp_path)
+
+    ok = _run_dual_status(runtime_root, code_root)
+    assert ok.returncode == 0, ok.stderr + ok.stdout
+
+    (code_root / "dirty.txt").write_text("dirty", encoding="utf-8")
+    dirty = _run_dual_status(runtime_root, code_root)
+    assert dirty.returncode == 2
+    assert "CODE_ROOT 必须 clean" in dirty.stderr
+    (code_root / "dirty.txt").unlink()
+
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    subprocess.run(["git", "init", "-q", str(foreign)], check=True)
+    subprocess.run(["git", "-C", str(foreign), "config", "user.email", "foreign@test"], check=True)
+    subprocess.run(["git", "-C", str(foreign), "config", "user.name", "foreign-test"], check=True)
+    (foreign / "src").mkdir()
+    os.symlink(str(_SCRIPT.parents[1] / "src" / "llm_loop"), foreign / "src" / "llm_loop")
+    subprocess.run(["git", "-C", str(foreign), "add", "src/llm_loop"], check=True)
+    subprocess.run(["git", "-C", str(foreign), "commit", "-qm", "foreign"], check=True)
+    mismatch = _run_dual_status(runtime_root, foreign)
+    assert mismatch.returncode == 2
+    assert "git-common-dir 不一致" in mismatch.stderr
