@@ -13,6 +13,22 @@ def test_common_governance_prefix_is_deterministic_and_bounded():
     assert sha256(a.encode()).hexdigest() == sha256(b.encode()).hexdigest()
 
 
+def test_current_evidence_invariant_has_one_structured_core_anchor():
+    prompt = build_system_prompt()
+    invariant = (
+        "涉及当前代码、文件、路径、版本、运行态、配置或外部接口等可核事实时，"
+        "训练先验/历史知识只作假设，先取当前证据；无法核对就明示未核验，不猜。"
+    )
+
+    assert prompt.count("[LFL核心认知]") == 1
+    assert prompt.count(invariant) == 1
+    assert prompt.endswith(f"[LFL核心认知]\n{invariant}")
+    assert len(prompt) == 380
+    assert sha256(prompt.encode()).hexdigest() == (
+        "8934d96c3f25a6727df750e3f73e0ed73743c985b861d97f7bc3f7f2a4c60392"
+    )
+
+
 def test_common_governance_encodes_reusable_anti_drift_invariants():
     prompt = build_system_prompt()
     expected = (
