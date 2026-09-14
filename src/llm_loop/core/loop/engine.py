@@ -810,17 +810,15 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 logical_round=rounds,
             )
             _tool_schema_chars = len(_json_dumps_args({"tools": tools_param}))
-            _budget_info = self._run_state().last_budget_info or {}
+            _budget_info = dict(self._run_state().last_budget_info or {})
             _pre_tool_budget = effective_budget
             effective_budget = self._routing.reserve_tool_schema_from_history_budget(
                 effective_budget, _budget_info, _tool_schema_chars
             )
-            if effective_budget != _pre_tool_budget:
-                _budget_info = dict(_budget_info)
-                _budget_info["pre_tool_history_budget"] = _pre_tool_budget
-                _budget_info["tool_schema_reserve_chars"] = _tool_schema_chars
-                _budget_info["effective_budget"] = effective_budget
-                self._run_state().last_budget_info = _budget_info
+            _budget_info["pre_tool_history_budget"] = _pre_tool_budget
+            _budget_info["tool_schema_reserve_chars"] = _tool_schema_chars
+            _budget_info["effective_budget"] = effective_budget
+            self._run_state().last_budget_info = _budget_info
             # A final-client rejection has not sent bytes. Re-enter this same
             # logical round using current durable truth, bypassing the projection
             # that failed; never retry a saved provider wire.
@@ -1034,6 +1032,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             # HARNESS-02(2026-08-14): 每轮请求快照进事件日志（fail-open）——routing/fallback
             # 可能中途换模型，事件回放据此确知"当时用的哪个模型/挂了哪些工具/预算多少"，
             # 对 self_evaluate 溯源与回放诊断有帮助
+            _provider_visible_chars: int | None = None
             try:
                 _reasoning_contract_fn = getattr(llm_client, "reasoning_contract_state", None)
                 if callable(_reasoning_contract_fn):
@@ -1172,6 +1171,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         "input_budget": {
                             "requested_input_tokens": _budget_info.get("input_token_budget"),
                             "allowed_input_tokens": _budget_info.get("allowed_input_tokens"),
+                            "tool_schema_reserve_tokens": _budget_info.get("tool_schema_reserve_tokens"),
+                            "effective_history_budget_tokens": _budget_info.get("effective_history_budget_tokens"),
+                            "projection_chars_per_token": _budget_info.get("projection_chars_per_token"),
+                            "projection_density_source": _budget_info.get("projection_density_source"),
+                            "projection_density_samples": _budget_info.get("projection_density_samples", 0),
                             "pre_tool_history_budget_chars": _budget_info.get("pre_tool_history_budget"),
                             "tool_schema_reserve_chars": _budget_info.get("tool_schema_reserve_chars", 0),
                             "effective_history_budget_chars": effective_budget,
@@ -1196,6 +1200,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 )
             except Exception:  # noqa: BLE001 — 快照失败 fail-open（不影响主循环）
                 logger.debug("request.meta 事件写入失败（fail-open）")
+            _density_observation_eligible = True
             cap = InterruptedCapture(
                 self,
                 sess=sess,
@@ -1469,6 +1474,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         provider_call=_provider_call,
                     )
                 )
+                if _e1210_recovered:
+                    # Recovery may send a mechanically transformed payload; the pre-call
+                    # provider_visible_chars no longer describes the successful request.
+                    _density_observation_eligible = False
                 # ── M49（design §5.4）: 降级逻辑 ──
                 # 仅当当前模型为默认装配（sess.model_override is None 且 per-call override 也为 None）
                 # 才沿 fallback 链尝试；会话显式 override（含用户/AI 经 switch_model 选择）=
@@ -1489,8 +1498,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     def _fallback_request_builder(
                         fallback_label: str, fallback_registry: Any, _round: int = rounds
                     ) -> tuple[list[dict], list[dict]]:
-                        fallback_budget = self._effective_history_budget(
+                        fallback_budget_info = self._effective_history_budget_detail(
                             fallback_label, registry_snapshot=fallback_registry
+                        )
+                        fallback_budget = int(
+                            fallback_budget_info.get("effective_budget", 0) or 0
                         )
                         fallback_schemas, fallback_tools = self._project_request_tools(
                             session_id=session_id,
@@ -1499,6 +1511,16 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             session_messages=sess.messages,
                             advance_state_round=False,
                             logical_round=_round,
+                        )
+                        fallback_tool_chars = len(
+                            _json_dumps_args({"tools": fallback_tools})
+                        )
+                        fallback_budget = (
+                            self._routing.reserve_tool_schema_from_history_budget(
+                                fallback_budget,
+                                fallback_budget_info,
+                                fallback_tool_chars,
+                            )
                         )
                         fallback_messages = self._build_llm_messages(
                             sess,
@@ -1528,6 +1550,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     # model-visible Message objects. inject_msgs is all-failed facts only.
                     if fallback_resp is not None:
                         # 降级成功: 响应以新模型运行, 进入后续正常路径
+                        # Primary request chars do not describe the fallback wire.
+                        _density_observation_eligible = False
                         resp = fallback_resp
                         if fallback_ref:
                             model_used = fallback_ref  # M51: 如实标注为降级后的模型
@@ -1596,6 +1620,21 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             # Cast only communicates that control-flow
             # invariant to static analysis; it does not change runtime behavior.
             resp = cast(LLMResponse, resp)
+            if (
+                _density_observation_eligible
+                and isinstance(_provider_visible_chars, int)
+                and _provider_visible_chars > 0
+                and int(resp.prompt_tokens or 0) > 0
+            ):
+                try:
+                    self._routing._observe_projection_density(
+                        planned_label,
+                        provider_visible_chars=_provider_visible_chars,
+                        prompt_tokens=int(resp.prompt_tokens),
+                        registry_snapshot=_planning_registry,
+                    )
+                except Exception:  # noqa: BLE001 — calibration is observational/fail-open
+                    logger.debug("projection density observation failed", exc_info=True)
             provider_output_truncated = provider_output_truncated or bool(resp.truncated)
             self._tool_cycle._reachability_record_response(resp)
             self._record_action(

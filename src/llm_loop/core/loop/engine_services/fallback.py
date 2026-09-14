@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine
 
+from llm_loop.core.loop.tool_exec import _json_dumps_args
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.client import GuardRequestContext, LLMClient, LLMResponse
 from llm_loop.llm.errors import (
@@ -242,6 +243,19 @@ class FallbackService:
                         if fallback_registry is not None
                         else self._host._effective_history_budget(fallback_label)
                     )
+                    detail_fn = getattr(self._host, "_effective_history_budget_detail", None)
+                    routing = getattr(self._host, "_routing", None)
+                    if callable(detail_fn) and routing is not None:
+                        detail = (
+                            detail_fn(fallback_label, registry_snapshot=fallback_registry)
+                            if fallback_registry is not None
+                            else detail_fn(fallback_label)
+                        )
+                        fallback_budget = routing.reserve_tool_schema_from_history_budget(
+                            fallback_budget,
+                            detail,
+                            len(_json_dumps_args({"tools": candidate_tools})),
+                        )
                     (
                         cache_stable_fp,
                         cache_prefix_epoch,

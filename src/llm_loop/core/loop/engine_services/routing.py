@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any
 from llm_loop.feedback.honesty import model_unavailable_text
 from llm_loop.llm.client import LLMClient
 
+from .token_budget import ProjectionDensityTracker, reserve_history_after_tools
+
 if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine
     from llm_loop.llm.providers import ProviderRegistry
@@ -56,6 +58,7 @@ class _RouteDecision:
 class RoutingService:
     def __init__(self, host: LoopEngine) -> None:
         self._host = host
+        self._projection_density_tracker = ProjectionDensityTracker()
 
     @staticmethod
     def _registry_fingerprint(registry: Any) -> str:
@@ -320,6 +323,70 @@ class RoutingService:
             return self._default_model_label()
         return self._default_model_label(registry_snapshot=registry_snapshot)
 
+    def _density_tracker(self) -> ProjectionDensityTracker:
+        # A few narrow unit/duck hosts subclass RoutingService without calling super().__init__.
+        # Keep the calibration path mechanically available there without widening the host API.
+        tracker = getattr(self, "_projection_density_tracker", None)
+        if tracker is None:
+            tracker = ProjectionDensityTracker()
+            self._projection_density_tracker = tracker
+        return tracker
+
+    def _projection_density_surface(
+        self,
+        model_label: str,
+        *,
+        registry_snapshot: ProviderRegistry | None = None,
+    ) -> tuple[str, str, str]:
+        if "/" not in model_label:
+            return "", str(model_label or ""), "openai"
+        provider_id, model_id = model_label.split("/", 1)
+        wire_protocol = "openai"
+        registry = registry_snapshot or self._pool_registry_snapshot()
+        spec = registry.providers.get(provider_id) if registry is not None else None
+        if spec is not None:
+            model_spec = (getattr(spec, "models", None) or {}).get(model_id)
+            wire_protocol = str(
+                getattr(model_spec, "wire_protocol", "openai") or "openai"
+            )
+        return provider_id, model_id, wire_protocol
+
+    def _projection_density_decision(
+        self,
+        model_label: str,
+        *,
+        fallback_chars_per_token: float,
+        registry_snapshot: ProviderRegistry | None = None,
+    ):
+        provider_id, model_id, wire_protocol = self._projection_density_surface(
+            model_label, registry_snapshot=registry_snapshot
+        )
+        return self._density_tracker().decision(
+            provider_id,
+            model_id,
+            wire_protocol,
+            fallback_chars_per_token=fallback_chars_per_token,
+        )
+
+    def _observe_projection_density(
+        self,
+        model_label: str,
+        *,
+        provider_visible_chars: int,
+        prompt_tokens: int,
+        registry_snapshot: ProviderRegistry | None = None,
+    ) -> None:
+        provider_id, model_id, wire_protocol = self._projection_density_surface(
+            model_label, registry_snapshot=registry_snapshot
+        )
+        self._density_tracker().observe(
+            provider_id,
+            model_id,
+            wire_protocol,
+            provider_visible_chars=provider_visible_chars,
+            prompt_tokens=prompt_tokens,
+        )
+
     def _provider_chars_per_token(
         self,
         model_label: str,
@@ -386,13 +453,19 @@ class RoutingService:
             limited_by = "model_window"
         provider_budget: int | None = None
         input_token_budget: int | None = None
-        cpt = (
+        configured_cpt = (
             self._provider_chars_per_token(model_label)
             if registry_snapshot is None
             else self._provider_chars_per_token(
                 model_label, registry_snapshot=registry_snapshot
             )
         )
+        density = self._projection_density_decision(
+            model_label,
+            fallback_chars_per_token=configured_cpt,
+            registry_snapshot=registry_snapshot,
+        )
+        cpt = density.chars_per_token
         if self._host.llm_pool is not None and "/" in model_label:
             pid, _mid = model_label.split("/", 1)
             registry = registry_snapshot or self._pool_registry_snapshot()
@@ -434,6 +507,10 @@ class RoutingService:
                     "input_token_budget": input_token_budget,
                     "allowed_input_tokens": input_token_budget,
                     "model_window_budget": None,
+                    "model_window_budget_tokens": input_token_budget,
+                    "projection_chars_per_token": cpt,
+                    "projection_density_source": density.source,
+                    "projection_density_samples": density.samples,
                     "effective_budget": eff,
                     "limited_by": limited_by,
                     "model": model_label,
@@ -450,6 +527,10 @@ class RoutingService:
                 "input_token_budget": input_token_budget,
                 "allowed_input_tokens": input_token_budget,
                 "model_window_budget": None,
+                "model_window_budget_tokens": input_token_budget,
+                "projection_chars_per_token": cpt,
+                "projection_density_source": density.source,
+                "projection_density_samples": density.samples,
                 "effective_budget": eff,
                 "limited_by": limited_by,
                 "model": model_label,
@@ -487,6 +568,10 @@ class RoutingService:
             "input_token_budget": input_token_budget,
             "allowed_input_tokens": allowed_input_tokens,
             "model_window_budget": model_budget,
+            "model_window_budget_tokens": allowed_input_tokens,
+            "projection_chars_per_token": cpt,
+            "projection_density_source": density.source,
+            "projection_density_samples": density.samples,
             "effective_budget": eff,
             "limited_by": limited_by,
             "model": model_label,
@@ -498,11 +583,39 @@ class RoutingService:
     ) -> int:
         """Reserve provider-visible tool schema inside the same total input budget.
 
-        ``model_window_budget`` is the already-resolved total input capacity in chars
-        after physical context, output reserve and optional max_input_tokens. System
-        prompt is already counted by history projection; tools are not, so subtract only
-        the mechanical tool-schema bytes here. No semantic tool selection occurs.
+        ``allowed_input_tokens`` is the resolved physical/provider input authority after
+        context margin, output reserve and optional max_input_tokens. Tool schema chars are
+        mechanically converted to a conservative token reserve first; only the remaining
+        history tokens are bridged back to chars for the existing history projector. System
+        prompt is already inside that projector. No semantic tool selection occurs.
         """
+        allowed_input_tokens = budget_info.get("allowed_input_tokens")
+        projection_cpt = budget_info.get("projection_chars_per_token")
+        if (
+            isinstance(allowed_input_tokens, int)
+            and allowed_input_tokens > 0
+            and isinstance(projection_cpt, (int, float))
+            and float(projection_cpt) > 0
+        ):
+            reservation = reserve_history_after_tools(
+                allowed_input_tokens=allowed_input_tokens,
+                pre_tool_history_budget_chars=history_budget,
+                tool_schema_chars=tool_schema_chars,
+                projection_chars_per_token=float(projection_cpt),
+            )
+            budget_info["tool_schema_reserve_tokens"] = (
+                reservation.tool_schema_reserve_tokens
+            )
+            budget_info["effective_history_budget_tokens"] = (
+                reservation.history_token_budget
+            )
+            budget_info["token_projected_history_budget_chars"] = (
+                reservation.projected_history_chars
+            )
+            return reservation.effective_history_budget_chars
+
+        # Legacy/unknown-capacity compatibility: without token authority preserve the
+        # existing char-only behavior rather than inventing a token limit.
         total_input_chars = budget_info.get("model_window_budget")
         if not isinstance(total_input_chars, int) or total_input_chars <= 0:
             return history_budget

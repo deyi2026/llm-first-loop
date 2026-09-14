@@ -174,3 +174,60 @@ def test_tool_schema_is_reserved_inside_total_input_budget_without_semantic_tool
     assert RoutingService.reserve_tool_schema_from_history_budget(
         50_000, {}, 20_639
     ) == 50_000
+
+
+def test_token_authority_stays_fixed_while_observed_density_relaxes_char_bridge():
+    class _InputCapModel:
+        max_input_tokens = None
+        max_tokens = None
+        wire_protocol = "openai"
+
+    class _InputCapSpec:
+        history_budget_chars = None
+        max_input_tokens = 184_000
+        max_tokens = 16_000
+        chars_per_token = None
+        models = {"m": _InputCapModel()}
+
+    class _InputCapRegistry:
+        providers = {"cloud": _InputCapSpec()}
+
+    class _InputCapPool:
+        registry = _InputCapRegistry()
+
+    r = _DummyRouting(global_budget=None, ctx=1_000_000)
+    r.llm_pool = _InputCapPool()
+    cold = r._effective_history_budget_detail("cloud/m")
+    assert cold["allowed_input_tokens"] == 184_000
+    assert cold["projection_chars_per_token"] == 0.6
+    assert cold["projection_density_source"] == "configured_fallback"
+
+    warm = cold
+    for _ in range(24):
+        r._observe_projection_density(
+            "cloud/m",
+            provider_visible_chars=34_000,
+            prompt_tokens=10_000,
+        )
+        warm = r._effective_history_budget_detail("cloud/m")
+    assert warm["allowed_input_tokens"] == 184_000
+    assert warm["projection_chars_per_token"] > 1.0
+    assert warm["effective_budget"] > 110_400
+    assert warm["projection_density_source"] == "observed_lower_bound"
+    assert warm["projection_density_samples"] == 24
+
+
+def test_routing_tool_reserve_uses_tokens_then_char_bridge_and_records_both_units():
+    budget_info = {
+        "allowed_input_tokens": 184_000,
+        "projection_chars_per_token": 3.0,
+        "model_window_budget": 552_000,
+    }
+    effective = RoutingService.reserve_tool_schema_from_history_budget(
+        552_000, budget_info, 24_881
+    )
+    reserve_tokens = 8_294
+    assert budget_info["tool_schema_reserve_tokens"] == reserve_tokens
+    assert budget_info["effective_history_budget_tokens"] == 184_000 - reserve_tokens
+    assert budget_info["token_projected_history_budget_chars"] == 527_118
+    assert effective == 527_118
