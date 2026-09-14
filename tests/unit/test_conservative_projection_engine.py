@@ -9,6 +9,7 @@ import pytest
 
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.client import LLMClient, LLMResponse
+from llm_loop.llm.errors import LLMProjectionError
 from tests.conftest import FakeLLM
 from tests.unit.test_llm_client import _FakeStreamCtx
 
@@ -63,12 +64,36 @@ def test_engine_rebuild_uses_latest_durable_truth(build_test_engine, monkeypatch
     assert engine.session.load(sid).messages[:len(snapshots[0])] == snapshots[0]
 
 
+def test_llm_client_blocks_invalid_canonical_wire_before_transport():
+    client = LLMClient(
+        api_key="test", base_url="https://fake.local/v1", model="m",
+        provider="glm", timeout_s=1.0, guard_enabled=False,
+    )
+    client._client = mock.Mock()
+    invalid_messages = [
+        [{"role": "system", "content": "SYS"}, {"role": "alien", "content": "x"}],
+        [{"role": "system", "content": "SYS"}, {"role": "user", "content": {"text": "x"}}],
+    ]
+
+    for messages in invalid_messages:
+        with pytest.raises(LLMProjectionError):
+            client.chat(messages, [])
+
+    client._client.stream.assert_not_called()
+
+
 def test_engine_cannot_fit_never_opens_transport(build_test_engine, monkeypatch):
     engine, _ = build_test_engine([])
     client = _wire_client(engine)
     monkeypatch.setattr(engine, "_build_llm_messages", lambda *a, **k: [])
+    monkeypatch.setattr(engine, "_effective_history_budget", lambda *a, **k: 1)
     monkeypatch.setattr(
-        engine._routing, "reserve_tool_schema_from_history_budget", lambda *a: 1,
+        engine, "_effective_history_budget_detail",
+        lambda *a, **k: {
+            "effective_budget": 1,
+            "model_window_budget": 1,
+            "limited_by": "model_window",
+        },
     )
     sid = engine.session.create()
     with mock.patch.object(client, "_client") as transport:

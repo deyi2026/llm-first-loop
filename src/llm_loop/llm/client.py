@@ -180,7 +180,20 @@ def provider_structure_violations(
         if not isinstance(message, dict):
             violations.append(f"message_not_object:{index}")
             continue
-        role = str(message.get("role") or "")
+        raw_role = message.get("role")
+        role = raw_role if isinstance(raw_role, str) else ""
+        if role not in {"system", "user", "assistant", "tool"}:
+            violations.append(f"role_invalid:{index}:{role or '?'}")
+        content = message.get("content")
+        assistant_tool_only = (
+            role == "assistant"
+            and content is None
+            and bool(message.get("tool_calls"))
+        )
+        if not isinstance(content, str) and not assistant_tool_only:
+            violations.append(
+                f"content_not_string:{index}:{type(content).__name__}"
+            )
         marker = str(message.get("_active_run_ingress_ref") or "")
         if marker:
             marked.append((index, message))

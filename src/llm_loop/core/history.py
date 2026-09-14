@@ -173,6 +173,7 @@ def build_conservative_active_run_projection(
     system_prompt: str,
     current_turn_ref: int | None,
     max_chars: int,
+    hard_limit_chars: int | None = None,
 ) -> ConservativeProjectionOutcome:
     """Rebuild the smallest mechanically valid current-run provider view.
 
@@ -184,6 +185,7 @@ def build_conservative_active_run_projection(
     the request budget requires it.
     """
     budget = max(0, int(max_chars or 0))
+    hard_limit = max(0, int(hard_limit_chars or 0))
     if current_turn_ref is None or current_turn_ref not in filtered_indices:
         return ConservativeProjectionOutcome(
             state="active_run_ingress_unavailable",
@@ -290,7 +292,7 @@ def build_conservative_active_run_projection(
     if len(groups) > 1:
         mandatory.add(len(groups) - 1)
     mandatory_chars = system_chars + sum(group_chars[index] for index in mandatory)
-    if budget > 0 and mandatory_chars > budget:
+    if hard_limit > 0 and mandatory_chars > hard_limit:
         return ConservativeProjectionOutcome(
             state="projection_cannot_fit",
             messages=(),
@@ -298,7 +300,7 @@ def build_conservative_active_run_projection(
             budget_chars=budget,
             total_groups=len(groups),
             retired_groups=max(0, len(groups) - len(mandatory)),
-            detail="system_plus_active_ingress_plus_latest_atomic_group_exceeds_budget",
+            detail="system_plus_active_ingress_plus_latest_atomic_group_exceeds_window_capacity_estimate",
         )
 
     selected = set(mandatory)

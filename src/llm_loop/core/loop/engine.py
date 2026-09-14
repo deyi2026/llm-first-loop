@@ -822,6 +822,12 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 _budget_info["tool_schema_reserve_chars"] = _tool_schema_chars
                 _budget_info["effective_budget"] = effective_budget
                 self._run_state().last_budget_info = _budget_info
+            _window_capacity_estimate: int | None = None
+            _model_window_budget = _budget_info.get("model_window_budget")
+            if isinstance(_model_window_budget, int) and _model_window_budget > 0:
+                _window_capacity_estimate = max(
+                    1, _model_window_budget - max(0, int(_tool_schema_chars or 0))
+                )
             # A final-client rejection has not sent bytes. Re-enter this same
             # logical round using current durable truth, bypassing the projection
             # that failed; never retry a saved provider wire.
@@ -892,6 +898,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     _rebuild = self._build_conservative_active_run_messages(
                         sess,
                         max_chars=effective_budget,
+                        hard_limit_chars=_window_capacity_estimate,
                         model=model,
                         planned_label=planned_label,
                     )
@@ -904,6 +911,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             "trigger_violations": _preflight_violations,
                             "projected_chars": _rebuild.projected_chars,
                             "budget_chars": _rebuild.budget_chars,
+                            "window_capacity_estimate_chars": _window_capacity_estimate,
                             "total_groups": _rebuild.total_groups,
                             "retired_groups": _rebuild.retired_groups,
                             "detail": _rebuild.detail,
@@ -961,7 +969,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             )
                             _run_end_reason = "projection_cannot_fit"
                             final_answer = (
-                                "[上下文压力] 当前 run 的最小合法 provider 投影仍超过可提交预算；"
+                                "[上下文压力] 当前 run 的最小合法 provider 投影超过基于已注册模型窗口、"
+                                "输出预留与工具 schema 计算的保守容量估计；"
                                 "已停止发送，未删除当前入口、未复用旧请求、未伪造摘要。"
                             )
                         else:

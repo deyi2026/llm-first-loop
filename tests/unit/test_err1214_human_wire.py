@@ -360,6 +360,26 @@ def test_conservative_rebuild_retires_only_older_complete_groups() -> None:
     assert rebuilt_ids == {"call-2"}
 
 
+def test_conservative_rebuild_soft_history_cap_cannot_fake_window_cannot_fit() -> None:
+    current = Message(
+        role="user", content="DELEGATED", source=MessageSource.USER,
+        metadata={"ingress_delegated": True},
+    )
+    newest = _tool_group(8)
+    base = [current, *newest]
+    outcome = build_conservative_active_run_projection(
+        base=base,
+        filtered_indices=list(range(len(base))),
+        system_prompt="SYS",
+        current_turn_ref=0,
+        max_chars=1,
+        hard_limit_chars=10_000,
+    )
+
+    assert outcome.state == "rebuilt"
+    assert outcome.projected_chars > outcome.budget_chars
+
+
 def test_conservative_rebuild_reports_projection_cannot_fit_without_mutating_truth() -> None:
     current = Message(
         role="user",
@@ -379,6 +399,7 @@ def test_conservative_rebuild_reports_projection_cannot_fit_without_mutating_tru
         system_prompt="SYS",
         current_turn_ref=0,
         max_chars=100,
+        hard_limit_chars=100,
     )
 
     assert outcome.state == "projection_cannot_fit"
