@@ -763,11 +763,10 @@ class _EventsMixin:
         """M48（design §5.3）: switch_model 调用的会话 override 写入回调.
 
         直接修改 in-memory sess（引用已加载的 Session 对象）, loop 末 self.session.save(sess)
-        会自动持久化。失败由 tools_model.run_switch_model 内部捕获并如实回执。
+        会自动持久化。P6 起不再同步 shared CorrectionContext override 字段；模型侧
+        authority 来自 exact session binding。失败由 tools_model.run_switch_model 内部捕获并如实回执。
         """
         sess.model_override = value
-        if self.correction_ctx is not None:
-            self.correction_ctx.session_model_override = value
 
     def _resolve_session_binding(self, session_id: str):
         """P0-5: 按会话解析 switch_model 绑定（getter/setter），供 registry_model 经

@@ -486,8 +486,7 @@ def test_spawn_subagent_tool_missing_task(build_test_engine):
 def test_runner_restores_parent_session_id(build_test_engine):
     """P1-5(审计发现 #10): 子代理执行后会话 id 恢复为父会话（不再串台）.
 
-    子代理执行期间有效 registry._session_id 由 ContextVar 指向子会话；共享显式
-    fallback 保持父会话，不再被并发 child 临时改写。退出后 ContextVar 恢复父会话。
+    子代理执行期间 ContextVar 指向子会话；退出后精确恢复父会话。
     """
     from llm_loop.core.run_context import current_session_id
 
@@ -497,8 +496,8 @@ def test_runner_restores_parent_session_id(build_test_engine):
     )
 
     # 探针工具（在子代理受限工具集内，且测试引擎未注册 web_search）:
-    # 记录子代理执行瞬间的会话（contextvar 优先值 + 显式回退字段）
-    captured: list[tuple[str, str]] = []
+    # 记录子代理执行瞬间的 exact ContextVar 会话。
+    captured: list[str] = []
 
     class _ProbeTool:
         name = "web_search"
@@ -506,9 +505,7 @@ def test_runner_restores_parent_session_id(build_test_engine):
         parameters = {"type": "object", "properties": {}}
 
         def execute(self, **kwargs):
-            captured.append(
-                (engine.registry._session_id, engine.registry._session_id_explicit)
-            )
+            captured.append(current_session_id.get())
             return "探针结果"
 
     engine.registry.register(_ProbeTool())
@@ -522,22 +519,17 @@ def test_runner_restores_parent_session_id(build_test_engine):
     ]
 
     parent_sid = "parent_test_session"
-    engine.registry.set_session_id(parent_sid)
-    prev_ctx = current_session_id.get()
-    current_session_id.set(parent_sid)  # 模拟 engine.run 包装层（值快照 set，与引擎一致）
+    parent_token = current_session_id.set(parent_sid)
     try:
         result = runner.run(task="探针任务", depth=0)
         assert result.truncated is False
-        # 执行期间: 有效会话来自 child ContextVar；共享 fallback 保持 parent。
+        # 执行期间: 有效会话来自 child ContextVar。
         assert captured, "探针工具应被执行"
-        assert captured[0][0].startswith("subagent_"), captured
-        assert captured[0][1] == parent_sid, captured
-        # 执行结束: 恢复父会话（显式字段 + contextvar + 属性读取三者一致）
-        assert engine.registry._session_id_explicit == parent_sid
+        assert captured[0].startswith("subagent_"), captured
+        # 执行结束: exact ContextVar 恢复父会话。
         assert current_session_id.get() == parent_sid
-        assert engine.registry._session_id == parent_sid
     finally:
-        current_session_id.set(prev_ctx)
+        current_session_id.reset(parent_token)
 
 
 def test_parent_stop_cancels_child_before_post_llm_tool_execution(build_test_engine):
@@ -648,9 +640,7 @@ def test_runner_restores_parent_session_on_exception(build_test_engine):
         llm=fake, registry=engine.registry, session_store=engine.session
     )
     parent_sid = "parent_test_session"
-    engine.registry.set_session_id(parent_sid)
-    prev_ctx = current_session_id.get()
-    current_session_id.set(parent_sid)
+    parent_token = current_session_id.set(parent_sid)
 
     def _boom(*args, **kwargs):
         raise RuntimeError("子代理内部异常（测试注入）")
@@ -660,10 +650,9 @@ def test_runner_restores_parent_session_on_exception(build_test_engine):
         with pytest.raises(RuntimeError):
             runner.run(task="探针任务", depth=0)
         # 异常穿透后父会话仍被恢复（try/finally 覆盖所有返回路径）
-        assert engine.registry._session_id_explicit == parent_sid
         assert current_session_id.get() == parent_sid
     finally:
-        current_session_id.set(prev_ctx)
+        current_session_id.reset(parent_token)
 
 
 def test_runner_acceptance_injected(build_test_engine):

@@ -91,15 +91,15 @@ def _switch_reply(
     """`/model <ref>` 切换 → 复用 M48 run_switch_model + 写会话 override + 持久化.
 
     Args:
-        ctx: CorrectionContext（持有 model_pool + session_set_override）.
-        session: 当前会话（in-memory 引用; None 时不修改本身, 仅审计回执）.
+        ctx: CorrectionContext（持有 model_pool）.
+        session: 当前会话（in-memory 引用; None 时拒绝切换）.
         session_store: SessionStore（changed=True 时持久化）.
         model_ref: 目标模型引用（'provider/model' / 裸名 / 'default'）.
         audit: 审计回调（corrections._audit 闭包; None 时不审计）.
 
     设计要点:
-    - session_set_override: LoopEngine.run() 路径会注入回调; CLI/飞书 路径 ctx.session_set_override 可能为 None,
-      本函数提供 fallback: 直接修改 in-memory sess.model_override 字段 + 修正 ctx.session_model_override.
+    - getter/setter 直接捕获本次显式 Session，不经共享 CorrectionContext 传递，
+      防止并发 CLI/飞书命令替换彼此的写入目标。
     """
     if ctx.model_pool is None:
         return ModelCommandResult(
@@ -110,33 +110,32 @@ def _switch_reply(
             ),
         )
 
-    # fallback override 写入: ctx.session_set_override 为 None 时直接改 in-memory session
-    # 关键: 每次调用 freshness 闭环 (闭包捕获本回调的 session, 避免与上一个调用冲突)
-    if session is not None:
-        def _fallback_set_override(value: str | None, _sess: Session = session) -> None:
-            _sess.model_override = value
-            ctx.session_model_override = value
+    if session is None:
+        return ModelCommandResult(
+            success=False,
+            reply="[切换不可用] 当前没有明确的会话，模型切换未执行。",
+        )
 
-        # 始终覆写：避免被上一次调用捕住的旧 session 覆盖本次新 session
-        ctx.session_set_override = _fallback_set_override
+    def _set_override(value: str | None) -> None:
+        session.model_override = value
 
     # 复用 M48 run_switch_model (审计 + resolve + client_params 校验 + 写 override + 回执)
     result = run_switch_model(
         ctx,
         ctx.model_pool,
-        ctx.session_set_override,
+        _set_override,
         audit,
         {"model": model_ref, "reason": "M50 CLI/飞书 /model 指令切换"},
-        session_get_override=(lambda: session.model_override) if session is not None else None,
+        session_get_override=lambda: session.model_override,
     )
     success = result.status.value == "success"
     # changed 语义: 成功且回执包含"已切换/已清除"标记
-    changed = success and session is not None and (
+    changed = success and (
         "已切换" in result.content or "已清除" in result.content
     )
     # 持久化（run_switch_model 内部已调用 session_set_override 修改 in-memory sess；
     #  CLI/飞书 路径不经过 LoopEngine.run() → 需手动 save 以落到 JSON）
-    if changed and session is not None:
+    if changed:
         try:
             session_store.save(session)
         except Exception as exc:  # noqa: BLE001 — 持久化失败如实标注
@@ -162,7 +161,7 @@ def handle_model_command(
 
     Args:
         text: 原始消息文本.
-        ctx: CorrectionContext（model_pool + session_set_override）.
+        ctx: CorrectionContext（持有 model_pool）.
         session: 当前会话（in-memory Session 实例; 无会话时传 None）.
         session_store: SessionStore（持久化用）.
         audit: 审计回调（corrections._audit 闭包; None 时不审计）.

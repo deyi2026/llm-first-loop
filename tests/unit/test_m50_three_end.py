@@ -123,8 +123,6 @@ def test_cli_startup_model_writes_session_override(tmp_path):
     engine = mock.Mock()
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
-    engine.correction_ctx.session_set_override = None  # 模拟 CLI 启动路径（loop.run 未注入）
-    engine.correction_ctx.session_model_override = None
 
     sid = session_store.create()
     sess = session_store.load(sid)
@@ -149,8 +147,6 @@ def test_cli_startup_model_invalid_does_not_change(tmp_path):
     engine = mock.Mock()
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
-    engine.correction_ctx.session_set_override = None
-    engine.correction_ctx.session_model_override = None
 
     sid = session_store.create()
     sess = session_store.load(sid)
@@ -172,8 +168,6 @@ def test_cli_startup_model_default_clears_override(tmp_path):
     engine = mock.Mock()
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
-    engine.correction_ctx.session_set_override = None
-    engine.correction_ctx.session_model_override = None
 
     sid = session_store.create()
     sess = session_store.load(sid)
@@ -218,8 +212,6 @@ def test_cli_model_command_listing(tmp_path, capsys):
     engine = mock.Mock()
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
-    engine.correction_ctx.session_set_override = None
-    engine.correction_ctx.session_model_override = None
     engine.session = session_store
     engine._cli_startup_model = ""
     engine.run = mock.Mock(
@@ -247,8 +239,6 @@ def test_cli_model_command_switch(tmp_path, capsys):
     engine = mock.Mock()
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
-    engine.correction_ctx.session_set_override = None
-    engine.correction_ctx.session_model_override = None
     engine.session = session_store
     engine._cli_startup_model = ""  # 明确不启动 --model 参数
     engine.run = mock.Mock(
@@ -277,8 +267,6 @@ def test_cli_model_command_default(tmp_path, capsys):
     engine = mock.Mock()
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
-    engine.correction_ctx.session_set_override = None
-    engine.correction_ctx.session_model_override = None
     engine.session = session_store
     engine._cli_startup_model = ""
     engine.run = mock.Mock(
@@ -309,8 +297,6 @@ def test_cli_model_command_unknown_does_not_change(tmp_path, capsys):
     engine = mock.Mock()
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
-    engine.correction_ctx.session_set_override = None
-    engine.correction_ctx.session_model_override = None
     engine.session = session_store
     engine._cli_startup_model = ""
     engine.run = mock.Mock()
@@ -365,8 +351,6 @@ def _make_feishu_engine(tmp_path, settings):
     engine = mock.Mock()
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
-    engine.correction_ctx.session_set_override = None
-    engine.correction_ctx.session_model_override = None
     engine.session = session_store
     engine.run = mock.Mock(
         return_value=mock.Mock(
@@ -453,8 +437,6 @@ def test_three_ends_share_session_override(tmp_path):
     engine = mock.Mock()
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
-    engine.correction_ctx.session_set_override = None
-    engine.correction_ctx.session_model_override = None
 
     sid = session_store.create()
     _apply_cli_startup_model(engine, session_store, sid, "minimax/MiniMax-M3")
@@ -477,8 +459,6 @@ def test_three_ends_share_session_override(tmp_path):
     feishu_engine.session = session_store2
     feishu_engine.correction_ctx = mock.Mock()
     feishu_engine.correction_ctx.model_pool = pool
-    feishu_engine.correction_ctx.session_set_override = None
-    feishu_engine.correction_ctx.session_model_override = "minimax/MiniMax-M3"
     feishu_engine.llm_pool = pool
     feishu_engine.run = mock.Mock(
         return_value=mock.Mock(
@@ -711,8 +691,6 @@ def test_handle_model_command_non_model_text_returns_none(tmp_path):
     pool = _make_pool(settings, _FakeLLM())
     ctx = mock.Mock()
     ctx.model_pool = pool
-    ctx.session_set_override = None
-    ctx.session_model_override = None
 
     result = handle_model_command("hello world", ctx, None, session_store)
     assert result is None
@@ -723,8 +701,6 @@ def test_handle_model_command_without_model_pool(tmp_path):
     session_store = SessionStore(str(tmp_path / "sessions"))
     ctx = mock.Mock()
     ctx.model_pool = None
-    ctx.session_set_override = None
-    ctx.session_model_override = None
 
     result = handle_model_command("/model", ctx, None, session_store)
     assert result is not None

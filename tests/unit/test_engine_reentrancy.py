@@ -56,17 +56,17 @@ def test_run_state_buckets_isolated_by_contextvar(build_test_engine):
         current_session_id.reset(token)
 
 
-# ── 2. registry._session_id：contextvar 优先 + 只读池传播 ──
-def test_registry_session_id_contextvar_precedence():
+# ── 2. registry ownership：只认 ContextVar + 只读池传播 ──
+def test_registry_shared_session_id_fallback_retired():
     reg = ToolRegistry()
-    reg.set_session_id("explicit-sid")
-    assert reg._session_id == "explicit-sid"
+    assert not hasattr(reg, "set_session_id")
+    assert not hasattr(reg, "_session_id_explicit")
+    assert not hasattr(type(reg), "_session_id")
     token = current_session_id.set("ctx-sid")
     try:
-        assert reg._session_id == "ctx-sid"
+        assert current_session_id.get() == "ctx-sid"
     finally:
         current_session_id.reset(token)
-    assert reg._session_id == "explicit-sid"
 
 
 class _SessionProbeTool:

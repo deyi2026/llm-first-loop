@@ -73,7 +73,6 @@ def test_change_log_hook_missing_context_does_not_borrow_registry_last_session(
     from llm_loop.factory import build_engine
 
     engine = build_engine(_settings(tmp_path))  # type: ignore[arg-type]
-    engine.registry.set_session_id("stale-session-B")
     captured: list[str] = []
     monkeypatch.setattr(
         "llm_loop.introspection.proc_version.record_change_log",

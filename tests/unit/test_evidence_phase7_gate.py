@@ -47,6 +47,7 @@ def test_phase7_gate_map_exactly_covers_frozen_oracle():
 
 
 def test_r0_09_provider_projection_switch_keeps_exact_evidence_set(tmp_path):
+    from llm_loop.core.run_context import current_session_id
     from llm_loop.factory import build_engine
 
     settings = Settings(
@@ -61,12 +62,15 @@ def test_r0_09_provider_projection_switch_keeps_exact_evidence_set(tmp_path):
     )
     engine = build_engine(settings)
     sid = engine.session.create()
-    engine.registry.set_session_id(sid)
     evidence_file = tmp_path / "provider-neutral.txt"
     evidence_file.write_text("provider-neutral source evidence", encoding="utf-8")
-    result = engine.registry.execute(
-        ToolCall(id="r0-9-tool", name="read_file", arguments={"path": str(evidence_file)})
-    )
+    token = current_session_id.set(sid)
+    try:
+        result = engine.registry.execute(
+            ToolCall(id="r0-9-tool", name="read_file", arguments={"path": str(evidence_file)})
+        )
+    finally:
+        current_session_id.reset(token)
     assert result.evidence_ref
 
     sess = engine.session.load(sid)
@@ -107,8 +111,12 @@ def test_r0_09_provider_projection_switch_keeps_exact_evidence_set(tmp_path):
     assert refs_before == refs_deepseek == refs_minimax == refs_deepseek_again
     assert blobs_before == blobs_after
     assert _manifest(deepseek) == _manifest(minimax) == _manifest(deepseek_again) == ""
-    md = engine.registry.evidence_recovery_manifest(limit=100)
-    md2 = engine.registry.evidence_recovery_manifest(limit=100)
+    token = current_session_id.set(sid)
+    try:
+        md = engine.registry.evidence_recovery_manifest(limit=100)
+        md2 = engine.registry.evidence_recovery_manifest(limit=100)
+    finally:
+        current_session_id.reset(token)
     assert md and _manifest_refs(md) == _manifest_refs(md2) == refs_before
 
 

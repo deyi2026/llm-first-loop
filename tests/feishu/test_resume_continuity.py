@@ -154,6 +154,17 @@ def test_anchor_reader_none_without_goal(build_test_engine):
     assert ResumeAnchorReader().read_anchor(sid, audit) is None
 
 
+def test_anchor_reader_never_borrows_other_session_goal(build_test_engine):
+    """P6: preferred session is an ownership boundary, not a global fallback hint."""
+    engine, fake = build_test_engine([])
+    requested_sid = engine.session.create()
+    other_sid = engine.session.create()
+    _seed(engine, other_sid)
+    audit = str(Path(engine.settings.data_dir) / "audit")
+
+    assert ResumeAnchorReader().read_anchor(requested_sid, audit) is None
+
+
 # ── 现场预检 repair_status（tasks 5.2/6.3-1，ADR-6、FTR-CONT-1）──
 
 

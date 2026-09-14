@@ -3,8 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from llm_loop.config import Settings
 from llm_loop.core.message import Message, MessageSource, ToolCall
+from llm_loop.core.run_context import current_session_id
 from llm_loop.memory.evidence import (
     BlobStore,
     Coverage,
@@ -36,6 +39,16 @@ def _settings(tmp_path: Path, *, mode: str = "enforce", manifest_limit: int = 8)
     )
 
 
+@pytest.fixture(autouse=True)
+def _reset_session_context():
+    """Direct-registry tests bind exact ownership without leaking across test cases."""
+    token = current_session_id.set("")
+    try:
+        yield
+    finally:
+        current_session_id.reset(token)
+
+
 def _manifest(messages: list[dict]) -> str:
     hits = [
         str(row.get("content") or "")
@@ -56,7 +69,7 @@ def _build_engine(tmp_path: Path, *, mode: str = "enforce", manifest_limit: int 
 
 
 def _capture_tool_evidence(engine, sid: str, path: Path) -> str:
-    engine.registry.set_session_id(sid)
+    current_session_id.set(sid)
     result = engine.registry.execute(
         ToolCall(id="tool-evidence-1", name="read_file", arguments={"path": str(path)})
     )
@@ -112,7 +125,7 @@ def test_manifest_is_tail_regenerated_and_provider_neutral(tmp_path):
 def test_shadow_keeps_zero_prompt_schema_change_and_no_manifest(tmp_path):
     _, engine = _build_engine(tmp_path, mode="shadow")
     sid = engine.session.create()
-    engine.registry.set_session_id(sid)
+    current_session_id.set(sid)
     path = tmp_path / "shadow.txt"
     path.write_text("shadow evidence", encoding="utf-8")
     engine.registry.execute(ToolCall(id="shadow-1", name="read_file", arguments={"path": str(path)}))
@@ -178,7 +191,7 @@ def test_provider_switch_does_not_duplicate_already_captured_compressed_history(
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path)
     sid = engine.session.create()
-    engine.registry.set_session_id(sid)
+    current_session_id.set(sid)
     sess = engine.session.load(sid)
     for i in range(14):
         sess.messages.append(
@@ -255,7 +268,7 @@ def test_canonical_root_cause_recovery_chain_reads_source_once(tmp_path, monkeyp
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path, manifest_limit=8)
     sid = engine.session.create()
-    engine.registry.set_session_id(sid)
+    current_session_id.set(sid)
     sess = engine.session.load(sid)
 
     target = tmp_path / "canonical-large.txt"
@@ -384,7 +397,7 @@ def test_compressed_tool_message_reuses_original_evidence_ref(tmp_path, monkeypa
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path)
     sid = engine.session.create()
-    engine.registry.set_session_id(sid)
+    current_session_id.set(sid)
     sess = engine.session.load(sid)
     path = tmp_path / "reuse.txt"
     path.write_text("TOOL_REF_REUSE " + ("R" * 7000), encoding="utf-8")
@@ -442,7 +455,7 @@ def test_enforce_compression_fails_closed_when_history_evidence_capture_fails(tm
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path)
     sid = engine.session.create()
-    engine.registry.set_session_id(sid)
+    current_session_id.set(sid)
     sess = engine.session.load(sid)
     for i in range(12):
         sess.messages.append(
@@ -471,7 +484,7 @@ def test_context_compressed_event_carries_evidence_ref(tmp_path, monkeypatch):
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     settings, engine = _build_engine(tmp_path)
     sid = engine.session.create()
-    engine.registry.set_session_id(sid)
+    current_session_id.set(sid)
     sess = engine.session.load(sid)
     for i in range(14):
         sess.messages.append(
@@ -496,7 +509,7 @@ def test_context_compressed_event_carries_evidence_ref(tmp_path, monkeypatch):
 def test_manifest_render_failure_does_not_remove_recovery_tools(tmp_path):
     _, engine = _build_engine(tmp_path)
     sid = engine.session.create()
-    engine.registry.set_session_id(sid)
+    current_session_id.set(sid)
     sess = engine.session.load(sid)
 
     def broken_manifest(_limit):
@@ -512,7 +525,7 @@ def test_manifest_render_failure_does_not_remove_recovery_tools(tmp_path):
 def test_empty_ledger_does_not_inject_empty_manifest(tmp_path):
     _, engine = _build_engine(tmp_path)
     sid = engine.session.create()
-    engine.registry.set_session_id(sid)
+    current_session_id.set(sid)
     sess = engine.session.load(sid)
     out = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
     assert _manifest(out) == ""
@@ -521,7 +534,7 @@ def test_empty_ledger_does_not_inject_empty_manifest(tmp_path):
 def test_evidence_ledger_change_does_not_change_prompt_projection(tmp_path):
     _, engine = _build_engine(tmp_path)
     sid = engine.session.create()
-    engine.registry.set_session_id(sid)
+    current_session_id.set(sid)
     sess = engine.session.load(sid)
     engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
     assert engine._projection_guard_state == "miss"
@@ -555,7 +568,7 @@ def test_identical_history_text_at_different_times_stays_distinct_without_msg_se
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path)
     sid = engine.session.create()
-    engine.registry.set_session_id(sid)
+    current_session_id.set(sid)
     sess = engine.session.load(sid)
     first = Message(role="user", content="IDENTICAL-HISTORY " + ("I" * 900), source=MessageSource.USER)
     second = Message(role="user", content=first.content, source=MessageSource.USER)

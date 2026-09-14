@@ -80,15 +80,19 @@ def test_summarizer_sync_backfill(tmp_path):
 
 def test_registry_oversize_archives(tmp_path):
     """T22/T35: 超长工具结果另存压缩档案（信息不丢失）."""
+    from llm_loop.core.run_context import current_session_id
     from llm_loop.memory.archive import ArchiveStore
 
     arch = ArchiveStore(tmp_path / "archives")
     reg = ToolRegistry(max_output_chars=50, archive_store=arch)
-    reg.set_session_id("s1")
     reg.register(ReadFileTool())
     f = tmp_path / "big.txt"
     f.write_text("内容" * 100, encoding="utf-8")
-    result = reg.execute(ToolCall(id="c1", name="read_file", arguments={"path": str(f)}))
+    token = current_session_id.set("s1")
+    try:
+        result = reg.execute(ToolCall(id="c1", name="read_file", arguments={"path": str(f)}))
+    finally:
+        current_session_id.reset(token)
     assert result.status == ToolResultStatus.SUCCESS
     assert "已另存" in result.content  # 截断标注含另存指引
     # 完整结果已在档案中（可检索找回）

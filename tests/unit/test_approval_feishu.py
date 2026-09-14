@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from llm_loop.feishu.approval import (
     approve,
@@ -129,9 +130,13 @@ def test_reject_executed_idempotent(tmp_path):
 
 # ── handle_approval 完整入口 ──
 class _Engine:
-    def __init__(self, store):
-        self.evolution_store = store
-        self.correction_ctx = type("C", (), {"evolve_local_exec": 0, "evolve_exec_whitelist": ""})()
+    def __init__(self, store, *, legacy_only=False):
+        self.evolution_store = store if legacy_only else None
+        self.correction_ctx = SimpleNamespace(
+            evolution_store=None if legacy_only else store,
+            evolve_local_exec=0,
+            evolve_exec_whitelist="",
+        )
         self.settings = type("S", (), {"audit_dir": ""})()
 
 
@@ -166,11 +171,12 @@ def test_handle_list(tmp_path, monkeypatch):
 
 def test_handle_accept_approves_and_replies(tmp_path, monkeypatch):
     eng, replies, reply_fn = _handler_env(tmp_path, monkeypatch)
-    sid = eng.evolution_store.list()[0]["id"]
+    store = eng.correction_ctx.evolution_store
+    sid = store.list()[0]["id"]
     msg = _FeishuMsg("ou_owner123")
     assert handle_approval(eng, msg, f"批准 {sid}", reply_fn) is True
     assert len(replies) == 1 and "已批准" in replies[0][1]
-    assert eng.evolution_store.list()[0]["status"] == "accepted"
+    assert store.list()[0]["status"] == "accepted"
 
 
 def test_handle_reject_denied_unauthorized(tmp_path, monkeypatch):
@@ -178,6 +184,25 @@ def test_handle_reject_denied_unauthorized(tmp_path, monkeypatch):
     msg = _FeishuMsg("ou_stranger")  # 非白名单
     assert handle_approval(eng, msg, "审批列表", reply_fn) is True
     assert len(replies) == 1 and "无权" in replies[0][1]
+
+
+def test_handle_approval_does_not_use_legacy_engine_store(tmp_path, monkeypatch):
+    """P6: authenticated approval still must use the production store authority path."""
+    smap = tmp_path / "feishu_session_map.json"
+    smap.write_text(json.dumps({"p:ou_owner123": "sid1"}), encoding="utf-8")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    store = _store(tmp_path)
+    engine = _Engine(store, legacy_only=True)
+    replies = []
+
+    def reply_fn(rid, text, rtype):
+        replies.append((rid, text, rtype))
+
+    msg = _FeishuMsg("ou_owner123")
+    assert handle_approval(engine, msg, "审批列表", reply_fn) is True
+    assert len(replies) == 1
+    assert "演进功能未启用" in replies[0][1]
+    assert store.list()[0]["status"] == "pending_review"
 
 
 def test_handle_non_approval_falls_through(tmp_path, monkeypatch):

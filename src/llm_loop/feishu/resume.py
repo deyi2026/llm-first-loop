@@ -73,7 +73,10 @@ class ResumeAnchorReader:
         from llm_loop.introspection.goal import GoalStore, GoalStoreCorruptionError
 
         try:
-            return GoalStore(audit_dir).get(prefer_session_id=session_id)
+            return GoalStore(audit_dir).get(
+                prefer_session_id=session_id,
+                strict_session=True,
+            )
         except GoalStoreCorruptionError as exc:
             logger.warning("续聊锚点读取：Goal 存储损坏，降级 none: %s", exc)
             return None

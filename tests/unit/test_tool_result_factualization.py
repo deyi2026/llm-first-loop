@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_loop.core.message import ToolCall, ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_session_id
 from llm_loop.memory.evidence import (
     BlobStore,
     EvidenceCapture,
@@ -161,21 +162,24 @@ class TestCG1CG4GuidanceExit:
             max_output_chars=9000,
             archive_store=ArchiveStore(tmp_path / "archive"),
         )
-        registry.set_session_id("guidance-session")
         registry.register(_EchoTool())
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
-        result_off = registry.execute(
-            ToolCall(id="t4", name="echo", arguments={"text": "x" * 12000})
-        )
-        assert "行动指引" not in result_off.content
-        assert "截断高亮" not in result_off.content
-        assert "RULE-AI-12" not in result_off.content
+        token = current_session_id.set("guidance-session")
+        try:
+            monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
+            result_off = registry.execute(
+                ToolCall(id="t4", name="echo", arguments={"text": "x" * 12000})
+            )
+            assert "行动指引" not in result_off.content
+            assert "截断高亮" not in result_off.content
+            assert "RULE-AI-12" not in result_off.content
 
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")  # 反例自证
-        result_on = registry.execute(
-            ToolCall(id="t5", name="echo", arguments={"text": "y" * 12000})
-        )
-        assert "行动指引" in result_on.content
+            monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")  # 反例自证
+            result_on = registry.execute(
+                ToolCall(id="t5", name="echo", arguments={"text": "y" * 12000})
+            )
+            assert "行动指引" in result_on.content
+        finally:
+            current_session_id.reset(token)
 
     def test_shadow_mode_projects_and_observes(self, monkeypatch, caplog):
         result = ToolResult(

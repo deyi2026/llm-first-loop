@@ -142,8 +142,7 @@ def test_model_catalog_includes_directory_and_current() -> None:
     settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
     pool = _build_pool(settings)
     ctx = _build_ctx(pool)
-    ctx.session_model_override = None  # 默认装配
-    result = run_model_catalog(ctx, pool, ctx.session_model_override)
+    result = run_model_catalog(ctx, pool, None)
     assert result.status.value == "success"
     content = result.content
     assert "deepseek" in content
@@ -167,8 +166,7 @@ def test_model_catalog_marks_current_with_override() -> None:
     settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
     pool = _build_pool(settings)
     ctx = _build_ctx(pool)
-    ctx.session_model_override = "local/qwen3.6-27b"
-    result = run_model_catalog(ctx, pool, ctx.session_model_override)
+    result = run_model_catalog(ctx, pool, "local/qwen3.6-27b")
     assert result.status.value == "success"
     assert "会话覆盖" in result.content
     assert "local/qwen3.6-27b" in result.content
@@ -212,7 +210,7 @@ def test_model_catalog_degraded_annotation() -> None:
     # load_registry fail-soft → degraded=True
     assert pool.registry.degraded is True
     ctx = _build_ctx(pool)
-    result = run_model_catalog(ctx, pool, ctx.session_model_override)
+    result = run_model_catalog(ctx, pool, None)
     assert result.status.value == "success"
     assert "[degraded]" in result.content
 
@@ -225,7 +223,7 @@ def test_model_catalog_zero_registry_singleton_provider(tmp_path) -> None:
     # L0 合成: 仅 deepseek 单 provider
     assert set(pool.registry.providers) == {"deepseek"}
     ctx = _build_ctx(pool)
-    result = run_model_catalog(ctx, pool, ctx.session_model_override)
+    result = run_model_catalog(ctx, pool, None)
     assert result.status.value == "success"
     assert "[deepseek]" in result.content
     assert "deepseek-v4-flash" in result.content
@@ -253,7 +251,7 @@ def test_switch_model_active_binding_uses_session_getter_for_from_label(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
     pool = _build_pool(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
     ctx = _build_ctx(pool)
-    ctx.session_model_override = "deepseek/deepseek-v4-pro"  # 模拟另一session最后写入的共享残值
+    vars(ctx)["session_model_override"] = "deepseek/deepseek-v4-pro"  # stale residue poison
     current = {"value": "local/qwen3.6-27b"}
     ctx.session_binding_resolver = lambda _sid: (
         lambda: current["value"],
@@ -283,8 +281,8 @@ def test_switch_model_missing_context_does_not_use_shared_session_setter(
     pool = _build_pool(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
     ctx = _build_ctx(pool)
     stale_writes: list[str | None] = []
-    ctx.session_model_override = "deepseek/deepseek-v4-pro"
-    ctx.session_set_override = stale_writes.append
+    vars(ctx)["session_model_override"] = "deepseek/deepseek-v4-pro"
+    vars(ctx)["session_set_override"] = stale_writes.append
     ctx.session_binding_resolver = lambda _sid: pytest.fail(
         "resolver must not be called without an exact current session"
     )
@@ -310,8 +308,8 @@ def test_switch_model_broken_exact_getter_does_not_fallback_to_shared_override(
     pool = _build_pool(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
     ctx = _build_ctx(pool)
     stale_writes: list[str | None] = []
-    ctx.session_model_override = "deepseek/deepseek-v4-pro"
-    ctx.session_set_override = stale_writes.append
+    vars(ctx)["session_model_override"] = "deepseek/deepseek-v4-pro"
+    vars(ctx)["session_set_override"] = stale_writes.append
 
     def _broken_binding(_sid: str):
         def _get() -> str | None:
@@ -351,7 +349,6 @@ def test_switch_model_success_writes_session_and_audit(tmp_path, monkeypatch: py
     audit_dir.mkdir(exist_ok=True)
     reg = _build_corrections(_build_ctx(pool), audit_dir)
     ctx = reg.ctx
-    ctx.session_model_override = sess.model_override
 
     captured = {"value": None}
 
@@ -359,15 +356,14 @@ def test_switch_model_success_writes_session_and_audit(tmp_path, monkeypatch: py
         captured["value"] = value
         sess.model_override = value
 
-    ctx.session_set_override = _set_override
-
     # 执行: 切到 deepseek-v4-pro（同 provider, 走 resolve → 缓存复用）
     result = run_switch_model(
         ctx,
         pool,
-        ctx.session_set_override,
+        _set_override,
         reg._audit,  # noqa: SLF001
         {"model": "deepseek-v4-pro", "reason": "需要更强推理"},
+        session_get_override=lambda: sess.model_override,
     )
     assert result.status.value == "success"
     # 回执文案对齐 design §5.3
@@ -407,14 +403,14 @@ def test_switch_model_cross_provider_thinking_note(tmp_path, monkeypatch: pytest
     def _set_override(value):
         pass
 
-    ctx.session_set_override = _set_override
     # 切到 local/qwen3.6-27b（thinking=True, 但要测反向用例）
     result = run_switch_model(
         ctx,
         pool,
-        ctx.session_set_override,
+        _set_override,
         reg._audit,  # noqa: SLF001
         {"model": "local/qwen3.6-27b", "reason": "本地兜底"},
+        session_get_override=lambda: None,
     )
     assert result.status.value == "success"
     assert "local/qwen3.6-27b" in result.content
@@ -476,7 +472,7 @@ def test_switch_model_uses_one_registry_snapshot_and_reports_always_on_effort(
         return resolved
 
     monkeypatch.setattr(pool, "get_resolved_client", resolve_then_reload)
-    holder = {"value": None}
+    holder: dict[str, str | None] = {"value": None}
 
     result = run_switch_model(
         _build_ctx(pool),
@@ -484,6 +480,7 @@ def test_switch_model_uses_one_registry_snapshot_and_reports_always_on_effort(
         lambda value: holder.__setitem__("value", value),
         None,
         {"model": "glm/glm-5.3", "reason": "snapshot audit"},
+        session_get_override=lambda: holder["value"],
     )
 
     assert result.status.value == "success"
@@ -511,21 +508,19 @@ def test_switch_model_unknown_model_truthful(tmp_path, monkeypatch: pytest.Monke
     ctx = reg.ctx
 
     sess_model_override_holder = {"value": "deepseek/deepseek-v4-pro"}
-    ctx.session_model_override = sess_model_override_holder["value"]
 
     def _set_override(value):
         # 失败路径不应被调用
         sess_model_override_holder["value"] = value
         raise AssertionError("set_override should not be called on failure")
 
-    ctx.session_set_override = _set_override
-
     result = run_switch_model(
         ctx,
         pool,
-        ctx.session_set_override,
+        _set_override,
         reg._audit,  # noqa: SLF001
         {"model": "nonexistent-model", "reason": "测试未知"},
+        session_get_override=lambda: sess_model_override_holder["value"],
     )
     assert result.status.value == "failure"
     assert "[状态: 失败]" in result.content
@@ -551,16 +546,16 @@ def test_switch_model_ambiguous_bare_name_truthful(tmp_path, monkeypatch: pytest
     audit_dir.mkdir(exist_ok=True)
     reg = _build_corrections(_build_ctx(pool), audit_dir)
     ctx = reg.ctx
-    ctx.session_model_override = None
-
-    ctx.session_set_override = lambda v: pytest.fail("set_override should not be called")
+    def setter(_value):
+        pytest.fail("set_override should not be called")
 
     result = run_switch_model(
         ctx,
         pool,
-        ctx.session_set_override,
+        setter,
         reg._audit,  # noqa: SLF001
         {"model": "shared", "reason": "歧义测试"},
+        session_get_override=lambda: None,
     )
     assert result.status.value == "failure"
     assert "[状态: 失败]" in result.content
@@ -577,21 +572,19 @@ def test_switch_model_missing_key_truthful(tmp_path, monkeypatch: pytest.MonkeyP
     audit_dir.mkdir(exist_ok=True)
     reg = _build_corrections(_build_ctx(pool), audit_dir)
     ctx = reg.ctx
-    ctx.session_model_override = None
 
     override_calls = []
 
     def _set_override(value):
         override_calls.append(value)
 
-    ctx.session_set_override = _set_override
-
     result = run_switch_model(
         ctx,
         pool,
-        ctx.session_set_override,
+        _set_override,
         reg._audit,  # noqa: SLF001
         {"model": "deepseek-v4-pro", "reason": "缺 key 测试"},
+        session_get_override=lambda: None,
     )
     assert result.status.value == "failure"
     assert "DEEPSEEK_API_KEY" in result.content
@@ -636,19 +629,17 @@ def test_switch_model_default_clears_override(tmp_path, monkeypatch: pytest.Monk
     audit_dir.mkdir(exist_ok=True)
     reg = _build_corrections(_build_ctx(pool), audit_dir)
     ctx = reg.ctx
-    ctx.session_model_override = sess.model_override
 
     def _set_override(value):
         sess.model_override = value
 
-    ctx.session_set_override = _set_override
-
     result = run_switch_model(
         ctx,
         pool,
-        ctx.session_set_override,
+        _set_override,
         reg._audit,  # noqa: SLF001
         {"model": "default", "reason": "回退默认"},
+        session_get_override=lambda: sess.model_override,
     )
     assert result.status.value == "success"
     assert "[状态: 成功]" in result.content
@@ -668,22 +659,20 @@ def test_switch_model_default_case_insensitive(tmp_path) -> None:
     pool = _build_pool(settings)
     reg = _build_corrections(_build_ctx(pool), tmp_path / "audit")
     ctx = reg.ctx
-    ctx.session_model_override = None
 
     override_calls = []
 
     def _set_override(value):
         override_calls.append(value)
 
-    ctx.session_set_override = _set_override
-
     for variant in ("default", "DEFAULT", "Default"):
         result = run_switch_model(
             ctx,
             pool,
-            ctx.session_set_override,
+            _set_override,
             reg._audit,  # noqa: SLF001
             {"model": variant, "reason": "case test"},
+            session_get_override=lambda: None,
         )
         assert result.status.value == "success"
     assert override_calls == [None, None, None]
@@ -899,15 +888,13 @@ def test_end_to_end_catalog_then_switch_then_persist(tmp_path, monkeypatch: pyte
     def _set_override(value):
         sess.model_override = value
 
-    ctx.session_model_override = sess.model_override
-    ctx.session_set_override = _set_override
-
     switch = run_switch_model(
         ctx,
         pool,
-        ctx.session_set_override,
+        _set_override,
         reg._audit,  # noqa: SLF001
         {"model": "deepseek-v4-pro", "reason": "e2e 测试"},
+        session_get_override=lambda: sess.model_override,
     )
     assert switch.status.value == "success"
     # 持久化
@@ -945,8 +932,6 @@ def test_no_api_key_leaked_in_tool_responses(tmp_path, monkeypatch: pytest.Monke
     def _set_override(value):
         pass
 
-    ctx.session_set_override = _set_override
-
     # catalog
     cat = run_model_catalog(ctx, pool, None)
     assert "supersecret-xyz-789" not in cat.content
@@ -955,9 +940,10 @@ def test_no_api_key_leaked_in_tool_responses(tmp_path, monkeypatch: pytest.Monke
     sw = run_switch_model(
         ctx,
         pool,
-        ctx.session_set_override,
+        _set_override,
         reg._audit,  # noqa: SLF001
         {"model": "deepseek-v4-pro", "reason": "key 安全测试"},
+        session_get_override=lambda: None,
     )
     assert "supersecret-xyz-789" not in sw.content
 
@@ -977,7 +963,6 @@ def test_corrections_execute_dispatch_model_catalog(tmp_path) -> None:
     audit_dir.mkdir(exist_ok=True)
     ctx = _build_ctx(pool)
     reg = _build_corrections(ctx, audit_dir)
-    ctx.session_model_override = None
 
     result = reg.execute("model_catalog", {})
     assert result.status.value == "success"
@@ -996,8 +981,7 @@ def test_corrections_execute_dispatch_switch_model(tmp_path, monkeypatch: pytest
     audit_dir.mkdir(exist_ok=True)
     ctx = _build_ctx(pool)
     reg = _build_corrections(ctx, audit_dir)
-    ctx.session_model_override = None
-    holder = {"value": None}
+    holder: dict[str, str | None] = {"value": None}
     ctx.session_binding_resolver = lambda _sid: (
         lambda: holder["value"],
         lambda v: holder.__setitem__("value", v),
@@ -1066,8 +1050,7 @@ def test_model_catalog_shows_capabilities() -> None:
     assert spec.multimodal is False
 
     ctx = _build_ctx(pool)
-    ctx.session_model_override = None
-    result = run_model_catalog(ctx, pool, ctx.session_model_override)
+    result = run_model_catalog(ctx, pool, None)
     assert result.status.value == "success"
     assert "reasoning/long_context" in result.content  # 能力标注
     assert "deepseek-v4-flash" in result.content  # 无能力字段模型不标注

@@ -225,23 +225,31 @@ def run_switch_model(
             tool_name="switch_model",
         )
 
-    # 当前会话 override（用于审计/回执 from→to 标注）。并发run优先使用本会话getter，
-    # 避免共享CorrectionContext.session_model_override被其他session覆盖后造成事实串台。
-    if session_get_override is not None:
-        try:
-            current_override = session_get_override()
-        except Exception as exc:  # noqa: BLE001 — exact binding read must fail closed
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=(
-                    "[会话归属不可用] 当前 session override 读取失败；"
-                    f"模型切换未执行: {exc}"
-                ),
-                tool_call_id="",
-                tool_name="switch_model",
-            )
-    else:
-        current_override = getattr(ctx, "session_model_override", None) if ctx else None
+    # P6: valid model mutation requires an exact read/write binding for the same
+    # Session.  There is no shared-context fallback: without either side, ownership is
+    # unknown and the mutation must fail closed before resolving/constructing a client.
+    if session_get_override is None or session_set_override is None:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                "[会话归属不可用] 当前模型切换缺少 exact session getter/setter binding；"
+                "未读取 shared override，模型切换未执行。"
+            ),
+            tool_call_id="",
+            tool_name="switch_model",
+        )
+    try:
+        current_override = session_get_override()
+    except Exception as exc:  # noqa: BLE001 — exact binding read must fail closed
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                "[会话归属不可用] 当前 session override 读取失败；"
+                f"模型切换未执行: {exc}"
+            ),
+            tool_call_id="",
+            tool_name="switch_model",
+        )
     from_label = current_override if current_override else pool.get_default_model()
 
     # 特殊语义: model="default" → 清除 override 回装配默认。default client 本身
@@ -249,16 +257,15 @@ def run_switch_model(
     # 不能借“切回 default”顺带把外部 hot reload 变成隐式授权。
     if model_ref.lower() == "default":
         transition_registry = pool.default_registry_snapshot()
-        if session_set_override is not None:
-            try:
-                session_set_override(None)
-            except Exception as exc:  # noqa: BLE001 — 写入异常如实标注
-                return ToolResult(
-                    status=ToolResultStatus.FAILURE,
-                    content=f"[清除失败] 事实: 清除会话覆盖写入异常: {exc}。建议: 检查会话存储可写性。",
-                    tool_call_id="",
-                    tool_name="switch_model",
-                )
+        try:
+            session_set_override(None)
+        except Exception as exc:  # noqa: BLE001 — 写入异常如实标注
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[清除失败] 事实: 清除会话覆盖写入异常: {exc}。建议: 检查会话存储可写性。",
+                tool_call_id="",
+                tool_name="switch_model",
+            )
         if routing_transition is not None:
             routing_transition(transition_registry, "default")
         if audit is not None:
@@ -333,19 +340,18 @@ def run_switch_model(
     )
 
     # 写会话 override
-    if session_set_override is not None:
-        try:
-            session_set_override(to_label)
-        except Exception as exc:  # noqa: BLE001 — 写入异常如实标注
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=(
-                    f"[状态: 失败] 会话覆盖写入失败: {exc}。"
-                    "建议: 检查会话存储可写性（会话 JSON 目录权限）。"
-                ),
-                tool_call_id="",
-                tool_name="switch_model",
-            )
+    try:
+        session_set_override(to_label)
+    except Exception as exc:  # noqa: BLE001 — 写入异常如实标注
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                f"[状态: 失败] 会话覆盖写入失败: {exc}。"
+                "建议: 检查会话存储可写性（会话 JSON 目录权限）。"
+            ),
+            tool_call_id="",
+            tool_name="switch_model",
+        )
 
     # The exact registry used above is the only authority allowed to advance the active
     # run routing epoch. A background provider-admin/refresh without this explicit model

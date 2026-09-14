@@ -544,21 +544,15 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         sess = plan.sess
         self._recover_pre_ingress_runtime_state(session_id, sess)
 
-        # T22/T23: 注入当前会话到注册表与修正上下文（压缩档案/检索关联）
-        from contextlib import suppress
-
-        with suppress(AttributeError):
-            self.registry.set_session_id(session_id)
+        # Read-only correction/introspection compatibility may still expose the most
+        # recent session on CorrectionContext.  Tool mutation ownership itself is
+        # ContextVar-bound and must not maintain a registry-level last-session fallback.
         if self.correction_ctx is not None:
             self.correction_ctx.session_id = session_id
-            # M48（design §5.3）: switch_model 写入会话级 override 的回调（直接修改 in-memory sess）
-            # loop 结束时 self.session.save(sess) 会持久化该字段（向后兼容，旧会话缺该字段 → None）
-            self.correction_ctx.session_model_override = sess.model_override
-            self.correction_ctx.session_set_override = lambda value: self._set_session_override(
-                sess, value
-            )
-            # P0-5: 每会话绑定表——并发 run 各自 sess 不互踩（registry_model 经
-            # contextvar 解析本会话绑定，上方 ctx 字段保留为无上下文回退）
+            # P0-5/P6: model mutation authority is the per-session binding resolver below.
+            # Do not refresh shared session_model_override/session_set_override here;
+            # explicit CLI/Feishu control-plane commands bind their concrete Session
+            # independently, while model-facing registry_model must use this exact map.
             with self._run_state_mgr.guard:
                 self._run_sessions[session_id] = sess
 

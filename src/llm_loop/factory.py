@@ -1120,8 +1120,9 @@ def build_engine(settings: Settings) -> LoopEngine:
         # EVO-20260816-f1f73a0d: 采样时间窗 24h（防历史异常污染当前评估）
         window_hours=24.0,
     )
-    # M48（design §5.3）: 模型路由池注入；session_set_override 回调在 run() 内动态绑定，
-    # 此处先注入 pool 让 tool_defs() 完整（让 LLM 在工具列表中看到 model_catalog/switch_model）
+    # M48/P6（design §5.3）: 模型路由池注入；会话 getter/setter 由 exact
+    # session_binding_resolver 或显式 control-plane Session 局部绑定，不存放 shared callback。
+    # 此处只注入 pool 让 tool_defs() 完整（让 LLM 在工具列表中看到 model_catalog/switch_model）。
     correction_ctx.model_pool = model_pool
 
     # T23: 统一检索实现注入（search_records）+ T31 语义路径

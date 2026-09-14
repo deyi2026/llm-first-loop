@@ -79,13 +79,12 @@ class CorrectionContext:
     evolve_local_exec: int = 0  # 0=仅建议/1=白名单/2=全面执行
     evolve_exec_whitelist: str = ""  # 执行白名单（逗号分隔，级别 1 时生效）
     evaluator: Any | None = None  # M12 T64: SelfEvaluator
-    # M48: 会话级模型覆盖 + 客户端池（model_pool=None 时工具回执"不可用"）
+    # M48/P6: 模型池 + exact per-session binding resolver。
+    # 会话 getter/setter 不再作为共享 CorrectionContext 字段保存；模型侧与
+    # CLI/飞书 control-plane 均必须持有本次明确 Session 的局部 binding。
     model_pool: Any | None = None
-    session_set_override: Callable[[str | None], None] | None = None  # switch_model 写入 override
-    session_model_override: str | None = None  # 当前会话级覆盖（审计 from→to）
     # P0-5/P2: 每会话绑定解析器（contextvar 定位本会话 sess 的 override
-    # getter/setter；并发 run 不互踩）。模型侧 registry 缺 binding 时必须 fail closed；
-    # 上方 shared 字段仅保留给持有显式 Session 的 CLI/飞书 control-plane 兼容路径。
+    # getter/setter；并发 run 不互踩）。模型侧 registry 缺 binding 时必须 fail closed。
     session_binding_resolver: Callable[[str], Any] | None = None
     # Learning Plane P0: 当前真实 human turn 的机械 Episode identity 解析器。
     # 仅由活跃 Engine run 装配；不得回退 latest historical episode，也不接受模型自报 ref。

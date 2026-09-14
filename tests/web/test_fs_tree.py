@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -146,12 +148,16 @@ def test_agents_tree_empty(client):
 def test_evolution_review_accept(client, tmp_path):
     """web 审批: accepted → 状态机流转 + 回执."""
     cli, engine = client
-    # 构造带 evolution_store 的引擎
+    # 构造 production authority path 上的 evolution_store
     from llm_loop.introspection.evolution import EvolutionStore
 
     st = EvolutionStore(tmp_path / "data" / "audit")
     st.submit(content="web 审批测试建议", evidence="ev", impact_scope="core", priority="low")
-    engine.evolution_store = st
+    engine.correction_ctx = SimpleNamespace(
+        evolution_store=st,
+        evolve_local_exec=0,
+        evolve_exec_whitelist="",
+    )
     sid = st.list()[0]["id"]
 
     r = cli.post("/api/v1/evolution/review", json={"id": sid, "decision": "accepted"})
@@ -167,7 +173,11 @@ def test_evolution_review_reject_with_reason(client, tmp_path):
 
     st = EvolutionStore(tmp_path / "data" / "audit")
     st.submit(content="web 拒绝测试", evidence="ev", impact_scope="core", priority="low")
-    engine.evolution_store = st
+    engine.correction_ctx = SimpleNamespace(
+        evolution_store=st,
+        evolve_local_exec=0,
+        evolve_exec_whitelist="",
+    )
     sid = st.list()[0]["id"]
 
     r = cli.post("/api/v1/evolution/review", json={"id": sid, "decision": "rejected", "reason": "不成熟"})

@@ -313,13 +313,13 @@ def _engine_from(request: Request) -> Any:
 
 
 def _evolution_store_from(engine: Any) -> Any | None:
-    """解析 EvolutionStore：优先 correction_ctx.evolution_store（factory.py 装配位置），兼容 engine.evolution_store（测试/历史挂载）.
+    """解析 production EvolutionStore authority（factory.py 唯一装配位置）.
 
     修复（EVO-20260909 web 审批确认键无效）：真实引擎只在 correction_ctx 上持有 store，
-    旧的 engine.evolution_store 读取在生产恒为 None，导致 list 有数据但 review 恒 400 evolve_disabled。
+    P6 起不再接受历史 ``engine.evolution_store`` 挂载作为审批写 authority。
     """
     ctx = getattr(engine, "correction_ctx", None)
-    return getattr(ctx, "evolution_store", None) or getattr(engine, "evolution_store", None)
+    return getattr(ctx, "evolution_store", None)
 
 
 _locks_guard = threading.Lock()

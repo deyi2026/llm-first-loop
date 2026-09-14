@@ -200,9 +200,10 @@ def handle_approval(engine: Any, msg: Any, text: str, reply_fn: Any) -> bool:
     if not is_approval_allowed(msg):
         reply_fn(rid, "⚠️ 无权执行审批指令（仅限本人私聊）。", rtype)
         return True
-    store = getattr(getattr(engine, "correction_ctx", None), "evolution_store", None) or getattr(
-        engine, "evolution_store", None
-    )
+    # Production write authority is factory-owned CorrectionContext only.  Historical
+    # ``engine.evolution_store`` test/side mounts are deliberately ignored so an
+    # alternate last-writer object cannot acquire approval authority.
+    store = getattr(getattr(engine, "correction_ctx", None), "evolution_store", None)
     if store is None:
         reply_fn(rid, "⚠️ 演进功能未启用（EVOLVE_ENABLED=0）。", rtype)
         return True

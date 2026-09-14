@@ -8,6 +8,7 @@ truthful; optional legacy guidance remains off by default.
 from __future__ import annotations
 
 from llm_loop.core.message import ToolCall
+from llm_loop.core.run_context import current_session_id
 from llm_loop.tools.registry import ToolRegistry, ToolResult, ToolResultStatus
 
 
@@ -70,10 +71,13 @@ def test_hard_cap_archives_exact_body_then_truncates_truthfully(monkeypatch):
     body = "Z" * 5000
     archive = _ArchiveFake()
     reg = ToolRegistry(max_output_chars=2000, archive_store=archive)
-    reg.set_session_id("s-hard")
     reg.register(_BigTool(body))
 
-    result = reg.execute(_call())
+    token = current_session_id.set("s-hard")
+    try:
+        result = reg.execute(_call())
+    finally:
+        current_session_id.reset(token)
 
     assert "已截断" in result.content
     assert "硬上限: 2000" in result.content
@@ -98,11 +102,14 @@ def test_legacy_guidance_is_only_an_explicit_opt_in_at_real_truncation(monkeypat
     body = "G" * 5000
     archive = _ArchiveFake()
     reg = ToolRegistry(max_output_chars=2000, archive_store=archive)
-    reg.set_session_id("s-guide")
     reg.register(_BigTool(body))
 
-    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
-    assert "行动指引" not in reg.execute(_call()).content
+    token = current_session_id.set("s-guide")
+    try:
+        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
+        assert "行动指引" not in reg.execute(_call()).content
 
-    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
-    assert "行动指引" in reg.execute(_call()).content
+        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
+        assert "行动指引" in reg.execute(_call()).content
+    finally:
+        current_session_id.reset(token)

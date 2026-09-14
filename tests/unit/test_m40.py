@@ -76,11 +76,11 @@ def test_history_compression_pair_atomic_2m():
 
 def test_tool_hard_cap_archives_exact_result_not_lost(tmp_path):
     """300K output: physical hard cap truncates only after exact archive persistence."""
+    from llm_loop.core.run_context import current_session_id
     from llm_loop.memory.archive import ArchiveStore
 
     archive = ArchiveStore(tmp_path / "archives")
     registry = ToolRegistry(max_output_chars=100_000, archive_store=archive)
-    registry.set_session_id("m40-hard")
 
     class _BigTool:
         name = "big_tool"
@@ -98,7 +98,11 @@ def test_tool_hard_cap_archives_exact_result_not_lost(tmp_path):
     registry.register(_BigTool())
     from llm_loop.core.message import ToolCall
 
-    result = registry.execute(ToolCall(id="big_1", name="big_tool", arguments={}))
+    token = current_session_id.set("m40-hard")
+    try:
+        result = registry.execute(ToolCall(id="big_1", name="big_tool", arguments={}))
+    finally:
+        current_session_id.reset(token)
     assert "[结果超长，已截断" in result.content
     assert "硬上限: 100000" in result.content
     assert "完整内容已另存" in result.content

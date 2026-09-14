@@ -260,7 +260,6 @@ def test_off_mode_large_read_file_stays_exact_below_hard_cap(tmp_path, monkeypat
 
     archive = ArchiveStore(tmp_path / "archives")
     registry = ToolRegistry(archive_store=archive)
-    registry.set_session_id("session-off")
     registry.register(ReadFileTool())
     result = registry.execute(
         ToolCall(id="legacy-read", name="read_file", arguments={"path": str(path)})

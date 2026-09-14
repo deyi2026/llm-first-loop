@@ -13,7 +13,7 @@ import pytest
 
 from llm_loop.config import Settings
 from llm_loop.core.message import ToolCall
-from llm_loop.core.run_context import current_workspace_root
+from llm_loop.core.run_context import current_session_id, current_workspace_root
 from llm_loop.factory import build_engine
 from llm_loop.tools.registry import tool_result_to_message
 from llm_loop.workspace.human_file_ops import HumanFileOperationError
@@ -47,8 +47,8 @@ def _write_fixture(workspace: Path) -> None:
 
 def _versioned_ai_edit(engine, sid: str, workspace: Path, relative_path: str, round_no: int) -> None:
     """Exercise the same durable effect path used by the model tool loop."""
-    engine.registry.set_session_id(sid)
-    token = current_workspace_root.set(str(workspace))
+    session_token = current_session_id.set(sid)
+    workspace_token = current_workspace_root.set(str(workspace))
     try:
         read_call = ToolCall(
             id=f"read-{round_no}",
@@ -106,7 +106,8 @@ def _versioned_ai_edit(engine, sid: str, workspace: Path, relative_path: str, ro
             tool_message=tool_message,
         )
     finally:
-        current_workspace_root.reset(token)
+        current_workspace_root.reset(workspace_token)
+        current_session_id.reset(session_token)
 
 
 def test_p4_sequential_human_ai_handoff_survives_engine_reconstruction(tmp_path: Path) -> None:
