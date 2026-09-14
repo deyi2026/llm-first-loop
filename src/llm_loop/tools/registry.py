@@ -29,6 +29,7 @@ from llm_loop.core.message import (
     ToolResult,
     ToolResultStatus,
 )
+from llm_loop.core.run_context import current_run_generation
 from llm_loop.tools.pipeline import ImmutableResult, MaterializationError
 from llm_loop.tools.safety import CatastrophicGuard
 
@@ -465,8 +466,6 @@ class ToolRegistry:
     def _track_active(self, session_id: str, future: Any, tool: Any) -> None:
         if not session_id:
             return
-        from llm_loop.core.run_context import current_run_generation
-
         generation = str(current_run_generation.get() or "")
         with self._active_exec_guard:
             self._active_exec.setdefault(session_id, []).append((future, tool, generation))
@@ -489,8 +488,6 @@ class ToolRegistry:
         提供 ``terminate_session(session_id)`` 才会被硬终止。刻意不回退到无参数
         terminate()，因为工具实例跨会话共享，全局终止可能误杀别的会话。
         """
-        from llm_loop.core.run_context import current_run_generation
-
         effective_generation = str(run_generation or current_run_generation.get() or "")
         with self._active_exec_guard:
             all_entries = list(self._active_exec.get(session_id, []))
@@ -737,8 +734,6 @@ class ToolRegistry:
         self, session_id: str, *, run_generation: str = ""
     ) -> list[dict[str, Any]]:
         """收集指定 session/run 尚未 terminal 的异步子资源；异常源 fail-open。"""
-        from llm_loop.core.run_context import current_run_generation
-
         target_generation = str(run_generation or current_run_generation.get() or "")
         out: list[dict[str, Any]] = []
         for hook in list(self._async_obligation_hooks):

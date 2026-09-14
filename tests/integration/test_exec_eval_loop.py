@@ -91,23 +91,29 @@ def test_boundary_accepted_human_execution(tmp_path):
 def test_eval_improve_verify_loop(tmp_path):
     """评估-改进-验证闭环: self_evaluate → submit_evolution(eval_id) → 执行 → 再评估对比（EVAL-05/07）."""
     from llm_loop.cli import _cmd_evolve_review
+    from llm_loop.core.run_context import current_session_id
     from llm_loop.introspection.evaluator import SelfEvaluator
 
     engine = _make_engine(tmp_path)
     evaluator = SelfEvaluator(status_provider=None, audit_dir=engine.settings.audit_dir)
+    sid = engine.session.create()
     # 1. 评估（改进前基线）
-    before = evaluator.evaluate(session_id="s-eval", trigger="manual")
+    before = evaluator.evaluate(session_id=sid, trigger="manual")
     assert before.eval_id.startswith("SE-")
     # 2. 基于评估提交改进建议（走 submit_evolution 工具链路: evidence 引用 eval:<id> → eval_id 回填）
     store = engine.correction_ctx.evolution_store
-    r = engine.corrections.execute(
-        "submit_evolution",
-        {
-            "content": "基于评估优化超时参数",
-            "impact_scope": "timeout_s",
-            "evidence": f"eval:{before.eval_id}",
-        },
-    )
+    token = current_session_id.set(sid)
+    try:
+        r = engine.corrections.execute(
+            "submit_evolution",
+            {
+                "content": "基于评估优化超时参数",
+                "impact_scope": "timeout_s",
+                "evidence": f"eval:{before.eval_id}",
+            },
+        )
+    finally:
+        current_session_id.reset(token)
     assert r.status.value == "success"
     sug = store.list()[-1]
     assert sug["eval_id"] == before.eval_id
@@ -115,7 +121,7 @@ def test_eval_improve_verify_loop(tmp_path):
     engine.correction_ctx.evolve_local_exec = 2
     assert _cmd_evolve_review(engine, sug["id"], "accepted") == 0
     # 4. 再评估（改进后）+ AI 侧自比基础（M18 AA5: compare 已移除，对比交 AI）
-    after = evaluator.evaluate(session_id="s-eval", trigger="manual")
+    after = evaluator.evaluate(session_id=sid, trigger="manual")
     assert before.eval_id != after.eval_id  # 两次评估可溯源
     am = {m.name: m for m in after.metrics}
     assert "success_rate" in am  # 指标字段可读（AI 自比 delta 基础）
@@ -213,10 +219,17 @@ def test_evolution_summary_in_architecture_status(tmp_path):
 
 def test_submit_evolution_receipt_next_step(tmp_path):
     """M17 FR-REVIEW-AI-06: submit_evolution 回执含'等待 evolve-review 审阅'引导."""
+    from llm_loop.core.run_context import current_session_id
+
     engine = _make_engine(tmp_path)
-    r = engine.corrections.execute(
-        "submit_evolution", {"content": "优化超时参数", "impact_scope": "timeout_s"}
-    )
+    sid = engine.session.create()
+    token = current_session_id.set(sid)
+    try:
+        r = engine.corrections.execute(
+            "submit_evolution", {"content": "优化超时参数", "impact_scope": "timeout_s"}
+        )
+    finally:
+        current_session_id.reset(token)
     assert r.status.value == "success"
     assert "evolve-review" in r.content
     assert "pending_review" in r.content
