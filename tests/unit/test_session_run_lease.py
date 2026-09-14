@@ -236,3 +236,35 @@ def test_run_owned_session_binds_save_authority_without_serializing_token(tmp_pa
     assert owner.load(sid).messages[-1].content == "durable"
     with other.run_lease(sid) as acquired:
         assert acquired is True
+
+
+def test_expired_run_owned_session_never_regains_management_save_authority(tmp_path: Path):
+    """P3: an A1 Session snapshot must not overwrite A2 after A1 ownership expires."""
+    from llm_loop.core.message import Message, MessageSource
+
+    store = SessionStore(tmp_path)
+    sid = store.create()
+
+    with store.run_owned_session(sid) as a1:
+        assert a1 is not None
+        a1.messages.append(Message(role="user", content="A1", source=MessageSource.USER))
+        store.save(a1)
+
+    with store.run_owned_session(sid) as a2:
+        assert a2 is not None
+        a2.messages.append(
+            Message(role="assistant", content="A2-FINAL", source=MessageSource.SYSTEM)
+        )
+        store.save(a2)
+
+    # Simulate a late A1 callback after A2 has already completed. The stale object still
+    # carries its old run-owner marker; it must never silently downgrade to a management write.
+    a1.messages.append(
+        Message(role="assistant", content="A1-LATE", source=MessageSource.SYSTEM)
+    )
+    with pytest.raises(RuntimeError, match="run|owner|ownership|stale|过期|归属"):
+        store.save(a1)
+
+    stored = store.load(sid)
+    assert stored.messages[-1].content == "A2-FINAL"
+    assert all(m.content != "A1-LATE" for m in stored.messages)

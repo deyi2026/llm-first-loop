@@ -895,6 +895,19 @@ class _EventsMixin:
         """
         if not text_full and not reasoning_full and not provider_replay and not tool_call_drafts:
             return "", 0, 0
+        from llm_loop.core.run_context import current_run_generation
+
+        origin_run_generation = str(current_run_generation.get() or "")
+        active_generation = getattr(getattr(self, "session", None), "active_run_generation", None)
+        if (
+            origin_run_generation
+            and callable(active_generation)
+            and str(active_generation(session_id) or "") != origin_run_generation
+        ):
+            # This file is an overwrite-only *current* slot, not an append-only history.
+            # A stale callback may keep its A1 ContextVar, but once A1 ownership expires
+            # it must not overwrite A2 (or recreate state after A2 completed).
+            return "", 0, 0
         snapshot = {
             "version": 1,
             "session_id": str(session_id),
@@ -909,6 +922,8 @@ class _EventsMixin:
                 dict(item) for item in (tool_call_drafts or []) if isinstance(item, dict)
             ],
         }
+        if origin_run_generation:
+            snapshot["origin_run_generation"] = origin_run_generation
         raw = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         digest = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()
         path = self._inflight_native_state_path(session_id)
@@ -934,6 +949,7 @@ class _EventsMixin:
         expected_provider: str = "",
         expected_model: str = "",
         expected_partial_sha256: str = "",
+        expected_origin_run_generation: str = "",
     ) -> dict[str, Any] | None:
         """Load a sidecar only when its content digest matches the checkpoint fact."""
         if not expected_sha256:
@@ -957,12 +973,28 @@ class _EventsMixin:
                 and str(value.get("partial_sha256") or "") != expected_partial_sha256
             ):
                 return None
+            if (
+                expected_origin_run_generation
+                and str(value.get("origin_run_generation") or "")
+                != expected_origin_run_generation
+            ):
+                return None
             return value
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return None
 
     def _clear_inflight_native_state(self, session_id: str) -> None:
         """Best-effort cleanup after a later completed run supersedes crash state."""
+        from llm_loop.core.run_context import current_run_generation
+
+        origin_run_generation = str(current_run_generation.get() or "")
+        active_generation = getattr(getattr(self, "session", None), "active_run_generation", None)
+        if (
+            origin_run_generation
+            and callable(active_generation)
+            and str(active_generation(session_id) or "") != origin_run_generation
+        ):
+            return
         with contextlib.suppress(OSError, ValueError):
             self._inflight_native_state_path(session_id).unlink(missing_ok=True)
 

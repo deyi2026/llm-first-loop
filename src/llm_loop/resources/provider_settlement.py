@@ -66,6 +66,7 @@ class ProviderCallIdentity:
     service_priority: ServicePriority
     purpose: ProviderCallPurpose
     created_at: float
+    origin_run_generation: str = ""
 
 
 @dataclass(frozen=True)
@@ -119,8 +120,12 @@ def bind_provider_call_site(site: ProviderCallSite | None) -> Iterator[None]:
         _CURRENT_PROVIDER_CALL_SITE.reset(token)
 
 
-def _call_id(session_id: str, idempotency_key: str) -> str:
-    raw = f"{session_id}\x00{idempotency_key}".encode()
+def _call_id(session_id: str, idempotency_key: str, origin_run_generation: str = "") -> str:
+    if origin_run_generation:
+        raw = f"{session_id}\x00{origin_run_generation}\x00{idempotency_key}".encode()
+    else:
+        # Preserve historical/offline call ids when no run identity exists.
+        raw = f"{session_id}\x00{idempotency_key}".encode()
     return "pcall:" + hashlib.sha256(raw).hexdigest()[:32]
 
 
@@ -236,6 +241,7 @@ class ProviderCallSettlementJournal:
                 service_priority=ServicePriority(int(str(payload.get("service_priority") or ""))),
                 purpose=ProviderCallPurpose(str(payload.get("purpose") or "")),
                 created_at=float(payload.get("created_at") or 0.0),
+                origin_run_generation=str(payload.get("origin_run_generation") or ""),
             )
         except (TypeError, ValueError):
             return None
@@ -255,7 +261,10 @@ class ProviderCallSettlementJournal:
         session_id = _require_text("session_id", session_id)
         idempotency_key = _require_text("idempotency_key", idempotency_key)
         owner_ref = _require_text("owner_ref", owner_ref)
-        call_id = _call_id(session_id, idempotency_key)
+        from llm_loop.core.run_context import current_run_generation
+
+        origin_run_generation = str(current_run_generation.get() or "")
+        call_id = _call_id(session_id, idempotency_key, origin_run_generation)
         with self._lock:
             self._hydrate_session_locked(session_id)
             existing = self._calls.get(call_id)
@@ -276,6 +285,7 @@ class ProviderCallSettlementJournal:
                     service_priority=existing.service_priority,
                     purpose=existing.purpose,
                     created_at=existing.created_at,
+                    origin_run_generation=existing.origin_run_generation,
                 )
 
             call = ProviderCallIdentity(
@@ -287,6 +297,7 @@ class ProviderCallSettlementJournal:
                 service_priority=service_priority,
                 purpose=purpose,
                 created_at=float(self._clock()),
+                origin_run_generation=origin_run_generation,
             )
             payload = {
                 "call_id": call.call_id,
@@ -297,6 +308,8 @@ class ProviderCallSettlementJournal:
                 "purpose": call.purpose.value,
                 "created_at": call.created_at,
             }
+            if call.origin_run_generation:
+                payload["origin_run_generation"] = call.origin_run_generation
             written = self._event_store.append(session_id, self.CALL_OPENED, payload) if self.enabled else None
             if written is not None:
                 self._calls[call_id] = call

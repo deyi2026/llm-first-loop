@@ -101,6 +101,38 @@ def test_enforce_read_file_captures_before_projection_and_hydrates_hidden_middle
     assert ledger.count(_owner()) == 1
 
 
+def test_same_tool_call_bytes_across_run_generations_keep_distinct_evidence_origin(tmp_path):
+    """P3: A1/A2 historical Evidence may both persist but must never alias as one capture."""
+    from llm_loop.core.run_context import current_run_generation
+
+    _blobs, ledger, enforcer = _enforcer(tmp_path)
+    call = ToolCall(id="same-call-id", name="read_file", arguments={"path": "same.txt"})
+    refs: list[str] = []
+    for generation in ("run-A1", "run-A2"):
+        token = current_run_generation.set(generation)
+        try:
+            result = enforcer.apply(
+                call,
+                ToolResult(
+                    status=ToolResultStatus.SUCCESS,
+                    content="SAME OBSERVATION BYTES",
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                ),
+            )
+        finally:
+            current_run_generation.reset(token)
+        assert result.evidence_ref is not None
+        refs.append(result.evidence_ref)
+
+    assert refs[0] != refs[1]
+    records = ledger.list_recent(_owner(), limit=10)
+    assert {record.provenance.origin_run_generation for record in records} == {
+        "run-A1",
+        "run-A2",
+    }
+
+
 def test_enforce_capture_failure_preserves_side_effect_action_truth_and_does_not_rerun(tmp_path):
     calls = {"count": 0}
 

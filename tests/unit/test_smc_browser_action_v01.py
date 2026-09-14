@@ -395,3 +395,94 @@ def test_navigate_requires_exact_page_semantic_root_under_resource_scope(tmp_pat
         for reason in result["completeness"]["reasons"]
     )
     assert actuator.calls == []
+
+
+def test_browser_dispatch_fails_closed_when_origin_run_generation_is_stale(tmp_path: Path) -> None:
+    from llm_loop.core.message import ToolCall
+    from llm_loop.core.run_context import current_run_generation
+    from llm_loop.core.session import SessionStore
+    from llm_loop.core.tool_execution_journal import ToolExecutionJournal
+    from llm_loop.event_log.store import EventStore
+
+    events = EventStore(tmp_path / "events-p3-browser", enabled=True)
+    sessions = SessionStore(tmp_path / "sessions-p3-browser", event_store=events)
+    sid = sessions.create()
+    journal = ToolExecutionJournal(
+        event_store=events,
+        result_root=tmp_path / "tool-results-p3-browser",
+        session_store=sessions,
+    )
+    perception, receipts, _backend, actuator, action = _stack(
+        tmp_path / "browser-p3", [FIXTURES["base"]]
+    )
+    first = perception.snapshot(sid, FIXTURES["base"])
+    call = ToolCall(id="browser-late-g1", name="browser_action", arguments={})
+
+    ctx_token = current_run_generation.set("run-g1")
+    run1_token = sessions._activate_run_save_token(sid, run_generation="run-g1")  # noqa: SLF001
+    try:
+        with journal.effect_context(
+            session_id=sid,
+            execution_id="browser-exec-g1",
+            round_no=1,
+            call=call,
+            workspace_root=str(tmp_path),
+        ):
+            sessions._deactivate_run_save_token(sid, run1_token)  # noqa: SLF001
+            run2_token = sessions._activate_run_save_token(sid, run_generation="run-g2")  # noqa: SLF001
+            try:
+                result = action.execute(sid, _click_action(first, action_id="stale-g1"))
+            finally:
+                sessions._deactivate_run_save_token(sid, run2_token)  # noqa: SLF001
+    finally:
+        current_run_generation.reset(ctx_token)
+
+    assert result["status"] == "failed"
+    assert len(actuator.calls) == 0
+    assert "dispatch_authority_lost" in result["completeness"]["reasons"]
+    assert [x["status"] for x in receipts.list_action(sid, "stale-g1")] == ["running", "failed"]
+
+
+def test_browser_dispatch_fails_closed_after_tool_attempt_revocation(tmp_path: Path) -> None:
+    from llm_loop.core.message import ToolCall
+    from llm_loop.core.run_context import current_run_generation
+    from llm_loop.core.session import SessionStore
+    from llm_loop.core.tool_execution_journal import (
+        ToolExecutionJournal,
+        revoke_effect_binding_for_call,
+    )
+    from llm_loop.event_log.store import EventStore
+
+    events = EventStore(tmp_path / "events-p3-browser-revoked", enabled=True)
+    sessions = SessionStore(tmp_path / "sessions-p3-browser-revoked", event_store=events)
+    sid = sessions.create()
+    journal = ToolExecutionJournal(
+        event_store=events,
+        result_root=tmp_path / "tool-results-p3-browser-revoked",
+        session_store=sessions,
+    )
+    perception, _receipts, _backend, actuator, action = _stack(
+        tmp_path / "browser-p3-revoked", [FIXTURES["base"]]
+    )
+    first = perception.snapshot(sid, FIXTURES["base"])
+    call = ToolCall(id="browser-revoked", name="browser_action", arguments={})
+
+    ctx_token = current_run_generation.set("run-g1")
+    run_token = sessions._activate_run_save_token(sid, run_generation="run-g1")  # noqa: SLF001
+    try:
+        with journal.effect_context(
+            session_id=sid,
+            execution_id="browser-exec-revoked",
+            round_no=1,
+            call=call,
+            workspace_root=str(tmp_path),
+        ):
+            assert revoke_effect_binding_for_call(call.id) is True
+            result = action.execute(sid, _click_action(first, action_id="revoked-g1"))
+    finally:
+        sessions._deactivate_run_save_token(sid, run_token)  # noqa: SLF001
+        current_run_generation.reset(ctx_token)
+
+    assert result["status"] == "failed"
+    assert len(actuator.calls) == 0
+    assert "dispatch_authority_lost" in result["completeness"]["reasons"]

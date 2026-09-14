@@ -20,6 +20,14 @@ current_session_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "llm_loop_current_session_id", default=""
 )
 
+# P3 Same-Session Cross-Run ownership: exact execution generation for the active run.
+# BackgroundRunner seeds this with RunHandle.run_generation; direct/synchronous Engine runs
+# mint one generation at admission.  Worker pools use copy_context(), so late callbacks can
+# retain their *origin* generation instead of borrowing whichever run is current later.
+current_run_generation: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "llm_loop_current_run_generation", default=""
+)
+
 # CR-R1.1（审查项7）: 当前 LLM 轮次（engine run 循环每轮 set；cognitive
 # telemetry 归因用——此前 packet_compile 事件的 round 恒 0，attribution 断裂）
 current_round_no: contextvars.ContextVar[int] = contextvars.ContextVar(

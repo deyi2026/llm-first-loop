@@ -273,9 +273,15 @@ class Provenance:
     producer: str
     authority: str = ""
     scope: str = ""
+    origin_run_generation: str = ""
 
     def to_dict(self) -> dict[str, str]:
-        return {"producer": self.producer, "authority": self.authority, "scope": self.scope}
+        out = {"producer": self.producer, "authority": self.authority, "scope": self.scope}
+        # Backward-compatible wire shape for historical/offline Evidence.  Runtime captures
+        # opt in only when they have an exact mechanical run generation.
+        if self.origin_run_generation:
+            out["origin_run_generation"] = self.origin_run_generation
+        return out
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Provenance:
@@ -283,6 +289,7 @@ class Provenance:
             producer=str(data.get("producer", "")),
             authority=str(data.get("authority", "")),
             scope=str(data.get("scope", "")),
+            origin_run_generation=str(data.get("origin_run_generation", "")),
         )
 
 

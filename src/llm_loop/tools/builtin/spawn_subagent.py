@@ -65,9 +65,9 @@ class SpawnSubAgentTool:
     def __init__(self, runner) -> None:
         self._runner = runner
 
-    def terminate_session(self, session_id: str) -> None:
+    def terminate_session(self, session_id: str, *, run_generation: str = "") -> None:
         """父会话 Stop 向正在运行的 child/descendants 传播取消。"""
-        self._runner.cancel_parent(session_id)
+        self._runner.cancel_parent(session_id, run_generation=run_generation)
 
     def execute(self, **kwargs) -> ToolResult:
         task = str(kwargs.get("task", "")).strip()

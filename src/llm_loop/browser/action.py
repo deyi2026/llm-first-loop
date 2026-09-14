@@ -18,6 +18,7 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from llm_loop.browser.perception import BrowserPerceptionAdapter
+from llm_loop.core.tool_execution_journal import current_effect_mutation_authority
 
 _MUTATION_CONTRACT: dict[str, dict[str, Any]] = {
     "click": {"version_scopes": {"object"}, "args": set()},
@@ -532,36 +533,44 @@ class BrowserActionAdapter:
 
         dispatch_error: Exception | None = None
         dispatch_result: BrowserDispatchResult | None = None
-        try:
-            dispatch_result = self.actuator.dispatch(
-                verb=str(action["verb"]),
-                physical_target=physical_target,
-                args=dict(action["args"]),
-            )
-        except Exception as exc:  # noqa: BLE001 - ambiguity must be surfaced, never replayed.
-            dispatch_error = exc
+        dispatch_authority_lost = False
+        with current_effect_mutation_authority() as mutation_allowed:
+            if not mutation_allowed:
+                dispatch_authority_lost = True
+            else:
+                try:
+                    dispatch_result = self.actuator.dispatch(
+                        verb=str(action["verb"]),
+                        physical_target=physical_target,
+                        args=dict(action["args"]),
+                    )
+                except Exception as exc:  # noqa: BLE001 - ambiguity must be surfaced, never replayed.
+                    dispatch_error = exc
 
         after_version: str | None = None
         after_ref: str | None = None
         diff_ref: str | None = None
         post_reasons: list[str] = []
-        try:
-            after_raw = self.capture_backend.capture()
-            after_result = self.perception.snapshot(session_id, after_raw, projection_limit=1)
-            after_snapshot = dict(after_result.get("snapshot") or {})
-            after_version = str(after_snapshot.get("snapshot_id") or "") or None
-            after_ref = str(after_snapshot.get("objects_ref") or "") or None
-            if after_version is not None:
-                diff = self.perception.diff(
-                    session_id,
-                    from_version=before_version,
-                    to_version=after_version,
-                )
-                diff_ref = str(diff.get("full_list_ref") or "") or None
-                if not bool((diff.get("completeness") or {}).get("complete")):
-                    post_reasons.extend(str(x) for x in (diff.get("completeness") or {}).get("reasons", []))
-        except Exception as exc:  # noqa: BLE001 - post-observation failure degrades evidence only.
-            post_reasons.append(f"post_dispatch_observation_failed:{type(exc).__name__}")
+        if not dispatch_authority_lost:
+            try:
+                after_raw = self.capture_backend.capture()
+                after_result = self.perception.snapshot(session_id, after_raw, projection_limit=1)
+                after_snapshot = dict(after_result.get("snapshot") or {})
+                after_version = str(after_snapshot.get("snapshot_id") or "") or None
+                after_ref = str(after_snapshot.get("objects_ref") or "") or None
+                if after_version is not None:
+                    diff = self.perception.diff(
+                        session_id,
+                        from_version=before_version,
+                        to_version=after_version,
+                    )
+                    diff_ref = str(diff.get("full_list_ref") or "") or None
+                    if not bool((diff.get("completeness") or {}).get("complete")):
+                        post_reasons.extend(
+                            str(x) for x in (diff.get("completeness") or {}).get("reasons", [])
+                        )
+            except Exception as exc:  # noqa: BLE001 - post-observation failure degrades evidence only.
+                post_reasons.append(f"post_dispatch_observation_failed:{type(exc).__name__}")
 
         terminal = self._receipt_base(action)
         terminal["before_version"] = before_version
@@ -577,7 +586,11 @@ class BrowserActionAdapter:
             "dispatch": running_receipt["grounding_refs"]["dispatch"],
         }
         reasons = list(post_reasons)
-        if dispatch_error is not None:
+        if dispatch_authority_lost:
+            terminal["status"] = "failed"
+            reasons.append("dispatch_authority_lost")
+            terminal["retry"]["reason"] = "dispatch_authority_lost"
+        elif dispatch_error is not None:
             terminal["status"] = "failed"
             reasons.append("dispatch_outcome_ambiguous")
             terminal["retry"]["reason"] = f"dispatch_error:{type(dispatch_error).__name__}"

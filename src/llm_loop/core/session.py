@@ -328,6 +328,10 @@ class SessionStore:
         # run 内 save 的显式所有权：仅绑定到本轮 load 出来的 Session 对象。
         # 不依赖 ContextVar（ASGI 生成器可跨 Context resume），也不会序列化到 JSON。
         self._run_save_tokens: dict[str, object] = {}
+        # P3: externally auditable execution generation for the currently active run.
+        # The opaque token remains the in-process save capability; generation is identity,
+        # never a substitute capability.
+        self._run_save_generations: dict[str, str] = {}
         self._run_save_tokens_guard = threading.Lock()
 
     @property
@@ -505,6 +509,7 @@ class SessionStore:
         self._fallback_locks_guard = threading.Lock()
         with self._run_save_tokens_guard:
             self._run_save_tokens.clear()
+            self._run_save_generations.clear()
 
     def set_root(self, sessions_dir: str | Path) -> None:
         """切换会话根目录；先准备成功再原子更新内存根。"""
@@ -894,22 +899,58 @@ class SessionStore:
             finally:
                 self._deactivate_run_save_token(session_id, token)
 
-    def _activate_run_save_token(self, session_id: str) -> object:
+    def _activate_run_save_token(self, session_id: str, *, run_generation: str = "") -> object:
         """为已取得 whole-run lease 的本轮创建 opaque save token。"""
         token = object()
         with self._run_save_tokens_guard:
             self._run_save_tokens[session_id] = token
+            self._run_save_generations[session_id] = str(run_generation or "")
         return token
 
     def _bind_run_save_token(self, session: Session, token: object) -> None:
         """把 token 绑定到本轮内存 Session；动态属性不参与 dataclass/asdict/to_dict。"""
         session.__dict__["_run_save_token"] = token
+        with self._run_save_tokens_guard:
+            if self._run_save_tokens.get(session.session_id) is token:
+                session.__dict__["_origin_run_generation"] = self._run_save_generations.get(
+                    session.session_id, ""
+                )
 
     def _deactivate_run_save_token(self, session_id: str, token: object) -> None:
         """run 结束后仅按 identity 注销，防迟到清理误删下一轮 token。"""
         with self._run_save_tokens_guard:
             if self._run_save_tokens.get(session_id) is token:
                 self._run_save_tokens.pop(session_id, None)
+                self._run_save_generations.pop(session_id, None)
+
+    def active_run_generation(self, session_id: str) -> str:
+        """Return the exact active run generation for ``session_id`` or empty when inactive."""
+        with self._run_save_tokens_guard:
+            return str(self._run_save_generations.get(session_id, "") or "")
+
+    @contextmanager
+    def run_generation_authority(
+        self, session_id: str, run_generation: str
+    ) -> Iterator[bool]:
+        """Fence one short mutation commit window to an exact active run generation.
+
+        The guard is process-local capability state, not semantic task authority. Holding
+        it across the physical commit prevents this process from deactivating G1 or
+        activating G2 between the exact-generation check and the mutation. Cross-process
+        runs are already serialized by the whole-run ``<sid>.run.lock``; after this
+        process releases G1 its local generation map is empty, so a stale worker fails
+        closed even if G2 starts elsewhere.
+        """
+        sid = _validate_session_id(session_id)
+        generation = str(run_generation or "")
+        if not generation:
+            yield False
+            return
+        with self._run_save_tokens_guard:
+            if str(self._run_save_generations.get(sid, "") or "") != generation:
+                yield False
+                return
+            yield True
 
     def _is_run_owned_session(self, session: Session) -> bool:
         token = getattr(session, "_run_save_token", None)
@@ -1133,10 +1174,18 @@ class SessionStore:
         fail-fast，避免长 run 最终 save 覆盖并发管理写。
         """
         self._ensure_identity_owner(session.session_id)
-        if self._is_run_owned_session(session):
-            with self._session_lock(session.session_id):
-                self._save_locked(session)
-            return
+        run_token = getattr(session, "_run_save_token", None)
+        if run_token is not None:
+            if self._is_run_owned_session(session):
+                with self._session_lock(session.session_id):
+                    self._save_locked(session)
+                return
+            origin_generation = str(getattr(session, "_origin_run_generation", "") or "")
+            raise SessionMutationBusyError(
+                "stale run ownership expired; run-owned Session snapshot cannot regain "
+                f"management save authority (session={session.session_id}, "
+                f"origin_run_generation={origin_generation or 'unknown'})"
+            )
 
         with self.management_lease(session.session_id), self._session_lock(session.session_id):
             self._save_locked(session)

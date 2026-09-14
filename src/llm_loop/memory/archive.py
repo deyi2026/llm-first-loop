@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -144,6 +145,10 @@ class ArchiveStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._segment_bytes = segment_bytes  # T3b: 单文件分片阈值（0=不分片，兼容旧行为）
         self._known_session_id_fn = known_session_id_fn
+        # P3: async historical backfill and newer-run appends may target the same segment.
+        # Serialize physical archive mutations without judging whether either fact is
+        # semantically current; both remain valid historical truth.
+        self._mutation_lock = threading.RLock()
 
     def _path(self, session_id: str) -> Path:
         session_id = _validate_session_id(session_id)
@@ -346,14 +351,15 @@ class ArchiveStore:
             summary_source=summary_source_override or "deterministic",
             reasoning_content=reasoning_content,
         )
-        p = self._append_path(session_id)  # T3b: 超阈值开新段
-        p.parent.mkdir(parents=True, exist_ok=True)
-        # T3c: 二进制追加取字节偏移（sidecar 索引定位用），UTF-8 无 BOM 下偏移稳定
-        line_bytes = (json.dumps(entry.to_dict(), ensure_ascii=False) + "\n").encode("utf-8")
-        with p.open("ab") as f:
-            offset = f.tell()
-            f.write(line_bytes)
-        self._index_append(p, offset, entry)
+        with self._mutation_lock:
+            p = self._append_path(session_id)  # T3b: 超阈值开新段
+            p.parent.mkdir(parents=True, exist_ok=True)
+            # T3c: 二进制追加取字节偏移（sidecar 索引定位用），UTF-8 无 BOM 下偏移稳定
+            line_bytes = (json.dumps(entry.to_dict(), ensure_ascii=False) + "\n").encode("utf-8")
+            with p.open("ab") as f:
+                offset = f.tell()
+                f.write(line_bytes)
+            self._index_append(p, offset, entry)
         return entry
 
     # ── T3c sidecar 索引：写入/读取 ──
@@ -707,38 +713,41 @@ class ArchiveStore:
         """按 id 回填摘要到档案条目（T28）.
 
         失败返回 False + 日志（fail-open，不影响已交付档案）。
+        P3: 与 append 串行化物理 segment mutation；旧 run 的合法历史回填可以
+        继续完成，但绝不能用旧 read snapshot 覆盖新 run 已追加的事实。
         """
-        p = self._entry_session_path(entry_id)
-        if p is None:
-            return False
-        try:
-            lines = p.read_text(encoding="utf-8").splitlines()
-            out: list[str] = []
-            found = False
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    out.append(line)
-                    continue
-                if entry.get("id") == entry_id:
-                    # R5: identity_filtered is a sticky derived-state invariant. Normal
-                    # semantic backfill must not reintroduce identity/self-description
-                    # details. A future reversible migration can explicitly rewrite the
-                    # archive outside this generic update path.
-                    if entry.get("summary_source") != "identity_filtered":
-                        entry["summary"] = summary
-                        entry["summary_source"] = summary_source
-                    found = True
-                out.append(json.dumps(entry, ensure_ascii=False))
-            if found:
-                p.write_text("\n".join(out) + "\n", encoding="utf-8")
-            return found
-        except OSError:
-            return False
+        with self._mutation_lock:
+            p = self._entry_session_path(entry_id)
+            if p is None:
+                return False
+            try:
+                lines = p.read_text(encoding="utf-8").splitlines()
+                out: list[str] = []
+                found = False
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        out.append(line)
+                        continue
+                    if entry.get("id") == entry_id:
+                        # R5: identity_filtered is a sticky derived-state invariant. Normal
+                        # semantic backfill must not reintroduce identity/self-description
+                        # details. A future reversible migration can explicitly rewrite the
+                        # archive outside this generic update path.
+                        if entry.get("summary_source") != "identity_filtered":
+                            entry["summary"] = summary
+                            entry["summary_source"] = summary_source
+                        found = True
+                    out.append(json.dumps(entry, ensure_ascii=False))
+                if found:
+                    p.write_text("\n".join(out) + "\n", encoding="utf-8")
+                return found
+            except OSError:
+                return False
 
     def _entry_session_path(self, entry_id: str) -> Path | None:
         """定位条目所在段文件（线性扫描全部段；T3b 返回完整路径，分片正确）."""

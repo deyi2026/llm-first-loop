@@ -65,6 +65,9 @@ class MemoryEntry:
     version: int = 1                 # 版本号（同事实更新 +1）
     updated_at: str = ""             # 最近更新时间 ISO（空=与 created_at 同）
     version_history: list[dict] = field(default_factory=list)  # 旧版沉淀: [{"version","content","updated_at"}]
+    # P3: results computed from an older observed store state remain durable facts, but
+    # never retake the current value after a newer version has been committed.
+    observation_history: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -87,7 +90,7 @@ class MemoryStore:
         self._index_path = self._dir / "index.json"
         self._entries: list[MemoryEntry] = []
         # 2026-08-20（d8a76517, 镜像）: 跨进程/线程并发写防护——写前合并磁盘最新态
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._load()
 
     def _load(self) -> None:
@@ -200,22 +203,81 @@ class MemoryStore:
         existing.decay_score = 1.0  # 更新即"最新"，衰减重置（访问统计保留）
         return existing
 
-    def save_entry(self, entry: MemoryEntry) -> MemoryEntry:
+    def version_snapshot(self) -> dict[str, int]:
+        """Return a mechanical id→version snapshot for long-running producers.
+
+        The snapshot carries no relevance/currentness judgment.  It is only a CAS basis
+        so a late producer cannot overwrite a memory value changed after it started.
+        """
+        with self._lock:
+            self._merge_remote_changes()
+            return {str(entry.id): int(entry.version) for entry in self._entries if entry.id}
+
+    def _prepare_entry(self, entry: MemoryEntry) -> None:
         if not entry.id:
             entry.id = f"MEM-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
         if not entry.created_at:
             entry.created_at = datetime.now(UTC).isoformat()
         if not entry.content_fingerprint:
             entry.content_fingerprint = self._compute_fingerprint(entry)
-        existing = self._find_same_fact(entry)
-        if existing is not None:
-            updated = self._update_existing(existing, entry)
+
+    def save_entry_if_observed(
+        self, entry: MemoryEntry, *, observed_versions: dict[str, int]
+    ) -> tuple[MemoryEntry, bool]:
+        """CAS-style save for async/late producers.
+
+        ``True`` means the candidate became current (new entry or update of an unchanged
+        observed entry). ``False`` means a matching entry was created/changed after the
+        producer's snapshot; the candidate is retained in observation_history but is not
+        promoted to current.
+        """
+        with self._lock:
+            self._merge_remote_changes()
+            self._prepare_entry(entry)
+            existing = self._find_same_fact(entry)
+            if existing is not None:
+                observed_version = observed_versions.get(existing.id)
+                if observed_version is None or int(existing.version) != int(observed_version):
+                    existing.observation_history.append(
+                        {
+                            "disposition": "late_observation_not_promoted",
+                            "content": entry.content,
+                            "keywords": list(entry.keywords),
+                            "source_session_id": entry.source_session_id,
+                            "source_message_id": entry.source_message_id,
+                            "deposit_path": entry.deposit_path,
+                            "content_fingerprint": entry.content_fingerprint,
+                            "observed_version": observed_version,
+                            "current_version": int(existing.version),
+                            "observed_at": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                    self._save()
+                    return existing, False
+                updated = self._update_existing(existing, entry)
+                self._save()
+                return updated, True
+            entry.updated_at = entry.updated_at or entry.created_at
+            self._entries.append(entry)
             self._save()
-            return updated
-        entry.updated_at = entry.updated_at or entry.created_at
-        self._entries.append(entry)
-        self._save()
-        return entry
+            return entry, True
+
+    def save_entry(self, entry: MemoryEntry) -> MemoryEntry:
+        with self._lock:
+            # Refresh before matching, not only before the final file write.  Otherwise a
+            # concurrent writer can create the same fact after this process loaded its
+            # in-memory index and weak-dedup would make the decision on stale state.
+            self._merge_remote_changes()
+            self._prepare_entry(entry)
+            existing = self._find_same_fact(entry)
+            if existing is not None:
+                updated = self._update_existing(existing, entry)
+                self._save()
+                return updated
+            entry.updated_at = entry.updated_at or entry.created_at
+            self._entries.append(entry)
+            self._save()
+            return entry
 
     def search(self, keywords: list[str], top_k: int = 5, session_id: str = "") -> list[MemoryEntry]:
         """关键词检索 + 衰减排序（Phase 2）: 检索命中更新访问统计（内存），不即时全量落盘.

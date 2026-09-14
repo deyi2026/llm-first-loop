@@ -12,6 +12,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from llm_loop.core.message import ToolCall, ToolResult
+from llm_loop.core.run_context import current_run_generation
 from llm_loop.memory.evidence import (
     Coverage,
     EvidenceCapture,
@@ -39,9 +40,13 @@ class EvidenceShadowRecorder:
     def __call__(self, call: ToolCall, result: ToolResult) -> None:
         raw = result.raw_observation if result.raw_observation is not None else result.content
         source, coverage = source_for_call(call, result)
+        run_generation = str(current_run_generation.get() or "")
+        stable_capture_id = (
+            f"run:{run_generation}:{call.id}" if run_generation else call.id
+        )
         request = make_capture_request(
             owner=self.owner_resolver(),
-            stable_capture_id=call.id,
+            stable_capture_id=stable_capture_id,
             raw_observation=raw,
             acquired_at=self.clock(),
             tool_name=call.name,
@@ -52,6 +57,7 @@ class EvidenceShadowRecorder:
                 producer="tool_registry_shadow",
                 authority="tool_observation",
                 scope=result.status.value,
+                origin_run_generation=run_generation,
             ),
         )
         self.capture.capture(request)

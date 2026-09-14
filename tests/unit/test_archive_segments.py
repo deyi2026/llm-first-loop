@@ -280,3 +280,61 @@ def test_delete_session_purges_all_segments_and_indexes(tmp_path):
     assert store._segment_paths(_SID) == []
     assert not list(tmp_path.glob(f"{_SID}*.idx"))
     assert store.search(_SID, "alpha") == []
+
+
+def test_late_async_summary_backfill_cannot_overwrite_newer_append(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P3: old-run entry backfill may finish late but must not erase a newer run append."""
+    import threading
+
+    store = ArchiveStore(tmp_path, segment_bytes=0)
+    first_id = _mk(store, _SID, "A1 archived payload")
+    segment = tmp_path / f"{_SID}.jsonl"
+
+    real_write_text = Path.write_text
+    rewrite_ready = threading.Event()
+    allow_rewrite = threading.Event()
+
+    def _gated_write(path: Path, data: str, *args, **kwargs):  # noqa: ANN002, ANN003
+        if path == segment and threading.current_thread().name == "late-summary":
+            rewrite_ready.set()
+            assert allow_rewrite.wait(timeout=2.0)
+        return real_write_text(path, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", _gated_write)
+    update_result: list[bool] = []
+    append_result: list[str] = []
+    append_done = threading.Event()
+
+    update_thread = threading.Thread(
+        target=lambda: update_result.append(
+            store.update_summary(first_id, "A1 late semantic summary", "llm")
+        ),
+        name="late-summary",
+    )
+    update_thread.start()
+    assert rewrite_ready.wait(timeout=2.0)
+
+    def _append_newer() -> None:
+        append_result.append(_mk(store, _SID, "A2 newer archive payload"))
+        append_done.set()
+
+    append_thread = threading.Thread(target=_append_newer, name="new-run-append")
+    append_thread.start()
+    # Force the dangerous order on the old implementation: A2 finishes its append while
+    # A1 still holds an old read snapshot. A correct mutation fence makes this wait time
+    # out (A2 blocks) until the A1 rewrite is released.
+    append_done.wait(timeout=0.5)
+    allow_rewrite.set()
+    update_thread.join(timeout=2.0)
+    append_thread.join(timeout=2.0)
+    assert not update_thread.is_alive()
+    assert not append_thread.is_alive()
+    assert update_result == [True]
+    assert len(append_result) == 1
+
+    rows = [json.loads(line) for line in segment.read_text(encoding="utf-8").splitlines() if line]
+    assert {row["id"] for row in rows} == {first_id, append_result[0]}
+    first = next(row for row in rows if row["id"] == first_id)
+    assert first["summary"] == "A1 late semantic summary"

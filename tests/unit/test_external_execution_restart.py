@@ -298,3 +298,74 @@ def test_dsh_background_reuses_same_durable_external_execution_contract(tmp_path
     assert state.executor == "dsh_task"
     assert state.state == "completed"
     assert state.exit_code == 0
+
+
+def test_a2_session_cancel_does_not_kill_a1_background_job(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from llm_loop.core.run_context import current_run_generation
+    from llm_loop.tools.registry import ToolRegistry
+
+    events = EventStore(tmp_path / "events-p3", enabled=True)
+    reg = _fresh_registry(events)
+    proc = _FakeProc(pid=23456)
+    sid_token = current_session_id.set("owner-cross-run")
+    gen_token = current_run_generation.set("run-A1")
+    try:
+        job_id = reg.create(
+            proc,
+            "sleep 30",
+            session_id="owner-cross-run",
+            workspace_root=str(tmp_path),
+            executor="execute_command",
+        )
+    finally:
+        current_run_generation.reset(gen_token)
+        current_session_id.reset(sid_token)
+
+    tools = ToolRegistry()
+    tools.add_session_cancel_hook(reg.cancel_session)
+    monkeypatch.setattr(os, "getpgid", lambda _pid: (_ for _ in ()).throw(ProcessLookupError()))
+
+    assert tools.cancel_session("owner-cross-run", run_generation="run-A2") == 0
+    assert proc.terminated is False
+    assert tools.cancel_session("owner-cross-run", run_generation="run-A1") == 1
+    assert proc.terminated is True
+    snap = reg.snapshot(job_id, session_id="owner-cross-run")
+    assert snap is not None and snap["origin_run_generation"] == "run-A1"
+
+
+def test_in_run_session_cancel_infers_current_generation_for_long_lived_hooks(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P3: Engine finalizer calls cancel_session without an explicit generation."""
+    from llm_loop.core.run_context import current_run_generation
+    from llm_loop.tools.registry import ToolRegistry
+
+    events = EventStore(tmp_path / "events-p3-finalizer", enabled=True)
+    reg = _fresh_registry(events)
+    proc = _FakeProc(pid=23457)
+    sid_token = current_session_id.set("owner-finalizer")
+    gen_token = current_run_generation.set("run-A1")
+    try:
+        reg.create(
+            proc,
+            "sleep 30",
+            session_id="owner-finalizer",
+            workspace_root=str(tmp_path),
+            executor="execute_command",
+        )
+    finally:
+        current_run_generation.reset(gen_token)
+        current_session_id.reset(sid_token)
+
+    tools = ToolRegistry()
+    tools.add_session_cancel_hook(reg.cancel_session)
+    monkeypatch.setattr(os, "getpgid", lambda _pid: (_ for _ in ()).throw(ProcessLookupError()))
+
+    sid_token = current_session_id.set("owner-finalizer")
+    gen_token = current_run_generation.set("run-A2")
+    try:
+        assert tools.cancel_session("owner-finalizer") == 0
+    finally:
+        current_run_generation.reset(gen_token)
+        current_session_id.reset(sid_token)
+    assert proc.terminated is False

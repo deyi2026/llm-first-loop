@@ -428,20 +428,25 @@ class BackgroundRunner:
           自动获得同语义，运维清理路径显式传 runner_stop 保持可区分）
         - 返回 True=该会话确有进行中 run（后台或同步）且已请求取消；False=无 run
         """
+        run_generation = ""
         with self._guard:
             h = self._registry.get(session_id)
             if h is not None:
                 h.cancelled = True
                 h.cancel_reason = reason
+                run_generation = str(h.run_generation or "")
             elif self.is_sync_active(session_id):
                 self._sync_cancelled[session_id] = reason
+                active_generation = getattr(getattr(self._engine, "session", None), "active_run_generation", None)
+                if callable(active_generation):
+                    run_generation = str(active_generation(session_id) or "")
             else:
                 return False
         registry = getattr(self._engine, "registry", None)
         cancel_session = getattr(registry, "cancel_session", None)
         if callable(cancel_session):
             try:
-                cancel_session(session_id)
+                cancel_session(session_id, run_generation=run_generation)
             except Exception:  # noqa: BLE001 — 工具硬取消失败仍保留循环 cancelled 标志
                 logger.warning("后台 run 工具取消失败（fail-open）: session=%s", session_id, exc_info=True)
         return True
@@ -730,32 +735,38 @@ class BackgroundRunner:
             ctx = contextvars.copy_context()
 
             def _run() -> Any:
+                from llm_loop.core.run_context import current_run_generation
+
+                generation_token = current_run_generation.set(handle.run_generation)
                 run_kwargs: dict[str, Any] = {}
-                it: Any
-                if reasoning_effort is not None:
-                    run_kwargs["reasoning_effort"] = reasoning_effort
-                if reasoning_mode is not None:
-                    run_kwargs["reasoning_mode"] = reasoning_mode
-                if ingress is not None:
-                    run_kwargs["ingress"] = ingress
-                if user_metadata is not None:
-                    run_kwargs["user_metadata"] = user_metadata
-                if before_start is not None:
-                    accepted_stream = getattr(self._engine, "_run_stream_with_acquired", None)
-                    if not callable(accepted_stream):
-                        raise RuntimeError("engine 不支持 accepted-boundary callback")
-                    it = accepted_stream(
-                        session_id, user_text, model,
-                        on_run_acquired=before_start, **run_kwargs,
-                    )
-                else:
-                    it = self._engine.run_stream(session_id, user_text, model, **run_kwargs)
-                while True:
-                    try:
-                        delta = next(it)
-                    except StopIteration as exc:
-                        return exc.value
-                    bus.emit({"type": "delta", "delta": delta})
+                try:
+                    it: Any
+                    if reasoning_effort is not None:
+                        run_kwargs["reasoning_effort"] = reasoning_effort
+                    if reasoning_mode is not None:
+                        run_kwargs["reasoning_mode"] = reasoning_mode
+                    if ingress is not None:
+                        run_kwargs["ingress"] = ingress
+                    if user_metadata is not None:
+                        run_kwargs["user_metadata"] = user_metadata
+                    if before_start is not None:
+                        accepted_stream = getattr(self._engine, "_run_stream_with_acquired", None)
+                        if not callable(accepted_stream):
+                            raise RuntimeError("engine 不支持 accepted-boundary callback")
+                        it = accepted_stream(
+                            session_id, user_text, model,
+                            on_run_acquired=before_start, **run_kwargs,
+                        )
+                    else:
+                        it = self._engine.run_stream(session_id, user_text, model, **run_kwargs)
+                    while True:
+                        try:
+                            delta = next(it)
+                        except StopIteration as exc:
+                            return exc.value
+                        bus.emit({"type": "delta", "delta": delta})
+                finally:
+                    current_run_generation.reset(generation_token)
 
             result = ctx.run(_run)
             # The run itself owns terminal side effects. Subscribers may disconnect at any

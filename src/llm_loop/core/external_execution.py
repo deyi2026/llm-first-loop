@@ -21,6 +21,7 @@ from llm_loop.event_log.model import (
 class ExternalExecutionState:
     job_id: str
     session_id: str
+    origin_run_generation: str
     workspace_root: str
     executor: str
     command_sha256: str
@@ -62,6 +63,7 @@ class ExternalExecutionJournal:
         workspace_root: str,
         executor: str,
         command_sha256: str,
+        origin_run_generation: str = "",
         pid: int = 0,
         pgid: int = 0,
     ) -> ExternalExecutionState | None:
@@ -70,6 +72,7 @@ class ExternalExecutionJournal:
             return ExternalExecutionState(
                 job_id=job_id,
                 session_id=session_id,
+                origin_run_generation=str(origin_run_generation or ""),
                 workspace_root=workspace_root,
                 executor=executor,
                 command_sha256=command_sha256,
@@ -82,6 +85,7 @@ class ExternalExecutionJournal:
         if existing is not None:
             if (
                 existing.workspace_root == workspace_root
+                and existing.origin_run_generation == str(origin_run_generation or "")
                 and existing.executor == executor
                 and existing.command_sha256 == command_sha256
             ):
@@ -92,6 +96,7 @@ class ExternalExecutionJournal:
             EVENT_EXTERNAL_EXECUTION_LAUNCHED,
             {
                 "job_id": job_id,
+                "origin_run_generation": str(origin_run_generation or ""),
                 "workspace_root": workspace_root,
                 "executor": executor,
                 "command_sha256": command_sha256,
@@ -105,6 +110,7 @@ class ExternalExecutionJournal:
         return ExternalExecutionState(
             job_id=job_id,
             session_id=session_id,
+            origin_run_generation=str(origin_run_generation or ""),
             workspace_root=workspace_root,
             executor=executor,
             command_sha256=command_sha256,
@@ -219,6 +225,7 @@ class ExternalExecutionJournal:
                 ExternalExecutionState(
                     job_id=job_id,
                     session_id=session_id,
+                    origin_run_generation=str(lp.get("origin_run_generation") or ""),
                     workspace_root=str(lp.get("workspace_root") or ""),
                     executor=str(lp.get("executor") or ""),
                     command_sha256=str(lp.get("command_sha256") or ""),
@@ -264,6 +271,7 @@ class ExternalExecutionJournal:
         return ExternalExecutionState(
             job_id=job_id,
             session_id=session_id,
+            origin_run_generation=str(lp.get("origin_run_generation") or ""),
             workspace_root=str(lp.get("workspace_root") or ""),
             executor=str(lp.get("executor") or ""),
             command_sha256=str(lp.get("command_sha256") or ""),

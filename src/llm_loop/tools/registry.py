@@ -205,8 +205,8 @@ PreExecuteHook = Callable[[ToolCall], None]
 EvidenceShadowHook = Callable[[ToolCall, ToolResult], None]
 EvidenceManifestProvider = Callable[[int], str]
 EvidenceHistoryCaptureHook = Callable[[str, Message, int | None, str | None], str | None]
-SessionCancelHook = Callable[[str], Any]
-AsyncObligationHook = Callable[[str], list[dict[str, Any]]]
+SessionCancelHook = Callable[..., Any]
+AsyncObligationHook = Callable[..., list[dict[str, Any]]]
 
 
 class ToolRegistry:
@@ -244,7 +244,10 @@ class ToolRegistry:
         # 后台 Stop 的会话定向取消：不同 session 共享 registry/tool 实例，
         # 因此活跃执行必须按 current_session_id 分桶，禁止全局 terminate 误杀其他会话。
         self._active_exec_guard = threading.Lock()
-        self._active_exec: dict[str, list[tuple[Any, Any]]] = {}
+        # P3: session alone is not sufficient once a timed-out/long-running tool from A1
+        # can outlive its parent and A2 starts on the same session.  Keep the exact origin
+        # run generation with each live future so Stop/finalization cannot claim A1 work.
+        self._active_exec: dict[str, list[tuple[Any, Any, str]]] = {}
         self.safety = safety_guard or CatastrophicGuard(audit_dir=safety_audit_dir)
         self.tool_timeout_s = tool_timeout_s
         self.max_output_chars = max_output_chars
@@ -488,8 +491,11 @@ class ToolRegistry:
     def _track_active(self, session_id: str, future: Any, tool: Any) -> None:
         if not session_id:
             return
+        from llm_loop.core.run_context import current_run_generation
+
+        generation = str(current_run_generation.get() or "")
         with self._active_exec_guard:
-            self._active_exec.setdefault(session_id, []).append((future, tool))
+            self._active_exec.setdefault(session_id, []).append((future, tool, generation))
 
     def _untrack_active(self, session_id: str, future: Any) -> None:
         if not session_id:
@@ -502,17 +508,25 @@ class ToolRegistry:
             else:
                 self._active_exec.pop(session_id, None)
 
-    def cancel_session(self, session_id: str) -> int:
-        """尽力取消指定会话正在执行的工具，不触碰其他 session。
+    def cancel_session(self, session_id: str, *, run_generation: str = "") -> int:
+        """尽力取消指定会话/运行代次正在执行的工具，不触碰其他 owner。
 
         future.cancel() 仅能取消尚未开始的线程任务；运行中的外部进程必须由工具
         提供 ``terminate_session(session_id)`` 才会被硬终止。刻意不回退到无参数
         terminate()，因为工具实例跨会话共享，全局终止可能误杀别的会话。
         """
+        from llm_loop.core.run_context import current_run_generation
+
+        effective_generation = str(run_generation or current_run_generation.get() or "")
         with self._active_exec_guard:
-            entries = list(self._active_exec.get(session_id, []))
+            all_entries = list(self._active_exec.get(session_id, []))
+            entries = [
+                entry
+                for entry in all_entries
+                if not effective_generation or entry[2] == effective_generation
+            ]
         seen_tools: set[int] = set()
-        for future, tool in entries:
+        for future, tool, _origin_generation in entries:
             future.cancel()
             ident = id(tool)
             if ident in seen_tools:
@@ -521,7 +535,11 @@ class ToolRegistry:
             terminate_session = getattr(tool, "terminate_session", None)
             if callable(terminate_session):
                 try:
-                    terminate_session(session_id)
+                    self._call_session_owner_hook(
+                        terminate_session,
+                        session_id,
+                        run_generation=effective_generation,
+                    )
                 except Exception:  # noqa: BLE001 — Stop 是 best-effort，失败仍由循环取消标志收尾
                     logger.warning(
                         "会话工具终止失败（fail-open）: session=%s tool=%s",
@@ -532,7 +550,11 @@ class ToolRegistry:
         hook_hits = 0
         for hook in list(self._session_cancel_hooks):
             try:
-                hit = hook(session_id)
+                hit = self._call_session_owner_hook(
+                    hook,
+                    session_id,
+                    run_generation=effective_generation,
+                )
                 if isinstance(hit, bool):
                     hook_hits += int(hit)
                 elif isinstance(hit, int):
@@ -545,6 +567,26 @@ class ToolRegistry:
                     exc_info=True,
                 )
         return len(entries) + hook_hits
+
+    @staticmethod
+    def _call_session_owner_hook(hook: Any, session_id: str, *, run_generation: str) -> Any:
+        """Call a lifecycle hook with generation when its declared surface supports it.
+
+        Signature inspection avoids using an internal ``TypeError`` from the hook body as a
+        false signal that the hook is legacy.  Unknown signatures keep the historical
+        single-argument call rather than guessing authority.
+        """
+        import inspect
+
+        try:
+            params = inspect.signature(hook).parameters
+        except (TypeError, ValueError):
+            params = {}
+        if "run_generation" in params:
+            return hook(session_id, run_generation=run_generation)
+        if "origin_run_generation" in params:
+            return hook(session_id, origin_run_generation=run_generation)
+        return hook(session_id)
 
     def schemas(self, lazy: bool = False) -> list[dict]:
         """生成 LLM tools 参数（JSON Schema，约束 C4）.
@@ -717,12 +759,21 @@ class ToolRegistry:
         if hook not in self._async_obligation_hooks:
             self._async_obligation_hooks.append(hook)
 
-    def async_obligations(self, session_id: str) -> list[dict[str, Any]]:
-        """收集指定 session 尚未 terminal 的异步子资源；异常源 fail-open。"""
+    def async_obligations(
+        self, session_id: str, *, run_generation: str = ""
+    ) -> list[dict[str, Any]]:
+        """收集指定 session/run 尚未 terminal 的异步子资源；异常源 fail-open。"""
+        from llm_loop.core.run_context import current_run_generation
+
+        target_generation = str(run_generation or current_run_generation.get() or "")
         out: list[dict[str, Any]] = []
         for hook in list(self._async_obligation_hooks):
             try:
-                rows = hook(session_id) or []
+                rows = self._call_session_owner_hook(
+                    hook,
+                    session_id,
+                    run_generation=target_generation,
+                ) or []
                 out.extend(row for row in rows if isinstance(row, dict))
             except Exception:  # noqa: BLE001 — observability/lifecycle source fail-open
                 logger.warning(
@@ -1275,7 +1326,10 @@ class ToolRegistry:
         )
         shadow_token = current_evidence_shadow_enabled.set(capture_enabled)
         enforce_token = current_evidence_enforce_enabled.set(self._evidence_enforcer is not None)
-        from llm_loop.core.tool_execution_journal import activate_effect_binding_for_call
+        from llm_loop.core.tool_execution_journal import (
+            activate_effect_binding_for_call,
+            revoke_effect_binding_for_call,
+        )
 
         try:
             with activate_effect_binding_for_call(call.id):
@@ -1297,6 +1351,10 @@ class ToolRegistry:
         try:
             result = future.result() if timeout_s is None else future.result(timeout=timeout_s)
         except concurrent.futures.TimeoutError:
+            # P3: revoke the shared effect capability before TIMEOUT becomes visible.
+            # If the worker is already inside the tiny physical commit window this waits
+            # for that window to close, so no mutation can occur *after* timeout return.
+            revoke_effect_binding_for_call(call.id)
             # P1-5(审计发现 #11): 超时即放弃等待，让"超时"按时返回——
             # ① future.cancel()（运行中任务取消无效，尽力而为）;
             # ② 调用工具暴露的 terminate() 钩子（execute_command 整树杀子进程，

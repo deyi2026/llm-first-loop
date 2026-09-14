@@ -48,6 +48,7 @@ class JobEntry:
     exit_code: int | None = None
     killed: bool = False
     session_id: str = ""
+    origin_run_generation: str = ""
     workspace_root: str = ""
     executor: str = ""
     durable: bool = False
@@ -144,6 +145,9 @@ class JobRegistry:
         command_sha256 = hashlib.sha256(command.encode("utf-8", "replace")).hexdigest()
         pid = int(getattr(proc, "pid", 0) or 0)
         pgid = self._process_group(proc)
+        from llm_loop.core.run_context import current_run_generation
+
+        origin_run_generation = str(current_run_generation.get() or "")
         launch = None
         try:
             if requires_durable:
@@ -153,6 +157,7 @@ class JobRegistry:
                     workspace_root=canonical_workspace,
                     executor=str(executor or "external"),
                     command_sha256=command_sha256,
+                    origin_run_generation=origin_run_generation,
                     pid=pid,
                     pgid=pgid,
                 )
@@ -164,6 +169,7 @@ class JobRegistry:
                 command=command,
                 proc=proc,
                 session_id=session_id,
+                origin_run_generation=origin_run_generation,
                 workspace_root=canonical_workspace,
                 executor=str(executor or "external"),
                 durable=bool(launch and launch.durable),
@@ -246,6 +252,7 @@ class JobRegistry:
             return {
                 "job_id": job_id,
                 "session_id": entry.session_id,
+                "origin_run_generation": entry.origin_run_generation,
                 "workspace_root": entry.workspace_root,
                 "executor": entry.executor,
                 "state": state,
@@ -273,6 +280,7 @@ class JobRegistry:
         return {
             "job_id": job_id,
             "session_id": durable.session_id,
+            "origin_run_generation": durable.origin_run_generation,
             "workspace_root": durable.workspace_root,
             "executor": durable.executor,
             "state": state,
@@ -389,11 +397,14 @@ class JobRegistry:
             return False, "任务已结束或本进程无句柄"
         return True, "SIGTERM 已发送"
 
-    def cancel_session(self, session_id: str) -> int:
-        """Cancel only this process's active jobs owned by ``session_id``."""
+    def cancel_session(self, session_id: str, *, run_generation: str = "") -> int:
+        """Cancel local jobs owned by the exact session/run generation when supplied."""
         entries = self.active_for_session(session_id)
+        target_generation = str(run_generation or "")
         count = 0
         for entry in entries:
+            if target_generation and entry.origin_run_generation != target_generation:
+                continue
             if self._terminate_entry(entry, reason="session_cancel"):
                 count += 1
         return count

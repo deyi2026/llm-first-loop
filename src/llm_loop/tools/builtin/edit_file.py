@@ -39,6 +39,10 @@ class _ToolJournalFileEffectSink:
     def records_durable(self) -> bool:
         return bool(self._binding.journal.enabled)
 
+    def mutation_authority(self):
+        """Return the exact WAL/run capability guard for the physical commit window."""
+        return self._binding.journal.effect_mutation_authority(self._binding)
+
     def prepared(
         self,
         *,

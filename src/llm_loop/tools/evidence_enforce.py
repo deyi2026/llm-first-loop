@@ -14,6 +14,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from llm_loop.core.message import RecoverabilityStatus, ToolCall, ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_run_generation
 from llm_loop.memory.evidence import (
     EvidenceCapture,
     OwnerScope,
@@ -79,11 +80,15 @@ class EvidenceEnforcer:
         source, coverage = source_for_call(call, result)
         budget = max(128, budget_chars or self.projection_budget_chars)
         owner = self.owner_resolver()
+        run_generation = str(current_run_generation.get() or "")
+        stable_capture_id = (
+            f"run:{run_generation}:{call.id}" if run_generation else call.id
+        )
         try:
             captured = self.capture.capture(
                 make_capture_request(
                     owner=owner,
-                    stable_capture_id=call.id,
+                    stable_capture_id=stable_capture_id,
                     raw_observation=raw,
                     acquired_at=self.clock(),
                     tool_name=call.name,
@@ -94,6 +99,7 @@ class EvidenceEnforcer:
                         producer="tool_registry_enforce",
                         authority="tool_observation",
                         scope=result.status.value,
+                        origin_run_generation=run_generation,
                     ),
                 )
             )

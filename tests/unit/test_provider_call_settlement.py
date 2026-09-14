@@ -65,6 +65,108 @@ def test_logical_call_id_is_stable_and_raw_idempotency_key_is_not_persisted(tmp_
     assert opened[0].payload["purpose"] == "task"
 
 
+def test_logical_provider_call_identity_is_scoped_by_origin_run_generation(tmp_path):
+    """P3: identical idempotency keys in A1/A2 must not alias one logical provider call."""
+    from llm_loop.core.run_context import current_run_generation
+
+    store, journal, _recorder = _journal(tmp_path)
+    key = "task:s1:turn:2:round:1"
+    token = current_run_generation.set("run-A1")
+    try:
+        a1 = _call(journal, key=key)
+    finally:
+        current_run_generation.reset(token)
+    token = current_run_generation.set("run-A2")
+    try:
+        a2 = _call(journal, key=key)
+    finally:
+        current_run_generation.reset(token)
+
+    assert a1.call_id != a2.call_id
+    assert a1.origin_run_generation == "run-A1"
+    assert a2.origin_run_generation == "run-A2"
+    opened = [event.payload for event in store.read("s1") if event.type == journal.CALL_OPENED]
+    assert [payload["origin_run_generation"] for payload in opened] == ["run-A1", "run-A2"]
+
+
+def test_a1_fallback_settles_late_without_mutating_a2_provider_call(tmp_path):
+    """P3 Gate2: a late A1 fallback remains A1 history after A2 routes to another provider."""
+    from llm_loop.core.run_context import current_run_generation
+
+    _store, journal, _recorder = _journal(tmp_path)
+    key = "task:s1:same-logical-position"
+
+    token = current_run_generation.set("run-A1")
+    try:
+        a1 = _call(journal, key=key)
+        a1_site = ProviderCallSite(
+            call=a1,
+            attempt_kind=ProviderAttemptKind.FALLBACK,
+            site_index=1,
+            provider_id="minimax",
+            model_id="minimax-old",
+        )
+        a1_attempt = journal.open_transport_attempt(a1_site, transport_retry_index=0)
+    finally:
+        current_run_generation.reset(token)
+
+    token = current_run_generation.set("run-A2")
+    try:
+        a2 = _call(journal, key=key)
+        a2_site = ProviderCallSite(
+            call=a2,
+            attempt_kind=ProviderAttemptKind.PRIMARY,
+            site_index=0,
+            provider_id="deepseek",
+            model_id="deepseek-new",
+        )
+        a2_attempt = journal.open_transport_attempt(a2_site, transport_retry_index=0)
+        journal.settle_transport_attempt(
+            session_id="s1",
+            attempt=a2_attempt,
+            outcome=ProviderTransportOutcome.SUCCESS,
+            usage={"input_tokens": 20, "output_tokens": 2, "total_tokens": 22},
+            usage_observations=1,
+            status_code=200,
+            provider_code=None,
+            retry_after_seconds=None,
+            rate_limits=(),
+            error_type=None,
+        )
+        journal.settle_call(a2, ProviderCallOutcome.SUCCESS)
+        a2_before = journal.snapshot_call(a2)
+    finally:
+        current_run_generation.reset(token)
+
+    # A1 transport completes only after A2 is already durably settled on another provider.
+    token = current_run_generation.set("run-A1")
+    try:
+        journal.settle_transport_attempt(
+            session_id="s1",
+            attempt=a1_attempt,
+            outcome=ProviderTransportOutcome.SUCCESS,
+            usage={"input_tokens": 10, "output_tokens": 1, "total_tokens": 11},
+            usage_observations=1,
+            status_code=200,
+            provider_code=None,
+            retry_after_seconds=None,
+            rate_limits=(),
+            error_type=None,
+        )
+        journal.settle_call(a1, ProviderCallOutcome.SUCCESS)
+    finally:
+        current_run_generation.reset(token)
+
+    a2_after = journal.snapshot_call(a2)
+    a1_after = journal.snapshot_call(a1)
+    assert a2_after == a2_before
+    assert a2_after["attempts"][0]["provider_id"] == "deepseek"
+    assert a2_after["attempts"][0]["model_id"] == "deepseek-new"
+    assert a1_after["attempts"][0]["provider_id"] == "minimax"
+    assert a1_after["attempts"][0]["attempt_kind"] == "fallback"
+    assert a1.call_id != a2.call_id
+
+
 def test_transport_settlement_merges_usage_chunks_without_summing_snapshots(tmp_path):
     _store, journal, recorder = _journal(tmp_path)
     call = _call(journal)

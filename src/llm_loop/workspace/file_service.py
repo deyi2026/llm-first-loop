@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from llm_loop.workspace.artifacts import ArtifactError, WorkspaceArtifactStore
 from llm_loop.workspace.file_effects import FileArtifactProvenance, FileEffectSink
@@ -441,74 +442,85 @@ class FileService:
             if not prepared:
                 raise FileServiceError("EffectPreparedUnavailable")
 
-        try:
-            fd, tmp_name = tempfile.mkstemp(
-                dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+        authority_factory = (
+            getattr(effect_sink, "mutation_authority", None) if effect_sink is not None else None
+        )
+        authority_ctx: contextlib.AbstractContextManager[bool] = contextlib.nullcontext(True)
+        if callable(authority_factory):
+            authority_ctx = cast(
+                contextlib.AbstractContextManager[bool], authority_factory()
             )
-            tmp = Path(tmp_name)
+        with authority_ctx as mutation_allowed:
+            if not mutation_allowed:
+                raise FileServiceError("EffectAuthorityLost")
             try:
-                with os.fdopen(fd, "wb") as file_obj:
-                    file_obj.write(out_bytes)
-                    file_obj.flush()
-                    os.fsync(file_obj.fileno())
-                os.replace(tmp, path)
-            except BaseException:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp)
-                raise
-        except OSError as exc:
-            raise FileServiceError(
-                "WriteFailed", detail=str(exc), cause_type=type(exc).__name__
-            ) from exc
-
-        try:
-            reread = path.read_bytes()
-        except OSError as exc:
-            raise FileServiceError(
-                "VerifyReadFailed", detail=str(exc), cause_type=type(exc).__name__
-            ) from exc
-        if reread != out_bytes:
-            raise FileServiceError("VerifyMismatch")
-
-        post_stat = path.stat()
-        artifact_fact: dict[str, object] | None = None
-        artifact_error_type = ""
-        if (
-            effect_sink is not None
-            and effect_sink.records_durable
-            and self.artifact_store is not None
-        ):
-            try:
-                artifact = self.artifact_store.create(
-                    workspace_scope=effect_sink.workspace_scope,
-                    canonical_path=str(path),
-                    data=reread,
-                    owner_session_id=effect_sink.owner_session_id,
-                    execution_id=effect_sink.operation_id,
-                    tool_call_id=effect_sink.tool_call_id,
-                    tool_name=effect_sink.tool_name,
-                    effect_kind=effect_sink.effect_kind,
+                fd, tmp_name = tempfile.mkstemp(
+                    dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
                 )
-                artifact_fact = artifact.public_facts()
-            except Exception as exc:  # noqa: BLE001 - successful bytes stay authoritative
-                artifact_error_type = type(exc).__name__
+                tmp = Path(tmp_name)
+                try:
+                    with os.fdopen(fd, "wb") as file_obj:
+                        file_obj.write(out_bytes)
+                        file_obj.flush()
+                        os.fsync(file_obj.fileno())
+                    os.replace(tmp, path)
+                except BaseException:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp)
+                    raise
+            except OSError as exc:
+                raise FileServiceError(
+                    "WriteFailed", detail=str(exc), cause_type=type(exc).__name__
+                ) from exc
 
-        receipt_state = "unknown"
-        if effect_sink is not None:
-            observed_recorded = effect_sink.observed(
-                canonical_path=path,
-                actual_after_bytes=reread,
-                expected_after_bytes=out_bytes,
-                actual_mtime_ns=post_stat.st_mtime_ns,
-                artifact_ref=(
-                    str(artifact_fact.get("artifact_ref") or "")
-                    if artifact_fact is not None
-                    else ""
-                ),
-            )
-            receipt_state = "recorded" if observed_recorded else "recording_failed"
-        if artifact_error_type:
-            receipt_state = "recording_failed"
+            try:
+                reread = path.read_bytes()
+            except OSError as exc:
+                raise FileServiceError(
+                    "VerifyReadFailed", detail=str(exc), cause_type=type(exc).__name__
+                ) from exc
+            if reread != out_bytes:
+                raise FileServiceError("VerifyMismatch")
+
+            post_stat = path.stat()
+            artifact_fact: dict[str, object] | None = None
+            artifact_error_type = ""
+            if (
+                effect_sink is not None
+                and effect_sink.records_durable
+                and self.artifact_store is not None
+            ):
+                try:
+                    artifact = self.artifact_store.create(
+                        workspace_scope=effect_sink.workspace_scope,
+                        canonical_path=str(path),
+                        data=reread,
+                        owner_session_id=effect_sink.owner_session_id,
+                        execution_id=effect_sink.operation_id,
+                        tool_call_id=effect_sink.tool_call_id,
+                        tool_name=effect_sink.tool_name,
+                        effect_kind=effect_sink.effect_kind,
+                    )
+                    artifact_fact = artifact.public_facts()
+                except Exception as exc:  # noqa: BLE001 - successful bytes stay authoritative
+                    artifact_error_type = type(exc).__name__
+
+            receipt_state = "unknown"
+            if effect_sink is not None:
+                observed_recorded = effect_sink.observed(
+                    canonical_path=path,
+                    actual_after_bytes=reread,
+                    expected_after_bytes=out_bytes,
+                    actual_mtime_ns=post_stat.st_mtime_ns,
+                    artifact_ref=(
+                        str(artifact_fact.get("artifact_ref") or "")
+                        if artifact_fact is not None
+                        else ""
+                    ),
+                )
+                receipt_state = "recorded" if observed_recorded else "recording_failed"
+            if artifact_error_type:
+                receipt_state = "recording_failed"
 
         return FileEditResult(
             path=path,

@@ -78,6 +78,27 @@ def test_start_returns_handle_and_queue():
     assert eng.called == 1
 
 
+def test_background_worker_binds_exact_run_generation_context():
+    """P3: worker callbacks/futures inherit the exact RunHandle generation."""
+    from llm_loop.core import run_context
+
+    observed: list[str] = []
+
+    class _GenerationEngine(FakeEngine):
+        def run_stream(self, session_id: str, user_text: str, model: str | None = None):
+            generation_var = getattr(run_context, "current_run_generation", None)
+            observed.append(generation_var.get() if generation_var is not None else "")
+            yield SimpleNamespace(text="ok", reasoning="", tool_round=None)
+            return SimpleNamespace(session_id=session_id, final_answer="done", rounds=1, tool_calls=0)
+
+    runner = BackgroundRunner(_GenerationEngine())
+    handle, q = runner.start("s-p3-generation", "go")
+    assert handle is not None and q is not None
+    _drain(q, 2)
+
+    assert observed == [handle.run_generation]
+
+
 def test_double_start_rejected():
     eng = FakeEngine(deltas=10, delay=0.05)
     r = BackgroundRunner(eng)

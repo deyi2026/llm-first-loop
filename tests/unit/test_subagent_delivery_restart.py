@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from llm_loop.core.run_context import current_session_id
+from llm_loop.core.run_context import current_run_generation, current_session_id
 from llm_loop.core.session import SessionStore
 from llm_loop.event_log.model import (
     EVENT_SUBAGENT_CANCEL_REQUESTED,
@@ -518,3 +518,34 @@ def test_eventstore_disabled_runner_keeps_legacy_same_process_mailbox(tmp_path) 
         current_session_id.reset(token)
         runner._finalize_child(child, parent, None)  # noqa: SLF001
     assert any("LOCAL-ONLY" in message.content for message in sess.messages)
+
+
+def test_a2_cancel_does_not_cancel_a1_background_child(tmp_path) -> None:
+    """P3: a new run's lifecycle cancel must not claim an older run's child resource."""
+    store, _events = _store(tmp_path)
+    llm = _BlockingLLM()
+    runner = _runner(llm, store)
+    parent = "parent-cross-run-cancel"
+
+    sid_token = current_session_id.set(parent)
+    gen_token = current_run_generation.set("run-A1")
+    try:
+        started = runner.start("A1 child survives into later parent run", depth=0)
+    finally:
+        current_run_generation.reset(gen_token)
+        current_session_id.reset(sid_token)
+
+    child = str(started["child_id"])
+    assert started["accepted"] is True
+    assert llm.entered.wait(timeout=2.0)
+    try:
+        assert runner.cancel_parent(parent, run_generation="run-A2") == 0
+        with runner._children_guard:  # noqa: SLF001 - ownership regression
+            assert not runner._cancel_events[child].is_set()  # noqa: SLF001
+        assert runner.pending_obligations(parent, run_generation="run-A2") == []
+        assert runner.pending_obligations(parent, run_generation="run-A1") == [
+            {"kind": "subagent", "id": child, "state": "running"}
+        ]
+    finally:
+        llm.release.set()
+        _wait_terminal(runner, parent, child)

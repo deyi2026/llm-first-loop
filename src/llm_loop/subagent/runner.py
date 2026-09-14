@@ -95,6 +95,7 @@ class _SubAgentHandle:
 
     child_id: str
     parent_id: str
+    parent_run_generation: str
     depth: int
     generation: str
     state: str = "running"
@@ -152,6 +153,8 @@ class SubAgentRunner:
         # separately so restart never fabricates Thread/Event/Future or a writable mailbox.
         self._children_by_parent: dict[str, set[str]] = {}
         self._parent_by_child: dict[str, str] = {}
+        # P3: parent session alone is insufficient across sequential runs of the same session.
+        self._parent_run_generation_by_child: dict[str, str] = {}
         self._durable_topology: dict[str, SubAgentTopologyState] = {}
         self._local_generation_by_child: dict[str, str] = {}
         self._cancel_events: dict[str, threading.Event] = {}
@@ -422,16 +425,26 @@ class SubAgentRunner:
         with self._children_guard:
             return sorted(self._children_by_parent.get(parent_session_id, set()))
 
-    def pending_obligations(self, parent_session_id: str) -> list[dict[str, object]]:
+    def pending_obligations(
+        self, parent_session_id: str, *, run_generation: str = ""
+    ) -> list[dict[str, object]]:
         """返回 parent 正常 final 时仍在运行、必须机械收束的 child 资源。
 
         terminal-but-unread result 不是完成门槛：模型可自行决定是否读取 child 结果。
         """
+        from llm_loop.core.run_context import current_run_generation
+
+        target_generation = str(run_generation or current_run_generation.get() or "")
         with self._children_guard:
             return [
                 {"kind": "subagent", "id": sid, "state": handle.state}
                 for sid, handle in sorted(self._handles.items())
-                if handle.parent_id == parent_session_id and handle.state == "running"
+                if handle.parent_id == parent_session_id
+                and handle.state == "running"
+                and (
+                    not target_generation
+                    or handle.parent_run_generation == target_generation
+                )
             ]
 
     def parent_of(self, child_session_id: str) -> str:
@@ -586,19 +599,37 @@ class SubAgentRunner:
             self._agent_inbox[child_sid] = []
         return len(rows)
 
-    def cancel_parent(self, parent_session_id: str) -> int:
-        """Cancel this process's direct children after attempting a durable fenced fact."""
+    def cancel_parent(
+        self,
+        parent_session_id: str,
+        *,
+        run_generation: str = "",
+        origin_run_generation: str = "",
+    ) -> int:
+        """Cancel only children owned by the exact parent run generation.
+
+        An explicit/current generation fences same-session sequential runs.  Empty
+        generation remains a deliberate legacy/operator scope for callers that truly own
+        the whole session lifecycle; it is never inferred from the most recent run.
+        """
         if not parent_session_id:
             return 0
+        from llm_loop.core.run_context import current_run_generation
+
+        target_generation = str(run_generation or origin_run_generation or current_run_generation.get() or "")
         with self._children_guard:
-            rows = [
-                (
-                    sid,
-                    self._cancel_events.get(sid),
-                    self._local_generation_by_child.get(sid, ""),
+            rows = []
+            for sid in self._children_by_parent.get(parent_session_id, set()):
+                owner_generation = self._parent_run_generation_by_child.get(sid, "")
+                if target_generation and owner_generation != target_generation:
+                    continue
+                rows.append(
+                    (
+                        sid,
+                        self._cancel_events.get(sid),
+                        self._local_generation_by_child.get(sid, ""),
+                    )
                 )
-                for sid in self._children_by_parent.get(parent_session_id, set())
-            ]
 
         for sid, event, generation in rows:
             # The durable attempt happens before the local signal. If persistence fails,
@@ -631,11 +662,15 @@ class SubAgentRunner:
         """同步登记 active child topology；调用者负责最终 ``_finalize_child``。"""
         sid = f"subagent_{uuid.uuid4().hex[:12]}"
         generation = uuid.uuid4().hex
+        from llm_loop.core.run_context import current_run_generation
+
+        parent_run_generation = str(current_run_generation.get() or "")
         cancel_event = threading.Event()
         with self._children_guard:
             if parent_sid:
                 self._children_by_parent.setdefault(parent_sid, set()).add(sid)
                 self._parent_by_child[sid] = parent_sid
+                self._parent_run_generation_by_child[sid] = parent_run_generation
             self._local_generation_by_child[sid] = generation
             self._cancel_events[sid] = cancel_event
             self._agent_inbox[sid] = []
@@ -687,6 +722,7 @@ class SubAgentRunner:
             self._agent_inbox.pop(sid, None)
             self._messages_to_parent.pop(sid, None)
             self._parent_by_child.pop(sid, None)
+            self._parent_run_generation_by_child.pop(sid, None)
             if parent_sid:
                 children = self._children_by_parent.get(parent_sid)
                 if children is not None:
@@ -886,9 +922,16 @@ class SubAgentRunner:
         """原子保留一个 background handle 槽位；容量只约束并发资源，不判断任务。"""
         sid = f"subagent_{uuid.uuid4().hex[:12]}"
         generation = uuid.uuid4().hex
+        from llm_loop.core.run_context import current_run_generation
+
+        parent_run_generation = str(current_run_generation.get() or "")
         cancel_event = threading.Event()
         handle = _SubAgentHandle(
-            child_id=sid, parent_id=parent_sid, depth=depth, generation=generation
+            child_id=sid,
+            parent_id=parent_sid,
+            parent_run_generation=parent_run_generation,
+            depth=depth,
+            generation=generation,
         )
         with self._children_guard:
             self._prune_handles_locked(reserve_slot=True)
@@ -897,6 +940,7 @@ class SubAgentRunner:
             if parent_sid:
                 self._children_by_parent.setdefault(parent_sid, set()).add(sid)
                 self._parent_by_child[sid] = parent_sid
+                self._parent_run_generation_by_child[sid] = parent_run_generation
             self._local_generation_by_child[sid] = generation
             self._cancel_events[sid] = cancel_event
             self._agent_inbox[sid] = []

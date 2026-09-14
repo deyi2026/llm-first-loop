@@ -14,12 +14,14 @@ import contextvars
 import hashlib
 import json
 import logging
+import threading
 import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
+from llm_loop.core.run_context import current_run_generation
 from llm_loop.core.session import Session, SessionStore, _validate_session_id
 from llm_loop.event_log.model import build_message_payload
 
@@ -37,6 +39,9 @@ class _EffectBinding:
         "tool_call_id",
         "tool_name",
         "workspace_root",
+        "origin_run_generation",
+        "_authority_lock",
+        "_revoked",
     )
 
     def __init__(
@@ -49,6 +54,7 @@ class _EffectBinding:
         tool_call_id: str,
         tool_name: str,
         workspace_root: str,
+        origin_run_generation: str,
     ) -> None:
         self.journal = journal
         self.session_id = session_id
@@ -57,6 +63,21 @@ class _EffectBinding:
         self.tool_call_id = tool_call_id
         self.tool_name = tool_name
         self.workspace_root = workspace_root
+        self.origin_run_generation = str(origin_run_generation or "")
+        self._authority_lock = threading.RLock()
+        self._revoked = False
+
+    @property
+    def revoked(self) -> bool:
+        with self._authority_lock:
+            return bool(self._revoked)
+
+    def revoke(self) -> None:
+        # The same lock is held for the physical commit authority window.  A timeout
+        # therefore cannot return while a previously-authorized commit is still running;
+        # otherwise it revokes before a late worker can enter that window.
+        with self._authority_lock:
+            self._revoked = True
 
 
 _current_effect_binding: contextvars.ContextVar[_EffectBinding | None] = contextvars.ContextVar(
@@ -85,6 +106,37 @@ def activate_effect_binding_for_call(tool_call_id: str) -> Iterator[None]:
         yield
     finally:
         _current_effect_binding.reset(token)
+
+
+def revoke_effect_binding_for_call(tool_call_id: str) -> bool:
+    """Revoke one process-local effect capability after timeout/cancellation."""
+    call_id = str(tool_call_id or "")
+    bindings = _current_effect_bindings.get()
+    binding = bindings.get(call_id) if bindings else None
+    if binding is None:
+        current = _current_effect_binding.get()
+        if current is not None and current.tool_call_id == call_id:
+            binding = current
+    if binding is None:
+        return False
+    binding.revoke()
+    return True
+
+
+@contextlib.contextmanager
+def current_effect_mutation_authority() -> Iterator[bool]:
+    """Expose the current tool attempt's exact mutation capability, if any.
+
+    Direct/control-plane callers without a ToolExecutionJournal binding retain legacy
+    behavior. Runtime model-tool calls receive a binding and therefore exact attempt/run
+    fencing without each actuator reimplementing ownership logic.
+    """
+    binding = _current_effect_binding.get()
+    if binding is None:
+        yield True
+        return
+    with binding.journal.effect_mutation_authority(binding) as allowed:
+        yield bool(allowed)
 
 
 class ToolExecutionJournal:
@@ -157,6 +209,7 @@ class ToolExecutionJournal:
         raw = json.dumps(
             {
                 "session_id": str(session_id),
+                "origin_run_generation": str(current_run_generation.get() or ""),
                 "round": int(round_no or 0),
                 "tool_call_id": str(getattr(call, "id", "") or ""),
                 "tool_name": str(getattr(call, "name", "") or ""),
@@ -234,6 +287,7 @@ class ToolExecutionJournal:
             "tool.execution.declared",
             {
                 "execution_id": execution_id,
+                "origin_run_generation": str(current_run_generation.get() or ""),
                 "round": int(round_no or 0),
                 "tool_call_id": str(getattr(call, "id", "") or ""),
                 "tool_name": str(getattr(call, "name", "") or ""),
@@ -253,6 +307,7 @@ class ToolExecutionJournal:
             "tool.execution.started",
             {
                 "execution_id": execution_id,
+                "origin_run_generation": str(current_run_generation.get() or ""),
                 "round": int(round_no or 0),
                 "tool_call_id": str(getattr(call, "id", "") or ""),
                 "tool_name": str(getattr(call, "name", "") or ""),
@@ -279,6 +334,7 @@ class ToolExecutionJournal:
             tool_call_id=str(getattr(call, "id", "") or ""),
             tool_name=str(getattr(call, "name", "") or ""),
             workspace_root=str(Path(workspace_root).expanduser().resolve()),
+            origin_run_generation=str(current_run_generation.get() or ""),
         )
         token = _current_effect_binding.set(binding)
         try:
@@ -313,12 +369,34 @@ class ToolExecutionJournal:
                 tool_call_id=call_id,
                 tool_name=str(getattr(call, "name", "") or ""),
                 workspace_root=workspace,
+                origin_run_generation=str(current_run_generation.get() or ""),
             )
         token = _current_effect_bindings.set(bindings)
         try:
             yield
         finally:
             _current_effect_bindings.reset(token)
+
+    @contextlib.contextmanager
+    def effect_mutation_authority(self, binding: _EffectBinding) -> Iterator[bool]:
+        """Hold exact attempt + run ownership across one physical mutation commit."""
+        with binding._authority_lock:
+            if binding._revoked:
+                yield False
+                return
+            generation = str(binding.origin_run_generation or "")
+            # Empty generation is legacy/non-run use. Preserve old behavior rather than
+            # inventing ownership; runtime-owned effects always carry a generation now.
+            if not generation:
+                yield True
+                return
+            with self.session_store.run_generation_authority(
+                binding.session_id, generation
+            ) as owned:
+                if not owned or binding._revoked:
+                    yield False
+                    return
+                yield True
 
     @staticmethod
     def _canonical_effect_scope(workspace_root: str, canonical_path: str) -> tuple[str, str] | None:
@@ -370,6 +448,7 @@ class ToolExecutionJournal:
             "tool.execution.effect_prepared",
             {
                 "execution_id": str(execution_id),
+                "origin_run_generation": str(current_run_generation.get() or ""),
                 "round": int(round_no or 0),
                 "tool_call_id": str(tool_call_id or ""),
                 "tool_name": str(tool_name or ""),
@@ -414,6 +493,7 @@ class ToolExecutionJournal:
             "tool.execution.effect_observed",
             {
                 "execution_id": str(execution_id),
+                "origin_run_generation": str(current_run_generation.get() or ""),
                 "round": int(round_no or 0),
                 "tool_call_id": str(tool_call_id or ""),
                 "tool_name": str(tool_name or ""),
@@ -517,6 +597,7 @@ class ToolExecutionJournal:
             "version": 1,
             "session_id": str(session_id),
             "execution_id": str(execution_id),
+            "origin_run_generation": str(current_run_generation.get() or ""),
             "round": int(round_no or 0),
             "tool_call_id": str(getattr(call, "id", "") or ""),
             "tool_name": str(getattr(call, "name", "") or ""),
@@ -541,6 +622,7 @@ class ToolExecutionJournal:
             "tool.execution.finished",
             {
                 "execution_id": execution_id,
+                "origin_run_generation": str(current_run_generation.get() or ""),
                 "round": int(round_no or 0),
                 "tool_call_id": str(getattr(call, "id", "") or ""),
                 "tool_name": str(getattr(call, "name", "") or ""),
@@ -579,12 +661,16 @@ class ToolExecutionJournal:
         result_state_sha256: str = "",
         recovered: bool = False,
         tool_message: Message | None = None,
+        origin_run_generation: str = "",
     ) -> bool:
         event = self._append_event(
             session_id,
             "tool.execution.receipt_committed",
             {
                 "execution_id": execution_id,
+                "origin_run_generation": str(
+                    origin_run_generation or current_run_generation.get() or ""
+                ),
                 "round": int(round_no or 0),
                 "tool_call_id": str(tool_call_id or ""),
                 "tool_name": str(tool_name or ""),
@@ -640,6 +726,7 @@ class ToolExecutionJournal:
                 call_id = str(declared.get("tool_call_id") or "")
                 tool_name = str(declared.get("tool_name") or "")
                 round_no = int(declared.get("round") or 0)
+                origin_run_generation = str(declared.get("origin_run_generation") or "")
                 if not call_id:
                     continue
                 finished = state.get("finished")
@@ -661,6 +748,7 @@ class ToolExecutionJournal:
                         ),
                         recovered=True,
                         tool_message=existing_receipt,
+                        origin_run_generation=origin_run_generation,
                     )
                     continue
 
@@ -764,6 +852,7 @@ class ToolExecutionJournal:
                         result_state_sha256=result_sha,
                         recovered=True,
                         tool_message=msg,
+                        origin_run_generation=origin_run_generation,
                     )
                 recovered += 1
             if recovered:

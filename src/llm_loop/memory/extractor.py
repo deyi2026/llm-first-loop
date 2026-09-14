@@ -161,6 +161,11 @@ class MemoryExtractor:
             history_text = history_text[: self.max_input_chars]
             note = f"输入超预算，已截断至 {self.max_input_chars} 字符"
 
+        # P3: async extraction may outlive the run that observed this history. Capture
+        # only a mechanical memory-version snapshot before the provider call; no semantic
+        # relevance/currentness decision is made here.
+        observed_memory_versions = self.memory.version_snapshot()
+
         coordinator = self.provider_call_coordinator
         background = trigger == "interval"
         execution_class = (
@@ -236,6 +241,7 @@ class MemoryExtractor:
         # 指纹去重 + deposit_path=extract
         new_entries: list[MemoryEntry] = []
         skipped = 0
+        late_not_promoted = 0
         existing_fps = {e.content_fingerprint for e in self.memory.all() if e.content_fingerprint}
         for e in entries:
             fp = _fingerprint(e.content)
@@ -245,8 +251,17 @@ class MemoryExtractor:
                 skipped += 1
                 continue
             existing_fps.add(fp)
-            new_entries.append(e)
-            self.memory.save_entry(e)
+            saved, promoted = self.memory.save_entry_if_observed(
+                e, observed_versions=observed_memory_versions
+            )
+            if promoted:
+                new_entries.append(saved)
+            else:
+                late_not_promoted += 1
+
+        if late_not_promoted:
+            suffix = f"late_observation_not_promoted={late_not_promoted}"
+            note = f"{note}; {suffix}" if note else suffix
 
         self._audit(
             session_id,

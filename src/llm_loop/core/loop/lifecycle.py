@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -22,6 +23,9 @@ from llm_loop.core.run_context import (
 )
 from llm_loop.core.run_context import (
     current_reasoning_mode as _current_reasoning_mode,
+)
+from llm_loop.core.run_context import (
+    current_run_generation as _current_run_generation,
 )
 from llm_loop.core.run_context import (
     current_session_id as _current_session_id,
@@ -105,6 +109,10 @@ class _RunEntrypointMixin:
         if run_reasoning_mode not in {"auto", "off", "on"}:
             run_reasoning_mode = "auto"
         run_model_label = ""
+        # BackgroundRunner seeds the exact public RunHandle generation.  Direct/sync runs
+        # have no external handle, so mint an equally strong internal generation once and
+        # replay it into every generator-resume Context for the whole admitted run.
+        run_generation = str(_current_run_generation.get() or uuid.uuid4().hex)
         _run_stack = ExitStack()
         _run_save_token: object | None = None
         inner = None
@@ -112,6 +120,7 @@ class _RunEntrypointMixin:
         @contextmanager
         def _bound_run_context():
             sid_token = _current_session_id.set(session_id)
+            generation_token = _current_run_generation.set(run_generation)
             ws_token = _current_workspace_root.set(run_workspace)
             effort_token = _current_reasoning_effort.set(run_effort)
             reasoning_mode_token = _current_reasoning_mode.set(run_reasoning_mode)
@@ -130,6 +139,7 @@ class _RunEntrypointMixin:
                 _current_reasoning_mode.reset(reasoning_mode_token)
                 _current_reasoning_effort.reset(effort_token)
                 _current_workspace_root.reset(ws_token)
+                _current_run_generation.reset(generation_token)
                 _current_session_id.reset(sid_token)
 
         try:
@@ -137,7 +147,9 @@ class _RunEntrypointMixin:
                 from llm_loop.core.loop.runner import SessionBusyError
 
                 raise SessionBusyError(f"会话 {session_id} 正由另一进程执行，请稍后重试")
-            _run_save_token = self.session._activate_run_save_token(session_id)
+            _run_save_token = self.session._activate_run_save_token(
+                session_id, run_generation=run_generation
+            )
             with self._run_acquired_callbacks_guard:
                 on_run_acquired = self._run_acquired_callbacks.get(session_id)
             inner = self._run_stream_inner(

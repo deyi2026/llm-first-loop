@@ -221,6 +221,56 @@ def test_inflight_sidecar_keeps_full_reasoning_when_event_tail_is_bounded(
     assert native["reasoning_full"] == reasoning
 
 
+def test_inflight_native_current_slot_rejects_stale_run_persist_and_clear(tmp_path) -> None:
+    """P3: A1 late native-state callbacks must not overwrite/delete A2's current sidecar."""
+    from llm_loop.core.run_context import current_run_generation
+
+    eng = _StubEngine(data_dir=tmp_path)
+    sess, _store = eng.new()
+    active = {"generation": "run-A2"}
+    eng.session = SimpleNamespace(
+        active_run_generation=lambda sid: active["generation"] if sid == sess.session_id else ""
+    )
+
+    token = current_run_generation.set("run-A2")
+    try:
+        a2_digest, _chars, _drafts = eng._persist_inflight_native_state(
+            sess.session_id,
+            round_no=2,
+            provider="deepseek",
+            model="deepseek-v4",
+            partial_sha256="2" * 64,
+            text_full="A2-CURRENT",
+            provider_replay=None,
+            tool_call_drafts=None,
+        )
+    finally:
+        current_run_generation.reset(token)
+    assert a2_digest
+    sidecar = tmp_path / "audit" / "inflight" / f"{sess.session_id}.json"
+    a2_raw = sidecar.read_text(encoding="utf-8")
+    assert json.loads(a2_raw)["origin_run_generation"] == "run-A2"
+
+    token = current_run_generation.set("run-A1")
+    try:
+        stale = eng._persist_inflight_native_state(
+            sess.session_id,
+            round_no=9,
+            provider="minimax",
+            model="old-model",
+            partial_sha256="1" * 64,
+            text_full="A1-LATE",
+            provider_replay=None,
+            tool_call_drafts=None,
+        )
+        eng._clear_inflight_native_state(sess.session_id)
+    finally:
+        current_run_generation.reset(token)
+
+    assert stale == ("", 0, 0)
+    assert sidecar.read_text(encoding="utf-8") == a2_raw
+
+
 def test_b1_env_zero_disables_tails_but_cancelled_still_annotated(monkeypatch):
     """env=0 关闭尾段：推理不入行；cancelled 仍留独立标注行（0/0 如实）。"""
     eng, sess = _run_interrupted(

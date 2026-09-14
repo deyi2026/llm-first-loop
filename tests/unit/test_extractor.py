@@ -196,3 +196,71 @@ def test_extract_audit_fields(tmp_path):
     assert r["input_scope"]
     assert r["input_chars"] > 0
     assert r["entries"] >= 0
+
+
+def test_late_a1_extractor_cannot_overwrite_a2_current_memory(tmp_path) -> None:
+    """P3: late semantic extraction may be retained, but cannot retake current memory state."""
+    import threading
+
+    class _BlockingLLM:
+        def __init__(self) -> None:
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def chat(self, messages, tools):  # noqa: ANN001, ANN201, ARG002
+            self.entered.set()
+            assert self.release.wait(timeout=3.0)
+            return LLMResponse(
+                content=(
+                    '[[memory]] {"type": "fact", "content": "A1 old project state", '
+                    '"keywords": ["project"]} [[/memory]]'
+                ),
+                tool_calls=[],
+                provider="fake",
+            )
+
+    sessions = SessionStore(tmp_path / "sessions")
+    sid = _mk_session(sessions, 5)
+    memory = MemoryStore(tmp_path / "memory")
+    llm = _BlockingLLM()
+    extractor = MemoryExtractor(
+        llm_client=llm,
+        memory=memory,
+        session_store=sessions,
+        audit_dir=tmp_path / "audit",
+    )
+    result_box = []
+    worker = threading.Thread(
+        target=lambda: result_box.append(extractor.extract_session(sid, trigger="interval")),
+        name="a1-memory-extractor",
+    )
+    worker.start()
+    assert llm.entered.wait(timeout=2.0)
+
+    a2 = MemoryEntry(
+        id="",
+        type="fact",
+        content="A2 current project state",
+        keywords=["project"],
+        source_session_id=sid,
+        source_message_id="a2",
+        deposit_path="inline",
+    )
+    current = memory.save_entry(a2)
+    assert current.content == "A2 current project state"
+
+    llm.release.set()
+    worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    assert len(result_box) == 1
+
+    rows = memory.all()
+    assert len(rows) == 1
+    assert rows[0].content == "A2 current project state"
+    # The old result is still retained as provenance/history, just not promoted current.
+    late = [
+        item
+        for item in rows[0].observation_history
+        if item.get("disposition") == "late_observation_not_promoted"
+    ]
+    assert late and late[-1]["content"] == "A1 old project state"
