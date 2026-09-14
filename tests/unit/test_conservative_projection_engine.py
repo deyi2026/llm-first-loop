@@ -9,7 +9,7 @@ import pytest
 
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.client import LLMClient, LLMResponse
-from llm_loop.llm.errors import LLMProjectionError
+from llm_loop.llm.errors import LLMHTTPError, LLMProjectionError
 from tests.conftest import FakeLLM
 from tests.unit.test_llm_client import _FakeStreamCtx
 
@@ -82,7 +82,10 @@ def test_llm_client_blocks_invalid_canonical_wire_before_transport():
     client._client.stream.assert_not_called()
 
 
-def test_engine_cannot_fit_never_opens_transport(build_test_engine, monkeypatch):
+def test_approximate_window_estimate_cannot_block_conservative_rebuild_transport(
+    build_test_engine, monkeypatch,
+):
+    """Chars/token window estimates are planning facts, never pre-provider hard authority."""
     engine, _ = build_test_engine([])
     client = _wire_client(engine)
     monkeypatch.setattr(engine, "_build_llm_messages", lambda *a, **k: [])
@@ -97,15 +100,42 @@ def test_engine_cannot_fit_never_opens_transport(build_test_engine, monkeypatch)
     )
     sid = engine.session.create()
     with mock.patch.object(client, "_client") as transport:
+        transport.stream.return_value = _stream()
         result = engine.run(sid, "CURRENT_INGRESS_TOO_LARGE")
-        transport.stream.assert_not_called()
-    assert result.projection_cannot_fit
+        assert transport.stream.call_count == 1, result
     assert result.projection_validator_failed
-    assert not result.projection_rebuilt
+    assert result.projection_rebuilt
+    assert not result.projection_cannot_fit
+    assert not result.run_incomplete
+    assert not result.provider_output_truncated
+    assert any(m.content == "CURRENT_INGRESS_TOO_LARGE" for m in engine.session.load(sid).messages)
+
+
+def test_provider_overflow_on_mandatory_only_rebuild_is_cannot_fit(
+    build_test_engine, monkeypatch,
+):
+    """Only provider overflow can prove the conservative mandatory set cannot fit."""
+    engine, _ = build_test_engine([])
+    client = _wire_client(engine)
+    monkeypatch.setattr(engine, "_build_llm_messages", lambda *a, **k: [])
+    overflow = LLMHTTPError("maximum context length exceeded", status_code=400)
+    sid = engine.session.create()
+    with mock.patch.object(client, "_client") as transport:
+        transport.stream.side_effect = overflow
+        result = engine.run(sid, "MANDATORY_ONLY_CURRENT_INGRESS")
+        assert transport.stream.call_count == 1, (
+            "provider-authoritative minimal overflow must not be retried", result
+        )
+
+    assert result.projection_validator_failed
+    assert result.projection_rebuilt
+    assert result.projection_cannot_fit
     assert result.run_incomplete
     assert not result.provider_output_truncated
     assert "上下文压力" in result.final_answer
-    assert any(m.content == "CURRENT_INGRESS_TOO_LARGE" for m in engine.session.load(sid).messages)
+    assert any(
+        m.content == "MANDATORY_ONLY_CURRENT_INGRESS" for m in engine.session.load(sid).messages
+    )
 
 
 @pytest.mark.parametrize("persistent_corruption", [False, True])

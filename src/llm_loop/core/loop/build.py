@@ -427,7 +427,6 @@ class _BuildMixin:
         sess,
         *,
         max_chars: int,
-        hard_limit_chars: int | None = None,
         model: str | None = None,
         planned_label: str | None = None,
     ) -> ConservativeProjectionOutcome:
@@ -455,7 +454,6 @@ class _BuildMixin:
             system_prompt=_pre.system_prompt,
             current_turn_ref=self._run_state().current_turn_ref,
             max_chars=max_chars,
-            hard_limit_chars=hard_limit_chars,
         )
 
     def _build_llm_messages(

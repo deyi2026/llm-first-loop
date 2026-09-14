@@ -732,6 +732,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 final_answer = _CANCELLED_ANSWER
                 break
             rounds += 1
+            _projection_mandatory_only = False
             # CR-R1.1（审查项7）: 轮次入 contextvar——cognitive telemetry 等 build 期
             # 组件归因 round 用（此前 packet_compile 的 round 恒 0）
             with contextlib.suppress(Exception):
@@ -822,12 +823,6 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 _budget_info["tool_schema_reserve_chars"] = _tool_schema_chars
                 _budget_info["effective_budget"] = effective_budget
                 self._run_state().last_budget_info = _budget_info
-            _window_capacity_estimate: int | None = None
-            _model_window_budget = _budget_info.get("model_window_budget")
-            if isinstance(_model_window_budget, int) and _model_window_budget > 0:
-                _window_capacity_estimate = max(
-                    1, _model_window_budget - max(0, int(_tool_schema_chars or 0))
-                )
             # A final-client rejection has not sent bytes. Re-enter this same
             # logical round using current durable truth, bypassing the projection
             # that failed; never retry a saved provider wire.
@@ -898,7 +893,6 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     _rebuild = self._build_conservative_active_run_messages(
                         sess,
                         max_chars=effective_budget,
-                        hard_limit_chars=_window_capacity_estimate,
                         model=model,
                         planned_label=planned_label,
                     )
@@ -911,9 +905,13 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             "trigger_violations": _preflight_violations,
                             "projected_chars": _rebuild.projected_chars,
                             "budget_chars": _rebuild.budget_chars,
-                            "window_capacity_estimate_chars": _window_capacity_estimate,
                             "total_groups": _rebuild.total_groups,
                             "retired_groups": _rebuild.retired_groups,
+                            "mandatory_only": (
+                                _rebuild.state == "rebuilt"
+                                and (_rebuild.total_groups - _rebuild.retired_groups)
+                                == (1 if _rebuild.total_groups <= 1 else 2)
+                            ),
                             "detail": _rebuild.detail,
                             "active_run_ingress_ref": _active_run_ingress_ref,
                             "active_run_ingress_kind": _active_run_ingress_kind,
@@ -932,6 +930,15 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         if not _rebuilt_violations:
                             messages = _rebuilt_messages
                             projection_rebuilt_noted = True
+                            _selected_group_count = (
+                                _rebuild.total_groups - _rebuild.retired_groups
+                            )
+                            _mandatory_group_count = (
+                                1 if _rebuild.total_groups <= 1 else 2
+                            )
+                            _projection_mandatory_only = (
+                                _selected_group_count == _mandatory_group_count
+                            )
                             self._record_action(
                                 "action.llm_decide",
                                 "projection_rebuilt",
@@ -946,6 +953,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                                 "retired_groups": _rebuild.retired_groups,
                                 "projected_chars": _rebuild.projected_chars,
                                 "budget_chars": _rebuild.budget_chars,
+                                "mandatory_only": _projection_mandatory_only,
                             }
                             self._run_state().last_request_influence = _influence
                         else:
@@ -960,30 +968,19 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             )
 
                     if _rebuild.state != "rebuilt":
-                        if _rebuild.state == "projection_cannot_fit":
-                            projection_cannot_fit_noted = True
-                            self._record_action(
-                                "action.llm_decide",
-                                "projection_cannot_fit",
-                                _rebuild.detail[:200],
-                            )
-                            _run_end_reason = "projection_cannot_fit"
-                            final_answer = (
-                                "[上下文压力] 当前 run 的最小合法 provider 投影超过基于已注册模型窗口、"
-                                "输出预留与工具 schema 计算的保守容量估计；"
-                                "已停止发送，未删除当前入口、未复用旧请求、未伪造摘要。"
-                            )
-                        else:
-                            self._record_action(
-                                "action.llm_decide",
-                                "projection_invalid",
-                                (_rebuild.detail or ";".join(_preflight_violations))[:200],
-                            )
-                            _run_end_reason = "projection_invalid"
-                            final_answer = (
-                                "[上下文投影失败] 无法从当前 durable state 重建合法 provider 请求；"
-                                "已阻止发送，未用旧请求或伪造摘要替代。"
-                            )
+                        # Runtime cannot infer physical non-fit from a local estimate.
+                        # projection_cannot_fit is reserved for an actual provider
+                        # overflow on a conservative mandatory-only projection.
+                        self._record_action(
+                            "action.llm_decide",
+                            "projection_invalid",
+                            (_rebuild.detail or ";".join(_preflight_violations))[:200],
+                        )
+                        _run_end_reason = "projection_invalid"
+                        final_answer = (
+                            "[上下文投影失败] 无法从当前 durable state 重建合法 provider 请求；"
+                            "已阻止发送，未用旧请求或伪造摘要替代。"
+                        )
                         break
 
             # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）
@@ -1421,7 +1418,22 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     sess,
                     model_used,
                     model_window={"label": model_used, "context": _response_context_limit},
+                    projection_mandatory_only=_projection_mandatory_only,
                 )
+                if overflow_action == "cannot_fit" and overflow_final is not None:
+                    if _provider_call_coordinator is not None:
+                        _provider_call_coordinator.settle_shadow_call(
+                            _provider_call, ProviderCallOutcome.ERROR
+                        )
+                    projection_cannot_fit_noted = True
+                    self._record_action(
+                        "action.llm_decide",
+                        "projection_cannot_fit",
+                        "provider_rejected_mandatory_projection",
+                    )
+                    _run_end_reason = "projection_cannot_fit"
+                    final_answer = overflow_final
+                    break
                 if overflow_action == "reinject":
                     if _provider_call_coordinator is not None:
                         _provider_call_coordinator.settle_shadow_call(

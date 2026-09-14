@@ -59,11 +59,13 @@ class TerminationController:
         model_used: str,
         *,
         model_window: dict[str, Any] | None = None,
+        projection_mandatory_only: bool = False,
     ) -> tuple[str, str | None]:
         """R8.24-B B-D5: overflow runtime 确定性处理（零 prompt 注入）.
 
         Returns:
             ("reinject", None)   首次 overflow：预算已确定性收缩，主链路 continue
+            ("cannot_fit", text) provider 已拒绝机械最小合法投影
             ("end", text)        第二次 overflow：确定性终止，text 为纯事实终态
             ("not_overflow", None)  非 overflow 错误，主链路继续 fallback 判定
         """
@@ -73,6 +75,20 @@ class TerminationController:
         if model_window is None:
             ctx_limit = host._current_context_limit(model_used)
             model_window = {"label": model_used, "context": ctx_limit}
+        if projection_mandatory_only:
+            host._record_action(
+                "overflow.cannot_fit",
+                "provider_rejected_mandatory_projection",
+                f"provider_window={model_window.get('context', '?')}; "
+                f"model={model_window.get('label', '?')}; prompt_chars=0",
+            )
+            final_text = (
+                "[上下文压力] 事实: provider 已拒绝当前 run 的机械最小合法投影；"
+                "该投影只保留 system、exact active ingress 与当前必须完整保留的最新协议组，"
+                "因此不存在可继续机械退休的旧组。未删除当前入口、未复用旧请求、未伪造摘要。\n"
+                f"原因: {exc}。"
+            )
+            return ("cannot_fit", final_text)
         # 第一次 overflow: 确定性 compaction——预算收缩（build 链重组时超出部分
         # 走既有 lossless 归档：完整另存、信息零丢失、可检索找回；unresolved
         # protocol（assistant 声明↔回执配对）与 active user evidence 不裁断）。
