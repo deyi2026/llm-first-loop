@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://llm-first-loop.local/schemas/cache_attribution_report-1.0.0-draft2.json",
+  "title": "LFL Cache Attribution Report (JSONL records)",
+  "description": "One JSONL line per record. record_type discriminates snapshot_header / request_attribution / boundary_rollup. Semantics: docs/cache-attribution/schema.md. Field changes require a version bump.",
+  "$defs": {
+    "boundary_enum": {
+      "enum": [
+        "append_only",
+        "history_compaction",
+        "working_set_fold",
+        "provider_eviction",
+        "new_run_cold_start",
+        "route_switch",
+        "unknown"
+      ]
+    },
+    "controllable_enum": { "enum": ["yes", "no", "partial", "unknown"] },
+    "rollup_controllability_enum": { "enum": ["yes", "no", "partial", "unknown", "mixed"] },
+    "confidence_enum": { "enum": ["high", "medium", "low"] },
+    "nonneg_int": { "type": "integer", "minimum": 0 },
+    "source_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "first_seq", "last_seq", "event_count"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "first_seq": { "$ref": "#/$defs/nonneg_int" },
+        "last_seq": { "$ref": "#/$defs/nonneg_int" },
+        "event_count": { "$ref": "#/$defs/nonneg_int" }
+      }
+    },
+    "snapshot_header": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_type", "schema_version", "session_id", "log_snapshot_at",
+        "sources", "generated_by", "estimator", "surface"
+      ],
+      "properties": {
+        "record_type": { "const": "snapshot_header" },
+        "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(-draft[0-9]+)?$" },
+        "session_id": { "type": "string", "minLength": 1 },
+        "log_snapshot_at": { "type": "string", "format": "date-time" },
+        "sources": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/source_ref" } },
+        "generated_by": {
+          "type": "object", "additionalProperties": false,
+          "required": ["scorer", "version"],
+          "properties": { "scorer": { "type": "string" }, "version": { "type": "string" } }
+        },
+        "estimator": {
+          "type": "object", "additionalProperties": false,
+          "required": ["estimator_id", "params"],
+          "properties": {
+            "estimator_id": { "const": "v1-linear-append" },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "block_allowance_tokens", "growth_fallback_tokens",
+                "stable_prefix_tokens", "stable_prefix_source"
+              ],
+              "properties": {
+                "block_allowance_tokens": { "$ref": "#/$defs/nonneg_int" },
+                "growth_fallback_tokens": { "$ref": "#/$defs/nonneg_int" },
+                "stable_prefix_tokens": { "$ref": "#/$defs/nonneg_int" },
+                "stable_prefix_source": {
+                  "enum": ["lfl_measured", "observed_min_cold_start_hit_fallback"]
+                }
+              }
+            }
+          }
+        },
+        "surface": {
+          "type": "object", "additionalProperties": false,
+          "required": ["provider", "model", "tools_count", "stable_prefix_fp"],
+          "properties": {
+            "provider": { "type": "string" },
+            "model": { "type": "string" },
+            "wire_protocol": { "type": "string" },
+            "tools_count": { "$ref": "#/$defs/nonneg_int" },
+            "stable_prefix_fp": { "type": "string" },
+            "tool_prefix_fp": { "type": "string" },
+            "provider_structure_fp": { "type": "string" }
+          }
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "request_attribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_type", "session_id", "ts", "seq", "run_generation", "round",
+        "attempt_kind", "provider_call_id", "provider", "model",
+        "tokens_in", "cache_hit", "cache_miss", "cache_hit_rate",
+        "stable_prefix_fp", "prefix_changed", "prefix_change_reason",
+        "gap_seconds_since_prev", "context_sizes", "boundary", "attribution"
+      ],
+      "properties": {
+        "record_type": { "const": "request_attribution" },
+        "session_id": { "type": "string", "minLength": 1 },
+        "ts": { "type": "string", "format": "date-time" },
+        "seq": { "$ref": "#/$defs/nonneg_int" },
+        "run_generation": { "$ref": "#/$defs/nonneg_int" },
+        "round": { "$ref": "#/$defs/nonneg_int" },
+        "attempt_kind": { "type": "string" },
+        "provider_call_id": { "type": "string" },
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "tokens_in": { "$ref": "#/$defs/nonneg_int" },
+        "cache_hit": { "$ref": "#/$defs/nonneg_int" },
+        "cache_miss": { "$ref": "#/$defs/nonneg_int" },
+        "cache_hit_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "stable_prefix_fp": { "type": "string" },
+        "prefix_changed": { "type": "boolean" },
+        "prefix_change_reason": { "type": "string" },
+        "gap_seconds_since_prev": { "type": ["number", "null"], "minimum": 0 },
+        "context_sizes": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "history_chars": { "$ref": "#/$defs/nonneg_int" },
+            "provider_visible_chars": { "$ref": "#/$defs/nonneg_int" }
+          }
+        },
+        "boundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["types", "primary", "evidence_event_ids", "classification_rule"],
+          "properties": {
+            "types": {
+              "type": "array", "minItems": 1, "uniqueItems": true,
+              "items": { "$ref": "#/$defs/boundary_enum" }
+            },
+            "primary": { "$ref": "#/$defs/boundary_enum" },
+            "evidence_event_ids": { "type": "array", "items": { "type": "string" } },
+            "classification_rule": { "type": "string" }
+          }
+        },
+        "attribution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "observed_miss", "expected_append_miss", "boundary_excess_miss",
+            "clamped_negative_tokens", "controllable", "confidence", "estimator_id"
+          ],
+          "properties": {
+            "observed_miss": { "$ref": "#/$defs/nonneg_int" },
+            "expected_append_miss": { "$ref": "#/$defs/nonneg_int" },
+            "boundary_excess_miss": { "$ref": "#/$defs/nonneg_int" },
+            "clamped_negative_tokens": { "$ref": "#/$defs/nonneg_int" },
+            "controllable": { "$ref": "#/$defs/controllable_enum" },
+            "confidence": { "$ref": "#/$defs/confidence_enum" },
+            "estimator_id": { "const": "v1-linear-append" }
+          }
+        },
+        "history_compaction_detail": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["compaction_epoch", "pre_chars", "post_chars", "trigger", "pending_fields"],
+          "properties": {
+            "compaction_epoch": { "$ref": "#/$defs/nonneg_int" },
+            "pre_chars": { "$ref": "#/$defs/nonneg_int" },
+            "post_chars": { "$ref": "#/$defs/nonneg_int" },
+            "trigger": { "type": "string" },
+            "archived_messages": { "type": ["integer", "null"] },
+            "archived_groups": { "type": ["integer", "null"] },
+            "low_water_target": { "type": ["integer", "null"] },
+            "growth_guard": { "type": ["integer", "null"] },
+            "convergence_ok": { "type": ["boolean", "null"] },
+            "rounds_until_next_compaction": { "type": ["integer", "null"] },
+            "pending_fields": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "working_set_detail": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["raw_tool_chars", "projected_tool_chars", "folded_results", "folded_groups", "fold_trigger", "pending_fields"],
+          "properties": {
+            "raw_tool_chars": { "$ref": "#/$defs/nonneg_int" },
+            "projected_tool_chars": { "$ref": "#/$defs/nonneg_int" },
+            "folded_results": { "$ref": "#/$defs/nonneg_int" },
+            "folded_groups": { "$ref": "#/$defs/nonneg_int" },
+            "fold_trigger": { "type": "string" },
+            "net_gain_chars": { "type": ["integer", "null"] },
+            "working_set_projection_epoch": { "type": ["integer", "null"] },
+            "previous_projection_fp": { "type": ["string", "null"] },
+            "pending_fields": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "provider_eviction_detail": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stable_prefix_unchanged", "no_local_projection_boundary", "full_miss", "gap_seconds", "ttl_suspected"],
+          "properties": {
+            "stable_prefix_unchanged": { "const": true },
+            "no_local_projection_boundary": { "const": true },
+            "full_miss": { "type": "boolean" },
+            "hit_drop_ratio": { "type": ["number", "null"] },
+            "gap_seconds": { "type": "number", "minimum": 0 },
+            "ttl_suspected": { "type": "boolean" }
+          }
+        },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "boundary_rollup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_type", "session_id", "window", "totals", "by_boundary"],
+      "properties": {
+        "record_type": { "const": "boundary_rollup" },
+        "session_id": { "type": "string", "minLength": 1 },
+        "window": {
+          "type": "object", "additionalProperties": false,
+          "required": ["from_ts", "to_ts"],
+          "properties": {
+            "from_ts": { "type": "string", "format": "date-time" },
+            "to_ts": { "type": "string", "format": "date-time" }
+          }
+        },
+        "totals": {
+          "type": "object", "additionalProperties": false,
+          "required": [
+            "requests", "tokens_in", "cache_hit", "observed_miss",
+            "expected_append_miss", "boundary_excess_miss",
+            "controllable_excess_miss", "uncontrollable_excess_miss", "partial_excess_miss", "unknown_excess_miss"
+          ],
+          "properties": {
+            "requests": { "$ref": "#/$defs/nonneg_int" },
+            "tokens_in": { "$ref": "#/$defs/nonneg_int" },
+            "cache_hit": { "$ref": "#/$defs/nonneg_int" },
+            "observed_miss": { "$ref": "#/$defs/nonneg_int" },
+            "expected_append_miss": { "$ref": "#/$defs/nonneg_int" },
+            "boundary_excess_miss": { "$ref": "#/$defs/nonneg_int" },
+            "controllable_excess_miss": { "$ref": "#/$defs/nonneg_int" },
+            "uncontrollable_excess_miss": { "$ref": "#/$defs/nonneg_int" },
+            "partial_excess_miss": { "$ref": "#/$defs/nonneg_int" },
+            "unknown_excess_miss": { "$ref": "#/$defs/nonneg_int" }
+          }
+        },
+        "by_boundary": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["type", "requests", "observed_miss_sum", "expected_append_miss_sum", "boundary_excess_miss_sum", "controllable"],
+            "properties": {
+              "type": { "$ref": "#/$defs/boundary_enum" },
+              "requests": { "$ref": "#/$defs/nonneg_int" },
+              "observed_miss_sum": { "$ref": "#/$defs/nonneg_int" },
+              "expected_append_miss_sum": { "$ref": "#/$defs/nonneg_int" },
+              "boundary_excess_miss_sum": { "$ref": "#/$defs/nonneg_int" },
+              "controllable": { "$ref": "#/$defs/rollup_controllability_enum" }
+            }
+          }
+        },
+        "storm_clusters": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["boundary", "start_ts", "end_ts", "transactions", "excess_miss_sum", "definition"],
+            "properties": {
+              "boundary": { "const": "history_compaction" },
+              "start_ts": { "type": "string", "format": "date-time" },
+              "end_ts": { "type": "string", "format": "date-time" },
+              "transactions": { "$ref": "#/$defs/nonneg_int" },
+              "excess_miss_sum": { "$ref": "#/$defs/nonneg_int" },
+              "definition": { "type": "string" }
+            }
+          }
+        },
+        "notes": { "type": "string" }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/snapshot_header" },
+    { "$ref": "#/$defs/request_attribution" },
+    { "$ref": "#/$defs/boundary_rollup" }
+  ]
+}
