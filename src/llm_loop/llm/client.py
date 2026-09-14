@@ -168,6 +168,41 @@ class GuardRequestContext:
     )
 
 
+def _tool_call_projection_parts(
+    tool_call: Any,
+) -> tuple[str, dict[str, Any] | None, str | None]:
+    """Parse one durable tool-call declaration for provider projection.
+
+    Returns ``(name, arguments, violation_code)``.  The accepted source shapes are
+    the production OpenAI-canonical nested form and the historical flat adapter form.
+    Arguments must mechanically resolve to a JSON object; no semantic schema judgement
+    is performed here.
+    """
+    if not isinstance(tool_call, dict):
+        return "", None, "tool_call_not_object"
+    fn = tool_call.get("function")
+    if isinstance(fn, dict):
+        name = str(fn.get("name") or "")
+        raw_args = fn.get("arguments")
+    else:
+        name = str(tool_call.get("name") or "")
+        raw_args = tool_call.get("arguments")
+    if not name:
+        return "", None, "tool_call_name_missing"
+    if isinstance(raw_args, dict):
+        return name, dict(raw_args), None
+    if raw_args is None or raw_args == "":
+        return name, {}, None
+    if isinstance(raw_args, str):
+        try:
+            parsed = json.loads(raw_args)
+        except json.JSONDecodeError:
+            return name, None, "tool_call_arguments_invalid_json"
+        if isinstance(parsed, dict):
+            return name, parsed, None
+    return name, None, "tool_call_arguments_not_object"
+
+
 def provider_structure_violations(
     messages: list[dict], *, expected_active_ingress_ref: str = ""
 ) -> list[str]:
@@ -221,7 +256,9 @@ def provider_structure_violations(
                 call_id = str(tool_call.get("id") or "")
                 if not call_id:
                     violations.append(f"tool_call_id_missing:{index}:{call_index}")
-                    continue
+                _name, _arguments, projection_violation = _tool_call_projection_parts(tool_call)
+                if projection_violation:
+                    violations.append(f"{projection_violation}:{call_id or '?'}")
                 if call_id in ids:
                     violations.append(f"tool_call_id_duplicate:{call_id}")
                 ids.append(call_id)
@@ -1003,7 +1040,7 @@ class LLMClient:
     # ── 统一入口（协议分发） ──
     @staticmethod
     def _normalize_tool_call_args(messages: list[dict]) -> tuple[list[dict], dict | None]:
-        """EVO-20260827 V3: tool_call.function.arguments 非 str → 强制串化（智谱 1210 唯一探明触发器）.
+        """Canonicalize OpenAI tool calls and stringify function arguments.
 
         取证（6485b02b 会话排查 + 智谱 coding 端点二分探测）:
         - 15 个请求变体中仅「arguments 缺失(D4)/为 dict(D5)」复现 HTTP 400
@@ -1011,14 +1048,24 @@ class LLMClient:
         - ToolCall dataclass 标注 arguments: dict（core/message.py:54），存在隐式
           dict 构建分支——任何未经 json.dumps 的 wire 重建都会整轮 400，且 provider
           只回笼统 1210 无定位信息。
-        两遍扫描 + copy-on-write（不改调用方消息）；fail-open 不阻断；
+        Historical direct callers may still provide the old flat
+        ``{id,name,arguments}`` shape.  Normalize that mechanically to the current
+        OpenAI-canonical ``function{name,arguments}`` shape at this provider boundary.
+        两遍扫描 + copy-on-write（不改调用方消息）；最终结构合法性由随后 validator 裁决；
         返回 (新消息列表, 首个修复项诊断 {msg_idx, call_idx, tool}) 供异常归因。
         """
         needs = False
         for m in messages:
             for tc in m.get("tool_calls") or []:
                 fn = tc.get("function") if isinstance(tc, dict) else None
-                if isinstance(fn, dict) and not isinstance(fn.get("arguments"), str):
+                legacy_flat = (
+                    isinstance(tc, dict)
+                    and not isinstance(fn, dict)
+                    and bool(tc.get("name"))
+                )
+                if legacy_flat or (
+                    isinstance(fn, dict) and not isinstance(fn.get("arguments"), str)
+                ):
                     needs = True
                     break
             if needs:
@@ -1038,13 +1085,34 @@ class LLMClient:
             changed = False
             for ti, tc in enumerate(tcs):
                 fn = tc.get("function") if isinstance(tc, dict) else None
-                args = fn.get("arguments") if isinstance(fn, dict) else None
-                if isinstance(args, str):
+                legacy_flat = (
+                    isinstance(tc, dict)
+                    and not isinstance(fn, dict)
+                    and bool(tc.get("name"))
+                )
+                if isinstance(fn, dict):
+                    fn2 = dict(fn)
+                    args = fn.get("arguments")
+                    tool_name = fn.get("name")
+                elif legacy_flat:
+                    fn2 = {"name": str(tc.get("name") or "")}
+                    args = tc.get("arguments")
+                    tool_name = fn2["name"]
+                else:
                     new_tcs.append(tc)
                     continue
-                fn2 = dict(fn or {})
-                fn2["arguments"] = json.dumps(args if args is not None else {}, ensure_ascii=False)
+                if isinstance(args, str) and not legacy_flat:
+                    new_tcs.append(tc)
+                    continue
+                fn2["arguments"] = (
+                    args
+                    if isinstance(args, str)
+                    else json.dumps(args if args is not None else {}, ensure_ascii=False)
+                )
                 tc2 = dict(tc) if isinstance(tc, dict) else {}
+                tc2.pop("name", None)
+                tc2.pop("arguments", None)
+                tc2.setdefault("type", "function")
                 tc2["function"] = fn2
                 new_tcs.append(tc2)
                 changed = True
@@ -1053,7 +1121,7 @@ class LLMClient:
                     first_fixed = {
                         "msg_idx": mi,
                         "call_idx": ti,
-                        "tool": (fn2.get("name") if isinstance(fn2.get("name"), str) else "") or "?",
+                        "tool": (tool_name if isinstance(tool_name, str) else "") or "?",
                     }
             if changed:
                 m2 = dict(m)
@@ -1062,7 +1130,7 @@ class LLMClient:
             else:
                 out.append(m)
         logger.warning(
-            "提交视图修复(V3): %d 处 tool_call.arguments 非 str 已强制串化"
+            "提交视图修复(V3): %d 处 tool_call legacy shape/arguments 已机械规范化"
             "（首个 msg#%d call#%d %s）——智谱 1210 触发器防御",
             fixed_count,
             (first_fixed or {}).get("msg_idx", -1),
@@ -2282,6 +2350,29 @@ class LLMClient:
 
     # ── 消息/工具协议转换 ──
     @staticmethod
+    def _provider_tool_call_parts(tool_call: dict) -> tuple[str, dict[str, Any]]:
+        """Return exact provider-native name/args from canonical or legacy tool calls.
+
+        Durable LFL history uses the OpenAI-canonical nested representation
+        ``{"function": {"name": ..., "arguments": "<json>"}}``.  Older direct
+        adapter/tests may still carry the legacy flat ``name/arguments`` form.
+        Cross-protocol projection must understand both without mutating durable truth.
+
+        Anthropic/Google require an object for tool arguments.  Invalid/non-object JSON
+        is a mechanical projection failure, not an excuse to silently send ``{}`` and
+        change the model's declared action.
+        """
+        name, arguments, violation = _tool_call_projection_parts(tool_call)
+        if violation:
+            call_id = tool_call.get("id") if isinstance(tool_call, dict) else "?"
+            raise LLMProjectionError(
+                "provider tool-call declaration cannot be projected exactly",
+                violations=[f"{violation}:{call_id or '?'}"],
+            )
+        assert arguments is not None  # narrowed by violation-free parser result
+        return name, arguments
+
+    @staticmethod
     def _to_anthropic_messages(messages: list[dict]) -> list[dict]:
         """OpenAI 历史 → Anthropic messages（tool_use/tool_result 配对清洗）.
 
@@ -2330,14 +2421,15 @@ class LLMClient:
                 ids: list[str] = []
                 for tc in m.get("tool_calls") or []:
                     tid = str(tc.get("id") or "")
+                    name, arguments = LLMClient._provider_tool_call_parts(tc)
                     ids.append(tid)
                     pending_use_ids.append(tid)
                     blocks.append(
                         {
                             "type": "tool_use",
                             "id": tid,
-                            "name": str(tc.get("name") or ""),
-                            "input": tc.get("arguments") or {},
+                            "name": name,
+                            "input": arguments,
                         }
                     )
                 out.append({"role": "assistant", "content": blocks})
@@ -2390,7 +2482,7 @@ class LLMClient:
                         "parts": [
                             {
                                 "functionResponse": {
-                                    "name": str(m.get("tool_name") or ""),
+                                    "name": str(m.get("name") or m.get("tool_name") or ""),
                                     "response": {"result": str(m.get("content") or "")},
                                 }
                             }
@@ -2403,7 +2495,8 @@ class LLMClient:
                 if m.get("content"):
                     parts.append({"text": str(m["content"])})
                 for tc in m.get("tool_calls") or []:
-                    parts.append({"functionCall": {"name": str(tc.get("name") or ""), "args": tc.get("arguments") or {}}})
+                    name, arguments = LLMClient._provider_tool_call_parts(tc)
+                    parts.append({"functionCall": {"name": name, "args": arguments}})
                 out.append({"role": "model", "parts": parts})
                 continue
             out.append({"role": "user" if role == "user" else "model", "parts": [{"text": str(m.get("content") or "")}]})

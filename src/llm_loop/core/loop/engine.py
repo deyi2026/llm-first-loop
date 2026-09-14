@@ -435,6 +435,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         request_builder=None,
         provider_call=None,
         site_index_offset=1,
+        active_run_ingress_ref="",
+        active_run_ingress_kind="none",
     ):
         return self._fallback._try_fallback_chain(
             messages=messages,
@@ -448,6 +450,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             request_builder=request_builder,
             provider_call=provider_call,
             site_index_offset=site_index_offset,
+            active_run_ingress_ref=active_run_ingress_ref,
+            active_run_ingress_kind=active_run_ingress_kind,
         )
 
     def _fallback_reason_label(self, exc):
@@ -1523,6 +1527,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         request_builder=_fallback_request_builder,
                         provider_call=_provider_call,
                         site_index_offset=1 + int(_e1210_retry_count or 0),
+                        active_run_ingress_ref=_active_run_ingress_ref,
+                        active_run_ingress_kind=_active_run_ingress_kind,
                     )
                     # Successful fallback facts are carried by RunState/LoopResult, not
                     # model-visible Message objects. inject_msgs is all-failed facts only.

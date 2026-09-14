@@ -142,6 +142,8 @@ class FallbackService:
         request_builder: Callable[[str, Any], tuple[list[dict], list[dict]]] | None = None,
         provider_call: ProviderCallIdentity | None = None,
         site_index_offset: int = 1,
+        active_run_ingress_ref: str = "",
+        active_run_ingress_kind: str = "none",
     ) -> tuple[LLMResponse | None, list[Message], str | None]:
         """沿 fallback 链尝试下一个候选（design §5.4 行为规则表 + 原则 2 如实反馈）.
 
@@ -263,6 +265,8 @@ class FallbackService:
                         stable_prefix_fp=cache_stable_fp,
                         cache_prefix_epoch=cache_prefix_epoch,
                         compaction_epoch=compaction_epoch,
+                        active_run_ingress_ref=str(active_run_ingress_ref or ""),
+                        active_run_ingress_kind=str(active_run_ingress_kind or "none"),
                     )
                 _site_index = int(site_index_offset) + provider_attempt_index
                 _attempt_id = self._reachability_begin_attempt(
