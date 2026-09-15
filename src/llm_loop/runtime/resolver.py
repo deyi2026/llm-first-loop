@@ -198,6 +198,23 @@ def parse_runtime_toml(path: str | Path) -> dict[str, str]:
     return out
 
 
+class _FrozenJsonDict(dict[str, str]):
+    """JSON-serializable dict snapshot that rejects every mutating operation."""
+
+    def _readonly(self, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        raise TypeError("RuntimeConfig snapshot is immutable")
+
+    __setitem__ = _readonly  # type: ignore[assignment]
+    __delitem__ = _readonly  # type: ignore[assignment]
+    clear = _readonly  # type: ignore[assignment]
+    pop = _readonly  # type: ignore[assignment]
+    popitem = _readonly  # type: ignore[assignment]
+    setdefault = _readonly  # type: ignore[assignment]
+    update = _readonly  # type: ignore[assignment]
+    __ior__ = _readonly  # type: ignore[assignment]
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     """Immutable, provenance-carrying effective runtime configuration snapshot."""
@@ -215,7 +232,7 @@ class RuntimeConfig:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
-        object.__setattr__(self, "sources", MappingProxyType(dict(self.sources)))
+        object.__setattr__(self, "sources", _FrozenJsonDict(self.sources))
         object.__setattr__(
             self, "ignored_shell_env", MappingProxyType(dict(self.ignored_shell_env))
         )
