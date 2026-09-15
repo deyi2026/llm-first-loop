@@ -228,7 +228,12 @@ _port_pid() {
 # run owner 判成“另一进程执行”。用镜像 venv 的绝对 argv 精确识别本区 Web，既能
 # 找到已经不监听的 stale owner，也不会误杀主区不同 venv 的 :8902。
 _mirror_web_pids() {
-  pgrep -f "^${VENV_PY} -m llm_loop\.web( |$)" 2>/dev/null || true
+  {
+    # Rollout-safe: first C0-B restart must still find the legacy direct-entry process;
+    # later restarts must find the canonical runtime.launch process as well.
+    pgrep -f "^${VENV_PY} -m llm_loop\.web( |$)" 2>/dev/null || true
+    pgrep -f "^${VENV_PY} -m llm_loop\.runtime\.launch web( |$)" 2>/dev/null || true
+  } | awk 'NF && !seen[$1]++ {print $1}'
 }
 
 _pid_alive() {
@@ -319,7 +324,13 @@ try: print(json.load(open('$hb')).get('pid') or '')
 except Exception: pass" 2>/dev/null || true)"
     fi
   fi
-  { [[ -n "$hb_pid" ]] && echo "$hb_pid"; pgrep -f "^$VENV_PY -m llm_loop\.feishu( |$)" 2>/dev/null || true; } | awk 'NF && !seen[$1]++ {print $1}'
+  {
+    [[ -n "$hb_pid" ]] && echo "$hb_pid"
+    # Keep both argv forms during C0-B rollout/rollback. Heartbeat remains authoritative;
+    # argv is only the stale/no-heartbeat fallback.
+    pgrep -f "^$VENV_PY -m llm_loop\.feishu( |$)" 2>/dev/null || true
+    pgrep -f "^$VENV_PY -m llm_loop\.runtime\.launch feishu( |$)" 2>/dev/null || true
+  } | awk 'NF && !seen[$1]++ {print $1}'
 }
 _feishu_stop() {
   local pids pid survivors
@@ -398,9 +409,10 @@ PY
 _start_web() {
   _log "启动 web(port $WEB_PORT)..."
   _prep_dsh_env
-  # R2: 业务配置归 python（web main 的 load_env_file，环境优先）——shell 不再
-  # source .env、不再设 PYTHONPATH（R1 venv .pth 天然指向镜像 src，PYTHONPATH
-  # 反而是跨区污染源）。清空继承锚点键防残留压过 .env（对齐 restart_system.sh）；
+  # C0-B: 正式服务统一经 runtime.launch 解析 canonical runtime snapshot；shell 仅管进程。
+  # runtime.launch 在进入 web main 前执行 resolve_effective -> apply_to_environ，确保
+  # runtime.toml > .env > stale shell 的同一快照同时供 manifest 与真实 Settings 消费。
+  # 清空继承锚点键，让 resolver 依据 runtime_root 决定业务配置权威来源；
   # readiness check 用公开 /auth/status；/health 在 WEB_AUTH_REQUIRE=1 时按设计需要认证。
   # 检查仍用启动前捕获的局部变量（unset 后 $WEB_* 不再绑定，-u 会报错）。
   local check_host="$WEB_HOST" check_port="$WEB_PORT"
@@ -411,7 +423,7 @@ _start_web() {
   # 且覆盖 shell 残留的主区 PYTHONPATH）。
   # 修3(2026-09-09): 启动改走 _spawn_detached（可移植 setsid+execvp）——nohup+&
   # 不换进程组，宿主 shell 超时 killpg 会被整树波及（execute_command.py:108-109 实证）。
-  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/web.log "$VENV_PY" -m llm_loop.web
+  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/web.log "$VENV_PY" -m llm_loop.runtime.launch web
   local pid=$!
   for _ in $(seq 1 30); do
     if curl -sf --max-time 2 "http://$check_host:$check_port/auth/status" >/dev/null 2>&1; then
@@ -428,11 +440,11 @@ _start_web() {
 _start_feishu() {
   _log "启动飞书桥..."
   _prep_dsh_env
-  # R2: 同 _start_web——配置归 python，shell 清锚点键防污染；
+  # C0-B: 同 _start_web——正式配置先经 runtime.launch canonical snapshot；
   # PYTHONPATH=镜像 src 显式注入（协议 §3，同 _start_web 注释）。
   unset WEB_PORT WEB_HOST LFL_DATA_DIR DATA_DIR
   # 修3(2026-09-09): 同 _start_web——经 _spawn_detached 脱离进程组再 exec。
-  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/feishu.log "$VENV_PY" -m llm_loop.feishu
+  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/feishu.log "$VENV_PY" -m llm_loop.runtime.launch feishu
   local pid=$!
   # 校验: 预检失败会立即退出；WS 连接成功后心跳文件写 state=connected。
   # 心跳文件优先（权威；lsof 查 feishu.cn 连接有时序误报）。WS 握手含 token 获取+
