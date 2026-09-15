@@ -1,11 +1,11 @@
 {
-  "access_count": 202,
+  "access_count": 204,
   "baseline_context": {
-    "candidate_access_count": 202,
-    "parent_access_count": 243,
-    "parent_commit": "96a4dce50c2dcaa0509780e1ff30929d6ca9cc8f",
-    "phase": "runtime-config-p0-main-20260915",
-    "review_rationale": "central injected-env/bootstrap compatibility boundaries; no new business-key reads",
+    "candidate_access_count": 204,
+    "parent_access_count": 245,
+    "parent_commit": "e5bfe24985efd3328592692b496241b0ed743781",
+    "phase": "runtime-config-p0-fresh-main-20260916",
+    "review_rationale": "fresh-main inherited nonconvergence env reads are frozen as existing debt; P0 adds only central injected-env/bootstrap compatibility boundaries and no new business-key reads",
     "reviewed_new_signatures": [
       "src/llm_loop/runtime/identity.py|_find_runtime_root|bulk:raw|<all>",
       "src/llm_loop/runtime/identity.py|_find_workspace_root|bulk:raw|<all>",
@@ -23,7 +23,7 @@
     "dynamic_or_bulk": 2,
     "secret": 4
   },
-  "file_count": 63,
+  "file_count": 64,
   "keys": {
     "<all>": {
       "class": "dynamic_or_bulk",
@@ -53,6 +53,7 @@
       "files": [
         "src/llm_loop/cache_guard/guard.py",
         "src/llm_loop/config.py",
+        "src/llm_loop/core/loop/engine_services/nonconvergence_guard.py",
         "src/llm_loop/core/loop/engine_services/tool_reachability.py",
         "src/llm_loop/core/loop/events.py",
         "src/llm_loop/core/loop/input_authorization.py",
@@ -70,7 +71,7 @@
         "src/llm_loop/web/vision.py"
       ],
       "module_import_reads": 0,
-      "reads": 20,
+      "reads": 22,
       "writes": 3
     },
     "ANTHROPIC_CACHE_CONTROL": {
@@ -1139,6 +1140,8 @@
     "src/llm_loop/core/loop/build.py|_BuildMixin/_breaker_pressure_block|read|LFL_BREAKER_PRESSURE_NARROW": 1,
     "src/llm_loop/core/loop/engine.py|LoopEngine/_run_stream_inner|read|LFL_E18_HARD_STOP": 1,
     "src/llm_loop/core/loop/engine_services/interop.py|InteropService/_interop_inbox_messages|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/core/loop/engine_services/nonconvergence_guard.py|NonconvergenceGuard/from_env/_float_env|read|<dynamic>": 1,
+    "src/llm_loop/core/loop/engine_services/nonconvergence_guard.py|NonconvergenceGuard/from_env/_int_env|read|<dynamic>": 1,
     "src/llm_loop/core/loop/engine_services/recovery_controller.py|RecoveryController/_try_err1210_recovery|read|ERR1210_RECOVERY": 1,
     "src/llm_loop/core/loop/engine_services/tool_reachability.py|_log_path|read|<dynamic>": 1,
     "src/llm_loop/core/loop/err1210.py|snapshot_offending_payload|read|ERR1210_SNAPSHOT": 1,

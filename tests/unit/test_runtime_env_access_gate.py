@@ -41,8 +41,8 @@ def test_runtime_toml_template_contains_no_secret_fields():
 def test_p0_env_ratchet_baseline_records_reviewed_parent_delta():
     baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
     ctx = baseline["baseline_context"]
-    assert ctx["parent_commit"] == "96a4dce50c2dcaa0509780e1ff30929d6ca9cc8f"
-    assert ctx["parent_access_count"] == 243
-    assert ctx["candidate_access_count"] == 202
+    assert ctx["parent_commit"] == "e5bfe24985efd3328592692b496241b0ed743781"
+    assert ctx["parent_access_count"] == 245
+    assert ctx["candidate_access_count"] == 204
     assert len(ctx["reviewed_new_signatures"]) == 7
     assert all("business_value" not in sig for sig in ctx["reviewed_new_signatures"])
