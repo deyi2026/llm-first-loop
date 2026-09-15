@@ -4,7 +4,11 @@
 遇未知字段 TypeError → _load() 误判 corruption → 内存索引清空。本测试锁定读写兼容
 （仅持久化字段，不带 main 的 promotion/observation-fence 运行时语义）。
 """
-from llm_loop.memory.store import MemoryEntry, MemoryStore
+import json
+
+import pytest
+
+from llm_loop.memory.store import MemoryEntry, MemorySchemaMismatchError, MemoryStore
 
 
 def _entry(**extra):
@@ -50,15 +54,10 @@ def test_cross_process_merge_preserves_disk_entry_with_field(tmp_path):
 
 
 # ── 第二层根治: _load 错误分类（schema mismatch ≠ corruption）──
-import json
-
-import pytest
-
-from llm_loop.memory.store import MemorySchemaMismatch
 
 
 def test_unknown_field_fail_closed_not_corrupt(tmp_path):
-    # 新 schema 未知字段: 不当 corruption 处理——不备份、文件一字节不动、禁写并抛 MemorySchemaMismatch
+    # 新 schema 未知字段: 不当 corruption 处理——不备份、文件一字节不动、禁写并抛 MemorySchemaMismatchError
     idx = tmp_path / "index.json"
     idx.write_text(
         json.dumps([{"id": "X1", "type": "fact", "content": "c",
@@ -70,7 +69,7 @@ def test_unknown_field_fail_closed_not_corrupt(tmp_path):
     assert idx.read_bytes() == before                       # 原文件未动
     assert not (tmp_path / "index.corrupt.json").exists()   # 不误备份（不是损坏）
     assert store.all() == []                                # 读侧 fail-open(空)，已记 error 日志
-    with pytest.raises(MemorySchemaMismatch):
+    with pytest.raises(MemorySchemaMismatchError):
         store.save_entry(MemoryEntry(id="X2", type="fact", content="never written"))
     assert idx.read_bytes() == before                       # 写被拒，文件仍原样
 
@@ -95,7 +94,7 @@ def test_runtime_disk_schema_upgrade_locks_old_writer(tmp_path):
     data[0]["future_field"] = [{"v": 2}]
     idx.write_text(json.dumps(data), encoding="utf-8")
     s_old = MemoryStore(tmp_path)  # 加载时还是旧 schema（无 future_field）→ 正常
-    with pytest.raises(MemorySchemaMismatch):
+    with pytest.raises(MemorySchemaMismatchError):
         s_old.save_entry(MemoryEntry(id="A2", type="fact", content="must not overwrite"))
     data_after = json.loads(idx.read_text(encoding="utf-8"))
     assert data_after[0]["future_field"] == [{"v": 2}]      # 磁盘新 schema 未被旧进程破坏

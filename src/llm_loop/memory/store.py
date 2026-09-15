@@ -84,7 +84,7 @@ def _normalize_content(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip()).lower()
 
 
-class MemorySchemaMismatch(RuntimeError):
+class MemorySchemaMismatchError(RuntimeError):
     """记忆索引 schema 高于当前 reader（未知字段/缺必填字段）——不是文件损坏.
 
     2026-09-15 事故根治: reader 过旧时绝不能走 corruption 路径（备份+清空+继续
@@ -155,13 +155,13 @@ class MemoryStore:
         # 磁盘旧状态会把刚淘汰的条目回填合并，淘汰失效（2026-08-20 镜像实测回归）。
         with self._lock:
             if self._schema_locked is not None:
-                raise MemorySchemaMismatch(self._schema_locked)
+                raise MemorySchemaMismatchError(self._schema_locked)
             if merge:
                 self._merge_remote_changes()
                 if self._schema_locked is not None:
                     # 运行期磁盘被更高 schema 进程升级: 本进程同样禁写，防止
                     # 旧 reader 用"过滤后的内存态"覆盖磁盘新 schema 数据。
-                    raise MemorySchemaMismatch(self._schema_locked)
+                    raise MemorySchemaMismatchError(self._schema_locked)
             # 原子写（tmp+rename）：Web/飞书跨进程共享记忆时防半写损坏/交错覆盖
             payload = json.dumps(
                 [e.to_dict() for e in self._entries], ensure_ascii=False, indent=2
@@ -187,7 +187,7 @@ class MemoryStore:
             disk_entries = [MemoryEntry(**e) for e in disk]
         except TypeError as exc:
             # 2026-09-15 事故根治: 磁盘 schema 高于 reader → 置锁禁写（_save 随后
-            # raise MemorySchemaMismatch），绝不静默 return 后照常覆盖磁盘。
+            # raise MemorySchemaMismatchError），绝不静默 return 后照常覆盖磁盘。
             import logging
 
             self._schema_locked = (

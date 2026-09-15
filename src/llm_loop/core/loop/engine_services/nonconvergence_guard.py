@@ -87,7 +87,7 @@ class NonconvergenceGuard:
         self.evidence: dict = {}
 
     @classmethod
-    def from_env(cls) -> "NonconvergenceGuard":
+    def from_env(cls) -> NonconvergenceGuard:
         """环境旋钮：LFL_NONCONV_FUSE_WINDOWS(0=关)/…_JACCARD(0,1]/…_MIN_DELTA(tokens)."""
 
         def _int_env(name: str, default: int) -> int:
