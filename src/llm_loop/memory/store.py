@@ -18,7 +18,7 @@ import json
 import re
 import threading
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -81,6 +81,14 @@ def _normalize_content(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip()).lower()
 
 
+class MemorySchemaMismatchError(RuntimeError):
+    """记忆索引 schema 高于当前 reader——不是文件损坏.
+
+    reader 过旧时绝不能走 corruption 路径（备份+清空+继续写会覆盖好数据），
+    必须保持原文件不动并禁止写入。JSON 语法破损仍走原 corruption 路径。
+    """
+
+
 class MemoryStore:
     """记忆条目存取（JSON 单文件索引，P0）."""
 
@@ -89,6 +97,7 @@ class MemoryStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._dir / "index.json"
         self._entries: list[MemoryEntry] = []
+        self._schema_locked: str | None = None
         # 2026-08-20（d8a76517, 镜像）: 跨进程/线程并发写防护——写前合并磁盘最新态
         self._lock = threading.RLock()
         self._load()
@@ -97,9 +106,8 @@ class MemoryStore:
         if self._index_path.exists():
             try:
                 data = json.loads(self._index_path.read_text(encoding="utf-8"))
-                self._entries = [MemoryEntry(**e) for e in data]
-            except (json.JSONDecodeError, TypeError, ValueError) as exc:
-                # T39: 损坏如实记录（不静默降级），备份原始文件（不覆盖丢数据），fail-open 继续
+            except (json.JSONDecodeError, ValueError) as exc:
+                # T39: 真 corruption（JSON 语法/文件破损）→ 备份原始文件，fail-open 继续
                 import logging
 
                 logging.getLogger(__name__).warning(
@@ -113,6 +121,24 @@ class MemoryStore:
                 except OSError:
                     pass  # 备份失败尽力而为
                 self._entries = []
+                return
+            try:
+                self._entries = [MemoryEntry(**e) for e in data]
+            except TypeError as exc:
+                # schema mismatch ≠ corruption：保持原文件不动并禁写，防旧 reader 覆盖新 schema。
+                import logging
+
+                unknown = sorted(
+                    {k for e in data if isinstance(e, dict) for k in e}
+                    - {f.name for f in fields(MemoryEntry)}
+                )
+                self._schema_locked = (
+                    f"记忆索引 schema 高于当前 reader（TypeError: {exc}）"
+                    + (f"；未知字段: {', '.join(unknown)}" if unknown else "")
+                    + "。原文件未改动、已禁止写入；请升级到兼容代码版本后重试。"
+                )
+                logging.getLogger(__name__).error(self._schema_locked)
+                self._entries = []
 
     def _save(self, *, merge: bool = True) -> None:
         # 2026-08-20（d8a76517, 镜像）: 写前合并磁盘最新态（防覆盖其他进程写入）+
@@ -120,8 +146,13 @@ class MemoryStore:
         # merge=False: 本进程有明确淘汰/清理语义（cleanup）时跳过磁盘合并——否则
         # 磁盘旧状态会把刚淘汰的条目回填合并，淘汰失效（2026-08-20 镜像实测回归）。
         with self._lock:
+            if self._schema_locked is not None:
+                raise MemorySchemaMismatchError(self._schema_locked)
             if merge:
                 self._merge_remote_changes()
+                if self._schema_locked is not None:
+                    # 运行期磁盘被更高 schema 进程升级时，同样禁止旧 reader 写回。
+                    raise MemorySchemaMismatchError(self._schema_locked)
             # 原子写（tmp+rename）：Web/飞书跨进程共享记忆时防半写损坏/交错覆盖
             payload = json.dumps(
                 [e.to_dict() for e in self._entries], ensure_ascii=False, indent=2
@@ -141,9 +172,24 @@ class MemoryStore:
             return
         try:
             disk = json.loads(self._index_path.read_text(encoding="utf-8"))
-            disk_entries = [MemoryEntry(**e) for e in disk]
-        except (json.JSONDecodeError, TypeError, ValueError):
+        except (json.JSONDecodeError, ValueError):
             return  # 磁盘损坏: _load 已有备份逻辑, 此处不合并防覆盖
+        try:
+            disk_entries = [MemoryEntry(**e) for e in disk]
+        except TypeError as exc:
+            import logging
+
+            unknown = sorted(
+                {k for e in disk if isinstance(e, dict) for k in e}
+                - {f.name for f in fields(MemoryEntry)}
+            )
+            self._schema_locked = (
+                f"磁盘记忆索引 schema 高于当前 reader（TypeError: {exc}）"
+                + (f"；未知字段: {', '.join(unknown)}" if unknown else "")
+                + "；已禁止写入。"
+            )
+            logging.getLogger(__name__).error(self._schema_locked)
+            return
         mem_ids = {e.id for e in self._entries}
         remote_only = [de for de in disk_entries if de.id not in mem_ids]
         if remote_only:
