@@ -106,8 +106,14 @@ class RuleIndex:
 
     @staticmethod
     def _exact_ref(query: str) -> str:
-        match = _RULE_REF_RE.fullmatch(query.strip())
-        return match.group(0).upper() if match else ""
+        # A returned ``rule_ref`` is a machine-addressable stable identity.  Models
+        # may mechanically wrap that identity (for example ``rule:RULE-AI-18``) or
+        # append a human label when asking to hydrate it.  If and only if the query
+        # contains one distinct Rule identity, treat it as exact hydration.  Multiple
+        # distinct refs remain ordinary search input so the program never chooses
+        # which rule the model meant.
+        refs = {match.group(0).upper() for match in _RULE_REF_RE.finditer(query)}
+        return next(iter(refs)) if len(refs) == 1 else ""
 
     @staticmethod
     def _tokens(query: str) -> tuple[str, ...]:

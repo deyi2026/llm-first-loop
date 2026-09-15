@@ -75,6 +75,39 @@ def test_exact_rule_ref_hydrates_complete_section_with_source_version(tmp_path):
     assert "## 规则二十二" not in row["content"]
 
 
+def test_unique_rule_ref_inside_query_hydrates_exact_rule(tmp_path):
+    """One mechanically unambiguous stable ref hydrates despite harmless wrapper text."""
+    searcher = _searcher(tmp_path)
+
+    for query in (
+        "rule:RULE-AI-18",
+        "RULE-AI-18 经验按需复用 全文",
+        "请精确水合 RULE-AI-18",
+    ):
+        rows = searcher.search(kind="rule", query=query, limit=10)
+
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["rule_ref"] == "RULE-AI-18"
+        assert row["representation"] == "full_rule"
+        assert row["projection_complete"] is True
+        assert "## 规则十八" in row["content"]
+
+
+def test_multiple_rule_refs_do_not_trigger_implicit_exact_selection(tmp_path):
+    """Multiple distinct refs are ambiguous; retrieval must not silently pick one."""
+    searcher = _searcher(tmp_path)
+
+    rows = searcher.search(
+        kind="rule",
+        query="比较 RULE-AI-18 与 RULE-AI-22",
+        limit=10,
+    )
+
+    assert all(row["representation"] == "rule_card" for row in rows)
+    assert all(row["projection_complete"] is False for row in rows)
+
+
 def test_empty_rule_query_lists_index_without_hydrating_full_sot(tmp_path):
     searcher = _searcher(tmp_path)
 
