@@ -20,6 +20,10 @@ from typing import Any
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.llm.model_ids import canonical_model_id
 from llm_loop.llm.pool import ModelClientPool
+from llm_loop.resources.local_runtime import (
+    LocalRuntimeIdentityObservation,
+    observe_local_runtime_identity,
+)
 
 MODEL_CATALOG_TOOL_DEF: dict = {
     "name": "model_catalog",
@@ -78,6 +82,9 @@ def run_model_catalog(
     session_override: str | None,
     *,
     session_binding_known: bool = True,
+    local_runtime_identity_observer: Callable[[str], LocalRuntimeIdentityObservation | None] = (
+        observe_local_runtime_identity
+    ),
 ) -> ToolResult:
     """model_catalog: 列出可用模型 + 当前会话模型 + degraded 标注（只读）.
 
@@ -150,12 +157,28 @@ def run_model_catalog(
             if mspec.multimodal:
                 caps.append("multimodal")
             cap_str = f" [{'/'.join(caps)}]" if caps else ""
+            identity_bits = [
+                f"runtime_identity_declared={mspec.runtime_identity or 'unknown'}",
+                "runtime_identity_declared_currentness=not_observed",
+            ]
+            if is_current:
+                try:
+                    observed = local_runtime_identity_observer(spec.base_url)
+                except Exception:
+                    observed = None
+                if observed is not None:
+                    identity_bits.extend(
+                        [
+                            f"runtime_identity_observed={observed.identity}",
+                            "runtime_identity_observed_source=live_loopback_process",
+                        ]
+                    )
             lines.append(
                 f"    - {mid}: context={mspec.context}, "
                 f"reasoning_capable={'✓' if reasoning_capable else '✗'}, "
                 f"reasoning_control={reasoning_control}, "
                 f"reasoning_replay={mspec.reasoning_replay}, "
-                f"runtime_identity={mspec.runtime_identity}, "
+                f"{', '.join(identity_bits)}, "
                 f"cost={mspec.cost_tier}{alias_note}{cap_str}{mark}"
             )
     if not session_override and default_registry is not registry:
