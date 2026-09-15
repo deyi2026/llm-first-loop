@@ -273,7 +273,9 @@ def extract_raw(events: dict) -> dict:
 
 # ---------- Layer 2：benchmark scorer（依赖 task oracle，离线） ----------
 
-def score_fcr(raw: dict, events: dict, task: dict | None) -> dict:
+def score_fcr(raw: dict, events: dict, task: dict | None, *,
+              task_effects: list[dict] | None = None,
+              task_effects_status: str | None = None) -> dict:
     calls, turns = events.get("calls", []), events.get("turns", [])
     task = task or {}
     first_tools = set(task.get("first_tools") or [])
@@ -309,10 +311,44 @@ def score_fcr(raw: dict, events: dict, task: dict | None) -> dict:
                 sub = _usable_usage(turns)[:tnv]
                 ins = [x for x, _, _ in sub if x is not None]
                 s["tokens_to_first_task_valid_action"] = sum(ins) if ins else None
-        # repair：失败后同名工具出现成功（修复闭环）；dup：同 (name,args) 成功调用重复
+        # Legacy raw-tool failure metrics remain observational. Structured task effects are
+        # a separate benchmark-owned fact plane for checks whose inner process status can be
+        # masked by a successful shell wrapper (T02: `python3 gen.py; echo $?`).
         repair = dup = 0
         seen_ok, failed_names = set(), set()
-        exp_hit = unexp = unresolvable = 0
+        legacy_exp = [e for e in exp_fail if not e.get("check_id")]
+        effect_exp = [e for e in exp_fail if e.get("check_id")]
+        exp_hit = unexp = unresolvable = confirmed = 0
+        effect_expected = 0
+        effect_unexpected = 0
+        if effect_exp:
+            if task_effects_status != "ok":
+                unresolvable += len(effect_exp)
+            else:
+                pending: dict[tuple[str, str, str], int] = {}
+                for effect in task_effects or []:
+                    key = (str(effect.get("check_id") or ""), str(effect.get("target") or ""),
+                           str(effect.get("scope") or ""))
+                    code = effect.get("exit_code")
+                    matching = [e for e in effect_exp if e.get("check_id") == key[0]]
+                    if code == 0:
+                        if pending.get(key, 0) > 0:
+                            pending[key] -= 1
+                            confirmed += 1
+                        continue
+                    if any(isinstance(e.get("exit_code"), int) and e.get("exit_code") == code
+                           for e in matching):
+                        effect_expected += 1
+                        pending[key] = pending.get(key, 0) + 1
+                    else:
+                        effect_unexpected += 1
+                exp_hit += effect_expected
+                unexp += effect_unexpected
+
+        # If the same structured failure is also surfaced as raw tool failure, consume at
+        # most one same-class raw failure per structured expected effect so it is not double
+        # counted. The expected claim itself still comes only from the structured effect.
+        structured_allowance = effect_expected
         for c in calls:
             if c.get("ok") is True:
                 k = (c["name"], c["args"])
@@ -326,14 +362,19 @@ def score_fcr(raw: dict, events: dict, task: dict | None) -> dict:
             elif c.get("ok") is False:
                 res = c.get("result") or ""
                 if any((e.get("tool_class") in set(c["classes"])) and (e.get("match") in res)
-                       for e in exp_fail):
+                       for e in legacy_exp):
                     exp_hit += 1
+                elif structured_allowance > 0 and any(
+                    e.get("tool_class") in set(c["classes"]) for e in effect_exp
+                ):
+                    structured_allowance -= 1
                 elif c.get("result_truncated"):
                     unresolvable += 1   # A05：截断且未命中 → 证据不完整，不伪造 unexpected
                 else:
                     unexp += 1
                 failed_names.add(c["name"])
         s["failure_to_repair_count"] = repair
+        s["confirmed_repair_count"] = confirmed
         s["unnecessary_verification_count"] = dup
         s["expected_failure_count"] = exp_hit
         s["unexpected_failure_count"] = unexp
@@ -343,6 +384,7 @@ def score_fcr(raw: dict, events: dict, task: dict | None) -> dict:
         s["first_args_mechanically_valid"] = None
         s["first_call_ready"] = None
         s["failure_to_repair_count"] = None
+        s["confirmed_repair_count"] = None
         s["unnecessary_verification_count"] = None
         s["expected_failure_count"] = None
         s["unexpected_failure_count"] = None
