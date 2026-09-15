@@ -351,3 +351,5 @@ def test_md2pdf_skill_uses_skill_load_execution_facts_for_dual_root() -> None:
     )
     assert "relative_path_base" in meta.description
     assert "不是 Skill 目录" in meta.description
+    assert '"$PY" "$ROOT/scripts/md2pdf.py" --help' in text
+    assert "无需重建字体注册" in text

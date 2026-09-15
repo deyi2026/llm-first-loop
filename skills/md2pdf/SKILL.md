@@ -32,6 +32,13 @@ ROOT="<skill_load.relative_path_base>"
 "$PY" "$ROOT/scripts/md2pdf.py" <in.md> <out.pdf> --image-filter tree
 ```
 
+### 只读健康检查（不生成 PDF）
+如果任务只是确认当前脚本/依赖是否可用，直接走脚本自己的真实入口：
+```bash
+"$PY" "$ROOT/scripts/md2pdf.py" --help
+```
+该命令在参数帮助输出前会真实 import reportlab 并执行本脚本的 `UnicodeCIDFont('STSong-Light')` 注册；exit 0 即证明当前解释器、reportlab、字体注册和参数入口均可加载。**无需重建字体注册**或另写替代 import 片段做二次验证。
+
 ## 脚本能力（2026-08-20 升级）
 - 标题三级（# / ## / ###）、表格（| 分隔 + 表头）、列表（-）、引用（>）、正文、`---` 分隔线
 - **加粗**（`**文本**` → 粗体）、`![图注](path)` 图片嵌入（自动等比缩放至 175mm 宽 + 图注）
