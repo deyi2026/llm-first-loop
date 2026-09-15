@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20260915-capability-recovery-on-main",
-  "summary": "Replay the exact qualified capability-recovery patches onto main@20247b1f without introducing a new control machine or semantic authority.",
+  "summary": "Replay the exact qualified capability-recovery patches onto main@20247b1f, plus one narrowly qualified Rule stable-reference FCR follow-up, without introducing a new control machine or semantic authority.",
   "components": [
     {
       "component_id": "capability-source-continuity-toutiao",
@@ -50,11 +50,13 @@
       "evidence": [
         "stable patch-id equality for fe1ad1ac/da1e2246/33548430/71a781d2/8f839411 replays",
         "focused FCR/Rule/runtime qualification passes on the rebuilt main-based candidate",
+        "three fresh real Ornith sessions reproduced Rule discovery followed by mechanically wrapped/suffixed single RULE-AI stable refs that remained cards under strict fullmatch",
+        "follow-up 9f77f774 hydrates only when a query contains exactly one distinct RULE-AI stable identity; zero or multiple identities retain ordinary search and no program semantic selection",
         "prior exact 0cfd Ornith and GLM canaries showed first-call-ready and runtime-identity recovery without a second local model"
       ],
-      "verification_level": "exact patch-equivalence audit + focused deterministic tests + whole-tree gates + renewed Ornith/GLM canaries",
-      "model_evidence_veto_recovery_exit": "Programs bound enums/limits and report observed identity/currentness; model retains query wording, Rule applicability, evidence use, strategy and completion decisions.",
-      "rollback_route": "Revert the five replay commits; observed/declarative runtime identities stay separated and no external model/runtime state is mutated by the code replay."
+      "verification_level": "exact patch-equivalence audit + TDD-qualified single-stable-ref normalization + focused deterministic tests + whole-tree gates + renewed Ornith/GLM canaries",
+      "model_evidence_veto_recovery_exit": "Programs bound enums/limits, mechanically normalize one unambiguous Rule stable identity, and report observed identity/currentness; model retains query wording, Rule choice/applicability, evidence use, strategy and completion decisions.",
+      "rollback_route": "Revert the five replay commits plus the independent stable-reference follow-up; observed/declarative runtime identities stay separated and no external model/runtime state is mutated by the code replay."
     },
     {
       "component_id": "capability-skill-active-run-introspection",
