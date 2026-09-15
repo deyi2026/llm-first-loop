@@ -123,7 +123,7 @@ class TestFinalGateSwitchDefaults:
         import llm_loop.cache_guard.guard as guard_mod
 
         src = inspect.getsource(guard_mod)
-        assert 'os.environ.get("CACHE_GUARD_PERF_BLOCK", "enforce")' in src
+        assert '_CACHE_GUARD_CONFIG.get("CACHE_GUARD_PERF_BLOCK", "enforce")' in src
 
 
 # ══════════════ 组二: H1 正常任务轮 wire 零程序注入（默认态）══════════════

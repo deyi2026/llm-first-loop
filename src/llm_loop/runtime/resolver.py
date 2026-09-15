@@ -19,6 +19,7 @@ that adapter as a configuration API.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import tomllib
@@ -28,7 +29,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
-ValueKind = Literal["str", "int", "bool"]
+ValueKind = Literal["str", "int", "bool", "float", "json"]
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,45 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("summary", "mode"): TomlField(("SUMMARY_MODE",), "str"),
         ("tools", "schema_lazy"): TomlField(("TOOL_SCHEMA_LAZY",), "bool"),
         ("dsh", "home"): TomlField(("DSH_HOME",), "str"),
+        ("dsh", "sessions_root"): TomlField(("DSH_SESSIONS_ROOT",), "str"),
+        ("cache_guard", "perf_block_mode"): TomlField(("CACHE_GUARD_PERF_BLOCK",), "str"),
+        ("cache_guard", "hit_block"): TomlField(("CACHE_GUARD_HIT_BLOCK",), "float"),
+        ("cache_guard", "hit_warn"): TomlField(("CACHE_GUARD_HIT_WARN",), "float"),
+        ("cache_guard", "hit_warn_adaptive"): TomlField(("CACHE_GUARD_HIT_WARN_ADAPTIVE",), "bool"),
+        ("cache_guard", "hit_warn_tiers"): TomlField(("CACHE_GUARD_HIT_WARN_TIERS",), "json"),
+        ("cache_guard", "hit_sample"): TomlField(("CACHE_GUARD_HIT_SAMPLE",), "int"),
+        ("cache_guard", "block_escape"): TomlField(("CACHE_GUARD_BLOCK_ESCAPE",), "int"),
+        ("cache_health", "breaker_trigger_runs"): TomlField(("BREAKER_TRIGGER_RUNS",), "int"),
+        ("cache_health", "breaker_cooldown_rounds"): TomlField(("BREAKER_COOLDOWN_ROUNDS",), "int"),
+        ("cache_health", "breaker_exit_stable_runs"): TomlField(("BREAKER_EXIT_STABLE_RUNS",), "int"),
+        ("cache_health", "breaker_exit_chars_ratio"): TomlField(("BREAKER_EXIT_CHARS_RATIO",), "float"),
+        ("cache_health", "breaker_pressure_ratio"): TomlField(("BREAKER_PRESSURE_RATIO",), "float"),
+        ("cache_health", "breaker_pressure_escape_max"): TomlField(("BREAKER_PRESSURE_ESCAPE_MAX",), "int"),
+        ("cache_health", "breaker_hit_thr"): TomlField(("BREAKER_HIT_THR",), "float"),
+        ("cache_health", "breaker_over_ratio"): TomlField(("BREAKER_OVER_RATIO",), "float"),
+        ("cache_health", "telemetry_strip_audit_log"): TomlField(("CACHE_TELEMETRY_STRIP_AUDIT_LOG",), "bool"),
+        ("cache_health", "telemetry_strip_tail_lines"): TomlField(("CACHE_TELEMETRY_STRIP_TAIL_LINES",), "int"),
+        ("interop", "watch_poll_s"): TomlField(("INBOX_WATCH_POLL_S",), "float"),
+        ("interop", "wakeup"): TomlField(("INBOX_WAKEUP",), "bool"),
+        ("interop", "wakeup_min_interval_s"): TomlField(("INBOX_WAKEUP_MIN_INTERVAL_S",), "float"),
+        ("interop", "pending_ttl_hours"): TomlField(("INBOX_PENDING_TTL_HOURS",), "float"),
+        ("interop", "pending_cleanup_on_start"): TomlField(("INBOX_PENDING_CLEANUP_ON_START",), "bool"),
+        ("interop", "pending_max"): TomlField(("INBOX_PENDING_MAX",), "int"),
+        ("run_cleanup", "stale_run_inspect_hours"): TomlField(("STALE_RUN_INSPECT_HOURS",), "float"),
+        ("run_cleanup", "shutdown_timeout_s"): TomlField(("RUN_CLEANUP_SHUTDOWN_TIMEOUT_SEC",), "float"),
+        ("run_cleanup", "confirmation_required"): TomlField(("RUN_CLEANUP_CONFIRMATION_REQUIRED",), "bool"),
+        ("feishu", "ws_watchdog_poll_s"): TomlField(("FEISHU_WS_WATCHDOG_POLL_S",), "int"),
+        ("feishu", "ws_watchdog_lock_s"): TomlField(("FEISHU_WS_WATCHDOG_LOCK_S",), "float"),
+        ("feishu", "heartbeat_path"): TomlField(("FEISHU_HEARTBEAT_PATH",), "str"),
+        ("feishu", "dedup_path"): TomlField(("FEISHU_DEDUP_PATH",), "str"),
+        ("feishu", "heartbeat_history_path"): TomlField(("FEISHU_HEARTBEAT_HISTORY_PATH",), "str"),
+        ("feishu", "ws_queue_max"): TomlField(("FEISHU_WS_QUEUE_MAX",), "int"),
+        ("feishu", "interrupt_notify_timeout_s"): TomlField(("FEISHU_INTERRUPT_NOTIFY_TIMEOUT_S",), "float"),
+        ("feishu", "cross_sync_poll_s"): TomlField(("FEISHU_CROSS_SYNC_POLL_S",), "float"),
+        ("feishu", "cross_sync_min_interval_s"): TomlField(("FEISHU_CROSS_SYNC_MIN_INTERVAL_S",), "float"),
+        ("feishu", "cross_sync_max_chars"): TomlField(("FEISHU_CROSS_SYNC_MAX_CHARS",), "int"),
+        ("feishu", "cross_sync"): TomlField(("FEISHU_CROSS_SYNC",), "bool"),
+        ("feishu", "audit_dir"): TomlField(("FEISHU_AUDIT_DIR",), "str"),
     }
 )
 
@@ -154,10 +194,18 @@ def _toml_value_to_legacy(path: tuple[str, str], value: Any, kind: ValueKind) ->
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError(f"runtime.toml {where} 必须是整数")
         return str(value)
+    if kind == "float":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"runtime.toml {where} 必须是数字")
+        return str(float(value))
     if kind == "bool":
         if not isinstance(value, bool):
             raise ValueError(f"runtime.toml {where} 必须是布尔值")
         return "1" if value else "0"
+    if kind == "json":
+        if not isinstance(value, (list, dict)):
+            raise ValueError(f"runtime.toml {where} 必须是数组或 table")
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     raise AssertionError(f"unsupported runtime.toml kind: {kind}")
 
 
@@ -256,6 +304,31 @@ class RuntimeConfig:
 
 # Compatibility name used by manifest/tests while callers migrate to RuntimeConfig.
 EffectiveConfig = RuntimeConfig
+
+
+def business_config_snapshot(
+    service: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    workspace_root: str | Path | None = None,
+    config_file: str | Path | None = None,
+) -> Mapping[str, str]:
+    """Return an immutable non-secret business configuration snapshot.
+
+    P1 migration adapter for legacy modules that historically froze environment-
+    driven constants at import time.  Values now come through the canonical
+    RuntimeConfig resolver (runtime.toml > legacy .env > defaults), without
+    projecting secrets or mutating process-global environment.
+    """
+    config = resolve_effective(
+        service,
+        env=env,
+        workspace_root=workspace_root,
+        config_file=config_file,
+    )
+    return MappingProxyType(
+        {key: value for key, value in config.values.items() if key in BUSINESS_KEYS}
+    )
 
 
 def resolve_effective(

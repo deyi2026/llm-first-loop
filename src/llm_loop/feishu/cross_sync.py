@@ -14,18 +14,21 @@ fail-open：异常仅记日志，不阻断桥主体；推送失败不推进基�
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
+from llm_loop.runtime.resolver import business_config_snapshot
+
 logger = logging.getLogger(__name__)
 
-_POLL_S = float(os.environ.get("FEISHU_CROSS_SYNC_POLL_S", "1.5"))
-_MIN_INTERVAL_S = float(os.environ.get("FEISHU_CROSS_SYNC_MIN_INTERVAL_S", "3.0"))
-_MAX_CHARS = int(os.environ.get("FEISHU_CROSS_SYNC_MAX_CHARS", "10000"))
-_ENABLED = os.environ.get("FEISHU_CROSS_SYNC", "1").strip().lower() not in {
+_CROSS_SYNC_CONFIG = business_config_snapshot("feishu_cross_sync")
+
+_POLL_S = float(_CROSS_SYNC_CONFIG.get("FEISHU_CROSS_SYNC_POLL_S", "1.5"))
+_MIN_INTERVAL_S = float(_CROSS_SYNC_CONFIG.get("FEISHU_CROSS_SYNC_MIN_INTERVAL_S", "3.0"))
+_MAX_CHARS = int(_CROSS_SYNC_CONFIG.get("FEISHU_CROSS_SYNC_MAX_CHARS", "10000"))
+_ENABLED = _CROSS_SYNC_CONFIG.get("FEISHU_CROSS_SYNC", "1").strip().lower() not in {
     "0",
     "off",
     "false",

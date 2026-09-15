@@ -25,7 +25,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from llm_loop.runtime.resolver import business_config_snapshot
+
 logger = logging.getLogger(__name__)
+
+_CACHE_HEALTH_CONFIG = business_config_snapshot("cache_health")
 
 # ── P0 压缩风暴熔断（2026-08-25 规格）──
 # 触发: 连续 (context.compressed 且 压缩后上下文仍超压缩线) 轮数达阈值 且
@@ -43,14 +47,14 @@ logger = logging.getLogger(__name__)
 # 逃生: 连续 context_pressure 达 BREAKER_PRESSURE_ESCAPE_MAX → 允许一次受控压缩
 #   （防永久死锁；单次压缩后仍超限 → 再次压力循环，烧损有界）。
 # 审计: data/audit/cache_breaker.jsonl（storm_count/anchor/enter/exit/pressure/escape）。
-_BREAKER_TRIGGER_RUNS = int(os.environ.get("BREAKER_TRIGGER_RUNS", "5"))
-_BREAKER_COOLDOWN_ROUNDS = int(os.environ.get("BREAKER_COOLDOWN_ROUNDS", "8"))
-_BREAKER_EXIT_STABLE_RUNS = int(os.environ.get("BREAKER_EXIT_STABLE_RUNS", "3"))
-_BREAKER_EXIT_CHARS_RATIO = float(os.environ.get("BREAKER_EXIT_CHARS_RATIO", "0.8"))
-_BREAKER_PRESSURE_RATIO = float(os.environ.get("BREAKER_PRESSURE_RATIO", "0.95"))
-_BREAKER_PRESSURE_ESCAPE_MAX = int(os.environ.get("BREAKER_PRESSURE_ESCAPE_MAX", "6"))
-_BREAKER_HIT_THR = float(os.environ.get("BREAKER_HIT_THR", "0.5"))  # 命中共信号（防折叠误判）
-_BREAKER_OVER_RATIO = float(os.environ.get("BREAKER_OVER_RATIO", "0.9"))  # 压缩线（=compact_ratio 默认）
+_BREAKER_TRIGGER_RUNS = int(_CACHE_HEALTH_CONFIG.get("BREAKER_TRIGGER_RUNS", "5"))
+_BREAKER_COOLDOWN_ROUNDS = int(_CACHE_HEALTH_CONFIG.get("BREAKER_COOLDOWN_ROUNDS", "8"))
+_BREAKER_EXIT_STABLE_RUNS = int(_CACHE_HEALTH_CONFIG.get("BREAKER_EXIT_STABLE_RUNS", "3"))
+_BREAKER_EXIT_CHARS_RATIO = float(_CACHE_HEALTH_CONFIG.get("BREAKER_EXIT_CHARS_RATIO", "0.8"))
+_BREAKER_PRESSURE_RATIO = float(_CACHE_HEALTH_CONFIG.get("BREAKER_PRESSURE_RATIO", "0.95"))
+_BREAKER_PRESSURE_ESCAPE_MAX = int(_CACHE_HEALTH_CONFIG.get("BREAKER_PRESSURE_ESCAPE_MAX", "6"))
+_BREAKER_HIT_THR = float(_CACHE_HEALTH_CONFIG.get("BREAKER_HIT_THR", "0.5"))  # 命中共信号（防折叠误判）
+_BREAKER_OVER_RATIO = float(_CACHE_HEALTH_CONFIG.get("BREAKER_OVER_RATIO", "0.9"))  # 压缩线（=compact_ratio 默认）
 
 
 def _breaker_audit_path() -> Path:
@@ -70,8 +74,8 @@ _TELEMETRY_LINE_EOF_RE = re.compile(r"(?m)^[ \t]*⚡ 缓存命中率 [^\n]*?toke
 # 任务4（2026-08-25 §5.10）: 末尾位置限定——遥测总是程序注入在回答末尾（legacy）
 # 或模型伪造在末尾；正文中部出现"缓存命中率"字样属正常论述，不应误剥离。
 # 默认仅检查末尾 N 行（=0 时回退全文匹配兼容旧行为）。
-_STRIP_AUDIT_LOG = os.environ.get("CACHE_TELEMETRY_STRIP_AUDIT_LOG", "0") == "1"
-_STRIP_TAIL_LINES = int(os.environ.get("CACHE_TELEMETRY_STRIP_TAIL_LINES", "10"))
+_STRIP_AUDIT_LOG = _CACHE_HEALTH_CONFIG.get("CACHE_TELEMETRY_STRIP_AUDIT_LOG", "0") == "1"
+_STRIP_TAIL_LINES = int(_CACHE_HEALTH_CONFIG.get("CACHE_TELEMETRY_STRIP_TAIL_LINES", "10"))
 
 
 def strip_cache_telemetry_lines(content: str | None, *, audit_log: bool = False) -> str:

@@ -32,6 +32,19 @@ def test_direct_environment_access_is_one_way_ratchet():
     assert current["access_count"] <= baseline["access_count"]
 
 
+def test_no_direct_environment_reads_at_module_import():
+    current_items = scan_tree(ROOT / "src")
+    offenders = [
+        f"{item.file}:{item.scope}:{item.key}:{item.op}"
+        for item in current_items
+        if item.module_import and item.op != "write"
+    ]
+    assert not offenders, (
+        "模块 import 阶段不得直接读取 os.environ/os.getenv；"
+        f"应改为一次不可变 RuntimeConfig snapshot。剩余: {offenders}"
+    )
+
+
 def test_runtime_toml_template_contains_no_secret_fields():
     text = (ROOT / "runtime.toml.example").read_text(encoding="utf-8").lower()
     for forbidden in ("api_key", "api-key", "password", "app_secret", "iam_token"):

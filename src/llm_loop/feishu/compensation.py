@@ -21,7 +21,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
+from llm_loop.runtime.resolver import business_config_snapshot
+
 logger = logging.getLogger(__name__)
+
+_COMPENSATION_CONFIG = business_config_snapshot("feishu_compensation")
 
 # 结构化中断原因五类（FTR-DFX-08：禁止脆弱文本匹配分类）
 WATCHDOG_EXIT = "watchdog_exit"
@@ -47,7 +51,7 @@ _DEFAULT_COMPENSATION_PATH = "data/feishu_compensation.jsonl"
 _LEGACY_INTERRUPTED_PATH_ENV = "FEISHU_INTERRUPTED_PATH"
 _DEFAULT_LEGACY_INTERRUPTED_PATH = "data/feishu_interrupted.json"
 
-_NOTIFY_TIMEOUT_S = float(os.environ.get("FEISHU_INTERRUPT_NOTIFY_TIMEOUT_S", "1"))
+_NOTIFY_TIMEOUT_S = float(_COMPENSATION_CONFIG.get("FEISHU_INTERRUPT_NOTIFY_TIMEOUT_S", "1"))
 
 
 def compensation_path() -> str:
