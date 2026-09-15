@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20260915-capability-recovery-on-main",
-  "summary": "Replay the exact qualified capability-recovery patches onto main@20247b1f, plus narrowly qualified Rule stable-reference FCR and R05/T05 exact-read recovery-efficiency follow-ups, without introducing a new control machine or semantic authority.",
+  "summary": "Replay the exact qualified capability-recovery patches onto main@20247b1f, plus one narrowly qualified Rule stable-reference FCR follow-up, without introducing a new control machine or semantic authority.",
   "components": [
     {
       "component_id": "capability-source-continuity-toutiao",
@@ -78,29 +78,6 @@
       "verification_level": "exact patch-equivalence audit + focused deterministic tests + whole-tree gates + renewed Skill/FCR canary",
       "model_evidence_veto_recovery_exit": "The model receives code/runtime roots, Python executable and run-scoped provider/window facts, and remains free to choose whether/how to use the Skill and what conclusion to draw.",
       "rollback_route": "Revert the four replay commits; the current exact 0cfd Web/Feishu deployment remains an independently recorded rollbackable runtime anchor until replacement qualification."
-    },
-    {
-      "component_id": "capability-exact-read-recovery-efficiency",
-      "paths": [
-        "src/llm_loop/memory/evidence.py",
-        "src/llm_loop/tools/evidence_enforce.py",
-        "tests/unit/test_evidence_enforce.py",
-        "tests/unit/test_evidence_phase5.py",
-        "tests/unit/test_evidence_source_resolution.py"
-      ],
-      "control_machinery": false,
-      "owning_subsystem": "Evidence exact-range delivery, hydration pagination and source reuse",
-      "disposition": "ADMIT as mechanical byte/range/version/reuse contracts that remove unnecessary rereads; no field-importance, relevance, editing or completion authority",
-      "evidence": [
-        "production factory/registry assembly opts read_file into the existing real hard-cap budget while historical manual/frozen Evidence harnesses keep their prior generic projection behavior",
-        "R05/T05 regression places code_fingerprints/git/adjudication in the middle of a JSON source and proves the requested range remains visible while snapshot bytes remain complete",
-        "read_evidence line pagination proves cursor continuity with no gap or overlap, and over-hard-cap projection reports exact visible/omitted/next_start/version facts",
-        "verified-current Evidence reuse can satisfy a repeat read without a second physical source execution",
-        "committed-state focused tests, whole-tree security and full ci_gate pass on the follow-up candidate"
-      ],
-      "verification_level": "R05/T05 deterministic regressions + committed-state A.5/security + whole-tree Ruff/Pyright/tier0/full pytest",
-      "model_evidence_veto_recovery_exit": "Programs expose exact bytes, ranges, cursors, versions, refs and reuse/currentness facts; the model retains which fields matter, semantic relevance, recovery strategy, edits and task-completion judgment.",
-      "rollback_route": "Revert the R05/T05 implementation commit and this governance follow-up; no durable source-content migration or semantic state conversion is introduced."
     },
     {
       "component_id": "capability-architecture-submission-record",
