@@ -1,0 +1,108 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "SUB-2026-09-15-EVO-e6b8aa22-1eb26afa",
+  "summary": "落地 EVO-20260914-e6b8aa22（AgentFollowupTool：终止 child 的有界同会话续话，跨续话记账+租约串行）与 EVO-20260914-1eb26afa（执行面能力矩阵+spawn/workflow 启动期早失败），含独立评审修复（续话验证降级路径属性错误，74be84c8）。",
+  "declarations": [
+    {
+      "declaration_id": "decl-execution-surface-earlyfail",
+      "g1": {
+        "necessity": "EVO-20260914-1eb26afa：spawn/workflow 启动前将能力需求（requires：tools/network/fs/session_continuity）与执行面事实显式比对，缺口前置拒绝，避免受限/远端执行面启动后才失败、浪费预算与租约。"
+      },
+      "g2": {
+        "authority_owner": "llm_loop.core.execution_surface（矩阵事实面）+ spawn_subagent/workflow 工具启动期校验",
+        "relationship": "new_authority",
+        "non_duplication": "只比对显式声明（requires，opt-in），不做语义推断；codearts 远端定义面如实标注不可本地断言，不冒充全知；不与既有工具白名单/安全边界重叠（那是权限层，这是能力缺口层）。"
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/unit/test_execution_surface.py 全部通过",
+          "tools_model（model_catalog）输出机器可读执行面矩阵 + spawn 前比对入口",
+          "CI 口径 ruff/pyright 0 error；全量 pytest -m 'not real_llm' 通过"
+        ],
+        "recovery_or_reason": "缺口→启动前显式拒绝并给出缺口清单（拒绝路径全显式）；未声明 requires 的存量调用零回归（opt-in）。"
+      },
+      "g4": {
+        "rollback": "git revert 本组件提交即回滚；requires 为 opt-in，不影响存量调用。",
+        "verification": [
+          "tests/unit/test_execution_surface.py",
+          "scripts/check_architecture_submission.py（本清单）"
+        ]
+      }
+    }
+  ],
+  "components": [
+    {
+      "component_id": "execution-surface-earlyfail",
+      "paths": [
+        "src/llm_loop/core/execution_surface.py",
+        "src/llm_loop/introspection/tools_model.py",
+        "src/llm_loop/tools/builtin/spawn_subagent.py",
+        "src/llm_loop/tools/builtin/workflow.py",
+        "src/llm_loop/tools/registry.py",
+        "tests/unit/test_execution_surface.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "decl-execution-surface-earlyfail",
+      "owning_subsystem": "llm_loop.tools / llm_loop.introspection",
+      "disposition": "新增保留：机器可读执行面能力矩阵 + spawn/workflow requires 启动期早失败（EVO-20260914-1eb26afa）。",
+      "verification_level": "专项单测 + CI 门禁（ruff/pyright/pytest not real_llm）",
+      "model_evidence_veto_recovery_exit": "缺口在启动前被机械拒绝（veto 后续执行）；拒绝消息含缺口清单，模型可改声明或换执行面后重试。",
+      "rollback_route": "git revert 对应提交（f3d77e50 线）。",
+      "evidence": [
+        "tests/unit/test_execution_surface.py 全过",
+        "tools_model 执行面矩阵输出"
+      ]
+    },
+    {
+      "component_id": "agent-followup-bounded-continuation",
+      "paths": [
+        "src/llm_loop/tools/builtin/agent_followup.py",
+        "src/llm_loop/subagent/runner.py",
+        "src/llm_loop/factory.py",
+        "tests/conftest.py",
+        "tests/unit/test_agent_followup.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "llm_loop.subagent / llm_loop.tools",
+      "disposition": "新增保留：AgentFollowupTool——终止 child 的有界同会话续话（EVO-20260914-e6b8aa22）。机械边界在程序侧：预算先查后变更、先记账后执行、租约串行化、terminal 检查含 durable 降级路径（独立评审修复 74be84c8）；工具按需由模型调用，故不标 control_machinery。",
+      "verification_level": "专项单测 + subagent/workflow/spawn/registry/factory 子集 + CI 门禁",
+      "model_evidence_veto_recovery_exit": "超窗/超预算/租约被占时显式拒绝；父不在场或 handle 失效时拒绝而非猜测续话对象。",
+      "rollback_route": "git revert 对应提交（f3d77e50/74be84c8 线）即回滚；不迁移任何持久状态。",
+      "evidence": [
+        "tests/unit/test_agent_followup.py 全过",
+        "独立评审（2026-09-15）：预算先查后记/租约串行/finally 全恢复纪律确认；降级路径 AttributeError 已修复"
+      ]
+    },
+    {
+      "component_id": "mirror-restart-docs",
+      "paths": [
+        "docs/MIRROR-RESTART-GUIDE.md",
+        "docs/MIRROR-workspace-protocol.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs/mirror-ops",
+      "disposition": "保留：镜像重启指南（红线）与协议更新（restart_mirror.sh 统一入口，废止手写 nohup）。",
+      "verification_level": "文档评审；restart_mirror.sh 已跟踪且在用",
+      "model_evidence_veto_recovery_exit": "不适用：文档。",
+      "rollback_route": "git revert 对应提交。",
+      "evidence": [
+        "scripts/restart_mirror.sh 存在且被协议引用"
+      ]
+    },
+    {
+      "component_id": "governance-manifest-self",
+      "paths": [
+        "docs/governance/submissions/2026-09-15-evo-exec-surface-agent-followup.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs/governance",
+      "disposition": "新增保留：本架构提交清单（A.5 门禁要求）。",
+      "verification_level": "scripts/check_architecture_submission.py 通过",
+      "model_evidence_veto_recovery_exit": "不适用：治理元数据。",
+      "rollback_route": "git revert 本提交。",
+      "evidence": [
+        "checker 本地通过后随 PR 审阅"
+      ]
+    }
+  ]
+}
