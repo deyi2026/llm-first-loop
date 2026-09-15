@@ -11,6 +11,7 @@ automatically re-promoted as fresh role=user authority.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from llm_loop.core.episode_history import (
@@ -27,6 +28,10 @@ def _metadata(message: Any) -> dict[str, Any]:
 
 
 RECENT_ASSISTANT_CHAR_LIMIT = 32_768
+RECENT_REFERENCE_FACT_LIMIT = 8
+_URL_REFERENCE_RE = re.compile(r"https?://[^\s<>\"']+")
+_REFERENCE_SCHEMES = ("attachment://", "artifact://v1/", "evidence://v1/")
+_REFERENCE_TRAILING_PUNCTUATION = ".,;:!?)]}，。；：！？）】》"
 
 
 def _is_completed_model_answer(message: Any) -> bool:
@@ -75,6 +80,81 @@ def latest_model_assistant_before_turn(
         ):
             return message
     return None
+
+
+def _machine_reference_facts(message: Any | None) -> tuple[str, ...]:
+    """Return bounded machine-addressable refs from one historical human turn.
+
+    This deliberately does *not* quote the old human prose.  URLs and opaque durable
+    refs are identity facts that a short follow-up may point at; instructions around
+    them remain retired.  The extraction is syntactic only and never decides semantic
+    relevance or task authority.
+    """
+    if message is None or not is_human_user_message(message):
+        return ()
+    refs: list[str] = []
+    content = str(getattr(message, "content", "") or "")
+    for match in _URL_REFERENCE_RE.finditer(content):
+        value = match.group(0).rstrip(_REFERENCE_TRAILING_PUNCTUATION)
+        if value and value not in refs:
+            refs.append(value)
+            if len(refs) >= RECENT_REFERENCE_FACT_LIMIT:
+                return tuple(refs)
+
+    md = _metadata(message)
+    attachments = md.get("attachments")
+    if isinstance(attachments, list):
+        for item in attachments:
+            if not isinstance(item, dict):
+                continue
+            for key in ("attachment_ref", "ref", "source_ref"):
+                value = item.get(key)
+                if not isinstance(value, str) or not value.startswith(_REFERENCE_SCHEMES):
+                    continue
+                if value not in refs:
+                    refs.append(value)
+                    if len(refs) >= RECENT_REFERENCE_FACT_LIMIT:
+                        return tuple(refs)
+    return tuple(refs)
+
+
+def _recent_reference_wire(
+    session_messages: list[Any], current_turn_ref: int | None, *, enabled: bool
+) -> tuple[dict[str, Any] | None, int]:
+    """Project only source identities from the immediately preceding human turn.
+
+    The carrier is assistant-side, explicitly historical, and authority=false.  It
+    restores referential continuity (for example "that URL") without replaying stale
+    human text as role=user or reviving an old task/instruction.
+    """
+    if not enabled or current_turn_ref is None or current_turn_ref <= 0:
+        return None, 0
+    previous_human = next(
+        (
+            session_messages[idx]
+            for idx in range(current_turn_ref - 1, -1, -1)
+            if is_human_user_message(session_messages[idx])
+        ),
+        None,
+    )
+    refs = _machine_reference_facts(previous_human)
+    if not refs:
+        return None, 0
+    payload = {
+        "kind": "recent_reference_facts",
+        "historical": True,
+        "authority": False,
+        "source_identity_only": True,
+        "source_refs": list(refs),
+    }
+    return (
+        {
+            "role": "assistant",
+            "content": "[recent_reference_facts—not_instruction] "
+            + json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        },
+        len(refs),
+    )
 
 
 def _recent_assistant_wire(message: Any | None) -> dict[str, Any] | None:
@@ -214,6 +294,11 @@ def apply_recent_continuity_suffix(
     runtime_fact = _resume_runtime_fact(interruption_resume)
     adjacent_assistant = latest_model_assistant_before_turn(session_messages, current_turn_ref)
     recent_assistant_wire = _recent_assistant_wire(adjacent_assistant)
+    reference_wire, reference_fact_count = _recent_reference_wire(
+        session_messages,
+        current_turn_ref,
+        enabled=recent_assistant_wire is not None,
+    )
     # Once a turn advances, native assistant(tool_calls)->tool order is authoritative.
     # Do not re-append the current user or any interruption partial at the tail.  But if
     # the initial request used the immediately prior completed assistant as adjacency
@@ -227,18 +312,24 @@ def apply_recent_continuity_suffix(
         if recent_assistant_wire is None:
             return built, {"applied": False, "reason": "turn_already_advanced"}
         out = list(built)
-        # Remove one identical provider-visible copy if another projection retained it,
-        # then place it at the same adjacency boundary used by the initial round.
-        for idx in range(user_idx - 1, -1, -1):
-            item = out[idx]
-            if (
-                item.get("role") == "assistant"
-                and str(item.get("content") or "") == recent_assistant_wire["content"]
-                and not item.get("tool_calls")
-            ):
-                out.pop(idx)
-                user_idx -= 1
-                break
+        # Remove identical provider-visible copies if another projection retained them,
+        # then restore the same reference-fact + assistant adjacency used on round 1.
+        for wire in (recent_assistant_wire, reference_wire):
+            if wire is None:
+                continue
+            for idx in range(user_idx - 1, -1, -1):
+                item = out[idx]
+                if (
+                    item.get("role") == "assistant"
+                    and str(item.get("content") or "") == str(wire.get("content") or "")
+                    and not item.get("tool_calls")
+                ):
+                    out.pop(idx)
+                    user_idx -= 1
+                    break
+        if reference_wire is not None:
+            out.insert(user_idx, dict(reference_wire))
+            user_idx += 1
         out.insert(user_idx, dict(recent_assistant_wire))
         return out, {
             "applied": True,
@@ -249,6 +340,7 @@ def apply_recent_continuity_suffix(
             "dialogue_pairs": 0,
             "assistant_context": 1,
             "historical_user_messages": 0,
+            "reference_fact_count": reference_fact_count,
             "dialogue_reference_authority": False,
         }
     if assistant_wire is not None or runtime_fact:
@@ -278,6 +370,8 @@ def apply_recent_continuity_suffix(
     # Any build-time dynamic/program material that appeared after current human is
     # moved ahead of recent assistant context. Exact current human ingress remains final.
     out = before + after_user
+    if reference_wire is not None and assistant_wire is None:
+        out.append(dict(reference_wire))
     if recent_assistant_wire is not None and assistant_wire is None:
         out.append(dict(recent_assistant_wire))
     if runtime_fact:
@@ -301,5 +395,6 @@ def apply_recent_continuity_suffix(
         "dialogue_pairs": 0,
         "assistant_context": int(recent_assistant_wire is not None and assistant_wire is None),
         "historical_user_messages": 0,
+        "reference_fact_count": reference_fact_count,
         "dialogue_reference_authority": False,
     }
