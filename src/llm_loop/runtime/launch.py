@@ -16,7 +16,7 @@ import sys
 
 from .identity import check_identity
 from .manifest import build_manifest, write_manifest
-from .resolver import apply_to_environ, resolve_effective
+from .resolver import apply_to_environ, legacy_env_snapshot, resolve_effective
 
 _SERVICES = {
     "web": "llm_loop.web",
@@ -29,6 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("service", choices=sorted(_SERVICES))
     parser.add_argument("--model", help="显式 model override（最高优先级，被记录）")
     parser.add_argument("--port", help="显式端口 override")
+    parser.add_argument("--config", help="显式 runtime.toml 路径（不存在则拒绝启动）")
     parser.add_argument("--dry-run", action="store_true", help="只打印 effective 配置，不启动服务")
     args = parser.parse_args(argv)
 
@@ -38,12 +39,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.port:
         cli["WEB_PORT"] = args.port
 
-    # 启动守卫（R1）：shadow 记录 / enforce 拒绝
-    report = check_identity()
-
-    ec = resolve_effective(args.service, cli)
+    ec = resolve_effective(args.service, cli, config_file=args.config)
+    # Identity consumes the resolved snapshot without first mutating process-global env.
+    identity_env = legacy_env_snapshot(ec)
+    report = check_identity(
+        mode=ec.values.get("RUNTIME_IDENTITY_MODE") or None,
+        env=identity_env,
+    )
     print(f"[runtime-launch] service={args.service} identity_ok={report.ok} "
-          f"workspace={ec.workspace_root} env_file={ec.env_file}", file=sys.stderr)
+          f"runtime_root={ec.runtime_root} config_file={ec.config_file}", file=sys.stderr)
     if ec.ignored_shell_env:
         print(f"[runtime-launch] ignored shell env (not authoritative): "
               f"{sorted(ec.ignored_shell_env)}", file=sys.stderr)
