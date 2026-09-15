@@ -1,0 +1,62 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260915-step5-a5-repo-review-gate",
+  "summary": "Bootstrap A.5 as a repository/PR mechanical presence-and-coverage gate without semantic source parsing or runtime authority.",
+  "components": [
+    {
+      "component_id": "a5-repo-review-gate-v0.1",
+      "paths": [
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        ".github/workflows/ci.yml",
+        "docs/analysis/AGENT-QUALIFICATION-ENVELOPE-STEP5-A5-REPO-GATE-20260915.md",
+        "docs/governance/architecture-submission-v0.1.schema.json",
+        "docs/governance/submissions/20260915-step5-a5-repo-review-gate.json",
+        "scripts/check_architecture_submission.py",
+        "tests/unit/test_architecture_submission_gate.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "repository architecture-review governance (A.5)",
+      "disposition": "ADMIT as mechanical PR review gate; no runtime or semantic qualification authority",
+      "evidence": [
+        "docs/analysis/CONVERGENCE-DISPOSITION-20260910.md:657-705",
+        "docs/DESIGN-20260915-agent-qualification-envelope-v0.1.md:223-231,362-405"
+      ],
+      "verification_level": "deterministic unit tests + staged/committed exact diff self-coverage + CI workflow inspection",
+      "model_evidence_veto_recovery_exit": "The gate reports exact missing/extra paths and missing structural fields; submitter/reviewer can amend classification/declarations and rerun. Semantic quality remains model/human review-owned.",
+      "rollback_route": "Revert the Step5 commit to remove the PR status job/checker/schema/template wiring; runtime behavior is unaffected.",
+      "declaration_id": "a5-repo-review-gate-v0.1"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "a5-repo-review-gate-v0.1",
+      "g1": {
+        "necessity": "A.5 explicitly requires submission/review enforcement. Exact diff-path coverage and required-field presence are mechanical facts that cannot be guaranteed by model judgment alone without a repository check."
+      },
+      "g2": {
+        "authority_owner": "CONVERGENCE A.5 architecture-review policy and the submitter-authored changed-component manifest",
+        "relationship": "reuse",
+        "non_duplication": "The checker owns no runtime state, task completion, scorer verdict, control classification, or G1-G4 semantic judgment; it only compares declared structure with Git diff facts."
+      },
+      "g3": {
+        "model_evidence": [
+          "exact missing changed paths",
+          "exact stale/extra manifest paths",
+          "missing/duplicate component or declaration identifiers",
+          "missing G1-G4/file-matrix fields"
+        ],
+        "recovery_or_reason": "Edit the submission manifest or split/reclassify the PR and rerun the checker. There is no runtime refusal or hidden model-side override because this gate exists only in repository review."
+      },
+      "g4": {
+        "rollback": "Revert the Step5 gate commit; no service/runtime migration or durable application state is introduced.",
+        "verification": [
+          "TDD negative tests for missing G1-G4 and file-matrix fields",
+          "exact changed-path missing/extra coverage tests",
+          "explicit test proving vague semantic prose still passes structural validation",
+          "staged and committed self-application against the exact Step5 diff",
+          "repository Ruff/Pyright/compile/diff/security and adjacent tests"
+        ]
+      }
+    }
+  ]
+}
