@@ -1236,7 +1236,14 @@ def build_engine(settings: Settings) -> LoopEngine:
             .expanduser()
             .resolve()
         ),
-        "python_executable": str(Path(sys.executable).expanduser().resolve()),
+        # Preserve the logical venv executable path.  ``resolve()`` would follow
+        # the venv symlink into the base/uv interpreter and falsely imply that
+        # project-installed packages are unavailable.
+        "python_executable": str(Path(sys.executable).expanduser().absolute()),
+        # Repository-relative paths inside SKILL.md (for example
+        # ``scripts/md2pdf.py``) are relative to the code root, not the Skill
+        # directory.  This is a path-resolution fact, not an execution strategy.
+        "relative_path_base": str(_runtime_paths.code_root),
     }
     status_provider.set_recovery_status_fn(backup_store.status_summary)
 

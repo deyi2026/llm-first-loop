@@ -233,6 +233,38 @@ def test_factory_injects_skills_dir(tmp_path, monkeypatch):
     assert '"python_executable":' in r2.content
 
 
+def test_factory_skill_execution_facts_keep_venv_executable_and_code_relative_base(
+    tmp_path, monkeypatch
+):
+    from llm_loop.config import Settings
+    from llm_loop.factory import build_engine
+
+    skills = tmp_path / "skills"
+    _mk_skill(skills, "ops", "ops", "运维流程")
+    real_python = tmp_path / "real-python"
+    real_python.write_text("", encoding="utf-8")
+    logical_python = tmp_path / "runtime" / ".venv" / "bin" / "python"
+    logical_python.parent.mkdir(parents=True)
+    logical_python.symlink_to(real_python)
+    monkeypatch.setattr("llm_loop.factory.sys.executable", str(logical_python))
+
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        skills_dir=str(skills),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    facts = engine.corrections.skill_execution_facts
+
+    assert facts["python_executable"] == str(logical_python.absolute())
+    assert facts["python_executable"] != str(logical_python.resolve())
+    assert facts["relative_path_base"] == facts["code_root"]
+
+
 def test_factory_default_skills_dir_zero_behavior(tmp_path):
     """skills_dir 指向不存在目录 → skill_list 空清单零行为."""
     from llm_loop.config import Settings
