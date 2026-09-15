@@ -1396,10 +1396,10 @@ class SubAgentRunner:
             if durable is not None:
                 if durable.parent_id != requester:
                     return False, f"拒绝: {sid} 不是当前会话的直接 child。", None
-                if not str(durable.snapshot_status).endswith("terminal"):
+                if not durable.terminal:
                     return (
                         False,
-                        f"{sid} 状态非 terminal（{durable.snapshot_status}），不可续话。",
+                        f"{sid} 状态非 terminal（outcome={durable.outcome}），不可续话。",
                         None,
                     )
                 generation = durable.generation

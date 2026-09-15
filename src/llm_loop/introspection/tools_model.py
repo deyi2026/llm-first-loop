@@ -203,8 +203,8 @@ def run_model_catalog(
         "fs=workspace(随工具域), session_continuity=✓（terminal 后有界续话）"
     )
     lines.append(
-        f"  - codearts: allowed_tools=远端定义（本地不可枚举）, network_egress=✓, "
-        f"fs=remote_sandbox, session_continuity=✗（跨步状态经 ctx_path 显式传递）"
+        "  - codearts: allowed_tools=远端定义（本地不可枚举）, network_egress=✓, "
+        "fs=remote_sandbox, session_continuity=✗（跨步状态经 ctx_path 显式传递）"
     )
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
