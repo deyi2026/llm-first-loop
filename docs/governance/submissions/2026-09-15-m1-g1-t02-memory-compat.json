@@ -1,0 +1,152 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "SUB-2026-09-15-M1-G1-T02-MEM-COMPAT",
+  "summary": "M1-G1 scorer 收敛修复、T02 内层过程效应回执与 gate 闭环、纯机械非收敛熔断守卫、memory schema 兼容 fail-closed 修复（含 2026-09-15 两起事故回归），rebase 到 main@96a4dce5，PR #10。",
+  "declarations": [
+    {
+      "declaration_id": "decl-nonconvergence-fuse",
+      "g1": {
+        "necessity": "EVO-20260915-789eb9d5：迭代预算/超时维度之外的非收敛观察计数熔断，纯机械计数判定，不解析语义；防止预算耗尽仍无收敛信号的持续空转消耗。"
+      },
+      "g2": {
+        "authority_owner": "llm_loop.core.loop.engine_services.nonconvergence_guard.NonconvergenceGuard",
+        "relationship": "new_authority",
+        "non_duplication": "与 max_iterations/timeout_s 属不同维度（按 reasoning 字符与工具草稿计数判定），不与既有预算裁决重叠。"
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/test_nonconvergence_fuse.py 全部通过（含 SENT/OTHER 混合与 persist 序列）",
+          "全量 pytest 5727 项 exit 0（净化 LFL_WORKSPACE_ROOT 环境）",
+          "CI 口径 ruff/pyright 0 error（本地复现通过）"
+        ],
+        "recovery_or_reason": "熔断经 NonconvergenceFuseError 异常路径退出，已完成 journal 由 interrupted_capture 保留可审计。"
+      },
+      "g4": {
+        "rollback": "git revert 本组件提交即回滚；无状态/数据迁移。",
+        "verification": [
+          "tests/test_nonconvergence_fuse.py",
+          "scripts/check_architecture_submission.py（本清单）"
+        ]
+      }
+    },
+    {
+      "declaration_id": "decl-memory-schema-fail-closed",
+      "g1": {
+        "necessity": "2026-09-15 两起事故回归：旧 reader 读到新 schema 的未知字段时 MemoryEntry(**e) TypeError 被 _load 误判为 corruption，导致内存索引清空。"
+      },
+      "g2": {
+        "authority_owner": "llm_loop.memory.store.MemoryStore._load + _schema_locked",
+        "relationship": "replace",
+        "non_duplication": "main 线 3a95ed46 已带 observation_history 字段本身；本组件只做错误分类（schema mismatch ≠ corruption）与禁写，不重复实现 observation-fence 语义。"
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/test_memory_schema_compat.py 全部通过（旧格式默认值/新字段读写/未知字段 fail-closed）",
+          "全量 pytest 5727 项 exit 0"
+        ],
+        "recovery_or_reason": "fail-closed：置诊断消息、禁写并抛 MemorySchemaMismatchError，索引文件一字节不动（不误备份、不清空），可人工处置后恢复。"
+      },
+      "g4": {
+        "rollback": "git revert 本组件提交即回滚；字段已在 main 线，无需数据迁移。",
+        "verification": [
+          "tests/test_memory_schema_compat.py",
+          "全量 pytest（tests/ exit 0）"
+        ]
+      }
+    }
+  ],
+  "components": [
+    {
+      "component_id": "evals-pilot-g1-scorer-fix",
+      "paths": [
+        "evals/pilot/analyze.py",
+        "evals/pilot/run_pilot.py",
+        "evals/pilot/tasks.py",
+        "evals/pilot/telemetry.py",
+        "evals/pilot/test_g1_fixes.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "evals/pilot",
+      "disposition": "修复保留：G1 scorer 收敛问题修复（原 fd56884d 线），随 rebase 进入 main。",
+      "verification_level": "evals/pilot pytest 子集 + T02 验收脚本 exit 0",
+      "model_evidence_veto_recovery_exit": "不适用：评估脚本，不进入运行时控制路径。",
+      "rollback_route": "git revert 对应提交（480be28f 线）。",
+      "evidence": [
+        "evals/pilot/test_t02_effect_receipt.py: T02 EFFECT RECEIPT REAL-SHAPE PASS",
+        "全量 pytest 5727 项 exit 0"
+      ]
+    },
+    {
+      "component_id": "t02-effect-receipt-gate-closure",
+      "paths": [
+        "evals/pilot/test_t02_effect_receipt.py",
+        "evals/pilot/qualification/m1-20260915/REPORT-M1-G2-GATE-CLOSURE.md",
+        "evals/pilot/qualification/m1-20260915/m1-g2-gate-closure.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "evals/pilot/qualification",
+      "disposition": "新增保留：T02 内层过程效应回执脚本与 M1-G2 gate 闭环记录。",
+      "verification_level": "脚本 exit 0（REAL-SHAPE PASS），报告与 json 相互一致",
+      "model_evidence_veto_recovery_exit": "不适用：验收脚本与文档。",
+      "rollback_route": "git revert 对应提交（49552e53/4f4e9265 线）。",
+      "evidence": [
+        "T02 脚本输出 PASS（rebase 前后各验证一次）",
+        "m1-g2-gate-closure.json 与本清单同 PR 审阅"
+      ]
+    },
+    {
+      "component_id": "nonconvergence-fuse",
+      "paths": [
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/loop/engine_services/interrupted_capture.py",
+        "src/llm_loop/core/loop/engine_services/nonconvergence_guard.py",
+        "src/llm_loop/core/tool_execution_journal.py",
+        "tests/test_nonconvergence_fuse.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "decl-nonconvergence-fuse",
+      "owning_subsystem": "llm_loop.core.loop",
+      "disposition": "新增保留：EVO-20260915-789eb9d5 纯机械非收敛熔断守卫（原 f87e85af）。",
+      "verification_level": "专项单测 + 全量 pytest + ruff/pyright 门禁",
+      "model_evidence_veto_recovery_exit": "熔断即 NonconvergenceFuseError 异常退出（veto 后续迭代）；journal/interrupted_capture 保留恢复与审计面。",
+      "rollback_route": "git revert 对应提交（c4dec2ed 线）。",
+      "evidence": [
+        "tests/test_nonconvergence_fuse.py 全过",
+        "全量 pytest 5727 项 exit 0"
+      ]
+    },
+    {
+      "component_id": "memory-schema-fail-closed",
+      "paths": [
+        "src/llm_loop/memory/store.py",
+        "tests/test_memory_schema_compat.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "decl-memory-schema-fail-closed",
+      "owning_subsystem": "llm_loop.memory",
+      "disposition": "修复保留：observation_history 兼容字段注释化合并 + _load 错误分类与 fail-closed 禁写（原 7833c42b/b34c098e）。",
+      "verification_level": "专项单测 + 全量 pytest + ruff/pyright 门禁",
+      "model_evidence_veto_recovery_exit": "schema 高于 reader 时禁写并抛 MemorySchemaMismatchError（veto 写路径）；索引文件保持原样可人工恢复。",
+      "rollback_route": "git revert 对应提交（d594ead8/9ca1aa8b 线）。",
+      "evidence": [
+        "tests/test_memory_schema_compat.py 全过",
+        "全量 pytest 5727 项 exit 0"
+      ]
+    },
+    {
+      "component_id": "governance-manifest-self",
+      "paths": [
+        "docs/governance/submissions/2026-09-15-m1-g1-t02-memory-compat.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs/governance",
+      "disposition": "新增保留：本架构提交清单（A.5 门禁要求）。",
+      "verification_level": "scripts/check_architecture_submission.py 通过",
+      "model_evidence_veto_recovery_exit": "不适用：治理元数据。",
+      "rollback_route": "git revert 本提交。",
+      "evidence": [
+        "checker 本地通过后随 PR 审阅"
+      ]
+    }
+  ]
+}
