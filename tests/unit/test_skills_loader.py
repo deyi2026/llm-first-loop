@@ -111,8 +111,14 @@ def test_find_skill(tmp_path):
 
 
 class _FakeHost:
-    def __init__(self, skills_dir: str | None) -> None:
+    def __init__(
+        self,
+        skills_dir: str | None,
+        *,
+        skill_execution_facts: dict[str, str] | None = None,
+    ) -> None:
         self.skills_dir = skills_dir
+        self.skill_execution_facts = skill_execution_facts or {}
 
 
 def test_skill_list_empty(tmp_path):
@@ -141,6 +147,45 @@ def test_skill_load_returns_full(tmp_path):
     assert r.status.value == "success"
     assert "部署流程" in r.content
     assert "正文步骤" in r.content  # 全文加载
+
+
+def test_skill_load_exposes_current_execution_roots_without_strategy(tmp_path):
+    from llm_loop.introspection.tools_skill_files import run_skill_load
+
+    _mk_skill(tmp_path, "deploy", "deploy", "部署流程")
+    code_root = tmp_path / "code"
+    runtime_root = tmp_path / "runtime"
+    python_executable = runtime_root / ".venv" / "bin" / "python"
+    host = _FakeHost(
+        str(tmp_path),
+        skill_execution_facts={
+            "code_root": str(code_root),
+            "runtime_root": str(runtime_root),
+            "python_executable": str(python_executable),
+        },
+    )
+
+    r = run_skill_load(host, {"name": "deploy"})
+
+    assert r.status.value == "success"
+    assert "[执行环境事实]" in r.content
+    assert f'"code_root": "{code_root}"' in r.content
+    assert f'"runtime_root": "{runtime_root}"' in r.content
+    assert f'"python_executable": "{python_executable}"' in r.content
+    assert '"skill_file":' in r.content
+    assert "下一步" not in r.content
+    assert "建议执行" not in r.content
+
+
+def test_skill_load_without_runtime_facts_keeps_existing_shape(tmp_path):
+    from llm_loop.introspection.tools_skill_files import run_skill_load
+
+    _mk_skill(tmp_path, "deploy", "deploy", "部署流程")
+    r = run_skill_load(_FakeHost(str(tmp_path)), {"name": "deploy"})
+
+    assert r.status.value == "success"
+    assert "[执行环境事实]" not in r.content
+    assert "正文步骤" in r.content
 
 
 def test_skill_load_unknown_and_missing_param(tmp_path):
@@ -182,6 +227,10 @@ def test_factory_injects_skills_dir(tmp_path, monkeypatch):
     r2 = engine.corrections.execute("skill_load", {"name": "ops"})
     assert r2.status.value == "success"
     assert "运维流程" in r2.content
+    assert "[执行环境事实]" in r2.content
+    assert '"code_root":' in r2.content
+    assert '"runtime_root":' in r2.content
+    assert '"python_executable":' in r2.content
 
 
 def test_factory_default_skills_dir_zero_behavior(tmp_path):
