@@ -546,9 +546,14 @@ class FeishuRestClient:
             )
             .build()
         )
-        resp = self._lark_client.optical_char_recognition.v1.image.basic_recognize(req)
+        ocr_service = self._lark_client.optical_char_recognition
+        if ocr_service is None:
+            raise RuntimeError("optical_char_recognition service unavailable")
+        resp = ocr_service.v1.image.basic_recognize(req)
         if not resp.success():
             raise RuntimeError(f"basic_recognize failed: code={resp.code} msg={resp.msg}")
+        if resp.data is None:
+            raise RuntimeError("basic_recognize failed: response data missing")
         return list(resp.data.text_list or [])
 
     def download_resource(self, message_id: str, file_key: str, resource_type: str) -> bytes:

@@ -604,3 +604,45 @@ def test_send_throttle_waits_min_interval(monkeypatch):
         rest_client._throttle_send()  # 间隔 0 → sleep 0.3
         rest_client._throttle_send()  # 间隔仍 0 → sleep 0.3
     assert sleeps == [0.3, 0.3]
+
+
+# ── OCR SDK Optional 边界（lark-oapi 1.7.3 类型契约）──
+
+
+def test_ocr_image_fails_honestly_when_service_missing():
+    """OCR service 为 None 时应明确失败，由 handler 既有 fail-open 路径接管。"""
+    fake = _FakeLark()
+    fake.optical_char_recognition = None
+    client = _rest(fake)
+
+    with pytest.raises(RuntimeError, match="optical_char_recognition service unavailable"):
+        client.ocr_image(b"image-bytes")
+
+
+def test_ocr_image_fails_honestly_when_response_data_missing():
+    """SDK success 但 data=None 时不得解引用 None，也不得伪造空 OCR 成功。"""
+
+    class _OcrResp:
+        code = 0
+        msg = ""
+        data = None
+
+        @staticmethod
+        def success():
+            return True
+
+    class _ImageService:
+        @staticmethod
+        def basic_recognize(_request):
+            return _OcrResp()
+
+    fake = _FakeLark()
+    fake.optical_char_recognition = type(
+        "Ocr",
+        (),
+        {"v1": type("V1", (), {"image": _ImageService()})()},
+    )()
+    client = _rest(fake)
+
+    with pytest.raises(RuntimeError, match="response data missing"):
+        client.ocr_image(b"image-bytes")
