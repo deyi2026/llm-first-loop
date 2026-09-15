@@ -11,6 +11,7 @@ from typing import Any
 from llm_loop.core.message import ToolResult
 from llm_loop.introspection.registry_host import RegistryHost
 from llm_loop.introspection.tools_docs import SEARCH_DOCS_TOOL_DEF
+from llm_loop.introspection.tools_status import _ALL_DIMS
 
 _ARCHITECTURE_STATUS_TOOL_DEF: dict[str, Any] = {
     "name": "architecture_status",
@@ -20,8 +21,8 @@ _ARCHITECTURE_STATUS_TOOL_DEF: dict[str, Any] = {
         "properties": {
             "dimensions": {
                 "type": "array",
-                "items": {"type": "string"},
-                "description": "按需裁剪的状态维度，可选: current_phase/action_trace/tool_history/message_flow/memory_state/context_usage/exception_log/architecture_config",
+                "items": {"type": "string", "enum": list(_ALL_DIMS)},
+                "description": "按需裁剪的状态维度；合法值由执行侧 _ALL_DIMS 单一事实源机械导出。",
             }
         },
     },

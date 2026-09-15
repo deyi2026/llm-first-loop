@@ -276,7 +276,7 @@ def test_search_gold_fixture_precision_recall_visible_matches(tmp_path):
             assert "private owner evidence" not in snippet
 
 
-def test_agent_read_evidence_limit_is_hard_bounded(tmp_path):
+def test_agent_read_evidence_limit_is_server_bounded_with_explicit_receipt(tmp_path):
     blobs, ledger = _stores(tmp_path)
     owner = _owner()
     capture = EvidenceCapture(blobs, ledger)
@@ -292,10 +292,33 @@ def test_agent_read_evidence_limit_is_hard_bounded(tmp_path):
         evidence_ref=record.evidence_ref.ref,
         range_type="text_char",
         start=0,
-        limit=4001,
+        limit=6000,
     )
+    assert result.status is ToolResultStatus.SUCCESS
+    payload = json.loads(result.content)
+    assert payload["range"] == {
+        "type": "text_char",
+        "start": 0,
+        "requested_limit": 6000,
+        "applied_limit": 4000,
+        "bounded_by_server_max": True,
+        "count": 4000,
+        "next_start": 4000,
+        "complete": False,
+    }
+    assert len(payload["content"]) == 4000
+    assert result.evidence_projection_complete is False
+
+
+def test_agent_read_evidence_negative_limit_still_fails(tmp_path):
+    blobs, ledger = _stores(tmp_path)
+    owner = _owner()
+    record = _capture(EvidenceCapture(blobs, ledger), owner, "large", "X" * 10000)
+    tool = EvidenceReadTool(
+        blobs, ledger, freshness=EvidenceFreshness(ledger), owner_resolver=lambda: owner
+    )
+    result = tool.execute(evidence_ref=record.evidence_ref.ref, limit=-1)
     assert result.status is ToolResultStatus.FAILURE
-    assert "maximum 4000" in result.content
 
 
 def test_list_evidence_safe_labels_hide_command_args_and_url_query(tmp_path):
