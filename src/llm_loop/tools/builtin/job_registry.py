@@ -74,12 +74,8 @@ class JobRegistry:
         self._seq = 0
         self._creating = 0
         self._journal = ExternalExecutionJournal(event_store)
-        try:
-            self.max_concurrent = max(
-                1, int(os.environ.get("JOB_MAX_CONCURRENT", _DEFAULT_MAX_CONCURRENT))
-            )
-        except ValueError:
-            self.max_concurrent = _DEFAULT_MAX_CONCURRENT
+        self._notify_data_dir: Path | None = None
+        self.max_concurrent = _DEFAULT_MAX_CONCURRENT
 
     @classmethod
     def instance(cls) -> JobRegistry:
@@ -87,13 +83,24 @@ class JobRegistry:
             cls._instance = cls()
         return cls._instance
 
-    def configure(self, *, event_store: Any | None) -> None:
-        """Bind the durable EventStore used by the current runtime.
+    def configure(
+        self,
+        *,
+        event_store: Any | None,
+        data_dir: str | Path | None = None,
+        max_concurrent: int | None = None,
+    ) -> None:
+        """Bind durable execution facts and the resolved runtime data owner.
 
-        This does not mutate existing process handles.  Production has one shared store;
-        tests/hot construction may explicitly rebind the singleton.
+        This does not mutate existing process handles. Production has one shared store/path;
+        tests/hot construction may explicitly rebind them. No process-env fallback is used.
         """
         self._journal = ExternalExecutionJournal(event_store)
+        self._notify_data_dir = (
+            Path(data_dir).expanduser().resolve() if data_dir is not None else None
+        )
+        if max_concurrent is not None:
+            self.max_concurrent = max(1, int(max_concurrent))
 
     @property
     def durable_enabled(self) -> bool:
@@ -448,12 +455,10 @@ class JobRegistry:
                 status, detail = "failed", f"（exit={exit_code}）"
             else:
                 return
-            base = (
-                Path(os.environ.get("LFL_DATA_DIR", "data"))
-                / "interop"
-                / "lfl_to_dsh"
-                / "pending"
-            )
+            if self._notify_data_dir is None:
+                logger.debug("job 终态通知未绑定 data_dir，跳过文件通知: job_id=%s", job_id)
+                return
+            base = self._notify_data_dir / "interop" / "lfl_to_dsh" / "pending"
             base.mkdir(parents=True, exist_ok=True)
             now = datetime.now(UTC)
             ts = now.strftime("%Y%m%d-%H%M%S")

@@ -721,7 +721,7 @@ def test_schedule_wake_uses_delegated_same_session_runner_not_inbox_wakeup(tmp_p
     monkeypatch.setattr(
         SchedulerThread,
         "_notify_via_interop",
-        staticmethod(lambda entry: notified.append(entry.sid)),
+        staticmethod(lambda entry, **_kwargs: notified.append(entry.sid)),
     )
     engine = build_engine(_settings(tmp_path))  # type: ignore[arg-type]
     store = engine.scheduler._store

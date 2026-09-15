@@ -9,6 +9,7 @@ import pytest
 from llm_loop.config import load_settings
 from llm_loop.runtime.resolver import (
     RuntimeConfig,
+    legacy_settings_snapshot,
     parse_runtime_toml,
     resolve_effective,
 )
@@ -78,6 +79,111 @@ def test_runtime_toml_beats_legacy_dotenv_and_stale_shell_by_default(tmp_path: P
     assert ec.sources["LLM_MODEL"] == "runtime_toml"
     assert ec.ignored_shell_env["LLM_MODEL"] == "glm/stale"
 
+
+
+def test_history_policy_runtime_toml_beats_stale_shell_and_reaches_settings(
+    tmp_path: Path,
+) -> None:
+    _runtime_toml(
+        tmp_path,
+        """
+[llm]
+model = "glm/file"
+base_url = "https://example.invalid/v1"
+[history]
+working_set_receipts = true
+working_set_batch_chars = 65536
+working_set_grace_groups = 2
+working_set_soft_result_cap = 7
+working_set_hard_result_cap = 19
+working_set_min_net_gain_chars = 1234
+compress_target_ratio = 0.54
+compact_ratio = 0.82
+nudge_growth_chars = 23456
+head_keep_ratio = 0.33
+head_keep_force_ratio = 0.44
+head_keep_target_ratio = 0.66
+""",
+    )
+    ec = resolve_effective(
+        "web",
+        env={
+            "COMPACT_RATIO": "0.20",
+            "HEAD_KEEP_RATIO": "0.99",
+            "LFL_TOOL_WORKING_SET_BATCH_CHARS": "4096",
+        },
+        workspace_root=tmp_path,
+    )
+    snapshot = legacy_settings_snapshot(
+        ec,
+        base_env={
+            "LLM_API_KEY": "local-eval",
+            "DATA_DIR": str(tmp_path / "isolated-data"),
+            "COMPACT_RATIO": "0.20",
+            "HEAD_KEEP_RATIO": "0.99",
+        },
+    )
+    settings = load_settings(snapshot)
+
+    assert ec.sources["COMPACT_RATIO"] == "runtime_toml"
+    assert ec.sources["HEAD_KEEP_RATIO"] == "runtime_toml"
+    assert ec.ignored_shell_env["COMPACT_RATIO"] == "0.20"
+    hp = settings.history_policy
+    assert hp.working_set_receipts is True
+    assert hp.working_set_batch_chars == 65536
+    assert hp.working_set_grace_groups == 2
+    assert hp.working_set_soft_result_cap == 7
+    assert hp.working_set_hard_result_cap == 19
+    assert hp.working_set_min_net_gain_chars == 1234
+    assert hp.compress_target_ratio == 0.54
+    assert hp.compact_ratio == 0.82
+    assert hp.nudge_growth_chars == 23456
+    assert hp.head_keep_ratio == 0.33
+    assert hp.head_keep_force_ratio == 0.44
+    assert hp.head_keep_target_ratio == 0.66
+
+
+def test_nonconvergence_runtime_toml_beats_stale_shell_and_reaches_settings(
+    tmp_path: Path,
+) -> None:
+    _runtime_toml(
+        tmp_path,
+        """
+[llm]
+model = "glm/file"
+base_url = "https://example.invalid/v1"
+[tools]
+nonconvergence_fuse_windows = 2
+nonconvergence_fuse_jaccard = 0.75
+nonconvergence_fuse_min_delta = 7
+""",
+    )
+    ec = resolve_effective(
+        "web",
+        env={
+            "LFL_NONCONV_FUSE_WINDOWS": "99",
+            "LFL_NONCONV_FUSE_JACCARD": "0.2",
+            "LFL_NONCONV_FUSE_MIN_DELTA": "1",
+        },
+        workspace_root=tmp_path,
+    )
+    snapshot = legacy_settings_snapshot(
+        ec,
+        base_env={
+            "LLM_API_KEY": "local-eval",
+            "DATA_DIR": str(tmp_path / "isolated-data"),
+        },
+    )
+    settings = load_settings(snapshot)
+
+    assert ec.sources["LFL_NONCONV_FUSE_WINDOWS"] == "runtime_toml"
+    assert ec.sources["LFL_NONCONV_FUSE_JACCARD"] == "runtime_toml"
+    assert ec.sources["LFL_NONCONV_FUSE_MIN_DELTA"] == "runtime_toml"
+    assert ec.ignored_shell_env["LFL_NONCONV_FUSE_WINDOWS"] == "99"
+    tr = settings.tool_runtime
+    assert tr.nonconvergence_fuse_windows == 2
+    assert tr.nonconvergence_fuse_jaccard == 0.75
+    assert tr.nonconvergence_fuse_min_delta == 7
 
 def test_runtime_override_requires_explicit_opt_in(tmp_path: Path) -> None:
     _runtime_toml(tmp_path, '[llm]\nmodel = "glm/file"')

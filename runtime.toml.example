@@ -21,6 +21,19 @@ history_max_chars = 150000
 identity_mode = "shadow"
 # wire_contract_mode = "shadow"
 
+[history]
+working_set_receipts = false
+working_set_batch_chars = 32768
+working_set_grace_groups = 0
+working_set_soft_result_cap = 12
+working_set_hard_result_cap = 32
+working_set_min_net_gain_chars = 16384
+compress_target_ratio = 0.6
+compact_ratio = 1.0
+nudge_growth_chars = 20000
+# head_keep_ratio / head_keep_force_ratio / head_keep_target_ratio are intentionally
+# omitted by default so provider-specific historical defaults remain authoritative.
+
 [web]
 host = "127.0.0.1"
 port = 8903
@@ -30,6 +43,9 @@ mode = "off"
 
 [tools]
 schema_lazy = true
+nonconvergence_fuse_windows = 3
+nonconvergence_fuse_jaccard = 0.6
+nonconvergence_fuse_min_delta = 16
 
 [dsh]
 # home = "/absolute/path/to/dsh"

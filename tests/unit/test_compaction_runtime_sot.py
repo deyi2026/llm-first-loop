@@ -23,12 +23,10 @@ def _msg(
     )
 
 
-def test_compress_target_ratio_reads_runtime_env_after_module_import(monkeypatch):
-    """Late .env loading must still control compression target ratio."""
-    monkeypatch.setenv("COMPRESS_TARGET_RATIO", "0.5")
-    assert history_mod._compress_target_ratio() == 0.5
-    monkeypatch.setenv("COMPRESS_TARGET_RATIO", "0.7")
-    assert history_mod._compress_target_ratio() == 0.7
+def test_compress_target_ratio_normalizes_resolved_value():
+    assert history_mod._compress_target_ratio(0.5) == 0.5
+    assert history_mod._compress_target_ratio(0.7) == 0.7
+    assert history_mod._compress_target_ratio(2.0) == 0.6
 
 
 def test_non_wire_injected_system_does_not_trigger_compaction():
@@ -55,9 +53,8 @@ def test_non_wire_injected_system_does_not_trigger_compaction():
     assert all("[架构上报]" not in str(m.get("content") or "") for m in out)
 
 
-def test_cache_boundary_protects_cached_prefix_as_atomic_groups(monkeypatch):
+def test_cache_boundary_protects_cached_prefix_as_atomic_groups():
     """An explicit exact provider boundary must survive suffix compaction byte-for-byte."""
-    monkeypatch.setenv("COMPRESS_TARGET_RATIO", "0.6")
     msgs = [_msg("user", f"m{i:02d}:" + (chr(65 + i) * 996)) for i in range(12)]
     archived: list[Message] = []
     stats: list[dict] = []
@@ -67,6 +64,7 @@ def test_cache_boundary_protects_cached_prefix_as_atomic_groups(monkeypatch):
         "",
         max_chars=10_000,
         compact_ratio=0.85,
+        compress_target_ratio=0.6,
         session_id="s-boundary",
         archive_sink=lambda _sid, msg: archived.append(msg),
         cache_archive_provider="glm",
@@ -84,9 +82,8 @@ def test_cache_boundary_protects_cached_prefix_as_atomic_groups(monkeypatch):
     assert stats[0]["cache_boundary_reported_messages"] == 99
 
 
-def test_cache_boundary_insufficient_suffix_emits_epoch_reset(monkeypatch):
+def test_cache_boundary_insufficient_suffix_emits_epoch_reset():
     """An explicit exact protected prefix may reset the epoch if no safe suffix room remains."""
-    monkeypatch.setenv("COMPRESS_TARGET_RATIO", "0.6")
     msgs = [_msg("user", f"m{i:02d}:" + (chr(65 + i) * 996)) for i in range(12)]
     archived: list[Message] = []
     stats: list[dict] = []
@@ -96,6 +93,7 @@ def test_cache_boundary_insufficient_suffix_emits_epoch_reset(monkeypatch):
         "",
         max_chars=10_000,
         compact_ratio=0.85,
+        compress_target_ratio=0.6,
         session_id="s-epoch-reset",
         archive_sink=lambda _sid, msg: archived.append(msg),
         cache_archive_provider="glm",
@@ -109,9 +107,8 @@ def test_cache_boundary_insufficient_suffix_emits_epoch_reset(monkeypatch):
     assert stats[0]["cache_protected_messages"] >= 9
 
 
-def test_boundary_soft_pressure_without_archive_is_not_reported_as_compaction(monkeypatch):
+def test_boundary_soft_pressure_without_archive_is_not_reported_as_compaction():
     """Crossing the soft line alone is not a compact event if no bytes are removed."""
-    monkeypatch.setenv("COMPRESS_TARGET_RATIO", "0.6")
     msgs = [_msg("user", f"m{i:02d}:" + (chr(65 + i) * 996)) for i in range(9)]
     compacted: list[bool] = []
     archived: list[Message] = []
@@ -121,6 +118,7 @@ def test_boundary_soft_pressure_without_archive_is_not_reported_as_compaction(mo
         "",
         max_chars=10_000,
         compact_ratio=0.85,
+        compress_target_ratio=0.6,
         session_id="s-soft-only",
         archive_sink=lambda _sid, msg: archived.append(msg),
         cache_archive_provider="glm",

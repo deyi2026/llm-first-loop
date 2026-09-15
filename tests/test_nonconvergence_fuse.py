@@ -73,14 +73,27 @@ def test_disabled_by_windows_zero():
     assert g.tripped is False
 
 
-def test_from_env_disable(monkeypatch):
-    monkeypatch.setenv("LFL_NONCONV_FUSE_WINDOWS", "0")
-    assert NonconvergenceGuard.from_env().windows == 0
-    monkeypatch.setenv("LFL_NONCONV_FUSE_WINDOWS", "2")
-    monkeypatch.setenv("LFL_NONCONV_FUSE_JACCARD", "0.9")
-    monkeypatch.setenv("LFL_NONCONV_FUSE_MIN_DELTA", "4")
-    g = NonconvergenceGuard.from_env()
-    assert (g.windows, g.jaccard_threshold, g.min_delta_tokens) == (2, 0.9, 4)
+def test_explicit_runtime_settings_disable_and_override(monkeypatch):
+    from llm_loop.config import load_settings
+
+    # Stale process values must not override the explicit startup snapshot.
+    monkeypatch.setenv("LFL_NONCONV_FUSE_WINDOWS", "99")
+    settings = load_settings(
+        {
+            "LLM_API_KEY": "k",
+            "LLM_BASE_URL": "https://x.invalid/v1",
+            "LLM_MODEL": "m",
+            "LFL_NONCONV_FUSE_WINDOWS": "0",
+            "LFL_NONCONV_FUSE_JACCARD": "0.9",
+            "LFL_NONCONV_FUSE_MIN_DELTA": "4",
+        }
+    )
+    tr = settings.tool_runtime
+    assert (
+        tr.nonconvergence_fuse_windows,
+        tr.nonconvergence_fuse_jaccard,
+        tr.nonconvergence_fuse_min_delta,
+    ) == (0, 0.9, 4)
 
 
 def test_error_is_llmerror_with_evidence():
@@ -112,12 +125,18 @@ class _Delta:
         self.reasoning = reasoning
 
 
-def test_capture_fuse_end_to_end(monkeypatch):
-    monkeypatch.setenv("LFL_NONCONV_FUSE_WINDOWS", "3")
-    monkeypatch.setenv("LFL_NONCONV_FUSE_MIN_DELTA", "2")
+def test_capture_fuse_end_to_end():
     eng = _FakeEngine()
     sess = types.SimpleNamespace(session_id="s1")
-    cap = InterruptedCapture(eng, sess=sess, round_no=1, provider="p", model="m")
+    cap = InterruptedCapture(
+        eng,
+        sess=sess,
+        round_no=1,
+        provider="p",
+        model="m",
+        nonconvergence_windows=3,
+        nonconvergence_min_delta=2,
+    )
     cap.mark_provider_send()
     chunk = SENT * 80  # >1024 chars/块，绕过 checkpoint 节流
     for _ in range(4):
@@ -129,11 +148,10 @@ def test_capture_fuse_end_to_end(monkeypatch):
     assert eng.interrupted == ["nonconvergence_fuse"]
 
 
-def test_capture_disabled_by_env(monkeypatch):
-    monkeypatch.setenv("LFL_NONCONV_FUSE_WINDOWS", "0")
+def test_capture_disabled_by_explicit_runtime_policy():
     eng = _FakeEngine()
     sess = types.SimpleNamespace(session_id="s2")
-    cap = InterruptedCapture(eng, sess=sess, round_no=1)
+    cap = InterruptedCapture(eng, sess=sess, round_no=1, nonconvergence_windows=0)
     cap.mark_provider_send()
     for _ in range(6):
         cap.on_delta(_Delta(reasoning=SENT * 80))

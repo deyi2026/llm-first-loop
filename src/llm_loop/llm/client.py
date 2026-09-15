@@ -837,6 +837,7 @@ class LLMClient:
     reasoning_split: bool = False
     # 2026-08-18 cache_guard（MCP 出入口）: 请求前规则校验开关（默认开；CACHE_GUARD=0 关闭）
     guard_enabled: bool = True
+    guard_audit_file: str | Path | None = None
     # legacy guard 字段：仅兼容直接调用方。主 engine 使用 GuardRequestContext，
     # 不再把 per-request 元数据写进 provider 级共享 LLMClient。
     guard_system: str | None = None
@@ -1030,7 +1031,7 @@ class LLMClient:
                 _tel = _hit_tel not in ("0", "false", "False")
             else:
                 _tel = self.wire_protocol != "lms-chat"
-            _guard = PromptGuard(hit_telemetry=_tel)
+            _guard = PromptGuard(audit_file=self.guard_audit_file, hit_telemetry=_tel)
             self._pg = _guard
         return _guard
 

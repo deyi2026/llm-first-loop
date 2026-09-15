@@ -34,6 +34,42 @@ class ConfigFallbackNote:
     invalid_value_type: str
 
 
+@dataclass(frozen=True)
+class ToolRuntimeSettings:
+    """Resolved non-secret tool/runtime mechanics for one process."""
+
+    breaker_pressure_narrow: bool = True
+    e18_hard_stop: bool = True
+    tool_octet: bool = False
+    dsh_home: str = ""
+    job_max_concurrent: int = 5
+    evidence_capsule: str = "off"
+    tool_guidance: str = "off"
+    exec_sandbox: str = "none"
+    exec_sandbox_image: str = "python:3.13-slim"
+    nonconvergence_fuse_windows: int = 3
+    nonconvergence_fuse_jaccard: float = 0.6
+    nonconvergence_fuse_min_delta: int = 16
+
+
+@dataclass(frozen=True)
+class HistoryPolicySettings:
+    """Resolved non-secret history/working-set policy for one runtime."""
+
+    working_set_receipts: bool = False
+    working_set_batch_chars: int = 32768
+    working_set_grace_groups: int = 0
+    working_set_soft_result_cap: int = 12
+    working_set_hard_result_cap: int = 32
+    working_set_min_net_gain_chars: int = 16384
+    compress_target_ratio: float = 0.6
+    compact_ratio: float = 1.0
+    nudge_growth_chars: int = 20000
+    head_keep_ratio: float | None = None
+    head_keep_force_ratio: float | None = None
+    head_keep_target_ratio: float | None = None
+
+
 _fallback_notes: list[ConfigFallbackNote] = []
 
 
@@ -83,6 +119,28 @@ def _env_int_or_none(name: str, env: Mapping[str, str] | None = None) -> int | N
         return int(raw)
     except ValueError:
         _note_invalid_fallback(name, None, "非整数字符串")
+        return None
+
+
+def _env_float(name: str, default: float, env: Mapping[str, str] | None = None) -> float:
+    raw = _raw_env(name, env)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        _note_invalid_fallback(name, default, "非浮点数字符串")
+        return default
+
+
+def _env_float_or_none(name: str, env: Mapping[str, str] | None = None) -> float | None:
+    raw = _raw_env(name, env)
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        _note_invalid_fallback(name, None, "非浮点数字符串")
         return None
 
 
@@ -258,6 +316,8 @@ class Settings:
 
     # ── 数据目录 ──（EVO-20260830: 默认绝对路径 _DEFAULT_DATA_DIR，防 cwd 漂移 split-brain）
     data_dir: str = _DEFAULT_DATA_DIR
+    history_policy: HistoryPolicySettings = field(default_factory=HistoryPolicySettings)
+    tool_runtime: ToolRuntimeSettings = field(default_factory=ToolRuntimeSettings)
     # ERC v1.1 rollout: off=legacy only; shadow=dual-write no prompt change; enforce=Phase3 capture-before-projection (experimental/offline until R0 completes).
     evidence_mode: str = "off"
     evidence_manifest_limit: int = 8  # Phase5 bounded Recovery Manifest; build clamps 1..20
@@ -632,6 +692,69 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         env=env_values,
         data_dir_explicit=bool(_data_dir_raw),
     )
+    _ws_soft = max(1, min(env_int("LFL_TOOL_WORKING_SET_SOFT_RESULT_CAP", 12), 1024))
+    _ws_hard = max(
+        _ws_soft, min(env_int("LFL_TOOL_WORKING_SET_HARD_RESULT_CAP", 32), 4096)
+    )
+    _compress_target = _env_float("COMPRESS_TARGET_RATIO", 0.6, env_values)
+    if not 0.0 < _compress_target < 1.0:
+        _compress_target = 0.6
+    _history_policy = HistoryPolicySettings(
+        working_set_receipts=env_bool("LFL_TOOL_WORKING_SET_RECEIPTS", False),
+        working_set_batch_chars=max(
+            4096, min(env_int("LFL_TOOL_WORKING_SET_BATCH_CHARS", 32768), 1_048_576)
+        ),
+        working_set_grace_groups=max(
+            0, min(env_int("LFL_TOOL_WORKING_SET_GRACE_GROUPS", 0), 64)
+        ),
+        working_set_soft_result_cap=_ws_soft,
+        working_set_hard_result_cap=_ws_hard,
+        working_set_min_net_gain_chars=max(
+            0,
+            min(
+                env_int("LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS", 16384),
+                1_048_576,
+            ),
+        ),
+        compress_target_ratio=_compress_target,
+        compact_ratio=_env_float("COMPACT_RATIO", 1.0, env_values),
+        nudge_growth_chars=env_int("NUDGE_GROWTH_CHARS", 20000),
+        head_keep_ratio=_env_float_or_none("HEAD_KEEP_RATIO", env_values),
+        head_keep_force_ratio=_env_float_or_none("HEAD_KEEP_FORCE_RATIO", env_values),
+        head_keep_target_ratio=_env_float_or_none("HEAD_KEEP_TARGET_RATIO", env_values),
+    )
+    def _mode(name: str, default: str, allowed: set[str]) -> str:
+        raw = str(env_values.get(name, default) or default).strip().lower()
+        return raw if raw in allowed else default
+
+    _nonconvergence_jaccard = _env_float(
+        "LFL_NONCONV_FUSE_JACCARD", 0.6, env_values
+    )
+    if not 0.0 < _nonconvergence_jaccard <= 1.0:
+        _nonconvergence_jaccard = 0.6
+    _tool_runtime = ToolRuntimeSettings(
+        breaker_pressure_narrow=env_bool("LFL_BREAKER_PRESSURE_NARROW", True),
+        e18_hard_stop=env_bool("LFL_E18_HARD_STOP", True),
+        tool_octet=env_bool("LFL_TOOL_OCTET", False),
+        dsh_home=str(env_values.get("DSH_HOME", "") or "").strip(),
+        job_max_concurrent=max(1, env_int("JOB_MAX_CONCURRENT", 5)),
+        evidence_capsule=_mode(
+            "LFL_EVIDENCE_CAPSULE", "off", {"on", "shadow", "off"}
+        ),
+        tool_guidance=_mode(
+            "LFL_TOOL_GUIDANCE", "off", {"on", "shadow", "off"}
+        ),
+        exec_sandbox=_mode(
+            "EXEC_SANDBOX", "none", {"none", "bwrap", "docker"}
+        ),
+        exec_sandbox_image=str(
+            env_values.get("EXEC_SANDBOX_IMAGE", "python:3.13-slim")
+            or "python:3.13-slim"
+        ).strip(),
+        nonconvergence_fuse_windows=env_int("LFL_NONCONV_FUSE_WINDOWS", 3),
+        nonconvergence_fuse_jaccard=_nonconvergence_jaccard,
+        nonconvergence_fuse_min_delta=env_int("LFL_NONCONV_FUSE_MIN_DELTA", 16),
+    )
     settings = Settings(
         llm_api_key=api_key,
         llm_base_url=base_url,
@@ -643,6 +766,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         llm_max_tokens=env_int("LLM_MAX_TOKENS", 16000),  # 2026-08-15 显式输出预算
         llm_wire_protocol=env_values.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
         data_dir=str(_resolved_paths.data_dir),
+        history_policy=_history_policy,
+        tool_runtime=_tool_runtime,
         evidence_mode=env_one(_env_evidence_mode, "EVIDENCE_MODE"),
         evidence_manifest_limit=env_int("EVIDENCE_MANIFEST_LIMIT", 8),
         # D1 事件日志（EVENT_LOG_ENABLED / EVENT_LOGS_DIR 透传）
@@ -770,6 +895,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         auto_adaptive_keys=frozenset(_auto_adaptive_keys),
     )
     settings._extra["runtime_paths"] = _resolved_paths
+    _runtime_root_raw = str(env_values.get("LFL_RUNTIME_ROOT", "") or "").strip()
+    _workspace_root_raw = str(env_values.get("LFL_WORKSPACE_ROOT", "") or "").strip()
+    settings._extra["runtime_root"] = str(
+        Path(_runtime_root_raw or _workspace_root_raw or _CODE_ROOT).expanduser().resolve()
+    )
     return settings
 
 

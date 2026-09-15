@@ -315,11 +315,13 @@ def _check_privacy(messages: list[dict], system_text: str) -> GuardDecision | No
 
 
 def _resolve_audit_path(audit_file: str | Path | None) -> Path:
-    """审计文件路径解析（validate_request / record_result 共用；fail-open 由调用方包裹）."""
+    """Resolve the audit file without consulting mutable process business config.
+
+    Production clients bind this from resolved ``Settings.data_dir``. The repository
+    path is compatibility-only for direct/test construction.
+    """
     if audit_file:
         return Path(audit_file)
-    if os.environ.get("LFL_DATA_DIR"):
-        return Path(os.environ["LFL_DATA_DIR"]) / "audit" / "guarded_requests.jsonl"
     return Path(__file__).resolve().parents[3] / "data" / "audit" / "guarded_requests.jsonl"
 
 

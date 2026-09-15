@@ -10,7 +10,6 @@ import contextlib
 import copy
 import json
 import logging
-import os
 import re
 import threading
 import time
@@ -176,7 +175,7 @@ _COMPACT_PARAMETER_DESCRIPTIONS: dict[str, dict[str, str]] = {
 }
 
 
-def _tool_guidance_mode() -> str:
+def _tool_guidance_mode(raw: str = "off") -> str:
     """R8.24-C C-1.1（C-D2）: 工具回执建议源渲染模式（三态）.
 
     建议源四类: _FAILURE_GUIDANCE / ToolRecoveryAdvice.render() / guidance_extra /
@@ -188,8 +187,8 @@ def _tool_guidance_mode() -> str:
     - "off"（默认，R9-P0-01 批 2/3 切换 2026-09-01，前置=C 包 shadow 期指标达标）:
                   四源模型可见 chars=0（enforce 态）
     """
-    raw = (os.environ.get("LFL_TOOL_GUIDANCE", "off") or "off").strip().lower()
-    return raw if raw in {"on", "shadow", "off"} else "off"
+    mode = str(raw or "off").strip().lower()
+    return mode if mode in {"on", "shadow", "off"} else "off"
 
 
 def _emit_guidance_shadow_event(
@@ -222,6 +221,7 @@ class ToolRegistry:
         max_output_chars: int = 100000,
         archive_store: Any | None = None,
         failure_guidance_enabled: bool = True,
+        tool_guidance_mode: str = "off",
         # EVO-d78b270c: 经验库（MemoryStore）注入——失败回执按错误关键词检索
         # procedure 经验条目，命中则注入【已验解法】段（None = 无经验库，零回归）
         memory_store: Any | None = None,
@@ -254,6 +254,7 @@ class ToolRegistry:
         self.tool_timeout_s = tool_timeout_s
         self.max_output_chars = max_output_chars
         self.failure_guidance_enabled = failure_guidance_enabled
+        self.tool_guidance_mode = _tool_guidance_mode(tool_guidance_mode)
         self._memory_store = memory_store  # EVO-d78b270c: 经验库（fail-open 零回归）
         self.exec_mode = exec_mode  # readonly/allowlist/blocked（空 = 不启用分级）
         self.exec_allowlist = [s.strip() for s in (exec_allowlist or "").split(",") if s.strip()]
@@ -1096,7 +1097,7 @@ class ToolRegistry:
         # experience has no model authority.  Do not even query/mutate the experience
         # store in that mode; explicit on/shadow remain compatibility/experiment paths.
         if (
-            _tool_guidance_mode() != "off"
+            self.tool_guidance_mode != "off"
             and status in (ToolResultStatus.FAILURE, ToolResultStatus.ERROR, ToolResultStatus.TIMEOUT)
         ):
             result.guidance_extra = self._inject_experience_guidance(result)
@@ -1199,14 +1200,13 @@ class ToolRegistry:
         "“已完成/成功”，需用 search_archive 取回原文核验后再如实声明（RULE-AI-12）。"
     )
 
-    @staticmethod
-    def _distill_guidance_or_empty() -> str:
+    def _distill_guidance_or_empty(self) -> str:
         """R8.24-C C-D2: _DISTILL_GUIDANCE 受 LFL_TOOL_GUIDANCE 三态控制.
 
         off=enforce 态模型可见 chars=0（元任务建议退出）；shadow=照旧投影 + 观测事件。
         """
         guidance = ToolRegistry._DISTILL_GUIDANCE
-        mode = _tool_guidance_mode()
+        mode = self.tool_guidance_mode
         if mode == "off":
             return ""
         if mode == "shadow":
@@ -1444,6 +1444,7 @@ def tool_result_to_message(
     failure_guidance_enabled: bool = True,
     # 阶段4-A: 经验注入独立开关（None=跟随主开关；子代理用 True 可仅注入经验不注入默认模板）
     experience_guidance_enabled: bool | None = None,
+    tool_guidance_mode: str = "off",
 ) -> Message:
     """ToolResult → tool 消息（如实承载状态，T21: content 前置状态标注）.
 
@@ -1480,7 +1481,7 @@ def tool_result_to_message(
     if exp_enabled and result.guidance_extra and typed_recovery is None:
         _experience = result.guidance_extra
     # R8.24-C C-1.1: 程序建议层三态投影（off=enforce: 建议文本不进模型可见正文）
-    _mode = _tool_guidance_mode()
+    _mode = _tool_guidance_mode(tool_guidance_mode)
     if _mode != "off":
         if _mode == "shadow":
             if _advisory:

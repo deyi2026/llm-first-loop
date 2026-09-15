@@ -11,7 +11,6 @@ import bisect
 import hashlib
 import json
 import logging
-import os
 import re
 from dataclasses import dataclass, replace
 from typing import Any
@@ -122,78 +121,6 @@ def provider_message_visible(message: Message) -> bool:
         or is_closed_delegated_span_message(message)
         or is_resolved_episode_message(message)
     )
-
-
-def _working_set_receipts_enabled() -> bool:
-    raw = (os.environ.get("LFL_TOOL_WORKING_SET_RECEIPTS", "0") or "0").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
-
-
-def _working_set_batch_chars() -> int:
-    """Mechanical fold size; batching amortizes prefix rewrites without judging relevance."""
-
-    raw = (os.environ.get("LFL_TOOL_WORKING_SET_BATCH_CHARS", "32768") or "32768").strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        value = 32768
-    return max(4096, min(value, 1_048_576))
-
-
-def _working_set_grace_groups() -> int:
-    """Mechanical recency grace; keep newest exposed tool groups raw for continuity."""
-
-    raw = (os.environ.get("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "0") or "0").strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        value = 0
-    return max(0, min(value, 64))
-
-
-def _working_set_soft_result_cap() -> int:
-    raw = (
-        os.environ.get(
-            "LFL_TOOL_WORKING_SET_SOFT_RESULT_CAP",
-            str(_WORKING_SET_PENDING_RESULT_SOFT_CAP),
-        )
-        or str(_WORKING_SET_PENDING_RESULT_SOFT_CAP)
-    ).strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        value = _WORKING_SET_PENDING_RESULT_SOFT_CAP
-    return max(1, min(value, 1024))
-
-
-def _working_set_hard_result_cap(*, soft_cap: int) -> int:
-    raw = (
-        os.environ.get(
-            "LFL_TOOL_WORKING_SET_HARD_RESULT_CAP",
-            str(_WORKING_SET_PENDING_RESULT_HARD_CAP),
-        )
-        or str(_WORKING_SET_PENDING_RESULT_HARD_CAP)
-    ).strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        value = _WORKING_SET_PENDING_RESULT_HARD_CAP
-    return max(soft_cap, min(value, 4096))
-
-
-def _working_set_min_net_gain_chars() -> int:
-    raw = (
-        os.environ.get(
-            "LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS",
-            str(_WORKING_SET_MIN_NET_GAIN_CHARS),
-        )
-        or str(_WORKING_SET_MIN_NET_GAIN_CHARS)
-    ).strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        value = _WORKING_SET_MIN_NET_GAIN_CHARS
-    return max(0, min(value, 1_048_576))
 
 
 def _is_model_followup(message: Message) -> bool:
@@ -819,6 +746,7 @@ def project_active_tool_working_set_with_stats(
     messages: list[Message],
     *,
     preserve_group_digests: tuple[str, ...] | list[str] | set[str] | frozenset[str] = (),
+    policy: Any | None = None,
 ) -> tuple[list[Message], ToolWorkingSetProjectionStats]:
     """Project active-run tool results and return factual, non-prompt telemetry.
 
@@ -827,14 +755,38 @@ def project_active_tool_working_set_with_stats(
     do not claim that any evidence is important, stale, sufficient, or safe to ignore.
     """
 
-    enabled = _working_set_receipts_enabled()
-    batch_chars = _working_set_batch_chars() if enabled else 0
-    grace_groups = _working_set_grace_groups() if enabled else 0
-    soft_result_cap = _working_set_soft_result_cap() if enabled else 0
-    hard_result_cap = (
-        _working_set_hard_result_cap(soft_cap=soft_result_cap) if enabled else 0
+    enabled = bool(getattr(policy, "working_set_receipts", False))
+    batch_chars = (
+        max(4096, min(int(getattr(policy, "working_set_batch_chars", 32768)), 1_048_576))
+        if enabled
+        else 0
     )
-    min_net_gain_chars = _working_set_min_net_gain_chars() if enabled else 0
+    grace_groups = (
+        max(0, min(int(getattr(policy, "working_set_grace_groups", 0)), 64))
+        if enabled
+        else 0
+    )
+    soft_result_cap = (
+        max(1, min(int(getattr(policy, "working_set_soft_result_cap", 12)), 1024))
+        if enabled
+        else 0
+    )
+    hard_result_cap = (
+        max(
+            soft_result_cap,
+            min(int(getattr(policy, "working_set_hard_result_cap", 32)), 4096),
+        )
+        if enabled
+        else 0
+    )
+    min_net_gain_chars = (
+        max(
+            0,
+            min(int(getattr(policy, "working_set_min_net_gain_chars", 16384)), 1_048_576),
+        )
+        if enabled
+        else 0
+    )
     raw_tool_chars = sum(len(message.content or "") for message in messages if message.role == "tool")
     if not enabled or not messages:
         return messages, ToolWorkingSetProjectionStats(
@@ -989,10 +941,14 @@ def project_active_tool_working_set_with_stats(
     )
 
 
-def project_active_tool_working_set(messages: list[Message]) -> list[Message]:
+def project_active_tool_working_set(
+    messages: list[Message], *, policy: Any | None = None
+) -> list[Message]:
     """Compatibility wrapper returning only the provider projection."""
 
-    projected, _stats = project_active_tool_working_set_with_stats(messages)
+    projected, _stats = project_active_tool_working_set_with_stats(
+        messages, policy=policy
+    )
     return projected
 
 

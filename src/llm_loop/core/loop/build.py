@@ -394,7 +394,7 @@ class _BuildMixin:
             # 不终止 run，超限载荷由 _build_llm_messages 内置 compaction 链
             # （衔接 B 包 E17 runtime compact）压缩后继续；指令性输出取消
             # （通知面属 B 包 E19 改道）。
-            if os.environ.get("LFL_BREAKER_PRESSURE_NARROW", "1") == "1":
+            if self.settings.tool_runtime.breaker_pressure_narrow:
                 logger.info(
                     "event=breaker.context_pressure_narrowed chars=%d budget=%d model=%s"
                     "（内部水位超安全水位——run 不终止，compaction 链自行压缩后继续）",
@@ -447,6 +447,8 @@ class _BuildMixin:
             current_turn_ref=self._run_state().current_turn_ref,
             record_action=lambda *_args, **_kwargs: None,
             event_append=lambda *_args, **_kwargs: None,
+            data_dir=self.settings.data_dir,
+            history_policy=self.settings.history_policy,
         )
         return build_conservative_active_run_projection(
             base=_pre.base,
@@ -483,6 +485,8 @@ class _BuildMixin:
             current_turn_ref=self._run_state().current_turn_ref,
             record_action=self._record_action,
             event_append=self._event_append,
+            data_dir=self.settings.data_dir,
+            history_policy=self.settings.history_policy,
         )
         resolved_label = _pre.resolved_label
         provider_id = _pre.provider_id

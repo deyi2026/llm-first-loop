@@ -9,7 +9,6 @@ Capture failure never rewrites the source action status and never re-executes th
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -28,7 +27,7 @@ from llm_loop.tools.evidence_shadow import source_for_call
 logger = logging.getLogger(__name__)
 
 
-def _capsule_mode() -> str:
+def _capsule_mode(raw: str = "off") -> str:
     """R8.24-C C-2.1（C-D4）: evidence capsule 投影模式（三态）.
 
     - "on":        capsule 照旧拼接
@@ -39,8 +38,8 @@ def _capsule_mode() -> str:
     evidence.py render_capsule 本体与存储层零改动（R-4 红线）——开关只落在
     本调用方（与 D2 status 门 :52 叠加不冲突）。
     """
-    raw = (os.environ.get("LFL_EVIDENCE_CAPSULE", "off") or "off").strip().lower()
-    return raw if raw in {"on", "shadow", "off"} else "off"
+    mode = str(raw or "off").strip().lower()
+    return mode if mode in {"on", "shadow", "off"} else "off"
 
 
 class EvidenceEnforcer:
@@ -52,6 +51,7 @@ class EvidenceEnforcer:
         owner_resolver: Callable[[], OwnerScope],
         clock: Callable[[], datetime] | None = None,
         projection_budget_chars: int = 5000,
+        capsule_mode: str = "off",
     ) -> None:
         if projection_budget_chars < 128:
             raise ValueError("projection_budget_chars must be >= 128")
@@ -60,6 +60,7 @@ class EvidenceEnforcer:
         self.owner_resolver = owner_resolver
         self.clock = clock or (lambda: datetime.now(UTC))
         self.projection_budget_chars = projection_budget_chars
+        self.capsule_mode = _capsule_mode(capsule_mode)
 
     def apply(
         self,
@@ -162,7 +163,7 @@ class EvidenceEnforcer:
         result.evidence_representation = projection.metadata.representation.value
         result.evidence_projection_complete = projection.metadata.projection_complete
         # R8.24-C C-2.1/C-2.2（C-D4/C-D5）: capsule 投影三态开关（默认 on 现状逐字节一致）
-        _mode = _capsule_mode()
+        _mode = self.capsule_mode
         if _mode == "off":
             # capsule 完整字段（ref/source/coverage/projection/complete/recover）落
             # result metadata + 审计事件（不静默丢数据——§7.2 数据持久性强化项）

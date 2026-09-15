@@ -12,6 +12,7 @@ import contextlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from llm_loop.core.episode_history import (
@@ -196,6 +197,8 @@ def run_ingress_prelude(
     current_turn_ref: Any,
     record_action: Any,
     event_append: Any,
+    data_dir: str | Path | None = None,
+    history_policy: Any | None = None,
 ) -> IngressPreludeOutcome:
     """入口解析 → 泄漏隔离 → provider 预清洗（语义原样迁自 build.py 步D）.
 
@@ -233,6 +236,7 @@ def run_ingress_prelude(
         current_ingress=_r6_ingress_truth,
         event_sink=event_append,
         decision=decision,
+        data_dir=data_dir,
     )
     inputs = resolve_ingress(
         sess_messages=_trace_base,
@@ -294,7 +298,9 @@ def run_ingress_prelude(
     # authoritative. Selected protocol groups are exempted as exact raw evidence;
     # unselected groups keep the existing batch/grace mechanics unchanged.
     _provider_base, _working_set_stats = project_active_tool_working_set_with_stats(
-        _scrub.base, preserve_group_digests=_preserve_digests
+        _scrub.base,
+        preserve_group_digests=_preserve_digests,
+        policy=history_policy,
     )
     if _working_set_stats.enabled:
         with contextlib.suppress(Exception):

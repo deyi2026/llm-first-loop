@@ -14,6 +14,7 @@ import gc
 import types
 from unittest import mock
 
+from llm_loop.config import Settings
 from llm_loop.core.loop import LoopEngine
 from llm_loop.llm.client import LLMClient
 from llm_loop.llm.pool import ModelClientPool
@@ -47,14 +48,20 @@ def _make_pool(default=None, cached: dict | None = None) -> ModelClientPool:
     return pool
 
 
-def _make_engine(llm, llm_pool) -> LoopEngine:
+def _make_engine(llm, llm_pool, data_dir) -> LoopEngine:
     """最小装配 LoopEngine（仅验证 close 接线，不走 run）."""
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="http://close-test.invalid/v1",
+        llm_model="test/close",
+        data_dir=str(data_dir),
+    )
     return LoopEngine(
         llm_client=llm,  # type: ignore[arg-type]
         registry=object(),  # type: ignore[arg-type]
         memory=object(),  # type: ignore[arg-type]
         session=object(),  # type: ignore[arg-type]
-        settings=object(),  # type: ignore[arg-type]
+        settings=settings,
         llm_pool=llm_pool,  # type: ignore[arg-type]
     )
 
@@ -244,10 +251,10 @@ def test_replace_registry_retires_cached_llm_until_last_reference():
 # ── LoopEngine.close ──
 
 
-def test_engine_close_with_pool():
+def test_engine_close_with_pool(tmp_path):
     llm = _CloseTracker()
     pool = _CloseTracker()
-    engine = _make_engine(llm, pool)
+    engine = _make_engine(llm, pool, tmp_path)
 
     engine.close()
     engine.close()  # 幂等
@@ -256,9 +263,9 @@ def test_engine_close_with_pool():
     assert llm.close_calls == 0  # pool 非 None → 不直接关 llm（由 pool 统一管）
 
 
-def test_engine_close_without_pool():
+def test_engine_close_without_pool(tmp_path):
     llm = _CloseTracker()
-    engine = _make_engine(llm, None)
+    engine = _make_engine(llm, None, tmp_path)
 
     engine.close()
     engine.close()  # 幂等
@@ -266,26 +273,26 @@ def test_engine_close_without_pool():
     assert llm.close_calls == 2
 
 
-def test_engine_close_fail_open():
+def test_engine_close_fail_open(tmp_path):
     llm = _CloseTracker()
     pool = _CloseTracker(raise_on_close=True)
-    engine = _make_engine(llm, pool)
+    engine = _make_engine(llm, pool, tmp_path)
 
     engine.close()  # pool.close 抛 → fail-open 不抛穿
 
     assert pool.close_calls == 1
 
 
-def test_engine_close_missing_close_method():
-    engine = _make_engine(_NoCloseClient(), None)
+def test_engine_close_missing_close_method(tmp_path):
+    engine = _make_engine(_NoCloseClient(), None, tmp_path)
 
     engine.close()  # 无 close → 跳过不抛
 
 
-def test_engine_close_missing_pool_close_falls_to_llm():
+def test_engine_close_missing_pool_close_falls_to_llm(tmp_path):
     """pool 非 None 但无 close → 按 getattr 防御跳过 pool，不误伤（不抛）."""
     llm = _CloseTracker()
-    engine = _make_engine(llm, _NoCloseClient())
+    engine = _make_engine(llm, _NoCloseClient(), tmp_path)
 
     engine.close()
 

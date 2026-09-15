@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -62,16 +61,14 @@ class InboxWatcher:
     def __init__(
         self,
         *,
-        inbox_dir: str | Path | None = None,
+        inbox_dir: str | Path,
         poll_s: float = _POLL_S,
         on_notify: Callable[[Sequence[str]], None] | None = None,
         wakeup_fn: Callable[[Sequence[str]], None] | None = None,
         wakeup_enabled: bool | None = None,
         wakeup_min_interval_s: float = _WAKEUP_MIN_INTERVAL_S,
     ) -> None:
-        self._inbox_dir = Path(inbox_dir) if inbox_dir else (
-            Path(os.environ.get("LFL_DATA_DIR", "data")) / _INTEROP_INBOX_REL
-        )
+        self._inbox_dir = Path(inbox_dir).expanduser().resolve()
         self._poll_s = poll_s
         self._on_notify = on_notify
         self._wakeup_fn = wakeup_fn

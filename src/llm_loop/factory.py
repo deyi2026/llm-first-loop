@@ -282,6 +282,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         send_tool_choice=bool((llm_params or {}).get("send_tool_choice", True)),
         reasoning_split=bool((llm_params or {}).get("reasoning_split", False)),
         transport_observer=transport_observer,
+        guard_audit_file=Path(settings.data_dir).resolve() / "audit" / "guarded_requests.jsonl",
     )
 
     # M48（design §5.3）: 模型客户端路由池（会话级 model_override 路由 + provider 级缓存）
@@ -296,6 +297,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         base_timeout_s=settings.llm_timeout_s,
         base_max_tokens=settings.llm_max_tokens,
         transport_observer=transport_observer,
+        guard_audit_file=Path(settings.data_dir).resolve() / "audit" / "guarded_requests.jsonl",
     )
 
     # 存储（记忆 + 压缩档案 + 会话 + fail-open恢复备份）
@@ -421,6 +423,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         identity_history_exists_fn=identity_history_exists,
         delete_sidecars_fn=delete_session_sidecars,
         delete_resource_blocker_fn=external_resource_delete_blocker,
+        leak_data_dir=settings.data_dir,
     )
 
     # 工具注册表（3 基础工具 + 自省/修正/检索工具）
@@ -432,6 +435,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         exec_mode=settings.exec_mode,  # EVO-20260810-2549e9b6: EXEC_MODE 命令分级
         exec_allowlist=settings.exec_allowlist,
         memory_store=memory,  # EVO-d78b270c: 经验驱动注入（M41 升级，失败回执检索经验库）
+        tool_guidance_mode=settings.tool_runtime.tool_guidance,
         approval_audit_path=settings.audit_dir / "approval_audit.jsonl",  # T5a: 审批审计落盘
         safety_audit_dir=settings.audit_dir,  # P0-1: 灾难性阻断审计 safety_blocks.jsonl
     )
@@ -439,7 +443,11 @@ def build_engine(settings: Settings) -> LoopEngine:
     # shared EventStore owns durable launch/terminal/cancel facts.  Session cancellation
     # only signals currently local handles; normal model final remains unaffected.
     _job_registry = JobRegistry.instance()
-    _job_registry.configure(event_store=event_store)
+    _job_registry.configure(
+        event_store=event_store,
+        data_dir=settings.data_dir,
+        max_concurrent=settings.tool_runtime.job_max_concurrent,
+    )
     registry.add_session_cancel_hook(_job_registry.cancel_session)
 
     # ERC v1.1 rollout: explicit opt-in only.  Default ``off`` creates no Evidence store
@@ -526,6 +534,7 @@ def build_engine(settings: Settings) -> LoopEngine:
                     projection=ProjectionEngine(),
                     owner_resolver=_evidence_owner,
                     projection_budget_chars=min(settings.tool_max_output_chars, 5000),
+                    capsule_mode=settings.tool_runtime.evidence_capsule,
                 )
             )
             registry.set_evidence_source_resolver(
@@ -926,7 +935,14 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     registry.register(GetToolSchemaTool(registry))
     # M18 AA8: 工具内兜底超时读配置值（注册表另有线程级超时兜底）
-    _register_basic("execute_command", ExecuteCommandTool(timeout_s=_tool_timeout))
+    _register_basic(
+        "execute_command",
+        ExecuteCommandTool(
+            timeout_s=_tool_timeout,
+            sandbox_mode=settings.tool_runtime.exec_sandbox,
+            sandbox_image=settings.tool_runtime.exec_sandbox_image,
+        ),
+    )
     # EVO-20260814: 后台任务查询/终止（配合 execute_command run_in_background=true）
     _register_basic("job_output", JobOutputTool())
     _register_basic("job_kill", JobKillTool())
@@ -1111,8 +1127,11 @@ def build_engine(settings: Settings) -> LoopEngine:
     set_route_audit_fn(status_provider.record_action)
 
     # M2-G1.1: tool_octet 观测流 sink 一次性接线（沿用 set_route_audit_fn 装配模式；
-    # writer 仍为 status_provider._write_audit 单一 SoT；开关门控在 observer 首行，装配不判环境）
-    register_octet_sink(status_provider.append_audit_line)
+    # writer 仍为 status_provider._write_audit 单一 SoT；enablement 来自启动期 typed Settings）
+    register_octet_sink(
+        status_provider.append_audit_line,
+        enabled=settings.tool_runtime.tool_octet,
+    )
 
     # Current-run model-window facts use the same run-latched registry as routing.
     # Outside a run, report the startup default registry explicitly as startup scope.
@@ -1300,7 +1319,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     corrections._skill_execution_facts = {  # noqa: SLF001 — 当前执行环境机械事实
         "code_root": str(_runtime_paths.code_root),
         "runtime_root": str(
-            Path(os.environ.get("LFL_RUNTIME_ROOT") or _runtime_paths.state_root)
+            Path(settings._extra.get("runtime_root") or _runtime_paths.state_root)
             .expanduser()
             .resolve()
         ),
@@ -1419,7 +1438,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         runtime=runtime,  # M12 T50: 动态参数视图
         fault_classifier=_build_fault_classifier(),
         selfheal_budget=_build_selfheal_budget(settings),
-        loop_signal_detector=_build_loop_signal_detector(),
+        loop_signal_detector=_build_loop_signal_detector(settings.data_dir),
         llm_pool=model_pool,  # M48（design §5.3）: 会话级模型路由
         recovery=recovery_channel,  # P2-2: fail-open 写失败恢复通道
         event_store=_build_event_store(settings),  # D1: 事件源化（共享同一实例）
@@ -1502,14 +1521,14 @@ def build_engine(settings: Settings) -> LoopEngine:
         def _deliver_schedule(entry: ScheduleEntry) -> bool:
             """提醒交付：普通通知；或持有效 one-shot grant 的同会话续跑。"""
             if not getattr(entry, "wake", False):
-                SchedulerThread._notify_via_interop(entry)
+                SchedulerThread._notify_via_interop(entry, data_dir=settings.data_dir)
                 return True
 
             grant = _schedule_store.wake_grant(entry.sid)
             session_id = str(getattr(entry, "session_id", "") or "")
             if grant is None or not session_id:
                 # grant 不持久化：进程重启/owner 退出后安全降级为通知，不伪造授权。
-                SchedulerThread._notify_via_interop(entry)
+                SchedulerThread._notify_via_interop(entry, data_dir=settings.data_dir)
                 engine._record_action(
                     "schedule.wake",
                     "degraded_to_notify",
@@ -1542,7 +1561,7 @@ def build_engine(settings: Settings) -> LoopEngine:
                 return False
 
             # runner disabled/不可启动时不丢提醒，退化为可见通知。
-            SchedulerThread._notify_via_interop(entry)
+            SchedulerThread._notify_via_interop(entry, data_dir=settings.data_dir)
             engine._record_action(
                 "schedule.wake",
                 "degraded_to_notify",
@@ -1585,6 +1604,7 @@ def build_engine(settings: Settings) -> LoopEngine:
                 logger.warning("interop.coordinate_wakeup 审计写入失败（fail-open）")
 
         engine.inbox_watcher = InboxWatcher(
+            inbox_dir=Path(settings.data_dir) / "interop" / "lfl_to_dsh" / "pending",
             on_notify=_on_inbox_notify,
             wakeup_fn=_inbox_wakeup,
         )
@@ -1744,7 +1764,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     registry.register(workflow_tool)
     # DSH-ORCHESTRATION（2026-08-16）: 调度 DeepSeek Harness headless 执行任务（进程级子代理）
     registry.register(DshTaskTool())
-    registry.register(DshSessionReadTool())
+    registry.register(DshSessionReadTool(dsh_home=settings.tool_runtime.dsh_home))
 
     # CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）
     # CODEARTS_ENABLED=false 或凭证缺失/校验失败 → 跳过装配 + 日志标注，主运行时零回归
@@ -2097,11 +2117,11 @@ def _build_pending_actions_fn(settings) -> Any:
     return _aggregate
 
 
-def _build_loop_signal_detector() -> Any:
-    """Build the opt-in operator pending-review helper; ordinary runs do not scan it."""
+def _build_loop_signal_detector(data_dir: str | Path | None = None) -> Any:
+    """Build the opt-in operator helper with the resolved runtime data owner."""
     from llm_loop.introspection.loop_signals import LoopSignalDetector
 
-    return LoopSignalDetector()
+    return LoopSignalDetector(data_dir=data_dir)
 
 
 def _make_tool_call(name: str, arguments: dict):

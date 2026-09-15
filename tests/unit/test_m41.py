@@ -58,14 +58,13 @@ def test_not_truncated_keeps_declaration_check(build_test_engine, fake_settings)
 
 def test_failure_guidance_appended(monkeypatch):
     """工具 failure 回执追加引导段（错误类型 + 建议换用工具/重试；on 态机制，R9-P0-01 批 2/3 钉住前提）."""
-    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
     result = ToolResult(
         status=ToolResultStatus.FAILURE,
         content="[工具不存在] 未注册的工具 'xyz'",
         tool_call_id="c1",
         tool_name="xyz",
     )
-    msg = tool_result_to_message(result)
+    msg = tool_result_to_message(result, tool_guidance_mode="on")
     assert "[状态: failure]" in msg.content
     assert "可选项" in msg.content  # 对齐 registry.py failure 引导实际文案（原"建议"已改"可选项"）
     assert "RULE-AI-02/07" in msg.content

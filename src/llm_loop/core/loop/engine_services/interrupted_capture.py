@@ -14,7 +14,12 @@ import json
 import time
 from typing import Any
 
-from llm_loop.core.loop.engine_services.nonconvergence_guard import NonconvergenceGuard
+from llm_loop.core.loop.engine_services.nonconvergence_guard import (
+    DEFAULT_JACCARD,
+    DEFAULT_MIN_DELTA,
+    DEFAULT_WINDOWS,
+    NonconvergenceGuard,
+)
 
 
 def llm_error_digest(exc: BaseException) -> str:
@@ -69,6 +74,9 @@ class InterruptedCapture:
         round_no: int = 0,
         provider: str = "",
         model: str = "",
+        nonconvergence_windows: int = DEFAULT_WINDOWS,
+        nonconvergence_jaccard: float = DEFAULT_JACCARD,
+        nonconvergence_min_delta: int = DEFAULT_MIN_DELTA,
     ) -> None:
         self._engine = engine
         self._sess = sess
@@ -93,7 +101,11 @@ class InterruptedCapture:
         self._fired = False
         # EVO-20260915-789eb9d5：纯机械非收敛守卫（窗口=checkpoint 间隔；熔断只
         # 置位 fuse_tripped，终止动作由 engine 流循环执行）
-        self._nc_guard = NonconvergenceGuard.from_env()
+        self._nc_guard = NonconvergenceGuard(
+            windows=nonconvergence_windows,
+            jaccard_threshold=nonconvergence_jaccard,
+            min_delta_tokens=nonconvergence_min_delta,
+        )
         self.fuse_tripped = False
         self.fuse_evidence: dict[str, Any] = {}
 

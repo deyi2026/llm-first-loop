@@ -26,7 +26,7 @@ def _owner() -> OwnerScope:
     return OwnerScope(workspace_id="workspace-A", session_id="session-A")
 
 
-def _enforcer(tmp_path, *, projection_budget_chars: int = 900):
+def _enforcer(tmp_path, *, projection_budget_chars: int = 900, capsule_mode: str = "off"):
     blobs = BlobStore(tmp_path / "evidence" / "blobs")
     ledger = EvidenceLedgerStore(tmp_path / "evidence" / "ledger")
     capture = EvidenceCapture(blobs, ledger)
@@ -36,6 +36,7 @@ def _enforcer(tmp_path, *, projection_budget_chars: int = 900):
         owner_resolver=_owner,
         clock=lambda: datetime(2026, 8, 26, 8, 0, tzinfo=UTC),
         projection_budget_chars=projection_budget_chars,
+        capsule_mode=capsule_mode,
     )
     return blobs, ledger, enforcer
 
@@ -63,13 +64,12 @@ def test_hot_large_evidence_is_excerpt_not_forced_full():
 def test_enforce_read_file_captures_before_projection_and_hydrates_hidden_middle(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "on")  # R9-P0-01 批 1/3：on 态机制测试钉住前提
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "legacy-data"))
     path = tmp_path / "large.txt"
     marker = "MIDDLE_ONLY_IN_EVIDENCE_314159"
     path.write_text("A" * 6000 + marker + "Z" * 6000, encoding="utf-8")
 
-    blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
+    blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=700, capsule_mode="on")
     registry = ToolRegistry(max_output_chars=20000)
     registry.register(ReadFileTool())
     registry.set_evidence_enforcer(enforcer)
@@ -177,8 +177,7 @@ def test_enforce_capture_failure_preserves_side_effect_action_truth_and_does_not
 def test_enforce_structured_metadata_is_preserved_but_only_capsule_is_model_visible(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "on")  # R9-P0-01 批 1/3：on 态机制测试钉住前提
-    _, _, enforcer = _enforcer(tmp_path, projection_budget_chars=500)
+    _, _, enforcer = _enforcer(tmp_path, projection_budget_chars=500, capsule_mode="on")
 
     class Tool:
         name = "meta_test"
@@ -309,7 +308,6 @@ def test_enforce_full_true_is_still_bounded_and_recoverable(tmp_path, monkeypatc
 def test_enforce_large_execute_command_does_not_create_legacy_command_sidecar(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "on")  # R9-P0-01 批 1/3：on 态机制测试钉住前提
     import shlex
     import sys
 
@@ -317,7 +315,7 @@ def test_enforce_large_execute_command_does_not_create_legacy_command_sidecar(
 
     data_dir = tmp_path / "legacy-data"
     monkeypatch.setenv("DATA_DIR", str(data_dir))
-    _, _, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
+    _, _, enforcer = _enforcer(tmp_path, projection_budget_chars=700, capsule_mode="on")
     registry = ToolRegistry(tool_timeout_s=10)
     registry.register(ExecuteCommandTool(timeout_s=10))
     registry.set_evidence_enforcer(enforcer)

@@ -1944,6 +1944,7 @@ class SubAgentRunner:
                     result,
                     failure_guidance_enabled=False,
                     experience_guidance_enabled=True,
+                    tool_guidance_mode=self.registry.tool_guidance_mode,
                 )
                 if executed and execution_id:
                     # Exact future receipt is staged immediately after execution; if

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_loop.config import Settings
+from llm_loop.config import HistoryPolicySettings, Settings
 from llm_loop.core.episode_history import (
     build_working_state_checkpoint,
     collect_active_evidence_groups,
@@ -71,6 +71,14 @@ def _messages() -> list[Message]:
         _assistant("c3"),
         _tool("c3", "LATEST-RAW-" * 500, ref="evidence://v1/latest"),
     ]
+
+
+def _ws_policy() -> HistoryPolicySettings:
+    return HistoryPolicySettings(
+        working_set_receipts=True,
+        working_set_batch_chars=4096,
+        working_set_grace_groups=0,
+    )
 
 
 def _checkpoint(messages: list[Message], *, selected_ids: list[str] | None = None) -> dict:
@@ -243,10 +251,7 @@ def test_checkpoint_rejects_unknown_and_duplicate_selection():
         _checkpoint(messages, selected_ids=["e9"])
 
 
-def test_selected_raw_session_group_remains_authority_without_evidence_ref(monkeypatch):
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "4096")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "0")
+def test_selected_raw_session_group_remains_authority_without_evidence_ref():
     messages = _messages()
     messages[2].metadata = {}
     checkpoint = _checkpoint(messages, selected_ids=["e1"])
@@ -258,7 +263,8 @@ def test_selected_raw_session_group_remains_authority_without_evidence_ref(monke
         model="deepseek/model",
     )
     projected, _ = project_active_tool_working_set_with_stats(
-        messages, preserve_group_digests=resolution.preserve_group_digests
+        messages, preserve_group_digests=resolution.preserve_group_digests,
+        policy=_ws_policy(),
     )
 
     assert resolution.eligible is True
@@ -305,10 +311,7 @@ def test_checkpoint_resolution_invalidates_on_new_human_or_protocol_change():
     assert stale.reason == "boundary"
 
 
-def test_projector_never_partially_applies_unknown_preserve_digest(monkeypatch):
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "4096")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "0")
+def test_projector_never_partially_applies_unknown_preserve_digest():
     messages = _messages()
     checkpoint = _checkpoint(messages)
     resolution = resolve_working_state_checkpoint(
@@ -322,6 +325,7 @@ def test_projector_never_partially_applies_unknown_preserve_digest(monkeypatch):
     projected, _ = project_active_tool_working_set_with_stats(
         messages,
         preserve_group_digests=resolution.preserve_group_digests + ("v1:unknown",),
+        policy=_ws_policy(),
     )
 
     assert "tool_result_receipt" in projected[2].content
@@ -329,10 +333,7 @@ def test_projector_never_partially_applies_unknown_preserve_digest(monkeypatch):
     assert projected[8].content == messages[8].content
 
 
-def test_selected_group_stays_raw_while_unselected_old_group_uses_receipt(monkeypatch):
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "4096")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "0")
+def test_selected_group_stays_raw_while_unselected_old_group_uses_receipt():
     messages = _messages()
     checkpoint = _checkpoint(messages)
     resolution = resolve_working_state_checkpoint(
@@ -344,7 +345,8 @@ def test_selected_group_stays_raw_while_unselected_old_group_uses_receipt(monkey
     )
 
     projected, stats = project_active_tool_working_set_with_stats(
-        messages, preserve_group_digests=resolution.preserve_group_digests
+        messages, preserve_group_digests=resolution.preserve_group_digests,
+        policy=_ws_policy(),
     )
 
     assert projected[2].content == messages[2].content
@@ -380,7 +382,7 @@ def test_checkpoint_round_trips_through_json_and_event_log(tmp_path: Path):
     assert len(replay_loaded.messages) == len(messages)
 
 
-def _settings(tmp_path: Path) -> Settings:
+def _settings(tmp_path: Path, *, working_set: bool = False) -> Settings:
     return Settings(
         llm_api_key="k",
         llm_base_url="https://x.invalid/v1",
@@ -390,16 +392,14 @@ def _settings(tmp_path: Path) -> Settings:
         evidence_mode="off",
         tool_pipeline_enabled=False,
         history_max_chars=200000,
+        history_policy=_ws_policy() if working_set else HistoryPolicySettings(),
     )
 
 
-def test_engine_projects_state_provider_only_and_preserves_selected_raw(tmp_path: Path, monkeypatch):
+def test_engine_projects_state_provider_only_and_preserves_selected_raw(tmp_path: Path):
     from llm_loop.factory import build_engine
 
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "4096")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "0")
-    engine = build_engine(_settings(tmp_path))
+    engine = build_engine(_settings(tmp_path, working_set=True))
     sess = Session(session_id="s1", messages=_messages())
     sess.working_state_checkpoint = _checkpoint(sess.messages)
     original_message_count = len(sess.messages)
@@ -417,11 +417,10 @@ def test_engine_projects_state_provider_only_and_preserves_selected_raw(tmp_path
     assert all(m.content != '{"verdict":"ready","next":"final"}' for m in sess.messages)
 
 
-def test_new_human_task_removes_provider_state_without_mutating_checkpoint(tmp_path: Path, monkeypatch):
+def test_new_human_task_removes_provider_state_without_mutating_checkpoint(tmp_path: Path):
     from llm_loop.factory import build_engine
 
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    engine = build_engine(_settings(tmp_path))
+    engine = build_engine(_settings(tmp_path, working_set=True))
     sess = Session(session_id="s1", messages=_messages())
     sess.working_state_checkpoint = _checkpoint(sess.messages)
     persisted = dict(sess.working_state_checkpoint)
@@ -508,10 +507,7 @@ def test_malformed_or_mismatched_checkpoint_fails_closed_to_ordinary_view(field,
     assert resolution.state_text == ""
 
 
-def test_multi_tool_selected_group_is_preserved_atomically(monkeypatch):
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "4096")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "0")
+def test_multi_tool_selected_group_is_preserved_atomically():
     multi = Message(
         role="assistant",
         content="checking both",
@@ -553,7 +549,8 @@ def test_multi_tool_selected_group_is_preserved_atomically(monkeypatch):
         model="deepseek/model",
     )
     projected, _ = project_active_tool_working_set_with_stats(
-        messages, preserve_group_digests=resolution.preserve_group_digests
+        messages, preserve_group_digests=resolution.preserve_group_digests,
+        policy=_ws_policy(),
     )
 
     assert projected[1].tool_calls == messages[1].tool_calls

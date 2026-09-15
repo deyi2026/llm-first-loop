@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import time
 from collections import deque
@@ -58,10 +57,11 @@ _BREAKER_OVER_RATIO = float(_CACHE_HEALTH_CONFIG.get("BREAKER_OVER_RATIO", "0.9"
 
 
 def _breaker_audit_path() -> Path:
-    try:
-        return Path(os.environ["LFL_DATA_DIR"]) / "audit" / "cache_breaker.jsonl"
-    except Exception:  # noqa: BLE001
-        return Path(__file__).resolve().parents[3] / "data" / "audit" / "cache_breaker.jsonl"
+    """Compatibility-only fallback for direct/test construction.
+
+    Production binds ``breaker_audit_file`` from resolved ``Settings.data_dir``.
+    """
+    return Path(__file__).resolve().parents[3] / "data" / "audit" / "cache_breaker.jsonl"
 
 
 # ── P1 遥测内容/传输分层（2026-08-25 规格）──

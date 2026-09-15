@@ -73,14 +73,12 @@ class TestFinalGateSwitchDefaults:
         """H3 开关面: LFL_TOOL_GUIDANCE 默认 off=最终治理态（批 2/3 切换，R9-P0-01）."""
         from llm_loop.tools.registry import _tool_guidance_mode
 
-        _clear_gates_env(monkeypatch)
         assert _tool_guidance_mode() == "off"
 
     def test_evidence_capsule_default_off_enforced(self, monkeypatch):
         """H4 开关面: LFL_EVIDENCE_CAPSULE 默认 off=最终治理态（批 1/3 切换，R9-P0-01）."""
         from llm_loop.tools.evidence_enforce import _capsule_mode
 
-        _clear_gates_env(monkeypatch)
         assert _capsule_mode() == "off"
 
     def test_leak_quarantine_default_off_enforced(self, monkeypatch):
@@ -222,7 +220,6 @@ class TestH3H4H6MechanismReadyAndCurrentState:
 
     def test_h3_off_mode_advisory_chars_zero_mechanism_ready(self, monkeypatch):
         """H3 机制 READY: off 态同一回执 advisory chars=0（复核对既有承载的抽样）."""
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
         result = ToolResult(
             status=ToolResultStatus.FAILURE,
             content="[文件不存在] /tmp/final-gate-none.txt 不存在。",
@@ -261,7 +258,6 @@ class TestH3H4H6MechanismReadyAndCurrentState:
         assert "[evidence]" not in result_default.content  # 现状登记: capsule chars=0
 
         # off 态（机制 READY）
-        monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "off")
         result_off = registry.execute(
             ToolCall(
                 id="h4-o", name="read_file", arguments={"path": str(path_off), "full": True}
