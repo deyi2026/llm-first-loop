@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -44,22 +45,23 @@ def _note_invalid_fallback(name: str, fallback_value: Any, invalid_value_type: s
     )
 
 
-def _raw_env(name: str) -> str:
+def _raw_env(name: str, env: Mapping[str, str] | None = None) -> str:
     """读取环境变量并剥离行内注释（与 load_env_file EVO-ba4a107c 对齐）.
 
     防外层 shell 残留脏值（如 RETRIEVE_TIMEOUT_S="1  # 注释"）导致解析失败回退默认：
     环境变量优先原则下 .env 无法覆盖已存在的脏值，解析函数自身剥离注释兜底。
     """
-    if name in os.environ:
-        raw = os.environ[name]
+    values = os.environ if env is None else env
+    if name in values:
+        raw = values[name]
         if " #" in raw:
             raw = raw.split(" #", 1)[0]
         return raw
     return ""
 
 
-def _env_int(name: str, default: int) -> int:
-    raw = _raw_env(name)
+def _env_int(name: str, default: int, env: Mapping[str, str] | None = None) -> int:
+    raw = _raw_env(name, env)
     if not raw:
         return default
     try:
@@ -69,12 +71,12 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def _env_int_or_none(name: str) -> int | None:
+def _env_int_or_none(name: str, env: Mapping[str, str] | None = None) -> int | None:
     """EVO-20260816-3af5dee3: env 未配置返回 None（history_max_chars 用，None=窗口自适应）.
 
     独立于 _env_int（其签名保持 int 返回，避免 46 处调用点类型连锁）。
     """
-    raw = _raw_env(name)
+    raw = _raw_env(name, env)
     if not raw:
         return None
     try:
@@ -121,8 +123,8 @@ def load_env_file(path: str | Path | None = None) -> None:
         pass  # 读取失败 fail-open
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = _raw_env(name).strip().lower()
+def _env_bool(name: str, default: bool, env: Mapping[str, str] | None = None) -> bool:
+    raw = _raw_env(name, env).strip().lower()
     if not raw:
         return default
     if raw in {"1", "true", "yes", "on"}:
@@ -133,9 +135,9 @@ def _env_bool(name: str, default: bool) -> bool:
     return False
 
 
-def _env_thinking_mode(name: str) -> bool:
+def _env_thinking_mode(name: str, env: Mapping[str, str] | None = None) -> bool:
     """LLM_THINKING_MODE 解析: enabled/1/true/on → True；disabled/0/false/off → False；非法回退 True."""
-    raw = _raw_env(name).strip().lower()
+    raw = _raw_env(name, env).strip().lower()
     if not raw:
         return True  # 未设置默认 enabled
     if raw in {"enabled", "1", "true", "on", "yes"}:
@@ -146,9 +148,9 @@ def _env_thinking_mode(name: str) -> bool:
     return True
 
 
-def _env_effort(name: str) -> str:
+def _env_effort(name: str, env: Mapping[str, str] | None = None) -> str:
     """LLM_REASONING_EFFORT 解析: low/high/max；非法回退 high."""
-    raw = _raw_env(name).strip().lower()
+    raw = _raw_env(name, env).strip().lower()
     if raw in {"low", "high", "max"}:
         return raw
     if raw:
@@ -156,9 +158,9 @@ def _env_effort(name: str) -> str:
     return "high"
 
 
-def _env_evolve_level(name: str) -> int:
+def _env_evolve_level(name: str, env: Mapping[str, str] | None = None) -> int:
     """EVOLVE_LOCAL_EXEC 三级解析（0/1/2；旧布尔 true/false 映射 1/0；非法回退 0）."""
-    raw = _raw_env(name).strip().lower()
+    raw = _raw_env(name, env).strip().lower()
     if raw in {"0", "1", "2"}:
         return int(raw)
     if raw in {"true", "yes", "on", "1"}:
@@ -170,9 +172,9 @@ def _env_evolve_level(name: str) -> int:
     return 0
 
 
-def _env_exec_mode(name: str) -> str:
+def _env_exec_mode(name: str, env: Mapping[str, str] | None = None) -> str:
     """EXEC_MODE 解析: readonly/allowlist/blocked；未设置返回空（不启用分级）；非法回退 blocked（安全优先）."""
-    raw = _raw_env(name).strip().lower()
+    raw = _raw_env(name, env).strip().lower()
     if not raw:
         return ""  # 未设置 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）
     if raw in {"readonly", "allowlist", "blocked"}:
@@ -181,13 +183,13 @@ def _env_exec_mode(name: str) -> str:
     return "blocked"
 
 
-def _env_evidence_mode(name: str) -> str:
+def _env_evidence_mode(name: str, env: Mapping[str, str] | None = None) -> str:
     """ERC rollout mode: off/shadow/enforce; invalid values fail safe to off.
 
     ``enforce`` is an explicit experimental mode. Production enablement remains gated by
     the deterministic ERC rollout phases and compatibility checks in factory/registry.
     """
-    raw = _raw_env(name).strip().lower()
+    raw = _raw_env(name, env).strip().lower()
     if not raw:
         return "off"
     if raw in {"off", "shadow", "enforce"}:
@@ -196,9 +198,9 @@ def _env_evidence_mode(name: str) -> str:
     return "off"
 
 
-def _env_method_reflection_mode(name: str) -> str:
+def _env_method_reflection_mode(name: str, env: Mapping[str, str] | None = None) -> str:
     """Method post-run reflection: off/auto. Invalid values fail safe to off."""
-    raw = _raw_env(name).strip().lower()
+    raw = _raw_env(name, env).strip().lower()
     if raw in {"off", "auto"}:
         return raw
     if raw:
@@ -206,7 +208,7 @@ def _env_method_reflection_mode(name: str) -> str:
     return "off"
 
 
-def _env_run_mode(name: str) -> str:
+def _env_run_mode(name: str, env: Mapping[str, str] | None = None) -> str:
     """RUN_MODE 运行模式解析（EVO-20260814 P1-A，对齐 Harness 四种运行模式）.
 
     standard: 全工具集（默认，零回归）
@@ -216,7 +218,7 @@ def _env_run_mode(name: str) -> str:
     creative: 宽松默认参数——更大超时/输出阈值/检索上限（对齐 Harness creative 模式）
     非法回退 standard（不阻断启动，安全性不受影响）。
     """
-    raw = _raw_env(name).strip().lower()
+    raw = _raw_env(name, env).strip().lower()
     if not raw:
         return "standard"
     if raw in {"standard", "ptc", "minimal", "creative"}:
@@ -567,17 +569,30 @@ class Settings:
         }
 
 
-def load_settings() -> Settings:
-    """从环境变量装配 Settings；缺少必填项时抛出带指引的 ValueError."""
+def load_settings(env: Mapping[str, str] | None = None) -> Settings:
+    """从显式 mapping（默认进程环境）装配不可变 Settings。"""
     _fallback_notes.clear()
-    api_key = os.environ.get("LLM_API_KEY", "").strip()
-    base_url = os.environ.get("LLM_BASE_URL", "").strip()
+    env_values = os.environ if env is None else env
+
+    def env_int(name: str, default: int) -> int:
+        return _env_int(name, default, env_values)
+
+    def env_int_or_none(name: str) -> int | None:
+        return _env_int_or_none(name, env_values)
+
+    def env_bool(name: str, default: bool) -> bool:
+        return _env_bool(name, default, env_values)
+
+    def env_one(fn, name: str):
+        return fn(name, env_values)
+    api_key = env_values.get("LLM_API_KEY", "").strip()
+    base_url = env_values.get("LLM_BASE_URL", "").strip()
     # M20 CFG-01/02: LLM_MODEL 缺省 → OPENSYGAI_DEEPSEEK_DEFAULT_MODEL → 内置 deepseek-flash
     # （2026-09-10 起官方模型名为 deepseek-flash / V4.1-Flash；旧名 deepseek-v4-flash 仅剩临时路由层）
-    model = os.environ.get("LLM_MODEL", "").strip()
+    model = env_values.get("LLM_MODEL", "").strip()
     if not model:
         model = (
-            os.environ.get("OPENSYGAI_DEEPSEEK_DEFAULT_MODEL", "").strip() or "deepseek-flash"
+            env_values.get("OPENSYGAI_DEEPSEEK_DEFAULT_MODEL", "").strip() or "deepseek-flash"
         )
 
     missing: list[str] = []
@@ -595,7 +610,7 @@ def load_settings() -> Settings:
     # Local qualification/probe runs use a deliberately non-secret sentinel key.
     # Such runs must never fall through to the repository's production DATA_DIR:
     # an unisolated Engine can create durable sessions and contaminate Web history.
-    if api_key == "local-eval" and not os.environ.get("DATA_DIR", "").strip():
+    if api_key == "local-eval" and not env_values.get("DATA_DIR", "").strip():
         raise ValueError(
             "local-eval 资格化/探测必须显式设置 DATA_DIR 到隔离目录；"
             "拒绝使用默认生产数据目录。"
@@ -603,153 +618,153 @@ def load_settings() -> Settings:
 
     # T3: 记录 env 未显式设置的可自适应配置项（消费方据此走自适应，env 显式设置时走固定值）
     _auto_adaptive_keys: set[str] = set()
-    if not os.environ.get("MEMORY_TOP_K", "").strip():
+    if not env_values.get("MEMORY_TOP_K", "").strip():
         _auto_adaptive_keys.add("memory_top_k")
-    if not os.environ.get("RETRIEVE_SEMANTIC_TOP_K", "").strip():
+    if not env_values.get("RETRIEVE_SEMANTIC_TOP_K", "").strip():
         _auto_adaptive_keys.add("retrieve_semantic_top_k")
 
     from llm_loop.runtime.paths import resolve_runtime_paths
 
-    _data_dir_raw = str(os.environ.get("DATA_DIR", "") or "").strip()
+    _data_dir_raw = str(env_values.get("DATA_DIR", "") or "").strip()
     _resolved_paths = resolve_runtime_paths(
         data_dir=_data_dir_raw or None,
         code_root=_CODE_ROOT,
-        env=os.environ,
+        env=env_values,
         data_dir_explicit=bool(_data_dir_raw),
     )
     settings = Settings(
         llm_api_key=api_key,
         llm_base_url=base_url,
         llm_model=model,
-        thinking_mode=_env_thinking_mode("LLM_THINKING_MODE"),
-        reasoning_effort=_env_effort("LLM_REASONING_EFFORT"),
-        max_iterations=_env_int("LLM_MAX_ITERATIONS", 500),
-        llm_timeout_s=float(_env_int("LLM_TIMEOUT_S", 120)),
-        llm_max_tokens=_env_int("LLM_MAX_TOKENS", 16000),  # 2026-08-15 显式输出预算
-        llm_wire_protocol=os.environ.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
+        thinking_mode=env_one(_env_thinking_mode, "LLM_THINKING_MODE"),
+        reasoning_effort=env_one(_env_effort, "LLM_REASONING_EFFORT"),
+        max_iterations=env_int("LLM_MAX_ITERATIONS", 500),
+        llm_timeout_s=float(env_int("LLM_TIMEOUT_S", 120)),
+        llm_max_tokens=env_int("LLM_MAX_TOKENS", 16000),  # 2026-08-15 显式输出预算
+        llm_wire_protocol=env_values.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
         data_dir=str(_resolved_paths.data_dir),
-        evidence_mode=_env_evidence_mode("EVIDENCE_MODE"),
-        evidence_manifest_limit=_env_int("EVIDENCE_MANIFEST_LIMIT", 8),
+        evidence_mode=env_one(_env_evidence_mode, "EVIDENCE_MODE"),
+        evidence_manifest_limit=env_int("EVIDENCE_MANIFEST_LIMIT", 8),
         # D1 事件日志（EVENT_LOG_ENABLED / EVENT_LOGS_DIR 透传）
-        event_log_enabled=_env_bool("EVENT_LOG_ENABLED", True),
-        event_logs_dir_override=os.environ.get("EVENT_LOGS_DIR", "").strip(),
-        read_path_source=os.environ.get("READ_PATH_SOURCE", "session_json").strip(),
-        event_log_rotate_bytes=int(os.environ.get("EVENT_LOG_ROTATE_BYTES", str(10 * 1024 * 1024))),
-        event_log_rotate_days=int(os.environ.get("EVENT_LOG_ROTATE_DAYS", "30")),
-        event_log_rotate_on_session_end=_env_bool("EVENT_LOG_ROTATE_ON_SESSION_END", True),
-        event_hooks_config=os.environ.get("EVENT_HOOKS_CONFIG", "").strip(),
-        tool_timeout_s=float(_env_int("TOOL_TIMEOUT_S", 60)),
-        tool_max_output_chars=_env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
-        mcp_servers_raw=os.environ.get("MCP_SERVERS", "").strip(),  # P3-1 MCP stdio 服务器
-        smx_perceive_path=os.environ.get("LFL_SMX_PERCEIVE", "").strip(),  # EVO-20260912-10818cb5 smx 感知层 opt-in
-        browser_perception_cdp_url=os.environ.get(
+        event_log_enabled=env_bool("EVENT_LOG_ENABLED", True),
+        event_logs_dir_override=env_values.get("EVENT_LOGS_DIR", "").strip(),
+        read_path_source=env_values.get("READ_PATH_SOURCE", "session_json").strip(),
+        event_log_rotate_bytes=int(env_values.get("EVENT_LOG_ROTATE_BYTES", str(10 * 1024 * 1024))),
+        event_log_rotate_days=int(env_values.get("EVENT_LOG_ROTATE_DAYS", "30")),
+        event_log_rotate_on_session_end=env_bool("EVENT_LOG_ROTATE_ON_SESSION_END", True),
+        event_hooks_config=env_values.get("EVENT_HOOKS_CONFIG", "").strip(),
+        tool_timeout_s=float(env_int("TOOL_TIMEOUT_S", 60)),
+        tool_max_output_chars=env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
+        mcp_servers_raw=env_values.get("MCP_SERVERS", "").strip(),  # P3-1 MCP stdio 服务器
+        smx_perceive_path=env_values.get("LFL_SMX_PERCEIVE", "").strip(),  # EVO-20260912-10818cb5 smx 感知层 opt-in
+        browser_perception_cdp_url=env_values.get(
             "LFL_BROWSER_PERCEPTION_CDP_URL", ""
         ).strip(),
-        browser_perception_target_id=os.environ.get(
+        browser_perception_target_id=env_values.get(
             "LFL_BROWSER_PERCEPTION_TARGET_ID", ""
         ).strip(),
-        browser_action_enabled=_env_bool("LFL_BROWSER_ACTION_ENABLED", False),
-        exec_mode=_env_exec_mode("EXEC_MODE"),
-        exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),
-        run_mode=_env_run_mode("RUN_MODE"),
-        tool_schema_lazy=_env_bool("TOOL_SCHEMA_LAZY", True),  # EVO-20260814: 默认开
-        tool_pipeline_enabled=_env_bool("TOOL_PIPELINE_ENABLED", False),
-        tool_materialize_enabled=_env_bool("TOOL_MATERIALIZE_ENABLED", False),
-        tool_guard_enabled=_env_bool("TOOL_GUARD_ENABLED", False),
-        exact_duplicate_tool_fold=_env_bool("LFL_EXACT_DUPLICATE_TOOL_FOLD", False),
-        runner_background=_env_bool("RUNNER_BACKGROUND", True),  # EVO 后台 run 改造: 默认开
+        browser_action_enabled=env_bool("LFL_BROWSER_ACTION_ENABLED", False),
+        exec_mode=env_one(_env_exec_mode, "EXEC_MODE"),
+        exec_allowlist=env_values.get("EXEC_ALLOWLIST", "").strip(),
+        run_mode=env_one(_env_run_mode, "RUN_MODE"),
+        tool_schema_lazy=env_bool("TOOL_SCHEMA_LAZY", True),  # EVO-20260814: 默认开
+        tool_pipeline_enabled=env_bool("TOOL_PIPELINE_ENABLED", False),
+        tool_materialize_enabled=env_bool("TOOL_MATERIALIZE_ENABLED", False),
+        tool_guard_enabled=env_bool("TOOL_GUARD_ENABLED", False),
+        exact_duplicate_tool_fold=env_bool("LFL_EXACT_DUPLICATE_TOOL_FOLD", False),
+        runner_background=env_bool("RUNNER_BACKGROUND", True),  # EVO 后台 run 改造: 默认开
         # EVO-20260819-2254e3b4 方案B（用户批准）: 回答末尾常态展示缓存命中率
-        cache_hit_show_in_answer=_env_bool("CACHE_HIT_SHOW_IN_ANSWER", False),
+        cache_hit_show_in_answer=env_bool("CACHE_HIT_SHOW_IN_ANSWER", False),
         # 认知运行时（Cognitive Runtime v1，缺省零回归）
-        cog_runtime_anchor_mode=_env_cog_anchor_mode("COG_RUNTIME_ANCHOR_MODE"),
-        cog_runtime_dual_source_guard=_env_bool("COG_RUNTIME_DUAL_SOURCE_GUARD", True),
-        cog_runtime_state_version=_env_cog_state_version("COG_RUNTIME_STATE_VERSION"),
-        cog_runtime_tier_enabled=_env_bool("COG_RUNTIME_TIER_ENABLED", True),
-        cog_runtime_mode=_env_cog_mode("COG_RUNTIME_MODE"),
-        cog_enforce_file=_raw_env("COG_RUNTIME_ENFORCE_FILE").strip(),
-        cog_runtime_packet_budget=_env_int("COG_RUNTIME_PACKET_BUDGET", 2000),
-        history_max_chars=_env_int_or_none(
+        cog_runtime_anchor_mode=env_one(_env_cog_anchor_mode, "COG_RUNTIME_ANCHOR_MODE"),
+        cog_runtime_dual_source_guard=env_bool("COG_RUNTIME_DUAL_SOURCE_GUARD", True),
+        cog_runtime_state_version=env_one(_env_cog_state_version, "COG_RUNTIME_STATE_VERSION"),
+        cog_runtime_tier_enabled=env_bool("COG_RUNTIME_TIER_ENABLED", True),
+        cog_runtime_mode=env_one(_env_cog_mode, "COG_RUNTIME_MODE"),
+        cog_enforce_file=env_one(_raw_env, "COG_RUNTIME_ENFORCE_FILE").strip(),
+        cog_runtime_packet_budget=env_int("COG_RUNTIME_PACKET_BUDGET", 2000),
+        history_max_chars=env_int_or_none(
             "HISTORY_MAX_CHARS"
         ),  # EVO-20260816-3af5dee3: None=未配置→按窗口自适应
-        memory_top_k=_env_int("MEMORY_TOP_K", 5),
-        self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
-        status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),
-        archive_enabled=_env_bool("ARCHIVE_ENABLED", True),
+        memory_top_k=env_int("MEMORY_TOP_K", 5),
+        self_inspection_enabled=env_bool("SELF_INSPECTION_ENABLED", True),
+        status_report_cooldown_s=float(env_int("STATUS_REPORT_COOLDOWN_S", 60)),
+        archive_enabled=env_bool("ARCHIVE_ENABLED", True),
         experiences_dir=str(_resolved_paths.experiences_dir),
         methods_dir=str(_resolved_paths.methods_dir),
         method_seed_dir=str(_resolved_paths.method_seed_dir),
-        learning_plane_enabled=os.environ.get("LEARNING_PLANE_ENABLED", "0").strip() in {"1", "true", "yes", "on"},
+        learning_plane_enabled=env_values.get("LEARNING_PLANE_ENABLED", "0").strip() in {"1", "true", "yes", "on"},
         skills_dir=str(_resolved_paths.skills_dir),  # B3: tracked Skill follows CODE_ROOT
         docs_dir=str(_resolved_paths.docs_dir),
-        archive_max_entries=_env_int("ARCHIVE_MAX_ENTRIES", 0),
-        archive_ttl_days=_env_int("ARCHIVE_TTL_DAYS", 0),
-        archive_segment_bytes=_env_int(
+        archive_max_entries=env_int("ARCHIVE_MAX_ENTRIES", 0),
+        archive_ttl_days=env_int("ARCHIVE_TTL_DAYS", 0),
+        archive_segment_bytes=env_int(
             "ARCHIVE_SEGMENT_BYTES", 104857600
         ),  # T3b: 默认 100MB（0=不分片）
-        audit_ttl_days=_env_int("AUDIT_TTL_DAYS", 30),
-        memory_max_entries=_env_int("MEMORY_MAX_ENTRIES", 0),
+        audit_ttl_days=env_int("AUDIT_TTL_DAYS", 30),
+        memory_max_entries=env_int("MEMORY_MAX_ENTRIES", 0),
         # P1（design.md §3.6，非法值回退默认）
-        summary_mode=os.environ.get("SUMMARY_MODE", "off").strip().lower() or "off",
-        summary_timeout_s=float(_env_int("SUMMARY_TIMEOUT_S", 30)),
-        summary_max_input_chars=_env_int("SUMMARY_MAX_INPUT_CHARS", 100000),
-        summary_model=os.environ.get("SUMMARY_MODEL", "").strip(),
-        embedding_provider=os.environ.get("EMBEDDING_PROVIDER", "none").strip().lower() or "none",
-        embedding_base_url=os.environ.get("EMBEDDING_BASE_URL", "").strip(),
-        embedding_model=os.environ.get("EMBEDDING_MODEL", "").strip(),
-        embedding_api_key=os.environ.get("EMBEDDING_API_KEY", "").strip(),
-        embedding_dim=_env_int("EMBEDDING_DIM", 128),
-        retrieve_timeout_s=float(_env_int("RETRIEVE_TIMEOUT_S", 1)),
-        retrieve_semantic_top_k=_env_int("RETRIEVE_SEMANTIC_TOP_K", 20),
-        extract_enabled=_env_bool("EXTRACT_ENABLED", True),
-        extract_interval_msgs=_env_int("EXTRACT_INTERVAL_MSGS", 20),
-        precheck_enabled=_env_bool("PRECHECK_ENABLED", False),  # EVO-20260822-8b7a41c0 env 化持久化
-        fix_loop_enabled=_env_bool("FIX_LOOP_ENABLED", False),
-        reasoning_tail=_env_int("REASONING_TAIL", 0),  # R8.21: unknown-provider fail-safe fallback
-        extract_cooldown_s=float(_env_int("EXTRACT_COOLDOWN_S", 600)),
-        extract_max_input_chars=_env_int("EXTRACT_MAX_INPUT_CHARS", 100000),
-        extract_timeout_s=float(_env_int("EXTRACT_TIMEOUT_S", 60)),
-        validate_semantic=_env_bool("VALIDATE_SEMANTIC", False),
-        validate_semantic_threshold=float(_env_int("VALIDATE_SEMANTIC_THRESHOLD", 0)) or 0.75,
+        summary_mode=env_values.get("SUMMARY_MODE", "off").strip().lower() or "off",
+        summary_timeout_s=float(env_int("SUMMARY_TIMEOUT_S", 30)),
+        summary_max_input_chars=env_int("SUMMARY_MAX_INPUT_CHARS", 100000),
+        summary_model=env_values.get("SUMMARY_MODEL", "").strip(),
+        embedding_provider=env_values.get("EMBEDDING_PROVIDER", "none").strip().lower() or "none",
+        embedding_base_url=env_values.get("EMBEDDING_BASE_URL", "").strip(),
+        embedding_model=env_values.get("EMBEDDING_MODEL", "").strip(),
+        embedding_api_key=env_values.get("EMBEDDING_API_KEY", "").strip(),
+        embedding_dim=env_int("EMBEDDING_DIM", 128),
+        retrieve_timeout_s=float(env_int("RETRIEVE_TIMEOUT_S", 1)),
+        retrieve_semantic_top_k=env_int("RETRIEVE_SEMANTIC_TOP_K", 20),
+        extract_enabled=env_bool("EXTRACT_ENABLED", True),
+        extract_interval_msgs=env_int("EXTRACT_INTERVAL_MSGS", 20),
+        precheck_enabled=env_bool("PRECHECK_ENABLED", False),  # EVO-20260822-8b7a41c0 env 化持久化
+        fix_loop_enabled=env_bool("FIX_LOOP_ENABLED", False),
+        reasoning_tail=env_int("REASONING_TAIL", 0),  # R8.21: unknown-provider fail-safe fallback
+        extract_cooldown_s=float(env_int("EXTRACT_COOLDOWN_S", 600)),
+        extract_max_input_chars=env_int("EXTRACT_MAX_INPUT_CHARS", 100000),
+        extract_timeout_s=float(env_int("EXTRACT_TIMEOUT_S", 60)),
+        validate_semantic=env_bool("VALIDATE_SEMANTIC", False),
+        validate_semantic_threshold=float(env_int("VALIDATE_SEMANTIC_THRESHOLD", 0)) or 0.75,
         # M12 AI 自主闭环（§9，默认值保零回归）
-        selfheal_max_attempts=_env_int("SELFHEAL_MAX_ATTEMPTS", 3),
-        selfheal_max_per_round=_env_int("SELFHEAL_MAX_PER_ROUND", 6),
-        param_adjust_per_round=_env_int("PARAM_ADJUST_PER_ROUND", 3),
-        evolve_enabled=_env_bool("EVOLVE_ENABLED", True),
-        evolve_local_exec=_env_evolve_level("EVOLVE_LOCAL_EXEC"),
-        evolve_exec_whitelist=os.environ.get("EVOLVE_EXEC_WHITELIST", "").strip(),
-        self_eval_enabled=_env_bool("SELF_EVAL_ENABLED", True),
-        self_eval_min_samples=_env_int("SELF_EVAL_MIN_SAMPLES", 5),
-        self_eval_span=_env_int("SELF_EVAL_SPAN", 50),
-        method_reflection_mode=_env_method_reflection_mode("METHOD_REFLECTION_MODE"),
-        method_reflection_min_rounds=_env_int("METHOD_REFLECTION_MIN_ROUNDS", 6),
-        method_reflection_min_tools=_env_int("METHOD_REFLECTION_MIN_TOOLS", 6),
-        method_reflection_min_failures=_env_int("METHOD_REFLECTION_MIN_FAILURES", 2),
-        method_reflection_timeout_s=float(_env_int("METHOD_REFLECTION_TIMEOUT_S", 120)),
+        selfheal_max_attempts=env_int("SELFHEAL_MAX_ATTEMPTS", 3),
+        selfheal_max_per_round=env_int("SELFHEAL_MAX_PER_ROUND", 6),
+        param_adjust_per_round=env_int("PARAM_ADJUST_PER_ROUND", 3),
+        evolve_enabled=env_bool("EVOLVE_ENABLED", True),
+        evolve_local_exec=env_one(_env_evolve_level, "EVOLVE_LOCAL_EXEC"),
+        evolve_exec_whitelist=env_values.get("EVOLVE_EXEC_WHITELIST", "").strip(),
+        self_eval_enabled=env_bool("SELF_EVAL_ENABLED", True),
+        self_eval_min_samples=env_int("SELF_EVAL_MIN_SAMPLES", 5),
+        self_eval_span=env_int("SELF_EVAL_SPAN", 50),
+        method_reflection_mode=env_one(_env_method_reflection_mode, "METHOD_REFLECTION_MODE"),
+        method_reflection_min_rounds=env_int("METHOD_REFLECTION_MIN_ROUNDS", 6),
+        method_reflection_min_tools=env_int("METHOD_REFLECTION_MIN_TOOLS", 6),
+        method_reflection_min_failures=env_int("METHOD_REFLECTION_MIN_FAILURES", 2),
+        method_reflection_timeout_s=float(env_int("METHOD_REFLECTION_TIMEOUT_S", 120)),
         # M47（design §5.1）: MODEL_PROVIDERS 注册表 JSON, 解析由 llm.providers.load_registry 完成
-        model_providers_raw=os.environ.get("MODEL_PROVIDERS", "").strip(),
+        model_providers_raw=env_values.get("MODEL_PROVIDERS", "").strip(),
         # M49（design §5.4）: MODEL_FALLBACKS 降级链原始值, 解析由 llm.pool 完成
-        model_fallbacks_raw=os.environ.get("MODEL_FALLBACKS", "").strip(),
+        model_fallbacks_raw=env_values.get("MODEL_FALLBACKS", "").strip(),
         # CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）
-        # 凭证类字段仅从 os.environ 读取，不落盘不日志（DFX-SEC-02）
+        # 凭证类字段仅从注入的 secret/env mapping 读取，不落盘不日志（DFX-SEC-02）
         codearts=CodeArtsSettings(
-            enabled=_env_bool("CODEARTS_ENABLED", False),
-            endpoint=os.environ.get("CODEARTS_ENDPOINT", "").strip(),
-            region=os.environ.get("CODEARTS_REGION", "cn-north-4").strip() or "cn-north-4",
-            project_id=os.environ.get("CODEARTS_PROJECT_ID", "").strip(),
-            ak=os.environ.get("CODEARTS_AK", "").strip(),
-            sk=os.environ.get("CODEARTS_SK", "").strip(),
-            iam_token=os.environ.get("CODEARTS_IAM_TOKEN", "").strip(),
-            api_version=os.environ.get("CODEARTS_API_VERSION", "v1").strip() or "v1",
-            connect_timeout_s=_env_int("CODEARTS_CONNECT_TIMEOUT_S", 10),
-            call_timeout_s=_env_int("CODEARTS_CALL_TIMEOUT_S", 30),
-            exec_timeout_s=_env_int("CODEARTS_EXEC_TIMEOUT_S", 1800),
-            poll_interval_s=_env_int("CODEARTS_POLL_INTERVAL_S", 5),
-            max_concurrent=_env_int("CODEARTS_MAX_CONCURRENT", 10),
-            max_retries=_env_int("CODEARTS_MAX_RETRIES", 3),
-            result_max_bytes=_env_int("CODEARTS_RESULT_MAX_BYTES", 1048576),
-            webhook_enabled=_env_bool("CODEARTS_WEBHOOK_ENABLED", False),
-            webhook_secret=os.environ.get("CODEARTS_WEBHOOK_SECRET", "").strip(),
-            approval_required=_env_bool("CODEARTS_APPROVAL_REQUIRED", True),
+            enabled=env_bool("CODEARTS_ENABLED", False),
+            endpoint=env_values.get("CODEARTS_ENDPOINT", "").strip(),
+            region=env_values.get("CODEARTS_REGION", "cn-north-4").strip() or "cn-north-4",
+            project_id=env_values.get("CODEARTS_PROJECT_ID", "").strip(),
+            ak=env_values.get("CODEARTS_AK", "").strip(),
+            sk=env_values.get("CODEARTS_SK", "").strip(),
+            iam_token=env_values.get("CODEARTS_IAM_TOKEN", "").strip(),
+            api_version=env_values.get("CODEARTS_API_VERSION", "v1").strip() or "v1",
+            connect_timeout_s=env_int("CODEARTS_CONNECT_TIMEOUT_S", 10),
+            call_timeout_s=env_int("CODEARTS_CALL_TIMEOUT_S", 30),
+            exec_timeout_s=env_int("CODEARTS_EXEC_TIMEOUT_S", 1800),
+            poll_interval_s=env_int("CODEARTS_POLL_INTERVAL_S", 5),
+            max_concurrent=env_int("CODEARTS_MAX_CONCURRENT", 10),
+            max_retries=env_int("CODEARTS_MAX_RETRIES", 3),
+            result_max_bytes=env_int("CODEARTS_RESULT_MAX_BYTES", 1048576),
+            webhook_enabled=env_bool("CODEARTS_WEBHOOK_ENABLED", False),
+            webhook_secret=env_values.get("CODEARTS_WEBHOOK_SECRET", "").strip(),
+            approval_required=env_bool("CODEARTS_APPROVAL_REQUIRED", True),
         ),
         invalid_fallbacks=tuple(_fallback_notes),
         auto_adaptive_keys=frozenset(_auto_adaptive_keys),
@@ -759,9 +774,9 @@ def load_settings() -> Settings:
 
 
 # CR-R1: COG_RUNTIME_* 三态解析（origin/main 移植；适配 ours _raw_env/_note_invalid_fallback）
-def _env_cog_mode(name: str) -> str:
+def _env_cog_mode(name: str, env: Mapping[str, str] | None = None) -> str:
     """COG_RUNTIME_MODE 三态解析: off/shadow/enforce；非法回退 shadow（CR-R1 tasks 2.1）。"""
-    raw = _raw_env(name).strip().lower()
+    raw = _raw_env(name, env).strip().lower()
     if raw in {"off", "shadow", "enforce"}:
         return raw
     if raw:
@@ -769,9 +784,9 @@ def _env_cog_mode(name: str) -> str:
     return "shadow"
 
 
-def _env_cog_anchor_mode(name: str) -> str:
+def _env_cog_anchor_mode(name: str, env: Mapping[str, str] | None = None) -> str:
     """COG_RUNTIME_ANCHOR_MODE 三态解析: semantic/anchor/auto；非法回退 auto（design 2.1.3.4）。"""
-    raw = _raw_env(name).strip().lower()
+    raw = _raw_env(name, env).strip().lower()
     if raw in {"semantic", "anchor", "auto"}:
         return raw
     if raw:
@@ -779,9 +794,9 @@ def _env_cog_anchor_mode(name: str) -> str:
     return "auto"
 
 
-def _env_cog_state_version(name: str) -> str:
+def _env_cog_state_version(name: str, env: Mapping[str, str] | None = None) -> str:
     """COG_RUNTIME_STATE_VERSION 分级解析: v0.1/v0.2；非法回退 v0.1（保守起步）。"""
-    raw = _raw_env(name).strip().lower()
+    raw = _raw_env(name, env).strip().lower()
     if raw in {"v0.1", "v0.2"}:
         return raw
     if raw:
