@@ -67,6 +67,9 @@ class MemoryEntry:
     version_history: list[dict] = field(default_factory=list)  # 旧版沉淀: [{"version","content","updated_at"}]
     # P3: results computed from an older observed store state remain durable facts, but
     # never retake the current value after a newer version has been committed.
+    # 兼容性（2026-09-15 事故回归）: 旧 reader 遇到新 schema 的该未知字段曾触发
+    # MemoryEntry(**e) TypeError → _load 误判 corruption → 索引清空。此处仅补字段，
+    # 保证旧代码可无损读写新格式 index；语义升级随 main 线 cherry-pick。
     observation_history: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
