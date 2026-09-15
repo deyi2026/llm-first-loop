@@ -220,9 +220,21 @@ def _extract_toutiao_info(raw: str) -> tuple[str, str] | None:
     data = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data, dict):
         return None
+    source = data
     content = data.get("content")
     if not isinstance(content, str) or not content.strip():
-        return None
+        # Micro-post (微头条) info/v2 production shape stores the readable body
+        # under data.thread.thread_base rather than the ordinary article fields.
+        # This is a structural projection only: the site adapter/URL identity and
+        # network safety boundary remain unchanged.
+        thread = data.get("thread")
+        thread_base = thread.get("thread_base") if isinstance(thread, dict) else None
+        if not isinstance(thread_base, dict):
+            return None
+        content = thread_base.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return None
+        source = thread_base
     text = re.sub(r"<br\s*/?>", "\n", content, flags=re.I)
     text = re.sub(r"</p\s*>", "\n\n", text, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
@@ -231,7 +243,15 @@ def _extract_toutiao_info(raw: str) -> tuple[str, str] | None:
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     if len(text) < 20:
         return None
-    title = str(data.get("title") or "").strip()
+    title = str(source.get("title") or "").strip()
+    # Micro-post payloads may mechanically duplicate the entire body into title.
+    # Compare only after the same whitespace/entity normalization already applied
+    # to content; this is byte-shape deduplication, not semantic shortening.
+    title_cmp = _html.unescape(title)
+    title_cmp = re.sub(r"[ \t]+\n", "\n", title_cmp)
+    title_cmp = re.sub(r"\n{3,}", "\n\n", title_cmp).strip()
+    if title_cmp == text:
+        title = ""
     return (title, text)
 
 
@@ -724,7 +744,8 @@ class WebFetchTool:
             method_out, raw = fallback
             method, title, text = _extract_content(raw, url)
 
-        header = f"[title] {title}\n[source] {url}\n[extract] {method_out}\n" if title else ""
+        header = f"[title] {title}\n" if title else ""
+        header += f"[source] {url}\n[extract] {method_out}\n"
         if curl_used:
             header += f"[fetch] curl 回退（{httpx_note}）\n"
         elif fast_fetch_note:
