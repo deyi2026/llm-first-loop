@@ -465,3 +465,50 @@ Step 1 is complete when:
 - runtime/scorer behavior remains byte-for-byte untouched by this docs-only change.
 
 The next phase, if separately continued, is Step 2/3: freeze the field list/classification and build a deterministic **read-only** matrix that proves the mapping can be consumed without semantic drift.
+
+---
+
+## 12. Step 2/3 frozen contract and deterministic qualification
+
+Step 2/3 freezes the Step 1 field/classification map without adding runtime authority.
+
+Frozen artifacts:
+
+- machine contract: `docs/analysis/AGENT-QUALIFICATION-ENVELOPE-v0.1.json`;
+- machine contract SHA256: `041e32c4501812fb2c10b1d3d95b7eadf659e0143d8e2cd43d64c8d7228ef9d1`;
+- read-only validator: `scripts/qualification/agent_qualification_envelope_v0_1.py`;
+- deterministic TDD: `tests/unit/test_agent_qualification_envelope_v0_1.py`;
+- frozen source/design revision: `b753d632fccabd5b742835162a9074b431b8ba94`.
+
+The validator is an explicitly invoked qualification utility, not a runtime hook, CI admission rule, or
+submission gate. Its non-zero exit only means the frozen evidence-view contract/provenance no longer
+matches the checkout being inspected. It does not decide whether a Goal, Agent, deployment, PR, or
+release should proceed.
+
+The machine contract freezes all 35 Step 1 fields and the four classifications exactly. Stable source
+text/symbol anchors are the machine invariant; `file:line` ranges remain human report metadata. The
+contract also freezes these non-authority invariants:
+
+- `blocking=false`;
+- `aggregate_verdict=not_evaluated`;
+- missing source state remains `unknown` and cannot be silently coerced to pass/zero/false;
+- substantive field owner cannot be `envelope`;
+- DIAGNOSTIC fields cannot carry a universal threshold;
+- PREREGISTERED fields carry explicit policy/protocol provenance;
+- SCORE fields carry explicit scorer provenance;
+- runtime identity facts reuse existing Runtime Manifest / resolver / build / receipt authorities;
+- a future blocking Envelope requires a fresh A.5 G1-G4 review rather than inheriting authority from
+  this read-only contract.
+
+Historical provenance remains explicit. In particular, the WebUI artifact requirement was discovered
+when an exact-code linked-worktree deployment lacked ignored `webui/dist`. The v0.1 contract freezes
+that requirement **for future qualification after the discovery**; it does not rewrite the first 404 as
+if the WebUI gate had been pre-registered beforehand. The live Context Integrity canary, by contrast,
+points back to the previously established P7 behavior protocol rather than inventing an easier post-hoc
+smoke task.
+
+Step 3 deterministic tests cover both valid and deliberately invalid contract variants: Envelope-owned
+facts, DIAGNOSTIC threshold injection, missing policy/scorer provenance, invalid classification, global
+aggregate verdict, `blocking=true`, missing source, and source-anchor drift. These checks validate only
+contract/provenance mechanics. They do not execute a model, touch live runtime state, or recompute any
+semantic scorer output.
