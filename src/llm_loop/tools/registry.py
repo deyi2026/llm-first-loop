@@ -269,6 +269,10 @@ class ToolRegistry:
         self._evidence_source_resolver: Any | None = None
         self._evidence_manifest_provider: EvidenceManifestProvider | None = None
         self._evidence_history_capture_hook: EvidenceHistoryCaptureHook | None = None
+        # R05/T05: production may explicitly allow exact read_file ranges up to the
+        # real tool hard cap. None deliberately preserves the historical generic 5K
+        # Evidence projection used by frozen/manual qualification harnesses.
+        self._exact_read_projection_budget_chars: int | None = None
         self.precheck_layer = precheck_layer  # task_quality 路径 A（None=关闭零回归）
         self._archive_store = archive_store  # ArchiveStore（T22 超长结果另存）
         # EVO-20260813-9ced1f4c: 工具执行瀑布（默认 None = 零回归；set_pipeline 显式装配）
@@ -365,8 +369,32 @@ class ToolRegistry:
             return None
         return self._evidence_history_capture_hook(session_id, message, msg_seq, archive_id)
 
-    def _evidence_projection_budget(self) -> int:
-        """Bound one evidence projection page; full bytes remain retrievable by stable ref."""
+    def set_exact_read_projection_budget(self, budget_chars: int | None) -> None:
+        """Configure the exact read_file projection budget for production assembly.
+
+        ``None`` keeps the historical generic Evidence budget.  A positive explicit
+        value lets the factory bind exact file reads to the runtime's real output cap
+        without changing frozen/manual Evidence harness semantics.
+        """
+        if budget_chars is not None and budget_chars <= 0:
+            raise ValueError("exact read projection budget must be > 0")
+        self._exact_read_projection_budget_chars = budget_chars
+
+    def _evidence_projection_budget(self, tool_name: str | None = None) -> int:
+        """Return the model-visible Evidence projection budget for one tool result.
+
+        ``read_file`` already has an explicit source-range contract: the selected range is
+        the requested observation and its provider-facing description promises that range
+        verbatim until the registry's real per-result hard cap. Applying the generic 5K
+        Evidence excerpt budget after that read can hide middle lines the model explicitly
+        requested. Keep capture-before-projection, but let read_file use the existing hard
+        cap. Other tools retain the bounded 5K Evidence projection.
+        """
+        if tool_name == "read_file" and self._exact_read_projection_budget_chars is not None:
+            return max(
+                128,
+                min(self.max_output_chars, self._exact_read_projection_budget_chars),
+            )
         return max(128, min(self.max_output_chars, 5000))
 
     def set_pipeline(self, pipeline: Any) -> None:
@@ -1381,7 +1409,7 @@ class ToolRegistry:
             result = self._evidence_enforcer.apply(
                 call,
                 result,
-                budget_chars=self._evidence_projection_budget(),
+                budget_chars=self._evidence_projection_budget(call.name),
                 temperature="hot",
             )
             if result.tool_call_id != call.id:

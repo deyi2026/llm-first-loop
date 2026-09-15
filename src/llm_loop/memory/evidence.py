@@ -961,6 +961,95 @@ class ProjectionEngine:
 
     _MARKER = "\n…[evidence excerpt; exact omitted content via read_evidence]…\n"
 
+    def project_contiguous_prefix(
+        self,
+        content: str,
+        *,
+        evidence_ref: EvidenceRef,
+        source_label: str,
+        coverage_label: str,
+        budget_chars: int,
+        source_version_token: str | None = None,
+        temperature: str = "hot",
+    ) -> ProjectionResult:
+        """Project one exact prefix page with a mechanical continuation cursor.
+
+        This is used for source reads whose contract is an exact requested range.  Unlike
+        the generic head/tail excerpt, every visible source byte belongs to one contiguous
+        Evidence hydration range, so ``next_start`` is mechanically usable without the
+        model guessing which middle bytes were omitted.
+        """
+        if budget_chars < 128:
+            raise ValueError("projection budget_chars must be >= 128")
+        original_chars = len(content)
+        if original_chars <= budget_chars:
+            return self.project(
+                content,
+                evidence_ref=evidence_ref,
+                source_label=source_label,
+                coverage_label=coverage_label,
+                budget_chars=budget_chars,
+                temperature=temperature,
+            )
+
+        version = " ".join(str(source_version_token or "unknown").split())
+
+        def marker(visible_count: int) -> str:
+            return (
+                "\nresult_truncated=true omitted=true "
+                f"recovery_ref={evidence_ref.ref} recovery_range_type=text_char "
+                f"visible_start=0 visible_count={visible_count} "
+                f"omitted_start={visible_count} omitted_end={original_chars} "
+                f"next_start={visible_count} source_version={version}"
+            )
+
+        # The cursor values change marker width by only a few digits. Iterate to a fixed
+        # point so the retained prefix plus its factual continuation line stays <= budget.
+        visible_count = max(1, budget_chars - len(marker(0)))
+        for _ in range(8):
+            next_count = max(1, budget_chars - len(marker(visible_count)))
+            if next_count == visible_count:
+                break
+            visible_count = next_count
+        marker_text = marker(visible_count)
+        if len(marker_text) >= budget_chars:
+            # Extremely tiny hard caps cannot carry the complete cursor contract. Preserve
+            # the pre-existing bounded projection rather than emitting a misleading cursor.
+            return self.project(
+                content,
+                evidence_ref=evidence_ref,
+                source_label=source_label,
+                coverage_label=coverage_label,
+                budget_chars=budget_chars,
+                temperature=temperature,
+            )
+        visible_count = min(visible_count, original_chars)
+        projected = content[:visible_count] + marker(visible_count)
+        if len(projected) > budget_chars:
+            overflow = len(projected) - budget_chars
+            visible_count = max(1, visible_count - overflow)
+            projected = content[:visible_count] + marker(visible_count)
+
+        capsule = self.render_capsule(
+            evidence_ref=evidence_ref,
+            source_label=source_label,
+            coverage_label=coverage_label,
+            representation=EvidenceRepresentation.EXCERPT,
+            projection_complete=False,
+        )
+        return ProjectionResult(
+            content=projected,
+            metadata=ProjectionMetadata(
+                evidence_ref=evidence_ref,
+                representation=EvidenceRepresentation.EXCERPT,
+                projection_complete=False,
+                original_chars=original_chars,
+                visible_chars=len(projected),
+                temperature=temperature,
+            ),
+            model_capsule=capsule,
+        )
+
     def project(
         self,
         content: str,

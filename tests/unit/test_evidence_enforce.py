@@ -5,7 +5,9 @@ from datetime import UTC, datetime
 import pytest
 
 from llm_loop.config import Settings
+from llm_loop.core.episode_history import _tool_evidence_receipt
 from llm_loop.core.message import RecoverabilityStatus, ToolCall, ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_workspace_root
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.evidence import (
     BlobStore,
@@ -20,6 +22,8 @@ from llm_loop.memory.evidence import (
 from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.evidence_enforce import EvidenceEnforcer
 from llm_loop.tools.registry import ToolRegistry
+from llm_loop.workspace.artifacts import WorkspaceArtifactStore
+from llm_loop.workspace.file_service import FileService
 
 
 def _owner() -> OwnerScope:
@@ -71,6 +75,7 @@ def test_enforce_read_file_captures_before_projection_and_hydrates_hidden_middle
 
     blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
     registry = ToolRegistry(max_output_chars=20000)
+    registry.set_exact_read_projection_budget(20000)
     registry.register(ReadFileTool())
     registry.set_evidence_enforcer(enforcer)
 
@@ -81,9 +86,9 @@ def test_enforce_read_file_captures_before_projection_and_hydrates_hidden_middle
     assert result.status is ToolResultStatus.SUCCESS
     assert result.recoverability_status is RecoverabilityStatus.RECORDED
     assert result.evidence_ref is not None
-    assert result.evidence_representation == "excerpt"
-    assert result.evidence_projection_complete is False
-    assert marker not in result.content
+    assert result.evidence_representation == "full"
+    assert result.evidence_projection_complete is True
+    assert marker in result.content
     assert "[输出已截断]" not in result.content
     assert "search_archive" not in result.content
     assert "[evidence]" in result.content
@@ -99,6 +104,118 @@ def test_enforce_read_file_captures_before_projection_and_hydrates_hidden_middle
     assert marker in hydrated.content
     assert hydrated.content.startswith(f"[read_file] {path}")
     assert ledger.count(_owner()) == 1
+
+
+def test_enforce_read_file_still_excerpts_above_real_registry_hard_cap(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "off")
+    path = tmp_path / "beyond-hard-cap.txt"
+    middle = "MIDDLE-BEYOND-HARD-CAP"
+    path.write_text("A" * 8000 + middle + "Z" * 8000, encoding="utf-8")
+
+    blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=400)
+    registry = ToolRegistry(max_output_chars=5000)
+    registry.set_exact_read_projection_budget(5000)
+    registry.register(ReadFileTool())
+    registry.set_evidence_enforcer(enforcer)
+
+    result = registry.execute(
+        ToolCall(id="hard-cap-read", name="read_file", arguments={"path": str(path)})
+    )
+
+    assert result.status is ToolResultStatus.SUCCESS
+    assert result.evidence_representation == "excerpt"
+    assert result.evidence_projection_complete is False
+    assert middle not in result.content
+    assert "result_truncated=true omitted=true recovery_ref=evidence://" in result.content
+    fact_line = next(
+        line for line in result.content.splitlines() if line.startswith("result_truncated=")
+    )
+    facts = dict(field.split("=", 1) for field in fact_line.split())
+    assert facts["recovery_range_type"] == "text_char"
+    assert facts["visible_start"] == "0"
+    assert facts["omitted_start"] == facts["visible_count"] == facts["next_start"]
+    assert int(facts["omitted_end"]) > int(facts["omitted_start"])
+    assert facts["source_version"].startswith("stat:")
+
+    visible_prefix = result.content.split("\nresult_truncated=", 1)[0]
+    next_start = int(facts["next_start"])
+    full = EvidenceHydration(blobs, ledger, max_limit=30000).read(
+        owner=_owner(),
+        evidence_ref=EvidenceRef(result.evidence_ref or ""),
+        range_type=RangeType.TEXT_CHAR,
+        start=0,
+        limit=30000,
+    ).content
+    suffix = EvidenceHydration(blobs, ledger, max_limit=30000).read(
+        owner=_owner(),
+        evidence_ref=EvidenceRef(result.evidence_ref or ""),
+        range_type=RangeType.TEXT_CHAR,
+        start=next_start,
+        limit=30000 - next_start,
+    ).content
+    assert visible_prefix + suffix == full
+    assert result.capability_requirements == ("read_evidence",)
+
+
+def test_snapshot_preserves_full_baseline_and_delivers_requested_middle_range(tmp_path, monkeypatch):
+    """R05/T05: snapshot durability and model-visible exact range are separate contracts."""
+    monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "off")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    path = workspace / "inventory.json"
+    rows = [f'  "row_{i:03d}": "' + ("x" * 32) + '",' for i in range(220)]
+    rows[105] = '  "code_fingerprints": {"runner": "abc", "tasks": "def"},'
+    rows[106] = '  "git": {"HEAD": "candidate"},'
+    rows[107] = '  "adjudication": "data-family-scoped",'
+    full_text = "{\n" + "\n".join(rows) + "\n}\n"
+    path.write_text(full_text, encoding="utf-8")
+
+    store = WorkspaceArtifactStore(tmp_path / "artifact-data")
+    service = FileService(artifact_store=store, lock_root=tmp_path / "locks")
+    _blobs, _ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=400)
+    registry = ToolRegistry(max_output_chars=20000)
+    registry.set_exact_read_projection_budget(20000)
+    registry.register(ReadFileTool(artifact_store=store, file_service=service))
+    registry.set_evidence_enforcer(enforcer)
+
+    token = current_workspace_root.set(str(workspace))
+    try:
+        result = registry.execute(
+            ToolCall(
+                id="snapshot-middle",
+                name="read_file",
+                arguments={"path": "inventory.json", "snapshot": True, "offset": 100, "limit": 20},
+            )
+        )
+    finally:
+        current_workspace_root.reset(token)
+
+    assert result.status is ToolResultStatus.SUCCESS
+    assert result.evidence_representation == "full"
+    assert result.evidence_projection_complete is True
+    assert "code_fingerprints" in result.content
+    assert '"git"' in result.content
+    assert "adjudication" in result.content
+    assert len(result.artifact_facts) == 1
+    snapshot_ref = str(result.artifact_facts[0]["artifact_ref"])
+    assert store.read_bytes(snapshot_ref, workspace_scope=str(workspace)) == full_text.encode()
+
+    # R05/T05 recovery object: once the full tool body is folded out of the active
+    # working set, the thin receipt still identifies the exact file/snapshot/Evidence
+    # object and the acquired line range. Recovery therefore starts from this work
+    # object instead of replaying an old execute_command receipt to rediscover a path.
+    receipt = _tool_evidence_receipt(result.to_message())
+    assert receipt is not None
+    assert f"evidence_ref={result.evidence_ref}" in receipt.content
+    assert f"artifact_ref={snapshot_ref}" in receipt.content
+    assert "artifact_path=inventory.json" in receipt.content
+    assert f"artifact_sha256={result.artifact_facts[0]['sha256']}" in receipt.content
+    assert "coverage=" in receipt.content
+    assert "source_line" in receipt.content
+    assert "100" in receipt.content and "120" in receipt.content
+    assert "recovery_tool=read_evidence" in receipt.content
 
 
 def test_same_tool_call_bytes_across_run_generations_keep_distinct_evidence_origin(tmp_path):
@@ -275,7 +392,7 @@ def test_off_mode_large_read_file_stays_exact_below_hard_cap(tmp_path, monkeypat
     assert not sidecar_dir.exists() or list(sidecar_dir.iterdir()) == []
 
 
-def test_enforce_full_true_is_still_bounded_and_recoverable(tmp_path, monkeypatch):
+def test_enforce_full_true_uses_real_registry_hard_cap(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "legacy-data"))
     path = tmp_path / "full-large.txt"
     marker = "FULL_MODE_HIDDEN_MIDDLE"
@@ -283,6 +400,7 @@ def test_enforce_full_true_is_still_bounded_and_recoverable(tmp_path, monkeypatc
 
     blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=650)
     registry = ToolRegistry(max_output_chars=20000)
+    registry.set_exact_read_projection_budget(20000)
     registry.register(ReadFileTool())
     registry.set_evidence_enforcer(enforcer)
     result = registry.execute(
@@ -293,9 +411,10 @@ def test_enforce_full_true_is_still_bounded_and_recoverable(tmp_path, monkeypatc
         )
     )
 
-    assert result.evidence_representation == "excerpt"
-    assert marker not in result.content
-    assert len(result.content) < 5500  # provider-neutral one-shot evidence page budget is 5K
+    assert result.evidence_representation == "full"
+    assert result.evidence_projection_complete is True
+    assert marker in result.content
+    assert len(result.content) > 10000
     hydrated = EvidenceHydration(blobs, ledger, max_limit=20000).read(
         owner=_owner(),
         evidence_ref=EvidenceRef(result.evidence_ref or ""),
