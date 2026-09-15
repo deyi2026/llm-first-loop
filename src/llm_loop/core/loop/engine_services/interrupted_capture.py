@@ -14,6 +14,8 @@ import json
 import time
 from typing import Any
 
+from llm_loop.core.loop.engine_services.nonconvergence_guard import NonconvergenceGuard
+
 
 def llm_error_digest(exc: BaseException) -> str:
     """LLMError 摘要（状态码/provider/消息头，≤200 chars）.
@@ -54,6 +56,9 @@ class InterruptedCapture:
         "reasoning_parts",
         "cancelled",
         "_fired",
+        "_nc_guard",
+        "fuse_tripped",
+        "fuse_evidence",
     )
 
     def __init__(
@@ -86,6 +91,11 @@ class InterruptedCapture:
         self.reasoning_parts: list[str] = []
         self.cancelled = False  # 吸收原局部 _cancelled_during_llm（取消归因消费点同名语义）
         self._fired = False
+        # EVO-20260915-789eb9d5：纯机械非收敛守卫（窗口=checkpoint 间隔；熔断只
+        # 置位 fuse_tripped，终止动作由 engine 流循环执行）
+        self._nc_guard = NonconvergenceGuard.from_env()
+        self.fuse_tripped = False
+        self.fuse_evidence: dict[str, Any] = {}
 
     def mark_provider_send(self) -> None:
         """Mark the primary provider-call boundary; timing is telemetry only."""
@@ -201,6 +211,9 @@ class InterruptedCapture:
             or total_chars - self._last_checkpoint_chars >= 1024
             or now - self._last_checkpoint_at >= 1.0
         ):
+            # EVO-20260915-789eb9d5：窗口观测在 checkpoint 写入前执行（守卫只置位，
+            # 终止动作由 engine 流循环在 on_delta 返回后执行）
+            self._observe_nonconvergence_window()
             try:
                 self._engine._on_llm_partial_checkpoint(
                     self._sess,
@@ -216,6 +229,27 @@ class InterruptedCapture:
                 self._last_checkpoint_at = now
             except Exception:  # noqa: BLE001 — checkpoint failure must not break streaming
                 pass
+
+    def _observe_nonconvergence_window(self) -> None:
+        """EVO-20260915-789eb9d5：以 checkpoint 边界做纯机械非收敛窗口观测（fail-safe）."""
+        if self._nc_guard is None or self.fuse_tripped:
+            return
+        persist_seq = -1  # 不可测哨兵：守卫侧按"条件②不满足"保守处理
+        try:
+            journal = self._engine._tool_execution_journal()
+            count = int(getattr(journal, "receipt_commit_count", -1))
+            persist_seq = count if count >= 0 else -1
+        except Exception:  # noqa: BLE001 — 探针失败按不可测处理（保守不熔断）
+            persist_seq = -1
+        self._nc_guard.observe_checkpoint(
+            reasoning_chars=self._reasoning_chars,
+            reasoning_full="".join(self.reasoning_parts),
+            tool_draft_count=len(self._tool_call_drafts),
+            persist_seq=persist_seq,
+        )
+        if self._nc_guard.tripped:
+            self.fuse_tripped = True
+            self.fuse_evidence = dict(getattr(self._nc_guard, "evidence", None) or {})
 
     def fire(self, sess: Any, reason: str, round_no: int, exc: BaseException | None = None) -> None:
         """中断半截产物限量落盘（防重：同一 run 轮至多一行截断标注）."""

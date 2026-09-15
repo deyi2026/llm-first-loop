@@ -158,10 +158,17 @@ class ToolExecutionJournal:
         self._event_append_override = event_append
         self._message_event_append_override = message_event_append
         self._receipt_committed_hook = receipt_committed_hook
+        # EVO-20260915-789eb9d5：receipt 提交单调计数（非收敛守卫持久写入探针）
+        self._receipt_commit_count = 0
 
     @property
     def enabled(self) -> bool:
         return self.event_store is not None and bool(getattr(self.event_store, "enabled", False))
+
+    @property
+    def receipt_commit_count(self) -> int:
+        """已落盘 receipt 提交数（单调递增；EVO-20260915-789eb9d5 守卫探针）."""
+        return self._receipt_commit_count
 
     def _append_event(self, session_id: str, event_type: str, payload: dict) -> Any | None:
         if self._event_append_override is not None:
@@ -681,6 +688,9 @@ class ToolExecutionJournal:
         # With WAL enabled, keep the exact sidecar until the commit fact itself is
         # durable. A later repair can settle from the already-durable tool receipt.
         committed = bool(self.enabled and event is not None)
+        if committed:
+            # EVO-20260915-789eb9d5：单调推进"持久写入"探针计数（守卫熔断条件②）
+            self._receipt_commit_count += 1
         if not self.enabled or event is not None:
             with contextlib.suppress(OSError, ValueError):
                 self.result_path(session_id, execution_id).unlink(missing_ok=True)
