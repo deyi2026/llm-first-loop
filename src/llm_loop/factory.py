@@ -528,6 +528,11 @@ def build_engine(settings: Settings) -> LoopEngine:
             evidence_freshness = EvidenceFreshness(evidence_ledger)
             evidence_search = EvidenceSearch(evidence_blobs, evidence_ledger)
             evidence_manifest = ManifestProjector(evidence_ledger)
+            # R05/T05: only the production assembly upgrades read_file's exact selected
+            # range from the generic 5K Evidence excerpt budget to the runtime's real
+            # per-result hard cap. Frozen/manual Evidence harnesses retain their historical
+            # projection contract unless they opt in explicitly.
+            registry.set_exact_read_projection_budget(settings.tool_max_output_chars)
             registry.set_evidence_enforcer(
                 EvidenceEnforcer(
                     evidence_capture,
@@ -545,7 +550,9 @@ def build_engine(settings: Settings) -> LoopEngine:
                     # R8.24-C C-D9: 复用命中内联正文所需 blob 面 + 内联预算（与 enforcer
                     # projection budget 同源）；缺 blob 面时命中如实 failure（不静默吞正文）。
                     blobs=evidence_blobs,
-                    inline_budget_chars=min(settings.tool_max_output_chars, 5000),
+                    # read_file Evidence reuse follows the same selected-range contract as
+                    # a physical read; the existing registry hard cap remains authoritative.
+                    inline_budget_chars=settings.tool_max_output_chars,
                 )
             )
             registry.register(

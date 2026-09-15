@@ -32,6 +32,7 @@ def _registry(
     *,
     resolver_has_blobs: bool = True,
     inline_budget_chars: int = 5000,
+    exact_read_projection_budget_chars: int | None = None,
 ):
     blobs = BlobStore(tmp_path / "evidence" / "blobs")
     ledger = EvidenceLedgerStore(tmp_path / "evidence" / "ledger")
@@ -39,6 +40,8 @@ def _registry(
     freshness = EvidenceFreshness(ledger)
     tool = CountingReadFileTool()
     registry = ToolRegistry(max_output_chars=20000)
+    if exact_read_projection_budget_chars is not None:
+        registry.set_exact_read_projection_budget(exact_read_projection_budget_chars)
     registry.register(tool)
     registry.set_evidence_enforcer(
         EvidenceEnforcer(
@@ -140,6 +143,40 @@ def test_current_evidence_over_inline_budget_falls_back_to_physical_source(
     assert second.source_execution_performed is True
     assert tool.execute_count == 2
     assert ledger.count(owner) == 2
+
+
+def test_current_large_evidence_within_registry_hard_cap_reuses_without_reread(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "large-current.txt"
+    rows = [f"line-{i:04d}-" + ("x" * 40) for i in range(220)]
+    rows[110] = "MIDDLE-CODE-FINGERPRINTS"
+    path.write_text("\n".join(rows), encoding="utf-8")
+    owner = OwnerScope(workspace_id=str(tmp_path), session_id="r9-large-current")
+    registry, tool, ledger = _registry(
+        tmp_path,
+        owner,
+        inline_budget_chars=20000,
+        exact_read_projection_budget_chars=20000,
+    )
+
+    first = registry.execute(
+        ToolCall(id="lc1", name="read_file", arguments={"path": str(path)})
+    )
+    assert first.status is ToolResultStatus.SUCCESS
+    assert "MIDDLE-CODE-FINGERPRINTS" in first.content
+    assert first.evidence_projection_complete is True
+    assert tool.execute_count == 1
+
+    second = registry.execute(
+        ToolCall(id="lc2", name="read_file", arguments={"path": str(path)})
+    )
+    assert second.status is ToolResultStatus.SUCCESS
+    assert second.source_resolution_mode == "evidence_reuse"
+    assert second.source_execution_performed is False
+    assert "MIDDLE-CODE-FINGERPRINTS" in second.content
+    assert tool.execute_count == 1
+    assert ledger.count(owner) == 1
 
 
 def test_stale_file_evidence_forces_new_source_acquisition(tmp_path: Path) -> None:

@@ -288,7 +288,9 @@ class TestCG2CG3CG9CapsuleCensus:
     def test_cg3_complete_false_single_fact_line(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
         path = tmp_path / "big.txt"
-        path.write_text("A" * 6000, encoding="utf-8")
+        # R05/T05: truncation census must cross the *real* registry hard cap.
+        # A 6K read_file result is now correctly delivered in full under the 20K cap.
+        path.write_text("A" * 30000, encoding="utf-8")
         registry, _, _ = _enforce_registry(tmp_path, projection_budget_chars=400)
 
         result = registry.execute(
@@ -298,17 +300,22 @@ class TestCG2CG3CG9CapsuleCensus:
         assert result.evidence_projection_complete is False  # complete=false 面
         assert "[evidence]" not in result.content
         assert "recover=read_evidence" not in result.content
-        # 事实行 ≤1 行且仅含三元组字段
+        # read_file 的 complete=false 面仍只有一个截断事实行，但同时给出与实际
+        # 连续前缀一一对应的 hydration cursor / omitted range / source version。
         fact_lines = [
             ln for ln in result.content.splitlines() if ln.startswith("result_truncated=")
         ]
         assert len(fact_lines) == 1
-        assert re.fullmatch(
-            r"result_truncated=true omitted=true recovery_ref=evidence://\S+",
-            fact_lines[0],
-        )
+        fields = dict(field.split("=", 1) for field in fact_lines[0].split())
+        assert fields["result_truncated"] == "true"
+        assert fields["omitted"] == "true"
+        assert fields["recovery_range_type"] == "text_char"
+        assert fields["visible_start"] == "0"
+        assert fields["visible_count"] == fields["omitted_start"] == fields["next_start"]
+        assert int(fields["omitted_end"]) > int(fields["omitted_start"])
+        assert fields["source_version"].startswith("stat:")
         # ref 可经 read_evidence 取回（恢复链路连通）
-        assert result.evidence_ref == fact_lines[0].split("recovery_ref=", 1)[1]
+        assert result.evidence_ref == fields["recovery_ref"]
 
     def test_cg9_capsule_ratio_zero(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
@@ -664,14 +671,19 @@ class TestC24OnDemandDiscovery:
         """截断事实行在场场景（端到端）: 事实行 + 恢复工具可发现。"""
         monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
         path = tmp_path / "big2.txt"
-        path.write_text("Z" * 6000, encoding="utf-8")
+        # Keep this as a genuine truncation/recovery scenario by exceeding the
+        # registry's 20K hard cap rather than relying on the retired 5K Evidence budget.
+        path.write_text("Z" * 30000, encoding="utf-8")
         registry, _, _ = _enforce_registry(tmp_path, projection_budget_chars=400)
         result = registry.execute(
             ToolCall(id="e2e", name="read_file", arguments={"path": str(path), "full": True})
         )
         fact = [ln for ln in result.content.splitlines() if ln.startswith("result_truncated=")]
         assert len(fact) == 1
-        recovery_ref = fact[0].split("recovery_ref=", 1)[1]
+        fields = dict(field.split("=", 1) for field in fact[0].split())
+        recovery_ref = fields["recovery_ref"]
+        assert fields["recovery_range_type"] == "text_char"
+        assert fields["visible_count"] == fields["next_start"]
         # 事实行的 ref 可经 read_evidence 取回（同构 resolver 路由面）
         hydrated_check = recovery_ref.startswith("evidence://v1/")
         assert hydrated_check
