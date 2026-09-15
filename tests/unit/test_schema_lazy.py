@@ -326,3 +326,37 @@ def test_tool_local_lazy_parameters_override_is_opt_in_and_full_schema_is_unchan
     lazy["required"].append("mutated_by_test")
     assert "mutated_by_test" not in tool.lazy_parameters["required"]
     assert reg.schemas(lazy=False)[0]["parameters"] == full_before
+
+
+def test_architecture_status_lazy_surface_exposes_exact_dimension_enum():
+    """P0b: provider first call must see the exact executable status vocabulary."""
+    from llm_loop.introspection.registry_introspection import tool_defs
+    from llm_loop.introspection.tools_status import _ALL_DIMS
+
+    definition = next(row for row in tool_defs() if row["name"] == "architecture_status")
+    tool = _FakeTool("architecture_status", definition["description"])
+    tool.parameters = definition["parameters"]
+    reg = ToolRegistry()
+    reg.register(tool)
+
+    lazy = reg.schemas(lazy=True)[0]
+    items = lazy["parameters"]["properties"]["dimensions"]["items"]
+    assert items["enum"] == _ALL_DIMS
+    assert not ({"runtime", "cache", "exception", "config"} & set(items["enum"]))
+
+
+def test_read_evidence_lazy_surface_exposes_bounded_request_contract():
+    """P0b: provider may request >page cap; server-bound normalization remains visible."""
+    from llm_loop.tools.evidence_tools import EvidenceReadTool
+
+    tool = _FakeTool("read_evidence", EvidenceReadTool.description)
+    tool.parameters = EvidenceReadTool.parameters
+    reg = ToolRegistry()
+    reg.register(tool)
+
+    lazy = reg.schemas(lazy=True)[0]
+    limit = lazy["parameters"]["properties"]["limit"]
+    assert limit["minimum"] == 1
+    assert "maximum" not in limit
+    assert "server" in lazy["description"].casefold()
+    assert "4000" in lazy["description"]

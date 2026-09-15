@@ -50,7 +50,11 @@ class EvidenceReadTool:
                 "description": "text_char=Unicode字符范围；line=Evidence observation 行范围",
             },
             "start": {"type": "integer", "description": "0-based 起点，默认 0"},
-            "limit": {"type": "integer", "description": "本次最多读取数量，默认 200，硬上限 4000"},
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "请求读取数量，默认 200；服务端每页最多应用 4000，超出会机械限幅并显式回执",
+            },
             "allow_stale": {
                 "type": "boolean",
                 "description": "仅历史/审计用途显式读取已确认 stale 的 FILE Evidence；默认 false",
@@ -78,7 +82,8 @@ class EvidenceReadTool:
             ref = EvidenceRef(str(kwargs.get("evidence_ref", "")).strip())
             range_type = RangeType(str(kwargs.get("range_type", "text_char") or "text_char"))
             start = int(kwargs.get("start", 0) or 0)
-            limit = int(kwargs.get("limit", 200) or 200)
+            requested_limit = int(kwargs.get("limit", 200) or 200)
+            applied_limit = min(requested_limit, self.hydration.max_limit)
             allow_stale = kwargs.get("allow_stale", False)
             if not isinstance(allow_stale, bool):
                 raise ValueError("allow_stale must be boolean")
@@ -117,7 +122,7 @@ class EvidenceReadTool:
                 evidence_ref=ref,
                 range_type=range_type,
                 start=start,
-                limit=limit,
+                limit=applied_limit,
             )
         except (EvidenceAuthDeniedError, EvidenceRefUnknownError):
             return _failure(self.name, f"[Evidence 不可用] {_OWNER_HIDDEN}")
@@ -137,6 +142,9 @@ class EvidenceReadTool:
             "range": {
                 "type": result.range_type.value,
                 "start": result.start,
+                "requested_limit": requested_limit,
+                "applied_limit": applied_limit,
+                "bounded_by_server_max": requested_limit > applied_limit,
                 "count": result.count,
                 "next_start": result.next_start,
                 "complete": result.next_start is None,
