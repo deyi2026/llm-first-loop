@@ -12,8 +12,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any
 
 # 工具面能力分类（随工具注册表演进需同步维护的唯一定义点）:
 # - 出站网络能力工具
@@ -73,7 +74,7 @@ class SurfaceRequirements:
     session_continuity: bool = False
 
     @classmethod
-    def from_kwargs(cls, raw: Any) -> "SurfaceRequirements | None":
+    def from_kwargs(cls, raw: Any) -> SurfaceRequirements | None:
         """解析工具参数里的 requires 声明；非法结构返回 None（调用方回参数错误）."""
         if raw is None:
             return None
