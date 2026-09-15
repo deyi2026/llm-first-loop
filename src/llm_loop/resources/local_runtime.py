@@ -15,6 +15,8 @@ import shlex
 import subprocess
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse
 
 from llm_loop.resources.contracts import (
@@ -114,6 +116,49 @@ def _positive_int_flag(argv: list[str], name: str) -> int | None:
     except ValueError:
         return None
     return value if value > 0 else None
+
+
+@dataclass(frozen=True)
+class LocalRuntimeIdentityObservation:
+    """Current local listener identity derived only from the live process command."""
+
+    identity: str
+    source_ref: str
+
+
+def observe_local_runtime_identity(
+    base_url: str,
+    *,
+    listener_pids: ListenerPidResolver = _default_listener_pids,
+    process_command: ProcessCommandResolver = _default_process_command,
+) -> LocalRuntimeIdentityObservation | None:
+    """Observe one exact mlx_lm loopback runtime identity; otherwise return unknown."""
+    port = _loopback_port(str(base_url or ""))
+    if port is None:
+        return None
+    try:
+        pids = tuple(listener_pids(port))
+    except Exception:
+        return None
+    if len(pids) != 1:
+        return None
+    pid = pids[0]
+    try:
+        command = str(process_command(pid) or "").strip()
+        argv = shlex.split(command)
+    except (Exception, ValueError):
+        return None
+    if not argv or "mlx_lm.server" not in argv:
+        return None
+    observed_port = _positive_int_flag(argv, "--port")
+    model_arg = _flag_value(argv, "--model")
+    if observed_port != port or not model_arg:
+        return None
+    model_label = Path(model_arg).expanduser().name or str(model_arg)
+    return LocalRuntimeIdentityObservation(
+        identity=f"mlx_lm.server/{model_label}",
+        source_ref=f"local-listener:{port}:pid:{pid}",
+    )
 
 
 class LocalRuntimeConcurrencyAdapter:

@@ -18,7 +18,10 @@ from llm_loop.resources.contracts import (
     ServicePriority,
 )
 from llm_loop.resources.governor import ResourceGovernor
-from llm_loop.resources.local_runtime import LocalRuntimeConcurrencyAdapter
+from llm_loop.resources.local_runtime import (
+    LocalRuntimeConcurrencyAdapter,
+    observe_local_runtime_identity,
+)
 from llm_loop.resources.provider_calls import ProviderCallCoordinator
 
 
@@ -88,6 +91,40 @@ def test_local_adapter_reads_exact_listener_process_flags_without_provider_name_
     assert state.provenance.source_ref == "local-listener:8901:pid:35751"
     assert listener_calls == [8901]
     assert command_calls == [35751]
+
+
+def test_local_runtime_identity_uses_exact_live_listener_command():
+    observation = observe_local_runtime_identity(
+        "http://127.0.0.1:8901/v1",
+        listener_pids=lambda _port: (35751,),
+        process_command=lambda _pid: (
+            "/opt/homebrew/bin/python -m mlx_lm.server "
+            "--model /srv/models/Ornith-1.5-35B-A3B-MLX --port 8901"
+        ),
+    )
+
+    assert observation is not None
+    assert observation.identity == "mlx_lm.server/Ornith-1.5-35B-A3B-MLX"
+    assert observation.source_ref == "local-listener:8901:pid:35751"
+
+
+def test_local_runtime_identity_is_unknown_for_remote_or_ambiguous_listener():
+    assert (
+        observe_local_runtime_identity(
+            "https://api.example.invalid/v1",
+            listener_pids=lambda _port: (1,),
+            process_command=lambda _pid: "python -m mlx_lm.server --model x --port 8901",
+        )
+        is None
+    )
+    assert (
+        observe_local_runtime_identity(
+            "http://127.0.0.1:8901/v1",
+            listener_pids=lambda _port: (1, 2),
+            process_command=lambda _pid: "python -m mlx_lm.server --model x --port 8901",
+        )
+        is None
+    )
 
 
 def test_local_adapter_does_not_probe_cloud_or_guess_missing_or_ambiguous_capacity():

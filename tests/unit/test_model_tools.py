@@ -161,6 +161,43 @@ def test_model_catalog_includes_directory_and_current() -> None:
     assert "switch_model" in content
 
 
+def test_model_catalog_separates_declared_identity_from_live_local_observation() -> None:
+    raw = json.dumps(
+        {
+            "local": {
+                "base_url": "http://127.0.0.1:8901/v1",
+                "api_key_env": "",
+                "models": {
+                    "ornith": {
+                        "context": 262144,
+                        "runtime_identity": "llama.cpp/stale.gguf/Q4_K",
+                    }
+                },
+                "default_model": "ornith",
+            }
+        }
+    )
+    pool = _build_pool(_settings(llm_model="ornith", model_providers_raw=raw))
+    ctx = _build_ctx(pool)
+
+    class _Observed:
+        identity = "mlx_lm.server/Ornith-1.5-35B-A3B-MLX"
+        source_ref = "local-listener:8901:pid:35751"
+
+    result = run_model_catalog(
+        ctx,
+        pool,
+        None,
+        local_runtime_identity_observer=lambda _base_url: _Observed(),
+    )
+
+    assert result.status.value == "success"
+    assert "runtime_identity_declared=llama.cpp/stale.gguf/Q4_K" in result.content
+    assert "runtime_identity_declared_currentness=not_observed" in result.content
+    assert "runtime_identity_observed=mlx_lm.server/Ornith-1.5-35B-A3B-MLX" in result.content
+    assert "runtime_identity_observed_source=live_loopback_process" in result.content
+
+
 def test_model_catalog_marks_current_with_override() -> None:
     """override 设置后, 当前会话模型标注为 "会话覆盖" 且指向 override 模型."""
     settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
