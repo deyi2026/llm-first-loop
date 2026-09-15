@@ -1,0 +1,43 @@
+{
+  "schema": "agentpilot-m1-g2-gate-closure/1",
+  "date": "2026-09-15",
+  "historical_rework_report_commit": "942747de9e602bb566a61fcf8c72c634f384def2",
+  "repair_commit": "f633eff13c59c3623862a660b3bfd30029bea1ec",
+  "repair_parent": "fd56884d0036c5170172d4a7536a9488e2166490",
+  "verdicts": {
+    "g1_scorer": "PASS",
+    "m1_phase_exit": "PASS_WITH_SCOPE_LIMITS",
+    "g4_performance": "NOT_EVALUATED",
+    "m2": "NOT_STARTED"
+  },
+  "live": {
+    "model_listener_pid": 52430,
+    "plan_sha256": "32df564761d8c0357f1acb74df5328c0ceec90adb78a12eb9c43c66a68e20045",
+    "freeze_sha256": "9eac82d93d77ad8e1aa32e9e45d96288c3833a69a8d58c9f3bc39ce97d6409f2",
+    "rows": 8,
+    "pass": 8,
+    "task_fail": 0,
+    "infra_fail": 0,
+    "t02_rows": 4,
+    "t02_expected_failure_count_each": 1,
+    "t02_confirmed_repair_count_each": 1,
+    "t02_unexpected_failure_count_each": 0,
+    "t02_unresolvable_count_each": 0,
+    "t01_control_rows": 4,
+    "t01_control_pass": 4
+  },
+  "artifacts": {
+    "manifest_sha256": "e9340f657641e104fd3571f36cf6cc48bd422b6c82ec6668ef548dd0b79d0fd8",
+    "results_sha256": "910c1edfd3a31b9e771df56135cbc19f5f3db2e4810a27a8907de4dd4338c20f",
+    "summary_sha256": "e97ea69aa98702d536d9293e13e7c335bb36b2272f1ae8fba18feab8149ece85",
+    "invocations_sha256": "4131b2c1c6df26ba5cd82436926e102e65d66382c157039c9a904e38f18667df",
+    "invalid_first_attempt_results_sha256": "44611f7d7956b8f24ba83cf8783451d9aa49e4e30edbb7b7959a8d130776d618",
+    "canonical_providers_sha256": "bf463c72a8cfcd9261ed2d8c11d4f8b3d4ed37569bb4f678d50566e231e6be4e"
+  },
+  "scope_limits": [
+    "historical formal108/frozen112 lack newly introduced task-effect receipts; missing facts are not reconstructed",
+    "prior 48-row baseline/candidate performance comparison remains invalid because arms overlapped",
+    "narrow closure run is not used to establish latency/cache/throughput thresholds",
+    "T02 first_tools=[read] directness oracle is unchanged and not qualified by this repair"
+  ]
+}
