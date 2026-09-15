@@ -111,6 +111,10 @@ def test_runtime_config_is_immutable_and_missing_toml_keeps_legacy_dotenv(tmp_pa
     assert ec.config_file == str((tmp_path / ".env").resolve())
     with pytest.raises(TypeError):
         ec.values["LLM_MODEL"] = "mutated"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        ec.sources["LLM_MODEL"] = "mutated"  # type: ignore[index]
+    import json
+    assert json.loads(json.dumps(ec.sources))["LLM_MODEL"] == "dotenv"
 
 
 def test_load_settings_accepts_explicit_snapshot_without_mutating_ambient_env(
