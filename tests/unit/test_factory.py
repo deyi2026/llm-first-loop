@@ -259,7 +259,127 @@ def test_default_model_status_window_remains_bound_to_startup_registry_after_rel
     assert snap["context_usage"]["model_window"] == {
         "label": "kimi/k3-256k",
         "context": 262144,
+        "scope": "startup_default",
+        "source": "startup_registry",
     }
+
+
+def test_model_window_and_config_use_current_run_latched_registry(tmp_path):
+    """Current-run introspection must use the run-latched provider/model, not startup env."""
+    from llm_loop.core.run_context import current_model_label, current_session_id
+    from llm_loop.factory import build_engine
+    from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
+
+    providers = json.dumps(
+        {
+            "deepseek": {
+                "base_url": "https://api.deepseek.example/v1",
+                "api_key_env": "",
+                "models": {"d": {"context": 128000}},
+                "default_model": "d",
+            },
+            "glm": {
+                "base_url": "https://open.bigmodel.example/v4",
+                "api_key_env": "",
+                "models": {"g": {"context": 1048576}},
+                "default_model": "g",
+            },
+        }
+    )
+    settings = Settings(
+        llm_api_key="env-key",
+        llm_base_url="https://api.deepseek.example/v1",
+        llm_model="deepseek/d",
+        data_dir=str(tmp_path / "data"),
+        model_providers_raw=providers,
+        self_inspection_enabled=True,
+        extract_enabled=False,
+    )
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    sid = engine.session.create(model_override="glm/g")
+    sid_token = current_session_id.set(sid)
+    model_token = current_model_label.set("glm/g")
+    try:
+        engine._routing._begin_run_routing_epoch()
+        bucket = engine._run_state()
+        bucket.last_breakdown = {"model": "glm/g"}
+        bucket.last_budget_info = {"model": "glm/g"}
+
+        # A provider-admin refresh after run admission must not rewrite current-run facts.
+        engine.llm_pool.replace_registry(
+            ProviderRegistry(
+                providers={
+                    "deepseek": ProviderSpec(
+                        id="deepseek",
+                        base_url="https://new-deepseek.invalid/v1",
+                        api_key_env="",
+                        models={"d": ModelSpec(context=999999)},
+                        default_model="d",
+                    ),
+                    "glm": ProviderSpec(
+                        id="glm",
+                        base_url="https://new-glm.invalid/v4",
+                        api_key_env="",
+                        models={"g": ModelSpec(context=999999)},
+                        default_model="g",
+                    ),
+                }
+            )
+        )
+        snap = engine.status.snapshot(dimensions=["context_usage", "architecture_config"])
+    finally:
+        current_model_label.reset(model_token)
+        current_session_id.reset(sid_token)
+
+    assert snap["context_usage"]["model_window"] == {
+        "label": "glm/g",
+        "context": 1048576,
+        "scope": "current_run",
+        "source": "run_latched_registry",
+    }
+    assert snap["context_usage"]["model_fact_integrity"]["status"] == "consistent"
+    assert snap["context_usage"]["model_fact_integrity"]["healthy"] is True
+
+    cfg = snap["architecture_config"]
+    assert cfg["llm_model"] == "glm/g"
+    assert cfg["llm_base_url"] == "https://open.bigmodel.example/v4"
+    assert cfg["llm_config_scope"] == "current_run"
+    assert cfg["llm_config_source"] == "run_latched_registry"
+    assert cfg["llm_model_configured"] == "deepseek/d"
+    assert cfg["llm_base_url_configured"] == "https://api.deepseek.example/v1"
+
+
+def test_architecture_config_startup_default_uses_registry_effective_endpoint(tmp_path):
+    """Outside a run, qualified startup model still uses its registry endpoint, not env base."""
+    from llm_loop.factory import build_engine
+
+    providers = json.dumps(
+        {
+            "glm": {
+                "base_url": "https://open.bigmodel.example/v4",
+                "api_key_env": "",
+                "models": {"g": {"context": 1048576}},
+                "default_model": "g",
+            }
+        }
+    )
+    settings = Settings(
+        llm_api_key="env-key",
+        llm_base_url="https://api.deepseek.example/v1",
+        llm_model="glm/g",
+        data_dir=str(tmp_path / "data"),
+        model_providers_raw=providers,
+        self_inspection_enabled=True,
+        extract_enabled=False,
+    )
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    cfg = engine.status.snapshot(dimensions=["architecture_config"])["architecture_config"]
+
+    assert cfg["llm_model"] == "glm/g"
+    assert cfg["llm_base_url"] == "https://open.bigmodel.example/v4"
+    assert cfg["llm_config_scope"] == "startup_default"
+    assert cfg["llm_config_source"] == "startup_registry"
+    assert cfg["llm_base_url_configured"] == "https://api.deepseek.example/v1"
 
 
 def test_default_model_bare_keeps_env_trio(tmp_path):
