@@ -82,6 +82,9 @@ from llm_loop.feedback.honesty import max_iterations_feedback
 from llm_loop.feedback.validator import DeclarationValidator, build_discrepancy_feedback
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.status import ArchitectureStatusProvider
+from llm_loop.core.loop.engine_services.nonconvergence_guard import (
+    NonconvergenceFuseError,
+)
 from llm_loop.llm.client import (
     GuardRequestContext,
     LLMClient,
@@ -1286,6 +1289,19 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                                 _ttft_done = True
                                 ttft_first_ms = (time.perf_counter() - _llm_start) * 1000.0
                             cap.on_delta(d)
+                            if cap.fuse_tripped:
+                                # EVO-20260915-789eb9d5：机械非收敛熔断——先落半截产物
+                                # 与 llm.interrupted 审计，再终态终止本生成（不再 yield）。
+                                cap.fire(sess, "nonconvergence_fuse", rounds)
+                                close_stream = getattr(it, "close", None)
+                                if callable(close_stream):
+                                    try:
+                                        close_stream()
+                                    except Exception:  # noqa: BLE001 — 熔断释放流 fail-open
+                                        logger.debug(
+                                            "LLM stream close 失败（fail-open）", exc_info=True
+                                        )
+                                raise NonconvergenceFuseError(cap.fuse_evidence)
                             yield d
                         except StopIteration as exc:
                             resp = exc.value
@@ -1355,6 +1371,40 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 # spec 4.4.1），短路 guard/overflow/err1210/fallback/R9/故障反馈
                 # 全部真实故障路径（spec 5.1.1-6）；标记未置位时行为与现状一致。
                 _cancel_reason = _background_cancel_reason(self, session_id)
+                if isinstance(exc, NonconvergenceFuseError):
+                    # EVO-20260915-789eb9d5：机械非收敛熔断——终态化收口，短路
+                    # guard/overflow/err1210/fallback 全部重试环（绝不无限重试）。
+                    self._tool_cycle._reachability_finalize("nonconvergence_fuse")
+                    if _provider_call_coordinator is not None:
+                        _provider_call_coordinator.settle_shadow_call(
+                            _provider_call, ProviderCallOutcome.INTERRUPTED
+                        )
+                    self._record_action(
+                        "action.llm_decide", "nonconvergence_fuse", str(exc)[:200]
+                    )
+                    if self.status:
+                        self.status.record_exception("nonconvergence_fuse", exc)
+                    try:
+                        self._event_append(
+                            sess.session_id,
+                            "llm.nonconvergence_fuse",
+                            {
+                                "round": int(rounds or 0),
+                                **(getattr(exc, "evidence", None) or {}),
+                            },
+                        )
+                    except Exception:  # noqa: BLE001 — 审计事件 fail-open
+                        logger.debug("llm.nonconvergence_fuse 事件写入失败（fail-open）")
+                    _run_end_reason = "nonconvergence_fuse"
+                    final_answer = (
+                        "[非收敛熔断 EVO-20260915-789eb9d5] 模型生成连续 "
+                        f"{int((getattr(exc, 'evidence', None) or {}).get('streak', 0) or 0)} 个"
+                        "检查点窗口无新工具草稿、无持久状态写入且推理同语义复读，"
+                        "已机械熔断终止；半截产物与窗口证据见 llm.interrupted 与 "
+                        "llm.nonconvergence_fuse 事件。请上层策略决定下一步。"
+                    )
+                    resp = None
+                    break
                 self._tool_cycle._reachability_finalize(
                     "cancelled_provider" if _cancel_reason else "provider_error"
                 )
