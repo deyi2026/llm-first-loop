@@ -97,6 +97,32 @@ class WorkflowRunTool:
                             "description": "执行器（可选；local=本地 SubAgentRunner（缺省零回归）；"
                                            "codearts=经 CodeArtsScheduler 委派远端子 Agent 执行）",
                         },
+                        "requires": {
+                            "type": "object",
+                            "properties": {
+                                "tools": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "该步必需的具体工具名（local 执行面在启动前比对允许工具集；codearts 为远端定义面，不可本地断言）",
+                                },
+                                "network": {
+                                    "type": "boolean",
+                                    "description": "是否需要出站网络",
+                                },
+                                "fs": {
+                                    "type": "boolean",
+                                    "description": "是否需要工作区文件系统读写",
+                                },
+                                "session_continuity": {
+                                    "type": "boolean",
+                                    "description": "是否需要 terminal 后可续话（codearts 不支持，缺口前置拒绝）",
+                                },
+                            },
+                            "description": (
+                                "能力需求显式声明（可选，EVO-20260914-1eb26afa）：任何步骤声明缺口"
+                                "在整个工作流启动前拒绝（child 启动前零成本早失败）；不声明则不比对"
+                            ),
+                        },
                     },
                     "required": ["task"],
                 },
@@ -136,9 +162,74 @@ class WorkflowRunTool:
                 tool_name=self.name,
             )
 
+        # EVO-20260914-1eb26afa: 任何步骤的显式能力需求缺口 → 整个工作流启动前拒绝
+        surface_fail = self._validate_step_requirements(steps)
+        if surface_fail is not None:
+            return surface_fail
+
         if mode == "dag":
             return self._execute_dag(steps)
         return self._execute_linear(mode, steps)
+
+    # ── 执行面能力矩阵前置校验（EVO-20260914-1eb26afa）──
+    def _validate_step_requirements(self, steps: list) -> ToolResult | None:
+        """任何步骤显式声明缺口 → 整个工作流启动前拒绝（child 启动前零成本早失败）.
+
+        不声明则不比对（零回归）。矩阵派生失败不拦截既有行为（仅跳过比对）。
+        """
+        from llm_loop.core.execution_surface import (
+            SurfaceRequirements,
+            alternatives_hint,
+            codearts_capability,
+            local_subagent_capability,
+            validate_requirements,
+        )
+
+        try:
+            allowed_names: list[str] | None = list(self._runner.registry.names())
+        except Exception:  # noqa: BLE001 — 矩阵派生失败不拦截既有行为
+            allowed_names = None
+        caps_local = local_subagent_capability(allowed_names)
+        caps_codearts = codearts_capability()
+        surfaces = {"local_subagent": caps_local, "codearts": caps_codearts}
+
+        for i, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            raw = step.get("requires")
+            if raw is None:
+                continue
+            reqs = SurfaceRequirements.from_kwargs(raw)
+            if reqs is None:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=(
+                        f"[参数错误] steps[{i}].requires 需为对象 "
+                        "{tools?: [工具名], network?: bool, fs?: bool, session_continuity?: bool}"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            if not reqs.declared():
+                continue
+            executor = str(step.get("executor", "local") or "local").strip().lower()
+            caps = caps_codearts if executor == "codearts" else caps_local
+            gaps = validate_requirements(caps, reqs)
+            if gaps:
+                surface_label = caps.surface
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=(
+                        f"[状态: failure] steps[{i}]（executor={surface_label}）能力需求声明"
+                        f"与执行面矩阵存在缺口，工作流未启动:\n- "
+                        + "\n- ".join(gaps)
+                        + "\n"
+                        + alternatives_hint(reqs, surfaces)
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+        return None
 
     # ── pipeline / parallel ──
     def _execute_linear(self, mode: str, steps: list) -> ToolResult:

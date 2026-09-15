@@ -1706,6 +1706,10 @@ def build_engine(settings: Settings) -> LoopEngine:
     # 旧 subagent_report 公共工具已退休，不保留第二套投递路径。
     registry.register(AgentMessageTool(subagent_runner))
     registry.register(SubAgentResultTool(subagent_runner))
+    # EVO-20260914-e6b8aa22: 终止 child 的有界同会话续话（程序侧硬预算/窗口）。
+    from llm_loop.tools.builtin.agent_followup import AgentFollowupTool
+
+    registry.register(AgentFollowupTool(subagent_runner))
     engine._tool_receipt_committed_hook = subagent_runner.settle_committed_receipt
 
     # task_quality 六路径装配（2026-08-17，D3 定案: 动态开关默认关零回归）:

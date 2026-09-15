@@ -1314,6 +1314,208 @@ class SubAgentRunner:
             self._prune_handles_locked()
             return True
 
+    # ── EVO-20260914-e6b8aa22: 终止子代理有界续话 ──
+    # 预算由程序跨续话记账（记账事实持久化在会话消息本身，崩溃/重启后仍成立）：
+    #   - 每 child 续话次数: 统计其会话内 FOLLOWUP_MARKER 前缀 user 消息数
+    #   - 每父会话总预算: 统计父会话内 agent_followup 工具调用帧数
+    #   - 时间窗: child 会话 updated_at（终止时最后一次落盘）距 now 不超过 FOLLOWUP_WINDOW_S
+    # 超限/过期 → 显式拒绝并提示 spawn_subagent 新开；绝不静默新会话顶替续话。
+    FOLLOWUP_MAX_PER_CHILD = 2
+    FOLLOWUP_TOTAL_PER_PARENT = 4
+    FOLLOWUP_WINDOW_S = 900.0
+    FOLLOWUP_MAX_ROUNDS = 6
+    FOLLOWUP_MARKER = "[subagent_followup:"
+
+    def _followup_usage(
+        self, child_sess: Session, parent_sess: Session | None
+    ) -> tuple[int, int]:
+        """从持久化会话消息推导续话记账（权威源是已落盘事实，非内存计数）."""
+        per_child = sum(
+            1
+            for m in child_sess.messages
+            if getattr(m, "role", "") == "user"
+            and str(getattr(m, "content", "")).startswith(self.FOLLOWUP_MARKER)
+        )
+        per_parent = 0
+        if parent_sess is not None:
+            import json as _json
+
+            per_parent = sum(
+                1
+                for m in parent_sess.messages
+                if getattr(m, "role", "") == "assistant"
+                and "agent_followup" in _json.dumps(m.to_llm_dict(), ensure_ascii=False, default=str)
+            )
+        return per_child, per_parent
+
+    def _followup_window_expired(self, child_sess: Session) -> bool:
+        from datetime import datetime, timedelta
+
+        try:
+            last = datetime.fromisoformat(str(child_sess.updated_at))
+        except (TypeError, ValueError):
+            # updated_at 不可解析（老版本会话）：不因格式问题误拒，次数/总量预算仍硬约束
+            return False
+        # naive/aware 混算会抛 TypeError 被吞掉导致窗口永不生效（2026-09-14 测试实测）
+        now = datetime.now(last.tzinfo) if last.tzinfo else datetime.now()
+        return now - last > timedelta(seconds=self.FOLLOWUP_WINDOW_S)
+
+    def followup_current(
+        self, child_id: str, instruction: str
+    ) -> tuple[bool, str, SubAgentResult | None]:
+        """对已终止的直接 child 发起有界续话（同会话、同深度、受限轮数）.
+
+        返回 (ok, detail, result)。所有拒绝路径都显式说明剩余预算或过期事实，
+        并指向 spawn_subagent 重新开一个新 child；不隐式新开会话。
+        """
+        from llm_loop.core.run_context import current_model_label, current_session_id
+
+        requester = current_session_id.get()
+        sid = str(child_id or "").strip()
+        instruction = str(instruction or "").strip()
+        if not requester:
+            return False, "续话必须在父会话执行上下文中发起（无 current session）。", None
+        if not sid:
+            return False, "参数错误: child_id 不能为空。", None
+        if not instruction:
+            return False, "参数错误: instruction 不能为空；续话必须携带明确的新指令。", None
+
+        with self._children_guard:
+            handle = self._handles.get(sid)
+        if handle is not None:
+            if handle.parent_id != requester:
+                return False, f"拒绝: {sid} 不是当前会话的直接 child。", None
+            if handle.state == "running":
+                return False, f"{sid} 仍在运行；运行中转向请用 agent_message。", None
+            generation = handle.generation
+            depth = handle.depth
+        else:
+            self._refresh_topology_state(sid)
+            durable = self._durable_topology.get(sid)
+            probe_sess = self.session_store.load(sid)
+            if durable is not None:
+                if durable.parent_id != requester:
+                    return False, f"拒绝: {sid} 不是当前会话的直接 child。", None
+                if not str(durable.snapshot_status).endswith("terminal"):
+                    return (
+                        False,
+                        f"{sid} 状态非 terminal（{durable.snapshot_status}），不可续话。",
+                        None,
+                    )
+                generation = durable.generation
+                depth = durable.depth
+            elif probe_sess is not None:
+                # 无 journal 部署：会话存储里的 parent_id 是登记事实；不在 active
+                # 映射中（不在 _handles/_cancel_events）即视为已终止。
+                if str(probe_sess.parent_id or "") != requester:
+                    return False, f"拒绝: {sid} 不是当前会话的直接 child。", None
+                generation = ""
+                depth = 0
+            else:
+                return False, f"未找到 child {sid} 的任何登记记录。", None
+
+        # ── 预算/窗口检查（在改动任何状态之前完成）──
+        child_sess_probe = self.session_store.load(sid)
+        if child_sess_probe is None:
+            return False, f"child 会话 {sid} 不存在，无法续话。", None
+        parent_sess = (
+            self.session_store.load(requester) if requester != sid else child_sess_probe
+        )
+        per_child, per_parent = self._followup_usage(child_sess_probe, parent_sess)
+        if per_child >= self.FOLLOWUP_MAX_PER_CHILD:
+            return (
+                False,
+                f"续话窗口已用尽: {sid} 已续话 {per_child}/{self.FOLLOWUP_MAX_PER_CHILD} 次。"
+                f"请用 spawn_subagent 新开 child（全新会话，需在 task 中带上必要上下文）。",
+                None,
+            )
+        if per_parent >= self.FOLLOWUP_TOTAL_PER_PARENT:
+            return (
+                False,
+                f"父会话续话总预算已用尽: {per_parent}/{self.FOLLOWUP_TOTAL_PER_PARENT}。"
+                "请用 spawn_subagent 新开 child。",
+                None,
+            )
+        if self._followup_window_expired(child_sess_probe):
+            return (
+                False,
+                f"续话窗口已过期: {sid} 终止已超过 {int(self.FOLLOWUP_WINDOW_S)}s。"
+                "请用 spawn_subagent 新开 child。",
+                None,
+            )
+
+        # ── 同会话续话执行（受限轮数；记账标记先落盘再执行，保证失败也计费）──
+        # 与 run() 相同的 child LLM 解析（继承父 run 模型；失败则拒绝、不执行）
+        child_model_ref = (
+            str(current_model_label.get() or "").strip()
+            if self._llm_resolver is not None
+            else ""
+        )
+        try:
+            child_llm, child_model_label = self._resolve_child_llm(child_model_ref)
+        except Exception as exc:  # noqa: BLE001 - reject before any provider/tool action
+            return False, f"子代理模型不可用，续话未执行: {type(exc).__name__}: {exc}", None
+
+        seq = per_child + 1
+        outcome: SubAgentResult
+        with self.session_store.run_owned_session(sid) as owned:
+            if owned is None:
+                return False, f"无法取得 {sid} 的会话执行租约（可能正被其他执行持有）。", None
+            owned.messages.append(
+                Message(
+                    role="user",
+                    content=(
+                        f"{self.FOLLOWUP_MARKER}{seq}] 父代理有界续话"
+                        f"（第 {seq}/{self.FOLLOWUP_MAX_PER_CHILD} 次，本轮上限 "
+                        f"{self.FOLLOWUP_MAX_ROUNDS} 轮）。新指令: {instruction}"
+                    ),
+                    source=MessageSource.USER,
+                    metadata=origin_metadata(
+                        InjectionLayer.PROGRAM_RECOVERY,
+                        injection_kind="subagent_followup",
+                        subagent_depth=depth,
+                    ),
+                )
+            )
+            _depth_tok = _CURRENT_SUBAGENT_DEPTH.set(depth)
+            old_ctx_sid = current_session_id.set(sid)
+            old_ctx_model = (
+                current_model_label.set(child_model_label) if child_model_label else None
+            )
+            try:
+                outcome = self._execute_subagent(
+                    owned,
+                    depth,
+                    max_rounds=self.FOLLOWUP_MAX_ROUNDS,
+                    cancel_event=threading.Event(),
+                    llm_client=child_llm,
+                    model_label=child_model_label,
+                )
+            finally:
+                if old_ctx_model is not None:
+                    current_model_label.reset(old_ctx_model)
+                current_session_id.reset(old_ctx_sid)
+                _CURRENT_SUBAGENT_DEPTH.reset(_depth_tok)
+
+        self._persist_terminal_result(
+            child_id=sid, parent_id=requester, generation=generation, result=outcome
+        )
+        self._refresh_topology_state(sid)
+        with self._children_guard:
+            if handle is not None:
+                handle.state = "settled"
+                handle.result = outcome
+                handle.collected = False
+                handle.activity_event.set()
+        return (
+            True,
+            (
+                f"续话完成（{seq}/{self.FOLLOWUP_MAX_PER_CHILD}，父会话累计 "
+                f"{per_parent + 1}/{self.FOLLOWUP_TOTAL_PER_PARENT}）。"
+            ),
+            outcome,
+        )
+
     # ── 公开入口 ──
     def run(
         self,

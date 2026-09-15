@@ -44,8 +44,9 @@ rsync -a --exclude='data' --exclude='.venv' --exclude='webui/node_modules' \
 # 不带 PYTHONPATH 会测试到主区代码，镜像验证失效）
 cd "$M" && PYTHONPATH="$M/src" .venv/bin/python -m pytest tests/ -q
 
-# 镜像 web（端口 8903，独立数据）
-cd "$M" && set -a && source .env && set +a && WEB_PORT=8903 PYTHONPATH="$M/src" nohup .venv/bin/python -m llm_loop.web > data/mirror-web.log 2>&1 &
+# 镜像 web（端口 8903，独立数据）——一律经 restart_mirror.sh（环境隔离/回执落盘/
+# 预检门内置）；手写 nohup 启动已废止（2026-09-14：与 MIRROR-RESTART-GUIDE.md 红线冲突）
+cd "$M" && bash scripts/restart_mirror.sh web        # 亦可用 feishu / all / status
 
 # 产出 diff（镜像 vs 主区，用于审批）
 diff -ru "$MAIN/src" "$M/src"   # 按目录逐个
