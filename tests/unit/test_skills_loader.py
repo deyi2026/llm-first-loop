@@ -330,3 +330,16 @@ def test_repo_bundled_skills_have_valid_frontmatter():
     for meta in metas:
         assert meta.description, f"{meta.name} 缺 description"
         assert meta.body, f"{meta.name} 正文为空"
+
+
+def test_md2pdf_skill_uses_skill_load_execution_facts_for_dual_root() -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "skills" / "md2pdf" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "python_executable" in text
+    assert "relative_path_base" in text
+    assert 'PY="<skill_load.python_executable>"' in text
+    assert 'ROOT="<skill_load.relative_path_base>"' in text
+    assert '"$PY" "$ROOT/scripts/md2pdf.py"' in text
+    assert '.venv/bin/python scripts/md2pdf.py' not in text
+    assert 'skills/md2pdf/scripts/md2pdf.py' not in text

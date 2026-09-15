@@ -12,16 +12,24 @@ description: Markdown 转 PDF 技能（reportlab 方案）——需要把报告/
 3. ❌ weasyprint → `cannot load library 'libgobject-2.0-0'`（macOS 缺系统库）
 4. ✅ reportlab 5.0.0（项目 venv 已装）→ 可用
 
-## 用法
+## 执行环境与用法
+`skill_load` 回执会同时给出当前执行环境事实。这里的命令只使用其中两项机械事实：
+- `python_executable`：当前项目 Python/venv 的逻辑可执行路径；不要从 cwd 猜 `.venv`。
+- `relative_path_base`：本 Skill 中 `scripts/...` 等仓库相对路径的基准；当前应等于 `code_root`，**不是** `skills/md2pdf/` 目录。
+
+将回执值代入：
 ```bash
+PY="<skill_load.python_executable>"
+ROOT="<skill_load.relative_path_base>"
+
 # 基础
-.venv/bin/python scripts/md2pdf.py <in.md> <out.pdf>
+"$PY" "$ROOT/scripts/md2pdf.py" <in.md> <out.pdf>
 # 指定 PDF 元数据标题
-.venv/bin/python scripts/md2pdf.py <in.md> <out.pdf> --title "报告标题"
+"$PY" "$ROOT/scripts/md2pdf.py" <in.md> <out.pdf> --title "报告标题"
 # 纯文字版（不嵌图）
-.venv/bin/python scripts/md2pdf.py <in.md> <out.pdf> --no-images
+"$PY" "$ROOT/scripts/md2pdf.py" <in.md> <out.pdf> --no-images
 # 多图报告只出单图版本（按文件名关键词过滤）
-.venv/bin/python scripts/md2pdf.py <in.md> <out.pdf> --image-filter tree
+"$PY" "$ROOT/scripts/md2pdf.py" <in.md> <out.pdf> --image-filter tree
 ```
 
 ## 脚本能力（2026-08-20 升级）
@@ -38,9 +46,9 @@ description: Markdown 转 PDF 技能（reportlab 方案）——需要把报告/
 dot -Tplain -Gpad=1.2 graph.dot > graph.plain
 dot -Tpng -Gdpi=200 -Gpad=1.2 graph.dot -o graph.png
 # ② 客观质量检测（交叉/重叠/穿过），目标交叉=0
-.venv/bin/python scripts/graphviz_layout_check.py graph.dot
+"$PY" "$ROOT/scripts/graphviz_layout_check.py" graph.dot
 # ③ 叠加虚线标注框（如"一致行动人"）+ 底部图例
-.venv/bin/python scripts/graphviz_overlay.py graph.png graph.plain out.png \
+"$PY" "$ROOT/scripts/graphviz_overlay.py" graph.png graph.plain out.png \
     --box-nodes ZHAO YANG LI \
     --box-label "一致行动人协议（赵/李/杨，锁定36个月）" \
     --legend "#D8E4F0:自然人 #3E5C8A:公司 #EDE3F5:合伙 #4F8A3C:目标 #F0F0F0:子公司"
@@ -52,7 +60,7 @@ dot 布局踩坑速查（详见 scripts/graphviz_layout_check.py 头部注释）
 - cluster 画虚线框与 rank 约束冲突时 → 改用无 cluster 布局 + graphviz_overlay.py 叠加框
 
 ## 失败对策
-- reportlab 未装 → `.venv/bin/pip install reportlab`
+- reportlab 未装 → 先确认 `python_executable` 是否为项目环境；确需安装时使用 `"$PY" -m pip install reportlab`
 - 表格列太多溢出 → 手动调 FONTSIZE 或缩减列
 - 中文乱码 → 脚本已注册 CJK 字体（STSong-Light，reportlab 内置 CID 字体）
 - 图片嵌入报错 → 确认图片路径相对 md 文件所在目录
