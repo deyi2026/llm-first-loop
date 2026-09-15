@@ -1,0 +1,35 @@
+# LFL runtime business configuration (non-secret only).
+# Place as runtime.toml in the canonical LFL_RUNTIME_ROOT. runtime.toml is intentionally gitignored.
+# Credentials/API keys MUST stay in a secret provider or environment boundary.
+
+[llm]
+model = "glm/glm-5.3"
+base_url = "https://example.invalid/v1"
+thinking_mode = "enabled"
+reasoning_effort = "high"
+max_iterations = 500
+timeout_s = 120
+max_tokens = 16000
+wire_protocol = "openai"
+
+[runtime]
+# DATA_DIR and LFL_DATA_DIR are intentionally distinct legacy anchors.
+# Do not collapse them unless the deployment explicitly wants the same path.
+# data_dir = "/absolute/path/to/runtime-data"
+# lfl_data_dir = "/absolute/path/to/lfl-audit-data"
+history_max_chars = 150000
+identity_mode = "shadow"
+# wire_contract_mode = "shadow"
+
+[web]
+host = "127.0.0.1"
+port = 8903
+
+[summary]
+mode = "off"
+
+[tools]
+schema_lazy = true
+
+[dsh]
+# home = "/absolute/path/to/dsh"

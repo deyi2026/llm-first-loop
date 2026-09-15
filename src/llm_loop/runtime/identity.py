@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -76,10 +77,11 @@ def _git_head(workspace: Path) -> str:
         return "unknown"
 
 
-def _find_workspace_root() -> Path:
-    env = os.environ.get("LFL_WORKSPACE_ROOT")
-    if env:
-        return Path(env).expanduser().resolve()
+def _find_workspace_root(env: Mapping[str, str] | None = None) -> Path:
+    values = os.environ if env is None else env
+    root = values.get("LFL_WORKSPACE_ROOT")
+    if root:
+        return Path(root).expanduser().resolve()
     p = Path.cwd().resolve()
     for cand in (p, *p.parents):
         if (cand / "pyproject.toml").is_file():
@@ -87,44 +89,60 @@ def _find_workspace_root() -> Path:
     return p
 
 
-def _find_runtime_root(workspace: Path) -> Path:
+def _find_runtime_root(workspace: Path, env: Mapping[str, str] | None = None) -> Path:
     """Return the operational CWD/config root, distinct from source workspace when explicit.
 
     Normal launches keep the historical single-root contract.  Gate-E canaries may
     load an exact clean source worktree while retaining the canonical mirror CWD/data
     root; that split is authorized only by an explicit ``LFL_RUNTIME_ROOT``.
     """
-    env = (os.environ.get("LFL_RUNTIME_ROOT") or "").strip()
-    return Path(env).expanduser().resolve() if env else workspace
+    values = os.environ if env is None else env
+    runtime_root = (values.get("LFL_RUNTIME_ROOT") or "").strip()
+    return Path(runtime_root).expanduser().resolve() if runtime_root else workspace
 
 
-def _mode() -> str:
-    m = (os.environ.get("RUNTIME_IDENTITY_MODE") or "shadow").strip().lower()
+def _mode(env: Mapping[str, str] | None = None) -> str:
+    values = os.environ if env is None else env
+    m = (values.get("RUNTIME_IDENTITY_MODE") or "shadow").strip().lower()
     return m if m in ("shadow", "enforce") else "shadow"
 
 
-def compute_identity(mode: str | None = None) -> IdentityReport:
+def compute_identity(
+    mode: str | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+    workspace_root: str | Path | None = None,
+) -> IdentityReport:
     """机械计算当前进程 runtime 身份。纯事实，无副作用。"""
     import llm_loop
 
-    mode = mode or _mode()
-    workspace = _find_workspace_root()
-    runtime_root = _find_runtime_root(workspace)
+    values = os.environ if env is None else env
+    mode = mode or _mode(values)
+    workspace = (
+        Path(workspace_root).expanduser().resolve()
+        if workspace_root is not None
+        else (_find_workspace_root() if env is None else _find_workspace_root(values))
+    )
+    runtime_root = _find_runtime_root(workspace, values)
     module = Path(llm_loop.__file__).resolve()
     expected_src = (workspace / "src").resolve()
     ok = expected_src == module.parent or expected_src in module.parents
 
     from .paths import resolve_runtime_paths
 
-    data_dir_raw = str(os.environ.get("DATA_DIR", "") or "").strip()
+    data_dir_raw = str(values.get("DATA_DIR", "") or "").strip()
     runtime_paths = resolve_runtime_paths(
         data_dir=data_dir_raw or None,
         code_root=workspace,
-        env=os.environ,
+        env=values,
         data_dir_explicit=bool(data_dir_raw),
     )
     data_dir = str(runtime_paths.data_dir)
-    config_candidates = [runtime_root / ".env", Path.home() / ".llm_loop" / ".env"]
+    config_candidates = [
+        runtime_root / "runtime.toml",
+        runtime_root / ".env",
+        Path.home() / ".llm_loop" / ".env",
+    ]
     providers_candidates = [
         Path(data_dir) / "providers.local.json",
         Path(data_dir) / "providers.json",
@@ -148,15 +166,20 @@ def compute_identity(mode: str | None = None) -> IdentityReport:
         detail={
             "expected_src": str(expected_src),
             "runtime_root": str(runtime_root),
-            "pythonpath_set": bool(os.environ.get("PYTHONPATH")),
-            "pythonpath": os.environ.get("PYTHONPATH", ""),
+            "pythonpath_set": bool(values.get("PYTHONPATH")),
+            "pythonpath": values.get("PYTHONPATH", ""),
         },
     )
 
 
-def check_identity(mode: str | None = None) -> IdentityReport:
+def check_identity(
+    mode: str | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+    workspace_root: str | Path | None = None,
+) -> IdentityReport:
     """启动守卫入口：shadow 记录告警；enforce 违规即抛。"""
-    report = compute_identity(mode=mode)
+    report = compute_identity(mode=mode, env=env, workspace_root=workspace_root)
     if not report.ok:
         if report.mode == "enforce":
             raise RuntimeIdentityError(report)
@@ -165,7 +188,12 @@ def check_identity(mode: str | None = None) -> IdentityReport:
     return report
 
 
-def enforce_identity(workspace: Path | None = None) -> IdentityReport:
+def enforce_identity(
+    workspace: Path | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+    mode: str | None = None,
+) -> IdentityReport:
     """R1 服务入口严格守卫（2026-08-30 重写——半改工作区丢失的未提交 API）.
 
     与 check_identity 的差异：除模块归属核验（resolve(llm_loop) ∈ workspace/src）
@@ -178,7 +206,7 @@ def enforce_identity(workspace: Path | None = None) -> IdentityReport:
     """
     import dataclasses
 
-    report = compute_identity()
+    report = compute_identity(mode=mode, env=env)
     expected = (workspace if workspace is not None else Path.cwd()).resolve()
     runtime_root = Path(
         str(report.detail.get("runtime_root") or report.workspace_root)
