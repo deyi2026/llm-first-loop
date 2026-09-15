@@ -15,13 +15,16 @@ import argparse
 import contextlib
 import json
 import os
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
 import time
 import uuid
-import telemetry as _tl
 from pathlib import Path
+
+import telemetry as _tl
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
@@ -155,6 +158,99 @@ def verify(task: dict, ws: Path) -> tuple[bool, str]:
         # verifier 挂起=测量设施故障，不是任务失败（§18.1 任务 verifier 健壮性）
         return False, "VERIFIER-TIMEOUT-60s"
 
+
+def _prepare_effect_probe(task: dict, ws: Path, base_env: dict[str, str]) -> dict[str, str]:
+    """Install a task-scoped process-exit observer without changing task source.
+
+    The shim records only mechanical child-process facts. It never parses stdout/stderr,
+    never changes the child exit code, and is enabled only by an explicit task contract.
+    """
+    probe = task.get("effect_probe")
+    env = dict(base_env)
+    if not probe:
+        return env
+    if probe.get("kind") != "process_exit":
+        raise RuntimeError(f"unsupported effect_probe kind: {probe.get('kind')!r}")
+    target = str(probe.get("target_basename") or "")
+    check_id = str(probe.get("check_id") or "")
+    effect_dir = ws.parent / ".agentpilot-effect-probes" / ws.name
+    shim_dir = effect_dir / "bin"
+    # Re-entry safe: never resolve the shim itself as the real interpreter.
+    clean_path = os.pathsep.join(
+        entry for entry in env.get("PATH", "").split(os.pathsep)
+        if entry and Path(entry).resolve() != shim_dir.resolve()
+    )
+    real_python3 = shutil.which("python3", path=clean_path)
+    if not real_python3:
+        raise RuntimeError("effect_probe requires python3 in PATH")
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    log_path = effect_dir / "events.jsonl"
+    shim = shim_dir / "python3"
+    qreal = shlex.quote(real_python3)
+    qlog = shlex.quote(str(log_path))
+    qtarget = shlex.quote(target)
+    qcheck = shlex.quote(check_id)
+    shim.write_text(f'''#!/bin/zsh
+REAL={qreal}
+LOG={qlog}
+TARGET={qtarget}
+CHECK_ID={qcheck}
+"$REAL" "$@"
+rc=$?
+matched=0
+for arg in "$@"; do
+  if [[ "${{arg:t}}" == "$TARGET" ]]; then
+    matched=1
+    break
+  fi
+done
+if [[ "$matched" == "1" ]]; then
+  mkdir -p "${{LOG:h}}"
+  if [[ -f "$LOG" ]]; then
+    n=$(wc -l < "$LOG" | tr -d ' ')
+  else
+    n=0
+  fi
+  attempt=$((n + 1))
+  printf '{{"schema":"agentpilot-task-effect/v1","check_id":"%s","target":"%s","scope":"workspace","attempt":%d,"exit_code":%d}}\n' "$CHECK_ID" "$TARGET" "$attempt" "$rc" >> "$LOG"
+fi
+exit "$rc"
+''')
+    shim.chmod(0o755)
+    env["PATH"] = str(shim_dir) + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def _collect_task_effects(task: dict, ws: Path) -> tuple[list[dict], str]:
+    """Read and validate the closed task-effect receipt, if configured."""
+    probe = task.get("effect_probe")
+    if not probe:
+        return [], "not_configured"
+    log_path = ws.parent / ".agentpilot-effect-probes" / ws.name / "events.jsonl"
+    if not log_path.exists():
+        return [], "missing"
+    allowed = {"schema", "check_id", "target", "scope", "attempt", "exit_code"}
+    effects: list[dict] = []
+    try:
+        for idx, line in enumerate(log_path.read_text().splitlines(), 1):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if not isinstance(row, dict) or set(row) != allowed:
+                return [], "invalid_schema"
+            if row.get("schema") != "agentpilot-task-effect/v1":
+                return [], "invalid_schema"
+            if row.get("check_id") != probe.get("check_id"):
+                return [], "invalid_check_id"
+            if row.get("target") != probe.get("target_basename") or row.get("scope") != "workspace":
+                return [], "invalid_target_scope"
+            if row.get("attempt") != idx or not isinstance(row.get("exit_code"), int):
+                return [], "invalid_sequence"
+            effects.append(row)
+    except (OSError, json.JSONDecodeError):
+        return [], "invalid_json"
+    return effects, "ok"
+
 def _lfl_env(ws: Path) -> dict:
     """会话/记忆存储隔离：每 run 独立 DATA_DIR（主路径 load_settings 读 DATA_DIR env）。
     v0 原始 33 条 LFL run 未隔离（共享仓库 data/）；本修复仅影响 t12 复测与后续正式矩阵，
@@ -197,7 +293,7 @@ def _lfl_newest_session_sid(ws: Path) -> str:
     return m[0].stem if m else ""
 
 def run_lfl(task: dict, ws: Path, deadline_s: int) -> dict:
-    env = _lfl_env(ws)
+    env = _prepare_effect_probe(task, ws, _lfl_env(ws))
     cmd = [str(REPO / ".venv/bin/python"), "-m", "llm_loop.cli", "--model", LFL_MODEL, task["prompt"]]
     t0 = time.time()
     try:
@@ -220,7 +316,8 @@ def run_da(task: dict, ws: Path, deadline_s: int) -> dict:
     cmd = [str(HERE / ".venv-da/bin/python"), str(adapter), task["prompt"]]
     t0 = time.time()
     try:
-        r = subprocess.run(cmd, cwd=ws, capture_output=True, text=True, timeout=deadline_s)
+        env = _prepare_effect_probe(task, ws, dict(os.environ))
+        r = subprocess.run(cmd, cwd=ws, env=env, capture_output=True, text=True, timeout=deadline_s)
         out, rc, dur = r.stdout, r.returncode, round(time.time() - t0, 1)
         meta = {}
         for line in out.splitlines():
@@ -315,8 +412,9 @@ def run_cline(task: dict, ws: Path, deadline_s: int, session_id: str = "") -> di
                 "session": "", "first_call": None, "fcr_events": None,
                 "stdout_tail": "", "stderr_tail": config_err}
     try:
+        env = _prepare_effect_probe(task, ws, dict(os.environ))
         r = subprocess.run(_cline_cmd(task["prompt"], ws, deadline_s, session_id),
-                           cwd=ws, capture_output=True, text=True, timeout=deadline_s + 60)
+                           cwd=ws, env=env, capture_output=True, text=True, timeout=deadline_s + 60)
         out, rc, dur = r.stdout, r.returncode, round(time.time() - t0, 1)
         info = _cline_parse(out)
         meta = info["meta"]
@@ -371,7 +469,8 @@ def run_one(agent: str, task: dict, run_idx: int, base: Path, interrupt: bool) -
         cmd_list = _spawn(agent, task, ws)
         # v0.1：lfl phase1 也必须用隔离 DATA_DIR，否则 session 落到共享仓库 data/，
         # ws 级 sid 反查（_lfl_full_sid）找不到文件，--session 依旧不会附加。
-        spawn_env = _lfl_env(ws) if agent == "lfl" else None
+        spawn_base = _lfl_env(ws) if agent == "lfl" else dict(os.environ)
+        spawn_env = _prepare_effect_probe(task, ws, spawn_base)
         p = subprocess.Popen(cmd_list, cwd=ws, env=spawn_env,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                              start_new_session=True)
@@ -429,6 +528,10 @@ def run_one(agent: str, task: dict, run_idx: int, base: Path, interrupt: bool) -
             rec["dur"] = round(task["interrupt_s"] + float(rec["resume_dur"]), 1)
     else:
         rec.update(ADAPTERS[agent](task, ws, task["timeout_s"]))
+    effects, effects_status = _collect_task_effects(task, ws)
+    if task.get("effect_probe"):
+        rec["task_effects"] = effects
+        rec["task_effects_status"] = effects_status
     ok, err = verify(task, ws)
     rec["pass"] = ok
     rec["verify_err"] = err
@@ -605,9 +708,10 @@ def _manifest(agents, tasks, runs, interrupt, randomize, latin_square, seed, pla
     m["model_server_runtime"] = _server_runtime_versions(cmd8901)
     m["task_oracles"] = [{"id": t["id"], "first_tools": t.get("first_tools"),
                           "expected_failures": t.get("expected_failures", []),
+                          "effect_probe": t.get("effect_probe"),
                           "timeout_s": t["timeout_s"], "interrupt_s": t.get("interrupt_s")}
                          for t in tasks]
-    m["manifest_revision"] = 2
+    m["manifest_revision"] = 3  # M1 T02: frozen task effect-probe contract
     m["fcr_caliber"] = ("lfl first-action tokens/cache = null（per-turn usage 未持久化，"
                         "usage-missing ≠ 0），不参与 FCR efficiency 跨 harness 排名；"
                         "run-level tokens/cache 仍可比较。cline 工具级 ok 不可观测 → None。")

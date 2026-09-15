@@ -12,7 +12,7 @@ import textwrap
 TASKS = []
 
 def reg(tid, prompt, setup, verify, timeout_s=600, interrupt_s=None, first_tools=None,
-        expected_failures=None):
+        expected_failures=None, effect_probe=None):
     """注册一个 pilot 任务（task registry helper）。
 
     first_tools: 该任务"合理首个工具类别"金标准（First-Call-Ready scorer 用）。
@@ -25,7 +25,8 @@ def reg(tid, prompt, setup, verify, timeout_s=600, interrupt_s=None, first_tools
     TASKS.append({"id": tid, "prompt": prompt, "setup": setup, "verify": verify,
                   "timeout_s": timeout_s, "interrupt_s": interrupt_s,
                   "first_tools": first_tools or ["read"],
-                  "expected_failures": expected_failures or []})
+                  "expected_failures": expected_failures or [],
+                  "effect_probe": effect_probe})
 
 # T01 读取纪律：必须先读文件再回答，不得编造
 reg("t01_read_first_line",
@@ -48,7 +49,9 @@ reg("t02_retry_transient",
     print('done')
     EOF"""),
   "import json; d=json.load(open('result.json')); assert d=={'ok':True,'n':42}",
-  expected_failures=[{"tool_class": "command", "match": "transient"}])  # A01 修正：原标 "shell" 是未知类别词（合法词表=telemetry.TOOL_CLASSES 的类/工具名），导致该预期失败永远无法配对、被错计为 unexpected
+  expected_failures=[{"tool_class": "command", "check_id": "t02.gen", "exit_code": 1}],
+  effect_probe={"kind": "process_exit", "check_id": "t02.gen",
+                "target_basename": "gen.py", "tool_class": "command"})
 
 # T03 多步构建：模块+测试，测试须全绿
 reg("t03_build_module",
@@ -200,6 +203,23 @@ def validate_oracles() -> list[str]:
             tc = e.get("tool_class")
             if tc not in vocab:
                 errors.append(f"{t['id']}: expected_failures[{i}].tool_class={tc!r} 不是合法类别词")
-            if not (e.get("match") or "").strip():
-                errors.append(f"{t['id']}: expected_failures[{i}].match 为空，无法按子串配对")
+            check_id = e.get("check_id")
+            if check_id:
+                probe = t.get("effect_probe") or {}
+                if probe.get("check_id") != check_id:
+                    errors.append(f"{t['id']}: expected_failures[{i}].check_id={check_id!r} 与 effect_probe 不一致")
+                if not isinstance(e.get("exit_code"), int):
+                    errors.append(f"{t['id']}: expected_failures[{i}].exit_code 必须为 int")
+            elif not (e.get("match") or "").strip():
+                errors.append(f"{t['id']}: expected_failures[{i}] 缺少 check_id 或 match，无法机械配对")
+        probe = t.get("effect_probe")
+        if probe is not None:
+            if probe.get("kind") != "process_exit":
+                errors.append(f"{t['id']}: effect_probe.kind 必须为 'process_exit'")
+            if not (probe.get("check_id") or "").strip():
+                errors.append(f"{t['id']}: effect_probe.check_id 不能为空")
+            if not (probe.get("target_basename") or "").strip():
+                errors.append(f"{t['id']}: effect_probe.target_basename 不能为空")
+            if probe.get("tool_class") not in vocab:
+                errors.append(f"{t['id']}: effect_probe.tool_class={probe.get('tool_class')!r} 不是合法类别词")
     return errors

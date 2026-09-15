@@ -32,7 +32,10 @@ tel = {"t0": "", "source": "da:adapter-stdout", "turns": [],
                   "call_id": "call_abc", "turn": 1}]}
 ev = tl.events_da(tel)
 task = TBI["t02_retry_transient"]
-s = tl.score_fcr({"name": "execute_command", "args": {"command": "python3 gen.py"}, "ok_signal": True}, ev, task)
+legacy_task = dict(task)
+legacy_task["expected_failures"] = [{"tool_class": "command", "match": "transient"}]
+legacy_task["effect_probe"] = None
+s = tl.score_fcr({"name": "execute_command", "args": {"command": "python3 gen.py"}, "ok_signal": True}, ev, legacy_task)
 assert s["expected_failure_count"] == 1, s
 assert s["unexpected_failure_count"] == 0, s
 assert s["expected_failure_unresolvable_count"] == 0, s
@@ -45,17 +48,26 @@ tel3 = {"t0": "", "source": "da:x", "turns": [],
         "calls": [{"name": "execute_command", "args": {"command": "x"}, "ok": False,
                    "result": body3[:tl.RESULT_CAP], "result_len": len(body3),
                    "result_truncated": True, "call_id": "c2", "turn": 1}]}
-s3 = tl.score_fcr({"name": "execute_command", "args": {"command": "x"}, "ok_signal": True}, tl.events_da(tel3), task)
+s3 = tl.score_fcr({"name": "execute_command", "args": {"command": "x"}, "ok_signal": True}, tl.events_da(tel3), legacy_task)
 assert s3["expected_failure_unresolvable_count"] == 1, s3
 assert s3["unexpected_failure_count"] == 0, s3
 print("T3 PASS 截断+未命中 → unresolvable=1/unexpected=0")
 
 # ---- T4 S2/t12: analyze._scored 读 resume_fcr_events
 import analyze as az, json
+effect_rows = [
+    {"schema": "agentpilot-task-effect/v1", "check_id": "t02.gen", "target": "gen.py",
+     "scope": "workspace", "attempt": 1, "exit_code": 1},
+    {"schema": "agentpilot-task-effect/v1", "check_id": "t02.gen", "target": "gen.py",
+     "scope": "workspace", "attempt": 2, "exit_code": 0},
+]
 row = {"agent": "lfl", "run": 1, "task": "t02_retry_transient", "status": "PASS",
        "first_call": None, "resume_first_call": {"name": "execute_command", "args": {"command": "python3 gen.py"}, "ok_signal": True},
-       "resume_fcr_events": tl.events_da(tel)}
+       "resume_fcr_events": tl.events_da(tel),
+       "task_effects": effect_rows, "task_effects_status": "ok"}
 sc = az._scored(row)
+assert sc is not None
 assert sc["expected_failure_count"] == 1, sc
-print("T4 PASS _scored 经 resume_fcr_events 复算 expected=1")
+assert sc["confirmed_repair_count"] == 1, sc
+print("T4 PASS _scored 经 resume_fcr_events + task_effects 复算 expected=1 confirmed=1")
 print("ALL G1 FIXTURE TESTS PASS")
