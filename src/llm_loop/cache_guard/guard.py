@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_loop.llm.errors import LLMError
+from llm_loop.runtime.resolver import business_config_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,9 @@ _SUBMIT_RATIO_WARN = 0.85  # >85% → WARN（提示接近超限）
 # 规则 G（2026-08-18 用户反馈：'低命中'应拦截——命中是结果——需响应回馈闭环）：
 # 会话近期命中率 < 阈值且样本足够 → BLOCK（前缀不稳定——先压缩 checkpoint/换会话）
 # 阈值 env 化（拷问④——2026-08-18）: 可用 CACHE_GUARD_* 覆盖
+# P1-A: import-time business values come from one immutable file-backed snapshot.
+_CACHE_GUARD_CONFIG = business_config_snapshot("cache_guard")
+
 # D'-1.1（R8.24 D-D3）: 性能类 BLOCK 分类改造开关——on=性能 BLOCK 保留 /
 # enforce（默认，R9-P0-01 批 3/3 切换 2026-09-01，前置=D'-1.3 齐备性判读通过）=
 # 性能类退出 BLOCK 仅 WARN（记录 would_block 观测事件；对照基线 25 次
@@ -53,28 +57,28 @@ _SUBMIT_RATIO_WARN = 0.85  # >85% → WARN（提示接近超限）
 #   4. 用户成本硬限
 #   5. safety 类拦截
 # 性能类理由（低命中/体积占比）不构成阻断——代价由 cost/observability 面承接。
-_PERF_BLOCK_MODE = os.environ.get("CACHE_GUARD_PERF_BLOCK", "enforce").strip().lower()
+_PERF_BLOCK_MODE = _CACHE_GUARD_CONFIG.get("CACHE_GUARD_PERF_BLOCK", "enforce").strip().lower()
 # D'-1.1 核对结论（2026-08-31）: 规则 G（_check_hit_rate）全路径 WARN-only
 # （low_hit_rate_ttl / low_hit_rate_compressing / low_hit_rate_provider 三分支均
 # 无 BLOCK verdict——_HIT_RATE_BLOCK 仅作阈值比较）；规则 A（system_stability）/
 # 规则 D（compress_storm）核对为 WARN-only。性能 BLOCK 仅存于规则 F submit_ratio
 # 非 breaker 分支，由 _PERF_BLOCK_MODE 管控。
-_HIT_RATE_BLOCK = float(os.environ.get("CACHE_GUARD_HIT_BLOCK", "0.30"))
+_HIT_RATE_BLOCK = float(_CACHE_GUARD_CONFIG.get("CACHE_GUARD_HIT_BLOCK", "0.30"))
 # 2026-08-18 用户反馈（'78% 也是低的'）: WARN 阈值 0.50 → 0.85——低于预期的命中
 # （工具轮/前缀微变化）也应提示 AI（'命中低于预期——注意前缀稳定性'）；BLOCK 保持 0.30
 # （真异常才拦——防误伤工具轮正常场景）
-_HIT_RATE_WARN = float(os.environ.get("CACHE_GUARD_HIT_WARN", "0.85"))
+_HIT_RATE_WARN = float(_CACHE_GUARD_CONFIG.get("CACHE_GUARD_HIT_WARN", "0.85"))
 # 任务2（2026-08-25 §5.2）: WARN 阈值按会话规模自适应——小型会话正常命中率物理性
 # 低于大型稳定会话（前缀建立中），固定 0.85 会导致小会话持续误 WARN 刷屏（"WARN 阈值
 # 不敏感"问题）。自适应分段: tokens_in 越大 → 期望命中率越高 → 阈值越高。
-_ADAPTIVE_ENABLED = bool(int(os.environ.get("CACHE_GUARD_HIT_WARN_ADAPTIVE", "1")))
+_ADAPTIVE_ENABLED = bool(int(_CACHE_GUARD_CONFIG.get("CACHE_GUARD_HIT_WARN_ADAPTIVE", "1")))
 _WARN_TIERS: list[list[float]] = json.loads(
-    os.environ.get(
+    _CACHE_GUARD_CONFIG.get(
         "CACHE_GUARD_HIT_WARN_TIERS",
         '[[30000,0.65],[80000,0.75],[200000,0.80]]',
     )
 )
-_HIT_SAMPLE_MIN = int(os.environ.get("CACHE_GUARD_HIT_SAMPLE", "3"))
+_HIT_SAMPLE_MIN = int(_CACHE_GUARD_CONFIG.get("CACHE_GUARD_HIT_SAMPLE", "3"))
 
 
 def _adaptive_warn_threshold(tokens_in: int) -> float:
@@ -91,7 +95,7 @@ def _adaptive_warn_threshold(tokens_in: int) -> float:
     return thr
 # 逃生（拷问③——2026-08-18）: 连续 BLOCK N 次后自动降级 WARN（防死锁——AI 不处理时
 # 不无限拦截；降级后 AI 可行动）
-_BLOCK_ESCAPE_MAX = int(os.environ.get("CACHE_GUARD_BLOCK_ESCAPE", "3"))
+_BLOCK_ESCAPE_MAX = int(_CACHE_GUARD_CONFIG.get("CACHE_GUARD_BLOCK_ESCAPE", "3"))
 # EVO-20260818（实测）: provider 前缀缓存 TTL（秒）——MiniMax 约 130s 失效
 # （间隔 134s 即全 miss，剩 128 tokens 特征最小命中）; 请求间隔超 TTL 的低命中属
 # 缓存过期（provider 侧行为）→ 规则 G 降级 WARN 不 BLOCK（防误拦，grill-me 2.3 实证落地）

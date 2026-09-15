@@ -19,11 +19,15 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
+from llm_loop.runtime.resolver import business_config_snapshot
+
 logger = logging.getLogger(__name__)
+
+_SCHEDULER_CONFIG = business_config_snapshot("scheduler")
 
 # EVO-20260817 审查 P0-3: 基准统一——LFL_DATA_DIR 优先（与 interop/web 一致），
 # 避免配置 LFL_DATA_DIR 时提醒写错位置静默丢失（原硬编码相对 data/）。
-_SCHEDULE_PATH = Path(os.environ.get("LFL_DATA_DIR", "data")) / "schedule.json"
+_SCHEDULE_PATH = Path(_SCHEDULER_CONFIG.get("LFL_DATA_DIR", "data")) / "schedule.json"
 _TICK_INTERVAL_S = 10.0  # 检查周期
 
 # Wake authorization is process-local, not Store-instance-local. Multiple ScheduleStore

@@ -39,8 +39,11 @@ from llm_loop.feishu.handlers import (
     FeishuMessageHandler,
 )
 from llm_loop.feishu.rest import FeishuRestClient, FeishuRestError, _mask_id
+from llm_loop.runtime.resolver import business_config_snapshot
 
 logger = logging.getLogger(__name__)
+
+_BRIDGE_CONFIG = business_config_snapshot("feishu_bridge")
 
 _MAX_DEDUP_IDS = 500
 _RECONNECT_BASE_S = 5
@@ -56,13 +59,13 @@ _TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/inter
 # 永久阻塞，进程假死但旧 TCP 仍 ESTABLISHED（健康检查误报健康，须人工重启）。
 # 防护三层：①_ 修补 _connect 锁泄漏（根治）②看门狗心跳 + 假死自杀（兜底）
 # ③restart_system.sh 健康检查改看门狗心跳新鲜度（消除误报）。
-_WATCHDOG_POLL_S = int(os.environ.get("FEISHU_WS_WATCHDOG_POLL_S", "30"))  # 看门狗轮询/心跳间隔
-_WATCHDOG_LOCK_S = float(os.environ.get("FEISHU_WS_WATCHDOG_LOCK_S", "180"))  # SDK 锁持有超此时长判定假死
-_HEARTBEAT_PATH = os.environ.get("FEISHU_HEARTBEAT_PATH", "data/feishu_heartbeat.json")
+_WATCHDOG_POLL_S = int(_BRIDGE_CONFIG.get("FEISHU_WS_WATCHDOG_POLL_S", "30"))  # 看门狗轮询/心跳间隔
+_WATCHDOG_LOCK_S = float(_BRIDGE_CONFIG.get("FEISHU_WS_WATCHDOG_LOCK_S", "180"))  # SDK 锁持有超此时长判定假死
+_HEARTBEAT_PATH = _BRIDGE_CONFIG.get("FEISHU_HEARTBEAT_PATH", "data/feishu_heartbeat.json")
 # 中断补偿（2026-08-16）：优雅退出打断长任务 → 落盘 → 下次启动主动回复（避免静默丢失）
 # 2026-09 起：单文件改 JSONL 增量存储（feishu/compensation.py，legacy 单文件启动时自动迁移）
-_DEDUP_PATH = os.environ.get("FEISHU_DEDUP_PATH", "data/feishu_dedup.json")
-_HEARTBEAT_HISTORY_PATH = os.environ.get(
+_DEDUP_PATH = _BRIDGE_CONFIG.get("FEISHU_DEDUP_PATH", "data/feishu_dedup.json")
+_HEARTBEAT_HISTORY_PATH = _BRIDGE_CONFIG.get(
     "FEISHU_HEARTBEAT_HISTORY_PATH", "data/feishu_heartbeat_history.jsonl"
 )
 
@@ -105,7 +108,7 @@ def rotate_heartbeat_history(hist_path: str | Path, max_bytes: int | None) -> bo
 # 根因: 事件回调在 SDK asyncio loop 内同步执行消息处理（LLM 推理可达分钟级），期间
 # _ping_loop 停发 → 服务端 3003 断开。方案: 单 worker 线程 + 有界队列，_handle_event
 # 仅 marshal + put_nowait 立即返回；队列满 fail-open 如实告警丢弃（不阻塞 loop）。
-_MAX_MSG_QUEUE: int = int(os.environ.get("FEISHU_WS_QUEUE_MAX", "64"))
+_MAX_MSG_QUEUE: int = int(_BRIDGE_CONFIG.get("FEISHU_WS_QUEUE_MAX", "64"))
 
 # ── P1-3-R2: 优雅退出 drain 时间预算 ──
 # 时间契约: wait(10) + drain(3) = 13s ≤ GRACE_S(15) − 2s 余量（与 feishu/__init__.py 对齐）。

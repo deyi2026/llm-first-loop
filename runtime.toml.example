@@ -33,3 +33,52 @@ schema_lazy = true
 
 [dsh]
 # home = "/absolute/path/to/dsh"
+# sessions_root = "/absolute/path/to/dsh-sessions"
+
+[cache_guard]
+perf_block_mode = "enforce"
+hit_block = 0.30
+hit_warn = 0.85
+hit_warn_adaptive = true
+hit_warn_tiers = [[30000, 0.65], [80000, 0.75], [200000, 0.80]]
+hit_sample = 3
+block_escape = 3
+
+[cache_health]
+breaker_trigger_runs = 5
+breaker_cooldown_rounds = 8
+breaker_exit_stable_runs = 3
+breaker_exit_chars_ratio = 0.8
+breaker_pressure_ratio = 0.95
+breaker_pressure_escape_max = 6
+breaker_hit_thr = 0.5
+breaker_over_ratio = 0.9
+telemetry_strip_audit_log = false
+telemetry_strip_tail_lines = 10
+
+[interop]
+watch_poll_s = 10.0
+wakeup = false
+wakeup_min_interval_s = 300.0
+pending_ttl_hours = 24.0
+pending_cleanup_on_start = true
+pending_max = 20
+
+[run_cleanup]
+stale_run_inspect_hours = 24.0
+shutdown_timeout_s = 10.0
+confirmation_required = true
+
+[feishu]
+ws_watchdog_poll_s = 30
+ws_watchdog_lock_s = 180.0
+heartbeat_path = "data/feishu_heartbeat.json"
+dedup_path = "data/feishu_dedup.json"
+heartbeat_history_path = "data/feishu_heartbeat_history.jsonl"
+ws_queue_max = 64
+interrupt_notify_timeout_s = 1.0
+cross_sync_poll_s = 1.5
+cross_sync_min_interval_s = 3.0
+cross_sync_max_chars = 10000
+cross_sync = true
+audit_dir = "data/audit"

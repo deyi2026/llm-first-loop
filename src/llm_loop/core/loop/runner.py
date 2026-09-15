@@ -20,7 +20,6 @@ from __future__ import annotations
 import contextvars
 import copy
 import logging
-import os
 import pickle
 import queue
 import tempfile
@@ -31,15 +30,19 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from llm_loop.runtime.resolver import business_config_snapshot
+
 logger = logging.getLogger(__name__)
 
+_RUNNER_CONFIG = business_config_snapshot("runner")
+
 # EVO-20260825（任务12 §5.12）: 残留 run 巡检/清理配置（spec §6.11）
-_STALE_RUN_INSPECT_HOURS = float(os.environ.get("STALE_RUN_INSPECT_HOURS", "24"))
+_STALE_RUN_INSPECT_HOURS = float(_RUNNER_CONFIG.get("STALE_RUN_INSPECT_HOURS", "24"))
 _RUN_CLEANUP_SHUTDOWN_TIMEOUT_SEC = float(
-    os.environ.get("RUN_CLEANUP_SHUTDOWN_TIMEOUT_SEC", "10.0")
+    _RUNNER_CONFIG.get("RUN_CLEANUP_SHUTDOWN_TIMEOUT_SEC", "10.0")
 )
 _RUN_CLEANUP_CONFIRMATION_REQUIRED = bool(
-    int(os.environ.get("RUN_CLEANUP_CONFIRMATION_REQUIRED", "1"))
+    int(_RUNNER_CONFIG.get("RUN_CLEANUP_CONFIRMATION_REQUIRED", "1"))
 )
 
 # 取消原因值域（结构化标记位，可审计；空串=未取消）。
