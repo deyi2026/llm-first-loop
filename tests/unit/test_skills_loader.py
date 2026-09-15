@@ -343,3 +343,11 @@ def test_md2pdf_skill_uses_skill_load_execution_facts_for_dual_root() -> None:
     assert '"$PY" "$ROOT/scripts/md2pdf.py"' in text
     assert '.venv/bin/python scripts/md2pdf.py' not in text
     assert 'skills/md2pdf/scripts/md2pdf.py' not in text
+
+    meta = parse_skill_md(
+        text,
+        "md2pdf",
+        str(root / "skills" / "md2pdf" / "SKILL.md"),
+    )
+    assert "relative_path_base" in meta.description
+    assert "不是 Skill 目录" in meta.description
