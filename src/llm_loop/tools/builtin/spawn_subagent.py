@@ -23,6 +23,7 @@ class SpawnSubAgentTool:
         "注意: 子代理继承父代理当前工具执行域；父域完整时 child 可用完整已注册工具面，"
         "父域显式受限时 child 不得扩权。各工具自身安全/授权/并发写保护继续生效。"
         "递归深度由程序计算，上限 3，超限会拒绝。"
+        "requires 可显式声明能力需求（工具/网络/文件系统/会话连续性），缺口在 child 启动前拒绝。"
         "spawn 成功只代表 child 已启动，不代表子任务完成；最终 outcome 以 subagent_result 为准。"
     )
     parameters = {
@@ -58,6 +59,33 @@ class SpawnSubAgentTool:
                                "完成/未完成/原因——分歧显性化，父级保留最终裁决权。给验收标准后"
                                "子代理结果更可靠（自检倒逼收敛，避免'答非所问'）。",
             },
+            "requires": {
+                "type": "object",
+                "properties": {
+                    "tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "子任务必需的具体工具名（程序在 child 启动前比对允许工具集）",
+                    },
+                    "network": {
+                        "type": "boolean",
+                        "description": "是否需要出站网络（web_fetch/web_search/execute_command 等）",
+                    },
+                    "fs": {
+                        "type": "boolean",
+                        "description": "是否需要工作区文件系统读写",
+                    },
+                    "session_continuity": {
+                        "type": "boolean",
+                        "description": "是否需要 terminal 后可续话（本执行面支持，声明用于 fail-fast）",
+                    },
+                },
+                "description": (
+                    "能力需求显式声明（可选，EVO-20260914-1eb26afa）：程序在 child 启动前"
+                    "比对执行面能力矩阵，缺口即在启动前拒绝并给出替代执行面提示（只提前"
+                    "'必然失败'，不放宽任何授权边界）。不声明则不比对，行为与既有完全一致。"
+                ),
+            },
         },
         "required": ["task"],
     }
@@ -89,6 +117,54 @@ class SpawnSubAgentTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+
+        # EVO-20260914-1eb26afa: 显式能力需求声明 → child 启动前矩阵比对早失败。
+        # 不声明则不比对（零回归）；拒绝只针对"必然失败"的显式缺口。
+        from llm_loop.core.execution_surface import (
+            SurfaceRequirements,
+            alternatives_hint,
+            codearts_capability,
+            local_subagent_capability,
+            validate_requirements,
+        )
+
+        requires_raw = kwargs.get("requires")
+        reqs = SurfaceRequirements.from_kwargs(requires_raw)
+        if requires_raw is not None and reqs is None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    "[参数错误] requires 需为对象 {tools?: [工具名], network?: bool, "
+                    "fs?: bool, session_continuity?: bool}"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        if reqs is not None and reqs.declared():
+            try:
+                allowed_names = list(self._runner.registry.names())
+            except Exception:  # noqa: BLE001 — 矩阵派生失败不拦截既有行为
+                allowed_names = None
+            caps = local_subagent_capability(allowed_names)
+            gaps = validate_requirements(caps, reqs)
+            if gaps:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=(
+                        "[状态: failure] 能力需求声明与执行面矩阵存在缺口，child 未启动:\n- "
+                        + "\n- ".join(gaps)
+                        + "\n"
+                        + alternatives_hint(
+                            reqs,
+                            {
+                                "local_subagent": caps,
+                                "codearts": codearts_capability(),
+                            },
+                        )
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
 
         try:
             started = self._runner.start(

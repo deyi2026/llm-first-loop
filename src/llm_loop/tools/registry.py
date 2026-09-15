@@ -121,6 +121,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "spawn_subagent": "非阻塞启动隔离子代理并返回 child_id；父代理可继续当前 run。",
     "agent_message": "向直接 parent 或仍运行的直接 child 发消息；sender 由运行时确定，不能指定。",
     "subagent_result": "查询/短暂等待自己的直接 child；completed 才代表子任务成功结算。",
+    "agent_followup": "对已终止的直接 child 有界续话（同会话保留上下文，每 child≤2 次/父会话≤4 次/15 分钟窗口）。",
     "fix_loop": "原子编排检查→定位→子代理修复→重跑的有界修复循环。",
     "workflow_run": "编排 parallel/pipeline/DAG 子任务；按依赖执行并传递前序结果。",
     "dsh_task": "在隔离进程/会话中委派 DeepSeek Harness 任务；不会自动继承当前会话历史。",

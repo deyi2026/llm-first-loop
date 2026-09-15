@@ -193,6 +193,19 @@ def run_model_catalog(
         "复杂推理优先看 reasoning_capable；是否可 on/off 另看 reasoning_control。"
         "切换经 switch_model（必带 reason，审计可溯，RULE-AI-09）。"
     )
+    # EVO-20260914-1eb26afa: 执行面能力矩阵（机器可读面 + spawn 前比对入口）
+    from llm_loop.core.execution_surface import EXECUTION_SURFACE_MATRIX_DOC
+
+    lines.append(f"执行面能力矩阵: {EXECUTION_SURFACE_MATRIX_DOC}")
+    lines.append(
+        "  - local_subagent: allowed_tools=父执行域继承（spawn 时 live 派生）, "
+        "network_egress=随工具域, "
+        "fs=workspace(随工具域), session_continuity=✓（terminal 后有界续话）"
+    )
+    lines.append(
+        f"  - codearts: allowed_tools=远端定义（本地不可枚举）, network_egress=✓, "
+        f"fs=remote_sandbox, session_continuity=✗（跨步状态经 ctx_path 显式传递）"
+    )
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content="\n".join(lines),

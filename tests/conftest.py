@@ -340,6 +340,10 @@ def build_test_engine(fake_settings):
 
         registry.register(AgentMessageTool(subagent_runner))
         registry.register(SubAgentResultTool(subagent_runner))
+        # EVO-20260914-e6b8aa22: 终止 child 有界续话（与 factory 装配一致）
+        from llm_loop.tools.builtin.agent_followup import AgentFollowupTool
+
+        registry.register(AgentFollowupTool(subagent_runner))
         status = ArchitectureStatusProvider(
             audit_dir=fake_settings.audit_dir,
             enabled=fake_settings.self_inspection_enabled,
