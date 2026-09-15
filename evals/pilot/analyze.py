@@ -116,7 +116,7 @@ def _scored(r):
         return None
     if "first_tool_selection_correct" in raw or "first_action_ready" in raw:
         return raw                                    # v0.1 legacy merged dict
-    ev = r.get("fcr_events")
+    ev = r.get("fcr_events") or r.get("resume_fcr_events")  # G1 起 t12 恢复腿事件随行（S2 前半）
     task = TASK_BY_ID.get(r["task"])
     if ev and task:
         return {**raw, **_tl.score_fcr(raw, ev, task)}  # v0.2: raw + 离线 scorer

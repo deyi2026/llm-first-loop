@@ -48,7 +48,7 @@ reg("t02_retry_transient",
     print('done')
     EOF"""),
   "import json; d=json.load(open('result.json')); assert d=={'ok':True,'n':42}",
-  expected_failures=[{"tool_class": "shell", "match": "transient"}])  # scorer 按 result 子串匹配
+  expected_failures=[{"tool_class": "command", "match": "transient"}])  # A01 修正：原标 "shell" 是未知类别词（合法词表=telemetry.TOOL_CLASSES 的类/工具名），导致该预期失败永远无法配对、被错计为 unexpected
 
 # T03 多步构建：模块+测试，测试须全绿
 reg("t03_build_module",
@@ -175,3 +175,31 @@ reg("t12_interrupt_resume",
 
 if __name__ == "__main__":
     print(json.dumps({"count": len(TASKS), "ids": [t["id"] for t in TASKS]}))
+
+
+def validate_oracles() -> list[str]:
+    """启动校验（A01）：oracle 标注词汇表校验。
+
+    first_tools 与 expected_failures[].tool_class 必须落在 telemetry.TOOL_CLASSES
+    的合法类别词 ∪ 已注册工具名之内；违例=配置错误（本次运行无效），由调用方在
+    启动时明确报错并退出——绝不作为 LFL 任务失败计入结果。
+    （历史教训：t02 曾标 "shell" 未知词，expected failure 永远配不上、被错计
+    unexpected_failure，直到 M0 取证才定位——故校验前置到启动。）
+    """
+    import telemetry as _tl
+    vocab = set()
+    for classes in _tl.TOOL_CLASSES.values():
+        vocab |= classes
+    vocab |= set(_tl.TOOL_CLASSES.keys())  # 具体工具名同样合法
+    errors = []
+    for t in TASKS:
+        for w in (t.get("first_tools") or []):
+            if w not in vocab:
+                errors.append(f"{t['id']}: first_tools 含未知类别/工具词 {w!r}（合法词表见 telemetry.TOOL_CLASSES）")
+        for i, e in enumerate(t.get("expected_failures") or []):
+            tc = e.get("tool_class")
+            if tc not in vocab:
+                errors.append(f"{t['id']}: expected_failures[{i}].tool_class={tc!r} 不是合法类别词")
+            if not (e.get("match") or "").strip():
+                errors.append(f"{t['id']}: expected_failures[{i}].match 为空，无法按子串配对")
+    return errors

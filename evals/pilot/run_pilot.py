@@ -26,6 +26,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 sys.path.insert(0, str(HERE))
+import tasks  # noqa: E402
 from tasks import TASKS  # noqa: E402
 
 LFL_MODEL = "cognilocal/ornith-1.5-35b-a3b-mlx"
@@ -99,7 +100,8 @@ def main():
     msgs = state["messages"]
     # --- telemetry v0.2：tool_call_id 精确配对（declared tool_calls → ToolMessage 结果）---
     # 口径统一：rounds = AIMessage 数（不再用 len(msgs) 混入 tool messages）；
-    #           tool_calls = declared 调用数；ok 由结果消息判定并附 result 摘要（≤200 字符）。
+    #           tool_calls = declared 调用数；ok 由结果消息判定并附 result 摘要
+    #           （≤2000 字符 + result_len/result_truncated 截断显式标记，F08 修复）。
     events = {"t0": "", "calls": [], "turns": [], "source": "da:adapter-stdout"}
     turn = 0
     for m in msgs:
@@ -116,17 +118,18 @@ def main():
             for tc in getattr(m, "tool_calls", None) or []:
                 events["calls"].append({"name": tc.get("name"), "args": tc.get("args"),
                                         "ok": None, "result": None, "turn": turn,
-                                        "tcid": tc.get("id")})
+                                        "call_id": tc.get("id")})  # F08：保留机械身份，不再事后移除
         elif mt == "tool":
             body = str(getattr(m, "content", ""))
             tcid = getattr(m, "tool_call_id", None)
             for c in events["calls"]:
-                if c["ok"] is None and ((tcid and c.get("tcid") == tcid) or not tcid):
+                if c["ok"] is None and ((tcid and c.get("call_id") == tcid) or not tcid):
                     c["ok"] = not (body.startswith("ERROR:") or '"exit": -1' in body[:80])
-                    c["result"] = body[:200]
+                    c["result"] = body[:2000]
+                    c["result_len"] = len(body)
+                    c["result_truncated"] = len(body) > 2000
                     break
-    for c in events["calls"]:
-        c.pop("tcid", None)
+    # F08 修复：不再移除 call_id（raw 层保留机械身份；scorer 不消费）
     n_tool = len(events["calls"])
     n_rounds = sum(1 for m in msgs if getattr(m, "type", "") == "ai")
     last = ""
@@ -145,8 +148,12 @@ def sh(cmd: str, cwd: Path, timeout: int = 30) -> None:
         raise RuntimeError(f"setup failed: {r.stderr[:500]}")
 
 def verify(task: dict, ws: Path) -> tuple[bool, str]:
-    r = subprocess.run([sys.executable, "-c", task["verify"]], cwd=ws, capture_output=True, text=True, timeout=60)
-    return r.returncode == 0, (r.stderr[-300:] if r.returncode else "")
+    try:
+        r = subprocess.run([sys.executable, "-c", task["verify"]], cwd=ws, capture_output=True, text=True, timeout=60)
+        return r.returncode == 0, (r.stderr[-300:] if r.returncode else "")
+    except subprocess.TimeoutExpired:
+        # verifier 挂起=测量设施故障，不是任务失败（§18.1 任务 verifier 健壮性）
+        return False, "VERIFIER-TIMEOUT-60s"
 
 def _lfl_env(ws: Path) -> dict:
     """会话/记忆存储隔离：每 run 独立 DATA_DIR（主路径 load_settings 读 DATA_DIR env）。
@@ -482,16 +489,21 @@ def run_lfl_session(task, ws, timeout_s, phase1_full: str, phase1_sid_full: str)
         stats = [ln for ln in out.splitlines() if ln.startswith("[会话")]
         resumed8 = stats[0].split("[会话 ")[1][:8] if stats else ""
         continuity = bool(sid8 and resumed8 and resumed8 == sid8)
+        # S2/G1 修复：恢复腿事件随行落盘（合并后为 resume_first_call/resume_fcr_events）——
+        # 否则 t12 恢复过程不可复算（frozen112 教训：事件只存 LFL 会话存储，存储不可用即 D0）
+        fc2, fev2 = _tl.fcr_lfl(ws, sid_full)
         return {"ok_run": r.returncode == 0, "dur": round(time.time() - t0, 1),
                 "stats": stats[0] if stats else "", "session": sid_full,
                 "session_continuity": continuity,
                 "resume_semantics": "session-resume" if continuity else
                                     ("new-session-same-workspace" if resumed8 else "resume-failed"),
-                "stdout_tail": out[-1500:], "stderr_tail": r.stderr[-500:]}
+                "stdout_tail": out[-1500:], "stderr_tail": r.stderr[-500:],
+                "first_call": fc2, "fcr_events": fev2}
     except subprocess.TimeoutExpired:
         return {"ok_run": False, "dur": timeout_s, "stats": "", "session": sid_full,
                 "session_continuity": False, "resume_semantics": "resume-failed",
-                "stdout_tail": "HARNESS-TIMEOUT", "stderr_tail": ""}
+                "stdout_tail": "HARNESS-TIMEOUT", "stderr_tail": "",
+                "first_call": None, "fcr_events": None}
 
 def _sha256(path: Path) -> str:
     import hashlib
@@ -688,6 +700,14 @@ def main():
         ap.error("--runs must be >= 1")
     if args.latin_square and args.runs % len(agents) != 0:
         ap.error("--latin-square requires --runs to be a multiple of the number of agents")
+    # A01 启动校验：oracle 标注词汇表校验——违例=本次配置无效，明确报错退出，
+    # 绝不把配置错误记为 LFL 任务失败（t02 "shell" 教训）
+    oracle_errors = tasks.validate_oracles()
+    if oracle_errors:
+        print("ORACLE-CONFIG-INVALID（A01 启动校验失败，本次运行未执行）：", file=sys.stderr)
+        for e in oracle_errors:
+            print(f"  - {e}", file=sys.stderr)
+        sys.exit(2)
     results_path = base / args.out
     triples = _build_plan(agents, sel, args.runs, args.randomize, args.seed, args.latin_square)
     manifest = _manifest(agents, sel, args.runs, args.interrupt, args.randomize,
