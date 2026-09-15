@@ -17,6 +17,7 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from llm_loop.core.message import ToolCall, ToolResult, ToolResultStatus
 from llm_loop.core.run_context import current_session_id
@@ -876,3 +877,69 @@ def test_bare_registry_hard_cap_is_truthful_when_archive_unavailable(monkeypatch
     assert "没有 archive 恢复路径" in result.content
     assert "search_archive" not in result.content
     assert "已另存" not in result.content
+
+
+
+def test_typed_recovery_projects_verified_skill_capability_fact_with_guidance_off(
+    monkeypatch, tmp_path
+) -> None:
+    from llm_loop.core.history import _provider_message_dict
+    from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
+
+    skills = tmp_path / "skills"
+    skill_dir = skills / "web-fetch-fast"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: web-fetch-fast\ndescription: deterministic fetch recovery\n---\nbody\n",
+        encoding="utf-8",
+    )
+    result = ToolResult(
+        status=ToolResultStatus.FAILURE,
+        content="[抓取失败] httpx 仅取到 JS 壳；curl 回退亦失败。",
+        tool_call_id="wf-1",
+        tool_name="web_fetch",
+    )
+    result.recovery_advice = classify_tool_recovery(result)
+    assert result.recovery_advice is not None
+    assert result.recovery_advice.preferred_skill == "web-fetch-fast"
+
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
+    tool_msg = tool_result_to_message(result)
+    host = SimpleNamespace(
+        settings=SimpleNamespace(skills_dir=str(skills)),
+        _run_state=lambda: SimpleNamespace(current_turn_ref=7),
+    )
+    ToolCycleService(host)._attach_capability_boundary_metadata(tool_msg, result)
+    wire = _provider_message_dict(tool_msg, 7)
+
+    assert "[恢复策略]" not in wire["content"]
+    assert "next=" not in wire["content"]
+    assert "[能力边界事实]" in wire["content"]
+    assert "skill=web-fetch-fast; available=true; loader=skill_load" in wire["content"]
+    assert tool_msg.metadata["capability_available"] == [
+        {"kind": "skill", "name": "web-fetch-fast", "loader": "skill_load"}
+    ]
+
+
+def test_typed_recovery_does_not_claim_missing_skill_available(monkeypatch, tmp_path) -> None:
+    from llm_loop.core.history import _provider_message_dict
+    from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
+
+    result = ToolResult(
+        status=ToolResultStatus.FAILURE,
+        content="[抓取失败] JS 壳",
+        tool_call_id="wf-2",
+        tool_name="web_fetch",
+    )
+    result.recovery_advice = classify_tool_recovery(result)
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
+    tool_msg = tool_result_to_message(result)
+    host = SimpleNamespace(
+        settings=SimpleNamespace(skills_dir=str(tmp_path / "empty-skills")),
+        _run_state=lambda: SimpleNamespace(current_turn_ref=3),
+    )
+    ToolCycleService(host)._attach_capability_boundary_metadata(tool_msg, result)
+    wire = _provider_message_dict(tool_msg, 3)
+
+    assert "skill=web-fetch-fast; available=true" not in wire["content"]
+    assert "capability_available" not in tool_msg.metadata

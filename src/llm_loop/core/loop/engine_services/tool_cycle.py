@@ -434,38 +434,59 @@ class ToolCycleService:
             self._reachability_finalize("tool_declarations_invalid")
 
     def _attach_capability_boundary_metadata(self, tool_msg: Message, result) -> None:
-        """Attach G6-v2 hard-boundary facts to their original visible producer.
+        """Attach current-turn mechanical capability facts to their visible producer.
 
-        No dynamic prompt slot is created. The session's tool content stays unchanged;
-        history projection renders these structured facts only for the current human turn.
+        This layer reports only verified availability/boundary facts.  It does not
+        render recovery strategy, select the next action, or create a dynamic prompt
+        slot.  History projection keeps the facts visible only for the current human
+        turn; durable tool content remains unchanged.
         """
         try:
+            from llm_loop.skills.loader import find_skill
             from llm_loop.tools.eligibility import runtime_tool_health
-            names = tuple(
+
+            required_tools = tuple(
                 dict.fromkeys(
                     str(n)
                     for n in (getattr(result, "capability_requirements", ()) or ())
                     if str(n)
                 )
             )
-            if not names:
-                return
-            facts: list[dict[str, Any]] = []
-            for name in names:
+            unavailable: list[dict[str, Any]] = []
+            for name in required_tools:
                 health = runtime_tool_health(name)
                 if health.available:
                     continue
-                facts.append(
+                unavailable.append(
                     {
                         "tool_name": name,
                         "reason_code": str(health.reason_code or "runtime_unhealthy"),
                         "replacement": [str(x) for x in (health.preferred_next or ()) if str(x)],
                     }
                 )
-            if not facts:
+
+            available: list[dict[str, str]] = []
+            advice = getattr(result, "recovery_advice", None)
+            preferred_skill = str(getattr(advice, "preferred_skill", "") or "").strip()
+            if preferred_skill:
+                settings = getattr(self._host, "settings", None)
+                skills_dir = str(getattr(settings, "skills_dir", "") or "").strip() or None
+                if find_skill(skills_dir, preferred_skill) is not None:
+                    available.append(
+                        {
+                            "kind": "skill",
+                            "name": preferred_skill,
+                            "loader": "skill_load",
+                        }
+                    )
+
+            if not unavailable and not available:
                 return
             metadata = tool_msg.metadata if isinstance(tool_msg.metadata, dict) else {}
-            metadata["capability_unavailable"] = facts
+            if unavailable:
+                metadata["capability_unavailable"] = unavailable
+            if available:
+                metadata["capability_available"] = available
             metadata["capability_boundary_turn_ref"] = self._host._run_state().current_turn_ref
             tool_msg.metadata = metadata
         except Exception:  # noqa: BLE001 — boundary facts must never block tool receipt

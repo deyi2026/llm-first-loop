@@ -103,39 +103,56 @@ def _same_turn_ref(raw: Any, current_turn_ref: int | None) -> bool:
 
 
 def _capability_boundary_block(m: Message, current_turn_ref: int | None) -> str:
-    """Render producer-attached G6-v2 boundary facts for the current human turn only.
+    """Render producer-attached current-turn mechanical capability facts.
 
-    The source Message is never mutated. The block is factual (no imperative next-step
-    wording), deterministic, and loses prompt visibility on the next human turn while
-    structured metadata remains available for audit/retrieval.
+    The source Message is never mutated.  Facts are deterministic and non-imperative:
+    unavailable tools report their mechanical boundary; recovery-linked skills are
+    shown as available only after runtime skill discovery verified them.  No row says
+    which action the model should choose.  Visibility expires on the next human turn.
     """
     metadata = m.metadata if isinstance(m.metadata, dict) else {}
     if not _same_turn_ref(metadata.get("capability_boundary_turn_ref"), current_turn_ref):
         return ""
-    rows = metadata.get("capability_unavailable")
-    if not isinstance(rows, list):
-        return ""
-    normalized: list[tuple[str, str, tuple[str, ...]]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("tool_name", "") or "").strip()
-        reason = str(row.get("reason_code", "") or "runtime_unhealthy").strip()
-        if not name:
-            continue
-        raw_repl = row.get("replacement") or ()
-        if isinstance(raw_repl, str):
-            raw_repl = (raw_repl,)
-        repl = tuple(sorted({str(x).strip() for x in raw_repl if str(x).strip()}))
-        normalized.append((name, reason, repl))
-    if not normalized:
+
+    unavailable_rows = metadata.get("capability_unavailable")
+    unavailable: list[tuple[str, str, tuple[str, ...]]] = []
+    if isinstance(unavailable_rows, list):
+        for row in unavailable_rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("tool_name", "") or "").strip()
+            reason = str(row.get("reason_code", "") or "runtime_unhealthy").strip()
+            if not name:
+                continue
+            raw_repl = row.get("replacement") or ()
+            if isinstance(raw_repl, str):
+                raw_repl = (raw_repl,)
+            repl = tuple(sorted({str(x).strip() for x in raw_repl if str(x).strip()}))
+            unavailable.append((name, reason, repl))
+
+    available_rows = metadata.get("capability_available")
+    available: list[tuple[str, str, str]] = []
+    if isinstance(available_rows, list):
+        for row in available_rows:
+            if not isinstance(row, dict):
+                continue
+            kind = str(row.get("kind", "") or "").strip()
+            name = str(row.get("name", "") or "").strip()
+            loader = str(row.get("loader", "") or "").strip()
+            if kind != "skill" or not name or loader != "skill_load":
+                continue
+            available.append((kind, name, loader))
+
+    if not unavailable and not available:
         return ""
     lines = ["[能力边界事实]"]
-    for name, reason, repl in sorted(set(normalized)):
+    for name, reason, repl in sorted(set(unavailable)):
         line = f"tool={name}; available=false; reason={reason}"
         if repl:
             line += "; alternatives=" + ",".join(repl)
         lines.append(line)
+    for kind, name, loader in sorted(set(available)):
+        lines.append(f"{kind}={name}; available=true; loader={loader}")
     return "\n" + "\n".join(lines)
 
 
