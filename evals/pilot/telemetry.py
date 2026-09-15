@@ -14,8 +14,11 @@ Layer 2  benchmark scorer         score_fcr(raw, events, task)
   {"t0": float|"", "ok_signal": bool,
    "calls":[{"name","classes","args","ok","result","start_rel","end_rel","turn"}],
    "turns":[{"tokens_in","cached","tokens_out"}], "source": str}
-  ok=None 表示该通道 per-call 成败不可测（cline）；result 为工具结果摘要（≤200 字符，
-  lfl/da 有；cline None）。scorer 对不可测指标输出 None 而非猜测。
+  ok=None 表示该通道 per-call 成败不可测（cline）；result 为工具结果摘要（≤RESULT_CAP
+  字符，附 result_len/result_truncated 截断显式标记；lfl/da 有；cline None）。raw 层
+  保留 call_id 机械身份供跨步骤追溯（A09），scorer 不消费 call_id（分层不破坏）。
+  scorer 对不可测指标输出 None 而非猜测；证据被截断且未命中 oracle 的失败归
+  expected_failure_unresolvable 而非伪造 unexpected（A05）。
 
 First-Call-Ready 定义（沿用 63-tool 实验已验证语义）：
   Mechanical Correctness（主指标） = 正确工具选择 × 参数机械可执行
@@ -26,6 +29,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
+# 结果保留上限（F08 修复，200→2000）：expected_failure 匹配需要完整可判证据，
+# 原先 200 字符截断会把出现在截断点之后的失败标记错计为 unexpected_failure。
+# 超限时保留前 RESULT_CAP 字符并显式置 result_truncated=True（A05：不伪造判定）。
+RESULT_CAP = 2000
 
 TOOL_CLASSES: dict[str, set[str]] = {
     # lfl（仓库工具面）
@@ -102,10 +110,12 @@ def events_lfl(session_path: Path) -> dict | None:
             for c in calls:
                 if c.get("call_id") and c["call_id"] == m.get("tool_call_id") and c["ok"] is None:
                     c["ok"] = (m.get("status") == "success")
-                    c["result"] = body[:200]
+                    c["result"] = body[:RESULT_CAP]
+                    c["result_len"] = len(body)
+                    c["result_truncated"] = len(body) > RESULT_CAP
                     c["end_rel"] = (m.get("ts", 0.0) - t0)
-    for c in calls:
-        c.pop("call_id", None)
+    # F08 修复：不再移除 call_id——raw 层保留机械身份（调用↔结果精确关联、A09 追溯）；
+    # scorer 不消费该字段，raw/scorer 分层不变。
     return {"t0": t0, "calls": calls, "turns": turns, "source": f"lfl:{session_path.name[:8]}"}
 
 def events_da(telemetry: dict | None) -> dict | None:
@@ -117,6 +127,8 @@ def events_da(telemetry: dict | None) -> dict | None:
         name = c.get("name", "")
         calls.append({"name": name, "classes": sorted(tool_classes(name)), "args": _canon_args(c.get("args")),
                       "ok": c.get("ok"), "result": c.get("result"),
+                      "result_len": c.get("result_len"), "result_truncated": c.get("result_truncated"),
+                      "call_id": c.get("call_id"),  # F08 修复：raw 层保留机械身份（scorer 不消费）
                       "start_rel": None, "end_rel": None, "turn": c.get("turn")})
     for i, c in enumerate(calls, 1):
         if c["turn"] is None:
@@ -300,7 +312,7 @@ def score_fcr(raw: dict, events: dict, task: dict | None) -> dict:
         # repair：失败后同名工具出现成功（修复闭环）；dup：同 (name,args) 成功调用重复
         repair = dup = 0
         seen_ok, failed_names = set(), set()
-        exp_hit = unexp = 0
+        exp_hit = unexp = unresolvable = 0
         for c in calls:
             if c.get("ok") is True:
                 k = (c["name"], c["args"])
@@ -316,6 +328,8 @@ def score_fcr(raw: dict, events: dict, task: dict | None) -> dict:
                 if any((e.get("tool_class") in set(c["classes"])) and (e.get("match") in res)
                        for e in exp_fail):
                     exp_hit += 1
+                elif c.get("result_truncated"):
+                    unresolvable += 1   # A05：截断且未命中 → 证据不完整，不伪造 unexpected
                 else:
                     unexp += 1
                 failed_names.add(c["name"])
@@ -323,6 +337,7 @@ def score_fcr(raw: dict, events: dict, task: dict | None) -> dict:
         s["unnecessary_verification_count"] = dup
         s["expected_failure_count"] = exp_hit
         s["unexpected_failure_count"] = unexp
+        s["expected_failure_unresolvable_count"] = unresolvable
     else:
         # cline / 未配对通道：语义成败不可测 → None，不猜
         s["first_args_mechanically_valid"] = None
@@ -331,6 +346,7 @@ def score_fcr(raw: dict, events: dict, task: dict | None) -> dict:
         s["unnecessary_verification_count"] = None
         s["expected_failure_count"] = None
         s["unexpected_failure_count"] = None
+        s["expected_failure_unresolvable_count"] = None
     return s
 
 # ---------- 兼容组合入口（旧调用点 / 快速联查） ----------
