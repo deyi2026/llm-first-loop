@@ -123,3 +123,28 @@ def test_rule_access_extends_existing_tool_without_expanding_universal_prompt():
     assert len(prompt) < 400
     assert "RULE-AI" not in prompt
     assert "按需检索已验证经验/方法并核适用性" in prompt
+
+
+def test_rule_discovery_falls_back_to_natural_query_candidates(tmp_path):
+    """Natural multi-phrase queries should return candidate cards, not false-empty."""
+    searcher = _searcher(tmp_path)
+
+    rows = searcher.search(
+        kind="rule",
+        query="当前事实 历史经验 旧结论 冲突 采信顺序",
+        limit=10,
+    )
+
+    assert rows
+    assert any(row["rule_ref"] == "RULE-AI-18" for row in rows)
+    assert all(row["representation"] == "rule_card" for row in rows)
+    assert all(row["projection_complete"] is False for row in rows)
+    assert all(row["task_applicability"] == "not_evaluated" for row in rows)
+
+
+def test_rule_discovery_fallback_keeps_unrelated_query_empty(tmp_path):
+    searcher = _searcher(tmp_path)
+
+    rows = searcher.search(kind="rule", query="火星香蕉量子西瓜", limit=10)
+
+    assert rows == []

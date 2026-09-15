@@ -15,6 +15,8 @@ from pathlib import Path
 _RULE_REF_RE = re.compile(r"RULE-AI-\d+(?:\.\d+)?", re.IGNORECASE)
 _RULE_HEADING_RE = re.compile(r"^##\s+.*?(RULE-AI-\d+(?:\.\d+)?).*?$", re.IGNORECASE | re.MULTILINE)
 _QUERY_TOKEN_RE = re.compile(r"[\w.\-]+", re.UNICODE)
+_ASCII_TERM_RE = re.compile(r"[a-z0-9]+")
+_CJK_RUN_RE = re.compile(r"[\u3400-\u9fff]+")
 
 
 @dataclass(frozen=True)
@@ -53,7 +55,22 @@ class RuleIndex:
             if score > 0:
                 ranked.append((-score, entry.order, entry))
         ranked.sort()
-        return [self._card(entry, digest) for _, _, entry in ranked[:limit]]
+        if ranked:
+            return [self._card(entry, digest) for _, _, entry in ranked[:limit]]
+
+        # Natural multi-phrase queries can be over-specific even when several
+        # mechanically relevant substrings are present in one rule.  Only after
+        # the strict conjunctive pass is empty, fall back to lexical candidate
+        # discovery using ASCII words and CJK 2-4 grams.  This broadens retrieval
+        # only; task applicability remains explicitly not_evaluated.
+        fallback_terms = self._fallback_terms(raw)
+        fallback_ranked: list[tuple[int, int, RuleEntry]] = []
+        for entry in entries:
+            score, matched = self._fallback_score(entry, fallback_terms)
+            if matched >= 2 and score > 0:
+                fallback_ranked.append((-score, entry.order, entry))
+        fallback_ranked.sort()
+        return [self._card(entry, digest) for _, _, entry in fallback_ranked[:limit]]
 
     def _load(self) -> tuple[tuple[RuleEntry, ...], str]:
         try:
@@ -95,6 +112,50 @@ class RuleIndex:
     @staticmethod
     def _tokens(query: str) -> tuple[str, ...]:
         return tuple(token.casefold() for token in _QUERY_TOKEN_RE.findall(query) if token.strip())
+
+    @staticmethod
+    def _fallback_terms(query: str) -> tuple[tuple[str, int], ...]:
+        terms: dict[str, int] = {}
+        lowered = query.casefold()
+        for token in _ASCII_TERM_RE.findall(lowered):
+            if len(token) < 2:
+                continue
+            terms[token] = max(terms.get(token, 0), 3 if len(token) >= 4 else 2)
+        for run in _CJK_RUN_RE.findall(query):
+            if len(run) < 2:
+                continue
+            max_size = min(4, len(run))
+            for size in range(2, max_size + 1):
+                weight = {2: 1, 3: 2, 4: 3}[size]
+                for start in range(len(run) - size + 1):
+                    gram = run[start : start + size]
+                    terms[gram] = max(terms.get(gram, 0), weight)
+        return tuple(sorted(terms.items()))
+
+    @staticmethod
+    def _fallback_score(
+        entry: RuleEntry, terms: tuple[tuple[str, int], ...]
+    ) -> tuple[int, int]:
+        ref = entry.ref.casefold()
+        title = entry.title.casefold()
+        synopsis = entry.synopsis.casefold()
+        body = entry.content.casefold()
+        score = 0
+        matched = 0
+        for term, query_weight in terms:
+            field_weight = 0
+            if term in ref:
+                field_weight = max(field_weight, 12)
+            if term in title:
+                field_weight = max(field_weight, 8)
+            if term in synopsis:
+                field_weight = max(field_weight, 5)
+            if term in body:
+                field_weight = max(field_weight, 2)
+            if field_weight:
+                matched += 1
+                score += field_weight * query_weight
+        return score, matched
 
     @staticmethod
     def _title(heading: str) -> str:
