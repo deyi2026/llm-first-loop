@@ -18,7 +18,7 @@ def _feed(guard, blocks, *, drafts=None, persists=None):
     drafts = drafts if drafts is not None else [0] * len(blocks)
     persists = persists if persists is not None else [0] * len(blocks)
     full = ""
-    for text, dcount, pseq in zip(blocks, drafts, persists):
+    for text, dcount, pseq in zip(blocks, drafts, persists, strict=True):
         full += text
         guard.observe_checkpoint(
             reasoning_chars=len(full),

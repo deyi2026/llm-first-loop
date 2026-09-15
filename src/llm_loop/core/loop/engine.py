@@ -40,6 +40,9 @@ from llm_loop.core.loop.engine_services.attempt_executor import AttemptExecutor
 from llm_loop.core.loop.engine_services.fallback import FallbackService
 from llm_loop.core.loop.engine_services.interop import InteropService
 from llm_loop.core.loop.engine_services.interrupted_capture import InterruptedCapture
+from llm_loop.core.loop.engine_services.nonconvergence_guard import (
+    NonconvergenceFuseError,
+)
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 from llm_loop.core.loop.engine_services.routing import (
     _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -82,9 +85,6 @@ from llm_loop.feedback.honesty import max_iterations_feedback
 from llm_loop.feedback.validator import DeclarationValidator, build_discrepancy_feedback
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.status import ArchitectureStatusProvider
-from llm_loop.core.loop.engine_services.nonconvergence_guard import (
-    NonconvergenceFuseError,
-)
 from llm_loop.llm.client import (
     GuardRequestContext,
     LLMClient,
