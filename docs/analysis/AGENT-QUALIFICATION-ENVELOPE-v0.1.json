@@ -1,0 +1,669 @@
+{
+  "aggregate_verdict": "not_evaluated",
+  "authority_note": "Mechanical provenance contract only. This JSON is not a second qualification SoT and does not replace the paired design document or any owning subsystem.",
+  "blocking": false,
+  "design_ref": {
+    "anchor": "Envelope v0.1 has no blocking right.",
+    "frozen_revision": "b753d632fccabd5b742835162a9074b431b8ba94",
+    "line_hint": "1-467",
+    "path": "docs/DESIGN-20260915-agent-qualification-envelope-v0.1.md"
+  },
+  "field_count": 35,
+  "fields": [
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "mechanical.goal.open_count",
+      "owner": "TaskStore.frontier",
+      "rule": "Existing mechanical fact; never infer from prose.",
+      "source_refs": [
+        {
+          "anchor": "\"open_count\": sum(",
+          "line_hint": "438-445",
+          "path": "src/llm_loop/introspection/task_store.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "mechanical.goal.completion_ready",
+      "owner": "TaskStore",
+      "rule": "Existing boolean when TaskStore is readable.",
+      "source_refs": [
+        {
+          "anchor": "def goal_completion_ready(",
+          "line_hint": "448-457",
+          "path": "src/llm_loop/introspection/task_store.py"
+        }
+      ]
+    },
+    {
+      "availability": "gap_unknown",
+      "classification": "DIAGNOSTIC",
+      "field": "mechanical.goal.completion_precheck_observed",
+      "owner": "update_goal.wrapper_observation",
+      "rule": "No persisted precheck-observed fact exists; fail-open exception path remains unknown.",
+      "source_refs": [
+        {
+          "anchor": "except Exception:  # noqa: BLE001 — fail-open",
+          "line_hint": "223-240",
+          "path": "src/llm_loop/introspection/tools_goal.py"
+        }
+      ],
+      "source_status_default": "unknown"
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "mechanical.task.evidence_required",
+      "owner": "TaskStore.task_record",
+      "rule": "Existing mechanical completion precondition.",
+      "source_refs": [
+        {
+          "anchor": "if task.evidence_required and not task.evidence_refs:",
+          "line_hint": "269-274",
+          "path": "src/llm_loop/introspection/task_store.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "mechanical.task.evidence_verification_status",
+      "owner": "TaskEvidenceVerifier",
+      "rule": "Authenticity/integrity only; never semantic sufficiency.",
+      "source_refs": [
+        {
+          "anchor": "report = self._evidence_verifier.verify(task.evidence_refs)",
+          "line_hint": "275-291",
+          "path": "src/llm_loop/introspection/task_store.py"
+        },
+        {
+          "anchor": "class TaskEvidenceVerifier:",
+          "line_hint": "47-135",
+          "path": "src/llm_loop/introspection/task_evidence.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "mechanical.task.evidence_refs_digest",
+      "owner": "TaskEvidenceVerifier",
+      "rule": "Existing digest only when verification ran.",
+      "source_refs": [
+        {
+          "anchor": "task.evidence_refs_digest = report.refs_digest",
+          "line_hint": "289-291",
+          "path": "src/llm_loop/introspection/task_store.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "runtime.git_head",
+      "owner": "RuntimeManifest",
+      "rule": "Exact identity fact; expected SHA comes from the declared qualification profile.",
+      "source_refs": [
+        {
+          "anchor": "\"git_head\": report.git_head",
+          "line_hint": "195-244",
+          "path": "src/llm_loop/runtime/manifest.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "runtime.identity_ok",
+      "owner": "IdentityReport.RuntimeManifest",
+      "rule": "View only; does not change launch shadow/enforce behavior.",
+      "source_refs": [
+        {
+          "anchor": "\"identity_ok\": report.ok",
+          "line_hint": "218-225",
+          "path": "src/llm_loop/runtime/manifest.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "runtime.build_identity",
+      "owner": "BuildIdentity",
+      "rule": "Tracked-source/release mechanical identity.",
+      "source_refs": [
+        {
+          "anchor": "def compute_build_identity(",
+          "line_hint": "47-53",
+          "path": "src/llm_loop/runtime/build_identity.py"
+        },
+        {
+          "anchor": "\"build_identity\": build_identity",
+          "line_hint": "226-227",
+          "path": "src/llm_loop/runtime/manifest.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "runtime.config_hash",
+      "owner": "EffectiveConfig.RuntimeManifest",
+      "rule": "Exact config fingerprint; expected value must be predeclared by profile/evidence.",
+      "source_refs": [
+        {
+          "anchor": "\"config_hash\": config_hash(ec)",
+          "line_hint": "38-44,228-240",
+          "path": "src/llm_loop/runtime/manifest.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "runtime.config_sources",
+      "owner": "EffectiveConfig",
+      "rule": "Preserve existing per-key source; no second precedence system.",
+      "source_refs": [
+        {
+          "anchor": "def resolve_effective(",
+          "line_hint": "108-168",
+          "path": "src/llm_loop/runtime/resolver.py"
+        },
+        {
+          "anchor": "\"config_sources\": ec.sources",
+          "line_hint": "228-240",
+          "path": "src/llm_loop/runtime/manifest.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "runtime.providers_effective_hash",
+      "owner": "RuntimeManifest",
+      "rule": "Existing provider-source identity.",
+      "source_refs": [
+        {
+          "anchor": "\"providers_effective_hash\": effective_hash",
+          "line_hint": "75-123",
+          "path": "src/llm_loop/runtime/manifest.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "runtime.causal_snapshot_id",
+      "owner": "RuntimeCausalSnapshot",
+      "rule": "Existing immutable causal identity card; view only.",
+      "source_refs": [
+        {
+          "anchor": "def build_runtime_causal_snapshot(",
+          "line_hint": "88-107",
+          "path": "src/llm_loop/runtime/causality.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "deployment.restart_receipt",
+      "owner": "OfficialRestartReceipt",
+      "rule": "Exact action/rc/git SHA evidence.",
+      "source_refs": [
+        {
+          "anchor": "\"git_head_full\": head_full",
+          "line_hint": "364-395",
+          "path": "scripts/restart_mirror.sh"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "PREREGISTERED",
+      "field": "trajectory.eval_verdict_name",
+      "owner": "EvalScenario.VerdictRegistry",
+      "policy_ref": {
+        "anchor": "\"name\": \"llm-first-loop 核心引导评测集 v1\"",
+        "id": "core-guidance-eval-v1",
+        "line_hint": "1-74",
+        "path": "tests/eval_sets/scenarios_v1.json"
+      },
+      "rule": "Meaningful only with the declared scenario/policy.",
+      "source_refs": [
+        {
+          "anchor": "VERDICTS: dict",
+          "line_hint": "75-83",
+          "path": "src/llm_loop/eval/verdicts.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "PREREGISTERED",
+      "field": "trajectory.eval_verdict_pass",
+      "owner": "NamedEvalVerdict",
+      "policy_ref": {
+        "anchor": "\"name\": \"llm-first-loop 核心引导评测集 v1\"",
+        "id": "core-guidance-eval-v1",
+        "line_hint": "1-74",
+        "path": "tests/eval_sets/scenarios_v1.json"
+      },
+      "rule": "Scenario verdict is not a universal runtime policy.",
+      "source_refs": [
+        {
+          "anchor": "def run_verdict(",
+          "line_hint": "178-186",
+          "path": "src/llm_loop/eval/verdicts.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "PREREGISTERED",
+      "field": "trajectory.adjacent_duplicate_fingerprint",
+      "owner": "no_repeat_tool",
+      "policy_ref": {
+        "anchor": "\"name\": \"llm-first-loop 核心引导评测集 v1\"",
+        "id": "core-guidance-eval-v1",
+        "line_hint": "1-74",
+        "path": "tests/eval_sets/scenarios_v1.json"
+      },
+      "rule": "Adjacent exact fingerprint only; non-adjacent recurrence is not implemented.",
+      "source_refs": [
+        {
+          "anchor": "def _same_fingerprint(",
+          "line_hint": "60-70",
+          "path": "src/llm_loop/eval/verdicts.py"
+        },
+        {
+          "anchor": "@_register(\"no_repeat_tool\")",
+          "line_hint": "140-146",
+          "path": "src/llm_loop/eval/verdicts.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "SCORE",
+      "field": "semantic.task_success",
+      "owner": "FrozenCalibrationScorer",
+      "rule": "Semantic benchmark output; not durable Goal truth.",
+      "scorer_ref": [
+        {
+          "anchor": "C1 scorer-v1.4 自动评分器",
+          "id": "v1.4",
+          "line_hint": "1-3,435",
+          "path": "scripts/calib/scorer.py"
+        },
+        {
+          "anchor": "\"scorer_version\": \"v1.6-h2\"",
+          "id": "v1.6-h2",
+          "line_hint": "1-21,602",
+          "path": "scripts/calib/h2_scorer.py"
+        }
+      ],
+      "source_refs": [
+        {
+          "anchor": "\"task_success\": task_success",
+          "line_hint": "400-450",
+          "path": "scripts/calib/scorer.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "SCORE",
+      "field": "semantic.constraint_violation",
+      "owner": "FrozenCalibrationScorer",
+      "rule": "Keep scorer version/provenance attached.",
+      "scorer_ref": [
+        {
+          "anchor": "C1 scorer-v1.4 自动评分器",
+          "id": "v1.4",
+          "line_hint": "1-3,435",
+          "path": "scripts/calib/scorer.py"
+        },
+        {
+          "anchor": "\"scorer_version\": \"v1.6-h2\"",
+          "id": "v1.6-h2",
+          "line_hint": "1-21,602",
+          "path": "scripts/calib/h2_scorer.py"
+        }
+      ],
+      "source_refs": [
+        {
+          "anchor": "\"constraint_violation\": constraint_violation",
+          "line_hint": "400-450",
+          "path": "scripts/calib/scorer.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "SCORE",
+      "field": "semantic.fatal_behavior",
+      "owner": "FrozenCalibrationScorer",
+      "rule": "Keep scorer version/provenance attached.",
+      "scorer_ref": [
+        {
+          "anchor": "C1 scorer-v1.4 自动评分器",
+          "id": "v1.4",
+          "line_hint": "1-3,435",
+          "path": "scripts/calib/scorer.py"
+        },
+        {
+          "anchor": "\"scorer_version\": \"v1.6-h2\"",
+          "id": "v1.6-h2",
+          "line_hint": "1-21,602",
+          "path": "scripts/calib/h2_scorer.py"
+        }
+      ],
+      "source_refs": [
+        {
+          "anchor": "\"fatal_behavior\": fatal",
+          "line_hint": "400-450",
+          "path": "scripts/calib/scorer.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "SCORE",
+      "field": "semantic.novel_stage",
+      "owner": "FrozenCalibrationScorer",
+      "rule": "Verification-depth score; independent of task_success in C1.",
+      "scorer_ref": [
+        {
+          "anchor": "C1 scorer-v1.4 自动评分器",
+          "id": "v1.4",
+          "line_hint": "1-3,435",
+          "path": "scripts/calib/scorer.py"
+        },
+        {
+          "anchor": "\"scorer_version\": \"v1.6-h2\"",
+          "id": "v1.6-h2",
+          "line_hint": "1-21,602",
+          "path": "scripts/calib/h2_scorer.py"
+        }
+      ],
+      "source_refs": [
+        {
+          "anchor": "\"novel_stage\": novel_stage",
+          "line_hint": "379-450",
+          "path": "scripts/calib/scorer.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "SCORE",
+      "field": "semantic.source_conflict_resolved",
+      "owner": "FrozenCalibrationScorer",
+      "rule": "Scorer-owned semantic predicate.",
+      "scorer_ref": [
+        {
+          "anchor": "C1 scorer-v1.4 自动评分器",
+          "id": "v1.4",
+          "line_hint": "1-3,435",
+          "path": "scripts/calib/scorer.py"
+        },
+        {
+          "anchor": "\"scorer_version\": \"v1.6-h2\"",
+          "id": "v1.6-h2",
+          "line_hint": "1-21,602",
+          "path": "scripts/calib/h2_scorer.py"
+        }
+      ],
+      "source_refs": [
+        {
+          "anchor": "\"source_conflict_resolved\": int(conflict_resolved)",
+          "line_hint": "400-450",
+          "path": "scripts/calib/scorer.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "DIAGNOSTIC",
+      "field": "trajectory.unnecessary_verification_count",
+      "owner": "CalibrationScorer.S2Analyzer",
+      "rule": "Raw count only; no universal fail threshold.",
+      "source_refs": [
+        {
+          "anchor": "\"unnecessary_verification_count\": unnecessary",
+          "line_hint": "370-377,430-450",
+          "path": "scripts/calib/scorer.py"
+        },
+        {
+          "anchor": "def unnec(o):",
+          "line_hint": "18-26",
+          "path": "scripts/calib/analyze_s2.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "DIAGNOSTIC",
+      "field": "trajectory.reasoning_chars",
+      "owner": "CalibrationScorer",
+      "rule": "Diagnostic unless a future scoped protocol preregisters a rule.",
+      "source_refs": [
+        {
+          "anchor": "\"reasoning_chars\": reasoning_chars",
+          "line_hint": "355-360,430-450",
+          "path": "scripts/calib/scorer.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "DIAGNOSTIC",
+      "field": "trajectory.reasoning_reflection_count",
+      "owner": "CalibrationScorer",
+      "rule": "Diagnostic only.",
+      "source_refs": [
+        {
+          "anchor": "\"reasoning_reflection_count\": reasoning_reflection_count",
+          "line_hint": "355-360,430-450",
+          "path": "scripts/calib/scorer.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "DIAGNOSTIC",
+      "field": "trajectory.decisive_action_turn",
+      "owner": "CalibrationScorer",
+      "rule": "Observed endpoint; no universal max-turn rule.",
+      "source_refs": [
+        {
+          "anchor": "\"decisive_action_turn\": decisive_turn",
+          "line_hint": "417-420,448",
+          "path": "scripts/calib/scorer.py"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "PREREGISTERED",
+      "field": "screening.s2_classification",
+      "owner": "S2FrozenScreeningProtocol",
+      "policy_ref": {
+        "anchor": "## Frozen Screening Classification",
+        "id": "s2-anchor-only-v1",
+        "line_hint": "7-14",
+        "path": "docs/SCREENING-S2-MATRIX-v1.md"
+      },
+      "rule": "Anchor-only frozen policy; not global Agent qualification.",
+      "source_refs": [
+        {
+          "anchor": "\"classification\": classification",
+          "line_hint": "59-105",
+          "path": "scripts/calib/analyze_s2.py"
+        },
+        {
+          "anchor": "## Frozen Screening Classification",
+          "id": "s2-anchor-only-v1",
+          "line_hint": "7-14",
+          "path": "docs/SCREENING-S2-MATRIX-v1.md"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "HARD",
+      "field": "screening.s2_scope",
+      "owner": "S2ProtocolMetadata",
+      "rule": "Preserve anchor-only scope; never upgrade to cross-vendor claim.",
+      "source_refs": [
+        {
+          "anchor": "This is a screening rule, not a significance test or global promotion rule.",
+          "line_hint": "14",
+          "path": "docs/SCREENING-S2-MATRIX-v1.md"
+        },
+        {
+          "anchor": "Not cross-vendor generalization.",
+          "line_hint": "1-5",
+          "path": "docs/SCREENING-S2-ANCHOR-RESULT-v1.md"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "PREREGISTERED",
+      "field": "deployment.live_canary_profile",
+      "owner": "QualificationProtocol",
+      "policy_ref": {
+        "anchor": "The behavior protocol reuses the previously established Context Integrity canary",
+        "id": "context-integrity-p7-behavior-protocol",
+        "line_hint": "94-113,165-175",
+        "path": "docs/QUALIFICATION-20260914-context-integrity-p7.md"
+      },
+      "rule": "Pass/fail only inside the declared Context Integrity canary boundary.",
+      "source_refs": [
+        {
+          "anchor": "The later real GLM canary exercised a 12-request / 11-tool-read chain",
+          "line_hint": "122-150,182-198",
+          "path": "docs/QUALIFICATION-20260915-gate-e-promotion.md"
+        }
+      ]
+    },
+    {
+      "availability": "existing",
+      "classification": "PREREGISTERED",
+      "field": "deployment.webui_artifact_gate",
+      "owner": "ReleaseQualification",
+      "policy_ref": {
+        "anchor": "Release implication:** WebUI test/build is a distinct promotion gate.",
+        "id": "webui-artifact-gate-post-discovery-freeze",
+        "line_hint": "219-242",
+        "path": "docs/QUALIFICATION-20260915-gate-e-promotion.md",
+        "provenance_note": "Historical requirement was discovered during promotion; this ref freezes it for future qualification and does not claim it was pre-registered before the first missing-dist 404."
+      },
+      "rule": "Post-discovery requirement frozen for future promotion qualification; Python CI alone is insufficient and history is not rewritten as pre-registered before discovery.",
+      "source_refs": [
+        {
+          "anchor": "A clean linked worktree does not contain `webui/dist`",
+          "line_hint": "219-242",
+          "path": "docs/QUALIFICATION-20260915-gate-e-promotion.md"
+        }
+      ]
+    },
+    {
+      "availability": "not_wired",
+      "classification": "HARD",
+      "field": "governance.g1_present",
+      "owner": "A5SubmissionWorkflow",
+      "rule": "Required by design; future repo gate checks presence only in first implementation.",
+      "source_refs": [
+        {
+          "anchor": "### G1. Necessity",
+          "line_hint": "661-669",
+          "path": "docs/analysis/CONVERGENCE-DISPOSITION-20260910.md"
+        }
+      ]
+    },
+    {
+      "availability": "not_wired",
+      "classification": "HARD",
+      "field": "governance.g2_present",
+      "owner": "A5SubmissionWorkflow",
+      "rule": "Required by design; not wired in Envelope v0.1.",
+      "source_refs": [
+        {
+          "anchor": "### G2. Ownership / non-duplication",
+          "line_hint": "671-675",
+          "path": "docs/analysis/CONVERGENCE-DISPOSITION-20260910.md"
+        }
+      ]
+    },
+    {
+      "availability": "not_wired",
+      "classification": "HARD",
+      "field": "governance.g3_present",
+      "owner": "A5SubmissionWorkflow",
+      "rule": "Required by design; not wired in Envelope v0.1.",
+      "source_refs": [
+        {
+          "anchor": "### G3. Model evidence/veto/recovery exit",
+          "line_hint": "677-681",
+          "path": "docs/analysis/CONVERGENCE-DISPOSITION-20260910.md"
+        }
+      ]
+    },
+    {
+      "availability": "not_wired",
+      "classification": "HARD",
+      "field": "governance.g4_present",
+      "owner": "A5SubmissionWorkflow",
+      "rule": "Required by design; not wired in Envelope v0.1.",
+      "source_refs": [
+        {
+          "anchor": "### G4. Rollback and verification",
+          "line_hint": "683-685",
+          "path": "docs/analysis/CONVERGENCE-DISPOSITION-20260910.md"
+        }
+      ]
+    },
+    {
+      "availability": "not_wired",
+      "classification": "HARD",
+      "field": "governance.file_coverage_present",
+      "owner": "A5DispositionMatrixWorkflow",
+      "rule": "Mechanical presence/coverage only; no semantic string parser.",
+      "source_refs": [
+        {
+          "anchor": "Every new control change must appear in the disposition matrix",
+          "line_hint": "693-705",
+          "path": "docs/analysis/CONVERGENCE-DISPOSITION-20260910.md"
+        }
+      ]
+    }
+  ],
+  "frozen_source_revision": "b753d632fccabd5b742835162a9074b431b8ba94",
+  "invariants": {
+    "diagnostic_universal_thresholds": "forbidden",
+    "future_blocking_requires_a5": true,
+    "missing_source_status": "unknown",
+    "owner_must_not_be": "envelope",
+    "runtime_identity_must_reuse_existing_authority": true,
+    "unknown_must_not_coerce_to": [
+      "pass",
+      "zero",
+      "false"
+    ]
+  },
+  "profiles": [
+    "durable-goal",
+    "benchmark-run",
+    "deployment",
+    "architecture-submission"
+  ],
+  "schema": "agent-qualification-envelope/v0.1",
+  "status": "frozen_read_only_contract"
+}
