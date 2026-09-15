@@ -26,6 +26,43 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _model_fact_integrity(
+    model_window: object, breakdown: object, budget: object
+) -> dict[str, object]:
+    """Compare independent current-run model labels without inferring semantics."""
+
+    window = model_window if isinstance(model_window, dict) else {}
+    breakdown_map = breakdown if isinstance(breakdown, dict) else {}
+    budget_map = budget if isinstance(budget, dict) else {}
+    labels = {
+        "model_window": str(window.get("label") or ""),
+        "breakdown": str(breakdown_map.get("model") or ""),
+        "budget": str(budget_map.get("model") or ""),
+    }
+    scope = str(window.get("scope") or "")
+    if scope != "current_run":
+        return {
+            "status": "not_current_run",
+            "healthy": None,
+            "scope": scope or "unknown",
+            "labels": labels,
+        }
+    if not all(labels.values()):
+        return {
+            "status": "unknown",
+            "healthy": None,
+            "scope": scope,
+            "labels": labels,
+        }
+    consistent = len(set(labels.values())) == 1
+    return {
+        "status": "consistent" if consistent else "mismatch",
+        "healthy": consistent,
+        "scope": scope,
+        "labels": labels,
+    }
+
+
 @dataclass
 class ActionTraceItem:
     """动作轨迹条目（AI 可溯源）."""
@@ -495,6 +532,21 @@ class ArchitectureStatusProvider:
                 runtime_params = fn2()
             except Exception:  # noqa: BLE001 — 参数快照失败如实标注 None（fail-open）
                 runtime_params = None
+        breakdown = None
+        breakdown_fn = getattr(self, "_context_breakdown_fn", None)
+        if breakdown_fn is not None:
+            try:
+                breakdown = breakdown_fn()
+            except Exception:  # noqa: BLE001 — missing fact stays unknown
+                breakdown = None
+        budget = None
+        budget_fn = getattr(self, "_budget_fn", None)
+        if budget_fn is not None:
+            try:
+                budget = budget_fn()
+            except Exception:  # noqa: BLE001 — missing fact stays unknown
+                budget = None
+        model_fact_integrity = _model_fact_integrity(model_window, breakdown, budget)
         request_usage_fn = self._request_usage_fn
         _causality_requested = (
             isinstance(dimensions, list) and "causality" in dimensions
@@ -530,19 +582,14 @@ class ArchitectureStatusProvider:
                 "archive": self._archive_stats_fn() if self._archive_stats_fn else None,
                 # M56 B5（ANALYSIS-20260811）: 当前模型窗口（AI 可查后自主决策压缩）
                 "model_window": model_window,
+                "model_fact_integrity": model_fact_integrity,
                 # M57 配置面收敛: adjust_strategy 当前生效值（AI 可查可验证）
                 "runtime_params": runtime_params,
                 # R1: 组件级占用分解（AI 每轮可见，自主决策压缩/切换/开新会话）
-                "breakdown": (
-                    self._context_breakdown_fn()
-                    if getattr(self, "_context_breakdown_fn", None)
-                    else None
-                ),
+                "breakdown": breakdown,
                 # EVO-20260827-ed4c1350（P0-B）: 有效预算全口径归因（消除
                 # 1M/300K/200K 三口径误读——AI 直接见 effective + limited_by）
-                "budget": (
-                    self._budget_fn() if getattr(self, "_budget_fn", None) else None
-                ),
+                "budget": budget,
                 "last_request": (
                     request_usage_fn() if request_usage_fn is not None else None
                 ),

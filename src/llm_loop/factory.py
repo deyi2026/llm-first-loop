@@ -28,6 +28,9 @@ from llm_loop.core.history import converge_history_budget
 from llm_loop.core.loop import LoopEngine
 from llm_loop.core.message import ToolResult
 from llm_loop.core.run_context import (
+    current_model_label as current_model_label_ctx,
+)
+from llm_loop.core.run_context import (
     current_session_id as current_session_id_ctx,
 )
 from llm_loop.core.run_context import (
@@ -1029,13 +1032,65 @@ def build_engine(settings: Settings) -> LoopEngine:
     def _knowledge_health_snapshot() -> dict[str, Any]:
         return inspect_knowledge_health(_runtime_paths)
 
+    _engine_ref: dict[str, LoopEngine] = {}
+
+    def _effective_model_binding() -> tuple[Any, str, str, str]:
+        """Return registry/model/scope/source for the facts effective at this instant."""
+        run_label = str(current_model_label_ctx.get() or "").strip()
+        engine_ref = _engine_ref.get("engine")
+        if run_label and engine_ref is not None:
+            bucket = engine_ref._run_state()
+            registry_snapshot = (
+                bucket.routing_registry_snapshot if bucket.routing_epoch_active else None
+            )
+            return registry_snapshot, run_label, "current_run", "run_latched_registry"
+        return (
+            model_pool.default_registry_snapshot(),
+            settings.llm_model,
+            "startup_default",
+            "startup_registry",
+        )
+
+    def _effective_model_status() -> dict[str, Any]:
+        registry_snapshot, label, scope, source = _effective_model_binding()
+        if registry_snapshot is None:
+            return {
+                "llm_model": label,
+                "llm_base_url": None,
+                "llm_provider": None,
+                "llm_config_scope": scope,
+                "llm_config_source": "run_registry_unavailable" if scope == "current_run" else source,
+            }
+        try:
+            pid, mid = registry_snapshot.resolve(label)
+            provider = registry_snapshot.providers[pid]
+            return {
+                "llm_model": f"{pid}/{mid}",
+                "llm_base_url": provider.base_url,
+                "llm_provider": pid,
+                "llm_config_scope": scope,
+                "llm_config_source": source,
+            }
+        except Exception:  # noqa: BLE001 — unresolved current fact stays explicit
+            return {
+                "llm_model": label,
+                "llm_base_url": None,
+                "llm_provider": None,
+                "llm_config_scope": scope,
+                "llm_config_source": source,
+            }
+
     # 架构自省（M17 FR-REVIEW-AI-05: config_status 闭包含演进状态摘要，fail-open;
     # M18 AA10: memory_stats_fn 补记忆真实数据）
     status_provider = ArchitectureStatusProvider(
         audit_dir=settings.audit_dir,
         cooldown_s=settings.status_report_cooldown_s,
         enabled=settings.self_inspection_enabled,
-        config_status=_build_config_status_with_evolution(settings, model_registry_resolved),
+        config_status=_build_config_status_with_evolution(
+            settings,
+            model_registry_resolved,
+            effective_model_status_fn=_effective_model_status,
+        ),
         archive_stats_fn=(
             (lambda: {"archived_total": 0})
             if archive is None
@@ -1058,16 +1113,28 @@ def build_engine(settings: Settings) -> LoopEngine:
     # writer 仍为 status_provider._write_audit 单一 SoT；开关门控在 observer 首行，装配不判环境）
     register_octet_sink(status_provider.append_audit_line)
 
-    # M56 B5（ANALYSIS-20260811）: 当前模型窗口注入 architecture_status（AI 可查后
-    # 自主决策上下文压缩；resolve 失败/未知模型如实返回 label+context=None，不伪造）
+    # Current-run model-window facts use the same run-latched registry as routing.
+    # Outside a run, report the startup default registry explicitly as startup scope.
     def _model_window_snapshot() -> dict:
+        registry_snapshot, label, scope, source = _effective_model_binding()
+        if registry_snapshot is None:
+            return {
+                "label": label,
+                "context": None,
+                "scope": scope,
+                "source": "run_registry_unavailable" if scope == "current_run" else source,
+            }
         try:
-            registry_snapshot = model_pool.default_registry_snapshot()
-            pid, mid = registry_snapshot.resolve(settings.llm_model)
+            pid, mid = registry_snapshot.resolve(label)
             spec = registry_snapshot.providers[pid].models.get(mid)
-            return {"label": f"{pid}/{mid}", "context": spec.context if spec else None}
-        except Exception:  # noqa: BLE001 — 窗口查询失败如实降级
-            return {"label": settings.llm_model, "context": None}
+            return {
+                "label": f"{pid}/{mid}",
+                "context": spec.context if spec else None,
+                "scope": scope,
+                "source": source,
+            }
+        except Exception:  # noqa: BLE001 — lookup failure stays unknown, never borrowed
+            return {"label": label, "context": None, "scope": scope, "source": source}
 
     status_provider.set_model_context_fn(_model_window_snapshot)
 
@@ -1357,6 +1424,8 @@ def build_engine(settings: Settings) -> LoopEngine:
         event_store=_build_event_store(settings),  # D1: 事件源化（共享同一实例）
         episode_store=episode_store,  # R8.5: resolved episode durable retrieval
     )
+
+    _engine_ref["engine"] = engine
 
     engine.file_effect_query = _file_effect_query
     engine.human_file_operations = _human_file_operations
@@ -1900,7 +1969,12 @@ def _build_memory_stats_fn(memory) -> Any:
     return _memory_stats
 
 
-def _build_config_status_with_evolution(settings, model_registry_resolved: bool) -> Any:
+def _build_config_status_with_evolution(
+    settings,
+    model_registry_resolved: bool,
+    *,
+    effective_model_status_fn: Callable[[], dict[str, Any]] | None = None,
+) -> Any:
     """构造 config_status 闭包: to_status_dict + evolution_summary（M17 FR-REVIEW-AI-05）.
 
     演进状态摘要（executing/pending_review 计数 + recent 摘要）为信息提供（非约束）；
@@ -1913,7 +1987,26 @@ def _build_config_status_with_evolution(settings, model_registry_resolved: bool)
 
     def _config_status() -> dict:
         base = settings.to_status_dict()
-        # P1-4: 模型注册表 resolve 结果如实标注（AI 可经 architecture_status 自查）
+        # Keep the startup/env facts under explicit names.  The legacy top-level
+        # llm_model/base_url fields are overwritten below with the mechanically
+        # effective registry route when that fact is available.
+        base["llm_model_configured"] = str(base.get("llm_model") or "")
+        base["llm_base_url_configured"] = str(base.get("llm_base_url") or "")
+        if effective_model_status_fn is not None:
+            try:
+                effective = effective_model_status_fn() or {}
+            except Exception:  # noqa: BLE001 — introspection failure stays explicit/unknown
+                effective = {}
+            for key in (
+                "llm_model",
+                "llm_base_url",
+                "llm_provider",
+                "llm_config_scope",
+                "llm_config_source",
+            ):
+                if key in effective:
+                    base[key] = effective[key]
+        # P1-4: startup model registry resolve result remains a separate startup fact.
         base["model_registry_resolved"] = model_registry_resolved
         try:
             store = EvolutionStore(settings.audit_dir)
