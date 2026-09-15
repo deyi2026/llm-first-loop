@@ -134,10 +134,10 @@ def _wait_idle_or_fail() -> None:
     raise RuntimeError("8901 has an external established client; measured run refused")
 
 
-def _base_env(run_dir: Path) -> dict[str, str]:
+def _base_env(run_dir: Path, *, providers_path: Path = PROVIDERS) -> dict[str, str]:
     data_dir = run_dir / ".lfldata"
     data_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(PROVIDERS, data_dir / "providers.json")
+    shutil.copy2(providers_path, data_dir / "providers.json")
     env = dict(os.environ)
     old_pp = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = os.pathsep.join([str(RUNTIME_REPO / "src"), str(REPO), old_pp]).rstrip(

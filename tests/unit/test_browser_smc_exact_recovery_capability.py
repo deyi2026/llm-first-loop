@@ -33,8 +33,12 @@ def test_recovery_capability_does_not_change_model_owned_operation_surface():
 def test_fc2_runner_freezes_evidence_enforce_for_recovery_refs(tmp_path):
     from evals.browser_smc_semantic_execute_recovery_smoke import run_a2
 
-    env = run_a2._base_env(tmp_path)
+    provider_fixture = tmp_path / "providers.fixture.json"
+    provider_fixture.write_text("{}", encoding="utf-8")
+    env = run_a2._base_env(tmp_path, providers_path=provider_fixture)
+
     assert env["EVIDENCE_MODE"] == "enforce"
+    assert (tmp_path / ".lfldata" / "providers.json").read_text(encoding="utf-8") == "{}"
 
 
 def test_fc2_protocol_has_distinct_schema_identity():
