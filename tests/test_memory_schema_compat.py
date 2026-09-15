@@ -47,3 +47,56 @@ def test_cross_process_merge_preserves_disk_entry_with_field(tmp_path):
     a = [e for e in s3.all() if e.id == "MEM-A"]
     assert a and a[0].observation_history == oh
     assert {e.id for e in s3.all()} >= {"MEM-A", "MEM-B"}
+
+
+# ── 第二层根治: _load 错误分类（schema mismatch ≠ corruption）──
+import json
+
+import pytest
+
+from llm_loop.memory.store import MemorySchemaMismatch
+
+
+def test_unknown_field_fail_closed_not_corrupt(tmp_path):
+    # 新 schema 未知字段: 不当 corruption 处理——不备份、文件一字节不动、禁写并抛 MemorySchemaMismatch
+    idx = tmp_path / "index.json"
+    idx.write_text(
+        json.dumps([{"id": "X1", "type": "fact", "content": "c",
+                     "future_field": [{"a": 1}]}]),
+        encoding="utf-8",
+    )
+    before = idx.read_bytes()
+    store = MemoryStore(tmp_path)
+    assert idx.read_bytes() == before                       # 原文件未动
+    assert not (tmp_path / "index.corrupt.json").exists()   # 不误备份（不是损坏）
+    assert store.all() == []                                # 读侧 fail-open(空)，已记 error 日志
+    with pytest.raises(MemorySchemaMismatch):
+        store.save_entry(MemoryEntry(id="X2", type="fact", content="never written"))
+    assert idx.read_bytes() == before                       # 写被拒，文件仍原样
+
+
+def test_broken_json_still_corruption_path(tmp_path):
+    # JSON 语法破损: 保持原 corruption 路径（备份+空+fail-open 可继续写）
+    idx = tmp_path / "index.json"
+    idx.write_text("{ not json", encoding="utf-8")
+    store = MemoryStore(tmp_path)
+    assert (tmp_path / "index.corrupt.json").exists()
+    assert store.all() == []
+    store.save_entry(MemoryEntry(id="N1", type="fact", content="recovered"))
+    assert {e.id for e in MemoryStore(tmp_path).all()} == {"N1"}
+
+
+def test_runtime_disk_schema_upgrade_locks_old_writer(tmp_path):
+    # 进程A(旧)已加载正常 index → 磁盘被新 schema 进程升级 → A 再写必须 fail-closed，
+    # 不得用旧 reader 的内存态覆盖磁盘新 schema 数据
+    MemoryStore(tmp_path).save_entry(MemoryEntry(id="A1", type="fact", content="a"))
+    idx = tmp_path / "index.json"
+    data = json.loads(idx.read_text(encoding="utf-8"))
+    data[0]["future_field"] = [{"v": 2}]
+    idx.write_text(json.dumps(data), encoding="utf-8")
+    s_old = MemoryStore(tmp_path)  # 加载时还是旧 schema（无 future_field）→ 正常
+    with pytest.raises(MemorySchemaMismatch):
+        s_old.save_entry(MemoryEntry(id="A2", type="fact", content="must not overwrite"))
+    data_after = json.loads(idx.read_text(encoding="utf-8"))
+    assert data_after[0]["future_field"] == [{"v": 2}]      # 磁盘新 schema 未被旧进程破坏
+    assert len(data_after) == 1                             # A2 未被写入
