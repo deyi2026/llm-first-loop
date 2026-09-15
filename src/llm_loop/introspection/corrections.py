@@ -118,6 +118,7 @@ class CorrectionToolRegistry:
         self._recovery_session_store: Any | None = None
         self._recovery_memory_dir: str | Path | None = None
         self._skills_dir: str | None = None  # B3: 插件化 Skill 目录（None=未注入零回归）
+        self._skill_execution_facts: dict[str, str] = {}
 
     # ── 暴露私有属性为公开名供 registry 模块访问（RegistryHost 协议）──
     _PUBLIC_MAP = {
@@ -132,6 +133,7 @@ class CorrectionToolRegistry:
         "recovery_session_store": "_recovery_session_store",
         "recovery_memory_dir": "_recovery_memory_dir",
         "skills_dir": "_skills_dir",  # B3: 插件化 Skill 目录
+        "skill_execution_facts": "_skill_execution_facts",
     }
 
     @property

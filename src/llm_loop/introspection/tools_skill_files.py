@@ -6,6 +6,7 @@ AI 经 skill_list 发现、skill_load 把 SKILL.md 全文加载进上下文执�
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -90,9 +91,21 @@ def run_skill_load(host: Any, args: dict) -> ToolResult:
             tool_call_id="",
             tool_name="skill_load",
         )
+    execution_facts = dict(getattr(host, "skill_execution_facts", {}) or {})
+    facts_block = ""
+    if execution_facts:
+        execution_facts["skill_file"] = meta.path
+        facts_block = (
+            "\n[执行环境事实] "
+            + json.dumps(execution_facts, ensure_ascii=False, sort_keys=True)
+            + "\n"
+        )
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
-        content=f"[技能 {meta.name}] {meta.description}\n\n--- SKILL.md 全文 ---\n{meta.body}",
+        content=(
+            f"[技能 {meta.name}] {meta.description}"
+            f"{facts_block}\n--- SKILL.md 全文 ---\n{meta.body}"
+        ),
         tool_call_id="",
         tool_name="skill_load",
     )

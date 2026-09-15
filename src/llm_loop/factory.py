@@ -12,6 +12,7 @@ import hashlib
 import logging
 import os
 import shutil
+import sys
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -1228,6 +1229,15 @@ def build_engine(settings: Settings) -> LoopEngine:
     corrections._recovery_session_store = session_store  # noqa: SLF001 — 复用全局sid归属/原子恢复
     corrections._recovery_memory_dir = settings.memory_dir  # noqa: SLF001
     corrections._skills_dir = str(_runtime_paths.skills_dir) or None  # noqa: SLF001 — B3: 插件化 Skill 目录注入
+    corrections._skill_execution_facts = {  # noqa: SLF001 — 当前执行环境机械事实
+        "code_root": str(_runtime_paths.code_root),
+        "runtime_root": str(
+            Path(os.environ.get("LFL_RUNTIME_ROOT") or _runtime_paths.state_root)
+            .expanduser()
+            .resolve()
+        ),
+        "python_executable": str(Path(sys.executable).expanduser().resolve()),
+    }
     status_provider.set_recovery_status_fn(backup_store.status_summary)
 
     # 自省/修正/检索工具注册进 ToolRegistry（LLM 可见）

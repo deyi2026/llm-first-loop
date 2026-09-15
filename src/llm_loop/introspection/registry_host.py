@@ -55,6 +55,9 @@ class RegistryHost(Protocol):
     @property
     def skills_dir(self) -> str | None: ...  # B3: 插件化 Skill 目录（未注入 None → 空清单）
 
+    @property
+    def skill_execution_facts(self) -> dict[str, str]: ...
+
     def audit(self, tool_name: str, arguments: dict, result_status: str) -> None: ...
 
     def current_session_id(self) -> str: ...
