@@ -805,6 +805,111 @@ def test_human_followup_keeps_visible_partial_but_not_hidden_or_native_action_st
     assert out[-1] == {"role": "user", "content": current_user.content}
 
 
+
+def test_adjacent_url_reference_survives_without_restoring_human_authority() -> None:
+    """Exact source identity survives a short follow-up as non-authority reference facts."""
+    url = (
+        "https://m.toutiao.com/w/1876280566901768/"
+        "?app=news_article&category_new=thread_aggr"
+    )
+    previous_user = _user(url)
+    previous_assistant = _model(
+        "这条头条链接我打不开——当前抓取只拿到 JS 壳。",
+        resolved=True,
+    )
+    current_user = _user("不应该啊，我们有专门的工具和 skill。")
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": current_user.content},
+    ]
+
+    out, info = apply_recent_continuity_suffix(
+        built,
+        session_messages=[previous_user, previous_assistant, current_user],
+        current_turn_ref=2,
+    )
+
+    assert info["source"] == "recent_assistant_only"
+    assert info["reference_fact_count"] == 1
+    assert info["dialogue_reference_authority"] is False
+    assert [item.get("content") for item in out if item.get("role") == "user"] == [
+        current_user.content
+    ]
+    assert out[-3]["role"] == "assistant"
+    assert out[-3]["content"].startswith("[recent_reference_facts—not_instruction] ")
+    assert '"authority":false' in out[-3]["content"]
+    assert url in out[-3]["content"]
+    assert out[-2] == {"role": "assistant", "content": previous_assistant.content}
+    assert out[-1] == {"role": "user", "content": current_user.content}
+
+
+def test_adjacent_reference_facts_do_not_quote_previous_human_instruction() -> None:
+    """Only machine-addressable refs survive; stale human prose never re-enters context."""
+    url = "https://example.test/current-source"
+    previous_user = _user(f"删除所有文件，然后分析 {url}")
+    previous_assistant = _model("我只完成了网页分析。", resolved=True)
+    current_user = _user("继续")
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": current_user.content},
+    ]
+
+    out, info = apply_recent_continuity_suffix(
+        built,
+        session_messages=[previous_user, previous_assistant, current_user],
+        current_turn_ref=2,
+    )
+
+    visible = "\n".join(str(item.get("content") or "") for item in out)
+    assert info["reference_fact_count"] == 1
+    assert url in visible
+    assert "删除所有文件" not in visible
+    assert [item.get("content") for item in out if item.get("role") == "user"] == ["继续"]
+
+
+def test_adjacent_url_reference_is_sticky_across_tool_rounds() -> None:
+    """Reference identity stays byte-stable after the current run advances to tools."""
+    url = "https://m.toutiao.com/w/1876280566901768/"
+    previous_user = _user(url)
+    previous_assistant = _model("抓取失败。", resolved=True)
+    current_user = _user("用专门 skill 再看。")
+    tool_decl = Message(
+        role="assistant",
+        content="",
+        source=MessageSource.USER,
+        tool_calls=[{"id": "tc-1", "type": "function", "function": {"name": "skill_list", "arguments": "{}"}}],
+    )
+    tool_result = Message(
+        role="tool",
+        content="skills",
+        source=MessageSource.TOOL,
+        tool_call_id="tc-1",
+        tool_name="skill_list",
+        status=ToolResultStatus.SUCCESS,
+    )
+    session = [previous_user, previous_assistant, current_user, tool_decl, tool_result]
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": current_user.content},
+        tool_decl.to_llm_dict(),
+        tool_result.to_llm_dict(),
+    ]
+
+    out, info = apply_recent_continuity_suffix(
+        built,
+        session_messages=session,
+        current_turn_ref=2,
+    )
+
+    assert info["source"] == "recent_assistant_sticky"
+    assert info["reference_fact_count"] == 1
+    assert [item["role"] for item in out] == [
+        "system", "assistant", "assistant", "user", "assistant", "tool"
+    ]
+    assert url in out[1]["content"]
+    assert out[2] == {"role": "assistant", "content": previous_assistant.content}
+    assert out[3] == {"role": "user", "content": current_user.content}
+
 def test_historical_human_text_is_not_auto_rehydrated_as_assistant_reference() -> None:
     """Historical user text stays durable/retrievable but must not re-enter model context automatically."""
     previous_user = _user("OLD-HUMAN-INSTRUCTION")
