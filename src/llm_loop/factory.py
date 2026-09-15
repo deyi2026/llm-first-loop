@@ -76,6 +76,7 @@ from llm_loop.runtime.paths import RuntimePaths, resolve_runtime_paths
 from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
 from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
+from llm_loop.tools.builtin.agent_followup import AgentFollowupTool
 from llm_loop.tools.builtin.agent_message import AgentMessageTool
 from llm_loop.tools.builtin.browser_action import BrowserActionTool
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
@@ -1707,8 +1708,6 @@ def build_engine(settings: Settings) -> LoopEngine:
     registry.register(AgentMessageTool(subagent_runner))
     registry.register(SubAgentResultTool(subagent_runner))
     # EVO-20260914-e6b8aa22: 终止 child 的有界同会话续话（程序侧硬预算/窗口）。
-    from llm_loop.tools.builtin.agent_followup import AgentFollowupTool
-
     registry.register(AgentFollowupTool(subagent_runner))
     engine._tool_receipt_committed_hook = subagent_runner.settle_committed_receipt
 
