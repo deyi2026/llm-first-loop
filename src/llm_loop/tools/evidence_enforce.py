@@ -130,14 +130,25 @@ class EvidenceEnforcer:
             )
 
         try:
-            projection = self.projection.project(
-                raw,
-                evidence_ref=captured.evidence_ref,
-                source_label=f"{call.name}:{source.safe_locator}",
-                coverage_label=coverage.label,
-                budget_chars=budget,
-                temperature=temperature,
-            )
+            if call.name == "read_file" and len(raw) > budget:
+                projection = self.projection.project_contiguous_prefix(
+                    raw,
+                    evidence_ref=captured.evidence_ref,
+                    source_label=f"{call.name}:{source.safe_locator}",
+                    coverage_label=coverage.label,
+                    budget_chars=budget,
+                    source_version_token=result.evidence_source_version_token,
+                    temperature=temperature,
+                )
+            else:
+                projection = self.projection.project(
+                    raw,
+                    evidence_ref=captured.evidence_ref,
+                    source_label=f"{call.name}:{source.safe_locator}",
+                    coverage_label=coverage.label,
+                    budget_chars=budget,
+                    temperature=temperature,
+                )
         except Exception:
             # The Evidence blob is durable even if projection rendering fails.  Keep the
             # source action truth and expose a minimal exact recovery handle instead of
@@ -176,16 +187,22 @@ class EvidenceEnforcer:
                 # complete=false 面（存量 104 条形态）: 单行稳定事实行——C-D5 三元组
                 # （≤1 行、仅含 result_truncated/omitted/recovery_ref 三字段；多行
                 # capsule 模板与 recover= 喊话全部退出，路由由 ref resolver 承载）
-                _fact_line = (
-                    f"result_truncated=true omitted=true recovery_ref={captured.evidence_ref.ref}"
-                )
                 # R2 P0-3: 截断文案与结构化字段同一构造点产出（exact omitted → read_evidence）
                 result.capability_requirements = ("read_evidence",)
-                result.content = (
-                    f"{projection.content}\n{_fact_line}"
-                    if projection.content
-                    else _fact_line
-                )
+                if call.name == "read_file" and "recovery_range_type=text_char" in projection.content:
+                    # R05/T05 exact-read paging: the projection itself already ends in one
+                    # factual continuation line whose next_start matches the exact visible
+                    # prefix. Do not append a second, less precise truncation line.
+                    result.content = projection.content
+                else:
+                    _fact_line = (
+                        f"result_truncated=true omitted=true recovery_ref={captured.evidence_ref.ref}"
+                    )
+                    result.content = (
+                        f"{projection.content}\n{_fact_line}"
+                        if projection.content
+                        else _fact_line
+                    )
             logger.info(
                 "event=evidence_capsule_omitted tool=%s complete=%s omitted_chars=%d ref=%s",
                 call.name,
