@@ -7,7 +7,7 @@
       "component_id": "a5-repo-review-gate-v0.1",
       "paths": [
         ".github/PULL_REQUEST_TEMPLATE.md",
-        ".github/workflows/ci.yml",
+        ".github/workflows/architecture-review.yml",
         "docs/analysis/AGENT-QUALIFICATION-ENVELOPE-STEP5-A5-REPO-GATE-20260915.md",
         "docs/governance/architecture-submission-v0.1.schema.json",
         "docs/governance/submissions/20260915-step5-a5-repo-review-gate.json",
@@ -19,11 +19,12 @@
       "disposition": "ADMIT as mechanical PR review gate; no runtime or semantic qualification authority",
       "evidence": [
         "docs/analysis/CONVERGENCE-DISPOSITION-20260910.md:657-705",
-        "docs/DESIGN-20260915-agent-qualification-envelope-v0.1.md:223-231,362-405"
+        "docs/DESIGN-20260915-agent-qualification-envelope-v0.1.md:223-231,362-405",
+        "GitHub required-check identity boundary: the A.5 required context is emitted only by a pull_request-only workflow"
       ],
-      "verification_level": "deterministic unit tests + staged/committed exact diff self-coverage + CI workflow inspection",
+      "verification_level": "deterministic unit tests + staged/committed exact diff self-coverage + PR-only workflow identity inspection",
       "model_evidence_veto_recovery_exit": "The gate reports exact missing/extra paths and missing structural fields; submitter/reviewer can amend classification/declarations and rerun. Semantic quality remains model/human review-owned.",
-      "rollback_route": "Revert the Step5 commit to remove the PR status job/checker/schema/template wiring; runtime behavior is unaffected.",
+      "rollback_route": "Revert the Step5 commits to remove the PR-only status workflow/checker/schema/template wiring; runtime behavior is unaffected.",
       "declaration_id": "a5-repo-review-gate-v0.1"
     }
   ],
@@ -53,6 +54,7 @@
           "TDD negative tests for missing G1-G4 and file-matrix fields",
           "exact changed-path missing/extra coverage tests",
           "explicit test proving vague semantic prose still passes structural validation",
+          "static regression proving the required A.5 check context exists only on pull_request",
           "staged and committed self-application against the exact Step5 diff",
           "repository Ruff/Pyright/compile/diff/security and adjacent tests"
         ]

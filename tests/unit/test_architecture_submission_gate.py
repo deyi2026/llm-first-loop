@@ -176,3 +176,19 @@ def test_published_schema_identity_matches_checker_contract() -> None:
     )
     assert schema["properties"]["schema"]["const"] == SCHEMA_ID
     assert schema["additionalProperties"] is False
+
+
+def test_architecture_review_required_context_is_pull_request_only() -> None:
+    workflow_path = ROOT / ".github/workflows/architecture-review.yml"
+    assert workflow_path.is_file(), "A.5 required context must live in a dedicated PR-only workflow"
+
+    workflow = workflow_path.read_text(encoding="utf-8")
+    assert "  pull_request:\n" in workflow
+    assert "  push:\n" not in workflow
+    assert "  workflow_dispatch:\n" not in workflow
+    assert "  schedule:\n" not in workflow
+    assert "name: A.5 架构提交审查（机械 presence/coverage）" in workflow
+
+    general_ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "architecture-review:" not in general_ci
+    assert "A.5 架构提交审查（机械 presence/coverage）" not in general_ci

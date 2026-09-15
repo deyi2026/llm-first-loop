@@ -1,0 +1,28 @@
+name: A.5 Architecture Review
+
+on:
+  pull_request:
+
+jobs:
+  architecture-review:
+    name: A.5 架构提交审查（机械 presence/coverage）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Compare the exact PR base...head path set. Full history avoids
+          # shallow-clone ambiguity; checkout is pinned to the PR head, not
+          # GitHub's synthetic merge commit.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: G1-G4 structured declaration + changed-path coverage
+        env:
+          A5_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          A5_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python scripts/check_architecture_submission.py \
+            --base "$A5_BASE_SHA" \
+            --head "$A5_HEAD_SHA"

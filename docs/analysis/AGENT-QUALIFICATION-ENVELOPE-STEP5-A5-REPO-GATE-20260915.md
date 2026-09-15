@@ -94,14 +94,21 @@ Important boundaries in the implementation:
 
 No production module imports this checker.
 
-### 3.3 PR wiring
+### 3.3 PR wiring and check identity
 
-`.github/workflows/ci.yml:20-42` adds an `architecture-review` job only for
-`pull_request`. It checks out the exact PR head with full history and compares the exact
-GitHub PR base SHA to head SHA.
+`.github/workflows/architecture-review.yml` is a dedicated `pull_request`-only workflow.
+Its `architecture-review` job checks out the exact PR head with full history and compares
+the exact GitHub PR base SHA to head SHA. The general `.github/workflows/ci.yml` no
+longer defines the A.5 job.
 
-The job does not install model/runtime dependencies and does not inspect application
-semantics. It invokes only the stdlib checker.
+This separation is load-bearing for remote enforcement. A job guarded only by
+`if: github.event_name == 'pull_request'` inside a push+PR workflow still produces a
+**skipped check run with the same job context on push**. GitHub required status checks do
+not distinguish workflow event types, and a skipped check can satisfy a required context.
+Therefore the required A.5 context must be absent on push, not merely skipped.
+
+The PR-only job does not install model/runtime dependencies and does not inspect
+application semantics. It invokes only the stdlib checker.
 
 `.github/PULL_REQUEST_TEMPLATE.md:12-22` makes the contract visible to submitters and
 explicitly states the authority boundary: CI checks presence/coverage; humans/models judge
@@ -194,41 +201,53 @@ the FC2 runner, or production `src/`.
 
 ## 7. Activation boundary
 
-This Step5 worktree is local. The implementation does **not** by itself alter GitHub
-repository rulesets/branch protection and does not push, merge, restart or deploy anything.
+The Step5 code change does **not** by itself alter GitHub repository rulesets/branch
+protection and does not merge, restart or deploy anything. Publishing the change on a
+review branch/PR is a separate repository action from activating required-check policy.
 
-Once this exact commit lineage is pushed and used by a PR, the workflow will emit the A.5
-review status. Whether GitHub is configured to make that status a required merge check is
-an external repository-policy fact and must be verified/changed separately rather than
-claimed by this code commit.
+Once this exact commit lineage is pushed and used by a PR, the dedicated workflow will emit
+the A.5 review status. A push event must emit **no check run with that required A.5
+context**; this is a remote qualification fact, not something inferred from a local pass.
+Whether GitHub is configured to make that status a required merge check is an external
+repository-policy fact and must be verified/changed separately rather than claimed by
+this code commit.
 
 This distinction is deliberate: "checker is wired into PR CI" and "remote main cannot be
 merged while the check fails" are two different facts.
 
 ## 8. Verification record
 
-Observed on the clean current-main final staged candidate before commit:
+### 8.1 Initial narrow Step5 candidate
 
-1. Step5 focused suite: **21/21 PASS**;
-2. focused Step5 + Envelope + PR #5 exact-recovery regression: **40/40 PASS**;
-3. full Ruff gate: PASS;
-4. env-pin declaration gate: **571 test files / 0 undeclared COMPACT_RATIO dependents**;
-5. Pyright: **0 errors / 0 warnings / 0 informations**;
-6. new Python/test `py_compile`: PASS;
-7. schema + bootstrap-manifest JSON parsing: PASS;
-8. staged self-application: **PASS** with
-   `changed_paths=7 components=1 controls=1` and
-   `semantic_quality=not_evaluated classification_truth=not_evaluated`;
-9. `git diff --cached --check`: PASS;
-10. full `bash scripts/ci_gate.sh`: PASS, including tier0 and full xdist;
-11. staged security: **7 content files PASS**;
-12. whole-tree security: **1873 tracked files PASS**;
-13. production/runtime source delta under `src/`: **0 Step5 files**;
-14. Step5 has **no diff** in `tests/scripts/__init__.py`,
-    `tests/unit/test_browser_smc_exact_recovery_capability.py`, or the FC2 runner; those
-    clean-checkout prerequisites are baseline-owned.
+The initial `b6ac136a` candidate established the mechanical A.5 checker and passed its
+committed-state qualification: focused **21/21**, combined adjacent **40/40**, full
+`ci_gate.sh`, whole-tree security, exact 7-path self-coverage, and zero production `src/`
+delta. Its first real PR run also exposed an enforcement-identity defect: because the A.5
+job lived in the general push+PR CI workflow behind a job-level `if`, a push produced a
+**same-name skipped A.5 check run**. That is safe for advisory CI but unsafe as a future
+required-check identity.
 
-The final closeout still requires the checks that are only meaningful after the exact
-Step5 commit exists: `base...head` self-gate replay, exact changed-path identity,
-committed security/full-CI replay, and clean worktree. Those results are external
-verification facts and are not self-referentially edited into the commit after the fact.
+### 8.2 PR-only check-identity follow-up
+
+The follow-up is intentionally narrower than the original gate implementation: it changes
+only how the existing A.5 check identity is emitted. Before the follow-up commit, the clean
+working candidate produced these results:
+
+1. TDD regression first failed because the dedicated PR-only workflow did not exist;
+2. after the workflow split, Step5 focused suite: **22/22 PASS**;
+3. focused Step5 + Envelope + exact-recovery regression: **41/41 PASS**;
+4. general `.github/workflows/ci.yml` contains neither the `architecture-review` job nor
+   the required A.5 check name;
+5. dedicated `.github/workflows/architecture-review.yml` declares only `pull_request`;
+6. JSON parsing, new Python/test `py_compile`, and `git diff --check`: PASS;
+7. full `bash scripts/ci_gate.sh`: PASS, including Ruff, env-pin
+   (**571 test files / 0 undeclared COMPACT_RATIO dependents**), Pyright
+   (**0 errors / 0 warnings / 0 informations**), tier0, and full xdist;
+8. production/runtime source delta under `src/`: remains **0 Step5 files**.
+
+The final closeout still requires checks meaningful only after the exact follow-up commit
+exists: `base...head` self-gate replay, exact changed-path identity, committed
+whole-tree security/full-CI replay, clean worktree, and remote proof that a push run emits
+**no required A.5 check context** while the pull-request run emits exactly that context.
+Those post-commit/remote facts are kept as external qualification evidence rather than
+self-referentially editing the commit after it has been qualified.
