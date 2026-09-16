@@ -74,8 +74,11 @@ def _stack(tmp_path: Path) -> tuple[BrowserSemanticOperationTool, BrowserPerceiv
 def _provider_do_values() -> set[str]:
     params = BrowserSemanticOperationTool.parameters
     props = params.get("properties") or {}
-    steps = props.get("steps") or {}
-    variants = ((steps.get("items") or {}).get("oneOf") or [])
+    if "oneOf" in params:
+        variants = params.get("oneOf") or []
+    else:
+        steps = props.get("steps") or {}
+        variants = ((steps.get("items") or {}).get("oneOf") or [])
     values: set[str] = set()
     for branch in variants:
         do_schema = ((branch.get("properties") or {}).get("do") or {})

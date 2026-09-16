@@ -42,27 +42,17 @@ def test_mf2_compiles_wait_with_runtime_owned_poll_interval() -> None:
     assert clause["interval_ms"] == 250
 
 
-def test_mf2_model_surface_contains_only_steps_root() -> None:
-    params = BrowserSemanticOperationTool.parameters
+def test_mf2_historical_model_surface_contains_only_steps_root() -> None:
+    params = BrowserSemanticOperationTool._HISTORICAL_STEPS_PARAMETERS
     assert params["required"] == ["steps"]
     assert set(params["properties"]) == {"steps"}
     assert params["additionalProperties"] is False
 
 
-def test_mf2_provider_surface_exposes_short_steps_not_legacy_clauses() -> None:
-    from llm_loop.tools.registry import ToolRegistry
-
-    reg = ToolRegistry()
-    reg.register(BrowserSemanticOperationTool.__new__(BrowserSemanticOperationTool))
-    lazy = reg.schemas(lazy=True)[0]
-    full = reg.schemas(lazy=False)[0]
-    for surface in (lazy, full):
-        params = surface["parameters"]
-        assert params["required"] == ["steps"]
-        assert set(params["properties"]) == {"steps"}
-        assert "clauses" not in json.dumps(params, sort_keys=True)
-    compact = lazy["description"]
-    assert "steps" in compact
-    assert "target=exact" in compact
-    assert "clauses" not in compact
-    assert "set_text" in json.dumps(lazy["parameters"], sort_keys=True)
+def test_mf2_historical_steps_surface_excludes_legacy_clauses() -> None:
+    params = BrowserSemanticOperationTool._HISTORICAL_STEPS_PARAMETERS
+    assert params["required"] == ["steps"]
+    assert set(params["properties"]) == {"steps"}
+    wire = json.dumps(params, sort_keys=True)
+    assert "clauses" not in wire
+    assert "set_text" in wire

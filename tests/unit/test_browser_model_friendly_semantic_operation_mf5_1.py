@@ -9,7 +9,6 @@ from llm_loop.tools.builtin.browser_semantic_operation import (
     BrowserSemanticOperationContractError,
     BrowserSemanticOperationTool,
 )
-from llm_loop.tools.registry import ToolRegistry
 
 
 def _wait_step(*, operator: str | None = None) -> dict[str, object]:
@@ -25,8 +24,8 @@ def _wait_step(*, operator: str | None = None) -> dict[str, object]:
     return step
 
 
-def _provider_wait_branch() -> dict[str, Any]:
-    variants = BrowserSemanticOperationTool.parameters["properties"]["steps"]["items"]["oneOf"]
+def _historical_wait_branch() -> dict[str, Any]:
+    variants = BrowserSemanticOperationTool._HISTORICAL_STEPS_PARAMETERS["properties"]["steps"]["items"]["oneOf"]
     matches = [
         branch
         for branch in variants
@@ -37,7 +36,7 @@ def _provider_wait_branch() -> dict[str, Any]:
 
 
 def test_mf5_1_provider_wait_uses_uniform_do_discriminator() -> None:
-    branch = _provider_wait_branch()
+    branch = _historical_wait_branch()
     props = branch["properties"]
     assert props["do"]["enum"] == ["wait"]
     assert "do" in branch["required"]
@@ -46,15 +45,12 @@ def test_mf5_1_provider_wait_uses_uniform_do_discriminator() -> None:
     assert "wait" not in props
 
 
-def test_mf5_1_provider_surface_has_no_nested_wait_discriminator() -> None:
-    registry = ToolRegistry()
-    registry.register(BrowserSemanticOperationTool.__new__(BrowserSemanticOperationTool))
-    for surface in (registry.schemas(lazy=True)[0], registry.schemas(lazy=False)[0]):
-        params = surface["parameters"]
-        wire = json.dumps(params, ensure_ascii=False, sort_keys=True)
-        assert '"enum": ["wait"]' in wire
-        assert '"wait": {' not in wire
-        assert params["required"] == ["steps"]
+def test_mf5_1_historical_surface_has_no_nested_wait_discriminator() -> None:
+    params = BrowserSemanticOperationTool._HISTORICAL_STEPS_PARAMETERS
+    wire = json.dumps(params, ensure_ascii=False, sort_keys=True)
+    assert '"enum": ["wait"]' in wire
+    assert '"wait": {' not in wire
+    assert params["required"] == ["steps"]
 
 
 def test_mf5_1_compiles_uniform_wait_to_existing_typed_predicate_primitive() -> None:

@@ -12,8 +12,8 @@ from llm_loop.tools.builtin.browser_semantic_operation import (
 from llm_loop.tools.registry import ToolRegistry
 
 
-def _provider_wait_branch() -> dict[str, Any]:
-    branches = BrowserSemanticOperationTool.parameters["properties"]["steps"]["items"]["oneOf"]
+def _historical_wait_branch() -> dict[str, Any]:
+    branches = BrowserSemanticOperationTool._HISTORICAL_STEPS_PARAMETERS["properties"]["steps"]["items"]["oneOf"]
     matches = [
         branch
         for branch in branches
@@ -35,7 +35,7 @@ def _common_wait(*, until: str = "enabled", within_ms: int | None = None) -> dic
 
 
 def test_mf5_2_provider_common_wait_uses_natural_state_affordance() -> None:
-    branch = _provider_wait_branch()
+    branch = _historical_wait_branch()
     props = branch["properties"]
     assert set(props) == {"do", "target", "until", "within_ms"}
     assert branch["required"] == ["do", "target", "until"]
@@ -103,16 +103,16 @@ def test_mf5_2_common_wait_rejects_unknown_state_without_inference() -> None:
         BrowserSemanticOperationTool._compile_short_steps([_common_wait(until="ready_enough")])
 
 
-def test_mf5_2_description_treats_one_action_as_normal_and_batching_as_optional() -> None:
+def test_mf5_2_description_evolves_to_direct_single_action_without_reasoning_protocol() -> None:
     description = BrowserSemanticOperationTool.description
-    assert "单个已决定动作" in description
-    assert "多个动作" in description
-    assert "已经决定" in description
-    assert "一次声明1..8个 ordered steps" not in description
+    assert "一次调用只表达一个已经决定的 mutation" in description
+    assert "wait 属于 browser_perceive" in description
+    assert "多个动作" not in description
+    assert "ordered steps" not in description
 
 
 def test_mf5_2_provider_common_wait_does_not_expose_predicate_bookkeeping() -> None:
-    wire = json.dumps(_provider_wait_branch(), ensure_ascii=False, sort_keys=True)
+    wire = json.dumps(_historical_wait_branch(), ensure_ascii=False, sort_keys=True)
     assert '"property"' not in wire
     assert '"operator"' not in wire
     assert '"value"' not in wire
@@ -133,8 +133,8 @@ def test_mf5_2_legacy_predicate_shorthand_can_remain_compatibility_only() -> Non
     assert clause["value"] is True
 
 
-def _provider_wait_text_branch() -> dict[str, Any]:
-    branches = BrowserSemanticOperationTool.parameters["properties"]["steps"]["items"]["oneOf"]
+def _historical_wait_text_branch() -> dict[str, Any]:
+    branches = BrowserSemanticOperationTool._HISTORICAL_STEPS_PARAMETERS["properties"]["steps"]["items"]["oneOf"]
     matches = [
         branch
         for branch in branches
@@ -145,7 +145,7 @@ def _provider_wait_text_branch() -> dict[str, Any]:
 
 
 def test_mf5_2_provider_preserves_advanced_text_wait_as_semantic_escape_hatch() -> None:
-    branch = _provider_wait_text_branch()
+    branch = _historical_wait_text_branch()
     props = branch["properties"]
     assert set(props) == {"do", "target", "field", "match", "text", "within_ms"}
     assert branch["required"] == ["do", "target", "field", "match", "text"]
@@ -203,9 +203,8 @@ def test_mf5_2_lazy_provider_description_preserves_native_reasoning_contract() -
     registry.register(BrowserSemanticOperationTool.__new__(BrowserSemanticOperationTool))
     surface = registry.schemas(lazy=True)[0]
     description = str(surface["description"])
-    assert "单个已决定动作" in description
-    assert "多个动作" in description
-    assert "已经决定" in description
-    assert "until" in description
+    assert "一次调用一个已决定mutation" in description
+    assert "wait属于browser_perceive" in description
+    assert "steps" not in description
     assert "1..8 ordered steps" not in description
     assert "typed condition+within_ms" not in description
