@@ -135,3 +135,32 @@ Zero-model preflight at experiment HEAD `6e13c04ef7356eb6b0651cdf230b46e56610c4b
 - unique local model: Ornith on 8901, prompt/decode concurrency 1/1, max tokens 16000; no second local model started.
 
 The next step is the fresh six-row treatment-only Ornith matrix. It is a major measured qualification boundary and must not begin until the explicit human checkpoint is crossed. No row may be replayed or repaired in place.
+
+## 8. MF-5.2 v0.2 formal result — 2026-09-16
+
+Authoritative report: `docs/SMC-BROWSER-COGNITION-PRESERVING-ACTUATION-MF5.2-v0.2-RESULT-20260916.md`.
+
+MF-5.2 v0.2 closed **NOT QUALIFIED** under its frozen Gate. Infrastructure and all hard mechanical safety boundaries were valid, but external task correctness was 3/6 and cognition-preserving interaction did not stabilize:
+
+- first operation contract-valid 5/6;
+- 18 operation contract failures, of which 16 were `short_target_fields_mismatch` from scope/document waits being forced through an object-target surface;
+- 20 observable protocol-repair episodes;
+- 14 additional valid-syntax `target_not_found` halts;
+- 53 semantic-operation calls over 72 rounds;
+- 52 recognized single-action calls, zero multi-action calls;
+- delayed_wait r2 failed despite protocol_repair=0;
+- click_commit r2 repeated a successful click and ended at `commit_count=2`.
+
+This closes MF-5.2. Do not patch/rerun it in place and do not start MF-6.
+
+### MF-5.3 work order
+
+MF-5.3 starts **read-only**. Before any new production code:
+
+1. audit the existing `browser_perceive` provider surface and identify the minimum model-facing perception contract needed for unknown-world understanding and post-action verification;
+2. audit replacing mandatory `steps:[single_action]` with a direct single-action normal form; keep batching only as an optional already-decided horizon;
+3. define natural page/scope waits (for example readiness/URL state) that compile mechanically to existing scope Predicate primitives rather than fake document objects;
+4. define the boundary between compact local actuation delta and explicit model-visible perception;
+5. pre-register next qualification metrics, including target-not-found / grounding-probe amplification as a diagnostic, without weakening exact fail-closed grounding.
+
+No production implementation begins until this architecture audit is reviewed.
