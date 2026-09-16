@@ -213,3 +213,12 @@ The remaining high-value correction is narrow:
 > **Move common wait Predicate bookkeeping and default timing out of the model-facing contract, and stop presenting multi-step batching as the model's preferred planning mode.**
 
 No grounding, authority, actuator, retry or task-completion semantics need to change.
+
+
+## 10. Lazy provider-layer addendum
+
+The first MF-5.2 zero-model preflight exposed one additional interface layer that the initial source audit did not include: `ToolRegistry.schemas(lazy=True)` replaces the tool's full description with `_COMPACT_TOOL_DESCRIPTIONS`. As a result, updating `BrowserSemanticOperationTool.description` alone was insufficient; the actual stable provider prefix still contained the old `1..8 ordered steps` / `typed condition+within_ms` guidance.
+
+This was reproduced with a deterministic RED over the lazy provider surface. `ab99aac3` updates only the compact description to state that `steps` is a call container, a single already-decided action is normal, multiple actions are submitted only when already decided, and common wait uses `until` while `wait_text` preserves text comparison.
+
+This finding strengthens the audit method: **model-friendliness must be checked at the exact provider-visible surface, not only on the tool class definition.**
