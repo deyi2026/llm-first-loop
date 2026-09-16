@@ -213,3 +213,15 @@ MF-5.3 v0.1 closed **NOT QUALIFIED** under the frozen hard Gate, but external ta
 The sole hard-Gate failure class is now Perceive contract repair: **8 browser_perceive failures**. Six are natural waits whose nested `condition` was emitted as a JSON string rather than an object; two are hydrate calls that carried the snapshot-only `projection_limit` field. This is a model-facing wire-shape problem, not a reason to weaken fail-closed validation.
 
 The next identity is therefore **MF-5.3.1**, starting with deterministic RED for a root-direct Perceive schema: action-discriminated closed branches, wait fields flat at the root, and no cross-action fields. Low-level typed waits remain internal. After deterministic qualification, run a fresh measured identity. **MF-6 remains deferred.**
+
+## 12. MF-5.3.1 deterministic implementation — 2026-09-16
+
+Authoritative result: `docs/SMC-BROWSER-MF5.3.1-DETERMINISTIC-IMPLEMENTATION-RESULT-20260916.md`.
+
+MF-5.3.1 root-direct Perceive regularization is deterministically complete at `1cb9ad2b`. The measured MF-5.3 failure taxonomy was translated directly into RED before implementation: nested `condition` and cross-action field leakage are removed from the provider contract, while fail-closed validation and all Browser authority boundaries remain unchanged.
+
+The model-facing Perceive grammar is now seven closed root branches: snapshot, hydrate, diff, and four flat wait forms (`page_ready`, `page_url`, `object_state`, `object_text`). Lazy and full provider schemas carry the same branches; `interval_ms` remains runtime-owned. Historical nested-condition calls remain executable only as an internal compatibility path and are absent from provider surface.
+
+Committed-state deterministic qualification is green: focused 30/30, Browser 316/316, Factory 24/24, Ruff/Pyright clean, security/diff-check PASS, and the full non-real-LLM test Gate exits 0 with no failures/errors.
+
+Next phase is a **fresh MF-5.3.1 measured identity**, not reuse of MF-5.3 v0.1 evidence. Freeze protocol + manifest, run zero-model preflight, and stop at the human checkpoint before any model request. MF-6 remains deferred.

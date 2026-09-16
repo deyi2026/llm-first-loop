@@ -793,3 +793,40 @@ Do not solve the measured failures with JSON-string coercion or permissive extra
 A second measured fact is that all 14 compact operation deltas were mechanically incomplete on this fixture set. Navigation changed document generation/scope; same-scope mutations reported unstable object identity. The runtime correctly surfaced those reasons and the model frequently escalated to snapshot/hydrate. This validates the sufficiency boundary but shows that perception bandwidth is still expensive. Optimize identity stability and perception projection only after the Perceive wire hard-passes, so efficiency tuning does not obscure the remaining contract problem.
 
 See `docs/SMC-BROWSER-COGNITION-PRESERVING-MF5.3-v0.1-RESULT-20260916.md` for exact Gate evidence and hashes. MF-6 remains deferred.
+
+---
+
+## 20. MF-5.3.1 deterministic correction — prefer semantic branch regularity over byte minimalism
+
+MF-5.3.1 implements the interface law learned from the 6/6-correct-but-not-qualified MF-5.3 measured run:
+
+> **When action variants have different semantics, expose closed root branches rather than one broad parameter bag plus nested protocol objects.**
+
+Perceive now has root-direct action-specific branches. In particular, natural waits are expressed as:
+
+```text
+action=wait + kind=page_url + match + url
+```
+
+or:
+
+```text
+action=wait + kind=object_state + exact object_ref + state + value
+```
+
+rather than requiring a second nested `condition` object.
+
+This does not flatten semantic distinctions away. `kind` remains explicit and every branch is closed. The program still refuses unknown fields/kinds and still performs no fuzzy repair.
+
+The measured evidence also changes how Interface Tax should be interpreted. A root-direct closed `oneOf` can consume more schema bytes because constraints repeat across branches, yet still be cognitively cheaper because the model no longer has to construct an embedded mini-protocol or remember which fields belong to another action.
+
+Therefore optimization priority is:
+
+1. task correctness and authority safety;
+2. cognition-preserving semantic regularity;
+3. observable protocol-repair reduction;
+4. only then serialized prefix size and perception bandwidth.
+
+Do not sacrifice items 1–3 merely to minimize schema bytes.
+
+The next live qualification should test whether the exact repair class from MF-5.3 v0.1 disappears under this root-direct surface. No claim of live improvement is made by the deterministic result alone.
