@@ -130,3 +130,69 @@ def test_mf5_2_legacy_predicate_shorthand_can_remain_compatibility_only() -> Non
     assert clause["property"] == "enabled"
     assert clause["operator"] == "eq"
     assert clause["value"] is True
+
+
+def _provider_wait_text_branch() -> dict[str, Any]:
+    branches = BrowserSemanticOperationTool.parameters["properties"]["steps"]["items"]["oneOf"]
+    matches = [
+        branch
+        for branch in branches
+        if "wait_text" in ((branch.get("properties") or {}).get("do") or {}).get("enum", [])
+    ]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def test_mf5_2_provider_preserves_advanced_text_wait_as_semantic_escape_hatch() -> None:
+    branch = _provider_wait_text_branch()
+    props = branch["properties"]
+    assert set(props) == {"do", "target", "field", "match", "text", "within_ms"}
+    assert branch["required"] == ["do", "target", "field", "match", "text"]
+    assert props["field"]["enum"] == ["name", "value_text"]
+    assert props["match"]["enum"] == ["equals", "contains", "starts_with", "ends_with"]
+    assert branch["additionalProperties"] is False
+
+
+@pytest.mark.parametrize(
+    ("match", "operator"),
+    [
+        ("equals", "eq"),
+        ("contains", "contains"),
+        ("starts_with", "prefix"),
+        ("ends_with", "suffix"),
+    ],
+)
+def test_mf5_2_wait_text_compiles_to_existing_string_predicate(
+    match: str, operator: str
+) -> None:
+    clause = BrowserSemanticOperationTool._compile_short_steps(
+        [
+            {
+                "do": "wait_text",
+                "target": {"kind": "status", "name": "Build status"},
+                "field": "value_text",
+                "match": match,
+                "text": "Ready",
+            }
+        ]
+    )[0]
+    assert clause["property"] == "value_text"
+    assert clause["operator"] == operator
+    assert clause["value"] == "Ready"
+    assert clause["timeout_ms"] == 60_000
+    assert clause["interval_ms"] == 250
+
+
+def test_mf5_2_wait_text_rejects_unknown_match_without_inference() -> None:
+    with pytest.raises(BrowserSemanticOperationContractError, match="wait_text_match_not_supported"):
+        BrowserSemanticOperationTool._compile_short_steps(
+            [
+                {
+                    "do": "wait_text",
+                    "target": {"kind": "status", "name": "Build status"},
+                    "field": "value_text",
+                    "match": "approximately",
+                    "text": "Ready",
+                }
+            ]
+        )

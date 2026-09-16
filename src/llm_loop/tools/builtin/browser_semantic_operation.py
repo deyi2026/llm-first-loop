@@ -112,6 +112,26 @@ class BrowserSemanticOperationReceiptStore:
         }
 
 
+_MODEL_FRIENDLY_WAIT_STATES = (
+    "exists",
+    "enabled",
+    "checked",
+    "selected",
+    "expanded",
+    "focused",
+    "editable",
+)
+_MODEL_FRIENDLY_DEFAULT_WAIT_MS = 60_000
+_MODEL_FRIENDLY_WAIT_INTERVAL_MS = 250
+_MODEL_FRIENDLY_WAIT_TEXT_FIELDS = ("name", "value_text")
+_MODEL_FRIENDLY_WAIT_TEXT_MATCH = {
+    "equals": "eq",
+    "contains": "contains",
+    "starts_with": "prefix",
+    "ends_with": "suffix",
+}
+
+
 # Module-level because Python class-body comprehensions do not close over class locals.
 # The class exposes the same schema value below for introspection/tests.
 _SHORT_TARGET_SCHEMA = {
@@ -250,9 +270,9 @@ def _build_first_call_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
 class BrowserSemanticOperationTool:
     name = "browser_semantic_operation"
     description = (
-        "Model-friendly bounded Browser semantic operation：模型一次声明1..8个 ordered steps；"
-        "do=navigate|click|set_text|append_text|select|scroll|wait，target 只写 exact semantic "
-        "identity(kind/name，可选role)；do=wait 直接声明 target + typed property/value + within_ms。"
+        "Model-friendly Browser semantic actuation：单个已决定动作可直接调用；多个动作仅在模型已经决定时才按原顺序一并声明（1..8）。"
+        "do=navigate|click|set_text|append_text|select|scroll|wait|wait_text；target 使用 exact semantic identity(kind/name，可选role)。"
+        "常见状态等待用 do=wait + target + until=exists|enabled|checked|selected|expanded|focused|editable；文本等待用 do=wait_text + field + match + text；within_ms 均可选。"
         "程序仅机械编译到既有 exact grounding/version guard/typed Predicate/single-dispatch/ActionReceipt；"
         "不 fuzzy/best-match，不 auto-target/latest/rebind/retry，不判断 task completion。"
     )
@@ -464,27 +484,26 @@ class BrowserSemanticOperationTool:
             "properties": {
                 "do": {"type": "string", "enum": ["wait"]},
                 "target": _SHORT_TARGET_SCHEMA,
-                "property": {
-                    "type": "string",
-                    "enum": [
-                        "exists", "enabled", "checked", "selected", "expanded",
-                        "focused", "editable", "name", "value_text",
-                    ],
-                },
-                "operator": {
-                    "type": "string",
-                    "enum": ["eq", "contains", "prefix", "suffix", "ge", "le"],
-                },
-                "value": {
-                    "anyOf": [
-                        {"type": "string"},
-                        {"type": "boolean"},
-                        {"type": "integer"},
-                    ]
-                },
+                "until": {"type": "string", "enum": list(_MODEL_FRIENDLY_WAIT_STATES)},
                 "within_ms": {"type": "integer", "minimum": 1, "maximum": 60000},
             },
-            "required": ["do", "target", "property", "value", "within_ms"],
+            "required": ["do", "target", "until"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["wait_text"]},
+                "target": _SHORT_TARGET_SCHEMA,
+                "field": {"type": "string", "enum": list(_MODEL_FRIENDLY_WAIT_TEXT_FIELDS)},
+                "match": {
+                    "type": "string",
+                    "enum": list(_MODEL_FRIENDLY_WAIT_TEXT_MATCH),
+                },
+                "text": {"type": "string"},
+                "within_ms": {"type": "integer", "minimum": 1, "maximum": 60000},
+            },
+            "required": ["do", "target", "field", "match", "text"],
             "additionalProperties": False,
         },
     ]
@@ -684,7 +703,69 @@ class BrowserSemanticOperationTool:
                         "args": {"delta_pages": delta},
                     })
                     continue
+                if verb == "wait_text":
+                    required = {"do", "target", "field", "match", "text"}
+                    if not required.issubset(step) or not set(step).issubset(
+                        required | {"within_ms"}
+                    ):
+                        raise BrowserSemanticOperationContractError("wait_text_step_fields_mismatch")
+                    field = str(step.get("field") or "").strip()
+                    if field not in _MODEL_FRIENDLY_WAIT_TEXT_FIELDS:
+                        raise BrowserSemanticOperationContractError("wait_text_field_not_supported")
+                    match = str(step.get("match") or "").strip()
+                    operator = _MODEL_FRIENDLY_WAIT_TEXT_MATCH.get(match)
+                    if operator is None:
+                        raise BrowserSemanticOperationContractError("wait_text_match_not_supported")
+                    timeout = step.get("within_ms", _MODEL_FRIENDLY_DEFAULT_WAIT_MS)
+                    if (
+                        isinstance(timeout, bool)
+                        or not isinstance(timeout, int)
+                        or not (1 <= timeout <= 60_000)
+                    ):
+                        raise BrowserSemanticOperationContractError("wait_timeout_invalid")
+                    clauses.append({
+                        "kind": "wait",
+                        "target": cls._short_target_to_clause_target(step.get("target")),
+                        "property": field,
+                        "operator": operator,
+                        "value": str(step.get("text") or ""),
+                        "timeout_ms": timeout,
+                        "interval_ms": min(_MODEL_FRIENDLY_WAIT_INTERVAL_MS, timeout),
+                    })
+                    continue
                 if verb == "wait":
+                    # Canonical model-facing path: ordinary state condition.  This is a
+                    # closed deterministic alias into the already-qualified Predicate
+                    # primitive, not natural-language interpretation or target inference.
+                    if "until" in step:
+                        required = {"do", "target", "until"}
+                        if not required.issubset(step) or not set(step).issubset(
+                            required | {"within_ms"}
+                        ):
+                            raise BrowserSemanticOperationContractError("wait_step_fields_mismatch")
+                        prop = str(step.get("until") or "").strip()
+                        if prop not in _MODEL_FRIENDLY_WAIT_STATES:
+                            raise BrowserSemanticOperationContractError("wait_until_not_supported")
+                        timeout = step.get("within_ms", _MODEL_FRIENDLY_DEFAULT_WAIT_MS)
+                        if (
+                            isinstance(timeout, bool)
+                            or not isinstance(timeout, int)
+                            or not (1 <= timeout <= 60_000)
+                        ):
+                            raise BrowserSemanticOperationContractError("wait_timeout_invalid")
+                        clauses.append({
+                            "kind": "wait",
+                            "target": cls._short_target_to_clause_target(step.get("target")),
+                            "property": prop,
+                            "operator": "eq",
+                            "value": True,
+                            "timeout_ms": timeout,
+                            "interval_ms": min(_MODEL_FRIENDLY_WAIT_INTERVAL_MS, timeout),
+                        })
+                        continue
+
+                    # Compatibility-only path for MF-5.1 / historical deterministic
+                    # callers.  It is intentionally not provider-visible.
                     required = {"do", "target", "property", "value", "within_ms"}
                     if not required.issubset(step) or not set(step).issubset(required | {"operator"}):
                         raise BrowserSemanticOperationContractError("wait_step_fields_mismatch")
@@ -707,7 +788,7 @@ class BrowserSemanticOperationTool:
                         "operator": operator,
                         "value": step.get("value"),
                         "timeout_ms": timeout,
-                        "interval_ms": min(250, timeout),
+                        "interval_ms": min(_MODEL_FRIENDLY_WAIT_INTERVAL_MS, timeout),
                     })
                     continue
                 raise BrowserSemanticOperationContractError("short_operation_not_supported")
