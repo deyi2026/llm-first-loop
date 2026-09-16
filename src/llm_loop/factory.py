@@ -75,6 +75,10 @@ from llm_loop.runtime.causality import build_runtime_causal_snapshot
 from llm_loop.runtime.knowledge_health import inspect_knowledge_health
 from llm_loop.runtime.paths import RuntimePaths, resolve_runtime_paths
 from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
+from llm_loop.runtime.service_control import (
+    ManagedServiceDeploymentStore,
+    ManagedServiceMutationGuard,
+)
 from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.builtin.agent_followup import AgentFollowupTool
@@ -103,6 +107,7 @@ from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.builtin.read_image import ReadImageTool
 from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
 from llm_loop.tools.builtin.search_files import SearchFilesTool
+from llm_loop.tools.builtin.service_control import ServiceControlTool
 from llm_loop.tools.builtin.smx_perceive import SmxPerceiveTool
 from llm_loop.tools.builtin.source_synopsis import SourceSynopsisTool
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
@@ -439,6 +444,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         tool_guidance_mode=settings.tool_runtime.tool_guidance,
         approval_audit_path=settings.audit_dir / "approval_audit.jsonl",  # T5a: 审批审计落盘
         safety_audit_dir=settings.audit_dir,  # P0-1: 灾难性阻断审计 safety_blocks.jsonl
+        managed_service_guard=ManagedServiceMutationGuard(settings.data_dir),
     )
     # EW2-A: background external executions keep process-local handles, while the
     # shared EventStore owns durable launch/terminal/cancel facts.  Session cancellation
@@ -950,6 +956,11 @@ def build_engine(settings: Settings) -> LoopEngine:
             sandbox_mode=settings.tool_runtime.exec_sandbox,
             sandbox_image=settings.tool_runtime.exec_sandbox_image,
         ),
+    )
+    # P0-A: shared Web/Feishu lifecycle uses a generation-bound dedicated surface.
+    _register_basic(
+        "service_control",
+        ServiceControlTool(store=ManagedServiceDeploymentStore(settings.data_dir)),
     )
     # EVO-20260814: 后台任务查询/终止（配合 execute_command run_in_background=true）
     _register_basic("job_output", JobOutputTool())

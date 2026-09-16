@@ -108,6 +108,35 @@ RESTART_PORT="$WEB_PORT"
 
 _log() { echo "[mirror] $(date '+%H:%M:%S') $*"; }
 
+# P0-A shared-service lifecycle authority: mutating restarts require an
+# operator-published desired deployment that exactly binds code/runtime roots and
+# tracked Git identity. Web/all also bind the ignored WebUI artifact tree. This is
+# checked before any healthy service is stopped.
+_service_control_preflight() {
+  local target="$1"
+  local rc=0
+  if [[ "$target" == "feishu" ]]; then
+    LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" \
+      "$VENV_PY" -m llm_loop.runtime.service_control verify \
+      --data-dir "$RUNTIME_ROOT/data" \
+      --code-root "$CODE_ROOT" \
+      --runtime-root "$RUNTIME_ROOT" --skip-webui || rc=$?
+  else
+    LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" \
+      "$VENV_PY" -m llm_loop.runtime.service_control verify \
+      --data-dir "$RUNTIME_ROOT/data" \
+      --code-root "$CODE_ROOT" \
+      --runtime-root "$RUNTIME_ROOT" || rc=$?
+  fi
+  if [[ "$rc" -eq 0 ]]; then
+    _log "✅ service-control desired deployment binding PASS ($target)"
+    return 0
+  fi
+  _log "✗ service-control desired deployment binding FAILED；拒绝停止现有服务"
+  _log "  首次/新版本部署需先由 operator publish exact desired generation"
+  return 1
+}
+
 # Web V2 build artifacts are intentionally gitignored. A fresh linked worktree may
 # therefore contain exact Python/source bytes but no webui/dist, in which case
 # create_app() does not mount /ui/v2 at all. Fail before stopping a healthy Web.
@@ -573,6 +602,7 @@ _status() {
 
 case "${1:-web}" in
   web)     _webui_artifact_preflight || { _write_receipt web "1" "webui_artifact_preflight_failed"; exit 1; }
+           _service_control_preflight web || { _write_receipt web "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck
            _knowledge_preflight || { _write_receipt web "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
@@ -584,7 +614,8 @@ case "${1:-web}" in
            fi
            _write_receipt web "$_rc" "port=$RESTART_PORT"
            exit "$_rc" ;;
-  feishu)  _restart_precheck
+  feishu)  _service_control_preflight feishu || { _write_receipt feishu "1" "service_control_binding_failed"; exit 1; }
+           _restart_precheck
            _knowledge_preflight || { _write_receipt feishu "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _feishu_stop; then
@@ -596,6 +627,7 @@ case "${1:-web}" in
            _write_receipt feishu "$_rc" ""
            exit "$_rc" ;;
   all)     _webui_artifact_preflight || { _write_receipt all "1" "webui_artifact_preflight_failed"; exit 1; }
+           _service_control_preflight all || { _write_receipt all "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck
            _knowledge_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }
            # 修2(2026-09-09): 失败补偿——web 停/启失败不再 && 短路吞掉 feishu 恢复；

@@ -278,3 +278,53 @@ def test_partial_webui_dist_with_missing_hashed_asset_fails_preflight(tmp_path):
     assert result.returncode == 1
     assert "missing Web V2 asset: assets/index-missing.js" in result.stderr
     assert "index 引用的静态资源缺失" in result.stdout
+
+# ── 2026-09-16 P0-A shared service lifecycle authority ──
+
+def test_service_control_binding_preflight_runs_before_any_stop():
+    src = _src()
+    assert "_service_control_preflight()" in src
+    assert "llm_loop.runtime.service_control verify" in src
+    case_body = src.split("\ncase ", 1)[1]
+    for branch, stop_token in (
+        ("web)", '_stop_web "$RESTART_PORT"'),
+        ("feishu)", "_feishu_stop"),
+        ("all)", '_stop_web "$RESTART_PORT"'),
+    ):
+        body = case_body.split(branch, 1)[1].split(";;", 1)[0]
+        assert "_service_control_preflight" in body
+        assert body.index("_service_control_preflight") < body.index(stop_token)
+    feishu_body = case_body.split("feishu)", 1)[1].split(";;", 1)[0]
+    assert "_service_control_preflight feishu" in feishu_body
+    assert "--skip-webui" in src
+
+
+def test_status_remains_readonly_without_desired_deployment_preflight():
+    src = _src()
+    case_body = src.split("\ncase ", 1)[1]
+    status_body = case_body.split("status)", 1)[1].split(";;", 1)[0]
+    assert "_service_control_preflight" not in status_body
+    assert "_status" in status_body
+
+
+def test_missing_desired_deployment_fails_before_restart_after_artifact_preflight(tmp_path):
+    runtime_root, code_root = _init_dual_root_fixture(tmp_path)
+    dist = tmp_path / "verified-dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><title>ok</title>", encoding="utf-8")
+    env = os.environ.copy()
+    env["LFL_RESTART_RUNTIME_ROOT"] = str(runtime_root)
+    env["LFL_RESTART_CODE_ROOT"] = str(code_root)
+    env["UI_V2_DIR"] = str(dist)
+    result = subprocess.run(
+        ["bash", str(_SCRIPT), "web"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 1
+    assert "service-control desired deployment binding FAILED" in result.stdout
+    import json
+    receipt = json.loads((runtime_root / "data" / "restart-receipt.json").read_text(encoding="utf-8"))
+    assert receipt["detail"] == "service_control_binding_failed"

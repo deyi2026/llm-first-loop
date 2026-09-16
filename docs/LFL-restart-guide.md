@@ -154,16 +154,67 @@ PY
 
 这些检查不替代功能测试、候选资格审查或真实登录验收。
 
-### 4.4 确认任务空闲
+### 4.4 发布共享服务 desired deployment（P0-A）
+
+从 P0-A 起，Web/Feishu 的“当前 PID”只是观测事实，**不是生命周期控制权**。正式重启前必须先由 operator 发布一个 closed-schema desired deployment，把本次准许运行的 `code root + runtime root + exact Git SHA + WebUI artifact tree SHA256` 固化为 generation。`scripts/restart_mirror.sh` 会在停任何健康服务之前机械验证该 binding；缺失或不一致即 fail-closed。
+
+先只读查看当前 generation：
+
+```bash
+LFL_WORKSPACE_ROOT="$LFL_OP_CODE" \
+LFL_RUNTIME_ROOT="$LFL_OP_RUNTIME" \
+PYTHONPATH="$LFL_OP_CODE/src" \
+"$LFL_OP_RUNTIME/.venv/bin/python" -m llm_loop.runtime.service_control show \
+  --data-dir "$LFL_OP_RUNTIME/data"
+```
+
+首次没有记录时返回空对象，`expected_generation=0`。后续发布必须使用刚观察到的 generation 做 CAS；过期 generation 会拒绝，不允许“最后写者覆盖”。发布新候选示例：
+
+```bash
+export LFL_OP_EXPECTED_GENERATION='REPLACE_WITH_CURRENT_GENERATION_OR_0'
+
+LFL_WORKSPACE_ROOT="$LFL_OP_CODE" \
+LFL_RUNTIME_ROOT="$LFL_OP_RUNTIME" \
+PYTHONPATH="$LFL_OP_CODE/src" \
+"$LFL_OP_RUNTIME/.venv/bin/python" -m llm_loop.runtime.service_control publish \
+  --expected-generation "$LFL_OP_EXPECTED_GENERATION" \
+  --code-root "$LFL_OP_CODE" \
+  --runtime-root "$LFL_OP_RUNTIME" \
+  --data-dir "$LFL_OP_RUNTIME/data"
+```
+
+`publish` 只接受 tracked-clean 的 exact Git worktree；WebUI `dist` 可以是 ignored artifact，但它的内容树 SHA256 会进入 desired deployment。发布本身**不停止、不启动服务**。如发布后候选 SHA、code root、runtime root 或 WebUI artifact 发生变化，必须再发布一个更高 generation；不要原地修改旧 generation。
+
+发布后可做无副作用 binding 验证：
+
+```bash
+LFL_WORKSPACE_ROOT="$LFL_OP_CODE" \
+LFL_RUNTIME_ROOT="$LFL_OP_RUNTIME" \
+PYTHONPATH="$LFL_OP_CODE/src" \
+"$LFL_OP_RUNTIME/.venv/bin/python" -m llm_loop.runtime.service_control verify \
+  --data-dir "$LFL_OP_RUNTIME/data" \
+  --code-root "$LFL_OP_CODE" \
+  --runtime-root "$LFL_OP_RUNTIME"
+```
+
+Feishu-only restart 的正式脚本会跳过 WebUI artifact 比对，但仍严格核对 roots、exact Git SHA 和 tracked-clean。Web/all 必须同时核对 WebUI artifact。
+
+**控制面边界：** LFL 模型会话不能再用普通 `execute_command` 直接 `kill` managed Web/Feishu PID、运行 mutating restart script、或直接 `runtime.launch web|feishu`。这些路径会被机械 fence；合法路径是先 `service_control(action=status)` 取得当前 generation，再由模型判断是否需要 `service_control(action=restart, target=..., expected_generation=...)`。程序不替模型决定“要不要重启”，只限定物理控制权和 exact deployment binding。`ps`、`kill -0`、`runtime.launch --dry-run`、restart `status` 等只读观测仍保留。
+
+`service_control restart` 会先落 durable `accepted` action receipt，再启动脱离当前 Web 进程组的 worker；worker 对 generation/deployment_id 再检查，并持有跨进程 lifecycle lease 直到 official restart 结束和 terminal receipt 落盘。期间新的 desired deployment publish 会等待，而不会在 check→execute 窗口替换部署目标。
+
+### 4.5 确认任务空闲
 
 - Feishu：心跳必须新鲜，核对对应活 PID，`processing_msg_id` 为空且 `queue_depth=0`。
 - Web：另行确认没有正在生成、排队、执行工具或后台运行的任务。使用已登录 UI 或受保护的运行状态接口。
 - 心跳缺失、过期或无法解析表示“未知”，不能当作“空闲”。
 - 当前脚本的 `_restart_precheck` 主要检查飞书消息和队列，**不是 Web 全部任务的空闲证明**。
 
-## 5. 通过目标版本的正式脚本执行
+## 5. 通过目标版本的正式控制面执行
 
-不要从 mirror 主检出裸跑旧脚本。使用已验 code root 的脚本，并显式绑定两个根。
+不要从 mirror 主检出裸跑旧脚本。P0-A 之后，**模型/Agent 会话优先使用 `service_control` 专用工具**；人工/operator 终端仍可直接调用目标版本的 official `restart_mirror.sh`，但脚本本身会先验证 §4.4 已发布的 desired deployment binding。两种路径最终都只允许目标版本的正式脚本执行物理 stop/start。
+
+模型会话流程：`service_control(status) → 模型判断是否需要重启 → service_control(restart, expected_generation=刚观察值) → service_control(status, action_id=...)`。不要把普通 `execute_command` 的 shell 审批或可执行性当成 shared-service lifecycle authority。
 
 ### 人工终端
 
@@ -277,6 +328,8 @@ Feishu 需要对应新 PID 的新鲜心跳，`state=connected`；检查启动后
 | `all` 后只有一个服务正常 | 两个服务各自日志与回执，不能只看共享 manifest | 修复失败的一项，健康项保持运行 |
 | 日志出现 `CancelledError` | 是否在旧 Web 的关停时间窗口 | 对照新 PID 的启动和请求结果，不把旧关停栈当成新启动失败 |
 | 测试在本机红、CI 绿 | 运行时环境变量是否泄漏；原始基线是否同样失败 | 用隔离测试环境定位，不扩大豁免，不改生产配置掩盖问题 |
+| `service_control_binding_failed` | desired deployment 未发布，或 code/runtime root、SHA、tracked-clean、WebUI artifact 与已发布 generation 不一致 | **不要停旧服务。** 先查 `service_control show/verify`，确认候选后以当前 generation 做 CAS 发布新 generation |
+| 普通 `execute_command` 返回“共享服务控制权拦截” | 命令试图 signal managed PID、运行 mutating restart script 或 direct runtime.launch | 不绕过 fence；改用 `service_control status → restart(expected_generation=...)`，只读 status/dry-run/probe 继续使用 |
 | 验收时版本/PID 又变化 | 是否有另一会话部署 | 协调操作者，重新核验最终状态 |
 
 日志按本轮时间和 PID 阅读：`data/web.log`、`data/feishu.log` 长期追加，混有历史记录。不要只搜索到一个旧报错就认定本次故障。
@@ -289,7 +342,7 @@ Feishu 需要对应新 PID 的新鲜心跳，`state=connected`；检查启动后
 
 1. 选定先前保全且验证过的完整 SHA、code root 和构建产物。
 2. 确认旧代码兼容当前 runtime 配置和数据 schema；不兼容则停止回滚，改做前向修复。
-3. 重新设定 `LFL_OP_CODE`、`LFL_OP_SHA` 和最小动作范围，按同样的前检查、显式双根脚本和验收步骤操作。
+3. 重新设定 `LFL_OP_CODE`、`LFL_OP_SHA` 和最小动作范围，按同样的前检查操作；**回滚不是 generation 倒退**，应把已验旧 code root 作为一个新的 desired deployment，以当前 generation 为 expected 值发布下一 generation，再执行受控 restart。
 4. 保留 canonical runtime root；不要用旧代码目录的数据覆盖运行数据。
 5. 如回滚会暂时失去 R05 或其他已上线能力，明确记录降级范围，不能把“恢复可访问”写成“能力全部保持”。
 
@@ -316,6 +369,12 @@ Feishu 需要对应新 PID 的新鲜心跳，`state=connected`；检查启动后
 5. 将 fe209 的已验 `dist` 复制到 c577 worktree 后，前后各 **63** 个文件，内容树 SHA256 都为 `516bb04f8c9390824710ff41edaab134f9bf3fdde67e0cb182584dfa4f44dec8`；目标 worktree 仍 Git clean，因为 `dist` 是 ignored runtime artifact。
 6. 只执行 official dual-root **Web-only restart**，不重启 Feishu，不触碰 8901。新 Web 启动后：`/auth/status=200`、`/ui/v2/` 未登录时 `303 -> /login?next=/ui/v2/`、登录页 `200`；真实浏览器会话随后访问 `/ui/v2/?session=...` 与 JS/CSS 均得到 `200`。新 PID 启动段无新的 `ERROR/Traceback`。
 7. 此次也暴露出 `restart_mirror.sh` readiness 的覆盖缺口：它能在 `/auth/status` 正常时返回成功，却没有证明 Web V2 静态产物已经挂载。**今后的“Web restart success”至少必须联合验证 `/auth/status` + `/ui/v2/` + `/login`，并在部署前验证 `webui/dist/index.html` 及其引用资源存在。**
+
+### 9.2 同日第二类事故：普通 Web 会话越权控制共享服务生命周期
+
+另一条真实事故链与 WebUI artifact 无关：一个普通 Web 会话通过 `execute_command` 多次执行 `kill -TERM <web-pid> <feishu-pid>`，其中一次直接杀掉承载自己的 Web 进程。durable journal 完整记录为 `tool.execution.started → finished(status=success) → receipt_committed`，说明 WAL/恢复机制没有丢事实；问题是 generic shell 当时确实拥有了它不应默认拥有的共享服务物理控制权。
+
+审计确认：CatastrophicGuard 按设计只拦不可逆系统灾难；线上 `EXEC_MODE` 为空；Web/Feishu 没有 CLI 人工 approval callback；现有 `run.lock`、JobRegistry ownership、`maintenance.lock` 分别解决会话/子进程/watchdog 协调，都不是 shared-service lifecycle authority。P0-A 因此引入独立 `service_control` surface、operator-published desired deployment、generation CAS/lifecycle lease 和 generic-shell fence。它是 LFL 工具/控制面的 fail-closed ownership boundary，**不是对同一 OS 用户下任意恶意代码的安全沙箱承诺**。
 
 必须长期保留的注意事项：
 
@@ -354,9 +413,10 @@ Feishu 旧 PID → 新 PID / 启动 SHA / 心跳时间与状态：
 
 - `AGENTS.md`、`docs/DEVELOPMENT_REPAIR_SAFETY.md`
 - `scripts/restart_mirror.sh`
-- `src/llm_loop/runtime/launch.py`、`identity.py`、`manifest.py`
+- `src/llm_loop/runtime/launch.py`、`identity.py`、`manifest.py`、`service_control.py`
+- `src/llm_loop/tools/builtin/service_control.py`、`src/llm_loop/tools/registry.py`
 - `src/llm_loop/introspection/proc_version.py`
 - `src/llm_loop/web/__init__.py`、`auth.py`、`auth_routes.py`
 - `webui/package.json`、`webui/package-lock.json`、`webui/vite.config.ts`
 
-运行证据位置：`data/restart-receipt.json`、`data/restart-receipt.log`、`data/audit/proc_versions.jsonl`、`data/runtime/runtime_manifest.json`、`data/feishu_heartbeat.json`。这些属于运行数据，应保留在其原有权限边界内，不随公开代码或报告上传。
+运行证据位置：`data/restart-receipt.json`、`data/restart-receipt.log`、`data/audit/proc_versions.jsonl`、`data/runtime/runtime_manifest.json`、`data/runtime/runtime_manifest.web.json`、`data/runtime/runtime_manifest.feishu.json`、`data/runtime/managed_service_deployment.json`、`data/runtime/service-control-actions/`、`data/feishu_heartbeat.json`。这些属于运行数据，应保留在其原有权限边界内，不随公开代码或报告上传。

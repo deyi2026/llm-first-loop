@@ -72,6 +72,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
     "execute_command": "在本地 shell 执行命令并返回 stdout/stderr；每次为独立进程，灾难性命令由硬安全边界阻断。",
+    "service_control": "共享Web/Feishu生命周期控制：status只读；restart需exact deployment generation并异步走desired-state绑定的official restart。",
     "job_output": "查询 execute_command 后台任务的状态与已收集输出。",
     "job_kill": "终止仍在运行的 execute_command 后台任务。",
     "search_files": "按文件名/glob 或内容搜索当前工作区；默认排除 .tmp-ci/.backup/.worktrees 等旁路副本，需审这些副本时显式 root 到对应目录。pattern+content 表示先限定文件再搜内容。root 只接受搜索根目录，不能填文件路径；查单个已知文件内容用 root=<父目录> + pattern=<文件名> + content=<关键词>，或直接 read_file。path 只做精确存在/stat，不执行内容搜索。",
@@ -240,6 +241,9 @@ class ToolRegistry:
         # task_quality 路径 A（2026-08-17）: 参数预检层（None = 关闭，零回归；
         # 注入后 execute 步骤 1 后、安全检查前执行预检，失败返回字段级引导反馈）
         precheck_layer: Any | None = None,
+        # P0-A: narrow shared Web/Feishu lifecycle ownership fence. This does not
+        # make execute_command globally readonly.
+        managed_service_guard: Any | None = None,
     ) -> None:
         self._tools: dict[str, Any] = {}
         self._lock = threading.Lock()
@@ -276,6 +280,7 @@ class ToolRegistry:
         # Evidence projection used by frozen/manual qualification harnesses.
         self._exact_read_projection_budget_chars: int | None = None
         self.precheck_layer = precheck_layer  # task_quality 路径 A（None=关闭零回归）
+        self._managed_service_guard = managed_service_guard
         self._archive_store = archive_store  # ArchiveStore（T22 超长结果另存）
         # EVO-20260813-9ced1f4c: 工具执行瀑布（默认 None = 零回归；set_pipeline 显式装配）
         self._pipeline: Any = None
@@ -904,6 +909,26 @@ class ToolRegistry:
                     tool_call_id=call.id,
                     tool_name=call.name,
                     error_detail=f"判定依据: {blocked.evidence}",
+                    duration_ms=0.0,
+                )
+
+        # P0-A shared-service lifecycle ownership fence. It is intentionally
+        # independent of EXEC_MODE/approval: generic-shell approval never mints
+        # shared Web/Feishu lifecycle authority.
+        if call.name == "execute_command" and self._managed_service_guard is not None:
+            command = str(call.arguments.get("command", "") or "")
+            decision = self._managed_service_guard.guard(command)
+            if decision is not None and decision.blocked:
+                return ToolResult(
+                    status=ToolResultStatus.BLOCKED,
+                    content=f"[共享服务控制权拦截] {decision.reason}",
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    error_detail=(
+                        "managed_services=" + ",".join(decision.services)
+                        if decision.services
+                        else "managed_service_lifecycle"
+                    ),
                     duration_ms=0.0,
                 )
 

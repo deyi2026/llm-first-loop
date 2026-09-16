@@ -253,6 +253,17 @@ def write_manifest(manifest: dict, data_dir: str | Path) -> Path:
     tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
                    encoding="utf-8")
     tmp.replace(out)
+    # P0-A shared-service ownership: preserve a service-specific live identity in
+    # addition to the historical last-writer compatibility manifest. PID is an
+    # observation only; it never grants lifecycle authority.
+    service = str(manifest.get("service") or "").strip()
+    if service in {"web", "feishu"}:
+        specific = rt_dir / f"runtime_manifest.{service}.json"
+        specific_tmp = specific.with_suffix(specific.suffix + ".tmp")
+        specific_tmp.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        specific_tmp.replace(specific)
     return out
 
 
