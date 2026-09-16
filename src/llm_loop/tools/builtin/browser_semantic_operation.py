@@ -847,6 +847,16 @@ class BrowserSemanticOperationTool:
                     receipt["execution_status"] = "halted"
                     receipt["halt_reason"] = f"action_receipt_status:{action_receipt.get('status')}"
                     return finalize()
+                boundary_events = action_receipt.get("boundary_events")
+                # The actuator has already mechanically classified these as Browser
+                # boundary events.  A model-declared navigate is an explicit structural
+                # transition and may continue with fresh grounding.  Any boundary caused
+                # by another mutation is undeclared world-structure change: stop before
+                # interpreting or executing a later semantic step.
+                if verb != "navigate" and isinstance(boundary_events, list) and boundary_events:
+                    receipt["execution_status"] = "halted"
+                    receipt["halt_reason"] = "undeclared_structural_transition"
+                    return finalize()
                 continue
 
             if kind == "wait":
