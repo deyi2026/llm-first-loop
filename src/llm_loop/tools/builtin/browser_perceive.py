@@ -32,7 +32,7 @@ class BrowserPerceiveTool:
     description = (
         "Browser 只读感知：snapshot 读取 host 已绑定当前页面，hydrate 精确水合既有 ref，"
         "diff 比较两张 exact snapshot，wait 只读等待页面 ready/URL 或已观察对象 state/text。"
-        "页面 wait 机械绑定当前 host-bound page；对象 wait 必须使用 exact object_ref。"
+        "页面 wait 机械绑定当前 host-bound page；对象 wait 必须使用 exact grounding_ref。"
         "运行时拥有轮询节奏和默认超时；不导航、不 mutation、不 fuzzy/latest/rebind/retry，"
         "不判断 task completion，也不暴露 selector/坐标/CDP node id/AX index。"
         f"method_ref={SEMANTIC_OPERATION_METHOD_REF}。"
@@ -97,7 +97,7 @@ class BrowserPerceiveTool:
             "properties": {
                 "action": {"type": "string", "enum": ["wait"]},
                 "kind": {"type": "string", "enum": ["object_state"]},
-                "object_ref": {"type": "string", "minLength": 1},
+                "grounding_ref": {"type": "string", "minLength": 1},
                 "state": {
                     "type": "string",
                     "enum": [
@@ -113,7 +113,7 @@ class BrowserPerceiveTool:
                 "value": {"type": "boolean"},
                 "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
             },
-            "required": ["action", "kind", "object_ref", "state", "value"],
+            "required": ["action", "kind", "grounding_ref", "state", "value"],
             "additionalProperties": False,
         },
         {
@@ -121,7 +121,7 @@ class BrowserPerceiveTool:
             "properties": {
                 "action": {"type": "string", "enum": ["wait"]},
                 "kind": {"type": "string", "enum": ["object_text"]},
-                "object_ref": {"type": "string", "minLength": 1},
+                "grounding_ref": {"type": "string", "minLength": 1},
                 "field": {"type": "string", "enum": ["name", "value_text"]},
                 "match": {
                     "type": "string",
@@ -130,7 +130,7 @@ class BrowserPerceiveTool:
                 "text": {"type": "string"},
                 "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
             },
-            "required": ["action", "kind", "object_ref", "field", "match", "text"],
+            "required": ["action", "kind", "grounding_ref", "field", "match", "text"],
             "additionalProperties": False,
         },
     ]
@@ -154,7 +154,6 @@ class BrowserPerceiveTool:
                 "enum": ["equals", "contains", "starts_with", "ends_with"],
             },
             "expected_url": {"type": "string"},
-            "object_ref": {"type": "string", "minLength": 1},
             "value": {"type": "boolean"},
             "field": {"type": "string", "enum": ["name", "value_text"]},
             "text": {"type": "string"},
@@ -172,11 +171,11 @@ class BrowserPerceiveTool:
     _FLAT_WAIT_FIELDS = {
         "page_ready": {"action", "kind", "state", "within_ms"},
         "page_url": {"action", "kind", "match", "expected_url", "within_ms"},
-        "object_state": {"action", "kind", "object_ref", "state", "value", "within_ms"},
+        "object_state": {"action", "kind", "grounding_ref", "state", "value", "within_ms"},
         "object_text": {
             "action",
             "kind",
-            "object_ref",
+            "grounding_ref",
             "field",
             "match",
             "text",
@@ -264,6 +263,18 @@ class BrowserPerceiveTool:
             # and observed-URL waiting no longer share the same argument role.
             kwargs = dict(kwargs)
             kwargs["expected_url"] = kwargs.pop("url")
+        if (
+            action == "wait"
+            and "condition" not in kwargs
+            and str(kwargs.get("kind") or "").strip() in {"object_state", "object_text"}
+            and "grounding_ref" not in kwargs
+            and "object_ref" in kwargs
+        ):
+            # Hidden compatibility for historical/internal direct callers.  The
+            # provider contract exposes only grounding_ref so the model sees the
+            # same exact-ref name on snapshot objects, hydrate, and object waits.
+            kwargs = dict(kwargs)
+            kwargs["grounding_ref"] = kwargs.pop("object_ref")
         session_id = str(self._session_id_getter() or "").strip()
         if not session_id:
             return ToolResult(
@@ -295,6 +306,14 @@ class BrowserPerceiveTool:
                     # Historical nested-condition compatibility is execution-only; it
                     # is absent from both lazy and full provider schemas.
                     condition["expected_url"] = condition.pop("url")
+                if (
+                    str(condition.get("kind") or "").strip() in {"object_state", "object_text"}
+                    and "grounding_ref" not in condition
+                    and "object_ref" in condition
+                ):
+                    # Historical nested object_ref remains execution-only.  It is
+                    # normalized mechanically to the exact GroundingRef field.
+                    condition["grounding_ref"] = condition.pop("object_ref")
             try:
                 timeout_ms = int(kwargs.get("within_ms", 60_000) or 60_000)
             except (TypeError, ValueError):
@@ -361,7 +380,7 @@ class BrowserPerceiveTool:
                     result = self._wait_scope_url.execute_request(session_id, request)
             elif kind == "object_state":
                 request = {
-                    "object_ref": condition.get("object_ref"),
+                    "object_ref": condition.get("grounding_ref"),
                     "property": condition.get("state"),
                     "value": condition.get("value"),
                     "timeout_ms": timeout_ms,
@@ -380,7 +399,7 @@ class BrowserPerceiveTool:
                 if operator is None:
                     return self._fail("[browser_perceive:wait] object_text match 不受支持。")
                 request = {
-                    "object_ref": condition.get("object_ref"),
+                    "object_ref": condition.get("grounding_ref"),
                     "property": condition.get("field"),
                     "operator": operator,
                     "value": condition.get("text"),
