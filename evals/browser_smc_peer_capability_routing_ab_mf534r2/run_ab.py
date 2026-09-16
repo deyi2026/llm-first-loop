@@ -15,6 +15,7 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
+sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO))
 
 from evals.browser_smc_cognition_preserving_actuation_mf534 import run_mf534 as base  # noqa: E402
