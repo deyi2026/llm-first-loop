@@ -166,12 +166,12 @@ def test_bqual_b0_b13_each_have_deterministic_implementation_evidence() -> None:
 
 def test_bqual_lazy_provider_surface_describes_full_qualified_browser_contract() -> None:
     perceive = _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"]
-    for action in ("snapshot", "hydrate", "diff"):
+    for action in ("snapshot", "hydrate", "diff", "wait"):
         assert action in perceive
-    for boundary in ("不导航", "不执行 mutation", "selector"):
+    for boundary in ("不导航", "不mutation", "不fuzzy", "object_ref"):
         assert boundary in perceive
-    for wait_kind in ("scope_url", "scope_ready", "scope_count", "object_state", "object_text"):
-        assert wait_kind in perceive
+    assert "host-bound page" in perceive
+    # Qualified typed waits remain available as internal mechanical primitives.
     assert "target=scope_ref" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_scope_url"]
     assert "boolean value" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_object_state"]
 
