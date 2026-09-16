@@ -66,13 +66,13 @@ def test_semantic_operation_method_teaches_facts_not_target_policy() -> None:
         assert forbidden_authority not in body
 
 
-def test_browser_surfaces_keep_progressive_method_ref_without_forcing_perception_protocol() -> None:
-    perceive_surfaces = (
-        _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"],
-        BrowserPerceiveTool.description,
-    )
-    for surface in perceive_surfaces:
-        assert METHOD_REF in surface
+def test_browser_perceive_stable_prefix_drops_method_ref_but_full_schema_keeps_progressive_disclosure() -> None:
+    compact = _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"]
+    full = BrowserPerceiveTool.description
+
+    assert METHOD_REF not in compact
+    assert METHOD_REF in full
+    for surface in (compact, full):
         assert "Observe -> Ground -> Execute -> Receipt -> Re-observe/Verify" not in surface
         assert "browser_semantic_execute" not in surface
 
@@ -90,7 +90,7 @@ def test_browser_surfaces_keep_progressive_method_ref_without_forcing_perception
     for marker in ("snapshot", "GroundingRef", "resource_ref", "verb/args", "ActionReceipt"):
         assert marker in semantic_surface
     # Keep always-visible surfaces compact; detailed recovery remains progressive disclosure.
-    for surface in (*perceive_surfaces, *legacy_execution_card_surfaces):
+    for surface in (compact, full, *legacy_execution_card_surfaces):
         assert "expected_version_unavailable" not in surface
         assert "resource_scope_mismatch" not in surface
         assert "args_contract_mismatch" not in surface

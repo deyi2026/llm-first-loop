@@ -255,13 +255,13 @@ def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeyp
     enabled_browser_names = {
         name for name in enabled.registry.names() if name.startswith("browser_")
     }
-    assert enabled_browser_names == {"browser_perceive", "browser_semantic_operation"}
+    assert enabled_browser_names == {"browser_perceive", "browser_operate"}
     factory.CdpBrowserMutationActuator.assert_called_once_with(
         "http://127.0.0.1:9222",
         target_id="target-1",
         max_frame_bytes=134_217_728,
     )
-    tool = enabled.registry.get("browser_semantic_operation")
+    tool = enabled.registry.get("browser_operate")
     assert tool._semantic_execute._action_adapter.actuator is fake_write
 
 
@@ -283,6 +283,6 @@ def test_bqual_ptc_experiment_arm_exposes_smc_browser_without_legacy_playwright(
     )
     names = set(engine.registry.names())
     browser_names = {name for name in names if name.startswith("browser_")}
-    assert browser_names == {"browser_perceive", "browser_semantic_operation"}
+    assert browser_names == {"browser_perceive", "browser_operate"}
     assert "playwright_exec" not in names
     assert "playwright_test" not in names

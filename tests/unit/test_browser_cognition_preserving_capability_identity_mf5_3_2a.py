@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 from unittest import mock
 
 import pytest
 
+import llm_loop.tools.builtin.browser_semantic_operation as operation_module
 from llm_loop.config import Settings
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
 from llm_loop.tools.builtin.browser_semantic_operation import BrowserSemanticOperationTool
-from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS
+from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS, ToolRegistry
 
 
 def _settings(tmp_path, **kwargs: Any) -> Settings:
@@ -81,9 +83,15 @@ def test_mf5_3_2a_authority_split_is_unchanged() -> None:
 
 
 def test_mf5_3_2a_internal_receipt_schema_identity_stays_historical() -> None:
-    import inspect
-    import llm_loop.tools.builtin.browser_semantic_operation as module
-
-    source = inspect.getsource(module)
+    source = inspect.getsource(operation_module)
     assert '"smc.browser_semantic_operation_full_receipt.v0.1"' in source
     assert '"smc.browser_semantic_operation_compact_receipt.v0.1"' in source
+
+
+def test_mf5_3_2a_perceive_stable_prefix_does_not_depend_on_stale_method_ref() -> None:
+    registry = ToolRegistry()
+    registry.register(BrowserPerceiveTool.__new__(BrowserPerceiveTool))
+    description = str(registry.schemas(lazy=True)[0]["description"])
+
+    assert "method_ref=" not in description
+    assert "browser_semantic_execute" not in description
