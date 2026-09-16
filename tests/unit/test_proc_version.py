@@ -1,9 +1,11 @@
 """进程版本一致性 + 变更通告测试（EVO-20260811-f94e5306）."""
 
 import json
+import os
 
 from llm_loop.introspection import proc_version
 from llm_loop.introspection.proc_version import (
+    check_stale_services,
     get_process_versions,
     git_head,
     record_change_log,
@@ -20,6 +22,7 @@ def test_record_and_get_process_versions(tmp_path, monkeypatch):
     svc = [s for s in result["services"] if s["service"] == "test-svc"]
     assert len(svc) == 1
     assert svc[0]["pid"]  # pid 有值
+    assert svc[0]["pid_alive"] is True  # 本进程必然存活
     assert "started_at" in svc[0]
     # code_current = 记录时 git head 与当前一致（同一进程内调用 → True）
     assert svc[0]["git_head"] == result["current_git_head"]
@@ -27,24 +30,59 @@ def test_record_and_get_process_versions(tmp_path, monkeypatch):
 
 
 def test_process_versions_old_code_flagged(tmp_path, monkeypatch):
-    """旧代码进程（git_head 与当前不一致）→ code_current=False + 建议重启提示."""
+    """旧代码进程（git_head 与当前不一致，PID 存活）→ code_current=False + 建议重启提示."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    # 手工写入一条旧版本记录（git_head 与当前不一致）
+    # 手工写入一条旧版本记录（git_head 与当前不一致；pid 用本测试进程保证存活）
     path = tmp_path / "audit" / "proc_versions.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     current = git_head()
     old_head = "deadbeef" if current != "deadbeef" else "cafebabe"
     path.write_text(json.dumps({
         "ts": "2026-08-11T00:00:00+00:00",
-        "pid": 9999,
+        "pid": os.getpid(),
         "service": "old-svc",
         "git_head": old_head,
     }, ensure_ascii=False) + "\n", encoding="utf-8")
     result = get_process_versions()
     old = [s for s in result["services"] if s["service"] == "old-svc"]
     assert len(old) == 1
+    assert old[0]["pid_alive"] is True
     assert old[0]["code_current"] is False
     assert "建议重启" in old[0]["note"]
+
+
+def test_process_versions_dead_pid_not_flagged(tmp_path, monkeypatch):
+    """死进程历史记录（旧 HEAD + PID 已退出）→ 标注已退出，不再误报建议重启.
+
+    复现 2026-09-16 PID 85233 事故：proc_versions.jsonl 只记启动不记
+    退出，append-only 最新记录若属已退出进程，会永远停在"建议重启"。
+    """
+    import subprocess
+    import sys
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    # 产生一个确定已退出的 PID（子进程跑完 wait 即被 reap）
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    dead_pid = child.pid
+    path = tmp_path / "audit" / "proc_versions.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    current = git_head()
+    old_head = "deadbeef" if current != "deadbeef" else "cafebabe"
+    path.write_text(json.dumps({
+        "ts": "2026-09-15T12:35:00+00:00",
+        "pid": dead_pid,
+        "service": "ghost-svc",
+        "git_head": old_head,
+    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    result = get_process_versions()
+    ghost = [s for s in result["services"] if s["service"] == "ghost-svc"]
+    assert len(ghost) == 1
+    assert ghost[0]["pid_alive"] is False
+    assert "已退出" in ghost[0]["note"]
+    assert "建议重启" not in ghost[0]["note"]
+    # 服务级主动提示不再包含死进程（本次误报根因）
+    assert check_stale_services() == ""
 
 
 def test_record_change_log(tmp_path, monkeypatch):
