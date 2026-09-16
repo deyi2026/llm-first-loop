@@ -109,7 +109,14 @@ def _surface(engine: Any) -> dict[str, Any]:
         "branch_do": branch_do,
         "description_chars": len(desc),
         "cognition_contract_visible": all(
-            marker in desc for marker in ("单个已决定动作", "多个动作", "已经决定", "until=")
+            marker in desc
+            for marker in (
+                "steps仅是调用容器",
+                "单个已决定动作",
+                "多个动作",
+                "已经决定",
+                "wait=until",
+            )
         ),
         "hidden_atomic_tools_present": bool(set(names) & _HIDDEN_BROWSER_TOOLS),
     }
