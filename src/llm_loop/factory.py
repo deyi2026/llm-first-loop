@@ -1031,14 +1031,23 @@ def build_engine(settings: Settings) -> LoopEngine:
     # P1: 语义检索器（RETRIEVE_*, §3.6）
     semantic_retriever = None
     if embedder is not None:
+        from llm_loop.memory.embedder import HashEmbedder
         from llm_loop.memory.retriever import SemanticRetriever
 
+        # T0-B（2026-09-16）: 主嵌入=api（8765/bge）时注入 hash 回退引擎——
+        # 8765 不可用 → 查询/缓存/阈值整套切 hash 空间，绝不混向量空间（见 retriever T0-B）。
+        _fallback_embedder = (
+            HashEmbedder(dim=settings.embedding_dim)
+            if settings.embedding_provider == "api"
+            else None
+        )
         semantic_retriever = SemanticRetriever(
             embedder,
             timeout_s=settings.retrieve_timeout_s,
             semantic_top_k=settings.retrieve_semantic_top_k,
             memory_dir=settings.memory_dir,
             archive_dir=settings.archive_dir,
+            fallback_embedder=_fallback_embedder,
         )
 
 

@@ -70,10 +70,13 @@ class ExperienceStore:
         *,
         embedder: Any | None = None,
         write_guard: Callable[[], bool] | None = None,
+        near_dup_threshold: float = 0.80,
     ) -> None:
         self._dir = Path(experiences_dir)
         self._write_guard = write_guard
         self._embedder = embedder  # T5: 可选 embedder 注入（None 时走关键词匹配，零回归）
+        # T0-C1: 写时近重复链接阈值（保守未校准默认；仅高相似改写触发无损链接）
+        self._near_dup_threshold = near_dup_threshold
         # 文档向量只缓存机械可验证的输入→输出；query 向量每次现算。
         # filename 作为槽位可让同一经验内容变化时原位替换，避免陈旧 hash 无限累积。
         self._doc_embedding_cache: dict[str, tuple[str, list[float]]] = {}
@@ -126,6 +129,15 @@ class ExperienceStore:
         path = self._dir / filename
         if path.exists():
             raise FileExistsError(f"经验文档已存在: {filename}（同日同 slug 冲突，不覆盖）")
+        # T0-C1（2026-09-16）: 写时近重复无损链接——新条目记 supersedes 指针，绝不改写
+        # 旧条目（合并走人工批准事务）；embedder 缺失/故障一律跳过（fail-open 不阻断写入）。
+        try:
+            near = self._find_near_duplicate_ids(doc)
+            if near:
+                doc.supersedes = list(dict.fromkeys([*(doc.supersedes or []), *near]))
+                logger.info("[经验库] 近重复无损链接: %s supersedes %s", filename, near)
+        except Exception:  # noqa: BLE001 — 链接探测失败不影响写入本身
+            logger.warning("[经验库] 近重复探测异常，本次跳过链接（fail-open）", exc_info=True)
         path.write_text(doc.to_md(), encoding="utf-8")
         return filename
 
@@ -191,6 +203,23 @@ class ExperienceStore:
             if record_kind is not None and doc.record_kind != record_kind:
                 continue
             active.append((path.name, doc))
+
+        # T0-C1: supersede-aware 去重——被 active 新条目 supersedes 的旧条目不再返回
+        # （截断前过滤，limit 内只留链上最新 canonical；链数据无损保留在文件里）。
+        if any(doc.supersedes for _fname, doc in active):
+            superseded_ids: set[str] = set()
+            for _fname, doc in active:
+                superseded_ids.update(doc.supersedes or [])
+            if superseded_ids:
+                before = len(active)
+                active = [
+                    (fname, doc)
+                    for fname, doc in active
+                    if fname.removesuffix(".md") not in superseded_ids
+                ]
+                logger.info(
+                    "[经验库] supersede 去重: %d → %d（隐藏被链接旧条目）", before, len(active)
+                )
 
         records = self._search(active, query, limit)
 
@@ -289,6 +318,51 @@ class ExperienceStore:
         if doc_vec is not None:
             self._doc_embedding_cache[filename] = (fingerprint, doc_vec)
         return doc_vec
+
+    def _find_near_duplicate_ids(self, doc: ExperienceDocument, *, cap: int = 3) -> list[str]:
+        """T0-C1 写时近重复探测: 语义相似 ≥ near_dup_threshold 的 active 旧条目 id.
+
+        无损链接（link-not-merge）: 只产出 supersedes 指针，不改写旧条目；存量合并
+        事务走人工批准。fail-open: 无 embedder / 嵌入失败 / 扫描异常 → 返回空。
+        阈值 0.80 为保守默认（未校准，仅拦截高相似改写）。
+        """
+        if self._embedder is None:
+            return []
+        q_text = " ".join([doc.title, doc.scenario, doc.root_cause, doc.solution])
+        try:
+            q_vec = self._embedder.embed(q_text)
+        except Exception:  # noqa: BLE001
+            return []
+        if not q_vec:
+            return []
+        try:
+            paths = sorted(self._dir.glob("EXPERIENCE-*.md"))
+        except OSError:
+            return []
+        hits: list[tuple[float, str]] = []
+        for path in paths:
+            try:
+                other = ExperienceDocument.from_md(path.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001 — 损坏文档跳过
+                continue
+            if other.status != "active":
+                continue
+            doc_vec = self._document_embedding(path.name, other)
+            if not doc_vec:
+                continue
+            score = _cosine_similarity(q_vec, doc_vec)
+            if score >= self._near_dup_threshold:
+                hits.append((score, path.name.removesuffix(".md")))
+        def _mtime(fid: str) -> float:
+            try:
+                return (self._dir / f"{fid}.md").stat().st_mtime
+            except OSError:
+                return 0.0
+
+        # 平分时最新写入优先（mtime 判新, 文件名兜底; 字符串序对 r9/r10 类编号
+        # 不是时间序）——cap 截断不丢最新链头
+        hits.sort(key=lambda row: (-row[0], -_mtime(row[1]), row[1]))
+        return [fid for _score, fid in hits[:cap]]
 
     def _embedder_cache_namespace(self) -> str:
         """机械描述向量契约，防 provider/model/vector-version 变化复用旧向量。"""

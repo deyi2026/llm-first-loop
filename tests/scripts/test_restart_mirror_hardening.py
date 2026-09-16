@@ -167,6 +167,7 @@ def _run_dual_status(runtime_root: Path, code_root: Path) -> subprocess.Complete
     env = os.environ.copy()
     env["LFL_RESTART_RUNTIME_ROOT"] = str(runtime_root)
     env["LFL_RESTART_CODE_ROOT"] = str(code_root)
+    env["LFL_RESTART_CODE_ROOT_CONFIRMED"] = "1"  # T0-A3 契约: 自动化显式不同目录 CODE_ROOT 须确认
     return subprocess.run(
         ["bash", str(_SCRIPT), "status"],
         env=env,
@@ -238,6 +239,7 @@ def test_missing_webui_dist_fails_before_restart_side_effects(tmp_path):
     env = os.environ.copy()
     env["LFL_RESTART_RUNTIME_ROOT"] = str(runtime_root)
     env["LFL_RESTART_CODE_ROOT"] = str(code_root)
+    env["LFL_RESTART_CODE_ROOT_CONFIRMED"] = "1"  # T0-A3 契约: 自动化显式不同目录 CODE_ROOT 须确认
     result = subprocess.run(
         ["bash", str(_SCRIPT), "web"],
         env=env,
@@ -267,6 +269,7 @@ def test_partial_webui_dist_with_missing_hashed_asset_fails_preflight(tmp_path):
     env = os.environ.copy()
     env["LFL_RESTART_RUNTIME_ROOT"] = str(runtime_root)
     env["LFL_RESTART_CODE_ROOT"] = str(code_root)
+    env["LFL_RESTART_CODE_ROOT_CONFIRMED"] = "1"  # T0-A3 契约: 自动化显式不同目录 CODE_ROOT 须确认
     env["UI_V2_DIR"] = str(dist)
     result = subprocess.run(
         ["bash", str(_SCRIPT), "web"],
@@ -315,6 +318,7 @@ def test_missing_desired_deployment_fails_before_restart_after_artifact_prefligh
     env = os.environ.copy()
     env["LFL_RESTART_RUNTIME_ROOT"] = str(runtime_root)
     env["LFL_RESTART_CODE_ROOT"] = str(code_root)
+    env["LFL_RESTART_CODE_ROOT_CONFIRMED"] = "1"  # T0-A3 契约: 自动化显式不同目录 CODE_ROOT 须确认
     env["UI_V2_DIR"] = str(dist)
     result = subprocess.run(
         ["bash", str(_SCRIPT), "web"],
