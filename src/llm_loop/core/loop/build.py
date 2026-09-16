@@ -517,6 +517,79 @@ class _BuildMixin:
         # 历史投影三段接线 → stages/history_pipeline.py::run_history_pipeline
         # （B4-CLOSE-01 步C1；prep→projection→postprocess 语义原样，调
         # history 现函数 Phase 7 前不动其内部）；写回面经 outcome 回接。
+
+        def _task_anchor_snapshot() -> str:
+            # EVO-20260916-ccc978b2（人工已审）: 任务锚快照——durable 事实的逐字
+            # 机械投影（Goal objective + 最近 checkpoint + frontier 单行 + 最近
+            # evidence 引用锚）。只投影已记录字符串，不合成决策/摘要；惰性求值
+            # （仅压缩生效轮被调用）；任一存储异常 → 尽力返回已取部分（fail-open，
+            # 不阻断窗口构建）。
+            from pathlib import Path as _P
+
+            parts: list[str] = []
+            try:
+                from llm_loop.introspection.goal import GoalStore
+                from llm_loop.introspection.task_store import TaskStore
+
+                _audit_dir = os.path.join(str(self.settings.data_dir), "audit")
+                _goal = GoalStore(_audit_dir).get(prefer_session_id=sess.session_id)
+                if _goal:
+                    _obj = str(_goal.get("objective") or "").strip()
+                    if _obj:
+                        parts.append(
+                            "[Goal %s] objective: %s"
+                            % (_goal.get("id", ""), _obj[:1200])
+                        )
+                    _cps = _goal.get("checkpoints") or []
+                    if _cps:
+                        _cp = _cps[-1]
+                        _cp_line = "[Checkpoint] %s" % str(_cp.get("what") or "")[:400]
+                        if _cp.get("next"):
+                            _cp_line += " | next: %s" % str(_cp["next"])[:400]
+                        if _cp.get("evidence"):
+                            _cp_line += " | evidence: %s" % str(_cp["evidence"])[:200]
+                        parts.append(_cp_line)
+                    try:
+                        _ts = TaskStore(_audit_dir)
+                        _line = _ts.summary_line(str(_goal.get("id")))
+                        if _line:
+                            parts.append("[Frontier] %s" % _line)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                from llm_loop.memory.evidence import EvidenceLedgerStore, OwnerScope
+
+                _ledger = EvidenceLedgerStore(
+                    _P(os.path.join(str(self.settings.evidence_dir), "ledger"))
+                )
+                _recs = _ledger.list_recent(
+                    OwnerScope(session=sess.session_id), limit=6
+                )
+                _lines = []
+                for _r in _recs:
+                    _p = getattr(_r, "payload", None)
+                    _ref = getattr(getattr(_p, "evidence_ref", None), "ref", "")
+                    if _ref:
+                        _lines.append(
+                            "- %s (%s)"
+                            % (_ref, getattr(_p, "tool_name", "") or "evidence")
+                        )
+                if _lines:
+                    parts.append(
+                        "[Evidence 锚] 最近 evidence 引用（指针，非内容；用 "
+                        "read_evidence 恢复）：\n" + "\n".join(_lines)
+                    )
+            except Exception:
+                pass
+            if not parts:
+                return ""
+            return (
+                "[任务锚点·压缩存活快照]（程序逐字投影 durable 事实，非摘要；旧 tool "
+                "回执已折叠，read_evidence 可恢复）\n" + "\n".join(parts)
+            )
+
         _hist = run_history_pipeline(
             sess=sess,
             provider_id=provider_id,
@@ -540,6 +613,7 @@ class _BuildMixin:
             cache_protected_prefix_messages=_cache_protected_messages,
             cache_protected_prefix_chars=_cache_protected_chars,
             current_turn_ref=_state.current_turn_ref,
+            task_anchor_snapshot_provider=_task_anchor_snapshot,  # EVO-20260916-ccc978b2
             event_append=self._event_append,
             compact_event_seq=self._run_state().compact_event_seq,
             compact_event_was_compacted=self._run_state().compact_event_was_compacted,

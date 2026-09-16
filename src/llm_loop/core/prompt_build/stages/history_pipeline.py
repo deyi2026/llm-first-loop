@@ -101,6 +101,7 @@ def run_history_pipeline(
     cache_protected_prefix_messages: int = 0,
     cache_protected_prefix_chars: int = 0,
     current_turn_ref: int | None = None,
+    task_anchor_snapshot_provider: Any | None = None,  # EVO-20260916-ccc978b2
     event_append: Any,
     compact_event_seq: int = 0,
     compact_event_was_compacted: bool = False,
@@ -161,6 +162,7 @@ def run_history_pipeline(
         cache_protected_prefix_messages=cache_protected_prefix_messages,
         cache_protected_prefix_chars=cache_protected_prefix_chars,
         current_turn_ref=current_turn_ref,
+        task_anchor_snapshot_provider=task_anchor_snapshot_provider,
     )
     built = _proj.built
     anchor_box = _proj.anchor_box
