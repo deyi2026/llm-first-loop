@@ -92,10 +92,10 @@ class BrowserPerceiveTool:
                     "type": "string",
                     "enum": ["equals", "contains", "starts_with", "ends_with"],
                 },
-                "url": {"type": "string"},
+                "expected_url": {"type": "string"},
                 "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
             },
-            "required": ["action", "kind", "match", "url"],
+            "required": ["action", "kind", "match", "expected_url"],
             "additionalProperties": False,
         },
         {
@@ -182,7 +182,7 @@ class BrowserPerceiveTool:
                 "type": "string",
                 "enum": ["equals", "contains", "starts_with", "ends_with"],
             },
-            "url": {"type": "string"},
+            "expected_url": {"type": "string"},
             "object_ref": {"type": "string", "minLength": 1},
             "value": {"type": "boolean"},
             "field": {"type": "string", "enum": ["name", "value_text"]},
@@ -200,7 +200,7 @@ class BrowserPerceiveTool:
 
     _FLAT_WAIT_FIELDS = {
         "page_ready": {"action", "kind", "state", "within_ms"},
-        "page_url": {"action", "kind", "match", "url", "within_ms"},
+        "page_url": {"action", "kind", "match", "expected_url", "within_ms"},
         "object_state": {"action", "kind", "object_ref", "state", "value", "within_ms"},
         "object_text": {
             "action",
@@ -287,6 +287,18 @@ class BrowserPerceiveTool:
 
     def execute(self, **kwargs: Any) -> ToolResult:
         action = str(kwargs.get("action") or "").strip()
+        if (
+            action == "wait"
+            and "condition" not in kwargs
+            and str(kwargs.get("kind") or "").strip() == "page_url"
+            and "expected_url" not in kwargs
+            and "url" in kwargs
+        ):
+            # Hidden compatibility for historical/internal direct callers.  The
+            # provider contract exposes only expected_url so destination navigation
+            # and observed-URL waiting no longer share the same argument role.
+            kwargs = dict(kwargs)
+            kwargs["expected_url"] = kwargs.pop("url")
         session_id = str(self._session_id_getter() or "").strip()
         if not session_id:
             return ToolResult(
@@ -308,6 +320,16 @@ class BrowserPerceiveTool:
                 }
             elif not isinstance(condition, dict):
                 return self._fail("[browser_perceive:wait] condition 必须是闭合 object。")
+            else:
+                condition = dict(condition)
+                if (
+                    str(condition.get("kind") or "").strip() == "page_url"
+                    and "expected_url" not in condition
+                    and "url" in condition
+                ):
+                    # Historical nested-condition compatibility is execution-only; it
+                    # is absent from both lazy and full provider schemas.
+                    condition["expected_url"] = condition.pop("url")
             try:
                 timeout_ms = int(kwargs.get("within_ms", 60_000) or 60_000)
             except (TypeError, ValueError):
@@ -367,7 +389,7 @@ class BrowserPerceiveTool:
                     request = {
                         "scope_ref": scope_ref,
                         "operator": operator,
-                        "value": condition.get("url"),
+                        "value": condition.get("expected_url"),
                         "timeout_ms": timeout_ms,
                         "interval_ms": interval_ms,
                     }
