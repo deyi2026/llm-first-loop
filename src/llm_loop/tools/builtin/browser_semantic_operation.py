@@ -251,8 +251,8 @@ class BrowserSemanticOperationTool:
     name = "browser_semantic_operation"
     description = (
         "Model-friendly bounded Browser semantic operation：模型一次声明1..8个 ordered steps；"
-        "do=navigate|click|set_text|append_text|select|scroll，target 只写 exact semantic "
-        "identity(kind/name，可选role)；wait 直接声明 target + 一个 typed property/value + within_ms。"
+        "do=navigate|click|set_text|append_text|select|scroll|wait，target 只写 exact semantic "
+        "identity(kind/name，可选role)；do=wait 直接声明 target + typed property/value + within_ms。"
         "程序仅机械编译到既有 exact grounding/version guard/typed Predicate/single-dispatch/ActionReceipt；"
         "不 fuzzy/best-match，不 auto-target/latest/rebind/retry，不判断 task completion。"
     )
@@ -462,35 +462,29 @@ class BrowserSemanticOperationTool:
         {
             "type": "object",
             "properties": {
-                "wait": {
-                    "type": "object",
-                    "properties": {
-                        "target": _SHORT_TARGET_SCHEMA,
-                        "property": {
-                            "type": "string",
-                            "enum": [
-                                "exists", "enabled", "checked", "selected", "expanded",
-                                "focused", "editable", "name", "value_text",
-                            ],
-                        },
-                        "operator": {
-                            "type": "string",
-                            "enum": ["eq", "contains", "prefix", "suffix", "ge", "le"],
-                        },
-                        "value": {
-                            "anyOf": [
-                                {"type": "string"},
-                                {"type": "boolean"},
-                                {"type": "integer"},
-                            ]
-                        },
-                    },
-                    "required": ["target", "property", "value"],
-                    "additionalProperties": False,
+                "do": {"type": "string", "enum": ["wait"]},
+                "target": _SHORT_TARGET_SCHEMA,
+                "property": {
+                    "type": "string",
+                    "enum": [
+                        "exists", "enabled", "checked", "selected", "expanded",
+                        "focused", "editable", "name", "value_text",
+                    ],
+                },
+                "operator": {
+                    "type": "string",
+                    "enum": ["eq", "contains", "prefix", "suffix", "ge", "le"],
+                },
+                "value": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "boolean"},
+                        {"type": "integer"},
+                    ]
                 },
                 "within_ms": {"type": "integer", "minimum": 1, "maximum": 60000},
             },
-            "required": ["wait", "within_ms"],
+            "required": ["do", "target", "property", "value", "within_ms"],
             "additionalProperties": False,
         },
     ]
@@ -688,6 +682,32 @@ class BrowserSemanticOperationTool:
                         "verb": "scroll",
                         "target": cls._short_target_to_clause_target(step.get("target")),
                         "args": {"delta_pages": delta},
+                    })
+                    continue
+                if verb == "wait":
+                    required = {"do", "target", "property", "value", "within_ms"}
+                    if not required.issubset(step) or not set(step).issubset(required | {"operator"}):
+                        raise BrowserSemanticOperationContractError("wait_step_fields_mismatch")
+                    prop = str(step.get("property") or "").strip()
+                    operator = str(step.get("operator") or "eq").strip()
+                    if prop not in {
+                        "exists", "enabled", "checked", "selected", "expanded",
+                        "focused", "editable", "name", "value_text",
+                    }:
+                        raise BrowserSemanticOperationContractError("wait_property_not_supported")
+                    if operator not in {"eq", "contains", "prefix", "suffix", "ge", "le"}:
+                        raise BrowserSemanticOperationContractError("wait_operator_not_supported")
+                    timeout = step.get("within_ms")
+                    if isinstance(timeout, bool) or not isinstance(timeout, int) or not (1 <= timeout <= 60000):
+                        raise BrowserSemanticOperationContractError("wait_timeout_invalid")
+                    clauses.append({
+                        "kind": "wait",
+                        "target": cls._short_target_to_clause_target(step.get("target")),
+                        "property": prop,
+                        "operator": operator,
+                        "value": step.get("value"),
+                        "timeout_ms": timeout,
+                        "interval_ms": min(250, timeout),
                     })
                     continue
                 raise BrowserSemanticOperationContractError("short_operation_not_supported")
