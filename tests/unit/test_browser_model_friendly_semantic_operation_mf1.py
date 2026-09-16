@@ -150,8 +150,8 @@ def test_mf1_wait_uses_runtime_poll_interval_default(tmp_path: Path) -> None:
     assert receipt["steps_executed"] == 1
 
 
-def test_mf1_short_wire_is_closed_and_carries_no_program_strategy_fields() -> None:
-    params = BrowserSemanticOperationTool.parameters
+def test_mf1_historical_short_wire_is_closed_and_carries_no_program_strategy_fields() -> None:
+    params = BrowserSemanticOperationTool._HISTORICAL_STEPS_PARAMETERS
     assert params["required"] == ["steps"]
     assert params["additionalProperties"] is False
     wire = json.dumps(params, ensure_ascii=False, sort_keys=True)

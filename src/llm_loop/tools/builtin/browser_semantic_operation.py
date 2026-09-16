@@ -270,10 +270,10 @@ def _build_first_call_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
 class BrowserSemanticOperationTool:
     name = "browser_semantic_operation"
     description = (
-        "Model-friendly Browser semantic actuation：单个已决定动作可直接调用；多个动作仅在模型已经决定时才按原顺序一并声明（1..8）。"
-        "do=navigate|click|set_text|append_text|select|scroll|wait|wait_text；target 使用 exact semantic identity(kind/name，可选role)。"
-        "常见状态等待用 do=wait + target + until=exists|enabled|checked|selected|expanded|focused|editable；文本等待用 do=wait_text + field + match + text；within_ms 均可选。"
-        "程序仅机械编译到既有 exact grounding/version guard/typed Predicate/single-dispatch/ActionReceipt；"
+        "Browser semantic actuation：一次调用只表达一个已经决定的 mutation。"
+        "do=navigate|click|set_text|append_text|select|scroll；对象 target 使用 exact semantic identity(kind/name，可选role)。"
+        "wait 属于 browser_perceive，不在 actuation provider contract。"
+        "程序仅机械编译到既有 exact grounding/version guard/single-dispatch/ActionReceipt；"
         "不 fuzzy/best-match，不 auto-target/latest/rebind/retry，不判断 task completion。"
     )
     _IDENTITY_SCHEMA = {
@@ -507,7 +507,7 @@ class BrowserSemanticOperationTool:
             "additionalProperties": False,
         },
     ]
-    parameters = {
+    _HISTORICAL_STEPS_PARAMETERS = {
         "type": "object",
         "properties": {
             "steps": {
@@ -520,8 +520,27 @@ class BrowserSemanticOperationTool:
         "required": ["steps"],
         "additionalProperties": False,
     }
-    # Keep the short contract intact on the lazy/provider path rather than stripping
-    # discriminated oneOf branches and forcing a schema-repair round trip.
+
+    # MF-5.3 provider normal form: one already-decided mutation per call.  The historical
+    # steps compiler remains below as an internal/compatibility path for frozen evidence,
+    # but wait and batching are no longer part of the provider-facing cognitive contract.
+    _DIRECT_STEP_VARIANTS = _SHORT_STEP_VARIANTS[:5]
+    parameters = {
+        "type": "object",
+        "properties": {
+            "do": {
+                "type": "string",
+                "enum": ["navigate", "click", "set_text", "append_text", "select", "scroll"],
+            },
+            "url": {"type": "string", "minLength": 1},
+            "target": _SHORT_TARGET_SCHEMA,
+            "text": {"type": "string"},
+            "value": {"type": "string"},
+            "delta_pages": {"type": "number"},
+        },
+        "oneOf": _DIRECT_STEP_VARIANTS,
+        "additionalProperties": False,
+    }
     lazy_parameters = parameters
 
     def __init__(
@@ -880,8 +899,19 @@ class BrowserSemanticOperationTool:
     def execute_request(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
         if not session_id:
             raise BrowserSemanticOperationContractError("session_id_missing")
-        model_friendly = set(request) == {"steps"}
-        if model_friendly:
+        direct_verbs = {"navigate", "click", "set_text", "append_text", "select", "scroll"}
+        direct_model_friendly = isinstance(request.get("do"), str) and "steps" not in request
+        historical_steps = set(request) == {"steps"}
+        model_friendly = direct_model_friendly or historical_steps
+        if direct_model_friendly:
+            verb = str(request.get("do") or "").strip()
+            if verb not in direct_verbs:
+                raise BrowserSemanticOperationContractError("direct_operation_not_supported")
+            clauses = self._validate_clauses(self._compile_short_steps([request]))
+        elif historical_steps:
+            # Historical MF-5.x compatibility path.  It is deliberately absent from the
+            # provider schema so old evidence remains mechanically replayable without
+            # teaching batching/wait syntax to the model.
             clauses = self._validate_clauses(self._compile_short_steps(request["steps"]))
         elif set(request) == {"clauses"}:
             # Legacy/internal primitive retained for deterministic historical qualification
