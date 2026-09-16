@@ -141,24 +141,38 @@ class _CanonicalWaitTool:
 
     def execute(self, **kwargs: Any):
         assert kwargs.pop("action", None) == "wait"
+        predicate = kwargs.get("predicate")
+        assert isinstance(predicate, dict)
         return self._waiter.wait(
             str(self._session_id_getter() or ""),
-            predicate=kwargs.get("predicate"),
+            predicate=predicate,
             timeout_ms=kwargs.get("timeout_ms"),
             interval_ms=kwargs.get("interval_ms"),
             tool_name="browser_wait_canonical_test",
         )
 
 
-def test_model_surface_splits_readonly_wait_from_general_perception(tmp_path: Path) -> None:
+def test_model_surface_aggregates_wait_while_typed_primitives_remain_closed(tmp_path: Path) -> None:
     tool = BrowserPerceiveTool(
         adapter=_adapter(tmp_path),
         backend=None,
         session_id_getter=lambda: "s1",
     )
     props = tool.parameters["properties"]
-    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff"]
-    assert set(props) == {"action", "projection_limit", "projection_kinds", "projection_cursor", "vision", "grounding_ref", "from_version", "to_version"}
+    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
+    assert set(props) == {
+        "action",
+        "projection_limit",
+        "projection_kinds",
+        "projection_cursor",
+        "vision",
+        "grounding_ref",
+        "from_version",
+        "to_version",
+        "condition",
+        "within_ms",
+    }
+    assert "interval_ms" not in props
 
     scope = BrowserWaitScopeTool.parameters
     obj = BrowserWaitObjectTool.parameters
@@ -170,10 +184,12 @@ def test_model_surface_splits_readonly_wait_from_general_perception(tmp_path: Pa
     }
 
 
-def test_wait_first_call_contract_survives_compact_and_lazy_typed_surfaces(tmp_path: Path) -> None:
+def test_wait_first_call_contract_survives_perceive_facade_and_typed_internals(tmp_path: Path) -> None:
     from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS, ToolRegistry
 
-    assert "wait" not in BrowserPerceiveTool.parameters["properties"]["action"]["enum"]
+    perceive_props = BrowserPerceiveTool.parameters["properties"]
+    assert "wait" in perceive_props["action"]["enum"]
+    assert "interval_ms" not in perceive_props
     assert "target=scope_ref" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_scope"]
     assert "GroundingRef" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_object"]
 

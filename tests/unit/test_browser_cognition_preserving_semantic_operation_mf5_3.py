@@ -121,6 +121,52 @@ def test_mf5_3_perceive_wait_contract_covers_page_and_exact_object_conditions() 
         assert "object_ref" in by_kind[kind]["required"]
 
 
+def test_mf5_3_perceive_page_url_wait_binds_current_host_page(tmp_path: Path) -> None:
+    _, perceive = _stack(tmp_path)
+    result = perceive.execute(
+        action="wait",
+        condition={
+            "kind": "page_url",
+            "match": "equals",
+            "url": "https://example.test/a",
+        },
+        within_ms=50,
+    )
+
+    assert result.status.value == "success"
+    assert result.tool_name == "browser_perceive"
+    payload = json.loads(result.content)
+    assert payload["predicate"]["property"] == "url"
+    assert payload["predicate"]["value"] == "https://example.test/a"
+    assert payload["predicate_result"]["result"] == "satisfied"
+    assert payload["predicate_result"]["interval_ms"] == 50
+
+
+def test_mf5_3_perceive_object_wait_requires_exact_observed_ref(tmp_path: Path) -> None:
+    _, perceive = _stack(tmp_path)
+    snapshot = json.loads(perceive.execute(action="snapshot").content)
+    submit = next(
+        obj for obj in snapshot["objects"] if obj.get("attributes", {}).get("name") == "Submit"
+    )
+    result = perceive.execute(
+        action="wait",
+        condition={
+            "kind": "object_state",
+            "object_ref": submit["grounding_ref"],
+            "state": "enabled",
+            "value": True,
+        },
+        within_ms=50,
+    )
+
+    assert result.status.value == "success"
+    assert result.tool_name == "browser_perceive"
+    payload = json.loads(result.content)
+    assert payload["predicate"]["target"] == submit["id"]
+    assert payload["predicate"]["property"] == "enabled"
+    assert payload["predicate_result"]["result"] == "satisfied"
+
+
 def test_mf5_3_perceive_stable_prefix_does_not_teach_low_level_execution_protocol() -> None:
     registry = ToolRegistry()
     registry.register(BrowserPerceiveTool.__new__(BrowserPerceiveTool))

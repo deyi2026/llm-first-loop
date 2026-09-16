@@ -59,7 +59,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "read_file": "读取已知路径的本地文本文件或 artifact://v1/... immutable snapshot；目录/关键词定位用 search_files。若后续计划 edit_file，必须本次 snapshot=true 取得 snapshot_ref。",
     "read_image": "读取本地图片并返回结构化视觉与元信息证据；需要图片路径。",
     "smx_perceive": "smx 感知层（opt-in）：wait 用 satisfied=true/false/null+sample_count/observer_error_count；snapshot 绑定 scope/content_sha256；diff 给 comparable/field_completeness；wait/snapshot/diff 另附 nested smc canonical projection；receipt raw grounding 标 canonical=false；只感知不执行。",
-    "browser_perceive": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 只读感知（opt-in loopback CDP host）：snapshot/hydrate/diff；DOM+AX→WorldSnapshot/SemanticObject。wait 使用 typed scope_url/scope_ready/scope_count/object_state/object_text；不导航、不执行 mutation，不暴露 selector/坐标/CDP node id/AX index。",
+    "browser_perceive": "Browser只读感知：snapshot当前host-bound page、hydrate精确ref、diff精确snapshots、wait页面ready/URL或已观察对象state/text；page wait机械绑定当前host-bound page，对象wait要求exact object_ref；运行时拥有轮询节奏/默认超时；不导航、不mutation、不fuzzy/latest/rebind/retry/完成判断。",
     "browser_wait_scope": "Browser 只读 scope wait：传当前 observation 的 exact scope_ref + property/operator/value + timeout_ms/interval_ms；property 仅 scope 类。工具机械编译 schema/domain/target=scope_ref 后轮询；不 mutation/retry/latest/rebind，不判断任务完成。",
     "browser_wait_object": "Browser 只读 object wait：传当前 SemanticObject GroundingRef（object_ref）+ property/operator/value + timeout_ms/interval_ms；工具 exact hydrate 并机械派生 Semantic ID/scope；不名称匹配/fallback/retry/latest/rebind，不判断任务完成。",
     "browser_wait_scope_url": "Browser只读URL等待：exact scope_ref + operator(eq|contains|prefix|suffix) + string value；程序固定property=url与target=scope_ref，不retry/latest/rebind。",

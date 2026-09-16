@@ -106,9 +106,9 @@ def _object_tool(
     return adapter, tool
 
 
-def test_v06_provider_surface_separates_perception_scope_wait_and_object_wait() -> None:
+def test_v06_provider_surface_aggregates_wait_over_closed_typed_primitives() -> None:
     perceive_props = BrowserPerceiveTool.parameters["properties"]
-    assert perceive_props["action"]["enum"] == ["snapshot", "hydrate", "diff"]
+    assert perceive_props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
     assert set(perceive_props) == {
         "action",
         "projection_limit",
@@ -118,6 +118,8 @@ def test_v06_provider_surface_separates_perception_scope_wait_and_object_wait() 
         "grounding_ref",
         "from_version",
         "to_version",
+        "condition",
+        "within_ms",
     }
     for forbidden in ("predicate", "timeout_ms", "interval_ms"):
         assert forbidden not in perceive_props
@@ -175,7 +177,9 @@ def test_v06_lazy_surface_keeps_typed_property_enums_and_machine_bounds(tmp_path
     assert "GroundingRef" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_object"]
     assert "object_ref" in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_object"]
     assert "（grounding_ref）" not in _COMPACT_TOOL_DESCRIPTIONS["browser_wait_object"]
-    assert "wait" not in BrowserPerceiveTool.parameters["properties"]["action"]["enum"]
+    perceive_props = BrowserPerceiveTool.parameters["properties"]
+    assert "wait" in perceive_props["action"]["enum"]
+    assert "interval_ms" not in perceive_props
 
 
 def test_scope_compiler_derives_only_fixed_predicate_identity(tmp_path: Path) -> None:
