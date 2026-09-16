@@ -203,3 +203,13 @@ Final deterministic evidence:
 - actual two-tool lazy provider surface: 4,054 chars, SHA256 `b2549e11adb78ca1cd1e7bb252d0ef928e0171fe1cc2c7918706c499f4e24017`.
 
 The next phase is a fresh MF-5.3 measured qualification identity. First freeze its plan/manifest and run zero-model preflight; do not start measured Ornith rows until the next human checkpoint. MF-6 remains deferred.
+
+## 11. MF-5.3 v0.1 formal measured result — 2026-09-16
+
+Authoritative report: `docs/SMC-BROWSER-COGNITION-PRESERVING-MF5.3-v0.1-RESULT-20260916.md`.
+
+MF-5.3 v0.1 closed **NOT QUALIFIED** under the frozen hard Gate, but external task correctness reached **6/6**: click 2/2, fill 2/2, delayed-wait 2/2. The previous MF-5.2 failure classes were eliminated: Operate failures 0, Grounding Probe Amplification 0, duplicate successful mutations 0, schema lookups 0, and all mechanical safety boundaries remained intact.
+
+The sole hard-Gate failure class is now Perceive contract repair: **8 browser_perceive failures**. Six are natural waits whose nested `condition` was emitted as a JSON string rather than an object; two are hydrate calls that carried the snapshot-only `projection_limit` field. This is a model-facing wire-shape problem, not a reason to weaken fail-closed validation.
+
+The next identity is therefore **MF-5.3.1**, starting with deterministic RED for a root-direct Perceive schema: action-discriminated closed branches, wait fields flat at the root, and no cross-action fields. Low-level typed waits remain internal. After deterministic qualification, run a fresh measured identity. **MF-6 remains deferred.**
