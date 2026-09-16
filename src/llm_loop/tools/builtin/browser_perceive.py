@@ -11,6 +11,7 @@ import json
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from llm_loop.browser.method_card import SEMANTIC_OPERATION_METHOD_REF
 from llm_loop.browser.perception import BrowserPerceptionAdapter
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.tools.builtin.browser_wait import (
@@ -33,6 +34,7 @@ class BrowserPerceiveTool:
         "页面 wait 机械绑定当前 host-bound page；对象 wait 必须使用 exact object_ref。"
         "运行时拥有轮询节奏和默认超时；不导航、不 mutation、不 fuzzy/latest/rebind/retry，"
         "不判断 task completion，也不暴露 selector/坐标/CDP node id/AX index。"
+        f"method_ref={SEMANTIC_OPERATION_METHOD_REF}。"
     )
     _WAIT_CONDITION_SCHEMA = {
         "oneOf": [

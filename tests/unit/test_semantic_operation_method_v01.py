@@ -66,23 +66,31 @@ def test_semantic_operation_method_teaches_facts_not_target_policy() -> None:
         assert forbidden_authority not in body
 
 
-def test_browser_surfaces_carry_compact_method_card_and_exact_ref() -> None:
-    card_surfaces = (
+def test_browser_surfaces_keep_progressive_method_ref_without_forcing_perception_protocol() -> None:
+    perceive_surfaces = (
         _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"],
-        _COMPACT_TOOL_DESCRIPTIONS["browser_action"],
         BrowserPerceiveTool.description,
+    )
+    for surface in perceive_surfaces:
+        assert METHOD_REF in surface
+        assert "Observe -> Ground -> Execute -> Receipt -> Re-observe/Verify" not in surface
+        assert "browser_semantic_execute" not in surface
+
+    legacy_execution_card_surfaces = (
+        _COMPACT_TOOL_DESCRIPTIONS["browser_action"],
         BrowserActionTool.description,
         BrowserSemanticExecuteTool.description,
     )
-    for surface in card_surfaces:
+    for surface in legacy_execution_card_surfaces:
         assert METHOD_REF in surface
         assert "Observe -> Ground -> Execute -> Receipt -> Re-observe/Verify" in surface
         assert "receipt ok != task complete" in surface
+
     semantic_surface = _COMPACT_TOOL_DESCRIPTIONS["browser_semantic_execute"]
-    for marker in ("snapshot", "GroundingRef", "target_ref", "resource_ref", "ActionReceipt"):
+    for marker in ("snapshot", "GroundingRef", "resource_ref", "verb/args", "ActionReceipt"):
         assert marker in semantic_surface
-    # Keep the always-visible card compact; detailed recovery remains progressive disclosure.
-    for surface in card_surfaces:
+    # Keep always-visible surfaces compact; detailed recovery remains progressive disclosure.
+    for surface in (*perceive_surfaces, *legacy_execution_card_surfaces):
         assert "expected_version_unavailable" not in surface
         assert "resource_scope_mismatch" not in surface
         assert "args_contract_mismatch" not in surface
