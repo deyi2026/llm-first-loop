@@ -4,7 +4,20 @@ import copy
 
 import pytest
 
-from llm_loop.resources.lfrt_runtime import LFRTStatusObserver, parse_lfrt_status
+from llm_loop.resources.contracts import (
+    FactProvenance,
+    FactSource,
+    ObservedResourceState,
+    ResourceKey,
+    ResourceScopeKind,
+    RuntimeType,
+)
+from llm_loop.resources.lfrt_runtime import (
+    LFRTStatusObserver,
+    compare_lfrt_with_legacy,
+    parse_lfrt_status,
+)
+from llm_loop.resources.local_runtime import LocalRuntimeIdentityObservation
 
 
 def _payload() -> dict:
@@ -143,3 +156,70 @@ def test_observer_requires_absolute_executable_and_positive_timeout() -> None:
         LFRTStatusObserver("runtime/lfrt")
     with pytest.raises(ValueError, match="positive"):
         LFRTStatusObserver("/opt/lfrt/lfrt", timeout_s=0)
+
+
+def _legacy_state(*, pid: int = 52430, capacity: int = 1) -> ObservedResourceState:
+    return ObservedResourceState(
+        key=ResourceKey("cognilocal", ResourceScopeKind.RUNTIME, "mlx-loopback:8901"),
+        provenance=FactProvenance(
+            source=FactSource.RUNTIME_PROBE,
+            source_ref=f"local-listener:8901:pid:{pid}",
+            recorded_at=123.0,
+        ),
+        runtime_type=RuntimeType.LOCAL,
+        max_concurrency=capacity,
+    )
+
+
+def _legacy_identity(*, pid: int = 52430, model: str = "Ornith-1.5-35B-A3B-MLX"):
+    return LocalRuntimeIdentityObservation(
+        identity=f"mlx_lm.server/{model}",
+        source_ref=f"local-listener:8901:pid:{pid}",
+    )
+
+
+def test_shadow_parity_matches_without_changing_legacy_authority() -> None:
+    lfrt = parse_lfrt_status(_payload(), observed_at=123.0)
+
+    report = compare_lfrt_with_legacy(lfrt, _legacy_state(), _legacy_identity())
+
+    assert report.status == "match"
+    assert report.mismatches == ()
+    assert report.lfrt_source_ref == "lfrt-status:8901:pid:52430"
+    assert report.legacy_source_ref == "local-listener:8901:pid:52430"
+
+
+def test_shadow_parity_reports_mismatch_mechanically() -> None:
+    lfrt = parse_lfrt_status(_payload(), observed_at=123.0)
+
+    report = compare_lfrt_with_legacy(
+        lfrt,
+        _legacy_state(pid=999, capacity=2),
+        _legacy_identity(pid=999, model="Other-Model"),
+    )
+
+    assert report.status == "mismatch"
+    assert report.mismatches == (
+        "listener_pid",
+        "max_concurrency",
+        "runtime_identity",
+        "identity_source",
+    )
+
+
+@pytest.mark.parametrize("missing", ["lfrt", "state", "identity"])
+def test_shadow_parity_is_unknown_when_either_observer_is_incomplete(missing: str) -> None:
+    lfrt = parse_lfrt_status(_payload(), observed_at=123.0)
+    state = _legacy_state()
+    identity = _legacy_identity()
+    if missing == "lfrt":
+        lfrt = None
+    elif missing == "state":
+        state = None
+    else:
+        identity = None
+
+    report = compare_lfrt_with_legacy(lfrt, state, identity)
+
+    assert report.status == "unknown"
+    assert report.mismatches == ()

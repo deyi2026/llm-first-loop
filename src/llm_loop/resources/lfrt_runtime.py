@@ -17,6 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from llm_loop.resources.contracts import ObservedResourceState, RuntimeType
+from llm_loop.resources.local_runtime import LocalRuntimeIdentityObservation
+
 CommandRunner = Callable[[tuple[str, ...], float], tuple[int, str, str]]
 
 
@@ -46,6 +49,57 @@ class LFRTStatusSnapshot:
         """Conservative capacity from live process flags, never config intent."""
 
         return min(self.live_prompt_concurrency, self.live_decode_concurrency)
+
+
+@dataclass(frozen=True)
+class LFRTShadowParityReport:
+    """Read-only comparison with the existing RG-2 observer."""
+
+    status: str
+    mismatches: tuple[str, ...]
+    lfrt_source_ref: str | None
+    legacy_source_ref: str | None
+
+
+def compare_lfrt_with_legacy(
+    lfrt: LFRTStatusSnapshot | None,
+    legacy_state: ObservedResourceState | None,
+    legacy_identity: LocalRuntimeIdentityObservation | None,
+) -> LFRTShadowParityReport:
+    """Compare observers without granting LFRT any admission authority."""
+
+    if lfrt is None or legacy_state is None or legacy_identity is None:
+        return LFRTShadowParityReport(
+            status="unknown",
+            mismatches=(),
+            lfrt_source_ref=lfrt.source_ref if lfrt is not None else None,
+            legacy_source_ref=(
+                legacy_state.provenance.source_ref if legacy_state is not None else None
+            ),
+        )
+
+    mismatches: list[str] = []
+    expected_scope = f"mlx-loopback:{lfrt.port}"
+    expected_legacy_source = f"local-listener:{lfrt.port}:pid:{lfrt.listener_pid}"
+    expected_identity = f"mlx_lm.server/{lfrt.model_identity}"
+    if legacy_state.runtime_type is not RuntimeType.LOCAL:
+        mismatches.append("runtime_type")
+    if legacy_state.key.scope_id != expected_scope:
+        mismatches.append("scope_id")
+    if legacy_state.provenance.source_ref != expected_legacy_source:
+        mismatches.append("listener_pid")
+    if legacy_state.max_concurrency != lfrt.max_concurrency:
+        mismatches.append("max_concurrency")
+    if legacy_identity.identity != expected_identity:
+        mismatches.append("runtime_identity")
+    if legacy_identity.source_ref != expected_legacy_source:
+        mismatches.append("identity_source")
+    return LFRTShadowParityReport(
+        status="match" if not mismatches else "mismatch",
+        mismatches=tuple(mismatches),
+        lfrt_source_ref=lfrt.source_ref,
+        legacy_source_ref=legacy_state.provenance.source_ref,
+    )
 
 
 def _positive_int(value: object) -> int | None:
