@@ -283,3 +283,24 @@ Implemented and qualified deterministic sequence:
 Formal result: **NOT QUALIFIED**. External oracle is 6/6 and Grounding Probe Amplification is 0, but one task-correct row hit the frozen 240s worker timeout and four completed rows still contain first-call Perceive routing repair.
 
 Do not rerun this identity, loosen the Gate, raise max iterations, add navigation to Perceive, fuzzy-resolve targets, or proceed to MF-6. The next phase is a read-only audit of (a) capability routing after peer naming and (b) post-success verification/evidence amplification. Production changes require a new deterministic identity after that audit.
+
+## 16. MF-5.3.2 post-qualification read-only dual audit — 2026-09-16
+
+Authoritative audit: `docs/SMC-BROWSER-MF5.3.2-POSTQUALIFICATION-READ-ONLY-AUDIT-20260916.md`.
+
+The audit is complete with **no production/test/provider/runtime modification and no new model run**.
+
+Two independent residuals are now bounded:
+
+1. **Routing:** the peer rename to `browser_operate` is insufficient. First-call correctness is 3/6 in MF531 and 2/6 by MF532 raw-event reconstruction; B projection cannot affect the first call. The strongest mechanical signal is not name length but a provider affordance collision: Perceive's shallow compatibility union exposes a literal `url` field for `page_url` waiting while Operate also exposes destination `url` for `do=navigate`. Every remaining routing repair cross-binds the destination URL into Perceive. Provider tool order remains `read_evidence → browser_perceive → hand → get_tool_schema`, but ordering alone is not yet established as causal.
+2. **Post-success verification:** MF532 Row2 completed the real `Save code` mutation and external oracle before spending seven more tool-bearing rounds / eight calls on snapshot-hydrate-evidence escalation, followed by a long no-tool decode loop into the 240s worker timeout. The concrete representation gap is that direct DOM text-node content is dropped from its stable parent while AX `Submitted` fragments are emitted detached from `Submission status`. Existing schema already supports `attributes.text`, and existing diff logic already tracks that field.
+
+Recommended next sequence after human approval:
+
+1. B1 RED + implementation: mechanically preserve direct DOM child text on the exact stable DOM parent; no task semantics, no AX merge yet;
+2. B1 deterministic qualification;
+3. A' RED + implementation: disambiguate observed/waited URL from navigation destination in the provider facade, without another thought protocol or task router;
+4. full non-real qualification;
+5. only then consider a fresh measured identity and live treatment at a new human checkpoint.
+
+Do not raise iteration/timeout/evidence budgets, infer task completion, fuzzy-resolve targets, auto retry/replay mutation, reorder tools in the same causal commit, or enter MF-6.
