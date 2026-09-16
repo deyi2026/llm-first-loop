@@ -86,19 +86,11 @@ from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.builtin.agent_followup import AgentFollowupTool
 from llm_loop.tools.builtin.agent_message import AgentMessageTool
-from llm_loop.tools.builtin.browser_action import BrowserActionTool
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
 from llm_loop.tools.builtin.browser_semantic_operation import (
     BrowserSemanticOperationReceiptStore,
     BrowserSemanticOperationTool,
-)
-from llm_loop.tools.builtin.browser_wait import (
-    BrowserWaitObjectStateTool,
-    BrowserWaitObjectTextTool,
-    BrowserWaitScopeCountTool,
-    BrowserWaitScopeReadyTool,
-    BrowserWaitScopeUrlTool,
 )
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
@@ -896,9 +888,10 @@ def build_engine(
                 max_wait_s=max(1.0, float(settings.tool_timeout_s) - 5.0),
             ),
         )
-    # SMC Browser Phase 1 live perception: explicit loopback CDP opt-in only.
-    # Read-only model surface is snapshot|hydrate|diff plus mechanically typed semantic waits.
-    # The host performs no navigation/input and exposes no model-supplied script evaluation.
+    # SMC Browser cognition-preserving surface: explicit loopback CDP opt-in only.
+    # Provider-visible Browser capabilities are deliberately collapsed to `browser_perceive`
+    # (read-only sensing/wait) and, when writes are enabled, `browser_semantic_operation`
+    # (one direct mutation). Typed waits/action/semantic_execute remain internal mechanics.
     if settings.browser_perception_cdp_url:
         _browser_host = CdpReadOnlyBrowserHost(
             settings.browser_perception_cdp_url,
@@ -920,19 +913,6 @@ def build_engine(
                 exact_ref_hydrator=_browser_operation_receipt_store.hydrate,
             ),
         )
-        for wait_tool_type in (
-            BrowserWaitScopeUrlTool,
-            BrowserWaitScopeReadyTool,
-            BrowserWaitScopeCountTool,
-            BrowserWaitObjectStateTool,
-            BrowserWaitObjectTextTool,
-        ):
-            wait_tool = wait_tool_type(
-                adapter=_browser_adapter,
-                backend=_browser_host,
-                session_id_getter=lambda: current_session_id_ctx.get(),
-            )
-            _register_basic(wait_tool.name, wait_tool)
         # Mutation capability is independently opt-in.  Perception alone never grants writes.
         if settings.browser_action_enabled:
             _browser_actuator = CdpBrowserMutationActuator(
@@ -946,19 +926,11 @@ def build_engine(
                 capture_backend=_browser_host,
                 actuator=_browser_actuator,
             )
-            _register_basic(
-                "browser_action",
-                BrowserActionTool(
-                    adapter=_browser_action_adapter,
-                    session_id_getter=lambda: current_session_id_ctx.get(),
-                ),
-            )
             _browser_semantic_execute = BrowserSemanticExecuteTool(
                 perception=_browser_adapter,
                 action_adapter=_browser_action_adapter,
                 session_id_getter=lambda: current_session_id_ctx.get(),
             )
-            _register_basic("browser_semantic_execute", _browser_semantic_execute)
             _register_basic(
                 "browser_semantic_operation",
                 BrowserSemanticOperationTool(
