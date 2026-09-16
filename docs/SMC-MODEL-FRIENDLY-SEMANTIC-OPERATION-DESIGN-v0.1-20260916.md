@@ -874,3 +874,21 @@ Current snapshots sort SemanticObjects by opaque hashed ID before projection. On
 The full canonical object set, exact refs and fail-closed grounding remain authoritative. AX lineage preservation and compact Browser object cards are later candidates, not the first correction.
 
 See `docs/SMC-BROWSER-MF5.3.2-READ-ONLY-INTERFACE-AUDIT-20260916.md`. MF-6 remains deferred.
+
+
+---
+
+## 23. MF-5.3.2 measured treatment — task-correct, not qualified
+
+MF-5.3.2A/B were independently RED-driven and deterministically qualified before the combined live treatment. The formal treatment is **NOT QUALIFIED**, despite external task correctness reaching **6/6**.
+
+Two results must be kept separate:
+
+1. **Evidence-quality projection is directionally supported.** Grounding Probe Amplification fell from 1 to 0, both fill tasks passed their external oracle, and the successful Row5 click grounded exactly to `kind=button,name=Save code` with one match. This is consistent with the deterministic projection result, while the combined A+B treatment does not prove single-variable causality.
+2. **Peer capability naming is not sufficient for routing stability.** Four completed workers still sent the opening navigation URL to `browser_perceive`; raw reconstruction including the TIMEOUT row gives only 2/6 first-call contract-valid. Do not respond by giving Perceive navigation authority or by teaching the model a routing decision tree.
+
+A third residual tax is now visible: one fill row completed the external save action exactly once, then continued snapshot/evidence/hydration verification until the frozen 240s worker timeout. This is **post-success evidence/verification amplification**, not evidence for increasing `max_iterations` or giving the runtime task-completion authority.
+
+The next design step should therefore remain read-only: audit why natural peer naming still fails first-call capability selection, and audit how post-action evidence can become sufficient sooner while leaving semantic completion with the model. MF-6 remains deferred.
+
+See `docs/SMC-BROWSER-COGNITION-PRESERVING-MF5.3.2-v0.1-RESULT-20260916.md`.

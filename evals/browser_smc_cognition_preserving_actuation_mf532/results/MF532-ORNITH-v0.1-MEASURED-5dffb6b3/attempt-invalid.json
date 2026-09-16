@@ -1,0 +1,20 @@
+{
+  "completed_row_indices": [
+    1,
+    2,
+    3
+  ],
+  "completed_row_statuses": {
+    "1": "PASS",
+    "2": "TASK_FAIL",
+    "3": "TASK_FAIL"
+  },
+  "evidence_policy": "preserve_as-is; do not resume, delete, copy, or selectively replay rows under this identity",
+  "incomplete_row_directory": "04-delayed_wait-r2-peer-capability-quality-projection",
+  "next_identity": "MF532-ORNITH-v0.1-MEASURED2-5dffb6b3",
+  "next_orchestration": "one frozen row per runner invocation under the same manifest identity",
+  "qualification_gate_present": false,
+  "reason": "single runner invocation was bounded by the host 600s command envelope; continuing would force-kill a later formal row",
+  "schema": "smc.browser_cognition_preserving_actuation_mf532.v0.1.invalid_attempt",
+  "status": "INFRA_INVALID_ORCHESTRATION_ENVELOPE"
+}

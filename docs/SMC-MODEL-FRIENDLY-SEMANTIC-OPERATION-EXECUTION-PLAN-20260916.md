@@ -265,3 +265,21 @@ Read-only evidence shows current object order is opaque Semantic ID order and ge
 Do not yet implement global Evidence-budget changes, compact Browser cards, AX lineage/fragment merging, iteration-limit increases, fuzzy target repair or auto retry. Those are deferred until the narrow corrections are qualified.
 
 Next phase requires a human checkpoint before any RED or production edit. MF-6 remains deferred.
+
+
+## 15. MF-5.3.2 deterministic + measured result — 2026-09-16
+
+Authoritative report: `docs/SMC-BROWSER-COGNITION-PRESERVING-MF5.3.2-v0.1-RESULT-20260916.md`.
+
+Implemented and qualified deterministic sequence:
+
+1. A RED `7723a271` -> A provider peer identity `dfca4c95`;
+2. B RED `5da9d8a8` -> B evidence-quality projection `05d0f36c`;
+3. Browser/Factory 363/363 PASS; full non-real test Gate 100% exit 0; Ruff/Pyright/security/diff checks green;
+4. fresh measured protocol `5dffb6b3`, identical 6-row tasks/prompts/fixture/oracles/hard Gate;
+5. zero-model preflight PASS;
+6. fresh six-row live treatment completed without selective replay.
+
+Formal result: **NOT QUALIFIED**. External oracle is 6/6 and Grounding Probe Amplification is 0, but one task-correct row hit the frozen 240s worker timeout and four completed rows still contain first-call Perceive routing repair.
+
+Do not rerun this identity, loosen the Gate, raise max iterations, add navigation to Perceive, fuzzy-resolve targets, or proceed to MF-6. The next phase is a read-only audit of (a) capability routing after peer naming and (b) post-success verification/evidence amplification. Production changes require a new deterministic identity after that audit.
