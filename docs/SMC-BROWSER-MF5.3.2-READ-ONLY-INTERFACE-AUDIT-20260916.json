@@ -1,0 +1,221 @@
+{
+  "adjudication": {
+    "mf6_deferred": true,
+    "next_deterministic_split": [
+      "MF-5.3.2A capability identity RED",
+      "MF-5.3.2B evidence-quality projection RED"
+    ],
+    "root_causes": [
+      "capability_routing_salience",
+      "perception_projection_salience"
+    ],
+    "same_narrow_interface_gap": false,
+    "single_combined_correction_identity_authorized": false
+  },
+  "audit_documents": {
+    "docs/SMC-BROWSER-MF5.3.2-READ-ONLY-INTERFACE-AUDIT-20260916.md": {
+      "bytes": 31818,
+      "sha256": "769965aeda285f0daf86f7b9cd6bb6e583882889079ad1ff2b1bfb83b8c5d272",
+      "source": "raw_measured_evidence"
+    },
+    "docs/SMC-MODEL-FRIENDLY-SEMANTIC-OPERATION-DESIGN-v0.1-20260916.md": {
+      "bytes": 43596,
+      "sha256": "0f31186937104410b64a27f2bde8a3693e326cee83f737ac73ba5b0d423184de",
+      "source": "raw_measured_evidence"
+    },
+    "docs/SMC-MODEL-FRIENDLY-SEMANTIC-OPERATION-EXECUTION-PLAN-20260916.md": {
+      "bytes": 19393,
+      "sha256": "8ea99762ed379d7a478b51ad046f41fa8e8c6acfa5566e5dfd93f973fc116b70",
+      "source": "raw_measured_evidence"
+    }
+  },
+  "counterfactual_projection": {
+    "actionable_instances": 73,
+    "complete_stable_then_id_order": {
+      "max_index": 4,
+      "mean_index": 1.52,
+      "median_index": 1,
+      "top5": 73
+    },
+    "corpus_snapshots": 63,
+    "current_opaque_id_order": {
+      "max_index": 24,
+      "mean_index": 10.62,
+      "median_index": 11,
+      "top3": 17,
+      "top5": 26
+    },
+    "uses_intended_verb": false,
+    "uses_object_name": false,
+    "uses_relevance_model": false,
+    "uses_task_text": false
+  },
+  "formal_artifacts": {
+    "docs/SMC-BROWSER-COGNITION-PRESERVING-MF5.3.1-v0.1-RESULT-20260916.json": {
+      "bytes": 4806,
+      "sha256": "f915b3dc3d04bf13f441f6f539806e94e01457213f89c1614812bd7195edeef6",
+      "source": "git:914f98d7f6f0181bab60f68e9e5264908b7ed373"
+    },
+    "docs/SMC-BROWSER-COGNITION-PRESERVING-MF5.3.1-v0.1-RESULT-20260916.md": {
+      "bytes": 10991,
+      "sha256": "274a27bf82342605a3e17e8c3b5e59bad59bd4741dc5b5209c581180d48fbeae",
+      "source": "git:914f98d7f6f0181bab60f68e9e5264908b7ed373"
+    },
+    "evals/browser_smc_cognition_preserving_actuation_mf531/results/MF531-ORNITH-v0.1-MEASURED-05f17151/execution-manifest.json": {
+      "bytes": 56013,
+      "sha256": "51eda5453ea387600930bfd7791cf53943338705d430cf7bd0eba88edda05b8c",
+      "source": "git:914f98d7f6f0181bab60f68e9e5264908b7ed373"
+    },
+    "evals/browser_smc_cognition_preserving_actuation_mf531/results/MF531-ORNITH-v0.1-MEASURED-05f17151/plan.json": {
+      "bytes": 1279,
+      "sha256": "54551033ca4e4204152bafeaaaf8f1108b75d90e5f0f14010342f8cc04e93833",
+      "source": "git:914f98d7f6f0181bab60f68e9e5264908b7ed373"
+    },
+    "evals/browser_smc_cognition_preserving_actuation_mf531/results/MF531-ORNITH-v0.1-MEASURED-05f17151/qualification-gate.json": {
+      "bytes": 1505,
+      "sha256": "5fb15a135f7460446a5f2bb88b264d4ce62a2242a01786582b96452169d5dbd1",
+      "source": "git:914f98d7f6f0181bab60f68e9e5264908b7ed373"
+    },
+    "evals/browser_smc_cognition_preserving_actuation_mf531/results/MF531-ORNITH-v0.1-MEASURED-05f17151/results.jsonl": {
+      "bytes": 30453,
+      "sha256": "8535114ac74a9cb6df35169a02f80737b459540965a27c49990c199e55577703",
+      "source": "git:914f98d7f6f0181bab60f68e9e5264908b7ed373"
+    }
+  },
+  "formal_evidence_anchor": "914f98d7f6f0181bab60f68e9e5264908b7ed373",
+  "implementation_anchor": "1cb9ad2bddd8b44ca31dd38ff1b30c9dd42c01e0",
+  "measured_identity": "MF531-ORNITH-v0.1-MEASURED-05f17151",
+  "perceive_failures": [
+    {
+      "call": "browser_perceive(action=navigate,url=...)",
+      "class": "capability_routing",
+      "mechanical_rejection": "action_not_supported",
+      "row": 2,
+      "task": "fill_submit"
+    },
+    {
+      "call": "browser_perceive(action=snapshot,url=...)",
+      "class": "capability_routing",
+      "mechanical_rejection": "snapshot_fields_mismatch_url",
+      "row": 3,
+      "task": "delayed_wait"
+    },
+    {
+      "call": "browser_perceive(action=navigate,url=...)",
+      "class": "capability_routing",
+      "mechanical_rejection": "action_not_supported",
+      "row": 5,
+      "task": "fill_submit"
+    }
+  ],
+  "raw_evidence_artifacts": {
+    "row5_key_artifacts": {
+      "halted_operation_receipt": {
+        "bytes": 916,
+        "sha256": "aeb82d37aa716707aeb413fa3e2e8cdf50520974e5d933c5d692a967188039e0",
+        "source": "raw_measured_evidence"
+      },
+      "snapshot_bsnp_f132": {
+        "bytes": 64385,
+        "sha256": "72077bfb15a95782aa4bda300e0fb029461433b35d29cd7e60c9a10e90e344c8",
+        "source": "raw_measured_evidence"
+      }
+    },
+    "rows": {
+      "2": {
+        "event_log": {
+          "bytes": 227546,
+          "sha256": "df5b40c09f48537ff438e03fdc8ed533baaadd3063fb431d3d7121a7efdde7e5",
+          "source": "raw_measured_evidence"
+        },
+        "run_id": "02-fill_submit-r1-root-direct-perceive-operate",
+        "worker-result.json": {
+          "bytes": 12602,
+          "sha256": "aaf7baea7ddfeda6f3e82f548f6a08b2501805c8f4079b1dd5748f2c066879a6",
+          "source": "raw_measured_evidence"
+        }
+      },
+      "3": {
+        "event_log": {
+          "bytes": 94257,
+          "sha256": "0050b8e5f995cb382eeabe5f0722466a22574d7e3f3a48aead689417c8505dc3",
+          "source": "raw_measured_evidence"
+        },
+        "run_id": "03-delayed_wait-r1-root-direct-perceive-operate",
+        "worker-result.json": {
+          "bytes": 10214,
+          "sha256": "2f144973d0bf2b7d6ad35b2af2edbd7a89bd6a5670d7cf029329b1ebe64d00bd",
+          "source": "raw_measured_evidence"
+        }
+      },
+      "5": {
+        "event_log": {
+          "bytes": 222019,
+          "sha256": "8510be1ec5ca529f49e6abf6fdda1b089a8ccf0c76d4f7760b2029385bd3adac",
+          "source": "raw_measured_evidence"
+        },
+        "run_id": "05-fill_submit-r2-root-direct-perceive-operate",
+        "worker-result.json": {
+          "bytes": 12457,
+          "sha256": "8de183eab0ab719c4ab783532fd08157ae7ba45716c583e2caccfb4e0f9904d7",
+          "source": "raw_measured_evidence"
+        }
+      }
+    }
+  },
+  "row5_ground_probe": {
+    "automatic_retry": false,
+    "call": "browser_semantic_operation(do=click,target={kind:generic,name:Save code})",
+    "halt_reason": "exact_identity_match_count:2",
+    "objects": [
+      {
+        "coverage": "partial",
+        "index": 0,
+        "kind": "generic",
+        "name": "Save code",
+        "role": "InlineTextBox",
+        "sources": [
+          "ax"
+        ]
+      },
+      {
+        "coverage": "complete",
+        "index": 1,
+        "kind": "input",
+        "name": "Project code",
+        "sources": [
+          "dom",
+          "ax"
+        ]
+      },
+      {
+        "coverage": "partial",
+        "index": 11,
+        "kind": "generic",
+        "name": "Save code",
+        "role": "StaticText",
+        "sources": [
+          "ax"
+        ]
+      },
+      {
+        "coverage": "complete",
+        "enabled": true,
+        "index": 14,
+        "kind": "button",
+        "name": "Save code",
+        "sources": [
+          "dom",
+          "ax"
+        ]
+      }
+    ],
+    "outer_evidence_budget_chars": 5000,
+    "serialized_button_kind_char_approx": 10775,
+    "snapshot_id": "bsnap-1-f132fed5fb8ce290",
+    "snapshot_object_count": 23,
+    "task_completion": "not_evaluated"
+  },
+  "schema": "smc.browser_mf532_read_only_interface_audit.v0.1",
+  "status": "READ_ONLY_AUDIT_COMPLETE"
+}

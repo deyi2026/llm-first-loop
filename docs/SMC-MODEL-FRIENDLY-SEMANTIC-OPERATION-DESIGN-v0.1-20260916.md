@@ -851,3 +851,26 @@ This strengthens two design laws:
 MF-5.3.2 should therefore begin with a read-only audit of (1) Perceive/Operate routing salience and (2) actionable-parent vs AX-text-fragment projection/fusion/order. Do not add navigation to Perceive, do not fuzzy-resolve ambiguous targets, and do not raise the iteration budget as the primary fix.
 
 See `docs/SMC-BROWSER-COGNITION-PRESERVING-MF5.3.1-v0.1-RESULT-20260916.md`. MF-6 remains deferred.
+
+
+---
+
+## 22. MF-5.3.2 read-only interface ruling — peer capability identity + evidence-quality projection
+
+Formal MF-5.3.1 evidence shows that root-direct Perceive fixed its intended nested-wire defect but exposed two new interface taxes: unstable first-call routing between the read-only eye and mutation hand, plus model-visible snapshot ordering that can foreground partial AX text fragments while complete DOM+AX controls sit in the generic Evidence excerpt's omitted middle.
+
+The architecture is refined accordingly:
+
+> **The eye and hand should be peer capabilities in both authority and cognitive naming.**
+
+A provider-visible pair such as `browser_perceive` + `browser_operate` better matches the architecture than `browser_perceive` + `browser_semantic_operation`. This is a capability-label correction, not a routing thought template. Navigation remains exclusively on the mutation hand. Do not expose both an old and new hand name at once.
+
+The perception refinement is similarly task-invariant:
+
+> **Bounded perception may prioritize evidence quality, but it must not prioritize task relevance.**
+
+Current snapshots sort SemanticObjects by opaque hashed ID before projection. On the frozen 63-snapshot corpus, complete/stable evidence-quality ordering moved all 73 actionable instances into the top five positions without using task text, object name, intended verb or relevance judgment. Row5's complete `Save code` button moved from index 14 / the omitted ~10K region to index 3 / the visible ~2.57K region under the same 5K outer Evidence bound.
+
+The full canonical object set, exact refs and fail-closed grounding remain authoritative. AX lineage preservation and compact Browser object cards are later candidates, not the first correction.
+
+See `docs/SMC-BROWSER-MF5.3.2-READ-ONLY-INTERFACE-AUDIT-20260916.md`. MF-6 remains deferred.
