@@ -160,7 +160,8 @@ def test_model_surface_aggregates_wait_while_typed_primitives_remain_closed(tmp_
     )
     props = tool.parameters["properties"]
     assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
-    assert "condition" in props
+    assert "condition" not in props
+    assert "kind" in props
     assert "within_ms" in props
     assert "interval_ms" not in props
 
