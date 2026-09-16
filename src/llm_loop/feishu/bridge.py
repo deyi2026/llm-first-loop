@@ -32,7 +32,7 @@ from llm_loop.feishu.compensation import (
     InterruptionNotifier,
     compensation_path,
 )
-from llm_loop.feishu.config import FeishuConfig
+from llm_loop.feishu.config import FeishuConfig, _resolved_float
 from llm_loop.feishu.handlers import (
     FASTLANE_CONTROL_COMMANDS,
     FeishuMessage,
@@ -112,21 +112,17 @@ _MAX_MSG_QUEUE: int = int(_BRIDGE_CONFIG.get("FEISHU_WS_QUEUE_MAX", "64"))
 
 # ── P1-3-R2: 优雅退出 drain 时间预算 ──
 # 时间契约: wait(10) + drain(3) = 13s ≤ GRACE_S(15) − 2s 余量（与 feishu/__init__.py 对齐）。
-# 预算耗尽中断 drain 时如实 WARNING 记录积压量（不再无时间上限地拖住优雅退出）。
-def _env_float(name: str, default: float) -> float:
-    """读取 env 浮点值（非法值回退默认，fail-open）."""
-    try:
-        return float(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        return default
-
-
-_DRAIN_BUDGET_S: float = _env_float("FEISHU_EXIT_DRAIN_S", 3)
+# P1-A2: reuse the immutable bridge RuntimeConfig snapshot; no module-import env read.
+_DRAIN_BUDGET_S: float = _resolved_float(_BRIDGE_CONFIG, "FEISHU_EXIT_DRAIN_S", 3)
 
 # ── P1-3-R3: 活性观测阈值 ──
 # 单条消息处理超时探测（只记录不打断，默认 5min）；主链路静默判定（默认 30min）。
-_MSG_PROCESS_TIMEOUT_S: float = _env_float("FEISHU_MSG_PROCESS_TIMEOUT_S", 300)
-_SILENT_THRESHOLD_S: float = _env_float("FEISHU_SILENT_THRESHOLD_S", 1800)
+_MSG_PROCESS_TIMEOUT_S: float = _resolved_float(
+    _BRIDGE_CONFIG, "FEISHU_MSG_PROCESS_TIMEOUT_S", 300
+)
+_SILENT_THRESHOLD_S: float = _resolved_float(
+    _BRIDGE_CONFIG, "FEISHU_SILENT_THRESHOLD_S", 1800
+)
 
 
 def _patch_sdk_connect_lock(client: Any) -> None:
