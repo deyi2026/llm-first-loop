@@ -1,6 +1,6 @@
 # SMC Model-Friendly Semantic Operation — Execution Plan — 2026-09-16
 
-Status: **MF-5 v0.1 COMPLETE / NOT QUALIFIED / COGNITION-PRESERVING CORRECTION ADOPTED / MF-6 DEFERRED**
+Status: **MF-5 v0.1 NOT QUALIFIED / MF-5.2 IMPLEMENTED + ZERO-MODEL PREFLIGHT PASS / MEASURED LIVE PENDING / MF-6 DEFERRED**
 
 Design authority: `docs/SMC-MODEL-FRIENDLY-SEMANTIC-OPERATION-DESIGN-v0.1-20260916.md`
 
@@ -17,7 +17,7 @@ Baseline: `lfl/main@2c4b9b087f5d2fad2cf2c5c026194038c7613c5c`
 | 4 | MF-4 Decision Boundary enforcement | production + tests | **COMPLETE** — explicit declared/undeclared transition boundary | boundary cannot be mechanically determined |
 | 5 | MF-5 local A/B | qualification | **COMPLETE / NOT QUALIFIED** — efficiency PASS, hard gate FAIL | gate failure |
 | 5.1 | MF-5.1 grammar regularization | narrow production + deterministic tests | **IMPLEMENTED at `d6ec0113`** — uniform `do`, including `do:"wait"` | any authority change beyond syntax |
-| 5.2 | Cognition-preserving actuation qualification | design + qualification | normal reasoning -> natural semantic call; protocol-repair taxonomy + fresh hard Gate | model still reasons about tool grammar |
+| 5.2 | Cognition-preserving actuation qualification | design + qualification | **IMPLEMENTED + ZERO-MODEL PREFLIGHT PASS** — natural actuation surface, observable protocol-repair Gate; fresh 6-row measured live still pending | model still reasons about tool grammar |
 | 6 | MF-6 independent confirmatory | qualification | **DEFERRED** until MF-5.2 hard PASS; fresh repeat, no pooling | gate failure |
 | 7 | MF-7 portability/wider matrix | later | provider + broader tasks | local repeat stability not proven |
 
@@ -105,3 +105,33 @@ MF-5.2 requirements:
 - no fuzzy/best-match/auto-target/latest/rebind/retry/task-completion authority.
 
 MF-6 is explicitly deferred; do not run it until MF-5.2 hard qualification passes.
+
+
+## 7. MF-5.2 implementation + zero-model preflight update — 2026-09-16
+
+The cognition-preserving correction is now mechanically implemented and frozen for live qualification.
+
+Implementation layers:
+
+- `8273c11c` — common wait model surface becomes `do + exact target + until`, `within_ms` optional; deterministic compiler expands common state aliases to the existing typed Predicate path; `wait_text` preserves `name/value_text` comparison capability without exposing the generic Predicate bookkeeping on the common path.
+- `ab99aac3` — provider **lazy stable-prefix** contract aligned with the same cognition-preserving semantics. This follow-up was required because `ToolRegistry.schemas(lazy=True)` uses `_COMPACT_TOOL_DESCRIPTIONS`, not the tool's full description. The stale lazy string still said `1..8 ordered steps / typed condition+within_ms`; a new RED test reproduced this and the compact string was fixed without changing execution behavior.
+
+Deterministic qualification:
+
+- MF1→MF5.2 semantic-operation chain: PASS;
+- cognition-preserving focused tests: PASS;
+- MF-5.2 Gate synthetic positive/negative suite: PASS;
+- Ruff PASS; targeted Pyright 0 errors / 0 warnings; security scans PASS.
+
+Frozen MF-5.2 harness: `evals/browser_smc_cognition_preserving_actuation_mf52/`. The release Gate does not inspect hidden chain-of-thought. `protocol_repair` is an observable proxy over semantic-operation contract failures plus schema lookup on this already-known surface.
+
+Zero-model preflight at experiment HEAD `6e13c04ef7356eb6b0651cdf230b46e56610c4bc` and implementation `ab99aac3d6287a485f4d45646287242bc6a6ab07` passed with **model_requests=0**:
+
+- plan SHA: `81fe0e21ffc511f3894f246c80423b2c9c014f86e450b74c2d40c614a4bceefe`;
+- provider surface SHA: `106e302dac1f099594072cb76cfd26d7bd1a6961d61c5e615224c1e13b75aa6c`;
+- model-visible tools: exactly `browser_semantic_operation`, `get_tool_schema`, `read_evidence`;
+- provider root: `steps`; canonical branches include `wait` and `wait_text`;
+- cognition-preserving lazy contract marker check: PASS;
+- unique local model: Ornith on 8901, prompt/decode concurrency 1/1, max tokens 16000; no second local model started.
+
+The next step is the fresh six-row treatment-only Ornith matrix. It is a major measured qualification boundary and must not begin until the explicit human checkpoint is crossed. No row may be replayed or repaired in place.
