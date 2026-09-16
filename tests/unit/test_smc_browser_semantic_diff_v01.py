@@ -97,9 +97,17 @@ def test_model_surface_keeps_diff_and_aggregated_wait_read_only(tmp_path: Path) 
         "grounding_ref",
         "from_version",
         "to_version",
-        "condition",
+        "kind",
+        "state",
+        "match",
+        "url",
+        "object_ref",
+        "value",
+        "field",
+        "text",
         "within_ms",
     }
+    assert "condition" not in props
     surface = {str(key).lower() for key in props}
     surface.update(str(value).lower() for value in props["action"]["enum"])
     for forbidden in (
@@ -114,7 +122,6 @@ def test_model_surface_keeps_diff_and_aggregated_wait_read_only(tmp_path: Path) 
         "scroll",
         "script",
         "code",
-        "url",
     ):
         assert forbidden not in surface
 

@@ -1,8 +1,9 @@
 """Model-facing read-only Browser SMC perception tool.
 
-The tool can snapshot only a page already bound by the host backend and hydrate exact
-GroundingRefs.  It intentionally has no URL/script/selector/action parameter and performs
-no navigation or mutation. The action discriminator is limited to snapshot/hydrate/diff; typed wait lives in separate tools. Host/runtime activation is a separate integration decision.
+The tool observes only a page already bound by the host backend and hydrates exact
+GroundingRefs. It performs no navigation or mutation. Provider-facing wait is a flat,
+root-discriminated read-only branch that compiles mechanically to internal typed waits;
+poll cadence stays runtime-owned. Host/runtime activation is a separate integration decision.
 """
 
 from __future__ import annotations
@@ -36,86 +37,115 @@ class BrowserPerceiveTool:
         "不判断 task completion，也不暴露 selector/坐标/CDP node id/AX index。"
         f"method_ref={SEMANTIC_OPERATION_METHOD_REF}。"
     )
-    _WAIT_CONDITION_SCHEMA = {
-        "oneOf": [
-            {
-                "type": "object",
-                "properties": {
-                    "kind": {"const": "page_ready"},
-                    "state": {"type": "string", "enum": ["loading", "interactive", "complete"]},
+    _PROVIDER_BRANCHES = [
+        {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["snapshot"]},
+                "projection_limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                "projection_kinds": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
                 },
-                "required": ["kind", "state"],
-                "additionalProperties": False,
+                "projection_cursor": {"type": "integer", "minimum": 0},
+                "vision": {"type": "string", "enum": ["evidence"]},
             },
-            {
-                "type": "object",
-                "properties": {
-                    "kind": {"const": "page_url"},
-                    "match": {
-                        "type": "string",
-                        "enum": ["equals", "contains", "starts_with", "ends_with"],
-                    },
-                    "url": {"type": "string"},
+            "required": ["action"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["hydrate"]},
+                "grounding_ref": {"type": "string", "minLength": 1},
+            },
+            "required": ["action", "grounding_ref"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["diff"]},
+                "from_version": {"type": "string", "minLength": 1},
+                "to_version": {"type": "string", "minLength": 1},
+            },
+            "required": ["action", "from_version", "to_version"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["wait"]},
+                "kind": {"type": "string", "enum": ["page_ready"]},
+                "state": {"type": "string", "enum": ["loading", "interactive", "complete"]},
+                "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
+            },
+            "required": ["action", "kind", "state"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["wait"]},
+                "kind": {"type": "string", "enum": ["page_url"]},
+                "match": {
+                    "type": "string",
+                    "enum": ["equals", "contains", "starts_with", "ends_with"],
                 },
-                "required": ["kind", "match", "url"],
-                "additionalProperties": False,
+                "url": {"type": "string"},
+                "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
             },
-            {
-                "type": "object",
-                "properties": {
-                    "kind": {"const": "object_state"},
-                    "object_ref": {"type": "string", "minLength": 1},
-                    "state": {
-                        "type": "string",
-                        "enum": [
-                            "exists",
-                            "enabled",
-                            "checked",
-                            "selected",
-                            "expanded",
-                            "focused",
-                            "editable",
-                        ],
-                    },
-                    "value": {"type": "boolean"},
+            "required": ["action", "kind", "match", "url"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["wait"]},
+                "kind": {"type": "string", "enum": ["object_state"]},
+                "object_ref": {"type": "string", "minLength": 1},
+                "state": {
+                    "type": "string",
+                    "enum": [
+                        "exists",
+                        "enabled",
+                        "checked",
+                        "selected",
+                        "expanded",
+                        "focused",
+                        "editable",
+                    ],
                 },
-                "required": ["kind", "object_ref", "state", "value"],
-                "additionalProperties": False,
+                "value": {"type": "boolean"},
+                "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
             },
-            {
-                "type": "object",
-                "properties": {
-                    "kind": {"const": "object_text"},
-                    "object_ref": {"type": "string", "minLength": 1},
-                    "field": {"type": "string", "enum": ["name", "value_text"]},
-                    "match": {
-                        "type": "string",
-                        "enum": ["equals", "contains", "starts_with", "ends_with"],
-                    },
-                    "text": {"type": "string"},
+            "required": ["action", "kind", "object_ref", "state", "value"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["wait"]},
+                "kind": {"type": "string", "enum": ["object_text"]},
+                "object_ref": {"type": "string", "minLength": 1},
+                "field": {"type": "string", "enum": ["name", "value_text"]},
+                "match": {
+                    "type": "string",
+                    "enum": ["equals", "contains", "starts_with", "ends_with"],
                 },
-                "required": ["kind", "object_ref", "field", "match", "text"],
-                "additionalProperties": False,
+                "text": {"type": "string"},
+                "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
             },
-        ]
-    }
+            "required": ["action", "kind", "object_ref", "field", "match", "text"],
+            "additionalProperties": False,
+        },
+    ]
     parameters = {
         "type": "object",
+        # Keep the shallow union for provider compatibility, while oneOf branches below
+        # are the authority for action-specific closed fields.
         "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["snapshot", "hydrate", "diff", "wait"],
-                "description": (
-                    "snapshot=当前 host-bound page 感知；hydrate=精确水合 ref；"
-                    "diff=比较 exact snapshots；wait=只读等待已声明的页面/对象条件"
-                ),
-            },
-            "projection_limit": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 500,
-                "description": "仅 snapshot：首屏投影对象上限；不改变底层 observation completeness",
-            },
+            "action": {"type": "string", "enum": ["snapshot", "hydrate", "diff", "wait"]},
             "projection_kinds": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
@@ -139,118 +169,49 @@ class BrowserPerceiveTool:
                     "grounding/version；模型用 read_image 消费并自行裁决"
                 ),
             },
-            "grounding_ref": {
-                "type": "string",
-                "description": "仅 hydrate：精确 Browser GroundingRef 或 browser-operation-receipt ref",
-            },
-            "from_version": {
-                "type": "string",
-                "description": "仅 diff：起点精确 Browser snapshot_id",
-            },
-            "to_version": {
-                "type": "string",
-                "description": "仅 diff：终点精确 Browser snapshot_id",
-            },
-            "condition": _WAIT_CONDITION_SCHEMA,
-            "within_ms": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 60_000,
-                "description": "仅 wait：可选任务级等待上限；省略时使用运行时默认 60000ms",
-            },
-        },
-        "required": ["action"],
-        "additionalProperties": False,
-    }
-
-    # Provider-lazy must remain first-call self-sufficient. The generic lazy skeleton
-    # intentionally drops oneOf/const, which would otherwise turn `condition` into `{}`
-    # and force schema repair before a natural wait. Keep this explicit surface closed
-    # and compact; polling cadence remains runtime-owned and is not exposed.
-    lazy_parameters = {
-        "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["snapshot", "hydrate", "diff", "wait"],
-            },
             "projection_limit": {"type": "integer", "minimum": 1, "maximum": 500},
-            "grounding_ref": {"type": "string"},
-            "from_version": {"type": "string"},
-            "to_version": {"type": "string"},
-            "condition": {
-                "oneOf": [
-                    {
-                        "type": "object",
-                        "properties": {
-                            "kind": {"type": "string", "enum": ["page_ready"]},
-                            "state": {
-                                "type": "string",
-                                "enum": ["loading", "interactive", "complete"],
-                            },
-                        },
-                        "required": ["kind", "state"],
-                        "additionalProperties": False,
-                    },
-                    {
-                        "type": "object",
-                        "properties": {
-                            "kind": {"type": "string", "enum": ["page_url"]},
-                            "match": {
-                                "type": "string",
-                                "enum": ["equals", "contains", "starts_with", "ends_with"],
-                            },
-                            "url": {"type": "string"},
-                        },
-                        "required": ["kind", "match", "url"],
-                        "additionalProperties": False,
-                    },
-                    {
-                        "type": "object",
-                        "properties": {
-                            "kind": {"type": "string", "enum": ["object_state"]},
-                            "object_ref": {"type": "string", "minLength": 1},
-                            "state": {
-                                "type": "string",
-                                "enum": [
-                                    "exists",
-                                    "enabled",
-                                    "checked",
-                                    "selected",
-                                    "expanded",
-                                    "focused",
-                                    "editable",
-                                ],
-                            },
-                            "value": {"type": "boolean"},
-                        },
-                        "required": ["kind", "object_ref", "state", "value"],
-                        "additionalProperties": False,
-                    },
-                    {
-                        "type": "object",
-                        "properties": {
-                            "kind": {"type": "string", "enum": ["object_text"]},
-                            "object_ref": {"type": "string", "minLength": 1},
-                            "field": {"type": "string", "enum": ["name", "value_text"]},
-                            "match": {
-                                "type": "string",
-                                "enum": ["equals", "contains", "starts_with", "ends_with"],
-                            },
-                            "text": {"type": "string"},
-                        },
-                        "required": ["kind", "object_ref", "field", "match", "text"],
-                        "additionalProperties": False,
-                    },
-                ]
+            "grounding_ref": {"type": "string", "minLength": 1},
+            "from_version": {"type": "string", "minLength": 1},
+            "to_version": {"type": "string", "minLength": 1},
+            "kind": {
+                "type": "string",
+                "enum": ["page_ready", "page_url", "object_state", "object_text"],
             },
+            "state": {"type": "string"},
+            "match": {
+                "type": "string",
+                "enum": ["equals", "contains", "starts_with", "ends_with"],
+            },
+            "url": {"type": "string"},
+            "object_ref": {"type": "string", "minLength": 1},
+            "value": {"type": "boolean"},
+            "field": {"type": "string", "enum": ["name", "value_text"]},
+            "text": {"type": "string"},
             "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
         },
         "required": ["action"],
+        "oneOf": _PROVIDER_BRANCHES,
         "additionalProperties": False,
     }
 
+    # Generic lazy projection drops oneOf. This explicit provider schema preserves the
+    # exact same root-direct branch structure on the stable prefix.
+    lazy_parameters = parameters
 
+    _FLAT_WAIT_FIELDS = {
+        "page_ready": {"action", "kind", "state", "within_ms"},
+        "page_url": {"action", "kind", "match", "url", "within_ms"},
+        "object_state": {"action", "kind", "object_ref", "state", "value", "within_ms"},
+        "object_text": {
+            "action",
+            "kind",
+            "object_ref",
+            "field",
+            "match",
+            "text",
+            "within_ms",
+        },
+    }
 
     def __init__(
         self,
@@ -302,9 +263,19 @@ class BrowserPerceiveTool:
             },
             "hydrate": {"action", "grounding_ref"},
             "diff": {"action", "from_version", "to_version"},
-            "wait": {"action", "condition", "within_ms"},
         }
-        allowed = allowed_by_action.get(action)
+        if action == "wait":
+            # Historical nested condition remains executable for frozen evidence and
+            # deterministic compatibility, but it is absent from the provider schema.
+            if "condition" in kwargs:
+                allowed = {"action", "condition", "within_ms"}
+            else:
+                kind = str(kwargs.get("kind") or "").strip()
+                allowed = self._FLAT_WAIT_FIELDS.get(kind)
+                if allowed is None:
+                    return self._fail(f"[browser_perceive:wait] kind 不受支持: {kind or '<missing>'}。")
+        else:
+            allowed = allowed_by_action.get(action)
         if allowed is None:
             return None
         extras = sorted(set(kwargs) - allowed)
@@ -329,7 +300,13 @@ class BrowserPerceiveTool:
             return mismatch
         if action == "wait":
             condition = kwargs.get("condition")
-            if not isinstance(condition, dict):
+            if condition is None:
+                condition = {
+                    key: value
+                    for key, value in kwargs.items()
+                    if key not in {"action", "within_ms"}
+                }
+            elif not isinstance(condition, dict):
                 return self._fail("[browser_perceive:wait] condition 必须是闭合 object。")
             try:
                 timeout_ms = int(kwargs.get("within_ms", 60_000) or 60_000)

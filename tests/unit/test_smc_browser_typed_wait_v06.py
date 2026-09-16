@@ -118,9 +118,17 @@ def test_v06_provider_surface_aggregates_wait_over_closed_typed_primitives() -> 
         "grounding_ref",
         "from_version",
         "to_version",
-        "condition",
+        "kind",
+        "state",
+        "match",
+        "url",
+        "object_ref",
+        "value",
+        "field",
+        "text",
         "within_ms",
     }
+    assert "condition" not in perceive_props
     for forbidden in ("predicate", "timeout_ms", "interval_ms"):
         assert forbidden not in perceive_props
 

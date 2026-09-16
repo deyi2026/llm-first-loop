@@ -169,9 +169,17 @@ def test_model_surface_aggregates_wait_while_typed_primitives_remain_closed(tmp_
         "grounding_ref",
         "from_version",
         "to_version",
-        "condition",
+        "kind",
+        "state",
+        "match",
+        "url",
+        "object_ref",
+        "value",
+        "field",
+        "text",
         "within_ms",
     }
+    assert "condition" not in props
     assert "interval_ms" not in props
 
     scope = BrowserWaitScopeTool.parameters

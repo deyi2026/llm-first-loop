@@ -92,26 +92,26 @@ def test_mf5_3_perceive_is_the_provider_facing_wait_capability() -> None:
     actions = set(props["action"]["enum"])
 
     assert "wait" in actions
-    assert "condition" in props
+    assert "condition" not in props
+    assert "kind" in props
     assert "within_ms" in props
     # Poll cadence is runtime mechanics, not model task semantics.
     assert "interval_ms" not in props
 
 
 def test_mf5_3_perceive_wait_contract_covers_page_and_exact_object_conditions() -> None:
-    condition = BrowserPerceiveTool.parameters["properties"].get("condition")
-    assert isinstance(condition, dict)
-    branches = condition.get("oneOf") or []
-    kinds = {
-        str((((branch.get("properties") or {}).get("kind") or {}).get("enum") or [((branch.get("properties") or {}).get("kind") or {}).get("const") or ""])[0])
-        for branch in branches
-    }
-    assert kinds == {"page_ready", "page_url", "object_state", "object_text"}
-
+    branches = [
+        branch
+        for branch in (BrowserPerceiveTool.parameters.get("oneOf") or [])
+        if isinstance(branch, dict)
+        and "wait" in (((branch.get("properties") or {}).get("action") or {}).get("enum") or [])
+    ]
     by_kind = {
-        str(((branch.get("properties") or {}).get("kind") or {}).get("const")): branch
+        str((((branch.get("properties") or {}).get("kind") or {}).get("enum") or [""])[0]): branch
         for branch in branches
     }
+    assert set(by_kind) == {"page_ready", "page_url", "object_state", "object_text"}
+
     for kind in ("page_ready", "page_url"):
         props = by_kind[kind]["properties"]
         # The unique host-bound page is a mechanical binding; the model must not invent
@@ -294,14 +294,19 @@ def test_mf5_3_lazy_perceive_wait_schema_is_self_sufficient_on_first_call() -> N
     registry = ToolRegistry()
     registry.register(BrowserPerceiveTool.__new__(BrowserPerceiveTool))
     schema = registry.schemas(lazy=True)[0]
-    props = (schema.get("parameters") or {}).get("properties") or {}
-    condition = props.get("condition") or {}
-    branches = condition.get("oneOf") or []
-    kinds = {
-        str((((branch.get("properties") or {}).get("kind") or {}).get("enum") or [((branch.get("properties") or {}).get("kind") or {}).get("const") or ""])[0])
-        for branch in branches
+    params = schema.get("parameters") or {}
+    props = params.get("properties") or {}
+    branches = [
+        branch
+        for branch in (params.get("oneOf") or [])
         if isinstance(branch, dict)
+        and "wait" in (((branch.get("properties") or {}).get("action") or {}).get("enum") or [])
+    ]
+    kinds = {
+        str((((branch.get("properties") or {}).get("kind") or {}).get("enum") or [""])[0])
+        for branch in branches
     }
 
     assert kinds == {"page_ready", "page_url", "object_state", "object_text"}
+    assert "condition" not in props
     assert "interval_ms" not in props

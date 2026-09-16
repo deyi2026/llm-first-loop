@@ -78,9 +78,17 @@ def test_model_surface_is_read_only_and_has_no_backend_locator_parameters(tmp_pa
         "grounding_ref",
         "from_version",
         "to_version",
-        "condition",
+        "kind",
+        "state",
+        "match",
+        "url",
+        "object_ref",
+        "value",
+        "field",
+        "text",
         "within_ms",
     }
+    assert "condition" not in props
     model_surface_tokens = {str(key).lower() for key in props}
     model_surface_tokens.update(str(value).lower() for value in props["action"]["enum"])
     for forbidden in (
@@ -96,7 +104,6 @@ def test_model_surface_is_read_only_and_has_no_backend_locator_parameters(tmp_pa
         "scroll",
         "script",
         "code",
-        "url",
     ):
         assert forbidden not in model_surface_tokens
 
