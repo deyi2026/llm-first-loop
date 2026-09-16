@@ -1,0 +1,598 @@
+{
+  "adjudication": {
+    "compact_description_effect_adjudicated": false,
+    "control_discriminator_observed": false,
+    "diagnostic_complete": true,
+    "full_qualification_authorized": false,
+    "historical_cross_capability_slip_reproduced_in_A": false,
+    "interpretation": "A control was 8/8 clean, so the historical routing discriminator did not reproduce; the A/B treatment effect is not identifiable from this targeted run.",
+    "measurement_valid": true,
+    "no_row_replay": true,
+    "production_change_authorized": false,
+    "targeted_signal": "INCONCLUSIVE_CEILING"
+  },
+  "anchors": {
+    "production_anchor": "d908adbf58610e1c136ede69b33203acc7422207",
+    "ref_kind_red_commit": "ce688c0c3de6e2c48cfb54a729f0d7ba486a284f",
+    "routing_red_commit": "3fe30b5c07a34394b6c46234c554d5d7789ff47e"
+  },
+  "artifacts": {
+    "diagnostic-gate.json": {
+      "bytes": 2380,
+      "sha256": "af5fdf4e7ffeee4a78d7e0ad3dc1651aa09525bafbe6baf0e70694eebefc65c5"
+    },
+    "execution-manifest.json": {
+      "bytes": 65583,
+      "sha256": "f70b6e82366b1db079a0f31c6e10052ea992aecc8bb9698abb1465bce35b2c74"
+    },
+    "plan.json": {
+      "bytes": 3530,
+      "sha256": "bb517d5d8d48946394887cbd4a9eb36d8c791604ac5f92460dcb766fe1873ddb"
+    },
+    "results.jsonl": {
+      "bytes": 77009,
+      "sha256": "f1e396a63f7687ef0b217ead7dcb07d29a0ca275a754cbb9e8b3b7260c1e2e16"
+    }
+  },
+  "date": "2026-09-17",
+  "gate": {
+    "arms": {
+      "A": {
+        "cache_hit_tokens": 216942,
+        "cross_capability_failures": 0,
+        "first_call_routing_pass": 8,
+        "first_call_routing_required": 8,
+        "get_tool_schema_calls": 0,
+        "infra_valid": true,
+        "mechanical_safe": true,
+        "operation_failures": 0,
+        "perceive_failures": 0,
+        "protocol_repair_episodes": 0,
+        "recovered_later": 0,
+        "rounds": 49,
+        "rows": 8,
+        "task_pass": 8,
+        "task_pass_required": 8,
+        "tokens_in": 292542,
+        "tokens_out": 4862,
+        "tool_calls": 41
+      },
+      "B": {
+        "cache_hit_tokens": 189662,
+        "cross_capability_failures": 0,
+        "first_call_routing_pass": 8,
+        "first_call_routing_required": 8,
+        "get_tool_schema_calls": 0,
+        "infra_valid": true,
+        "mechanical_safe": true,
+        "operation_failures": 0,
+        "perceive_failures": 0,
+        "protocol_repair_episodes": 0,
+        "recovered_later": 0,
+        "rounds": 45,
+        "rows": 8,
+        "task_pass": 8,
+        "task_pass_required": 8,
+        "tokens_in": 245777,
+        "tokens_out": 4443,
+        "tool_calls": 37
+      }
+    },
+    "complete_rows": 16,
+    "control_discriminator_observed": false,
+    "diagnostic_only": true,
+    "expected_rows": 16,
+    "full_qualification_authorized": false,
+    "measurement_valid": true,
+    "paired_routing": [
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "delayed_wait-r1",
+        "result": "tie"
+      },
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "delayed_wait-r2",
+        "result": "tie"
+      },
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "delayed_wait-r3",
+        "result": "tie"
+      },
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "delayed_wait-r4",
+        "result": "tie"
+      },
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "delayed_wait-r5",
+        "result": "tie"
+      },
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "delayed_wait-r6",
+        "result": "tie"
+      },
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "delayed_wait-r7",
+        "result": "tie"
+      },
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "delayed_wait-r8",
+        "result": "tie"
+      }
+    ],
+    "production_change_authorized": false,
+    "schema": "smc.browser_delayed_wait_routing_reproduction_mf534r4.v0.1.gate",
+    "targeted_signal": "INCONCLUSIVE_CEILING",
+    "task_success_overrides_routing": false
+  },
+  "measured_head": "5fcb032f15c76a16b13c22b52420d5eb4e7c2612",
+  "measured_identity": "MF534R4-ORNITH-TARGETED-v0.1-MEASURED-5fcb032f",
+  "model_server": {
+    "command_sha256": "2bee17c3fb687fb9224f0f72cac6738c607515a3ba92b90ae867995dd7b85fcf",
+    "decode_concurrency_1": true,
+    "max_tokens_16000": true,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "pid": 52430,
+    "prompt_concurrency_1": true
+  },
+  "plan_sha256": "1205312ba98e9fe41254e0dc74ef558df0101e0d3456f1ffd9f706eb3ddcc2ee",
+  "rows": [
+    {
+      "arm": "A",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 1,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r1",
+      "protocol_repair_episodes": 0,
+      "rounds": 6,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "B",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 2,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r1",
+      "protocol_repair_episodes": 0,
+      "rounds": 5,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "B",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 3,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r2",
+      "protocol_repair_episodes": 0,
+      "rounds": 6,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "A",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 4,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r2",
+      "protocol_repair_episodes": 0,
+      "rounds": 5,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "A",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "action",
+          "projection_limit"
+        ],
+        "name": "browser_perceive",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 5,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r3",
+      "protocol_repair_episodes": 0,
+      "rounds": 7,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "B",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 6,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r3",
+      "protocol_repair_episodes": 0,
+      "rounds": 7,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "B",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 7,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r4",
+      "protocol_repair_episodes": 0,
+      "rounds": 5,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "A",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 8,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r4",
+      "protocol_repair_episodes": 0,
+      "rounds": 7,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "A",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 9,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r5",
+      "protocol_repair_episodes": 0,
+      "rounds": 5,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "B",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 10,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r5",
+      "protocol_repair_episodes": 0,
+      "rounds": 5,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "B",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 11,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r6",
+      "protocol_repair_episodes": 0,
+      "rounds": 6,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "A",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "action",
+          "projection_limit"
+        ],
+        "name": "browser_perceive",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 12,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r6",
+      "protocol_repair_episodes": 0,
+      "rounds": 6,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "A",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 13,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r7",
+      "protocol_repair_episodes": 0,
+      "rounds": 6,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "B",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 14,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r7",
+      "protocol_repair_episodes": 0,
+      "rounds": 5,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "B",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 15,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r8",
+      "protocol_repair_episodes": 0,
+      "rounds": 6,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    },
+    {
+      "arm": "A",
+      "failure_kind": null,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "name": "browser_operate",
+        "status": "success"
+      },
+      "first_call_routing_valid": true,
+      "index": 16,
+      "oracle_pass": true,
+      "pair_id": "delayed_wait-r8",
+      "protocol_repair_episodes": 0,
+      "rounds": 7,
+      "routing_verdict": "PASS",
+      "status": "PASS"
+    }
+  ],
+  "runtime": {
+    "evidence_mode": "enforce",
+    "fallbacks": 0,
+    "llm_timeout_s": 1800,
+    "max_iterations": 12,
+    "max_tokens": 16000,
+    "reasoning_effort": "medium",
+    "second_local_model": false,
+    "serial_model_runs": true,
+    "thinking_mode": "on",
+    "tool_schema_lazy": true,
+    "worker_timeout_s": 240
+  },
+  "schema": "smc.browser_delayed_wait_routing_reproduction_mf534r4.v0.1.result",
+  "status": "COMPLETE_INCONCLUSIVE_CEILING",
+  "surface_isolation": {
+    "A_boundary_green": false,
+    "A_lazy_surface_sha256": "6dcc769d109677f069910dc39baac72feb731101bda0652c882c6ddc9a00e1d2",
+    "B_boundary_green": true,
+    "B_lazy_surface_sha256": "46da5c3da9d3605256098669f1cdc884f433675e096eb51fed2fe2e84f1ad4fc",
+    "description_only_identity": true,
+    "full_surface_equal": true,
+    "operate_parameters_equal": true,
+    "perceive_parameters_equal": true
+  },
+  "worker_results": [
+    {
+      "bytes": 10645,
+      "index": 1,
+      "run_id": "01-delayed_wait-r1-A",
+      "sha256": "faa9fcafe6b5862e92790d5fd5b996006ff418f0a9d1c25d13c7c0e28fff7a35"
+    },
+    {
+      "bytes": 10326,
+      "index": 2,
+      "run_id": "02-delayed_wait-r1-B",
+      "sha256": "18d33b5486c30ec1deffc007fb80bdbc1f49787d47c07b5d9533a8765b040d32"
+    },
+    {
+      "bytes": 10644,
+      "index": 3,
+      "run_id": "03-delayed_wait-r2-B",
+      "sha256": "963913a9c3f6747379a3e1d8dadd37e44971810f583a736393d9586e65428560"
+    },
+    {
+      "bytes": 10328,
+      "index": 4,
+      "run_id": "04-delayed_wait-r2-A",
+      "sha256": "10acf445c5076a553d1b75fa351974e448cf13e2b13efb5b6cce9960eb7d745b"
+    },
+    {
+      "bytes": 10960,
+      "index": 5,
+      "run_id": "05-delayed_wait-r3-A",
+      "sha256": "7e4d565de8f6f45c3c4989bd9634dbee61398334202548088c493a567dfa9251"
+    },
+    {
+      "bytes": 11040,
+      "index": 6,
+      "run_id": "06-delayed_wait-r3-B",
+      "sha256": "333aa0db8dce16c8ba098f6eb390d921a72a5f1636d2a9b0e095f7888a1bbd9f"
+    },
+    {
+      "bytes": 10327,
+      "index": 7,
+      "run_id": "07-delayed_wait-r4-B",
+      "sha256": "10630e822847a4978e8bdc30de2eeb6df640c7fd0732938fc255c827233349da"
+    },
+    {
+      "bytes": 11041,
+      "index": 8,
+      "run_id": "08-delayed_wait-r4-A",
+      "sha256": "c81bd507b3de2fcd228a8beea5c2ab7c15071dc7fddaa47f703bfc00c400fe19"
+    },
+    {
+      "bytes": 10308,
+      "index": 9,
+      "run_id": "09-delayed_wait-r5-A",
+      "sha256": "bc3d308ec89dfa0779a9c7638910f5a1e475fca5181ca9f34077c01e5a48148c"
+    },
+    {
+      "bytes": 10327,
+      "index": 10,
+      "run_id": "10-delayed_wait-r5-B",
+      "sha256": "0f6971c2f2f37a0d0fb8dfb8499eb752754a46656132496294f107d24dc4e8b5"
+    },
+    {
+      "bytes": 10644,
+      "index": 11,
+      "run_id": "11-delayed_wait-r6-B",
+      "sha256": "b49a472d60e9384183d4e88b7a734869095ebe2ba725c78f3ee7be7f89150028"
+    },
+    {
+      "bytes": 10645,
+      "index": 12,
+      "run_id": "12-delayed_wait-r6-A",
+      "sha256": "7c306c83124adb0f9c2a3308075f916a2f17f448a46800b87c4e053cdfa29087"
+    },
+    {
+      "bytes": 10645,
+      "index": 13,
+      "run_id": "13-delayed_wait-r7-A",
+      "sha256": "f20da9abf775a7be4b3c31a1e246209ed1cf2d169b928d6325f6e45e33bb4774"
+    },
+    {
+      "bytes": 10251,
+      "index": 14,
+      "run_id": "14-delayed_wait-r7-B",
+      "sha256": "c097b5e9dd9ec227adcac243578fb38923c5d783b39afe86a8773295a50f2216"
+    },
+    {
+      "bytes": 10644,
+      "index": 15,
+      "run_id": "15-delayed_wait-r8-B",
+      "sha256": "9ecab7bb1c2568bea88da5fc2acb77e26994c4f8a12a1c9352f9f3fce580fe36"
+    },
+    {
+      "bytes": 11041,
+      "index": 16,
+      "run_id": "16-delayed_wait-r8-A",
+      "sha256": "6cca6a589ca2ce32188092a07cd8c198e8e81caccd9528f371ac95bd2e842e4c"
+    }
+  ]
+}
