@@ -698,3 +698,38 @@ Therefore MF-5.1/MF-5.2 work must evaluate two independent properties:
 A future qualification should explicitly classify every model turn into `task_reasoning`, `actuation_call`, `protocol_repair`, or `evidence_inspection`. The target is not to suppress task reasoning; it is to drive `protocol_repair` toward zero while preserving or improving task correctness.
 
 This also changes the interpretation of MDEH: an execution horizon is **not a planning format the model must construct in advance**. It is merely the set of actions the model happens to have already decided and chooses to hand off together. A one-action horizon is perfectly valid and should remain the common case when the model naturally wants to inspect the result before deciding again.
+
+---
+
+## 16. Validation addendum — MF-5.2 v0.2: cognition preservation requires perception (2026-09-16)
+
+Formal MF-5.2 v0.2 evidence falsifies the idea that a sufficiently natural **actuation-only** surface is enough. The treatment preserved all mechanical safety boundaries but achieved only 3/6 external task correctness; both delayed-wait repeats failed, and one of them failed with zero observable contract/schema repair.
+
+The dominant remaining contract mismatch is no longer wait syntax. Sixteen of eighteen contract failures came from the model naturally trying to express **page/document observation or readiness** through an object-target wait. Fourteen additional calls were contract-valid but halted `target_not_found`, showing that the model then used exact actuation calls to probe guessed world identities.
+
+This strengthens the architecture law:
+
+> **Perception is a cognitive dependency when the model needs to understand the world; it must not be optimized away as if it were protocol overhead.**
+
+The preferred model-facing loop is therefore:
+
+```text
+perceive when understanding is needed
+  -> native model reasoning
+  -> one already-decided semantic action
+  -> runtime actuation + compact mechanical delta
+  -> native model reasoning
+  -> perceive again only when broader state is needed
+```
+
+A second measured correction concerns MDEH. Across 53 semantic-operation calls, 52 recognized calls were single-action and zero were multi-action. Therefore:
+
+> **Single action is the primary cognition-preserving actuation form. MDEH batching is optional and secondary.**
+
+The `steps:[...]` wrapper should be treated as a candidate Interface Tax item for MF-5.3. A direct single-action wire should be audited before further production work.
+
+A third correction is target-domain separation. Scope/page conditions (`ready`, URL/current document state) are not object identities and should not require the model to fabricate `document/page` objects. MF-5.3 must audit a natural scope-wait affordance that mechanically maps to existing scope Predicate primitives without exposing `scope_ref/version` bookkeeping or granting program strategy authority.
+
+Finally, compact receipts remain valuable but are not a replacement for perception. They should carry local mechanical effects; model-visible perception remains available when the next semantic decision genuinely requires broader world state.
+
+See `docs/SMC-BROWSER-COGNITION-PRESERVING-ACTUATION-MF5.2-v0.2-RESULT-20260916.md` for exact evidence and hashes.

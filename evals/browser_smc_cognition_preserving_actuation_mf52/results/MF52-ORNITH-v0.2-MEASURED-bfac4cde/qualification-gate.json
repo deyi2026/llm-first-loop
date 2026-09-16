@@ -1,0 +1,42 @@
+{
+  "automatic_retry_true": 0,
+  "complete_rows": 6,
+  "diagnostics": {
+    "cache_hit_tokens": 239372,
+    "multi_action_calls": 0,
+    "operation_arg_chars": 5372,
+    "operation_calls": 53,
+    "operation_result_chars": 17162,
+    "read_evidence_calls": 17,
+    "rounds": 72,
+    "single_action_calls": 52,
+    "tokens_in": 253962,
+    "tokens_out": 8526
+  },
+  "direct_atomic_browser_calls": 0,
+  "expected_rows": 6,
+  "first_operation_contract_valid": 5,
+  "first_operation_contract_valid_required": 6,
+  "get_tool_schema_calls": 2,
+  "infra_valid": true,
+  "model_no_fallback": true,
+  "operation_automatic_retry_true": 0,
+  "operation_tool_errors": 0,
+  "operation_tool_failures": 18,
+  "operation_unparsed_results": 18,
+  "pass": false,
+  "per_task_pass": {
+    "click_commit": 1,
+    "delayed_wait": 0,
+    "fill_submit": 2
+  },
+  "per_task_pass_required": 2,
+  "protocol_repair_episodes": 20,
+  "schema": "smc.browser_cognition_preserving_actuation_mf52.v0.2.gate",
+  "security_agent_spawned": false,
+  "surface_exact": true,
+  "task_completion_violations": 0,
+  "task_pass": 3,
+  "task_pass_required": 6,
+  "undeclared_boundary_continuations": 0
+}
