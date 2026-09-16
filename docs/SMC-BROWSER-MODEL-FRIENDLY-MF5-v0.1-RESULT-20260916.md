@@ -209,3 +209,32 @@ Top-level measured artifacts:
 | `qualification-gate.json` | `cfd5d1fd4212830bbbf777ba3e878688e9172caba62dc3a8a1d3a6be157c092e` |
 
 No production deployment, service restart, cloud fallback, or second local model was used by this qualification.
+
+## 11. Post-result architecture correction: preserve model cognition
+
+A later architecture ruling sharpens the interpretation of this result: Semantic Operation should be treated as the model's **actuation mechanism**, not as a reasoning language the model must adopt.
+
+MF-5 B reduced bytes/tokens/support calls, but several failed trajectories still diverted model reasoning into interface repair: the model explicitly reasoned about whether wait needed an operator, whether wait-only calls were supported, whether it should combine wait with navigate/scroll, and when to request schema. Those turns did not represent useful task reasoning; they were **protocol-induced reasoning** created by the interface.
+
+This means the remediation target is broader than “make `wait` use the same discriminator”. `d6ec0113` fixes the concrete grammar asymmetry, but the next qualification must ask:
+
+> Can the model reason about the task normally, decide an action normally, and then invoke Semantic Operation without reorganizing its thought process around the tool contract?
+
+The desired interaction is:
+
+```text
+model: reason normally -> decide "wait until button enabled"
+tool call: natural semantic actuation
+runtime: exact ground -> typed predicate -> bounded poll -> receipt
+model: continue normal task reasoning
+```
+
+not:
+
+```text
+model: decide to wait -> reason about DSL fields -> guess schema -> repair call -> retry grammar -> return to task
+```
+
+Future qualification should therefore retain the existing correctness/safety/efficiency metrics and add a turn taxonomy with a hard target of zero `protocol_repair` turns after a correct semantic intent has been formed. This does not suppress model reasoning; it distinguishes productive task reasoning from reasoning forced by API friction.
+
+MDEH remains valid but is reinterpreted as an **optional execution handoff boundary**, not a required model planning representation. The runtime may batch multiple actions only when the model has naturally already decided them; it should never pressure the model to pre-plan more steps merely to reduce round trips.
