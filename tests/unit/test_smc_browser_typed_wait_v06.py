@@ -118,7 +118,7 @@ def test_v06_provider_surface_aggregates_wait_over_closed_typed_primitives() -> 
         "kind",
         "state",
         "match",
-        "url",
+        "expected_url",
         "object_ref",
         "value",
         "field",
