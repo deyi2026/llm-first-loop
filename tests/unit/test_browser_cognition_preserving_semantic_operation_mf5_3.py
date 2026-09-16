@@ -103,7 +103,7 @@ def test_mf5_3_perceive_wait_contract_covers_page_and_exact_object_conditions() 
     assert isinstance(condition, dict)
     branches = condition.get("oneOf") or []
     kinds = {
-        str(((branch.get("properties") or {}).get("kind") or {}).get("const") or "")
+        str((((branch.get("properties") or {}).get("kind") or {}).get("enum") or [((branch.get("properties") or {}).get("kind") or {}).get("const") or ""])[0])
         for branch in branches
     }
     assert kinds == {"page_ready", "page_url", "object_state", "object_text"}
@@ -288,3 +288,20 @@ def test_mf5_3_cognitive_contract_keeps_program_strategy_authority_closed() -> N
         "task_complete",
     ):
         assert forbidden not in wire
+
+
+def test_mf5_3_lazy_perceive_wait_schema_is_self_sufficient_on_first_call() -> None:
+    registry = ToolRegistry()
+    registry.register(BrowserPerceiveTool.__new__(BrowserPerceiveTool))
+    schema = registry.schemas(lazy=True)[0]
+    props = (schema.get("parameters") or {}).get("properties") or {}
+    condition = props.get("condition") or {}
+    branches = condition.get("oneOf") or []
+    kinds = {
+        str((((branch.get("properties") or {}).get("kind") or {}).get("enum") or [((branch.get("properties") or {}).get("kind") or {}).get("const") or ""])[0])
+        for branch in branches
+        if isinstance(branch, dict)
+    }
+
+    assert kinds == {"page_ready", "page_url", "object_state", "object_text"}
+    assert "interval_ms" not in props
