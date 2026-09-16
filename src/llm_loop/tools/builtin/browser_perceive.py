@@ -74,7 +74,7 @@ class BrowserPerceiveTool:
             },
             "grounding_ref": {
                 "type": "string",
-                "description": "仅 hydrate：精确 grounding://browser/v0.1/... 引用",
+                "description": "仅 hydrate：精确 Browser GroundingRef 或 browser-operation-receipt ref",
             },
             "from_version": {
                 "type": "string",
@@ -96,10 +96,12 @@ class BrowserPerceiveTool:
         adapter: BrowserPerceptionAdapter,
         backend: BrowserCaptureBackend | None,
         session_id_getter: Callable[[], str],
+        exact_ref_hydrator: Callable[[str, str], dict[str, Any]] | None = None,
     ) -> None:
         self._adapter = adapter
         self._backend = backend
         self._session_id_getter = session_id_getter
+        self._exact_ref_hydrator = exact_ref_hydrator
 
     def _json_result(self, payload: dict[str, Any]) -> ToolResult:
         return ToolResult(
@@ -162,9 +164,11 @@ class BrowserPerceiveTool:
                     tool_call_id="",
                     tool_name=self.name,
                 )
-            return self._json_result(
-                {"action": "hydrate", **self._adapter.hydrate(session_id, ref)}
-            )
+            if ref.startswith("browser-operation-receipt://") and self._exact_ref_hydrator is not None:
+                hydrated = self._exact_ref_hydrator(session_id, ref)
+            else:
+                hydrated = self._adapter.hydrate(session_id, ref)
+            return self._json_result({"action": "hydrate", **hydrated})
         if action == "diff":
             from_version = str(kwargs.get("from_version") or "").strip()
             to_version = str(kwargs.get("to_version") or "").strip()

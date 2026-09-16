@@ -18,7 +18,10 @@ from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
-from llm_loop.tools.builtin.browser_semantic_operation import BrowserSemanticOperationTool
+from llm_loop.tools.builtin.browser_semantic_operation import (
+    BrowserSemanticOperationReceiptStore,
+    BrowserSemanticOperationTool,
+)
 
 try:
     from scripts.qualification.smc_browser_live_navigation import (
@@ -112,6 +115,7 @@ def run_live(*, chrome: str, evidence_dir: Path) -> dict[str, Any]:
                 perception=perception,
                 capture_backend=read_host,
                 semantic_execute=semantic,
+                receipt_store=BrowserSemanticOperationReceiptStore(evidence_dir / "operation_receipts"),
                 session_id_getter=lambda: sid,
             )
 
