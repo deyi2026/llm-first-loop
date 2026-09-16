@@ -65,7 +65,7 @@ from llm_loop.methods.store import (
 from llm_loop.resources.foreground import ForegroundActivityProbe
 from llm_loop.resources.governor import ResourceGovernor
 from llm_loop.resources.ledger_projection import ProviderSettlementProjectionIndex
-from llm_loop.resources.lfrt_runtime import make_lfrt_status_fn
+from llm_loop.resources.lfrt_runtime import LFRTAdmissionRuntimeAdapter, make_lfrt_status_fn
 from llm_loop.resources.local_runtime import LocalRuntimeConcurrencyAdapter
 from llm_loop.resources.provider_calls import ProviderCallCoordinator
 from llm_loop.resources.provider_settlement import ProviderCallSettlementJournal
@@ -1466,10 +1466,17 @@ def build_engine(settings: Settings) -> LoopEngine:
     foreground_probe = ForegroundActivityProbe(engine, settings.sessions_dir)
     resource_governor = ResourceGovernor(foreground_probe=foreground_probe.active)
     engine.resource_governor = resource_governor
+    lfrt_admission_runtime = (
+        LFRTAdmissionRuntimeAdapter(settings.lfrt_cli)
+        if settings.local_runtime_admission_authority == "lfrt"
+        else None
+    )
     provider_call_coordinator = ProviderCallCoordinator(
         resource_governor,
         local_runtime=LocalRuntimeConcurrencyAdapter(),
         settlement_journal=provider_call_settlement_journal,
+        admission_authority=settings.local_runtime_admission_authority,
+        lfrt_runtime=lfrt_admission_runtime,
     )
     engine.provider_call_coordinator = provider_call_coordinator
     engine.provider_call_settlement_journal = provider_call_settlement_journal

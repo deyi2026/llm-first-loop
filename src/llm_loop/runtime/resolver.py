@@ -85,6 +85,7 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("web", "host"): TomlField(("WEB_HOST",), "str"),
         ("web", "port"): TomlField(("WEB_PORT",), "int"),
         ("local_runtime", "observer"): TomlField(("LFL_LOCAL_RUNTIME_OBSERVER",), "str"),
+        ("local_runtime", "admission_authority"): TomlField(("LFL_LOCAL_RUNTIME_ADMISSION_AUTHORITY",), "str"),
         ("local_runtime", "cli"): TomlField(("LFL_LFRT_CLI",), "str"),
         ("summary", "mode"): TomlField(("SUMMARY_MODE",), "str"),
         ("tools", "schema_lazy"): TomlField(("TOOL_SCHEMA_LAZY",), "bool"),

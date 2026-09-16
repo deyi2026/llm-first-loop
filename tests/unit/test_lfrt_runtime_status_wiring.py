@@ -128,3 +128,28 @@ def test_invalid_lfrt_cli_is_visible_as_unknown_without_startup_failure() -> Non
         "status": "unknown",
         "reason": "invalid_configuration",
     }
+
+
+def test_runtime_toml_defaults_admission_authority_to_legacy_and_allows_lfrt(tmp_path: Path) -> None:
+    (tmp_path / "runtime.toml").write_text(
+        """
+[llm]
+model = "glm/glm-5.3"
+base_url = "https://example.invalid/v1"
+[runtime]
+data_dir = "/tmp/lfrt-authority-wiring"
+[local_runtime]
+observer = "lfrt"
+cli = "/opt/lfrt/lfrt"
+admission_authority = "lfrt"
+""".strip() + "\n",
+        encoding="utf-8",
+    )
+    effective = resolve_effective("web", env={}, workspace_root=tmp_path)
+    settings = load_settings(legacy_settings_snapshot(effective, base_env={"LLM_API_KEY": "x"}))
+    assert settings.local_runtime_admission_authority == "lfrt"
+    assert effective.sources["LFL_LOCAL_RUNTIME_ADMISSION_AUTHORITY"] == "runtime_toml"
+    assert settings.to_status_dict()["local_runtime_admission_authority"] == "lfrt"
+
+    legacy = load_settings({"LLM_API_KEY": "x", "LLM_BASE_URL": "https://example.invalid/v1"})
+    assert legacy.local_runtime_admission_authority == "legacy"

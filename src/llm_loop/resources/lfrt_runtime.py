@@ -14,13 +14,185 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from llm_loop.resources.contracts import ObservedResourceState, RuntimeType
-from llm_loop.resources.local_runtime import LocalRuntimeIdentityObservation
+from llm_loop.resources.contracts import (
+    FactProvenance,
+    FactSource,
+    ObservedResourceState,
+    ResourceKey,
+    ResourceScopeKind,
+    RuntimeType,
+)
+from llm_loop.resources.local_runtime import LocalRuntimeIdentityObservation, _loopback_port
 
 CommandRunner = Callable[[tuple[str, ...], float], tuple[int, str, str]]
+
+
+class LocalRuntimeTargetState(StrEnum):
+    """Mechanical applicability state for one provider target."""
+
+    NOT_APPLICABLE = "not_applicable"
+    MANAGED_BUT_UNKNOWN = "managed_but_unknown"
+    OBSERVED = "observed"
+
+
+@dataclass(frozen=True)
+class LocalRuntimeTargetObservation:
+    """Tri-state authority result; semantic routing is deliberately absent."""
+
+    state: LocalRuntimeTargetState
+    key: ResourceKey | None = None
+    resource: ObservedResourceState | None = None
+    reason: str = ""
+    generation: str | None = None
+
+
+def _runtime_key(provider_id: str, port: int) -> ResourceKey:
+    return ResourceKey(
+        provider_id=provider_id,
+        scope_kind=ResourceScopeKind.RUNTIME,
+        scope_id=f"mlx-loopback:{port}",
+    )
+
+
+def _run_runtime_observation(
+    argv: tuple[str, ...], timeout_s: float
+) -> tuple[int, str, str]:
+    try:
+        completed = subprocess.run(
+            list(argv),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return -1, "", "runtime observation execution failed"
+    return completed.returncode, completed.stdout, completed.stderr
+
+
+class LFRTAdmissionRuntimeAdapter:
+    """Consume only the versioned LFRT admission observation contract."""
+
+    def __init__(
+        self,
+        executable: str | Path,
+        *,
+        runner: CommandRunner = _run_runtime_observation,
+        clock: Callable[[], float] = time.time,
+        timeout_s: float = 2.0,
+    ) -> None:
+        path = Path(executable)
+        if not path.is_absolute():
+            raise ValueError("LFRT executable path must be absolute")
+        if timeout_s <= 0:
+            raise ValueError("LFRT authority timeout must be positive")
+        self._executable = str(path)
+        self._runner = runner
+        self._clock = clock
+        self._timeout_s = float(timeout_s)
+
+    @staticmethod
+    def _unknown(provider_id: str, port: int, reason: str) -> LocalRuntimeTargetObservation:
+        return LocalRuntimeTargetObservation(
+            state=LocalRuntimeTargetState.MANAGED_BUT_UNKNOWN,
+            key=_runtime_key(provider_id, port),
+            reason=reason,
+        )
+
+    def observe_target(
+        self,
+        client: object,
+        *,
+        provider_id: str,
+        model_id: str,
+    ) -> LocalRuntimeTargetObservation:
+        del model_id  # runtime capacity is endpoint-scoped, as in the legacy adapter
+        provider = str(provider_id or "").strip()
+        requested_port = _loopback_port(str(getattr(client, "base_url", "") or ""))
+        if requested_port is None:
+            return LocalRuntimeTargetObservation(LocalRuntimeTargetState.NOT_APPLICABLE)
+        if not provider:
+            return LocalRuntimeTargetObservation(
+                LocalRuntimeTargetState.MANAGED_BUT_UNKNOWN, reason="provider_unknown"
+            )
+
+        argv = (self._executable, "runtime-observation", "--json")
+        try:
+            rc, stdout, stderr = self._runner(argv, self._timeout_s)
+        except Exception:  # noqa: BLE001 - authority uncertainty must fail closed
+            return self._unknown(provider, requested_port, "observation_failed")
+        if rc != 0 or stderr.strip() or not stdout.strip():
+            return self._unknown(provider, requested_port, "observation_failed")
+        try:
+            payload = json.loads(stdout)
+        except (TypeError, json.JSONDecodeError):
+            return self._unknown(provider, requested_port, "invalid_json")
+        if not isinstance(payload, dict):
+            return self._unknown(provider, requested_port, "invalid_contract")
+        if payload.get("ok") is not True or payload.get("contract") != "runtime-observation/v1":
+            return self._unknown(provider, requested_port, "incompatible_contract")
+
+        managed_port = _positive_int(payload.get("managed_port"))
+        managed = payload.get("managed")
+        if managed_port is None:
+            return self._unknown(provider, requested_port, "managed_target_unknown")
+        if managed_port != requested_port:
+            return LocalRuntimeTargetObservation(LocalRuntimeTargetState.NOT_APPLICABLE)
+        key = _runtime_key(provider, requested_port)
+        if managed is not True:
+            return LocalRuntimeTargetObservation(
+                LocalRuntimeTargetState.MANAGED_BUT_UNKNOWN,
+                key=key,
+                reason="managed_target_unknown",
+            )
+
+        state = str(payload.get("state") or "").strip()
+        if state != "observed":
+            reason = str(payload.get("reason") or ("runtime_stopped" if state == "stopped" else "observation_unknown"))
+            return LocalRuntimeTargetObservation(
+                LocalRuntimeTargetState.MANAGED_BUT_UNKNOWN, key=key, reason=reason
+            )
+        runtime = _dict(payload.get("runtime"))
+        if runtime is None or runtime.get("type") != "mlx_lm.server":
+            return LocalRuntimeTargetObservation(
+                LocalRuntimeTargetState.MANAGED_BUT_UNKNOWN, key=key, reason="runtime_identity_unknown"
+            )
+        pid = _positive_int(runtime.get("pid"))
+        runtime_port = _positive_int(runtime.get("port"))
+        prompt = _positive_int(runtime.get("prompt_concurrency"))
+        decode = _positive_int(runtime.get("decode_concurrency"))
+        model = str(runtime.get("model") or "").strip()
+        if (
+            pid is None
+            or runtime_port != requested_port
+            or prompt is None
+            or decode is None
+            or not model
+        ):
+            return LocalRuntimeTargetObservation(
+                LocalRuntimeTargetState.MANAGED_BUT_UNKNOWN, key=key, reason="runtime_fact_unknown"
+            )
+        source_ref = f"lfrt-runtime-observation:{requested_port}:pid:{pid}"
+        resource = ObservedResourceState(
+            key=key,
+            provenance=FactProvenance(
+                source=FactSource.RUNTIME_PROBE,
+                source_ref=source_ref,
+                recorded_at=float(self._clock()),
+            ),
+            runtime_type=RuntimeType.LOCAL,
+            max_concurrency=min(prompt, decode),
+        )
+        return LocalRuntimeTargetObservation(
+            LocalRuntimeTargetState.OBSERVED,
+            key=key,
+            resource=resource,
+            generation=f"pid:{pid}",
+        )
 
 
 @dataclass(frozen=True)
