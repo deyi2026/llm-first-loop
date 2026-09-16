@@ -232,18 +232,11 @@ def _operation_message_facts(data_dir: Path, session_id: str) -> dict[str, Any]:
         reason = str(doc.get("halt_reason") or "")
         if reason:
             reasons[reason] = reasons.get(reason, 0) + 1
-            facts["undeclared_boundary_halt_count"] += int(
-                reason == "undeclared_structural_transition"
-            )
-        # A compact completed receipt carrying boundary events for a non-navigate operation
-        # would indicate MF-4 continuation drift.  Current runtime halts before that point.
-        boundary_events = doc.get("boundary_events")
-        if (
-            doc.get("status") == "completed"
-            and isinstance(boundary_events, list)
-            and boundary_events
-        ):
-            facts["undeclared_boundary_continuation_count"] += 1
+        # Do not infer declared/undeclared structural-transition behavior from the
+        # compact receipt. A successful navigate legitimately carries boundary events,
+        # while a non-navigate boundary must halt. Only the durable full operation
+        # receipt retains the clause verb needed to distinguish those cases; the
+        # qualification Gate consumes _full_operation_receipt_facts() below.
     facts["operation_halt_reasons"] = dict(sorted(reasons.items()))
     return facts
 
