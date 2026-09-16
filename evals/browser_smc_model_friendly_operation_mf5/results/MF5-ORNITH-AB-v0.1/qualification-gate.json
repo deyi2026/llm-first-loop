@@ -1,0 +1,68 @@
+{
+  "A": {
+    "auto_retry_true": 0,
+    "cache_hit_tokens": 283162,
+    "direct_atomic_calls": 0,
+    "get_tool_schema": 6,
+    "operation_arg_chars": 11150,
+    "operation_calls": 57,
+    "operation_errors": 0,
+    "operation_failures": 18,
+    "operation_result_chars": 50716,
+    "read_evidence": 9,
+    "rounds": 72,
+    "rows": 6,
+    "semantic_decision_points": 16,
+    "srta": 4.5,
+    "task_completion_violations": 0,
+    "task_pass": 3,
+    "tokens_in": 327462,
+    "tokens_out": 11137,
+    "tool_calls": 72
+  },
+  "B": {
+    "auto_retry_true": 0,
+    "cache_hit_tokens": 186198,
+    "direct_atomic_calls": 0,
+    "get_tool_schema": 2,
+    "operation_arg_chars": 6826,
+    "operation_calls": 54,
+    "operation_errors": 0,
+    "operation_failures": 29,
+    "operation_result_chars": 16061,
+    "read_evidence": 7,
+    "rounds": 64,
+    "rows": 6,
+    "semantic_decision_points": 16,
+    "srta": 4.0,
+    "task_completion_violations": 0,
+    "task_pass": 5,
+    "tokens_in": 207296,
+    "tokens_out": 7679,
+    "tool_calls": 63
+  },
+  "efficiency_pass": true,
+  "hard_pass": false,
+  "model_visible_operation_chars": {
+    "A": 61866,
+    "B": 22887
+  },
+  "pass": false,
+  "requirements": {
+    "B_operation_chars_lt_A": true,
+    "B_rounds_lte_A": true,
+    "B_support_calls_lt_A": true,
+    "auto_retry": 0,
+    "direct_atomic_calls": 0,
+    "operation_errors": 0,
+    "operation_failures": 0,
+    "rows_per_arm": 6,
+    "task_completion_violations": 0,
+    "task_pass_per_arm": 6
+  },
+  "schema": "smc.browser_model_friendly_operation_mf5.v0.1.gate",
+  "support_calls": {
+    "A": 15,
+    "B": 9
+  }
+}

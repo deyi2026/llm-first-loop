@@ -601,3 +601,22 @@ And this safety counterpart:
 > **The program may remove mechanical work from the model, but may not remove a semantic decision from the model.**
 
 The immediate next work is **MF-0 Read-only Interface Tax Audit**, not production code modification.
+
+
+---
+
+## 15. Validation addendum — MF-5 v0.1 (2026-09-16)
+
+The original v0.1 design hypothesis was partially confirmed and partially falsified by formal MF-5 A/B evidence. Compact projection and the short semantic surface materially reduce Interface Tax, but the first short grammar is not yet regular enough for stable model use.
+
+The key falsification is grammatical: the design example used a special top-level `wait` discriminator while ordinary operations used `do`. In measured runs, Ornith repeatedly normalized the language itself and emitted `do:"wait"`; 25/29 B contract failures were therefore `short_operation_not_supported`. This is a design defect in the model-facing language, not a reason to relax exact grounding.
+
+The design rule is strengthened accordingly:
+
+> **A model-facing semantic language should use one regular discriminator for peer operations unless a distinct discriminator encodes a real semantic distinction.**
+
+Wait is a peer semantic step, so the next provider-facing grammar should expose `do:"wait"` rather than make the model remember a one-off structural exception. The runtime may retain the previous form only as a compatibility parser path.
+
+A second lesson is methodological: treatment qualification and baseline comparison are distinct questions. A legacy baseline may remain useful for paired efficiency comparison even when it is not itself release-qualified. Future protocol identities should keep the treatment's hard correctness/safety Gate separate from comparative A/B metrics, without changing the already-frozen MF-5 v0.1 verdict.
+
+See `docs/SMC-BROWSER-MODEL-FRIENDLY-MF5-v0.1-RESULT-20260916.md` for the complete evidence and hashes.

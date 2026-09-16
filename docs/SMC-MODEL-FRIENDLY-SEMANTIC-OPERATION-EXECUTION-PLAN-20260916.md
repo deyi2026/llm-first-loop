@@ -1,6 +1,6 @@
 # SMC Model-Friendly Semantic Operation — Execution Plan — 2026-09-16
 
-Status: **ACTIVE PLAN / MF-0 STARTED / NO PRODUCTION IMPLEMENTATION**
+Status: **MF-5 v0.1 COMPLETE / NOT QUALIFIED / MF-6 DEFERRED / MF-5.1 REMEDIATION REQUIRED**
 
 Design authority: `docs/SMC-MODEL-FRIENDLY-SEMANTIC-OPERATION-DESIGN-v0.1-20260916.md`
 
@@ -10,13 +10,14 @@ Baseline: `lfl/main@2c4b9b087f5d2fad2cf2c5c026194038c7613c5c`
 
 | Order | Work package | Change class | Required output | Stop condition |
 |---:|---|---|---|---|
-| 0 | MF-0 Interface Tax Audit | read-only | audit report + frozen baseline metrics | unresolved authority ambiguity |
-| 1 | MF-1 deterministic RED | tests only | RED contract suite | proposed wire cannot preserve exact/fail-closed boundary |
-| 2 | MF-2 narrow input compiler | production, narrow | short semantic grammar -> existing qualified primitives | backend semantic behavior would need changing |
-| 3 | MF-3 compact result projection | production, narrow | compact projection + exact evidence refs | any evidence becomes non-recoverable |
-| 4 | MF-4 Decision Boundary enforcement | production + tests | explicit declared/undeclared transition boundary | boundary cannot be mechanically determined |
-| 5 | MF-5 local A/B | qualification | same 3×2 fixture, pre-registered gate | gate failure |
-| 6 | MF-6 independent confirmatory | qualification | fresh repeat, no pooling | gate failure |
+| 0 | MF-0 Interface Tax Audit | read-only | **COMPLETE** — audit report + frozen baseline metrics | unresolved authority ambiguity |
+| 1 | MF-1 deterministic RED | tests only | **COMPLETE** — RED contract suite | proposed wire cannot preserve exact/fail-closed boundary |
+| 2 | MF-2 narrow input compiler | production, narrow | **COMPLETE** — short semantic grammar -> existing qualified primitives | backend semantic behavior would need changing |
+| 3 | MF-3 compact result projection | production, narrow | **COMPLETE** — compact projection + exact evidence refs | any evidence becomes non-recoverable |
+| 4 | MF-4 Decision Boundary enforcement | production + tests | **COMPLETE** — explicit declared/undeclared transition boundary | boundary cannot be mechanically determined |
+| 5 | MF-5 local A/B | qualification | **COMPLETE / NOT QUALIFIED** — efficiency PASS, hard gate FAIL | gate failure |
+| 5.1 | MF-5.1 grammar regularization + fresh qualification | narrow production + qualification | uniform `do`, including `do:"wait"`; new hard treatment Gate | hard treatment Gate failure |
+| 6 | MF-6 independent confirmatory | qualification | **DEFERRED** until MF-5.1 hard PASS; fresh repeat, no pooling | gate failure |
 | 7 | MF-7 portability/wider matrix | later | provider + broader tasks | local repeat stability not proven |
 
 ## 2. Parallelism rules
@@ -76,3 +77,14 @@ remove redundant model fields
 ```
 
 Never invert that order by adding more automatic strategy.
+
+
+## 6. MF-5 v0.1 evidence update — 2026-09-16
+
+Authoritative result: `docs/SMC-BROWSER-MODEL-FRIENDLY-MF5-v0.1-RESULT-20260916.md`.
+
+MF-5 closed **NOT QUALIFIED** under the frozen Gate. The treatment nevertheless produced a strong efficiency signal: support calls -40.0%, model-visible operation chars -63.0%, input tokens -36.7%, output tokens -31.0%, rounds -11.1%, and task oracle 5/6 vs A 3/6. Safety invariants remained intact.
+
+The dominant treatment failure is now specific rather than diffuse: 25/29 B contract failures are `short_operation_not_supported`, caused by the asymmetry between `do=...` mutations and the special top-level wait form. MF-5.1 therefore changes syntax only: one uniform `do` discriminator including `do:"wait"`. It must not add fuzzy target selection, target inference, retry/rebind, automatic latest/snapshot, or program task completion.
+
+MF-6 is explicitly deferred; do not run it against `bb0d0ab0` as though MF-5 had passed.
