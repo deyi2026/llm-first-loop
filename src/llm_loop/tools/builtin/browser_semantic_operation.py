@@ -22,6 +22,19 @@ _IDENTITY_KEYS = {"kind", "role", "name"}
 _OBJECT_VERBS = {"click", "fill", "select", "scroll"}
 _MUTATION_VERBS = _OBJECT_VERBS | {"navigate"}
 
+# Module-level because Python class-body comprehensions do not close over class locals.
+# The class exposes the same schema value below for introspection/tests.
+_SHORT_TARGET_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
+        "name": {"type": "string", "minLength": 1},
+        "role": {"type": "string", "minLength": 1},
+    },
+    "required": ["kind", "name"],
+    "additionalProperties": False,
+}
+
 
 class BrowserCaptureBackend(Protocol):
     def capture(self) -> dict[str, Any]: ...
@@ -147,13 +160,11 @@ def _build_first_call_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
 class BrowserSemanticOperationTool:
     name = "browser_semantic_operation"
     description = (
-        "Bounded Browser semantic operation v0.1：模型一次声明1..8个 clauses；每个对象 target "
-        "只允许 exact identity(kind/role/name) 严格匹配，程序对当前 canonical SemanticObject "
-        "计数，恰好1个才继续，0或>1立即停止；wait clause 使用既有 typed Predicate polling；"
-        "mutate args 固定为 click={}、fill={text,mode(replace|append)}、select={value}、"
-        "scroll={delta_pages}、navigate={url}；委托 browser_semantic_execute / single-dispatch / "
-        "version guard / ActionReceipt。不 fuzzy/best-match，不 auto-target/latest/rebind/retry，"
-        "不判断 task completion。"
+        "Model-friendly bounded Browser semantic operation：模型一次声明1..8个 ordered steps；"
+        "do=navigate|click|set_text|append_text|select|scroll，target 只写 exact semantic "
+        "identity(kind/name，可选role)；wait 直接声明 target + 一个 typed property/value + within_ms。"
+        "程序仅机械编译到既有 exact grounding/version guard/typed Predicate/single-dispatch/ActionReceipt；"
+        "不 fuzzy/best-match，不 auto-target/latest/rebind/retry，不判断 task completion。"
     )
     _IDENTITY_SCHEMA = {
         "type": "object",
@@ -180,7 +191,7 @@ class BrowserSemanticOperationTool:
         "required": ["kind"],
         "additionalProperties": False,
     }
-    parameters = {
+    _CLAUSE_PARAMETERS = {
         "type": "object",
         "properties": {
             "clauses": {
@@ -294,7 +305,121 @@ class BrowserSemanticOperationTool:
         "additionalProperties": False,
     }
 
-    lazy_parameters = _build_first_call_parameters(parameters)
+    _CLAUSE_LAZY_PARAMETERS = _build_first_call_parameters(_CLAUSE_PARAMETERS)
+
+    # MF v0.2 model-facing wire.  This is deliberately a mechanical shorthand over
+    # the already-qualified clause executor below; it does not add target selection,
+    # retry, rebind, latest, or task-completion authority.
+    _SHORT_TARGET_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
+            "name": {"type": "string", "minLength": 1},
+            "role": {"type": "string", "minLength": 1},
+        },
+        "required": ["kind", "name"],
+        "additionalProperties": False,
+    }
+    _SHORT_STEP_VARIANTS = [
+        {
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["navigate"]},
+                "url": {"type": "string", "minLength": 1},
+            },
+            "required": ["do", "url"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["click"]},
+                "target": _SHORT_TARGET_SCHEMA,
+            },
+            "required": ["do", "target"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["set_text", "append_text"]},
+                "target": _SHORT_TARGET_SCHEMA,
+                "text": {"type": "string"},
+            },
+            "required": ["do", "target", "text"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["select"]},
+                "target": _SHORT_TARGET_SCHEMA,
+                "value": {"type": "string"},
+            },
+            "required": ["do", "target", "value"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["scroll"]},
+                "target": _SHORT_TARGET_SCHEMA,
+                "delta_pages": {"type": "number"},
+            },
+            "required": ["do", "target", "delta_pages"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "wait": {
+                    "type": "object",
+                    "properties": {
+                        "target": _SHORT_TARGET_SCHEMA,
+                        "property": {
+                            "type": "string",
+                            "enum": [
+                                "exists", "enabled", "checked", "selected", "expanded",
+                                "focused", "editable", "name", "value_text",
+                            ],
+                        },
+                        "operator": {
+                            "type": "string",
+                            "enum": ["eq", "contains", "prefix", "suffix", "ge", "le"],
+                        },
+                        "value": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {"type": "boolean"},
+                                {"type": "integer"},
+                            ]
+                        },
+                    },
+                    "required": ["target", "property", "value"],
+                    "additionalProperties": False,
+                },
+                "within_ms": {"type": "integer", "minimum": 1, "maximum": 60000},
+            },
+            "required": ["wait", "within_ms"],
+            "additionalProperties": False,
+        },
+    ]
+    parameters = {
+        "type": "object",
+        "properties": {
+            "steps": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": _MAX_CLAUSES,
+                "items": {"oneOf": _SHORT_STEP_VARIANTS},
+            }
+        },
+        "required": ["steps"],
+        "additionalProperties": False,
+    }
+    # Keep the short contract intact on the lazy/provider path rather than stripping
+    # discriminated oneOf branches and forcing a schema-repair round trip.
+    lazy_parameters = parameters
 
     def __init__(
         self,
@@ -388,12 +513,151 @@ class BrowserSemanticOperationTool:
             raise BrowserSemanticOperationContractError("clause_must_be_object")
         return [dict(item) for item in raw]
 
+    @classmethod
+    def _short_target_to_clause_target(cls, raw: Any) -> dict[str, Any]:
+        if not isinstance(raw, dict):
+            raise BrowserSemanticOperationContractError("short_target_must_be_object")
+        if not {"kind", "name"}.issubset(raw) or not set(raw).issubset(_IDENTITY_KEYS):
+            raise BrowserSemanticOperationContractError("short_target_fields_mismatch")
+        identity: dict[str, str] = {}
+        for key in ("kind", "name", "role"):
+            if key not in raw:
+                continue
+            value = str(raw.get(key) or "").strip()
+            if not value:
+                raise BrowserSemanticOperationContractError(f"short_target_{key}_missing")
+            identity[key] = value
+        return {"kind": "object", "identity": identity}
+
+    @classmethod
+    def _compile_short_steps(cls, raw: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw, list) or not (1 <= len(raw) <= _MAX_CLAUSES):
+            raise BrowserSemanticOperationContractError("steps_count_out_of_bounds")
+        clauses: list[dict[str, Any]] = []
+        for step in raw:
+            if not isinstance(step, dict):
+                raise BrowserSemanticOperationContractError("step_must_be_object")
+            if "do" in step:
+                verb = str(step.get("do") or "").strip()
+                if verb == "navigate":
+                    if set(step) != {"do", "url"}:
+                        raise BrowserSemanticOperationContractError("navigate_step_fields_mismatch")
+                    url = str(step.get("url") or "").strip()
+                    if not url:
+                        raise BrowserSemanticOperationContractError("navigate_url_missing")
+                    clauses.append({
+                        "kind": "mutate",
+                        "verb": "navigate",
+                        "target": {"kind": "page"},
+                        "args": {"url": url},
+                    })
+                    continue
+                if verb == "click":
+                    if set(step) != {"do", "target"}:
+                        raise BrowserSemanticOperationContractError("click_step_fields_mismatch")
+                    clauses.append({
+                        "kind": "mutate",
+                        "verb": "click",
+                        "target": cls._short_target_to_clause_target(step.get("target")),
+                        "args": {},
+                    })
+                    continue
+                if verb in {"set_text", "append_text"}:
+                    if set(step) != {"do", "target", "text"}:
+                        raise BrowserSemanticOperationContractError("text_step_fields_mismatch")
+                    clauses.append({
+                        "kind": "mutate",
+                        "verb": "fill",
+                        "target": cls._short_target_to_clause_target(step.get("target")),
+                        "args": {
+                            "text": str(step.get("text") or ""),
+                            "mode": "replace" if verb == "set_text" else "append",
+                        },
+                    })
+                    continue
+                if verb == "select":
+                    if set(step) != {"do", "target", "value"}:
+                        raise BrowserSemanticOperationContractError("select_step_fields_mismatch")
+                    clauses.append({
+                        "kind": "mutate",
+                        "verb": "select",
+                        "target": cls._short_target_to_clause_target(step.get("target")),
+                        "args": {"value": str(step.get("value") or "")},
+                    })
+                    continue
+                if verb == "scroll":
+                    if set(step) != {"do", "target", "delta_pages"}:
+                        raise BrowserSemanticOperationContractError("scroll_step_fields_mismatch")
+                    delta = step.get("delta_pages")
+                    if isinstance(delta, bool) or not isinstance(delta, (int, float)):
+                        raise BrowserSemanticOperationContractError("scroll_delta_pages_invalid")
+                    clauses.append({
+                        "kind": "mutate",
+                        "verb": "scroll",
+                        "target": cls._short_target_to_clause_target(step.get("target")),
+                        "args": {"delta_pages": delta},
+                    })
+                    continue
+                raise BrowserSemanticOperationContractError("short_operation_not_supported")
+
+            if "wait" in step:
+                if set(step) != {"wait", "within_ms"}:
+                    raise BrowserSemanticOperationContractError("wait_step_fields_mismatch")
+                wait = step.get("wait")
+                if not isinstance(wait, dict) or "target" not in wait:
+                    raise BrowserSemanticOperationContractError("wait_contract_mismatch")
+                allowed_properties = {
+                    "exists", "enabled", "checked", "selected", "expanded",
+                    "focused", "editable", "name", "value_text"
+                }
+                allowed_operators = {"eq", "contains", "prefix", "suffix", "ge", "le"}
+                # Provider-facing MF wire is target+property+value(+operator).  Accept the
+                # earlier one-property shorthand only as a deterministic local compatibility
+                # path for the MF-1 RED fixture; it is not exposed in ``parameters``.
+                if {"property", "value"}.issubset(wait):
+                    if not set(wait).issubset({"target", "property", "value", "operator"}):
+                        raise BrowserSemanticOperationContractError("wait_fields_mismatch")
+                    prop = str(wait.get("property") or "").strip()
+                    value = wait.get("value")
+                    operator = str(wait.get("operator") or "eq").strip()
+                else:
+                    predicates = [key for key in wait if key != "target"]
+                    if len(predicates) != 1:
+                        raise BrowserSemanticOperationContractError("wait_requires_one_predicate")
+                    prop = predicates[0]
+                    value = wait[prop]
+                    operator = "eq"
+                if prop not in allowed_properties:
+                    raise BrowserSemanticOperationContractError("wait_property_not_supported")
+                if operator not in allowed_operators:
+                    raise BrowserSemanticOperationContractError("wait_operator_not_supported")
+                timeout = step.get("within_ms")
+                if isinstance(timeout, bool) or not isinstance(timeout, int) or not (1 <= timeout <= 60000):
+                    raise BrowserSemanticOperationContractError("wait_timeout_invalid")
+                clauses.append({
+                    "kind": "wait",
+                    "target": cls._short_target_to_clause_target(wait.get("target")),
+                    "property": prop,
+                    "operator": operator,
+                    "value": value,
+                    "timeout_ms": timeout,
+                    "interval_ms": min(250, timeout),
+                })
+                continue
+            raise BrowserSemanticOperationContractError("step_discriminator_missing")
+        return clauses
+
     def execute_request(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
         if not session_id:
             raise BrowserSemanticOperationContractError("session_id_missing")
-        if set(request) != {"clauses"}:
+        if set(request) == {"steps"}:
+            clauses = self._validate_clauses(self._compile_short_steps(request["steps"]))
+        elif set(request) == {"clauses"}:
+            # Legacy/internal primitive retained for deterministic historical qualification
+            # and backend reuse.  It is no longer the provider-facing MF schema.
+            clauses = self._validate_clauses(request["clauses"])
+        else:
             raise BrowserSemanticOperationContractError("operation_fields_mismatch")
-        clauses = self._validate_clauses(request["clauses"])
         receipt = self._base_receipt()
 
         for index, clause in enumerate(clauses, start=1):

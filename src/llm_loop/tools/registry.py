@@ -69,7 +69,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "browser_wait_object_text": "Browser只读对象文本等待：exact object_ref + property(name|value_text) + string operator/value；程序exact hydrate，不名称匹配/retry/rebind。",
     "browser_action": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 写操作：click/fill/select/navigate/scroll；使用 snapshot 的 exact Semantic ID/scope + expected_version，object mutation=object，navigate=resource，snapshot 不作为 mutation version_scope；dispatch 前机械复核；单次 dispatch，不自动 retry/rebind；ActionReceipt 只表示机械事实，不等于任务完成。",
     "browser_semantic_execute": "Browser 语义执行：必须先 browser_perceive snapshot 并取得 exact GroundingRef/resource_ref；没有 snapshot/ref 不要调用，不要把 URL 当 target_ref。对象 target_ref=SemanticObject.grounding_ref，navigate target_ref=resource_ref；args: click={}，fill={text,mode(replace|append)}，select={value}，navigate={url}，scroll={delta_pages}；工具内部编译 scope/version/action_id 后单次执行；读 ActionReceipt，再 snapshot 验证；不自动 retry/rebind，receipt ok 不等于任务完成。",
-    "browser_semantic_operation": "Bounded Browser semantic operation：模型声明有序 clauses；对象只按模型给出的 kind/role/name exact-unique 匹配，0或>1立即停止；args: click={}，fill={text,mode(replace|append)}，select={value}，scroll={delta_pages}，navigate={url}；wait复用typed Predicate，mutate复用single-dispatch/ActionReceipt；不 fuzzy/auto-target/latest/rebind/retry，不判断任务完成。",
+    "browser_semantic_operation": "Browser语义操作：1..8 ordered steps；target=exact kind+name(+role)；wait=typed condition+within_ms；程序只做ground/version/wait/single-dispatch；不fuzzy/rebind/retry/完成判断。",
     "inspect_code": "解析 Python 文件/目录 AST，列类、函数、签名与 imports；实现正文用 read_file。",
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
@@ -162,7 +162,7 @@ _COMPACT_PARAMETER_DESCRIPTIONS: dict[str, dict[str, str]] = {
         "args": "click={}；fill={text,mode} mode=replace|append；select={value}；navigate={url}；scroll={delta_pages}。",
     },
     "browser_semantic_operation": {
-        "clauses": "1..8个模型声明有序clauses；object target identity只允许 exact kind/role/name；0或>1匹配即停止。",
+        "steps": "1..8个模型声明的有序语义steps；target只允许exact kind+name，可选role；程序不新增/重排步骤。",
     },
     "list_evidence": {
         "limit": "整数 1..20；单次最多 20。用户要更多时本轮也不得超过 20。",
