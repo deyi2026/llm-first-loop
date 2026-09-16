@@ -304,3 +304,19 @@ Recommended next sequence after human approval:
 5. only then consider a fresh measured identity and live treatment at a new human checkpoint.
 
 Do not raise iteration/timeout/evidence budgets, infer task completion, fuzzy-resolve targets, auto retry/replay mutation, reorder tools in the same causal commit, or enter MF-6.
+
+## 17. Post-MF-5.3.2 B1 + A' deterministic correction — 2026-09-16
+
+Authoritative result: `docs/SMC-BROWSER-MF5.3.2-POSTQUALIFICATION-DETERMINISTIC-RESULT-20260916.md`.
+
+The two corrections selected by the post-qualification audit are now **deterministically qualified**:
+
+1. B1 RED `ba2307bc` → implementation `058a5ae5`: preserve non-empty direct DOM `#text` child content on the exact stable parent using existing `attributes.text`; direct-only, DOM-order deterministic, script/style/noscript/template excluded, no AX fusion or task semantics.
+2. A' RED `f310407d` → implementation `e4ee5352`: Perceive `page_url` provider surface now uses observation-specific `expected_url`; Operate remains the sole Browser capability exposing navigation destination `url`; hidden historical/internal Perceive `url` compatibility is mechanical and not provider-visible; tool order is unchanged.
+3. Current-contract test alignment `0e4eb293` updates only three stale provider-surface assertions.
+
+Committed-state qualification at `0e4eb293` is green: Browser+Factory 100% exit 0; full non-real test Gate 100% exit 0 with no FAILED/ERROR; full Ruff PASS; full Pyright 0/0; full tracked-tree security scan PASS for 2,013 files; aggregate diff-check PASS; tracked tree clean.
+
+No live model treatment, push/PR/merge/deploy/restart, budget increase, fuzzy target selection, automatic mutation retry, completion heuristic, tool reorder, or MF-6 occurred.
+
+Next phase is a **fresh measured identity + zero-model preflight**, but this is behind a human checkpoint. Do not append to the old MF532 identities and do not start an Ornith row automatically.
