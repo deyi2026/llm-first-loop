@@ -1,0 +1,339 @@
+{
+  "a_implementation_commit": "dfca4c959279c639c8b9b6febe9ba79325af33b6",
+  "a_red_commit": "7723a2715cc334d46cdfb9c819b9bb3c40af8a1d",
+  "adjudication": {
+    "a_capability_identity_live_signal": "not_supported_as_sufficient; first-call routing misuse persists",
+    "b_projection_live_signal": "consistent_with_improvement: ground-probe=0 and both fill oracles pass, but A+B live treatment does not isolate causality",
+    "external_task_correctness_6_of_6": true,
+    "mf6_deferred": true,
+    "no_row_replay": true,
+    "qualified": false,
+    "timeout_signal": "post-success verification/hydration amplification remains; do not raise max_iterations as the correction"
+  },
+  "artifacts": {
+    "invalid_orchestration_attempt": {
+      "attempt-invalid.json": {
+        "bytes": 821,
+        "sha256": "29fd986dde5d00ced9875a51f3b45976737876705418ec6dfd69c0d204fbffe0"
+      },
+      "execution-manifest.json": {
+        "bytes": 55991,
+        "sha256": "6ed64cd8f4f058aebbea114d7937ba82996ac897a078b4ec6eefa11c7949088e"
+      },
+      "plan.json": {
+        "bytes": 1315,
+        "sha256": "c8d925d0ea7dd3986a30bd4cc9f0d8eac2692f3f7578b903e6e269955e371a78"
+      },
+      "results.jsonl": {
+        "bytes": 16833,
+        "sha256": "4d46258aede25beac9f20bc47a742567557f43b2c7d5768e17632a8023709317"
+      }
+    },
+    "valid_measured": {
+      "execution-manifest.json": {
+        "bytes": 55991,
+        "sha256": "6ed64cd8f4f058aebbea114d7937ba82996ac897a078b4ec6eefa11c7949088e"
+      },
+      "plan.json": {
+        "bytes": 1315,
+        "sha256": "c8d925d0ea7dd3986a30bd4cc9f0d8eac2692f3f7578b903e6e269955e371a78"
+      },
+      "qualification-gate.json": {
+        "bytes": 1505,
+        "sha256": "c33b2e2aeb1b5310cbf8f87466e59d710593b6ad80636cf72e044e74120ff4dc"
+      },
+      "results.jsonl": {
+        "bytes": 26207,
+        "sha256": "9ae23ccc39a22c8a845f6910955360d2417e43c80afca0d6af3c4e97a94e01d3"
+      }
+    }
+  },
+  "b_implementation_commit": "05d0f36c7202a8c183a517813815f6ef83f2cfe4",
+  "b_red_commit": "5da9d8a86350f0d9225e0e1a6cae2d99ffa84d85",
+  "comparison_to_mf531": {
+    "efficiency_comparison_reason": "MF532 aggregate rounds/tokens omit the TIMEOUT worker and must not be compared as a complete six-row total.",
+    "efficiency_metrics_comparable": false,
+    "first_browser_call_contract_valid_frozen_gate": {
+      "mf531": 3,
+      "mf532": 1
+    },
+    "first_browser_call_contract_valid_mf532_raw_reconstructed": 2,
+    "ground_probe_amplification": {
+      "mf531": 1,
+      "mf532": 0
+    },
+    "infra_valid": {
+      "mf531": true,
+      "mf532": false
+    },
+    "operation_tool_failures": {
+      "mf531": 0,
+      "mf532": 0
+    },
+    "per_task_pass": {
+      "mf531": {
+        "click_commit": 2,
+        "delayed_wait": 2,
+        "fill_submit": 1
+      },
+      "mf532": {
+        "click_commit": 2,
+        "delayed_wait": 2,
+        "fill_submit": 2
+      }
+    },
+    "perceive_tool_failures": {
+      "mf531": 3,
+      "mf532": 4
+    },
+    "protocol_repair_episodes": {
+      "mf531": 3,
+      "mf532": 4
+    },
+    "task_pass": {
+      "mf531": 5,
+      "mf532": 6
+    }
+  },
+  "date": "2026-09-16",
+  "deterministic_qualification": {
+    "browser_factory_tests": "363/363 PASS",
+    "full_non_real": "100% exit 0; 0 FAILED / 0 ERROR",
+    "pyright": "0 errors / 0 warnings",
+    "ruff": "PASS",
+    "security": "A/B and protocol staged scans PASS"
+  },
+  "gate": {
+    "automatic_retry_true": 0,
+    "complete_rows": 6,
+    "diagnostics": {
+      "browser_arg_chars": 2497,
+      "browser_result_chars": 73013,
+      "cache_hit_tokens": 292543,
+      "delta_only": 3,
+      "delta_to_hydrate": 0,
+      "delta_to_hydrate_then_snapshot": 2,
+      "delta_to_snapshot": 6,
+      "operation_calls": 11,
+      "perceive_calls": 26,
+      "perceive_diff_calls": 0,
+      "perceive_hydrate_calls": 2,
+      "perceive_snapshot_calls": 12,
+      "perceive_wait_calls": 10,
+      "read_evidence_calls": 7,
+      "rounds": 47,
+      "tokens_in": 333511,
+      "tokens_out": 5741
+    },
+    "direct_atomic_browser_calls": 0,
+    "duplicate_successful_mutations": 0,
+    "expected_rows": 6,
+    "first_browser_call_contract_valid": 1,
+    "first_browser_call_contract_valid_required": 6,
+    "get_tool_schema_calls": 0,
+    "ground_probe_amplification": 0,
+    "infra_valid": false,
+    "model_no_fallback": true,
+    "operation_automatic_retry_true": 0,
+    "operation_tool_errors": 0,
+    "operation_tool_failures": 0,
+    "operation_unparsed_results": 0,
+    "pass": false,
+    "per_task_pass": {
+      "click_commit": 2,
+      "delayed_wait": 2,
+      "fill_submit": 2
+    },
+    "per_task_pass_required": 2,
+    "perceive_tool_errors": 0,
+    "perceive_tool_failures": 4,
+    "protocol_repair_episodes": 4,
+    "schema": "smc.browser_cognition_preserving_actuation_mf532.v0.1.gate",
+    "security_agent_spawned": false,
+    "surface_exact": true,
+    "task_completion_violations": 0,
+    "task_pass": 6,
+    "task_pass_required": 6,
+    "undeclared_boundary_continuations": 0
+  },
+  "implementation_commit": "05d0f36c7202a8c183a517813815f6ef83f2cfe4",
+  "invalid_attempt": {
+    "identity": "MF532-ORNITH-v0.1-MEASURED-5dffb6b3",
+    "reason": "one six-row runner invocation could not safely fit the host 600s command envelope; preserved without resume/deletion/selective replay",
+    "status": "INFRA_INVALID_ORCHESTRATION_ENVELOPE"
+  },
+  "measured_identity": "MF532-ORNITH-v0.1-MEASURED2-5dffb6b3",
+  "protocol_commit": "5dffb6b37d928f34ab558789e768c5336a1cb7c4",
+  "raw_reconstruction": {
+    "first_browser_call_contract_valid_including_timeout_event_log": 2,
+    "note": "Frozen Gate reports 1 because the TIMEOUT row has no worker-result metrics; its raw event log begins with browser_operate(do=navigate).",
+    "perceive_failure_mechanics": {
+      "row1": "browser_perceive(action=snapshot,url) -> fields_mismatch(url)",
+      "row4": "browser_perceive(action=navigate,url) -> action_not_supported",
+      "row5": "browser_perceive(action=navigate,url) -> action_not_supported",
+      "row6": "browser_perceive(action=snapshot,url) -> fields_mismatch(url)"
+    },
+    "row2_timeout": {
+      "interpretation_boundary": "task action succeeded mechanically; worker did not return before frozen 240s timeout",
+      "oracle_pass": true,
+      "save_count": 1,
+      "tool_sequence_before_timeout": [
+        "browser_operate:navigate",
+        "browser_perceive:snapshot",
+        "browser_operate:set_text",
+        "browser_operate:click",
+        "browser_perceive:snapshot",
+        "read_evidence",
+        "browser_perceive:hydrate",
+        "browser_perceive:hydrate",
+        "browser_perceive:hydrate",
+        "browser_perceive:hydrate",
+        "browser_perceive:snapshot(projection_limit=500)",
+        "read_evidence"
+      ],
+      "value_match": true
+    },
+    "row5_grounding": {
+      "click_identity": {
+        "kind": "button",
+        "name": "Save code"
+      },
+      "exact_match_count": 1,
+      "ground_probe_amplification": 0
+    }
+  },
+  "rows": [
+    {
+      "cache_hit_tokens": 71915,
+      "duplicate_successful_mutations": 0,
+      "first_browser_call_contract_valid": false,
+      "ground_probe_amplification": 0,
+      "index": 1,
+      "operation_tool_failures": 0,
+      "oracle": {
+        "commit_count": 1,
+        "pass": true
+      },
+      "perceive_tool_failures": 1,
+      "protocol_repair_episodes": 1,
+      "read_evidence_calls": 3,
+      "repeat": 1,
+      "rounds": 11,
+      "status": "PASS",
+      "task_id": "click_commit",
+      "tokens_in": 82462,
+      "tokens_out": 1248
+    },
+    {
+      "cache_hit_tokens": null,
+      "duplicate_successful_mutations": null,
+      "first_browser_call_contract_valid": null,
+      "ground_probe_amplification": null,
+      "index": 2,
+      "operation_tool_failures": null,
+      "oracle": {
+        "pass": true,
+        "save_count": 1,
+        "value_match": true
+      },
+      "perceive_tool_failures": null,
+      "protocol_repair_episodes": null,
+      "read_evidence_calls": null,
+      "repeat": 1,
+      "rounds": null,
+      "status": "TIMEOUT",
+      "task_id": "fill_submit",
+      "tokens_in": null,
+      "tokens_out": null
+    },
+    {
+      "cache_hit_tokens": 27179,
+      "duplicate_successful_mutations": 0,
+      "first_browser_call_contract_valid": true,
+      "ground_probe_amplification": 0,
+      "index": 3,
+      "operation_tool_failures": 0,
+      "oracle": {
+        "early_click_count": 0,
+        "pass": true,
+        "ready_click_count": 1
+      },
+      "perceive_tool_failures": 0,
+      "protocol_repair_episodes": 0,
+      "read_evidence_calls": 0,
+      "repeat": 1,
+      "rounds": 6,
+      "status": "PASS",
+      "task_id": "delayed_wait",
+      "tokens_in": 31656,
+      "tokens_out": 486
+    },
+    {
+      "cache_hit_tokens": 23956,
+      "duplicate_successful_mutations": 0,
+      "first_browser_call_contract_valid": false,
+      "ground_probe_amplification": 0,
+      "index": 4,
+      "operation_tool_failures": 0,
+      "oracle": {
+        "early_click_count": 0,
+        "pass": true,
+        "ready_click_count": 1
+      },
+      "perceive_tool_failures": 1,
+      "protocol_repair_episodes": 1,
+      "read_evidence_calls": 0,
+      "repeat": 2,
+      "rounds": 6,
+      "status": "PASS",
+      "task_id": "delayed_wait",
+      "tokens_in": 28094,
+      "tokens_out": 570
+    },
+    {
+      "cache_hit_tokens": 83032,
+      "duplicate_successful_mutations": 0,
+      "first_browser_call_contract_valid": false,
+      "ground_probe_amplification": 0,
+      "index": 5,
+      "operation_tool_failures": 0,
+      "oracle": {
+        "pass": true,
+        "save_count": 1,
+        "value_match": true
+      },
+      "perceive_tool_failures": 1,
+      "protocol_repair_episodes": 1,
+      "read_evidence_calls": 2,
+      "repeat": 2,
+      "rounds": 12,
+      "status": "PASS",
+      "task_id": "fill_submit",
+      "tokens_in": 93633,
+      "tokens_out": 1820
+    },
+    {
+      "cache_hit_tokens": 86461,
+      "duplicate_successful_mutations": 0,
+      "first_browser_call_contract_valid": false,
+      "ground_probe_amplification": 0,
+      "index": 6,
+      "operation_tool_failures": 0,
+      "oracle": {
+        "commit_count": 1,
+        "pass": true
+      },
+      "perceive_tool_failures": 1,
+      "protocol_repair_episodes": 1,
+      "read_evidence_calls": 2,
+      "repeat": 2,
+      "rounds": 12,
+      "status": "PASS",
+      "task_id": "click_commit",
+      "tokens_in": 97666,
+      "tokens_out": 1617
+    }
+  ],
+  "schema": "smc.browser_cognition_preserving_actuation_mf532.v0.1.result_summary",
+  "status": "COMPLETE_NOT_QUALIFIED"
+}
