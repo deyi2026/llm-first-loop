@@ -77,6 +77,7 @@ def run_history_projection(
     cache_protected_prefix_messages: int = 0,
     cache_protected_prefix_chars: int = 0,
     current_turn_ref: int | None = None,
+    task_anchor_snapshot_provider: Any | None = None,  # EVO-20260916-ccc978b2
 ) -> HistoryProjection:
     """锚点换算 + build_history_messages 调用（参数语义逐字节原样）."""
     # P1-10 + R8.5: persisted anchor uses original sess.messages indices,
@@ -193,6 +194,13 @@ def run_history_projection(
         preserve_last_human_exact=r6_ingress_truth is not None,
         preserve_active_ingress_message=_current_ingress_message,
         current_turn_ref=current_turn_ref,
+        # EVO-20260916-ccc978b2（人工已审）: 锚点保护扩到最近 N 条真实 user 指令 +
+        # 压缩生效窗口 pin 任务锚快照（N 取自 settings.task_anchor_pin_messages，
+        # 默认 2；provider 回调由 engine 侧组装 durable 事实逐字投影）。
+        task_anchor_pin_user_messages=int(
+            getattr(settings, "task_anchor_pin_messages", 0) or 0
+        ),
+        task_anchor_snapshot_provider=task_anchor_snapshot_provider,
     )
     duplicate_tool_projection_stats: dict[str, int | bool] = {
         "enabled": bool(getattr(settings, "exact_duplicate_tool_fold", False)),
@@ -208,6 +216,19 @@ def run_history_projection(
         prefix_len=prefix_len,
         filtered_indices=filtered_indices,
     )
+    # EVO-20260916-ccc978b2: pinned（锚钉 user 指令）/summarized（被折叠消息）的
+    # 原 session 索引——与 cache_compacted 同一映射口径，写入 stats 供 postprocess
+    # 的 history.compaction 事件逐条审计（区分"证据投影"与"真实压缩"）。
+    if compact_view_box:
+        _compact_stats = compact_view_box[0]
+        _compact_stats["pinned_msg_seqs"] = _map_compacted_source_indices(
+            [int(_v) for _v in (_compact_stats.get("pinned_msg_seqs_local") or [])],
+            prefix_len=prefix_len,
+            filtered_indices=filtered_indices,
+        )
+        _compact_stats["summarized_msg_seqs"] = [
+            int(_v) for _v in cache_compacted_source_box
+        ]
     return HistoryProjection(
         built=built,
         anchor_arg=anchor_arg,

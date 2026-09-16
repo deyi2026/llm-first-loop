@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -79,6 +80,35 @@ def workspace_diff_summary(max_chars: int = 120) -> str:
         return ""
 
 
+def _pid_alive(pid: object) -> bool:
+    """PID 存活探测（os.kill(pid, 0)，仅 POSIX）.
+
+    proc_versions.jsonl 只记启动不记退出，死进程的最新记录会永远停留在
+    "旧代码建议重启"误报（2026-09-16 PID 85233 事故）。探测语义：
+    ProcessLookupError=已退出；PermissionError=存在但属他人 → 存活；
+    记录缺 PID/非法值/Windows（os.kill(pid,0) 走 TerminateProcess 会真杀
+    进程）→ 保守视为存活（保留原提示，不因探测失败误消）。PID 复用无法
+    用 0 信号区分属已知局限（记录含 ts 供人工复核）。
+    """
+    if sys.platform == "win32":
+        return True
+    try:
+        p = int(pid)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return True
+    if p <= 0:
+        return True
+    try:
+        os.kill(p, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+
+
 def record_process_start(service: str) -> None:
     """记录进程启动（启动时间 + PID + git HEAD）到 proc_versions.jsonl（fail-open）."""
     try:
@@ -130,7 +160,10 @@ def get_process_versions(limit: int = 30) -> dict:
         head = r.get("git_head", "")
         start_dirty = bool(r.get("workspace_dirty", False))
         same_head = head == current
-        if not same_head:
+        alive = _pid_alive(r.get("pid"))
+        if not alive:
+            note = "进程已退出（历史启动记录，无需重启）"
+        elif not same_head:
             note = "启动时代码与当前 HEAD 不一致（旧代码，建议重启）"
         elif start_dirty or current_dirty:
             note = "工作区含未提交改动（进程加载代码可能与 HEAD 不一致），建议及时 commit 并重启"
@@ -140,6 +173,7 @@ def get_process_versions(limit: int = 30) -> dict:
             {
                 "service": svc,
                 "pid": r.get("pid"),
+                "pid_alive": alive,
                 "started_at": r.get("ts", ""),
                 "git_head": head,
                 "workspace_dirty": start_dirty,
@@ -152,7 +186,7 @@ def get_process_versions(limit: int = 30) -> dict:
         "current_git_head": current,
         "current_workspace_dirty": current_dirty,
         "services": services,
-        "note": "进程启动时记录 git HEAD；启动早于代码变更的进程标注建议重启（EVO-20260811-f94e5306）；EVO-20260811-a30732d9 增加工作区 dirty 检测",
+        "note": "进程启动时记录 git HEAD；启动早于代码变更的进程标注建议重启（EVO-20260811-f94e5306）；EVO-20260811-a30732d9 增加工作区 dirty 检测；EVO-20260916 增加 PID 存活探测（os.kill(pid,0)），已退出进程标注 pid_alive=false 不再建议重启",
     }
 
 
@@ -194,8 +228,10 @@ def check_stale_services(limit: int = 10) -> str:
     """服务级旧代码检测（EVO-20260817-cef296f8 L1）.
 
     对照 proc_versions.jsonl 中每服务最新启动记录与当前 git HEAD，
-    存在 code_current=False（启动 HEAD ≠ 当前 HEAD）的进程 → 返回主动提示
-    （含服务/PID/启动时 HEAD/当前 HEAD）；全部一致返回 ""。
+    存在 code_current=False（启动 HEAD ≠ 当前 HEAD）且进程仍存活
+    （pid_alive，EVO-20260916：死进程历史记录不再误报建议重启）的
+    进程 → 返回主动提示（含服务/PID/启动时 HEAD/当前 HEAD）；
+    全部一致或仅剩已退出进程返回 ""。
     fail-open：读记录/解析异常返回 "" 不阻断。
     """
     try:
@@ -203,7 +239,9 @@ def check_stale_services(limit: int = 10) -> str:
         stale_services = [
             s
             for s in info.get("services", [])
-            if not s.get("code_current", True) and s.get("service") != "cli"
+            if not s.get("code_current", True)
+            and s.get("pid_alive", True)
+            and s.get("service") != "cli"
         ]
         if not stale_services:
             return ""
