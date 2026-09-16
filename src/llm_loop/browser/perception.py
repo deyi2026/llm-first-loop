@@ -207,6 +207,31 @@ def _content_hash_object_basis(
     return sorted(normalized, key=lambda item: str(item.get("id") or ""))
 
 
+def _model_projection_order(
+    objects: list[dict[str, Any]],
+    object_grounding: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Order already-observed objects for bounded model display using evidence quality only.
+
+    Canonical persisted object order remains opaque-ID order.  This projection prefers
+    complete source coverage, then identities proven beyond one snapshot, then uses the
+    canonical opaque Semantic ID as the sole deterministic tiebreaker.  It intentionally
+    ignores task text, object names/kinds, intended actions, and task completion.
+    """
+
+    def quality_key(obj: dict[str, Any]) -> tuple[int, int, str]:
+        semantic_id = str(obj.get("id") or "")
+        coverage = obj.get("coverage") or {}
+        coverage_rank = 0 if coverage.get("status") == "complete" else 1
+        grounding = object_grounding.get(semantic_id) or {}
+        identity_rank = (
+            1 if grounding.get("identity_basis") == "snapshot_local_ax_identity" else 0
+        )
+        return coverage_rank, identity_rank, semantic_id
+
+    return sorted(objects, key=quality_key)
+
+
 def _diff_value_basis(value: Any) -> Any:
     """Canonicalize unordered contract facts while stripping per-snapshot refs."""
     value = _content_fact_basis(value)
@@ -1531,7 +1556,8 @@ class BrowserPerceptionAdapter:
                 set(completeness["reasons"] + ["relation_cap"])
             )
 
-        objects_sorted = sorted(build.semantic_objects, key=lambda item: item["id"])
+        objects_canonical = sorted(build.semantic_objects, key=lambda item: item["id"])
+        objects_projected = _model_projection_order(objects_canonical, build.object_grounding)
         projection_limit = max(1, min(int(projection_limit), 500))
         # EVO-20260918-c69527a1: model-declared projection window. The runtime
         # applies no policy: kinds/cursor only filter and paginate the projection
@@ -1546,11 +1572,11 @@ class BrowserPerceptionAdapter:
         except (TypeError, ValueError):
             cursor_norm = 0
         if kinds_norm is None:
-            matched_objects = objects_sorted
+            matched_objects = objects_projected
         else:
             matched_objects = [
                 item
-                for item in objects_sorted
+                for item in objects_projected
                 if str(item.get("kind") or "") in kinds_norm
             ]
         matched_total = len(matched_objects)
@@ -1578,7 +1604,7 @@ class BrowserPerceptionAdapter:
             scope_facts=scope_facts,
             frame_scopes=frame_scopes,
         )
-        for obj in objects_sorted:
+        for obj in objects_canonical:
             semantic_id = str(obj.get("id") or "")
             grounding = build.object_grounding.get(semantic_id) or {}
             if grounding.get("identity_basis") != "snapshot_local_ax_identity":
@@ -1590,7 +1616,7 @@ class BrowserPerceptionAdapter:
                 "sensor_contract": _SENSOR_CONTRACT,
                 "completeness": completeness,
                 "objects": _content_hash_object_basis(
-                    objects_sorted,
+                    objects_canonical,
                     build.object_grounding,
                 ),
                 "sensor_grounding": sensor_grounding,
@@ -1609,13 +1635,13 @@ class BrowserPerceptionAdapter:
             "completeness": completeness,
             "projection": {
                 "representation": "objects",
-                "complete": len(objects_sorted) <= projection_limit,
+                "complete": len(objects_canonical) <= projection_limit,
                 "full_ref": objects_ref,
             },
             "budget": {
                 "object_cap": self.capture_node_cap,
                 "relation_cap": relation_cap,
-                "token_estimate": len(_json_bytes(objects_sorted)) // 4,
+                "token_estimate": len(_json_bytes(objects_canonical)) // 4,
             },
             "grounding_version": content_sha,
             "content_sha256": content_sha,
@@ -1628,7 +1654,7 @@ class BrowserPerceptionAdapter:
         bundle = {
             "snapshot": snapshot,
             "scope_facts": scope_facts,
-            "objects": objects_sorted,
+            "objects": objects_canonical,
             "sensor_grounding": sensor_grounding,
             "object_grounding": build.object_grounding,
             "resource_grounding": resource_grounding,
@@ -1652,7 +1678,7 @@ class BrowserPerceptionAdapter:
             "objects": projection_window,
             "objects_projection": {
                 "returned": returned_count,
-                "total": len(objects_sorted),
+                "total": len(objects_projected),
                 "matched_total": matched_total,
                 "cursor": cursor_norm,
                 "limit": projection_limit,
