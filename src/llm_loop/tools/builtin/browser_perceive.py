@@ -140,6 +140,94 @@ class BrowserPerceiveTool:
         "additionalProperties": False,
     }
 
+    # Provider-lazy must remain first-call self-sufficient. The generic lazy skeleton
+    # intentionally drops oneOf/const, which would otherwise turn `condition` into `{}`
+    # and force schema repair before a natural wait. Keep this explicit surface closed
+    # and compact; polling cadence remains runtime-owned and is not exposed.
+    lazy_parameters = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["snapshot", "hydrate", "diff", "wait"],
+            },
+            "projection_limit": {"type": "integer", "minimum": 1, "maximum": 500},
+            "grounding_ref": {"type": "string"},
+            "from_version": {"type": "string"},
+            "to_version": {"type": "string"},
+            "condition": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["page_ready"]},
+                            "state": {
+                                "type": "string",
+                                "enum": ["loading", "interactive", "complete"],
+                            },
+                        },
+                        "required": ["kind", "state"],
+                        "additionalProperties": False,
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["page_url"]},
+                            "match": {
+                                "type": "string",
+                                "enum": ["equals", "contains", "starts_with", "ends_with"],
+                            },
+                            "url": {"type": "string"},
+                        },
+                        "required": ["kind", "match", "url"],
+                        "additionalProperties": False,
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["object_state"]},
+                            "object_ref": {"type": "string", "minLength": 1},
+                            "state": {
+                                "type": "string",
+                                "enum": [
+                                    "exists",
+                                    "enabled",
+                                    "checked",
+                                    "selected",
+                                    "expanded",
+                                    "focused",
+                                    "editable",
+                                ],
+                            },
+                            "value": {"type": "boolean"},
+                        },
+                        "required": ["kind", "object_ref", "state", "value"],
+                        "additionalProperties": False,
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["object_text"]},
+                            "object_ref": {"type": "string", "minLength": 1},
+                            "field": {"type": "string", "enum": ["name", "value_text"]},
+                            "match": {
+                                "type": "string",
+                                "enum": ["equals", "contains", "starts_with", "ends_with"],
+                            },
+                            "text": {"type": "string"},
+                        },
+                        "required": ["kind", "object_ref", "field", "match", "text"],
+                        "additionalProperties": False,
+                    },
+                ]
+            },
+            "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
+        },
+        "required": ["action"],
+        "additionalProperties": False,
+    }
+
+
 
     def __init__(
         self,
