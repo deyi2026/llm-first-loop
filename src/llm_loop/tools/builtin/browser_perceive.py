@@ -11,9 +11,14 @@ import json
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from llm_loop.browser.method_card import SEMANTIC_OPERATION_METHOD_CARD
 from llm_loop.browser.perception import BrowserPerceptionAdapter
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.tools.builtin.browser_wait import (
+    BrowserWaitObjectStateTool,
+    BrowserWaitObjectTextTool,
+    BrowserWaitScopeReadyTool,
+    BrowserWaitScopeUrlTool,
+)
 
 
 class BrowserCaptureBackend(Protocol):
@@ -23,24 +28,84 @@ class BrowserCaptureBackend(Protocol):
 class BrowserPerceiveTool:
     name = "browser_perceive"
     description = (
-        SEMANTIC_OPERATION_METHOD_CARD
-        + " "
-        "SMC Browser Phase 1 只读感知。snapshot=读取 host 已绑定的当前页面 DOM+AX，返回"
-        "WorldSnapshot + SemanticObject；hydrate=按精确 GroundingRef 水合历史 observation；"
-        "diff=仅比较两张已落盘 exact snapshot。该工具不 wait、不导航、不点击/输入/滚动、"
-        "不执行模型提供的脚本或自动重试；wait 使用 typed browser_wait_scope_url/"
-        "scope_ready/scope_count/object_state/object_text。"
-        "ref 过期/跨 session/不可用会如实返回。模型面不暴露 CSS/XPath/坐标/CDP node id/AX index。"
+        "Browser 只读感知：snapshot 读取 host 已绑定当前页面，hydrate 精确水合既有 ref，"
+        "diff 比较两张 exact snapshot，wait 只读等待页面 ready/URL 或已观察对象 state/text。"
+        "页面 wait 机械绑定当前 host-bound page；对象 wait 必须使用 exact object_ref。"
+        "运行时拥有轮询节奏和默认超时；不导航、不 mutation、不 fuzzy/latest/rebind/retry，"
+        "不判断 task completion，也不暴露 selector/坐标/CDP node id/AX index。"
     )
+    _WAIT_CONDITION_SCHEMA = {
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {"const": "page_ready"},
+                    "state": {"type": "string", "enum": ["loading", "interactive", "complete"]},
+                },
+                "required": ["kind", "state"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {"const": "page_url"},
+                    "match": {
+                        "type": "string",
+                        "enum": ["equals", "contains", "starts_with", "ends_with"],
+                    },
+                    "url": {"type": "string"},
+                },
+                "required": ["kind", "match", "url"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {"const": "object_state"},
+                    "object_ref": {"type": "string", "minLength": 1},
+                    "state": {
+                        "type": "string",
+                        "enum": [
+                            "exists",
+                            "enabled",
+                            "checked",
+                            "selected",
+                            "expanded",
+                            "focused",
+                            "editable",
+                        ],
+                    },
+                    "value": {"type": "boolean"},
+                },
+                "required": ["kind", "object_ref", "state", "value"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {"const": "object_text"},
+                    "object_ref": {"type": "string", "minLength": 1},
+                    "field": {"type": "string", "enum": ["name", "value_text"]},
+                    "match": {
+                        "type": "string",
+                        "enum": ["equals", "contains", "starts_with", "ends_with"],
+                    },
+                    "text": {"type": "string"},
+                },
+                "required": ["kind", "object_ref", "field", "match", "text"],
+                "additionalProperties": False,
+            },
+        ]
+    }
     parameters = {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["snapshot", "hydrate", "diff"],
+                "enum": ["snapshot", "hydrate", "diff", "wait"],
                 "description": (
-                    "snapshot=当前已绑定页面只读 DOM+AX 感知；"
-                    "hydrate=精确水合 grounding_ref；diff=比较两张 exact snapshot"
+                    "snapshot=当前 host-bound page 感知；hydrate=精确水合 ref；"
+                    "diff=比较 exact snapshots；wait=只读等待已声明的页面/对象条件"
                 ),
             },
             "projection_limit": {
@@ -61,6 +126,13 @@ class BrowserPerceiveTool:
                 "type": "string",
                 "description": "仅 diff：终点精确 Browser snapshot_id",
             },
+            "condition": _WAIT_CONDITION_SCHEMA,
+            "within_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60_000,
+                "description": "仅 wait：可选任务级等待上限；省略时使用运行时默认 60000ms",
+            },
         },
         "required": ["action"],
         "additionalProperties": False,
@@ -79,6 +151,15 @@ class BrowserPerceiveTool:
         self._backend = backend
         self._session_id_getter = session_id_getter
         self._exact_ref_hydrator = exact_ref_hydrator
+        common_wait = {
+            "adapter": adapter,
+            "backend": backend,
+            "session_id_getter": session_id_getter,
+        }
+        self._wait_scope_ready = BrowserWaitScopeReadyTool(**common_wait)
+        self._wait_scope_url = BrowserWaitScopeUrlTool(**common_wait)
+        self._wait_object_state = BrowserWaitObjectStateTool(**common_wait)
+        self._wait_object_text = BrowserWaitObjectTextTool(**common_wait)
 
     def _json_result(self, payload: dict[str, Any]) -> ToolResult:
         return ToolResult(
@@ -102,6 +183,7 @@ class BrowserPerceiveTool:
             "snapshot": {"action", "projection_limit"},
             "hydrate": {"action", "grounding_ref"},
             "diff": {"action", "from_version", "to_version"},
+            "wait": {"action", "condition", "within_ms"},
         }
         allowed = allowed_by_action.get(action)
         if allowed is None:
@@ -126,6 +208,117 @@ class BrowserPerceiveTool:
         mismatch = self._field_mismatch(action, dict(kwargs))
         if mismatch is not None:
             return mismatch
+        if action == "wait":
+            condition = kwargs.get("condition")
+            if not isinstance(condition, dict):
+                return self._fail("[browser_perceive:wait] condition 必须是闭合 object。")
+            try:
+                timeout_ms = int(kwargs.get("within_ms", 60_000) or 60_000)
+            except (TypeError, ValueError):
+                return self._fail("[browser_perceive:wait] within_ms 必须是整数 1..60000。")
+            if not 1 <= timeout_ms <= 60_000:
+                return self._fail("[browser_perceive:wait] within_ms 必须在 1..60000。")
+            interval_ms = min(250, timeout_ms)
+            kind = str(condition.get("kind") or "").strip()
+            if kind in {"page_ready", "page_url"}:
+                if self._backend is None:
+                    return self._fail(
+                        "[browser_perceive:wait] read-only Browser backend unavailable; no polling started."
+                    )
+                try:
+                    seed = self._adapter.snapshot(
+                        session_id, self._backend.capture(), projection_limit=1
+                    )
+                    page_scope = next(
+                        item
+                        for item in list(seed.get("scope_facts") or [])
+                        if isinstance(item, dict) and item.get("kind") == "page"
+                    )
+                    scope_ref = str(page_scope.get("scope_ref") or "").strip()
+                except Exception as exc:  # noqa: BLE001 - observation failure must stay explicit.
+                    return ToolResult(
+                        status=ToolResultStatus.ERROR,
+                        content=(
+                            "[browser_perceive:wait] page binding observation failed; "
+                            f"error_type={type(exc).__name__}; error={exc}"
+                        ),
+                        tool_call_id="",
+                        tool_name=self.name,
+                        error_type=type(exc).__name__,
+                        error_detail=str(exc),
+                    )
+                if not scope_ref:
+                    return self._fail("[browser_perceive:wait] host-bound page scope unavailable.")
+                if kind == "page_ready":
+                    request = {
+                        "scope_ref": scope_ref,
+                        "state": condition.get("state"),
+                        "timeout_ms": timeout_ms,
+                        "interval_ms": interval_ms,
+                    }
+                    result = self._wait_scope_ready.execute_request(session_id, request)
+                else:
+                    match_to_operator = {
+                        "equals": "eq",
+                        "contains": "contains",
+                        "starts_with": "prefix",
+                        "ends_with": "suffix",
+                    }
+                    match = str(condition.get("match") or "").strip()
+                    operator = match_to_operator.get(match)
+                    if operator is None:
+                        return self._fail("[browser_perceive:wait] page_url match 不受支持。")
+                    request = {
+                        "scope_ref": scope_ref,
+                        "operator": operator,
+                        "value": condition.get("url"),
+                        "timeout_ms": timeout_ms,
+                        "interval_ms": interval_ms,
+                    }
+                    result = self._wait_scope_url.execute_request(session_id, request)
+            elif kind == "object_state":
+                request = {
+                    "object_ref": condition.get("object_ref"),
+                    "property": condition.get("state"),
+                    "value": condition.get("value"),
+                    "timeout_ms": timeout_ms,
+                    "interval_ms": interval_ms,
+                }
+                result = self._wait_object_state.execute_request(session_id, request)
+            elif kind == "object_text":
+                match_to_operator = {
+                    "equals": "eq",
+                    "contains": "contains",
+                    "starts_with": "prefix",
+                    "ends_with": "suffix",
+                }
+                match = str(condition.get("match") or "").strip()
+                operator = match_to_operator.get(match)
+                if operator is None:
+                    return self._fail("[browser_perceive:wait] object_text match 不受支持。")
+                request = {
+                    "object_ref": condition.get("object_ref"),
+                    "property": condition.get("field"),
+                    "operator": operator,
+                    "value": condition.get("text"),
+                    "timeout_ms": timeout_ms,
+                    "interval_ms": interval_ms,
+                }
+                result = self._wait_object_text.execute_request(session_id, request)
+            else:
+                return self._fail(
+                    "[browser_perceive:wait] condition.kind 必须是 "
+                    "page_ready/page_url/object_state/object_text。"
+                )
+            return ToolResult(
+                status=result.status,
+                content=result.content,
+                tool_call_id="",
+                tool_name=self.name,
+                error_type=result.error_type,
+                error_detail=result.error_detail,
+                partial_output=result.partial_output,
+            )
         if action == "hydrate":
             ref = str(kwargs.get("grounding_ref") or "").strip()
             if not ref:
@@ -212,7 +405,7 @@ class BrowserPerceiveTool:
                 )
         return ToolResult(
             status=ToolResultStatus.FAILURE,
-            content="[browser_perceive] action 必须是 snapshot、hydrate 或 diff。",
+            content="[browser_perceive] action 必须是 snapshot、hydrate、diff 或 wait。",
             tool_call_id="",
             tool_name=self.name,
         )
