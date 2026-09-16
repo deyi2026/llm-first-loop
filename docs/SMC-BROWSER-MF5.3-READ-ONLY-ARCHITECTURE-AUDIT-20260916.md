@@ -432,3 +432,12 @@ Pre-register diagnostics separately:
 - rounds/tokens/cache as diagnostics, never correctness substitutes.
 
 MF-6 remains deferred until a cognition-preserving treatment hard-passes.
+---
+
+## 10. Post-audit deterministic implementation closure — 2026-09-16
+
+The audit's two-capability target is now implemented at exact HEAD `d415daa048ce8c96eddefe4fb06b1d996673e0d4`. A final assembly audit found and corrected one additional layer not visible in the original class-level design review: Factory still registered low-level typed waits, `browser_action`, and `browser_semantic_execute`. The final Factory now exposes only `browser_perceive` in perception-only mode and adds only `browser_semantic_operation` when mutation is enabled.
+
+The implemented lazy two-tool surface is 4,054 chars (SHA256 `b2549e11adb78ca1cd1e7bb252d0ef928e0171fe1cc2c7918706c499f4e24017`), rather than the audit's ~3,560 design estimate. This difference is recorded as measurement, not treated as a failure: the architectural objective was reducing protocol concepts while retaining exact capability, not minimizing a byte score.
+
+Deterministic repository qualification is GREEN; live model qualification is still pending. See `docs/SMC-BROWSER-MF5.3-DETERMINISTIC-IMPLEMENTATION-RESULT-20260916.md`.

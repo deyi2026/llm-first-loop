@@ -174,3 +174,32 @@ MF-5.3 read-only audit is complete with no production change. The architecture r
 Current implementation already contains the required mechanical substrate (`browser_perceive`, exact snapshot/hydrate/diff, typed waits, version guards, post-action capture/diff, single-dispatch receipts). The next phase is interface composition, not a new Browser engine.
 
 MF-6 remains deferred. No RED or production implementation may begin until the MF-5.3 architecture checkpoint is explicitly crossed.
+
+## 10. MF-5.3 deterministic implementation result — 2026-09-16
+
+Authoritative result: `docs/SMC-BROWSER-MF5.3-DETERMINISTIC-IMPLEMENTATION-RESULT-20260916.md`.
+
+MF-5.3 deterministic implementation is **QUALIFIED** at exact HEAD `d415daa048ce8c96eddefe4fb06b1d996673e0d4`; live measured qualification remains pending.
+
+Implemented sequence:
+
+1. `29884118` — cognition-preserving deterministic RED;
+2. `dd0b697c` — Perceive wait facade;
+3. `3597b4f8` — direct mutation-only Operate;
+4. `31376dc1` — compact delta sufficiency;
+5. `a2775aba` — perception contract test alignment;
+6. `984264fa` — historical eval protocol import isolation;
+7. `e83807a6` — progressive method ref without Perceive protocol teaching;
+8. `1b74f609` — Factory two-capability visibility RED;
+9. `d415daa0` — Factory exposes only `browser_perceive` and `browser_semantic_operation`.
+
+Final deterministic evidence:
+
+- MF-5.3 focused cognition contract: 12/12 GREEN;
+- all Browser unit tests: 298/298 PASS;
+- Factory unit tests: 24/24 PASS;
+- Ruff PASS; targeted production Pyright 0/0; security and diff-check PASS;
+- full `pytest tests -q -m 'not real_llm'`: exit 0, 0 FAILED / 0 ERROR;
+- actual two-tool lazy provider surface: 4,054 chars, SHA256 `b2549e11adb78ca1cd1e7bb252d0ef928e0171fe1cc2c7918706c499f4e24017`.
+
+The next phase is a fresh MF-5.3 measured qualification identity. First freeze its plan/manifest and run zero-model preflight; do not start measured Ornith rows until the next human checkpoint. MF-6 remains deferred.
