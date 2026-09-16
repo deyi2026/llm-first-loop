@@ -2320,6 +2320,18 @@ class PlaywrightPageCaptureBackend:
             parent_indexes = list(nodes.get("parentIndex") or [])
             backend_ids = list(nodes.get("backendNodeId") or [])
             attributes = list(nodes.get("attributes") or [])
+            direct_text_by_parent: dict[int, list[str]] = {}
+            for child_idx, node_name in enumerate(node_names):
+                if _string(strings, node_name).lower() != "#text":
+                    continue
+                if child_idx >= len(parent_indexes) or child_idx >= len(node_values):
+                    continue
+                parent_idx = parent_indexes[child_idx]
+                if not isinstance(parent_idx, int) or parent_idx < 0:
+                    continue
+                text_value = _string(strings, node_values[child_idx])
+                if text_value.strip():
+                    direct_text_by_parent.setdefault(parent_idx, []).append(text_value)
             frame_id = _string_index_or_literal(strings, document.get("frameId"))
             frame_token = None if frame_id == main_frame_id else (f"frame:{frame_id}" if frame_id else None)
             shadow_types = _rare_string_values(nodes.get("shadowRootType"), strings)
@@ -2348,6 +2360,15 @@ class PlaywrightPageCaptureBackend:
                     text = _string(strings, node_values[idx]).strip()
                     if text:
                         dom_attributes["text"] = text
+                if "text" not in dom_attributes and tag not in {
+                    "script",
+                    "style",
+                    "noscript",
+                    "template",
+                }:
+                    direct_text = "".join(direct_text_by_parent.get(idx, [])).strip()
+                    if direct_text:
+                        dom_attributes["text"] = direct_text
                 # Layout-tree membership is not equivalent to user-visible state
                 # (opacity/clipping/occlusion can disagree), so do not promote it
                 # into the canonical ``visible`` field.
