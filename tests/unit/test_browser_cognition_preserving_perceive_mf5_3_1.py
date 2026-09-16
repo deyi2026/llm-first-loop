@@ -100,12 +100,12 @@ def test_mf5_3_1_action_specific_branches_exclude_cross_action_fields() -> None:
             {"action", "kind", "match", "expected_url"},
         ),
         ("wait", "object_state"): (
-            {"action", "kind", "object_ref", "state", "value", "within_ms"},
-            {"action", "kind", "object_ref", "state", "value"},
+            {"action", "kind", "grounding_ref", "state", "value", "within_ms"},
+            {"action", "kind", "grounding_ref", "state", "value"},
         ),
         ("wait", "object_text"): (
-            {"action", "kind", "object_ref", "field", "match", "text", "within_ms"},
-            {"action", "kind", "object_ref", "field", "match", "text"},
+            {"action", "kind", "grounding_ref", "field", "match", "text", "within_ms"},
+            {"action", "kind", "grounding_ref", "field", "match", "text"},
         ),
     }
 
@@ -152,7 +152,7 @@ def test_mf5_3_1_flat_object_wait_executes_with_exact_ref(tmp_path: Path) -> Non
     result = perceive.execute(
         action="wait",
         kind="object_state",
-        object_ref=submit["grounding_ref"],
+        grounding_ref=submit["grounding_ref"],
         state="enabled",
         value=True,
         within_ms=50,
