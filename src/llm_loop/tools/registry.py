@@ -66,7 +66,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "browser_wait_object_state": "Browser只读对象状态等待：exact object_ref + state property + boolean value；程序exact hydrate并固定operator=eq，不名称匹配/retry/rebind。",
     "browser_wait_object_text": "Browser只读对象文本等待：exact object_ref + property(name|value_text) + string operator/value；程序exact hydrate，不名称匹配/retry/rebind。",
     "browser_action": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 写操作：click/fill/select/navigate/scroll；使用 snapshot 的 exact Semantic ID/scope + expected_version，object mutation=object，navigate=resource，snapshot 不作为 mutation version_scope；dispatch 前机械复核；单次 dispatch，不自动 retry/rebind；ActionReceipt 只表示机械事实，不等于任务完成。",
-    "browser_semantic_execute": "Browser 语义执行：必须先 browser_perceive snapshot 并取得 exact GroundingRef/resource_ref；没有 snapshot/ref 不要调用，不要把 URL 当 target_ref。对象 target_ref=SemanticObject.grounding_ref，navigate target_ref=resource_ref；args: click={}，fill={text,mode(replace|append)}，select={value}，navigate={url}，scroll={delta_pages}；工具内部编译 scope/version/action_id 后单次执行；读 ActionReceipt，再 snapshot 验证；不自动 retry/rebind，receipt ok 不等于任务完成。",
+    "browser_semantic_execute": "Browser低层语义执行：exact GroundingRef/resource_ref + verb/args；内部编译scope/version/action_id并single-dispatch。ActionReceipt已有post-capture/diff；仅需更广语义或证据不完整时再snapshot；不retry/rebind/完成判断。",
     "browser_semantic_operation": "Browser语义操作：1..8 ordered steps；target=exact kind+name(+role)；wait=typed condition+within_ms；程序只做ground/version/wait/single-dispatch；不fuzzy/rebind/retry/完成判断。",
     "inspect_code": "解析 Python 文件/目录 AST，列类、函数、签名与 imports；实现正文用 read_file。",
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",

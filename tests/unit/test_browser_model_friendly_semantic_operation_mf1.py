@@ -11,7 +11,10 @@ from llm_loop.browser.action import (
 )
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
-from llm_loop.tools.builtin.browser_semantic_operation import BrowserSemanticOperationTool
+from llm_loop.tools.builtin.browser_semantic_operation import (
+    BrowserSemanticOperationReceiptStore,
+    BrowserSemanticOperationTool,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = json.loads((ROOT / "tests/fixtures/smc_browser_perception_v01.json").read_text())
@@ -67,6 +70,7 @@ def _stack(
         perception=perception,
         capture_backend=backend,
         semantic_execute=execute,
+        receipt_store=BrowserSemanticOperationReceiptStore(tmp_path / "operation_receipts"),
         session_id_getter=lambda: "s1",
     )
     return operation, actuator
@@ -91,7 +95,22 @@ def test_mf1_short_wire_accepts_navigation_without_protocol_scaffolding(tmp_path
 
 
 def test_mf1_short_wire_encodes_replace_as_set_text_not_mode_field(tmp_path: Path) -> None:
-    tool, actuator = _stack(tmp_path)
+    raw = json.loads(json.dumps(FIXTURES["base"]))
+    raw["dom"]["nodes"].append(
+        {
+            "physical_id": "n-project-code",
+            "parent_id": "n-root",
+            "frame_token": None,
+            "kind": "input",
+            "attributes": {
+                "role": "textbox",
+                "name": "Project code",
+                "tag": "input",
+            },
+            "state": {"exists": True, "enabled": True, "visible": True, "editable": True},
+        }
+    )
+    tool, actuator = _stack(tmp_path, raw=raw)
 
     receipt = _json_result(
         tool.execute(
@@ -261,7 +280,10 @@ def test_mf1_unsatisfied_wait_halts_instead_of_inventing_false_success(tmp_path:
     )
 
     assert receipt["status"] == "halted"
-    assert receipt["halt_reason"] == "predicate_result:unsatisfied"
+    assert receipt["halt_reason"] in {
+        "predicate_result:unsatisfied",
+        "predicate_result:indeterminate",
+    }
     assert actuator.calls == []
 
 

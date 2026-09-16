@@ -8,8 +8,13 @@ retries a mutation, substitutes an identity, or decides task completion.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import re
+import secrets
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Protocol
 
 from llm_loop.browser.perception import SEMANTIC_OBJECT_KINDS, BrowserPerceptionAdapter
@@ -21,6 +26,91 @@ _MAX_CLAUSES = 8
 _IDENTITY_KEYS = {"kind", "role", "name"}
 _OBJECT_VERBS = {"click", "fill", "select", "scroll"}
 _MUTATION_VERBS = _OBJECT_VERBS | {"navigate"}
+
+_OPERATION_RECEIPT_PREFIX = "browser-operation-receipt://v0.1/"
+_OPERATION_RECEIPT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _session_hash(session_id: str) -> str:
+    return hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+
+
+class BrowserSemanticOperationReceiptStore:
+    """Immutable, session-fenced full receipts behind compact model projections."""
+
+    def __init__(self, root: str | Path) -> None:
+        self.root = Path(root).expanduser()
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def _path(self, session_id: str, receipt_id: str) -> Path:
+        return self.root / _session_hash(session_id) / f"{receipt_id}.json"
+
+    def persist(self, session_id: str, receipt: dict[str, Any]) -> str:
+        if not session_id:
+            raise ValueError("session_id is required")
+        canonical = json.dumps(
+            receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        content_sha = hashlib.sha256(canonical).hexdigest()
+        receipt_id = hashlib.sha256(
+            (_session_hash(session_id) + ":" + content_sha).encode("utf-8")
+        ).hexdigest()[:32]
+        ref = f"{_OPERATION_RECEIPT_PREFIX}{receipt_id}"
+        doc = {
+            "schema": "smc.browser_semantic_operation_full_receipt.v0.1",
+            "owner_session_sha256": _session_hash(session_id),
+            "receipt_ref": ref,
+            "content_sha256": content_sha,
+            "content": receipt,
+        }
+        path = self._path(session_id, receipt_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(doc, ensure_ascii=False, sort_keys=True, indent=2)
+        if path.exists():
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            if existing != doc:
+                raise RuntimeError("semantic operation receipt hash collision")
+            return ref
+        tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}-{secrets.token_hex(4)}")
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+        return ref
+
+    def hydrate(self, session_id: str, receipt_ref: str) -> dict[str, Any]:
+        ref = str(receipt_ref or "").strip()
+        if not ref.startswith(_OPERATION_RECEIPT_PREFIX):
+            return {"grounding_ref": ref, "availability": "unavailable", "reason": "invalid_ref"}
+        receipt_id = ref[len(_OPERATION_RECEIPT_PREFIX) :]
+        if _OPERATION_RECEIPT_ID_RE.fullmatch(receipt_id) is None:
+            return {"grounding_ref": ref, "availability": "unavailable", "reason": "invalid_ref"}
+        path = self._path(session_id, receipt_id)
+        if not path.is_file():
+            return {"grounding_ref": ref, "availability": "unavailable", "reason": "unavailable"}
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"grounding_ref": ref, "availability": "unavailable", "reason": "corrupt"}
+        if doc.get("owner_session_sha256") != _session_hash(session_id):
+            return {"grounding_ref": ref, "availability": "unauthorized", "reason": "session_scope"}
+        content = doc.get("content")
+        if not isinstance(content, dict):
+            return {"grounding_ref": ref, "availability": "unavailable", "reason": "corrupt"}
+        canonical = json.dumps(
+            content, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        if hashlib.sha256(canonical).hexdigest() != doc.get("content_sha256"):
+            return {"grounding_ref": ref, "availability": "unavailable", "reason": "integrity_mismatch"}
+        return {
+            "grounding_ref": ref,
+            "availability": "available",
+            "content_sha256": doc["content_sha256"],
+            "content": content,
+        }
+
 
 # Module-level because Python class-body comprehensions do not close over class locals.
 # The class exposes the same schema value below for introspection/tests.
@@ -427,11 +517,13 @@ class BrowserSemanticOperationTool:
         perception: BrowserPerceptionAdapter,
         capture_backend: BrowserCaptureBackend,
         semantic_execute: BrowserSemanticExecuteTool,
+        receipt_store: BrowserSemanticOperationReceiptStore,
         session_id_getter: Callable[[], str],
     ) -> None:
         self._perception = perception
         self._capture_backend = capture_backend
         self._semantic_execute = semantic_execute
+        self._receipt_store = receipt_store
         self._session_id_getter = session_id_getter
         self._wait_object = BrowserWaitObjectTool(
             adapter=perception,
@@ -647,10 +739,48 @@ class BrowserSemanticOperationTool:
             raise BrowserSemanticOperationContractError("step_discriminator_missing")
         return clauses
 
+    @staticmethod
+    def _compact_projection(full_receipt: dict[str, Any], receipt_ref: str) -> dict[str, Any]:
+        execution_status = str(full_receipt.get("execution_status") or "halted")
+        clauses = [x for x in list(full_receipt.get("clauses") or []) if isinstance(x, dict)]
+        status = "completed" if execution_status == "clauses_exhausted" else "halted"
+        compact: dict[str, Any] = {
+            "schema": "smc.browser_semantic_operation_compact_receipt.v0.1",
+            "status": status,
+            "steps_executed": len(clauses),
+            "task_completion": "not_evaluated",
+            "receipt_ref": receipt_ref,
+            "automatic_retry": False,
+        }
+        halt_reason = full_receipt.get("halt_reason")
+        if status == "halted":
+            reason = str(halt_reason or "halted")
+            if reason == "exact_identity_match_count:0":
+                reason = "target_not_found"
+            elif reason.startswith("exact_identity_match_count:"):
+                reason = "ambiguous_target"
+            compact["halt_reason"] = reason
+        last = clauses[-1] if clauses else {}
+        if "exact_match_count" in last:
+            compact["match_count"] = last.get("exact_match_count")
+        action_receipt = last.get("action_receipt")
+        if isinstance(action_receipt, dict):
+            after_version = action_receipt.get("after_version")
+            if after_version:
+                compact["world_version"] = after_version
+            observed = action_receipt.get("observed_effects")
+            if isinstance(observed, dict) and observed.get("diff_ref"):
+                compact["diff_ref"] = observed["diff_ref"]
+            boundary_events = action_receipt.get("boundary_events")
+            if isinstance(boundary_events, list) and boundary_events:
+                compact["boundary_events"] = boundary_events
+        return compact
+
     def execute_request(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
         if not session_id:
             raise BrowserSemanticOperationContractError("session_id_missing")
-        if set(request) == {"steps"}:
+        model_friendly = set(request) == {"steps"}
+        if model_friendly:
             clauses = self._validate_clauses(self._compile_short_steps(request["steps"]))
         elif set(request) == {"clauses"}:
             # Legacy/internal primitive retained for deterministic historical qualification
@@ -659,6 +789,12 @@ class BrowserSemanticOperationTool:
         else:
             raise BrowserSemanticOperationContractError("operation_fields_mismatch")
         receipt = self._base_receipt()
+
+        def finalize() -> dict[str, Any]:
+            if not model_friendly:
+                return receipt
+            receipt_ref = self._receipt_store.persist(session_id, receipt)
+            return self._compact_projection(receipt, receipt_ref)
 
         for index, clause in enumerate(clauses, start=1):
             kind = str(clause.get("kind") or "")
@@ -692,7 +828,7 @@ class BrowserSemanticOperationTool:
                         )
                         receipt["execution_status"] = "halted"
                         receipt["halt_reason"] = f"exact_identity_match_count:{exact_count}"
-                        return receipt
+                        return finalize()
                 action_receipt = self._semantic_execute.execute_request(
                     session_id,
                     {"verb": verb, "target_ref": target_ref, "args": dict(args)},
@@ -710,7 +846,7 @@ class BrowserSemanticOperationTool:
                 if action_receipt.get("status") != "ok":
                     receipt["execution_status"] = "halted"
                     receipt["halt_reason"] = f"action_receipt_status:{action_receipt.get('status')}"
-                    return receipt
+                    return finalize()
                 continue
 
             if kind == "wait":
@@ -740,7 +876,7 @@ class BrowserSemanticOperationTool:
                     )
                     receipt["execution_status"] = "halted"
                     receipt["halt_reason"] = f"exact_identity_match_count:{exact_count}"
-                    return receipt
+                    return finalize()
                 wait_result = self._wait_object.execute_request(
                     session_id,
                     {
@@ -766,7 +902,7 @@ class BrowserSemanticOperationTool:
                     )
                     receipt["execution_status"] = "halted"
                     receipt["halt_reason"] = "typed_wait_failed"
-                    return receipt
+                    return finalize()
                 wait_doc = json.loads(wait_result.content)
                 predicate_result = dict(wait_doc.get("predicate_result") or {})
                 observed = str(predicate_result.get("result") or "indeterminate")
@@ -785,13 +921,13 @@ class BrowserSemanticOperationTool:
                 if observed != "satisfied":
                     receipt["execution_status"] = "halted"
                     receipt["halt_reason"] = f"predicate_result:{observed}"
-                    return receipt
+                    return finalize()
                 continue
 
             raise BrowserSemanticOperationContractError("clause_kind_not_supported")
 
         receipt["execution_status"] = "clauses_exhausted"
-        return receipt
+        return finalize()
 
     def execute(self, **kwargs: Any) -> ToolResult:
         session_id = str(self._session_id_getter() or "").strip()

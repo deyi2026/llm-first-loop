@@ -15,7 +15,10 @@ from llm_loop.browser.perception import (
     BrowserPerceptionStore,
 )
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
-from llm_loop.tools.builtin.browser_semantic_operation import BrowserSemanticOperationTool
+from llm_loop.tools.builtin.browser_semantic_operation import (
+    BrowserSemanticOperationReceiptStore,
+    BrowserSemanticOperationTool,
+)
 from llm_loop.tools.registry import ToolRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -66,6 +69,7 @@ def _stack(tmp_path: Path, raw: dict[str, Any] | None = None):
         perception=perception,
         capture_backend=backend,
         semantic_execute=execute,
+        receipt_store=BrowserSemanticOperationReceiptStore(tmp_path / "operation_receipts"),
         session_id_getter=lambda: "s1",
     )
     return operation, actuator
