@@ -859,8 +859,9 @@ class BrowserSemanticOperationTool:
             raise BrowserSemanticOperationContractError("step_discriminator_missing")
         return clauses
 
-    @staticmethod
-    def _compact_projection(full_receipt: dict[str, Any], receipt_ref: str) -> dict[str, Any]:
+    def _compact_projection(
+        self, session_id: str, full_receipt: dict[str, Any], receipt_ref: str
+    ) -> dict[str, Any]:
         execution_status = str(full_receipt.get("execution_status") or "halted")
         clauses = [x for x in list(full_receipt.get("clauses") or []) if isinstance(x, dict)]
         status = "completed" if execution_status == "clauses_exhausted" else "halted"
@@ -890,7 +891,45 @@ class BrowserSemanticOperationTool:
                 compact["world_version"] = after_version
             observed = action_receipt.get("observed_effects")
             if isinstance(observed, dict) and observed.get("diff_ref"):
-                compact["diff_ref"] = observed["diff_ref"]
+                diff_ref = str(observed["diff_ref"])
+                compact["diff_ref"] = diff_ref
+                hydrated = self._perception.hydrate(session_id, diff_ref)
+                availability = str(hydrated.get("availability") or "unavailable")
+                content = hydrated.get("content")
+                if availability == "available" and isinstance(content, dict) and content.get(
+                    "schema"
+                ) == "smc.semantic_diff.v0.1":
+                    completeness = content.get("completeness")
+                    completeness = completeness if isinstance(completeness, dict) else {}
+
+                    def count_or_none(value: Any) -> int | None:
+                        return len(value) if isinstance(value, list) else None
+
+                    compact["delta"] = {
+                        "ref": diff_ref,
+                        "comparable": bool(content.get("comparable")),
+                        "scope_relation": str(content.get("scope_relation") or "unknown"),
+                        "complete": bool(completeness.get("complete")),
+                        "reasons": [
+                            str(reason)
+                            for reason in list(completeness.get("reasons") or [])[:8]
+                        ],
+                        "counts": {
+                            "created": count_or_none(content.get("created")),
+                            "removed": count_or_none(content.get("removed")),
+                            "changed": count_or_none(content.get("changed")),
+                        },
+                    }
+                else:
+                    reason = str(hydrated.get("reason") or "projection_mismatch")
+                    compact["delta"] = {
+                        "ref": diff_ref,
+                        "comparable": None,
+                        "scope_relation": "unknown",
+                        "complete": False,
+                        "reasons": [f"diff_{availability}:{reason}"],
+                        "counts": {"created": None, "removed": None, "changed": None},
+                    }
             boundary_events = action_receipt.get("boundary_events")
             if isinstance(boundary_events, list) and boundary_events:
                 compact["boundary_events"] = boundary_events
@@ -925,7 +964,7 @@ class BrowserSemanticOperationTool:
             if not model_friendly:
                 return receipt
             receipt_ref = self._receipt_store.persist(session_id, receipt)
-            return self._compact_projection(receipt, receipt_ref)
+            return self._compact_projection(session_id, receipt, receipt_ref)
 
         for index, clause in enumerate(clauses, start=1):
             kind = str(clause.get("kind") or "")
