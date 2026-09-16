@@ -38,6 +38,11 @@ nudge_growth_chars = 20000
 host = "127.0.0.1"
 port = 8903
 
+[local_runtime]
+# Read-only local runtime observation. Disabled preserves the existing RG-2 probe path.
+observer = "disabled"
+# cli = "/absolute/path/to/lfrt"
+
 [summary]
 mode = "off"
 

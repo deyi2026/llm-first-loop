@@ -223,3 +223,36 @@ def test_shadow_parity_is_unknown_when_either_observer_is_incomplete(missing: st
 
     assert report.status == "unknown"
     assert report.mismatches == ()
+
+
+def test_parser_rejects_listener_pid_when_port_listening_claim_is_false() -> None:
+    payload = _payload()
+    payload["data"]["server"]["port_listening"] = False
+    assert parse_lfrt_status(payload, observed_at=1.0) is None
+
+
+def test_parser_rejects_fractional_numeric_facts_instead_of_truncating() -> None:
+    payload = _payload()
+    payload["data"]["config"]["port"] = 8901.5
+    assert parse_lfrt_status(payload, observed_at=1.0) is None
+
+
+@pytest.mark.parametrize("config_body", [None, "{not-json", "[]"])
+def test_default_runner_does_not_invoke_lfrt_when_config_load_could_write(
+    tmp_path, config_body
+) -> None:
+    executable = tmp_path / "lfrt"
+    marker = tmp_path / "invoked"
+    executable.write_text(
+        "#!/bin/sh\nprintf invoked > " + str(marker) + "\nprintf '{\"ok\":true}'\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    if config_body is not None:
+        (tmp_path / "config.json").write_text(config_body, encoding="utf-8")
+
+    observer = LFRTStatusObserver(executable)
+
+    assert observer.observe() is None
+    assert not marker.exists()
+    assert not (tmp_path / "config.json.bak").exists()

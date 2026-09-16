@@ -402,6 +402,9 @@ class Settings:
     # ── 架构自省（AI-serving, design.md §2.1.4）──
     self_inspection_enabled: bool = True
     status_report_cooldown_s: float = 60.0
+    # LFRT is observation-only in this phase.  It does not own provider routing or RG admission.
+    local_runtime_observer: str = "disabled"
+    lfrt_cli: str = ""
 
     # ── 压缩档案（T22 另存提取替代截断）──
     archive_enabled: bool = True
@@ -578,6 +581,7 @@ class Settings:
             "history_max_chars": self.history_max_chars,
             "memory_top_k": self.memory_top_k,
             "self_inspection_enabled": self.self_inspection_enabled,
+            "local_runtime_observer": self.local_runtime_observer,
             # P1 配置摘要（不含密钥）
             "summary_mode": self.summary_mode,
             "embedding_provider": self.embedding_provider,
@@ -814,6 +818,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         memory_top_k=env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=env_bool("SELF_INSPECTION_ENABLED", True),
         status_report_cooldown_s=float(env_int("STATUS_REPORT_COOLDOWN_S", 60)),
+        local_runtime_observer=_mode(
+            "LFL_LOCAL_RUNTIME_OBSERVER", "disabled", {"disabled", "lfrt"}
+        ),
+        lfrt_cli=str(env_values.get("LFL_LFRT_CLI", "") or "").strip(),
         archive_enabled=env_bool("ARCHIVE_ENABLED", True),
         experiences_dir=str(_resolved_paths.experiences_dir),
         methods_dir=str(_resolved_paths.methods_dir),

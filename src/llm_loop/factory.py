@@ -65,6 +65,7 @@ from llm_loop.methods.store import (
 from llm_loop.resources.foreground import ForegroundActivityProbe
 from llm_loop.resources.governor import ResourceGovernor
 from llm_loop.resources.ledger_projection import ProviderSettlementProjectionIndex
+from llm_loop.resources.lfrt_runtime import make_lfrt_status_fn
 from llm_loop.resources.local_runtime import LocalRuntimeConcurrencyAdapter
 from llm_loop.resources.provider_calls import ProviderCallCoordinator
 from llm_loop.resources.provider_settlement import ProviderCallSettlementJournal
@@ -1122,6 +1123,8 @@ def build_engine(settings: Settings) -> LoopEngine:
     )
 
     status_provider.set_knowledge_health_fn(_knowledge_health_snapshot)
+    if settings.local_runtime_observer == "lfrt":
+        status_provider.set_local_runtime_fn(make_lfrt_status_fn(settings.lfrt_cli))
 
     # spec 6.5.4/D6: route.missing 留痕回调接既有审计单口（C-G1 遗留接线，恰一次）
     set_route_audit_fn(status_provider.record_action)

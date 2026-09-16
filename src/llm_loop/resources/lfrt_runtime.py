@@ -50,6 +50,27 @@ class LFRTStatusSnapshot:
 
         return min(self.live_prompt_concurrency, self.live_decode_concurrency)
 
+    def to_status_dict(self) -> dict[str, object]:
+        """Prompt-safe diagnostic projection; never exposes the LFRT executable path."""
+
+        return {
+            "available": True,
+            "observer": "lfrt",
+            "state": self.launchd_state,
+            "pid": self.listener_pid,
+            "port": self.port,
+            "model": self.model_identity,
+            "prompt_concurrency": self.live_prompt_concurrency,
+            "decode_concurrency": self.live_decode_concurrency,
+            "configured_concurrency": {
+                "prompt": self.configured_prompt_concurrency,
+                "decode": self.configured_decode_concurrency,
+            },
+            "endpoint_healthy": self.endpoint_healthy,
+            "drift": self.drift,
+            "source_ref": self.source_ref,
+        }
+
 
 @dataclass(frozen=True)
 class LFRTShadowParityReport:
@@ -105,9 +126,14 @@ def compare_lfrt_with_legacy(
 def _positive_int(value: object) -> int | None:
     if isinstance(value, bool):
         return None
-    try:
-        parsed = int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str):
+        raw = value.strip()
+        if not raw or not raw.isdecimal():
+            return None
+        parsed = int(raw)
+    else:
         return None
     return parsed if parsed > 0 else None
 
@@ -141,7 +167,7 @@ def parse_lfrt_status(payload: object, *, observed_at: float) -> LFRTStatusSnaps
 
     if launchd.get("known") is not True or launchd.get("registered") is not True:
         return None
-    if listener.get("known") is not True:
+    if server.get("port_listening") is not True or listener.get("known") is not True:
         return None
     launchd_state = str(launchd.get("state") or "").strip()
     if launchd_state != "running":
@@ -221,7 +247,26 @@ def parse_lfrt_status(payload: object, *, observed_at: float) -> LFRTStatusSnaps
     )
 
 
+def _status_config_is_read_only_safe(executable: str) -> bool:
+    """Reject LFRT status when its implicit config load could mutate disk.
+
+    LFRT currently creates a default config when ``config.json`` is missing and
+    writes a ``.bak`` when JSON is corrupt.  The Observer must not trigger those
+    self-repair paths, so the default runner proves a valid object exists first.
+    """
+
+    try:
+        command_path = Path(executable).resolve(strict=True)
+        config_path = command_path.parent / "config.json"
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict)
+
+
 def _run_status(argv: tuple[str, ...], timeout_s: float) -> tuple[int, str, str]:
+    if not argv or not _status_config_is_read_only_safe(argv[0]):
+        return -1, "", "observer preflight refused unsafe LFRT config load"
     try:
         completed = subprocess.run(
             list(argv),
@@ -269,3 +314,30 @@ class LFRTStatusObserver:
         except (TypeError, json.JSONDecodeError):
             return None
         return parse_lfrt_status(payload, observed_at=float(self._clock()))
+
+
+def make_lfrt_status_fn(executable: str | Path) -> Callable[[], dict[str, object]]:
+    """Build an on-demand, read-only ArchitectureStatus callback."""
+
+    try:
+        observer = LFRTStatusObserver(executable)
+    except ValueError:
+        return lambda: {
+            "available": False,
+            "observer": "lfrt",
+            "status": "unknown",
+            "reason": "invalid_configuration",
+        }
+
+    def _snapshot() -> dict[str, object]:
+        observed = observer.observe()
+        if observed is None:
+            return {
+                "available": False,
+                "observer": "lfrt",
+                "status": "unknown",
+                "reason": "observation_failed",
+            }
+        return observed.to_status_dict()
+
+    return _snapshot

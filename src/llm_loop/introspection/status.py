@@ -168,6 +168,7 @@ class ArchitectureStatusProvider:
         self._cache_guard_fn: Callable[[str], dict | None] | None = None  # session 透传（grill-me Q11）
         self._request_usage_fn: Callable[[], dict | None] | None = None
         self._causality_fn: Callable[[str], dict | None] | None = None
+        self._local_runtime_fn: Callable[[], dict] | None = None
 
     # ── 采集（循环事件附带调用，零侵入）──
     def record_phase(self, phase: str) -> None:
@@ -458,6 +459,11 @@ class ArchitectureStatusProvider:
         """Inject a read-only, on-demand per-session causal diagnostic callback."""
         self._causality_fn = fn
 
+    def set_local_runtime_fn(self, fn) -> None:
+        """Inject read-only local-runtime facts; queried only on explicit dimension request."""
+
+        self._local_runtime_fn = fn
+
     def set_pending_actions_fn(self, fn) -> None:
         """注入待办聚合回调（T4: AI 一站式感知系统待办，纯聚合无判断）.
 
@@ -561,6 +567,18 @@ class ArchitectureStatusProvider:
             if _causality_requested
             else {"available": self._causality_fn is not None, "on_demand": True}
         )
+        _local_runtime_requested = (
+            isinstance(dimensions, list) and "local_runtime" in dimensions
+        ) or (
+            isinstance(dimensions, str)
+            and "local_runtime"
+            in {item for item in re.split(r"[,，\s]+", dimensions) if item}
+        )
+        _local_runtime = (
+            self._local_runtime_snapshot()
+            if _local_runtime_requested
+            else {"available": self._local_runtime_fn is not None, "on_demand": True}
+        )
         avail = {
             "current_phase": self._phase_for(session_id),
             "action_trace": [a.to_dict() for a in self._action_trace[-30:]],
@@ -621,6 +639,7 @@ class ArchitectureStatusProvider:
             "knowledge_health": self._knowledge_health_snapshot(),
             # R2/A6: 程序故障计数（fail-open 聚合，AI 可感知"程序故障率"）
             "causality": _causality,
+            "local_runtime": _local_runtime,
             "program_faults": dict(self._program_faults),
         }
         # EVO-20260818/2026-08-20 防御归一化: dimensions 可能被模型传成字符串/残缺 JSON
@@ -649,6 +668,20 @@ class ArchitectureStatusProvider:
             return fn(session_id)
         except Exception:  # noqa: BLE001 — diagnosis is read-only/fail-open
             return {"available": True, "status": "read_failed"}
+
+    def _local_runtime_snapshot(self) -> dict:
+        fn = self._local_runtime_fn
+        if fn is None:
+            return {"available": False, "status": "unknown", "note": "source not injected"}
+        try:
+            value = fn()
+            return value if isinstance(value, dict) else {
+                "available": False,
+                "status": "unknown",
+                "note": "source returned non-object",
+            }
+        except Exception:  # noqa: BLE001 - diagnostics are fail-open and never authorize mutation
+            return {"available": False, "status": "unknown", "note": "read_failed"}
 
     # ── 缓存快照辅助（fail-open）──
     def _cache_health_snapshot(self) -> dict | None:
