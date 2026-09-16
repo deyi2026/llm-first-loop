@@ -830,3 +830,24 @@ Therefore optimization priority is:
 Do not sacrifice items 1–3 merely to minimize schema bytes.
 
 The next live qualification should test whether the exact repair class from MF-5.3 v0.1 disappears under this root-direct surface. No claim of live improvement is made by the deterministic result alone.
+
+
+---
+
+## 21. MF-5.3.1 measured correction — root-direct helps, but eye/hand routing and perception salience remain
+
+Formal MF-5.3.1 v0.1 reduced observable Perceive repair from 8 to 3 and eliminated the exact nested-condition / hydrate+projection_limit failure classes, but it did **not** qualify: external task correctness was 5/6 and the frozen Gate failed.
+
+The three remaining Perceive failures are capability-routing mistakes, not nested-schema mistakes: two `action=navigate` calls were sent to Perceive and one snapshot call carried a URL. The model recovered mechanically in each case, which suggests the semantic intent is understood but the “eye vs hand” ownership of navigation is not salient enough on first call.
+
+The failed fill row exposes a second independent issue. The snapshot contained an enabled complete `button` named `Save code` plus AX-only StaticText and InlineTextBox objects with the same name. The model selected `kind=generic`, exact grounding found two text-fragment matches, and the runtime correctly halted without fuzzy repair. The model then spent the remaining horizon inspecting evidence and never dispatched the corrected button click.
+
+This strengthens two design laws:
+
+> **Capability boundaries must be cognitively obvious without becoming a model planning protocol.**
+
+> **Perception should preserve exact evidence while making mechanically actionable semantics legible; it must not choose the task target for the model.**
+
+MF-5.3.2 should therefore begin with a read-only audit of (1) Perceive/Operate routing salience and (2) actionable-parent vs AX-text-fragment projection/fusion/order. Do not add navigation to Perceive, do not fuzzy-resolve ambiguous targets, and do not raise the iteration budget as the primary fix.
+
+See `docs/SMC-BROWSER-COGNITION-PRESERVING-MF5.3.1-v0.1-RESULT-20260916.md`. MF-6 remains deferred.

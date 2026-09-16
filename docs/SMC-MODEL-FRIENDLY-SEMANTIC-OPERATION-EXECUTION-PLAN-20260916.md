@@ -225,3 +225,27 @@ The model-facing Perceive grammar is now seven closed root branches: snapshot, h
 Committed-state deterministic qualification is green: focused 30/30, Browser 316/316, Factory 24/24, Ruff/Pyright clean, security/diff-check PASS, and the full non-real-LLM test Gate exits 0 with no failures/errors.
 
 Next phase is a **fresh MF-5.3.1 measured identity**, not reuse of MF-5.3 v0.1 evidence. Freeze protocol + manifest, run zero-model preflight, and stop at the human checkpoint before any model request. MF-6 remains deferred.
+
+
+## 13. MF-5.3.1 v0.1 formal measured result — 2026-09-16
+
+Authoritative report: `docs/SMC-BROWSER-COGNITION-PRESERVING-MF5.3.1-v0.1-RESULT-20260916.md`.
+
+MF-5.3.1 v0.1 closed **NOT QUALIFIED** under its frozen Gate. Infrastructure and hard Browser safety remained valid, and the intended old Perceive wire failures disappeared, but external task correctness was 5/6. Observed Gate failures: Perceive failures/protocol repairs=3, first Browser call valid=3/6, Grounding Probe Amplification=1, task pass=5/6. Operate failures/errors, schema lookup, duplicate successful mutation, hidden atomic calls, auto retry, completion authority and boundary continuation all remained zero.
+
+The remaining failure classes are new:
+
+1. **capability routing:** navigation was sent to Perceive on first call in two rows; a third row used snapshot+URL;
+2. **perception salience / identity choice:** `fill_submit-r2` selected a generic `Save code` AX text identity even though an enabled complete button identity was present; exact grounding correctly halted on two generic matches, after which evidence inspection exhausted the 12-round horizon.
+
+### MF-5.3.2 work order
+
+Start read-only. Do not change production yet.
+
+1. audit provider tool names/order/compact descriptions for natural Perceive-vs-Operate routing, especially navigation, without teaching a thought protocol;
+2. audit snapshot projection/object fusion/order so complete actionable parents are mechanically legible alongside AX text descendants while preserving exact evidence;
+3. inspect evidence paging/round amplification only after the first two causes are bounded; do not use a larger iteration budget as the primary remedy;
+4. preserve exact/fail-closed grounding, no fuzzy/best-match, no automatic target substitution/retry, and no task-completion authority;
+5. only after the audit, freeze deterministic RED for the minimal next correction.
+
+MF-6 remains deferred.
