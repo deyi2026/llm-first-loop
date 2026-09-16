@@ -164,3 +164,13 @@ MF-5.3 starts **read-only**. Before any new production code:
 5. pre-register next qualification metrics, including target-not-found / grounding-probe amplification as a diagnostic, without weakening exact fail-closed grounding.
 
 No production implementation begins until this architecture audit is reviewed.
+
+## 9. MF-5.3 read-only architecture audit — 2026-09-16
+
+Authoritative audit: `docs/SMC-BROWSER-MF5.3-READ-ONLY-ARCHITECTURE-AUDIT-20260916.md`.
+
+MF-5.3 read-only audit is complete with no production change. The architecture ruling is now: **perception and actuation are peer capabilities; wait belongs to perception; one already-decided mutation should have a direct single-action normal form; action results should expose a bounded local delta and exact refs, with escalation to hydrate or fresh snapshot only when mechanically/semantically needed.**
+
+Current implementation already contains the required mechanical substrate (`browser_perceive`, exact snapshot/hydrate/diff, typed waits, version guards, post-action capture/diff, single-dispatch receipts). The next phase is interface composition, not a new Browser engine.
+
+MF-6 remains deferred. No RED or production implementation may begin until the MF-5.3 architecture checkpoint is explicitly crossed.

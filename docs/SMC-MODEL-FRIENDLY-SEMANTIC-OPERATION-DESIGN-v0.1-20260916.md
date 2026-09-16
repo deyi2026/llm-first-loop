@@ -733,3 +733,19 @@ A third correction is target-domain separation. Scope/page conditions (`ready`, 
 Finally, compact receipts remain valuable but are not a replacement for perception. They should carry local mechanical effects; model-visible perception remains available when the next semantic decision genuinely requires broader world state.
 
 See `docs/SMC-BROWSER-COGNITION-PRESERVING-ACTUATION-MF5.2-v0.2-RESULT-20260916.md` for exact evidence and hashes.
+
+---
+
+## 17. MF-5.3 architecture addendum — perception + direct actuation
+
+MF-5.3 read-only audit refines Cognition-Preserving Semantic Actuation into a two-capability model-facing architecture:
+
+> **Perceive is the eye; Operate is the hand. Wait is read-only perception, not actuation.**
+
+> **One already-decided mutation maps to one direct action call. Batching is optional execution compression, not the default thought/call format.**
+
+> **Post-action evidence has three levels: bounded compact delta -> exact hydrate of already-captured evidence -> fresh full snapshot. The model decides semantic sufficiency; the runtime exposes only mechanical comparability/completeness/boundary facts.**
+
+The existing Browser implementation already supplies the mechanical primitives. The design task is to compose them into a smaller cognitive surface without weakening exact grounding, stale/version checks, session fencing, mutation single-dispatch or evidence durability.
+
+See `docs/SMC-BROWSER-MF5.3-READ-ONLY-ARCHITECTURE-AUDIT-20260916.md` for evidence, authority boundaries and the staged next plan.
