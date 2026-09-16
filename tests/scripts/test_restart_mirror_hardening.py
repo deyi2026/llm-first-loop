@@ -1,4 +1,4 @@
-"""修1-修5(2026-09-09): restart_mirror.sh 加固静态断言.
+"""修1-修6: restart_mirror.sh 加固静态断言.
 
 背景（EXPERIENCE 2026-09-09 假 armed 回执事故——stdout 回执随宿主死亡）:
 - 修1 RESTART_WAIT_IDLE 长任务保护移植到位（web/feishu/all 三分支均 precheck）
@@ -28,9 +28,14 @@ def test_bash_syntax_and_shellcheck_clean():
 def test_wait_idle_precheck_on_all_restart_branches():
     src = _src()
     assert "RESTART_WAIT_IDLE" in src
+    case_body = src.split("\ncase ", 1)[1]
     for branch in ("web)", "feishu)", "all)"):
-        m = re.search(re.escape(branch) + r"[^\n]*_restart_precheck", src)
-        assert m, f"{branch} 分支未接 _restart_precheck"
+        body = case_body.split(branch, 1)[1].split(";;", 1)[0]
+        assert "_restart_precheck" in body, f"{branch} 分支未接 _restart_precheck"
+    # Web-capable branches add artifact fail-fast before the existing long-task precheck.
+    for branch in ("web)", "all)"):
+        body = case_body.split(branch, 1)[1].split(";;", 1)[0]
+        assert body.index("_webui_artifact_preflight") < body.index("_restart_precheck")
 
 
 def test_stop_source_web_port_first_and_wait_pid_exit():
@@ -195,3 +200,81 @@ def test_dual_root_status_accepts_clean_same_repo_and_rejects_dirty_or_foreign(t
     mismatch = _run_dual_status(runtime_root, foreign)
     assert mismatch.returncode == 2
     assert "git-common-dir 不一致" in mismatch.stderr
+
+# ── 2026-09-16 Web V2 artifact/readiness hardening ──
+
+def test_webui_artifact_preflight_runs_before_any_web_stop():
+    """Missing ignored webui/dist must fail before a healthy Web is stopped."""
+    src = _src()
+    assert "_webui_artifact_preflight()" in src
+    case_body = src.split("\ncase ", 1)[1]
+    for branch in ("web)", "all)"):
+        body = case_body.split(branch, 1)[1].split(";;", 1)[0]
+        assert "_webui_artifact_preflight" in body
+        assert body.index("_webui_artifact_preflight") < body.index('_stop_web "$RESTART_PORT"')
+
+
+def test_webui_artifact_preflight_checks_index_and_referenced_assets():
+    src = _src()
+    body = src.split("_webui_artifact_preflight()", 1)[1].split("\n}", 1)[0]
+    assert "UI_V2_DIR" in body
+    assert '${UI_V2_DIR:-$CODE_ROOT/webui/dist}' in body
+    assert "index.html" in body
+    assert "missing Web V2 asset" in body
+    assert "npm run build" in body
+
+
+def test_web_readiness_requires_ui_v2_not_only_auth_status():
+    src = _src()
+    body = src.split("_start_web()", 1)[1].split("\n}", 1)[0]
+    assert "/auth/status" in body
+    assert "/ui/v2/" in body
+    assert "ui_code" in body
+    assert "web backend ready but Web V2 unavailable" in src
+
+
+def test_missing_webui_dist_fails_before_restart_side_effects(tmp_path):
+    runtime_root, code_root = _init_dual_root_fixture(tmp_path)
+    env = os.environ.copy()
+    env["LFL_RESTART_RUNTIME_ROOT"] = str(runtime_root)
+    env["LFL_RESTART_CODE_ROOT"] = str(code_root)
+    result = subprocess.run(
+        ["bash", str(_SCRIPT), "web"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 1
+    assert "Web V2 artifact preflight failed" in result.stdout
+    receipt = runtime_root / "data" / "restart-receipt.json"
+    assert receipt.is_file()
+    import json
+    row = json.loads(receipt.read_text(encoding="utf-8"))
+    assert row["action"] == "web"
+    assert row["rc"] == 1
+    assert row["detail"] == "webui_artifact_preflight_failed"
+
+
+def test_partial_webui_dist_with_missing_hashed_asset_fails_preflight(tmp_path):
+    runtime_root, code_root = _init_dual_root_fixture(tmp_path)
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text(
+        '<!doctype html><script type="module" src="/ui/v2/assets/index-missing.js"></script>',
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["LFL_RESTART_RUNTIME_ROOT"] = str(runtime_root)
+    env["LFL_RESTART_CODE_ROOT"] = str(code_root)
+    env["UI_V2_DIR"] = str(dist)
+    result = subprocess.run(
+        ["bash", str(_SCRIPT), "web"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 1
+    assert "missing Web V2 asset: assets/index-missing.js" in result.stderr
+    assert "index 引用的静态资源缺失" in result.stdout
