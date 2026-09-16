@@ -38,6 +38,13 @@ nudge_growth_chars = 20000
 host = "127.0.0.1"
 port = 8903
 
+[local_runtime]
+# On-demand diagnostic visibility only; independent from admission authority.
+observer = "disabled"
+# Admission authority is independent from diagnostic visibility; legacy is rollback-safe default.
+admission_authority = "legacy"
+# cli = "/absolute/path/to/lfrt"
+
 [summary]
 mode = "off"
 

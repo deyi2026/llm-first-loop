@@ -13,6 +13,7 @@ from llm_loop.methods.learning_journal import (
     learning_job_id,
 )
 from llm_loop.methods.learning_plane import LearningPlane
+from llm_loop.resources.contracts import ResourceKey, ResourceScopeKind
 from llm_loop.resources.foreground import ForegroundActivityProbe
 from llm_loop.resources.governor import ResourceGovernor
 
@@ -381,3 +382,89 @@ def test_learning_plane_unresolved_resource_target_yields_without_attempt(tmp_pa
     after = journal.job(job.job_id)
     assert after is not None and after.state == "queued" and after.attempt == 0
     assert plane._resource_governor.active_leases() == ()
+
+
+def test_learning_plane_authoritative_managed_unknown_does_not_fallback_to_rg1(tmp_path):
+    from llm_loop.resources.provider_calls import ResourceAdmissionError
+
+    journal = _mk(tmp_path)
+    job = journal.enqueue("episode:s1:3:xyz", session_id="s1", source_model="cognilocal/ornith")
+    assert job is not None
+    engine = SimpleNamespace(
+        registry=object(),
+        runner=SimpleNamespace(has_running=lambda: False),
+        _sync_guard=threading.Lock(),
+        _sync_active=set(),
+    )
+    probe = ForegroundActivityProbe(engine, tmp_path / "sessions")
+    governor = ResourceGovernor(foreground_probe=probe.active)
+
+    class Coordinator:
+        def build_request_for_client(self, *_args, **_kwargs):
+            raise ResourceAdmissionError("provider resource admission failed: required_fact_unknown")
+
+    plane = LearningPlane(
+        journal=journal,
+        episode_store=SimpleNamespace(get=lambda *_args: None),
+        method_store=SimpleNamespace(),
+        engine=engine,
+        model_resolver=lambda _model: object(),
+        resource_governor=governor,
+        resource_target_resolver=_resource_target,
+        provider_call_coordinator=Coordinator(),  # type: ignore[arg-type]
+        poll_interval_s=1.0,
+        quiet_period_s=0.0,
+    )
+    assert plane._try_execute(job) is False
+    after = journal.job(job.job_id)
+    assert after is not None and after.state == "queued" and after.attempt == 0
+    fallback = ResourceKey(
+        "cognilocal", ResourceScopeKind.RUNTIME, "rg1-learning-process:ornith"
+    )
+    assert governor.concurrency_limit(fallback) is None
+    assert governor.active_leases() == ()
+
+
+def test_learning_plane_revalidates_authority_before_started_and_requeues_on_generation_change(tmp_path):
+    from llm_loop.resources.contracts import AdmissionRequest, ExecutionClass, ServicePriority
+    from llm_loop.resources.provider_calls import ResourceAdmissionError
+
+    journal = _mk(tmp_path)
+    job = journal.enqueue("episode:s1:3:xyz", session_id="s1", source_model="cognilocal/ornith")
+    assert job is not None
+    engine = SimpleNamespace(
+        registry=object(), runner=SimpleNamespace(has_running=lambda: False),
+        _sync_guard=threading.Lock(), _sync_active=set(),
+        settings=SimpleNamespace(method_reflection_timeout_s=120.0),
+    )
+    probe = ForegroundActivityProbe(engine, tmp_path / "sessions")
+    governor = ResourceGovernor(foreground_probe=probe.active)
+    key = ResourceKey("cognilocal", ResourceScopeKind.RUNTIME, "mlx-loopback:8901")
+
+    class Coordinator:
+        def build_request_for_client(self, *_args, **_kwargs):
+            governor.set_concurrency_limit(key, 1, source_ref="lfrt:pid:1", generation="pid:1")
+            return AdmissionRequest(
+                request_id="learning:authority", owner_ref="learning:x",
+                execution_class=ExecutionClass.BACKGROUND_LEARNING,
+                service_priority=ServicePriority.P3_BACKGROUND_LEARNING,
+                provider_id="cognilocal", model_id="ornith", resource_keys=(key,),
+                submitted_at=1.0,
+            )
+        def revalidate_request_for_client(self, *_args, **_kwargs):
+            governor.invalidate_concurrency_limit(key)
+            raise ResourceAdmissionError("provider resource admission failed: fact_conflict")
+
+    plane = LearningPlane(
+        journal=journal,
+        episode_store=SimpleNamespace(get=lambda *_args: {"messages": [{"role": "assistant", "content": "done"}]}),
+        method_store=SimpleNamespace(), engine=engine,
+        model_resolver=lambda _model: object(), resource_governor=governor,
+        resource_target_resolver=_resource_target,
+        provider_call_coordinator=Coordinator(),  # type: ignore[arg-type]
+        poll_interval_s=1.0, quiet_period_s=0.0,
+    )
+    assert plane._try_execute(job) is False
+    after = journal.job(job.job_id)
+    assert after is not None and after.state == "queued" and after.attempt == 0
+    assert governor.active_leases() == ()

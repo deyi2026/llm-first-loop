@@ -30,7 +30,7 @@ from llm_loop.resources.contracts import (
     ServicePriority,
 )
 from llm_loop.resources.governor import ResourceGovernor
-from llm_loop.resources.provider_calls import ProviderCallCoordinator
+from llm_loop.resources.provider_calls import ProviderCallCoordinator, ResourceAdmissionError
 from llm_loop.resources.provider_settlement import (
     ProviderAttemptKind,
     ProviderCallOutcome,
@@ -123,7 +123,9 @@ class LearningPlane:
                     model_id=model_id,
                     request_id=request_id,
                 )
-            except Exception:  # noqa: BLE001 - preserve the RG-1 fallback lane
+            except ResourceAdmissionError:
+                raise
+            except Exception:  # noqa: BLE001 - legacy/unqualified probes preserve RG-1 fallback
                 shared = None
             if shared is not None:
                 return shared
@@ -203,8 +205,7 @@ class LearningPlane:
             if self.foreground_busy():  # re-check between admission and start
                 self._journal.mark_requeued(job.job_id, "foreground_arrived")
                 return False
-            self._journal.mark_started(job.job_id)
-            if self.foreground_busy():  # last check before spending the model slot
+            if self.foreground_busy():  # last early check before preparing model input
                 self._journal.mark_requeued(job.job_id, "foreground_arrived")
                 return False
             entry = self._episode_store.get(job.session_id, job.source_episode_ref)
@@ -220,6 +221,23 @@ class LearningPlane:
                     final_answer = str(row.get("content") or "")
                     break
             coordinator = self._provider_call_coordinator
+            if self.foreground_busy():  # final check immediately before authority/transport
+                self._journal.mark_requeued(job.job_id, "foreground_arrived")
+                return False
+            if coordinator is not None:
+                expected_generation = (
+                    self._resource_governor.concurrency_limit_generation(request.resource_keys[0])
+                    if len(request.resource_keys) == 1
+                    else None
+                )
+                try:
+                    coordinator.revalidate_request_for_client(
+                        client, request, expected_generation=expected_generation
+                    )
+                except ResourceAdmissionError:
+                    self._journal.mark_requeued(job.job_id, "resource_authority_changed")
+                    return False
+            self._journal.mark_started(job.job_id)
             provider_call = (
                 coordinator.open_shadow_call_for_client(
                     client,
