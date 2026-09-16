@@ -290,18 +290,23 @@ def test_action_worker_fails_closed_if_generation_changes_after_accept(tmp_path:
 
 
 def test_action_worker_records_success_from_desired_state_script(tmp_path: Path) -> None:
+    import subprocess
+
     from llm_loop.runtime.service_control import run_action_worker
 
-    store = ManagedServiceDeploymentStore(tmp_path / "data")
-    dep = _deployment(tmp_path, generation=1)
-    script = Path(dep.code_root) / "scripts" / "restart_mirror.sh"
-    marker = Path(dep.runtime_root) / "worker-marker.txt"
+    code, runtime = _git_deployment_fixture(tmp_path)
+    script = code / "scripts" / "restart_mirror.sh"
+    marker = runtime / "worker-marker.txt"
     script.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
         'printf "%s|%s|%s|%s\\n" "$1" "$LFL_RESTART_CODE_ROOT" "$LFL_RESTART_RUNTIME_ROOT" "${P0A_SHOULD_NOT_LEAK-unset}" > worker-marker.txt\n',
         encoding="utf-8",
     )
+    subprocess.run(["git", "-C", str(code), "add", "scripts/restart_mirror.sh"], check=True)
+    subprocess.run(["git", "-C", str(code), "commit", "-qm", "worker fixture"], check=True)
+    dep = build_deployment(code_root=code, runtime_root=runtime, generation=1)
+    store = ManagedServiceDeploymentStore(runtime / "data")
     store.compare_and_swap(dep, expected_generation=0)
     action = store.accept_restart(
         target="web",
@@ -478,10 +483,9 @@ def test_lifecycle_lock_serializes_publish_against_physical_restart(tmp_path: Pa
     import sys
     import time
 
-    store = ManagedServiceDeploymentStore(tmp_path / "data")
-    first = _deployment(tmp_path, generation=1)
-    marker = Path(first.runtime_root) / "lifecycle-started"
-    script = Path(first.code_root) / "scripts" / "restart_mirror.sh"
+    code, runtime = _git_deployment_fixture(tmp_path)
+    marker = runtime / "lifecycle-started"
+    script = code / "scripts" / "restart_mirror.sh"
     script.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
@@ -489,6 +493,10 @@ def test_lifecycle_lock_serializes_publish_against_physical_restart(tmp_path: Pa
         "sleep 0.8\n",
         encoding="utf-8",
     )
+    subprocess.run(["git", "-C", str(code), "add", "scripts/restart_mirror.sh"], check=True)
+    subprocess.run(["git", "-C", str(code), "commit", "-qm", "lifecycle fixture"], check=True)
+    first = build_deployment(code_root=code, runtime_root=runtime, generation=1)
+    store = ManagedServiceDeploymentStore(runtime / "data")
     store.compare_and_swap(first, expected_generation=0)
     action = store.accept_restart(
         target="all",
@@ -526,3 +534,163 @@ def test_lifecycle_lock_serializes_publish_against_physical_restart(tmp_path: Pa
     assert child.wait(timeout=5) == 0
     assert elapsed >= 0.45, f"publish did not wait for lifecycle lease: {elapsed:.3f}s"
     assert store.read() == second
+
+# ── P0-A.1 bootstrap-audit follow-up (2026-09-16) ──
+
+
+def test_missing_deployment_read_is_strictly_zero_write(tmp_path: Path) -> None:
+    data_dir = tmp_path / "read-data"
+    store = ManagedServiceDeploymentStore(data_dir)
+
+    assert not data_dir.exists()
+    assert store.read() is None
+    assert not data_dir.exists(), "read-only missing-state lookup must not create runtime/lock files"
+
+
+def test_service_control_status_on_missing_state_is_strictly_zero_write(tmp_path: Path) -> None:
+    data_dir = tmp_path / "tool-status-data"
+    store = ManagedServiceDeploymentStore(data_dir)
+    tool = ServiceControlTool(store=store)
+
+    result = tool.execute(action="status")
+    assert result.status == ToolResultStatus.SUCCESS
+    assert '"deployment": null' in result.content
+    assert not data_dir.exists(), "model-visible status must be physically read-only"
+
+
+def test_cli_show_and_verify_missing_state_are_strictly_zero_write(tmp_path: Path) -> None:
+    import os
+    import subprocess
+    import sys
+
+    source_root = Path(__file__).resolve().parents[2] / "src"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(source_root)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+    show_data = tmp_path / "cli-show-data"
+    shown = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "llm_loop.runtime.service_control",
+            "show",
+            "--data-dir",
+            str(show_data),
+        ],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert shown.returncode == 0
+    assert shown.stdout.strip() == "{}"
+    assert not show_data.exists(), "CLI show must not create a state-lock directory"
+
+    verify_data = tmp_path / "cli-verify-data"
+    verified = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "llm_loop.runtime.service_control",
+            "verify",
+            "--data-dir",
+            str(verify_data),
+            "--code-root",
+            str(tmp_path),
+            "--runtime-root",
+            str(tmp_path),
+        ],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert verified.returncode == 4
+    assert "not published" in verified.stderr
+    assert not verify_data.exists(), "CLI verify missing-state path must remain zero-write"
+
+
+def test_detached_worker_uses_current_control_code_for_pre_p0a_target(tmp_path: Path) -> None:
+    import time
+
+    from llm_loop.runtime.service_control import spawn_service_control_worker
+
+    code, runtime = _git_deployment_fixture(tmp_path)
+    script = code / "scripts" / "restart_mirror.sh"
+    marker = runtime / "old-target-ran.txt"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'printf "%s\\n" "$1" > old-target-ran.txt\n',
+        encoding="utf-8",
+    )
+    import subprocess
+
+    subprocess.run(["git", "-C", str(code), "add", "scripts/restart_mirror.sh"], check=True)
+    subprocess.run(["git", "-C", str(code), "commit", "-qm", "old target script"], check=True)
+    assert not (code / "src" / "llm_loop" / "runtime" / "service_control.py").exists()
+
+    store = ManagedServiceDeploymentStore(runtime / "data")
+    deployment = build_deployment(code_root=code, runtime_root=runtime, generation=1)
+    store.compare_and_swap(deployment, expected_generation=0)
+    action = store.accept_restart(
+        target="all",
+        expected_generation=1,
+        requester_session_id="session-rollback",
+    )
+
+    spawn_service_control_worker(store, action.action_id)
+    deadline = time.monotonic() + 8
+    terminal = None
+    while time.monotonic() < deadline:
+        terminal = store.read_action(action.action_id)
+        if terminal is not None and terminal.status in {"succeeded", "failed"}:
+            break
+        time.sleep(0.05)
+
+    assert terminal is not None
+    assert terminal.status == "succeeded", terminal.detail
+    assert marker.read_text(encoding="utf-8").strip() == "all"
+
+
+def test_worker_reverifies_dirty_target_before_old_script_execution(tmp_path: Path) -> None:
+    import subprocess
+
+    from llm_loop.runtime.service_control import run_action_worker
+
+    code, runtime = _git_deployment_fixture(tmp_path)
+    marker = runtime / "must-not-run.txt"
+    script = code / "scripts" / "restart_mirror.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "touch must-not-run.txt\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(code), "add", "scripts/restart_mirror.sh"], check=True)
+    subprocess.run(["git", "-C", str(code), "commit", "-qm", "old target script"], check=True)
+
+    store = ManagedServiceDeploymentStore(runtime / "data")
+    deployment = build_deployment(code_root=code, runtime_root=runtime, generation=1)
+    store.compare_and_swap(deployment, expected_generation=0)
+    action = store.accept_restart(
+        target="all",
+        expected_generation=1,
+        requester_session_id="session-dirty",
+    )
+
+    # Drift after publish/accept: generation/deployment_id still match, bytes do not.
+    (code / "pyproject.toml").write_text(
+        "[project]\nname='p0a'\nversion='dirty-after-publish'\n",
+        encoding="utf-8",
+    )
+    rc = run_action_worker(store, action.action_id)
+    terminal = store.read_action(action.action_id)
+
+    assert rc != 0
+    assert terminal is not None and terminal.status == "failed"
+    assert "dirty" in terminal.detail
+    assert not marker.exists(), "worker must fail before executing a drifted pre-P0-A script"

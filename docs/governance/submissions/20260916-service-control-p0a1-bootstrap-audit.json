@@ -1,0 +1,125 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260916-service-control-p0a1-bootstrap-audit",
+  "summary": "Refines the existing P0-A shared-service lifecycle authority after a read-only bootstrap audit found three pre-deployment contract gaps: missing-state reads wrote lock files, rollback worker imports incorrectly followed the old physical target, and the worker did not re-verify target bytes immediately before effect.",
+  "components": [
+    {
+      "component_id": "shared-service-lifecycle-authority-p0a1",
+      "paths": [
+        "src/llm_loop/runtime/service_control.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing P0-A generation-bound shared Web/Feishu lifecycle control plane",
+      "disposition": "ADMIT as a narrow refinement of the existing P0-A authority: make read-only desired-state observation physically zero-write, keep detached controller import identity on current control code during rollback, and re-verify desired physical target bytes under the lifecycle lease before invoking any old/new restart script.",
+      "evidence": [
+        "Temporary missing-state audit mechanically reproduced read=None followed by creation of service-control-state.lock.",
+        "A pre-P0-A temporary target without the service_control module left the detached action nonterminal because the worker imported from the desired target root.",
+        "A clean published temporary target modified after acceptance was previously executed successfully; P0-A.1 now durable-fails before the script when exact binding verification detects drift.",
+        "The existing lifecycle lease remains the publication-vs-effect serialization authority; no second restart executor or semantic policy is introduced."
+      ],
+      "verification_level": "deterministic RED/GREEN, 53-test focused matrix, 191-test adjacency, runtime-env ratchet, Ruff/Pyright, whole-tree security, and full repository ci_gate",
+      "model_evidence_veto_recovery_exit": "The model still receives desired generation/action terminal/binding evidence and decides whether restart or rollback is useful. Missing desired state is observable without side effects; a stale or byte-drifted target fails before physical execution; rollback may target pre-P0-A code because controller and physical target identity are explicit separate facts.",
+      "rollback_route": "Revert this follow-up to P0-A code with no application-data migration. Operational service rollback while P0-A.1 is active remains a monotonic new desired generation pointing at the prior qualified physical target, while preserving the current controller code root until the action terminal receipt.",
+      "declaration_id": "shared-service-lifecycle-authority-p0a1"
+    },
+    {
+      "component_id": "shared-service-lifecycle-p0a1-tests",
+      "paths": [
+        "tests/unit/test_managed_service_control_p0a.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic shared-service lifecycle bootstrap and rollback qualification",
+      "disposition": "ADMIT as verification-only coverage for zero-write missing-state reads, pre-P0-A rollback worker identity, target drift fail-closed behavior, and upgraded exact-Git worker fixtures.",
+      "evidence": [
+        "Five new P0-A.1 tests were RED before the production repair and GREEN afterward.",
+        "Existing worker fixtures were strengthened to real temporary Git deployments instead of weakening the new exact binding verifier."
+      ],
+      "verification_level": "53/53 focused and 191/191 adjacent pytest plus full repository gate",
+      "model_evidence_veto_recovery_exit": "Tests own no production authority and use isolated temporary repositories/directories.",
+      "rollback_route": "Revert with the P0-A.1 production refinement."
+    },
+    {
+      "component_id": "shared-service-operator-manual-p0a1",
+      "paths": [
+        "docs/LFL-restart-guide.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "operator lifecycle/rollback procedure",
+      "disposition": "ADMIT documentation corrections: missing-state status/show/verify are physically zero-write; detached control code identity remains current during rollback; worker re-verifies old/new target bytes before physical effect.",
+      "evidence": [
+        "Guide changes directly match the P0-A.1 deterministic contracts and record the bootstrap-audit incident as a separate lesson."
+      ],
+      "verification_level": "factual implementation comparison, diff-check, staged/whole-tree security",
+      "model_evidence_veto_recovery_exit": "Documentation has no runtime execution authority.",
+      "rollback_route": "Amend/revert independently if lifecycle implementation changes."
+    },
+    {
+      "component_id": "shared-service-p0a1-qualification-record",
+      "paths": [
+        "docs/QUALIFICATION-20260916-service-control-p0a1-bootstrap-audit.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "P0-A.1 bootstrap-audit qualification evidence",
+      "disposition": "ADMIT as a factual local qualification record for the three reproduced blockers, minimal repair, tests, gates, non-interference, and rollback semantics.",
+      "evidence": [
+        "The record preserves the RED evidence and separates implementation qualification from future production bootstrap authorization."
+      ],
+      "verification_level": "exact base-to-head review plus A.5 changed-path coverage",
+      "model_evidence_veto_recovery_exit": "Reviewers may amend/reject the record without runtime effect.",
+      "rollback_route": "Revert/remove with no runtime effect."
+    },
+    {
+      "component_id": "shared-service-p0a1-submission-record",
+      "paths": [
+        "docs/governance/submissions/20260916-service-control-p0a1-bootstrap-audit.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path partition and G1-G4 declaration metadata only.",
+      "evidence": [
+        "The manifest partitions the final P0-A.1 changed paths exactly once and binds the sole production path to the existing lifecycle authority declaration."
+      ],
+      "verification_level": "staged A.5 self-gate and committed-state exact base-to-head requalification",
+      "model_evidence_veto_recovery_exit": "Metadata has no runtime authority.",
+      "rollback_route": "Revert together with the P0-A.1 review line."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "shared-service-lifecycle-authority-p0a1",
+      "g1": {
+        "necessity": "P0-A cannot be safely bootstrapped while documented read-only status mutates lock state, rollback workers cannot import when the desired target predates service_control, and accepted targets can drift after publication yet still execute through old scripts. These are mechanical correctness gaps in the already-approved lifecycle authority."
+      },
+      "g2": {
+        "authority_owner": "existing P0-A generation-bound shared-service lifecycle control plane",
+        "relationship": "reuse",
+        "non_duplication": "P0-A.1 creates no second service-control authority and no second physical restart path. It reuses the same desired deployment, action receipts, lifecycle lease, binding verifier, and restart_mirror execution plan, while correcting read semantics and controller-vs-target identity."
+      },
+      "g3": {
+        "model_evidence": [
+          "side-effect-free desired deployment status/show/verify results",
+          "desired deployment generation/id and exact target binding facts",
+          "durable accepted/running/succeeded/failed action receipt",
+          "binding failure detail before physical script execution",
+          "existing restart receipt, Web readiness and Feishu heartbeat after a future authorized deployment"
+        ],
+        "recovery_or_reason": "Missing state remains observable without creating control files. A rollback can use a pre-P0-A target because the detached controller remains on current control code. If target roots/head/clean/artifact identity change after publish/accept, the worker durable-fails before effect, allowing the model/operator to republish a new generation or choose another target."
+      },
+      "g4": {
+        "rollback": "No application-data migration is introduced. Revert P0-A.1 to P0-A source if necessary. For operational service rollback under P0-A.1, publish the prior qualified physical target as the next generation, retain the current controller root until terminal receipt, then validate the restarted target normally.",
+        "verification": [
+          "five deterministic P0-A.1 tests failed before implementation and passed after the narrow repair",
+          "missing-state store read/model status/CLI show/verify create no filesystem state",
+          "detached worker successfully controls a temporary pre-P0-A target with no service_control module",
+          "publish/accept then tracked target drift durable-fails before old script execution",
+          "53/53 focused P0-A/P0-A.1/restart/runtime-env tests PASS",
+          "191/191 adjacent regression matrix PASS",
+          "Ruff PASS; Pyright 0 errors / 0 warnings / 0 informations; diff/shell checks PASS",
+          "whole-tree security PASS",
+          "full ci_gate PASS: env-pin 586/0, tier0 PASS, xdist full PASS, architecture guard PASS",
+          "staged and committed-state A.5 exact path coverage before remote publication"
+        ]
+      }
+    }
+  ]
+}

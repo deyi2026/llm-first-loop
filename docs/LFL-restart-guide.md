@@ -158,7 +158,7 @@ PY
 
 从 P0-A 起，Web/Feishu 的“当前 PID”只是观测事实，**不是生命周期控制权**。正式重启前必须先由 operator 发布一个 closed-schema desired deployment，把本次准许运行的 `code root + runtime root + exact Git SHA + WebUI artifact tree SHA256` 固化为 generation。`scripts/restart_mirror.sh` 会在停任何健康服务之前机械验证该 binding；缺失或不一致即 fail-closed。
 
-先只读查看当前 generation：
+先只读查看当前 generation。P0-A.1 起，missing-state `show` / `verify` / 模型 `service_control(status)` 都是**物理零写入**：不会为了“读不到状态”而创建 `data/runtime/` 或 lock 文件；首次上线前可安全探测。
 
 ```bash
 LFL_WORKSPACE_ROOT="$LFL_OP_CODE" \
@@ -202,6 +202,8 @@ Feishu-only restart 的正式脚本会跳过 WebUI artifact 比对，但仍严�
 **控制面边界：** LFL 模型会话不能再用普通 `execute_command` 直接 `kill` managed Web/Feishu PID、运行 mutating restart script、或直接 `runtime.launch web|feishu`。这些路径会被机械 fence；合法路径是先 `service_control(action=status)` 取得当前 generation，再由模型判断是否需要 `service_control(action=restart, target=..., expected_generation=...)`。程序不替模型决定“要不要重启”，只限定物理控制权和 exact deployment binding。`ps`、`kill -0`、`runtime.launch --dry-run`、restart `status` 等只读观测仍保留。
 
 `service_control restart` 会先落 durable `accepted` action receipt，再启动脱离当前 Web 进程组的 worker；worker 对 generation/deployment_id 再检查，并持有跨进程 lifecycle lease 直到 official restart 结束和 terminal receipt 落盘。期间新的 desired deployment publish 会等待，而不会在 check→execute 窗口替换部署目标。
+
+P0-A.1 进一步把**控制器代码身份**与**物理目标代码身份**分离：detached worker 始终从发起本次动作的当前 service-control code root 导入控制逻辑，physical `restart_mirror.sh` 才绑定 desired deployment 的 code root。这样回滚目标可以是 pre-P0-A 的旧版本，即使旧目标本身没有 `llm_loop.runtime.service_control` 也不会让 worker 在启动阶段失去控制面。worker 在 lifecycle lease 内、执行目标脚本之前还会再次机械验证 desired target 的 exact root / Git SHA / tracked-clean，Web/all 同时验证 WebUI artifact；任何 publish 后 bytes 漂移都会先写 durable `failed`，**不执行目标脚本**。因此执行 rollback action 期间必须保留当前 control code root，直到 action terminal receipt 已落盘。
 
 ### 4.5 确认任务空闲
 
@@ -342,8 +344,8 @@ Feishu 需要对应新 PID 的新鲜心跳，`state=connected`；检查启动后
 
 1. 选定先前保全且验证过的完整 SHA、code root 和构建产物。
 2. 确认旧代码兼容当前 runtime 配置和数据 schema；不兼容则停止回滚，改做前向修复。
-3. 重新设定 `LFL_OP_CODE`、`LFL_OP_SHA` 和最小动作范围，按同样的前检查操作；**回滚不是 generation 倒退**，应把已验旧 code root 作为一个新的 desired deployment，以当前 generation 为 expected 值发布下一 generation，再执行受控 restart。
-4. 保留 canonical runtime root；不要用旧代码目录的数据覆盖运行数据。
+3. 重新设定 `LFL_OP_CODE`、`LFL_OP_SHA` 和最小动作范围，按同样的前检查操作；**回滚不是 generation 倒退**，应把已验旧 code root 作为一个新的 desired deployment，以当前 generation 为 expected 值发布下一 generation，再执行受控 restart。旧目标可以是 pre-P0-A；控制 worker 继续从当前 P0-A.1 control code root 运行，并在执行旧脚本前重新验证旧目标 bytes。
+4. 保留 canonical runtime root，也保留发起 rollback 的当前 control code root 直到 action terminal；不要用旧代码目录的数据覆盖运行数据。
 5. 如回滚会暂时失去 R05 或其他已上线能力，明确记录降级范围，不能把“恢复可访问”写成“能力全部保持”。
 
 验收完成后才能考虑清理候选。正在服务的 code root、仍需使用的回滚目录、存在未提交工作的目录不能删除。“已合并”不等于“可以清理”；进程可能继续按路径读取静态资源或加载模块。
@@ -375,6 +377,16 @@ Feishu 需要对应新 PID 的新鲜心跳，`state=connected`；检查启动后
 另一条真实事故链与 WebUI artifact 无关：一个普通 Web 会话通过 `execute_command` 多次执行 `kill -TERM <web-pid> <feishu-pid>`，其中一次直接杀掉承载自己的 Web 进程。durable journal 完整记录为 `tool.execution.started → finished(status=success) → receipt_committed`，说明 WAL/恢复机制没有丢事实；问题是 generic shell 当时确实拥有了它不应默认拥有的共享服务物理控制权。
 
 审计确认：CatastrophicGuard 按设计只拦不可逆系统灾难；线上 `EXEC_MODE` 为空；Web/Feishu 没有 CLI 人工 approval callback；现有 `run.lock`、JobRegistry ownership、`maintenance.lock` 分别解决会话/子进程/watchdog 协调，都不是 shared-service lifecycle authority。P0-A 因此引入独立 `service_control` surface、operator-published desired deployment、generation CAS/lifecycle lease 和 generic-shell fence。它是 LFL 工具/控制面的 fail-closed ownership boundary，**不是对同一 OS 用户下任意恶意代码的安全沙箱承诺**。
+
+### 9.3 P0-A.1 bootstrap 审计：读副作用、旧目标 worker 与 publish 后漂移
+
+P0-A 合入 main 后、首次 production generation-1 bootstrap 前做了纯只读部署审计，并在**没有写 production desired state、没有重启服务**的条件下发现三个上线阻断点：
+
+1. missing-state `ManagedServiceDeploymentStore.read()` 原先会先取得 state lease，因此只读 `status/show/verify` 会偷偷创建 `data/runtime/service-control-state.lock`；P0-A.1 改为读取 atomic tmp+rename 发布的 immutable JSON snapshot，缺失时直接返回 `None`，从物理文件系统角度保持零写入。
+2. detached worker 原先把 `PYTHONPATH` 指到 desired target code root；回滚目标若是 pre-P0-A 版本，没有 `service_control` 模块，worker 自己无法启动。P0-A.1 把 controller import identity 固定为当前控制代码根，而 physical target 仍完全来自 desired deployment。
+3. worker 原先只复核 generation/deployment_id，旧目标脚本如果本身没有 P0-A preflight，publish 后 target bytes 变脏仍可能被执行。P0-A.1 在 lifecycle lease 内、physical exec 前统一调用 exact deployment binding verification；dirty/head/root/artifact 任一漂移都 durable-fail，目标脚本不运行。
+
+这三项说明“控制面状态可读”“rollback target 可旧”“generation 没变”都不足以单独证明可以执行；**真正的 physical effect 必须同时满足当前 controller 可运行 + desired target exact binding 仍成立。**
 
 必须长期保留的注意事项：
 

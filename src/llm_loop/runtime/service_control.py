@@ -245,16 +245,21 @@ class ManagedServiceDeploymentStore:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def _read_unlocked(self) -> ManagedServiceDeployment | None:
-        if not self.path.is_file():
+        # Writers publish with tmp+rename, so readers can consume the immutable
+        # snapshot without creating/acquiring a lock.  Missing-state observation
+        # is therefore physically read-only.  A concurrent initial rename may
+        # race the existence check; in that case report the same missing fact.
+        try:
+            raw_text = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return None
-        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        raw = json.loads(raw_text)
         if not isinstance(raw, dict):
             raise ValueError("managed service deployment must be a JSON object")
         return ManagedServiceDeployment.from_dict(raw)
 
     def read(self) -> ManagedServiceDeployment | None:
-        with self.lease():
-            return self._read_unlocked()
+        return self._read_unlocked()
 
     def compare_and_swap(
         self,
@@ -653,6 +658,16 @@ def build_restart_plan(
     )
 
 
+def _control_code_root() -> Path:
+    """Return the code root that owns this controller implementation.
+
+    The controller must survive a rollback to a pre-P0-A physical target.  Its
+    import identity is therefore the currently executing control-plane code, not
+    the desired deployment target that restart_mirror will later operate on.
+    """
+    return Path(__file__).resolve().parents[3]
+
+
 def spawn_service_control_worker(store: ManagedServiceDeploymentStore, action_id: str) -> None:
     action = store.read_action(action_id)
     deployment = store.read()
@@ -661,8 +676,9 @@ def spawn_service_control_worker(store: ManagedServiceDeploymentStore, action_id
     build_restart_plan(action, deployment)  # stale binding fails before spawn
     log_path = Path(deployment.runtime_root) / "data" / "service-control-worker.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    controller_root = _control_code_root()
     env = _control_subprocess_env(
-        code_root=deployment.code_root,
+        code_root=str(controller_root),
         runtime_root=deployment.runtime_root,
     )
     stream = log_path.open("a", encoding="utf-8")
@@ -727,6 +743,28 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
         running, plan, prepare_rc = _prepare_action_for_worker(store, action_id)
         if prepare_rc != 0 or running is None or plan is None:
             return prepare_rc
+
+        deployment = store.read()
+        if deployment is None:
+            store.update_action(
+                action_id,
+                status="failed",
+                detail="deployment binding failed: desired deployment disappeared",
+            )
+            return 4
+        problems = verify_deployment_binding(
+            deployment,
+            code_root=deployment.code_root,
+            runtime_root=deployment.runtime_root,
+            verify_webui=(running.target != "feishu"),
+        )
+        if problems:
+            store.update_action(
+                action_id,
+                status="failed",
+                detail="deployment binding failed: " + "; ".join(problems),
+            )
+            return 4
 
         env = _control_subprocess_env(
             code_root=plan.env["LFL_RESTART_CODE_ROOT"],
