@@ -249,3 +249,19 @@ Start read-only. Do not change production yet.
 5. only after the audit, freeze deterministic RED for the minimal next correction.
 
 MF-6 remains deferred.
+
+
+## 14. MF-5.3.2 read-only interface audit — 2026-09-16
+
+Authoritative audit: `docs/SMC-BROWSER-MF5.3.2-READ-ONLY-INTERFACE-AUDIT-20260916.md`.
+
+The audit is complete with **no production/test/provider/runtime change**. It separates two next corrections:
+
+1. **MF-5.3.2A capability identity:** deterministic RED for one natural provider-visible eye/hand pair (preferred `browser_perceive` + `browser_operate`), navigation only on the hand, wait only on the eye, no duplicate old/new hand names, no routing decision tree;
+2. **MF-5.3.2B evidence-quality projection:** deterministic RED for task-independent model-facing ordering by completeness/identity stability while preserving the canonical full object set, exact refs, hydration, fail-closed grounding and model choice.
+
+Read-only evidence shows current object order is opaque Semantic ID order and generic tool Evidence uses a 5K 60%-head/40%-tail excerpt. In Row5 the partial AX `Save code` InlineTextBox was visible at the beginning while the complete enabled button was in the omitted middle. Across 63 frozen snapshots, current actionable index median=11 / mean=10.62 / max=24; complete+stable mechanical ordering yields median=1 / mean=1.52 / max=4, with all 73 actionable instances inside top5.
+
+Do not yet implement global Evidence-budget changes, compact Browser cards, AX lineage/fragment merging, iteration-limit increases, fuzzy target repair or auto retry. Those are deferred until the narrow corrections are qualified.
+
+Next phase requires a human checkpoint before any RED or production edit. MF-6 remains deferred.
