@@ -120,8 +120,9 @@ def test_mf5_3_perceive_wait_contract_covers_page_and_exact_object_conditions() 
         assert "object_ref" not in props
     for kind in ("object_state", "object_text"):
         props = by_kind[kind]["properties"]
-        assert "object_ref" in props
-        assert "object_ref" in by_kind[kind]["required"]
+        assert "grounding_ref" in props
+        assert "grounding_ref" in by_kind[kind]["required"]
+        assert "object_ref" not in props
 
 
 def test_mf5_3_perceive_page_url_wait_binds_current_host_page(tmp_path: Path) -> None:
