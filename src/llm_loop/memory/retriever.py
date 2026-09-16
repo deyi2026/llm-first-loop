@@ -126,12 +126,33 @@ class SemanticRetriever:
         self._top_k_provider: Callable[[], int] | None = None
         self._mem_emb_cache: dict[str, list[float]] = {}
         self._arch_emb_cache: dict[str, list[float]] = {}
+        # T8 缓存文件按向量版本分离（embeddings-<tag>.json）：不同 provider/算法
+        # 各写各的文件，根治"两代代码/两种 embedder 共写 embeddings.json 互踩覆写"
+        # （2026-09-16 实测事故：worktree 旧代码无版本键整体覆写，1487 条 bge 缓存丢失）。
+        # 旧 embeddings.json 仅作回退读（版本匹配才载入）；persist 一律写 tag 文件。
         if memory_dir:
-            self._load_emb_cache(Path(memory_dir) / "embeddings.json", self._mem_emb_cache)
+            self._mem_emb_cache = self._load_emb_cache_versioned(Path(memory_dir))
         if archive_dir:
-            self._load_emb_cache(Path(archive_dir) / "embeddings.json", self._arch_emb_cache)
-        self._mem_cache_path = Path(memory_dir) / "embeddings.json" if memory_dir else None
-        self._arch_cache_path = Path(archive_dir) / "embeddings.json" if archive_dir else None
+            self._arch_emb_cache = self._load_emb_cache_versioned(Path(archive_dir))
+        self._mem_cache_path = self._cache_path(Path(memory_dir)) if memory_dir else None
+        self._arch_cache_path = self._cache_path(Path(archive_dir)) if archive_dir else None
+
+    def _cache_tag(self) -> str:
+        """向量版本 → 文件名安全 tag（空版本 → legacy，防旧代码/None embedder 覆写主版本）."""
+        ver = self._emb_version()
+        tag = re.sub(r"[^A-Za-z0-9._-]", "_", ver)[:64]
+        return tag or "legacy"
+
+    def _cache_path(self, directory: Path) -> Path:
+        return directory / f"embeddings-{self._cache_tag()}.json"
+
+    def _load_emb_cache_versioned(self, directory: Path) -> dict[str, list[float]]:
+        """载入版本化缓存；tag 文件缺失时回退旧 embeddings.json（版本匹配才载入）."""
+        cache: dict[str, list[float]] = {}
+        self._load_emb_cache(self._cache_path(directory), cache)
+        if not cache:
+            self._load_emb_cache(directory / "embeddings.json", cache)
+        return cache
 
     def _emb_version(self) -> str:
         """当前 embedder 向量算法版本（T6: 缓存按版本校验，防新旧向量混用）."""
