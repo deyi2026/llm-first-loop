@@ -18,22 +18,41 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO))
 
-from fixture_server import FixtureServer  # noqa: E402
-from protocol import (  # noqa: E402
-    ARMS,
-    MODEL_REF,
-    SCHEMA,
-    SEED,
-    TASKS,
-    build_plan,
-    judge,
-    plan_sha256,
-    prompt_for,
-    smoke_gate,
-)
+# Package imports must stay package-qualified: several Browser qualification directories
+# have a `protocol.py`, and reusing the top-level module name inside one pytest process
+# can silently bind this runner to another experiment's protocol.  Direct script execution
+# keeps the historical local-import path for reproducible CLI runs.
+if __package__:
+    from .fixture_server import FixtureServer  # noqa: E402
+    from .protocol import (  # noqa: E402
+        ARMS,
+        MODEL_REF,
+        SCHEMA,
+        SEED,
+        TASKS,
+        build_plan,
+        judge,
+        plan_sha256,
+        prompt_for,
+        smoke_gate,
+    )
+else:
+    sys.path.insert(0, str(HERE))
+    from fixture_server import FixtureServer  # type: ignore[no-redef]  # noqa: E402
+    from protocol import (  # type: ignore[no-redef]  # noqa: E402
+        ARMS,
+        MODEL_REF,
+        SCHEMA,
+        SEED,
+        TASKS,
+        build_plan,
+        judge,
+        plan_sha256,
+        prompt_for,
+        smoke_gate,
+    )
 
 from evals.browser_smc_semantic_execute_recovery_smoke.observations import (  # noqa: E402
     atomic_json,
@@ -463,8 +482,8 @@ def run_row(row: dict[str, Any], root: Path, manifest: dict[str, Any]) -> dict[s
         with FixtureServer(task_id) as fixture:
             original_record = fixture.state.record
 
-            def record_with_observation(event: dict[str, Any]) -> None:
-                original_record(event)
+            def record_with_observation(payload: dict[str, Any]) -> None:
+                original_record(payload)
                 observation = {
                     "round": declared_round(run_dir),
                     "oracle": judge(task_id, fixture.state.snapshot()),
