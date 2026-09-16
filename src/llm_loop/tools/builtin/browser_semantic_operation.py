@@ -268,9 +268,9 @@ def _build_first_call_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
 
 
 class BrowserSemanticOperationTool:
-    name = "browser_semantic_operation"
+    name = "browser_operate"
     description = (
-        "Browser semantic actuation：一次调用只表达一个已经决定的 mutation。"
+        "Browser 操作能力：一次调用只表达一个已经决定的 mutation。"
         "do=navigate|click|set_text|append_text|select|scroll；对象 target 使用 exact semantic identity(kind/name，可选role)。"
         "wait 属于 browser_perceive，不在 actuation provider contract。"
         "程序仅机械编译到既有 exact grounding/version guard/single-dispatch/ActionReceipt；"
@@ -1117,7 +1117,7 @@ class BrowserSemanticOperationTool:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
                 content=(
-                    "[browser_semantic_operation] contract rejected; "
+                    "[browser_operate] contract rejected; "
                     f"reason={exc}; no automatic retry/rebind/target substitution."
                 ),
                 tool_call_id="",
@@ -1129,7 +1129,7 @@ class BrowserSemanticOperationTool:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
                 content=(
-                    "[browser_semantic_operation] operation error; no automatic replay. "
+                    "[browser_operate] operation error; no automatic replay. "
                     f"error_type={type(exc).__name__}; error={exc}"
                 ),
                 tool_call_id="",

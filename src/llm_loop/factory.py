@@ -858,7 +858,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         )
     # SMC Browser cognition-preserving surface: explicit loopback CDP opt-in only.
     # Provider-visible Browser capabilities are deliberately collapsed to `browser_perceive`
-    # (read-only sensing/wait) and, when writes are enabled, `browser_semantic_operation`
+    # (read-only sensing/wait) and, when writes are enabled, `browser_operate`
     # (one direct mutation). Typed waits/action/semantic_execute remain internal mechanics.
     if settings.browser_perception_cdp_url:
         _browser_host = CdpReadOnlyBrowserHost(
@@ -898,7 +898,7 @@ def build_engine(settings: Settings) -> LoopEngine:
                 session_id_getter=lambda: current_session_id_ctx.get(),
             )
             _register_basic(
-                "browser_semantic_operation",
+                "browser_operate",
                 BrowserSemanticOperationTool(
                     perception=_browser_adapter,
                     capture_backend=_browser_host,
