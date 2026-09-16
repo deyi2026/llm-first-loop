@@ -268,9 +268,9 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
     if provider != expected_provider:
         raise RuntimeError(f"provider contract drift: {provider}")
 
-    static_plan = json.loads((HERE / "PLAN.v0.1.json").read_text(encoding="utf-8"))
+    static_plan = json.loads((HERE / "PLAN.v0.2.json").read_text(encoding="utf-8"))
     if static_plan != plan:
-        raise RuntimeError("committed PLAN.v0.1.json differs from protocol.build_plan()")
+        raise RuntimeError("committed PLAN.v0.2.json differs from protocol.build_plan()")
     if [(row["task_id"], row["repeat"]) for row in plan] != list(ROWS):
         raise RuntimeError("six-row task/repeat order drift")
     if _sha_file(HERE / "fixture_server.py") != FIXTURE_SHA256:
@@ -302,8 +302,8 @@ def execution_manifest(plan: list[dict[str, Any]], tmp_root: Path) -> dict[str, 
     runtime_paths = _git("ls-files", "src", "methods").splitlines()
     source_paths = [
         HERE / "protocol.py",
-        HERE / "PROTOCOL.v0.1.md",
-        HERE / "PLAN.v0.1.json",
+        HERE / "PROTOCOL.v0.2.md",
+        HERE / "PLAN.v0.2.json",
         HERE / "fixture_server.py",
         HERE / "worker.py",
         HERE / "run_mf52.py",

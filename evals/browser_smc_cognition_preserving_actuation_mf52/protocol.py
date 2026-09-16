@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-SCHEMA = "smc.browser_cognition_preserving_actuation_mf52.v0.1"
+SCHEMA = "smc.browser_cognition_preserving_actuation_mf52.v0.2"
 SEED = 2026091617
 IMPLEMENTATION_COMMIT = "ab99aac3d6287a485f4d45646287242bc6a6ab07"
 MODEL_REF = "cognilocal/ornith-1.5-35b-a3b-mlx"
