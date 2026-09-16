@@ -1,6 +1,6 @@
 # SMC Model-Friendly Semantic Operation Design v0.1 — 2026-09-16
 
-Status: **DESIGN FREEZE CANDIDATE / NO PRODUCTION IMPLEMENTATION YET**
+Status: **DESIGN AMENDED / MF-5 EVIDENCE INCORPORATED / COGNITION-PRESERVING RULING ACTIVE**
 
 Baseline: `lfl/main@2c4b9b087f5d2fad2cf2c5c026194038c7613c5c`
 
@@ -34,6 +34,46 @@ Equivalent LLM-First boundary:
 
 This is an efficiency rule and an authority rule at the same time. Reducing round trips is good only when the removed round contained no genuine semantic decision.
 
+### 0.1 Higher-order ruling: Cognition-Preserving Semantic Actuation
+
+The model-facing optimization must obey an even stronger rule:
+
+> **Semantic Manipulation must not require the model to change how it thinks.**
+
+Semantic Operation is the model's **actuation surface**, not its reasoning language. The model continues to understand the task, compare alternatives, form plans, revise beliefs and decide the next action using its native reasoning behavior. Only after the model has decided that a real-world action is needed should Semantic Runtime enter the loop.
+
+Preferred cognitive/execution flow:
+
+```text
+understand task
+  -> reason normally
+  -> decide next action
+  -> invoke semantic actuation only if an action is needed
+  -> runtime grounds / guards / executes / observes mechanically
+  -> return factual delta
+  -> reason normally again
+```
+
+Forbidden inversion:
+
+```text
+learn a Semantic DSL
+  -> reshape reasoning around tool grammar
+  -> guess schema/protocol fields
+  -> repair syntax
+  -> only then continue task reasoning
+```
+
+The runtime may reduce **execution friction**; it must not introduce a new **cognitive protocol tax**. A shorter JSON wire is not model-friendly if the model must spend reasoning effort remembering special discriminators, schema exceptions, polling mechanics or receipt structure.
+
+This yields two top-level invariants:
+
+> **Do not change how the model thinks.**
+
+> **Only mechanize actions the model has already decided to take.**
+
+These sit above MDEH, SDB, SRTA and Interface Tax. Those concepts are mechanisms for implementing the ruling, not a replacement reasoning framework for the model.
+
 ---
 
 ## 1. Problem statement: the remaining cost is interface friction
@@ -55,7 +95,13 @@ The remaining friction is mostly model-facing:
 4. common mechanical loops such as wait polling can be internalized without changing model authority;
 5. multi-step execution exists, but the boundary for when a batch must stop and return control to the model is not yet a first-class architecture concept.
 
-The design objective is therefore not “fewer tools at any cost” or “more automation”. It is **lower semantic interaction amplification without expanding program semantic authority**.
+The design objective is therefore not “fewer tools at any cost” or “more automation”. It is **lower semantic interaction amplification without expanding program semantic authority and without forcing the model to reorganize its reasoning around an execution DSL**.
+
+A useful distinction is:
+
+- **Cognitive dependency** — requires model understanding/judgment and must remain a model turn;
+- **Actuation dependency** — required only to carry an already-decided action into the machine world and should be mechanically compressed;
+- **Protocol dependency** — exists only because an API requires bookkeeping; this is pure interface tax and should be eliminated from model reasoning wherever possible.
 
 ---
 
@@ -65,6 +111,8 @@ The design objective is therefore not “fewer tools at any cost” or “more a
 
 A **Model-Declared Execution Horizon (MDEH)** is the finite ordered set of semantic operations that the model has already decided can be attempted without another model judgment.
 
+MDEH is an **execution handoff description, not a reasoning or planning requirement**. The model never needs to pre-build a multi-step horizon just to be “efficient”. A horizon of one action is valid and often preferable when the model naturally wants to inspect the result before deciding again. Multi-step batching is appropriate only when those later actions are already decided as part of ordinary reasoning.
+
 Example:
 
 ```json
@@ -72,7 +120,7 @@ Example:
   "steps": [
     {"do": "navigate", "url": "https://example.invalid/form"},
     {"do": "set_text", "target": {"kind": "input", "name": "Project code"}, "text": "ZX-41"},
-    {"wait": {"target": {"kind": "button", "name": "Save"}, "enabled": true}, "within_ms": 5000},
+    {"do": "wait", "target": {"kind": "button", "name": "Save"}, "until": "enabled", "within_ms": 5000},
     {"do": "click", "target": {"kind": "button", "name": "Save"}}
   ]
 }
@@ -182,6 +230,8 @@ A qualification should collect at least:
 - internal runtime captures (separate from model round trips);
 - first valid semantic operation round;
 - model-facing contract rejection count;
+- **protocol-induced reasoning events**: model turns spent interpreting/guessing/repairing tool grammar rather than advancing task semantics;
+- schema-repair loops after a semantically correct intent was already formed;
 - wait polling samples (internal, not model rounds);
 - full receipt hydrations requested by model;
 - task oracle result;
@@ -256,11 +306,13 @@ Every new model-facing field should justify why it is Category A. If it is B or 
 
 ---
 
-## 6. Input design: semantic shorthand without semantic authority transfer
+## 6. Input design: natural actuation call, not a model reasoning DSL
 
 The current bounded operation contract is intentionally strict, but it repeats structural fields such as `clauses`, `kind=mutate`, `target.kind=object`, `args`, `mode`, polling interval and other protocol scaffolding.
 
-The v0.2 design should investigate a shorter discriminated grammar such as:
+The goal is **not** to make the model learn a better DSL. The goal is to make the tool call look like the smallest structured expression of an action the model has already decided in ordinary reasoning.
+
+The provider/runtime may expose a short discriminated wire such as:
 
 ```json
 {"steps":[{"do":"navigate","url":"https://example.invalid"}]}
@@ -271,10 +323,10 @@ The v0.2 design should investigate a shorter discriminated grammar such as:
 ```
 
 ```json
-{"steps":[{"wait":{"target":{"kind":"button","name":"Run check"},"enabled":true},"within_ms":5000}]}
+{"steps":[{"do":"wait","target":{"kind":"button","name":"Run check"},"until":"enabled","within_ms":5000}]}
 ```
 
-This is an example shape, not yet the frozen wire contract.
+These shapes are execution encodings, not prescribed thought templates. The model should not need to reason in terms of `steps`, discriminators, polling fields or receipt schemas before deciding what it wants to do.
 
 ### 6.1 Design requirements
 
@@ -286,18 +338,22 @@ This is an example shape, not yet the frozen wire contract.
 - role may be optional only if exact uniqueness remains mechanically provable;
 - default write semantic should be explicit (`set_text` vs `append_text`) rather than a generic `fill` plus mechanically repetitive `mode` where possible;
 - polling interval should be runtime-owned unless user/task semantics explicitly require cadence;
-- timeout/deadline stays model-owned only when it encodes task meaning; otherwise a bounded runtime default may be used and surfaced.
+- timeout/deadline stays model-owned only when it encodes task meaning; otherwise a bounded runtime default may be used and surfaced;
+- one semantic action concept should have one regular tool-local form; avoid grammar exceptions the model must remember;
+- canonical examples may live in the tool-local schema/description, but the universal prompt must not teach a new reasoning procedure;
+- contract rejection should tell the model the precise mechanical mismatch, not invite open-ended schema guessing;
+- the model must remain free to reason first and call the tool only when it independently decides an action is needed.
 
-### 6.2 Why not hide everything behind prose
+### 6.2 Natural use does not mean opaque prose interpretation
 
-A natural-language `operate("fill the project code")` interface would reduce characters but destroy key properties:
+“Do not change model thinking” does **not** authorize a vague program-side natural-language planner. A free-form `operate("fill the project code")` interface would reduce characters but could destroy key properties:
 
 - it forces the program to interpret target/action semantics;
 - it weakens deterministic qualification;
 - it makes provider/model behavior harder to compare;
 - it creates hidden semantic routing.
 
-Model-friendly means **short structured semantics**, not opaque prose automation.
+Model-friendly therefore means **natural model decision -> minimal structured actuation -> strict mechanical execution**, not opaque prose automation and not a new thought DSL.
 
 ---
 
@@ -380,19 +436,19 @@ This removes duplicate observation without granting the runtime any new semantic
 
 ---
 
-## 9. Wait rule: internal polling, external semantic condition
+## 9. Wait rule: think naturally about the condition; runtime owns polling mechanics
 
-The model chooses the condition. The runtime performs the bounded sampling.
+The model chooses the semantic condition because that is part of task reasoning. The runtime performs the bounded sampling because that is execution mechanics.
 
-The model should normally declare something like:
+The model's reasoning may simply be “wait until the Finalize button is enabled”. The tool call should encode that decision directly, without requiring the model to first translate its reasoning into an internal Predicate vocabulary. A provider-facing form may be:
 
 ```json
-{"wait":{"target":{"kind":"button","name":"Finalize"},"enabled":true},"within_ms":10000}
+{"do":"wait","target":{"kind":"button","name":"Finalize"},"until":"enabled","within_ms":10000}
 ```
 
 The runtime may mechanically derive:
 
-- canonical Predicate wire fields;
+- canonical Predicate wire fields from the model-facing condition (for example `until:"enabled"` -> `property=enabled, operator=eq, value=true`);
 - exact target grounding;
 - scope;
 - sample interval default;
@@ -450,7 +506,9 @@ The following are not acceptable ways to reduce round trips:
 - increasing max rounds to mask interface friction;
 - adding large universal prompt instructions instead of fixing local contracts;
 - silently crossing an undeclared browser/document/native boundary;
-- provider-specific semantic behavior that makes the architecture non-portable.
+- provider-specific semantic behavior that makes the architecture non-portable;
+- teaching the model a mandatory semantic-operation planning/thinking format;
+- evaluating success by “how well the model speaks our DSL” instead of whether normal reasoning can naturally invoke qualified actions.
 
 ---
 
@@ -500,6 +558,7 @@ Pre-register improvement targets before live testing. Initial candidate gates:
 - First-call-valid: 6/6;
 - task oracle: 6/6 in qualification and 6/6 in independent confirmatory repeat;
 - model-facing contract rejection: 0;
+- protocol-induced reasoning/schema-repair loops after a correct semantic intent: 0;
 - `get_tool_schema`: 0 unless an intentionally novel tool is introduced;
 - explicit duplicate post-mutation snapshot: 0 when compact receipt/diff is sufficient;
 - tool-argument chars: materially lower than A;
@@ -592,9 +651,13 @@ Only after local repeat stability:
 
 ## 14. Decision summary
 
-The project should optimize Semantic Manipulation around this invariant:
+The project should optimize Semantic Manipulation around these invariants, in priority order:
 
-> **The model spends tokens on semantics, not protocol bookkeeping.**
+> **Do not change how the model thinks.**
+
+> **The model spends reasoning/tokens on task semantics, not protocol bookkeeping.**
+
+> **Semantic Operation is actuation: it carries an already-decided model action into the machine world.**
 
 And this safety counterpart:
 
@@ -615,8 +678,23 @@ The design rule is strengthened accordingly:
 
 > **A model-facing semantic language should use one regular discriminator for peer operations unless a distinct discriminator encodes a real semantic distinction.**
 
-Wait is a peer semantic step, so the next provider-facing grammar should expose `do:"wait"` rather than make the model remember a one-off structural exception. The runtime may retain the previous form only as a compatibility parser path.
+Wait is a peer semantic step, so the provider-facing grammar should expose one regular action family rather than make the model remember a one-off structural exception. `d6ec0113` implements the concrete `do:"wait"` regularization; the next question is whether even that structured surface stays out of the model's reasoning path and functions only as actuation.
 
 A second lesson is methodological: treatment qualification and baseline comparison are distinct questions. A legacy baseline may remain useful for paired efficiency comparison even when it is not itself release-qualified. Future protocol identities should keep the treatment's hard correctness/safety Gate separate from comparative A/B metrics, without changing the already-frozen MF-5 v0.1 verdict.
 
 See `docs/SMC-BROWSER-MODEL-FRIENDLY-MF5-v0.1-RESULT-20260916.md` for the complete evidence and hashes.
+
+### 15.1 Post-MF-5 cognition-preserving correction
+
+MF-5 exposed a deeper issue than the `wait` discriminator itself. Even after making the grammar shorter, failed trajectories showed the model spending reasoning on statements such as “the wait step needs an operator”, “wait-only operations are rejected”, and repeated attempts to infer how the interface wanted the thought to be encoded. That is **protocol-induced reasoning**.
+
+The correct remediation is not to make the model better at remembering the Semantic Operation language. The interface must instead make a normal model decision map directly onto a qualified actuation call.
+
+Therefore MF-5.1/MF-5.2 work must evaluate two independent properties:
+
+1. **Mechanical regularity** — one consistent tool-local action grammar, no hidden special cases;
+2. **Cognitive preservation** — the model can reason in its ordinary task language and only enters the semantic tool contract at the moment of action, without schema-guess/repair becoming part of the task trajectory.
+
+A future qualification should explicitly classify every model turn into `task_reasoning`, `actuation_call`, `protocol_repair`, or `evidence_inspection`. The target is not to suppress task reasoning; it is to drive `protocol_repair` toward zero while preserving or improving task correctness.
+
+This also changes the interpretation of MDEH: an execution horizon is **not a planning format the model must construct in advance**. It is merely the set of actions the model happens to have already decided and chooses to hand off together. A one-action horizon is perfectly valid and should remain the common case when the model naturally wants to inspect the result before deciding again.
