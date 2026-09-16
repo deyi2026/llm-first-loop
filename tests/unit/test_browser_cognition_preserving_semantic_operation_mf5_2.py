@@ -9,6 +9,7 @@ from llm_loop.tools.builtin.browser_semantic_operation import (
     BrowserSemanticOperationContractError,
     BrowserSemanticOperationTool,
 )
+from llm_loop.tools.registry import ToolRegistry
 
 
 def _provider_wait_branch() -> dict[str, Any]:
@@ -196,3 +197,15 @@ def test_mf5_2_wait_text_rejects_unknown_match_without_inference() -> None:
                 }
             ]
         )
+
+def test_mf5_2_lazy_provider_description_preserves_native_reasoning_contract() -> None:
+    registry = ToolRegistry()
+    registry.register(BrowserSemanticOperationTool.__new__(BrowserSemanticOperationTool))
+    surface = registry.schemas(lazy=True)[0]
+    description = str(surface["description"])
+    assert "单个已决定动作" in description
+    assert "多个动作" in description
+    assert "已经决定" in description
+    assert "until" in description
+    assert "1..8 ordered steps" not in description
+    assert "typed condition+within_ms" not in description
