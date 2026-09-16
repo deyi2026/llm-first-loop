@@ -43,7 +43,15 @@ from scripts.qualification.smc_browser_live_navigation import (  # noqa: E402
 
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 WORKER = HERE / "worker.py"
-PROVIDERS = REPO / "data/providers.json"
+GIT_COMMON_DIR = Path(
+    subprocess.check_output(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=REPO,
+        text=True,
+    ).strip()
+).resolve()
+PRIMARY_REPO = GIT_COMMON_DIR.parent
+PROVIDERS = PRIMARY_REPO / "data/providers.json"
 MODEL_PORT = 8901
 MAX_ITERATIONS = 12
 WORKER_TIMEOUT_S = 240
