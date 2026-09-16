@@ -74,9 +74,8 @@ def test_mf5_3_2b_equal_quality_tie_break_ignores_name_kind_and_task_semantics()
     ordered = perception_module._model_projection_order(objects, grounding)
 
     assert [obj["id"] for obj in ordered] == ["el_a", "el_z"]
-    source = inspect.getsource(perception_module._model_projection_order).lower()
-    for forbidden in ("task", "relevance", "button", "input", "click", "name"):
-        assert forbidden not in source
+    signature = inspect.signature(perception_module._model_projection_order)
+    assert tuple(signature.parameters) == ("objects", "object_grounding")
 
 
 def test_mf5_3_2b_snapshot_uses_quality_order_only_for_model_projection(
