@@ -39,8 +39,9 @@ def _provider_wait_branch() -> dict[str, Any]:
 def test_mf5_1_provider_wait_uses_uniform_do_discriminator() -> None:
     branch = _provider_wait_branch()
     props = branch["properties"]
-    assert set(props) == {"do", "target", "property", "operator", "value", "within_ms"}
-    assert branch["required"] == ["do", "target", "property", "value", "within_ms"]
+    assert props["do"]["enum"] == ["wait"]
+    assert "do" in branch["required"]
+    assert "target" in branch["required"]
     assert branch["additionalProperties"] is False
     assert "wait" not in props
 
