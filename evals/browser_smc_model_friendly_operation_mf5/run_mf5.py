@@ -190,7 +190,7 @@ def _surface_manifest(tmp_root: Path, arm: str) -> dict[str, Any]:
     result_path = run_dir / "surface.json"
     proc = subprocess.run(
         [
-            str(REPO / ".venv/bin/python"),
+            str(PRIMARY_REPO / ".venv/bin/python"),
             str(WORKER),
             "--arm",
             arm,
@@ -376,7 +376,7 @@ def run_row(row: dict[str, Any], root: Path, manifest: dict[str, Any]) -> dict[s
             try:
                 proc = subprocess.run(
                     [
-                        str(REPO / ".venv/bin/python"),
+                        str(PRIMARY_REPO / ".venv/bin/python"),
                         str(WORKER),
                         "--arm",
                         arm,
