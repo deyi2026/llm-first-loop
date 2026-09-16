@@ -79,7 +79,6 @@ def test_model_surface_is_read_only_and_has_no_backend_locator_parameters(tmp_pa
         "state",
         "match",
         "expected_url",
-        "object_ref",
         "value",
         "field",
         "text",
