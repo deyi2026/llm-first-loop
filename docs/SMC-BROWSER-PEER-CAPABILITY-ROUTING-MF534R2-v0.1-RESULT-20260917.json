@@ -1,0 +1,545 @@
+{
+  "adjudication": {
+    "complete_12_of_12": true,
+    "control_reproduced_prior_cross_capability_routing_defect": false,
+    "measurement_valid": false,
+    "no_row_replay": true,
+    "production_change_authorized_by_this_result": false,
+    "reason": "B task oracle is 5/6 because fill_submit-r1 did not click Save code; frozen validity requires both arms 6/6 task correctness.",
+    "routing_discriminator_observed": false,
+    "routing_improvement_supported": false,
+    "routing_no_improvement_proven": false,
+    "row3_failure_attributable_to_compact_treatment": false,
+    "treatment_signal": "INVALID"
+  },
+  "artifacts": {
+    "execution-manifest.json": {
+      "bytes": 65504,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/execution-manifest.json",
+      "sha256": "8de34e97a6482b40ba74ca576064916e1bbfcd7e9ac5e0a073e12bd55f0b1c73"
+    },
+    "plan.json": {
+      "bytes": 2638,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/plan.json",
+      "sha256": "12c8181bc7a74939dfdf7d383f7e1af8c4bf9bcedb1b4d3d0b930dd03c980eb0"
+    },
+    "qualification-gate.json": {
+      "bytes": 2027,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/qualification-gate.json",
+      "sha256": "9ea501dc769cfd658c8a87607de4e99468e75ea2102182fa0ef20b4a43e6da31"
+    },
+    "results.jsonl": {
+      "bytes": 61923,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/results.jsonl",
+      "sha256": "c3968d8fda5d0263a212dd7266467ed76ec1e9019de3c1b0238df27fb8c786a0"
+    },
+    "row3_raw_event_log": {
+      "bytes": 206218,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/03-fill_submit-r1-B/.lfldata/event_logs/68187a03-9138-4736-b4c9-7a926d3660d7.jsonl",
+      "sha256": "43d97fd597a77f260f5d19f78d1f30db9a51c3e41e9ad5da56d952c753cdfe46"
+    }
+  },
+  "date": "2026-09-17",
+  "experiment_git_head": "489dd5a47a7636ec0a6791dc1964c35c68bb7cf8",
+  "gate": {
+    "B_first_call_clean": true,
+    "arms": {
+      "A": {
+        "cache_hit_tokens": 272233,
+        "cross_capability_failures": 0,
+        "first_call_routing_pass": 6,
+        "first_call_routing_required": 6,
+        "get_tool_schema_calls": 0,
+        "infra_valid": true,
+        "mechanical_safe": true,
+        "operation_failures": 0,
+        "perceive_failures": 0,
+        "protocol_repair_episodes": 0,
+        "recovered_later": 0,
+        "rounds": 44,
+        "rows": 6,
+        "task_pass": 6,
+        "task_pass_required": 6,
+        "tokens_in": 341362,
+        "tokens_out": 5527,
+        "tool_calls": 38
+      },
+      "B": {
+        "cache_hit_tokens": 223997,
+        "cross_capability_failures": 0,
+        "first_call_routing_pass": 6,
+        "first_call_routing_required": 6,
+        "get_tool_schema_calls": 0,
+        "infra_valid": true,
+        "mechanical_safe": true,
+        "operation_failures": 0,
+        "perceive_failures": 5,
+        "protocol_repair_episodes": 5,
+        "recovered_later": 0,
+        "rounds": 43,
+        "rows": 6,
+        "task_pass": 5,
+        "task_pass_required": 6,
+        "tokens_in": 279301,
+        "tokens_out": 4748,
+        "tool_calls": 38
+      }
+    },
+    "complete_rows": 12,
+    "expected_rows": 12,
+    "measurement_valid": false,
+    "paired_routing": [
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "click_commit-r1",
+        "result": "tie"
+      },
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "fill_submit-r1",
+        "result": "tie"
+      },
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "delayed_wait-r1",
+        "result": "tie"
+      },
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "delayed_wait-r2",
+        "result": "tie"
+      },
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "fill_submit-r2",
+        "result": "tie"
+      },
+      {
+        "A": true,
+        "B": true,
+        "pair_id": "click_commit-r2",
+        "result": "tie"
+      }
+    ],
+    "schema": "smc.browser_peer_capability_routing_ab_mf534r2.v0.1.gate",
+    "task_success_overrides_routing": false,
+    "treatment_signal": "INVALID"
+  },
+  "measured_identity": "MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4",
+  "model_server": {
+    "command_sha256": "2bee17c3fb687fb9224f0f72cac6738c607515a3ba92b90ae867995dd7b85fcf",
+    "decode_concurrency_1": true,
+    "max_tokens_16000": true,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "pid": 52430,
+    "prompt_concurrency_1": true
+  },
+  "next_boundary": {
+    "config_authority_p1c_remains_separate": true,
+    "production_change": false,
+    "recommended_evidence_step": "If routing treatment is to be measured again, use a fresh independent protocol identity with the same single-variable treatment; separately diagnose the B row3 Perceive branch/reference synthesis failure rather than folding it into routing.",
+    "same_identity_replay": false,
+    "tool_name_and_action_do_ablations_remain_separate": true
+  },
+  "production_anchor": "d908adbf58610e1c136ede69b33203acc7422207",
+  "provider_contract": {
+    "max_input_tokens": 184000,
+    "max_tokens": 16000,
+    "min_p": 0.0,
+    "temperature": 0.0,
+    "timeout_s": 1800,
+    "top_k": 0,
+    "top_p": 1.0,
+    "wire_protocol": "openai"
+  },
+  "routing_red_commit": "3fe30b5c07a34394b6c46234c554d5d7789ff47e",
+  "row3_diagnostic": {
+    "arm": "B",
+    "causal_limit": "One stochastic B-row failure cannot establish that the compact-description treatment caused this synthesis slip.",
+    "classification": "within-Perceive branch/argument/reference synthesis slip after successful routing, not cross-capability Perceive/Operate routing.",
+    "failure_sequence": [
+      {
+        "action": "wait",
+        "reason": "fields_mismatch: extra action2",
+        "tool": "browser_perceive"
+      },
+      {
+        "action": "hydrate",
+        "reason": "fields_mismatch: wait-only fields field/kind/match/text",
+        "tool": "browser_perceive"
+      },
+      {
+        "action": "wait",
+        "reason": "object_ref_projection_mismatch",
+        "tool": "browser_perceive"
+      },
+      {
+        "action": "wait",
+        "reason": "object_ref_projection_mismatch",
+        "tool": "browser_perceive"
+      },
+      {
+        "action": "wait",
+        "reason": "object_ref_projection_mismatch",
+        "tool": "browser_perceive"
+      }
+    ],
+    "final_observation": "snapshot/hydrate confirmed Project code value_text=AB-7319, but no Save code click was issued; oracle save_count=0.",
+    "oracle": {
+      "pass": false,
+      "save_count": 0,
+      "value_match": false
+    },
+    "pair_id": "fill_submit-r1",
+    "routing": {
+      "cross_bound_action": null,
+      "expected_peer": null,
+      "failure_kind": null,
+      "first_call_index": 1,
+      "first_call_name": "browser_operate",
+      "first_call_routing_valid": true,
+      "recovered_later": false,
+      "recovery_call_index": null,
+      "routing_verdict": "PASS",
+      "task_pass": false,
+      "task_success_overrides_routing": false
+    },
+    "successful_prefix": [
+      "browser_operate(do=navigate)",
+      "browser_perceive(snapshot)",
+      "browser_perceive(hydrate)",
+      "browser_operate(do=set_text)"
+    ]
+  },
+  "rows": [
+    {
+      "arm": "A",
+      "cache_hit_tokens": 19049,
+      "failure_kind": null,
+      "first_call_name": "browser_operate",
+      "first_call_routing": "PASS",
+      "index": 1,
+      "operation_failures": 0,
+      "pair_id": "click_commit-r1",
+      "perceive_failures": 0,
+      "protocol_repair_episodes": 0,
+      "recovered_later": false,
+      "rounds": 5,
+      "status": "PASS",
+      "task_oracle_pass": true,
+      "tokens_in": 27840,
+      "tokens_out": 391,
+      "tool_calls": 4
+    },
+    {
+      "arm": "B",
+      "cache_hit_tokens": 19220,
+      "failure_kind": null,
+      "first_call_name": "browser_operate",
+      "first_call_routing": "PASS",
+      "index": 2,
+      "operation_failures": 0,
+      "pair_id": "click_commit-r1",
+      "perceive_failures": 0,
+      "protocol_repair_episodes": 0,
+      "recovered_later": false,
+      "rounds": 5,
+      "status": "PASS",
+      "task_oracle_pass": true,
+      "tokens_in": 28137,
+      "tokens_out": 326,
+      "tool_calls": 4
+    },
+    {
+      "arm": "B",
+      "cache_hit_tokens": 78014,
+      "failure_kind": null,
+      "first_call_name": "browser_operate",
+      "first_call_routing": "PASS",
+      "index": 3,
+      "operation_failures": 0,
+      "pair_id": "fill_submit-r1",
+      "perceive_failures": 5,
+      "protocol_repair_episodes": 5,
+      "recovered_later": false,
+      "rounds": 12,
+      "status": "TASK_FAIL",
+      "task_oracle_pass": false,
+      "tokens_in": 89561,
+      "tokens_out": 1799,
+      "tool_calls": 12
+    },
+    {
+      "arm": "A",
+      "cache_hit_tokens": 91545,
+      "failure_kind": null,
+      "first_call_name": "browser_perceive",
+      "first_call_routing": "PASS",
+      "index": 4,
+      "operation_failures": 0,
+      "pair_id": "fill_submit-r1",
+      "perceive_failures": 0,
+      "protocol_repair_episodes": 0,
+      "recovered_later": false,
+      "rounds": 11,
+      "status": "PASS",
+      "task_oracle_pass": true,
+      "tokens_in": 107434,
+      "tokens_out": 1595,
+      "tool_calls": 10
+    },
+    {
+      "arm": "A",
+      "cache_hit_tokens": 38936,
+      "failure_kind": null,
+      "first_call_name": "browser_perceive",
+      "first_call_routing": "PASS",
+      "index": 5,
+      "operation_failures": 0,
+      "pair_id": "delayed_wait-r1",
+      "perceive_failures": 0,
+      "protocol_repair_episodes": 0,
+      "recovered_later": false,
+      "rounds": 7,
+      "status": "PASS",
+      "task_oracle_pass": true,
+      "tokens_in": 50645,
+      "tokens_out": 668,
+      "tool_calls": 6
+    },
+    {
+      "arm": "B",
+      "cache_hit_tokens": 24528,
+      "failure_kind": null,
+      "first_call_name": "browser_operate",
+      "first_call_routing": "PASS",
+      "index": 6,
+      "operation_failures": 0,
+      "pair_id": "delayed_wait-r1",
+      "perceive_failures": 0,
+      "protocol_repair_episodes": 0,
+      "recovered_later": false,
+      "rounds": 6,
+      "status": "PASS",
+      "task_oracle_pass": true,
+      "tokens_in": 33951,
+      "tokens_out": 592,
+      "tool_calls": 5
+    },
+    {
+      "arm": "B",
+      "cache_hit_tokens": 27455,
+      "failure_kind": null,
+      "first_call_name": "browser_operate",
+      "first_call_routing": "PASS",
+      "index": 7,
+      "operation_failures": 0,
+      "pair_id": "delayed_wait-r2",
+      "perceive_failures": 0,
+      "protocol_repair_episodes": 0,
+      "recovered_later": false,
+      "rounds": 6,
+      "status": "PASS",
+      "task_oracle_pass": true,
+      "tokens_in": 33822,
+      "tokens_out": 474,
+      "tool_calls": 5
+    },
+    {
+      "arm": "A",
+      "cache_hit_tokens": 17315,
+      "failure_kind": null,
+      "first_call_name": "browser_operate",
+      "first_call_routing": "PASS",
+      "index": 8,
+      "operation_failures": 0,
+      "pair_id": "delayed_wait-r2",
+      "perceive_failures": 0,
+      "protocol_repair_episodes": 0,
+      "recovered_later": false,
+      "rounds": 5,
+      "status": "PASS",
+      "task_oracle_pass": true,
+      "tokens_in": 24302,
+      "tokens_out": 460,
+      "tool_calls": 4
+    },
+    {
+      "arm": "A",
+      "cache_hit_tokens": 86307,
+      "failure_kind": null,
+      "first_call_name": "browser_perceive",
+      "first_call_routing": "PASS",
+      "index": 9,
+      "operation_failures": 0,
+      "pair_id": "fill_submit-r2",
+      "perceive_failures": 0,
+      "protocol_repair_episodes": 0,
+      "recovered_later": false,
+      "rounds": 11,
+      "status": "PASS",
+      "task_oracle_pass": true,
+      "tokens_in": 103205,
+      "tokens_out": 2034,
+      "tool_calls": 10
+    },
+    {
+      "arm": "B",
+      "cache_hit_tokens": 45471,
+      "failure_kind": null,
+      "first_call_name": "browser_operate",
+      "first_call_routing": "PASS",
+      "index": 10,
+      "operation_failures": 0,
+      "pair_id": "fill_submit-r2",
+      "perceive_failures": 0,
+      "protocol_repair_episodes": 0,
+      "recovered_later": false,
+      "rounds": 8,
+      "status": "PASS",
+      "task_oracle_pass": true,
+      "tokens_in": 58094,
+      "tokens_out": 1071,
+      "tool_calls": 7
+    },
+    {
+      "arm": "B",
+      "cache_hit_tokens": 29309,
+      "failure_kind": null,
+      "first_call_name": "browser_operate",
+      "first_call_routing": "PASS",
+      "index": 11,
+      "operation_failures": 0,
+      "pair_id": "click_commit-r2",
+      "perceive_failures": 0,
+      "protocol_repair_episodes": 0,
+      "recovered_later": false,
+      "rounds": 6,
+      "status": "PASS",
+      "task_oracle_pass": true,
+      "tokens_in": 35736,
+      "tokens_out": 486,
+      "tool_calls": 5
+    },
+    {
+      "arm": "A",
+      "cache_hit_tokens": 19081,
+      "failure_kind": null,
+      "first_call_name": "browser_operate",
+      "first_call_routing": "PASS",
+      "index": 12,
+      "operation_failures": 0,
+      "pair_id": "click_commit-r2",
+      "perceive_failures": 0,
+      "protocol_repair_episodes": 0,
+      "recovered_later": false,
+      "rounds": 5,
+      "status": "PASS",
+      "task_oracle_pass": true,
+      "tokens_in": 27936,
+      "tokens_out": 379,
+      "tool_calls": 4
+    }
+  ],
+  "runtime": {
+    "evidence_mode": "enforce",
+    "fallbacks": 0,
+    "llm_timeout_s": 1800,
+    "max_iterations": 12,
+    "max_tokens": 16000,
+    "reasoning_effort": "medium",
+    "second_local_model": false,
+    "serial_model_runs": true,
+    "thinking_mode": "on",
+    "tool_schema_lazy": true,
+    "worker_timeout_s": 240
+  },
+  "schema": "smc.browser_peer_capability_routing_ab_mf534r2.v0.1.result",
+  "status": "COMPLETE_INVALID",
+  "surfaces": {
+    "A_compact_fingerprints": {
+      "browser_operate_chars": 207,
+      "browser_operate_sha256": "94f6978f57a6e44cb13d0b4f2dd95a5f87704279f1c1047e8c9b8dfb0814dccc",
+      "browser_perceive_chars": 219,
+      "browser_perceive_sha256": "a36200ee533c719664b5c5ebdbfa2c374640a49b56a4e03987d52b433705aa38"
+    },
+    "A_sha256": "6dcc769d109677f069910dc39baac72feb731101bda0652c882c6ddc9a00e1d2",
+    "B_compact_fingerprints": {
+      "browser_operate_chars": 302,
+      "browser_operate_sha256": "27fb033856359e6bd7c8dbdff9d69190737fbb4c81b336bfe5d45a4c8d7870a5",
+      "browser_perceive_chars": 314,
+      "browser_perceive_sha256": "980e30e9e9434f29690b85f4e0acbfe9cf7b0b79f6874b70f6f4b6c7985851a9"
+    },
+    "B_sha256": "46da5c3da9d3605256098669f1cdc884f433675e096eb51fed2fe2e84f1ad4fc",
+    "full_surface_equal": true,
+    "operate_parameters_equal": true,
+    "perceive_parameters_equal": true
+  },
+  "worker_results": {
+    "01-click_commit-r1-A": {
+      "bytes": 10308,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/01-click_commit-r1-A/worker-result.json",
+      "sha256": "4519bd55edf629c6d6771ed2460b563e6c7083878e0157505a8f8c28cde06602"
+    },
+    "02-click_commit-r1-B": {
+      "bytes": 10251,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/02-click_commit-r1-B/worker-result.json",
+      "sha256": "0ac5c93fd4fe1c8fc7e90b5d6144027d525b037b459aba0e7926c6b6fba4011a"
+    },
+    "03-fill_submit-r1-B": {
+      "bytes": 13111,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/03-fill_submit-r1-B/worker-result.json",
+      "sha256": "76bffb9a5f49cb64b093bb837fabacf503b75d3bccc39c5ec0133ebc090d4cf2"
+    },
+    "04-fill_submit-r1-A": {
+      "bytes": 12487,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/04-fill_submit-r1-A/worker-result.json",
+      "sha256": "d8e5ea6e72b5d42a3b2157c8d67e94f7cf197078ad5eeb0078b562de0c563978"
+    },
+    "05-delayed_wait-r1-A": {
+      "bytes": 10960,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/05-delayed_wait-r1-A/worker-result.json",
+      "sha256": "866d15c472ae12e8f48e6d217e5ff637709ff0334046612267b2cf7a810c35ac"
+    },
+    "06-delayed_wait-r1-B": {
+      "bytes": 10644,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/06-delayed_wait-r1-B/worker-result.json",
+      "sha256": "433e7b167f64a6780d2aef5191e15d2625c16dcd5a31f98b3b26d00020aae91a"
+    },
+    "07-delayed_wait-r2-B": {
+      "bytes": 10644,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/07-delayed_wait-r2-B/worker-result.json",
+      "sha256": "cfe43264883193237fd5d63cc6cb210fc5f33461a11017c777f91ab46048aab5"
+    },
+    "08-delayed_wait-r2-A": {
+      "bytes": 10328,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/08-delayed_wait-r2-A/worker-result.json",
+      "sha256": "dbd99de6d669981c49589f60b8d4d870d4065d5dc9e5b63d7da7f7fc24d4314f"
+    },
+    "09-fill_submit-r2-A": {
+      "bytes": 12347,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/09-fill_submit-r2-A/worker-result.json",
+      "sha256": "191cfe7d606d85f981ae8813787da4f5a354df97d8c63126f2143df6a510504a"
+    },
+    "10-fill_submit-r2-B": {
+      "bytes": 11323,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/10-fill_submit-r2-B/worker-result.json",
+      "sha256": "5ebed5dc060718e624f9e15e05714661ccac21cd5fa5754ecc4af268094aacac"
+    },
+    "11-click_commit-r2-B": {
+      "bytes": 10588,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/11-click_commit-r2-B/worker-result.json",
+      "sha256": "9b5bcc4e1cbc5e703f02f8c320197d370420e71f1db5b7976de32e165ed261a0"
+    },
+    "12-click_commit-r2-A": {
+      "bytes": 10252,
+      "path": "evals/browser_smc_peer_capability_routing_ab_mf534r2/results/MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4/12-click_commit-r2-A/worker-result.json",
+      "sha256": "47b235159bd819d9b44bf920b5082e4c44750161407eb10d2cbacf3d9527165c"
+    }
+  }
+}
