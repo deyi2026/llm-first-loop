@@ -749,3 +749,25 @@ MF-5.3 read-only audit refines Cognition-Preserving Semantic Actuation into a tw
 The existing Browser implementation already supplies the mechanical primitives. The design task is to compose them into a smaller cognitive surface without weakening exact grounding, stale/version checks, session fencing, mutation single-dispatch or evidence durability.
 
 See `docs/SMC-BROWSER-MF5.3-READ-ONLY-ARCHITECTURE-AUDIT-20260916.md` for evidence, authority boundaries and the staged next plan.
+---
+
+## 18. MF-5.3 deterministic implementation addendum — two capabilities are now real
+
+The MF-5.3 design has now been implemented and deterministically qualified at `d415daa048ce8c96eddefe4fb06b1d996673e0d4`. The important final correction was at Factory/Registry level: having a model-friendly `Perceive` and `Operate` class was insufficient while five typed waits plus low-level action/semantic-execute tools were still normally registered. Final Factory assembly therefore exposes exactly one Browser capability in perception-only mode and exactly two when mutation is enabled: `browser_perceive` and `browser_semantic_operation`. Low-level executors remain implementation mechanics, not normal model concepts.
+
+The provider-facing architecture is now mechanically:
+
+```text
+Perceive(snapshot | hydrate | diff | wait)
+  -> native model reasoning
+  -> Operate(one direct mutation)
+  -> compact mechanical delta
+  -> native model reasoning
+  -> exact hydrate or fresh Perceive only when needed
+```
+
+Wait is no longer part of the actuation provider grammar. `steps:[single]` is no longer the normal actuation wire. Compact delta reports only mechanical comparability/completeness/scope/count facts and never task success. Exact old `steps` execution is retained only for historical deterministic evidence compatibility.
+
+At the final committed HEAD the actual two-tool lazy schema is 4,054 chars, SHA256 `b2549e11adb78ca1cd1e7bb252d0ef928e0171fe1cc2c7918706c499f4e24017`. The earlier ~3,560 figure was a design estimate, not a release target.
+
+Deterministic qualification is GREEN; live Ornith qualification remains pending. See `docs/SMC-BROWSER-MF5.3-DETERMINISTIC-IMPLEMENTATION-RESULT-20260916.md`. MF-6 remains deferred.
