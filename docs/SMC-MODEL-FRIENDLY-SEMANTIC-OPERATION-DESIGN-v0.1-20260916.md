@@ -771,3 +771,25 @@ Wait is no longer part of the actuation provider grammar. `steps:[single]` is no
 At the final committed HEAD the actual two-tool lazy schema is 4,054 chars, SHA256 `b2549e11adb78ca1cd1e7bb252d0ef928e0171fe1cc2c7918706c499f4e24017`. The earlier ~3,560 figure was a design estimate, not a release target.
 
 Deterministic qualification is GREEN; live Ornith qualification remains pending. See `docs/SMC-BROWSER-MF5.3-DETERMINISTIC-IMPLEMENTATION-RESULT-20260916.md`. MF-6 remains deferred.
+
+---
+
+## 19. MF-5.3 measured correction — the architecture works; Perceive must become root-direct
+
+Formal MF-5.3 v0.1 evidence separates architecture from wire format.
+
+The architecture signal is strong: with `browser_perceive` and direct single-action `browser_semantic_operation` both available, all six external tasks passed, including delayed_wait 2/2. There were no target-not-found grounding probes, no duplicate successful mutation, no Operate failure, and no schema lookup.
+
+The treatment still failed its frozen cognition-preserving Gate because `browser_perceive` produced eight contract failures. Six occurred when the model expressed a semantically correct page wait but serialized the nested `condition` object as a JSON string. Two occurred when `hydrate` inherited the snapshot-only `projection_limit` field from the broad top-level parameter surface.
+
+This adds a more precise interface law:
+
+> **A cognition-preserving tool should not require nested protocol objects when the same semantic distinction can be expressed as a closed root branch. Action-specific fields should not coexist in one broad parameter bag.**
+
+The next Perceive provider shape should therefore use root-discriminated closed branches. `action=wait` remains perception, but `kind/page_url/match/url/...` or `kind/object_state/object_ref/...` should be peers in the selected branch rather than nested under a second object. `snapshot`, `hydrate`, and `diff` branches should expose only their own applicable fields.
+
+Do not solve the measured failures with JSON-string coercion or permissive extra-field dropping. Those would make the program guess protocol intent. The better solution is to remove unnecessary protocol structure while preserving fail-closed execution.
+
+A second measured fact is that all 14 compact operation deltas were mechanically incomplete on this fixture set. Navigation changed document generation/scope; same-scope mutations reported unstable object identity. The runtime correctly surfaced those reasons and the model frequently escalated to snapshot/hydrate. This validates the sufficiency boundary but shows that perception bandwidth is still expensive. Optimize identity stability and perception projection only after the Perceive wire hard-passes, so efficiency tuning does not obscure the remaining contract problem.
+
+See `docs/SMC-BROWSER-COGNITION-PRESERVING-MF5.3-v0.1-RESULT-20260916.md` for exact Gate evidence and hashes. MF-6 remains deferred.

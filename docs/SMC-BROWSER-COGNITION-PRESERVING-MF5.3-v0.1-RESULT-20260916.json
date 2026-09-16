@@ -1,0 +1,68 @@
+{
+  "schema": "smc.browser_cognition_preserving_actuation_mf53.v0.1.result_summary",
+  "status": "COMPLETE_NOT_QUALIFIED",
+  "date": "2026-09-16",
+  "experiment_git_head": "3ae87a30b97bfeed34804e6fb7fb08ed4f52978a",
+  "implementation_commit": "b831b3992d02fec280d1098e9d71a7b26a3ed776",
+  "task_oracle": {
+    "pass": 6,
+    "total": 6,
+    "per_task": {
+      "click_commit": "2/2",
+      "fill_submit": "2/2",
+      "delayed_wait": "2/2"
+    }
+  },
+  "gate": {
+    "pass": false,
+    "infra_valid": true,
+    "surface_exact": true,
+    "first_browser_call_contract_valid": 6,
+    "perceive_tool_failures": 8,
+    "perceive_tool_errors": 0,
+    "operation_tool_failures": 0,
+    "operation_tool_errors": 0,
+    "protocol_repair_episodes": 8,
+    "get_tool_schema_calls": 0,
+    "ground_probe_amplification": 0,
+    "duplicate_successful_mutations": 0,
+    "direct_atomic_browser_calls": 0,
+    "automatic_retry_true": 0,
+    "task_completion_violations": 0,
+    "undeclared_boundary_continuations": 0
+  },
+  "repair_taxonomy": {
+    "wait_condition_json_string_instead_of_object": 6,
+    "hydrate_projection_limit_cross_action_field": 2
+  },
+  "diagnostics": {
+    "rounds": 68,
+    "perceive_calls": 29,
+    "operate_calls": 14,
+    "read_evidence_calls": 23,
+    "browser_arg_chars": 3170,
+    "browser_result_chars": 94903,
+    "tokens_in": 632206,
+    "tokens_out": 11741,
+    "cache_hit_tokens": 533863,
+    "cache_hit_over_input_pct": 84.44,
+    "delta_only": 2,
+    "delta_to_hydrate": 0,
+    "delta_to_snapshot": 8,
+    "delta_to_hydrate_then_snapshot": 4,
+    "operation_delta_complete": 0,
+    "operation_delta_incomplete": 14,
+    "support_tool_failures_outside_gate": {
+      "read_evidence_with_grounding_ref": 1
+    }
+  },
+  "formal_artifact_sha256": {
+    "execution-manifest.json": "afe1a3f161d61af2518d6b031865e9fa1352399e3db5c08bb0a49958f079b506",
+    "plan.json": "b41dbc259d10f4973ecfd325872bba9b93bda79c0c4d1f7fcb58546585f32310",
+    "results.jsonl": "2de99a1a709a72c49f2b3287786794f67d7251f6140217da481a091e18330113",
+    "qualification-gate.json": "ac9992bd8032297d2f0b0e4e02880dac4efc6219dc204612656b659879cad8d3"
+  },
+  "surface_sha256": "dc8ebc96b4d7d8c670f28a8f68ed738ce6d3b5ba070fbb4d0628dbd3905fba4c",
+  "next_identity": "MF-5.3.1 root-direct Perceive regularization",
+  "mf6": "DEFERRED"
+}
