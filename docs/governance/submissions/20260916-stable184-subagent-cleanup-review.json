@@ -1,0 +1,128 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260916-stable184-subagent-cleanup-review",
+  "summary": "Fresh review metadata for the exact 184f-derived SubAgent cancellation cleanup. The review qualifies the requested stable-point lineage while explicitly recording that current formal main already contains patch-identical implementation/test blobs; publication is review-only and does not authorize deployment or main mutation.",
+  "components": [
+    {
+      "component_id": "stable184-subagent-cancelled-session-visibility-control",
+      "paths": [
+        "src/llm_loop/subagent/runner.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "SubAgent durable topology finalization plus SessionStore active/archive visibility lifecycle",
+      "disposition": "ADMIT for review as the exact 184-derived replay of the already-qualified narrow visibility projection. Durable topology/EventStore remains execution-outcome authority; current formal main has a patch-identical implementation.",
+      "evidence": [
+        "Exact 184f RED reproduced a durable cancelled child that still loaded with Session.status=active.",
+        "The fix requires durable result, successful same-generation topology terminal persistence, and exact outcome=cancelled before SessionStore.archive.",
+        "Normal completed children remain active/session-visible, preserving AgentFollowup lifecycle.",
+        "Stable patch-id and final runner blob are identical to formal-main commit a585f981/current main."
+      ],
+      "verification_level": "Exact 184-derived RED/GREEN, 152-test SubAgent/P3 adjacency, full local committed-state CI/security, and remote PR CI on the published review ref",
+      "model_evidence_veto_recovery_exit": "Execution outcome remains inspectable in durable topology/EventStore. Session status only projects active/archive visibility. If terminal persistence is not durable the child is not archived; if archive projection fails, durable terminal truth remains and generation cleanup continues.",
+      "rollback_route": "Revert 04294fb1 on the 184-derived line. No persistent schema migration, LFRT change, provider restart, or topology rewrite is required.",
+      "declaration_id": "stable184-subagent-cancelled-session-visibility-control"
+    },
+    {
+      "component_id": "stable184-subagent-cancelled-session-tests",
+      "paths": [
+        "tests/unit/test_agent_followup.py",
+        "tests/unit/test_subagent.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "SubAgent cancellation, terminal visibility, and AgentFollowup regression qualification",
+      "disposition": "ADMIT as verification-only coverage. The files are byte-identical to current formal main and do not create runtime authority.",
+      "evidence": [
+        "Exact cancel/archive plus completed-child visibility regression 2/2 PASS.",
+        "SubAgent/AgentFollowup/delivery/topology/restart/settlement/P3 ownership adjacency 152/152 PASS.",
+        "Stable patch identity matches the already-reviewed main lineage."
+      ],
+      "verification_level": "Focused and adjacent deterministic pytest plus whole-repository CI",
+      "model_evidence_veto_recovery_exit": "Tests assert mechanical lifecycle facts only and own no runtime execution authority.",
+      "rollback_route": "Revert with the 184-derived production fix if this review lineage is abandoned."
+    },
+    {
+      "component_id": "stable184-proc-version-test-env-isolation",
+      "paths": [
+        "tests/unit/test_proc_version.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "proc-version unit-test environment isolation",
+      "disposition": "ADMIT as test-only hermeticity. Production LFL_WORKSPACE_ROOT dual-root authority is unchanged; current formal main contains the byte-identical test isolation.",
+      "evidence": [
+        "Hostile inherited LFL_WORKSPACE_ROOT passes the proc-version suite 7/7 with test-local isolation.",
+        "Tests that intentionally exercise explicit source-workspace behavior can still set LFL_WORKSPACE_ROOT.",
+        "Stable patch-id matches formal-main commit af8a41e3."
+      ],
+      "verification_level": "Hostile inherited-environment pytest plus full committed-state repository CI",
+      "model_evidence_veto_recovery_exit": "The isolation fixture affects unit-test process state only; production workspace authority remains unchanged.",
+      "rollback_route": "Revert 9fb66650; production runtime behavior is unaffected."
+    },
+    {
+      "component_id": "stable184-subagent-cleanup-qualification-record",
+      "paths": [
+        "docs/QUALIFICATION-20260916-stable184-subagent-cleanup-review.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "fresh stable-point qualification and convergence evidence record",
+      "disposition": "ADMIT as a factual review record. Runtime does not consume it.",
+      "evidence": [
+        "The record freezes the 184-derived identities, deterministic qualification results, current-main blob/patch equivalence, production non-interference, rollback, and review boundaries."
+      ],
+      "verification_level": "Exact Git/evidence review plus branch-wide A.5 path coverage",
+      "model_evidence_veto_recovery_exit": "Human/model reviewers may amend or reject the record without runtime side effects.",
+      "rollback_route": "Revert or delete the qualification record with no runtime effect."
+    },
+    {
+      "component_id": "stable184-subagent-cleanup-submission-record",
+      "paths": [
+        "docs/governance/submissions/20260916-stable184-subagent-cleanup-review.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations only. A.5 does not decide semantic quality, classification truth, deployment, or whether an equivalent main implementation should be replaced.",
+      "evidence": [
+        "A.5 mechanically validates closed manifest shape and exact PR base...head path partition.",
+        "The manifest explicitly discloses current-main patch/blob equivalence so reviewers do not mistake the lineage review for a new runtime delta."
+      ],
+      "verification_level": "Local exact committed base...head A.5 self-gate followed by remote PR-only A.5 required check",
+      "model_evidence_veto_recovery_exit": "Human/model review retains classification and promotion authority; metadata has no runtime authority.",
+      "rollback_route": "Revert together with the fresh review metadata."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "stable184-subagent-cancelled-session-visibility-control",
+      "g1": {
+        "necessity": "A durably cancelled SubAgent child must not continue to be advertised in the active-session index, while exact execution outcome remains owned by durable topology rather than duplicated into Session.status."
+      },
+      "g2": {
+        "authority_owner": "existing SubAgent topology/EventStore for exact execution outcome plus existing SessionStore active/archive lifecycle for visibility",
+        "relationship": "reuse",
+        "non_duplication": "The change creates no new execution-state owner. It projects only a durably confirmed cancelled terminal into the existing archive lifecycle. Current formal main already carries a patch-identical implementation, so this review also avoids claiming duplicate authority."
+      },
+      "g3": {
+        "model_evidence": [
+          "durable subagent.terminal outcome and generation identity",
+          "child Session active/archive visibility",
+          "SubAgentResult terminal receipt including child_outcome",
+          "delivery/topology recovery facts when persistence is incomplete",
+          "fresh qualification record disclosing current-main patch/blob equivalence"
+        ],
+        "recovery_or_reason": "If terminal persistence cannot be proven durable, leave the child visible and rely on existing recovery/topology facts. If only archive projection fails, retain the durable cancelled terminal and complete generation cleanup. Reviewers can reject this duplicate lineage without affecting the already-qualified formal-main implementation."
+      },
+      "g4": {
+        "rollback": "Revert 04294fb1 on the 184-derived review line; no Session schema migration, topology rewrite, provider restart, LFRT rollback, or application-data conversion is required.",
+        "verification": [
+          "exact 184f RED reproduced cancelled terminal with Session.status still active",
+          "cancel/archive plus completed-child visibility regression 2/2 PASS",
+          "hostile inherited LFL_WORKSPACE_ROOT proc-version 7/7 PASS",
+          "SubAgent/AgentFollowup/delivery/topology/restart/settlement/P3 ownership adjacency 152/152 PASS",
+          "Ruff PASS; production Pyright 0 errors / 0 warnings / 0 informations; py_compile and diff-check PASS",
+          "whole-tree security 1908 tracked files PASS",
+          "full committed-state scripts/ci_gate.sh exit 0 with env-pin 584/0, tier0 PASS, and xdist full PASS",
+          "stable patch-id equality and byte-identical final implementation/test blobs versus current formal main"
+        ]
+      }
+    }
+  ]
+}
