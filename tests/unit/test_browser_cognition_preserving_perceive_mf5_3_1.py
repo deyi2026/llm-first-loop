@@ -66,8 +66,8 @@ def test_mf5_3_1_perceive_wait_fields_are_flat_not_nested_condition() -> None:
     props = page_url.get("properties") or {}
 
     assert "condition" not in props
-    assert set(props) == {"action", "kind", "match", "url", "within_ms"}
-    assert set(page_url.get("required") or []) == {"action", "kind", "match", "url"}
+    assert set(props) == {"action", "kind", "match", "expected_url", "within_ms"}
+    assert set(page_url.get("required") or []) == {"action", "kind", "match", "expected_url"}
 
 
 def test_mf5_3_1_action_specific_branches_exclude_cross_action_fields() -> None:
@@ -84,8 +84,8 @@ def test_mf5_3_1_action_specific_branches_exclude_cross_action_fields() -> None:
             {"action", "kind", "state"},
         ),
         ("wait", "page_url"): (
-            {"action", "kind", "match", "url", "within_ms"},
-            {"action", "kind", "match", "url"},
+            {"action", "kind", "match", "expected_url", "within_ms"},
+            {"action", "kind", "match", "expected_url"},
         ),
         ("wait", "object_state"): (
             {"action", "kind", "object_ref", "state", "value", "within_ms"},
@@ -119,7 +119,7 @@ def test_mf5_3_1_flat_page_url_wait_executes_without_nested_condition(tmp_path: 
         action="wait",
         kind="page_url",
         match="equals",
-        url="https://example.test/a",
+        expected_url="https://example.test/a",
         within_ms=50,
     )
 
