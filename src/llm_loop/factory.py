@@ -276,6 +276,10 @@ def build_engine(settings: Settings) -> LoopEngine:
             if llm_params is not None
             else settings.llm_wire_protocol
         ),
+        trust_env=settings.llm_trust_env,
+        retry_disconnect=settings.llm_retry_disconnect,
+        anthropic_cache_control=settings.anthropic_cache_control,
+        guard_hit_telemetry=settings.cache_guard_hit_telemetry,
         # M20 THK-01: 思考参数装配一次，三条 LLM 路径统一受益（VAL-02）
         thinking_mode=settings.thinking_mode,
         reasoning_effort=settings.reasoning_effort,

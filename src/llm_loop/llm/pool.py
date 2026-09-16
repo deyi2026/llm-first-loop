@@ -141,6 +141,12 @@ class ModelClientPool:
             # compatibility. Absence therefore means openai, never "inherit the
             # assembled default model's protocol" (which may be anthropic/google).
             wire_protocol=provider_wire_protocol or "openai",
+            trust_env=getattr(self.default_client, "trust_env", None),
+            retry_disconnect=int(getattr(self.default_client, "retry_disconnect", 1)),
+            anthropic_cache_control=getattr(
+                self.default_client, "anthropic_cache_control", None
+            ),
+            guard_hit_telemetry=getattr(self.default_client, "guard_hit_telemetry", None),
             thinking_mode=self.default_client.thinking_mode,
             reasoning_effort=self.default_client.reasoning_effort,
             reasoning_effort_map=reasoning_effort_map,
