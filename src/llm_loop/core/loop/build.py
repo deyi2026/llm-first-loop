@@ -59,6 +59,73 @@ def _provider_visible_chars(messages: list[Message], provider_id: str, start: in
     )
 
 
+def _task_anchor_goal_parts(audit_dir: str, session_id: str) -> list[str]:
+    """任务锚快照·Goal 段（EVO-20260916-ccc978b2 复核修正 2026-09-16 拷问）.
+
+    通道A修正: GoalStore.get 带 strict_session=True（CR-R1.1，与
+    _persist_semantic_state/_decision_line_frame 同口径）——本会话无 goal 时
+    不回退投影其他会话/全局 goal，防止旧目标借压缩态窗口复活。
+    通道B修正: 终态（complete/blocked）goal 只投影状态+时间戳一行，不投
+    objective/checkpoint.next（update 不清 checkpoints[-1].next，全量投影会让
+    已过时 next 以活性口吻常驻压缩态）；active goal 增投 status/updated_at/
+    checkpoint ts，供模型自判陈旧。仍为逐字机械投影，不合成决策/摘要。
+    任一存储异常 → 返回已取部分（fail-open，与原实现一致）。
+    """
+    parts: list[str] = []
+    try:
+        from llm_loop.introspection.goal import GoalStore
+
+        goal = GoalStore(audit_dir).get(
+            prefer_session_id=session_id, strict_session=True
+        )
+        if not goal:
+            return parts
+        status = str(goal.get("status") or "")
+        updated = str(goal.get("updated_at") or "")
+        if status != "active":
+            bits = ["[Goal %s] status: %s" % (goal.get("id", ""), status or "-")]
+            if goal.get("completed_at"):
+                bits.append("completed_at: %s" % goal["completed_at"])
+            if goal.get("blocked_reason"):
+                bits.append(
+                    "blocked_reason: %s" % str(goal["blocked_reason"])[:200]
+                )
+            if updated:
+                bits.append("updated_at: %s" % updated)
+            bits.append("objective/checkpoints 不投影（终态，其 next 可能已过时）")
+            parts.append(" | ".join(bits))
+            return parts
+        obj = str(goal.get("objective") or "").strip()
+        if obj:
+            parts.append(
+                "[Goal %s] status: %s | updated_at: %s\nobjective: %s"
+                % (goal.get("id", ""), status or "-", updated or "-", obj[:1200])
+            )
+        cps = goal.get("checkpoints") or []
+        if cps:
+            cp = cps[-1]
+            cp_line = "[Checkpoint ts: %s] %s" % (
+                str(cp.get("ts") or "-"),
+                str(cp.get("what") or "")[:400],
+            )
+            if cp.get("next"):
+                cp_line += " | next: %s" % str(cp["next"])[:400]
+            if cp.get("evidence"):
+                cp_line += " | evidence: %s" % str(cp["evidence"])[:200]
+            parts.append(cp_line)
+        try:
+            from llm_loop.introspection.task_store import TaskStore
+
+            line = TaskStore(audit_dir).summary_line(str(goal.get("id")))
+            if line:
+                parts.append("[Frontier] %s" % line)
+        except Exception:  # noqa: BLE001 — frontier fail-open
+            pass
+    except Exception:  # noqa: BLE001 — goal fail-open（与原实现一致）
+        pass
+    return parts
+
+
 def _cache_boundary_protection(
     state: Any,
     *,
@@ -526,38 +593,11 @@ class _BuildMixin:
             # 不阻断窗口构建）。
             from pathlib import Path as _P
 
-            parts: list[str] = []
-            try:
-                from llm_loop.introspection.goal import GoalStore
-                from llm_loop.introspection.task_store import TaskStore
-
-                _audit_dir = os.path.join(str(self.settings.data_dir), "audit")
-                _goal = GoalStore(_audit_dir).get(prefer_session_id=sess.session_id)
-                if _goal:
-                    _obj = str(_goal.get("objective") or "").strip()
-                    if _obj:
-                        parts.append(
-                            "[Goal %s] objective: %s"
-                            % (_goal.get("id", ""), _obj[:1200])
-                        )
-                    _cps = _goal.get("checkpoints") or []
-                    if _cps:
-                        _cp = _cps[-1]
-                        _cp_line = "[Checkpoint] %s" % str(_cp.get("what") or "")[:400]
-                        if _cp.get("next"):
-                            _cp_line += " | next: %s" % str(_cp["next"])[:400]
-                        if _cp.get("evidence"):
-                            _cp_line += " | evidence: %s" % str(_cp["evidence"])[:200]
-                        parts.append(_cp_line)
-                    try:
-                        _ts = TaskStore(_audit_dir)
-                        _line = _ts.summary_line(str(_goal.get("id")))
-                        if _line:
-                            parts.append("[Frontier] %s" % _line)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+            _audit_dir = os.path.join(str(self.settings.data_dir), "audit")
+            # 通道A/B 修正（2026-09-16 拷问）: Goal 段逻辑收敛到模块级
+            # _task_anchor_goal_parts——strict_session=True（禁跨会话回退）+
+            # 终态只投状态行（旧 next 不投影）+ active 增投 status/时间戳。
+            parts: list[str] = _task_anchor_goal_parts(_audit_dir, sess.session_id)
             try:
                 from llm_loop.memory.evidence import EvidenceLedgerStore, OwnerScope
 
