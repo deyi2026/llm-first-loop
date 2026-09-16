@@ -431,3 +431,34 @@ Semantic Predicate Compiler:
 This is a narrower and more LLM-First correction than adding more instructions. It removes fields the model has no reason to invent while preserving the decisions the model is supposed to make.
 
 The recommended next implementation checkpoint is therefore **v0.6-A typed wait compiler only**. Navigation FCR remains a documented second variable, not part of the first patch.
+
+---
+
+## 12. 2026-09-16 addendum — from First-Call-Ready to Model-Friendly Semantic Operation
+
+The v0.6 FCR design remains valid as historical evidence and as the first local correction of redundant mechanical Predicate fields. Subsequent FC2 work showed that the same principle generalizes beyond typed wait: the main remaining problem is now **model-facing interaction amplification across the whole semantic-operation path**.
+
+The current forward design is recorded in:
+
+- `SMC-MODEL-FRIENDLY-SEMANTIC-OPERATION-DESIGN-v0.1-20260916.md`
+- `SMC-MODEL-FRIENDLY-SEMANTIC-OPERATION-EXECUTION-PLAN-20260916.md`
+
+The important extension is:
+
+```text
+FCR:
+  Can the model express the first valid operation without learning the protocol by failure?
+
+Model-Friendly Semantic Operation:
+  After the model has made a semantic decision, how much additional model I/O is required
+  before that already-decided intent is safely grounded, executed and mechanically verified?
+```
+
+New architecture concepts:
+
+- **Model-Declared Execution Horizon**: program may batch only steps the model has already declared;
+- **Semantic Decision Boundary**: ambiguity, stale state, unknown outcome or undeclared structural transition returns control to the model;
+- **Semantic Round-Trip Amplification**: measure model interaction tax separately from internal capture/polling work;
+- **Interface Tax**: remove mechanically derivable fields from the normal model path while preserving exact durable evidence.
+
+This addendum does not retroactively change the v0.6 experiment result. It changes the recommended next research unit: run the MF-0 interface-tax audit before further production expansion.
