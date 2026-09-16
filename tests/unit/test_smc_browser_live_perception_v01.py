@@ -211,16 +211,8 @@ def test_factory_registers_browser_perceive_only_when_explicitly_opted_in(
         browser_perception_target_id="target-1",
     )
     engine = factory.build_engine(settings)
-    assert "browser_perceive" in engine.registry.names()
-    assert {
-        "browser_wait_scope_url",
-        "browser_wait_scope_ready",
-        "browser_wait_scope_count",
-        "browser_wait_object_state",
-        "browser_wait_object_text",
-    }.issubset(engine.registry.names())
-    assert "browser_wait_scope" not in engine.registry.names()
-    assert "browser_wait_object" not in engine.registry.names()
+    browser_names = {name for name in engine.registry.names() if name.startswith("browser_")}
+    assert browser_names == {"browser_perceive"}
     factory.CdpReadOnlyBrowserHost.assert_called_once_with(
         "http://127.0.0.1:9222",
         target_id="target-1",
@@ -246,18 +238,10 @@ def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeyp
             browser_action_enabled=False,
         )
     )
-    assert "browser_perceive" in perception_only.registry.names()
-    assert {
-        "browser_wait_scope_url",
-        "browser_wait_scope_ready",
-        "browser_wait_scope_count",
-        "browser_wait_object_state",
-        "browser_wait_object_text",
-    }.issubset(perception_only.registry.names())
-    assert "browser_wait_scope" not in perception_only.registry.names()
-    assert "browser_wait_object" not in perception_only.registry.names()
-    assert "browser_action" not in perception_only.registry.names()
-    assert "browser_semantic_execute" not in perception_only.registry.names()
+    perception_browser_names = {
+        name for name in perception_only.registry.names() if name.startswith("browser_")
+    }
+    assert perception_browser_names == {"browser_perceive"}
     factory.CdpBrowserMutationActuator.assert_not_called()
 
     enabled = factory.build_engine(
@@ -268,25 +252,17 @@ def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeyp
             browser_action_enabled=True,
         )
     )
-    assert "browser_perceive" in enabled.registry.names()
-    assert {
-        "browser_wait_scope_url",
-        "browser_wait_scope_ready",
-        "browser_wait_scope_count",
-        "browser_wait_object_state",
-        "browser_wait_object_text",
-    }.issubset(enabled.registry.names())
-    assert "browser_wait_scope" not in enabled.registry.names()
-    assert "browser_wait_object" not in enabled.registry.names()
-    assert "browser_action" in enabled.registry.names()
-    assert "browser_semantic_execute" in enabled.registry.names()
+    enabled_browser_names = {
+        name for name in enabled.registry.names() if name.startswith("browser_")
+    }
+    assert enabled_browser_names == {"browser_perceive", "browser_semantic_operation"}
     factory.CdpBrowserMutationActuator.assert_called_once_with(
         "http://127.0.0.1:9222",
         target_id="target-1",
         max_frame_bytes=134_217_728,
     )
-    tool = enabled.registry.get("browser_action")
-    assert tool._adapter.actuator is fake_write
+    tool = enabled.registry.get("browser_semantic_operation")
+    assert tool._semantic_execute._action_adapter.actuator is fake_write
 
 
 def test_bqual_ptc_experiment_arm_exposes_smc_browser_without_legacy_playwright(
@@ -306,6 +282,7 @@ def test_bqual_ptc_experiment_arm_exposes_smc_browser_without_legacy_playwright(
         )
     )
     names = set(engine.registry.names())
-    assert {"browser_perceive", "browser_action"}.issubset(names)
+    browser_names = {name for name in names if name.startswith("browser_")}
+    assert browser_names == {"browser_perceive", "browser_semantic_operation"}
     assert "playwright_exec" not in names
     assert "playwright_test" not in names
