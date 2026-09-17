@@ -1483,8 +1483,9 @@ def build_engine(settings: Settings) -> LoopEngine:
     install_refresh_executor(engine)
 
     # Learning Plane（design §5.3）: durable journal + 后台 ReflectionRun 消费者。
-    # 默认关闭（LEARNING_PLANE_ENABLED）；关闭时不挂载 engine.learning_journal，
-    # post_run 反射检查保持静默 —— 零行为变化、无队列积压。
+    # 默认开启（2026-09-17 用户裁决：学习闭环为运行时一等能力，config.LEARNING_PLANE_ENABLED
+    # 默认 True）；显式 LEARNING_PLANE_ENABLED=0 时不挂载 engine.learning_journal，
+    # post_run 反射检查保持静默 —— 零模型调用、无队列积压。
     engine.learning_plane = None
     foreground_probe = ForegroundActivityProbe(engine, settings.sessions_dir)
     resource_governor = ResourceGovernor(foreground_probe=foreground_probe.active)
