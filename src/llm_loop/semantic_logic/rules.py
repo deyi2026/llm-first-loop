@@ -847,6 +847,220 @@ def _semantic_action_id(*, verb: str, target_ref: str, args: dict[str, Any]) -> 
     return f"sact-{hashlib.sha256(wire).hexdigest()[:24]}"
 
 
+def _scope_graph(
+    input_facts: list[dict[str, Any]],
+) -> tuple[dict[str, str | None], dict[str, str]]:
+    by_subject: dict[str, dict[str, list[Any]]] = {}
+    for fact in input_facts:
+        predicate = str(fact["predicate"])
+        if predicate not in {
+            "scope.node.scope_ref",
+            "scope.node.parent_scope_ref",
+            "scope.node.kind",
+        }:
+            continue
+        subject = str(fact["subject"])
+        by_subject.setdefault(subject, {}).setdefault(predicate, []).append(fact.get("value"))
+    if not by_subject:
+        raise _ValidationError("scope_graph_missing")
+
+    parents: dict[str, str | None] = {}
+    kinds: dict[str, str] = {}
+    for fields in by_subject.values():
+        scope_values = fields.get("scope.node.scope_ref") or []
+        parent_values = fields.get("scope.node.parent_scope_ref") or []
+        kind_values = fields.get("scope.node.kind") or []
+        if len(scope_values) != 1 or len(parent_values) != 1 or len(kind_values) != 1:
+            raise _ValidationError("scope_node_fields_ambiguous")
+        scope_ref = scope_values[0]
+        parent_ref = parent_values[0]
+        kind = kind_values[0]
+        if not _nonempty_string(scope_ref) or not _nonempty_string(kind):
+            raise _ValidationError("scope_node_identity_invalid")
+        if parent_ref is not None and not _nonempty_string(parent_ref):
+            raise _ValidationError("scope_parent_ref_invalid")
+        if scope_ref in parents:
+            raise _ValidationError("duplicate_scope_ref")
+        parents[str(scope_ref)] = str(parent_ref) if parent_ref is not None else None
+        kinds[str(scope_ref)] = str(kind)
+
+    if len(parents) > _FROZEN_BOUNDS["max_scope_nodes"]:
+        raise _ValidationError("max_scope_nodes_exceeded")
+    for start in parents:
+        seen = {start}
+        current = start
+        depth = 0
+        while True:
+            parent = parents.get(current)
+            if parent is None or parent not in parents:
+                break
+            depth += 1
+            if depth > _FROZEN_BOUNDS["max_scope_depth"]:
+                raise _ValidationError("max_scope_depth_exceeded")
+            if parent in seen:
+                raise _ValidationError("scope_graph_cycle")
+            seen.add(parent)
+            current = parent
+    return parents, kinds
+
+
+def _scope_edges(parents: dict[str, str | None]) -> list[tuple[str, str]]:
+    edges: set[tuple[str, str]] = set()
+    for child in parents:
+        current = child
+        while True:
+            parent = parents.get(current)
+            if parent is None:
+                break
+            edges.add((child, parent))
+            if parent not in parents:
+                break
+            current = parent
+    return sorted(edges)
+
+
+def _make_scope_closure_bundle(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    edges: list[tuple[str, str]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    input_refs = sorted({str(fact["fact_id"]) for fact in input_facts})
+    if len(input_refs) > _FROZEN_BOUNDS["max_input_fact_refs_per_derivation"]:
+        raise _ValidationError("max_input_fact_refs_per_derivation_exceeded")
+    if len(edges) > _FROZEN_BOUNDS["max_output_facts_per_rule_context"]:
+        raise _ValidationError("max_output_facts_per_rule_context_exceeded")
+    if not edges:
+        raise _ValidationError("scope_closure_has_no_positive_edge")
+    context_ref = str(input_document["context_ref"])
+    derivation_seed = {
+        "rule_ref": str(rule["rule_id"]),
+        "rule_hash": str(rule["rule_hash"]),
+        "input_fact_refs": input_refs,
+        "context_refs": [context_ref],
+        "edges": edges,
+        "result": "derived",
+    }
+    derivation_id = f"deriv-{_sha256(derivation_seed)[:24]}"
+    rule_ref = f"{rule['rule_id']}@{rule['rule_version']}"
+    completeness = _derived_completeness(input_facts)
+    projection_complete = _derived_projection_complete(input_facts)
+    derived: list[dict[str, Any]] = []
+    for child, ancestor in edges:
+        fact_seed = {
+            "derivation_id": derivation_id,
+            "predicate": "scope.descendant_of",
+            "subject": child,
+            "ancestor": ancestor,
+        }
+        fact_id = f"dfact-{_sha256(fact_seed)[:24]}"
+        derived.append(
+            {
+                "kind": "fact",
+                "schema": _FACT_SCHEMA,
+                "fact_id": fact_id,
+                "domain": str(rule["domain"]),
+                "subject": child,
+                "predicate": "scope.descendant_of",
+                "value": "asserted",
+                "value_type": "string",
+                "truth_state": "asserted",
+                "context": {
+                    "domain": str(rule["domain"]),
+                    "scope_ref": ancestor,
+                    "observed_version": None,
+                    "snapshot_id": None,
+                    "sensor_contract_ref": None,
+                },
+                "observation_completeness": dict(completeness),
+                "projection_complete": projection_complete,
+                "provenance": {
+                    "kind": "mechanically_derived",
+                    "source": f"rule:{rule_ref}",
+                    "grounding_ref": None,
+                    "observed_version": None,
+                    "derivation_ref": derivation_id,
+                    "rule_ref": rule_ref,
+                    "input_fact_refs": input_refs,
+                },
+            }
+        )
+    derivation = {
+        "kind": "derivation",
+        "schema": "smc.derivation_record.v0.1",
+        "derivation_id": derivation_id,
+        "rule_ref": rule_ref,
+        "rule_hash": str(rule["rule_hash"]),
+        "input_fact_refs": input_refs,
+        "output_fact_refs": [str(fact["fact_id"]) for fact in derived],
+        "context_refs": [context_ref],
+        "result": "derived",
+        "reason": None,
+    }
+    return derived, derivation
+
+
+def _evaluate_scope_descendant_closure(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    del index
+    parents, _ = _scope_graph(input_facts)
+    return _make_scope_closure_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        edges=_scope_edges(parents),
+    )
+
+
+def _evaluate_scope_target_relation(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    request_ok, request_scope = _single_value(index, "request.scope_ref")
+    target_ok, target_scope = _single_value(index, "target.scope_ref")
+    observed = {
+        str(fact.get("value"))
+        for fact in index.get("scope.node.scope_ref", [])
+        if _nonempty_string(fact.get("value"))
+    }
+    if (
+        not request_ok
+        or not target_ok
+        or not _nonempty_string(request_scope)
+        or not _nonempty_string(target_scope)
+        or request_scope not in observed
+        or target_scope not in observed
+    ):
+        relation = "indeterminate"
+        reason = "scope_unobserved"
+        result: Literal["derived", "indeterminate"] = "indeterminate"
+    elif request_scope == target_scope:
+        relation = "match"
+        reason = "exact_scope"
+        result = "derived"
+    else:
+        relation = "mismatch"
+        reason = "target_scope_mismatch"
+        result = "derived"
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs={"scope.relation": relation, "scope.reason": reason},
+        result=result,
+        reason=reason,
+    )
+
+
 def _evaluate_action_fixed_contract(
     *,
     rule: dict[str, Any],
@@ -898,6 +1112,8 @@ def _evaluate_action_fixed_contract(
 _IMPLEMENTED_EVALUATORS: Final = {
     "grounding_exact_binding": _evaluate_grounding_exact_binding,
     "action_fixed_contract": _evaluate_action_fixed_contract,
+    "scope_descendant_closure": _evaluate_scope_descendant_closure,
+    "scope_target_relation": _evaluate_scope_target_relation,
 }
 
 
