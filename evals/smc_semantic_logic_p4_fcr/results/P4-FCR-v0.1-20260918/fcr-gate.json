@@ -1,0 +1,24 @@
+{
+  "b_mechanical_valid": 16,
+  "b_rows": 20,
+  "b_structural_valid": 20,
+  "b_targeted_cross_binding_errors": 4,
+  "browser_runtime_rows": 0,
+  "fallback_rows": 0,
+  "pass": false,
+  "raw_results_sha256": "2c8f3561f75e7ab3a6660f47dd8b58fc37abdc2078f412bfbb3e900164204bab",
+  "requirements": {
+    "b_mechanical_20_of_20": false,
+    "b_structural_20_of_20": true,
+    "b_targeted_errors_zero": false,
+    "browser_runtime_zero": true,
+    "fallback_zero": true,
+    "manifest_normalization_false": true,
+    "manifest_retry_false": true,
+    "manifest_task_completion_false": true,
+    "tool_execution_zero": true
+  },
+  "schema": "smc.semantic_logic_p4_fcr.v0.1.gate",
+  "tool_execution_total": 0,
+  "verdict": "NOT_QUALIFIED"
+}

@@ -1,0 +1,10 @@
+{
+  "b_mechanical_valid": 16,
+  "b_rows": 20,
+  "b_structural_valid": 20,
+  "b_targeted_cross_binding_errors": 4,
+  "browser_runtime_rows": 0,
+  "fallback_rows": 0,
+  "rows": 40,
+  "tool_execution_total": 0
+}

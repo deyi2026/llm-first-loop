@@ -1,0 +1,136 @@
+{
+  "experiment_git_head": "9e6e146da56c29eea3eeb8f832ade2ff2915a0d3",
+  "model_ref": "cognilocal/ornith-1.5-35b-a3b-mlx",
+  "model_server": {
+    "command_sha256": "2bee17c3fb687fb9224f0f72cac6738c607515a3ba92b90ae867995dd7b85fcf",
+    "decode_concurrency_1": true,
+    "max_tokens_16000": true,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "pid": 52430,
+    "prompt_concurrency_1": true
+  },
+  "p4d_base": "596c4175dd6cb3f0bd27656735f886b923758c80",
+  "plan_rows": 40,
+  "plan_sha256": "989258ba902aaf548625b043ef7649760a497697db0af28f1e53dcd687280420",
+  "protocol_sha256": "d39a34053c9762ae6760e6bc65a43375ac6f4023966621963918890af78ab9f6",
+  "provider_contract": {
+    "base_url": "http://localhost:8901/v1",
+    "max_input_tokens": 184000,
+    "max_tokens": 16000,
+    "min_p": 0.0,
+    "reasoning_capable": true,
+    "reasoning_control": "chat_template",
+    "temperature": 0.0,
+    "timeout_s": 1800,
+    "top_k": 0,
+    "top_p": 1.0,
+    "wire_protocol": "openai"
+  },
+  "runtime": {
+    "browser_runtime_required": false,
+    "fallbacks": 0,
+    "input_token_budget": 184000,
+    "normalization": false,
+    "output_token_budget": 16000,
+    "reasoning_effort": "medium",
+    "retry": false,
+    "serial_requests": true,
+    "task_completion_judgment": false,
+    "temperature": 0.0,
+    "thinking_mode": "on",
+    "tool_execution_total_required": 0
+  },
+  "schema": "smc.semantic_logic_p4_fcr.v0.1.execution_manifest",
+  "shared_surface_identical": true,
+  "source_sha256": {
+    "docs/SMC-SEMANTIC-LOGIC-P4-AB-PROTOCOL-v0.1.json": "d39a34053c9762ae6760e6bc65a43375ac6f4023966621963918890af78ab9f6",
+    "evals/smc_semantic_logic_p4_fcr/PLAN.v0.1-FCR.json": "40aeeaa8ee071bd5b393d95152f6a81f4fa76f10dc64022a09e40818cef8a47a",
+    "evals/smc_semantic_logic_p4_fcr/PROTOCOL.v0.1-FCR.md": "62c836be80a46c47ee926bd3260d813fe195c5d87ebf020cb90615bf7fe93e26",
+    "evals/smc_semantic_logic_p4_fcr/analyze.py": "08ea6c9264f5c8b60b648dfd03001de348790457c416c1ad21048c784dec2a98",
+    "evals/smc_semantic_logic_p4_fcr/protocol.py": "64fb1d16e889de1a74f68e82c50893d5144070e981fd031999880001729b0c94",
+    "evals/smc_semantic_logic_p4_fcr/run_fcr.py": "528f1d6e81258aff6c02d9d3ecb68bb44584b21a2d3290f40ba7cfa29528c3eb",
+    "src/llm_loop/core/prompt.py": "4a68cf7439b9417c539844489851629d0c2e2d6f22efb4b5325995bc76d91757",
+    "src/llm_loop/llm/client.py": "e548d63e56a754b4b43772ffd468d77fc6c124f270bb085627ab6fe28f39bfb6",
+    "src/llm_loop/llm/schemas.py": "59f9cc7ddb468d96ca0403de2bca474f8cf6a854fd7c30eee1acbca99af9b96a",
+    "src/llm_loop/tools/builtin/browser_perceive.py": "d180b7880813b74b9a7c5fbda3e120576fa2657d53bd8fc4274d1cc08e4be072",
+    "src/llm_loop/tools/builtin/browser_semantic_execute.py": "920f2f794b0f6a2ea8481fa2f7bc5e71091e8fa71353e62125d94f08557c1008",
+    "src/llm_loop/tools/builtin/browser_wait.py": "cf8c4830c0233df80920f6ee9d2ea8a414fd8a7558bdfb1d421770248fcd77f8",
+    "src/llm_loop/tools/registry.py": "b3ba32f63056a5d27ed4d46fe68f7a4824cde0ecd0b5087c21147df252eb7eb6",
+    "tools/semantic_logic/p4d_typed_compiler.py": "682829616f3d511518b2719753c4372972092c28c99fc61b26e15c93fb57fed5"
+  },
+  "surfaces": {
+    "A": {
+      "full_sha256": "aa2bba44a25f7e7e74a789d208055da33891ec756b032a64e3175dd7ebb99ec9",
+      "lazy_json_chars": 6098,
+      "lazy_sha256": "4e539db32f34b21cd84e6eed6c66c0f52ac17f95423d9a8b5cb7343f1d6a23e4",
+      "names": [
+        "browser_perceive",
+        "browser_wait_scope_url",
+        "browser_wait_scope_ready",
+        "browser_wait_scope_count",
+        "browser_wait_object_state",
+        "browser_wait_object_text",
+        "get_tool_schema",
+        "browser_semantic_execute"
+      ],
+      "tool_count": 8,
+      "tool_sha256": {
+        "browser_perceive": "a1f3d195dbde096d73a441dfe23d3fc388e6adb0d9cc3216f002848b93a947b1",
+        "browser_semantic_execute": "b998e3d37d388aecc3c4acce7593cdc609f2b547cde5c8449d685bb7360833d2",
+        "browser_wait_object_state": "94ef49bd8223e4145cb033f0a531964c29c66f2c1c4debfb5a81f8b4c56c219d",
+        "browser_wait_object_text": "5eb198f0b04653da62480c79a14640aadc70f3b19e1d9174f15a4097f7078b39",
+        "browser_wait_scope_count": "4f37ffca2323b3f8b6e49e7995e12f3ef14fbf86de9a6dd12f4a1038c295e032",
+        "browser_wait_scope_ready": "f4f2ec322542313a8879e18a4ee5382330ded4f63c6751a2e45ae305d7f3786f",
+        "browser_wait_scope_url": "40704f19ff359f9a5556b44c98df0f0668c2a8a588af779715d3a68bda3a5151",
+        "get_tool_schema": "fe584b7c2a0d39ea553bcaf12cfa5f8d6eef3c764c1ab6b62c2312b7a1a1b4b0"
+      },
+      "wire_json_chars": 6370,
+      "wire_sha256": "39f1c40e38dfb8187976ff633d952278eee54b67e2035716cc9c4fcd96266aec"
+    },
+    "B": {
+      "full_sha256": "48b57847d91c6fd66b8bf426687208d578f15a545202b21de1e99aec68619a4e",
+      "lazy_json_chars": 6535,
+      "lazy_sha256": "8f598520379eb51f7d624d243a2a1019110ce4231f8a34cda3e31c0603d8ce64",
+      "names": [
+        "browser_perceive",
+        "browser_wait_scope_url",
+        "browser_wait_scope_ready",
+        "browser_wait_scope_count",
+        "browser_wait_object_state",
+        "browser_wait_object_text",
+        "get_tool_schema",
+        "browser_semantic_click",
+        "browser_semantic_fill",
+        "browser_semantic_select",
+        "browser_semantic_scroll",
+        "browser_semantic_navigate"
+      ],
+      "tool_count": 12,
+      "tool_sha256": {
+        "browser_perceive": "a1f3d195dbde096d73a441dfe23d3fc388e6adb0d9cc3216f002848b93a947b1",
+        "browser_semantic_click": "6ae267f073f8e417c90158caa6370388ebf395522fe05f04bf95bbe3f99dc157",
+        "browser_semantic_fill": "0b545be18cdd0db2c16ed2bc9fa6e2e592db7ac42237aa80aeaae36f3e9b72cd",
+        "browser_semantic_navigate": "3aae6b37b697295aa77cf5ae7333067284f5eee5617510634c9d9dfd2ce42c29",
+        "browser_semantic_scroll": "d0df80ee6a7d3ef740062faaa47d8a3e35cd98b97b5b34456ec4c29d7cf21365",
+        "browser_semantic_select": "e4acb8f4cff96f1800b6952d7404c75fba86755e3f0039321db71767bbe7a5bf",
+        "browser_wait_object_state": "94ef49bd8223e4145cb033f0a531964c29c66f2c1c4debfb5a81f8b4c56c219d",
+        "browser_wait_object_text": "5eb198f0b04653da62480c79a14640aadc70f3b19e1d9174f15a4097f7078b39",
+        "browser_wait_scope_count": "4f37ffca2323b3f8b6e49e7995e12f3ef14fbf86de9a6dd12f4a1038c295e032",
+        "browser_wait_scope_ready": "f4f2ec322542313a8879e18a4ee5382330ded4f63c6751a2e45ae305d7f3786f",
+        "browser_wait_scope_url": "40704f19ff359f9a5556b44c98df0f0668c2a8a588af779715d3a68bda3a5151",
+        "get_tool_schema": "fe584b7c2a0d39ea553bcaf12cfa5f8d6eef3c764c1ab6b62c2312b7a1a1b4b0"
+      },
+      "wire_json_chars": 6943,
+      "wire_sha256": "5959591a07d0f4fc3a4c945037151187a09369763ea229a6fb9a2aca2eca16da"
+    }
+  },
+  "system_prompt_sha256": "8934d96c3f25a6727df750e3f73e0ed73743c985b861d97f7bc3f7f2a4c60392",
+  "task_prompt_sha256": {
+    "click": "a599f143511d065d0d0bc45a99e6d2a9e22f966e122d0239e9f5a2371996337f",
+    "fill": "b1f882f20611addea09d98aca8f87bfb94e95ea160cbf144c537781365e02092",
+    "navigate": "eda39ea455f16e5600f319113360cf913406041c113813328a3cff543c6a87fc",
+    "scroll": "eef919e32f7ff171b60adde426f5ed6f64921028dd673faf606fc72841ab3d63",
+    "select": "cd50491379b8459b4cb76f88acdbad984c855e96e0b2b9dc35e9db57302c1df5"
+  },
+  "tracked_dirty": false
+}

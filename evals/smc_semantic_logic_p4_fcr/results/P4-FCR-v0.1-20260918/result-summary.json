@@ -1,0 +1,235 @@
+{
+  "arm_a": {
+    "cache_hit_tokens": 0,
+    "mechanical_valid": 0,
+    "no_semantic_call": 12,
+    "rows": 20,
+    "schema_reread_intent_or_request": 0,
+    "structural_valid": 8,
+    "targeted_cross_binding_errors": 8,
+    "tokens_in": 47148,
+    "tokens_out": 3752,
+    "wall_s_median": 6.714,
+    "wall_s_total": 167.291
+  },
+  "arm_b": {
+    "cache_hit_tokens": 31109,
+    "mechanical_valid": 16,
+    "no_semantic_call": 0,
+    "rows": 20,
+    "schema_reread_intent_or_request": 0,
+    "structural_valid": 20,
+    "targeted_cross_binding_errors": 4,
+    "tokens_in": 49448,
+    "tokens_out": 4152,
+    "wall_s_median": 6.1754999999999995,
+    "wall_s_total": 138.148
+  },
+  "arm_b_failures": [
+    {
+      "actual": [
+        {
+          "arguments": {
+            "object_ref": "ground://browser/v0.1/p4fcr-snapshot/object/el_33333333333333333333",
+            "value": "beta"
+          },
+          "name": "browser_semantic_select"
+        }
+      ],
+      "errors": [
+        "P4-X06"
+      ],
+      "repeat": 1,
+      "row": 8,
+      "task": "select"
+    },
+    {
+      "actual": [
+        {
+          "arguments": {
+            "object_ref": "ground://browser/v0.1/p4fcr-snapshot/object/el_33333333333333333333",
+            "value": "beta"
+          },
+          "name": "browser_semantic_select"
+        }
+      ],
+      "errors": [
+        "P4-X06"
+      ],
+      "repeat": 2,
+      "row": 15,
+      "task": "select"
+    },
+    {
+      "actual": [
+        {
+          "arguments": {
+            "object_ref": "ground://browser/v0.1/p4fcr-snapshot/object/el_33333333333333333333",
+            "value": "beta"
+          },
+          "name": "browser_semantic_select"
+        }
+      ],
+      "errors": [
+        "P4-X06"
+      ],
+      "repeat": 3,
+      "row": 24,
+      "task": "select"
+    },
+    {
+      "actual": [
+        {
+          "arguments": {
+            "object_ref": "ground://browser/v0.1/p4fcr-snapshot/object/el_33333333333333333333",
+            "value": "beta"
+          },
+          "name": "browser_semantic_select"
+        }
+      ],
+      "errors": [
+        "P4-X06"
+      ],
+      "repeat": 4,
+      "row": 31,
+      "task": "select"
+    }
+  ],
+  "execution_manifest_sha256": "766ec577201026085d1bcaed7c7981598147a6877caf7e3ef1ae3b9d7cc388ae",
+  "experiment_git_head": "9e6e146da56c29eea3eeb8f832ade2ff2915a0d3",
+  "hard_gate": {
+    "b_mechanical_20_of_20": false,
+    "b_structural_20_of_20": true,
+    "b_targeted_errors_zero": false,
+    "browser_runtime_zero": true,
+    "fallback_zero": true,
+    "manifest_normalization_false": true,
+    "manifest_retry_false": true,
+    "manifest_task_completion_false": true,
+    "tool_execution_zero": true
+  },
+  "next_stage": "P4-LIVE_BLOCKED_BY_P4-FCR_HARD_GATE",
+  "p4d_base": "596c4175dd6cb3f0bd27656735f886b923758c80",
+  "per_task": {
+    "click": {
+      "A": {
+        "errors": [
+          "P4-X06"
+        ],
+        "mechanical_valid": 0,
+        "no_semantic_call": 0,
+        "rows": 4,
+        "structural_valid": 4
+      },
+      "B": {
+        "errors": [],
+        "mechanical_valid": 4,
+        "no_semantic_call": 0,
+        "rows": 4,
+        "structural_valid": 4
+      }
+    },
+    "fill": {
+      "A": {
+        "errors": [
+          "P4-X06"
+        ],
+        "mechanical_valid": 0,
+        "no_semantic_call": 0,
+        "rows": 4,
+        "structural_valid": 4
+      },
+      "B": {
+        "errors": [],
+        "mechanical_valid": 4,
+        "no_semantic_call": 0,
+        "rows": 4,
+        "structural_valid": 4
+      }
+    },
+    "navigate": {
+      "A": {
+        "errors": [
+          "NO_SEMANTIC_CALL"
+        ],
+        "mechanical_valid": 0,
+        "no_semantic_call": 4,
+        "rows": 4,
+        "structural_valid": 0
+      },
+      "B": {
+        "errors": [],
+        "mechanical_valid": 4,
+        "no_semantic_call": 0,
+        "rows": 4,
+        "structural_valid": 4
+      }
+    },
+    "scroll": {
+      "A": {
+        "errors": [
+          "NO_SEMANTIC_CALL"
+        ],
+        "mechanical_valid": 0,
+        "no_semantic_call": 4,
+        "rows": 4,
+        "structural_valid": 0
+      },
+      "B": {
+        "errors": [],
+        "mechanical_valid": 4,
+        "no_semantic_call": 0,
+        "rows": 4,
+        "structural_valid": 4
+      }
+    },
+    "select": {
+      "A": {
+        "errors": [
+          "NO_SEMANTIC_CALL"
+        ],
+        "mechanical_valid": 0,
+        "no_semantic_call": 4,
+        "rows": 4,
+        "structural_valid": 0
+      },
+      "B": {
+        "errors": [
+          "P4-X06"
+        ],
+        "mechanical_valid": 0,
+        "no_semantic_call": 0,
+        "rows": 4,
+        "structural_valid": 4
+      }
+    }
+  },
+  "plan_sha256": "989258ba902aaf548625b043ef7649760a497697db0af28f1e53dcd687280420",
+  "preflight_sha256": "c471b9ba3f5fbac3a55dbb54d8f8d2ec4b16533aa9a4b852e3363c931f5c2e33",
+  "protocol_sha256": "d39a34053c9762ae6760e6bc65a43375ac6f4023966621963918890af78ab9f6",
+  "provider_surface": {
+    "A": {
+      "tool_count": 8,
+      "wire_json_chars": 6370,
+      "wire_sha256": "39f1c40e38dfb8187976ff633d952278eee54b67e2035716cc9c4fcd96266aec"
+    },
+    "B": {
+      "tool_count": 12,
+      "wire_json_chars": 6943,
+      "wire_sha256": "5959591a07d0f4fc3a4c945037151187a09369763ea229a6fb9a2aca2eca16da"
+    }
+  },
+  "raw_results_sha256": "2c8f3561f75e7ab3a6660f47dd8b58fc37abdc2078f412bfbb3e900164204bab",
+  "safety": {
+    "browser_runtime_rows": 0,
+    "fallback_rows": 0,
+    "indices_exact": true,
+    "pairing_exact": true,
+    "provider_all_cognilocal": true,
+    "rows_complete": true,
+    "tool_execution_total": 0,
+    "truncated_rows": 0
+  },
+  "schema": "smc.semantic_logic_p4_fcr.v0.1.result",
+  "verdict": "NOT_QUALIFIED"
+}

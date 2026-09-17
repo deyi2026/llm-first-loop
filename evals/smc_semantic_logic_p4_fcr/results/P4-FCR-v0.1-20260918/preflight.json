@@ -1,0 +1,17 @@
+{
+  "browser_runtime_used": false,
+  "experiment_git_head": "9e6e146da56c29eea3eeb8f832ade2ff2915a0d3",
+  "measured_row_dirs": 0,
+  "model_requests": 0,
+  "p4d_base": "596c4175dd6cb3f0bd27656735f886b923758c80",
+  "plan_rows": 40,
+  "plan_sha256": "989258ba902aaf548625b043ef7649760a497697db0af28f1e53dcd687280420",
+  "preflight": true,
+  "qualification_gate_present": false,
+  "results_present": false,
+  "schema": "smc.semantic_logic_p4_fcr.v0.1.preflight",
+  "shared_surface_identical": true,
+  "surface_a_sha256": "39f1c40e38dfb8187976ff633d952278eee54b67e2035716cc9c4fcd96266aec",
+  "surface_b_sha256": "5959591a07d0f4fc3a4c945037151187a09369763ea229a6fb9a2aca2eca16da",
+  "tool_execution_total": 0
+}
