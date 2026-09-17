@@ -122,7 +122,12 @@ class SelfEvaluator:
             self._metric_exception_rate(exceptions, llm_rounds, action_trace),
         ]
         summary = self._build_summary(metrics)
-        notes = [m.note for m in metrics if m.note]
+        # EVO-20260917-45863aeb B(i)(ii): 规则化哨兵（矛盾对+相邻突变，只标注不阻断）并入 note/diagnostics
+        alerts = self._check_metric_consistency(metrics) + self._check_adjacent_shift(metrics)
+        notes = [m.note for m in metrics if m.note] + alerts
+        diagnostics = self._build_declaration_diagnostics(declaration_checks)
+        if alerts:
+            diagnostics["consistency_alerts"] = alerts
         report = SelfEvalReport(
             eval_id=self._next_eval_id(),
             ts=_now(),
@@ -131,7 +136,7 @@ class SelfEvaluator:
             metrics=metrics,
             summary=summary,
             note="；".join(notes) if notes else "",
-            diagnostics=self._build_declaration_diagnostics(declaration_checks),
+            diagnostics=diagnostics,
         )
         self._persist(report)
         return report
@@ -208,6 +213,8 @@ class SelfEvaluator:
             value=round(success / len(recent), 4),
             sample_size=len(recent),
             source="action_trace",
+            # EVO-20260917-45863aeb: 正常计算也写明口径，数字自带可审计构成
+            note=f"分子={success} 条成功动作/分母={len(recent)} 条动作(近span)",
         )
 
     @staticmethod
@@ -232,11 +239,10 @@ class SelfEvaluator:
                 note="无工具调用样本",
             )
         success = sum(1 for t in recent if t.get("status") == "success")
-        note = (
-            ""
-            if len(recent) >= self._min_samples
-            else f"小样本（{len(recent)} < {self._min_samples}）"
-        )
+        # EVO-20260917-45863aeb: 正常计算也写明口径；小样本附加标注
+        note = f"分子={success} 条成功调用/分母={len(recent)} 条调用"
+        if len(recent) < self._min_samples:
+            note += f"；小样本（{len(recent)} < {self._min_samples}）"
         return EvalMetric(
             name="tool_efficiency",
             value=round(success / len(recent), 4),
@@ -262,6 +268,7 @@ class SelfEvaluator:
             value=round(consistent / len(recent), 4),
             sample_size=len(recent),
             source="declaration_check",
+            note=f"分子={consistent} 条一致声明/分母={len(recent)} 条声明(近span)",
         )
 
     def _metric_stagnation_rate(self, action_trace: list[dict]) -> EvalMetric:
@@ -333,12 +340,15 @@ class SelfEvaluator:
                 note=f"样本不足（{rounds_src} {llm_rounds} 轮 < {self._min_samples}）",
             )
         value = round(len(recent) / llm_rounds, 4)
+        note = f"分子={len(recent)} 条(近span)/分母={llm_rounds} 轮({rounds_src})"
+        if len(recent) >= llm_rounds:
+            note += "；分子≥分母，已封顶 1.0"  # EVO-20260917-45863aeb: 截断显式化
         return EvalMetric(
             name="exception_rate",
             value=min(value, 1.0),
             sample_size=llm_rounds,
             source="exception_log",
-            note=f"分子={len(recent)} 条(近span)/分母={llm_rounds} 轮({rounds_src})",
+            note=note,
         )
 
     def _build_summary(self, metrics: list[EvalMetric]) -> str:
@@ -356,6 +366,83 @@ class SelfEvaluator:
             else f"近 {self._span} 条"
         )
         return f"{window_desc}窗口指标: {parts}"
+
+    # ── EVO-20260917-45863aeb: 跨指标哨兵（规则化，只标注不阻断）──
+    @staticmethod
+    def _check_metric_consistency(metrics: list[EvalMetric]) -> list[str]:
+        """B(i) 矛盾对哨兵（只标注不阻断，评估 fail-open 红线不变）.
+
+        - exception_rate > 0.8 且 success_rate > 0.8 同现 → 分母口径疑似失真
+          （提案 B(i) 原口径；2026-09-17 首次落盘曾静默偏为 ≥0.5/≥0.9，本次对齐提案）：
+          2026-08-27 SE 案例中 process_snapshot 分母虚高致 exception_rate=1.00 与
+          success_rate=1.00 剧烈矛盾；主修复 EVO-20260827-c6908267，此处防同类回归。
+        """
+        by_name = {m.name: m for m in metrics}
+        exc = by_name.get("exception_rate")
+        suc = by_name.get("success_rate")
+        if not exc or not suc or exc.value is None or suc.value is None:
+            return []
+        if exc.value > 0.8 and suc.value > 0.8:
+            return [
+                f"矛盾哨兵: exception_rate={exc.value:.2f} 与 success_rate={suc.value:.2f} 同现，"
+                "分母口径疑似失真（参照 EVO-20260827-c6908267 案例模式，核查 note 中分母来源），"
+                "口径存疑，需复核",
+            ]
+        return []
+
+    def _check_adjacent_shift(self, metrics: list[EvalMetric]) -> list[str]:
+        """B(ii) 相邻突变哨兵: 与 self_eval_log 上一条同指标 |Δ|≥0.5 → 口径存疑（只标注）.
+
+        2026-08-27 案例形态: exception_rate 0.06 → 1.00 单次跳变，此前只能人工比对
+        相邻两次评估才能发现。只读已落盘的上一条（当前报告在检查后才 persist，不会自比）；
+        日志缺失/损坏如实降级为不比对（fail-open）。
+        """
+        prev = self._read_last_eval_metrics()
+        if not prev:
+            return []
+        alerts: list[str] = []
+        for m in metrics:
+            if m.value is None:
+                continue
+            pv = prev.get(m.name)
+            if pv is None:
+                continue
+            delta = abs(m.value - pv)
+            if delta >= 0.5:
+                alerts.append(
+                    f"相邻突变哨兵: {m.name} 上一评估 {pv:.2f} → 本次 {m.value:.2f}"
+                    f"（|Δ|={delta:.2f}≥0.50），口径存疑，需复核"
+                )
+        return alerts
+
+    def _read_last_eval_metrics(self) -> dict[str, float]:
+        """读 self_eval_log.jsonl 最后一条可解析记录的 {指标名: 值}（无/损坏 → 空）."""
+        path = self._audit_dir / "self_eval_log.jsonl"
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return {}
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            out: dict[str, float] = {}
+            for m in row.get("metrics", []):
+                if not isinstance(m, dict):
+                    continue
+                v = m.get("value")
+                if isinstance(v, bool) or not isinstance(v, (int, float)):
+                    continue
+                name = str(m.get("name") or "")
+                if name:
+                    out[name] = float(v)
+            if out:
+                return out
+        return {}
 
     # ── 数据源读取（读取失败如实标注，不伪造）──
     def _read_jsonl(self, filename: str, *, with_source_ref: bool = False) -> list[dict]:
