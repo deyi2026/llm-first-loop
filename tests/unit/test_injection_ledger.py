@@ -60,6 +60,26 @@ def test_ledger_io_error_fail_open(tmp_path, monkeypatch):
     assert "RULE-AI-02/07" in str(msg.content)
 
 
+def test_hydration_refs_and_session_id_fields(tmp_path, monkeypatch):
+    """P1: hydration 行登记 refs（正文提取）与 session_id（run_context 缺省时为空串）."""
+    from llm_loop.tools.registry import _observe_knowledge_hydration
+
+    monkeypatch.setenv("INJECTION_LEDGER_PATH", str(tmp_path / "injection_ledger.jsonl"))
+    call = SimpleNamespace(name="search_records", arguments={"kind": "experience", "query": "venv"})
+    result = SimpleNamespace(
+        status=SimpleNamespace(value="success"),
+        tool_name="search_records",
+        content="命中卡片: experience:EXP-1 experience:EXP-1 method:m-2 无关文本",
+    )
+    _observe_knowledge_hydration(call, result)
+    rows = [json.loads(l) for l in (tmp_path / "injection_ledger.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["kind"] == "hydration"
+    assert row["refs"] == ["experience:EXP-1", "method:m-2"]  # 去重 + 只取 ref 字面
+    assert "session_id" in row  # 无 run_context 时为 ""（fail-open 归属缺失，归因跳过）
+
+
 def test_hydration_rows(tmp_path, monkeypatch):
     from llm_loop.tools.registry import _observe_knowledge_hydration
 

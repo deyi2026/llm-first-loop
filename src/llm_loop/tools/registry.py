@@ -207,12 +207,48 @@ def _emit_guidance_shadow_event(
 _HYDRATION_TOOLS = frozenset({"search_records", "skill_load"})
 
 
+def _ledger_session_id() -> str:
+    """P1 归因窗口按 session 划分所需的机械归属（fail-open，取不到则空串）."""
+    try:
+        from llm_loop.core.run_context import current_session_id
+
+        return str(current_session_id.get() or "")
+    except Exception:  # noqa: BLE001 - 观测字段永不阻断主路径
+        return ""
+
+
 def _ledger_receipt_pointer(*, tool: str, status: str, source: str, chars: int) -> None:
     """登记"建议文本实际进入模型可见正文"的时刻（on/shadow 模式；off 态不触发）."""
     with contextlib.suppress(Exception):
         from llm_loop.knowledge.injection_ledger import append_row
 
-        append_row(kind="receipt_pointer", tool=tool, status=status, source=source, chars=chars)
+        append_row(
+            kind="receipt_pointer",
+            tool=tool,
+            status=status,
+            source=source,
+            chars=chars,
+            session_id=_ledger_session_id(),
+        )
+
+
+# P1: 从水合回执正文提取 stable ref 字面（机械正则；观测字段，不改投影）
+_HYDRATION_REF_RE = re.compile(
+    r"(?:experience|lesson|method|memory|episode|rule|synopsis):[A-Za-z0-9][A-Za-z0-9_\-/:.]*"
+)
+
+
+def _extract_hydration_refs(content: object, *, limit: int = 8) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for m in _HYDRATION_REF_RE.findall(str(content or "")):
+        ref = m[:120]
+        if ref not in seen:
+            seen.add(ref)
+            refs.append(ref)
+        if len(refs) >= limit:
+            break
+    return refs
 
 
 def _observe_knowledge_hydration(call: "ToolCall", result: "ToolResult") -> None:
@@ -226,6 +262,7 @@ def _observe_knowledge_hydration(call: "ToolCall", result: "ToolResult") -> None
         args = getattr(call, "arguments", None)
         if not isinstance(args, dict):
             args = {}
+        session_id = _ledger_session_id()
         if (getattr(result, "tool_name", "") or getattr(call, "name", "")) == "search_records":
             append_row(
                 kind="hydration",
@@ -233,6 +270,8 @@ def _observe_knowledge_hydration(call: "ToolCall", result: "ToolResult") -> None
                 status=status,
                 record_kind=str(args.get("kind", ""))[:32],
                 query=str(args.get("query", ""))[:120],
+                session_id=session_id,
+                refs=_extract_hydration_refs(getattr(result, "content", "")),
             )
         else:
             append_row(
@@ -240,6 +279,7 @@ def _observe_knowledge_hydration(call: "ToolCall", result: "ToolResult") -> None
                 tool="skill_load",
                 status=status,
                 skill=str(args.get("name", ""))[:64],
+                session_id=session_id,
             )
 
 # execute 包裹的扩展钩子（由外部装配: 如架构自省 record_action）
