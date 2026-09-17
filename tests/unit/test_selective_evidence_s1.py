@@ -413,8 +413,42 @@ def test_engine_projects_state_provider_only_and_preserves_selected_raw(tmp_path
     assert sum(text == '{"verdict":"ready","next":"final"}' for text in texts) == 1
     assert any("SELECTED-RAW-" in text for text in texts)
     assert any("tool_result_receipt" in text and "unselected" in text for text in texts)
+    assert (
+        engine._run_state().last_request_influence["ingress"]["tool_working_set"]
+        ["opportunistic_fold_allowed"]
+        is True
+    )
     assert len(sess.messages) == original_message_count
     assert all(m.content != '{"verdict":"ready","next":"final"}' for m in sess.messages)
+
+
+def test_engine_same_run_followup_defers_unselected_receipt_fold(tmp_path: Path):
+    """Round>1 keeps the already-sent raw tool prefix unless the hard valve is reached."""
+    from llm_loop.factory import build_engine
+
+    engine = build_engine(_settings(tmp_path, working_set=True))
+    sess = Session(session_id="s1", messages=_messages())
+    sess.working_state_checkpoint = _checkpoint(sess.messages)
+    original_message_count = len(sess.messages)
+
+    wire = engine._build_llm_messages(
+        sess,
+        [],
+        max_chars=200000,
+        planned_label="deepseek/model",
+        logical_round=2,
+    )
+    texts = [str(row.get("content") or "") for row in wire]
+
+    assert any("SELECTED-RAW-" in text for text in texts)
+    assert any("UNSELECTED-RAW-" in text for text in texts)
+    assert not any("tool_result_receipt" in text and "unselected" in text for text in texts)
+    assert (
+        engine._run_state().last_request_influence["ingress"]["tool_working_set"]
+        ["opportunistic_fold_allowed"]
+        is False
+    )
+    assert len(sess.messages) == original_message_count
 
 
 def test_new_human_task_removes_provider_state_without_mutating_checkpoint(tmp_path: Path):

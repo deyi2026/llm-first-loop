@@ -747,6 +747,7 @@ def project_active_tool_working_set_with_stats(
     *,
     preserve_group_digests: tuple[str, ...] | list[str] | set[str] | frozenset[str] = (),
     policy: Any | None = None,
+    allow_opportunistic_fold: bool = True,
 ) -> tuple[list[Message], ToolWorkingSetProjectionStats]:
     """Project active-run tool results and return factual, non-prompt telemetry.
 
@@ -891,15 +892,21 @@ def project_active_tool_working_set_with_stats(
                 pending_group_count += 1
                 pending_net_gain = pending_chars - pending_receipt_chars
                 fold_trigger = ""
-                if pending_chars >= batch_chars:
-                    fold_trigger = "coarse_bytes"
+                if allow_opportunistic_fold:
+                    if pending_chars >= batch_chars:
+                        fold_trigger = "coarse_bytes"
+                    elif len(pending) >= hard_result_cap:
+                        fold_trigger = "hard_result_cap"
+                    elif (
+                        len(pending) >= soft_result_cap
+                        and pending_net_gain >= min_net_gain_chars
+                    ):
+                        fold_trigger = "soft_cap_net_gain"
                 elif len(pending) >= hard_result_cap:
+                    # Same-run tool follow-ups keep the already-sent provider prefix
+                    # append-only whenever resource bounds permit. The hard result
+                    # count valve remains authoritative to prevent unbounded growth.
                     fold_trigger = "hard_result_cap"
-                elif (
-                    len(pending) >= soft_result_cap
-                    and pending_net_gain >= min_net_gain_chars
-                ):
-                    fold_trigger = "soft_cap_net_gain"
                 if pending and fold_trigger:
                     for idx, receipt in pending:
                         projected[idx] = receipt
