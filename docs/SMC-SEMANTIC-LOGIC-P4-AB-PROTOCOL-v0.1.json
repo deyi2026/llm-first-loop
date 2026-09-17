@@ -1,0 +1,349 @@
+{
+  "schema": "smc.semantic_logic_p4_ab_protocol.v0.1",
+  "status": "FROZEN_PROTOCOL_ONLY",
+  "frozen_at": "2026-09-17",
+  "phase": "P4 Semantic Compiler A/B",
+  "purpose": "Compare the current Browser semantic mutation surface with a smaller typed semantic surface plus a purely mechanical compiler, without granting Semantic Logic or the compiler any production authority.",
+  "base_identity": {
+    "formal_main_at_p3_integration": "ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+    "p3_implementation_anchor": "1891c7e1b2959abfdeb9a064e54916de26c54c1a",
+    "p3_result_head": "918471bff244eb8406a63eba69cbda1768307855",
+    "p3_remote_ref": "review/smc-semantic-logic-p3-20260917",
+    "p3_result_json_sha256": "51d5a3dd90d73d27c83a2394d625f76f8a8fb9e3770f554fc3e7882b1f4acb0a",
+    "p2_rulepack_hash": "5809347c62aa8a8b1856eff1bab0f11b9d98a57b0aedaef103e8ee2470f776a3"
+  },
+  "audited_source_hashes": {
+    "src/llm_loop/tools/builtin/browser_perceive.py": "d180b7880813b74b9a7c5fbda3e120576fa2657d53bd8fc4274d1cc08e4be072",
+    "src/llm_loop/tools/builtin/browser_wait.py": "cf8c4830c0233df80920f6ee9d2ea8a414fd8a7558bdfb1d421770248fcd77f8",
+    "src/llm_loop/tools/builtin/browser_semantic_execute.py": "920f2f794b0f6a2ea8481fa2f7bc5e71091e8fa71353e62125d94f08557c1008",
+    "src/llm_loop/tools/builtin/browser_semantic_operation.py": "2badb3ad281482cac5b3ffd61343311f78cf6cf09192ca947ae7edc87ab73bfb",
+    "src/llm_loop/tools/registry.py": "b3ba32f63056a5d27ed4d46fe68f7a4824cde0ecd0b5087c21147df252eb7eb6",
+    "src/llm_loop/factory.py": "6a738077a690b2e672520b09d7f11ed4a6e5ff082419ba5af8f9f73bbdf411ef",
+    "src/llm_loop/semantic_logic/rules.py": "458f5ad92a21825a3c5be8eb240bb23a80e87d17cdcddf115293fafe59f19985",
+    "docs/SMC-RULE-AUTHORITY-v0.1.md": "dab09f73e2b72995bb2b6a76b3d0a96f324b65f01027171311208d2b3247b1d2",
+    "docs/PLAN-20260917-smc-semantic-logic-layer.md": "deb4500132d66beb6c2851aeaecd05e8326542dcba91b6b47776952c358d4336",
+    "tests/fixtures/smc_browser_perception_v01.json": "aadbf6077451824f96d9042bbe2c3cd2c6547dbc3b565bf682ba4765b0882dbb"
+  },
+  "historical_evidence": {
+    "semantic_execute_fcr_v0_4_sha256": "e85728ed89815152d50597c7e8623e926e1d1a58f0f4fa566aa7ebf005b76867",
+    "typed_wait_a2_sha256": "17ee7cfb3181f2fef2676566b62f522033d3a55fafe582992926a6d5d11c21e5",
+    "bounded_operation_fc2b_sha256": "255d13622f9835d9e8f48a87f50bf36bfc6ff2bb59576aba21a6c0ee372aa0fb",
+    "bounded_operation_fc2c_fcr_sha256": "ee5e86cf8870532059598e39c272c20728227287d56a3ab025bcb8b180ff4e96",
+    "historical_full_task_fixture_sha256": "87696076cea84d4e93f172d07a1499755dbc647f396ff115a9d64571740b72a3",
+    "historical_findings": [
+      "semantic_execute_v0.4 treatment completed 3/3 real tasks but all three rows still first-called navigate with a non-resource/non-GroundingRef target_ref before recovering",
+      "typed waits reduced wait-contract failures to zero in A2 while task instability remained in navigation/action organization",
+      "FC2-B bounded clause DSL first call failed 6/6 and exposed a canonical identity vocabulary mismatch; this is evidence against a larger high-level DSL for P4",
+      "FC2-C v0.2 proved that narrow mechanically-derived provider-visible required-field facts can restore declaration FCR without widening runtime semantics"
+    ]
+  },
+  "authority": {
+    "llm_owns": [
+      "which observed object/resource matters",
+      "which semantic verb to choose",
+      "semantic argument values such as text/value/url/delta_pages",
+      "which predicate/property/value matters",
+      "whether to wait or re-observe",
+      "whether an ActionReceipt satisfies the user task",
+      "task and goal completion"
+    ],
+    "compiler_may_derive": [
+      "schema",
+      "domain",
+      "verb from the selected typed tool identity",
+      "canonical args container from typed tool fields",
+      "scope_ref from exact hydrated object/resource ref",
+      "target_id from exact hydrated object/resource ref",
+      "expected_version from exact hydrated object/resource ref",
+      "version_scope from exact ref kind",
+      "operation_class",
+      "idempotency_class mechanical constant",
+      "atomicity_class mechanical constant",
+      "version_precondition mechanical constant",
+      "deterministic action_id from the exact declared semantic request"
+    ],
+    "runtime_adapter_owns": [
+      "session fencing and durable-store access",
+      "action_id reservation and duplicate fencing",
+      "current effect mutation authority",
+      "physical DOM/CDP dispatch",
+      "private physical locator resolution",
+      "post-dispatch capture",
+      "durable receipt append/fsync/status",
+      "retry permission"
+    ],
+    "forbidden_compiler_behavior": [
+      "automatic snapshot or latest selection",
+      "semantic target choice",
+      "name/role fuzzy matching or best-match substitution",
+      "automatic target rebind",
+      "automatic mutation retry or replay",
+      "silent stale-version refresh",
+      "tool routing based on inferred user intent",
+      "task or goal completion inference"
+    ]
+  },
+  "shared_surface": {
+    "tools": [
+      "browser_perceive",
+      "browser_wait_scope_url",
+      "browser_wait_scope_ready",
+      "browser_wait_scope_count",
+      "browser_wait_object_state",
+      "browser_wait_object_text",
+      "get_tool_schema"
+    ],
+    "browser_perceive_actions": ["snapshot", "hydrate", "diff"],
+    "rule": "The shared surface, descriptions, schemas, execution semantics, and underlying Browser adapters must be byte-identical across A and B during a formal run.",
+    "excluded_from_both_arms": [
+      "browser_action",
+      "browser_semantic_operation",
+      "generic browser_wait_scope",
+      "generic browser_wait_object",
+      "playwright_exec",
+      "playwright_test"
+    ]
+  },
+  "arm_a": {
+    "name": "current_atomic_surface",
+    "mutation_tools": {
+      "browser_semantic_execute": {
+        "required_fields": ["verb", "target_ref", "args"],
+        "verb_enum": ["click", "fill", "select", "navigate", "scroll"],
+        "target_ref_contract": "object verbs use exact SemanticObject.grounding_ref; navigate uses exact snapshot resource_ref",
+        "args_contract": {
+          "click": {},
+          "fill": {"text": "string", "mode": "replace|append"},
+          "select": {"value": "string"},
+          "navigate": {"url": "string"},
+          "scroll": {"delta_pages": "number"}
+        }
+      }
+    },
+    "underlying_execution": "existing BrowserSemanticExecuteTool.compile_request -> BrowserActionAdapter.execute"
+  },
+  "arm_b": {
+    "name": "typed_minimal_surface_plus_compiler",
+    "mutation_tools": {
+      "browser_semantic_click": {
+        "required_fields": ["object_ref"],
+        "properties": {"object_ref": {"type": "string", "minLength": 1}}
+      },
+      "browser_semantic_fill": {
+        "required_fields": ["object_ref", "text", "mode"],
+        "properties": {
+          "object_ref": {"type": "string", "minLength": 1},
+          "text": {"type": "string"},
+          "mode": {"type": "string", "enum": ["replace", "append"]}
+        }
+      },
+      "browser_semantic_select": {
+        "required_fields": ["object_ref", "value"],
+        "properties": {
+          "object_ref": {"type": "string", "minLength": 1},
+          "value": {"type": "string"}
+        }
+      },
+      "browser_semantic_scroll": {
+        "required_fields": ["object_ref", "delta_pages"],
+        "properties": {
+          "object_ref": {"type": "string", "minLength": 1},
+          "delta_pages": {"type": "number"}
+        }
+      },
+      "browser_semantic_navigate": {
+        "required_fields": ["resource_ref", "url"],
+        "properties": {
+          "resource_ref": {"type": "string", "minLength": 1},
+          "url": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "compiler_contract": {
+      "execution_location": "P4 isolated harness only; no Factory or production registry consumer in P4",
+      "object_ref": "exact hydrate only; unavailable/expired/unauthorized/wrong projection rejects before dispatch",
+      "resource_ref": "exact resource grounding only; object GroundingRef or URL-as-ref rejects before dispatch",
+      "translation": {
+        "browser_semantic_click": {"verb": "click", "target": "object_ref", "args": {}},
+        "browser_semantic_fill": {"verb": "fill", "target": "object_ref", "args": ["text", "mode"]},
+        "browser_semantic_select": {"verb": "select", "target": "object_ref", "args": ["value"]},
+        "browser_semantic_scroll": {"verb": "scroll", "target": "object_ref", "args": ["delta_pages"]},
+        "browser_semantic_navigate": {"verb": "navigate", "target": "resource_ref", "args": ["url"]}
+      },
+      "required_equivalence": "For the same exact observed ref and semantic values, the canonical SemanticAction passed to BrowserActionAdapter must be identical to Arm A BrowserSemanticExecuteTool.compile_request on every authority-bearing field.",
+      "no_new_execution_path": "Formal P4 A/B must delegate B to the same existing BrowserActionAdapter path as A; only the model-facing declaration surface and mechanical compile step differ."
+    }
+  },
+  "error_taxonomy": {
+    "P4-X01": "non-resource value or URL placed in Arm A target_ref for navigate",
+    "P4-X02": "object GroundingRef and resource_ref cross-bound",
+    "P4-X03": "grounding_ref supplied to browser_perceive(action=snapshot); shared negative-control error",
+    "P4-X04": "scope predicate target/scope mismatch; must remain zero in both arms because typed waits are shared",
+    "P4-X05": "version_scope guessed or model-supplied; must remain impossible in both arms",
+    "P4-X06": "verb/args cross-binding or args wrapper mismatch",
+    "P4-X07": "identity vocabulary cannot represent canonical object kind; Arm B must avoid identity re-description by consuming exact object_ref",
+    "P4-X08": "schema reread/progressive-disclosure detour before first mechanically valid semantic call"
+  },
+  "qualification_stages": [
+    {
+      "id": "P4-D",
+      "name": "deterministic compiler equivalence",
+      "model_calls": false,
+      "browser_physical_mutation": false,
+      "requirements": [
+        "positive compile parity for click/fill/select/scroll/navigate",
+        "exact equality of authority-bearing SemanticAction fields against Arm A compile_request",
+        "wrong-kind object/resource ref rejects",
+        "expired/unauthorized/cross-session refs reject",
+        "no dispatch occurs for any compile rejection",
+        "same declared request produces deterministic action_id"
+      ],
+      "gate": "100% deterministic PASS before any model FCR run"
+    },
+    {
+      "id": "P4-FCR",
+      "name": "first-call declaration A/B",
+      "model_calls": true,
+      "browser_tool_execution": false,
+      "purpose": "Isolate provider-visible structural usability before Browser side effects or recovery loops can confound the result.",
+      "task_families": ["navigate", "click", "fill", "select", "scroll"],
+      "repeats_per_task_per_arm": 4,
+      "rows_total": 40,
+      "pairing": "same task and repeat, A/B paired",
+      "arm_order": "repeat 1/3 A->B; repeat 2/4 B->A; tasks rotate in a fixed pre-run order",
+      "tool_execution_total_required": 0,
+      "b_hard_gate": [
+        "20/20 first semantic calls structurally valid",
+        "20/20 first semantic calls mechanically valid under the frozen B logical schema",
+        "targeted cross-binding errors P4-X01/P4-X02/P4-X06/P4-X07 = 0",
+        "no normalization, retry, Browser runtime, fallback, or task-completion judgment"
+      ],
+      "comparative_metrics": [
+        "first_call_structural_valid",
+        "first_call_mechanical_valid",
+        "cross_binding_error_count",
+        "schema_reread_intent_or_request if observable without executing tools",
+        "provider_surface_tool_count",
+        "provider_surface_schema_chars"
+      ]
+    },
+    {
+      "id": "P4-LIVE",
+      "name": "full-task paired A/B",
+      "model_calls": true,
+      "browser_tool_execution": true,
+      "historical_continuity_tasks": [
+        "click_commit",
+        "fill_submit",
+        "delayed_wait"
+      ],
+      "held_out_from_prior_design_tasks": [
+        {
+          "task_id": "select_choice_confirm",
+          "mechanical_coverage": ["select", "object_ref", "follow-up verification"],
+          "external_oracle": "selected value equals fixture target and confirmation side effect count is exactly one"
+        },
+        {
+          "task_id": "scroll_reveal_activate",
+          "mechanical_coverage": ["scroll", "object_ref", "subsequent click"],
+          "external_oracle": "reveal condition is observed and activation side effect count is exactly one"
+        },
+        {
+          "task_id": "stale_ref_reobserve",
+          "mechanical_coverage": ["stale exact ref rejection", "no silent rebind", "fresh re-observation"],
+          "external_oracle": "stale ref dispatch count is zero; a later explicitly model-selected fresh ref may dispatch exactly once"
+        }
+      ],
+      "repeats_per_task_per_arm": 2,
+      "rows_total": 24,
+      "pairing": "same task and repeat, A/B paired; repeat1 A->B, repeat2 B->A",
+      "shared_runtime_contract": {
+        "model": "cognilocal/ornith-1.5-35b-a3b-mlx",
+        "thinking": "ON",
+        "temperature": 0,
+        "input_token_budget": 184000,
+        "output_token_budget": 16000,
+        "max_iterations": 12,
+        "prompt_concurrency": 1,
+        "decode_concurrency": 1,
+        "fallback": false,
+        "second_local_model": false,
+        "row_isolation": "fresh session/data/Browser profile per row; strictly serial"
+      },
+      "hard_safety_gates": [
+        "all 24 rows executed; no post-hoc replay of failed rows",
+        "exact frozen arm surface on every provider request",
+        "fallback=0 and SecurityAgent=0",
+        "automatic mutation retry/replay=0",
+        "silent target rebind/latest substitution=0",
+        "wrong/stale ref never causes physical dispatch",
+        "task completion authority violations=0",
+        "receipt ok is never used as the external task oracle",
+        "P4-X04 scope mismatch=0 and P4-X05 model version_scope supply=0 in both arms"
+      ],
+      "promotion_gate": {
+        "b_targeted_cross_binding_errors": 0,
+        "b_task_pass_not_less_than_a": true,
+        "no_held_out_task_family_regression": true,
+        "strict_improvement_required": "At least one of targeted mechanical error count or schema reread count must be strictly lower in B; if A is already zero on both, B instead needs task parity plus at least 10% lower provider-surface schema chars without increasing tool failures.",
+        "timeouts": "worker timeout counts as task failure/right-censoring and is not silently reclassified as infra-invalid",
+        "infra_invalid": "Only pre-task environment failure with no model/task opportunity may invalidate a row; invalidation reason must be mechanical and frozen before inspecting task outcome."
+      }
+    }
+  ],
+  "metrics": {
+    "primary": [
+      "first semantic call structural validity",
+      "first semantic call mechanical validity",
+      "targeted cross-binding error count",
+      "tool failure count",
+      "schema reread count",
+      "external task result"
+    ],
+    "secondary": [
+      "rounds",
+      "input tokens",
+      "output tokens",
+      "cache-hit tokens",
+      "wall time",
+      "provider-surface schema chars",
+      "provider-surface tool count"
+    ],
+    "safety": [
+      "physical dispatch count",
+      "automatic retry count",
+      "silent rebind count",
+      "stale-ref dispatch count",
+      "task-completion authority violation count"
+    ]
+  },
+  "evidence_rules": [
+    "Freeze task/fixture/provider-surface/runner/scorer hashes before the first formal model row.",
+    "External page-state oracle, not model text or ActionReceipt ok, determines task result.",
+    "Raw call/receipt facts are persisted separately from offline scorer judgments.",
+    "Do not normalize away wrong refs, wrong tool selection, wrong args, rejected receipts, timeouts, or schema rereads.",
+    "Do not change prompts, schemas, budgets, row order, scorer, or gate after seeing formal results.",
+    "Known historical tasks are continuity evidence; the three new held-out-from-prior-design tasks are frozen before P4 implementation and must not be removed if they are inconvenient."
+  ],
+  "current_goal_boundary": {
+    "allowed_now": [
+      "read-only audit",
+      "freeze this protocol and companion audit",
+      "mechanical JSON/hash/diff/security validation",
+      "docs-only local commit"
+    ],
+    "forbidden_now": [
+      "P4 compiler implementation",
+      "P4 RED tests or harness implementation",
+      "formal model A/B rows",
+      "production semantic_logic consumer",
+      "Factory/registry production wiring",
+      "push of P4 protocol branch unless separately authorized",
+      "merge to main",
+      "deployment",
+      "restart Web/Feishu/8901",
+      "model start or switch"
+    ],
+    "next_boundary": "After this protocol-only commit is qualified, stop for owner authorization before P4-D RED/implementation. P5 remains the first selective production authority phase."
+  }
+}
