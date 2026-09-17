@@ -7,6 +7,7 @@ P1-10 + R8.5 锚点边界换算（persisted anchor 用原始会话索引，eligi
 """
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -244,7 +245,7 @@ def run_history_projection(
             if _c.startswith("[任务锚点·压缩存活快照]"):
                 _anchor_block_sha = hashlib.sha256(_c.encode("utf-8")).hexdigest()
                 break
-        try:
+        with contextlib.suppress(Exception):  # 观测通道失败不阻断投影
             _note_disturbance(
                 session_id,
                 anchor_block_sha=_anchor_block_sha,
@@ -252,8 +253,6 @@ def run_history_projection(
                 marker_fold_count=len(cache_compacted_box),
                 new_compaction=bool(compacted_box) and bool(compacted_box[0]),
             )
-        except Exception:  # noqa: BLE001 — 观测通道失败不阻断投影
-            pass
     return HistoryProjection(
         built=built,
         anchor_arg=anchor_arg,
