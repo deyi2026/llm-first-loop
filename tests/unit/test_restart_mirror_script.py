@@ -22,10 +22,14 @@ def test_mirror_restart_waits_for_process_exit_not_only_port_release() -> None:
     # 51e4d9a 五项加固后（细化断言见 tests/scripts/test_restart_mirror_hardening.py）：
     # case 块改用冻结的 RESTART_PORT（_start_* 会 unset WEB_PORT，set -u 陷阱），
     # web 分支仍必须先停后启，且停止失败必须跳过启动（防双进程）。
-    assert 'web)     _restart_precheck' in script
+    assert 'web)     _webui_artifact_preflight' in script
     assert '_stop_web "$RESTART_PORT"' in script
     assert "web 停止失败，跳过启动（防双进程）" in script
-    assert 'all)     _restart_precheck' in script
+    assert 'all)     _webui_artifact_preflight' in script
+    case_body = script.split("\ncase ", 1)[1]
+    for branch in ("web)", "all)"):
+        body = case_body.split(branch, 1)[1].split(";;", 1)[0]
+        assert body.index("_webui_artifact_preflight") < body.index("_restart_precheck") < body.index('_stop_web "$RESTART_PORT"')
     # Regression: port release alone must never be the stop-complete condition.
     stop_block = script.split("_stop_web() {", 1)[1].split("_start_web() {", 1)[0]
     assert "_pid_alive" in stop_block

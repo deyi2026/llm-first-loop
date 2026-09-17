@@ -131,7 +131,12 @@ class Err1210RecoveryResult:
 
 
 def record_defer_event(
-    event: str, session_id: str, slot_kind: str, payload: dict | None = None
+    event: str,
+    session_id: str,
+    slot_kind: str,
+    payload: dict | None = None,
+    *,
+    data_dir: str | Path | None = None,
 ) -> None:
     """写 data/audit/defer_trace.jsonl 一行事件（env ERR1210_DEFER_TRACE=1 开关，fail-open）.
 
@@ -148,9 +153,12 @@ def record_defer_event(
             "slot_kind": slot_kind,
             "payload": payload or {},
         }
-        # LFL_DATA_DIR 先例（interop 写方同款）：测试隔离 + 部署根可配
-        base = os.environ.get("LFL_DATA_DIR", "data")
-        path = Path(base) / "audit" / "defer_trace.jsonl"
+        base = (
+            Path(data_dir).expanduser().resolve()
+            if data_dir is not None
+            else Path(__file__).resolve().parents[3] / "data"
+        )
+        path = base / "audit" / "defer_trace.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False) + "\n")

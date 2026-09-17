@@ -19,11 +19,15 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
+from llm_loop.runtime.resolver import business_config_snapshot
+
 logger = logging.getLogger(__name__)
+
+_SCHEDULER_CONFIG = business_config_snapshot("scheduler")
 
 # EVO-20260817 审查 P0-3: 基准统一——LFL_DATA_DIR 优先（与 interop/web 一致），
 # 避免配置 LFL_DATA_DIR 时提醒写错位置静默丢失（原硬编码相对 data/）。
-_SCHEDULE_PATH = Path(os.environ.get("LFL_DATA_DIR", "data")) / "schedule.json"
+_SCHEDULE_PATH = Path(_SCHEDULER_CONFIG.get("LFL_DATA_DIR", "data")) / "schedule.json"
 _TICK_INTERVAL_S = 10.0  # 检查周期
 
 # Wake authorization is process-local, not Store-instance-local. Multiple ScheduleStore
@@ -428,15 +432,19 @@ class SchedulerThread:
             self._stop.wait(self._tick)
 
     @staticmethod
-    def _notify_via_interop(entry: ScheduleEntry) -> None:
+    def _notify_via_interop(
+        entry: ScheduleEntry, *, data_dir: str | Path | None = None
+    ) -> None:
         """默认通知：写 interop LFL inbox（lfl_to_dsh/pending/，topic=notify）.
 
         LFL 下轮 run 读到并回显 [外部协调·from DSH] 或 [定时提醒]——web/飞书可见。
         """
         from datetime import datetime as _dt
 
-        # EVO-20260817-6efeb7a0: 基准统一（P0-3）——LFL_DATA_DIR 优先，与 interop/web 一致
-        inbox = Path(os.environ.get("LFL_DATA_DIR", "data")) / "interop" / "lfl_to_dsh" / "pending"
+        # P1-B1: notification storage follows the resolved runtime data owner.
+        # The fallback is the same immutable startup snapshot that owns schedule.json.
+        data_root = Path(data_dir).expanduser().resolve() if data_dir is not None else _SCHEDULE_PATH.parent
+        inbox = data_root / "interop" / "lfl_to_dsh" / "pending"
         inbox.mkdir(parents=True, exist_ok=True)
         now = _dt.now(UTC)
         ts = now.strftime("%Y%m%d-%H%M%S")

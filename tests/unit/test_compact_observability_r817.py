@@ -389,43 +389,35 @@ def test_engine_compact_action_reports_real_stats_not_missing_fact_warning(build
     assert payload["compaction_epoch"] >= 1
 
 
-def test_compact_ratio_env_syncs_trigger_limit(build_test_engine):
-    """Env COMPACT_RATIO scales the trigger threshold, not the budget.
+def test_compact_ratio_settings_syncs_trigger_limit():
+    """Resolved compact ratio scales the trigger threshold, not the budget."""
+    from types import SimpleNamespace
 
-    Guards the production contract that the autouse pin above deliberately
-    neutralizes for exact-number assertions: ratio<1 lowers when compaction
-    fires (3000 × 0.85 = 2550) while effective_budget_chars keeps the full
-    budget. If this fails, budget semantics drifted, not test hygiene.
-    """
-    engine, _fake = build_test_engine([{"content": "unused", "tool_calls": []}])
-    sid = engine.session.create()
-    sess = engine.session.load(sid)
-    for i in range(14):
-        sess.messages.append(
-            Message(
-                role="user",
-                content=f"old-user-{i}-" + "U" * 500,
-                source=MessageSource.USER,
-            )
-        )
-        sess.messages.append(
-            Message(
-                role="assistant",
-                content=f"old-answer-{i}-" + "A" * 500,
-                source=MessageSource.SYSTEM,
-            )
-        )
+    from llm_loop.core.prompt_build.context import BuildDecision
+    from llm_loop.core.prompt_build.stages.history_budget_prep import run_history_budget_prep
 
-    events: list[tuple[str, dict]] = []
-    engine._event_append = lambda _sid, typ, payload: events.append(  # type: ignore[method-assign]
-        (typ, payload)
+    actions: list[tuple[str, str, str]] = []
+    prep = run_history_budget_prep(
+        sess_messages=[Message(role="user", content="U" * 2600, source=MessageSource.USER)],
+        provider_id="glm",
+        sess_anchor=0,
+        max_chars=3_000,
+        runtime_history_budget=lambda: 3_000,
+        archive=None,
+        registry=SimpleNamespace(evidence_history_capture_enabled=False),
+        archive_sink_cb=None,
+        decision=BuildDecision(),
+        record_action=lambda *args: actions.append(args),
+        last_nudge_total=None,
+        provider_visible_chars=lambda *_args: 2600,
+        growth_nudge_kind=lambda total, prev, *, prep_at, force_at, growth_floor: (
+            "force" if total >= force_at else None
+        ),
+        compact_ratio=0.85,
+        nudge_growth_chars=20_000,
     )
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setenv("COMPACT_RATIO", "0.85")
-        engine._build_llm_messages(sess, [], max_chars=3_000)
 
-    compact_events = [payload for typ, payload in events if typ == "history.compaction"]
-    assert compact_events, "ratio=0.85 lowers the threshold; history must compact"
-    payload = compact_events[-1]
-    assert payload["trigger_limit_chars"] == 2_550
-    assert payload["effective_budget_chars"] == 3_000
+    assert prep.effective_budget == 3_000
+    assert prep.compact_ratio == 0.85
+    assert 3_000 * prep.compact_ratio == 2_550
+    assert actions and actions[-1][1] == "approaching_budget"

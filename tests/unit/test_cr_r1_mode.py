@@ -50,10 +50,9 @@ def test_persist_shadow_default_writes_shard(tmp_path, monkeypatch):
     from llm_loop.cognitive.state import SemanticStateStore
     from llm_loop.core.history import _persist_semantic_state
 
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("COG_RUNTIME_MODE", raising=False)  # 默认 shadow
     _seed_goal(tmp_path)
-    assert _persist_semantic_state("s1") is True
+    assert _persist_semantic_state("s1", data_dir=str(tmp_path)) is True
     shard = SemanticStateStore(tmp_path / "audit").path_for("s1")
     assert shard.exists()  # 默认（shadow）落盘
 
@@ -62,10 +61,9 @@ def test_persist_off_short_circuits_no_write(tmp_path, monkeypatch):
     from llm_loop.cognitive.state import SemanticStateStore
     from llm_loop.core.history import _persist_semantic_state
 
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("COG_RUNTIME_MODE", "off")
     _seed_goal(tmp_path)
-    assert _persist_semantic_state("s1") is False
+    assert _persist_semantic_state("s1", data_dir=str(tmp_path)) is False
     shard = SemanticStateStore(tmp_path / "audit").path_for("s1")
     assert not shard.exists()  # off 连 store 写都不做（tasks 2.2）
 
@@ -74,10 +72,9 @@ def test_persist_off_short_circuit_beats_goal_absence(tmp_path, monkeypatch):
     """off 返回 False 的原因是短路而非无 goal——用活跃 goal 存在与 off 对比同环境区分。"""
     from llm_loop.core.history import _persist_semantic_state
 
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("COG_RUNTIME_MODE", "off")
     _seed_goal(tmp_path)  # 有活跃 goal 仍 False → 证明是 off 短路
-    assert _persist_semantic_state("s1") is False
+    assert _persist_semantic_state("s1", data_dir=str(tmp_path)) is False
 
 
 # ── Stage 2 Enforce Allowlist（DESIGN-20260901 rev2，用户带硬约束批准）──

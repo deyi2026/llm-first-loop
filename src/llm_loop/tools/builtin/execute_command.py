@@ -190,9 +190,17 @@ class ExecuteCommandTool:
         "required": ["command"],
     }
 
-    def __init__(self, timeout_s: float | None = None) -> None:
+    def __init__(
+        self,
+        timeout_s: float | None = None,
+        *,
+        sandbox_mode: str = "none",
+        sandbox_image: str = "python:3.13-slim",
+    ) -> None:
         """工具内兜底超时（M18 AA8: 读配置值，默认 30s 兜底向后兼容；注册表另有线程级超时）."""
         self._timeout_s = 30.0 if timeout_s is None else float(timeout_s)
+        self._sandbox_mode = sandbox_mode
+        self._sandbox_image = sandbox_image
         # P1-5 + Stop: 工具实例跨 session 共享，单 `_active_proc` 会被并发覆盖并
         # 导致超时/Stop 杀错进程。按 current_session_id 保存前台进程，锁保护跨线程访问。
         self._active_procs: dict[str, subprocess.Popen] = {}
@@ -268,7 +276,12 @@ class ExecuteCommandTool:
                 from llm_loop.tools.sandbox import sandbox_argv
 
                 try:
-                    bg_cmd, _ = sandbox_argv(command, str(workdir or "."))
+                    bg_cmd, _ = sandbox_argv(
+                        command,
+                        str(workdir or "."),
+                        mode=self._sandbox_mode,
+                        image=self._sandbox_image,
+                    )
                 except RuntimeError as exc:
                     return ToolResult(
                         status=ToolResultStatus.ERROR,
@@ -326,7 +339,12 @@ class ExecuteCommandTool:
 
             sandbox_note = ""
             try:
-                sandbox_cmd, sandbox_note = sandbox_argv(command, str(workdir or "."))
+                sandbox_cmd, sandbox_note = sandbox_argv(
+                    command,
+                    str(workdir or "."),
+                    mode=self._sandbox_mode,
+                    image=self._sandbox_image,
+                )
             except RuntimeError as exc:
                 return ToolResult(
                     status=ToolResultStatus.ERROR,

@@ -88,21 +88,34 @@ def _content_digest(content: str) -> tuple[str, str]:
     return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest(), text[:200]
 
 
-def quarantine_root(session_id: str) -> Path:
-    """会话级隔离目录（dead/ 风格；对齐 interop 隔离先例，spec 4.3-3）。"""
-    base = Path(os.environ.get("LFL_DATA_DIR", "data"))
+def quarantine_root(
+    session_id: str, *, data_dir: str | Path | None = None
+) -> Path:
+    """会话级隔离目录；生产调用由运行时数据所有者显式绑定。"""
+    base = (
+        Path(data_dir).expanduser().resolve()
+        if data_dir is not None
+        else Path(__file__).resolve().parents[3] / "data"
+    )
     safe_sid = "".join(c if c.isalnum() or c in "-_" else "_" for c in str(session_id))
     return base / "trace_leak_quarantine" / safe_sid
 
 
-def write_quarantine(kind: str, *, session_id: str, content: str, basis: str) -> Path | None:
+def write_quarantine(
+    kind: str,
+    *,
+    session_id: str,
+    content: str,
+    basis: str,
+    data_dir: str | Path | None = None,
+) -> Path | None:
     """被拦截内容隔离留痕（可检索、不静默丢弃）；失败 fail-open 返回 None.
 
     R8.24-D §7.1 风险"quarantine 自身成为泄漏面"细化（DT-1.1④）：
     目录与文件权限收敛 0600/0700（仅属主可读写）。
     """
     try:
-        root = quarantine_root(session_id)
+        root = quarantine_root(session_id, data_dir=data_dir)
         root.mkdir(parents=True, exist_ok=True)
         with contextlib.suppress(Exception):  # noqa: BLE001 — 权限收敛失败不阻断留痕
             root.chmod(0o700)

@@ -42,6 +42,8 @@ def test_followup_success_same_session_and_budget_accounting(build_test_engine):
     parent = engine.session.create()
     runner = _make_runner(engine)
     child_id = _run_child(engine, runner, fake, parent, "A完成", "做A")
+    # Normal completed children retain the existing active/session-visible lifecycle.
+    assert engine.session.load(child_id).status == "active"
 
     tok = current_session_id.set(parent)
     try:

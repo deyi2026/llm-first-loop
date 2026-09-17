@@ -20,6 +20,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, cast
 
 from llm_loop.config import Settings
@@ -336,7 +337,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # EVO-20260817-72fcd94a L3（闭环）: 缓存健康监控 + 发送前门禁（独立模块，程序常态锚点管理）
         from llm_loop.core.cache_health import CacheHealthMonitor
 
-        self._cache_monitor = CacheHealthMonitor()
+        self._cache_monitor = CacheHealthMonitor(
+            breaker_audit_file=Path(settings.data_dir).resolve() / "audit" / "cache_breaker.jsonl"
+        )
         self._recovery._err1210_init()  # err1210 P0 恢复状态字段（tasks 4.2；字段语义见 err1210.py）
         # 2026-08-22 任务聚焦状态（focus 模块: 单向切换锁定 + 任务锚点数据源）
         # EVO-20260818（spec §5.4.1-3 注记，grill-me C1）: 模型切换检测——每轮对比实际
@@ -621,7 +624,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 guard_user_write,
             )
 
-            _verdict = guard_user_write(sess, user_msg, ingress, entry="engine.run")
+            _verdict = guard_user_write(
+                sess, user_msg, ingress, entry="engine.run", data_dir=self.settings.data_dir
+            )
             if _verdict.action is GuardAction.DENY:
                 # enforce 拒绝：不落盘不执行循环，如实返回拒绝回执（事件/隔离已留痕）
                 return LoopResult(
@@ -836,6 +841,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     model=model,
                     planned_label=planned_label,
                     registry_snapshot=_planning_registry,
+                    logical_round=rounds,
                 )
             self._kpi_accumulate_inject()
             if getattr(self, "_last_history_compacted", False):
@@ -894,6 +900,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         max_chars=effective_budget,
                         model=model,
                         planned_label=planned_label,
+                        logical_round=rounds,
                     )
                     self._event_append(
                         session_id,
@@ -1210,6 +1217,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 round_no=rounds,
                 provider=getattr(llm_client, "provider", ""),
                 model=model_used or chat_model_arg or getattr(llm_client, "model", ""),
+                nonconvergence_windows=self.settings.tool_runtime.nonconvergence_fuse_windows,
+                nonconvergence_jaccard=self.settings.tool_runtime.nonconvergence_fuse_jaccard,
+                nonconvergence_min_delta=self.settings.tool_runtime.nonconvergence_fuse_min_delta,
             )  # B1: 轮级重置 + durable in-flight checkpoint for restart continuity
             try:
                 stream_fn = getattr(llm_client, "chat_stream", None)
@@ -1578,6 +1588,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             max_chars=fallback_budget,
                             planned_label=fallback_label,
                             registry_snapshot=fallback_registry,
+                            logical_round=_round,
                         )
                         return fallback_messages, fallback_tools
 
@@ -1952,7 +1963,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 self._phase("terminate.max_iterations")
                 _run_end_reason = "max_iterations"
                 final_answer = max_iterations_feedback([t["name"] for t in tool_trace]).content
-                if os.environ.get("LFL_E18_HARD_STOP", "1") == "1":
+                if self.settings.tool_runtime.e18_hard_stop:
                     final_answer += (
                         '\n（已达轮数硬边界，run 已结束；发送"继续"可开新 run 接续任务。）'
                     )

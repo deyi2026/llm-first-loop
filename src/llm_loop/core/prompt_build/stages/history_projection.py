@@ -7,7 +7,7 @@ P1-10 + R8.5 锚点边界换算（persisted anchor 用原始会话索引，eligi
 """
 from __future__ import annotations
 
-import os
+import contextlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -114,6 +114,20 @@ def run_history_projection(
         reopened_marker_count = len(stale_markers)
         for m in stale_markers:
             clear_cache_compacted_for(m, cache_archive_provider)
+    _policy = getattr(settings, "history_policy", None)
+    _head_keep_ratio = getattr(_policy, "head_keep_ratio", None)
+    if _head_keep_ratio is None:
+        _head_keep_ratio = 0.35 if provider_id == "deepseek" else 0.15
+    _head_keep_force_ratio = getattr(_policy, "head_keep_force_ratio", None)
+    if _head_keep_force_ratio is None:
+        _head_keep_force_ratio = 0.40 if provider_id == "deepseek" else 0.20
+    _head_keep_target_ratio = getattr(_policy, "head_keep_target_ratio", None)
+    if _head_keep_target_ratio is None:
+        _head_keep_target_ratio = 0.70 if provider_id == "deepseek" else 0.50
+    _compress_target_ratio = float(
+        getattr(_policy, "compress_target_ratio", 0.6)
+    )
+
     _current_ingress_message: Message | None = None
     if current_turn_ref is not None:
         try:
@@ -133,6 +147,7 @@ def run_history_projection(
         system_prompt,
         max_chars=max_chars if max_chars is not None else runtime_history_budget_value,
         compact_ratio=compact_ratio,  # EVO-20260817: 预算分级主动压缩
+        compress_target_ratio=_compress_target_ratio,
         session_id=session_id,
         archive_sink=archive_sink,
         # RULE-AI-00: 不再传 summarizer（压缩路径不自动 LLM 摘要，AI 主动触发）
@@ -152,34 +167,14 @@ def run_history_projection(
         # same single compaction path with a deterministically shrunken budget; no second
         # emergency mode rewrites anchor semantics.
         head_keep_chars=max(
-            int(
-                effective_budget
-                * float(
-                    os.environ.get(
-                        "HEAD_KEEP_RATIO", "0.35" if provider_id == "deepseek" else "0.15"
-                    )
-                )
-            ),
-            int(
-                effective_budget
-                * float(
-                    os.environ.get(
-                        "HEAD_KEEP_FORCE_RATIO",
-                        "0.40" if provider_id == "deepseek" else "0.20",
-                    )
-                )
-            )
+            int(effective_budget * float(_head_keep_ratio)),
+            int(effective_budget * float(_head_keep_force_ratio))
             if cache_monitor.force_head_keep
             else 0,
         ),
-        # fixed-head 占压缩目标水位上限。历史层默认 0.50 保持旧行为；DeepSeek 提到
-        # 0.70，允许 0.35×effective_budget 的 head 真正留下（target=.5 时占70%），
-        # 仍给最近 tail 约30%目标水位；原子组边界会自然留出更多。env 可显式覆盖调参。
-        head_keep_target_ratio=float(
-            os.environ.get(
-                "HEAD_KEEP_TARGET_RATIO", "0.70" if provider_id == "deepseek" else "0.50"
-            )
-        ),
+        # fixed-head target preserves the historical provider-specific defaults unless
+        # an explicit file-backed history policy overrides them.
+        head_keep_target_ratio=float(_head_keep_target_ratio),
         # P0 压缩风暴熔断冻结（2026-08-25）: 冻结期禁压缩/禁锚点前移（前缀字节稳定）
         freeze_compression=freeze_compression,
         cache_archive_provider=provider_id,
@@ -250,7 +245,7 @@ def run_history_projection(
             if _c.startswith("[任务锚点·压缩存活快照]"):
                 _anchor_block_sha = hashlib.sha256(_c.encode("utf-8")).hexdigest()
                 break
-        try:
+        with contextlib.suppress(Exception):  # 观测通道失败不阻断投影
             _note_disturbance(
                 session_id,
                 anchor_block_sha=_anchor_block_sha,
@@ -258,8 +253,6 @@ def run_history_projection(
                 marker_fold_count=len(cache_compacted_box),
                 new_compaction=bool(compacted_box) and bool(compacted_box[0]),
             )
-        except Exception:  # noqa: BLE001 — 观测通道失败不阻断投影
-            pass
     return HistoryProjection(
         built=built,
         anchor_arg=anchor_arg,

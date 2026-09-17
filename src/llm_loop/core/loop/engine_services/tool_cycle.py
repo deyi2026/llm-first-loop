@@ -173,6 +173,7 @@ class ToolCycleService:
             tool_msg = tool_result_to_message(
                 result,
                 failure_guidance_enabled=self._host.registry.failure_guidance_enabled,
+                tool_guidance_mode=self._host.registry.tool_guidance_mode,
             )
             self._attach_capability_boundary_metadata(tool_msg, result)
             wal_messages[call.id] = tool_msg
@@ -526,7 +527,9 @@ class ToolCycleService:
         tool_msg = prebuilt_tool_msg
         if tool_msg is None:
             tool_msg = tool_result_to_message(
-                result, failure_guidance_enabled=self._host.registry.failure_guidance_enabled
+                result,
+                failure_guidance_enabled=self._host.registry.failure_guidance_enabled,
+                tool_guidance_mode=self._host.registry.tool_guidance_mode,
             )
             self._attach_capability_boundary_metadata(tool_msg, result)
         sess.messages.append(tool_msg)

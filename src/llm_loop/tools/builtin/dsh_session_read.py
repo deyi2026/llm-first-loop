@@ -15,16 +15,18 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.runtime.resolver import business_config_snapshot
 from llm_loop.workspace.store import workspace_key
 
 logger = logging.getLogger(__name__)
 
-_DSH_SESSIONS_ROOT = Path(os.environ.get("DSH_SESSIONS_ROOT", str(Path.home() / ".dsh" / "sessions")))
+_DSH_SESSION_CONFIG = business_config_snapshot("dsh_session_read")
+
+_DSH_SESSIONS_ROOT = Path(_DSH_SESSION_CONFIG.get("DSH_SESSIONS_ROOT", str(Path.home() / ".dsh" / "sessions")))
 _MAX_OUTPUT_CHARS = 30_000
 _MAX_EVENTS_DEFAULT = 40  # 默认提取事件上限（防超大日志淹没回执）
 
@@ -47,6 +49,9 @@ class DshSessionReadTool:
         "注意: 读取 ~/.dsh/sessions/ 下指定工作区的最新 session（或按 session_id 指定）；输出"
         "提取最终回答 + 工具调用轨迹 + 关键事件，截断 3 万字符；日志不存在/不可读时如实标注。"
     )
+    def __init__(self, *, dsh_home: str = "") -> None:
+        self._dsh_home = str(dsh_home or "").strip()
+
     parameters = {
         "type": "object",
         "properties": {
@@ -135,13 +140,10 @@ class DshSessionReadTool:
         )
 
     # ── 内部 ──
-    @staticmethod
-    def _sessions_root() -> Path:
-        """session 根目录：DSH_HOME 已重定向（服务进程写项目内 data/dsh-home）→ 跟随；
-        否则用模块常量（~/.dsh/sessions 或 DSH_SESSIONS_ROOT 覆盖）."""
-        dsh_home = os.environ.get("DSH_HOME", "").strip()
-        if dsh_home:
-            return Path(dsh_home) / "sessions"
+    def _sessions_root(self) -> Path:
+        """Use the startup-resolved DSH home, else the resolved session-root fallback."""
+        if self._dsh_home:
+            return Path(self._dsh_home) / "sessions"
         return _DSH_SESSIONS_ROOT
 
     @staticmethod

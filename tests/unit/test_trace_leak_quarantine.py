@@ -105,7 +105,7 @@ class TestDg1QuarantineEnforce:
         evt = sink.of(leak_events.LEAK_QUARANTINED)[0]
         assert evt["provider_chars"] == 0
         # quarantine 文件落盘在场（D-D1 三件套之二）
-        qroot = leak_events.quarantine_root(sess.session_id)
+        qroot = leak_events.quarantine_root(sess.session_id, data_dir=engine.settings.data_dir)
         assert qroot.exists() and list(qroot.glob("*.json"))
 
     def test_quarantine_event_payload_no_raw_content(
@@ -140,7 +140,7 @@ class TestDg1QuarantineEnforce:
     ) -> None:
         """DT-1.1④: quarantine 目录 0700 / 文件 0600（泄漏面收敛）."""
         engine, sess, leaked, out = _build_with_mislabel(tmp_path, sink)
-        qroot = leak_events.quarantine_root(sess.session_id)
+        qroot = leak_events.quarantine_root(sess.session_id, data_dir=engine.settings.data_dir)
         files = list(qroot.glob("*.json"))
         assert files
         assert (qroot.stat().st_mode & 0o777) == 0o700
@@ -160,7 +160,7 @@ class TestDg1QuarantineEnforce:
         """⑦ enforce 态计数对账：leak.quarantined 事件数 == quarantine 文件数."""
         engine, sess, leaked, out = _build_with_mislabel(tmp_path, sink)
         evt_n = len(sink.of(leak_events.LEAK_QUARANTINED))
-        qroot = leak_events.quarantine_root(sess.session_id)
+        qroot = leak_events.quarantine_root(sess.session_id, data_dir=engine.settings.data_dir)
         file_n = len(list(qroot.glob("*.json"))) if qroot.exists() else 0
         assert evt_n >= 1
         assert evt_n == file_n, f"事件数({evt_n}) 与 quarantine 文件数({file_n}) 不一致"
@@ -298,6 +298,7 @@ class TestDg3FailClosedDefault:
             store.load(sid) if hasattr(store, "load") else type("S", (), {"session_id": sid})(),
             _user("无凭据写入"),
             None,
+            data_dir=store.root.parent,
         )
         assert verdict.action is GuardAction.DENY
         assert leak_events.LEAK_CHANNEL_DENIED in sink.kinds()
