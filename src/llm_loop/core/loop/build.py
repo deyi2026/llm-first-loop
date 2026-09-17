@@ -605,13 +605,18 @@ class _BuildMixin:
             # 终态只投状态行（旧 next 不投影）+ active 增投 status/时间戳。
             parts: list[str] = _task_anchor_goal_parts(_audit_dir, sess.session_id)
             try:
+                from llm_loop.core.run_context import workspace_base
                 from llm_loop.memory.evidence import EvidenceLedgerStore, OwnerScope
 
                 _ledger = EvidenceLedgerStore(
                     Path(os.path.join(str(self.settings.evidence_dir), "ledger"))
                 )
                 _recs = _ledger.list_recent(
-                    OwnerScope(session=sess.session_id), limit=6
+                    OwnerScope(
+                        workspace_id=os.path.abspath(workspace_base()),
+                        session_id=sess.session_id,
+                    ),
+                    limit=6,
                 )
                 _lines = []
                 for _r in _recs:
