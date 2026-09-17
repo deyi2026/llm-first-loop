@@ -781,7 +781,7 @@
     "no_fixture_may_use_derived_output_as_asserted_input": true,
     "python_oracle_typed_evaluator_n3_shadow_required_per_rule_group": true
   },
-  "rulepack_hash": "bba3a38c315078e390d1afd985572c962bfcecf076ef9ff623abcdf34ace458b",
+  "rulepack_hash": "5809347c62aa8a8b1856eff1bab0f11b9d98a57b0aedaef103e8ee2470f776a3",
   "rulepack_id": "smc.browser.p2-core.v0.1",
   "schema": "smc.p2_red_gate_manifest.v0.1",
   "status": "design_frozen"
