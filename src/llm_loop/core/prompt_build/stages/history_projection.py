@@ -235,6 +235,31 @@ def run_history_projection(
         _compact_stats["summarized_msg_seqs"] = [
             int(_v) for _v in cache_compacted_source_box
         ]
+    # EVO-20260917-2f5ae9cb（人工已审）P0: wire 前缀扰动成因分类（纯观测）。
+    # 从本轮 built wire 识别锚快照块（engine 侧加头，直连调用无头则 sha=None）
+    # 计算 sha，连同实际锚位/marker 折叠数/新压缩标志喂给 monitor，与其跨 run
+    # 状态 diff 出成因并单行日志。getattr 防旧 mock/直连 monitor；任何异常
+    # 由 monitor 侧 fail-open 吞掉，不改变构建行为。
+    _note_disturbance = getattr(cache_monitor, "note_prefix_disturbance", None)
+    if callable(_note_disturbance):
+        import hashlib
+
+        _anchor_block_sha: str | None = None
+        for _m in built:
+            _c = str((_m.get("content") if isinstance(_m, dict) else None) or "")
+            if _c.startswith("[任务锚点·压缩存活快照]"):
+                _anchor_block_sha = hashlib.sha256(_c.encode("utf-8")).hexdigest()
+                break
+        try:
+            _note_disturbance(
+                session_id,
+                anchor_block_sha=_anchor_block_sha,
+                anchor_arg_used=int(anchor_box[0]) if anchor_box else 0,
+                marker_fold_count=len(cache_compacted_box),
+                new_compaction=bool(compacted_box) and bool(compacted_box[0]),
+            )
+        except Exception:  # noqa: BLE001 — 观测通道失败不阻断投影
+            pass
     return HistoryProjection(
         built=built,
         anchor_arg=anchor_arg,
