@@ -1,64 +1,102 @@
 {
-  "schema_version": 1,
-  "pr": 23,
-  "generated_at": "2026-09-17T15:55:00+08:00",
-  "base": "19e253edfe4d3fcbeb268830b90d00fd273a6262",
-  "head": "641e9a0f",
-  "summary": "same-run folds 前缀保持修复 + 已批准更新合流部署：exec 线锚钉机制（task_anchor_pin_messages 缺省 2，wire 尾部注入）与记忆/嵌入校准线、embedding env 治理键、proc_version PID liveness、toutiao 线 ingress 邻接源引用修复。冲突文件手工解并保持 deploy 线 helper/schema 约定。",
-  "declarations": {
-    "decl-fold-preserve": {
-      "necessity": "同 run 内 tool fold 展开造成 cache 前缀扰动，命中断崖",
-      "authority_owner": "cache fold architecture submission（a7ab30fc，2026-09-17 15:27）",
-      "relationship": "replace: fold 展开保留同 run 内前缀",
-      "non_duplication": "无既有同 run fold 保持机制",
-      "model_evidence": [
-        "evidence://v1/b2a6ffcdaffff82a9fb78779c9657e1cf5b5f7ddcdf7454955c48b879cb2600a"
-      ],
-      "rollback": "git revert 该修复；锚机制独立不受影响",
-      "verification": "tests/unit/test_run_prefix_stability.py 等 97 项绿",
-      "human_review_status": "pr_review(2026-09-17)"
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260917-cache-fold-same-run-merged-deploy",
+  "summary": "same-run folds 前缀保持修复 + 已批准更新合流部署：exec 线锚钉机制（task_anchor_pin_messages 缺省 2，wire 尾部注入）、记忆/嵌入校准线、embedding env 治理键、proc_version PID liveness、toutiao 线 ingress 邻接源引用修复。冲突 4 文件手工解并保持 deploy 线 helper/schema 约定。",
+  "declarations": [
+    {
+      "declaration_id": "decl-fold-preserve",
+      "g1": {
+        "necessity": "同 run 内 tool fold 展开造成 cache 前缀扰动，命中断崖"
+      },
+      "g2": {
+        "authority_owner": "cache fold architecture submission（a7ab30fc 会话）+ 本 PR 复核",
+        "relationship": "replace",
+        "non_duplication": "无既有同 run fold 保持机制"
+      },
+      "g3": {
+        "model_evidence": [
+          "evidence://v1/b2a6ffcdaffff82a9fb78779c9657e1cf5b5f7ddcdf7454955c48b879cb2600a"
+        ],
+        "recovery_or_reason": "tests/unit/test_run_prefix_stability.py 前缀稳定性断言直接覆盖"
+      },
+      "g4": {
+        "rollback": "git revert 同 run fold 修复提交（6d6347cc 线）；锚机制独立不受影响",
+        "verification": [
+          "锚/前缀 pytest 子集 97 项绿（2026-09-17 15:35）"
+        ]
+      }
     },
-    "decl-anchor-integration": {
-      "necessity": "部署线会话此前无压缩锚块前缀打穿保护（锚钉机制仅存在于 exec 线）；压缩态会话锚块扰动无保护与观测",
-      "authority_owner": "用户 2026-09-17 批准部署（13:39 批准、15:23 指示执行）；锚机制原始 EVO 人工评审记录见 exec 线 832b4dfa/7004b9b2",
-      "relationship": "replace: 扩展既有 compaction/hotcard 机制（task_anchor_pin_messages 配置缺省 2，wire 尾部注入），不新建平行通道",
-      "non_duplication": "与 decl-fold-preserve 的 same-run folds 正交（锚块 vs tool folds）；无重复既有机制",
-      "model_evidence": [
-        "evidence://v1/8f08d146346769924030a31e5bdf007e336177dcd59711fd8f6358121243ff2f",
-        "evidence://v1/01ff7c5893ebcb8932809527451c41f6cd78e4135ffac3aa50c748ad8bd2133d"
-      ],
-      "rollback": "deploy worktree checkout 19e253ed 后 service_control restart",
-      "verification": "锚/前缀 pytest 子集 97 项绿；全量 unit 仅 2 失败经在合流前部署头复现确认环境性",
-      "human_review_status": "approved_for_deploy(2026-09-17)"
+    {
+      "declaration_id": "decl-anchor-integration",
+      "g1": {
+        "necessity": "部署线会话此前无压缩锚块前缀打穿保护（锚钉机制仅存在于 exec 线），压缩态会话锚块扰动无保护与观测"
+      },
+      "g2": {
+        "authority_owner": "用户 2026-09-17 批准部署（13:39 批准锚钉 EVO 部署、15:23 指示执行并合入无副作用更新）；锚机制原始评审记录见 exec 线 832b4dfa/7004b9b2",
+        "relationship": "replace",
+        "non_duplication": "扩展既有 compaction/hotcard 机制（wire 尾部注入），与 same-run folds 正交，无平行通道"
+      },
+      "g3": {
+        "model_evidence": [
+          "evidence://v1/8f08d146346769924030a31e5bdf007e336177dcd59711fd8f6358121243ff2f",
+          "evidence://v1/01ff7c5893ebcb8932809527451c41f6cd78e4135ffac3aa50c748ad8bd2133d"
+        ],
+        "recovery_or_reason": "tests/unit/test_task_anchor_pin_compaction.py + test_task_anchor_snapshot_goal_projection.py 覆盖锚钉行为"
+      },
+      "g4": {
+        "rollback": "deploy worktree checkout 19e253ed 后 service_control restart（generation 序列推进）",
+        "verification": [
+          "锚/前缀 pytest 子集 97 项绿",
+          "全量 unit 仅 2 失败经在合流前部署头复现确认为 runtime.toml canary 环境性偏差"
+        ]
+      }
     },
-    "decl-runtime-governance": {
-      "necessity": "exec 线 EMBEDDING_* env 治理键（2026-09-16 缓存互踩事故修复）与 proc_version PID liveness 修复需进入部署线，否则部署会话继续暴露 shell 残留漂移",
-      "authority_owner": "事故根因修复已在 exec 线评审落地（eb525fef/55e53458）；本次合流部署经用户 2026-09-17 批准",
-      "relationship": "replace: 扩展 resolver._LEGACY_GOVERNED_KEYS 与 proc_version 进程存活检查",
-      "non_duplication": "runtime.toml 闭包 schema 保持唯一权威；legacy 键仅收容未迁移键，无平行配置通道",
-      "model_evidence": [
-        "evidence://v1/9ef99b484f395172c1b68dcc2a4daedb79414d60766de394cfcf9d9bb1e55317"
-      ],
-      "rollback": "git revert resolver/proc_version 改动",
-      "verification": "tests/unit/test_proc_version.py 等配置/治理批 149 项绿",
-      "human_review_status": "approved_for_deploy(2026-09-17)"
+    {
+      "declaration_id": "decl-runtime-governance",
+      "g1": {
+        "necessity": "exec 线 EMBEDDING_* env 治理键（2026-09-16 缓存互踩事故修复）与 proc_version PID liveness 修复需进入部署线，否则部署会话继续暴露 shell 残留漂移"
+      },
+      "g2": {
+        "authority_owner": "事故根因修复已在 exec 线评审落地（eb525fef/55e53458）；本次合流部署经用户 2026-09-17 批准",
+        "relationship": "replace",
+        "non_duplication": "runtime.toml 闭包 schema 保持唯一权威；_LEGACY_GOVERNED_KEYS 仅收容未迁移键，无平行配置通道"
+      },
+      "g3": {
+        "model_evidence": [
+          "evidence://v1/9ef99b484f395172c1b68dcc2a4daedb79414d60766de394cfcf9d9bb1e55317"
+        ],
+        "recovery_or_reason": "tests/unit/test_proc_version.py 覆盖进程存活语义"
+      },
+      "g4": {
+        "rollback": "git revert resolver/proc_version 改动",
+        "verification": [
+          "配置/治理批 149 项绿（含 config/resolver/common_governance）"
+        ]
+      }
     }
-  },
+  ],
   "components": [
     {
-      "name": "comp-fold-preserve",
-      "control_machinery": true,
+      "component_id": "comp-fold-preserve",
       "paths": [
         "src/llm_loop/core/prompt_build/stages/history_pipeline.py",
         "src/llm_loop/core/prompt_build/stages/history_postprocess.py",
         "src/llm_loop/core/prompt_build/stages/history_projection.py",
         "tests/unit/test_run_prefix_stability.py"
       ],
+      "control_machinery": true,
+      "owning_subsystem": "core.prompt_build.history",
+      "disposition": "admit",
+      "evidence": [
+        "evidence://v1/b2a6ffcdaffff82a9fb78779c9657e1cf5b5f7ddcdf7454955c48b879cb2600a"
+      ],
+      "verification_level": "pytest_subset",
+      "model_evidence_veto_recovery_exit": "无 veto；观测通道 prefix-disturbance 日志可独立关闭",
+      "rollback_route": "git revert fold 修复提交",
       "declaration_id": "decl-fold-preserve"
     },
     {
-      "name": "comp-fold-tools",
-      "control_machinery": false,
+      "component_id": "comp-fold-tools",
       "paths": [
         "src/llm_loop/core/loop/engine.py",
         "src/llm_loop/core/episode_history.py",
@@ -66,41 +104,71 @@
         "tests/unit/test_tool_working_set_projection.py",
         "tests/unit/test_tool_result_factualization.py"
       ],
-      "declaration_id": "decl-fold-preserve"
+      "control_machinery": false,
+      "owning_subsystem": "core.loop.engine",
+      "disposition": "admit",
+      "evidence": [
+        "evidence://v1/b2a6ffcdaffff82a9fb78779c9657e1cf5b5f7ddcdf7454955c48b879cb2600a"
+      ],
+      "verification_level": "pytest_subset",
+      "model_evidence_veto_recovery_exit": "无 veto",
+      "rollback_route": "git revert fold 修复提交"
     },
     {
-      "name": "comp-fold-obs",
-      "control_machinery": false,
+      "component_id": "comp-fold-obs",
       "paths": [
         "src/llm_loop/core/cache_health.py",
         "docs/governance/submissions/20260917-cache-fold-same-run.json"
       ],
-      "declaration_id": null
+      "control_machinery": false,
+      "owning_subsystem": "core.cache_health",
+      "disposition": "admit",
+      "evidence": [
+        "evidence://v1/9ef99b484f395172c1b68dcc2a4daedb79414d60766de394cfcf9d9bb1e55317"
+      ],
+      "verification_level": "pytest_subset",
+      "model_evidence_veto_recovery_exit": "无 veto",
+      "rollback_route": "git revert"
     },
     {
-      "name": "comp-anchor-integration",
-      "control_machinery": true,
+      "component_id": "comp-anchor-integration",
       "paths": [
         "src/llm_loop/config.py",
         "src/llm_loop/core/loop/build.py",
         "tests/unit/test_task_anchor_pin_compaction.py",
         "tests/unit/test_task_anchor_snapshot_goal_projection.py"
       ],
+      "control_machinery": true,
+      "owning_subsystem": "core.prompt_build.anchor",
+      "disposition": "admit",
+      "evidence": [
+        "evidence://v1/01ff7c5893ebcb8932809527451c41f6cd78e4135ffac3aa50c748ad8bd2133d"
+      ],
+      "verification_level": "pytest_subset+full_suite",
+      "model_evidence_veto_recovery_exit": "无 veto；task_anchor_pin_messages=0 可关闭",
+      "rollback_route": "deploy worktree checkout 19e253ed + restart",
       "declaration_id": "decl-anchor-integration"
     },
     {
-      "name": "comp-runtime-governance",
-      "control_machinery": true,
+      "component_id": "comp-runtime-governance",
       "paths": [
         "src/llm_loop/runtime/resolver.py",
         "src/llm_loop/introspection/proc_version.py",
         "tests/unit/test_proc_version.py"
       ],
+      "control_machinery": true,
+      "owning_subsystem": "runtime.resolver",
+      "disposition": "admit",
+      "evidence": [
+        "evidence://v1/96a49109febfb2a5a8d65cf4820f52cfd3a55b612dbe0eca3bd27fba92202b40"
+      ],
+      "verification_level": "pytest_subset",
+      "model_evidence_veto_recovery_exit": "无 veto；legacy 键白名单可精确回退",
+      "rollback_route": "git revert resolver/proc_version 改动",
       "declaration_id": "decl-runtime-governance"
     },
     {
-      "name": "comp-memory-embedding",
-      "control_machinery": false,
+      "component_id": "comp-memory-embedding",
       "paths": [
         "evals/embedding_stage1/calib_candidate_keys.npy",
         "evals/embedding_stage1/calib_sample.py",
@@ -126,15 +194,30 @@
         "tests/unit/test_embedder_v2.py",
         "tests/unit/test_selective_evidence_s1.py"
       ],
-      "declaration_id": null
+      "control_machinery": false,
+      "owning_subsystem": "memory.embedder",
+      "disposition": "admit",
+      "evidence": [
+        "evidence://v1/96a49109febfb2a5a8d65cf4820f52cfd3a55b612dbe0eca3bd27fba92202b40"
+      ],
+      "verification_level": "pytest_subset+evals",
+      "model_evidence_veto_recovery_exit": "无 veto；阈值校准随 embedder 版本隔离",
+      "rollback_route": "git revert 记忆线提交"
     },
     {
-      "name": "comp-continuity-fixes",
-      "control_machinery": false,
+      "component_id": "comp-continuity-fixes",
       "paths": [
         "src/llm_loop/core/prompt_build/stages/ingress_resolution.py"
       ],
-      "declaration_id": null
+      "control_machinery": false,
+      "owning_subsystem": "core.prompt_build.ingress",
+      "disposition": "admit",
+      "evidence": [
+        "evidence://v1/96a49109febfb2a5a8d65cf4820f52cfd3a55b612dbe0eca3bd27fba92202b40"
+      ],
+      "verification_level": "pytest_subset",
+      "model_evidence_veto_recovery_exit": "无 veto",
+      "rollback_route": "git revert toutia 线合并"
     }
   ]
 }
