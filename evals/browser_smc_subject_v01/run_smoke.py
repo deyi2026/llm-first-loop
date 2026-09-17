@@ -71,7 +71,13 @@ ROW_WALL_S_CAP = 420  # predeclared in PLAN.v1.json
 MODEL_PORT = 8901
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 WORKER = AB / "worker.py"
-PROVIDERS = REPO / "data" / "providers.json"
+# data/* is gitignored: the frozen providers.json lives in the main checkout
+# even when this eval runs from a worktree; the contract check still applies.
+PROVIDERS = next(
+    candidate
+    for candidate in (REPO / "data" / "providers.json", REPO.parent.parent / "data" / "providers.json")
+    if candidate.exists()
+)
 PLAN_FILE = HERE / "PLAN.v1.json"
 RESULTS = HERE / "results"
 
