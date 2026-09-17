@@ -227,10 +227,12 @@ def _value_type(value: Any) -> str:
 
 def _result(
     *,
-    status: Literal["rejected", "unimplemented"],
+    status: Literal["rejected", "unimplemented", "complete"],
     reason: str,
     pack: dict[str, Any] | None,
     input_document: dict[str, Any] | None,
+    derived_facts: list[dict[str, Any]] | None = None,
+    derivations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema": _RESULT_SCHEMA,
@@ -243,8 +245,8 @@ def _result(
         "input_fingerprint": (
             _sha256(input_document) if isinstance(input_document, dict) else None
         ),
-        "derived_facts": [],
-        "derivations": [],
+        "derived_facts": list(derived_facts or []),
+        "derivations": list(derivations or []),
     }
 
 
@@ -525,6 +527,447 @@ def _validate_input(
     return input_document
 
 
+def _index_facts(facts: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    index: dict[str, list[dict[str, Any]]] = {}
+    for fact in facts:
+        predicate = str(fact["predicate"])
+        index.setdefault(predicate, []).append(fact)
+    for values in index.values():
+        values.sort(key=lambda fact: str(fact["fact_id"]))
+    return index
+
+
+def _collect_rule_inputs(
+    rule: dict[str, Any],
+    index: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]] | None:
+    collected: list[dict[str, Any]] = []
+    for predicate in rule["input_predicates"]:
+        facts = index.get(str(predicate))
+        if not facts:
+            return None
+        collected.extend(facts)
+    return collected
+
+
+def _single_value(
+    index: dict[str, list[dict[str, Any]]], predicate: str
+) -> tuple[bool, Any]:
+    facts = index.get(predicate) or []
+    if len(facts) != 1:
+        return False, None
+    return True, facts[0].get("value")
+
+
+def _first_context(input_facts: list[dict[str, Any]]) -> dict[str, Any]:
+    for fact in input_facts:
+        raw = fact.get("context")
+        if isinstance(raw, dict):
+            return {
+                "domain": raw.get("domain"),
+                "scope_ref": raw.get("scope_ref"),
+                "observed_version": raw.get("observed_version"),
+                "snapshot_id": raw.get("snapshot_id"),
+                "sensor_contract_ref": raw.get("sensor_contract_ref"),
+            }
+    return {
+        "domain": "browser",
+        "scope_ref": None,
+        "observed_version": None,
+        "snapshot_id": None,
+        "sensor_contract_ref": None,
+    }
+
+
+def _derived_context(
+    input_facts: list[dict[str, Any]], outputs: dict[str, Any]
+) -> dict[str, Any]:
+    context = _first_context(input_facts)
+    scope = outputs.get("binding.scope_ref", outputs.get("action.scope_ref"))
+    version = outputs.get(
+        "binding.observed_version", outputs.get("action.expected_version")
+    )
+    if _nonempty_string(scope):
+        context["scope_ref"] = scope
+    if _nonempty_string(version):
+        context["observed_version"] = version
+        context["snapshot_id"] = version
+    return context
+
+
+def _derived_completeness(input_facts: list[dict[str, Any]]) -> dict[str, Any]:
+    reasons: set[str] = set()
+    complete = True
+    for fact in input_facts:
+        coverage = fact.get("observation_completeness")
+        if not isinstance(coverage, dict):
+            continue
+        complete = complete and coverage.get("complete") is True
+        raw_reasons = coverage.get("reasons")
+        if isinstance(raw_reasons, list):
+            reasons.update(str(reason) for reason in raw_reasons)
+    return {"complete": complete, "reasons": sorted(reasons)}
+
+
+def _derived_projection_complete(input_facts: list[dict[str, Any]]) -> bool | None:
+    observed = [fact.get("projection_complete") for fact in input_facts]
+    if any(value is False for value in observed):
+        return False
+    if observed and all(value is True for value in observed):
+        return True
+    return None
+
+
+def _make_derivation_bundle(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    outputs: dict[str, Any],
+    result: Literal["derived", "indeterminate", "conflict", "not_applicable", "rejected"],
+    reason: str | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    output_order = [
+        predicate for predicate in rule["output_predicates"] if predicate in outputs
+    ]
+    if not output_order:
+        raise _ValidationError("evaluator_returned_no_declared_outputs")
+    if len(output_order) > _FROZEN_BOUNDS["max_output_facts_per_rule_context"]:
+        raise _ValidationError("max_output_facts_per_rule_context_exceeded")
+    input_refs = sorted({str(fact["fact_id"]) for fact in input_facts})
+    if len(input_refs) > _FROZEN_BOUNDS["max_input_fact_refs_per_derivation"]:
+        raise _ValidationError("max_input_fact_refs_per_derivation_exceeded")
+    context_ref = str(input_document["context_ref"])
+    derivation_seed = {
+        "rule_ref": str(rule["rule_id"]),
+        "rule_hash": str(rule["rule_hash"]),
+        "input_fact_refs": input_refs,
+        "context_refs": [context_ref],
+        "outputs": [[predicate, outputs[predicate]] for predicate in output_order],
+        "result": result,
+        "reason": reason,
+    }
+    derivation_id = f"deriv-{_sha256(derivation_seed)[:24]}"
+    context = _derived_context(input_facts, outputs)
+    completeness = _derived_completeness(input_facts)
+    projection_complete = _derived_projection_complete(input_facts)
+    rule_ref = f"{rule['rule_id']}@{rule['rule_version']}"
+
+    derived: list[dict[str, Any]] = []
+    for predicate in output_order:
+        value = outputs[predicate]
+        fact_seed = {
+            "derivation_id": derivation_id,
+            "predicate": predicate,
+            "value": value,
+            "subject": f"rule:{rule['rule_id']}",
+        }
+        fact_id = f"dfact-{_sha256(fact_seed)[:24]}"
+        derived.append(
+            {
+                "kind": "fact",
+                "schema": _FACT_SCHEMA,
+                "fact_id": fact_id,
+                "domain": str(rule["domain"]),
+                "subject": f"rule:{rule['rule_id']}",
+                "predicate": predicate,
+                "value": value,
+                "value_type": _value_type(value),
+                "truth_state": "asserted",
+                "context": dict(context),
+                "observation_completeness": dict(completeness),
+                "projection_complete": projection_complete,
+                "provenance": {
+                    "kind": "mechanically_derived",
+                    "source": f"rule:{rule_ref}",
+                    "grounding_ref": None,
+                    "observed_version": context.get("observed_version"),
+                    "derivation_ref": derivation_id,
+                    "rule_ref": rule_ref,
+                    "input_fact_refs": input_refs,
+                },
+            }
+        )
+    derivation = {
+        "kind": "derivation",
+        "schema": "smc.derivation_record.v0.1",
+        "derivation_id": derivation_id,
+        "rule_ref": rule_ref,
+        "rule_hash": str(rule["rule_hash"]),
+        "input_fact_refs": input_refs,
+        "output_fact_refs": [str(fact["fact_id"]) for fact in derived],
+        "context_refs": [context_ref],
+        "result": result,
+        "reason": reason,
+    }
+    return derived, derivation
+
+
+def _topological_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    remaining = list(rules)
+    ordered: list[dict[str, Any]] = []
+    complete: set[str] = set()
+    while remaining:
+        next_index = next(
+            (
+                index
+                for index, rule in enumerate(remaining)
+                if set(rule["dependencies"]) <= complete
+            ),
+            None,
+        )
+        if next_index is None:
+            raise _ValidationError("rule_dependency_topology_unresolved")
+        rule = remaining.pop(next_index)
+        ordered.append(rule)
+        complete.add(str(rule["rule_id"]))
+    return ordered
+
+
+def _grounding_indeterminate(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    reason: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs={"binding.status": "indeterminate", "binding.reason": reason},
+        result="indeterminate",
+        reason=reason,
+    )
+
+
+def _evaluate_grounding_exact_binding(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    required = {
+        predicate: _single_value(index, predicate)
+        for predicate in rule["input_predicates"]
+    }
+    if not all(ok for ok, _ in required.values()):
+        return _grounding_indeterminate(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            reason="grounding_input_ambiguous",
+        )
+    values = {predicate: value for predicate, (_, value) in required.items()}
+    target_ref = values["request.target_ref"]
+    verb = values["request.verb"]
+    availability = values["grounding.availability"]
+    grounding_ref = values["grounding.ref"]
+    grounding_kind = values["grounding.kind"]
+    projection_ref = values["grounding.projection_ref"]
+    target_id = values["grounding.target_id"]
+    scope_ref = values["grounding.scope_ref"]
+    observed_version = values["grounding.observed_version"]
+
+    if availability != "available":
+        return _grounding_indeterminate(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            reason=f"target_ref_{availability}",
+        )
+    if not _nonempty_string(target_ref) or target_ref != grounding_ref or target_ref != projection_ref:
+        return _grounding_indeterminate(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            reason="target_ref_identity_mismatch",
+        )
+    object_verbs = {"click", "fill", "select", "scroll"}
+    if verb in object_verbs:
+        expected_kind = "object"
+        version_scope = "object"
+    elif verb == "navigate":
+        expected_kind = "resource"
+        version_scope = "resource"
+    else:
+        return _grounding_indeterminate(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            reason="verb_not_in_browser_mutation_profile",
+        )
+    if grounding_kind != expected_kind:
+        return _grounding_indeterminate(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            reason="target_ref_projection_mismatch",
+        )
+    if not all(_nonempty_string(value) for value in (target_id, scope_ref, observed_version)):
+        return _grounding_indeterminate(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            reason="target_ref_incomplete",
+        )
+    if version_scope == "resource" and target_id != scope_ref:
+        return _grounding_indeterminate(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            reason="resource_target_scope_mismatch",
+        )
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs={
+            "binding.status": "bound",
+            "binding.reason": None,
+            "binding.target_id": target_id,
+            "binding.scope_ref": scope_ref,
+            "binding.observed_version": observed_version,
+            "binding.version_scope": version_scope,
+        },
+        result="derived",
+        reason=None,
+    )
+
+
+def _semantic_action_id(*, verb: str, target_ref: str, args: dict[str, Any]) -> str:
+    wire = json.dumps(
+        {"verb": verb, "target_ref": target_ref, "args": args},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return f"sact-{hashlib.sha256(wire).hexdigest()[:24]}"
+
+
+def _evaluate_action_fixed_contract(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    required = {
+        predicate: _single_value(index, predicate)
+        for predicate in rule["input_predicates"]
+    }
+    if not all(ok for ok, _ in required.values()):
+        raise _ValidationError("action_fixed_contract_input_ambiguous")
+    values = {predicate: value for predicate, (_, value) in required.items()}
+    if values["binding.status"] != "bound":
+        raise _ValidationError("action_fixed_contract_requires_bound_target")
+    verb = values["request.verb"]
+    target_ref = values["request.target_ref"]
+    args = values["request.args"]
+    if verb not in {"click", "fill", "select", "scroll", "navigate"}:
+        raise _ValidationError("verb_not_in_browser_mutation_profile")
+    if not _nonempty_string(target_ref) or not isinstance(args, dict):
+        raise _ValidationError("semantic_action_request_invalid")
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs={
+            "action.schema": "smc.semantic_action.v0.1",
+            "action.domain": "browser",
+            "action.scope_ref": values["binding.scope_ref"],
+            "action.action_id": _semantic_action_id(
+                verb=str(verb), target_ref=str(target_ref), args=args
+            ),
+            "action.verb": verb,
+            "action.target_id": values["binding.target_id"],
+            "action.operation_class": "mutate",
+            "action.idempotency_class": "unknown",
+            "action.atomicity_class": "single_dispatch",
+            "action.expected_version": values["binding.observed_version"],
+            "action.version_scope": values["binding.version_scope"],
+            "action.version_precondition": "required",
+        },
+        result="derived",
+        reason=None,
+    )
+
+
+_IMPLEMENTED_EVALUATORS: Final = {
+    "grounding_exact_binding": _evaluate_grounding_exact_binding,
+    "action_fixed_contract": _evaluate_action_fixed_contract,
+}
+
+
+def _evaluate_validated(
+    *,
+    pack: dict[str, Any],
+    input_document: dict[str, Any],
+) -> dict[str, Any]:
+    all_facts = list(input_document["facts"])
+    index = _index_facts(all_facts)
+    derived_facts: list[dict[str, Any]] = []
+    derivations: list[dict[str, Any]] = []
+    completed_rules: set[str] = set()
+    unimplemented_applicable = False
+
+    for rule in _topological_rules(list(pack["rules"])):
+        if not set(rule["dependencies"]) <= completed_rules:
+            continue
+        input_facts = _collect_rule_inputs(rule, index)
+        if input_facts is None:
+            continue
+        evaluator = _IMPLEMENTED_EVALUATORS.get(str(rule["evaluator_op"]))
+        if evaluator is None:
+            unimplemented_applicable = True
+            continue
+        new_facts, derivation = evaluator(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            index=index,
+        )
+        if len(derived_facts) + len(new_facts) > _FROZEN_BOUNDS["max_derived_facts"]:
+            raise _ValidationError("max_derived_facts_exceeded")
+        if len(derivations) + 1 > _FROZEN_BOUNDS["max_derivations"]:
+            raise _ValidationError("max_derivations_exceeded")
+        derived_facts.extend(new_facts)
+        derivations.append(derivation)
+        all_facts.extend(new_facts)
+        for fact in new_facts:
+            predicate = str(fact["predicate"])
+            index.setdefault(predicate, []).append(fact)
+            index[predicate].sort(key=lambda value: str(value["fact_id"]))
+        completed_rules.add(str(rule["rule_id"]))
+
+    if unimplemented_applicable:
+        return _result(
+            status="unimplemented",
+            reason="applicable_semantic_evaluator_not_implemented",
+            pack=pack,
+            input_document=input_document,
+            derived_facts=derived_facts,
+            derivations=derivations,
+        )
+    if not derivations:
+        return _result(
+            status="unimplemented",
+            reason="no_implemented_rule_applicable",
+            pack=pack,
+            input_document=input_document,
+        )
+    return _result(
+        status="complete",
+        reason="closure_complete_for_available_facts",
+        pack=pack,
+        input_document=input_document,
+        derived_facts=derived_facts,
+        derivations=derivations,
+    )
+
+
 def evaluate_rulepack(
     *,
     rulepack_document: dict[str, Any],
@@ -547,6 +990,7 @@ def evaluate_rulepack(
             pack=validated_pack,
             derived_predicates=derived_predicates,
         )
+        return _evaluate_validated(pack=validated_pack, input_document=input_document)
     except _ValidationError as exc:
         return _result(
             status="rejected",
@@ -554,9 +998,3 @@ def evaluate_rulepack(
             pack=pack,
             input_document=source_input,
         )
-    return _result(
-        status="unimplemented",
-        reason="semantic_evaluators_not_implemented",
-        pack=validated_pack,
-        input_document=input_document,
-    )
