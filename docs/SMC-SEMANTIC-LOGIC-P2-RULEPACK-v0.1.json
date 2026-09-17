@@ -1,0 +1,636 @@
+{
+  "authority": "shadow_only",
+  "baseline": "54f1ed8c6c0b4cf71ca4b2bd39970df31d2e2ed5",
+  "domain": "browser",
+  "engine_profile": {
+    "allowed_authority_classes": [
+      "mechanical_derivation",
+      "execution_precondition_fact"
+    ],
+    "arbitrary_code_execution": false,
+    "bounds": {
+      "max_asserted_facts": 4096,
+      "max_contexts": 256,
+      "max_derivations": 4096,
+      "max_derived_facts": 4096,
+      "max_engine_wall_ms_qualification": 5000,
+      "max_input_fact_refs_per_derivation": 64,
+      "max_output_facts_per_rule_context": 64,
+      "max_rule_dependencies": 16,
+      "max_rules": 64,
+      "max_scope_depth": 32,
+      "max_scope_nodes": 1024,
+      "rule_firings_per_context": 1
+    },
+    "cycles": "reject",
+    "dynamic_rule_loading": false,
+    "evaluation_strategy": "single_topological_pass",
+    "evaluator_ops": [
+      "grounding_exact_binding",
+      "action_fixed_contract",
+      "scope_descendant_closure",
+      "scope_target_relation",
+      "canonicalize_source_conflict",
+      "derive_coverage_status",
+      "separate_completeness",
+      "identity_ambiguity_no_fusion",
+      "predicate_bind_selected_condition",
+      "predicate_evaluate",
+      "version_assess",
+      "receipt_sequence_validate",
+      "receipt_dispatch_invariants"
+    ],
+    "forbidden_authority_classes": [
+      "runtime_authority",
+      "model_semantic",
+      "candidate_only"
+    ],
+    "forbidden_output_predicates": [
+      "important",
+      "priority",
+      "recommended",
+      "best",
+      "preferred",
+      "task_relevant",
+      "should_click",
+      "should_fill",
+      "should_navigate",
+      "next_action",
+      "recovery_sequence",
+      "likely_complete",
+      "task_complete",
+      "goal_complete",
+      "user_intent_is"
+    ],
+    "input_mutation": false,
+    "mode": "shadow_qualification_only",
+    "negative_reasoning": {
+      "closed_world_requirements_must_be_explicit": true,
+      "missing_fact_means_false": false,
+      "negation_as_failure": false,
+      "negative_conclusion_requires_explicit_membership_fact": true,
+      "open_world_default": true
+    },
+    "recursion": false,
+    "runtime_authority_minting": false,
+    "schema": "smc.rule_engine_profile.v0.1",
+    "task_completion_authority": false,
+    "unknown_dependency": "reject"
+  },
+  "group_order": [
+    "G1_grounding",
+    "G2_scope",
+    "G3_completeness_conflict",
+    "G4_predicate",
+    "G5_version_receipt"
+  ],
+  "hash_contract": {
+    "algorithm": "sha256",
+    "canonical_json": "UTF-8, sort_keys=true, separators=(comma,colon), allow_nan=false",
+    "rule_hash_excludes": [
+      "rule_hash"
+    ],
+    "rulepack_hash_excludes": [
+      "rulepack_hash"
+    ]
+  },
+  "phase": "P2-design",
+  "production_consumed": false,
+  "rulepack_hash": "bba3a38c315078e390d1afd985572c962bfcecf076ef9ff623abcdf34ace458b",
+  "rulepack_id": "smc.browser.p2-core.v0.1",
+  "rulepack_version": "0.1",
+  "rules": [
+    {
+      "authority_class": "mechanical_derivation",
+      "closed_world_requirements": [],
+      "dependencies": [],
+      "domain": "browser",
+      "evaluator_op": "grounding_exact_binding",
+      "fixture_refs": [
+        "S1-object-grounding-compile",
+        "S1-resource-grounding-compile",
+        "S1-grounding-fail-closed"
+      ],
+      "group": "G1_grounding",
+      "input_predicates": [
+        "request.target_ref",
+        "request.verb",
+        "grounding.availability",
+        "grounding.ref",
+        "grounding.kind",
+        "grounding.projection_ref",
+        "grounding.target_id",
+        "grounding.scope_ref",
+        "grounding.observed_version"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "binding.status",
+        "binding.reason",
+        "binding.target_id",
+        "binding.scope_ref",
+        "binding.observed_version",
+        "binding.version_scope"
+      ],
+      "production_consumed": false,
+      "rule_hash": "2e200a696b37c4db9840114e0228a8074669c130e6565800a3c42be65003e7b0",
+      "rule_id": "browser.grounding.exact-binding",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "src/llm_loop/tools/builtin/browser_semantic_execute.py::compile_request",
+        "src/llm_loop/browser/perception.py::hydrate"
+      ],
+      "status": "candidate"
+    },
+    {
+      "authority_class": "mechanical_derivation",
+      "closed_world_requirements": [],
+      "dependencies": [
+        "browser.grounding.exact-binding"
+      ],
+      "domain": "browser",
+      "evaluator_op": "action_fixed_contract",
+      "fixture_refs": [
+        "S1-object-grounding-compile",
+        "S1-resource-grounding-compile"
+      ],
+      "group": "G1_grounding",
+      "input_predicates": [
+        "request.verb",
+        "request.args",
+        "request.target_ref",
+        "binding.status",
+        "binding.target_id",
+        "binding.scope_ref",
+        "binding.observed_version",
+        "binding.version_scope"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "action.schema",
+        "action.domain",
+        "action.scope_ref",
+        "action.action_id",
+        "action.verb",
+        "action.target_id",
+        "action.operation_class",
+        "action.idempotency_class",
+        "action.atomicity_class",
+        "action.expected_version",
+        "action.version_scope",
+        "action.version_precondition"
+      ],
+      "production_consumed": false,
+      "rule_hash": "0884ec90eae83907310d611dcc6b949f80f96d06b344d69ed40f6bfe500e85d2",
+      "rule_id": "browser.action.fixed-contract",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "src/llm_loop/tools/builtin/browser_semantic_execute.py::compile_request"
+      ],
+      "status": "candidate"
+    },
+    {
+      "authority_class": "mechanical_derivation",
+      "closed_world_requirements": [],
+      "dependencies": [],
+      "domain": "browser",
+      "evaluator_op": "scope_descendant_closure",
+      "fixture_refs": [
+        "S3-lower-bound-object-count"
+      ],
+      "group": "G2_scope",
+      "input_predicates": [
+        "scope.node.scope_ref",
+        "scope.node.parent_scope_ref",
+        "scope.node.kind"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "scope.descendant_of"
+      ],
+      "production_consumed": false,
+      "rule_hash": "29c2c4184ee6b55a7160351e41822f50bc7381c0a13b26448317cda32986d9f5",
+      "rule_id": "core.scope.descendant-closure",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "src/llm_loop/browser/predicate.py::_scope_descendants",
+        "src/llm_loop/browser/perception.py::_build_scope_facts"
+      ],
+      "status": "candidate"
+    },
+    {
+      "authority_class": "mechanical_derivation",
+      "closed_world_requirements": [],
+      "dependencies": [],
+      "domain": "browser",
+      "evaluator_op": "scope_target_relation",
+      "fixture_refs": [
+        "S3-absence-complete-vs-partial",
+        "S4-object-same-generation-changed"
+      ],
+      "group": "G2_scope",
+      "input_predicates": [
+        "request.scope_ref",
+        "target.scope_ref",
+        "scope.node.scope_ref"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "scope.relation",
+        "scope.reason"
+      ],
+      "production_consumed": false,
+      "rule_hash": "7a02a1fcb566d11c8ebfd2aa699083a94715c4a2c3259b19421cf6a455ff0cbd",
+      "rule_id": "core.scope.target-relation",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "src/llm_loop/browser/predicate.py::evaluate_predicate",
+        "src/llm_loop/browser/perception.py::assess_version_precondition"
+      ],
+      "status": "candidate"
+    },
+    {
+      "authority_class": "mechanical_derivation",
+      "closed_world_requirements": [],
+      "dependencies": [],
+      "domain": "browser",
+      "evaluator_op": "canonicalize_source_conflict",
+      "fixture_refs": [
+        "S2-dom-ax-field-conflict"
+      ],
+      "group": "G3_completeness_conflict",
+      "input_predicates": [
+        "observation.subject",
+        "observation.property",
+        "observation.source",
+        "observation.value",
+        "observation.grounding_ref",
+        "resolver.contract"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "canonical.value",
+        "canonical.truth_state",
+        "conflict.resolution",
+        "conflict.source_observations"
+      ],
+      "production_consumed": false,
+      "rule_hash": "736b0fd277896c9383b3cb177ad94d4829f0f4fc5f94fd7727e24be841d549f8",
+      "rule_id": "core.conflict.canonicalize-unresolved",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "src/llm_loop/browser/perception.py::_merge_fields"
+      ],
+      "status": "candidate"
+    },
+    {
+      "authority_class": "mechanical_derivation",
+      "closed_world_requirements": [
+        "domain_expected_sensor_set_declared"
+      ],
+      "dependencies": [],
+      "domain": "browser",
+      "evaluator_op": "derive_coverage_status",
+      "fixture_refs": [
+        "S2-dom-ax-field-conflict",
+        "S2-identity-fusion-ambiguity",
+        "S3-absence-complete-vs-partial"
+      ],
+      "group": "G3_completeness_conflict",
+      "input_predicates": [
+        "coverage.expected_sources",
+        "coverage.observed_sources",
+        "coverage.blind_spots",
+        "coverage.sensor_truncated"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "coverage.status",
+        "coverage.complete",
+        "coverage.reasons"
+      ],
+      "production_consumed": false,
+      "rule_hash": "bd49e4d8b73efd27403d9f8273ec930292da84fa26348688152e23063494c066",
+      "rule_id": "core.coverage.derive-status",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "src/llm_loop/browser/perception.py::_object_coverage",
+        "src/llm_loop/browser/perception.py::_snapshot_completeness"
+      ],
+      "status": "candidate"
+    },
+    {
+      "authority_class": "mechanical_derivation",
+      "closed_world_requirements": [],
+      "dependencies": [],
+      "domain": "browser",
+      "evaluator_op": "separate_completeness",
+      "fixture_refs": [
+        "S2-dom-ax-field-conflict"
+      ],
+      "group": "G3_completeness_conflict",
+      "input_predicates": [
+        "observation.complete",
+        "observation.reasons",
+        "projection.complete",
+        "projection.reasons"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "semantic_evidence.observation_complete",
+        "semantic_evidence.projection_complete",
+        "semantic_evidence.projection_can_upgrade_observation"
+      ],
+      "production_consumed": false,
+      "rule_hash": "647089ba861c54e9364cf0359f5dfa1c43c4941540e1449b73d3e5f99408074a",
+      "rule_id": "core.completeness.separate-observation-projection",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "docs/SMC-CONTRACT-v0.1.md",
+        "src/llm_loop/browser/perception.py::_snapshot_completeness"
+      ],
+      "status": "candidate"
+    },
+    {
+      "authority_class": "mechanical_derivation",
+      "closed_world_requirements": [],
+      "dependencies": [],
+      "domain": "browser",
+      "evaluator_op": "identity_ambiguity_no_fusion",
+      "fixture_refs": [
+        "S2-identity-fusion-ambiguity"
+      ],
+      "group": "G3_completeness_conflict",
+      "input_predicates": [
+        "identity.mapping_status",
+        "identity.source_candidates"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "identity.binding_status",
+        "identity.fusion_performed",
+        "identity.reason"
+      ],
+      "production_consumed": false,
+      "rule_hash": "e172f9cc673d5c12910e33700cc46196fd7636ad835d03054138e2625b48789a",
+      "rule_id": "core.identity.ambiguity-no-fusion",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "docs/SMC-CONTRACT-v0.1.md::C28",
+        "tests/unit/test_smc_semantic_logic_p1a.py::_case_s2_fusion"
+      ],
+      "status": "candidate"
+    },
+    {
+      "authority_class": "mechanical_derivation",
+      "closed_world_requirements": [],
+      "dependencies": [],
+      "domain": "browser",
+      "evaluator_op": "predicate_bind_selected_condition",
+      "fixture_refs": [
+        "S3-absence-complete-vs-partial",
+        "S3-lower-bound-object-count"
+      ],
+      "group": "G4_predicate",
+      "input_predicates": [
+        "model_condition.scope_ref",
+        "model_condition.target_ref",
+        "model_condition.property",
+        "model_condition.operator",
+        "model_condition.value",
+        "binding.target_id",
+        "binding.scope_ref"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "predicate.schema",
+        "predicate.domain",
+        "predicate.scope_ref",
+        "predicate.target",
+        "predicate.property",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "production_consumed": false,
+      "rule_hash": "f1000df6acaa1af4ada2b254bae47aec6b1ac04f422ad5bde220424df30b99f0",
+      "rule_id": "browser.predicate.bind-selected-condition",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "src/llm_loop/browser/predicate.py::validate_predicate"
+      ],
+      "status": "candidate"
+    },
+    {
+      "authority_class": "mechanical_derivation",
+      "closed_world_requirements": [
+        "complete_relevant_coverage_for_negative_absence",
+        "stable_identity_for_absence",
+        "closed_predicate_vocabulary"
+      ],
+      "dependencies": [
+        "core.scope.descendant-closure",
+        "core.scope.target-relation",
+        "core.coverage.derive-status",
+        "core.identity.ambiguity-no-fusion"
+      ],
+      "domain": "browser",
+      "evaluator_op": "predicate_evaluate",
+      "fixture_refs": [
+        "S3-absence-complete-vs-partial",
+        "S3-unknown-or-unstable-identity",
+        "S3-lower-bound-object-count"
+      ],
+      "group": "G4_predicate",
+      "input_predicates": [
+        "predicate.schema",
+        "predicate.domain",
+        "predicate.scope_ref",
+        "predicate.target",
+        "predicate.property",
+        "predicate.operator",
+        "predicate.value",
+        "scope.relation",
+        "observation.target_present",
+        "observation.property_value",
+        "identity.stable_scope",
+        "coverage.complete",
+        "observation.object_count",
+        "scope.descendant_of"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "predicate.result",
+        "predicate.observed_value",
+        "predicate.coverage_complete",
+        "predicate.reason"
+      ],
+      "production_consumed": false,
+      "rule_hash": "448f7b552e8d832f30806e600e868fc77893d637012a297e8d51db39ae10490a",
+      "rule_id": "browser.predicate.evaluate",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "src/llm_loop/browser/predicate.py::evaluate_predicate"
+      ],
+      "status": "candidate"
+    },
+    {
+      "authority_class": "execution_precondition_fact",
+      "closed_world_requirements": [],
+      "dependencies": [
+        "core.scope.target-relation",
+        "core.coverage.derive-status",
+        "core.identity.ambiguity-no-fusion"
+      ],
+      "domain": "browser",
+      "evaluator_op": "version_assess",
+      "fixture_refs": [
+        "S4-object-same-generation-changed",
+        "S4-object-unchanged-new-observation",
+        "S4-document-generation-change",
+        "S4-incomplete-missing-target"
+      ],
+      "group": "G5_version_receipt",
+      "input_predicates": [
+        "version.scope",
+        "version.expected",
+        "version.observed",
+        "version.expected_availability",
+        "version.observed_availability",
+        "scope.relation",
+        "lineage.page_same",
+        "lineage.document_same",
+        "identity.stable",
+        "observation.target_present",
+        "observation.complete",
+        "object.changed_fields",
+        "resource.changed_fields"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "version.result",
+        "version.reason",
+        "version.comparable",
+        "version.automatic_refresh_performed",
+        "version.silent_rebind_performed"
+      ],
+      "production_consumed": false,
+      "rule_hash": "555b7a0d7234ea0ccbc05eab96ecae61fa5f178d9e393e9a64578313c009567b",
+      "rule_id": "core.version.assess-precondition",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "src/llm_loop/browser/perception.py::assess_version_precondition"
+      ],
+      "status": "candidate"
+    },
+    {
+      "authority_class": "mechanical_derivation",
+      "closed_world_requirements": [
+        "receipt_history_complete_to_watermark"
+      ],
+      "dependencies": [],
+      "domain": "browser",
+      "evaluator_op": "receipt_sequence_validate",
+      "fixture_refs": [
+        "S5-running-terminal-sequence",
+        "S5-duplicate-action-id",
+        "S5-transport-ambiguity-no-replay"
+      ],
+      "group": "G5_version_receipt",
+      "input_predicates": [
+        "receipt.action_id",
+        "receipt.seq",
+        "receipt.status",
+        "receipt.history_watermark"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "receipt.sequence_monotonic",
+        "receipt.transition_valid",
+        "receipt.terminal_status"
+      ],
+      "production_consumed": false,
+      "rule_hash": "0a6e2b0032fc4df267e799f7b26a2e278671542e3e5c687c048a598a3cea2688",
+      "rule_id": "core.receipt.validate-sequence",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "src/llm_loop/browser/action.py::BrowserActionReceiptStore.append",
+        "src/llm_loop/browser/action.py::BrowserActionReceiptStore.list_action"
+      ],
+      "status": "candidate"
+    },
+    {
+      "authority_class": "mechanical_derivation",
+      "closed_world_requirements": [
+        "runtime_dispatch_counter_authoritative",
+        "reservation_outcome_authoritative"
+      ],
+      "dependencies": [
+        "core.receipt.validate-sequence"
+      ],
+      "domain": "browser",
+      "evaluator_op": "receipt_dispatch_invariants",
+      "fixture_refs": [
+        "S5-running-terminal-sequence",
+        "S5-duplicate-action-id",
+        "S5-transport-ambiguity-no-replay"
+      ],
+      "group": "G5_version_receipt",
+      "input_predicates": [
+        "runtime.reservation_result",
+        "runtime.dispatch_count",
+        "receipt.status",
+        "receipt.retry.automatic_retry_performed",
+        "receipt.retry.reason",
+        "receipt.observed_effects.provisional"
+      ],
+      "kind": "rule",
+      "output_predicates": [
+        "receipt.single_dispatch_preserved",
+        "receipt.no_automatic_retry",
+        "receipt.effect_evidence_status",
+        "receipt.invariant_status"
+      ],
+      "production_consumed": false,
+      "rule_hash": "44c4e2dd045d116eb62e5ffc09069668b4280461e196b4b42d3b839080aa20d8",
+      "rule_id": "core.receipt.validate-dispatch-invariants",
+      "rule_version": "0.1",
+      "rulepack_id": "smc.browser.p2-core.v0.1",
+      "schema": "smc.semantic_rule.v0.1",
+      "source_refs": [
+        "src/llm_loop/browser/action.py::BrowserActionAdapter.execute"
+      ],
+      "status": "candidate"
+    }
+  ],
+  "schema": "smc.rulepack.v0.1",
+  "source_refs": [
+    "docs/SMC-RULE-AUTHORITY-v0.1.md",
+    "docs/SMC-SEMANTIC-LOGIC-v0.1.md",
+    "docs/SMC-SEMANTIC-LOGIC-P1D-RESULT-20260917.json"
+  ],
+  "status": "candidate"
+}
