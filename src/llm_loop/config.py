@@ -313,6 +313,12 @@ class Settings:
     llm_timeout_s: float = 120.0
     llm_max_tokens: int = 16000
     llm_wire_protocol: str = "openai"  # P3-5: 默认 client 协议（openai/anthropic/google）  # 2026-08-15: 显式输出预算（默认 16000，防 thinking/reasoning 占满生成预算后截断最终回答/工具调用）
+    # P1-C1: call-time LLM business policy is frozen at startup. ``None`` keeps
+    # the existing provider-aware automatic behavior for optional booleans.
+    llm_trust_env: bool | None = None
+    llm_retry_disconnect: int = 1
+    anthropic_cache_control: bool | None = None
+    cache_guard_hit_telemetry: bool | None = None
 
     # ── 数据目录 ──（EVO-20260830: 默认绝对路径 _DEFAULT_DATA_DIR，防 cwd 漂移 split-brain）
     data_dir: str = _DEFAULT_DATA_DIR
@@ -653,6 +659,18 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     def env_bool(name: str, default: bool) -> bool:
         return _env_bool(name, default, env_values)
 
+    def env_optional_true_set(name: str) -> bool | None:
+        """Preserve legacy optional bool semantics without later process-env reads."""
+        if name not in env_values:
+            return None
+        return str(env_values.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+    def env_optional_hit_telemetry(name: str) -> bool | None:
+        """Preserve CACHE_GUARD_HIT_TELEMETRY's historical explicit-value rule."""
+        if name not in env_values:
+            return None
+        return str(env_values.get(name, "")) not in {"0", "false", "False"}
+
     def env_one(fn, name: str):
         return fn(name, env_values)
     api_key = env_values.get("LLM_API_KEY", "").strip()
@@ -775,6 +793,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         llm_timeout_s=float(env_int("LLM_TIMEOUT_S", 120)),
         llm_max_tokens=env_int("LLM_MAX_TOKENS", 16000),  # 2026-08-15 显式输出预算
         llm_wire_protocol=env_values.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
+        llm_trust_env=env_optional_true_set("LLM_TRUST_ENV"),
+        llm_retry_disconnect=env_int("LLM_RETRY_DISCONNECT", 1),
+        anthropic_cache_control=env_optional_true_set("ANTHROPIC_CACHE_CONTROL"),
+        cache_guard_hit_telemetry=env_optional_hit_telemetry("CACHE_GUARD_HIT_TELEMETRY"),
         data_dir=str(_resolved_paths.data_dir),
         history_policy=_history_policy,
         tool_runtime=_tool_runtime,

@@ -1116,10 +1116,13 @@ def build_history_messages(
                 block[:cap]
                 + "\n…[锚快照超限截断；完整事实经 get_goal/task_frontier/read_evidence 恢复]…"
             )
-        # system 之后、真实历史之前插入（qwen 系模板要求 system 在首；user 锚块
-        # 紧随其后，既不被摘要也不打乱工具配对）。
-        _at = 1 if (out and out[0].get("role") == "system") else 0
-        out.insert(_at, {"role": "user", "content": block})
+        # EVO-20260917-2f5ae9cb（人工已审）P1: 追加 wire 尾部而非插头部。
+        # 锚块内容跨轮必然变化（Goal/checkpoint/frontier 投影 + 压缩轮一次性
+        # [锚提示] 行）——"同状态同字节"只在状态冻结时成立；头部插入时其变化
+        # 打穿其后全部历史前缀（会话观测 96%→2% 全量失效的同类机制）。
+        # 仿 memory 注入先例移尾部: 变化只落在 wire 末尾，前缀命中保持；system
+        # 仍在首位（qwen 模板约束不受影响），尾部 user 块不与工具配对冲突。
+        out.append({"role": "user", "content": block})
 
     # Physical history pressure is handled by the single atomic-group compaction path.
     # There is no separate tool-result relevance/age/threshold rewrite policy.

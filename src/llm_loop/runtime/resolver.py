@@ -53,6 +53,10 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("llm", "timeout_s"): TomlField(("LLM_TIMEOUT_S",), "int"),
         ("llm", "max_tokens"): TomlField(("LLM_MAX_TOKENS",), "int"),
         ("llm", "wire_protocol"): TomlField(("LLM_WIRE_PROTOCOL",), "str"),
+        ("llm", "trust_env"): TomlField(("LLM_TRUST_ENV",), "bool"),
+        ("llm", "retry_disconnect"): TomlField(("LLM_RETRY_DISCONNECT",), "int"),
+        ("llm", "anthropic_cache_control"): TomlField(("ANTHROPIC_CACHE_CONTROL",), "bool"),
+        ("llm", "cache_guard_hit_telemetry"): TomlField(("CACHE_GUARD_HIT_TELEMETRY",), "bool"),
         ("runtime", "data_dir"): TomlField(("DATA_DIR",), "str"),
         ("runtime", "lfl_data_dir"): TomlField(("LFL_DATA_DIR",), "str"),
         ("runtime", "history_max_chars"): TomlField(("HISTORY_MAX_CHARS",), "int"),
@@ -146,6 +150,10 @@ _TOML_ENV_KEYS = tuple(
 _LEGACY_GOVERNED_KEYS = (
     "MODEL_PROVIDERS",
     "MODEL_FALLBACKS",
+    # R2: 从 restart_system.sh shell 默认值等价迁移（.env 未定义时兜底），
+    # schema 迁移前暂列 legacy 治理
+    "SUMMARY_MODE",
+    "TOOL_SCHEMA_LAZY",
     # R2 增补（2026-09-16 缓存互踩事故）: embedding 业务配置纳入治理——
     # shell 残留不再漂移 provider/base_url/model，只认 workspace .env 文件。
     # （自 evo-20260914-exec-surface-followup 832b4dfa 移植；TOML 迁移前留此清单）

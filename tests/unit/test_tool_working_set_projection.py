@@ -278,6 +278,93 @@ def test_hard_result_cap_still_bounds_long_small_result_episode():
     assert stats.latest_raw_chars == 1000
     assert "tool_result_receipt" in projected[2].content
 
+
+def test_same_run_defers_soft_fold_without_rewriting_provider_prefix():
+    """Same-run cache continuity must defer an opportunistic soft-cap rewrite."""
+    policy = _policy(working_set_batch_chars=65536, working_set_grace_groups=1)
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 16):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(65 + idx % 26) * 2000, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(
+        messages,
+        policy=policy,
+        allow_opportunistic_fold=False,
+    )
+
+    assert stats.raw_tool_chars == 30000
+    assert stats.folded_results == 0
+    assert stats.folded_groups == 0
+    assert stats.fold_triggers == ()
+    assert stats.pending_results >= stats.soft_result_cap
+    assert stats.pending_net_gain_chars >= stats.min_net_gain_chars
+    assert projected[2].content == "B" * 2000
+
+
+def test_same_run_defers_coarse_byte_fold_without_rewriting_provider_prefix():
+    """Same-run cache continuity must also defer the coarse-byte opportunistic fold."""
+    policy = _policy(working_set_batch_chars=4096, working_set_grace_groups=0)
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 4):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(65 + idx % 26) * 2500, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(
+        messages,
+        policy=policy,
+        allow_opportunistic_fold=False,
+    )
+
+    assert stats.raw_tool_chars == 7500
+    assert stats.folded_results == 0
+    assert stats.folded_groups == 0
+    assert stats.fold_triggers == ()
+    assert stats.pending_raw_chars >= stats.batch_chars
+    assert projected[2].content == "B" * 2500
+
+
+def test_same_run_still_applies_hard_result_cap_safety_valve():
+    """Disabling opportunistic rewrites must not disable the hard bounded-result valve."""
+    policy = _policy(
+        working_set_batch_chars=1048576,
+        working_set_grace_groups=1,
+        working_set_min_net_gain_chars=1048576,
+    )
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 37):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(65 + idx % 26) * 1000, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(
+        messages,
+        policy=policy,
+        allow_opportunistic_fold=False,
+    )
+
+    assert stats.folded_results == 32
+    assert stats.folded_groups == 32
+    assert stats.fold_triggers == ("hard_result_cap",)
+    assert "tool_result_receipt" in projected[2].content
+
 def test_soft_result_cap_folds_when_net_saving_is_material():
     """Soft cap may fold before 64K when the raw->receipt byte saving is large."""
     policy = _policy(working_set_batch_chars=65536, working_set_grace_groups=1)

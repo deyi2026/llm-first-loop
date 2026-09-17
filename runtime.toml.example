@@ -11,6 +11,11 @@ max_iterations = 500
 timeout_s = 120
 max_tokens = 16000
 wire_protocol = "openai"
+# Optional startup-owned transport/cache policy. Omit to preserve provider-aware defaults.
+# trust_env = false
+# retry_disconnect = 1
+# anthropic_cache_control = true
+# cache_guard_hit_telemetry = true
 
 [runtime]
 # DATA_DIR and LFL_DATA_DIR are intentionally distinct legacy anchors.

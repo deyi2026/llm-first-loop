@@ -105,9 +105,12 @@ def test_pin_last_two_user_messages_and_snapshot_survive_compaction():
     # ④ stats 携带 pinned 局部索引（base 编号=直连调用即列表位置）
     assert stats_box[0]["pinned_msg_seqs_local"] == [idx_b, idx_c]
     assert stats_box[0]["pinned_user_message_count"] == 2
-    # 视图首个非 system 消息即锚块（在真实历史之前）
-    first_non_sys = next(m for m in built if m.get("role") != "system")
-    assert "验收目标-OBJ9f" in str(first_non_sys.get("content", ""))
+    # EVO-20260917-2f5ae9cb P1: 锚块在 wire 尾部（而非首个非 system 位）——
+    # 头部插入时锚块字节变化会打穿其后全部历史前缀，移尾部后变化只落末尾。
+    # 直连调用不加 engine 侧头，锚块即 _SNAPSHOT 原文（+ 压缩轮一次性锚提示行）。
+    last = built[-1]
+    assert str(last.get("content", "")).startswith("[Goal G-77]")
+    assert "验收目标-OBJ9f" in str(last.get("content", ""))
 
 
 def test_steady_state_round_after_compaction_keeps_snapshot_without_reminder():
