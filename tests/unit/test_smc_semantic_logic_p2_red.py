@@ -403,7 +403,16 @@ def _semantic_case(gate_id: str) -> list[dict[str, Any]]:
                 _add(facts, "receipt.history_watermark", 3, subject=duplicate, provenance_kind="runtime_authority")
                 _add(facts, "receipt.retry.reason", "duplicate_action_id", subject=duplicate, provenance_kind="runtime_authority")
             elif gate_id == "P2-G5-10":
-                next(f for f in facts if f["predicate"] == "receipt.retry.reason")["value"] = "dispatch_error:TimeoutError"
+                reason_index = next(
+                    index
+                    for index, fact in enumerate(facts)
+                    if fact["predicate"] == "receipt.retry.reason"
+                )
+                facts[reason_index] = _fact(
+                    "receipt.retry.reason",
+                    "dispatch_error:TimeoutError",
+                    provenance_kind="runtime_authority",
+                )
             elif gate_id == "P2-G5-12":
                 seqs = [f for f in facts if f["predicate"] == "receipt.seq"]
                 seqs[0]["value"], seqs[1]["value"] = 2, 1

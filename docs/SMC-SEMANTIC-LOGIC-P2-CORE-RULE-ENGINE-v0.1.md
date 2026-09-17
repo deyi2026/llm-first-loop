@@ -3,7 +3,7 @@
 > Status: **P2 design / docs-only / shadow-only**
 > Frozen parent: `54f1ed8c6c0b4cf71ca4b2bd39970df31d2e2ed5` (P1-D PASS)
 > RulePack: `smc.browser.p2-core.v0.1`
-> RulePack SHA256: `bba3a38c315078e390d1afd985572c962bfcecf076ef9ff623abcdf34ace458b`
+> RulePack SHA256: `5809347c62aa8a8b1856eff1bab0f11b9d98a57b0aedaef103e8ee2470f776a3`
 > Production consumer: **none**
 
 ## 1. Ruling
@@ -168,10 +168,23 @@ Partial `object_count` is a lower bound: monotonic `ge` success and already-exce
 cannot refresh or rebind. Its output remains `execution_precondition_fact` and is
 **shadow-only throughout P2**.
 
+Qualification wiring correction (2026-09-17): the version evaluator consumes
+`coverage.complete`, the exact completeness fact produced by the G3 coverage rule and
+present in the frozen G5 composition path. The original P2 design artifact listed
+`observation.complete`, which no G5 fixture or dependency produced; that unreachable
+input was corrected before any G5 evaluator implementation.
+
 Receipt rules consume Runtime-produced receipt/reservation/dispatch facts. They validate
 monotonic append-only history, one-dispatch invariants, and no-auto-retry observations;
 they do not reserve, dispatch, append, or change receipt status. `receipt.status=ok`
 never implies task completion.
+
+Qualification wiring correction (2026-09-17): the dispatch-invariant evaluator
+explicitly consumes `receipt.sequence_monotonic` and `receipt.transition_valid`, the
+mechanical outputs of its declared sequence-validator dependency. The original design
+listed the dependency but omitted those derived predicates from the consumer's input
+contract, which made sequence violations unable to reach `receipt.invariant_status`
+without an undeclared read. This was corrected before receipt evaluator implementation.
 
 ## 7. Proof / provenance
 

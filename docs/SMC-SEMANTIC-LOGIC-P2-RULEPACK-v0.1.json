@@ -96,7 +96,7 @@
   },
   "phase": "P2-design",
   "production_consumed": false,
-  "rulepack_hash": "bba3a38c315078e390d1afd985572c962bfcecf076ef9ff623abcdf34ace458b",
+  "rulepack_hash": "5809347c62aa8a8b1856eff1bab0f11b9d98a57b0aedaef103e8ee2470f776a3",
   "rulepack_id": "smc.browser.p2-core.v0.1",
   "rulepack_version": "0.1",
   "rules": [
@@ -521,7 +521,7 @@
         "lineage.document_same",
         "identity.stable",
         "observation.target_present",
-        "observation.complete",
+        "coverage.complete",
         "object.changed_fields",
         "resource.changed_fields"
       ],
@@ -534,7 +534,7 @@
         "version.silent_rebind_performed"
       ],
       "production_consumed": false,
-      "rule_hash": "555b7a0d7234ea0ccbc05eab96ecae61fa5f178d9e393e9a64578313c009567b",
+      "rule_hash": "b35f5f745a510eeb25e181eb00cff4c318e167811288dd5176c88a50d34abf52",
       "rule_id": "core.version.assess-precondition",
       "rule_version": "0.1",
       "rulepack_id": "smc.browser.p2-core.v0.1",
@@ -605,7 +605,9 @@
         "receipt.status",
         "receipt.retry.automatic_retry_performed",
         "receipt.retry.reason",
-        "receipt.observed_effects.provisional"
+        "receipt.observed_effects.provisional",
+        "receipt.sequence_monotonic",
+        "receipt.transition_valid"
       ],
       "kind": "rule",
       "output_predicates": [
@@ -615,7 +617,7 @@
         "receipt.invariant_status"
       ],
       "production_consumed": false,
-      "rule_hash": "44c4e2dd045d116eb62e5ffc09069668b4280461e196b4b42d3b839080aa20d8",
+      "rule_hash": "3bdcb05e74f7ec992fafb1426e4f9e5fca5983b60cc1b206d812e4f3270e20e6",
       "rule_id": "core.receipt.validate-dispatch-invariants",
       "rule_version": "0.1",
       "rulepack_id": "smc.browser.p2-core.v0.1",
