@@ -64,7 +64,7 @@ def _owner() -> OwnerScope:
     return OwnerScope(workspace_id="ws-c", session_id="ss-c")
 
 
-def _enforce_registry(tmp_path: Path, *, projection_budget_chars: int = 900):
+def _enforce_registry(tmp_path: Path, *, projection_budget_chars: int = 900, capsule_mode: str = "off"):
     """Evidence enforce 装置（与 factory 生产装配同构: enforcer + resolver + 三件套）。"""
     blobs = BlobStore(tmp_path / "evidence" / "blobs")
     ledger = EvidenceLedgerStore(tmp_path / "evidence" / "ledger")
@@ -80,6 +80,7 @@ def _enforce_registry(tmp_path: Path, *, projection_budget_chars: int = 900):
             owner_resolver=lambda: owner,
             clock=lambda: datetime(2026, 8, 31, 8, 0, tzinfo=UTC),
             projection_budget_chars=projection_budget_chars,
+            capsule_mode=capsule_mode,
         )
     )
     registry.set_evidence_source_resolver(
@@ -108,13 +109,11 @@ class TestCG1CG4GuidanceExit:
             tool_call_id="t1",
             tool_name="read_file",
         )
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
-        msg_off = tool_result_to_message(result)
+        msg_off = tool_result_to_message(result, tool_guidance_mode="off")
         assert "可选项（判断归你）" not in msg_off.content
         assert "RULE-AI-02" not in msg_off.content
 
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")  # 反例自证: 现状在场
-        msg_on = tool_result_to_message(result)
+        msg_on = tool_result_to_message(result, tool_guidance_mode="on")
         assert "可选项（判断归你）" in msg_on.content
 
     def test_typed_recovery_render_off_chars0_metadata_kept(self, monkeypatch):
@@ -128,15 +127,13 @@ class TestCG1CG4GuidanceExit:
         result.recovery_advice = classify_tool_recovery(result)
         assert result.recovery_advice is not None
 
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
-        msg_off = tool_result_to_message(result)
+        msg_off = tool_result_to_message(result, tool_guidance_mode="off")
         assert "[恢复策略]" not in msg_off.content
         assert "next=" not in msg_off.content
         # C-D1 白名单保留面: failure_class 输入不动（B 包熔断计数依赖）
         assert msg_off.metadata["tool_recovery"]["failure_class"] == "url_not_found"
 
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")  # 反例自证
-        msg_on = tool_result_to_message(result)
+        msg_on = tool_result_to_message(result, tool_guidance_mode="on")
         assert "[恢复策略]" in msg_on.content
 
     def test_guidance_extra_off_chars0_on_present(self, monkeypatch):
@@ -147,35 +144,35 @@ class TestCG1CG4GuidanceExit:
             tool_name="execute_command",
             guidance_extra="【已验解法】某某经验条目内容",
         )
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
-        msg_off = tool_result_to_message(result)
+        msg_off = tool_result_to_message(result, tool_guidance_mode="off")
         assert "已验解法" not in msg_off.content
 
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")  # 反例自证
-        msg_on = tool_result_to_message(result)
+        msg_on = tool_result_to_message(result, tool_guidance_mode="on")
         assert "已验解法" in msg_on.content
 
     def test_distill_guidance_off_chars0_on_present(self, monkeypatch, tmp_path):
         # Explicit legacy/on guidance is exercised only with a real lossless archive path.
         from llm_loop.memory.archive import ArchiveStore
 
-        registry = ToolRegistry(
-            max_output_chars=9000,
-            archive_store=ArchiveStore(tmp_path / "archive"),
+        archive = ArchiveStore(tmp_path / "archive")
+        registry_off = ToolRegistry(
+            max_output_chars=9000, archive_store=archive, tool_guidance_mode="off"
         )
-        registry.register(_EchoTool())
+        registry_on = ToolRegistry(
+            max_output_chars=9000, archive_store=archive, tool_guidance_mode="on"
+        )
+        registry_off.register(_EchoTool())
+        registry_on.register(_EchoTool())
         token = current_session_id.set("guidance-session")
         try:
-            monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
-            result_off = registry.execute(
+            result_off = registry_off.execute(
                 ToolCall(id="t4", name="echo", arguments={"text": "x" * 12000})
             )
             assert "行动指引" not in result_off.content
             assert "截断高亮" not in result_off.content
             assert "RULE-AI-12" not in result_off.content
 
-            monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")  # 反例自证
-            result_on = registry.execute(
+            result_on = registry_on.execute(
                 ToolCall(id="t5", name="echo", arguments={"text": "y" * 12000})
             )
             assert "行动指引" in result_on.content
@@ -189,11 +186,10 @@ class TestCG1CG4GuidanceExit:
             tool_call_id="t6",
             tool_name="read_file",
         )
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "shadow")
-        msg = tool_result_to_message(result)
+        msg = tool_result_to_message(result, tool_guidance_mode="shadow")
         assert "可选项（判断归你）" in msg.content  # shadow: 建议文本照旧投影
         with caplog.at_level("INFO", logger="llm_loop.tools.registry"):
-            tool_result_to_message(result)
+            tool_result_to_message(result, tool_guidance_mode="shadow")
         assert any(
             "tool_guidance_shadow" in r.message for r in caplog.records
         )  # shadow 观测事件在场
@@ -201,12 +197,9 @@ class TestCG1CG4GuidanceExit:
     def test_tristate_invalid_falls_back_off(self, monkeypatch):
         from llm_loop.tools.registry import _tool_guidance_mode
 
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "garbage")
-        assert _tool_guidance_mode() == "off"
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "shadow")
-        assert _tool_guidance_mode() == "shadow"
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
-        assert _tool_guidance_mode() == "on"
+        assert _tool_guidance_mode("garbage") == "off"
+        assert _tool_guidance_mode("shadow") == "shadow"
+        assert _tool_guidance_mode("on") == "on"
 
 
 class TestCG5VariantInstructions:
@@ -267,7 +260,6 @@ class TestCG2CG3CG9CapsuleCensus:
         path.write_text("SHORT CONTENT", encoding="utf-8")
         registry, blobs, ledger = _enforce_registry(tmp_path, projection_budget_chars=900)
 
-        monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "off")
         result = registry.execute(
             ToolCall(id="c1", name="read_file", arguments={"path": str(path), "full": True})
         )
@@ -296,10 +288,11 @@ class TestCG2CG3CG9CapsuleCensus:
     def test_cg3_complete_false_single_fact_line(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
         path = tmp_path / "big.txt"
-        path.write_text("A" * 6000, encoding="utf-8")
+        # R05/T05: truncation census must cross the *real* registry hard cap.
+        # A 6K read_file result is now correctly delivered in full under the 20K cap.
+        path.write_text("A" * 30000, encoding="utf-8")
         registry, _, _ = _enforce_registry(tmp_path, projection_budget_chars=400)
 
-        monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "off")
         result = registry.execute(
             ToolCall(id="c2", name="read_file", arguments={"path": str(path), "full": True})
         )
@@ -307,17 +300,22 @@ class TestCG2CG3CG9CapsuleCensus:
         assert result.evidence_projection_complete is False  # complete=false 面
         assert "[evidence]" not in result.content
         assert "recover=read_evidence" not in result.content
-        # 事实行 ≤1 行且仅含三元组字段
+        # read_file 的 complete=false 面仍只有一个截断事实行，但同时给出与实际
+        # 连续前缀一一对应的 hydration cursor / omitted range / source version。
         fact_lines = [
             ln for ln in result.content.splitlines() if ln.startswith("result_truncated=")
         ]
         assert len(fact_lines) == 1
-        assert re.fullmatch(
-            r"result_truncated=true omitted=true recovery_ref=evidence://\S+",
-            fact_lines[0],
-        )
+        fields = dict(field.split("=", 1) for field in fact_lines[0].split())
+        assert fields["result_truncated"] == "true"
+        assert fields["omitted"] == "true"
+        assert fields["recovery_range_type"] == "text_char"
+        assert fields["visible_start"] == "0"
+        assert fields["visible_count"] == fields["omitted_start"] == fields["next_start"]
+        assert int(fields["omitted_end"]) > int(fields["omitted_start"])
+        assert fields["source_version"].startswith("stat:")
         # ref 可经 read_evidence 取回（恢复链路连通）
-        assert result.evidence_ref == fact_lines[0].split("recovery_ref=", 1)[1]
+        assert result.evidence_ref == fields["recovery_ref"]
 
     def test_cg9_capsule_ratio_zero(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
@@ -327,7 +325,6 @@ class TestCG2CG3CG9CapsuleCensus:
         big.write_text("B" * 5000, encoding="utf-8")
         registry, _, _ = _enforce_registry(tmp_path, projection_budget_chars=400)
 
-        monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "off")
         contents = []
         for i, p in enumerate((small, big)):
             r = registry.execute(
@@ -346,17 +343,16 @@ class TestCG2CG3CG9CapsuleCensus:
         monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
         path = tmp_path / "s2.txt"
         path.write_text("tiny2", encoding="utf-8")
-        registry, _, _ = _enforce_registry(tmp_path)
+        registry_on, _, _ = _enforce_registry(tmp_path / "on", capsule_mode="on")
+        registry_shadow, _, _ = _enforce_registry(tmp_path / "shadow", capsule_mode="shadow")
 
-        monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "on")
-        r_on = registry.execute(
+        r_on = registry_on.execute(
             ToolCall(id="m1", name="read_file", arguments={"path": str(path), "full": True})
         )
         assert "[evidence]" in r_on.content  # on: 现状逐字节一致
 
-        monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "shadow")
         with caplog.at_level("INFO", logger="llm_loop.tools.evidence_enforce"):
-            r_shadow = registry.execute(
+            r_shadow = registry_shadow.execute(
                 ToolCall(
                     id="m2",
                     name="read_file",
@@ -382,7 +378,6 @@ class TestCG2CG3CG9CapsuleCensus:
             projection=_BoomProjection(),  # type: ignore[arg-type]
             owner_resolver=_owner,
         )
-        monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "off")
         result = enforcer.apply(
             ToolCall(id="pv1", name="read_file", arguments={"path": "/tmp/y"}),
             ToolResult(
@@ -676,15 +671,19 @@ class TestC24OnDemandDiscovery:
         """截断事实行在场场景（端到端）: 事实行 + 恢复工具可发现。"""
         monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
         path = tmp_path / "big2.txt"
-        path.write_text("Z" * 6000, encoding="utf-8")
+        # Keep this as a genuine truncation/recovery scenario by exceeding the
+        # registry's 20K hard cap rather than relying on the retired 5K Evidence budget.
+        path.write_text("Z" * 30000, encoding="utf-8")
         registry, _, _ = _enforce_registry(tmp_path, projection_budget_chars=400)
-        monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "off")
         result = registry.execute(
             ToolCall(id="e2e", name="read_file", arguments={"path": str(path), "full": True})
         )
         fact = [ln for ln in result.content.splitlines() if ln.startswith("result_truncated=")]
         assert len(fact) == 1
-        recovery_ref = fact[0].split("recovery_ref=", 1)[1]
+        fields = dict(field.split("=", 1) for field in fact[0].split())
+        recovery_ref = fields["recovery_ref"]
+        assert fields["recovery_range_type"] == "text_char"
+        assert fields["visible_count"] == fields["next_start"]
         # 事实行的 ref 可经 read_evidence 取回（同构 resolver 路由面）
         hydrated_check = recovery_ref.startswith("evidence://v1/")
         assert hydrated_check
@@ -797,7 +796,6 @@ class TestC34CompressionRecoveryReachability:
         freshness = EvidenceFreshness(ledger)
         owner = _owner()
         # "历史压缩期" capture（capsule off 不改变 capture 语义——存储层零改动）
-        monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "off")
         enforcer = EvidenceEnforcer(
             capture,
             projection=ProjectionEngine(),
@@ -850,7 +848,6 @@ class _EchoTool:
 
 def test_bare_registry_keeps_exact_result_below_hard_cap(monkeypatch):
     """Below the hard cap, the registry never removes model-visible facts."""
-    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
     body = "EXACT-MIDDLE-FACT" + "x" * 5000
     registry = ToolRegistry(max_output_chars=9000)
     registry.register(_EchoTool())
@@ -865,7 +862,6 @@ def test_bare_registry_keeps_exact_result_below_hard_cap(monkeypatch):
 
 def test_bare_registry_hard_cap_is_truthful_when_archive_unavailable(monkeypatch):
     """No archive + real hard cap: bound output, but never invent recoverability."""
-    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
     body = "H" * 12000
     registry = ToolRegistry(max_output_chars=9000)
     registry.register(_EchoTool())

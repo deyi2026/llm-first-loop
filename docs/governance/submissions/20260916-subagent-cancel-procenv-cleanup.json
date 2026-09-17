@@ -1,0 +1,125 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260916-subagent-cancel-procenv-cleanup",
+  "summary": "Closes two narrow runtime-quality defects: durably cancelled SubAgent children no longer remain visible as active sessions, and proc-version unit fixtures no longer inherit the production dual-root source anchor. Exact execution authority and production workspace semantics remain unchanged.",
+  "components": [
+    {
+      "component_id": "subagent-cancelled-session-visibility-control",
+      "paths": [
+        "src/llm_loop/subagent/runner.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "SubAgent durable topology finalization plus SessionStore active/archive visibility lifecycle",
+      "disposition": "ADMIT as a narrow mechanical visibility projection after an already durable cancelled terminal. Topology/EventStore remains the exact execution-outcome authority; no new SubAgent state machine or semantic scheduling authority is added.",
+      "evidence": [
+        "Production-shaped RED reproduced a child whose terminal receipt said child_outcome=cancelled while Session.status remained active.",
+        "The implementation requires a durable result, successful same-generation topology terminal write, and exact outcome=cancelled before SessionStore.archive.",
+        "Normal completed children are regression-tested to remain active/session-visible and AgentFollowup behavior remains unchanged."
+      ],
+      "verification_level": "TDD RED/GREEN plus 106-test SubAgent adjacency, whole-tree static/security gates, and full committed-state repository CI",
+      "model_evidence_veto_recovery_exit": "The durable topology/EventStore terminal outcome remains inspectable and authoritative. Session status only controls active/archive visibility. If the archive projection fails, generation cleanup continues and the child remains visible rather than being falsely hidden.",
+      "rollback_route": "Revert the SubAgent fix commit; no persistent schema migration or LFRT/8901 change is involved, and existing durable topology history remains valid.",
+      "declaration_id": "subagent-cancelled-session-visibility-control"
+    },
+    {
+      "component_id": "subagent-cancelled-session-tests",
+      "paths": [
+        "tests/unit/test_agent_followup.py",
+        "tests/unit/test_subagent.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "SubAgent cancellation and terminal-followup regression qualification",
+      "disposition": "ADMIT as verification-only coverage of cancelled-child visibility, normal completed-child visibility, and AgentFollowup compatibility.",
+      "evidence": [
+        "Cancel-path RED existed before the implementation fix and became GREEN afterward.",
+        "Normal completed child remains active; cancelled durable child is archived and excluded from default active-session listing.",
+        "The broader SubAgent adjacent matrix passed 106/106."
+      ],
+      "verification_level": "focused pytest plus adjacent topology/delivery/restart/settlement/run-generation matrix",
+      "model_evidence_veto_recovery_exit": "Tests assert mechanical lifecycle facts only and own no runtime execution authority.",
+      "rollback_route": "Revert together with the production fix if the review line is rejected."
+    },
+    {
+      "component_id": "proc-version-test-env-isolation",
+      "paths": [
+        "tests/unit/test_proc_version.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "proc-version unit-test environment isolation",
+      "disposition": "ADMIT as test-only hermeticity. Production LFL_WORKSPACE_ROOT dual-root authority remains unchanged.",
+      "evidence": [
+        "Inherited LFL_WORKSPACE_ROOT reproduced two false failures on the exact formal-main test before the harness fix.",
+        "With the test-local isolation fixture, the same hostile inherited environment passes 7/7.",
+        "Explicit source-workspace tests retain the ability to set LFL_WORKSPACE_ROOT deliberately."
+      ],
+      "verification_level": "hostile inherited-environment pytest plus full committed-state repository CI",
+      "model_evidence_veto_recovery_exit": "A test can explicitly set the source-workspace variable when that behavior is under test; otherwise unit Git fixtures remain isolated from the operator launch environment.",
+      "rollback_route": "Revert the test-only commit; production behavior is unaffected."
+    },
+    {
+      "component_id": "subagent-procenv-qualification-record",
+      "paths": [
+        "docs/QUALIFICATION-20260916-subagent-cancel-procenv-cleanup.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "local qualification and non-interference evidence record",
+      "disposition": "ADMIT as a factual review record; runtime does not consume it.",
+      "evidence": [
+        "Record freezes exact base/implementation identities, root causes, test matrices, full gates, production non-interference, boundaries, and rollback."
+      ],
+      "verification_level": "exact Git/evidence review plus branch-wide A.5 path coverage",
+      "model_evidence_veto_recovery_exit": "Human/model reviewers may amend or reject the record without runtime side effects.",
+      "rollback_route": "Revert or delete the qualification record with no runtime effect."
+    },
+    {
+      "component_id": "subagent-procenv-submission-record",
+      "paths": [
+        "docs/governance/submissions/20260916-subagent-cancel-procenv-cleanup.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations only; semantic quality and classification truth remain review-owned.",
+      "evidence": [
+        "A.5 mechanically validates the closed manifest shape and exact branch-wide path partition.",
+        "This metadata has no runtime authority."
+      ],
+      "verification_level": "exact committed base-to-head A.5 self-gate followed by remote PR-only A.5 required check",
+      "model_evidence_veto_recovery_exit": "Human/model review remains responsible for classification truth and may amend or reject this metadata.",
+      "rollback_route": "Revert together with the review line."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "subagent-cancelled-session-visibility-control",
+      "g1": {
+        "necessity": "A child that has durably terminated as cancelled must not continue to appear in the active-session index, but execution outcome authority must remain in the durable SubAgent topology rather than being duplicated into a new Session status schema."
+      },
+      "g2": {
+        "authority_owner": "existing SubAgent topology/EventStore for exact execution outcome plus existing SessionStore active/archive lifecycle for visibility",
+        "relationship": "reuse",
+        "non_duplication": "The change does not create a new execution-state owner. It projects only a durably confirmed cancelled terminal into the existing archive lifecycle; completed children retain the existing active visibility used by AgentFollowup."
+      },
+      "g3": {
+        "model_evidence": [
+          "durable subagent.terminal outcome and generation identity",
+          "child Session active/archive visibility",
+          "SubAgentResult terminal receipt including child_outcome",
+          "existing delivery/topology recovery facts when terminal persistence fails"
+        ],
+        "recovery_or_reason": "If durable terminal persistence is unavailable, do not archive the child: keep it visible and let existing topology/recovery facts expose the incomplete state. If only the archive projection fails, preserve the authoritative cancelled terminal and continue generation cleanup."
+      },
+      "g4": {
+        "rollback": "Revert a585f981 to restore prior index behavior. No Session schema migration, topology rewrite, provider restart, or application-data conversion is required.",
+        "verification": [
+          "TDD RED reproduced durable cancelled terminal with Session.status still active",
+          "focused cancel/AgentFollowup/proc-version set 14 PASS",
+          "SubAgent adjacent topology/delivery/restart/settlement/run-generation matrix 106/106 PASS",
+          "regression proving normal completed child remains active",
+          "regression proving failed terminal write does not create a false durable terminal/hidden child",
+          "touched Ruff PASS and production Pyright 0 errors / 0 warnings",
+          "whole-tree security PASS and full committed-state scripts/ci_gate.sh exit 0"
+        ]
+      }
+    }
+  ]
+}

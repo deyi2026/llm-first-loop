@@ -6,6 +6,7 @@ M46：新增 FEISHU_TYPING_ACK / FEISHU_STREAMING 开关（对齐 本地既有�
 """
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 FEISHU_WS_ENABLED_DEFAULT = "1"
@@ -33,6 +34,14 @@ class FeishuConfig:
     def has_credentials(self) -> bool:
         """凭证是否完整（app_id + app_secret 均非空）."""
         return bool(self.app_id and self.app_secret)
+
+
+def _resolved_float(values: Mapping[str, str], name: str, default: float) -> float:
+    """Parse one already-resolved non-secret config value with legacy fallback semantics."""
+    try:
+        return float(values.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
 
 
 def load_feishu_config() -> FeishuConfig:

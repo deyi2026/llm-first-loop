@@ -22,29 +22,32 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
+from llm_loop.runtime.resolver import business_config_snapshot
+
 logger = logging.getLogger(__name__)
 
+_INTEROP_CONFIG = business_config_snapshot("interop_watch")
+
 _INTEROP_INBOX_REL = Path("interop") / "lfl_to_dsh" / "pending"
-_POLL_S = float(os.environ.get("INBOX_WATCH_POLL_S", "10"))
-_WAKEUP_ENABLED = os.environ.get("INBOX_WAKEUP", "0").strip().lower() in {
+_POLL_S = float(_INTEROP_CONFIG.get("INBOX_WATCH_POLL_S", "10"))
+_WAKEUP_ENABLED = _INTEROP_CONFIG.get("INBOX_WAKEUP", "0").strip().lower() in {
     "1", "true", "yes", "on",
 }
-_WAKEUP_MIN_INTERVAL_S = float(os.environ.get("INBOX_WAKEUP_MIN_INTERVAL_S", "300"))
+_WAKEUP_MIN_INTERVAL_S = float(_INTEROP_CONFIG.get("INBOX_WAKEUP_MIN_INTERVAL_S", "300"))
 # EVO-20260825 任务9（§5.4）: pending 堆积治理——
 # 启动巡检清理过期 job/sched（>TTL 迁移 processed/）、堆积超限告警。
-_PENDING_TTL_HOURS = float(os.environ.get("INBOX_PENDING_TTL_HOURS", "24"))
+_PENDING_TTL_HOURS = float(_INTEROP_CONFIG.get("INBOX_PENDING_TTL_HOURS", "24"))
 _PENDING_CLEANUP_ON_START = (
-    os.environ.get("INBOX_PENDING_CLEANUP_ON_START", "1").strip().lower()
+    _INTEROP_CONFIG.get("INBOX_PENDING_CLEANUP_ON_START", "1").strip().lower()
     in {"1", "true", "yes", "on"}
 )
-_PENDING_MAX = int(os.environ.get("INBOX_PENDING_MAX", "20"))
+_PENDING_MAX = int(_INTEROP_CONFIG.get("INBOX_PENDING_MAX", "20"))
 
 
 class InboxWatcher:
@@ -58,16 +61,14 @@ class InboxWatcher:
     def __init__(
         self,
         *,
-        inbox_dir: str | Path | None = None,
+        inbox_dir: str | Path,
         poll_s: float = _POLL_S,
         on_notify: Callable[[Sequence[str]], None] | None = None,
         wakeup_fn: Callable[[Sequence[str]], None] | None = None,
         wakeup_enabled: bool | None = None,
         wakeup_min_interval_s: float = _WAKEUP_MIN_INTERVAL_S,
     ) -> None:
-        self._inbox_dir = Path(inbox_dir) if inbox_dir else (
-            Path(os.environ.get("LFL_DATA_DIR", "data")) / _INTEROP_INBOX_REL
-        )
+        self._inbox_dir = Path(inbox_dir).expanduser().resolve()
         self._poll_s = poll_s
         self._on_notify = on_notify
         self._wakeup_fn = wakeup_fn

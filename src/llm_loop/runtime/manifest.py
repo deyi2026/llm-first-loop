@@ -234,7 +234,7 @@ def build_manifest(service: str, ec: EffectiveConfig,
         "max_tokens": max_tokens,
         "model_context": meta.get("context", ""),
         "data_dir": report.data_dir,
-        "config_file": report.config_file,
+        "config_file": ec.config_file,
         "config_sources": ec.sources,
         "config_hash": config_hash(ec),
         "ignored_shell_env": sorted(ec.ignored_shell_env),
@@ -253,6 +253,17 @@ def write_manifest(manifest: dict, data_dir: str | Path) -> Path:
     tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
                    encoding="utf-8")
     tmp.replace(out)
+    # P0-A shared-service ownership: preserve a service-specific live identity in
+    # addition to the historical last-writer compatibility manifest. PID is an
+    # observation only; it never grants lifecycle authority.
+    service = str(manifest.get("service") or "").strip()
+    if service in {"web", "feishu"}:
+        specific = rt_dir / f"runtime_manifest.{service}.json"
+        specific_tmp = specific.with_suffix(specific.suffix + ".tmp")
+        specific_tmp.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        specific_tmp.replace(specific)
     return out
 
 

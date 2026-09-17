@@ -39,7 +39,6 @@ from llm_loop.tools.evidence_tools import (
     SearchArchiveCompatTool,
 )
 from llm_loop.tools.registry import ToolRegistry
-from scripts.evidence._capsule_pin import pinned_capsule_on
 from scripts.evidence.r4.fixtures import FIXTURES, R4Fixture
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -449,6 +448,7 @@ def _build_registry(
             projection=ProjectionEngine(),
             owner_resolver=lambda: owner,
             projection_budget_chars=900,
+            capsule_mode="on",
         )
     )
     registry.register(
@@ -496,11 +496,8 @@ def _source_call_name(fixture: R4Fixture) -> str:
 
 
 def execute_run(row: dict[str, Any], *, dry: bool = False) -> dict[str, Any]:
-    # R9-P0-01 批 1/3：R4 基准协议固化于 capsule=on 历史文本形状，回放钉住
-    # 历史协议（scripts/evidence/_capsule_pin.py），不随生产默认漂移。
-    with pinned_capsule_on():
-        return _execute_run_locked(row, dry=dry)
-
+    # Frozen Evidence replay contract: capsule visibility is explicit in _build_registry.
+    return _execute_run_locked(row, dry=dry)
 
 def _execute_run_locked(row: dict[str, Any], *, dry: bool = False) -> dict[str, Any]:
     run_id = str(row["run_id"])

@@ -312,6 +312,7 @@ class SessionStore:
         identity_history_exists_fn: Callable[[str], bool] | None = None,
         delete_sidecars_fn: Callable[[str], object] | None = None,
         delete_resource_blocker_fn: Callable[[str], str | None] | None = None,
+        leak_data_dir: str | Path | None = None,
     ) -> None:
         self._dir = Path(sessions_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -327,6 +328,11 @@ class SessionStore:
         self._identity_history_exists_fn = identity_history_exists_fn
         self._delete_sidecars_fn = delete_sidecars_fn
         self._delete_resource_blocker_fn = delete_resource_blocker_fn
+        self._leak_data_dir = (
+            Path(leak_data_dir).expanduser().resolve()
+            if leak_data_dir is not None
+            else self._dir.resolve().parent
+        )
         self._event_store = event_store
         self._read_path_source = read_path_source
         # P0-4(2026-08-15): 非 POSIX 平台 flock 不可得时的进程内回退锁表
@@ -1441,7 +1447,11 @@ class SessionStore:
             )
 
             verdict = guard_user_write(
-                session, message, ingress, entry="SessionStore.append"
+                session,
+                message,
+                ingress,
+                entry="SessionStore.append",
+                data_dir=self._leak_data_dir,
             )
             if verdict.action is GuardAction.DENY:
                 # enforce 拒绝：不追加（事件与隔离记录已由 guard 留痕）

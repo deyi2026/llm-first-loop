@@ -145,9 +145,8 @@ class TestGuardModeMatrix:
         self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setenv(GUARD_MODE_ENV, "enforce")
-        monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
         msg = _user_msg("被拒内容")
-        verdict = guard_user_write(_FakeSess(), msg, None, entry="t2")
+        verdict = guard_user_write(_FakeSess(), msg, None, entry="t2", data_dir=tmp_path)
         assert verdict.action is GuardAction.DENY
         assert leak_events.LEAK_CHANNEL_DENIED in sink.kinds()
         quarantined = list(

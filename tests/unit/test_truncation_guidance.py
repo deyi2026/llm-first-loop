@@ -67,7 +67,6 @@ def test_local_and_cloud_have_identical_tool_result_projection_below_hard_cap():
 
 
 def test_hard_cap_archives_exact_body_then_truncates_truthfully(monkeypatch):
-    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
     body = "Z" * 5000
     archive = _ArchiveFake()
     reg = ToolRegistry(max_output_chars=2000, archive_store=archive)
@@ -88,7 +87,6 @@ def test_hard_cap_archives_exact_body_then_truncates_truthfully(monkeypatch):
 
 
 def test_hard_cap_without_archive_never_invents_recovery(monkeypatch):
-    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
     body = "Q" * 5000
     reg = ToolRegistry(max_output_chars=2000)
     reg.register(_BigTool(body))
@@ -101,15 +99,18 @@ def test_hard_cap_without_archive_never_invents_recovery(monkeypatch):
 def test_legacy_guidance_is_only_an_explicit_opt_in_at_real_truncation(monkeypatch):
     body = "G" * 5000
     archive = _ArchiveFake()
-    reg = ToolRegistry(max_output_chars=2000, archive_store=archive)
-    reg.register(_BigTool(body))
+    reg_off = ToolRegistry(
+        max_output_chars=2000, archive_store=archive, tool_guidance_mode="off"
+    )
+    reg_off.register(_BigTool(body))
+    reg_on = ToolRegistry(
+        max_output_chars=2000, archive_store=archive, tool_guidance_mode="on"
+    )
+    reg_on.register(_BigTool(body))
 
     token = current_session_id.set("s-guide")
     try:
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
-        assert "行动指引" not in reg.execute(_call()).content
-
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
-        assert "行动指引" in reg.execute(_call()).content
+        assert "行动指引" not in reg_off.execute(_call()).content
+        assert "行动指引" in reg_on.execute(_call()).content
     finally:
         current_session_id.reset(token)

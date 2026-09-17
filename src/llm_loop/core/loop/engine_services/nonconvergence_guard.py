@@ -11,7 +11,6 @@
 """
 from __future__ import annotations
 
-import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -85,35 +84,6 @@ class NonconvergenceGuard:
         self._prev_delta_tokens: list[str] | None = None
         self.last_window: _WindowFact | None = None
         self.evidence: dict = {}
-
-    @classmethod
-    def from_env(cls) -> NonconvergenceGuard:
-        """环境旋钮：LFL_NONCONV_FUSE_WINDOWS(0=关)/…_JACCARD(0,1]/…_MIN_DELTA(tokens)."""
-
-        def _int_env(name: str, default: int) -> int:
-            raw = os.environ.get(name, "").strip()
-            if not raw:
-                return default
-            try:
-                return int(raw)
-            except ValueError:
-                return default
-
-        def _float_env(name: str, default: float) -> float:
-            raw = os.environ.get(name, "").strip()
-            if not raw:
-                return default
-            try:
-                value = float(raw)
-            except ValueError:
-                return default
-            return value if 0.0 < value <= 1.0 else default
-
-        return cls(
-            windows=_int_env("LFL_NONCONV_FUSE_WINDOWS", DEFAULT_WINDOWS),
-            jaccard_threshold=_float_env("LFL_NONCONV_FUSE_JACCARD", DEFAULT_JACCARD),
-            min_delta_tokens=_int_env("LFL_NONCONV_FUSE_MIN_DELTA", DEFAULT_MIN_DELTA),
-        )
 
     @property
     def tripped(self) -> bool:

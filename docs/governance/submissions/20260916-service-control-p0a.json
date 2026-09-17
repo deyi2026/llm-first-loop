@@ -1,0 +1,135 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260916-service-control-p0a",
+  "summary": "Introduces a narrow shared Web/Feishu lifecycle authority after reproduced generic-shell self/shared-service kills: models still decide whether a restart is useful, while physical restart authority becomes generation-bound to an operator-published exact deployment, durable action receipts, a dedicated service_control tool, a cross-process lifecycle lease, and pre-stop desired-state verification.",
+  "components": [
+    {
+      "component_id": "shared-service-lifecycle-authority",
+      "paths": [
+        "scripts/restart_mirror.sh",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/runtime/manifest.py",
+        "src/llm_loop/runtime/service_control.py",
+        "src/llm_loop/tools/builtin/service_control.py",
+        "src/llm_loop/tools/registry.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "shared LFL Web/Feishu service lifecycle control, exact deployment identity, and generic-shell effect fencing",
+      "disposition": "ADMIT as a new narrow mechanical lifecycle authority that replaces generic execute_command's implicit ability to control shared Web/Feishu while reusing restart_mirror.sh as the sole physical stop/start executor. The model retains the decision whether to restart; PID, cwd, shell approval, and manifest observations do not grant lifecycle authority.",
+      "evidence": [
+        "A real Web session durably executed managed Web/Feishu SIGTERM calls as ordinary successful execute_command receipts, proving the ownership gap was physical authority rather than WAL loss.",
+        "TDD locks literal and wrapped managed-PID kills, restart/direct-launch paths, dynamic PID sources, stale generations, durable accepted-before-worker ordering, exact desired roots, and readonly noninterference.",
+        "A cross-process test proves desired-deployment publication waits for the lifecycle lease while a physical restart window is active, closing the check-to-execute race.",
+        "The first full repository gate rejected new ambient os.environ copying; the implementation was corrected to a minimal deterministic control environment without expanding the environment-access baseline."
+      ],
+      "verification_level": "TDD RED/GREEN plus 180-test adjacency, cross-process lifecycle-lock qualification, runtime-env ratchet, whole-tree security, Ruff/Pyright, bash syntax, and full repository ci_gate",
+      "model_evidence_veto_recovery_exit": "The model can observe desired deployment generation/roots/head/artifact identity, per-service live PID identity, accepted/running/succeeded/failed action receipts, restart receipts, binding mismatch details, Web readiness and Feishu heartbeat. Missing desired state or binding mismatch fails before stop; stale generation fails before worker spawn; stale worker binding durable-fails instead of executing an old plan. Program code does not infer whether a restart is semantically desirable.",
+      "rollback_route": "Revert the P0-A code; no application-data/provider/model schema migration is required. For operational rollback while P0-A is active, publish the prior qualified code root as the next desired generation and restart through the same control plane rather than decrementing generation.",
+      "declaration_id": "shared-service-lifecycle-authority"
+    },
+    {
+      "component_id": "shared-service-lifecycle-tests",
+      "paths": [
+        "tests/scripts/test_restart_mirror_hardening.py",
+        "tests/unit/test_managed_service_control_p0a.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic shared-service lifecycle authority and restart regression qualification",
+      "disposition": "ADMIT as verification-only coverage of closed schemas, CAS/lease behavior, actual incident shapes, worker durability/environment, desired-state binding, restart pre-stop ordering, and readonly noninterference.",
+      "evidence": [
+        "The initial deterministic run was RED before service_control production code existed and converted to GREEN only after implementation.",
+        "Focused P0-A/restart coverage reached 41 PASS before later cross-process/environment cases; final focused and adjacent sets remained green after those additions.",
+        "The tests use fake subprocess/restart fixtures for physical lifecycle effects and do not stop production services."
+      ],
+      "verification_level": "focused pytest, 180/180 adjacent regression matrix, runtime-env-access ratchet, and full repository ci_gate",
+      "model_evidence_veto_recovery_exit": "Tests assert mechanical authority/effect facts only and own no production service authority.",
+      "rollback_route": "Revert together with the P0-A production control changes."
+    },
+    {
+      "component_id": "shared-service-operator-manual",
+      "paths": [
+        "docs/LFL-restart-guide.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "operator restart/deployment procedure and incident knowledge",
+      "disposition": "ADMIT as portable operator documentation for desired-generation publication, dedicated model lifecycle control, exact binding, safe rollback, and the reproduced generic-shell kill incident; runtime does not consume the document.",
+      "evidence": [
+        "The guide records show/publish/verify and service_control status/restart/status flows, plus pre-stop fail-closed behavior.",
+        "Rollback is documented as a new desired generation, preserving monotonic lifecycle identity instead of mutating history."
+      ],
+      "verification_level": "factual comparison with P0-A implementation plus repository privacy/security scanning",
+      "model_evidence_veto_recovery_exit": "Human/model operators may revise or reject the procedure without runtime side effects.",
+      "rollback_route": "Revert or amend the documentation independently if the control plane changes."
+    },
+    {
+      "component_id": "shared-service-p0a-qualification-record",
+      "paths": [
+        "docs/QUALIFICATION-20260916-service-control-p0a.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "local P0-A qualification, non-interference, and deployment-boundary evidence record",
+      "disposition": "ADMIT as a factual review record describing the incident, authority split, deterministic gates, known limits, bootstrap deployment requirement, and rollback. Runtime does not consume it.",
+      "evidence": [
+        "The record captures exact base, local branch, real durable kill evidence, RED/GREEN evolution, adjacent/full gates, environment-ratchet repair, production non-interference, and the no-push/no-deploy boundary."
+      ],
+      "verification_level": "exact Git/evidence review plus branch-wide A.5 changed-path coverage",
+      "model_evidence_veto_recovery_exit": "Reviewers may amend or reject this record without changing runtime authority.",
+      "rollback_route": "Revert or remove the qualification record with no runtime effect."
+    },
+    {
+      "component_id": "shared-service-p0a-submission-record",
+      "paths": [
+        "docs/governance/submissions/20260916-service-control-p0a.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declaration metadata only. CI validates structure and coverage; reviewers remain responsible for the semantic truth of the authority classification.",
+      "evidence": [
+        "The A.5 gate mechanically partitions every final P0-A changed path exactly once and requires a complete G1-G4 declaration for the control component."
+      ],
+      "verification_level": "staged A.5 self-gate followed by committed-state base-to-head A.5 requalification",
+      "model_evidence_veto_recovery_exit": "Human/model review may amend or reject this metadata; it has no runtime execution authority.",
+      "rollback_route": "Revert together with the review line."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "shared-service-lifecycle-authority",
+      "g1": {
+        "necessity": "Shared Web/Feishu services serve multiple sessions and are not session-owned execute_command jobs. A reproduced normal Web session successfully signalled those shared services through generic shell, so a separate mechanical lifecycle authority is necessary to prevent one task from physically terminating the shared runtime while preserving ordinary shell capability."
+      },
+      "g2": {
+        "authority_owner": "new generation-bound shared-service lifecycle control plane backed by operator-published desired deployment; existing restart_mirror.sh remains the sole physical stop/start executor",
+        "relationship": "new_authority",
+        "non_duplication": "The new authority replaces generic shell's implicit shared-service lifecycle control rather than creating a second physical restart implementation. PID/per-service manifests remain observations only, restart_mirror remains the physical executor, and model reasoning retains the semantic decision whether to request restart."
+      },
+      "g3": {
+        "model_evidence": [
+          "operator-published desired deployment id/generation/code root/runtime root/exact Git SHA/WebUI artifact SHA",
+          "per-service Web/Feishu live manifest PID and process identity observations",
+          "durable service-control accepted/running/succeeded/failed action receipts",
+          "restart receipt and explicit binding mismatch details",
+          "existing Web readiness, logs, Feishu heartbeat, and queue/processing facts"
+        ],
+        "recovery_or_reason": "Missing desired deployment or a root/SHA/dirty/artifact mismatch fails before stopping a healthy service. A stale expected generation rejects before worker spawn. If deployment identity changes after acceptance, the worker durable-fails instead of executing an obsolete plan; cross-process lifecycle locking prevents publication from racing an already-running physical restart. Status/read-only observations remain available so the model/operator can choose a new publish, retry, or rollback generation explicitly."
+      },
+      "g4": {
+        "rollback": "No application-data migration is introduced. Revert P0-A to restore the prior tool surface, or while P0-A is active publish the prior qualified code root as the next monotonic desired generation and restart through the same control plane. Existing desired/action/per-service-manifest files can remain inert operational evidence for older code.",
+        "verification": [
+          "deterministic initial RED before service_control implementation",
+          "real incident literal and wrapped/dynamic managed-service mutation shapes blocked while readonly probes and ordinary development shell commands remain available",
+          "durable accepted-before-worker and stale-generation/stale-worker fail-closed tests",
+          "real cross-process lifecycle lease blocks concurrent desired-deployment publish until physical restart completion",
+          "desired root/Git/tracked-clean/WebUI artifact binding and pre-stop restart-script verification",
+          "worker minimal-environment test proves ambient caller variable does not propagate",
+          "P0-A/restart focused qualification and 180/180 adjacent regression matrix PASS",
+          "runtime direct-environment one-way ratchet PASS without baseline expansion",
+          "Ruff PASS; Pyright 0 errors / 0 warnings / 0 informations; bash syntax PASS",
+          "whole-tree security scan PASS",
+          "full ci_gate PASS: env-pin 586/0, tier0 PASS, xdist full PASS, architecture guard PASS",
+          "staged and committed-state A.5 exact changed-path coverage before any remote publication or deployment"
+        ]
+      }
+    }
+  ]
+}

@@ -193,4 +193,4 @@ class TestPerfBlockModeSourceComments:
         import inspect
 
         src = inspect.getsource(guard_mod)
-        assert 'os.environ.get("CACHE_GUARD_PERF_BLOCK", "enforce")' in src
+        assert '_CACHE_GUARD_CONFIG.get("CACHE_GUARD_PERF_BLOCK", "enforce")' in src

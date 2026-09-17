@@ -310,6 +310,48 @@ def test_agent_read_evidence_limit_is_server_bounded_with_explicit_receipt(tmp_p
     assert result.evidence_projection_complete is False
 
 
+def test_agent_read_evidence_line_cursor_reassembles_without_gap_or_overlap(tmp_path):
+    """R05/T05: returned line cursor must describe exactly the bytes actually delivered."""
+    blobs, ledger = _stores(tmp_path)
+    owner = _owner()
+    source = "".join(f"line-{i:03d}: value-{i}\n" for i in range(137))
+    record = _capture(EvidenceCapture(blobs, ledger), owner, "paged-lines", source)
+    tool = EvidenceReadTool(
+        blobs,
+        ledger,
+        freshness=EvidenceFreshness(ledger),
+        owner_resolver=lambda: owner,
+        max_limit=4000,
+    )
+
+    start = 0
+    chunks: list[str] = []
+    starts: list[int] = []
+    while True:
+        result = tool.execute(
+            evidence_ref=record.evidence_ref.ref,
+            range_type="line",
+            start=start,
+            limit=17,
+        )
+        assert result.status is ToolResultStatus.SUCCESS
+        payload = json.loads(result.content)
+        assert payload["range"]["start"] == start
+        assert payload["range"]["count"] <= 17
+        starts.append(start)
+        chunks.append(payload["content"])
+        next_start = payload["range"]["next_start"]
+        if next_start is None:
+            assert payload["range"]["complete"] is True
+            break
+        assert payload["range"]["complete"] is False
+        assert next_start == start + payload["range"]["count"]
+        start = next_start
+
+    assert starts == [0, 17, 34, 51, 68, 85, 102, 119, 136]
+    assert "".join(chunks) == source
+
+
 def test_agent_read_evidence_negative_limit_still_fails(tmp_path):
     blobs, ledger = _stores(tmp_path)
     owner = _owner()

@@ -181,7 +181,7 @@ class _StubEngine(ToolCycleService):
         self._host = self  # 替身自给宿主面
         self._run_state_mgr = RunStateManager()
         ToolCycleService.__init__(self, cast(Any, self))  # 走真实服务装配，避免 stub 字段漂移
-        self.registry = SimpleNamespace(failure_guidance_enabled=False)
+        self.registry = SimpleNamespace(failure_guidance_enabled=False, tool_guidance_mode="off")
         self.status = None  # _record_tool_history 的空转面
         self.events: list = []
         self.actions: list = []

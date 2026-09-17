@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -628,7 +627,11 @@ def run_oracle(
     report.qps_actual = round(sent_count / elapsed_s, 3) if (sent_count and not dry_run) else 0.0
 
     # ── 6.6 报告落盘（fail-open：落盘失败不掩盖实验结论）──
-    base = Path(data_dir or os.environ.get("LFL_DATA_DIR", "data"))
+    base = (
+        Path(data_dir).expanduser().resolve()
+        if data_dir is not None
+        else Path(__file__).resolve().parents[3] / "data"
+    )
     ts_compact = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     report_dir = (
         base / "audit" / "oracle_1210"

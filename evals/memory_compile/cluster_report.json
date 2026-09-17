@@ -845,7 +845,7 @@
       "bash -c"
      ],
      "fp": "a1f030cc298a",
-     "content_preview": "MCP 沙盒环境陷阱：shell $HOME 是 mcp-console 沙盒目录而非 /Users/yyj，读用户配置必须用绝对路径；git credential fill/osxkeychain 在沙盒中搜不到 login.keychain-db（默认 keychain 列表不含它），须用 security 命令+"
+     "content_preview": "MCP 沙盒环境陷阱：shell $HOME 是 mcp-console 沙盒目录而非 ~，读用户配置必须用绝对路径；git credential fill/osxkeychain 在沙盒中搜不到 login.keychain-db（默认 keychain 列表不含它），须用 security 命令+"
     },
     {
      "id": "MEM-20260908-ada520ea",
@@ -862,7 +862,7 @@
       "funcname"
      ],
      "fp": "7e9a55ceafe4",
-     "content_preview": "沙盒/环境注意事项：MCP console shell 的 $HOME 是临时沙盒目录而非 /Users/yyj，查 gh/ssh 配置需用绝对路径；沙盒默认 keychain 搜索列表不含 login.keychain-db，故 git credential fill/osxkeychain helper 走不通；m"
+     "content_preview": "沙盒/环境注意事项：MCP console shell 的 $HOME 是临时沙盒目录而非 ~，查 gh/ssh 配置需用绝对路径；沙盒默认 keychain 搜索列表不含 login.keychain-db，故 git credential fill/osxkeychain helper 走不通；m"
     },
     {
      "id": "MEM-20260908-d5cc16b4",
@@ -879,7 +879,7 @@
       "后台任务"
      ],
      "fp": "a1ac2b639471",
-     "content_preview": "MCP console 沙盒环境要点：$HOME 是沙盒临时目录而非 /Users/yyj（查用户配置/SSH/keychain 必须用绝对路径）；进程默认 keychain 列表不含 login.keychain-db，故 git credential fill/osxkeychain helper 取不到 GitH"
+     "content_preview": "MCP console 沙盒环境要点：$HOME 是沙盒临时目录而非 ~（查用户配置/SSH/keychain 必须用绝对路径）；进程默认 keychain 列表不含 login.keychain-db，故 git credential fill/osxkeychain helper 取不到 GitH"
     },
     {
      "id": "MEM-20260908-8ae81f15",
@@ -895,7 +895,7 @@
       "环境陷阱"
      ],
      "fp": "b27fe5929bb5",
-     "content_preview": "沙盒环境陷阱：MCP console shell 的 $HOME 是沙盒目录而非 /Users/yyj（查用户配置必须用绝对路径）；macOS 无 timeout 命令；security 命令的 keychain 路径必须放在选项之后（放前面会输出 item 元数据 dump 而非密码）；git credential "
+     "content_preview": "沙盒环境陷阱：MCP console shell 的 $HOME 是沙盒目录而非 ~（查用户配置必须用绝对路径）；macOS 无 timeout 命令；security 命令的 keychain 路径必须放在选项之后（放前面会输出 item 元数据 dump 而非密码）；git credential "
     },
     {
      "id": "MEM-20260908-55cc4879",
@@ -911,7 +911,7 @@
       "后台任务防超时"
      ],
      "fp": "cdac46439e35",
-     "content_preview": "本机环境要点：MCP console 沙盒 $HOME 是 /var/folders/.../mcp-console/.../home 而非 /Users/yyj，读用户配置（.ssh/.config/gh/.gitconfig）必须用 /Users/yyj 绝对路径；macOS 无 timeout 命令（rc=127"
+     "content_preview": "本机环境要点：MCP console 沙盒 $HOME 是 /var/folders/.../mcp-console/.../home 而非 ~，读用户配置（.ssh/.config/gh/.gitconfig）必须用 ~ 绝对路径；macOS 无 timeout 命令（rc=127"
     },
     {
      "id": "MEM-20260908-fd257b1f",
@@ -927,7 +927,7 @@
       "MCP console"
      ],
      "fp": "ab038c0e3bad",
-     "content_preview": "执行环境特性：MCP console 沙盒 $HOME 不是 /Users/yyj，其默认 keychain 列表不含 login.keychain-db，故 git credential fill（osxkeychain helper）在沙盒中读不到用户凭据，需用 security 命令显式指定 keychain 路"
+     "content_preview": "执行环境特性：MCP console 沙盒 $HOME 不是 ~，其默认 keychain 列表不含 login.keychain-db，故 git credential fill（osxkeychain helper）在沙盒中读不到用户凭据，需用 security 命令显式指定 keychain 路"
     }
    ]
   },
@@ -2426,7 +2426,7 @@
       "Downloads"
      ],
      "fp": "af4a0c06bea3",
-     "content_preview": "LFL 设计文档 v1.1 权威路径为 /Users/yyj/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md；§12.1 不在 evals/pilot/GOVERNANCE.v1.md，也不在 docs/CALIBRATION-FROZEN-H2H-v1.md（此前 grep 系正则"
+     "content_preview": "LFL 设计文档 v1.1 权威路径为 ~/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md；§12.1 不在 evals/pilot/GOVERNANCE.v1.md，也不在 docs/CALIBRATION-FROZEN-H2H-v1.md（此前 grep 系正则"
     },
     {
      "id": "MEM-20260915-80947c75",
@@ -2442,7 +2442,7 @@
       "GOVERNANCE无12.1"
      ],
      "fp": "bf34dedb19cf",
-     "content_preview": "《LFL 执行力优化需求设计》v1.1 权威原文位于 /Users/yyj/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md（775 行，sha256 577ef08e…），§12.1/§12.1.1 阶段表（M0→M5 及 M1 Gate 口径）在此文件；mirror 仓库 docs"
+     "content_preview": "《LFL 执行力优化需求设计》v1.1 权威原文位于 ~/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md（775 行，sha256 577ef08e…），§12.1/§12.1.1 阶段表（M0→M5 及 M1 Gate 口径）在此文件；mirror 仓库 docs"
     },
     {
      "id": "MEM-20260915-f0299d12",
@@ -2458,7 +2458,7 @@
       "路径"
      ],
      "fp": "d8cb84c9e610",
-     "content_preview": "《LFL 执行力优化需求设计》v1.1 真实路径：/Users/yyj/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md（775 行，sha256 577ef08e…）。§12.1 阶段表、§12.1.1 M0 首步执行合同均在此文件，mirror 仓库 docs/ 内不存在（GOVE"
+     "content_preview": "《LFL 执行力优化需求设计》v1.1 真实路径：~/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md（775 行，sha256 577ef08e…）。§12.1 阶段表、§12.1.1 M0 首步执行合同均在此文件，mirror 仓库 docs/ 内不存在（GOVE"
     },
     {
      "id": "MEM-20260915-17a3b4e5",
@@ -2475,7 +2475,7 @@
       "文档路径"
      ],
      "fp": "2701200d5a42",
-     "content_preview": "LFL 执行力优化设计 v1.1 真实路径为 /Users/yyj/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md（775 行，sha256 577ef08e…），§12.1 阶段表/§12.1.1 M0 执行合同/§17/§17.1 均在此文档；mirror 仓库 docs/ 与 "
+     "content_preview": "LFL 执行力优化设计 v1.1 真实路径为 ~/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md（775 行，sha256 577ef08e…），§12.1 阶段表/§12.1.1 M0 执行合同/§17/§17.1 均在此文档；mirror 仓库 docs/ 与 "
     }
    ]
   },
@@ -2743,7 +2743,7 @@
       "P0-1"
      ],
      "fp": "e5e0a70b1c87",
-     "content_preview": "docs/FINAL-EXECUTION-PLAN-cache-hit-governance.md 为定稿执行方案（三方综合），执行方=镜像 LFL（本 agent，工作区 /Users/yyj/Project/llm-first-loop-mirror）；用户已指示「按建议实施」，从 P0-1（cache_hit_s"
+     "content_preview": "docs/FINAL-EXECUTION-PLAN-cache-hit-governance.md 为定稿执行方案（三方综合），执行方=镜像 LFL（本 agent，工作区 ~/Project/llm-first-loop-mirror）；用户已指示「按建议实施」，从 P0-1（cache_hit_s"
     },
     {
      "id": "MEM-20260820-ec95c284",
@@ -2774,7 +2774,7 @@
       "执行方案"
      ],
      "fp": "f2b37d6dbfc7",
-     "content_preview": "缓存命中治理执行方案已定稿并确认可执行：docs/FINAL-EXECUTION-PLAN-cache-hit-governance.md（2026-08-20），执行方=镜像 LFL（/Users/yyj/Project/llm-first-loop-mirror）。P0-1=cache_hit_show_in_an"
+     "content_preview": "缓存命中治理执行方案已定稿并确认可执行：docs/FINAL-EXECUTION-PLAN-cache-hit-governance.md（2026-08-20），执行方=镜像 LFL（~/Project/llm-first-loop-mirror）。P0-1=cache_hit_show_in_an"
     },
     {
      "id": "MEM-20260820-421a0346",
@@ -4149,7 +4149,7 @@
       "llm-first-loop-mirror"
      ],
      "fp": "9d9c02c6923e",
-     "content_preview": "LFL（LLM-First Core Loop）项目：位于 /Users/yyj/Project/llm-first-loop-mirror，v0.6.14，Apache-2.0，开源框架化（B 路线）进行中。自我定位为“AI 优先（LLM-first）的 Agent 运行时”，同时承担 Runtime 层（事件溯源、"
+     "content_preview": "LFL（LLM-First Core Loop）项目：位于 ~/Project/llm-first-loop-mirror，v0.6.14，Apache-2.0，开源框架化（B 路线）进行中。自我定位为“AI 优先（LLM-first）的 Agent 运行时”，同时承担 Runtime 层（事件溯源、"
     },
     {
      "id": "MEM-20260824-595f8cf5",
@@ -4165,7 +4165,7 @@
       "llm-first-loop-mirror"
      ],
      "fp": "cac50be94c9a",
-     "content_preview": "用户核心项目为 LFL（LLM-First Core Loop），本地路径 /Users/yyj/Project/llm-first-loop-mirror，版本 0.6.14，Apache-2.0，开源框架化（B 路线）进行中。官方定位：'AI 优先（LLM-first）的 Agent 运行时'——程序最小化 + 文"
+     "content_preview": "用户核心项目为 LFL（LLM-First Core Loop），本地路径 ~/Project/llm-first-loop-mirror，版本 0.6.14，Apache-2.0，开源框架化（B 路线）进行中。官方定位：'AI 优先（LLM-first）的 Agent 运行时'——程序最小化 + 文"
     },
     {
      "id": "MEM-20260811-f17e578e",
@@ -4770,7 +4770,7 @@
       "LFL自身修改"
      ],
      "fp": "a370db3af605",
-     "content_preview": "2026-08-20 用户批准强制镜像工作区协议（docs/MIRROR-workspace-protocol.md）：一切涉及 LFL 自身代码/文件的修改（src/、docs/ai_rules.md、prompt.py、.env、scripts/、tests/、webui/）必须先在工作区镜像 /Users/yyj"
+     "content_preview": "2026-08-20 用户批准强制镜像工作区协议（docs/MIRROR-workspace-protocol.md）：一切涉及 LFL 自身代码/文件的修改（src/、docs/ai_rules.md、prompt.py、.env、scripts/、tests/、webui/）必须先在工作区镜像 ~"
     },
     {
      "id": "MEM-20260821-2251bb9b",
@@ -4785,7 +4785,7 @@
       "M变量"
      ],
      "fp": "4d857fae4c98",
-     "content_preview": "镜像工作区协议（2026-08-20 用户批准，状态强制）：一切涉及 LFL 自身代码/文件的修改须在镜像（主区同级 *-mirror）进行；不硬编码绝对路径（2026-08-21 完善），部署方在 shell 中定义 M=<镜像绝对路径> 即可。当前实例 M=/Users/yyj/Project/llm-first-"
+     "content_preview": "镜像工作区协议（2026-08-20 用户批准，状态强制）：一切涉及 LFL 自身代码/文件的修改须在镜像（主区同级 *-mirror）进行；不硬编码绝对路径（2026-08-21 完善），部署方在 shell 中定义 M=<镜像绝对路径> 即可。当前实例 M=~/Project/llm-first-"
     },
     {
      "id": "MEM-20260821-5fece3e2",
@@ -5807,7 +5807,7 @@
       "submit_evolution"
      ],
      "fp": "fa24dfe7c728",
-     "content_preview": "镜像工作区协议：主区 /Users/yyj/Project/llm-first-loop（main），镜像区 /Users/yyj/Project/llm-first-loop-mirror；一切涉及 LFL 自身代码/文件的修改写入镜像区，主区不动，promotion 需走 submit_evolution + We"
+     "content_preview": "镜像工作区协议：主区 ~/Project/llm-first-loop（main），镜像区 ~/Project/llm-first-loop-mirror；一切涉及 LFL 自身代码/文件的修改写入镜像区，主区不动，promotion 需走 submit_evolution + We"
     },
     {
      "id": "MEM-20260822-d005d9ed",
@@ -5822,7 +5822,7 @@
       "MIRROR-workspace-protocol"
      ],
      "fp": "49f977c0bf6a",
-     "content_preview": "镜像工作区协议：主区 /Users/yyj/Project/llm-first-loop（main 分支），镜像区 /Users/yyj/Project/llm-first-loop-mirror；写入镜像区时主区不动；promotion 需走 submit_evolution + Web 审批。"
+     "content_preview": "镜像工作区协议：主区 ~/Project/llm-first-loop（main 分支），镜像区 ~/Project/llm-first-loop-mirror；写入镜像区时主区不动；promotion 需走 submit_evolution + Web 审批。"
     }
    ]
   },
@@ -6041,7 +6041,7 @@
       "401"
      ],
      "fp": "77f3a4c64ba3",
-     "content_preview": "无效/不可用的 GitHub 认证通道（勿重复排查）：gh CLI 未登录（hosts.yml 无 oauth_token）；keychain 中 gh:github.com generic password（75 字节）API 401 无效；/Users/yyj/.ssh/id_ed25519 和 id_rsa 均未"
+     "content_preview": "无效/不可用的 GitHub 认证通道（勿重复排查）：gh CLI 未登录（hosts.yml 无 oauth_token）；keychain 中 gh:github.com generic password（75 字节）API 401 无效；~/.ssh/id_ed25519 和 id_rsa 均未"
     },
     {
      "id": "MEM-20260908-9ee659cf",
@@ -6056,7 +6056,7 @@
       "1Password agent"
      ],
      "fp": "1148565cb50f",
-     "content_preview": "GitHub 认证排除项：gh CLI 未登录（hosts.yml 无 oauth_token）；SSH key（/Users/yyj/.ssh/id_ed25519、id_rsa）均未挂 GitHub 账号（publickey denied）；1Password agent socket 存在但未运行；gh:gith"
+     "content_preview": "GitHub 认证排除项：gh CLI 未登录（hosts.yml 无 oauth_token）；SSH key（~/.ssh/id_ed25519、id_rsa）均未挂 GitHub 账号（publickey denied）；1Password agent socket 存在但未运行；gh:gith"
     }
    ]
   },
@@ -6334,7 +6334,7 @@
       "deyi2026"
      ],
      "fp": "e0d0f53cb533",
-     "content_preview": "GitHub 推送认证通道：login keychain (/Users/yyj/Library/Keychains/login.keychain-db) 中存有 github.com internet password（acct=deyi2026，gho_ OAuth token，scopes: gist/read:"
+     "content_preview": "GitHub 推送认证通道：login keychain (~/Library/Keychains/login.keychain-db) 中存有 github.com internet password（acct=deyi2026，gho_ OAuth token，scopes: gist/read:"
     }
    ]
   },
@@ -7088,7 +7088,7 @@
       "无需同步修复"
      ],
      "fp": "ebcc8f947a91",
-     "content_preview": "主工作区 /Users/yyj/Project/llm-first-loop 的 factory.py 为旧版逻辑（通知写最近会话事件），不存在 awaiting_user_authorization 误报缺陷；该缺陷仅镜像区 llm-first-loop-mirror 存在，修复无需同步到主区。"
+     "content_preview": "主工作区 ~/Project/llm-first-loop 的 factory.py 为旧版逻辑（通知写最近会话事件），不存在 awaiting_user_authorization 误报缺陷；该缺陷仅镜像区 llm-first-loop-mirror 存在，修复无需同步到主区。"
     },
     {
      "id": "MEM-20260902-effadc94",
@@ -7103,7 +7103,7 @@
       "修复范围"
      ],
      "fp": "707897a4c64a",
-     "content_preview": "主区非镜像工程 /Users/yyj/Project/llm-first-loop 的 factory.py 为旧版逻辑，不存在 awaiting_user_authorization 误报问题；本次 notify 授权误报修复仅涉及镜像工作区 llm-first-loop-mirror，主区无需同步此改动。"
+     "content_preview": "主区非镜像工程 ~/Project/llm-first-loop 的 factory.py 为旧版逻辑，不存在 awaiting_user_authorization 误报问题；本次 notify 授权误报修复仅涉及镜像工作区 llm-first-loop-mirror，主区无需同步此改动。"
     }
    ]
   },
@@ -8464,7 +8464,7 @@
       "程序/模型分工"
      ],
      "fp": "95d11c34e60f",
-     "content_preview": "LoopX 借鉴建议书（/Users/yyj/Downloads/LFL-LoopX-借鉴分析建议书.md，2026-09-08 v1.0）的裁决框架：四项硬边界（用户预算/真实权限/运行锁/防重）归程序，四项机制（事件顺序/版本冲突/幂等回执/证据完整性）对照 LoopX 补齐，任务价值与完成判断留给模型（符合 LF"
+     "content_preview": "LoopX 借鉴建议书（~/Downloads/LFL-LoopX-借鉴分析建议书.md，2026-09-08 v1.0）的裁决框架：四项硬边界（用户预算/真实权限/运行锁/防重）归程序，四项机制（事件顺序/版本冲突/幂等回执/证据完整性）对照 LoopX 补齐，任务价值与完成判断留给模型（符合 LF"
     }
    ]
   },
@@ -9453,7 +9453,7 @@
       "research"
      ],
      "fp": "236da23e7ba8",
-     "content_preview": "用户工作区 /Users/yyj/Project/research 是围绕 StateBraid 记忆/缓存系统的研究项目，顶层不是 git 仓库，由多个独立子仓组成（非 monorepo）"
+     "content_preview": "用户工作区 ~/Project/research 是围绕 StateBraid 记忆/缓存系统的研究项目，顶层不是 git 仓库，由多个独立子仓组成（非 monorepo）"
     },
     {
      "id": "MEM-20260810-2f8ca65e",
@@ -9469,7 +9469,7 @@
       "runtime"
      ],
      "fp": "e12a5df2e7ad",
-     "content_preview": "用户工作区为 /Users/yyj/Project/research，是 StateBraid 记忆/缓存体系研究项目；其中 mlx-lm-statebraid-companion/ 是唯一开发仓和部署单一事实源（分支 frozen/cache-continuity-20260908），另有 llama.cpp-sta"
+     "content_preview": "用户工作区为 ~/Project/research，是 StateBraid 记忆/缓存体系研究项目；其中 mlx-lm-statebraid-companion/ 是唯一开发仓和部署单一事实源（分支 frozen/cache-continuity-20260908），另有 llama.cpp-sta"
     }
    ]
   },
@@ -9544,7 +9544,7 @@
       "运维操作"
      ],
      "fp": "cf9550ced399",
-     "content_preview": "8901 模型服务的运维操作：干净重启用 /Users/yyj/Project/research/runtime/qwen8901_switch.sh（停旧进程→重载 launchd→等模型重载，约24秒起端口）；监控脚本 monitor8901.sh；服务配置 plist 在 ~/Library/LaunchAgen"
+     "content_preview": "8901 模型服务的运维操作：干净重启用 ~/Project/research/runtime/qwen8901_switch.sh（停旧进程→重载 launchd→等模型重载，约24秒起端口）；监控脚本 monitor8901.sh；服务配置 plist 在 ~/Library/LaunchAgen"
     },
     {
      "id": "MEM-20260911-c22c4ca8",
@@ -9558,7 +9558,7 @@
       "运维操作"
      ],
      "fp": "4b50294ec47e",
-     "content_preview": "重启 8901 模型服务的标准方法：执行 bash /Users/yyj/Project/research/runtime/qwen8901_switch.sh，脚本会停掉旧进程、重载 launchd 条目，约 24 秒后端口恢复监听"
+     "content_preview": "重启 8901 模型服务的标准方法：执行 bash ~/Project/research/runtime/qwen8901_switch.sh，脚本会停掉旧进程、重载 launchd 条目，约 24 秒后端口恢复监听"
     }
    ]
   },

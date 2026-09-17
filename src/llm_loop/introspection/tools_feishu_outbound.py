@@ -19,9 +19,11 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.runtime.resolver import business_config_snapshot
 
 # ── 安全防护：模块级状态（单进程内有效） ──
-_audit_dir_env = os.environ.get("FEISHU_AUDIT_DIR", "data/audit")
+_OUTBOUND_CONFIG = business_config_snapshot("feishu_outbound")
+_audit_dir_env = _OUTBOUND_CONFIG.get("FEISHU_AUDIT_DIR", "data/audit")
 _outbound_audit_path = Path(_audit_dir_env) / "feishu_outbound.jsonl"
 
 # 速率状态：{ receive_id: [timestamp1, timestamp2, ...] }

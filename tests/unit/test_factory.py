@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from unittest import mock
 
 import pytest
@@ -721,7 +722,7 @@ def test_schedule_wake_uses_delegated_same_session_runner_not_inbox_wakeup(tmp_p
     monkeypatch.setattr(
         SchedulerThread,
         "_notify_via_interop",
-        staticmethod(lambda entry: notified.append(entry.sid)),
+        staticmethod(lambda entry, **_kwargs: notified.append(entry.sid)),
     )
     engine = build_engine(_settings(tmp_path))  # type: ignore[arg-type]
     store = engine.scheduler._store
@@ -750,3 +751,29 @@ def test_schedule_wake_uses_delegated_same_session_runner_not_inbox_wakeup(tmp_p
     assert len(starts) == 1
     assert notified == [sid]
     assert sid == entry.sid
+
+
+def test_local_runtime_admission_authority_factory_defaults_to_legacy(tmp_path):
+    from llm_loop.factory import build_engine
+    from llm_loop.resources.local_runtime import LocalRuntimeConcurrencyAdapter
+
+    engine = build_engine(_settings(tmp_path))  # type: ignore[arg-type]
+    coordinator = engine.provider_call_coordinator
+    assert coordinator._admission_authority == "legacy"  # noqa: SLF001 - wiring gate
+    assert isinstance(coordinator._local_runtime, LocalRuntimeConcurrencyAdapter)  # noqa: SLF001
+    assert coordinator._lfrt_runtime is None  # noqa: SLF001
+
+
+def test_local_runtime_admission_authority_factory_wires_lfrt_only_when_selected(tmp_path):
+    from llm_loop.factory import build_engine
+    from llm_loop.resources.lfrt_runtime import LFRTAdmissionRuntimeAdapter
+
+    settings = replace(
+        _settings(tmp_path),
+        local_runtime_admission_authority="lfrt",
+        lfrt_cli="/opt/lfrt/lfrt",
+    )
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    coordinator = engine.provider_call_coordinator
+    assert coordinator._admission_authority == "lfrt"  # noqa: SLF001 - wiring gate
+    assert isinstance(coordinator._lfrt_runtime, LFRTAdmissionRuntimeAdapter)  # noqa: SLF001

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -359,18 +358,11 @@ def build_conservative_active_run_projection(
 _DEFAULT_COMPRESS_TARGET_RATIO = 0.6
 
 
-def _compress_target_ratio() -> float:
-    """Return the runtime compression target ratio without import-order split brain."""
-    raw = os.environ.get("COMPRESS_TARGET_RATIO", "").strip()
-    if not raw:
-        return _DEFAULT_COMPRESS_TARGET_RATIO
-    try:
-        ratio = float(raw)
-    except ValueError:
-        return _DEFAULT_COMPRESS_TARGET_RATIO
-    if not 0.0 < ratio < 1.0:
-        return _DEFAULT_COMPRESS_TARGET_RATIO
-    return ratio
+def _compress_target_ratio(value: float | None = None) -> float:
+    """Normalize an already-resolved compression target ratio."""
+    ratio = _DEFAULT_COMPRESS_TARGET_RATIO if value is None else float(value)
+    return ratio if 0.0 < ratio < 1.0 else _DEFAULT_COMPRESS_TARGET_RATIO
+
 
 _CACHE_COMPACTED_FOR_META = "cache_compacted_for"
 _CACHE_COMPACTION_SCOPE_META = "cache_compaction_scope"
@@ -540,15 +532,13 @@ _HISTORY_BUDGET_CHARS_PER_TOKEN = 0.6
 _HISTORY_BUDGET_INPUT_MARGIN = 0.9
 
 
-def _cog_anchor_mode() -> str:
-    """读 COG_RUNTIME_ANCHOR_MODE（对齐 config._env_cog_anchor_mode 语义；模块级 env 惯例）."""
-    import os
-
-    raw = os.environ.get("COG_RUNTIME_ANCHOR_MODE", "").strip().lower()
-    return raw if raw in ("semantic", "anchor", "auto") else "auto"
+def _cog_anchor_mode(raw: str = "") -> str:
+    """Normalize an already-resolved cognitive anchor mode."""
+    value = str(raw or "").strip().lower()
+    return value if value in ("semantic", "anchor", "auto") else "auto"
 
 
-def _persist_semantic_state(session_id: str = "") -> bool:
+def _persist_semantic_state(session_id: str = "", *, data_dir: str | None = None) -> bool:
     """压缩黄金窗口: 从 GoalStore 派生语义状态并原子落盘（Cognitive Runtime tasks 2.4）.
 
     决策线（T2 [当前决策]+[下一步] 独立注入帧）升级演进为 SemanticTaskState 投影——
@@ -566,7 +556,6 @@ def _persist_semantic_state(session_id: str = "") -> bool:
     if not session_id:
         return False
     try:
-        import os
         from datetime import UTC, datetime
         from pathlib import Path as _Path
 
@@ -579,8 +568,8 @@ def _persist_semantic_state(session_id: str = "") -> bool:
         )
         from llm_loop.introspection.goal import GoalStore
 
-        base = os.environ.get("LFL_DATA_DIR", "data")
-        audit = _Path(base) / "audit"
+        base = _Path(data_dir).expanduser().resolve() if data_dir else _Path(__file__).resolve().parents[2] / "data"
+        audit = base / "audit"
         goal = GoalStore(audit).get(
             prefer_session_id=session_id, strict_session=True
         )
@@ -629,7 +618,7 @@ def _persist_semantic_state(session_id: str = "") -> bool:
         return False
 
 
-def _decision_line_frame(session_id: str = "") -> str:
+def _decision_line_frame(session_id: str = "", *, data_dir: str | None = None) -> str:
     """能力 B 决策线（injection_hygiene 5.2）: 活跃 goal + 最近 checkpoint 两行指针.
 
     注入位置 = 压缩产物帧首行（[压缩关键事实] 之前）——压缩后恢复从「检索式」变
@@ -641,13 +630,12 @@ def _decision_line_frame(session_id: str = "") -> str:
     if not session_id:
         return ""
     try:
-        import os
         from pathlib import Path as _Path
 
         from llm_loop.introspection.goal import GoalStore
 
-        base = os.environ.get("LFL_DATA_DIR", "data")
-        g = GoalStore(_Path(base) / "audit").get(
+        base = _Path(data_dir).expanduser().resolve() if data_dir else _Path(__file__).resolve().parents[2] / "data"
+        g = GoalStore(base / "audit").get(
             prefer_session_id=session_id, strict_session=True
         )
         if not g or g.get("status") != "active":
@@ -842,6 +830,7 @@ def build_history_messages(
     *,
     compact_ratio: float = 1.0,  # EVO-20260817: 主动压缩阈值（预算比例; 1.0=现行为超限才压;
     # <1.0 在预算附近提前整理压缩——裁到 COMPRESS_TARGET_RATIO 留缓冲, 避免撞顶被动压缩）
+    compress_target_ratio: float = _DEFAULT_COMPRESS_TARGET_RATIO,
     session_id: str = "",
     archive_sink: ArchiveSink | None = None,
     summarizer: Any | None = None,  # 保留签名向后兼容；压缩路径不再自动调 LLM 摘要（RULE-AI-00，LLM 摘要由 AI 经 search_archive(with_summary=true) 主动触发）
@@ -1259,7 +1248,7 @@ def build_history_messages(
     # 前缀缓存机制: 追加消息不破坏命中（实证 97%+），但修改已提交序列（压缩）必断点。
     # 裁到 100% 上限 → 下一轮必再超 → 每轮压缩 → 前缀每轮变化 → 永久断点（实测 1% 命中率）。
     # 裁到 60% → 压缩后留 40% 增长空间 → 稳定期从"几轮"延长到"几十轮"（该时段纯追加、高命中）。
-    _archive_target_ratio = _compress_target_ratio()
+    _archive_target_ratio = _compress_target_ratio(compress_target_ratio)
     _archive_target_chars = int(max_chars * _archive_target_ratio)
     archive_budget = _archive_target_chars
     # EVO-20260817-9d3e1f2c（缓存友好压缩 v2）: 保留锚点头部（提交前缀命中）+ 最近尾部（语义），

@@ -165,6 +165,7 @@ _ALL_DIMS = [
     "knowledge_health",
     "program_faults",
     "causality",
+    "local_runtime",
 ]
 
 

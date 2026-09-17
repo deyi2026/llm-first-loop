@@ -9,14 +9,18 @@
 """
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from llm_loop.core.loop.engine import LoopEngine
 
 
-def _bare_engine() -> LoopEngine:
-    return LoopEngine.__new__(LoopEngine)  # 纯方法测试，绕过 __init__
+def _bare_engine(data_dir) -> LoopEngine:
+    engine = LoopEngine.__new__(LoopEngine)  # 纯方法测试，绕过 __init__
+    engine.settings = SimpleNamespace(data_dir=str(data_dir))
+    return engine
 
 
 def test_task_pending_waits_for_user_authorization(tmp_path, monkeypatch):
@@ -39,8 +43,7 @@ def test_task_pending_waits_for_user_authorization(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
-    eng = _bare_engine()
+    eng = _bare_engine(tmp_path)
     actions: list[tuple[str, str, str]] = []
     eng._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
 
@@ -80,9 +83,8 @@ def test_skip_done_and_bad_files(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )  # 空 body → 跳过
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
 
-    assert _bare_engine()._interop_inbox_messages() == []
+    assert _bare_engine(tmp_path)._interop_inbox_messages() == []
     # EVO-20260825 任务9（§5.4.1-5）: 解析失败文件应隔离到 dead/（不静默滞留）
     dead = inbox / "dead" / "b.json"
     assert dead.exists(), "格式坏文件应隔离到 pending/dead/"
@@ -90,8 +92,7 @@ def test_skip_done_and_bad_files(tmp_path, monkeypatch):
 
 
 def test_missing_dir_fail_open(tmp_path, monkeypatch):
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path / "nope"))
-    assert _bare_engine()._interop_inbox_messages() == []  # 不抛异常
+    assert _bare_engine(tmp_path / "nope")._interop_inbox_messages() == []  # 不抛异常
 
 
 def _write_msg(inbox, name, topic, body, ref="", msg_id=None):
@@ -117,8 +118,7 @@ def test_notify_first_and_duplicate_are_observability_only(tmp_path, monkeypatch
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
     _write_msg(inbox, "n1.json", "notify", "job-1 完成", ref="job-1", msg_id="n1")
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
-    eng = _bare_engine()
+    eng = _bare_engine(tmp_path)
 
     # 首见 → 不构造模型消息，直接转 done/ 供 UI/retrieval。
     msgs = eng._interop_inbox_messages()
@@ -144,8 +144,7 @@ def test_notify_action_trace_has_zero_prompt_chars(tmp_path, monkeypatch):
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
     _write_msg(inbox, "n2.json", "notify", "job-2 完成", ref="job-2", msg_id="n2")
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
-    eng = _bare_engine()
+    eng = _bare_engine(tmp_path)
     actions: list[tuple[str, str, str]] = []
     eng._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
 
@@ -159,8 +158,7 @@ def test_backlog_count_is_observability_only(tmp_path, monkeypatch):
     inbox.mkdir(parents=True)
     for i in range(9):
         _write_msg(inbox, f"t{i}.json", "task", f"task-{i}", msg_id=f"t{i}")
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
-    eng = _bare_engine()
+    eng = _bare_engine(tmp_path)
     actions: list[tuple[str, str, str]] = []
     eng._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
 
@@ -177,7 +175,9 @@ def test_build_provider_wire_excludes_notify_but_keeps_done_record(
     build_test_engine, tmp_path, monkeypatch
 ):
     """E25 end-to-end: pending notify is consumed to done/UI and never appears in provider wire."""
-    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    engine, _fake = build_test_engine([])
+    data_dir = Path(engine.settings.data_dir)
+    inbox = data_dir / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
     _write_msg(
         inbox,
@@ -187,15 +187,13 @@ def test_build_provider_wire_excludes_notify_but_keeps_done_record(
         ref="job-wire",
         msg_id="notify-wire-id",
     )
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
-    engine, _fake = build_test_engine([])
     sid = engine.session.create()
 
     out = engine._build_llm_messages(engine.session.load(sid), [], max_chars=200_000)
     wire = json.dumps(out, ensure_ascii=False)
     assert "notify-wire-id" not in wire
     assert "job-sensitive-result-complete" not in wire
-    done = tmp_path / "interop" / "lfl_to_dsh" / "done" / "n-wire.json"
+    done = data_dir / "interop" / "lfl_to_dsh" / "done" / "n-wire.json"
     payload = json.loads(done.read_text(encoding="utf-8"))
     assert payload["status"] == "done"
     assert payload["body"] == "job-sensitive-result-complete"
@@ -206,8 +204,7 @@ def test_coordinate_stays_pending_and_never_auto_injects(tmp_path, monkeypatch):
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
     _write_msg(inbox, "t1.json", "coordinate", "请复核风险清单", ref="coord-1", msg_id="t1")
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
-    eng = _bare_engine()
+    eng = _bare_engine(tmp_path)
 
     assert eng._interop_inbox_messages() == []
     assert (inbox / "t1.json").exists()
@@ -250,7 +247,7 @@ def test_build_messages_excludes_unapproved_interop(tmp_path, monkeypatch):
         settings=settings,
     )
     # 装配点真实路径: 写 inbox 文件 → 不 monkeypatch 方法，走真实扫描
-    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    inbox = Path(settings.data_dir) / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
     (inbox / "20260816-006_dsh-x.json").write_text(
         json.dumps(
@@ -265,7 +262,6 @@ def test_build_messages_excludes_unapproved_interop(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
 
     sess = engine.session.create("interop-test") if hasattr(engine.session, "create") else None
     if sess is None:
@@ -292,8 +288,7 @@ def test_tail_mode_does_not_store_unapproved_interop_tail(tmp_path, monkeypatch)
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
     _write_msg(inbox, "t2.json", "task", "尾部注入验证", msg_id="t2")
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
-    eng = _bare_engine()
+    eng = _bare_engine(tmp_path)
     base = [Message(role="user", content="H1", source=MessageSource.USER)]
     out, prefix_len = eng._inject_interop_messages(list(base), 0, "s1")
     assert out == base
@@ -320,9 +315,8 @@ def test_prefix_mode_cannot_restore_external_auto_injection(tmp_path, monkeypatc
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
     _write_msg(inbox, "t3.json", "task", "前缀注入验证", msg_id="t3")
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("INTEROP_INJECT_TAIL", "0")
-    eng = _bare_engine()
+    eng = _bare_engine(tmp_path)
     base = [Message(role="user", content="H1", source=MessageSource.USER)]
     out, prefix_len = eng._inject_interop_messages(list(base), 0, "s1")
     assert out == base

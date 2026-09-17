@@ -17,7 +17,6 @@ from llm_loop.tools.registry import ToolRegistry
 @pytest.fixture(autouse=True)
 def _explicit_legacy_guidance_on(monkeypatch):
     """SkillZip feedback tests exercise the explicit legacy/experiment guidance path."""
-    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
 
 
 def _proc(content, risk=0, used_at=""):
@@ -42,7 +41,7 @@ def _fail_call():
 def test_guidance_records_used_at():
     """命中后记录 guidance_used_at（执行感知）."""
     proc = _proc("触发标签: [测试]\n已验解法: ①先确认路径②重试\n实证: 6/6")
-    reg = ToolRegistry(memory_store=_FakeMemory([proc]))
+    reg = ToolRegistry(memory_store=_FakeMemory([proc]), tool_guidance_mode="on")
     r = reg._result(ToolResultStatus.FAILURE, _fail_call(), "[文件不存在] /x", duration_ms=1.0)
     assert r.guidance_extra != ""
     assert proc.guidance_used_at != ""  # 记录使用时间
@@ -52,7 +51,7 @@ def test_guidance_records_used_at():
 def test_guidance_risk_prompt():
     """risk>=2 → 附带风险提示（执行感知反馈环标记）."""
     proc = _proc("触发标签: [测试]\n已验解法: ①先确认路径\n实证: 6/6", risk=3)
-    reg = ToolRegistry(memory_store=_FakeMemory([proc]))
+    reg = ToolRegistry(memory_store=_FakeMemory([proc]), tool_guidance_mode="on")
     r = reg._result(ToolResultStatus.FAILURE, _fail_call(), "[文件不存在] /x", duration_ms=1.0)
     assert "[经验风险]" in r.guidance_extra
     assert "谨慎参考" in r.guidance_extra
@@ -61,7 +60,7 @@ def test_guidance_risk_prompt():
 def test_guidance_low_risk_no_prompt():
     """risk<2 → 无风险提示."""
     proc = _proc("触发标签: [测试]\n已验解法: ①先确认路径\n实证: 6/6", risk=1)
-    reg = ToolRegistry(memory_store=_FakeMemory([proc]))
+    reg = ToolRegistry(memory_store=_FakeMemory([proc]), tool_guidance_mode="on")
     r = reg._result(ToolResultStatus.FAILURE, _fail_call(), "[文件不存在] /x", duration_ms=1.0)
     assert "[经验风险]" not in r.guidance_extra
 

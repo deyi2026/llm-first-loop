@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from llm_loop.config import HistoryPolicySettings
 from llm_loop.core.history import build_history_messages
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
 from llm_loop.core.prompt_build.stages.history_projection import (
@@ -13,9 +14,8 @@ def _msg(role: str, content: str) -> Message:
     return Message(role=role, content=content, source=MessageSource.SYSTEM)
 
 
-def test_duplicate_content_compaction_reports_distinct_exact_local_indices(monkeypatch):
+def test_duplicate_content_compaction_reports_distinct_exact_local_indices():
     """Duplicate role+content messages must never collapse onto the first match."""
-    monkeypatch.setenv("COMPRESS_TARGET_RATIO", "0.6")
     duplicate = "same-bytes-" + ("X" * 990)
     msgs = [_msg("assistant", duplicate) for _ in range(10)]
     msgs.append(Message(role="user", content="current task", source=MessageSource.USER))
@@ -27,6 +27,7 @@ def test_duplicate_content_compaction_reports_distinct_exact_local_indices(monke
         "",
         max_chars=8_000,
         compact_ratio=0.85,
+        compress_target_ratio=0.6,
         session_id="s-dup-index",
         archive_sink=lambda _sid, _msg: None,
         cache_archive_provider="glm",
@@ -60,9 +61,8 @@ def test_compacted_source_mapping_never_guesses_out_of_range_indices():
 
 
 
-def test_eighty_eight_duplicate_compactions_keep_eighty_eight_exact_source_indices(monkeypatch):
+def test_eighty_eight_duplicate_compactions_keep_eighty_eight_exact_source_indices():
     """Regression for the real 08:27 event shape: 88 marks must stay 88 distinct seqs."""
-    monkeypatch.setenv("COMPRESS_TARGET_RATIO", "0.6")
     duplicate = "D" * 1000
     msgs = [_msg("assistant", duplicate) for _ in range(100)]
     msgs.append(Message(role="user", content="current000", source=MessageSource.USER))
@@ -73,6 +73,7 @@ def test_eighty_eight_duplicate_compactions_keep_eighty_eight_exact_source_indic
         "",
         max_chars=21_000,
         compact_ratio=0.85,
+        compress_target_ratio=0.6,
         session_id="s-88-exact",
         archive_sink=lambda _sid, _msg: None,
         cache_archive_provider="glm",
@@ -143,7 +144,7 @@ def test_postprocess_emits_explicit_source_seq_and_replay_marks_exact_messages()
     assert marked == [2, 5, 8]
 
 
-def test_postprocess_marks_live_session_when_compaction_used_provider_view_copies(monkeypatch):
+def test_postprocess_marks_live_session_when_compaction_used_provider_view_copies():
     """A receipt-projected compaction must become sticky in the current live Session."""
     from types import SimpleNamespace
 
@@ -151,11 +152,7 @@ def test_postprocess_marks_live_session_when_compaction_used_provider_view_copie
     from llm_loop.core.history import is_cache_compacted_for
     from llm_loop.core.prompt_build.stages.history_postprocess import run_history_postprocess
 
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "65536")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "1")
     # Isolate live marker persistence from the independent fold-hysteresis policy.
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS", "0")
 
     def _assistant(idx: int) -> Message:
         return Message(
@@ -188,10 +185,16 @@ def test_postprocess_marks_live_session_when_compaction_used_provider_view_copie
             },
         )
 
+    policy = HistoryPolicySettings(
+        working_set_receipts=True,
+        working_set_batch_chars=65536,
+        working_set_grace_groups=1,
+        working_set_min_net_gain_chars=0,
+    )
     original = [Message(role="user", content="task", source=MessageSource.USER)]
     for idx in range(1, 17):
         original.extend([_assistant(idx), _tool(idx)])
-    projected, working_set = project_active_tool_working_set_with_stats(original)
+    projected, working_set = project_active_tool_working_set_with_stats(original, policy=policy)
     assert working_set.folded_results == 12
     assert any(projected[idx] is not original[idx] for idx in range(len(original)))
 

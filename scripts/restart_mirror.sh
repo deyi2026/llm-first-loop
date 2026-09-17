@@ -49,6 +49,8 @@
 #   修5 停止判定源: web=端口 lsof∪argv 且等 PID 本身退出；feishu=心跳 pid
 #       （≤180s 新鲜度门，防 PID 复用误杀）∪ argv 兜底（uv 启动会改写 argv）。
 #       xargs kill 裸杀路径已废除。
+#   修6 Web V2 产物/就绪闭环: web/all 在停旧服务前检查 gitignored webui/dist
+#       及 index 引用资源；启动后同时验 /auth/status 与 /ui/v2，禁止后端绿但页面404假成功。
 
 set -euo pipefail
 
@@ -105,6 +107,89 @@ WEB_HOST="${WEB_HOST:-127.0.0.1}"
 RESTART_PORT="$WEB_PORT"
 
 _log() { echo "[mirror] $(date '+%H:%M:%S') $*"; }
+
+# P0-A shared-service lifecycle authority: mutating restarts require an
+# operator-published desired deployment that exactly binds code/runtime roots and
+# tracked Git identity. Web/all also bind the ignored WebUI artifact tree. This is
+# checked before any healthy service is stopped.
+_service_control_preflight() {
+  local target="$1"
+  local rc=0
+  if [[ "$target" == "feishu" ]]; then
+    LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" \
+      "$VENV_PY" -m llm_loop.runtime.service_control verify \
+      --data-dir "$RUNTIME_ROOT/data" \
+      --code-root "$CODE_ROOT" \
+      --runtime-root "$RUNTIME_ROOT" --skip-webui || rc=$?
+  else
+    LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" \
+      "$VENV_PY" -m llm_loop.runtime.service_control verify \
+      --data-dir "$RUNTIME_ROOT/data" \
+      --code-root "$CODE_ROOT" \
+      --runtime-root "$RUNTIME_ROOT" || rc=$?
+  fi
+  if [[ "$rc" -eq 0 ]]; then
+    _log "✅ service-control desired deployment binding PASS ($target)"
+    return 0
+  fi
+  _log "✗ service-control desired deployment binding FAILED；拒绝停止现有服务"
+  _log "  首次/新版本部署需先由 operator publish exact desired generation"
+  return 1
+}
+
+# Web V2 build artifacts are intentionally gitignored. A fresh linked worktree may
+# therefore contain exact Python/source bytes but no webui/dist, in which case
+# create_app() does not mount /ui/v2 at all. Fail before stopping a healthy Web.
+_webui_artifact_preflight() {
+  local dist="${UI_V2_DIR:-$CODE_ROOT/webui/dist}"
+  local index="$dist/index.html"
+  if [[ ! -f "$index" ]]; then
+    _log "✗ Web V2 artifact preflight failed: $index 不存在"
+    _log "  请先构建目标版本: cd '$CODE_ROOT/webui' && npm run build"
+    return 1
+  fi
+
+  # Validate every local /ui/v2/... reference emitted by the built index. This
+  # catches partial/stale copies (index exists but hashed JS/CSS/font/favicon is
+  # missing) before any running service is stopped.
+  if ! "$VENV_PY" - "$dist" <<'PYASSET'
+from __future__ import annotations
+
+import sys
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.parse import urlsplit
+
+root = Path(sys.argv[1]).resolve()
+index = root / "index.html"
+
+class Refs(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.refs: set[str] = set()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        for key, value in attrs:
+            if key in {"src", "href"} and value and value.startswith("/ui/v2/"):
+                path = urlsplit(value).path.removeprefix("/ui/v2/")
+                if path:
+                    self.refs.add(path)
+
+parser = Refs()
+parser.feed(index.read_text(encoding="utf-8"))
+missing = [ref for ref in sorted(parser.refs) if not (root / ref).is_file()]
+if missing:
+    for ref in missing:
+        print(f"missing Web V2 asset: {ref}", file=sys.stderr)
+    raise SystemExit(1)
+PYASSET
+  then
+    _log "✗ Web V2 artifact preflight failed: index 引用的静态资源缺失"
+    _log "  请重新构建目标版本: cd '$CODE_ROOT/webui' && npm run build"
+    return 1
+  fi
+  _log "✅ Web V2 artifact preflight PASS: $dist"
+}
 
 # ── 重启前长任务保护（修1, 2026-09-09 移植自 restart_system.sh；判源改 VENV_PY）──
 # RESTART_WAIT_IDLE=1 → poll 心跳至空闲再停机；超时回退交互确认（FORCE=1 跳过交互）。
@@ -228,7 +313,12 @@ _port_pid() {
 # run owner 判成“另一进程执行”。用镜像 venv 的绝对 argv 精确识别本区 Web，既能
 # 找到已经不监听的 stale owner，也不会误杀主区不同 venv 的 :8902。
 _mirror_web_pids() {
-  pgrep -f "^${VENV_PY} -m llm_loop\.web( |$)" 2>/dev/null || true
+  {
+    # Rollout-safe: first C0-B restart must still find the legacy direct-entry process;
+    # later restarts must find the canonical runtime.launch process as well.
+    pgrep -f "^${VENV_PY} -m llm_loop\.web( |$)" 2>/dev/null || true
+    pgrep -f "^${VENV_PY} -m llm_loop\.runtime\.launch web( |$)" 2>/dev/null || true
+  } | awk 'NF && !seen[$1]++ {print $1}'
 }
 
 _pid_alive() {
@@ -319,7 +409,13 @@ try: print(json.load(open('$hb')).get('pid') or '')
 except Exception: pass" 2>/dev/null || true)"
     fi
   fi
-  { [[ -n "$hb_pid" ]] && echo "$hb_pid"; pgrep -f "^$VENV_PY -m llm_loop\.feishu( |$)" 2>/dev/null || true; } | awk 'NF && !seen[$1]++ {print $1}'
+  {
+    [[ -n "$hb_pid" ]] && echo "$hb_pid"
+    # Keep both argv forms during C0-B rollout/rollback. Heartbeat remains authoritative;
+    # argv is only the stale/no-heartbeat fallback.
+    pgrep -f "^$VENV_PY -m llm_loop\.feishu( |$)" 2>/dev/null || true
+    pgrep -f "^$VENV_PY -m llm_loop\.runtime\.launch feishu( |$)" 2>/dev/null || true
+  } | awk 'NF && !seen[$1]++ {print $1}'
 }
 _feishu_stop() {
   local pids pid survivors
@@ -398,10 +494,13 @@ PY
 _start_web() {
   _log "启动 web(port $WEB_PORT)..."
   _prep_dsh_env
-  # R2: 业务配置归 python（web main 的 load_env_file，环境优先）——shell 不再
-  # source .env、不再设 PYTHONPATH（R1 venv .pth 天然指向镜像 src，PYTHONPATH
-  # 反而是跨区污染源）。清空继承锚点键防残留压过 .env（对齐 restart_system.sh）；
-  # readiness check 用公开 /auth/status；/health 在 WEB_AUTH_REQUIRE=1 时按设计需要认证。
+  # C0-B: 正式服务统一经 runtime.launch 解析 canonical runtime snapshot；shell 仅管进程。
+  # runtime.launch 在进入 web main 前执行 resolve_effective -> apply_to_environ，确保
+  # runtime.toml > .env > stale shell 的同一快照同时供 manifest 与真实 Settings 消费。
+  # 清空继承锚点键，让 resolver 依据 runtime_root 决定业务配置权威来源；
+  # readiness 必须同时证明后端与 Web V2 路由可用：/auth/status=200 只证明
+  # 后端启动，不能证明 gitignored webui/dist 已挂载。/health 在
+  # WEB_AUTH_REQUIRE=1 时按设计需要认证。
   # 检查仍用启动前捕获的局部变量（unset 后 $WEB_* 不再绑定，-u 会报错）。
   local check_host="$WEB_HOST" check_port="$WEB_PORT"
   unset WEB_PORT WEB_HOST LFL_DATA_DIR DATA_DIR
@@ -411,15 +510,20 @@ _start_web() {
   # 且覆盖 shell 残留的主区 PYTHONPATH）。
   # 修3(2026-09-09): 启动改走 _spawn_detached（可移植 setsid+execvp）——nohup+&
   # 不换进程组，宿主 shell 超时 killpg 会被整树波及（execute_command.py:108-109 实证）。
-  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/web.log "$VENV_PY" -m llm_loop.web
-  local pid=$!
+  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/web.log "$VENV_PY" -m llm_loop.runtime.launch web
+  local pid=$! auth_code="000" ui_code="000"
   for _ in $(seq 1 30); do
-    if curl -sf --max-time 2 "http://$check_host:$check_port/auth/status" >/dev/null 2>&1; then
-      _log "✅ web 就绪: http://$check_host:$check_port/(pid $pid)"
+    auth_code="$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "http://$check_host:$check_port/auth/status" 2>/dev/null || true)"
+    ui_code="$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "http://$check_host:$check_port/ui/v2/" 2>/dev/null || true)"
+    if [[ "$auth_code" == "200" && "$ui_code" =~ ^[23][0-9][0-9]$ ]]; then
+      _log "✅ web 就绪: http://$check_host:$check_port/(pid $pid, auth=$auth_code, ui=$ui_code)"
       return 0
     fi
     sleep 1
   done
+  if [[ "$auth_code" == "200" ]]; then
+    _log "✗ web backend ready but Web V2 unavailable (auth/status=$auth_code, ui/v2=$ui_code)"
+  fi
   _log "✗ web 30s 未就绪，最近日志:"
   tail -10 data/web.log || true
   return 1
@@ -428,11 +532,11 @@ _start_web() {
 _start_feishu() {
   _log "启动飞书桥..."
   _prep_dsh_env
-  # R2: 同 _start_web——配置归 python，shell 清锚点键防污染；
+  # C0-B: 同 _start_web——正式配置先经 runtime.launch canonical snapshot；
   # PYTHONPATH=镜像 src 显式注入（协议 §3，同 _start_web 注释）。
   unset WEB_PORT WEB_HOST LFL_DATA_DIR DATA_DIR
   # 修3(2026-09-09): 同 _start_web——经 _spawn_detached 脱离进程组再 exec。
-  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/feishu.log "$VENV_PY" -m llm_loop.feishu
+  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/feishu.log "$VENV_PY" -m llm_loop.runtime.launch feishu
   local pid=$!
   # 校验: 预检失败会立即退出；WS 连接成功后心跳文件写 state=connected。
   # 心跳文件优先（权威；lsof 查 feishu.cn 连接有时序误报）。WS 握手含 token 获取+
@@ -497,7 +601,9 @@ _status() {
 }
 
 case "${1:-web}" in
-  web)     _restart_precheck
+  web)     _webui_artifact_preflight || { _write_receipt web "1" "webui_artifact_preflight_failed"; exit 1; }
+           _service_control_preflight web || { _write_receipt web "1" "service_control_binding_failed"; exit 1; }
+           _restart_precheck
            _knowledge_preflight || { _write_receipt web "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _stop_web "$RESTART_PORT"; then
@@ -508,7 +614,8 @@ case "${1:-web}" in
            fi
            _write_receipt web "$_rc" "port=$RESTART_PORT"
            exit "$_rc" ;;
-  feishu)  _restart_precheck
+  feishu)  _service_control_preflight feishu || { _write_receipt feishu "1" "service_control_binding_failed"; exit 1; }
+           _restart_precheck
            _knowledge_preflight || { _write_receipt feishu "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _feishu_stop; then
@@ -519,7 +626,9 @@ case "${1:-web}" in
            fi
            _write_receipt feishu "$_rc" ""
            exit "$_rc" ;;
-  all)     _restart_precheck
+  all)     _webui_artifact_preflight || { _write_receipt all "1" "webui_artifact_preflight_failed"; exit 1; }
+           _service_control_preflight all || { _write_receipt all "1" "service_control_binding_failed"; exit 1; }
+           _restart_precheck
            _knowledge_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }
            # 修2(2026-09-09): 失败补偿——web 停/启失败不再 && 短路吞掉 feishu 恢复；
            # 各服务按自身停止成败独立决定是否重启（停失败强启=制造双进程，禁止）。

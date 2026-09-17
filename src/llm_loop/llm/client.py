@@ -812,6 +812,11 @@ class LLMClient:
     min_p: float | None = None
     max_retries: int = 0
     wire_protocol: str = "openai"  # P3-5: openai / anthropic / google（ModelSpec 元数据）
+    # P1-C1 startup-owned business policy. None preserves provider-aware defaults.
+    trust_env: bool | None = None
+    retry_disconnect: int = 1
+    anthropic_cache_control: bool | None = None
+    guard_hit_telemetry: bool | None = None
 
     # 兼容构造: settings 装配（保留字段注入）
     provider: str = "openai-compat"
@@ -837,6 +842,7 @@ class LLMClient:
     reasoning_split: bool = False
     # 2026-08-18 cache_guard（MCP 出入口）: 请求前规则校验开关（默认开；CACHE_GUARD=0 关闭）
     guard_enabled: bool = True
+    guard_audit_file: str | Path | None = None
     # legacy guard 字段：仅兼容直接调用方。主 engine 使用 GuardRequestContext，
     # 不再把 per-request 元数据写进 provider 级共享 LLMClient。
     guard_system: str | None = None
@@ -861,7 +867,7 @@ class LLMClient:
         # 请求被转给代理 → Surge 无法代理自身回环 → 503 Connection Closed（SGErrorDomain）
         # → 表现即"本地模型出错"。本地推理必须直连（llama-server KV 前缀缓存依赖同 slot
         # 直连; 见 EXPERIENCE-local-model-config）；远程 provider 保持默认（需代理访问
-        # API 的场景零回归）。env LLM_TRUST_ENV 显式覆盖（1=启用系统代理, 0=禁用）。
+        # API 的场景零回归）。P1-C1 后显式覆盖由启动时 Settings 快照注入。
         base = (self.base_url or "").lower()
         _is_local_base = any(h in base for h in ("localhost", "127.0.0.1", "0.0.0.0"))
         self._is_local_base = _is_local_base  # 2026-08-24: 供 _stream_openai 判本地关 thinking
@@ -869,11 +875,7 @@ class LLMClient:
             headers: dict[str, str] = {}
         else:
             headers = {"Connection": "close"}
-        _trust_override = os.environ.get("LLM_TRUST_ENV")
-        if _trust_override is not None:
-            trust_env = _trust_override.strip().lower() in ("1", "true", "yes", "on")
-        else:
-            trust_env = not _is_local_base
+        trust_env = bool(self.trust_env) if self.trust_env is not None else not _is_local_base
         self._client = httpx.Client(timeout=self.timeout_s, headers=headers, trust_env=trust_env)
 
     def _observe_transport_response(self, resp: httpx.Response, *, model_id: str) -> None:
@@ -1024,13 +1026,12 @@ class LLMClient:
         if _guard is None:
             # EVO-20260818（spec §6.2-6，grill-me 2.2）: 命中回执开关——
             # lms-chat 等本地推理无命中回执（三字段兜底后仍恒 0）→ 规则 G 停用
-            # 防恒 0 误拦；env CACHE_GUARD_HIT_TELEMETRY 显式覆盖
-            _hit_tel = os.environ.get("CACHE_GUARD_HIT_TELEMETRY")
-            if _hit_tel is not None:
-                _tel = _hit_tel not in ("0", "false", "False")
+            # 防恒 0 误拦；P1-C1 后显式覆盖由启动时 Settings 快照注入。
+            if self.guard_hit_telemetry is not None:
+                _tel = bool(self.guard_hit_telemetry)
             else:
                 _tel = self.wire_protocol != "lms-chat"
-            _guard = PromptGuard(hit_telemetry=_tel)
+            _guard = PromptGuard(audit_file=self.guard_audit_file, hit_telemetry=_tel)
             self._pg = _guard
         return _guard
 
@@ -1639,15 +1640,12 @@ class LLMClient:
         acc = _StreamAcc()
         agg = ToolCallDeltaAggregator()
         effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
-        # EVO-20260824: 大上下文流式断连重试（默认 1 次，env LLM_RETRY_DISCONNECT 可调/关）——
+        # EVO-20260824: 大上下文流式断连重试（默认 1 次；P1-C1 后由启动快照可调/关）——
         # 观测: 150K+ 字符上下文下 deepseek 流式偶发 peer closed connection
         # （incomplete chunked read），同请求重试因前缀缓存命中率高、代价极低；
         # 仅在「尚无任何输出已产出」时重试（已有 content/reasoning/tool delta
         # 产出则重试会造成 UI 重复/工具重复执行，故不重试）。
-        try:
-            _retry_disconnect = int(os.environ.get("LLM_RETRY_DISCONNECT", "1"))
-        except ValueError:  # 非法 env 兜底 1
-            _retry_disconnect = 1
+        _retry_disconnect = int(self.retry_disconnect)
         _tc_seen = False
 
         def _openai_stream_once(transport_retry_index: int) -> Iterator[StreamDelta]:
@@ -1820,12 +1818,11 @@ class LLMClient:
 
     # ── Anthropic Messages API（wire_protocol=anthropic，P3-5） ──
     def _anthropic_cache_enabled(self) -> bool:
-        """prompt caching 开关（EVO-20260817）: env ANTHROPIC_CACHE_CONTROL 显式覆盖；
+        """prompt caching 开关（EVO-20260817）: 启动快照可显式覆盖；
         未配置时 localhost/127.0.0.1 自动启用（本地模型省 token 主场景），远端默认关
         （官方 API 兼容但默认零回归，避免第三方端点对 cache_control 报错）。"""
-        v = os.environ.get("ANTHROPIC_CACHE_CONTROL")
-        if v is not None:
-            return v.strip().lower() in {"1", "true", "yes", "on"}
+        if self.anthropic_cache_control is not None:
+            return bool(self.anthropic_cache_control)
         base = (self.base_url or "").lower()
         return "localhost" in base or "127.0.0.1" in base
 

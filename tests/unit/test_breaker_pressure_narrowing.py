@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+from llm_loop.config import ToolRuntimeSettings
 from llm_loop.core.loop.build import _BuildMixin
 from llm_loop.core.message import Message, MessageSource
 
@@ -45,8 +46,9 @@ class _CacheMonitor:
 class _StubEngine(_BuildMixin):
     """最小 engine stub——_breaker_pressure_block 依赖面."""
 
-    def __init__(self, *, breaker: bool, pressure: bool):
+    def __init__(self, *, breaker: bool, pressure: bool, narrow: bool = True):
         self._cache_monitor = _CacheMonitor(breaker=breaker, pressure=pressure)
+        self.settings = type("SettingsStub", (), {"tool_runtime": ToolRuntimeSettings(breaker_pressure_narrow=narrow)})()
         self.actions: list[tuple] = []
 
     def _record_action(self, *args) -> None:
@@ -71,11 +73,9 @@ class _Sess:
 
 
 def _run(monkeypatch, narrow: str | None, *, breaker=True, pressure=True):
-    if narrow is None:
-        monkeypatch.delenv("LFL_BREAKER_PRESSURE_NARROW", raising=False)
-    else:
-        monkeypatch.setenv("LFL_BREAKER_PRESSURE_NARROW", narrow)
-    eng = _StubEngine(breaker=breaker, pressure=pressure)
+    # None = typed default True; explicit legacy rollback is injected through settings.
+    enabled = True if narrow is None else narrow == "1"
+    eng = _StubEngine(breaker=breaker, pressure=pressure, narrow=enabled)
     out = eng._breaker_pressure_block(_Sess(), effective_budget=1000, planned_label="local/qwen")
     return eng, out
 
@@ -159,7 +159,7 @@ class TestLegalTerminationSet:
         src = inspect.getsource(_BuildMixin._breaker_pressure_block)
         assert "cost" not in src.lower() or "optimizer" in src
         # breaker 终止面只判内部水位；成本/预算数值不进终止判定
-        assert "LFL_BREAKER_PRESSURE_NARROW" in src
+        assert "tool_runtime.breaker_pressure_narrow" in src
 
     def test_engine_run_end_reason_wiring_intact(self):
         """显式 0 回滚接线在场: 文案非空 → breaker_context_pressure 仍可收口."""
