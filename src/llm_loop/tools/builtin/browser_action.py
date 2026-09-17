@@ -74,7 +74,15 @@ class BrowserActionTool:
                 tool_name=self.name,
             )
         try:
-            receipt = self._adapter.execute(session_id, dict(kwargs))
+            action = dict(kwargs)
+            # ``args_normalization`` is a machine-authored receipt field, never part
+            # of the model-owned surface (see llm_loop.browser.action._valid_args_normalization
+            # and browser_semantic_execute.compile_request): the tool layer authors the
+            # passthrough fact for schema-shaped actions. A hand-authored value is passed
+            # through unchanged and the adapter keeps validating it fail-closed
+            # (``args_normalization_mismatch``).
+            action.setdefault("args_normalization", {"applied": False, "rule": None})
+            receipt = self._adapter.execute(session_id, action)
         except Exception as exc:  # noqa: BLE001 - adapter implementation faults are tool errors.
             return ToolResult(
                 status=ToolResultStatus.ERROR,
