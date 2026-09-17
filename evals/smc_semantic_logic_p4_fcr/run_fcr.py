@@ -215,9 +215,8 @@ def _surface(arm: str) -> dict[str, Any]:
     lazy_defs = registry.schemas(lazy=True)
     full_defs = registry.schemas(lazy=False)
     names = [str(row.get("name") or "") for row in lazy_defs]
-    expected_names = sorted(
-        SHARED_TOOLS
-        + (["browser_semantic_execute"] if arm == ARM_A else list(ARM_B_TOOLS))
+    expected_names = SHARED_TOOLS + (
+        ["browser_semantic_execute"] if arm == ARM_A else list(ARM_B_TOOLS)
     )
     if names != expected_names:
         raise RuntimeError(f"arm {arm} surface names drift: {names}")
