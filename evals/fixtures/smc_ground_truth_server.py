@@ -14,6 +14,15 @@ Delta vs the per-eval ``fixture_server.py`` copies (``evals/browser_smc_*``):
 * one route carrying ``hx-*`` attributes (with a no-CDN behavior shim) as
   the observation hook for any future HTMX-grounding comparison.
 
+v1.1 (first consumer-driven gap, ``browser_smc_subject_v01``): GETs of
+``PAGE_ROUTES`` paths are now recorded as server-side visits
+(``{seq, path, server_ts}``) exposed under the ``/state`` snapshot key
+``"visits"`` (``/manifest``, ``/state``, ``/event`` and 404s excluded), and
+route manifests may carry ``"expected_visits": [paths]``. Reason: a
+subject-facing controller cannot drive the subject's browser, so
+third-party navigation needed a server-side observable. Additive only; the
+gt-v01 event-log judge semantics are unchanged.
+
 Zero third-party dependencies. Loopback 127.0.0.1, ephemeral port, context
 manager. Never import this from production code.
 
@@ -29,7 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-FIXTURE_ID = "smc_ground_truth_server.v1"
+FIXTURE_ID = "smc_ground_truth_server.v1.1"
 
 # ---------------------------------------------------------------------------
 # shared page pieces
@@ -343,7 +352,9 @@ PAGE_ROUTES: dict[str, dict[str, Any]] = {
             "title": "page A",
             "marker": "data-page='a'",
             "canonical_objects": [],
-            "contract_notes": "distinct page resource for the navigate clause",
+            "expected_visits": ["/navigate/page-b"],
+            "contract_notes": "distinct page resource for the navigate clause; v1.1 expected_visits "
+                              "declares the landing route a third-party driver must reach",
         },
     },
     "/navigate/page-b": {
@@ -389,10 +400,11 @@ _ALLOWED_EVENT_KEYS = {"kind", "element_id", "value", "scrollTop", "phase"}
 
 
 class FixtureState:
-    """Thread-safe append-only event log: the server-side ground truth."""
+    """Thread-safe append-only logs: events (POST /event) + visits (page GETs)."""
 
     def __init__(self) -> None:
         self._events: list[dict[str, Any]] = []
+        self._visits: list[dict[str, Any]] = []
         self._lock = threading.Lock()
 
     def record(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -403,10 +415,20 @@ class FixtureState:
             self._events.append(event)
             return dict(event)
 
+    def record_visit(self, path: str) -> None:
+        with self._lock:
+            self._visits.append(
+                {"seq": len(self._visits) + 1, "path": path, "server_ts": round(time.time(), 3)}
+            )
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return {"fixture": FIXTURE_ID, "count": len(self._events),
-                    "events": [dict(item) for item in self._events]}
+            return {
+                "fixture": FIXTURE_ID,
+                "count": len(self._events),
+                "events": [dict(item) for item in self._events],
+                "visits": [dict(item) for item in self._visits],
+            }
 
 
 class GroundTruthServer:
@@ -437,6 +459,7 @@ class GroundTruthServer:
                 if entry is None:
                     self._send(404, b"not found", "text/plain")
                     return
+                state.record_visit(path)  # v1.1: server-side observable for third-party navigation
                 html = entry["builder"](path, query).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -492,6 +515,7 @@ class GroundTruthServer:
 
 
 def _self_check() -> int:
+    import urllib.error
     import urllib.request
 
     failures: list[str] = []
@@ -500,6 +524,12 @@ def _self_check() -> int:
         with urllib.request.urlopen(base + "manifest", timeout=5) as resp:
             manifest = json.loads(resp.read().decode("utf-8"))
         assert manifest["fixture"] == FIXTURE_ID
+        # v1.1: 404s must not be recorded as visits
+        try:
+            urllib.request.urlopen(base.rstrip("/") + "/no-such-route", timeout=5)
+            failures.append("404 probe unexpectedly succeeded")
+        except urllib.error.HTTPError:
+            pass
         for path, meta in manifest["routes"].items():
             with urllib.request.urlopen(base.rstrip("/") + path + "?delay_ms=50", timeout=5) as resp:
                 body = resp.read().decode("utf-8")
@@ -518,12 +548,28 @@ def _self_check() -> int:
             state = json.loads(resp.read().decode())
         if state["count"] != 1 or state["events"][0]["element_id"] != "selfcheck":
             failures.append("state log wrong: " + json.dumps(state))
+        # v1.1: visits log — exactly the manifest routes, path-only, no query,
+        # no /manifest //state entries, 404 excluded, seq 1..n.
+        visits = state.get("visits")
+        if not isinstance(visits, list):
+            failures.append("state snapshot missing 'visits' list")
+        else:
+            paths = [str(v.get("path") or "") for v in visits]
+            if sorted(paths) != sorted(manifest["routes"]):
+                failures.append(f"visits mismatch: {sorted(paths)}")
+            if any("?" in p or p in {"/manifest", "/state", "/no-such-route"} for p in paths):
+                failures.append(f"visits contain excluded/query path: {paths}")
+            if [v.get("seq") for v in visits] != list(range(1, len(visits) + 1)):
+                failures.append(f"visit seq not 1..n: {visits}")
+            if any(not {"path", "seq", "server_ts"} <= set(v) for v in visits):
+                failures.append(f"visit entry keys wrong: {visits[:2]}")
     if failures:
         print("SELF-CHECK FAIL:")
         for item in failures:
             print(" -", item)
         return 1
-    print(f"SELF-CHECK PASS: {len(manifest['routes'])} routes, markers ok, event log ok, port ephemeral")
+    print(f"SELF-CHECK PASS: {len(manifest['routes'])} routes, markers ok, event log ok, "
+          f"visits log ok ({len(visits)}), port ephemeral")
     return 0
 
 
