@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class ExperienceParseError(Exception):
@@ -30,6 +30,7 @@ class ExperienceDocument:
     updated_at: str = ""
     body: str = ""
     superseded_by: str = ""
+    supersedes: list[str] = field(default_factory=list)  # T0-C1: 写时近重复无损链接（反向指针，不改写旧条目）
     promoted_to_rule: str = ""
     last_verified_at: str = ""
     # P1-B: positive reusable experience and negative/failed lesson are distinct facts.
@@ -64,6 +65,8 @@ class ExperienceDocument:
         _append_scalar(lines, "updated_at", self.updated_at)
         if self.superseded_by:
             _append_scalar(lines, "superseded_by", self.superseded_by)
+        if self.supersedes:
+            lines.append(f"supersedes: [{', '.join(_yaml_str(s) for s in self.supersedes)}]")
         if self.promoted_to_rule:
             _append_scalar(lines, "promoted_to_rule", self.promoted_to_rule)
         if self.last_verified_at:
@@ -97,6 +100,7 @@ class ExperienceDocument:
                 updated_at=str(fields_map.get("updated_at", "")),
                 body=body,
                 superseded_by=str(fields_map.get("superseded_by", "")),
+                supersedes=list(fields_map.get("supersedes", []) or []),
                 promoted_to_rule=str(fields_map.get("promoted_to_rule", "")),
                 last_verified_at=str(fields_map.get("last_verified_at", "")),
                 record_kind=str(fields_map.get("record_kind", "experience")),

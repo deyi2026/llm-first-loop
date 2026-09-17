@@ -155,7 +155,8 @@ _LEGACY_GOVERNED_KEYS = (
     "SUMMARY_MODE",
     "TOOL_SCHEMA_LAZY",
     # R2 增补（2026-09-16 缓存互踩事故）: embedding 业务配置纳入治理——
-    # shell 残留不再漂移 provider/base_url/model，只认 workspace .env 文件
+    # shell 残留不再漂移 provider/base_url/model，只认 workspace .env 文件。
+    # （自 evo-20260914-exec-surface-followup 832b4dfa 移植；TOML 迁移前留此清单）
     "EMBEDDING_PROVIDER",
     "EMBEDDING_BASE_URL",
     "EMBEDDING_MODEL",

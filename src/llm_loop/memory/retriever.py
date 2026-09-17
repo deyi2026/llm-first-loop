@@ -106,21 +106,20 @@ class SemanticRetriever:
         threshold: float | None = None,
         memory_dir: str | Path | None = None,
         archive_dir: str | Path | None = None,
+        fallback_embedder: Embedder | None = None,
     ) -> None:
         self.embedder = embedder
+        # T0-B（2026-09-16）: 主嵌入（生产 api@8765）不可用时整套回退 hash——查询向量/
+        # 阈值/缓存文件三件套同空间切换（引擎级），绝不把 fallback 向量写进主版本
+        # 缓存文件（T8 版本化缓存所防的互踩事故在回退路径同样成立）。
+        self.fallback_embedder = fallback_embedder
+        self.fallback_engaged = 0
+        self._fb_state: dict | None = None  # 惰性构建：首次回退时才加载 hash 版缓存
         self.timeout_s = timeout_s
         self.semantic_top_k = semantic_top_k
-        # T7: threshold=None → 按 embedder 相似度分布取校准默认（实测校准 2026-09-16，515 条真实查询 × 1487 候选）:
-        #  - hash（字符 n-gram 词法重叠，分布低）: 0.22（原校准值，语义召回靠词法重叠）
-        #  - api/bge-small-zh-v1.5（语义向量，中文各向异性整体偏高，全 pair P50=0.44）: 0.50
-        #    → 每查询通过数 P50 1487→208（信号密度×7），top-5 切损仅 2.3%（0.55 时 11.8% 过激进）；
-        #    相关/无关分界实测 ≈0.54（相关命中 0.58-0.75，无关混入 <0.54）
+        # T7: threshold=None → 按 embedder 相似度分布取校准默认
         if threshold is None:
-            threshold = (
-                0.22
-                if embedder is not None and getattr(embedder, "provider", "") == "hash"
-                else 0.50
-            )
+            threshold = self._default_threshold(embedder)
         self.threshold = threshold
         # M59 配置面收敛: 运行时动态 top_k 提供器（AI 经 adjust_strategy 可调；未注入用构造值）
         self._top_k_provider: Callable[[], int] | None = None
@@ -137,14 +136,14 @@ class SemanticRetriever:
         self._mem_cache_path = self._cache_path(Path(memory_dir)) if memory_dir else None
         self._arch_cache_path = self._cache_path(Path(archive_dir)) if archive_dir else None
 
-    def _cache_tag(self) -> str:
+    def _cache_tag(self, embedder: Embedder | None = None) -> str:
         """向量版本 → 文件名安全 tag（空版本 → legacy，防旧代码/None embedder 覆写主版本）."""
-        ver = self._emb_version()
+        ver = self._emb_version(embedder if embedder is not None else self.embedder)
         tag = re.sub(r"[^A-Za-z0-9._-]", "_", ver)[:64]
         return tag or "legacy"
 
-    def _cache_path(self, directory: Path) -> Path:
-        return directory / f"embeddings-{self._cache_tag()}.json"
+    def _cache_path(self, directory: Path, embedder: Embedder | None = None) -> Path:
+        return directory / f"embeddings-{self._cache_tag(embedder)}.json"
 
     def _load_emb_cache_versioned(self, directory: Path) -> dict[str, list[float]]:
         """载入版本化缓存；tag 文件缺失时回退旧 embeddings.json（版本匹配才载入）."""
@@ -154,19 +153,60 @@ class SemanticRetriever:
             self._load_emb_cache(directory / "embeddings.json", cache)
         return cache
 
-    def _emb_version(self) -> str:
+    def _emb_version(self, embedder: Embedder | None = None) -> str:
         """当前 embedder 向量算法版本（T6: 缓存按版本校验，防新旧向量混用）."""
-        if self.embedder is not None:
-            return str(getattr(self.embedder, "vector_version", ""))
+        target = self.embedder if embedder is None else embedder
+        if target is not None:
+            return str(getattr(target, "vector_version", "") or "")
         return ""
 
-    def _load_emb_cache(self, path: Path, cache: dict) -> None:
+    @staticmethod
+    def _default_threshold(embedder: Embedder | None) -> float:
+        """T7 按 embedder 相似度分布取校准默认（实测 2026-09-16，515 真实查询 × 1487 候选）:
+
+        - hash（字符 n-gram 词法重叠，分布低）: 0.22（原校准值，语义召回靠词法重叠）
+        - api/bge-small-zh-v1.5（语义向量，中文各向异性偏高，全 pair P50=0.44）: 0.50
+          → 每查询通过数 P50 1487→208（信号密度×7），top-5 切损 2.3%；相关/无关分界 ≈0.54
+        """
+        if embedder is not None and getattr(embedder, "provider", "") == "hash":
+            return 0.22
+        return 0.50
+
+    def _fallback_state(self) -> dict | None:
+        """T0-B: 惰性构建回退引擎（embedder/阈值/双缓存/双路径，hash 空间自洽）."""
+        if self.fallback_embedder is None:
+            return None
+        if self._fb_state is None:
+            state: dict = {
+                "embedder": self.fallback_embedder,
+                "threshold": self._default_threshold(self.fallback_embedder),
+                "mem_cache": {},
+                "arch_cache": {},
+                "mem_path": None,
+                "arch_path": None,
+            }
+            if self._mem_cache_path is not None:
+                state["mem_path"] = self._cache_path(self._mem_cache_path.parent, self.fallback_embedder)
+                state["mem_cache"] = self._load_emb_cache_for(state["mem_path"], self.fallback_embedder)
+            if self._arch_cache_path is not None:
+                state["arch_path"] = self._cache_path(self._arch_cache_path.parent, self.fallback_embedder)
+                state["arch_cache"] = self._load_emb_cache_for(state["arch_path"], self.fallback_embedder)
+            self._fb_state = state
+        return self._fb_state
+
+    def _load_emb_cache_for(self, path: Path, embedder: Embedder | None) -> dict[str, list[float]]:
+        """T0-B: 按指定 embedder 版本载入缓存（空缓存=冷启动重嵌入）."""
+        cache: dict[str, list[float]] = {}
+        self._load_emb_cache(path, cache, embedder)
+        return cache
+
+    def _load_emb_cache(self, path: Path, cache: dict, embedder: Embedder | None = None) -> None:
         """加载 embedding 缓存（T6 版本化：新格式带 v 键校验；旧扁平格式仅 hash-v1 兼容）."""
         if not path.exists():
             return
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            ver = self._emb_version()
+            ver = self._emb_version(embedder)
             if isinstance(raw, dict) and "v" in raw:
                 # 新格式: {"v": <版本>, "data": {key: vec}}；版本不匹配 → 忽略
                 # （fail-open 重建，防算法变更后新旧向量混用）
@@ -178,12 +218,12 @@ class SemanticRetriever:
         except (json.JSONDecodeError, OSError, TypeError):
             pass  # 损坏/异常 fail-open：忽略缓存
 
-    def _persist_emb_cache(self, path: Path | None, cache: dict) -> None:
+    def _persist_emb_cache(self, path: Path | None, cache: dict, embedder: Embedder | None = None) -> None:
         if path is None:
             return
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {"v": self._emb_version(), "data": dict(cache)}
+            payload = {"v": self._emb_version(embedder), "data": dict(cache)}
             path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         except OSError as exc:  # fail-open：缓存写失败仅影响下次冷启动
             logger.debug("embedding 缓存写失败，仅影响下次冷启动（fail-open）: %s", exc)
@@ -233,16 +273,43 @@ class SemanticRetriever:
             return RetrievalResult(entries=keyword_results or [], mode="keyword", note="")
 
         start = time.monotonic()
+        # T0-B: 引擎级回退——主嵌入不可用时，查询向量/阈值/缓存三件套整体切到
+        # fallback（hash）空间；fallback 也失败才降级关键词。绝不混用向量空间。
+        q_vec: list[float] | None = None
+        engine: dict | None = None
+        fallback_note = ""
+        primary_error = ""
         try:
             q_vec = self.embedder.embed(query)
         except Exception as exc:  # noqa: BLE001
-            return RetrievalResult(
-                entries=keyword_results or [],
-                mode="keyword",
-                note=f"语义检索不可用：{exc}，已降级为关键词检索",
-            )
-        if q_vec is None:
-            return RetrievalResult(entries=keyword_results or [], mode="keyword", note="")
+            primary_error = f"{exc}"
+        if q_vec is not None:
+            engine = {
+                "embedder": self.embedder,
+                "threshold": self.threshold,
+                "mem_cache": self._mem_emb_cache,
+                "arch_cache": self._arch_emb_cache,
+                "mem_path": self._mem_cache_path,
+                "arch_path": self._arch_cache_path,
+            }
+        else:
+            fb = self._fallback_state()
+            if fb is not None:
+                try:
+                    q_vec = fb["embedder"].embed(query)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("fallback embedder 也失败: %s", exc)
+                    q_vec = None
+                if q_vec is not None:
+                    engine = fb
+                    self.fallback_engaged += 1
+                    fallback_note = "主嵌入服务不可用，语义通道已整套回退 hash（查询/缓存/阈值同空间切换）"
+                    logger.warning(
+                        "[T0-B] 主嵌入不可用(%s)，语义通道整套回退 hash", primary_error or "embed 返回 None"
+                    )
+        if q_vec is None or engine is None:
+            note = f"语义检索不可用：{primary_error}，已降级为关键词检索" if primary_error else ""
+            return RetrievalResult(entries=keyword_results or [], mode="keyword", note=note)
 
         # 语义召回（预算内）
         semantic_hits: list[dict] = []
@@ -254,11 +321,11 @@ class SemanticRetriever:
                     mode="keyword",
                     note="语义检索超时，已降级为关键词检索",
                 )
-            vec = self._embed_cached(c, scope)
+            vec = self._embed_cached(c, engine)
             if vec is None:
                 continue
             score = cosine_similarity(q_vec, vec)
-            if score >= self.threshold:
+            if score >= engine["threshold"]:
                 semantic_hits.append({**c, "_semantic_score": round(score, 3)})
         semantic_hits.sort(key=lambda x: x["_semantic_score"], reverse=True)
         semantic_hits = semantic_hits[: self._semantic_top_k()]
@@ -290,7 +357,7 @@ class SemanticRetriever:
             mode = "semantic"
         else:
             mode = "keyword"
-        return RetrievalResult(entries=fused, mode=mode, note="")
+        return RetrievalResult(entries=fused, mode=mode, note=fallback_note)
 
     # ── 候选条目（惰性向量化）──
     def _candidates(self, scope: str, session_id: str, memory: Any, archive: Any) -> list[dict]:
@@ -322,19 +389,20 @@ class SemanticRetriever:
                 )
         return cands
 
-    def _embed_cached(self, cand: dict, scope: str) -> list[float] | None:
+    def _embed_cached(self, cand: dict, engine: dict) -> list[float] | None:
         # 修复: 按候选自身 kind 路由缓存（scope="all" 时此前误走 archive 缓存，
         # 导致 memory 候选逐条重嵌入+缓存文件交叉污染；候选 dict 已带 kind 字段）
+        # T0-B: 缓存/嵌入/落盘路径全部取自当前 engine（主或 fallback，空间自洽）
         is_memory = cand.get("kind", "memory") == "memory"
-        cache = self._mem_emb_cache if is_memory else self._arch_emb_cache
+        cache = engine["mem_cache"] if is_memory else engine["arch_cache"]
         key = cand["key"]
         if key not in cache:
-            vec = self.embedder.embed(cand["content"])  # type: ignore[union-attr]
+            vec = engine["embedder"].embed(cand["content"])
             if vec is None:
                 return None
             cache[key] = vec
-            path = self._mem_cache_path if is_memory else self._arch_cache_path
-            self._persist_emb_cache(path, cache)
+            path = engine["mem_path"] if is_memory else engine["arch_path"]
+            self._persist_emb_cache(path, cache, engine["embedder"])
         return cache.get(key)
 
     def _rrf_fuse(
