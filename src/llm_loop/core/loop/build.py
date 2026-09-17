@@ -59,6 +59,71 @@ def _provider_visible_chars(messages: list[Message], provider_id: str, start: in
     )
 
 
+def _task_anchor_goal_parts(audit_dir: str, session_id: str) -> list[str]:
+    """任务锚快照·Goal 段（EVO-20260916-ccc978b2 复核修正 2026-09-16 拷问）.
+
+    通道A修正: GoalStore.get 带 strict_session=True（CR-R1.1，与
+    _persist_semantic_state/_decision_line_frame 同口径）——本会话无 goal 时
+    不回退投影其他会话/全局 goal，防止旧目标借压缩态窗口复活。
+    通道B修正: 终态（complete/blocked）goal 只投影状态+时间戳一行，不投
+    objective/checkpoint.next（update 不清 checkpoints[-1].next，全量投影会让
+    已过时 next 以活性口吻常驻压缩态）；active goal 增投 status/updated_at/
+    checkpoint ts，供模型自判陈旧。仍为逐字机械投影，不合成决策/摘要。
+    任一存储异常 → 返回已取部分（fail-open，与原实现一致）。
+    """
+    parts: list[str] = []
+    try:
+        from llm_loop.introspection.goal import GoalStore
+
+        goal = GoalStore(audit_dir).get(
+            prefer_session_id=session_id, strict_session=True
+        )
+        if not goal:
+            return parts
+        status = str(goal.get("status") or "")
+        updated = str(goal.get("updated_at") or "")
+        if status != "active":
+            bits = [f"[Goal {goal.get('id', '')}] status: {status or '-'}"]
+            if goal.get("completed_at"):
+                bits.append(f"completed_at: {goal['completed_at']}")
+            if goal.get("blocked_reason"):
+                bits.append(
+                    f"blocked_reason: {str(goal['blocked_reason'])[:200]}"
+                )
+            if updated:
+                bits.append(f"updated_at: {updated}")
+            bits.append("objective/checkpoints 不投影（终态，其 next 可能已过时）")
+            parts.append(" | ".join(bits))
+            return parts
+        obj = str(goal.get("objective") or "").strip()
+        if obj:
+            parts.append(
+                f"[Goal {goal.get('id', '')}] status: {status or '-'} | updated_at: {updated or '-'}\nobjective: {obj[:1200]}"
+            )
+        cps = goal.get("checkpoints") or []
+        if cps:
+            cp = cps[-1]
+            cp_line = (
+                f"[Checkpoint ts: {str(cp.get('ts') or '-')}] {str(cp.get('what') or '')[:400]}"
+            )
+            if cp.get("next"):
+                cp_line += f" | next: {str(cp['next'])[:400]}"
+            if cp.get("evidence"):
+                cp_line += f" | evidence: {str(cp['evidence'])[:200]}"
+            parts.append(cp_line)
+        try:
+            from llm_loop.introspection.task_store import TaskStore
+
+            line = TaskStore(audit_dir).summary_line(str(goal.get("id")))
+            if line:
+                parts.append(f"[Frontier] {line}")
+        except Exception:  # noqa: BLE001 — frontier fail-open
+            pass
+    except Exception:  # noqa: BLE001 — goal fail-open（与原实现一致）
+        pass
+    return parts
+
+
 def _cache_boundary_protection(
     state: Any,
     *,
@@ -429,6 +494,7 @@ class _BuildMixin:
         max_chars: int,
         model: str | None = None,
         planned_label: str | None = None,
+        logical_round: int | None = None,
     ) -> ConservativeProjectionOutcome:
         """Side-effect-free rebuild from current durable Session truth.
 
@@ -445,6 +511,7 @@ class _BuildMixin:
             model=model,
             planned_model_label=self._planned_model_label,
             current_turn_ref=self._run_state().current_turn_ref,
+            logical_round=logical_round,
             record_action=lambda *_args, **_kwargs: None,
             event_append=lambda *_args, **_kwargs: None,
             data_dir=self.settings.data_dir,
@@ -466,6 +533,7 @@ class _BuildMixin:
         model: str | None = None,  # P1-7: per-call 模型覆盖（判定本地 provider 跳过推送式注入）
         planned_label: str | None = None,  # 热重载一致性: 复用本轮已解析标签，避免构造期二次读registry
         registry_snapshot: Any | None = None,  # R8.21: reasoning policy must bind to this round's provider
+        logical_round: int | None = None,
     ) -> list[dict]:
         """构造提交 LLM 的消息序列（system prompt + 记忆注入 + 历史 + 压缩另存）.
         M54: max_chars 可覆盖默认预算；None = 运行时预算。P1-10: 窗口锚定——
@@ -483,6 +551,7 @@ class _BuildMixin:
             model=model,
             planned_model_label=self._planned_model_label,
             current_turn_ref=self._run_state().current_turn_ref,
+            logical_round=logical_round,
             record_action=self._record_action,
             event_append=self._event_append,
             data_dir=self.settings.data_dir,
@@ -521,6 +590,56 @@ class _BuildMixin:
         # 历史投影三段接线 → stages/history_pipeline.py::run_history_pipeline
         # （B4-CLOSE-01 步C1；prep→projection→postprocess 语义原样，调
         # history 现函数 Phase 7 前不动其内部）；写回面经 outcome 回接。
+
+        def _task_anchor_snapshot() -> str:
+            # EVO-20260916-ccc978b2（人工已审）: 任务锚快照——durable 事实的逐字
+            # 机械投影（Goal objective + 最近 checkpoint + frontier 单行 + 最近
+            # evidence 引用锚）。只投影已记录字符串，不合成决策/摘要；惰性求值
+            # （仅压缩生效轮被调用）；任一存储异常 → 尽力返回已取部分（fail-open，
+            # 不阻断窗口构建）。
+            from pathlib import Path
+
+            _audit_dir = os.path.join(str(self.settings.data_dir), "audit")
+            # 通道A/B 修正（2026-09-16 拷问）: Goal 段逻辑收敛到模块级
+            # _task_anchor_goal_parts——strict_session=True（禁跨会话回退）+
+            # 终态只投状态行（旧 next 不投影）+ active 增投 status/时间戳。
+            parts: list[str] = _task_anchor_goal_parts(_audit_dir, sess.session_id)
+            try:
+                from llm_loop.core.run_context import workspace_base
+                from llm_loop.memory.evidence import EvidenceLedgerStore, OwnerScope
+
+                _ledger = EvidenceLedgerStore(
+                    Path(os.path.join(str(self.settings.evidence_dir), "ledger"))
+                )
+                _recs = _ledger.list_recent(
+                    OwnerScope(
+                        workspace_id=os.path.abspath(workspace_base()),
+                        session_id=sess.session_id,
+                    ),
+                    limit=6,
+                )
+                _lines = []
+                for _r in _recs:
+                    _p = getattr(_r, "payload", None)
+                    _ref = getattr(getattr(_p, "evidence_ref", None), "ref", "")
+                    if _ref:
+                        _lines.append(
+                            f"- {_ref} ({getattr(_p, 'tool_name', '') or 'evidence'})"
+                        )
+                if _lines:
+                    parts.append(
+                        "[Evidence 锚] 最近 evidence 引用（指针，非内容；用 "
+                        "read_evidence 恢复）：\n" + "\n".join(_lines)
+                    )
+            except Exception:
+                pass
+            if not parts:
+                return ""
+            return (
+                "[任务锚点·压缩存活快照]（程序逐字投影 durable 事实，非摘要；旧 tool "
+                "回执已折叠，read_evidence 可恢复）\n" + "\n".join(parts)
+            )
+
         _hist = run_history_pipeline(
             sess=sess,
             provider_id=provider_id,
@@ -544,6 +663,7 @@ class _BuildMixin:
             cache_protected_prefix_messages=_cache_protected_messages,
             cache_protected_prefix_chars=_cache_protected_chars,
             current_turn_ref=_state.current_turn_ref,
+            task_anchor_snapshot_provider=_task_anchor_snapshot,  # EVO-20260916-ccc978b2
             event_append=self._event_append,
             compact_event_seq=self._run_state().compact_event_seq,
             compact_event_was_compacted=self._run_state().compact_event_was_compacted,

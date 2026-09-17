@@ -1,0 +1,1184 @@
+{
+ "summary": {
+  "hash": {
+   "A": {
+    "n": 20,
+    "recall@5": 0.0
+   },
+   "B": {
+    "n": 10,
+    "recall@5": 1.0
+   },
+   "kw_only_A": 0,
+   "modes": {
+    "semantic": 29,
+    "mixed": 11
+   }
+  },
+  "bge": {
+   "A": {
+    "n": 20,
+    "recall@5": 0.45
+   },
+   "B": {
+    "n": 10,
+    "recall@5": 1.0
+   },
+   "kw_only_A": 0,
+   "modes": {
+    "semantic": 24,
+    "mixed": 11,
+    "keyword": 5
+   }
+  }
+ },
+ "detail": {
+  "hash": [
+   {
+    "class": "A",
+    "q": "大模型后台进程卡死了，把它彻底关掉再拉起来的正规流程是什么",
+    "target": "memory:MEM-20260911-3b15564f",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260909-c2b0ff7f",
+     "memory:MEM-20260909-3130370b",
+     "memory:MEM-20260903-08bbccca",
+     "memory:MEM-20260811-c917a6c3",
+     "memory:MEM-20260818-b41c2fdc"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "对面网关老返回参数不合法的报错，之前把多少次任务直接打断了",
+    "target": "memory:MEM-20260902-48766239",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260914-d3f267a5",
+     "memory:MEM-20260829-242d393b",
+     "memory:MEM-20260912-261b4289",
+     "memory:MEM-20260914-d22c1931",
+     "memory:MEM-20260818-1bebfde2"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "事件日志每一行是什么结构，公共字段有哪些",
+    "target": "memory:MEM-20260810-4bd1e04e",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260818-5ad82b5c",
+     "memory:MEM-20260905-9b218e85",
+     "memory:MEM-20260903-bcca3b7c",
+     "memory:MEM-20260815-9175bbc4",
+     "memory:MEM-20260903-78577006"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "系统给自己复盘打分时看哪几个方面，上次各项多少",
+    "target": "memory:MEM-20260811-7cc0a960",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260908-aace10a4",
+     "memory:MEM-20260915-17a3b4e5",
+     "memory:MEM-20260908-2f7935ab",
+     "memory:MEM-20260825-709ccaf8",
+     "memory:MEM-20260819-78b5e98e"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "消息桥接进程假死那次修复，心跳写到哪个文件",
+    "target": "memory:MEM-20260812-d7535179",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260812-826c2839",
+     "memory:MEM-20260817-cbeab258",
+     "memory:MEM-20260914-d3f267a5",
+     "memory:MEM-20260820-1e10df05",
+     "memory:MEM-20260823-9e01fe03"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "智能体原地打转反复做同一件事，为什么运行时拦不住它",
+    "target": "memory:MEM-20260814-c2aaa876",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260811-5815989c",
+     "memory:MEM-20260826-071e642e",
+     "memory:MEM-20260826-09b63ff1",
+     "memory:MEM-20260821-bf412eb8",
+     "memory:MEM-20260812-9988183f"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "回复末尾禁止自动出现哪类装饰性统计文字",
+    "target": "memory:MEM-20260816-8c6bfac9",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260901-ea24a1b8",
+     "memory:MEM-20260903-bd58a235",
+     "memory:MEM-20260914-7a226797",
+     "memory:MEM-20260818-1d57ee70",
+     "memory:MEM-20260901-49d3c0e1"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "配置热更新哪些字段立即生效，哪些必须重启进程",
+    "target": "memory:MEM-20260817-9ef30bf5",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260815-c98a8edc",
+     "memory:MEM-20260815-512e3572",
+     "memory:MEM-20260815-559477ae",
+     "memory:MEM-20260910-0d9c9095",
+     "memory:MEM-20260913-76187e38"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "本地小模型连着调工具时把前面做过的事忘了，针对这个毛病的改进方向",
+    "target": "memory:MEM-20260818-084967c3",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260814-85f8fb3d",
+     "memory:MEM-20260812-9988183f",
+     "memory:MEM-20260829-184aa8ea",
+     "memory:MEM-20260903-2c2c55ae",
+     "memory:MEM-20260908-4bd2891a"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "运行中往上下文里塞新信息的正确位置在哪，为什么不能插中间",
+    "target": "memory:MEM-20260819-916e6c82",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260901-39197400",
+     "memory:MEM-20260901-3792af4c",
+     "memory:MEM-20260908-12002958",
+     "memory:MEM-20260911-fe7dcb6f",
+     "memory:MEM-20260911-0dec12d1"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "上下文被压缩后模型变笨有哪几种真实风险",
+    "target": "memory:MEM-20260823-f7e94b6a",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260909-b3462011",
+     "memory:MEM-20260909-c241681e",
+     "memory:MEM-20260909-cd632077",
+     "memory:MEM-20260909-6400494f",
+     "memory:MEM-20260908-7f78724a"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "查异常记录应该用哪个参数名，容易写错成什么",
+    "target": "memory:MEM-20260825-1664e3ec",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260819-4516fe70",
+     "memory:MEM-20260817-cbeab258",
+     "memory:MEM-20260827-6cc1e63e",
+     "memory:MEM-20260829-242d393b",
+     "memory:MEM-20260829-5c624ec0"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "那份关于上下文健康和模型发挥的体检报告放在哪，结论分几块",
+    "target": "memory:MEM-20260831-fac32cf4",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260813-e639f8b4",
+     "memory:MEM-20260902-18e64051",
+     "memory:MEM-20260814-e7fa11c7",
+     "memory:MEM-20260830-8bc04d67",
+     "memory:MEM-20260830-8e597390"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "运行结果显示某个标记就结束了，这是程序崩了还是模型自己收尾",
+    "target": "memory:MEM-20260902-f9da74a8",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260810-48177358",
+     "memory:MEM-20260812-14cc9799",
+     "memory:MEM-20260820-1dec6ac3",
+     "memory:MEM-20260914-1adf5a13",
+     "memory:MEM-20260830-45577c5d"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "估算推理时上下文要占多少显存，有没有现成网页工具",
+    "target": "memory:MEM-20260905-e4df6130",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260810-1c299360",
+     "memory:MEM-20260814-df36de74",
+     "memory:MEM-20260818-41d98638",
+     "memory:MEM-20260909-da482f4d",
+     "memory:MEM-20260813-e639f8b4"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "写文件时防止并发覆盖把内容弄坏，完整防护顺序是什么",
+    "target": "memory:MEM-20260908-61371974",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260914-8a635b61",
+     "memory:MEM-20260914-2ec3b546",
+     "memory:MEM-20260909-342449ae",
+     "memory:MEM-20260811-3e4098c6",
+     "memory:MEM-20260810-d734dacb"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "提交代码时作者邮箱用什么格式才不暴露真实邮箱",
+    "target": "memory:MEM-20260908-0b262a8b",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260910-5f273533",
+     "memory:MEM-20260912-a36b81a4",
+     "memory:MEM-20260815-e94628e5",
+     "memory:MEM-20260911-fbd27048",
+     "memory:MEM-20260814-90fc47ae"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "用户研究开源仓库的习惯是什么，会读到什么颗粒度",
+    "target": "memory:MEM-20260910-fbb9a634",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260901-536fa4e0",
+     "memory:MEM-20260828-01cfa0cf",
+     "memory:MEM-20260811-832f3142",
+     "memory:MEM-20260909-da8b9baa",
+     "memory:MEM-20260901-940da190"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "零开头的版本号怎么升级，更新说明是写给谁看的",
+    "target": "memory:MEM-20260912-9b0624a3",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260906-7a7ebf40",
+     "memory:MEM-20260812-cd4a1771",
+     "memory:MEM-20260910-d3b11177",
+     "memory:MEM-20260827-3ffefaab",
+     "memory:MEM-20260819-a505e9dd"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "有个沙箱外的目录还在继续跑任务，追责查到什么程度了",
+    "target": "memory:MEM-20260913-af0f67d2",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260909-b894cd5a",
+     "memory:MEM-20260820-2ee505e5",
+     "memory:MEM-20260818-066f0da8",
+     "memory:MEM-20260903-12d7d546",
+     "memory:MEM-20260813-e64cae62"
+    ],
+    "hit": false
+   },
+   {
+    "class": "B",
+    "q": "err1214 messages 参数非法",
+    "target": "memory:MEM-20260902-48766239",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260902-48766239",
+     "memory:MEM-20260820-0e2c227a",
+     "memory:MEM-20260826-cad12a9b",
+     "memory:MEM-20260908-329c7730",
+     "memory:MEM-20260811-14bd1125"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "refresh_config 热重载语义",
+    "target": "memory:MEM-20260817-9ef30bf5",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260817-9ef30bf5",
+     "memory:MEM-20260810-78cb96da",
+     "memory:MEM-20260908-1ccc9e17",
+     "memory:MEM-20260814-df36de74",
+     "memory:MEM-20260914-41df1b03"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "Qwythos-9B MTP GGUF",
+    "target": "memory:MEM-20260813-d6e0da6b",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260813-d6e0da6b",
+     "memory:MEM-20260910-845b00e2",
+     "memory:MEM-20260908-c13da3f7",
+     "memory:MEM-20260811-71d84adc",
+     "memory:MEM-20260827-55bb3fd0"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "launchctl 8901 重启",
+    "target": "memory:MEM-20260911-3b15564f",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260911-3b15564f",
+     "memory:MEM-20260911-c22c4ca8",
+     "memory:MEM-20260906-aebcf217",
+     "memory:MEM-20260810-d596b0dd",
+     "memory:MEM-20260915-8a1cb18a"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "feishu_heartbeat.json 看门狗",
+    "target": "memory:MEM-20260812-d7535179",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260914-0b4d98db",
+     "memory:MEM-20260914-6b892256",
+     "memory:MEM-20260822-8eadbaa5",
+     "memory:MEM-20260811-b0f633c3",
+     "memory:MEM-20260812-d7535179"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "event_logs JSONL schema",
+    "target": "memory:MEM-20260810-4bd1e04e",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260810-4bd1e04e",
+     "memory:MEM-20260825-db7b2b6d",
+     "memory:MEM-20260913-66aed282",
+     "memory:MEM-20260817-33822297",
+     "memory:MEM-20260821-61a89715"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "kvcache.ai 计算器",
+    "target": "memory:MEM-20260905-e4df6130",
+    "modes": "mixed",
+    "kw_seed_hits": 1,
+    "top5_keys": [
+     "memory:MEM-20260905-e4df6130",
+     "memory:MEM-20260821-31f03506",
+     "memory:MEM-20260829-3be3de1a",
+     "memory:MEM-20260901-940da190",
+     "memory:MEM-20260815-c7af21d1"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "EffectPreparedUnavailable",
+    "target": "memory:MEM-20260908-61371974",
+    "modes": "mixed",
+    "kw_seed_hits": 3,
+    "top5_keys": [
+     "memory:MEM-20260908-61371974",
+     "memory:MEM-20260908-aaaa9225",
+     "memory:MEM-20260908-33ae7f75",
+     "memory:MEM-20260828-857d2c95",
+     "memory:MEM-20260910-08feffaa"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "noreply git 提交身份",
+    "target": "memory:MEM-20260908-0b262a8b",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260909-680c5495",
+     "memory:MEM-20260908-0b262a8b",
+     "memory:MEM-20260909-7f2594a8",
+     "memory:MEM-20260908-6011fc77",
+     "memory:MEM-20260909-f41d3efd"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "SYAGI 8924 告警服务",
+    "target": "memory:MEM-20260822-37dfe618",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260822-37dfe618",
+     "memory:MEM-20260811-8fe63120",
+     "memory:MEM-20260811-8c3950ab",
+     "memory:MEM-20260814-c243c84e",
+     "memory:MEM-20260825-1b6a3a5b"
+    ],
+    "hit": true
+   },
+   {
+    "class": "C",
+    "q": "React useEffect 依赖数组闭包陷阱",
+    "target": null,
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260819-15cda5dc",
+     "memory:MEM-20260903-ce839221",
+     "memory:MEM-20260903-45c35b0b",
+     "memory:MEM-20260828-9f775331",
+     "memory:MEM-20260908-aaaa9225"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "红烧肉炖多久才软烂",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260821-bbf37bfb",
+     "memory:MEM-20260812-9988183f",
+     "memory:MEM-20260810-ec77c106",
+     "memory:MEM-20260915-8181a01b",
+     "memory:MEM-20260914-d15c5504"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "增值税专用发票报销流程",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260901-29edbed2",
+     "memory:MEM-20260813-ba77b1bd",
+     "memory:MEM-20260818-c3963027",
+     "memory:MEM-20260812-db62eeb4",
+     "memory:MEM-20260820-9a8d8d45"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "日语 N2 备考三个月计划",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260811-c54bb631",
+     "memory:MEM-20260818-797586b2",
+     "memory:MEM-20260810-900d32e1",
+     "memory:MEM-20260817-15a447b5",
+     "memory:MEM-20260911-46330948"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "Photoshop 抠头发丝技巧",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260912-edcb37da",
+     "memory:MEM-20260912-261b4289",
+     "memory:MEM-20260822-4996c916",
+     "memory:MEM-20260906-faf60065",
+     "memory:MEM-20260821-96f2bc99"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "MySQL 主从复制延迟怎么排查",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260831-0dc1d536",
+     "memory:MEM-20260814-4992cd6d",
+     "memory:MEM-20260816-4c702d2c",
+     "memory:MEM-20260819-cb30364a",
+     "memory:MEM-20260812-d7535179"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "瑜伽下犬式发力要点",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260817-2b65d024",
+     "memory:MEM-20260915-5fcfe400",
+     "memory:MEM-20260907-9df24b0a",
+     "memory:MEM-20260901-4c548cbe",
+     "memory:MEM-20260810-b6a3ae32"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "跨境电商选品方法论",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260903-0149b356",
+     "memory:MEM-20260817-950817c8",
+     "memory:MEM-20260821-96f2bc99",
+     "memory:MEM-20260915-19544fb2",
+     "memory:MEM-20260829-83fd33c8"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "儿童疫苗接种时间表",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260813-ba852c4d",
+     "memory:MEM-20260826-7014474f",
+     "memory:MEM-20260830-8e597390",
+     "memory:MEM-20260910-78728a8a",
+     "memory:MEM-20260815-7c6017b5"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "迪拜自由行签证怎么办",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260829-53e66cbd",
+     "memory:MEM-20260902-16a53884",
+     "memory:MEM-20260828-7d57e2a6",
+     "memory:MEM-20260816-48c0a66e",
+     "memory:MEM-20260829-8d99244e"
+    ]
+   }
+  ],
+  "bge": [
+   {
+    "class": "A",
+    "q": "大模型后台进程卡死了，把它彻底关掉再拉起来的正规流程是什么",
+    "target": "memory:MEM-20260911-3b15564f",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260824-83e6abad",
+     "memory:MEM-20260823-68271629",
+     "memory:MEM-20260818-084967c3",
+     "memory:MEM-20260829-83fd33c8",
+     "memory:MEM-20260911-c22c4ca8"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "对面网关老返回参数不合法的报错，之前把多少次任务直接打断了",
+    "target": "memory:MEM-20260902-48766239",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260823-447a3d2f",
+     "memory:MEM-20260816-3b6de885",
+     "memory:MEM-20260816-4548d096",
+     "memory:MEM-20260902-0a9921ee",
+     "memory:MEM-20260902-4b971df6"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "事件日志每一行是什么结构，公共字段有哪些",
+    "target": "memory:MEM-20260810-4bd1e04e",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260825-9acb845b",
+     "memory:MEM-20260825-db7b2b6d",
+     "memory:MEM-20260810-d734dacb",
+     "memory:MEM-20260825-1664e3ec",
+     "memory:MEM-20260910-e641aa14"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "系统给自己复盘打分时看哪几个方面，上次各项多少",
+    "target": "memory:MEM-20260811-7cc0a960",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260813-b2364eeb",
+     "memory:MEM-20260907-96f6af87",
+     "memory:MEM-20260906-faf60065",
+     "memory:MEM-20260827-55bb3fd0",
+     "memory:MEM-20260811-8ae061e0"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "消息桥接进程假死那次修复，心跳写到哪个文件",
+    "target": "memory:MEM-20260812-d7535179",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260812-d7535179",
+     "memory:MEM-20260822-8eadbaa5",
+     "memory:MEM-20260824-83e6abad",
+     "memory:MEM-20260821-fc9b6eff",
+     "memory:MEM-20260823-b1c82f9c"
+    ],
+    "hit": true
+   },
+   {
+    "class": "A",
+    "q": "智能体原地打转反复做同一件事，为什么运行时拦不住它",
+    "target": "memory:MEM-20260814-c2aaa876",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260831-263c7cb4",
+     "memory:MEM-20260816-3b6de885",
+     "memory:MEM-20260817-e05abab3",
+     "memory:MEM-20260818-dfcee589",
+     "memory:MEM-20260810-bf6c6b55"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "回复末尾禁止自动出现哪类装饰性统计文字",
+    "target": "memory:MEM-20260816-8c6bfac9",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260811-6f21fb33",
+     "memory:MEM-20260825-22012211",
+     "memory:MEM-20260814-e5a92db7",
+     "memory:MEM-20260910-1251261a",
+     "memory:MEM-20260813-b2364eeb"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "配置热更新哪些字段立即生效，哪些必须重启进程",
+    "target": "memory:MEM-20260817-9ef30bf5",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260817-9ef30bf5",
+     "memory:MEM-20260815-9b493fdf",
+     "memory:MEM-20260813-de76ae6b",
+     "memory:MEM-20260826-75209352",
+     "memory:MEM-20260814-9e98292f"
+    ],
+    "hit": true
+   },
+   {
+    "class": "A",
+    "q": "本地小模型连着调工具时把前面做过的事忘了，针对这个毛病的改进方向",
+    "target": "memory:MEM-20260818-084967c3",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260823-447a3d2f",
+     "memory:MEM-20260902-3aca2a99",
+     "memory:MEM-20260816-d09b591c",
+     "memory:MEM-20260823-68271629",
+     "memory:MEM-20260829-89c4f8e6"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "运行中往上下文里塞新信息的正确位置在哪，为什么不能插中间",
+    "target": "memory:MEM-20260819-916e6c82",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260829-23664cf0",
+     "memory:MEM-20260824-22f98bc3",
+     "memory:MEM-20260909-21af182b",
+     "memory:MEM-20260903-224f9f78",
+     "memory:MEM-20260819-19bcb776"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "上下文被压缩后模型变笨有哪几种真实风险",
+    "target": "memory:MEM-20260823-f7e94b6a",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260823-f7e94b6a",
+     "memory:MEM-20260823-68271629",
+     "memory:MEM-20260822-efd8b59a",
+     "memory:MEM-20260822-f2a0f7d7",
+     "memory:MEM-20260830-3df313df"
+    ],
+    "hit": true
+   },
+   {
+    "class": "A",
+    "q": "查异常记录应该用哪个参数名，容易写错成什么",
+    "target": "memory:MEM-20260825-1664e3ec",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260825-1664e3ec",
+     "memory:MEM-20260817-6687edef",
+     "memory:MEM-20260811-087fa95b",
+     "memory:MEM-20260815-f255c423",
+     "memory:MEM-20260910-a37f8ce3"
+    ],
+    "hit": true
+   },
+   {
+    "class": "A",
+    "q": "那份关于上下文健康和模型发挥的体检报告放在哪，结论分几块",
+    "target": "memory:MEM-20260831-fac32cf4",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260831-8579dec9",
+     "memory:MEM-20260830-b4504138",
+     "memory:MEM-20260901-aa15ebd3",
+     "memory:MEM-20260826-983f5d72",
+     "memory:MEM-20260831-fac32cf4"
+    ],
+    "hit": true
+   },
+   {
+    "class": "A",
+    "q": "运行结果显示某个标记就结束了，这是程序崩了还是模型自己收尾",
+    "target": "memory:MEM-20260902-f9da74a8",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260902-f9da74a8",
+     "memory:MEM-20260816-8c6bfac9",
+     "memory:MEM-20260903-12d7d546",
+     "memory:MEM-20260814-e5a92db7",
+     "memory:MEM-20260909-0b5a3d94"
+    ],
+    "hit": true
+   },
+   {
+    "class": "A",
+    "q": "估算推理时上下文要占多少显存，有没有现成网页工具",
+    "target": "memory:MEM-20260905-e4df6130",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260825-f0db7d90",
+     "memory:MEM-20260817-e87f89be",
+     "memory:MEM-20260820-ec95c284",
+     "memory:MEM-20260813-e12d4e27",
+     "memory:MEM-20260819-dd5087a1"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "写文件时防止并发覆盖把内容弄坏，完整防护顺序是什么",
+    "target": "memory:MEM-20260908-61371974",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260813-b2364eeb",
+     "memory:MEM-20260908-61371974",
+     "memory:MEM-20260908-33ae7f75",
+     "memory:MEM-20260818-d8171027",
+     "memory:MEM-20260914-c6a45c26"
+    ],
+    "hit": true
+   },
+   {
+    "class": "A",
+    "q": "提交代码时作者邮箱用什么格式才不暴露真实邮箱",
+    "target": "memory:MEM-20260908-0b262a8b",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260817-0518f5bf",
+     "memory:MEM-20260909-7f2594a8",
+     "memory:MEM-20260825-3d7642f3",
+     "memory:MEM-20260908-92569756",
+     "memory:MEM-20260908-0b262a8b"
+    ],
+    "hit": true
+   },
+   {
+    "class": "A",
+    "q": "用户研究开源仓库的习惯是什么，会读到什么颗粒度",
+    "target": "memory:MEM-20260910-fbb9a634",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260911-eb7ad2fe",
+     "memory:MEM-20260911-6ddeb971",
+     "memory:MEM-20260904-0420c0f9",
+     "memory:MEM-20260810-2f8ca65e",
+     "memory:MEM-20260909-88e8132e"
+    ],
+    "hit": false
+   },
+   {
+    "class": "A",
+    "q": "零开头的版本号怎么升级，更新说明是写给谁看的",
+    "target": "memory:MEM-20260912-9b0624a3",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260814-0b3750b0",
+     "memory:MEM-20260811-14bd1125",
+     "memory:MEM-20260819-7e7eeb3c",
+     "memory:MEM-20260912-9b0624a3",
+     "memory:MEM-20260810-3d377ff0"
+    ],
+    "hit": true
+   },
+   {
+    "class": "A",
+    "q": "有个沙箱外的目录还在继续跑任务，追责查到什么程度了",
+    "target": "memory:MEM-20260913-af0f67d2",
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260818-59c7c314",
+     "memory:MEM-20260829-0d39c0ea",
+     "memory:MEM-20260819-7b11dd4b",
+     "memory:MEM-20260811-1cd6013b",
+     "memory:MEM-20260822-33467550"
+    ],
+    "hit": false
+   },
+   {
+    "class": "B",
+    "q": "err1214 messages 参数非法",
+    "target": "memory:MEM-20260902-48766239",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260826-cad12a9b",
+     "memory:MEM-20260902-48766239",
+     "memory:MEM-20260821-a92bbe89",
+     "memory:MEM-20260909-6a10b767",
+     "memory:MEM-20260818-9da92d6c"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "refresh_config 热重载语义",
+    "target": "memory:MEM-20260817-9ef30bf5",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260817-9ef30bf5",
+     "memory:MEM-20260814-df36de74",
+     "memory:MEM-20260815-9b493fdf",
+     "memory:MEM-20260814-9e98292f",
+     "memory:MEM-20260813-a22c3896"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "Qwythos-9B MTP GGUF",
+    "target": "memory:MEM-20260813-d6e0da6b",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260813-d6e0da6b",
+     "memory:MEM-20260910-845b00e2",
+     "memory:MEM-20260813-32152d75",
+     "memory:MEM-20260908-a41bd39b",
+     "memory:MEM-20260908-c13da3f7"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "launchctl 8901 重启",
+    "target": "memory:MEM-20260911-3b15564f",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260911-c22c4ca8",
+     "memory:MEM-20260911-3b15564f",
+     "memory:MEM-20260810-d596b0dd",
+     "memory:MEM-20260914-a8d62ad1",
+     "memory:MEM-20260819-bb970a6d"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "feishu_heartbeat.json 看门狗",
+    "target": "memory:MEM-20260812-d7535179",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260822-8eadbaa5",
+     "memory:MEM-20260812-d7535179",
+     "memory:MEM-20260914-6b892256",
+     "memory:MEM-20260811-b0f633c3",
+     "memory:MEM-20260914-0b4d98db"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "event_logs JSONL schema",
+    "target": "memory:MEM-20260810-4bd1e04e",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260810-4bd1e04e",
+     "memory:MEM-20260825-db7b2b6d",
+     "memory:MEM-20260817-33822297",
+     "memory:MEM-20260913-66aed282",
+     "memory:MEM-20260811-bf06faf6"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "kvcache.ai 计算器",
+    "target": "memory:MEM-20260905-e4df6130",
+    "modes": "mixed",
+    "kw_seed_hits": 1,
+    "top5_keys": [
+     "memory:MEM-20260905-e4df6130",
+     "memory:MEM-20260820-421a0346",
+     "memory:MEM-20260810-77465ec5",
+     "memory:MEM-20260811-cb205dcc",
+     "memory:MEM-20260810-1d7c5b3b"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "EffectPreparedUnavailable",
+    "target": "memory:MEM-20260908-61371974",
+    "modes": "mixed",
+    "kw_seed_hits": 3,
+    "top5_keys": [
+     "memory:MEM-20260908-61371974",
+     "memory:MEM-20260908-aaaa9225",
+     "memory:MEM-20260908-33ae7f75"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "noreply git 提交身份",
+    "target": "memory:MEM-20260908-0b262a8b",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260908-0b262a8b",
+     "memory:MEM-20260908-6011fc77",
+     "memory:MEM-20260909-680c5495",
+     "memory:MEM-20260909-7f2594a8",
+     "memory:MEM-20260909-f41d3efd"
+    ],
+    "hit": true
+   },
+   {
+    "class": "B",
+    "q": "SYAGI 8924 告警服务",
+    "target": "memory:MEM-20260822-37dfe618",
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260822-37dfe618",
+     "memory:MEM-20260811-8fe63120",
+     "memory:MEM-20260811-8c3950ab",
+     "memory:MEM-20260824-576d3cb5",
+     "memory:MEM-20260908-92569756"
+    ],
+    "hit": true
+   },
+   {
+    "class": "C",
+    "q": "React useEffect 依赖数组闭包陷阱",
+    "target": null,
+    "modes": "mixed",
+    "kw_seed_hits": 5,
+    "top5_keys": [
+     "memory:MEM-20260819-15cda5dc",
+     "memory:MEM-20260903-ce839221",
+     "memory:MEM-20260903-45c35b0b",
+     "memory:MEM-20260828-9f775331",
+     "memory:MEM-20260829-5aa86e2f"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "红烧肉炖多久才软烂",
+    "target": null,
+    "modes": "keyword",
+    "kw_seed_hits": 0,
+    "top5_keys": []
+   },
+   {
+    "class": "C",
+    "q": "增值税专用发票报销流程",
+    "target": null,
+    "modes": "keyword",
+    "kw_seed_hits": 0,
+    "top5_keys": []
+   },
+   {
+    "class": "C",
+    "q": "日语 N2 备考三个月计划",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260909-915dbcf0",
+     "memory:MEM-20260909-cfa907d8",
+     "memory:MEM-20260911-d6b70b9f",
+     "memory:MEM-20260829-242d393b",
+     "memory:MEM-20260909-da8b9baa"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "Photoshop 抠头发丝技巧",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260812-767049b5",
+     "memory:MEM-20260901-ea24a1b8"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "MySQL 主从复制延迟怎么排查",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260827-8f0ddc04",
+     "memory:MEM-20260825-8e3e9f4d",
+     "memory:MEM-20260810-24c87f84",
+     "memory:MEM-20260830-d2cb4a5e",
+     "memory:MEM-20260812-77b6133b"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "瑜伽下犬式发力要点",
+    "target": null,
+    "modes": "keyword",
+    "kw_seed_hits": 0,
+    "top5_keys": []
+   },
+   {
+    "class": "C",
+    "q": "跨境电商选品方法论",
+    "target": null,
+    "modes": "semantic",
+    "kw_seed_hits": 0,
+    "top5_keys": [
+     "memory:MEM-20260911-46330948",
+     "memory:MEM-20260909-da8b9baa",
+     "memory:MEM-20260818-5ad82b5c"
+    ]
+   },
+   {
+    "class": "C",
+    "q": "儿童疫苗接种时间表",
+    "target": null,
+    "modes": "keyword",
+    "kw_seed_hits": 0,
+    "top5_keys": []
+   },
+   {
+    "class": "C",
+    "q": "迪拜自由行签证怎么办",
+    "target": null,
+    "modes": "keyword",
+    "kw_seed_hits": 0,
+    "top5_keys": []
+   }
+  ]
+ }
+}

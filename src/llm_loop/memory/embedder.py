@@ -87,6 +87,9 @@ class APIEmbedder:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_s = timeout_s
+        # T6 版本化缓存对齐: 按端点+模型区分向量，换模型/端点自动重建缓存防混用
+        # （retriever._emb_version() 经 getattr 读取；experiences/store.py 同样消费）
+        self.vector_version = f"api-v1:{base_url.rstrip('/')}:{model}"
         self._client = httpx.Client(timeout=timeout_s)
 
     def embed(self, text: str) -> list[float] | None:
