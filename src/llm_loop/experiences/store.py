@@ -132,7 +132,7 @@ class ExperienceStore:
         # T0-C1（2026-09-16）: 写时近重复无损链接——新条目记 supersedes 指针，绝不改写
         # 旧条目（合并走人工批准事务）；embedder 缺失/故障一律跳过（fail-open 不阻断写入）。
         try:
-            near = self._find_near_duplicate_ids(doc)
+            near = self._find_near_duplicate_ids(filename, doc)
             if near:
                 doc.supersedes = list(dict.fromkeys([*(doc.supersedes or []), *near]))
                 logger.info("[经验库] 近重复无损链接: %s supersedes %s", filename, near)
@@ -319,7 +319,9 @@ class ExperienceStore:
             self._doc_embedding_cache[filename] = (fingerprint, doc_vec)
         return doc_vec
 
-    def _find_near_duplicate_ids(self, doc: ExperienceDocument, *, cap: int = 3) -> list[str]:
+    def _find_near_duplicate_ids(
+        self, filename: str, doc: ExperienceDocument, *, cap: int = 3
+    ) -> list[str]:
         """T0-C1 写时近重复探测: 语义相似 ≥ near_dup_threshold 的 active 旧条目 id.
 
         无损链接（link-not-merge）: 只产出 supersedes 指针，不改写旧条目；存量合并
@@ -328,11 +330,9 @@ class ExperienceStore:
         """
         if self._embedder is None:
             return []
-        q_text = " ".join([doc.title, doc.scenario, doc.root_cause, doc.solution])
-        try:
-            q_vec = self._embedder.embed(q_text)
-        except Exception:  # noqa: BLE001
-            return []
+        # 探测文本与文档指纹文本同构，直接复用文档向量缓存（写时嵌入一次，
+        # 后续检索命中同一 fingerprint），不产生额外 embedder 调用。
+        q_vec = self._document_embedding(filename, doc)
         if not q_vec:
             return []
         try:

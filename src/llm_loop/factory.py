@@ -48,6 +48,7 @@ from llm_loop.introspection.task_evidence import TaskEvidenceVerifier
 from llm_loop.llm.client import LLMClient
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.attachments import AttachmentStore
+from llm_loop.memory.embedder import HashEmbedder
 from llm_loop.memory.episode import EpisodeStore
 from llm_loop.memory.evidence import EvidenceError
 from llm_loop.memory.store import MemoryStore
@@ -1019,8 +1020,6 @@ def build_engine(settings: Settings) -> LoopEngine:
     # P1: 嵌入服务（EMBEDDING_PROVIDER, §3.6）
     embedder = None
     if settings.embedding_provider == "hash":
-        from llm_loop.memory.embedder import HashEmbedder
-
         embedder = HashEmbedder(dim=settings.embedding_dim)
     elif settings.embedding_provider == "api":
         from llm_loop.memory.embedder import APIEmbedder
@@ -1035,7 +1034,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     # P1: 语义检索器（RETRIEVE_*, §3.6）
     semantic_retriever = None
     if embedder is not None:
-        from llm_loop.memory.embedder import HashEmbedder
+        # HashEmbedder 已提升为模块级导入（local_imports ratchet 63 基线不增）
         from llm_loop.memory.retriever import SemanticRetriever
 
         # T0-B（2026-09-16）: 主嵌入=api（8765/bge）时注入 hash 回退引擎——
