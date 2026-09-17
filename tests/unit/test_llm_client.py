@@ -1242,13 +1242,21 @@ def test_anthropic_cache_control_remote_off():
         assert "cache_control" not in payload["tools"][0]
 
 
-def test_anthropic_cache_control_env_override(monkeypatch):
-    """env ANTHROPIC_CACHE_CONTROL=false 可关闭 localhost 缓存（fail-open 逃生口）."""
-    monkeypatch.setenv("ANTHROPIC_CACHE_CONTROL", "false")
-    client = _client(wire_protocol="anthropic", api_key="k", base_url="http://localhost:1234/v1")
+def test_anthropic_cache_control_explicit_override():
+    """启动快照可关闭 localhost 缓存，也可为远程端点显式启用。"""
+    client = _client(
+        wire_protocol="anthropic",
+        api_key="k",
+        base_url="http://localhost:1234/v1",
+        anthropic_cache_control=False,
+    )
     assert client._anthropic_cache_enabled() is False
-    monkeypatch.setenv("ANTHROPIC_CACHE_CONTROL", "1")
-    client2 = _client(wire_protocol="anthropic", api_key="k", base_url="https://remote.example.com/v1")
+    client2 = _client(
+        wire_protocol="anthropic",
+        api_key="k",
+        base_url="https://remote.example.com/v1",
+        anthropic_cache_control=True,
+    )
     assert client2._anthropic_cache_enabled() is True
 
 
@@ -1307,17 +1315,16 @@ def test_chat_disconnect_no_retry_after_output():
     assert client_cls.return_value.stream.call_count == 1
 
 
-def test_chat_disconnect_retry_disabled(monkeypatch):
-    """env LLM_RETRY_DISCONNECT=0 关闭重试 → 断连直接如实报错."""
+def test_chat_disconnect_retry_disabled():
+    """启动快照 retry_disconnect=0 → 断连直接如实报错。"""
     import httpx
 
     from llm_loop.llm.errors import LLMNetworkError
 
-    monkeypatch.setenv("LLM_RETRY_DISCONNECT", "0")
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.side_effect = httpx.RemoteProtocolError("peer closed connection")
         with pytest.raises(LLMNetworkError):
-            _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+            _client(retry_disconnect=0).chat(messages=[{"role": "user", "content": "hi"}], tools=[])
     assert client_cls.return_value.stream.call_count == 1
 
 
@@ -1365,13 +1372,11 @@ def test_remote_client_trust_env_default(monkeypatch):
     assert c._client.trust_env is True
 
 
-def test_llm_trust_env_override(monkeypatch):
-    """env LLM_TRUST_ENV 显式覆盖（本地可启用代理, 远程可禁用）."""
-    monkeypatch.setenv("LLM_TRUST_ENV", "1")
-    c = _client(base_url="http://127.0.0.1:1234/v1")
+def test_llm_trust_env_explicit_override():
+    """启动快照显式覆盖（本地可启用代理, 远程可禁用）。"""
+    c = _client(base_url="http://127.0.0.1:1234/v1", trust_env=True)
     assert c._client.trust_env is True
-    monkeypatch.setenv("LLM_TRUST_ENV", "0")
-    c2 = _client(base_url="https://api.deepseek.com/v1")
+    c2 = _client(base_url="https://api.deepseek.com/v1", trust_env=False)
     assert c2._client.trust_env is False
 
 
