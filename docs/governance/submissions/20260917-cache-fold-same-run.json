@@ -1,0 +1,93 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260917-cache-fold-same-run",
+  "summary": "Preserve provider-visible same-run cache prefix continuity by deferring opportunistic Tool Working Set receipt folding after round 1 while retaining the hard result-count safety valve, historical offline/boundary behavior, and explicit telemetry for canary verification.",
+  "components": [
+    {
+      "component_id": "cache-fold-same-run-control",
+      "paths": [
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/core/prompt_build/stages/ingress_resolution.py",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/loop/engine.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "provider-visible history projection and Tool Working Set cache-prefix preservation",
+      "disposition": "ADMIT as narrow mechanical cache-lineage control. The program only decides whether opportunistic soft/coarse receipt folding may rewrite already-sent same-run history; model semantic relevance, task strategy, evidence selection, and completion remain model-owned. hard_result_cap remains mandatory.",
+      "evidence": [
+        "Live attribution reproduced same-run prompt shrink when soft/coarse receipt folding replaced prior provider-visible tool results in place; one natural event shrank provider-visible chars from 94,295 to 72,458 and cache hit ratio to about 60.25%, followed by about 93.74% recovery on the next request.",
+        "Deterministic projection tests prove logical_round > 1 suppresses opportunistic soft/coarse folding while hard_result_cap still folds when required.",
+        "Engine-level selective-evidence coverage proves round-2 projection preserves selected evidence authority and does not opportunistically rewrite unselected raw tool results.",
+        "Telemetry exposes opportunistic_fold_allowed under ingress.tool_working_set for production canary verification."
+      ],
+      "verification_level": "Committed-state focused/adjacent pytest 101/101, Ruff, Pyright 0/0 on changed production paths, py_compile, diff-check, and full ci_gate",
+      "model_evidence_veto_recovery_exit": "The change is mechanical and observable. Operators can inspect request.meta tool_working_set telemetry and cache_health lineage; hard_result_cap still provides bounded safety, and the single implementation commit can be reverted without data migration.",
+      "rollback_route": "Revert cache-prefix implementation commit(s) on this review branch and redeploy the prior exact main 19e253ed rollback anchor; no persistent data conversion is involved.",
+      "declaration_id": "cache-fold-same-run-control"
+    },
+    {
+      "component_id": "cache-fold-same-run-tests",
+      "paths": [
+        "tests/unit/test_tool_working_set_projection.py",
+        "tests/unit/test_selective_evidence_s1.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic cache-prefix and selective-evidence regression qualification",
+      "disposition": "ADMIT as tests only; they exercise projection mechanics and own no runtime authority.",
+      "evidence": [
+        "Three projector contracts cover same-run soft deferral, coarse-byte deferral, and mandatory hard-cap folding.",
+        "One engine-level contract proves logical_round=2 propagation and selective-evidence authority preservation."
+      ],
+      "verification_level": "Focused and adjacent pytest plus full committed-state ci_gate",
+      "model_evidence_veto_recovery_exit": "Tests expose exact mechanical behavior and can be revised independently of live runtime state.",
+      "rollback_route": "Revert together with the implementation if the cache-prefix change is abandoned."
+    },
+    {
+      "component_id": "cache-fold-same-run-a5-record",
+      "paths": [
+        "docs/governance/submissions/20260917-cache-fold-same-run.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations only; this metadata has no runtime authority and does not decide merge or deployment.",
+      "evidence": [
+        "Manifest partitions the exact base-to-candidate changed-path set and declares the sole runtime control component."
+      ],
+      "verification_level": "Local exact A.5 self-gate before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth and promotion; the record is mechanical metadata only.",
+      "rollback_route": "Revert this metadata file with no runtime effect."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "cache-fold-same-run-control",
+      "g1": {
+        "necessity": "Within an active multi-round run, opportunistic Tool Working Set soft/coarse folding could rewrite provider-visible history that had already participated in the cache prefix. This caused discrete prompt-shrink warmups and materially reduced cache reuse despite otherwise healthy comparable-lineage cache behavior."
+      },
+      "g2": {
+        "authority_owner": "existing episode-history Tool Working Set projector plus existing engine logical_round fact",
+        "relationship": "reuse",
+        "non_duplication": "The change reuses existing projection, hard_result_cap, engine rounds, ingress telemetry, and cache-health facts. It adds no new cache store, semantic relevance engine, routing authority, history authority, provider adapter, or configuration source."
+      },
+      "g3": {
+        "model_evidence": [
+          "request.meta ingress.tool_working_set fold_reason/folded_results/provider-visible projection facts",
+          "opportunistic_fold_allowed telemetry",
+          "cache_health comparable-lineage absolute hit-token facts",
+          "durable raw tool results and selective Evidence authority"
+        ],
+        "recovery_or_reason": "Offline/boundary builds retain historical opportunistic behavior when logical_round is absent or <=1; hard_result_cap remains active at every round. Production canary can mechanically verify the new gate, and rollback is a normal code revert/deploy to exact prior main."
+      },
+      "g4": {
+        "rollback": "Revert this cache-prefix control and redeploy exact prior main 19e253ed; no persistent schema, credential, runtime.toml, provider registry, or data migration is required.",
+        "verification": [
+          "Related/adjacent pytest: 101/101 PASS on committed candidate",
+          "Ruff PASS on changed paths; Pyright changed production paths 0 errors / 0 warnings",
+          "py_compile and git diff --check PASS",
+          "full committed-state ci_gate PASS: Ruff, env-pin 587/0, Pyright, tier0, full xdist, architecture guard",
+          "remote canary remains a separate post-CI step; 8901 Ornith is outside deployment scope"
+        ]
+      }
+    }
+  ]
+}
