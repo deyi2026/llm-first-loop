@@ -61,19 +61,44 @@ def test_v2_semantic_recall(tmp_path):
 
 
 def test_cache_new_format_roundtrip(tmp_path):
-    """新格式（v+data）roundtrip：同版本加载."""
+    """新格式（v+data）roundtrip：同版本加载；文件按版本 tag 分离."""
     mem = tmp_path / "memory"
     mem.mkdir()
     retriever = SemanticRetriever(HashEmbedder(), memory_dir=mem)
     cache = retriever._mem_emb_cache
     cache["key-a"] = [0.1, 0.2]
     retriever._persist_emb_cache(retriever._mem_cache_path, cache)
-    raw = json.loads((mem / "embeddings.json").read_text(encoding="utf-8"))
+    cache_file = mem / "embeddings-hash-v2.json"
+    assert retriever._mem_cache_path == cache_file
+    raw = json.loads(cache_file.read_text(encoding="utf-8"))
     assert raw["v"] == "hash-v2"
     assert raw["data"] == {"key-a": [0.1, 0.2]}
     # 重新加载（同版本）→ 命中
     retriever2 = SemanticRetriever(HashEmbedder(), memory_dir=mem)
     assert retriever2._mem_emb_cache.get("key-a") == [0.1, 0.2]
+
+
+def test_cache_file_isolation_by_version(tmp_path):
+    """T8 版本文件隔离：不同 vector_version 各写各文件，互不覆写（2026-09-16 事故回归防线）."""
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    # 旧代码/无版本键写入者 → legacy 文件
+    class _LegacyEmbedder(HashEmbedder):
+        vector_version = ""
+
+    r_old = SemanticRetriever(_LegacyEmbedder(), memory_dir=mem)
+    r_old._mem_emb_cache["old-key"] = [0.3]
+    r_old._persist_emb_cache(r_old._mem_cache_path, r_old._mem_emb_cache)
+    # 新版本（hash-v2）写入者 → 自己的文件
+    r_new = SemanticRetriever(HashEmbedder(), memory_dir=mem)
+    r_new._mem_emb_cache["new-key"] = [0.7]
+    r_new._persist_emb_cache(r_new._mem_cache_path, r_new._mem_emb_cache)
+    # 互不覆写：两文件并存，各自 roundtrip 命中，互不含对方键
+    assert (mem / "embeddings-legacy.json").exists()
+    assert (mem / "embeddings-hash-v2.json").exists()
+    assert "old-key" not in r_new._mem_emb_cache
+    assert "new-key" not in SemanticRetriever(_LegacyEmbedder(), memory_dir=mem)._mem_emb_cache
+    assert "old-key" not in SemanticRetriever(HashEmbedder(), memory_dir=mem)._mem_emb_cache
 
 
 def test_cache_version_mismatch_ignored(tmp_path):

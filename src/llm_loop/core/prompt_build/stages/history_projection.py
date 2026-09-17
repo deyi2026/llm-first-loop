@@ -77,6 +77,7 @@ def run_history_projection(
     cache_protected_prefix_messages: int = 0,
     cache_protected_prefix_chars: int = 0,
     current_turn_ref: int | None = None,
+    task_anchor_snapshot_provider: Any | None = None,  # EVO-20260916-ccc978b2
 ) -> HistoryProjection:
     """锚点换算 + build_history_messages 调用（参数语义逐字节原样）."""
     # P1-10 + R8.5: persisted anchor uses original sess.messages indices,
@@ -193,6 +194,13 @@ def run_history_projection(
         preserve_last_human_exact=r6_ingress_truth is not None,
         preserve_active_ingress_message=_current_ingress_message,
         current_turn_ref=current_turn_ref,
+        # EVO-20260916-ccc978b2（人工已审）: 锚点保护扩到最近 N 条真实 user 指令 +
+        # 压缩生效窗口 pin 任务锚快照（N 取自 settings.task_anchor_pin_messages，
+        # 默认 2；provider 回调由 engine 侧组装 durable 事实逐字投影）。
+        task_anchor_pin_user_messages=int(
+            getattr(settings, "task_anchor_pin_messages", 0) or 0
+        ),
+        task_anchor_snapshot_provider=task_anchor_snapshot_provider,
     )
     duplicate_tool_projection_stats: dict[str, int | bool] = {
         "enabled": bool(getattr(settings, "exact_duplicate_tool_fold", False)),
@@ -208,6 +216,44 @@ def run_history_projection(
         prefix_len=prefix_len,
         filtered_indices=filtered_indices,
     )
+    # EVO-20260916-ccc978b2: pinned（锚钉 user 指令）/summarized（被折叠消息）的
+    # 原 session 索引——与 cache_compacted 同一映射口径，写入 stats 供 postprocess
+    # 的 history.compaction 事件逐条审计（区分"证据投影"与"真实压缩"）。
+    if compact_view_box:
+        _compact_stats = compact_view_box[0]
+        _compact_stats["pinned_msg_seqs"] = _map_compacted_source_indices(
+            [int(_v) for _v in (_compact_stats.get("pinned_msg_seqs_local") or [])],
+            prefix_len=prefix_len,
+            filtered_indices=filtered_indices,
+        )
+        _compact_stats["summarized_msg_seqs"] = [
+            int(_v) for _v in cache_compacted_source_box
+        ]
+    # EVO-20260917-2f5ae9cb（人工已审）P0: wire 前缀扰动成因分类（纯观测）。
+    # 从本轮 built wire 识别锚快照块（engine 侧加头，直连调用无头则 sha=None）
+    # 计算 sha，连同实际锚位/marker 折叠数/新压缩标志喂给 monitor，与其跨 run
+    # 状态 diff 出成因并单行日志。getattr 防旧 mock/直连 monitor；任何异常
+    # 由 monitor 侧 fail-open 吞掉，不改变构建行为。
+    _note_disturbance = getattr(cache_monitor, "note_prefix_disturbance", None)
+    if callable(_note_disturbance):
+        import hashlib
+
+        _anchor_block_sha: str | None = None
+        for _m in built:
+            _c = str((_m.get("content") if isinstance(_m, dict) else None) or "")
+            if _c.startswith("[任务锚点·压缩存活快照]"):
+                _anchor_block_sha = hashlib.sha256(_c.encode("utf-8")).hexdigest()
+                break
+        try:
+            _note_disturbance(
+                session_id,
+                anchor_block_sha=_anchor_block_sha,
+                anchor_arg_used=int(anchor_box[0]) if anchor_box else 0,
+                marker_fold_count=len(cache_compacted_box),
+                new_compaction=bool(compacted_box) and bool(compacted_box[0]),
+            )
+        except Exception:  # noqa: BLE001 — 观测通道失败不阻断投影
+            pass
     return HistoryProjection(
         built=built,
         anchor_arg=anchor_arg,

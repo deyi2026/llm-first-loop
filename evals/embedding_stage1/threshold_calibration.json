@@ -1,0 +1,42 @@
+{
+ "date": "2026-09-16",
+ "purpose": "SemanticRetriever threshold 校准（api/bge-small-zh-v1.5）",
+ "data": {
+  "queries": 515,
+  "candidates": 1487,
+  "pairs": 765805,
+  "source": "event_logs 真实检索调用 + data/memory/index.json"
+ },
+ "distribution": {
+  "pair_P50": 0.4446,
+  "pair_P75": 0.4935,
+  "pair_P90": 0.5379,
+  "below_022": "0.19%",
+  "below_040": "3.07%",
+  "below_040x": null
+ },
+ "manual_label_12q_x_top8": {
+  "relevant_range": "0.58-0.75",
+  "noise_intrusion": "<0.54",
+  "boundary": 0.54
+ },
+ "threshold_scan": {
+  "0.22": "pass P50=1487 (无效)",
+  "0.45": "pass P50=717, top5切损 3/515",
+  "0.50": "pass P50=208, top5切损 12/515 (2.3%), 全空 4 条正确降级",
+  "0.55": "pass P50=38, top5切损 61/515 (11.8%) 过激进"
+ },
+ "decision": "api → 0.50 (retriever.py 默认, provider=hash 保留 0.22)",
+ "verification": "pytest 26/26; 端到端: 无关查询语义通道清空降级 keyword",
+ "matrix_regenerate": ".venv/bin/python evals/embedding_stage1/calib_threshold.py（读 /tmp/calib_queries.json 或重新提取 event_logs）",
+ "pair_percentiles": {
+  "P1": 0.264,
+  "P10": 0.3469,
+  "P25": 0.3941,
+  "P50": 0.4446,
+  "P75": 0.4935,
+  "P90": 0.5379,
+  "P95": 0.565,
+  "P99": 0.6194
+ }
+}

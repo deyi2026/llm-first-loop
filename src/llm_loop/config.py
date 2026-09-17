@@ -401,6 +401,10 @@ class Settings:
     history_max_chars: int | None = (
         None  # None=无独立全局历史 cap；由当前路由模型物理窗口/输出预留收口
     )
+    # EVO-20260916-ccc978b2（人工已审）: 压缩锚钉——最近 N 条真实 user 指令原文
+    # + 任务锚快照（Goal objective/最近 checkpoint/frontier/evidence 引用）在
+    # 压缩生效窗口持续 pin。0/1=退化为仅最后 1 条保护的既有行为。
+    task_anchor_pin_messages: int = 2
     memory_top_k: int = (
         5  # auto-adaptive: env 未显式设置时按上下文占用率自适应（>70%→8/<30%→3，硬上限 20）
     )
@@ -839,6 +843,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         history_max_chars=env_int_or_none(
             "HISTORY_MAX_CHARS"
         ),  # EVO-20260816-3af5dee3: None=未配置→按窗口自适应
+        task_anchor_pin_messages=max(
+            0, env_int("TASK_ANCHOR_PIN_MESSAGES", 2)
+        ),  # EVO-20260916-ccc978b2: 压缩锚钉条数（0=关闭扩展保护）
         memory_top_k=env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=env_bool("SELF_INSPECTION_ENABLED", True),
         status_report_cooldown_s=float(env_int("STATUS_REPORT_COOLDOWN_S", 60)),

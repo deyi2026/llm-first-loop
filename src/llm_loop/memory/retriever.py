@@ -103,24 +103,56 @@ class SemanticRetriever:
         *,
         timeout_s: float = 1.0,
         semantic_top_k: int = 20,
-        threshold: float = 0.22,
+        threshold: float | None = None,
         memory_dir: str | Path | None = None,
         archive_dir: str | Path | None = None,
     ) -> None:
         self.embedder = embedder
         self.timeout_s = timeout_s
         self.semantic_top_k = semantic_top_k
+        # T7: threshold=None → 按 embedder 相似度分布取校准默认（实测校准 2026-09-16，515 条真实查询 × 1487 候选）:
+        #  - hash（字符 n-gram 词法重叠，分布低）: 0.22（原校准值，语义召回靠词法重叠）
+        #  - api/bge-small-zh-v1.5（语义向量，中文各向异性整体偏高，全 pair P50=0.44）: 0.50
+        #    → 每查询通过数 P50 1487→208（信号密度×7），top-5 切损仅 2.3%（0.55 时 11.8% 过激进）；
+        #    相关/无关分界实测 ≈0.54（相关命中 0.58-0.75，无关混入 <0.54）
+        if threshold is None:
+            threshold = (
+                0.22
+                if embedder is not None and getattr(embedder, "provider", "") == "hash"
+                else 0.50
+            )
         self.threshold = threshold
         # M59 配置面收敛: 运行时动态 top_k 提供器（AI 经 adjust_strategy 可调；未注入用构造值）
         self._top_k_provider: Callable[[], int] | None = None
         self._mem_emb_cache: dict[str, list[float]] = {}
         self._arch_emb_cache: dict[str, list[float]] = {}
+        # T8 缓存文件按向量版本分离（embeddings-<tag>.json）：不同 provider/算法
+        # 各写各的文件，根治"两代代码/两种 embedder 共写 embeddings.json 互踩覆写"
+        # （2026-09-16 实测事故：worktree 旧代码无版本键整体覆写，1487 条 bge 缓存丢失）。
+        # 旧 embeddings.json 仅作回退读（版本匹配才载入）；persist 一律写 tag 文件。
         if memory_dir:
-            self._load_emb_cache(Path(memory_dir) / "embeddings.json", self._mem_emb_cache)
+            self._mem_emb_cache = self._load_emb_cache_versioned(Path(memory_dir))
         if archive_dir:
-            self._load_emb_cache(Path(archive_dir) / "embeddings.json", self._arch_emb_cache)
-        self._mem_cache_path = Path(memory_dir) / "embeddings.json" if memory_dir else None
-        self._arch_cache_path = Path(archive_dir) / "embeddings.json" if archive_dir else None
+            self._arch_emb_cache = self._load_emb_cache_versioned(Path(archive_dir))
+        self._mem_cache_path = self._cache_path(Path(memory_dir)) if memory_dir else None
+        self._arch_cache_path = self._cache_path(Path(archive_dir)) if archive_dir else None
+
+    def _cache_tag(self) -> str:
+        """向量版本 → 文件名安全 tag（空版本 → legacy，防旧代码/None embedder 覆写主版本）."""
+        ver = self._emb_version()
+        tag = re.sub(r"[^A-Za-z0-9._-]", "_", ver)[:64]
+        return tag or "legacy"
+
+    def _cache_path(self, directory: Path) -> Path:
+        return directory / f"embeddings-{self._cache_tag()}.json"
+
+    def _load_emb_cache_versioned(self, directory: Path) -> dict[str, list[float]]:
+        """载入版本化缓存；tag 文件缺失时回退旧 embeddings.json（版本匹配才载入）."""
+        cache: dict[str, list[float]] = {}
+        self._load_emb_cache(self._cache_path(directory), cache)
+        if not cache:
+            self._load_emb_cache(directory / "embeddings.json", cache)
+        return cache
 
     def _emb_version(self) -> str:
         """当前 embedder 向量算法版本（T6: 缓存按版本校验，防新旧向量混用）."""
@@ -291,14 +323,17 @@ class SemanticRetriever:
         return cands
 
     def _embed_cached(self, cand: dict, scope: str) -> list[float] | None:
-        cache = self._mem_emb_cache if scope == "memory" else self._arch_emb_cache
+        # 修复: 按候选自身 kind 路由缓存（scope="all" 时此前误走 archive 缓存，
+        # 导致 memory 候选逐条重嵌入+缓存文件交叉污染；候选 dict 已带 kind 字段）
+        is_memory = cand.get("kind", "memory") == "memory"
+        cache = self._mem_emb_cache if is_memory else self._arch_emb_cache
         key = cand["key"]
         if key not in cache:
             vec = self.embedder.embed(cand["content"])  # type: ignore[union-attr]
             if vec is None:
                 return None
             cache[key] = vec
-            path = self._mem_cache_path if scope == "memory" else self._arch_cache_path
+            path = self._mem_cache_path if is_memory else self._arch_cache_path
             self._persist_emb_cache(path, cache)
         return cache.get(key)
 

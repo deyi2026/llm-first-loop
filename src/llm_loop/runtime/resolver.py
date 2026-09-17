@@ -150,6 +150,18 @@ _TOML_ENV_KEYS = tuple(
 _LEGACY_GOVERNED_KEYS = (
     "MODEL_PROVIDERS",
     "MODEL_FALLBACKS",
+    # R2: 从 restart_system.sh shell 默认值等价迁移（.env 未定义时兜底），
+    # schema 迁移前暂列 legacy 治理
+    "SUMMARY_MODE",
+    "TOOL_SCHEMA_LAZY",
+    # R2 增补（2026-09-16 缓存互踩事故）: embedding 业务配置纳入治理——
+    # shell 残留不再漂移 provider/base_url/model，只认 workspace .env 文件
+    "EMBEDDING_PROVIDER",
+    "EMBEDDING_BASE_URL",
+    "EMBEDDING_MODEL",
+    "EMBEDDING_DIM",
+    "EMBEDDING_TIMEOUT_S",
+    "EMBEDDING_API_TIMEOUT_S",
 )
 
 BUSINESS_KEYS = tuple(dict.fromkeys((*_TOML_ENV_KEYS, *_LEGACY_GOVERNED_KEYS)))
@@ -166,6 +178,7 @@ _SECRET_KEYS = (
     "CODEARTS_SK",
     "CODEARTS_IAM_TOKEN",
     "CODEARTS_WEBHOOK_SECRET",
+    "EMBEDDING_API_KEY",
 )
 
 LAUNCH_DEFAULTS = {"SUMMARY_MODE": "off", "TOOL_SCHEMA_LAZY": "1"}
