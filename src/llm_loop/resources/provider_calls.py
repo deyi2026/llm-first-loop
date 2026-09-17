@@ -213,6 +213,13 @@ class ProviderCallCoordinator:
             raise ResourceAdmissionError(
                 "provider resource admission failed: required_fact_unknown"
             ) from exc
+        if target.state is LocalRuntimeTargetState.NOT_APPLICABLE:
+            # Non-managed target (e.g. cloud provider, non-loopback base_url): LFRT
+            # has no authority fact here, mirroring build_request_for_client's
+            # NOT_APPLICABLE -> None -> RG-1 fallback. The RG-1 lease stands and
+            # this is not a conflict. (Root cause of the 6350/6350 learning
+            # requeue starvation observed 2026-09-17 on cloud-model deployments.)
+            return
         if target.state is LocalRuntimeTargetState.MANAGED_BUT_UNKNOWN:
             self._governor.invalidate_concurrency_limit(expected_key)
             raise ResourceAdmissionError(
