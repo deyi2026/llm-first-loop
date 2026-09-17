@@ -1,0 +1,788 @@
+{
+  "baseline": "54f1ed8c6c0b4cf71ca4b2bd39970df31d2e2ed5",
+  "cases": [
+    {
+      "description": "available exact object ref binds exact object/scope/version; no recapture",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "binding.status=bound",
+        "binding.version_scope=object"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G1-01",
+      "group": "G1_grounding",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S1-object-grounding-compile"
+    },
+    {
+      "description": "available exact page resource ref binds resource scope/version",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "binding.status=bound",
+        "binding.version_scope=resource"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G1-02",
+      "group": "G1_grounding",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S1-resource-grounding-compile"
+    },
+    {
+      "description": "cross-session unauthorized ref cannot bind",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "binding.status=indeterminate"
+      ],
+      "forbidden_relations": [
+        "binding.status=bound"
+      ],
+      "gate_id": "P2-G1-03",
+      "group": "G1_grounding",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S1-grounding-fail-closed"
+    },
+    {
+      "description": "expired ref cannot bind or refresh",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "binding.status=indeterminate"
+      ],
+      "forbidden_relations": [
+        "binding.status=bound",
+        "automatic_refresh=true"
+      ],
+      "gate_id": "P2-G1-04",
+      "group": "G1_grounding",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S1-grounding-fail-closed"
+    },
+    {
+      "description": "object ref used for resource verb is wrong-kind and fail-closed",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "binding.status=indeterminate"
+      ],
+      "forbidden_relations": [
+        "binding.version_scope=resource"
+      ],
+      "gate_id": "P2-G1-05",
+      "group": "G1_grounding",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S1-grounding-fail-closed"
+    },
+    {
+      "description": "projection grounding_ref mismatch/tamper cannot bind",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "binding.status=indeterminate"
+      ],
+      "forbidden_relations": [
+        "binding.status=bound"
+      ],
+      "gate_id": "P2-G1-06",
+      "group": "G1_grounding",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "missing id/scope/version remains indeterminate",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "binding.status=indeterminate"
+      ],
+      "forbidden_relations": [
+        "action.schema=smc.semantic_action.v0.1"
+      ],
+      "gate_id": "P2-G1-07",
+      "group": "G1_grounding",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "engine never chooses verb/args/target",
+      "expected_engine_status": "complete",
+      "expected_relations": [],
+      "forbidden_relations": [
+        "recommended",
+        "next_action",
+        "should_click",
+        "task_relevant"
+      ],
+      "gate_id": "P2-G1-08",
+      "group": "G1_grounding",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "exact target scope equality derives match",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "scope.relation=match"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G2-01",
+      "group": "G2_scope",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "known unequal target scope derives mismatch",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "scope.relation=mismatch"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G2-02",
+      "group": "G2_scope",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "unobserved/unknown scope derives indeterminate",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "scope.relation=indeterminate"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G2-03",
+      "group": "G2_scope",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "page->document->frame ancestry yields bounded positive descendant closure",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "scope.descendant_of=asserted"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G2-04",
+      "group": "G2_scope",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "scope graph cycle is rejected before evaluation",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-G2-05",
+      "group": "G2_scope",
+      "kind": "engine",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "scope depth above 32 is rejected, never truncated to a false relation",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-G2-06",
+      "group": "G2_scope",
+      "kind": "engine",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "DOM/AX disagreement produces null/conflict/unresolved while preserving both sources",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "canonical.value=null",
+        "canonical.truth_state=conflict",
+        "conflict.resolution=unresolved"
+      ],
+      "forbidden_relations": [
+        "canonical.value=true",
+        "canonical.value=false"
+      ],
+      "gate_id": "P2-G3-01",
+      "group": "G3_completeness_conflict",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S2-dom-ax-field-conflict"
+    },
+    {
+      "description": "equal qualified source values may yield that exact canonical value without conflict",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "canonical.truth_state=asserted"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G3-02",
+      "group": "G3_completeness_conflict",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "single observed source remains partial; no invented missing source",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "coverage.status=partial"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G3-03",
+      "group": "G3_completeness_conflict",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "ambiguous physical identity mapping forbids object fusion",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "identity.binding_status=unresolved",
+        "identity.fusion_performed=false"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G3-04",
+      "group": "G3_completeness_conflict",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S2-identity-fusion-ambiguity"
+    },
+    {
+      "description": "projection incomplete does not downgrade physically complete observation",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "semantic_evidence.observation_complete=true",
+        "semantic_evidence.projection_complete=false"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G3-05",
+      "group": "G3_completeness_conflict",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "projection complete cannot upgrade incomplete observation",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "semantic_evidence.observation_complete=false",
+        "semantic_evidence.projection_can_upgrade_observation=false"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G3-06",
+      "group": "G3_completeness_conflict",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "source order permutation cannot create source priority",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "conflict.resolution=unresolved"
+      ],
+      "forbidden_relations": [
+        "source_priority=dom",
+        "source_priority=ax"
+      ],
+      "gate_id": "P2-G3-07",
+      "group": "G3_completeness_conflict",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "complete coverage + stable known target absent permits exists=false and negative predicate satisfaction",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "predicate.result=satisfied",
+        "predicate.observed_value=false"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G4-01",
+      "group": "G4_predicate",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S3-absence-complete-vs-partial"
+    },
+    {
+      "description": "partial coverage + target not observed stays indeterminate",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "predicate.result=indeterminate"
+      ],
+      "forbidden_relations": [
+        "predicate.observed_value=false"
+      ],
+      "gate_id": "P2-G4-02",
+      "group": "G4_predicate",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S3-absence-complete-vs-partial"
+    },
+    {
+      "description": "unstable/invented identity stays indeterminate even with complete capture",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "predicate.result=indeterminate"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G4-03",
+      "group": "G4_predicate",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S3-unknown-or-unstable-identity"
+    },
+    {
+      "description": "unobserved property stays indeterminate",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "predicate.result=indeterminate"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G4-04",
+      "group": "G4_predicate",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S3-unknown-or-unstable-identity"
+    },
+    {
+      "description": "partial object_count is a positive lower bound: ge may be decisively satisfied",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "predicate.result=satisfied"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G4-05",
+      "group": "G4_predicate",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S3-lower-bound-object-count"
+    },
+    {
+      "description": "partial lower bound may decisively falsify le/eq only when observed_count already exceeds expected",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "predicate.result=unsatisfied"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G4-06",
+      "group": "G4_predicate",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "partial lower bound that cannot decide stays indeterminate",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "predicate.result=indeterminate"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G4-07",
+      "group": "G4_predicate",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S3-lower-bound-object-count"
+    },
+    {
+      "description": "scope not observed stays indeterminate",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "predicate.result=indeterminate"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G4-08",
+      "group": "G4_predicate",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "scope predicate target must equal exact scope_ref",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-G4-09",
+      "group": "G4_predicate",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "operator/value type outside closed Browser predicate vocabulary is rejected",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-G4-10",
+      "group": "G4_predicate",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "negative reasoning uses explicit target_present=false + complete coverage, never absence-as-failure",
+      "expected_engine_status": "complete",
+      "expected_relations": [],
+      "forbidden_relations": [
+        "negation_as_failure=true"
+      ],
+      "gate_id": "P2-G4-11",
+      "group": "G4_predicate",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "same lineage changed object is stale/comparable",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "version.result=stale",
+        "version.comparable=true"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G5-01",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S4-object-same-generation-changed"
+    },
+    {
+      "description": "unchanged object in newer same-lineage observation matches",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "version.result=match",
+        "version.comparable=true"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G5-02",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S4-object-unchanged-new-observation"
+    },
+    {
+      "description": "document generation change is stale and incomparable",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "version.result=stale",
+        "version.comparable=false"
+      ],
+      "forbidden_relations": [
+        "version.result=match"
+      ],
+      "gate_id": "P2-G5-03",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S4-document-generation-change"
+    },
+    {
+      "description": "missing target under incomplete observation is indeterminate",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "version.result=indeterminate"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G5-04",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S4-incomplete-missing-target"
+    },
+    {
+      "description": "expired expected version is indeterminate; no refresh/rebind",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "version.result=indeterminate",
+        "version.automatic_refresh_performed=false",
+        "version.silent_rebind_performed=false"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G5-05",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S4-incomplete-missing-target"
+    },
+    {
+      "description": "exact same version is match when both observations available",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "version.result=match"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G5-06",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "unstable identity cannot prove version continuity",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "version.result=indeterminate"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G5-07",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "running->terminal receipts with increasing seq are monotonic",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "receipt.sequence_monotonic=true",
+        "receipt.transition_valid=true"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G5-08",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S5-running-terminal-sequence"
+    },
+    {
+      "description": "duplicate action-id runtime reservation failure preserves physical dispatch count one",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "receipt.single_dispatch_preserved=true",
+        "receipt.no_automatic_retry=true"
+      ],
+      "forbidden_relations": [
+        "runtime.dispatch_count=2"
+      ],
+      "gate_id": "P2-G5-09",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S5-duplicate-action-id"
+    },
+    {
+      "description": "transport ambiguity remains failed/provisional/no automatic retry",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "receipt.no_automatic_retry=true",
+        "receipt.effect_evidence_status=provisional"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G5-10",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S5-transport-ambiguity-no-replay"
+    },
+    {
+      "description": "receipt ok never entails task or goal completion",
+      "expected_engine_status": "complete",
+      "expected_relations": [],
+      "forbidden_relations": [
+        "task_complete=true",
+        "goal_complete=true"
+      ],
+      "gate_id": "P2-G5-11",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": "S5-running-terminal-sequence"
+    },
+    {
+      "description": "nonmonotonic receipt_seq or terminal->running transition surfaces invariant violation; never reordered",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "receipt.invariant_status=violation"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G5-12",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "dispatch_count>1 for duplicate exact action surfaces violation rather than normalization",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "receipt.invariant_status=violation"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-G5-13",
+      "group": "G5_version_receipt",
+      "kind": "semantic",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "rulepack hash mismatch rejects whole evaluation",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-01",
+      "group": "ENGINE",
+      "kind": "engine",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "unknown rulepack schema/version rejects whole evaluation",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-02",
+      "group": "ENGINE",
+      "kind": "engine",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "runtime_authority rule is forbidden in executable P2 pack",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-03",
+      "group": "ENGINE",
+      "kind": "authority",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "model_semantic rule is forbidden in executable P2 pack",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-04",
+      "group": "ENGINE",
+      "kind": "authority",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "candidate_only authority rule is forbidden in executable P2 pack",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-05",
+      "group": "ENGINE",
+      "kind": "authority",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "forbidden output equivalent to recommendation/task completion rejects pack",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-06",
+      "group": "ENGINE",
+      "kind": "authority",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "rule dependency cycle rejects before any fact derivation",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-07",
+      "group": "ENGINE",
+      "kind": "engine",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "unknown dependency rejects before evaluation",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-08",
+      "group": "ENGINE",
+      "kind": "engine",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "duplicate rule id or invalid rule hash rejects pack",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-09",
+      "group": "ENGINE",
+      "kind": "engine",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "rule count above 64 rejects pack",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-10",
+      "group": "ENGINE",
+      "kind": "bounds",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "asserted fact count above 4096 rejects input without partial qualified output",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-11",
+      "group": "ENGINE",
+      "kind": "bounds",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "derived fact/derivation cap breach rejects result without partial qualification",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-12",
+      "group": "ENGINE",
+      "kind": "bounds",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "context count above 256 rejects input",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-13",
+      "group": "ENGINE",
+      "kind": "bounds",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "Browser rulepack applied to another domain rejects domain mismatch",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-14",
+      "group": "ENGINE",
+      "kind": "authority",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "unknown evaluator_op rejects; no dynamic code dispatch",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-15",
+      "group": "ENGINE",
+      "kind": "engine",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "evaluator fault fails closed; no partial derived set becomes qualified",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-16",
+      "group": "ENGINE",
+      "kind": "engine",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "same fact_id with conflicting payload rejects input",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-17",
+      "group": "ENGINE",
+      "kind": "engine",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "derived fact may not claim runtime_authority provenance",
+      "expected_engine_status": "rejected",
+      "expected_relations": [],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-18",
+      "group": "ENGINE",
+      "kind": "authority",
+      "oracle_fixture_ref": null
+    },
+    {
+      "description": "same pack+input produces byte-identical canonical result and derivation ids",
+      "expected_engine_status": "complete",
+      "expected_relations": [
+        "deterministic_bytes=true"
+      ],
+      "forbidden_relations": [],
+      "gate_id": "P2-E-19",
+      "group": "ENGINE",
+      "kind": "determinism",
+      "oracle_fixture_ref": null
+    }
+  ],
+  "counts": {
+    "engine_or_authority_bounds": 21,
+    "semantic": 43,
+    "total": 64
+  },
+  "production_consumed": false,
+  "requirements": {
+    "all_green_before_p2_complete": true,
+    "all_red_before_implementation": true,
+    "no_fixture_may_use_derived_output_as_asserted_input": true,
+    "python_oracle_typed_evaluator_n3_shadow_required_per_rule_group": true
+  },
+  "rulepack_hash": "bba3a38c315078e390d1afd985572c962bfcecf076ef9ff623abcdf34ace458b",
+  "rulepack_id": "smc.browser.p2-core.v0.1",
+  "schema": "smc.p2_red_gate_manifest.v0.1",
+  "status": "design_frozen"
+}
