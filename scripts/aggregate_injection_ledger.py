@@ -25,6 +25,8 @@ def main() -> int:
     by_source: collections.Counter = collections.Counter()
     by_day: collections.Counter = collections.Counter()
     by_pair: collections.Counter = collections.Counter()
+    by_ref: collections.Counter = collections.Counter()
+    by_record_kind: collections.Counter = collections.Counter()
     n = 0
     cutoff = (datetime.datetime.now() - datetime.timedelta(days=args.days)).timestamp() if args.days else 0.0
     for line in p.read_text(encoding="utf-8").splitlines():
@@ -44,6 +46,12 @@ def main() -> int:
         by_pair[(kind, tool)] += 1
         by_source[str(r.get("source", "-"))] += 1
         by_day[datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")] += 1
+        if kind == "hydration":
+            rk = str(r.get("record_kind", "") or "")
+            if rk:
+                by_record_kind[rk] += 1
+            for ref in r.get("refs") or []:
+                by_ref[str(ref)[:120]] += 1
     print(f"rows={n} path={p}")
     for title, counter in (("kind", by_kind), ("tool", by_tool), ("source", by_source), ("day", by_day)):
         print(f"\n[{title}]")
@@ -52,6 +60,15 @@ def main() -> int:
     print("\n[kind×tool]")
     for (kind, tool), v in by_pair.most_common():
         print(f"  {kind} × {tool}: {v}")
+    if by_ref or by_record_kind:
+        if by_record_kind:
+            print("\n[record_kind]")
+            for key, v in by_record_kind.most_common():
+                print(f"  {key}: {v}")
+        if by_ref:
+            print("\n[ref]（hydration 行 refs 展开，P1 起登记）")
+            for key, v in by_ref.most_common(50):
+                print(f"  {key}: {v}")
     return 0
 
 
