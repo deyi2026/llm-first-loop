@@ -29,6 +29,33 @@
           "scripts/check_architecture_submission.py（本清单）"
         ]
       }
+    },
+    {
+      "declaration_id": "decl-t0-merge-increment",
+      "g1": {
+        "necessity": "merge main 3eaae8f6 后全量套件门禁暴露两处部署阻断级缺陷: (a) factory provider=api 分支 UnboundLocalError（目标套件未覆盖）; (b) 近重复语义探测绕过 embedding cache 复用不变量。且冲突消解引入未在原 submission 覆盖的变更路径（resolver.py 治理键并集/cluster_report 删除定性/eval 复跑产物），按 A.5 机制补全覆盖与 G1-G4 记录。"
+      },
+      "g2": {
+        "authority_owner": "src/llm_loop/runtime/resolver.py 维持既有 runtime 启动解析权威: 消解为治理键并集（worktree 禁令键 ∪ 受控 env 前缀键），不新增事实源; eval 产物为记录性 artifact 非权威。",
+        "relationship": "reuse",
+        "non_duplication": "resolver 冲突消解为并集语义，两侧行为各自保留; cluster_report.* 删除维持 main 已批准的迁出决定; eval 复跑结果仅落 evals/retrieval_ab/ 记录目录; 未新增第二套治理/评测机制。"
+      },
+      "g3": {
+        "model_evidence": [
+          "全量 tests/ -q: 仅 2 个已知 worktree 环境失败（纯 main 代码在 worktree 同样失败、主检出通过，交叉定性为环境依赖，与本批代码无关）; 两处修复的目标用例全过",
+          "eval A/B 复跑: 答案级 Recall@5 64%≥30% GREEN，gold 级与 09-16 完全一致; 结果入库 evals/retrieval_ab/results-20260917-164554.json",
+          "CI 门禁 run 35202394667 pytest+ruff+pyright 全过; 本地 ruff clean"
+        ],
+        "recovery_or_reason": "provider=api 分支缺 HashEmbedder 由模块级导入修复，不再依赖分支内局部导入; cache 复用不变量由复用文档向量缓存恢复; 两项均有独立测试断言。"
+      },
+      "g4": {
+        "rollback": "git revert 对应 fix/merge 提交; resolver.py 回滚至 main 版本即恢复单侧行为（需同步检查并集键调用方）。",
+        "verification": [
+          "tests/unit/test_embedding_factory.py",
+          "tests/unit/test_semantic_memory_dedup.py",
+          "scripts/check_architecture_submission.py（本清单）"
+        ]
+      }
     }
   ],
   "components": [
@@ -109,6 +136,41 @@
         "experience 既有套件全绿"
       ],
       "model_evidence_veto_recovery_exit": "探测 fail-open 不阻断写入; 已写字段旧 reader 忽略无损"
+    },
+    {
+      "component_id": "merge-resolution-resolver-governance-keys",
+      "paths": [
+        "src/llm_loop/runtime/resolver.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "decl-t0-merge-increment",
+      "owning_subsystem": "runtime.startup",
+      "disposition": "component-tests-passed",
+      "evidence": [
+        "全量 tests/ 通过（除 2 个已知环境依赖项）",
+        "CI 门禁 run 35202394667 pytest+ruff+pyright 通过"
+      ],
+      "verification_level": "component-tests",
+      "model_evidence_veto_recovery_exit": "resolver 对未知治理键冲突 fail-closed; 回滚路由见 g4。",
+      "rollback_route": "git revert merge 提交 6f077439"
+    },
+    {
+      "component_id": "t0-gate-artifacts-and-report-retirement",
+      "paths": [
+        "evals/memory_compile/cluster_report.json",
+        "evals/memory_compile/cluster_report.md",
+        "evals/retrieval_ab/results-20260917-164554.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "evals.retrieval",
+      "disposition": "artifact-recording",
+      "evidence": [
+        "evals/retrieval_ab/results-20260917-164554.json 复跑结果入库",
+        "cluster_report.* 删除与 main 09-17 已合并的迁出决定一致"
+      ],
+      "verification_level": "artifact-present",
+      "model_evidence_veto_recovery_exit": "无行为影响; 产物缺失不阻断运行时。",
+      "rollback_route": "git revert 对应提交恢复文件"
     }
   ]
 }
