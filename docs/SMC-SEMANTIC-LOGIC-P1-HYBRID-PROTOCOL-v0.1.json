@@ -1,0 +1,146 @@
+{
+  "schema": "smc.semantic_logic_p1_hybrid_protocol.v0.1",
+  "status": "design_only",
+  "production_consumed": false,
+  "baseline": {
+    "git_head": "19e253edfe4d3fcbeb268830b90d00fd273a6262",
+    "p0_fixture_manifest": "docs/SMC-SEMANTIC-LOGIC-P0-FROZEN-FIXTURES-v0.1.json",
+    "p0_schema": "docs/SMC-SEMANTIC-LOGIC-P0-SCHEMA-v0.1.json"
+  },
+  "decision": {
+    "preferred_candidate": "hybrid_typed_ir_plus_n3_validation",
+    "canonical_ir_candidate": "typed_ir",
+    "n3_role": "shadow_validation_and_proof_only",
+    "production_authority": "unchanged_python_runtime",
+    "direct_n3_authority": false
+  },
+  "planes": [
+    {
+      "id": "python_oracle",
+      "role": "frozen_semantic_oracle",
+      "authoritative_during_p1": true
+    },
+    {
+      "id": "typed_ir",
+      "role": "canonical_internal_representation_candidate",
+      "authoritative_during_p1": false
+    },
+    {
+      "id": "n3_validator",
+      "role": "independent_shadow_validator",
+      "authoritative_during_p1": false
+    }
+  ],
+  "authority_forbidden_outputs": [
+    "task_relevant",
+    "recommended",
+    "best",
+    "preferred",
+    "next_action",
+    "should_click",
+    "should_fill",
+    "should_navigate",
+    "task_complete",
+    "goal_complete"
+  ],
+  "n3_profile": {
+    "network_access": false,
+    "arbitrary_file_access": false,
+    "process_effects": false,
+    "remote_imports": false,
+    "negation_as_failure_default": false,
+    "negation_requires_closed_world_requirement": true,
+    "rulepack_hash_required": true,
+    "fixture_hash_required": true,
+    "wall_timeout_required": true,
+    "output_byte_cap_required": true,
+    "answer_cap_required": true,
+    "recursion_or_fixpoint_cap_required_where_supported": true,
+    "backend_identity_required": true
+  },
+  "serialization_contract": {
+    "stable_namespace_required": true,
+    "qualification_critical_blank_nodes_allowed": false,
+    "explicit_context": true,
+    "explicit_source": true,
+    "explicit_version": true,
+    "explicit_provenance": true,
+    "explicit_truth_state": true,
+    "observation_and_projection_completeness_separate": true,
+    "deterministic_bytes_for_normalized_input": true,
+    "opaque_identity_isomorphism_only": true
+  },
+  "common_mode_controls": {
+    "typed_output_may_not_seed_n3_expected_output": true,
+    "both_typed_and_n3_compared_to_python_oracle": true,
+    "b_equals_c_but_a_differs_is_red": true,
+    "sentinel_queries": [
+      "S2_conflict_does_not_entail_conflicting_value_as_canonical",
+      "S3_partial_coverage_does_not_entail_false_absence",
+      "S3_complete_coverage_stable_identity_may_entail_false_absence",
+      "S4_document_generation_change_does_not_entail_match",
+      "S5_duplicate_exact_action_does_not_entail_second_physical_dispatch"
+    ]
+  },
+  "phases": [
+    {
+      "id": "P1-A",
+      "name": "typed_fact_graph_ir",
+      "gate": {
+        "frozen_cases_required": 15,
+        "semantic_loss": 0,
+        "production_consumers": 0
+      }
+    },
+    {
+      "id": "P1-B",
+      "name": "canonical_json_and_n3_serialization",
+      "gate": {
+        "deterministic_serialization": true,
+        "round_trip_relation_preservation": 1.0,
+        "opaque_identity_mapping_explicit": true
+      }
+    },
+    {
+      "id": "P1-C",
+      "name": "restricted_n3_validator_harness",
+      "gate": {
+        "effects_disabled": true,
+        "bounds_enforced": true,
+        "backend_version_recorded": true,
+        "unsafe_fixture_fail_closed": true
+      }
+    },
+    {
+      "id": "P1-D",
+      "name": "three_way_representation_qualification",
+      "gate": {
+        "cases_required": 15,
+        "relation_equivalence": 1.0,
+        "false_closure": 0,
+        "unknown_to_false_collapse": 0,
+        "source_or_provenance_loss": 0,
+        "context_or_version_loss": 0
+      }
+    }
+  ],
+  "fallback_to_typed_ir_only_if": [
+    "context_or_provenance_requires_fragile_n3_encoding",
+    "reasoner_output_not_deterministic_for_qualification",
+    "proof_cannot_map_stably_to_derivation_record",
+    "sandbox_or_bounds_not_provable",
+    "dependency_or_latency_cost_exceeds_validation_value",
+    "material_cross_reasoner_variance"
+  ],
+  "direct_n3_reconsideration_requires": [
+    "S1_S5_full_parity",
+    "bounded_local_reasoning",
+    "stable_proof_provenance_mapping",
+    "deterministic_reason_status_mapping",
+    "zero_false_closure",
+    "acceptable_cost",
+    "browser_and_filesystem_portability",
+    "mechanical_rollback",
+    "separate_owner_authorization"
+  ]
+}
