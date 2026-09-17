@@ -57,6 +57,65 @@ _EVALUATOR_OPS: Final = frozenset(
         "receipt_dispatch_invariants",
     }
 )
+_PREDICATE_SPECS: Final = {
+    "exists": {"operators": ("eq",), "value_type": "boolean", "target_kind": "semantic_object"},
+    "enabled": {"operators": ("eq",), "value_type": "boolean", "target_kind": "semantic_object"},
+    "visible": {"operators": ("eq",), "value_type": "boolean", "target_kind": "semantic_object"},
+    "checked": {"operators": ("eq",), "value_type": "boolean", "target_kind": "semantic_object"},
+    "selected": {"operators": ("eq",), "value_type": "boolean", "target_kind": "semantic_object"},
+    "expanded": {"operators": ("eq",), "value_type": "boolean", "target_kind": "semantic_object"},
+    "focused": {"operators": ("eq",), "value_type": "boolean", "target_kind": "semantic_object"},
+    "editable": {"operators": ("eq",), "value_type": "boolean", "target_kind": "semantic_object"},
+    "url": {
+        "operators": ("eq", "contains", "prefix", "suffix"),
+        "value_type": "string",
+        "target_kind": "scope",
+    },
+    "name": {
+        "operators": ("eq", "contains", "prefix", "suffix"),
+        "value_type": "string",
+        "target_kind": "semantic_object",
+    },
+    "value_text": {
+        "operators": ("eq", "contains", "prefix", "suffix"),
+        "value_type": "string",
+        "target_kind": "semantic_object",
+    },
+    "document_ready_state": {
+        "operators": ("eq",),
+        "value_type": "string",
+        "value_enum": ("loading", "interactive", "complete"),
+        "target_kind": "scope",
+    },
+    "object_count": {
+        "operators": ("eq", "ge", "le"),
+        "value_type": "integer",
+        "target_kind": "scope",
+    },
+}
+_EVALUATOR_REQUIRED_INPUTS: Final = {
+    "predicate_bind_selected_condition": frozenset(
+        {
+            "model_condition.scope_ref",
+            "model_condition.target_ref",
+            "model_condition.property",
+            "model_condition.operator",
+            "model_condition.value",
+        }
+    ),
+    "predicate_evaluate": frozenset(
+        {
+            "predicate.schema",
+            "predicate.domain",
+            "predicate.scope_ref",
+            "predicate.target",
+            "predicate.property",
+            "predicate.operator",
+            "predicate.value",
+            "scope.relation",
+        }
+    ),
+}
 _FORBIDDEN_OUTPUTS: Final = frozenset(
     {
         "important",
@@ -541,6 +600,15 @@ def _collect_rule_inputs(
     rule: dict[str, Any],
     index: dict[str, list[dict[str, Any]]],
 ) -> list[dict[str, Any]] | None:
+    evaluator_op = str(rule["evaluator_op"])
+    required = _EVALUATOR_REQUIRED_INPUTS.get(evaluator_op)
+    if required is not None:
+        if not all(index.get(predicate) for predicate in required):
+            return None
+        collected: list[dict[str, Any]] = []
+        for predicate in rule["input_predicates"]:
+            collected.extend(index.get(str(predicate)) or [])
+        return collected
     collected: list[dict[str, Any]] = []
     for predicate in rule["input_predicates"]:
         facts = index.get(str(predicate))
@@ -1302,6 +1370,295 @@ def _evaluate_identity_ambiguity_no_fusion(
     )
 
 
+def _predicate_type_ok(value: Any, value_type: str) -> bool:
+    if value_type == "boolean":
+        return isinstance(value, bool)
+    if value_type == "string":
+        return isinstance(value, str)
+    if value_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    return False
+
+
+def _semantic_object_id(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 23
+        and value.startswith("el_")
+        and all(char in "0123456789abcdef" for char in value[3:])
+    )
+
+
+def _predicate_compare(observed: Any, operator: str, expected: Any) -> bool:
+    if operator == "eq":
+        return observed == expected
+    if operator == "contains":
+        return str(expected) in str(observed)
+    if operator == "prefix":
+        return str(observed).startswith(str(expected))
+    if operator == "suffix":
+        return str(observed).endswith(str(expected))
+    if operator == "ge":
+        return observed >= expected
+    if operator == "le":
+        return observed <= expected
+    raise _ValidationError("predicate_operator_unsupported")
+
+
+def _evaluate_predicate_bind_selected_condition(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    required_names = _EVALUATOR_REQUIRED_INPUTS["predicate_bind_selected_condition"]
+    required = {predicate: _single_value(index, predicate) for predicate in required_names}
+    if not all(ok for ok, _ in required.values()):
+        raise _ValidationError("predicate_condition_input_ambiguous")
+    values = {predicate: value for predicate, (_, value) in required.items()}
+    scope_ref = values["model_condition.scope_ref"]
+    target_ref = values["model_condition.target_ref"]
+    property_name = values["model_condition.property"]
+    operator = values["model_condition.operator"]
+    expected = values["model_condition.value"]
+    if not _nonempty_string(scope_ref) or not _nonempty_string(target_ref):
+        raise _ValidationError("predicate_reference_invalid")
+    if not _nonempty_string(property_name) or property_name not in _PREDICATE_SPECS:
+        raise _ValidationError("predicate_property_unknown")
+    spec = _PREDICATE_SPECS[str(property_name)]
+    if operator not in spec["operators"]:
+        raise _ValidationError("predicate_operator_mismatch")
+    if not _predicate_type_ok(expected, str(spec["value_type"])):
+        raise _ValidationError("predicate_value_type_mismatch")
+    if "value_enum" in spec and expected not in spec["value_enum"]:
+        raise _ValidationError("predicate_value_enum_mismatch")
+
+    if spec["target_kind"] == "scope":
+        if target_ref != scope_ref:
+            raise _ValidationError("scope_predicate_target_mismatch")
+        target = str(scope_ref)
+    else:
+        target_ok, target = _single_value(index, "binding.target_id")
+        binding_scope_ok, binding_scope = _single_value(index, "binding.scope_ref")
+        if not target_ok or not binding_scope_ok:
+            raise _ValidationError("object_predicate_binding_missing")
+        if not _semantic_object_id(target) or binding_scope != scope_ref:
+            raise _ValidationError("object_predicate_binding_mismatch")
+
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs={
+            "predicate.schema": "smc.predicate.v0.1",
+            "predicate.domain": "browser",
+            "predicate.scope_ref": scope_ref,
+            "predicate.target": target,
+            "predicate.property": property_name,
+            "predicate.operator": operator,
+            "predicate.value": expected,
+        },
+        result="derived",
+        reason=None,
+    )
+
+
+def _predicate_indeterminate(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    coverage_complete: bool,
+    reason: str,
+    observed_value: Any | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs={
+            "predicate.result": "indeterminate",
+            "predicate.observed_value": observed_value,
+            "predicate.coverage_complete": coverage_complete,
+            "predicate.reason": reason,
+        },
+        result="indeterminate",
+        reason=reason,
+    )
+
+
+def _evaluate_predicate_evaluate(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    required_names = _EVALUATOR_REQUIRED_INPUTS["predicate_evaluate"]
+    required = {predicate: _single_value(index, predicate) for predicate in required_names}
+    if not all(ok for ok, _ in required.values()):
+        raise _ValidationError("predicate_evaluation_input_ambiguous")
+    values = {predicate: value for predicate, (_, value) in required.items()}
+    if values["predicate.schema"] != "smc.predicate.v0.1" or values["predicate.domain"] != "browser":
+        raise _ValidationError("predicate_contract_invalid")
+    scope_ref = values["predicate.scope_ref"]
+    target = values["predicate.target"]
+    property_name = values["predicate.property"]
+    operator = values["predicate.operator"]
+    expected = values["predicate.value"]
+    if property_name not in _PREDICATE_SPECS:
+        raise _ValidationError("predicate_property_unknown")
+    spec = _PREDICATE_SPECS[str(property_name)]
+    if operator not in spec["operators"] or not _predicate_type_ok(expected, str(spec["value_type"])):
+        raise _ValidationError("predicate_contract_invalid")
+
+    coverage_ok, coverage_value = _single_value(index, "coverage.complete")
+    coverage_complete = coverage_ok and coverage_value is True
+    scope_relation = values["scope.relation"]
+    if scope_relation != "match":
+        return _predicate_indeterminate(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            coverage_complete=coverage_complete,
+            reason="scope_not_observed" if scope_relation == "indeterminate" else "target_scope_mismatch",
+        )
+
+    if spec["target_kind"] == "semantic_object":
+        present_ok, target_present = _single_value(index, "observation.target_present")
+        if not present_ok or not isinstance(target_present, bool):
+            return _predicate_indeterminate(
+                rule=rule,
+                input_document=input_document,
+                input_facts=input_facts,
+                coverage_complete=coverage_complete,
+                reason="target_presence_unobserved",
+            )
+        if property_name == "exists":
+            if target_present:
+                observed: Any = True
+            else:
+                stable_ok, stable_scope = _single_value(index, "identity.stable_scope")
+                if not stable_ok or stable_scope != scope_ref:
+                    return _predicate_indeterminate(
+                        rule=rule,
+                        input_document=input_document,
+                        input_facts=input_facts,
+                        coverage_complete=coverage_complete,
+                        reason="target_identity_unknown_or_identity_unstable",
+                    )
+                if not coverage_complete:
+                    return _predicate_indeterminate(
+                        rule=rule,
+                        input_document=input_document,
+                        input_facts=input_facts,
+                        coverage_complete=False,
+                        reason="coverage_incomplete_for_absence",
+                    )
+                observed = False
+        else:
+            if not target_present:
+                return _predicate_indeterminate(
+                    rule=rule,
+                    input_document=input_document,
+                    input_facts=input_facts,
+                    coverage_complete=coverage_complete,
+                    reason="target_not_observed",
+                )
+            property_ok, observed = _single_value(index, "observation.property_value")
+            if not property_ok:
+                return _predicate_indeterminate(
+                    rule=rule,
+                    input_document=input_document,
+                    input_facts=input_facts,
+                    coverage_complete=coverage_complete,
+                    reason="property_unobserved",
+                )
+        decisive = _predicate_compare(observed, str(operator), expected)
+        return _make_derivation_bundle(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            outputs={
+                "predicate.result": "satisfied" if decisive else "unsatisfied",
+                "predicate.observed_value": observed,
+                "predicate.coverage_complete": coverage_complete,
+                "predicate.reason": None,
+            },
+            result="derived",
+            reason=None,
+        )
+
+    if target != scope_ref:
+        raise _ValidationError("scope_predicate_target_mismatch")
+    if property_name == "object_count":
+        count_ok, observed_count = _single_value(index, "observation.object_count")
+        if not count_ok or not isinstance(observed_count, int) or isinstance(observed_count, bool) or observed_count < 0:
+            return _predicate_indeterminate(
+                rule=rule,
+                input_document=input_document,
+                input_facts=input_facts,
+                coverage_complete=coverage_complete,
+                reason="object_count_unobserved",
+            )
+        if coverage_complete:
+            decisive = _predicate_compare(observed_count, str(operator), expected)
+            reason = None
+        elif operator == "ge" and observed_count >= expected:
+            decisive = True
+            reason = "coverage_incomplete_but_lower_bound_is_decisive"
+        elif operator in {"eq", "le"} and observed_count > expected:
+            decisive = False
+            reason = "coverage_incomplete_but_lower_bound_is_decisive"
+        else:
+            return _predicate_indeterminate(
+                rule=rule,
+                input_document=input_document,
+                input_facts=input_facts,
+                coverage_complete=False,
+                reason="coverage_incomplete_lower_bound_only",
+                observed_value=observed_count,
+            )
+        return _make_derivation_bundle(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            outputs={
+                "predicate.result": "satisfied" if decisive else "unsatisfied",
+                "predicate.observed_value": observed_count,
+                "predicate.coverage_complete": coverage_complete,
+                "predicate.reason": reason,
+            },
+            result="derived",
+            reason=reason,
+        )
+
+    property_ok, observed = _single_value(index, "observation.property_value")
+    if not property_ok:
+        return _predicate_indeterminate(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            coverage_complete=coverage_complete,
+            reason="property_unobserved",
+        )
+    decisive = _predicate_compare(observed, str(operator), expected)
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs={
+            "predicate.result": "satisfied" if decisive else "unsatisfied",
+            "predicate.observed_value": observed,
+            "predicate.coverage_complete": coverage_complete,
+            "predicate.reason": None,
+        },
+        result="derived",
+        reason=None,
+    )
+
+
 def _evaluate_action_fixed_contract(
     *,
     rule: dict[str, Any],
@@ -1359,6 +1716,8 @@ _IMPLEMENTED_EVALUATORS: Final = {
     "derive_coverage_status": _evaluate_derive_coverage_status,
     "separate_completeness": _evaluate_separate_completeness,
     "identity_ambiguity_no_fusion": _evaluate_identity_ambiguity_no_fusion,
+    "predicate_bind_selected_condition": _evaluate_predicate_bind_selected_condition,
+    "predicate_evaluate": _evaluate_predicate_evaluate,
 }
 
 
@@ -1371,12 +1730,9 @@ def _evaluate_validated(
     index = _index_facts(all_facts)
     derived_facts: list[dict[str, Any]] = []
     derivations: list[dict[str, Any]] = []
-    completed_rules: set[str] = set()
     unimplemented_applicable = False
 
     for rule in _topological_rules(list(pack["rules"])):
-        if not set(rule["dependencies"]) <= completed_rules:
-            continue
         input_facts = _collect_rule_inputs(rule, index)
         if input_facts is None:
             continue
@@ -1401,7 +1757,6 @@ def _evaluate_validated(
             predicate = str(fact["predicate"])
             index.setdefault(predicate, []).append(fact)
             index[predicate].sort(key=lambda value: str(value["fact_id"]))
-        completed_rules.add(str(rule["rule_id"]))
 
     if unimplemented_applicable:
         return _result(
