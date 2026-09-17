@@ -197,12 +197,13 @@ def _env_evidence_mode(name: str) -> str:
 
 
 def _env_method_reflection_mode(name: str) -> str:
-    """Method post-run reflection: off/auto. Invalid values fail safe to off."""
+    """Method post-run reflection: off/auto. Unset -> default auto; invalid fail safe to off."""
     raw = _raw_env(name).strip().lower()
+    if not raw:
+        return "auto"
     if raw in {"off", "auto"}:
         return raw
-    if raw:
-        _note_invalid_fallback(name, "off", "非 off/auto 字符串")
+    _note_invalid_fallback(name, "off", "非 off/auto 字符串")
     return "off"
 
 
@@ -351,8 +352,9 @@ class Settings:
     methods_dir: str = "./data/methods"  # runtime-learned candidates; keep private/local by default
     method_seed_dir: str = "./methods"  # reviewed tracked Method/Teacher seed assets
     # Learning Plane（design §5.3）: durable journal + 后台 ReflectionRun 消费者。
-    # 默认关闭——后台自动 LLM 反思调用涉及成本与用户知情权，由部署侧显式开启。
-    learning_plane_enabled: bool = False
+    # 默认开启（2026-09-17 用户裁决：学习闭环为运行时一等能力）。
+    # 空 journal = 空闲守护线程零模型调用；LEARNING_PLANE_ENABLED=0 显式关闭（置空同 0）。
+    learning_plane_enabled: bool = True
     skills_dir: str = (
         "./skills"  # B3(2026-08-14): 插件化 Skill 目录（skills/<name>/SKILL.md；空/不存在=零行为）
     )
@@ -419,8 +421,9 @@ class Settings:
     self_eval_enabled: bool = True  # 自我评估能力开关（0 时 self_evaluate 工具不注册）
     self_eval_min_samples: int = 5  # 指标最小样本数（不足 → 如实标注"样本不足"）
     self_eval_span: int = 50  # 评估聚合窗口（近 N 轮/条）
-    # Method Learning: post-run isolated reflection. Default off = zero extra model calls.
-    method_reflection_mode: str = "off"
+    # Method Learning: post-run isolated reflection. Default auto (2026-09-17 用户裁决:
+    # 学习闭环为运行时一等能力); explicit METHOD_REFLECTION_MODE=off disables (fail-safe 也回 off).
+    method_reflection_mode: str = "auto"
     method_reflection_min_rounds: int = 6
     method_reflection_min_tools: int = 6
     method_reflection_min_failures: int = 2
@@ -688,7 +691,7 @@ def load_settings() -> Settings:
         experiences_dir=str(_resolved_paths.experiences_dir),
         methods_dir=str(_resolved_paths.methods_dir),
         method_seed_dir=str(_resolved_paths.method_seed_dir),
-        learning_plane_enabled=os.environ.get("LEARNING_PLANE_ENABLED", "0").strip() in {"1", "true", "yes", "on"},
+        learning_plane_enabled=os.environ.get("LEARNING_PLANE_ENABLED", "1").strip() in {"1", "true", "yes", "on"},
         skills_dir=str(_resolved_paths.skills_dir),  # B3: tracked Skill follows CODE_ROOT
         docs_dir=str(_resolved_paths.docs_dir),
         archive_max_entries=_env_int("ARCHIVE_MAX_ENTRIES", 0),

@@ -78,7 +78,8 @@
 | `EVOLVE_EXEC_WHITELIST` | 空 | 级别 1 的执行白名单（逗号分隔；空=不自动执行） |
 | `SELF_EVAL_ENABLED` | 1 | self_evaluate 工具/自评能力开关；普通 run 不周期注入提醒 |
 | `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 5 / 50 | 自评样本阈值 / 聚合窗口；评估时机按需决定 |
-| `METHOD_REFLECTION_MODE` | off | Method post-run reflection：off/auto；auto 仅在 final 已确定后按机械 friction 触发，失败不影响原任务 |
+| `METHOD_REFLECTION_MODE` | auto | Method post-run reflection：off/auto；auto 仅在 final 已确定后按机械 friction 触发一次隔离模型调用，失败不影响原任务；`off` 显式关闭（非法值回 off） |
+| `LEARNING_PLANE_ENABLED` | 1 | Learning Plane 后台消费装配（journal + ReflectionRun）；`0` 显式关闭（置空同 0）；空 journal 时仅空闲守护线程 |
 | `METHOD_REFLECTION_MIN_ROUNDS` / `METHOD_REFLECTION_MIN_TOOLS` / `METHOD_REFLECTION_MIN_FAILURES` | 6 / 6 / 2 | auto 模式 friction 触发阈值 |
 | `METHOD_REFLECTION_TIMEOUT_S` | 120 | reflection 单次模型调用超时（秒） |
 | `VALIDATE_SEMANTIC` / `VALIDATE_SEMANTIC_THRESHOLD` | 0 / — | 声明-回执语义匹配（默认关） |
