@@ -1,0 +1,116 @@
+# LFL runtime business configuration (non-secret only).
+# Place as runtime.toml in the canonical LFL_RUNTIME_ROOT. runtime.toml is intentionally gitignored.
+# Credentials/API keys MUST stay in a secret provider or environment boundary.
+
+[llm]
+model = "glm/glm-5.3"
+base_url = "https://example.invalid/v1"
+thinking_mode = "enabled"
+reasoning_effort = "high"
+max_iterations = 500
+timeout_s = 120
+max_tokens = 16000
+wire_protocol = "openai"
+# Optional startup-owned transport/cache policy. Omit to preserve provider-aware defaults.
+# trust_env = false
+# retry_disconnect = 1
+# anthropic_cache_control = true
+# cache_guard_hit_telemetry = true
+
+[runtime]
+# DATA_DIR and LFL_DATA_DIR are intentionally distinct legacy anchors.
+# Do not collapse them unless the deployment explicitly wants the same path.
+# data_dir = "/absolute/path/to/runtime-data"
+# lfl_data_dir = "/absolute/path/to/lfl-audit-data"
+history_max_chars = 150000
+identity_mode = "shadow"
+# wire_contract_mode = "shadow"
+
+[history]
+working_set_receipts = false
+working_set_batch_chars = 32768
+working_set_grace_groups = 0
+working_set_soft_result_cap = 12
+working_set_hard_result_cap = 32
+working_set_min_net_gain_chars = 16384
+compress_target_ratio = 0.6
+compact_ratio = 1.0
+nudge_growth_chars = 20000
+# head_keep_ratio / head_keep_force_ratio / head_keep_target_ratio are intentionally
+# omitted by default so provider-specific historical defaults remain authoritative.
+
+[web]
+host = "127.0.0.1"
+port = 8903
+
+[local_runtime]
+# On-demand diagnostic visibility only; independent from admission authority.
+observer = "disabled"
+# Admission authority is independent from diagnostic visibility; legacy is rollback-safe default.
+admission_authority = "legacy"
+# cli = "/absolute/path/to/lfrt"
+
+[summary]
+mode = "off"
+
+[tools]
+schema_lazy = true
+nonconvergence_fuse_windows = 3
+nonconvergence_fuse_jaccard = 0.6
+nonconvergence_fuse_min_delta = 16
+
+[dsh]
+# home = "/absolute/path/to/dsh"
+# sessions_root = "/absolute/path/to/dsh-sessions"
+
+[cache_guard]
+perf_block_mode = "enforce"
+hit_block = 0.30
+hit_warn = 0.85
+hit_warn_adaptive = true
+hit_warn_tiers = [[30000, 0.65], [80000, 0.75], [200000, 0.80]]
+hit_sample = 3
+block_escape = 3
+
+[cache_health]
+breaker_trigger_runs = 5
+breaker_cooldown_rounds = 8
+breaker_exit_stable_runs = 3
+breaker_exit_chars_ratio = 0.8
+breaker_pressure_ratio = 0.95
+breaker_pressure_escape_max = 6
+breaker_hit_thr = 0.5
+breaker_over_ratio = 0.9
+telemetry_strip_audit_log = false
+telemetry_strip_tail_lines = 10
+
+[interop]
+watch_poll_s = 10.0
+wakeup = false
+wakeup_min_interval_s = 300.0
+pending_ttl_hours = 24.0
+pending_cleanup_on_start = true
+pending_max = 20
+
+[run_cleanup]
+stale_run_inspect_hours = 24.0
+shutdown_timeout_s = 10.0
+confirmation_required = true
+
+[feishu]
+ws_watchdog_poll_s = 30
+ws_watchdog_lock_s = 180.0
+heartbeat_path = "data/feishu_heartbeat.json"
+dedup_path = "data/feishu_dedup.json"
+heartbeat_history_path = "data/feishu_heartbeat_history.jsonl"
+ws_queue_max = 64
+exit_wait_s = 10.0
+exit_drain_s = 3.0
+msg_process_timeout_s = 300.0
+silent_threshold_s = 1800.0
+interrupt_notify_timeout_s = 1.0
+cross_sync_poll_s = 1.5
+cross_sync_min_interval_s = 3.0
+cross_sync_max_chars = 10000
+cross_sync = true
+audit_dir = "data/audit"

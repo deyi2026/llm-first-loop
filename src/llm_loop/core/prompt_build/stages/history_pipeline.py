@@ -125,6 +125,16 @@ def run_history_pipeline(
         last_nudge_total=last_nudge_total,
         provider_visible_chars=provider_visible_chars_fn,
         growth_nudge_kind=growth_nudge_kind_fn,
+        compact_ratio=float(
+            getattr(getattr(settings, "history_policy", None), "compact_ratio", 1.0)
+        ),
+        nudge_growth_chars=int(
+            getattr(
+                getattr(settings, "history_policy", None),
+                "nudge_growth_chars",
+                20000,
+            )
+        ),
     )
     archive_sink = _prep.archive_sink
     effective_budget = _prep.effective_budget

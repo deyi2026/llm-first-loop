@@ -199,7 +199,6 @@ def test_registry_preflight_does_not_execute_known_bad_web_fetch_domain():
 
 
 def test_typed_recovery_replaces_generic_failure_guidance(monkeypatch):
-    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
     advice = ToolRecoveryAdvice(
         failure_class="url_not_found",
         retry_same_tool="no",
@@ -214,7 +213,7 @@ def test_typed_recovery_replaces_generic_failure_guidance(monkeypatch):
         recovery_advice=advice,
         guidance_extra="[经验参考] stale generic advice",
     )
-    msg = tool_result_to_message(result)
+    msg = tool_result_to_message(result, tool_guidance_mode="on")
     assert "class=url_not_found" in msg.content
     assert "retry_same_tool=no" in msg.content
     assert "stale generic advice" not in msg.content

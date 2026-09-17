@@ -290,7 +290,10 @@ def test_canonical_root_cause_recovery_chain_reads_source_once(tmp_path, monkeyp
     assert calls["target"] == 1
     assert result.evidence_ref
     ref = result.evidence_ref
-    assert marker not in result.content  # immediate view is bounded; exact bytes are durable
+    # R05/T05 production assembly: this ~13KB exact read is below the real 100K tool
+    # hard cap, so the requested middle is delivered immediately. Durable Evidence still
+    # has to survive later compression/rebuild without another physical source read.
+    assert marker in result.content
 
     # Persist a real assistant declaration + tool result so compression later removes the
     # model-visible tool observation while the same EvidenceRef remains durable.

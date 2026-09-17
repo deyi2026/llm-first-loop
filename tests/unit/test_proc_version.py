@@ -3,6 +3,8 @@
 import json
 import os
 
+import pytest
+
 from llm_loop.introspection import proc_version
 from llm_loop.introspection.proc_version import (
     check_stale_services,
@@ -11,6 +13,12 @@ from llm_loop.introspection.proc_version import (
     record_change_log,
     record_process_start,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_explicit_source_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit git fixtures must not inherit the production dual-root source anchor."""
+    monkeypatch.delenv("LFL_WORKSPACE_ROOT", raising=False)
 
 
 def test_record_and_get_process_versions(tmp_path, monkeypatch):

@@ -4,14 +4,17 @@
 断言:
 1. spec/design/tasks 正文不含已废弃措辞（停滞检测/更正（最多 1 次）/参数边界校验等）
 2. README 含必备关键词（search_archive/search_records/ai_rules/SYSTEM_PROMPT_EXTRA/CLI 子命令）
-3. docs/ai_rules.md 五条规则编号与 prompt.py 对应（复用 test_ai_rules_sync 逻辑）
+3. docs/ai_rules.md 规则同步（委托 tests/unit/test_ai_rules_sync.py——单一真相源，防双契约漂移）
 
-用法: python scripts/verify_docs_sync.py
-退出码: 0=通过, 1=漂移
+用法: python scripts/verify_docs_sync.py（需可 import pytest 的解释器，推荐仓库 .venv）
+退出码: 0=通过, 1=漂移（含委托测试失败）
 """
 
 from __future__ import annotations
 
+import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,11 +26,29 @@ _README_KEYWORDS = [
     "search_archive", "search_records", "ai_rules", "SYSTEM_PROMPT_EXTRA",
     "list", "delete", "archive", "extract", "--session",
 ]
-_RULES = ["RULE-AI-01", "RULE-AI-02", "RULE-AI-03", "RULE-AI-04", "RULE-AI-05"]
-
-
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _run_rules_sync_test() -> tuple[int, str]:
+    """委托 pytest 运行规则同步测试（单一真相源），返回 (退出码, 输出尾部)。
+
+    旧实现钉死 RULE-AI-01..05 并断言其存在于 core/prompt.py；规则体系已按
+    agency-first 迁出通用提示词（见 test_universal_prompt_does_not_mirror_rule_playbook），
+    双契约漂移造成假红（2026-09-17 实证）。规则同步性以该测试为准，本脚本不再复制契约。
+    """
+    if importlib.util.find_spec("pytest") is None:
+        return 125, "pytest 不可用：请用仓库 .venv 解释器运行本脚本"
+    cmd = [
+        sys.executable, "-m", "pytest",
+        str(ROOT / "tests" / "unit" / "test_ai_rules_sync.py"), "-q",
+    ]
+    try:
+        proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return 124, "pytest 运行超时（120s）"
+    out = (proc.stdout or "") + (proc.stderr or "")
+    return proc.returncode, out[-1500:]
 
 
 def main() -> int:
@@ -50,14 +71,11 @@ def main() -> int:
         if kw not in readme:
             errors.append(f"README 缺关键词: {kw}")
 
-    # 3. 规则编号一致性
-    doc = _read(ROOT / "docs" / "ai_rules.md")
-    prompt = _read(ROOT / "src" / "llm_loop" / "core" / "prompt.py")
-    for rule in _RULES:
-        if rule not in doc:
-            errors.append(f"ai_rules.md 缺 {rule}")
-        if rule not in prompt:
-            errors.append(f"prompt.py 缺 {rule}")
+    # 3. 规则编号一致性——委托 tests/unit/test_ai_rules_sync.py（单一真相源）
+    rules_rc, rules_out = _run_rules_sync_test()
+    if rules_rc != 0:
+        errors.append(f"ai_rules 同步测试失败（exit={rules_rc}）")
+        print(rules_out.rstrip())
 
     if errors:
         print("❌ 文档同步校验失败:")

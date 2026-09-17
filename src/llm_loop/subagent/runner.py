@@ -724,7 +724,7 @@ class SubAgentRunner:
             )
         )
         if result_is_durable:
-            self._topology_journal.terminal(
+            terminal_durable = self._topology_journal.terminal(
                 child_id=sid,
                 parent_id=parent_sid,
                 generation=generation,
@@ -732,6 +732,14 @@ class SubAgentRunner:
                 outcome=result.outcome if result is not None else "failed",
             )
             self._refresh_topology_state(sid)
+            if terminal_durable and result is not None and result.outcome == "cancelled":
+                # Session.status is an active/archived visibility lifecycle, not the
+                # SubAgent execution outcome.  The topology journal above remains
+                # authoritative for `cancelled`; archive only the durable cancelled
+                # child so the session index no longer advertises it as active.
+                # Index projection failure must not prevent generation cleanup.
+                with suppress(Exception):
+                    self.session_store.archive(sid)
         with self._children_guard:
             self._cancel_events.pop(sid, None)
             self._local_generation_by_child.pop(sid, None)
@@ -1944,6 +1952,7 @@ class SubAgentRunner:
                     result,
                     failure_guidance_enabled=False,
                     experience_guidance_enabled=True,
+                    tool_guidance_mode=self.registry.tool_guidance_mode,
                 )
                 if executed and execution_id:
                     # Exact future receipt is staged immediately after execution; if

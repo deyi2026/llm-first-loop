@@ -1,7 +1,7 @@
 """P1-3-R2: feishu 优雅退出时间契约测试.
 
 验证:
-- FEISHU_EXIT_WAIT_S / FEISHU_EXIT_DRAIN_S env 可配（非法值回退默认）
+- FEISHU_EXIT_WAIT_S / FEISHU_EXIT_DRAIN_S 由已解析 RuntimeConfig 冻结（默认值不变）
 - wait 超时如实记录（WARNING + feishu_exit.log 含"优雅退出超时未完成"）
 - 空闲退出仍快速（不回归基线）
 """
@@ -18,25 +18,13 @@ def test_exit_contract_defaults():
     assert _EXIT_DRAIN_S == 3.0
 
 
-def test_exit_contract_env_override(monkeypatch):
-    """env 设置后新值生效（模块级常量读取于 import 时，经 monkeypatch 验证解析逻辑）."""
-    from llm_loop.feishu import _env_float
 
-    monkeypatch.setenv("FEISHU_EXIT_WAIT_S", "5")
-    monkeypatch.setenv("FEISHU_EXIT_DRAIN_S", "2")
-    assert _env_float("FEISHU_EXIT_WAIT_S", 10) == 5.0
-    assert _env_float("FEISHU_EXIT_DRAIN_S", 3) == 2.0
+def test_exit_contract_snapshot_parser_invalid_fallback():
+    """Legacy .env 非法字符串经已解析 snapshot 仍 fail-open 回退默认。"""
+    from llm_loop.feishu.config import _resolved_float
 
-
-def test_exit_contract_env_invalid_fallback(monkeypatch):
-    """env 非法值（非数字）回退默认，不抛异常."""
-    from llm_loop.feishu import _env_float
-
-    monkeypatch.setenv("FEISHU_EXIT_WAIT_S", "abc")
-    monkeypatch.setenv("FEISHU_EXIT_DRAIN_S", "")
-    assert _env_float("FEISHU_EXIT_WAIT_S", 10) == 10.0
-    assert _env_float("FEISHU_EXIT_DRAIN_S", 3) == 3.0
-
+    assert _resolved_float({"FEISHU_EXIT_WAIT_S": "abc"}, "FEISHU_EXIT_WAIT_S", 10) == 10.0
+    assert _resolved_float({"FEISHU_EXIT_DRAIN_S": ""}, "FEISHU_EXIT_DRAIN_S", 3) == 3.0
 
 def test_exit_wait_timeout_recorded(tmp_path, monkeypatch, caplog):
     """wait_until_idle 返回 False → WARNING + exit.log 含"优雅退出超时未完成"."""

@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -42,8 +41,14 @@ _INTEROP_INBOX_REL = Path("interop") / "lfl_to_dsh" / "pending"
 class InteropService:
     """协调通道（RULE-AI-14）程序级注入."""
 
-    def __init__(self, host: LoopEngine) -> None:
+    def __init__(self, host: LoopEngine, *, data_dir: str | Path | None = None) -> None:
         self._host = host
+        host_settings = getattr(host, "settings", None) if host is not None else None
+        host_data_dir = getattr(host_settings, "data_dir", "") if host_settings is not None else ""
+        bound_data_dir = data_dir or host_data_dir
+        self._data_dir = (
+            Path(bound_data_dir).expanduser().resolve() if bound_data_dir else None
+        )
 
     def _interop_inbox_messages(self) -> list[Message]:
         """扫描协调通道 inbox；返回值仅为兼容形状，R8.13 live path 恒为空.
@@ -59,8 +64,10 @@ class InteropService:
         - pending backlog 只记录结构化 action/watchdog 状态，不再构造“另有 N 条”提示；
         - R8.13/E26: coordinate/task 也退出自动 prompt；不消费文件，等待用户在输入侧明确接受/插入。
         """
+        if self._data_dir is None:
+            return []
         try:
-            base = Path(os.environ.get("LFL_DATA_DIR", "data")) / _INTEROP_INBOX_REL
+            base = self._data_dir / _INTEROP_INBOX_REL
             if not base.is_dir():
                 return []
             out: list[Message] = []

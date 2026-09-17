@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from llm_loop.core.injection_labels import InjectionLayer as _TLLayer
@@ -37,6 +38,7 @@ def run_trace_isolation(
     current_ingress: Any,
     event_sink: Any,
     decision: BuildDecision,
+    data_dir: str | Path | None = None,
 ) -> tuple[list[Any], list[int]]:
     """α 挂载点：user 消息投影进 provider 视图前泄漏检测（纯 metadata 单遍）.
 
@@ -81,6 +83,7 @@ def run_trace_isolation(
                                 "build α hook：确认 mislabel 的程序内容隔离"
                                 f"（{_f.basis}；不降级注入，provider chars=0）"
                             ),
+                            data_dir=data_dir,
                         )
                         _tle.emit_leak_event(
                             LEAK_QUARANTINED,

@@ -1,0 +1,121 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260916-lfrt-rg2-authority",
+  "summary": "Adds a versioned LFRT local-runtime observation path and an opt-in RG-2 admission authority with tri-state applicability, stale-capacity invalidation, fail-closed managed unknowns, legacy shadow veto, and delayed-transport generation revalidation; default and current production authority remain legacy.",
+  "components": [
+    {
+      "component_id": "lfrt-rg2-local-runtime-control",
+      "paths": [
+        "runtime.toml.example",
+        "src/llm_loop/config.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/introspection/status.py",
+        "src/llm_loop/introspection/tools_status.py",
+        "src/llm_loop/methods/learning_plane.py",
+        "src/llm_loop/resources/governor.py",
+        "src/llm_loop/resources/lfrt_runtime.py",
+        "src/llm_loop/resources/provider_calls.py",
+        "src/llm_loop/runtime/resolver.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "RG-2 local-runtime fact observation, capacity admission, startup configuration, and mechanical architecture observability",
+      "disposition": "ADMIT as opt-in mechanical resource authority. LFRT owns positive local capacity only when explicitly selected; managed unknown/conflict fails before transport; legacy remains the default and is shadow-veto-only in LFRT mode. No semantic task ranking or model completion authority is added.",
+      "evidence": [
+        "Formal-main audit proved observer-unknown could otherwise yield no lease, stale capacity had no invalidation path, and generic unknown acquisition could wait indefinitely.",
+        "LFRT runtime-observation/v1 at exact external SHA be8e543 is versioned and side-effect-free, with managed port, PID/process identity, and live prompt/decode concurrency facts.",
+        "Exact LFL c537557 committed-state qualification passed broad 250-test adjacency, full ci_gate, whole-tree security, and a real read-only 8901 max=1 admission/revalidation canary while production remained legacy."
+      ],
+      "verification_level": "TDD tri-state/adversarial matrix + whole-src static gates + full repository committed-state CI/security + exact real 8901 read-only authority canary",
+      "model_evidence_veto_recovery_exit": "Mechanical status exposes authority mode, LFRT observation source/generation, admission reason codes, and on-demand local-runtime diagnostics. Managed unknown/conflict is explicit rather than fallback; operators can repair the LFRT fact path or select legacy authority and restart LFL services without restarting 8901.",
+      "rollback_route": "Keep or restore `local_runtime.admission_authority=legacy` and use the established dual-root LFL restart path. The default is already legacy and this tranche introduces no persistent data migration.",
+      "declaration_id": "lfrt-rg2-local-runtime-control"
+    },
+    {
+      "component_id": "lfrt-rg2-qualification-tests",
+      "paths": [
+        "tests/unit/test_factory.py",
+        "tests/unit/test_learning_journal.py",
+        "tests/unit/test_lfrt_runtime_authority.py",
+        "tests/unit/test_lfrt_runtime_observer.py",
+        "tests/unit/test_lfrt_runtime_status_wiring.py",
+        "tests/unit/test_resource_governor_runtime.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic LFRT observer/admission/governor/factory/Learning qualification",
+      "disposition": "ADMIT as verification-only coverage of tri-state applicability, LFRT contract parsing, fail-closed authority, capacity generation/invalidation, shadow veto, startup defaults, and Learning transport revalidation.",
+      "evidence": [
+        "The branch-wide focused/adjacent set collected exactly 250 tests and passed.",
+        "Adversarial cases include malformed/incompatible observation, stopped/unknown managed runtime, stale capacity, PID/scope/limit conflict, no-TTL observation, legacy-no-fallback, and generation-change requeue.",
+        "Tests do not own runtime authority and do not send a real model request during the authority canary."
+      ],
+      "verification_level": "pytest focused/adjacent plus full repository committed-state CI",
+      "model_evidence_veto_recovery_exit": "Tests assert mechanical contracts only and have no provider or task-semantic authority.",
+      "rollback_route": "Revert with the corresponding implementation review line if rejected."
+    },
+    {
+      "component_id": "lfrt-rg2-qualification-record",
+      "paths": [
+        "docs/QUALIFICATION-20260916-lfrt-rg2-authority.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "LFRT/RG-2 qualification evidence record",
+      "disposition": "ADMIT as a factual review record of identities, contracts, deterministic/full gates, real read-only canary, non-interference, explicit non-claims, and rollback.",
+      "evidence": [
+        "The record distinguishes the exact LFL implementation anchor, the exact external LFRT contract dependency, and the still-legacy production runtime.",
+        "Runtime does not consult this document."
+      ],
+      "verification_level": "exact Git/evidence review plus branch-wide A.5 coverage",
+      "model_evidence_veto_recovery_exit": "Reviewers may amend or reject the record without changing runtime behavior.",
+      "rollback_route": "Revert or delete the qualification record with no runtime effect."
+    },
+    {
+      "component_id": "lfrt-rg2-submission-record",
+      "paths": [
+        "docs/governance/submissions/20260916-lfrt-rg2-authority.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact branch-wide changed-path coverage and submitter declarations only; semantic quality and classification truth remain outside the mechanical checker.",
+      "evidence": [
+        "A.5 validates closed schema and exact path partition for formal main to review head.",
+        "The manifest itself has no runtime authority."
+      ],
+      "verification_level": "synthetic staged-tree branch-wide A.5 followed by exact committed base-to-head A.5",
+      "model_evidence_veto_recovery_exit": "Human/model review remains responsible for declaration truth and may amend or reject this metadata.",
+      "rollback_route": "Revert together with the review line."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "lfrt-rg2-local-runtime-control",
+      "g1": {
+        "necessity": "A local runtime capacity source cannot become admission authority while observation failure silently bypasses RG-2, stale limits survive failed observations, or delayed Learning transport can cross runtime generations. The new machinery closes those mechanical gaps before any production cutover."
+      },
+      "g2": {
+        "authority_owner": "ProviderCallCoordinator + ResourceGovernor using the explicitly selected LFRT runtime-observation/v1 fact source",
+        "relationship": "new_authority",
+        "non_duplication": "The selector is exclusive: LFRT is the sole positive capacity authority in lfrt mode, while the legacy adapter is shadow-veto-only and never fallback capacity. The existing Governor/Coordinator remain the admission owners; no second scheduler or semantic policy engine is introduced."
+      },
+      "g3": {
+        "model_evidence": [
+          "typed local_runtime admission-authority mode in runtime status",
+          "LFRT observation source_ref and PID generation attached to the installed capacity fact",
+          "ResourceAdmissionError reason codes required_fact_unknown/fact_conflict before provider transport",
+          "on-demand local_runtime diagnostic snapshot and independent legacy/LFRT parity evidence"
+        ],
+        "recovery_or_reason": "Repair or restore the machine-observation facts, or explicitly select legacy admission authority and restart the LFL service. Managed-local unknown never uses an implicit fallback capacity; active leases remain non-preemptive and future admission waits for a new valid fact."
+      },
+      "g4": {
+        "rollback": "Set `local_runtime.admission_authority=legacy` (the default) and restart Web/Feishu through the existing dual-root process path. 8901 itself need not restart and no persistent application-data migration is involved.",
+        "verification": [
+          "LFRT final be8e543 runtime-observation/v1 selftest 31/31 and four-suite 79/79 with real read-only 8901 observation and no config/listener mutation",
+          "LFL branch-wide focused/adjacent exact collect 250 PASS and env inventory unchanged at 134 direct / 150 effective / 5 import-time / 44 files",
+          "LFL exact c537557 Ruff PASS and whole-src Pyright 0/0/0",
+          "LFL exact c537557 committed-state scripts/ci_gate.sh rc=0 and whole-tree security rc=0",
+          "LFL exact c537557 + LFRT be8e543 real read-only authority canary: max=1 serial admission, source/generation correct, listener/config unchanged, no model request",
+          "production runtime remained exact 439ad55d with admission authority default legacy throughout qualification"
+        ]
+      }
+    }
+  ]
+}

@@ -6,14 +6,14 @@ build_bridge(engine=None) 支持测试注入；python -m llm_loop.feishu 启动�
 
 import contextlib
 import logging
-import os
 import sys
 from pathlib import Path
 
 from llm_loop.config import load_env_file, load_settings
 from llm_loop.factory import build_engine
+from llm_loop.runtime.resolver import business_config_snapshot
 
-from .config import FeishuConfig, load_feishu_config
+from .config import FeishuConfig, _resolved_float, load_feishu_config
 from .session_map import SessionMap
 
 __all__ = ["build_bridge", "start_bridge", "main"]
@@ -21,17 +21,11 @@ __all__ = ["build_bridge", "start_bridge", "main"]
 logger = logging.getLogger(__name__)
 
 # P1-3-R2: 优雅退出时间契约 —— wait(10) + drain(3) = 13s ≤ GRACE_S(15) − 2s 余量。
-# 硬编码 30s > GRACE_S 15s 是 2026-08-12 22:41 feishu 被 SIGKILL 强杀的直接原因。
-def _env_float(name: str, default: float) -> float:
-    """读取 env 浮点值（非法值回退默认，fail-open）."""
-    try:
-        return float(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        return default
-
-
-_EXIT_WAIT_S: float = _env_float("FEISHU_EXIT_WAIT_S", 10)
-_EXIT_DRAIN_S: float = _env_float("FEISHU_EXIT_DRAIN_S", 3)
+# P1-A2: import-time mechanics freeze one immutable RuntimeConfig snapshot; stale ambient
+# shell business values are non-authoritative unless explicit runtime override is enabled.
+_FEISHU_RUNTIME_CONFIG = business_config_snapshot("feishu_main")
+_EXIT_WAIT_S: float = _resolved_float(_FEISHU_RUNTIME_CONFIG, "FEISHU_EXIT_WAIT_S", 10)
+_EXIT_DRAIN_S: float = _resolved_float(_FEISHU_RUNTIME_CONFIG, "FEISHU_EXIT_DRAIN_S", 3)
 
 
 def _close_engine(handler) -> None:

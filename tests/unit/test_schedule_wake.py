@@ -23,10 +23,9 @@ def _inbox_files(tmp_path) -> list[dict]:
 
 
 def test_default_schedule_still_notifies_only(tmp_path, monkeypatch):
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     e = ScheduleEntry(sid="sched-x1", message="m", trigger_at=0)
     assert e.wake is False
-    SchedulerThread._notify_via_interop(e)
+    SchedulerThread._notify_via_interop(e, data_dir=tmp_path)
     (msg,) = _inbox_files(tmp_path)
     assert msg["topic"] == "notify"
     assert msg["body"].startswith("[定时提醒] ")

@@ -8,7 +8,6 @@ fail-open：异常回退 1.0（不触发分级）。decision.history_total_chars
 """
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -41,6 +40,8 @@ def run_history_budget_prep(
     last_nudge_total: Any,
     provider_visible_chars: Callable[..., int],
     growth_nudge_kind: Callable[..., str | None],
+    compact_ratio: float = 1.0,
+    nudge_growth_chars: int = 20000,
 ) -> HistoryBudgetPrep:
     """archive_sink/budget/nudge 装配（产出投影调用前置值）."""
     prep = HistoryBudgetPrep()
@@ -60,7 +61,7 @@ def run_history_budget_prep(
         _history_total = decision.history_total_chars = provider_visible_chars(
             sess_messages, provider_id, sess_anchor
         )
-        _compact_ratio = float(os.environ.get("COMPACT_RATIO", "1.0"))
+        _compact_ratio = float(compact_ratio)
         if 0 < _compact_ratio < 1.0:
             # EVO-20260824-54d46549 增长率 nudge（billion-context 拷问产出, 双轨）:
             # - 强制轨: 超预算×compact_ratio（90% 默认）→ 必预警（压缩在即, bypass 增长率）
@@ -70,7 +71,7 @@ def run_history_budget_prep(
             _prep_at = prep.effective_budget * 0.8
             _growth_floor = max(
                 int(prep.effective_budget * 0.05),
-                int(os.environ.get("NUDGE_GROWTH_CHARS", "20000")),
+                int(nudge_growth_chars),
             )
             _prev_total = last_nudge_total
             _kind = growth_nudge_kind(

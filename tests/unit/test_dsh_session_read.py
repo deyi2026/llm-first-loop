@@ -140,8 +140,8 @@ def test_dsh_home_redirect(monkeypatch, tmp_path):
     root = tmp_path / "project" / "data" / "dsh-home"
     base = root / "sessions" / workspace_key("/fake/ws")
     _write_session(base, "session-h", _events())
-    monkeypatch.setenv("DSH_HOME", str(root))
-    tool = DshSessionReadTool()
+    monkeypatch.setenv("DSH_HOME", str(tmp_path / "stale-dsh-home"))
+    tool = DshSessionReadTool(dsh_home=str(root))
     r = tool.execute(workspace="/fake/ws")
     assert r.status == ToolResultStatus.SUCCESS
     assert "session-h" in r.content

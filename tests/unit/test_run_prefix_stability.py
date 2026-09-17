@@ -120,7 +120,7 @@ def test_run_boundary_prefix_byte_stability():
     built2, _, _ = _build(msgs, anchor=anchor_box[0])
     built3, _, _ = _build(msgs, anchor=anchor_box[0])
     assert built2 == built3, "同状态 run 边界 wire 应逐字节一致"
-    assert built2 != built1 or True  # 压缩轮→稳态轮锚块行差异属预期（场景2已断言）
+    # 压缩轮→稳态轮锚块行差异属预期，场景2已断言，此处不做冗余弱断言。
 
 
 def test_p0_prefix_disturbance_attribution(caplog):

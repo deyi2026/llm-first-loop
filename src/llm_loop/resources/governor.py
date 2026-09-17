@@ -59,6 +59,8 @@ class ResourceGovernor:
     ) -> None:
         self._condition = threading.Condition(threading.RLock())
         self._limits: dict[ResourceKey, int] = {}
+        self._limit_sources: dict[ResourceKey, str] = {}
+        self._limit_generations: dict[ResourceKey, str] = {}
         self._in_flight: dict[ResourceKey, int] = {}
         self._leases: dict[str, ResourceLease] = {}
         self._leases_by_request: dict[str, str] = {}
@@ -72,7 +74,14 @@ class ResourceGovernor:
 
     # ---------- capacity facts ----------
 
-    def set_concurrency_limit(self, key: ResourceKey, max_concurrency: int) -> None:
+    def set_concurrency_limit(
+        self,
+        key: ResourceKey,
+        max_concurrency: int,
+        *,
+        source_ref: str | None = None,
+        generation: str | None = None,
+    ) -> None:
         """Install one explicit process-local concurrency fact and wake waiters."""
         if isinstance(max_concurrency, bool) or not isinstance(max_concurrency, int):
             raise TypeError("max_concurrency must be an int")
@@ -80,11 +89,37 @@ class ResourceGovernor:
             raise ValueError("max_concurrency must be > 0")
         with self._condition:
             self._limits[key] = max_concurrency
+            if source_ref is None:
+                self._limit_sources.pop(key, None)
+            else:
+                self._limit_sources[key] = str(source_ref)
+            if generation is None:
+                self._limit_generations.pop(key, None)
+            else:
+                self._limit_generations[key] = str(generation)
             self._condition.notify_all()
+
+    def invalidate_concurrency_limit(self, key: ResourceKey) -> bool:
+        """Forget future admission capacity without revoking an active lease."""
+        with self._condition:
+            existed = key in self._limits
+            self._limits.pop(key, None)
+            self._limit_sources.pop(key, None)
+            self._limit_generations.pop(key, None)
+            self._condition.notify_all()
+            return existed
 
     def concurrency_limit(self, key: ResourceKey) -> int | None:
         with self._condition:
             return self._limits.get(key)
+
+    def concurrency_limit_source(self, key: ResourceKey) -> str | None:
+        with self._condition:
+            return self._limit_sources.get(key)
+
+    def concurrency_limit_generation(self, key: ResourceKey) -> str | None:
+        with self._condition:
+            return self._limit_generations.get(key)
 
     def in_flight(self, key: ResourceKey) -> int:
         with self._condition:

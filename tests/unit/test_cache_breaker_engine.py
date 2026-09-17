@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from contextlib import suppress
+from dataclasses import replace
 
 from .test_model_attribution import (
     _FakeLLMClient,
@@ -40,6 +41,7 @@ def _mk_engine(
     budget: int = 60_000,
     head_keep_ratio: str = "0",
     audit_file: str = "/tmp/cb_engine_test.jsonl",
+    breaker_pressure_narrow: bool = True,
 ):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
     # 风暴复现: 关 head_keep（build 时读 env）——生产风暴走 downgrade 路径
@@ -51,6 +53,13 @@ def _mk_engine(
         model_providers_raw=_DEEPSEEK_JSON,
         llm_model="deepseek/deepseek-v4-flash",
         history_max_chars=budget,
+    )
+    settings = replace(
+        settings,
+        tool_runtime=replace(
+            settings.tool_runtime,
+            breaker_pressure_narrow=breaker_pressure_narrow,
+        ),
     )
     fake = _FakeLLMClient("deepseek/deepseek-v4-flash")
     pool = _make_pool(settings, fake, cached={"deepseek": fake})
@@ -101,9 +110,10 @@ def test_breaker_full_chain_storm_to_recovery(tmp_path, monkeypatch):
     """显式 legacy 回滚：风暴 → context_pressure → 逃生压缩 → 恢复退出."""
     # 504641c 后默认行为已收窄为“不因性能水位终止 run”；本测试验证的是
     # 显式兼容回滚路径，因此必须 opt-in 旧阻断语义，不能把旧默认偷带回来。
-    monkeypatch.setenv("LFL_BREAKER_PRESSURE_NARROW", "0")
     audit = str(tmp_path / "breaker.jsonl")
-    engine, fake = _mk_engine(tmp_path, monkeypatch, audit_file=audit)
+    engine, fake = _mk_engine(
+        tmp_path, monkeypatch, audit_file=audit, breaker_pressure_narrow=False
+    )
     sid = engine.session.create()
     mon = engine._cache_monitor  # noqa: SLF001
     # 新中段压缩正常会在单轮内回落，不应人为制造风暴；这里用 monitor 的真实输入
@@ -145,10 +155,10 @@ def test_breaker_freeze_prevents_compression(tmp_path, monkeypatch):
     """显式 legacy 回滚下冻结期 build 禁止压缩并由 pressure 阻断."""
     from llm_loop.llm.client import LLMResponse
 
-    monkeypatch.setenv("LFL_BREAKER_PRESSURE_NARROW", "0")
-
     audit = str(tmp_path / "breaker2.jsonl")
-    engine, fake = _mk_engine(tmp_path, monkeypatch, audit_file=audit)
+    engine, fake = _mk_engine(
+        tmp_path, monkeypatch, audit_file=audit, breaker_pressure_narrow=False
+    )
     sid = engine.session.create()
     mon = engine._cache_monitor  # noqa: SLF001
     _arm_breaker(mon, sid)

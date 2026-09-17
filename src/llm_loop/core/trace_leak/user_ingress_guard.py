@@ -21,6 +21,7 @@ import logging
 import os
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
 from llm_loop.core.message import Message
@@ -126,6 +127,7 @@ def guard_user_write(
     ingress: object | None,
     *,
     entry: str = "user_ingress_guard",
+    data_dir: str | Path | None = None,
 ) -> GuardVerdict:
     """user 身份写入权判定（fail-open；异常放行 + leak.guard_fault 告警）."""
     session_id = str(getattr(sess, "session_id", "") or "?")
@@ -197,6 +199,7 @@ def guard_user_write(
             session_id=session_id,
             content=message.content,
             basis="enforce 拒绝的 user 写入内容（隔离留痕，不静默丢弃）",
+            data_dir=data_dir,
         )
         return GuardVerdict(
             GuardAction.DENY, message, "enforce 模式：白名单外 user 写入拒绝"

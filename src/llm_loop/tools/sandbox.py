@@ -31,9 +31,10 @@ _BWRAP_RO_BINDS = ("/usr", "/etc", "/lib", "/lib64", "/bin", "/sbin")
 _DEFAULT_IMAGE = "python:3.13-slim"
 
 
-def sandbox_mode() -> str:
-    """当前沙箱模式（bwrap / docker / none）."""
-    return os.environ.get("EXEC_SANDBOX", "").strip().lower() or "none"
+def sandbox_mode(raw: str = "none") -> str:
+    """Normalize a startup-resolved sandbox mode (bwrap / docker / none)."""
+    mode = str(raw or "none").strip().lower()
+    return mode if mode in {"bwrap", "docker", "none"} else "none"
 
 
 def bwrap_argv(command: str, workdir: str) -> list[str]:
@@ -52,7 +53,7 @@ def bwrap_argv(command: str, workdir: str) -> list[str]:
     return argv
 
 
-def docker_argv(command: str, workdir: str) -> list[str]:
+def docker_argv(command: str, workdir: str, *, image: str = _DEFAULT_IMAGE) -> list[str]:
     """构造 docker run argv（容器后端）.
 
     - --network=none: 断网（严于 bwrap）
@@ -60,7 +61,7 @@ def docker_argv(command: str, workdir: str) -> list[str]:
     - --user uid:gid: 容器进程与宿主当前用户同 uid, bind-mount 内新建文件不变成 root 属主
     - --cap-drop ALL / --pids-limit: 收紧能力与进程数
     """
-    image = os.environ.get("EXEC_SANDBOX_IMAGE", "").strip() or _DEFAULT_IMAGE
+    image = str(image or _DEFAULT_IMAGE).strip() or _DEFAULT_IMAGE
     uid, gid = os.getuid(), os.getgid()
     return [
         "docker", "run", "--rm",
@@ -77,14 +78,20 @@ def docker_argv(command: str, workdir: str) -> list[str]:
     ]
 
 
-def sandbox_argv(command: str, workdir: str) -> tuple[list[str] | None, str]:
+def sandbox_argv(
+    command: str,
+    workdir: str,
+    *,
+    mode: str = "none",
+    image: str = _DEFAULT_IMAGE,
+) -> tuple[list[str] | None, str]:
     """按 EXEC_SANDBOX 返回 (argv, note)。
 
     - 未启用 → (None, "")（调用方走既有 shell=True 路径，零回归）
     - bwrap/docker 且可用 → (argv, "（已启用 bwrap/docker 沙箱）")
     - 显式开启但后端不可用 → 抛 RuntimeError（fail-closed，调用方如实失败回执）
     """
-    mode = sandbox_mode()
+    mode = sandbox_mode(mode)
     workdir = os.path.abspath(workdir)
     if mode == "bwrap":
         if shutil.which("bwrap") is None:
@@ -102,7 +109,7 @@ def sandbox_argv(command: str, workdir: str) -> tuple[list[str] | None, str]:
                 f"（镜像可用 EXEC_SANDBOX_IMAGE 指定，默认 {_DEFAULT_IMAGE}）"
                 "或设 EXEC_SANDBOX=none。"
             )
-        return (docker_argv(command, workdir), "（已启用 docker 沙箱：断网/只读 rootfs/工作区可写）")
+        return (docker_argv(command, workdir, image=image), "（已启用 docker 沙箱：断网/只读 rootfs/工作区可写）")
     return (None, "")
 
 

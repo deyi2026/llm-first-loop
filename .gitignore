@@ -78,3 +78,6 @@ Nexitally_Surge*.conf
 
 # Web/local provider registry overlay (may contain private endpoints; no secrets)
 data/providers.local.json
+
+# Local runtime business configuration SoT
+runtime.toml
