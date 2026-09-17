@@ -1,0 +1,13 @@
+{
+  "name": "@lfl/smc-n3-validator-qualification",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pinned qualification-only EYE-js backend for SMC Semantic Logic P1-C",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "eyereasoner": "21.1.18"
+  }
+}
