@@ -42,9 +42,17 @@ ambiguity halt, scroll, navigate, parametrized delays, `hx-*` attributes).
 ### Verify
 
 ```sh
-python3 evals/fixtures/smc_ground_truth_server.py   # HTTP-level self-check
+python3 evals/fixtures/smc_ground_truth_server.py   # HTTP-level self-check (12 routes)
+python3 evals/fixtures/browser_smoke.py             # browser-level smoke (11 checks, playwright)
 ```
 
-Verified 2026-09-18: HTTP self-check (12 routes) and browser-level smoke
-(10/10: click/fill/select/scroll events, pollution AX occurrences >= 2,
-delayed enable/appear, navigate a→b, hx shim) on the helper sandbox.
+`browser_smoke.py` takes element names from `/manifest` (no hardcoded DOM
+expectations) and asserts effects against the `/state` event log. The
+pollution check counts the CDP full AX tree (`Accessibility.getFullAXTree`),
+because `aria_snapshot()` folds the button text into the button name and
+would report a false count of 1.
+
+Verified 2026-09-18 (local): HTTP self-check 12 routes PASS; browser smoke
+11/11 PASS (click/fill/select/scroll events, pollution raw AX occurrences
+>= 2, ambiguous kind+name == 2 with zero side effect, delayed enable with no
+early_click, delayed appear, navigate a→b, hx shim).
