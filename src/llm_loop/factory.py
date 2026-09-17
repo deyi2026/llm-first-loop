@@ -423,6 +423,12 @@ def build_engine(settings: Settings) -> LoopEngine:
         delete_resource_blocker_fn=external_resource_delete_blocker,
     )
 
+    # EVO-20260917-abdb3247 P0: 注入观测 ledger 路径绑定（跟随运行时 data_dir；fail-open）
+    with suppress(Exception):
+        from llm_loop.knowledge.injection_ledger import configure
+
+        configure(Path(settings.data_dir) / "audit")
+
     # 工具注册表（3 基础工具 + 自省/修正/检索工具）
     registry = ToolRegistry(
         tool_timeout_s=settings.tool_timeout_s,

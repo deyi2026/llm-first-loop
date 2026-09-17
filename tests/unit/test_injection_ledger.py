@@ -1,0 +1,85 @@
+"""EVO-20260917-abdb3247 P0: 注入观测 ledger——零行为变化 + fail-open + 开关."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+from llm_loop.tools.registry import (
+    ToolResult,
+    ToolResultStatus,
+    tool_result_to_message,
+)
+
+
+def _fail_result() -> ToolResult:
+    return ToolResult(
+        status=ToolResultStatus.FAILURE,
+        content="[状态: failure] boom",
+        tool_call_id="c1",
+        tool_name="demo_tool",
+    )
+
+
+def _rows(tmp: Path) -> list[dict]:
+    p = tmp / "injection_ledger.jsonl"
+    if not p.exists():
+        return []
+    return [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+
+def test_receipt_pointer_row_written_and_content_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setenv("INJECTION_LEDGER_PATH", str(tmp_path / "injection_ledger.jsonl"))
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
+    monkeypatch.delenv("KNOWLEDGE_INJECTION_LEDGER", raising=False)
+
+    with_ledger = tool_result_to_message(_fail_result())
+    rows = _rows(tmp_path)
+    assert any(
+        r.get("kind") == "receipt_pointer" and r.get("source") == "failure_guidance" for r in rows
+    )
+
+    # 开关关闭：正文逐字节一致，且不再新增行
+    monkeypatch.setenv("KNOWLEDGE_INJECTION_LEDGER", "0")
+    without = tool_result_to_message(_fail_result())
+    assert str(without.content) == str(with_ledger.content)
+    assert len(_rows(tmp_path)) == 1
+
+
+def test_guidance_off_mode_zero_rows(tmp_path, monkeypatch):
+    monkeypatch.setenv("INJECTION_LEDGER_PATH", str(tmp_path / "injection_ledger.jsonl"))
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
+    msg = tool_result_to_message(_fail_result())
+    assert "RULE-AI-02/07" not in str(msg.content)
+    assert _rows(tmp_path) == []
+
+
+def test_ledger_io_error_fail_open(tmp_path, monkeypatch):
+    # 路径指向目录 → 写失败 → 不冒泡、正文正常
+    monkeypatch.setenv("INJECTION_LEDGER_PATH", str(tmp_path))
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
+    msg = tool_result_to_message(_fail_result())
+    assert "RULE-AI-02/07" in str(msg.content)
+
+
+def test_hydration_rows(tmp_path, monkeypatch):
+    from llm_loop.tools.registry import _observe_knowledge_hydration
+
+    monkeypatch.setenv("INJECTION_LEDGER_PATH", str(tmp_path / "injection_ledger.jsonl"))
+    call = SimpleNamespace(name="search_records", arguments={"kind": "rule", "query": "evidence discipline"})
+    result = SimpleNamespace(status=SimpleNamespace(value="success"), tool_name="search_records")
+    _observe_knowledge_hydration(call, result)
+
+    call2 = SimpleNamespace(name="skill_load", arguments={"name": "notebook-session"})
+    result2 = SimpleNamespace(status=SimpleNamespace(value="success"), tool_name="skill_load")
+    _observe_knowledge_hydration(call2, result2)
+
+    # 非成功状态不登记
+    result3 = SimpleNamespace(status=SimpleNamespace(value="failure"), tool_name="search_records")
+    _observe_knowledge_hydration(call, result3)
+
+    rows = _rows(tmp_path)
+    pairs = [(r.get("tool"), r.get("record_kind") or r.get("skill")) for r in rows]
+    assert ("search_records", "rule") in pairs
+    assert ("skill_load", "notebook-session") in pairs
+    assert len(rows) == 2

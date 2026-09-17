@@ -45,3 +45,10 @@
 - **P1 归因**：A 级机械归因 + per-ref/per-surface 报告（self_evaluate/维护任务输出）；
 - **P2 L1 发现层**：首 turn 标题级指针 + 预算 + 自适应降频/摘除；
 - **P3 接口**：reuse_stats 进 method qualification 证据与 save_experience 验证状态（长期 unverified 降权）。
+
+
+## 六、勘误与 P0 状态（2026-09-17 20:5x 落实）
+
+- **勘误**：§一基线表"工具失败回执内嵌指针｜每次 failure 必现"为历史时段（LFL_TOOL_GUIDANCE 尚未 enforce）口径；自 2026-09-01（R9-P0-01 批 2/3）默认 `LFL_TOOL_GUIDANCE=off`（四源模型可见 chars=0），当前部署未覆盖。因此当前实际注入面 = L0 静态系统提示 + schema 内嵌描述（常量）+ L2 按需水合。
+- **推论**：P2 重引入回执/首 turn 指针 = 部分反转既有 enforce 决策，必须独立 EVO + 独立人工审批 + 先看 P0/P1 数据；本期（EVO-20260917-abdb3247）只落 P0 观测。
+- **P0 已实现**：`src/llm_loop/knowledge/injection_ledger.py`（fail-open JSONL，`KNOWLEDGE_INJECTION_LEDGER=0` 关闭）；registry 两处登记钩子（receipt_pointer=建议文本实际进入正文的时刻，off 态零写入零开销；hydration=search_records/skill_load 成功）；聚合 `scripts/aggregate_injection_ledger.py`；测试 `tests/unit/test_injection_ledger.py`（正文字节级不变 + fail-open + off 零行 + 水合字段）。

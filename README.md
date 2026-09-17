@@ -168,6 +168,7 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 | `HISTORY_MAX_CHARS` | 未设置 | **可选**全局历史/性能 cap。未设置时不制造独立 100K/200K 限制，每轮按当前实际路由模型的 context window、output reserve 与 provider 显式性能 cap 计算；显式设置时仅限制历史保留/prefill，不作为当前用户原文的能力上限 |
 | `METHOD_REFLECTION_MODE` | auto | Method post-run self-distill：off/auto；auto 按机械 friction 触发一次隔离模型调用；`off` 显式关闭（非法值回 off） |
 | `LEARNING_PLANE_ENABLED` | 1 | Learning Plane 后台消费装配（journal + ReflectionRun）；`0` 显式关闭（置空同 0） |
+| `KNOWLEDGE_INJECTION_LEDGER` / `INJECTION_LEDGER_PATH` | 1 / 空 | 注入观测 ledger（EVO-20260917-abdb3247 P0；登记回执指针与知识水合成功调用，零模型可见行为变化；0=关闭） |
 | `METHOD_REFLECTION_MIN_ROUNDS` / `METHOD_REFLECTION_MIN_TOOLS` / `METHOD_REFLECTION_MIN_FAILURES` | 6/6/2 | auto 模式机械 friction 阈值 |
 | `METHOD_REFLECTION_TIMEOUT_S` | 120 | 隔离 reflection 单次模型调用超时（秒） |
 | `MODEL_FALLBACKS` | 空 | 降级链（逗号分隔 `provider/model`，如 `deepseek/deepseek-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`）；空=不启用降级 |
