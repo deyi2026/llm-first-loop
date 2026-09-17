@@ -494,6 +494,10 @@ def _engine_case(gate_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
             )
             for i in range(257)
         ]
+        # Context cardinality is measured from the explicit FactContext wire, not from
+        # a helper-only hash salt.  Make all 257 contexts mechanically distinct.
+        for i, fact in enumerate(facts):
+            fact["context"]["scope_ref"] = f"scope:context:{i}"
     elif gate_id == "P2-E-14":
         domain = "filesystem"
         facts = [_fact("noise.value", 1, domain="filesystem")]
