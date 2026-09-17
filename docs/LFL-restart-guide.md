@@ -325,6 +325,8 @@ curl -sS --max-time 5 -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8903/lo
 | `/login?next=/ui/v2/` | 200 | 登录页面可访问 |
 | 受保护 `/health` 或 API | 未认证时可为 401 | 鉴权拒绝，不能单凭此判定后端崩溃 |
 
+断言 `303` 时客户端必须禁用自动重定向（curl 不加 `-L`；Python `urllib` 需自定义 no-redirect Handler），否则会跟随到链尾 `/login` 的 `200`，把首跳 `303` 掩盖成“通过”。断言对象是首跳状态码 + `Location` 头（2026-09-17 验收实证，`experience:EXPERIENCE-20260917-http-303-200`）。
+
 随后在浏览器重新登录，确认实际应用页面、JS/CSS、会话列表和一个最小请求正常。**303 到登录页只是入口验收；不能冒充登录后全功能验收。** 不要为验证方便关闭鉴权或输出 API key、cookie、完整进程环境。
 
 当前 `WebSessionStore` 保存在进程内存中，重启 Web 后旧登录 cookie 失效，需要重新登录。这不代表聊天记录丢失。
