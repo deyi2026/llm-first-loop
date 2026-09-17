@@ -1,0 +1,115 @@
+{
+  "schema": "smc.semantic_logic_p1b_result.v0.1",
+  "date": "2026-09-17",
+  "status": "pass",
+  "phase": "P1-B",
+  "branch": "feature/smc-semantic-logic-p1b-20260917",
+  "parent_p1a_commit": "6efd264224c8b3e00ef2d8b5c1e58bbb351a10cb",
+  "implementation_commit": "27bd31c8a4f03602987eaeb2c8f96baed68aa9f5",
+  "profiles": {
+    "canonical_json": "smc.fact_graph_json.v0.1",
+    "canonical_n3": "smc.fact_graph_n3.v0.1",
+    "opaque_identity_policy": "exact_literal_no_normalization",
+    "normalization": "none"
+  },
+  "implementation": {
+    "authority": "shadow_only",
+    "production_consumed": false,
+    "external_reasoner_required": false,
+    "external_reasoner_used": false,
+    "provider_visible_change": false,
+    "mutation_authority_change": false,
+    "runtime_authority_change": false,
+    "files": [
+      {
+        "path": "src/llm_loop/semantic_logic/__init__.py",
+        "sha256": "b9a632a8f546ce964a6ae0bc4f2bfb1a77e1ac22f1afae585d9185b86afddc54"
+      },
+      {
+        "path": "src/llm_loop/semantic_logic/serialization.py",
+        "sha256": "97e4386fbdf21c5404c28e5381aefea2a72826bf4199c97c0d8c96010cd12504"
+      },
+      {
+        "path": "tests/unit/test_smc_semantic_logic_p1b.py",
+        "sha256": "2ec9b29764955f2e15b50d8418ff4788bbe6d5a3a8878a67394531d081416cda"
+      },
+      {
+        "path": "docs/SMC-SEMANTIC-LOGIC-P1B-SERIALIZATION-v0.1.md",
+        "sha256": "ebc66ad3fd4588fcbc0cfd0655427d456d383b7c1d8ec5666d8fc1d2d803b9f8"
+      }
+    ]
+  },
+  "frozen_cases": {
+    "total": 15,
+    "S1": 3,
+    "S2": 2,
+    "S3": 3,
+    "S4": 4,
+    "S5": 3,
+    "facts_total": 726,
+    "containers_total": 209,
+    "json_round_trip_exact": 15,
+    "n3_round_trip_exact": 15,
+    "semantic_loss_observed": 0
+  },
+  "serialization_bytes": {
+    "measurement_kind": "serialized_byte_size_not_latency_benchmark",
+    "canonical_json_total": 437392,
+    "canonical_json_min": 4877,
+    "canonical_json_max": 83156,
+    "canonical_n3_total": 2731339,
+    "canonical_n3_min": 30938,
+    "canonical_n3_max": 516785
+  },
+  "tests": {
+    "p1a_plus_p1b": {
+      "collected": 47,
+      "passed": 47
+    },
+    "browser_frozen_oracle": {
+      "collected": 119,
+      "passed": 119
+    },
+    "combined_adjacent": {
+      "collected": 166,
+      "passed": 166
+    }
+  },
+  "static": {
+    "ruff": "pass",
+    "py_compile": "pass",
+    "pyright_errors": 0,
+    "pyright_warnings": 0,
+    "git_diff_check": "pass",
+    "production_consumers": 0
+  },
+  "whole_repo_gate": {
+    "ci_gate": "pass",
+    "ruff": "pass",
+    "env_pin_test_files_scanned": 589,
+    "env_pin_undeclared_compact_ratio_dependents": 0,
+    "pyright_errors": 0,
+    "pyright_warnings": 0,
+    "tier0": "pass",
+    "full_xdist": "pass",
+    "whole_tree_security_files": 1941,
+    "whole_tree_security": "pass"
+  },
+  "n3_claim_boundary": {
+    "turtle_compatible_triple_subset_intended": true,
+    "independent_external_parser_verified": false,
+    "entailment_verified": false,
+    "proof_generation_verified": false,
+    "deferred_to": "P1-C"
+  },
+  "boundaries": {
+    "python_oracle_remains_authoritative": true,
+    "p1c_started": false,
+    "p1d_started": false,
+    "p2_started": false,
+    "push_performed": false,
+    "deploy_performed": false,
+    "service_restart_performed": false,
+    "local_model_change_performed": false
+  }
+}
