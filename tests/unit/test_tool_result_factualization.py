@@ -899,7 +899,6 @@ def test_typed_recovery_projects_verified_skill_capability_fact_with_guidance_of
     assert result.recovery_advice is not None
     assert result.recovery_advice.preferred_skill == "web-fetch-fast"
 
-    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
     tool_msg = tool_result_to_message(result)
     host = SimpleNamespace(
         settings=SimpleNamespace(skills_dir=str(skills)),
@@ -928,7 +927,6 @@ def test_typed_recovery_does_not_claim_missing_skill_available(monkeypatch, tmp_
         tool_name="web_fetch",
     )
     result.recovery_advice = classify_tool_recovery(result)
-    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
     tool_msg = tool_result_to_message(result)
     host = SimpleNamespace(
         settings=SimpleNamespace(skills_dir=str(tmp_path / "empty-skills")),
