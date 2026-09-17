@@ -262,10 +262,12 @@ PAGE_ROUTES: dict[str, dict[str, Any]] = {
             "marker": "id='region'",
             "canonical_objects": [
                 {"kind": "select", "name": "Region", "expected_id": "region", "kind_name_matches": 1,
-                 "note": "canonical kind for <select> not pinned by FC2-B doc; grounded by role"}
+                 "note": "canonical kind for <select> not pinned by FC2-B doc; grounded by role"},
+                {"kind": "button", "name": "Save region", "expected_id": "save-region", "kind_name_matches": 1,
+                 "note": "confirm control: the select mutation is reported on this click"}
             ],
             "expected_events": [{"kind": "select", "element_id": "region", "count": 1}],
-            "contract_notes": "native <select>; option values east/west",
+            "contract_notes": "native <select>; option values east/west; confirm via Save region",
         },
     },
     "/unique/scroll": {

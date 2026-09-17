@@ -22,7 +22,7 @@ ambiguity halt, scroll, navigate, parametrized delays, `hx-*` attributes).
 | --- | --- |
 | `/unique/click` | unique `kind=button name="Run check"`; click reports one event |
 | `/unique/fill` | canonical FC2-C `kind=input name="Project code"` + Save code |
-| `/unique/select` | native `<select name="Region">` (east/west) |
+| `/unique/select` | native `<select name="Region">` (east/west), confirm via `Save region` |
 | `/unique/scroll` | `role=region` scroll container, 40 items, debounced scroll events |
 | `/pollution/button-text-child` | FC2-B phenomenon: button + same-name StaticText child; kind+name resolves, name-only is polluted |
 | `/ambiguous/two-buttons` | two `kind=button name="Deploy"`; contract must halt, `/state` stays empty |
