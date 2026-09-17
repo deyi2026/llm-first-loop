@@ -1,0 +1,66 @@
+{
+  "asset_hashes": {
+    "docs/SMC-SEMANTIC-LOGIC-P2-CORE-RULE-ENGINE-v0.1.md": "eb59b26b540b7197a00bb8b6a70615fb603c4dd82a15c9974c3f0dd14c971024",
+    "docs/SMC-SEMANTIC-LOGIC-P2-RED-GATES-v0.1.json": "d5c681333299016d1ac6a9c58e0effa18ce98afdd82aa878512aba1833bf2475",
+    "docs/SMC-SEMANTIC-LOGIC-P2-RULEPACK-v0.1.json": "97b37a9dcf12823a43058ea6663485e4dff60ed0071844fcc4eaedb53cad6268",
+    "docs/SMC-SEMANTIC-LOGIC-P2-SCHEMA-v0.1.json": "6eaa0333c10b458b71c459eef42f34e7e0c0b035749db7b2890d30f8d81ae83f"
+  },
+  "authority": "shadow_only",
+  "branch": "feature/smc-semantic-logic-p2-design-20260917",
+  "design_commit": "97c77c25a9ad573176c567dc8a1cb1d961713296",
+  "design_invariants": {
+    "arbitrary_code_execution": false,
+    "cycles_rejected": true,
+    "dynamic_rule_loading": false,
+    "input_output_fixture_separation_required": true,
+    "missing_fact_means_false": false,
+    "negation_as_failure": false,
+    "recursion": false,
+    "runtime_authority_minting": false,
+    "single_topological_pass": true,
+    "task_completion_authority": false
+  },
+  "machine_validation": {
+    "authority_audit": "PASS",
+    "dependency_dag": "PASS",
+    "draft202012_schema": "PASS",
+    "p0_fixture_refs": "15/15 resolved",
+    "rule_hashes": "13/13 PASS",
+    "rulepack_hash": "PASS",
+    "unique_red_gate_ids": "64/64 PASS"
+  },
+  "next_boundary": "RED-first test harness then Typed IR evaluator implementation requires explicit owner continuation after architecture checkpoint",
+  "non_effects": [
+    "no_production_code",
+    "no_provider_visible_change",
+    "no_runtime_consumer",
+    "no_mutation_cutover",
+    "no_deploy",
+    "no_service_restart",
+    "no_model_start_or_switch"
+  ],
+  "parent_p1d_result": "54f1ed8c6c0b4cf71ca4b2bd39970df31d2e2ed5",
+  "phase": "P2-design",
+  "production_consumed": false,
+  "qualification": {
+    "ci_gate": "PASS",
+    "env_pin_scanned_test_files": 591,
+    "env_pin_undeclared": 0,
+    "full_xdist": "PASS",
+    "p1_semantic_adjacency": {
+      "passed": 215,
+      "total": 215
+    },
+    "pyright_errors": 0,
+    "pyright_warnings": 0,
+    "ruff": "PASS",
+    "tier0": "PASS",
+    "whole_tree_security_files": 1961
+  },
+  "red_gate_count": 64,
+  "rule_count": 13,
+  "rulepack_hash": "bba3a38c315078e390d1afd985572c962bfcecf076ef9ff623abcdf34ace458b",
+  "rulepack_id": "smc.browser.p2-core.v0.1",
+  "schema": "smc.p2_design_result.v0.1",
+  "status": "PASS"
+}
