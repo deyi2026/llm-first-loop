@@ -1,6 +1,6 @@
 # LFL 重启操作指南与注意事项
 
-更新：2026-09-16。适用：本机 macOS 上的 LFL mirror Web（8903）和 Feishu 服务。
+更新：2026-09-17。适用：本机 macOS 上的 LFL mirror Web（8903）和 Feishu 服务。
 
 依据：本次重启事故的实际回执，以及 `184f6cc6` 中的 `scripts/restart_mirror.sh`、Web 静态资源挂载和登录实现。文中的提交号是历史证据，不是永久部署目标。后续脚本改变时，应重新核对。
 
@@ -216,6 +216,33 @@ Feishu-only restart 的正式脚本会跳过 WebUI artifact 比对，但仍严�
 
 模型会话流程：`service_control(status) → 模型判断是否需要重启 → service_control(restart, expected_generation=刚观察值) → service_control(status, action_id=...)`。不要把普通 `execute_command` 的 shell 审批或可执行性当成 shared-service lifecycle authority。
 
+### 推进 desired deployment：先 publish，再 restart（重启 ≠ 部署）
+
+`service_control restart`（工具或脚本）只执行**已发布**的 desired deployment 记录（`data/runtime/managed_service_deployment.json`）：它不拉取代码、不创建 worktree、不比较仓库 HEAD。记录指向哪个 code root/SHA，就原样重启哪条线。
+
+重启前必须先核对记录与本次目标一致（模块从目标 code root 导入，下同）：
+
+```bash
+LFL_WORKSPACE_ROOT="$LFL_OP_CODE" LFL_RUNTIME_ROOT="$LFL_OP_RUNTIME" PYTHONPATH="$LFL_OP_CODE/src" \
+  "$LFL_OP_RUNTIME/.venv/bin/python" -m llm_loop.runtime.service_control show \
+  --data-dir "$LFL_OP_RUNTIME/data"
+```
+
+`git_head` 不等于本次目标 SHA 时，直接 restart 只会把旧线原样重启一遍——回执同样 `rc=0`、PID 同样更新，没有任何报错提示版本未变（2026-09-17 实证：记录停在 gen3/`3eaae8f6`，仓库 HEAD 已前移两个提交，restart 成功但新提交未上线）。版本推进必须先发布新 generation：
+
+```bash
+LFL_WORKSPACE_ROOT="$LFL_OP_CODE" LFL_RUNTIME_ROOT="$LFL_OP_RUNTIME" PYTHONPATH="$LFL_OP_CODE/src" \
+  "$LFL_OP_RUNTIME/.venv/bin/python" -m llm_loop.runtime.service_control publish \
+  --expected-generation <show 读到的当前值> \
+  --code-root "$LFL_OP_CODE" \
+  --runtime-root "$LFL_OP_RUNTIME"
+```
+
+- publish 是 compare-and-swap：自动落 `generation+1`，从 code root 取 `git_head` 与 WebUI artifact SHA；`expected_generation` 与当前记录不符（他人已推进）会失败——重新 `show` 后重试，不要猜值、不要循环硬撞。
+- 发布前提即 §4.1/§4.2 的 qualified worktree：`verify`（脚本 fence 同款检查）绑定 code/runtime 根、SHA、tracked-clean 与 WebUI artifact tree（web/all）；发布后可先 `verify` 自检再重启。
+- **不要手改 `managed_service_deployment.json` 推进代次。** 手改可产出等值 JSON，但绕开 CAS 的单调 +1 校验与租约纪律（2026-09-17 gen4 曾以手改达成，属既有实践，不是规范路径）。
+- 发布与重启是两步：publish 后仍按本节执行 restart、走 §6 验收；action 回执在 `data/runtime/service-control-actions/svc-*.json`（`status`/`deployment_generation`/`detail`）。
+
 ### 人工终端
 
 下面配置等待飞书空闲，超时仍忙则交互确认；没有明确中断任务的意图时选否：
@@ -329,6 +356,7 @@ Feishu 需要对应新 PID 的新鲜心跳，`state=connected`；检查启动后
 | 日志出现 `CancelledError` | 是否在旧 Web 的关停时间窗口 | 对照新 PID 的启动和请求结果，不把旧关停栈当成新启动失败 |
 | 测试在本机红、CI 绿 | 运行时环境变量是否泄漏；原始基线是否同样失败 | 用隔离测试环境定位，不扩大豁免，不改生产配置掩盖问题 |
 | `service_control_binding_failed` | desired deployment 未发布，或 code/runtime root、SHA、tracked-clean、WebUI artifact 与已发布 generation 不一致 | **不要停旧服务。** 先查 `service_control show/verify`，确认候选后以当前 generation 做 CAS 发布新 generation |
+| restart 回执 `rc=0`、PID 已更新，但版本没变（新提交未上线） | 是否把 restart 当成了 deploy：desired deployment 未推进 | `service_control show` 核对 `git_head` 与目标 SHA；按 §5 先 `publish` 再 restart，重跑 §6 验收（2026-09-17 实证） |
 | 普通 `execute_command` 返回“共享服务控制权拦截” | 命令试图 signal managed PID、运行 mutating restart script 或 direct runtime.launch | 不绕过 fence；改用 `service_control status → restart(expected_generation=...)`，只读 status/dry-run/probe 继续使用 |
 | 验收时版本/PID 又变化 | 是否有另一会话部署 | 协调操作者，重新核验最终状态 |
 
@@ -393,6 +421,7 @@ Feishu 需要对应新 PID 的新鲜心跳，`state=connected`；检查启动后
 操作时间 / 操作者：
 动作范围：web / feishu / all
 目标完整 SHA / code root / runtime root：
+发布 generation / publish 回执（show 核对的 git_head）：
 前端构建来源 / 退出码 / 资源检查：
 忙碌检查结果及中断授权（如适用）：
 重启命令退出码 / 落盘回执位置：
