@@ -1659,6 +1659,410 @@ def _evaluate_predicate_evaluate(
     )
 
 
+def _version_result(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    result_value: str,
+    reason: str,
+    comparable: bool | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    semantic_result: Literal[
+        "derived", "indeterminate", "conflict", "not_applicable", "rejected"
+    ] = "indeterminate" if result_value == "indeterminate" else "derived"
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs={
+            "version.result": result_value,
+            "version.reason": reason,
+            "version.comparable": comparable,
+            "version.automatic_refresh_performed": False,
+            "version.silent_rebind_performed": False,
+        },
+        result=semantic_result,
+        reason=reason,
+    )
+
+
+def _evaluate_version_assess(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    required = {
+        predicate: _single_value(index, predicate)
+        for predicate in rule["input_predicates"]
+    }
+    if not all(ok for ok, _ in required.values()):
+        raise _ValidationError("version_assessment_input_ambiguous")
+    values = {predicate: value for predicate, (_, value) in required.items()}
+
+    version_scope = values["version.scope"]
+    expected = values["version.expected"]
+    observed = values["version.observed"]
+    expected_availability = values["version.expected_availability"]
+    observed_availability = values["version.observed_availability"]
+    scope_relation = values["scope.relation"]
+    page_same = values["lineage.page_same"]
+    document_same = values["lineage.document_same"]
+    identity_stable = values["identity.stable"]
+    target_present = values["observation.target_present"]
+    coverage_complete = values["coverage.complete"]
+    object_changed = values["object.changed_fields"]
+    resource_changed = values["resource.changed_fields"]
+
+    if version_scope not in {"object", "resource", "snapshot"}:
+        raise _ValidationError("version_scope_invalid")
+    if not _nonempty_string(expected) or not _nonempty_string(observed):
+        raise _ValidationError("version_reference_invalid")
+    if not _nonempty_string(expected_availability) or not _nonempty_string(
+        observed_availability
+    ):
+        raise _ValidationError("version_availability_invalid")
+    if scope_relation not in {"match", "mismatch", "indeterminate"}:
+        raise _ValidationError("version_scope_relation_invalid")
+    if not all(
+        isinstance(value, bool)
+        for value in (
+            page_same,
+            document_same,
+            identity_stable,
+            target_present,
+            coverage_complete,
+        )
+    ):
+        raise _ValidationError("version_boolean_fact_invalid")
+    if (
+        not isinstance(object_changed, list)
+        or not all(_nonempty_string(item) for item in object_changed)
+        or not isinstance(resource_changed, list)
+        or not all(_nonempty_string(item) for item in resource_changed)
+    ):
+        raise _ValidationError("version_changed_fields_invalid")
+
+    if expected_availability != "available":
+        return _version_result(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            result_value="indeterminate",
+            reason=f"expected_version_{expected_availability}",
+            comparable=None,
+        )
+    if observed_availability != "available":
+        return _version_result(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            result_value="indeterminate",
+            reason=f"observed_version_{observed_availability}",
+            comparable=None,
+        )
+    if scope_relation != "match":
+        return _version_result(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            result_value="indeterminate",
+            reason=(
+                "scope_not_observed"
+                if scope_relation == "indeterminate"
+                else "target_scope_mismatch"
+            ),
+            comparable=None,
+        )
+    if version_scope == "object" and not identity_stable:
+        return _version_result(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            result_value="indeterminate",
+            reason="target_identity_unstable",
+            comparable=None,
+        )
+    if expected == observed:
+        return _version_result(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            result_value="match",
+            reason="exact_version",
+            comparable=True,
+        )
+    if not page_same:
+        return _version_result(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            result_value="stale",
+            reason="page_generation_changed",
+            comparable=False,
+        )
+    if not document_same:
+        return _version_result(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            result_value="stale",
+            reason="document_generation_changed",
+            comparable=False,
+        )
+
+    if version_scope == "object":
+        if not target_present:
+            if not coverage_complete:
+                return _version_result(
+                    rule=rule,
+                    input_document=input_document,
+                    input_facts=input_facts,
+                    result_value="indeterminate",
+                    reason="target_not_observed_incomplete",
+                    comparable=True,
+                )
+            return _version_result(
+                rule=rule,
+                input_document=input_document,
+                input_facts=input_facts,
+                result_value="stale",
+                reason="target_absent_in_observed_version",
+                comparable=True,
+            )
+        if object_changed:
+            return _version_result(
+                rule=rule,
+                input_document=input_document,
+                input_facts=input_facts,
+                result_value="stale",
+                reason="object_changed_same_generation",
+                comparable=True,
+            )
+        return _version_result(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            result_value="match",
+            reason="object_unchanged_new_observation",
+            comparable=True,
+        )
+
+    if version_scope == "resource":
+        if resource_changed:
+            return _version_result(
+                rule=rule,
+                input_document=input_document,
+                input_facts=input_facts,
+                result_value="stale",
+                reason="resource_changed_same_generation",
+                comparable=True,
+            )
+        return _version_result(
+            rule=rule,
+            input_document=input_document,
+            input_facts=input_facts,
+            result_value="match",
+            reason="resource_unchanged_new_observation",
+            comparable=True,
+        )
+
+    return _version_result(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        result_value="stale",
+        reason="different_snapshot_same_generation",
+        comparable=True,
+    )
+
+
+def _receipt_rows_in_observed_order(
+    *,
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    allowed = {
+        "receipt.action_id",
+        "receipt.seq",
+        "receipt.status",
+        "receipt.history_watermark",
+    }
+    fact_ids = {str(fact["fact_id"]) for fact in input_facts}
+    grouped: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for fact in input_document["facts"]:
+        if str(fact.get("fact_id")) not in fact_ids:
+            continue
+        predicate = str(fact["predicate"])
+        if predicate not in allowed:
+            continue
+        subject = str(fact["subject"])
+        if subject not in grouped:
+            grouped[subject] = {"subject": subject}
+            order.append(subject)
+        if predicate in grouped[subject]:
+            raise _ValidationError("receipt_sequence_duplicate_field")
+        grouped[subject][predicate] = fact.get("value")
+    rows = [grouped[subject] for subject in order]
+    if not rows:
+        raise _ValidationError("receipt_sequence_missing")
+    if any(set(row) != allowed | {"subject"} for row in rows):
+        raise _ValidationError("receipt_sequence_fields_incomplete")
+    return rows
+
+
+def _evaluate_receipt_sequence_validate(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    del index
+    rows = _receipt_rows_in_observed_order(
+        input_document=input_document,
+        input_facts=input_facts,
+    )
+    action_ids = [row["receipt.action_id"] for row in rows]
+    seqs = [row["receipt.seq"] for row in rows]
+    statuses = [row["receipt.status"] for row in rows]
+    watermarks = [row["receipt.history_watermark"] for row in rows]
+    if not all(_nonempty_string(value) for value in action_ids):
+        raise _ValidationError("receipt_action_id_invalid")
+    if not all(
+        isinstance(value, int) and not isinstance(value, bool) and value > 0
+        for value in seqs + watermarks
+    ):
+        raise _ValidationError("receipt_sequence_number_invalid")
+    if not all(status in {"running", "ok", "failed", "rejected"} for status in statuses):
+        raise _ValidationError("receipt_status_invalid")
+
+    same_action = len(set(str(value) for value in action_ids)) == 1
+    strictly_increasing = all(
+        left < right for left, right in zip(seqs, seqs[1:], strict=False)
+    )
+    watermark_complete = all(
+        seq <= watermark for seq, watermark in zip(seqs, watermarks, strict=True)
+    ) and (max(seqs) == max(watermarks))
+    sequence_monotonic = same_action and strictly_increasing and watermark_complete
+
+    transition_valid = True
+    previous: str | None = None
+    for status in statuses:
+        if previous is None:
+            previous = status
+            continue
+        if previous == "running":
+            if status not in {"ok", "failed", "rejected"}:
+                transition_valid = False
+                break
+        elif status != "rejected":
+            # Once a physical attempt is terminal, production may append only a
+            # duplicate/precondition rejection for the same reserved action id.
+            transition_valid = False
+            break
+        previous = status
+    terminal_status = statuses[-1] if statuses[-1] in {"ok", "failed", "rejected"} else None
+    reason = None
+    if not sequence_monotonic:
+        reason = "receipt_sequence_nonmonotonic"
+    elif not transition_valid:
+        reason = "receipt_transition_invalid"
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs={
+            "receipt.sequence_monotonic": sequence_monotonic,
+            "receipt.transition_valid": transition_valid,
+            "receipt.terminal_status": terminal_status,
+        },
+        result="derived",
+        reason=reason,
+    )
+
+
+def _evaluate_receipt_dispatch_invariants(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    scalar_predicates = {
+        "runtime.reservation_result",
+        "runtime.dispatch_count",
+        "receipt.retry.automatic_retry_performed",
+        "receipt.observed_effects.provisional",
+        "receipt.sequence_monotonic",
+        "receipt.transition_valid",
+    }
+    scalar_values = {
+        predicate: _single_value(index, predicate) for predicate in scalar_predicates
+    }
+    if not all(ok for ok, _ in scalar_values.values()):
+        raise _ValidationError("receipt_dispatch_input_ambiguous")
+    values = {predicate: value for predicate, (_, value) in scalar_values.items()}
+    reservation_result = values["runtime.reservation_result"]
+    dispatch_count = values["runtime.dispatch_count"]
+    automatic_retry = values["receipt.retry.automatic_retry_performed"]
+    provisional = values["receipt.observed_effects.provisional"]
+    sequence_monotonic = values["receipt.sequence_monotonic"]
+    transition_valid = values["receipt.transition_valid"]
+    statuses = [fact.get("value") for fact in index.get("receipt.status") or []]
+    retry_reasons = [fact.get("value") for fact in index.get("receipt.retry.reason") or []]
+
+    if not isinstance(reservation_result, bool):
+        raise _ValidationError("receipt_reservation_result_invalid")
+    if (
+        not isinstance(dispatch_count, int)
+        or isinstance(dispatch_count, bool)
+        or dispatch_count < 0
+    ):
+        raise _ValidationError("receipt_dispatch_count_invalid")
+    if not isinstance(automatic_retry, bool) or not isinstance(provisional, bool):
+        raise _ValidationError("receipt_dispatch_boolean_invalid")
+    if not retry_reasons or not all(
+        reason is None or _nonempty_string(reason) for reason in retry_reasons
+    ):
+        raise _ValidationError("receipt_retry_reason_invalid")
+    if not isinstance(sequence_monotonic, bool) or not isinstance(transition_valid, bool):
+        raise _ValidationError("receipt_sequence_fact_invalid")
+    if not statuses or not all(
+        status in {"running", "ok", "failed", "rejected"} for status in statuses
+    ):
+        raise _ValidationError("receipt_status_invalid")
+
+    single_dispatch_preserved = dispatch_count <= 1
+    no_automatic_retry = not automatic_retry
+    reservation_consistent = reservation_result or "rejected" in statuses
+    invariant_ok = (
+        sequence_monotonic
+        and transition_valid
+        and single_dispatch_preserved
+        and no_automatic_retry
+        and reservation_consistent
+    )
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs={
+            "receipt.single_dispatch_preserved": single_dispatch_preserved,
+            "receipt.no_automatic_retry": no_automatic_retry,
+            "receipt.effect_evidence_status": (
+                "provisional" if provisional else "non_provisional"
+            ),
+            "receipt.invariant_status": "ok" if invariant_ok else "violation",
+        },
+        result="derived",
+        reason=None if invariant_ok else "receipt_invariant_violation",
+    )
+
+
 def _evaluate_action_fixed_contract(
     *,
     rule: dict[str, Any],
@@ -1718,6 +2122,9 @@ _IMPLEMENTED_EVALUATORS: Final = {
     "identity_ambiguity_no_fusion": _evaluate_identity_ambiguity_no_fusion,
     "predicate_bind_selected_condition": _evaluate_predicate_bind_selected_condition,
     "predicate_evaluate": _evaluate_predicate_evaluate,
+    "version_assess": _evaluate_version_assess,
+    "receipt_sequence_validate": _evaluate_receipt_sequence_validate,
+    "receipt_dispatch_invariants": _evaluate_receipt_dispatch_invariants,
 }
 
 
