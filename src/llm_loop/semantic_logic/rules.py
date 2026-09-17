@@ -1061,6 +1061,247 @@ def _evaluate_scope_target_relation(
     )
 
 
+def _evaluate_canonicalize_source_conflict(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    del index
+    grouped: dict[str, dict[str, Any]] = {}
+    for fact in input_facts:
+        predicate = str(fact["predicate"])
+        if predicate not in {
+            "observation.subject",
+            "observation.property",
+            "observation.source",
+            "observation.value",
+            "observation.grounding_ref",
+        }:
+            continue
+        grouped.setdefault(str(fact["subject"]), {})[predicate] = fact.get("value")
+
+    observations: list[dict[str, Any]] = []
+    logical_subject: str | None = None
+    logical_property: str | None = None
+    for fields in grouped.values():
+        required = {
+            key: fields.get(key)
+            for key in (
+                "observation.subject",
+                "observation.property",
+                "observation.source",
+                "observation.value",
+                "observation.grounding_ref",
+            )
+        }
+        if any(key not in fields for key in required):
+            raise _ValidationError("source_observation_fields_incomplete")
+        subject = required["observation.subject"]
+        property_name = required["observation.property"]
+        source = required["observation.source"]
+        grounding_ref = required["observation.grounding_ref"]
+        if not all(
+            _nonempty_string(value)
+            for value in (subject, property_name, source, grounding_ref)
+        ):
+            raise _ValidationError("source_observation_identity_invalid")
+        if logical_subject is None:
+            logical_subject = str(subject)
+            logical_property = str(property_name)
+        elif subject != logical_subject or property_name != logical_property:
+            raise _ValidationError("source_observation_target_mismatch")
+        observations.append(
+            {
+                "source": str(source),
+                "value": required["observation.value"],
+                "grounding_ref": str(grounding_ref),
+            }
+        )
+    if not observations:
+        raise _ValidationError("source_observations_missing")
+    observations.sort(
+        key=lambda item: json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
+    values = [item["value"] for item in observations]
+    first = values[0]
+    conflict = any(value != first for value in values[1:])
+    if conflict:
+        outputs = {
+            "canonical.value": None,
+            "canonical.truth_state": "conflict",
+            "conflict.resolution": "unresolved",
+            "conflict.source_observations": observations,
+        }
+        result: Literal["derived", "indeterminate", "conflict", "not_applicable", "rejected"] = "conflict"
+        reason = "qualified_sources_disagree"
+    else:
+        outputs = {
+            "canonical.value": first,
+            "canonical.truth_state": "asserted",
+            "conflict.resolution": "none",
+            "conflict.source_observations": observations,
+        }
+        result = "derived"
+        reason = None
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs=outputs,
+        result=result,
+        reason=reason,
+    )
+
+
+def _evaluate_derive_coverage_status(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    required = {
+        predicate: _single_value(index, predicate)
+        for predicate in rule["input_predicates"]
+    }
+    if not all(ok for ok, _ in required.values()):
+        raise _ValidationError("coverage_input_ambiguous")
+    values = {predicate: value for predicate, (_, value) in required.items()}
+    expected = values["coverage.expected_sources"]
+    observed = values["coverage.observed_sources"]
+    blind_spots = values["coverage.blind_spots"]
+    truncated = values["coverage.sensor_truncated"]
+    if (
+        not isinstance(expected, list)
+        or not expected
+        or not all(_nonempty_string(item) for item in expected)
+        or len(set(expected)) != len(expected)
+        or not isinstance(observed, list)
+        or not all(_nonempty_string(item) for item in observed)
+        or len(set(observed)) != len(observed)
+        or not isinstance(blind_spots, list)
+        or not all(_nonempty_string(item) for item in blind_spots)
+        or not isinstance(truncated, bool)
+    ):
+        raise _ValidationError("coverage_input_invalid")
+    expected_set = {str(item) for item in expected}
+    observed_set = {str(item) for item in observed}
+    missing = sorted(expected_set - observed_set)
+    reasons = sorted(
+        {str(item) for item in blind_spots}
+        | ({"sensor_truncated"} if truncated else set())
+        | {f"source_unobserved:{source}" for source in missing}
+    )
+    if not observed_set:
+        status = "unknown"
+        result: Literal["derived", "indeterminate", "conflict", "not_applicable", "rejected"] = "indeterminate"
+        outputs: dict[str, Any] = {
+            "coverage.status": status,
+            "coverage.reasons": reasons or ["no_qualified_source_observed"],
+        }
+        reason = "no_qualified_source_observed"
+    else:
+        complete = not missing and observed_set <= expected_set and not blind_spots and not truncated
+        status = "complete" if complete else "partial"
+        outputs = {
+            "coverage.status": status,
+            "coverage.complete": complete,
+            "coverage.reasons": reasons,
+        }
+        result = "derived"
+        reason = None if complete else "coverage_partial"
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs=outputs,
+        result=result,
+        reason=reason,
+    )
+
+
+def _evaluate_separate_completeness(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    required = {
+        predicate: _single_value(index, predicate)
+        for predicate in rule["input_predicates"]
+    }
+    if not all(ok for ok, _ in required.values()):
+        raise _ValidationError("completeness_input_ambiguous")
+    values = {predicate: value for predicate, (_, value) in required.items()}
+    observation_complete = values["observation.complete"]
+    observation_reasons = values["observation.reasons"]
+    projection_complete = values["projection.complete"]
+    projection_reasons = values["projection.reasons"]
+    if (
+        not isinstance(observation_complete, bool)
+        or not isinstance(projection_complete, bool)
+        or not isinstance(observation_reasons, list)
+        or not all(_nonempty_string(item) for item in observation_reasons)
+        or not isinstance(projection_reasons, list)
+        or not all(_nonempty_string(item) for item in projection_reasons)
+    ):
+        raise _ValidationError("completeness_input_invalid")
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs={
+            "semantic_evidence.observation_complete": observation_complete,
+            "semantic_evidence.projection_complete": projection_complete,
+            "semantic_evidence.projection_can_upgrade_observation": False,
+        },
+        result="derived",
+        reason=None,
+    )
+
+
+def _evaluate_identity_ambiguity_no_fusion(
+    *,
+    rule: dict[str, Any],
+    input_document: dict[str, Any],
+    input_facts: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    mapping_ok, mapping_status = _single_value(index, "identity.mapping_status")
+    candidates_ok, candidates = _single_value(index, "identity.source_candidates")
+    if (
+        not mapping_ok
+        or not candidates_ok
+        or not _nonempty_string(mapping_status)
+        or not isinstance(candidates, list)
+        or not all(_nonempty_string(item) for item in candidates)
+    ):
+        raise _ValidationError("identity_mapping_input_invalid")
+    if mapping_status == "ambiguous":
+        binding_status = "unresolved"
+        reason = "ambiguous_physical_identity"
+        result: Literal["derived", "indeterminate", "conflict", "not_applicable", "rejected"] = "indeterminate"
+    else:
+        binding_status = "indeterminate"
+        reason = "identity_mapping_not_proven_unique"
+        result = "indeterminate"
+    return _make_derivation_bundle(
+        rule=rule,
+        input_document=input_document,
+        input_facts=input_facts,
+        outputs={
+            "identity.binding_status": binding_status,
+            "identity.fusion_performed": False,
+            "identity.reason": reason,
+        },
+        result=result,
+        reason=reason,
+    )
+
+
 def _evaluate_action_fixed_contract(
     *,
     rule: dict[str, Any],
@@ -1114,6 +1355,10 @@ _IMPLEMENTED_EVALUATORS: Final = {
     "action_fixed_contract": _evaluate_action_fixed_contract,
     "scope_descendant_closure": _evaluate_scope_descendant_closure,
     "scope_target_relation": _evaluate_scope_target_relation,
+    "canonicalize_source_conflict": _evaluate_canonicalize_source_conflict,
+    "derive_coverage_status": _evaluate_derive_coverage_status,
+    "separate_completeness": _evaluate_separate_completeness,
+    "identity_ambiguity_no_fusion": _evaluate_identity_ambiguity_no_fusion,
 }
 
 
