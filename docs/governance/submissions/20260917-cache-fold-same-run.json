@@ -1,93 +1,140 @@
 {
-  "schema": "lfl.architecture_submission.v0.1",
-  "submission_id": "20260917-cache-fold-same-run",
-  "summary": "Preserve provider-visible same-run cache prefix continuity by deferring opportunistic Tool Working Set receipt folding after round 1 while retaining the hard result-count safety valve, historical offline/boundary behavior, and explicit telemetry for canary verification.",
+  "schema_version": 1,
+  "pr": 23,
+  "generated_at": "2026-09-17T15:55:00+08:00",
+  "base": "19e253edfe4d3fcbeb268830b90d00fd273a6262",
+  "head": "641e9a0f",
+  "summary": "same-run folds 前缀保持修复 + 已批准更新合流部署：exec 线锚钉机制（task_anchor_pin_messages 缺省 2，wire 尾部注入）与记忆/嵌入校准线、embedding env 治理键、proc_version PID liveness、toutiao 线 ingress 邻接源引用修复。冲突文件手工解并保持 deploy 线 helper/schema 约定。",
+  "declarations": {
+    "decl-fold-preserve": {
+      "necessity": "同 run 内 tool fold 展开造成 cache 前缀扰动，命中断崖",
+      "authority_owner": "cache fold architecture submission（a7ab30fc，2026-09-17 15:27）",
+      "relationship": "replace: fold 展开保留同 run 内前缀",
+      "non_duplication": "无既有同 run fold 保持机制",
+      "model_evidence": [
+        "evidence://v1/b2a6ffcdaffff82a9fb78779c9657e1cf5b5f7ddcdf7454955c48b879cb2600a"
+      ],
+      "rollback": "git revert 该修复；锚机制独立不受影响",
+      "verification": "tests/unit/test_run_prefix_stability.py 等 97 项绿",
+      "human_review_status": "pr_review(2026-09-17)"
+    },
+    "decl-anchor-integration": {
+      "necessity": "部署线会话此前无压缩锚块前缀打穿保护（锚钉机制仅存在于 exec 线）；压缩态会话锚块扰动无保护与观测",
+      "authority_owner": "用户 2026-09-17 批准部署（13:39 批准、15:23 指示执行）；锚机制原始 EVO 人工评审记录见 exec 线 832b4dfa/7004b9b2",
+      "relationship": "replace: 扩展既有 compaction/hotcard 机制（task_anchor_pin_messages 配置缺省 2，wire 尾部注入），不新建平行通道",
+      "non_duplication": "与 decl-fold-preserve 的 same-run folds 正交（锚块 vs tool folds）；无重复既有机制",
+      "model_evidence": [
+        "evidence://v1/8f08d146346769924030a31e5bdf007e336177dcd59711fd8f6358121243ff2f",
+        "evidence://v1/01ff7c5893ebcb8932809527451c41f6cd78e4135ffac3aa50c748ad8bd2133d"
+      ],
+      "rollback": "deploy worktree checkout 19e253ed 后 service_control restart",
+      "verification": "锚/前缀 pytest 子集 97 项绿；全量 unit 仅 2 失败经在合流前部署头复现确认环境性",
+      "human_review_status": "approved_for_deploy(2026-09-17)"
+    },
+    "decl-runtime-governance": {
+      "necessity": "exec 线 EMBEDDING_* env 治理键（2026-09-16 缓存互踩事故修复）与 proc_version PID liveness 修复需进入部署线，否则部署会话继续暴露 shell 残留漂移",
+      "authority_owner": "事故根因修复已在 exec 线评审落地（eb525fef/55e53458）；本次合流部署经用户 2026-09-17 批准",
+      "relationship": "replace: 扩展 resolver._LEGACY_GOVERNED_KEYS 与 proc_version 进程存活检查",
+      "non_duplication": "runtime.toml 闭包 schema 保持唯一权威；legacy 键仅收容未迁移键，无平行配置通道",
+      "model_evidence": [
+        "evidence://v1/9ef99b484f395172c1b68dcc2a4daedb79414d60766de394cfcf9d9bb1e55317"
+      ],
+      "rollback": "git revert resolver/proc_version 改动",
+      "verification": "tests/unit/test_proc_version.py 等配置/治理批 149 项绿",
+      "human_review_status": "approved_for_deploy(2026-09-17)"
+    }
+  },
   "components": [
     {
-      "component_id": "cache-fold-same-run-control",
-      "paths": [
-        "src/llm_loop/core/episode_history.py",
-        "src/llm_loop/core/prompt_build/stages/ingress_resolution.py",
-        "src/llm_loop/core/loop/build.py",
-        "src/llm_loop/core/loop/engine.py"
-      ],
+      "name": "comp-fold-preserve",
       "control_machinery": true,
-      "owning_subsystem": "provider-visible history projection and Tool Working Set cache-prefix preservation",
-      "disposition": "ADMIT as narrow mechanical cache-lineage control. The program only decides whether opportunistic soft/coarse receipt folding may rewrite already-sent same-run history; model semantic relevance, task strategy, evidence selection, and completion remain model-owned. hard_result_cap remains mandatory.",
-      "evidence": [
-        "Live attribution reproduced same-run prompt shrink when soft/coarse receipt folding replaced prior provider-visible tool results in place; one natural event shrank provider-visible chars from 94,295 to 72,458 and cache hit ratio to about 60.25%, followed by about 93.74% recovery on the next request.",
-        "Deterministic projection tests prove logical_round > 1 suppresses opportunistic soft/coarse folding while hard_result_cap still folds when required.",
-        "Engine-level selective-evidence coverage proves round-2 projection preserves selected evidence authority and does not opportunistically rewrite unselected raw tool results.",
-        "Telemetry exposes opportunistic_fold_allowed under ingress.tool_working_set for production canary verification."
+      "paths": [
+        "src/llm_loop/core/prompt_build/stages/history_pipeline.py",
+        "src/llm_loop/core/prompt_build/stages/history_postprocess.py",
+        "src/llm_loop/core/prompt_build/stages/history_projection.py",
+        "tests/unit/test_run_prefix_stability.py"
       ],
-      "verification_level": "Committed-state focused/adjacent pytest 101/101, Ruff, Pyright 0/0 on changed production paths, py_compile, diff-check, and full ci_gate",
-      "model_evidence_veto_recovery_exit": "The change is mechanical and observable. Operators can inspect request.meta tool_working_set telemetry and cache_health lineage; hard_result_cap still provides bounded safety, and the single implementation commit can be reverted without data migration.",
-      "rollback_route": "Revert cache-prefix implementation commit(s) on this review branch and redeploy the prior exact main 19e253ed rollback anchor; no persistent data conversion is involved.",
-      "declaration_id": "cache-fold-same-run-control"
+      "declaration_id": "decl-fold-preserve"
     },
     {
-      "component_id": "cache-fold-same-run-tests",
-      "paths": [
-        "tests/unit/test_tool_working_set_projection.py",
-        "tests/unit/test_selective_evidence_s1.py"
-      ],
+      "name": "comp-fold-tools",
       "control_machinery": false,
-      "owning_subsystem": "deterministic cache-prefix and selective-evidence regression qualification",
-      "disposition": "ADMIT as tests only; they exercise projection mechanics and own no runtime authority.",
-      "evidence": [
-        "Three projector contracts cover same-run soft deferral, coarse-byte deferral, and mandatory hard-cap folding.",
-        "One engine-level contract proves logical_round=2 propagation and selective-evidence authority preservation."
+      "paths": [
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/core/history.py",
+        "tests/unit/test_tool_working_set_projection.py",
+        "tests/unit/test_tool_result_factualization.py"
       ],
-      "verification_level": "Focused and adjacent pytest plus full committed-state ci_gate",
-      "model_evidence_veto_recovery_exit": "Tests expose exact mechanical behavior and can be revised independently of live runtime state.",
-      "rollback_route": "Revert together with the implementation if the cache-prefix change is abandoned."
+      "declaration_id": "decl-fold-preserve"
     },
     {
-      "component_id": "cache-fold-same-run-a5-record",
+      "name": "comp-fold-obs",
+      "control_machinery": false,
       "paths": [
+        "src/llm_loop/core/cache_health.py",
         "docs/governance/submissions/20260917-cache-fold-same-run.json"
       ],
-      "control_machinery": false,
-      "owning_subsystem": "repository A.5 architecture submission metadata",
-      "disposition": "ADMIT as exact changed-path coverage and submitter declarations only; this metadata has no runtime authority and does not decide merge or deployment.",
-      "evidence": [
-        "Manifest partitions the exact base-to-candidate changed-path set and declares the sole runtime control component."
-      ],
-      "verification_level": "Local exact A.5 self-gate before publication",
-      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth and promotion; the record is mechanical metadata only.",
-      "rollback_route": "Revert this metadata file with no runtime effect."
-    }
-  ],
-  "declarations": [
+      "declaration_id": null
+    },
     {
-      "declaration_id": "cache-fold-same-run-control",
-      "g1": {
-        "necessity": "Within an active multi-round run, opportunistic Tool Working Set soft/coarse folding could rewrite provider-visible history that had already participated in the cache prefix. This caused discrete prompt-shrink warmups and materially reduced cache reuse despite otherwise healthy comparable-lineage cache behavior."
-      },
-      "g2": {
-        "authority_owner": "existing episode-history Tool Working Set projector plus existing engine logical_round fact",
-        "relationship": "reuse",
-        "non_duplication": "The change reuses existing projection, hard_result_cap, engine rounds, ingress telemetry, and cache-health facts. It adds no new cache store, semantic relevance engine, routing authority, history authority, provider adapter, or configuration source."
-      },
-      "g3": {
-        "model_evidence": [
-          "request.meta ingress.tool_working_set fold_reason/folded_results/provider-visible projection facts",
-          "opportunistic_fold_allowed telemetry",
-          "cache_health comparable-lineage absolute hit-token facts",
-          "durable raw tool results and selective Evidence authority"
-        ],
-        "recovery_or_reason": "Offline/boundary builds retain historical opportunistic behavior when logical_round is absent or <=1; hard_result_cap remains active at every round. Production canary can mechanically verify the new gate, and rollback is a normal code revert/deploy to exact prior main."
-      },
-      "g4": {
-        "rollback": "Revert this cache-prefix control and redeploy exact prior main 19e253ed; no persistent schema, credential, runtime.toml, provider registry, or data migration is required.",
-        "verification": [
-          "Related/adjacent pytest: 101/101 PASS on committed candidate",
-          "Ruff PASS on changed paths; Pyright changed production paths 0 errors / 0 warnings",
-          "py_compile and git diff --check PASS",
-          "full committed-state ci_gate PASS: Ruff, env-pin 587/0, Pyright, tier0, full xdist, architecture guard",
-          "remote canary remains a separate post-CI step; 8901 Ornith is outside deployment scope"
-        ]
-      }
+      "name": "comp-anchor-integration",
+      "control_machinery": true,
+      "paths": [
+        "src/llm_loop/config.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_task_anchor_pin_compaction.py",
+        "tests/unit/test_task_anchor_snapshot_goal_projection.py"
+      ],
+      "declaration_id": "decl-anchor-integration"
+    },
+    {
+      "name": "comp-runtime-governance",
+      "control_machinery": true,
+      "paths": [
+        "src/llm_loop/runtime/resolver.py",
+        "src/llm_loop/introspection/proc_version.py",
+        "tests/unit/test_proc_version.py"
+      ],
+      "declaration_id": "decl-runtime-governance"
+    },
+    {
+      "name": "comp-memory-embedding",
+      "control_machinery": false,
+      "paths": [
+        "evals/embedding_stage1/calib_candidate_keys.npy",
+        "evals/embedding_stage1/calib_sample.py",
+        "evals/embedding_stage1/calib_semantic_queries.json",
+        "evals/embedding_stage1/calib_threshold.py",
+        "evals/embedding_stage1/threshold_calibration.json",
+        "evals/embedding_stage2/README.md",
+        "evals/embedding_stage2/ab_e2e_results.json",
+        "evals/embedding_stage2/ab_labels.json",
+        "evals/embedding_stage2/ab_results.json",
+        "evals/embedding_stage2/run_ab.py",
+        "evals/embedding_stage2/run_ab_e2e.py",
+        "evals/memory_compile/adjudication.json",
+        "evals/memory_compile/cluster_report.json",
+        "evals/memory_compile/cluster_report.md",
+        "evals/memory_compile/merge_ledger.json",
+        "evals/retrieval_ab/goldset.json",
+        "evals/retrieval_ab/results-20260916-144432.json",
+        "evals/retrieval_ab/run_ab_retrieval.py",
+        "scripts/memory_cluster_report.py",
+        "src/llm_loop/memory/embedder.py",
+        "src/llm_loop/memory/retriever.py",
+        "tests/unit/test_embedder_v2.py",
+        "tests/unit/test_selective_evidence_s1.py"
+      ],
+      "declaration_id": null
+    },
+    {
+      "name": "comp-continuity-fixes",
+      "control_machinery": false,
+      "paths": [
+        "src/llm_loop/core/prompt_build/stages/ingress_resolution.py"
+      ],
+      "declaration_id": null
     }
   ]
 }
