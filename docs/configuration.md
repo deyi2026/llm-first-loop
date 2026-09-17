@@ -80,6 +80,8 @@
 | `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 5 / 50 | 自评样本阈值 / 聚合窗口；评估时机按需决定 |
 | `METHOD_REFLECTION_MODE` | auto | Method post-run reflection：off/auto；auto 仅在 final 已确定后按机械 friction 触发一次隔离模型调用，失败不影响原任务；`off` 显式关闭（非法值回 off） |
 | `LEARNING_PLANE_ENABLED` | 1 | Learning Plane 后台消费装配（journal + ReflectionRun）；`0` 显式关闭（置空同 0）；空 journal 时仅空闲守护线程 |
+| `KNOWLEDGE_INJECTION_LEDGER` | 1 | 注入观测 ledger（EVO-20260917-abdb3247 P0，零行为变化；0=关闭） |
+| `INJECTION_LEDGER_PATH` | 空 | ledger 路径覆盖（默认 `<data>/audit/injection_ledger.jsonl`） |
 | `METHOD_REFLECTION_MIN_ROUNDS` / `METHOD_REFLECTION_MIN_TOOLS` / `METHOD_REFLECTION_MIN_FAILURES` | 6 / 6 / 2 | auto 模式 friction 触发阈值 |
 | `METHOD_REFLECTION_TIMEOUT_S` | 120 | reflection 单次模型调用超时（秒） |
 | `VALIDATE_SEMANTIC` / `VALIDATE_SEMANTIC_THRESHOLD` | 0 / — | 声明-回执语义匹配（默认关） |
