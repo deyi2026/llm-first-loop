@@ -399,6 +399,9 @@ class Settings:
     # ── P1 校验语义匹配（FR-P1-OPT-01, §3.6）──
     validate_semantic: bool = False
     validate_semantic_threshold: float = 0.75
+    # EVO-20260917-27cd77ed C: 声明-回执校验跨轮窗口（轮），默认 8（原 3——
+    # 早于 3 轮建立的事实无法补证，DC-20260917T105728591696-f08ab5 实证误判）
+    validate_recent_window: int = 8
 
     # ── M12 AI 自主闭环（§9，默认值保零回归）──
 
@@ -717,6 +720,7 @@ def load_settings() -> Settings:
         extract_timeout_s=float(_env_int("EXTRACT_TIMEOUT_S", 60)),
         validate_semantic=_env_bool("VALIDATE_SEMANTIC", False),
         validate_semantic_threshold=float(_env_int("VALIDATE_SEMANTIC_THRESHOLD", 0)) or 0.75,
+        validate_recent_window=_env_int("VALIDATE_RECENT_WINDOW", 8),  # EVO-20260917-27cd77ed C
         # M12 AI 自主闭环（§9，默认值保零回归）
         selfheal_max_attempts=_env_int("SELFHEAL_MAX_ATTEMPTS", 3),
         selfheal_max_per_round=_env_int("SELFHEAL_MAX_PER_ROUND", 6),

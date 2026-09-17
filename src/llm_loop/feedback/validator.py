@@ -78,10 +78,58 @@ _PLAN_MARKERS = ["下一步", "建议执行", "优先级", "计划", "待办", "
 # claims that require a success receipt. Keep the matcher local to the matched action verb;
 # a mixed sentence containing a separate positive claim (e.g. "未修改，但已执行") must
 # still be checked rather than blanket-exempted because it contains "未".
-_NEGATION_PREFIXES = ("未", "并未", "没有", "从未", "未曾", "不曾", "不", "无需")
+_NEGATION_PREFIXES = ("未", "并未", "没有", "从未", "未曾", "不曾", "不", "无需", "未提交")
 
 # B3 markdown 结构行（代码 fence/表格行/引用块）为引用内容，不进入声明抽取
 _MARKDOWN_STRUCT_PREFIXES = ("|", ">")
+
+# ── EVO-20260917-27cd77ed: 完整句单元 + 叙事豁免 + 匹配面扩容 + 窗口扩大 ──
+# 回执双面: 匹配用长面（提案下限 ≥512，取 1024 平衡 8 轮滚动缓冲体积）；
+# 人读摘要/审计落盘仍用 120 字符短面（declaration_check.jsonl 体积与消费方不变）。
+_RECEIPT_DISPLAY_CHARS = 120
+_RECEIPT_MATCH_CHARS = 1024
+
+# 叙事句标记（观点/批准/征询/未来/系统自动）——统一以"无完成标志"为门槛（防漏网，
+# 与能力/计划豁免同一反例约束: "已执行"类真完成声明永不因叙事词被豁免）
+_NARRATIVE_MARKERS = [
+    # 观点/规律（09-04 实证: "生产执行层永远是最没议价权的环节"）
+    "永远", "永不", "总是", "通常", "往往", "本质上", "理论上", "原则上", "大概率", "天生",
+    # 批准/决策/拒绝（实证: "批准执行"——授权或审批动作，非自身已完成动作）
+    "批准", "同意", "准许", "授权", "放行", "允许", "拒绝", "决策",
+    # 疑问/征询（实证: "确认是否需要我先创建…"、"要保留还是删除"、"完成了吗"）
+    "是否", "需不需要", "要不要", "请确认", "请指示", "还是", "怎么办", "怎么",
+    # 请求/角色（实证: "需你给出目标文件路径"、"我负责把验证和执行的脏活干到底"）
+    "需你", "需要你", "请你", "负责",
+    # 未来/进行中（实证: "等你确认后执行"、"正在执行的演进"）
+    "再", "将要", "将会", "准备", "打算", "稍后", "随后", "正在", "待我", "等你", "待你",
+    "待用户", "待动作", "待办", "待确认", "待执行", "待验证", "will ", "shall ",
+]
+_NARRATIVE_ENUM_MARKERS = ("①", "②", "③", "④", "⑤", "⑥")
+# 结论句（实证: "判断和方案全部成立"）
+_JUDGMENT_CONCLUSION_RE = re.compile(
+    r"(判断|方案|结论|假设|推理|评估|论证|决策|建议|结果)[^。！？]{0,16}?(全部|均|都)?(成立|无误|正确|属实|站得住)"
+)
+# 指标名词（实证: "月下载 30,031"、"23:25 更新"——数字语境的动名词，非动作声明）
+_METRIC_NOUN_RE = re.compile(
+    r"(下载|安装|更新|执行|写入)\s*量?\s*[:：]?\s*[\d,，]+|[\d:：]\s*(更新|下载|安装)"
+)
+# 动词名词化复合（实证: "execute_command 的执行环境残留"、"更新频率"——无主谓动作结构）
+_VERB_NOUN_COMPOUND_RE = re.compile(
+    r"(执行|写入|更新|删除|保存|安装|下载)"
+    r"(层|器|环境|序|面|动作|日志|记录|队列|钩子|历史|状态|时间|路径|权限|顺序|策略|频率|流程|上下文)"
+)
+# 认知性宾语（实证: "对方案执行实质拷问"——分析/评审行为无工具回执语义）
+_COGNITIVE_OBJECT_RE = re.compile(
+    r"(执行|进行|开展)[^。，；]{0,8}(拷问|评审|审查|分析|评估|复盘|检查|验证|排查|调研|梳理|对比|收敛|汇报)"
+)
+# 第三方被动句（实证: "文章已被作者删除、下线"——外部世界状态，非自身动作）。
+# 不以完成标志为门槛（"已被删除"天然含"已"），但句内出现自我主体词时保留校验。
+# 注意: 台账状态引用（"EVO-…→ executed"）**不在此列**——那是早轮事实陈述，
+# 应走跨轮窗口补证（C）而非静默豁免，否则真幻觉的台账声明会漏网（防漏网约束）。
+_PASSIVE_VERBS_RE = re.compile(
+    r"被[^。！？\n]{0,16}?(" + "|".join(_DECLARE_VERBS) + r"|下线|下架|带回|合并|标记|记录|登记|实施)"
+)
+_SELF_AGENTS = ("我", "我们", "子代理", "本轮", "本会话", "child", "subagent", " i ", "i'", "we ")
 
 
 @dataclass
@@ -104,7 +152,7 @@ class DeclarationValidator:
         *,
         semantic_matcher: Callable[[str, str], float] | None = None,
         semantic_threshold: float = 0.75,
-        recent_window: int = 3,
+        recent_window: int = 8,  # EVO-20260917-27cd77ed C: 3→8（早轮事实补证；VALIDATE_RECENT_WINDOW 可调）
         max_recent_sessions: int = 128,
     ) -> None:
         self._audit_dir = Path(audit_dir) if audit_dir else None
@@ -149,19 +197,27 @@ class DeclarationValidator:
         """
         # 收集成功回执摘要（EVO-20260820-be72efb1: 截断回执标注高亮——声明匹配截断数据时
         # 提醒 LLM 该结论基于未核验摘要，抑制"截断幻觉"声明）
+        # EVO-20260917-27cd77ed B: 双面回执——匹配用长面（≥512，取 1024），人读/审计仍短面。
+        # 实证（DC-20260917T105728591696-f08ab5 等）: 证据出现在回执 120 字之后必然 miss。
         receipts: list[str] = []
+        match_receipts: list[str] = []
         for m in tool_messages:
+            content = m.content or ""
             if m.status == ToolResultStatus.SUCCESS:
-                _tag = "（⚠️截断: 部分数据未核验）" if "[输出已截断]" in (m.content or "") else ""
-                receipts.append(f"{m.tool_name}{_tag}: {m.content[:120]}")
+                _tag = "（⚠️截断: 部分数据未核验）" if "[输出已截断]" in content else ""
+                receipts.append(f"{m.tool_name}{_tag}: {content[:_RECEIPT_DISPLAY_CHARS]}")
+                match_receipts.append(f"{m.tool_name}{_tag}: {content[:_RECEIPT_MATCH_CHARS]}")
                 # 组合工具可携带真实嵌套 SUCCESS 证据；metadata 不进模型 wire，
                 # 这里只扩展校验事实面，避免 subagent_result 外层摘要截断导致假阴性。
                 for nested in (m.metadata or {}).get("verification_receipts", ()) or ():
                     nested_text = str(nested or "")
                     if nested_text.endswith(":success"):
                         receipts.append(f"nested:{nested_text}")
+                        match_receipts.append(f"nested:{nested_text}")
             elif m.status == ToolResultStatus.BLOCKED:
-                receipts.append(f"{m.tool_name}（已阻断）: {m.content[:120]}")
+                blocked = f"{m.tool_name}（已阻断）: {content[:_RECEIPT_DISPLAY_CHARS]}"
+                receipts.append(blocked)
+                match_receipts.append(blocked)
 
         # 提取完成声明
         declarations = self._extract_declarations(final_answer)
@@ -177,7 +233,7 @@ class DeclarationValidator:
         matched_by: list[str] = []
         cross_round_hits: list[str] = []
         for decl in declarations:
-            matched = self._declaration_matches_receipt(decl, receipts)
+            matched = self._declaration_matches_receipt(decl, match_receipts)
             if matched:
                 matched_by.append(matched)
             else:
@@ -185,7 +241,7 @@ class DeclarationValidator:
                 cross = self._declaration_matches_receipt(decl, history)
                 if cross:
                     cross_round_hits.append(
-                        f"声明: {decl}（近 {self._recent_window} 轮回执命中: {cross}）"
+                        f"声明: {decl}（近 {self._recent_window} 轮回执命中: {cross[:160]}）"
                     )
                 else:
                     # 漂移修复（2026-08-29 会话 68fed5f5 实证）: 回执样本就近取样——
@@ -196,10 +252,11 @@ class DeclarationValidator:
                         f"声明: {decl} — 但本轮及近 {self._recent_window} 轮回执中均未见对应成功记录（回执: {receipts[-3:] or '无'}）"
                     )
 
-        # 本轮成功回执滚入近 N 轮窗口（供下轮跨轮引用补证）
-        if receipts:
+        # 本轮成功回执滚入近 N 轮窗口（供下轮跨轮引用补证；EVO-20260917-27cd77ed B:
+        # 滚动缓冲存匹配长面，跨轮补证同样不受 120 字截断限制）
+        if match_receipts:
             with self._recent_guard:
-                self._session_buf_locked(sid).append(receipts)
+                self._session_buf_locked(sid).append(match_receipts)
 
         result = DeclarationCheckResult(
             consistent=not discrepancies,
@@ -212,22 +269,27 @@ class DeclarationValidator:
         return result
 
     def _extract_declarations(self, answer: str) -> list[str]:
-        """扫描回答文本提取完成声明（动词 + 宾语）."""
+        """扫描回答文本提取完成声明（EVO-20260917-27cd77ed A: 完整句为校验单元）.
+
+        原实现取声明动词 ±40 字符片段——跨从句劈开半句话，叙述性文字（观点/
+        结论/决策/批准）被误抽为完成声明（667/2113 条 false 的主因）。现按句读符
+        切完整句再匹配动词；±40 片段语义只可用于高亮，不再作为校验单元。
+        """
         decls: list[str] = []
         # EVO-20260815-640fc96a B3: markdown 结构行（fence 内代码/表格行/引用块）
         # 为引用内容而非行为声明，抽取前剥离
         answer = self._strip_markdown_structures(answer)
-        for m in re.finditer(
-            r"[^。！？.!?\n]{0,40}(" + "|".join(_DECLARE_VERBS) + r")[^。！？.!?\n]{0,40}", answer
-        ):
-            text = m.group(0).strip()
+        for sentence in self._split_sentences(answer):
+            text = sentence.strip()
             if not text or text in decls:
+                continue
+            if not any(v in text for v in _DECLARE_VERBS):
                 continue
             # Agency-first: "未执行/没有修改/not executed" describes absence of an
             # action. It must not be turned into a fabricated completion claim that then
             # demands a success receipt. Mixed clauses with a separate positive action
             # remain checkable (see _is_negated_action_statement).
-            if self._is_negated_action_statement(text, m.group(1)):
+            if self._is_negated_action_statement(text):
                 continue
             # EVO-20260810-50816b30: 能力陈述（"可以调用工具执行命令"）非完成声明，跳过
             if self._is_ability_statement(text):
@@ -236,8 +298,77 @@ class DeclarationValidator:
             # 本质无回执可佐证，跳过；含完成标志（"已执行计划中的命令"）不豁免
             if self._is_plan_statement(text):
                 continue
+            # EVO-20260917-27cd77ed A: 叙事句（观点/结论/决策/批准/征询/未来/
+            # 名词化复合/认知宾语）非行为声明，跳过；含完成标志一律保留校验
+            if self._is_narrative_statement(text):
+                continue
+            # 第三方被动/台账状态句（"文章已被作者删除"）非自身动作，跳过；
+            # 句内含自我主体词（我/子代理/本轮）时不豁免（防自身声明漏网）
+            if self._is_third_party_state(text):
+                continue
             decls.append(text)
         return decls
+
+    @staticmethod
+    def _split_sentences(text: str) -> list[str]:
+        """按句读符切完整句（EVO-20260917-27cd77ed A）.
+
+        英文句点仅在真实句边界切分: 路径/版本号（src/a.py、v1.2.3）与小数中的点
+        两侧均为字母数字，先行掩码保护不切句——避免把"已写入 src/a.py"劈成两截。
+        """
+        masked = re.sub(r"(?<=[A-Za-z0-9_])\.(?=[A-Za-z0-9_])", "\x00", text)
+        parts = re.split(r"[。！？!?.\n]+", masked)
+        return [p.replace("\x00", ".") for p in parts if p.strip()]
+
+    @staticmethod
+    def _is_narrative_statement(text: str) -> bool:
+        """叙事句判定（EVO-20260917-27cd77ed A）: 观点/结论/决策/批准/征询/未来等句式.
+
+        2026-09-17 实证（667 条 false 抽样全为叙述性文字）: 观点句（"生产执行层
+        永远是最没议价权的环节"）、决策句（"批准执行"）、结论句（"判断和方案全部
+        成立"）、指标名词（"月下载 30,031"）、名词化复合（"执行环境残留"）被误抽
+        为完成声明。这些句式无回执语义也非行为声明，豁免。
+
+        防漏网约束（与能力/计划豁免一致）: 句内出现完成标志（已/了/成功/完成）
+        一律不豁免——"已写入"类真完成声明永不因叙事词逃脱校验。
+        """
+        lower = text.lower()
+        # 疑问后缀优先于完成标志门槛（"完成了吗/执行了吗"是提问不是声明，
+        # 天然含"完成/执行"但语义为征询）
+        if re.search(r"(完成|执行|写入|创建|更新|保存|删除|登记)了吗", text):
+            return True
+        if any(m in lower for m in _COMPLETION_MARKERS):
+            return False
+        if any(m in lower for m in _NARRATIVE_MARKERS):
+            return True
+        if any(m in text for m in _NARRATIVE_ENUM_MARKERS):
+            return True
+        if _JUDGMENT_CONCLUSION_RE.search(text):
+            return True
+        if _METRIC_NOUN_RE.search(text):
+            return True
+        if _VERB_NOUN_COMPOUND_RE.search(text):
+            return True
+        if _COGNITIVE_OBJECT_RE.search(text):
+            return True
+        return False
+
+    @staticmethod
+    def _is_third_party_state(text: str) -> bool:
+        """第三方被动句（EVO-20260917-27cd77ed A）.
+
+        实证: "文章已被作者删除、下线"（外部世界状态，天然含"已"）被判 false。
+        这类句子不以完成标志为门槛（否则全部漏掉），改用自我主体词防漏网:
+        句内出现 我/我们/子代理/本轮/本会话 等主体时不豁免——
+        "文件已被我删除"、"本轮实际执行…"仍需回执佐证。
+
+        台账状态引用（"EVO-…→ executed"）刻意不豁免: 那是早轮事实陈述，
+        应走跨轮窗口补证（C 项）而非静默豁免——真幻觉的台账声明必须可判 false。
+        """
+        lower = text.lower()
+        if any(agent in lower for agent in _SELF_AGENTS):
+            return False
+        return bool(_PASSIVE_VERBS_RE.search(text))
 
     @staticmethod
     def _strip_markdown_structures(answer: str) -> str:
@@ -254,7 +385,7 @@ class DeclarationValidator:
         return "\n".join(lines)
 
     @staticmethod
-    def _is_negated_action_statement(text: str, verb: str) -> bool:
+    def _is_negated_action_statement(text: str) -> bool:
         """Return True when the matched action is explicitly negated, with no positive action claim.
 
         Examples exempted: ``未执行任何修改`` / ``没有创建文件`` / ``not executed``.

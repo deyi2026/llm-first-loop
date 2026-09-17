@@ -1355,6 +1355,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         audit_dir=settings.audit_dir,
         semantic_matcher=semantic_matcher,
         semantic_threshold=settings.validate_semantic_threshold,
+        recent_window=settings.validate_recent_window,  # EVO-20260917-27cd77ed C: VALIDATE_RECENT_WINDOW
     )
 
     # P1: LLM 摘要器（SUMMARY_MODE，§3.6）
