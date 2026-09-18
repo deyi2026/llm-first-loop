@@ -70,6 +70,13 @@ case "$TUNNEL_MODE" in
     cloudflared tunnel --url "http://$WEB_HOST:$WEB_PORT" --no-autoupdate 2>&1 | tee "$LOG_DIR/cloudflared-quick.log"
     ;;
   named)
+    # launchd 接管后防止双实例：服务在跑时提示用 launchctl 管理，不再手动起进程
+    if launchctl print "gui/$(id -u)/com.llmfirstloop.cloudflared" >/dev/null 2>&1; then
+      echo "ℹ️  named tunnel 已由 launchd 服务 com.llmfirstloop.cloudflared 托管，跳过手动启动"
+      echo "   重启隧道: launchctl kickstart -k gui/$(id -u)/com.llmfirstloop.cloudflared"
+      echo "   停止隧道: launchctl bootout gui/$(id -u)/com.llmfirstloop.cloudflared"
+      exit 0
+    fi
     LOCAL_CONFIG="$PROJECT_ROOT/cloudflared/config.local.yaml"
     TEMPLATE_CONFIG="$PROJECT_ROOT/cloudflared/config.yaml"
     CONFIG="$TEMPLATE_CONFIG"

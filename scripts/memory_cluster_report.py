@@ -20,7 +20,7 @@ import json
 import sys
 import urllib.request
 from collections import Counter
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -60,7 +60,8 @@ def main() -> int:
     ap.add_argument("--threshold", type=float, default=0.90)
     args = ap.parse_args()
 
-    idx = json.load(open(ROOT / "data" / "memory" / "index.json", encoding="utf-8"))
+    with open(ROOT / "data" / "memory" / "index.json", encoding="utf-8") as f:
+        idx = json.load(f)
     n = len(idx)
     fps = [content_fp(e) for e in idx]
 
@@ -75,21 +76,21 @@ def main() -> int:
         except (json.JSONDecodeError, OSError):
             cache_meta = {}
     vecs_path = OUT / "vectors.npy"
-    M = np.load(vecs_path) if vecs_path.exists() else None
-    if M is not None and M.shape[0] == n and cache_meta.get("fps") == fps:
-        print(f"vectors cache hit: {n}x{M.shape[1]}")
+    m_mat = np.load(vecs_path) if vecs_path.exists() else None
+    if m_mat is not None and m_mat.shape[0] == n and cache_meta.get("fps") == fps:
+        print(f"vectors cache hit: {n}x{m_mat.shape[1]}")
     else:
         print(f"embedding {n} entries via {EMB_URL} ...")
-        M = np.array(embed_batch([entry_text(e) for e in idx]), dtype=np.float32)
-        np.save(vecs_path, M)
+        m_mat = np.array(embed_batch([entry_text(e) for e in idx]), dtype=np.float32)
+        np.save(vecs_path, m_mat)
         cache_meta_path.write_text(
-            json.dumps({"fps": fps, "dim": int(M.shape[1])}, ensure_ascii=False),
+            json.dumps({"fps": fps, "dim": int(m_mat.shape[1])}, ensure_ascii=False),
             encoding="utf-8",
         )
-    M /= np.linalg.norm(M, axis=1, keepdims=True) + 1e-9
+    m_mat /= np.linalg.norm(m_mat, axis=1, keepdims=True) + 1e-9
 
-    S = M @ M.T
-    np.fill_diagonal(S, 0.0)
+    s_mat = m_mat @ m_mat.T
+    np.fill_diagonal(s_mat, 0.0)
 
     # ── union-find 聚类 ──
     parent = list(range(n))
@@ -100,9 +101,9 @@ def main() -> int:
             x = parent[x]
         return x
 
-    A = S > args.threshold
+    a_mat = s_mat > args.threshold
     for i in range(n):
-        for j in np.where(A[i])[0]:
+        for j in np.where(a_mat[i])[0]:
             ri, rj = find(i), find(int(j))
             if ri != rj:
                 parent[ri] = rj
@@ -133,7 +134,7 @@ def main() -> int:
     for members in clusters.values():
         if len(members) < 2:
             continue
-        sub = S[np.ix_(members, members)]
+        sub = s_mat[np.ix_(members, members)]
         mask = sub > args.threshold
         # 主题提示: 成员 keywords 高频交集
         kw = Counter()
@@ -154,7 +155,7 @@ def main() -> int:
         )
     report_clusters.sort(key=lambda c: (-c["size"], -c["pair_max"]))
 
-    mx = S.max(axis=1)
+    mx = s_mat.max(axis=1)
     stats = {
         "generated_at": datetime.now(UTC).isoformat(),
         "corpus": n,

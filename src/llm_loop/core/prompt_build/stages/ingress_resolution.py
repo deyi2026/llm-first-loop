@@ -194,6 +194,7 @@ def run_ingress_prelude(
     model: str | None,
     planned_model_label: Callable[[str | None, Any], str],
     current_turn_ref: Any,
+    logical_round: int | None = None,
     record_action: Any,
     event_append: Any,
 ) -> IngressPreludeOutcome:
@@ -293,8 +294,15 @@ def run_ingress_prelude(
     # count stay identical, so the already-computed storage index mapping remains
     # authoritative. Selected protocol groups are exempted as exact raw evidence;
     # unselected groups keep the existing batch/grace mechanics unchanged.
+    # Same-run tool follow-ups (logical round > 1) defer opportunistic receipt
+    # rewrites so the provider-visible prefix remains append-only. Offline/recovery
+    # builds do not carry a logical round and preserve the historical projection
+    # behavior. The projector always keeps its hard result-count safety valve.
+    _opportunistic_fold_allowed = logical_round is None or logical_round <= 1
     _provider_base, _working_set_stats = project_active_tool_working_set_with_stats(
-        _scrub.base, preserve_group_digests=_preserve_digests
+        _scrub.base,
+        preserve_group_digests=_preserve_digests,
+        allow_opportunistic_fold=_opportunistic_fold_allowed,
     )
     if _working_set_stats.enabled:
         with contextlib.suppress(Exception):
@@ -314,6 +322,7 @@ def run_ingress_prelude(
                     f"soft_result_cap={_working_set_stats.soft_result_cap};"
                     f"hard_result_cap={_working_set_stats.hard_result_cap};"
                     f"min_net_gain_chars={_working_set_stats.min_net_gain_chars};"
+                    f"opportunistic_fold_allowed={_opportunistic_fold_allowed};"
                     f"pending_raw_chars={_working_set_stats.pending_raw_chars};"
                     f"pending_receipt_chars={_working_set_stats.pending_receipt_chars};"
                     f"pending_net_gain_chars={_working_set_stats.pending_net_gain_chars};"
@@ -338,6 +347,7 @@ def run_ingress_prelude(
         "soft_result_cap": int(_working_set_stats.soft_result_cap or 0),
         "hard_result_cap": int(_working_set_stats.hard_result_cap or 0),
         "min_net_gain_chars": int(_working_set_stats.min_net_gain_chars or 0),
+        "opportunistic_fold_allowed": _opportunistic_fold_allowed,
     }
     return IngressPreludeOutcome(
         resolved_label=resolved_label,

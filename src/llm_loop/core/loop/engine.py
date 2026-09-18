@@ -836,6 +836,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     model=model,
                     planned_label=planned_label,
                     registry_snapshot=_planning_registry,
+                    logical_round=rounds,
                 )
             self._kpi_accumulate_inject()
             if getattr(self, "_last_history_compacted", False):
@@ -894,6 +895,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         max_chars=effective_budget,
                         model=model,
                         planned_label=planned_label,
+                        logical_round=rounds,
                     )
                     self._event_append(
                         session_id,
@@ -1578,6 +1580,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             max_chars=fallback_budget,
                             planned_label=fallback_label,
                             registry_snapshot=fallback_registry,
+                            logical_round=_round,
                         )
                         return fallback_messages, fallback_tools
 

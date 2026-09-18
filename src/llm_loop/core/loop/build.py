@@ -496,6 +496,7 @@ class _BuildMixin:
         max_chars: int,
         model: str | None = None,
         planned_label: str | None = None,
+        logical_round: int | None = None,
     ) -> ConservativeProjectionOutcome:
         """Side-effect-free rebuild from current durable Session truth.
 
@@ -512,6 +513,7 @@ class _BuildMixin:
             model=model,
             planned_model_label=self._planned_model_label,
             current_turn_ref=self._run_state().current_turn_ref,
+            logical_round=logical_round,
             record_action=lambda *_args, **_kwargs: None,
             event_append=lambda *_args, **_kwargs: None,
         )
@@ -531,6 +533,7 @@ class _BuildMixin:
         model: str | None = None,  # P1-7: per-call 模型覆盖（判定本地 provider 跳过推送式注入）
         planned_label: str | None = None,  # 热重载一致性: 复用本轮已解析标签，避免构造期二次读registry
         registry_snapshot: Any | None = None,  # R8.21: reasoning policy must bind to this round's provider
+        logical_round: int | None = None,
     ) -> list[dict]:
         """构造提交 LLM 的消息序列（system prompt + 记忆注入 + 历史 + 压缩另存）.
         M54: max_chars 可覆盖默认预算；None = 运行时预算。P1-10: 窗口锚定——
@@ -548,6 +551,7 @@ class _BuildMixin:
             model=model,
             planned_model_label=self._planned_model_label,
             current_turn_ref=self._run_state().current_turn_ref,
+            logical_round=logical_round,
             record_action=self._record_action,
             event_append=self._event_append,
         )
