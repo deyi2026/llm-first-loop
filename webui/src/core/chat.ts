@@ -252,6 +252,16 @@ export interface QueueEnqueueResponse {
   detail?: string;
 }
 
+export interface QueueActionResponse {
+  ok: boolean;
+  status: number;
+  item?: QueueItem;
+  queue_id?: string;
+  state?: string;
+  error?: string;
+  detail?: string;
+}
+
 /** 入队一条 human turn（冻结 message/attachments/model/effort） */
 export async function enqueueQueueMessage(
   sessionId: string,
@@ -288,17 +298,49 @@ export async function enqueueQueueMessage(
   }
 }
 
-/** 取消排队项（仅 queued 可取消） */
-export async function cancelQueueItem(sessionId: string, queueId: string): Promise<boolean> {
+/** 取消排队项（仅 queued 可取消）；成功时返回冻结原文供“撤回编辑”恢复。 */
+export async function cancelQueueItem(
+  sessionId: string,
+  queueId: string
+): Promise<QueueActionResponse> {
   try {
     const resp = await fetch("/api/v1/chat/queue", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId, queue_id: queueId }),
     });
-    return resp.ok;
+    const data = (await resp.json().catch(() => ({}))) as Partial<QueueActionResponse>;
+    return { ok: resp.ok, status: resp.status, ...data };
   } catch {
-    return false;
+    return {
+      ok: false,
+      status: 0,
+      error: "network",
+      detail: "网络连接失败，未能撤回排队消息。",
+    };
+  }
+}
+
+/** 将一条 queued 消息交给当前 run，在下一个安全模型决策边界接收。 */
+export async function interjectQueueItem(
+  sessionId: string,
+  queueId: string
+): Promise<QueueActionResponse> {
+  try {
+    const resp = await fetch("/api/v1/chat/queue/interject", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, queue_id: queueId }),
+    });
+    const data = (await resp.json().catch(() => ({}))) as Partial<QueueActionResponse>;
+    return { ok: resp.ok, status: resp.status, ...data };
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      error: "network",
+      detail: "网络连接失败，消息仍保留在排队中。",
+    };
   }
 }
 

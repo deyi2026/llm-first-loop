@@ -166,7 +166,7 @@ export interface StreamOutcome {
   data: ChatDoneData | null;
 }
 
-/** Human Turn 排队项（后端 durable 事实冻结形态；cmd/ctrl+Enter 插话） */
+/** Human Turn 排队/插入项（后端 durable 事实冻结形态） */
 export interface QueueItem {
   queue_id: string;
   session_id: string;
@@ -178,7 +178,7 @@ export interface QueueItem {
   reasoning_effort: string | null;
   reasoning_mode: string;
   attachment_facts: AttachmentFact[];
-  status: "queued" | "claimed";
+  status: "queued" | "claimed" | "interject_pending" | "interject_received";
   created_at: number;
   [key: string]: unknown;
 }

@@ -33,6 +33,7 @@ QUEUE_VERSION = 1
 # claimed 悬挂回滚阈值：前端领取后应在数秒内发起正式 chat 请求；
 # 60s 覆盖慢网络与短暂卡顿，同时避免崩溃标签长时间阻塞队列。
 CLAIM_TIMEOUT_S = 60.0
+INTERJECT_RECEIPT_VISIBLE_S = 8.0
 
 
 def _now() -> float:
@@ -74,7 +75,19 @@ class HumanTurnQueue:
             logger.exception("human turn queue 文件损坏，按空队列处理: %s", self._path)
             items = []
         self._items = [it for it in items if isinstance(it, dict)]
+        # interject_pending is a process-local live-run handoff.  After a Web process
+        # restart that mailbox no longer exists, so restore the durable intent to the
+        # ordinary queue instead of pretending it is still pending delivery.
+        recovered_pending = False
+        for it in self._items:
+            if it.get("status") == "interject_pending":
+                it["status"] = "queued"
+                it["requeued_at"] = _now()
+                it["requeued_from"] = "interject_process_restart"
+                recovered_pending = True
         self._seq = max((int(it.get("_seq", 0)) for it in self._items), default=0)
+        if recovered_pending:
+            self._save()
 
     def _save(self) -> None:
         payload = {"version": QUEUE_VERSION, "items": self._items}
@@ -155,11 +168,20 @@ class HumanTurnQueue:
             self._save()
 
     def _active_items_locked(self, session_id: str) -> list[dict[str, Any]]:
-        return [
-            it
-            for it in self._items
-            if it.get("session_id") == session_id and it.get("status") in ("queued", "claimed")
-        ]
+        now = _now()
+        out: list[dict[str, Any]] = []
+        for it in self._items:
+            if it.get("session_id") != session_id:
+                continue
+            status = it.get("status")
+            if status in ("queued", "claimed", "interject_pending"):
+                out.append(it)
+                continue
+            if status == "interject_received":
+                received_at = float(it.get("received_at") or 0)
+                if received_at and now - received_at <= INTERJECT_RECEIPT_VISIBLE_S:
+                    out.append(it)
+        return out
 
     @staticmethod
     def _public(it: dict[str, Any]) -> dict[str, Any]:
@@ -209,13 +231,58 @@ class HumanTurnQueue:
 
     def cancel(self, session_id: str, queue_id: str) -> bool:
         """取消一条排队项（queued→cancelled；claimed 不可取消：已进入发送流程）."""
+        return self.cancel_with_item(session_id, queue_id) is not None
+
+    def cancel_with_item(self, session_id: str, queue_id: str) -> dict[str, Any] | None:
+        """Atomically cancel one still-queued item and return its frozen facts."""
         with self._lock:
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
                     if it.get("status") != "queued":
-                        return False
+                        return None
                     it["status"] = "cancelled"
                     it["terminal_at"] = _now()
+                    self._save()
+                    return self._public(it)
+            return None
+
+    def claim_interject(self, session_id: str, queue_id: str) -> dict[str, Any] | None:
+        """queued→interject_pending for an exact live-run handoff."""
+        with self._lock:
+            for it in self._items:
+                if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+                    if it.get("status") != "queued":
+                        return None
+                    it["status"] = "interject_pending"
+                    it["interject_requested_at"] = _now()
+                    self._save()
+                    return self._public(it)
+            return None
+
+    def release_interject(self, session_id: str, queue_id: str) -> bool:
+        """Rollback a mailbox handoff that never reached a live run."""
+        with self._lock:
+            for it in self._items:
+                if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+                    if it.get("status") != "interject_pending":
+                        return False
+                    it["status"] = "queued"
+                    it["requeued_at"] = _now()
+                    it["requeued_from"] = "interject_handoff_rejected"
+                    self._save()
+                    return True
+            return False
+
+    def mark_interject_received(self, session_id: str, queue_id: str) -> bool:
+        """Mark the exact point where the engine worker consumed the human steer."""
+        with self._lock:
+            for it in self._items:
+                if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+                    if it.get("status") != "interject_pending":
+                        return False
+                    it["status"] = "interject_received"
+                    it["received_at"] = _now()
+                    it["terminal_at"] = it["received_at"]
                     self._save()
                     return True
             return False
@@ -288,7 +355,11 @@ class HumanTurnQueue:
         with self._lock:
             if len(self._items) <= keep_n:
                 return
-            actives = [it for it in self._items if it.get("status") in ("queued", "claimed")]
+            actives = [
+                it
+                for it in self._items
+                if it.get("status") in ("queued", "claimed", "interject_pending")
+            ]
             terminals = [it for it in self._items if it not in actives]
             self._items = actives + terminals[-keep_n:]
             self._save()

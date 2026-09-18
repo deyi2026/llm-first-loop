@@ -110,6 +110,34 @@ def test_double_start_rejected():
     _drain(q1, 11)  # 10 delta + done
 
 
+def test_interjection_handoff_rejects_stale_run_generation():
+    eng = FakeEngine(deltas=10, delay=0.03)
+    runner = BackgroundRunner(eng)
+    handle, q = runner.start("s-steer-generation", "hi")
+    assert handle is not None and q is not None
+    assert (
+        runner.enqueue_interjection(
+            "s-steer-generation",
+            {"message": "wrong generation"},
+            expected_run_generation="stale-generation",
+        )
+        is False
+    )
+    snapshot = runner.get_handle("s-steer-generation")
+    assert snapshot is not None and snapshot["interjection_pending"] == 0
+    assert (
+        runner.enqueue_interjection(
+            "s-steer-generation",
+            {"message": "right generation"},
+            expected_run_generation=handle.run_generation,
+        )
+        is True
+    )
+    snapshot = runner.get_handle("s-steer-generation")
+    assert snapshot is not None and snapshot["interjection_pending"] == 1
+    _drain(q, 11)
+
+
 def test_subscriber_exit_no_crash():
     """订阅者退出（unsubscribe）后，后台继续完成不炸（B6）."""
     eng = FakeEngine(deltas=5, delay=0.05)
@@ -707,3 +735,63 @@ def test_background_active_blocks_workspace_switch(build_test_engine, tmp_path):
     stored = engine.session.load(sid)
     assert any(m.role == "assistant" and "AB" in m.content for m in stored.messages)
     assert not (engine.settings.sessions_dir / "ws-b" / f"{sid}.json").exists()
+
+
+def test_live_interjection_reaches_same_run_before_stale_final_settles(build_test_engine):
+    """Human steer arriving during provider output continues the same run at a safe boundary."""
+    from llm_loop.core.trace_leak.ingress_token import issue_ingress
+    from llm_loop.llm.client import LLMResponse, StreamDelta
+
+    engine, fake = build_test_engine([])
+    sid = engine.session.create()
+    first_provider_entered = threading.Event()
+    release_first = threading.Event()
+    received = threading.Event()
+    calls: list[list[dict]] = []
+
+    def controlled_stream(**kwargs):
+        messages = list(kwargs.get("messages") or [])
+        calls.append(messages)
+        if len(calls) == 1:
+            first_provider_entered.set()
+            yield StreamDelta(text="旧回答")
+            assert release_first.wait(5), "test release timeout"
+            return LLMResponse(content="旧回答", tool_calls=[], provider="fake")
+        yield StreamDelta(text="新回答")
+        return LLMResponse(content="新回答", tool_calls=[], provider="fake")
+
+    fake.chat_stream = controlled_stream
+    runner = BackgroundRunner(engine)
+    engine.runner = runner
+    handle, q = runner.start(sid, "原始问题", ingress=issue_ingress("web"))
+    assert handle is not None and q is not None
+    assert first_provider_entered.wait(5)
+
+    assert runner.enqueue_interjection(
+        sid,
+        {
+            "queue_id": "q-live-steer",
+            "message": "改按新要求继续",
+            "attachment_facts": [],
+            "_ingress": issue_ingress("web"),
+            "_on_received": received.set,
+        },
+    )
+    release_first.set()
+
+    deadline = time.time() + 5
+    events: list[dict] = []
+    while time.time() < deadline:
+        event = q.get(timeout=5)
+        events.append(event)
+        if event["type"] == "done":
+            break
+
+    assert received.wait(1)
+    assert len(calls) == 2, "late steer must prevent the stale no-tool response from settling"
+    second_users = [m.get("content") for m in calls[1] if m.get("role") == "user"]
+    assert "改按新要求继续" in second_users
+    assert events[-1]["type"] == "done"
+    assert events[-1]["result"].final_answer == "新回答"
+    stored = engine.session.load(sid)
+    assert any(m.role == "user" and m.content == "改按新要求继续" for m in stored.messages)

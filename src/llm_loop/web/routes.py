@@ -55,6 +55,7 @@ from .schemas import (
     QueueCancelRequest,
     QueueDispatchRequest,
     QueueEnqueueRequest,
+    QueueInterjectRequest,
     QueueReleaseRequest,
     SessionListResponse,
     SessionMessagesResponse,
@@ -1320,7 +1321,8 @@ def queue_enqueue(payload: QueueEnqueueRequest, request: Request) -> Response:
 def queue_cancel(payload: QueueCancelRequest, request: Request) -> Response:
     """取消排队项（仅 queued 可取消；claimed 已进入发送流程不可取消）."""
     hq = _human_turn_queue(request)
-    if not hq.cancel(payload.session_id, payload.queue_id):
+    item = hq.cancel_with_item(payload.session_id, payload.queue_id)
+    if item is None:
         return UTF8JSONResponse(
             status_code=409,
             content={
@@ -1328,7 +1330,80 @@ def queue_cancel(payload: QueueCancelRequest, request: Request) -> Response:
                 "detail": "排队项不存在或已在发送中，无法取消",
             },
         )
-    return UTF8JSONResponse(content={"ok": True})
+    return UTF8JSONResponse(content={"ok": True, "item": item})
+
+
+@router.post("/api/v1/chat/queue/interject", status_code=202)
+def queue_interject(payload: QueueInterjectRequest, request: Request) -> Response:
+    """Hand one queued human turn to the exact currently-running Web run.
+
+    "立即" means the next safe model-decision boundary.  This endpoint never mutates
+    Session history from the Web thread and never cancels an in-flight tool/provider
+    operation merely to make the handoff look immediate.
+    """
+    engine = _engine_from(request)
+    runner = getattr(engine, "runner", None)
+    if runner is None or not getattr(runner, "enabled", False):
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": "interject_no_live_run",
+                "detail": "当前会话没有可接收插话的运行任务；消息仍保留在排队中",
+            },
+        )
+    handle = runner.get_handle(payload.session_id)
+    if not handle:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": "interject_no_live_run",
+                "detail": "当前会话没有可接收插话的运行任务；消息仍保留在排队中",
+            },
+        )
+
+    hq = _human_turn_queue(request)
+    item = hq.claim_interject(payload.session_id, payload.queue_id)
+    if item is None:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": "interject_claim_conflict",
+                "detail": "该排队项已被领取、取消或不存在，无法立即插入",
+            },
+        )
+
+    from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
+    accepted = runner.enqueue_interjection(
+        payload.session_id,
+        {
+            "queue_id": payload.queue_id,
+            "message": item.get("message", ""),
+            "attachment_facts": list(item.get("attachment_facts") or []),
+            "_ingress": issue_ingress("web"),
+            "_on_received": lambda: hq.mark_interject_received(
+                payload.session_id, payload.queue_id
+            ),
+        },
+        expected_run_generation=str(handle.get("run_generation") or ""),
+    )
+    if not accepted:
+        hq.release_interject(payload.session_id, payload.queue_id)
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": "interject_run_changed",
+                "detail": "当前任务刚刚结束或停止；消息已恢复为普通排队",
+            },
+        )
+    return UTF8JSONResponse(
+        status_code=202,
+        content={"ok": True, "queue_id": payload.queue_id, "state": "interject_pending"},
+    )
 
 
 @router.post("/api/v1/chat/queue/dispatch")

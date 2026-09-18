@@ -18,6 +18,7 @@ import {
   fetchQueueList,
   enqueueQueueMessage,
   cancelQueueItem,
+  interjectQueueItem,
   claimNextQueued,
 } from "./chat";
 import { sessionStore } from "./stores";
@@ -701,9 +702,8 @@ function patchStreaming(partial: Partial<ChatMessage>): void {
   conversationStore.setState({ messages });
 }
 
-// ══ Human Turn 排队（生成中 cmd/ctrl+Enter 插话；后端 durable 事实）══
-// 模型（P0 假对齐修复）：zh.ts 已宣称"Cmd/Ctrl+Enter 插话发送（排队）"但
-// 原实现流式时静默 return。本块补齐真实能力：入队冻结事实 → run 终态后
+// ══ Human Turn 排队（生成中 cmd/ctrl+Enter；后端 durable 事实）══
+// 普通排队：入队冻结事实 → run 终态后
 // FIFO 接力派发（多标签原子 claim 只有一个成功）。
 
 /** 刷新当前会话队列镜像（FIFO 序；切会话/入队/取消/接力后调用） */
@@ -741,14 +741,44 @@ export async function enqueueQueueTurn(
 }
 
 /** 取消排队项（仅 queued 可取消；claimed 已进入发送流程） */
-export async function cancelQueueTurn(queueId: string): Promise<void> {
+export async function cancelQueueTurn(
+  queueId: string
+): Promise<{ ok: boolean; detail?: string }> {
   const sessionId = sessionStore.getState().currentSessionId;
-  if (!sessionId) return;
-  const ok = await cancelQueueItem(sessionId, queueId);
-  if (!ok) {
-    // 已被领取/不存在：刷新镜像收敛（终态由后端回写）
+  if (!sessionId) return { ok: false, detail: "当前没有可操作的会话" };
+  const result = await cancelQueueItem(sessionId, queueId);
+  await refreshQueue(sessionId);
+  return { ok: result.ok, detail: result.detail };
+}
+
+/** 撤回编辑：取消成功后把冻结正文/附件交给 Composer 合并回当前草稿。 */
+export async function withdrawQueueTurn(
+  queueId: string
+): Promise<{ ok: boolean; detail?: string }> {
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return { ok: false, detail: "当前没有可操作的会话" };
+  const result = await cancelQueueItem(sessionId, queueId);
+  if (result.ok && result.item) {
+    conversationStore.setState({
+      composerPrefill: {
+        text: result.item.message || "",
+        attachments: result.item.attachment_facts ?? [],
+      },
+    });
   }
   await refreshQueue(sessionId);
+  return { ok: result.ok, detail: result.detail };
+}
+
+/** 真插话：交给当前 live run；pending/received 由后端状态回显。 */
+export async function interjectQueueTurn(
+  queueId: string
+): Promise<{ ok: boolean; detail?: string }> {
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return { ok: false, detail: "当前没有可操作的会话" };
+  const result = await interjectQueueItem(sessionId, queueId);
+  await refreshQueue(sessionId);
+  return { ok: result.ok, detail: result.detail };
 }
 
 /** relay 防重入（多路径终态触发：done/error/停止/切回兜底） */

@@ -125,6 +125,13 @@ class QueueCancelRequest(BaseModel):
     queue_id: str = Field(description="要取消的排队项 ID")
 
 
+class QueueInterjectRequest(BaseModel):
+    """立即插入（POST /api/v1/chat/queue/interject body）."""
+
+    session_id: str = Field(description="目标会话 ID")
+    queue_id: str = Field(description="要交给当前 live run 的排队项 ID")
+
+
 class QueueDispatchRequest(BaseModel):
     """派发领取（POST /api/v1/chat/queue/dispatch body）：原子领取队首 queued 项."""
 
