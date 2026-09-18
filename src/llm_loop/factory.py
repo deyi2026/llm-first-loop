@@ -1094,6 +1094,11 @@ def build_engine(
             data_dir_explicit=False,
         )
 
+    if semantic_retriever is not None:
+        # RuntimePaths is the authority for mutable Method cache placement; do not let
+        # cwd decide where semantic Method vectors are persisted.
+        semantic_retriever.configure_method_dir(_runtime_paths.methods_dir)
+
     def _knowledge_health_snapshot() -> dict[str, Any]:
         return inspect_knowledge_health(_runtime_paths)
 

@@ -691,10 +691,38 @@ class RecordSearcher:
         return merged
 
     def _search_method(self, query: str, limit: int) -> list[dict]:
-        """Method cards by default; exact ``method:<id>`` hydrates one full record."""
+        """Method discovery uses lexical cards plus optional semantic RRF.
+
+        Exact stable refs remain exact hydration and never go through semantic fallback.
+        Semantic recall only broadens discovery; applicability stays ``not_evaluated``.
+        """
         if self._method_store is None:
             return []
-        return self._method_store.list(query, limit)
+        raw = str(query or "").strip()
+        if raw.lower().startswith("method:"):
+            return self._method_store.list(raw, limit)
+        keyword_limit = max(limit * 4, 20)
+        keyword = self._method_store.list(raw, keyword_limit)
+        if self._semantic is None or not self._semantic.semantic_available() or not raw:
+            return keyword[:limit]
+        result = self._semantic.search(
+            raw,
+            top_k=limit,
+            scope="method",
+            method=self._method_store,
+            keyword_results=keyword,
+        )
+        rows: list[dict] = []
+        for hit in result.entries:
+            ref = str(hit.get("key") or "")
+            record = self._method_store.get(ref)
+            if record is None:
+                continue
+            card = record.card()
+            if record.freshness_refs:
+                card["freshness"] = self._method_store.freshness(record.method_ref)
+            rows.append(card)
+        return rows[:limit]
 
     def _search_experience(
         self,
