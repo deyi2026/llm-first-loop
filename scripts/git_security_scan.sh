@@ -58,6 +58,7 @@ _ALLOWLIST=(
   'data/calib/h1c_control_bank.json'  # Gate0 项2 fixture 版本化：测试 bank 入库（PROBE 提交态自足；hash 背书于 tests/guards/fixture_manifest.json；非运行时数据，评测只读资产快照）
   'tests/fixtures/trace_leak/isomorphic-replay-pair.jsonl'  # Gate0 项2 fixture 版本化：trace 泄漏实证报文如实固化快照（内含工作区路径记录=泄漏样本本体，非泄露；同 tests/fixtures/wire/ 先例，内容不可改写）
   'tools/smx/lab/config-b.card'  # SMX lab treatment 评测卡：冻结样例，绝对路径是实验定义本体（同 tests/fixtures/wire/ 先例，内容不可改写）
+  'experiences/'  # 经验档案批量归档（2026-09-18）：历史 experience 文档如实记录本机工作区路径=记录本体，非泄露；无密钥类模式（2026-09-18 扫描抽查 243 文件），同 MIRROR 协议文档先例
 )
 
 # macOS/Linux 兼容的 stat 大小

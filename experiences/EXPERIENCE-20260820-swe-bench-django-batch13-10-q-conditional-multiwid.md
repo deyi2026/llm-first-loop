@@ -1,0 +1,12 @@
+---
+title: SWE-bench Django batch13 修复模式（10 实例，含 Q conditional 组合/嵌套 MultiWidget required/staticfiles 去重）
+scenario: "继续 SWE-bench django 批量流水线（batch13: 13810/13820/13821/13837/13925/14007/14017/14034/14053/14140），本地验证 10/10 全绿、patch 落盘 /tmp/swe_lfl_patches/，容器终验后台进行中。修复模式对后续批次（batch14-20）同类问题直接可复用。"
+root_cause: 各实例独立根因见 solution；共性教训：① Q 组合 conditional 表达式需三处配套修改（_combine 接受 + 空 Q 逻辑 + deconstruct 简化），缺一不可（14017 曾 3 次错误方向）；② 嵌套 MultiWidget 时 required 传播需 require_all_fields 标志门控（直接设 is_required 会破坏 SplitDateTime 子 widget）；③ 复杂修复优先 web_fetch 上游 3.2.x 源码对比（14017/14034 靠此对齐），避免试错。
+solution: "按实例最小修复：① 13810 MiddlewareNotUsed 副作用：load_middleware 用 adapted_handler 临时变量，实例化成功后才更新 handler（异常 continue 时 handler 不被污染）；② 13820 frozen 环境迁移加载：删 __file__ 检查，改用 isinstance(module.__spec__.loader, NamespaceLoader) 判 namespace 包（普通包无 __file__ 也能加载）；③ 13821 SQLite 最低版本 3.8.3→3.9.0（check_sqlite_version 元组比较天然支持四元组版本号）；④ 13837 autoreload：get_child_arguments 加 __main__.__spec__.parent 分支（-m pkg_other_than_django 也走 -m 重启）；⑤ 13925 W042 继承 pk 误报：_check_default_pk 加 not cls._meta.parents（只有根模型自动创建 pk 才报）；⑥ 14007 insert returning 未走 from_db_value：execute_sql 收束 rows 后对 returning_fields 应用 field.get_db_converters（注意 Field 无 output_field，不能复用 get_converters）；⑦ 14017/14140 Q 与 conditional 表达式组合：Q._combine 接受 getattr(other,'conditional',False) 表达式 + 空 Q 逻辑反转（self 空返回 other.copy）+ Q.deconstruct 简化为 args=tuple(children)（单 child 不再假设 (k,v) 元组，修复 Q(Exists) deconstruct 崩溃与 pickle）；⑧ 14034 MultiValueField 子字段 required 渲染：MultiValueField.__init__ 设 widget.require_all_fields + 子 widget.is_required，MultiWidget.get_context 仅当 require_all_fields=False 且子 widget 非 required 时 pop attrs 的 required（嵌套 MultiWidget 无该属性默认 True 不 pop，保 SplitDateTime 行为）；⑨ 14053 staticfiles 重复 yield：post_process 主循环加 yielded 集合，pass 2+ 不重复 yield 已处理文件。"
+evidence: 本地验证：13810 33 OK / 13820 563 OK / 13821 32 OK / 13837 78 OK / 13925 26 OK / 14007 15 OK / 14017 157 OK / 14034 13 OK / 14053 32 OK / 14140 115 OK；predictions 已写 data/swe_results/django_batch13_predictions.jsonl；容器终验 run_lfl_batch13_official.py 后台进行中
+tags: [swebench, django, 批量流水线, 修复模式, Q-conditional, MultiWidget, staticfiles]
+source: {}
+status: active
+created_at: "2026-08-20T06:12:17.598727+08:00"
+updated_at: "2026-08-20T06:12:17.598727+08:00"
+---
