@@ -98,7 +98,7 @@ def test_skill_call_scope_and_legacy_rows(tmp_path):
     assert report["summary"]["windowed_events"] == 1
 
 
-def test_markdown_render_contains_口径(tmp_path):
+def test_markdown_render_contains_grade_underest_window(tmp_path):
     report = mod.build_report(_rows(), tmp_path)
     md = mod.render_markdown(report, ledger="x.jsonl")
     assert "A 级" in md and "低估" in md and "窗口" in md

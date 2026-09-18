@@ -248,7 +248,7 @@ def _extract_hydration_refs(content: object, *, limit: int = 8) -> list[str]:
     return refs
 
 
-def _observe_knowledge_hydration(call: "ToolCall", result: "ToolResult") -> None:
+def _observe_knowledge_hydration(call: ToolCall, result: ToolResult) -> None:
     """登记知识水合调用（search_records/skill_load 成功执行；fail-open）."""
     with contextlib.suppress(Exception):
         status = str(getattr(result.status, "value", "") or "")

@@ -9,10 +9,10 @@
 """
 
 from llm_loop.feedback.validator import (
-    DeclarationValidator,
-    ToolResultStatus,
     _RECEIPT_DISPLAY_CHARS,
     _RECEIPT_MATCH_CHARS,
+    DeclarationValidator,
+    ToolResultStatus,
 )
 
 
@@ -126,7 +126,8 @@ class _TM:
 
 
 def test_window_eight_recovers_4_round_old_fact():
-    import tempfile, pathlib
+    import pathlib
+    import tempfile
 
     with tempfile.TemporaryDirectory() as td:
         v = _v(audit_dir=pathlib.Path(td))
@@ -141,7 +142,8 @@ def test_window_eight_recovers_4_round_old_fact():
 
 
 def test_window_configurable_back_to_3():
-    import tempfile, pathlib
+    import pathlib
+    import tempfile
 
     with tempfile.TemporaryDirectory() as td:
         v = _v(audit_dir=pathlib.Path(td), recent_window=3)
@@ -156,7 +158,8 @@ def test_window_configurable_back_to_3():
 
 
 def test_match_surface_beyond_display_chars():
-    import tempfile, pathlib
+    import pathlib
+    import tempfile
 
     with tempfile.TemporaryDirectory() as td:
         v = _v(audit_dir=pathlib.Path(td))
