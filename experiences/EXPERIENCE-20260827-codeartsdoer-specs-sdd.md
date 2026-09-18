@@ -7,6 +7,7 @@ evidence: ""
 tags: [spec-driven-development, sdd-pipeline, cache-capability, ev_recov, resume-context]
 source: {}
 status: active
+qualification: 2026-09-18 batch2/3 per-file review: retained（methodology self-evident：步骤可机械复现或含实测细节；evidence 内嵌正文）
 created_at: "2026-08-27T01:24:50.501292+08:00"
 updated_at: "2026-08-27T01:24:50.501292+08:00"
 ---

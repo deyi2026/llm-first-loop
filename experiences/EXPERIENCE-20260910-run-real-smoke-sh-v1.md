@@ -7,6 +7,7 @@ evidence: ""
 tags: [real_smoke, cache_gate, pytest, v1-v2-baseline, provider_routing]
 source: {}
 status: active
+qualification: 2026-09-18 batch2/3 per-file review: retained（methodology self-evident：步骤可机械复现或含实测细节；evidence 内嵌正文）
 created_at: "2026-09-10T01:37:44.682931+08:00"
 updated_at: "2026-09-10T01:37:44.682931+08:00"
 ---

@@ -7,6 +7,7 @@ evidence: ""
 tags: [fail-open, 观测插桩, 参数求值, 防御式调用, 异常边界]
 source: {}
 status: active
+qualification: 2026-09-18 batch2/3 per-file review: retained（methodology self-evident：步骤可机械复现或含实测细节；evidence 内嵌正文）
 created_at: "2026-09-03T16:37:38.234493+08:00"
 updated_at: "2026-09-03T16:37:38.234493+08:00"
 ---

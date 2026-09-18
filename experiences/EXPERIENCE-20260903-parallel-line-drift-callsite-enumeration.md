@@ -7,6 +7,7 @@ evidence: ""
 tags: [插桩, callsite-枚举, 多行调用, 行号漂移, fail-open]
 source: {}
 status: active
+qualification: 2026-09-18 batch2/3 per-file review: retained（methodology self-evident：步骤可机械复现或含实测细节；evidence 内嵌正文）
 record_kind: lesson
 verification_state: unverified
 created_at: "2026-09-03T16:37:28.249878+08:00"

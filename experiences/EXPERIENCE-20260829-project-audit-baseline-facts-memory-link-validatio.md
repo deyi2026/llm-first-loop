@@ -7,7 +7,9 @@ evidence: ""
 tags: [memory, benchmark, audit]
 source:
   task: this audit task
-status: active
+status: archived
+archived_at: 2026-09-18
+archived_reason: lifecycle-batch2: 占位流水账（solution 仅 "Baseline numbers recorded"，无方法论/无证据细节，逐条 qualification 判定）
 created_at: "2026-08-29T01:42:32.507660+08:00"
 updated_at: "2026-08-29T01:42:32.507660+08:00"
 ---

@@ -7,6 +7,7 @@ evidence: ""
 tags: [并行线, worktree, clobber, 基线留底, spec工作流]
 source: {}
 status: active
+qualification: 2026-09-18 batch2/3 per-file review: retained（methodology self-evident：步骤可机械复现或含实测细节；evidence 内嵌正文）
 record_kind: lesson
 verification_state: unverified
 created_at: "2026-09-03T07:50:31.507714+08:00"

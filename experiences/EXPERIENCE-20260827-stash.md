@@ -7,6 +7,7 @@ evidence: ""
 tags: [refactor, equivalence, test-stub-contract, stash-bisection, fail-open]
 source: {}
 status: active
+qualification: 2026-09-18 batch2/3 per-file review: retained（methodology self-evident：步骤可机械复现或含实测细节；evidence 内嵌正文）
 created_at: "2026-08-27T18:37:09.132416+08:00"
 updated_at: "2026-08-27T18:37:09.132416+08:00"
 ---

@@ -7,6 +7,7 @@ evidence: ""
 tags: [llama.cpp, speculative-decoding, MTP, apple-silicon, qwen, 性能测试]
 source: {}
 status: active
+qualification: 2026-09-18 batch2/3 per-file review: retained（methodology self-evident：步骤可机械复现或含实测细节；evidence 内嵌正文）
 created_at: "2026-09-11T01:16:51.581716+08:00"
 updated_at: "2026-09-11T01:16:51.581716+08:00"
 ---

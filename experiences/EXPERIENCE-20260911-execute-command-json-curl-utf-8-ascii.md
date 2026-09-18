@@ -7,6 +7,7 @@ evidence: ""
 tags: [curl, JSON, UTF-8, 全角字符, UnicodeDecodeError, 冒烟测试]
 source: {}
 status: active
+qualification: 2026-09-18 batch2/3 per-file review: retained（methodology self-evident：步骤可机械复现或含实测细节；evidence 内嵌正文）
 created_at: "2026-09-11T08:44:56.468145+08:00"
 updated_at: "2026-09-11T08:44:56.468145+08:00"
 ---
