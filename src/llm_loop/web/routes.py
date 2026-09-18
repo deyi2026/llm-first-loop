@@ -398,6 +398,11 @@ def _evolution_store_from(engine: Any) -> Any | None:
     return getattr(ctx, "evolution_store", None)
 
 
+def _web_data_dir(engine: Any) -> Path:
+    """Resolve Web route storage from the already-resolved engine settings authority."""
+    return Path(getattr(getattr(engine, "settings", None), "data_dir", "./data")).expanduser().resolve()
+
+
 _locks_guard = threading.Lock()
 _LOCK_TIMEOUT_S = 30
 _SSE_QUEUE_TIMEOUT_S = 15  # 后台 run 订阅队列 get 超时（防御；正常 run 必有 done/error 终态）
@@ -1652,21 +1657,29 @@ def evolution_detail(request: Request, id: str = "") -> Response:
         return UTF8JSONResponse(status_code=500, content={"error": "read_failed", "detail": "建议文件读取失败。"})
 
 
-def _log_web_review(evo_id: str, decision: str, ok: bool, note: str = "", reason: str = "") -> None:
+def _log_web_review(
+    evo_id: str,
+    decision: str,
+    ok: bool,
+    *,
+    data_dir: str | Path,
+    note: str = "",
+    reason: str = "",
+) -> None:
     """web 面板审批动作审计行（EVO-20260918-d1182270: 人工决策写可检索事实）.
 
     追加 JSONL 到 data/audit/evolution_review_log.jsonl，行内含 action=EVO_REVIEW_WEB + 建议 id，
     AI 侧（search_files content="EVO_REVIEW_WEB"）可直接定位人工何时批了什么；
     fail-open：审计写入失败不影响审批回执本身。
     """
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
 
     try:
-        base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
+        base = Path(data_dir).expanduser().resolve()
         audit_dir = base / "audit"
         audit_dir.mkdir(parents=True, exist_ok=True)
         record = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "source": "web_panel",
             "action": "EVO_REVIEW_WEB",
             "id": evo_id,
@@ -1751,7 +1764,14 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
         else:
             ok, resp = reject(store, evo_id, reason)
     except Exception as exc:  # noqa: BLE001 — 审批异常如实回执
-        _log_web_review(evo_id, decision, False, note=f"异常: {type(exc).__name__}: {exc}", reason=reason)
+        _log_web_review(
+            evo_id,
+            decision,
+            False,
+            data_dir=_web_data_dir(engine),
+            note=f"异常: {type(exc).__name__}: {exc}",
+            reason=reason,
+        )
         return UTF8JSONResponse(
             status_code=500,
             content={"error": "review_failed", "detail": f"审批异常: {type(exc).__name__}: {exc}"},
@@ -1761,7 +1781,14 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
     cur_after = _find_suggestion(store, evo_id)
     if cur_after is not None:
         new_status = str(cur_after.get("status") or "")
-    _log_web_review(evo_id, decision, bool(ok), note=resp, reason=reason)
+    _log_web_review(
+        evo_id,
+        decision,
+        bool(ok),
+        data_dir=_web_data_dir(engine),
+        note=resp,
+        reason=reason,
+    )
     return UTF8JSONResponse(
         content={"ok": ok, "message": resp, "id": evo_id, "new_status": new_status},
         status_code=200 if ok else 400,
@@ -1826,11 +1853,25 @@ async def evolution_review_batch(request: Request) -> Response:
                     continue
                 ok, resp = reject(store, evo_id, reason)
             results.append({"id": evo_id, "ok": bool(ok), "message": resp})
-            _log_web_review(evo_id, decision, bool(ok), note=resp, reason=reason)  # EVO-20260918-d1182270
+            _log_web_review(
+                evo_id,
+                decision,
+                bool(ok),
+                data_dir=_web_data_dir(engine),
+                note=resp,
+                reason=reason,
+            )  # EVO-20260918-d1182270
             ok_count += bool(ok)
             fail_count += not ok
         except Exception as exc:  # noqa: BLE001 — 单条失败不影响其余
-            _log_web_review(evo_id, decision, False, note=f"异常: {type(exc).__name__}: {exc}", reason=reason)
+            _log_web_review(
+                evo_id,
+                decision,
+                False,
+                data_dir=_web_data_dir(engine),
+                note=f"异常: {type(exc).__name__}: {exc}",
+                reason=reason,
+            )
             results.append({"id": evo_id, "ok": False, "message": f"异常: {type(exc).__name__}: {exc}"})
             fail_count += 1
     return UTF8JSONResponse(
