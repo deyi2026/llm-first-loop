@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.cdp_host import (
@@ -139,3 +140,84 @@ def test_settings_default_frame_limit_is_64mib() -> None:
 
     field = {f.name: f for f in dataclasses.fields(Settings)}["browser_cdp_max_frame_bytes"]
     assert field.default == 67_108_864
+
+
+# --- EVO-20260918-a2727fb2: connection-loss classification + diagnostics ---
+
+
+class _TimeoutRecvWs:
+    """Websocket whose recv always times out (no complete frame within window)."""
+
+    def send(self, payload: str | bytes) -> None: ...
+
+    def recv(self, timeout: float | None = None) -> str:
+        raise TimeoutError("timed out")
+
+    def close(self) -> None: ...
+
+
+class _FrameLimitRecvWs:
+    """Websocket closed by the peer with 1009 message too big."""
+
+    def send(self, payload: str | bytes) -> None: ...
+
+    def recv(self, timeout: float | None = None) -> str:
+        raise ConnectionClosedError(Close(1009, "message too big"), None)
+
+    def close(self) -> None: ...
+
+
+def test_capture_failure_classifies_timeout_vs_frame_limit() -> None:
+    from websockets.frames import Close
+
+    timeout_host = CdpReadOnlyBrowserHost(
+        "http://127.0.0.1:9222",
+        http_get_json=lambda url: [_target()],
+        ws_connect=lambda url: _TimeoutRecvWs(),
+    )
+    with pytest.raises(RuntimeError, match=r"capture_channel_degraded\[mode=timeout\]") as excinfo:
+        timeout_host.capture()
+    assert "error_type=TimeoutError" in str(excinfo.value)
+    assert timeout_host.bound_target_id == "TARGET-1"  # session dropped, pin kept
+
+    frame_host = CdpReadOnlyBrowserHost(
+        "http://127.0.0.1:9222",
+        http_get_json=lambda url: [_target()],
+        ws_connect=lambda url: _FrameLimitRecvWs(),
+    )
+    with pytest.raises(RuntimeError, match=r"capture_channel_degraded\[mode=frame_too_large\]") as excinfo:
+        frame_host.capture()
+    assert "error_type=ConnectionClosedError" in str(excinfo.value)
+
+
+def test_capture_diagnostics_carry_last_request_facts() -> None:
+    """A successful request records method/resp_chars/elapsed; the next failure surfaces them."""
+
+    class _ThenDeadWs:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def send(self, payload: str | bytes) -> None: ...
+
+        def recv(self, timeout: float | None = None) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                return json.dumps({"id": 1, "result": {"targetInfo": {"targetId": "TARGET-1"}}})
+            raise TimeoutError("timed out")
+
+        def close(self) -> None: ...
+
+    host = CdpReadOnlyBrowserHost(
+        "http://127.0.0.1:9222",
+        http_get_json=lambda url: [_target()],
+        ws_connect=lambda url: _ThenDeadWs(),
+    )
+    # probe_page_target performs one allowlisted request; capture then times out.
+    probe = host.probe_page_target()
+    assert probe["target_id"] == "TARGET-1"
+    assert probe["type"] == "page"
+    with pytest.raises(RuntimeError) as excinfo:
+        host.capture()
+    message = str(excinfo.value)
+    assert "diag=" in message
+    assert "method" in message  # last successful request facts are included

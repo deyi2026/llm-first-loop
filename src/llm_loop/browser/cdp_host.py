@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 from urllib.parse import urlparse
@@ -35,6 +36,23 @@ _CONNECTION_LOST_ERRORS: tuple[type[BaseException], ...] = (
     OSError,
     _WsConnectionClosed,
 )
+
+
+def _classify_connection_loss(exc: BaseException) -> str:
+    """EVO-20260918-a2727fb2: classify a connection-lost failure for callers.
+
+    timeout       - the fixed recv timeout expired before any complete frame
+                    (websockets sync recv raises TimeoutError, an OSError subclass).
+    frame_too_large - the peer closed with close code 1009 (message too big),
+                    i.e. the response frame exceeded the configured limit.
+    connection    - transport-level loss that is neither of the above.
+    """
+
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, _WsConnectionClosed) and "1009" in str(exc):
+        return "frame_too_large"
+    return "connection"
 
 _READ_ONLY_CDP_METHODS = frozenset(
     {
@@ -109,9 +127,14 @@ class _ReadOnlyCdpSession:
         self._timeout_s = float(timeout_s)
         self._request_id = 0
         self._lock = threading.Lock()
+        # EVO-20260918-a2727fb2: last request diagnostics so connection-lost
+        # failures can be classified (timeout vs frame limit vs transport) instead
+        # of surfacing as one undistinguishable error string.
+        self.last_diag: dict[str, Any] = {}
 
     def _request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         with self._lock:
+            started = time.monotonic()
             self._request_id += 1
             request_id = self._request_id
             self._websocket.send(
@@ -125,6 +148,11 @@ class _ReadOnlyCdpSession:
                 message = json.loads(raw)
                 if not isinstance(message, dict) or message.get("id") != request_id:
                     continue
+                self.last_diag = {
+                    "method": method,
+                    "resp_chars": len(raw) if isinstance(raw, str) else len(str(raw)),
+                    "elapsed_ms": round((time.monotonic() - started) * 1000.0, 1),
+                }
                 if "error" in message:
                     error = message.get("error") or {}
                     raise RuntimeError(
@@ -262,10 +290,38 @@ class CdpReadOnlyBrowserHost:
             try:
                 return PlaywrightPageCaptureBackend(page, node_cap=self._node_cap).capture()
             except _CONNECTION_LOST_ERRORS as exc:
+                diag = dict(getattr(session, "last_diag", {}) or {})
+                mode = _classify_connection_loss(exc)
                 self._drop_session()
                 raise RuntimeError(
+                    f"capture_channel_degraded[mode={mode}]; "
                     "CDP observation connection lost; dropped session for same-target reconnect"
+                    f"; diag={diag}; error_type={type(exc).__name__}"
                 ) from exc
+
+    def probe_page_target(self) -> dict[str, Any]:
+        """EVO-20260918-4766011b: lightweight page-target existence probe.
+
+        Uses only the already-allowlisted read-only CDP surface
+        (Target.getTargetInfo) - no DOM/AX capture - so resource-level
+        transition verbs can verify their precondition when a full capture
+        is structurally unavailable on the current page.
+        """
+
+        with self._capture_lock:
+            target = self._resolve_target()
+            target_id = str(target.get("id") or "")
+            session = self._ensure_session(target)
+            info = session.send("Target.getTargetInfo", {"targetId": target_id})
+            target_info = info.get("targetInfo") if isinstance(info, dict) else None
+            probed_id = str((target_info or {}).get("targetId") or "") or target_id
+            if probed_id != target_id:
+                raise RuntimeError("Browser target probe returned a different target id")
+            return {
+                "target_id": target_id,
+                "url": str(target.get("url") or ""),
+                "type": str(target.get("type") or ""),
+            }
 
     def close(self) -> None:
         websocket = self._websocket
