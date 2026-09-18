@@ -288,8 +288,13 @@ class ManagedServiceDeploymentStore:
         return ManagedServiceDeployment.from_dict(raw)
 
     def read(self) -> ManagedServiceDeployment | None:
-        with self.lease():
-            return self._read_unlocked()
+        # Readers never take the state lease: every write is an atomic
+        # same-directory tmp+rename (_atomic_json), so a reader observes
+        # the previous snapshot, the new snapshot, or no file at all.
+        # Observing missing state must stay physically read-only: no
+        # directory/lock-file creation and no exclusive flock on the
+        # read path (status/show/verify observations included).
+        return self._read_unlocked()
 
     def compare_and_swap(
         self,
@@ -683,6 +688,7 @@ def _control_subprocess_env(
     code_root: str,
     runtime_root: str,
     extra: Mapping[str, str] | None = None,
+    python_src: str | Path | None = None,
 ) -> dict[str, str]:
     """Build a deterministic minimal environment for lifecycle-control children.
 
@@ -690,19 +696,45 @@ def _control_subprocess_env(
     FORCE flags, stale config anchors, and sandbox HOME/TMPDIR are not lifecycle
     authority. The official restart script reconstructs service HOME/TMPDIR and
     business configuration from canonical roots.
+
+    ``python_src`` binds which ``llm_loop`` tree Python children import from.
+    The detached service-control worker must pass the *controller* code root
+    (see ``_control_code_root``); the restart-script child keeps the default
+    (desired ``code_root``/src) because the script itself belongs to the
+    target deployment.
     """
     account_home = pwd.getpwuid(os.getuid()).pw_dir
+    resolved_python_src = Path(python_src) if python_src is not None else Path(code_root) / "src"
     env = {
         "HOME": account_home,
         "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         "LANG": "C.UTF-8",
         "LFL_WORKSPACE_ROOT": code_root,
         "LFL_RUNTIME_ROOT": runtime_root,
-        "PYTHONPATH": str(Path(code_root) / "src"),
+        "PYTHONPATH": str(resolved_python_src),
     }
     if extra:
         env.update({str(key): str(value) for key, value in extra.items()})
     return env
+
+
+def _control_code_root() -> Path:
+    """Code root of the *currently executing* control plane.
+
+    The detached service-control worker must run the control-plane code that
+    dispatched it, never the code of the desired deployment target: rolling
+    back to a tree that predates this module must not make the worker
+    execute the old controller (P0-A.1). A layout that does not look like a
+    repository checkout (e.g. a site-packages install) fails closed here
+    instead of silently binding to an unrelated root.
+    """
+    root = Path(__file__).resolve().parents[3]
+    if not (root / "src" / "llm_loop").is_dir():
+        raise RuntimeError(
+            f"control code root sanity check failed: {root}/src/llm_loop not found; "
+            "refusing to spawn worker from an unrecognized layout"
+        )
+    return root
 
 
 def build_restart_plan(
@@ -738,6 +770,7 @@ def spawn_service_control_worker(store: ManagedServiceDeploymentStore, action_id
     env = _control_subprocess_env(
         code_root=deployment.code_root,
         runtime_root=deployment.runtime_root,
+        python_src=_control_code_root() / "src",
     )
     stream = log_path.open("a", encoding="utf-8")
     try:
@@ -824,7 +857,7 @@ def _wait_for(
     action: ServiceControlAction,
     *,
     status: str,
-    busy_probe: Callable[[], str],
+    busy_probe: Callable[[], str | bool],
     poll_s: float,
     timeout_s: float,
     timeout_detail: str,
@@ -864,19 +897,18 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
     # it, so desired-state publication stays unblocked.
     if action.target in {"web", "all"} and _requester_run_active(
         sessions_dir, action.requester_session_id
+    ) and not _wait_for(
+        store,
+        action,
+        status="waiting_for_requester_exit",
+        busy_probe=lambda: _requester_run_active(
+            sessions_dir, action.requester_session_id
+        ),
+        poll_s=_REQUESTER_EXIT_POLL_S,
+        timeout_s=_REQUESTER_EXIT_TIMEOUT_S,
+        timeout_detail="requester run still active",
     ):
-        if not _wait_for(
-            store,
-            action,
-            status="waiting_for_requester_exit",
-            busy_probe=lambda: _requester_run_active(
-                sessions_dir, action.requester_session_id
-            ),
-            poll_s=_REQUESTER_EXIT_POLL_S,
-            timeout_s=_REQUESTER_EXIT_TIMEOUT_S,
-            timeout_detail="requester run still active",
-        ):
-            return 1
+        return 1
 
     # Phase 2 - target idle, same target-scoped semantics as the official
     # restart gates (still without the lifecycle lease).
@@ -915,6 +947,28 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                 detail=f"desired deployment advanced while waiting: {exc}",
             )
             return 3
+        # P0-A.1: byte-level reverify of the desired binding inside the
+        # lifecycle lease, immediately before the physical restart. The
+        # generation CAS above only proves identity/generation agreement;
+        # this proves the target tree still matches the published commit
+        # and WebUI artifact hash at execution time. Drift => fail closed
+        # without executing the (possibly pre-P0-A) restart script.
+        # Feishu-only restarts do not consume WebUI artifacts, so the dist
+        # tree hash is not a hard gate for them.
+        binding_problems = verify_deployment_binding(
+            desired_now,
+            code_root=desired_now.code_root,
+            runtime_root=desired_now.runtime_root,
+            verify_webui=(latest.target != "feishu"),
+        )
+        if binding_problems:
+            _mark_action(
+                store,
+                latest,
+                status="failed",
+                detail="deployment binding failed: " + "; ".join(binding_problems),
+            )
+            return 4
         running = _mark_action(store, latest, status="running")
 
         env = _control_subprocess_env(
