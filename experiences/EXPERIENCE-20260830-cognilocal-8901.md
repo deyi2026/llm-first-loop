@@ -25,4 +25,3 @@ updated_at: "2026-09-06T00:19:02.697933+08:00"
 ## 2026-09-06 lifecycle review
 
 该 SOP 指向的 start-cog-server.sh 当前已不存在；当前 research/mlx-lm/scripts 只有 start-ornith-server.sh，cognilocal:8901 默认模型也已是 ornith-1.5-35b-a3b-mlx。旧启动脚本/旧 qwen3.8-cog SOP 退出 active；现行启动事实以当前 operator script 为准。
-

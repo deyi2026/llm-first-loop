@@ -126,4 +126,3 @@ updated_at: "2026-09-06T00:15:07.572782+08:00"
 ## 2026-09-06 lifecycle review
 
 该记录只有标题/场景，root_cause/solution/evidence/source/timestamp 均缺失，无法作为可消费的 active 经验；不根据标题猜补内容，保留历史文件并退出普通召回。
-

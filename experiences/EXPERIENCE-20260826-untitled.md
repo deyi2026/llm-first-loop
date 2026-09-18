@@ -27,4 +27,3 @@ promoted_to_rule: RULE-AI-11.1
 ## 2026-09-06 lifecycle review
 
 该经验的“三种截断判别 + search_archive 短关键词 + 未命中后不重复空耗”已经直接升格为当前 `docs/ai_rules.md` RULE-AI-11.1；经验保留为来源案例，不再与正式规则形成双权威。
-

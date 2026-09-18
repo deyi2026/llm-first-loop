@@ -14,4 +14,3 @@ updated_at: "2026-09-06T00:15:07.572782+08:00"
 ## 2026-09-06 lifecycle review
 
 该记录混合新旧事实：REASONING_TAIL=-1 仍是当前配置，但 HISTORY_MAX_CHARS=400K 与 CACHE_HIT_SHOW_IN_ANSWER=true 等处方已被后续架构替代；混合记录若继续 active 易把旧参数当当前方案，故整体归档，仍可 exact-ref 考古。
-

@@ -16,4 +16,3 @@ updated_at: "2026-09-06T00:19:02.697933+08:00"
 ## 2026-09-06 lifecycle review
 
 该记录把 local 当前接入前提写成 wire_protocol=lms-chat；当前 data/providers.json 的 local provider 未配置 lms-chat，按现行 registry 默认走 openai。旧 urllib/SSE 陷阱保留为 LM Studio 历史兼容资料，不作为当前通用操作指南。
-

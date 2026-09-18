@@ -14,6 +14,7 @@ DOM+AX parser.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
 import time
@@ -280,10 +281,8 @@ class CdpReadOnlyBrowserHost:
         self._session = None
         self._websocket = None
         if websocket is not None:
-            try:
+            with contextlib.suppress(Exception):  # noqa: BLE001 - best-effort close of a dead socket
                 websocket.close()
-            except Exception:  # noqa: BLE001 - best-effort close of a dead socket
-                pass
 
     def capture(self) -> dict[str, Any]:
         with self._capture_lock:

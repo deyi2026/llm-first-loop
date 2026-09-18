@@ -25,7 +25,7 @@ def _rows(tmp: Path) -> list[dict]:
     p = tmp / "injection_ledger.jsonl"
     if not p.exists():
         return []
-    return [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+    return [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def test_receipt_pointer_row_written_and_content_unchanged(tmp_path, monkeypatch):
@@ -72,7 +72,7 @@ def test_hydration_refs_and_session_id_fields(tmp_path, monkeypatch):
         content="命中卡片: experience:EXP-1 experience:EXP-1 method:m-2 无关文本",
     )
     _observe_knowledge_hydration(call, result)
-    rows = [json.loads(l) for l in (tmp_path / "injection_ledger.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows = [json.loads(line) for line in (tmp_path / "injection_ledger.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(rows) == 1
     row = rows[0]
     assert row["kind"] == "hydration"

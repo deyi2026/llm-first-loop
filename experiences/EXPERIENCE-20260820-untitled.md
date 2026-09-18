@@ -19,5 +19,3 @@ last_verified_at: "2026-09-06T00:16:22.443906+08:00"
 ## 2026-09-06 lifecycle review
 
 核心方法论仍适用：判断 prefix cache 是否退化应同时看绝对 cache_read_tokens 与 tokens_in，而不能只看比率。当前镜像 current-format request.usage 复核得到 804 个同 runtime/model/stable-prefix/epoch 相邻 transition，其中 98 个 hit rate 下降超过 5pt 但 cache_read_tokens 不减，符合“新增尾部扩大分母”的正常形态。历史具体数值仅作背景。
-
-

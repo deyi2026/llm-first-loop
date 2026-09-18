@@ -349,9 +349,7 @@ class DeclarationValidator:
             return True
         if _VERB_NOUN_COMPOUND_RE.search(text):
             return True
-        if _COGNITIVE_OBJECT_RE.search(text):
-            return True
-        return False
+        return bool(_COGNITIVE_OBJECT_RE.search(text))
 
     @staticmethod
     def _is_third_party_state(text: str) -> bool:

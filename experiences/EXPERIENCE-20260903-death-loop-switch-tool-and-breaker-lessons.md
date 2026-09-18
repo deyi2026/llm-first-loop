@@ -17,4 +17,3 @@ superseded_by: "rule:RULE-AI-03"
 1. 换工具原则：已持有信息后重复同工具同参数=零信息动作；失败后唯一有效动作是换路径。
 2. 熔断器：partition_stagnation_block + 跨 run carry + 会话分桶；宿主重启后生效。
 3. 冲突处置：演进管线并行写同一工作树时，以三版本对比+全量测试归因收尾，B-G3 facts-only 约束一切停滞文案。
-

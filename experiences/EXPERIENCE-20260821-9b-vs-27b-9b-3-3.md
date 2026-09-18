@@ -14,4 +14,3 @@ updated_at: "2026-09-06T00:19:02.697933+08:00"
 ## 2026-09-06 lifecycle review
 
 这是 2026-08-21 特定模型/协议/预热状态下的速度点测。当前 tool schema、runtime、cache 与本地 serving 栈已多轮演进，旧 3.3x 数字不应参与 active 路由判断；保留为历史 benchmark。
-

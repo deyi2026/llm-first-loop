@@ -24,7 +24,6 @@ from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.cdp_host import (
     DEFAULT_CDP_MAX_FRAME_BYTES,
     CdpReadOnlyBrowserHost,
-    _default_ws_connect,
 )
 
 _WS_URL = "ws://127.0.0.1:9222/devtools/page/TARGET-1"
@@ -168,7 +167,6 @@ class _FrameLimitRecvWs:
 
 
 def test_capture_failure_classifies_timeout_vs_frame_limit() -> None:
-    from websockets.frames import Close
 
     timeout_host = CdpReadOnlyBrowserHost(
         "http://127.0.0.1:9222",

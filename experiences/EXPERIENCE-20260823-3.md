@@ -16,4 +16,3 @@ updated_at: "2026-09-06T00:17:19.943416+08:00"
 ## 2026-09-06 lifecycle review
 
 该记录依赖“工具执行后自动检索并注入 experience_tip”的旧机制。当前 `tool_cycle._inject_experience_tips` 明确为 on-demand-only compatibility observability：不得 query ExperienceStore、不得 append Message、prompt_chars=0；经验由模型显式 `search_records(kind=experience)` 发现并按 stable ref 水合。因此退出 active 普通召回，历史实现保留 exact-ref 考古。
-

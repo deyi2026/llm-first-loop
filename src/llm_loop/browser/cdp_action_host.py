@@ -7,6 +7,7 @@ to fixed internal CDP sequences.  It performs no retry and never silently rebind
 
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
 from collections.abc import Callable
@@ -16,8 +17,8 @@ from websockets.sync.client import connect as websocket_connect
 
 from llm_loop.browser.action import BrowserDispatchResult
 from llm_loop.browser.cdp_host import (
-    DEFAULT_CDP_MAX_FRAME_BYTES,
     _CONNECTION_LOST_ERRORS,
+    DEFAULT_CDP_MAX_FRAME_BYTES,
     _default_http_get_json,
     _normalize_loopback_debug_url,
     _validate_loopback_ws_url,
@@ -250,10 +251,8 @@ class CdpBrowserMutationActuator:
         self._websocket = None
         self._page_events_enabled = False
         if websocket is not None:
-            try:
+            with contextlib.suppress(Exception):  # noqa: BLE001 - best-effort close of a dead socket
                 websocket.close()
-            except Exception:  # noqa: BLE001 - best-effort close of a dead socket
-                pass
 
     def dispatch(self, *, verb: str, physical_target: str | None, args: dict[str, Any]) -> BrowserDispatchResult:
         with self._dispatch_lock:

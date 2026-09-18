@@ -17,4 +17,3 @@ superseded_by: "rule:RULE-AI-16"
 ## 2026-09-06 lifecycle review
 
 该记录把高 cache hit 与“模型仍看到未随本轮 payload 提交的完整累计上下文”绑定，并把缓存率当作循环/任务判断准绳；当前 RULE-AI-16 已明确缓存是 provider 性能事实而非任务权威，实际任务上下文以本次 provider payload 为准，cache-read 只是前缀计算复用。记录同时包含旧 COMPACT_RATIO=.85/注入尾部 recipe，故退出 active，并由 RULE-AI-16 作为现行权威。
-

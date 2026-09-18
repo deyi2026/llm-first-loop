@@ -14,4 +14,3 @@ updated_at: "2026-09-06T00:15:07.572782+08:00"
 ## 2026-09-06 lifecycle review
 
 该记录主要是旧 qwen3.8 本地运行时参数 recipe，包含 COMPACT_RATIO=0.85、30K budget 与 zero-history 联动；当前 .env 明确 COMPACT_RATIO=1.0，history budget 语义也已改为模型物理窗口/显式性能 cap，故不再作为 active 操作指南。
-

@@ -14,4 +14,3 @@ updated_at: "2026-09-06T00:15:07.572782+08:00"
 ## 2026-09-06 lifecycle review
 
 该记录根因/修法依赖 TOOL_ROUND_ZERO_HISTORY=1 的旧工具轮零历史机制；当前 source/config 已无该机制，故作为已修复历史事故归档。
-

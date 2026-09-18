@@ -26,4 +26,3 @@ last_verified_at: "2026-09-06T00:12:36.510891+08:00"
 该条目已从 active 转为 archived/dormant。镜像权威 action_trace 的最后一次真实 1210 为 2026-08-30T16:17:43Z（+08 为 08-31 00:17），随后截至 2026-09-05T13:41:40Z 有 6425 条 action.llm_decide/llm_response、84 条其它 llm_error，真实 1210 为 0。主区旧 trace 最后一例为 2026-09-01T23:48:55Z（+08 为 09-02 07:48），但其日志仅延续到当日 09:05Z，证据窗口较短。当前 production source `tail_assembly.py` 明确不再生成 program-owned user tail，`base_assembly.py` 保留零内容 assistant role frame 以避免 user→user 结构。
 
 因此本条保留为历史 wire-compatibility / 回归诊断资料，不再参与 active 普通经验召回；当前 exact ERR1210 机械 recovery 仍由源码与测试作为低成本防御边界维护。
-
