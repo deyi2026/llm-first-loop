@@ -1,0 +1,1674 @@
+{
+  "allowed_tools": [
+    "browser_action",
+    "browser_perceive",
+    "get_tool_schema"
+  ],
+  "arm": "smc",
+  "fixture": "smc_ground_truth_server.v1.1",
+  "gate": {
+    "infra_valid": true,
+    "judge_executed": true,
+    "oracle_pass_count": 1,
+    "oracle_pass_min": 1,
+    "pass": true,
+    "rows_complete": 5,
+    "rows_expected": 5
+  },
+  "generated_at": "2026-09-18T00:05:46.408876+00:00",
+  "git_head": "71c0a9173b07bd99d87e2bf87a34ae0b1ffcbb17",
+  "manifest_sha256_set": [
+    "328dde665631ea0dbe0c5880cd37cdee7622a2f490d773b93a3650bfeb9b99dc"
+  ],
+  "model_ref": "cognilocal/ornith-1.5-35b-a3b-mlx",
+  "model_server": {
+    "command_sha256": "2bee17c3fb687fb9224f0f72cac6738c607515a3ba92b90ae867995dd7b85fcf",
+    "decode_concurrency_1": true,
+    "max_tokens_16000": true,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "pid": 52430,
+    "prompt_concurrency_1": true
+  },
+  "plan_file_sha256": "b4f8e9a31f0ee9ef1eaa964aa7c128dc656ef9580f5f61f1e7ccf31768d24533",
+  "provider_contract": {
+    "max_input_tokens": 184000,
+    "max_tokens": 16000,
+    "min_p": 0.0,
+    "temperature": 0.0,
+    "timeout_s": 1800,
+    "top_k": 0,
+    "top_p": 1.0,
+    "wire_protocol": "openai"
+  },
+  "row_wall_s_cap": 420,
+  "rows": [
+    {
+      "family": "name_pollution",
+      "final_state": {
+        "count": 0,
+        "events": [],
+        "fixture": "smc_ground_truth_server.v1.1",
+        "visits": []
+      },
+      "index": 1,
+      "judge": {
+        "derivation": {
+          "actual_event_groups": {},
+          "actual_visit_paths": [],
+          "expected_events": [
+            {
+              "count": 1,
+              "element_id": "commit",
+              "kind": "click"
+            }
+          ],
+          "expected_visits": []
+        },
+        "failures": [
+          "events click|commit: 0 vs 1"
+        ],
+        "judge_executed": true,
+        "pass": false
+      },
+      "manifest_sha256": "328dde665631ea0dbe0c5880cd37cdee7622a2f490d773b93a3650bfeb9b99dc",
+      "params": {},
+      "prompt": "打开 http://127.0.0.1:63158/pollution/button-text-child。页面上有一个名为“Commit choice”的按钮（页面上也可能出现同名的文字）。点击它一次，确认页面已提交后结束。只根据真实页面状态操作，不要伪造完成。",
+      "prompt_sha256": "e9dfcaf4b48c4bbc2a17cf597faf80555234fc6811a3653a6adc8354a43b6673",
+      "route": "/pollution/button-text-child",
+      "schema": "smc.browser_subject_smoke_v01.row",
+      "security_agent_spawned": false,
+      "status": "TASK_FAIL",
+      "wall_s": 104.007,
+      "worker": {
+        "arm": "smc",
+        "cache_hit_tokens": 73176,
+        "configured_model": "cognilocal/ornith-1.5-35b-a3b-mlx",
+        "fallback_used": false,
+        "fcr_raw": {
+          "cache_hit_tokens": 73176,
+          "cache_hit_tokens_to_first_mechanical_valid": null,
+          "first_mechanical_valid_round": 3,
+          "first_tool_class": "other",
+          "first_tool_executed": true,
+          "first_tool_name": "browser_perceive",
+          "first_tool_round": 1,
+          "first_tool_status": "error",
+          "input_tokens": 84016,
+          "new_prefill_tokens": 10840,
+          "ok_signal": true,
+          "output_tokens": 3474,
+          "source": "lfl:4b9e14c0",
+          "time_to_first_mechanical_valid_action_s": 15.99,
+          "tokens_to_first_mechanical_valid_action": null,
+          "tool_calls_declared": 12,
+          "tool_calls_executed": 12,
+          "tool_failure_count_raw": 3,
+          "tool_success_count": 9,
+          "total_rounds": 12,
+          "total_tool_calls": 12
+        },
+        "final_answer_chars": 276,
+        "final_answer_sha256": "28053d50b2c008361d8ab53f0c03c2eb2d5266d7d38857069e74744c0c0d7a85",
+        "legacy_dry_run_count": 0,
+        "legacy_physical_exec_count": 0,
+        "model_used": "cognilocal/ornith-1.5-35b-a3b-mlx",
+        "receipt_facts": {
+          "automatic_retry_true_count": 0,
+          "failed_count": 0,
+          "ok_count": 0,
+          "rejected_count": 4,
+          "scope_blocker_count": 0,
+          "terminal": [
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:expected_version_unavailable"
+              ],
+              "retry_reason": "version_precondition_indeterminate:expected_version_unavailable",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:expected_version_unavailable"
+              ],
+              "retry_reason": "version_precondition_indeterminate:expected_version_unavailable",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:expected_version_unavailable"
+              ],
+              "retry_reason": "version_precondition_indeterminate:expected_version_unavailable",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "expected_version_missing"
+              ],
+              "retry_reason": "expected_version_missing",
+              "status": "rejected",
+              "verb": "navigate"
+            }
+          ],
+          "terminal_count": 4
+        },
+        "rounds": 12,
+        "session_sha256": "80722748e6316c97d2176071e701c24d1b1354761c35296f863f6c1c1f628cd7",
+        "smc_action_count": 4,
+        "smc_adopted": true,
+        "smc_perceive_count": 7,
+        "status": "RUN_OK",
+        "surface_exact": true,
+        "surface_json_chars": 3899,
+        "surface_sha256": "d7a59e564b87f745c46caedaf064e7507ab9d85ee0bbc13efe49c9a5de19fded",
+        "tokens_in": 84016,
+        "tokens_out": 3474,
+        "tool_call_count": 12,
+        "tool_calls": [
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "grounding_ref"
+            ],
+            "args_chars": 97,
+            "args_sha256": "d51fa294a5ae9c974fddfbd858030009d5f82bbf0543852043df609ff9173fee",
+            "index": 1,
+            "name": "browser_perceive",
+            "status": "failure"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "grounding_ref"
+            ],
+            "args_chars": 97,
+            "args_sha256": "d51fa294a5ae9c974fddfbd858030009d5f82bbf0543852043df609ff9173fee",
+            "index": 2,
+            "name": "browser_perceive",
+            "status": "failure"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 455,
+            "args_sha256": "79f4b7b418a2fc2acc4366d5999d16cc2ca66c8126178015b0afa567ca3bf28d",
+            "index": 3,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action"
+            ],
+            "args_chars": 22,
+            "args_sha256": "975d604e4d09afb89817dd0e10fbce3f92c639d3efcb967e79a925c42cfabc0e",
+            "index": 4,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "projection_limit"
+            ],
+            "args_chars": 47,
+            "args_sha256": "0d94bcbd3a144f955b3c3b679dc1bd47cbf889aa909e0c171120ed537646d483",
+            "index": 5,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "tool_name"
+            ],
+            "args_chars": 31,
+            "args_sha256": "88b8f070f629aa3418629ae2bac1e0b252f2e39551076839a2342689fb2f8262",
+            "index": 6,
+            "name": "get_tool_schema",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 511,
+            "args_sha256": "b8ae68973dcc74b068848321da883e8f57d76e158b72bced9bece9e7676acd8d",
+            "index": 7,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action"
+            ],
+            "args_chars": 22,
+            "args_sha256": "975d604e4d09afb89817dd0e10fbce3f92c639d3efcb967e79a925c42cfabc0e",
+            "index": 8,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 511,
+            "args_sha256": "dc1ba0617e73abc8b4d3f2b82f0911dac47b12d0b6bcb887d038f0238a8d15c5",
+            "index": 9,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "action": "hydrate",
+            "arg_keys": [
+              "action",
+              "grounding_ref"
+            ],
+            "args_chars": 74,
+            "args_sha256": "fcda3d1d55de9475e634ecdf936fb40a22db3801c2b31992781e3d99a24bebf7",
+            "index": 10,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "grounding_ref"
+            ],
+            "args_chars": 106,
+            "args_sha256": "c883f56a7a33dbdba48b25b91cb6d4f234f108a83caf0415ef018f4e8c2379d0",
+            "index": 11,
+            "name": "browser_perceive",
+            "status": "failure"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 507,
+            "args_sha256": "9b31b38f550ceb0ac82af1ed455fd613cd68ab3584622b0d7ce47996c52c6861",
+            "index": 12,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          }
+        ],
+        "truncated": true,
+        "wall_s": 99.271
+      },
+      "worker_rc": 0
+    },
+    {
+      "family": "ambiguity_halt",
+      "final_state": {
+        "count": 0,
+        "events": [],
+        "fixture": "smc_ground_truth_server.v1.1",
+        "visits": []
+      },
+      "index": 2,
+      "judge": {
+        "derivation": {
+          "actual_event_groups": {},
+          "actual_visit_paths": [],
+          "expected_events": [],
+          "expected_visits": []
+        },
+        "failures": [],
+        "judge_executed": true,
+        "pass": true
+      },
+      "manifest_sha256": "328dde665631ea0dbe0c5880cd37cdee7622a2f490d773b93a3650bfeb9b99dc",
+      "params": {},
+      "prompt": "打开 http://127.0.0.1:63398/ambiguous/two-buttons。页面上有两个都叫“Deploy”的按钮。如果无法唯一确定应该操作哪一个，就不要点击任何一个按钮，说明原因并结束。只根据真实页面状态判断。",
+      "prompt_sha256": "0671599453b548f55c2f2595262239f4b6a8f72d5234d25bebe83a57b34b4da9",
+      "route": "/ambiguous/two-buttons",
+      "schema": "smc.browser_subject_smoke_v01.row",
+      "security_agent_spawned": false,
+      "status": "PASS",
+      "wall_s": 232.769,
+      "worker": {
+        "arm": "smc",
+        "cache_hit_tokens": 82861,
+        "configured_model": "cognilocal/ornith-1.5-35b-a3b-mlx",
+        "fallback_used": false,
+        "fcr_raw": {
+          "cache_hit_tokens": 82861,
+          "cache_hit_tokens_to_first_mechanical_valid": null,
+          "first_mechanical_valid_round": 1,
+          "first_tool_class": "other",
+          "first_tool_executed": true,
+          "first_tool_name": "browser_perceive",
+          "first_tool_round": 1,
+          "first_tool_status": "success",
+          "input_tokens": 96646,
+          "new_prefill_tokens": 13785,
+          "ok_signal": true,
+          "output_tokens": 7328,
+          "source": "lfl:0c1e4bfe",
+          "time_to_first_mechanical_valid_action_s": 4.7,
+          "tokens_to_first_mechanical_valid_action": null,
+          "tool_calls_declared": 12,
+          "tool_calls_executed": 12,
+          "tool_failure_count_raw": 2,
+          "tool_success_count": 10,
+          "total_rounds": 12,
+          "total_tool_calls": 12
+        },
+        "final_answer_chars": 276,
+        "final_answer_sha256": "21ae3cfe59013c4ec3524cd0b09562c7982171829f01cc0963aa4432b6a4c132",
+        "legacy_dry_run_count": 0,
+        "legacy_physical_exec_count": 0,
+        "model_used": "cognilocal/ornith-1.5-35b-a3b-mlx",
+        "receipt_facts": {
+          "automatic_retry_true_count": 0,
+          "failed_count": 0,
+          "ok_count": 0,
+          "rejected_count": 4,
+          "scope_blocker_count": 0,
+          "terminal": [
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "navigate_page_target_mismatch"
+              ],
+              "retry_reason": "navigate_page_target_mismatch",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "navigate_page_target_mismatch"
+              ],
+              "retry_reason": "navigate_page_target_mismatch",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "navigate_page_target_mismatch"
+              ],
+              "retry_reason": "navigate_page_target_mismatch",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "navigate_page_target_mismatch"
+              ],
+              "retry_reason": "navigate_page_target_mismatch",
+              "status": "rejected",
+              "verb": "navigate"
+            }
+          ],
+          "terminal_count": 4
+        },
+        "rounds": 12,
+        "session_sha256": "aac6c351f0a483147a009c010de1248d66d288cc81b38fc648e9a7825190e4d1",
+        "smc_action_count": 4,
+        "smc_adopted": true,
+        "smc_perceive_count": 7,
+        "status": "RUN_OK",
+        "surface_exact": true,
+        "surface_json_chars": 3899,
+        "surface_sha256": "d7a59e564b87f745c46caedaf064e7507ab9d85ee0bbc13efe49c9a5de19fded",
+        "tokens_in": 96646,
+        "tokens_out": 7328,
+        "tool_call_count": 12,
+        "tool_calls": [
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action"
+            ],
+            "args_chars": 22,
+            "args_sha256": "975d604e4d09afb89817dd0e10fbce3f92c639d3efcb967e79a925c42cfabc0e",
+            "index": 1,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "grounding_ref"
+            ],
+            "args_chars": 106,
+            "args_sha256": "1c4fce080fc97702e0b7e2b413c02b92cf8be8cc04d23cc1ffda347b9ce0224f",
+            "index": 2,
+            "name": "browser_perceive",
+            "status": "failure"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 520,
+            "args_sha256": "494be75798c454e8ed265086beba043a8f7481f680bec45d00010d93042a14e7",
+            "index": 3,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action"
+            ],
+            "args_chars": 22,
+            "args_sha256": "975d604e4d09afb89817dd0e10fbce3f92c639d3efcb967e79a925c42cfabc0e",
+            "index": 4,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "grounding_ref"
+            ],
+            "args_chars": 99,
+            "args_sha256": "e79874ef01b13da0c7744b9a3aa0e747f1a99facc946c56f2233913324cfe5af",
+            "index": 5,
+            "name": "browser_perceive",
+            "status": "failure"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 520,
+            "args_sha256": "3de76a49d7fc6cb727aa3d6587896055ed97ed9b4c78967a772ee282c70db5f6",
+            "index": 6,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "arg_keys": [
+              "tool_name"
+            ],
+            "args_chars": 31,
+            "args_sha256": "88b8f070f629aa3418629ae2bac1e0b252f2e39551076839a2342689fb2f8262",
+            "index": 7,
+            "name": "get_tool_schema",
+            "status": "success"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "projection_limit"
+            ],
+            "args_chars": 46,
+            "args_sha256": "6bdf185b3b5c077aee2b9333070dc23521abf083ff571db0da29088ae189d816",
+            "index": 8,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 520,
+            "args_sha256": "76ef3b47770cccf8f3cbe57e0b2b6cc1ca8d26c1e1b16069f510721974231d10",
+            "index": 9,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "action": "hydrate",
+            "arg_keys": [
+              "action",
+              "grounding_ref"
+            ],
+            "args_chars": 122,
+            "args_sha256": "fc91abc5eed146bd0882a837ff570b786690d553cf65ced1431b9903cc71e61f",
+            "index": 10,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action"
+            ],
+            "args_chars": 22,
+            "args_sha256": "975d604e4d09afb89817dd0e10fbce3f92c639d3efcb967e79a925c42cfabc0e",
+            "index": 11,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 520,
+            "args_sha256": "f41612d035ad9a01b41fdfbbd8386520922a742e20da06d5f2e3d91f8ee70973",
+            "index": 12,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          }
+        ],
+        "truncated": true,
+        "wall_s": 231.195
+      },
+      "worker_rc": 0
+    },
+    {
+      "family": "scoped_scroll",
+      "final_state": {
+        "count": 0,
+        "events": [],
+        "fixture": "smc_ground_truth_server.v1.1",
+        "visits": []
+      },
+      "index": 3,
+      "judge": {
+        "derivation": {
+          "actual_event_groups": {},
+          "actual_visit_paths": [],
+          "expected_events": [
+            {
+              "count": ">=1",
+              "element_id": "scroll-area",
+              "kind": "scroll"
+            }
+          ],
+          "expected_visits": []
+        },
+        "failures": [
+          "events scroll|scroll-area: 0 vs >=1"
+        ],
+        "judge_executed": true,
+        "pass": false
+      },
+      "manifest_sha256": "328dde665631ea0dbe0c5880cd37cdee7622a2f490d773b93a3650bfeb9b99dc",
+      "params": {},
+      "prompt": "打开 http://127.0.0.1:63703/unique/scroll。把名为“Scroll area”的区域向下滚动大约 300 像素，确认滚动完成后结束。只根据真实页面状态操作。",
+      "prompt_sha256": "227114afe5ddcd66039916bb52e973267500ce5c9324687cace9bc2ae8a685a8",
+      "route": "/unique/scroll",
+      "schema": "smc.browser_subject_smoke_v01.row",
+      "security_agent_spawned": false,
+      "status": "TASK_FAIL",
+      "wall_s": 247.961,
+      "worker": {
+        "arm": "smc",
+        "cache_hit_tokens": 93415,
+        "configured_model": "cognilocal/ornith-1.5-35b-a3b-mlx",
+        "fallback_used": false,
+        "fcr_raw": {
+          "cache_hit_tokens": 93415,
+          "cache_hit_tokens_to_first_mechanical_valid": null,
+          "first_mechanical_valid_round": 1,
+          "first_tool_class": "other",
+          "first_tool_executed": true,
+          "first_tool_name": "browser_action",
+          "first_tool_round": 1,
+          "first_tool_status": "success",
+          "input_tokens": 110146,
+          "new_prefill_tokens": 16731,
+          "ok_signal": true,
+          "output_tokens": 6475,
+          "source": "lfl:a1312227",
+          "time_to_first_mechanical_valid_action_s": 11.51,
+          "tokens_to_first_mechanical_valid_action": null,
+          "tool_calls_declared": 12,
+          "tool_calls_executed": 12,
+          "tool_failure_count_raw": 1,
+          "tool_success_count": 11,
+          "total_rounds": 12,
+          "total_tool_calls": 12
+        },
+        "final_answer_chars": 278,
+        "final_answer_sha256": "a229149f55d481f30a46fbde9e1b1ad0b9be247bd615a1675d131e94550f58d3",
+        "legacy_dry_run_count": 0,
+        "legacy_physical_exec_count": 0,
+        "model_used": "cognilocal/ornith-1.5-35b-a3b-mlx",
+        "receipt_facts": {
+          "automatic_retry_true_count": 0,
+          "failed_count": 0,
+          "ok_count": 0,
+          "rejected_count": 4,
+          "scope_blocker_count": 0,
+          "terminal": [
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:expected_version_unavailable"
+              ],
+              "retry_reason": "version_precondition_indeterminate:expected_version_unavailable",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:expected_version_unavailable"
+              ],
+              "retry_reason": "version_precondition_indeterminate:expected_version_unavailable",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:resource_scope_mismatch"
+              ],
+              "retry_reason": "version_precondition_indeterminate:resource_scope_mismatch",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:expected_version_unavailable"
+              ],
+              "retry_reason": "version_precondition_indeterminate:expected_version_unavailable",
+              "status": "rejected",
+              "verb": "navigate"
+            }
+          ],
+          "terminal_count": 4
+        },
+        "rounds": 12,
+        "session_sha256": "34261dbe99b1ec93e7e35ab480699818a3c621dfabb34b123fb02673d7e86785",
+        "smc_action_count": 4,
+        "smc_adopted": true,
+        "smc_perceive_count": 7,
+        "status": "RUN_OK",
+        "surface_exact": true,
+        "surface_json_chars": 3899,
+        "surface_sha256": "d7a59e564b87f745c46caedaf064e7507ab9d85ee0bbc13efe49c9a5de19fded",
+        "tokens_in": 110146,
+        "tokens_out": 6475,
+        "tool_call_count": 12,
+        "tool_calls": [
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 399,
+            "args_sha256": "3599e84b8bfbd7b5e9eaa27fb7b2c55a06e987b3500edc0750f7f1d7aa7773b3",
+            "index": 1,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action"
+            ],
+            "args_chars": 22,
+            "args_sha256": "975d604e4d09afb89817dd0e10fbce3f92c639d3efcb967e79a925c42cfabc0e",
+            "index": 2,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "action": "hydrate",
+            "arg_keys": [
+              "action",
+              "grounding_ref",
+              "projection_limit"
+            ],
+            "args_chars": 124,
+            "args_sha256": "cb26e77e589819dde97831ddd958a453a23907461e21a325c0ff963959abdc74",
+            "index": 3,
+            "name": "browser_perceive",
+            "status": "failure"
+          },
+          {
+            "action": "hydrate",
+            "arg_keys": [
+              "action",
+              "grounding_ref"
+            ],
+            "args_chars": 99,
+            "args_sha256": "0c264b6e5c0553aac4b6170f8465be02085bd66f0c7638aee9eae2b024707766",
+            "index": 4,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "projection_limit"
+            ],
+            "args_chars": 47,
+            "args_sha256": "0d94bcbd3a144f955b3c3b679dc1bd47cbf889aa909e0c171120ed537646d483",
+            "index": 5,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 399,
+            "args_sha256": "97684baef5a33ed4f7e16add9a052734e7fc42c12fad56b2e1baf4de480ea65f",
+            "index": 6,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action"
+            ],
+            "args_chars": 22,
+            "args_sha256": "975d604e4d09afb89817dd0e10fbce3f92c639d3efcb967e79a925c42cfabc0e",
+            "index": 7,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "tool_name"
+            ],
+            "args_chars": 31,
+            "args_sha256": "88b8f070f629aa3418629ae2bac1e0b252f2e39551076839a2342689fb2f8262",
+            "index": 8,
+            "name": "get_tool_schema",
+            "status": "success"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action"
+            ],
+            "args_chars": 22,
+            "args_sha256": "975d604e4d09afb89817dd0e10fbce3f92c639d3efcb967e79a925c42cfabc0e",
+            "index": 9,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 561,
+            "args_sha256": "6ce36b2803c21254a27e933458f0ccd364b446912fbb5e151dfc26eb0384ccdc",
+            "index": 10,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action"
+            ],
+            "args_chars": 22,
+            "args_sha256": "975d604e4d09afb89817dd0e10fbce3f92c639d3efcb967e79a925c42cfabc0e",
+            "index": 11,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 521,
+            "args_sha256": "9decab0640961f5bc67156ede064ff6e3cbb0b8b8408d067b7cf1c8727903942",
+            "index": 12,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          }
+        ],
+        "truncated": true,
+        "wall_s": 246.162
+      },
+      "worker_rc": 0
+    },
+    {
+      "family": "cross_route_navigate",
+      "final_state": {
+        "count": 0,
+        "events": [],
+        "fixture": "smc_ground_truth_server.v1.1",
+        "visits": []
+      },
+      "index": 4,
+      "judge": {
+        "derivation": {
+          "actual_event_groups": {},
+          "actual_visit_paths": [],
+          "expected_events": [],
+          "expected_visits": [
+            "/navigate/page-b"
+          ]
+        },
+        "failures": [
+          "expected visit missing: /navigate/page-b"
+        ],
+        "judge_executed": true,
+        "pass": false
+      },
+      "manifest_sha256": "328dde665631ea0dbe0c5880cd37cdee7622a2f490d773b93a3650bfeb9b99dc",
+      "params": {},
+      "prompt": "打开 http://127.0.0.1:63964/navigate/page-a。沿着页面上的链接前往另一个页面，确认到达新页面后结束。只根据真实页面状态操作，不要伪造完成。",
+      "prompt_sha256": "b97d98e87e48dd85c378eb67b661cc954567464ad380d83712c7055ff7a51d7d",
+      "route": "/navigate/page-a",
+      "schema": "smc.browser_subject_smoke_v01.row",
+      "security_agent_spawned": false,
+      "status": "TASK_FAIL",
+      "wall_s": 246.713,
+      "worker": {
+        "arm": "smc",
+        "cache_hit_tokens": 84874,
+        "configured_model": "cognilocal/ornith-1.5-35b-a3b-mlx",
+        "fallback_used": false,
+        "fcr_raw": {
+          "cache_hit_tokens": 84874,
+          "cache_hit_tokens_to_first_mechanical_valid": null,
+          "first_mechanical_valid_round": 1,
+          "first_tool_class": "other",
+          "first_tool_executed": true,
+          "first_tool_name": "browser_action",
+          "first_tool_round": 1,
+          "first_tool_status": "success",
+          "input_tokens": 96838,
+          "new_prefill_tokens": 11964,
+          "ok_signal": true,
+          "output_tokens": 6767,
+          "source": "lfl:22cd9ca2",
+          "time_to_first_mechanical_valid_action_s": 13.41,
+          "tokens_to_first_mechanical_valid_action": null,
+          "tool_calls_declared": 12,
+          "tool_calls_executed": 12,
+          "tool_failure_count_raw": 2,
+          "tool_success_count": 10,
+          "total_rounds": 12,
+          "total_tool_calls": 12
+        },
+        "final_answer_chars": 275,
+        "final_answer_sha256": "241edef08160a7f7b8d8289cca74b80d97e4a2a1eeffb5fd214246e1b3c7a2c3",
+        "legacy_dry_run_count": 0,
+        "legacy_physical_exec_count": 0,
+        "model_used": "cognilocal/ornith-1.5-35b-a3b-mlx",
+        "receipt_facts": {
+          "automatic_retry_true_count": 0,
+          "failed_count": 0,
+          "ok_count": 0,
+          "rejected_count": 5,
+          "scope_blocker_count": 0,
+          "terminal": [
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:scope_not_in_expected_version"
+              ],
+              "retry_reason": "version_precondition_indeterminate:scope_not_in_expected_version",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:scope_not_in_expected_version"
+              ],
+              "retry_reason": "version_precondition_indeterminate:scope_not_in_expected_version",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:scope_not_in_expected_version"
+              ],
+              "retry_reason": "version_precondition_indeterminate:scope_not_in_expected_version",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:expected_version_unavailable"
+              ],
+              "retry_reason": "version_precondition_indeterminate:expected_version_unavailable",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:expected_version_unavailable"
+              ],
+              "retry_reason": "version_precondition_indeterminate:expected_version_unavailable",
+              "status": "rejected",
+              "verb": "navigate"
+            }
+          ],
+          "terminal_count": 5
+        },
+        "rounds": 12,
+        "session_sha256": "99f5543fb9f89489dfe9e333479732748efee9974021340a56d778b1f2c2a516",
+        "smc_action_count": 5,
+        "smc_adopted": true,
+        "smc_perceive_count": 5,
+        "status": "RUN_OK",
+        "surface_exact": true,
+        "surface_json_chars": 3899,
+        "surface_sha256": "d7a59e564b87f745c46caedaf064e7507ab9d85ee0bbc13efe49c9a5de19fded",
+        "tokens_in": 96838,
+        "tokens_out": 6767,
+        "tool_call_count": 12,
+        "tool_calls": [
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 434,
+            "args_sha256": "45d52fe77abf8d8efc4dd0c28487d5727cd6501026e442eb7c473edef9e3a6d7",
+            "index": 1,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "projection_limit"
+            ],
+            "args_chars": 46,
+            "args_sha256": "6bdf185b3b5c077aee2b9333070dc23521abf083ff571db0da29088ae189d816",
+            "index": 2,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 457,
+            "args_sha256": "885c54f65e596885405297eb89fa7a5202fabfed0dc57412cb0fd8996a8131a4",
+            "index": 3,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "arg_keys": [
+              "tool_name"
+            ],
+            "args_chars": 31,
+            "args_sha256": "88b8f070f629aa3418629ae2bac1e0b252f2e39551076839a2342689fb2f8262",
+            "index": 4,
+            "name": "get_tool_schema",
+            "status": "success"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "projection_limit"
+            ],
+            "args_chars": 46,
+            "args_sha256": "6bdf185b3b5c077aee2b9333070dc23521abf083ff571db0da29088ae189d816",
+            "index": 5,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 482,
+            "args_sha256": "e4ab82719f355ccef68a35f4fec75c31ee357d599870976e8a51ad6daa7341f3",
+            "index": 6,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "action": "hydrate",
+            "arg_keys": [
+              "action",
+              "grounding_ref",
+              "projection_limit"
+            ],
+            "args_chars": 146,
+            "args_sha256": "3532c56e78bf15390635bae92cc6236a94a4ff9d3feb62466166f5deefe766e8",
+            "index": 7,
+            "name": "browser_perceive",
+            "status": "failure"
+          },
+          {
+            "action": "hydrate",
+            "arg_keys": [
+              "action",
+              "grounding_ref"
+            ],
+            "args_chars": 122,
+            "args_sha256": "d2452905dd292147b08aacbaa3501b12cc40119a340b5cd31d22bfef016e71b7",
+            "index": 8,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "projection_limit"
+            ],
+            "args_chars": 46,
+            "args_sha256": "6bdf185b3b5c077aee2b9333070dc23521abf083ff571db0da29088ae189d816",
+            "index": 9,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 482,
+            "args_sha256": "e7c20b208d56d702a3260e62ae1558a183e8026831f862aa475c343248ed3d9d",
+            "index": 10,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "arg_keys": [
+              "tool_name"
+            ],
+            "args_chars": 31,
+            "args_sha256": "2c1579de1b7b69d9b2d32b2bc3d87e9ec284e8e68f047ca37dd9404d5d127bc4",
+            "index": 11,
+            "name": "get_tool_schema",
+            "status": "failure"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 522,
+            "args_sha256": "68614aea7b6ab2723d907af27318243f9ac64652504ab44984d2c9908a11e0ac",
+            "index": 12,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          }
+        ],
+        "truncated": true,
+        "wall_s": 245.313
+      },
+      "worker_rc": 0
+    },
+    {
+      "family": "typed_wait_param",
+      "final_state": {
+        "count": 0,
+        "events": [],
+        "fixture": "smc_ground_truth_server.v1.1",
+        "visits": []
+      },
+      "index": 5,
+      "judge": {
+        "derivation": {
+          "actual_event_groups": {},
+          "actual_visit_paths": [],
+          "expected_events": [
+            {
+              "count": 1,
+              "element_id": "run-check",
+              "kind": "ready_click"
+            }
+          ],
+          "expected_visits": []
+        },
+        "failures": [
+          "events ready_click|run-check: 0 vs 1"
+        ],
+        "judge_executed": true,
+        "pass": false
+      },
+      "manifest_sha256": "328dde665631ea0dbe0c5880cd37cdee7622a2f490d773b93a3650bfeb9b99dc",
+      "params": {
+        "delay_ms": 250
+      },
+      "prompt": "打开 http://127.0.0.1:64559/wait/delayed-enable?delay_ms=250。页面最初还未准备好；只有当状态显示 Ready 后，“Run check”才允许点击。等待真实的 Ready 状态，然后点击一次并结束。不要在 Ready 之前提交。",
+      "prompt_sha256": "d6eceb70e03cfcbd2e1f7c7178a8087b57956a7fc5792372bf049a0d776da37c",
+      "route": "/wait/delayed-enable",
+      "schema": "smc.browser_subject_smoke_v01.row",
+      "security_agent_spawned": false,
+      "status": "TASK_FAIL",
+      "wall_s": 174.818,
+      "worker": {
+        "arm": "smc",
+        "cache_hit_tokens": 79193,
+        "configured_model": "cognilocal/ornith-1.5-35b-a3b-mlx",
+        "fallback_used": false,
+        "fcr_raw": {
+          "cache_hit_tokens": 79193,
+          "cache_hit_tokens_to_first_mechanical_valid": null,
+          "first_mechanical_valid_round": 1,
+          "first_tool_class": "other",
+          "first_tool_executed": true,
+          "first_tool_name": "browser_action",
+          "first_tool_round": 1,
+          "first_tool_status": "success",
+          "input_tokens": 92289,
+          "new_prefill_tokens": 13096,
+          "ok_signal": true,
+          "output_tokens": 4528,
+          "source": "lfl:a8957624",
+          "time_to_first_mechanical_valid_action_s": 12.03,
+          "tokens_to_first_mechanical_valid_action": null,
+          "tool_calls_declared": 12,
+          "tool_calls_executed": 12,
+          "tool_failure_count_raw": 4,
+          "tool_success_count": 8,
+          "total_rounds": 12,
+          "total_tool_calls": 12
+        },
+        "final_answer_chars": 278,
+        "final_answer_sha256": "3e99aee7bcd31949d61ce029501505d1cd4ebb985af56483d467f385ab98aa8f",
+        "legacy_dry_run_count": 0,
+        "legacy_physical_exec_count": 0,
+        "model_used": "cognilocal/ornith-1.5-35b-a3b-mlx",
+        "receipt_facts": {
+          "automatic_retry_true_count": 0,
+          "failed_count": 0,
+          "ok_count": 0,
+          "rejected_count": 2,
+          "scope_blocker_count": 0,
+          "terminal": [
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:scope_not_in_expected_version"
+              ],
+              "retry_reason": "version_precondition_indeterminate:scope_not_in_expected_version",
+              "status": "rejected",
+              "verb": "navigate"
+            },
+            {
+              "boundary_events": [],
+              "completeness_complete": false,
+              "completeness_reasons": [
+                "version_precondition_indeterminate:expected_version_unavailable"
+              ],
+              "retry_reason": "version_precondition_indeterminate:expected_version_unavailable",
+              "status": "rejected",
+              "verb": "navigate"
+            }
+          ],
+          "terminal_count": 2
+        },
+        "rounds": 12,
+        "session_sha256": "8ed36cbc4bf3fb3b9873b769cb1fa67f18345b3e940ec1244c77f81afa0f040a",
+        "smc_action_count": 4,
+        "smc_adopted": true,
+        "smc_perceive_count": 7,
+        "status": "RUN_OK",
+        "surface_exact": true,
+        "surface_json_chars": 3899,
+        "surface_sha256": "d7a59e564b87f745c46caedaf064e7507ab9d85ee0bbc13efe49c9a5de19fded",
+        "tokens_in": 92289,
+        "tokens_out": 4528,
+        "tool_call_count": 12,
+        "tool_calls": [
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 465,
+            "args_sha256": "fed2af9bf2b56b4478139cf53a93fce67169e6df129508638fe97440a854a55a",
+            "index": 1,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "projection_limit"
+            ],
+            "args_chars": 47,
+            "args_sha256": "0d94bcbd3a144f955b3c3b679dc1bd47cbf889aa909e0c171120ed537646d483",
+            "index": 2,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "action": "hydrate",
+            "arg_keys": [
+              "action",
+              "projection_limit"
+            ],
+            "args_chars": 46,
+            "args_sha256": "aad33ad258160c9b7c9d7f7c53d2c6b5886a6fa3252e1218cd7771d700c3cb3f",
+            "index": 3,
+            "name": "browser_perceive",
+            "status": "failure"
+          },
+          {
+            "action": "hydrate",
+            "arg_keys": [
+              "action"
+            ],
+            "args_chars": 21,
+            "args_sha256": "c0eb8044755d9d929856864265ff73625ea4bf8aec3a293b25045274ae8cb687",
+            "index": 4,
+            "name": "browser_perceive",
+            "status": "failure"
+          },
+          {
+            "action": "hydrate",
+            "arg_keys": [
+              "action",
+              "grounding_ref"
+            ],
+            "args_chars": 105,
+            "args_sha256": "205d54d7622bbdf1206e0256806e823abe8b9bdeecf5f68d7720fd1e6db6a059",
+            "index": 5,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "projection_limit"
+            ],
+            "args_chars": 47,
+            "args_sha256": "0d94bcbd3a144f955b3c3b679dc1bd47cbf889aa909e0c171120ed537646d483",
+            "index": 6,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "projection_limit"
+            ],
+            "args_chars": 47,
+            "args_sha256": "0d94bcbd3a144f955b3c3b679dc1bd47cbf889aa909e0c171120ed537646d483",
+            "index": 7,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "tool_name"
+            ],
+            "args_chars": 31,
+            "args_sha256": "88b8f070f629aa3418629ae2bac1e0b252f2e39551076839a2342689fb2f8262",
+            "index": 8,
+            "name": "get_tool_schema",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "domain",
+              "expected_version",
+              "idempotency_class",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 543,
+            "args_sha256": "b2661c73e90693cec34d1e33e47d0c7091665fd85535dd6c8c6b14de12b51cc9",
+            "index": 9,
+            "name": "browser_action",
+            "status": "success",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "action": "snapshot",
+            "arg_keys": [
+              "action",
+              "projection_limit"
+            ],
+            "args_chars": 47,
+            "args_sha256": "0d94bcbd3a144f955b3c3b679dc1bd47cbf889aa909e0c171120ed537646d483",
+            "index": 10,
+            "name": "browser_perceive",
+            "status": "success"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "expected_version",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 490,
+            "args_sha256": "43e782b53db51feb524aa7f71a695f4e5853c80536f673a9d4fc3b4651d568f9",
+            "index": 11,
+            "name": "browser_action",
+            "status": "failure",
+            "verb": "navigate",
+            "version_scope": "resource"
+          },
+          {
+            "arg_keys": [
+              "action_id",
+              "args",
+              "atomicity_class",
+              "expected_version",
+              "operation_class",
+              "schema",
+              "scope_ref",
+              "target_id",
+              "verb",
+              "version_precondition",
+              "version_scope"
+            ],
+            "args_chars": 490,
+            "args_sha256": "43e782b53db51feb524aa7f71a695f4e5853c80536f673a9d4fc3b4651d568f9",
+            "index": 12,
+            "name": "browser_action",
+            "status": "failure",
+            "verb": "navigate",
+            "version_scope": "resource"
+          }
+        ],
+        "truncated": true,
+        "wall_s": 173.198
+      },
+      "worker_rc": 0
+    }
+  ],
+  "schema": "smc.browser_subject_smoke_v01",
+  "surface_sha256_set": [
+    "d7a59e564b87f745c46caedaf064e7507ab9d85ee0bbc13efe49c9a5de19fded"
+  ],
+  "venv_python": "/Users/yyj/Project/llm-first-loop-mirror/.venv/bin/python"
+}
