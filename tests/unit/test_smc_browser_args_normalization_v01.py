@@ -14,6 +14,10 @@ Contract under test (GPT ruling 2026-09-13, FC1 fix):
    ``args_normalization={"applied": bool, "rule": "verb_wrapper_unwrap" | null}``.
 6. Malformed ``args_normalization`` is rejected with its own reason
    (``args_normalization_mismatch``) - the field is machine-authored, never model-authored.
+7. (2026-09-18 live mount fix) Because the field is never model-authored, a *missing*
+   ``args_normalization`` is not a model error: ``execute()`` injects the canonical
+   ``{"applied": False, "rule": None}`` default so the model-facing 13-field surface
+   stays valid; only a malformed value still rejects.
 """
 
 from __future__ import annotations
@@ -236,8 +240,12 @@ def test_malformed_normalization_field_is_rejected(tmp_path: Path, bad_field: An
     assert receipt["retry"]["reason"] == "args_normalization_mismatch"
 
 
-def test_missing_normalization_field_is_rejected(tmp_path: Path) -> None:
+def test_missing_normalization_field_gets_machine_default(tmp_path: Path) -> None:
+    # _hand_action carries a fabricated ref/version, so dispatch must still be
+    # rejected by the version precondition - but never again by the missing
+    # machine-authored field itself (semantic_action_fields_mismatch).
     _, _, _, action, _ = _stack(tmp_path)
     receipt = action.execute("s1", _hand_action({"applied": False, "rule": None}, present=False))
     assert receipt["status"] == "rejected"
-    assert receipt["retry"]["reason"] == "semantic_action_fields_mismatch"
+    assert receipt["retry"]["reason"] != "semantic_action_fields_mismatch"
+    assert receipt["args_normalization"] == {"applied": False, "rule": None}

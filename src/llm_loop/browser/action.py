@@ -406,6 +406,12 @@ class BrowserActionAdapter:
     def execute(self, session_id: str, action: dict[str, Any]) -> dict[str, Any]:
         if not session_id:
             raise ValueError("session_id is required")
+        # args_normalization is machine-authored and never part of the model-owned
+        # surface (see _valid_args_normalization). The model-facing browser_action
+        # tool legitimately omits it, so inject the canonical "not applied" default
+        # instead of failing validation with semantic_action_fields_mismatch.
+        if "args_normalization" not in action:
+            action = {**action, "args_normalization": {"applied": False, "rule": None}}
         validation_error = self._validate(action)
         action_id = str(action.get("action_id") or "invalid")
         if validation_error is not None:

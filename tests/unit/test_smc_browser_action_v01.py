@@ -125,6 +125,20 @@ def test_stale_precondition_rejects_before_dispatch(tmp_path: Path) -> None:
     assert receipts.list_action("s1", "act-1")[0]["receipt_seq"] == 1
 
 
+def test_model_surface_without_args_normalization_still_validates(tmp_path: Path) -> None:
+    """Regression (2026-09-18 live mount test): the model-facing browser_action tool
+    legitimately omits the machine-authored args_normalization field; execute() must
+    inject the canonical default instead of rejecting with semantic_action_fields_mismatch."""
+    perception, receipts, backend, actuator, action = _stack(tmp_path, [FIXTURES["base"]])
+    first = perception.snapshot("s1", FIXTURES["base"])
+    bare = _click_action(first)
+    del bare["args_normalization"]
+    result = action.execute("s1", bare)
+    assert result["status"] == "ok"
+    assert result["args_normalization"] == {"applied": False, "rule": None}
+    assert len(actuator.calls) == 1
+
+
 def test_same_name_replacement_never_rebinds(tmp_path: Path) -> None:
     replaced = json.loads(json.dumps(FIXTURES["base"]))
     for node in replaced["dom"]["nodes"]:
