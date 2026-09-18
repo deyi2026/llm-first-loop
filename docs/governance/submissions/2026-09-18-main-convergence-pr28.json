@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "SUB-2026-09-18-MAIN-CONVERGENCE-PR28",
-  "summary": "PR #28 main 收敛：lfl/main 七提交 ort 合并 + 我方线（注入观测/学习默认开启/五维哨兵/revalidate 修复/validator 误报治理/SMC browser eval v01/文档）+ 两笔既有债修复（8f2eae5f1/6e1d4cef8）+ 13 处 ruff 清理；diff base ddd108a2e...head 精确分区申报",
+  "summary": "PR #28 main 收敛：lfl/main 七提交 ort 合并 + 我方线（注入观测/学习默认开启/五维哨兵/revalidate 修复/validator 误报治理/SMC browser eval v01/文档）+ 两笔既有债修复（8f2eae5f1/6e1d4cef8）+ 13 处 ruff 清理；diff base ddd108a2e...head 精确分区申报；6b64cb9a7 显式登记 injection_ledger 两处 env 读取入棘轮基线（合并暴露的父提交既有债，按政策显式审查登记）",
   "components": [
     {
       "component_id": "knowledge-injection-observability",
@@ -183,6 +183,23 @@
       "verification_level": "CI_Green（ruff+pyright+pytest -m \"not real_llm\"，PR #28 门禁）",
       "model_evidence_veto_recovery_exit": "申报文档无运行时交互",
       "rollback_route": "删除本文件并 revert 合并提交"
+    },
+    {
+      "component_id": "runtime-env-ratchet-baseline-registration",
+      "paths": [
+        "tests/fixtures/runtime_env_access_baseline.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "runtime-env-audit",
+      "disposition": "登记分支侧 9022aa492 引入的 injection_ledger.py 两处直接 env 读取（KNOWLEDGE_INJECTION_LEDGER kill switch / INJECTION_LEDGER_PATH 台账落点覆写）进入棘轮基线；38b0db069 合并 main 侧审计后暴露，属父提交既有债，按基线政策『新增债务需显式审查登记』：仅增 2 条 signature_counts，计数帽 134/134 不变（当前实测 130，收缩余量留待后续 PR 收紧）",
+      "evidence": [
+        "tests/unit/test_runtime_env_access_gate.py",
+        "scripts/audit_runtime_env.py",
+        "本地三件套镜像：ruff clean / pyright 0 错 / pytest tests/ 非 real_llm exit=0 全绿"
+      ],
+      "verification_level": "unit",
+      "model_evidence_veto_recovery_exit": "若评审否决登记，revert 6b64cb9a7 后改为迁移 injection_ledger 至集中 env 读取通道或去除 kill switch 直读",
+      "rollback_route": "revert 6b64cb9a7 单提交；无行为代码变更，基线回到合并态"
     }
   ],
   "declarations": [
