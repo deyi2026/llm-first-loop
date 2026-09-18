@@ -18,8 +18,9 @@ from llm_loop.runtime.service_control import (
 class ServiceControlTool:
     name = "service_control"
     description = (
-        "共享 Web/Feishu 生命周期控制面。status 只读返回 operator-published desired deployment/action；"
+        "共享 Web/Feishu/Learning 生命周期控制面。status 只读返回 operator-published desired deployment/action；"
         "restart 必须携带刚观察到的 expected_generation，程序先 durable accepted 再由 detached worker "
+        "两阶段执行（等待 requester 会话结束/目标空闲时不占 lifecycle lease，物理重启阶段复核 generation）， "
         "按 desired-state exact code_root/runtime_root 调 official restart_mirror。"
         "模型决定是否需要重启；PID/cwd/历史 manifest 都不能自行获得控制权。P0-A 仅支持 status/restart。"
     )
@@ -33,7 +34,7 @@ class ServiceControlTool:
             },
             "target": {
                 "type": "string",
-                "enum": ["web", "feishu", "all"],
+                "enum": ["web", "feishu", "learning", "all"],
                 "description": "restart 目标；status 时可省略",
             },
             "expected_generation": {
@@ -90,8 +91,8 @@ class ServiceControlTool:
         if action != "restart":
             return self._failure("[参数错误] action 仅支持 status/restart")
         target = str(kwargs.get("target", "") or "").strip().lower()
-        if target not in {"web", "feishu", "all"}:
-            return self._failure("[参数错误] restart target 必须是 web/feishu/all")
+        if target not in {"web", "feishu", "learning", "all"}:
+            return self._failure("[参数错误] restart target 必须是 web/feishu/learning/all")
         raw_expected_generation = kwargs.get("expected_generation")
         if raw_expected_generation is None:
             return self._failure("[参数错误] restart 必须提供 expected_generation")
@@ -125,7 +126,8 @@ class ServiceControlTool:
                 "[service_control accepted] "
                 f"action_id={receipt.action_id} target={target} "
                 f"generation={receipt.deployment_generation}; "
-                "用 service_control(action=status, action_id=...) 查询 detached worker 终态"
+                "两阶段等待（web/all 先等 requester 会话结束，再等目标空闲）期间不占 publish 锁；"
+                "发起方应立即结束本轮、勿轮询本 action，下一轮用 service_control(action=status, action_id=...) 查终态"
             ),
             tool_call_id="",
             tool_name=self.name,

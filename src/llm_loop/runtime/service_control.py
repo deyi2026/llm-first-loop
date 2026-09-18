@@ -10,6 +10,10 @@ This module deliberately separates three things:
 * service-control actions are durable before a detached worker may execute the
   official restart script.  The worker derives code/runtime roots only from the
   desired deployment record, never from caller cwd or inherited business env.
+  Restarts execute two-phase: waiting (requester exit, target idle) holds no
+  lifecycle lease so publication is never blocked by a waiting action; the
+  physical restart runs under the lifecycle lease with a fresh generation
+  check.
 
 The model still decides whether a restart is useful.  Program code owns only the
 physical authority boundary and exact generation/root binding.
@@ -27,6 +31,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -34,6 +39,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+
+from llm_loop.resources.foreground import active_run_locks
 
 _DEPLOYMENT_SCHEMA = "managed-service-deployment/v1"
 _ACTION_SCHEMA = "service-control-action/v1"
@@ -65,6 +72,27 @@ _ACTION_FIELDS = frozenset(
 )
 _MANAGED_SERVICES = ("web", "feishu", "learning")
 _ACTION_TARGETS = ("web", "feishu", "learning", "all")
+_ACTION_STATUSES = frozenset(
+    {
+        "accepted",
+        "waiting_for_requester_exit",
+        "waiting_for_idle",
+        "running",
+        "succeeded",
+        "failed",
+    }
+)
+
+# Two-phase restart waiting budgets (seconds). Waiting phases deliberately run
+# WITHOUT the global lifecycle lease: publishing a desired deployment must
+# never be blocked by a restart action that is merely waiting for its
+# requester session to finish or for the target to become idle. Both waits
+# fail closed; there is no model-side force-through path.
+_REQUESTER_EXIT_POLL_S = 2.0
+_REQUESTER_EXIT_TIMEOUT_S = 900.0
+_IDLE_POLL_S = 5.0
+_IDLE_TIMEOUT_S = 900.0
+_STALE_WAITING_MARGIN_S = 300.0
 
 
 class DeploymentGenerationConflictError(RuntimeError):
@@ -129,7 +157,14 @@ class ServiceControlAction:
     deployment_id: str
     deployment_generation: int
     requester_session_id: str
-    status: Literal["accepted", "running", "succeeded", "failed"]
+    status: Literal[
+        "accepted",
+        "waiting_for_requester_exit",
+        "waiting_for_idle",
+        "running",
+        "succeeded",
+        "failed",
+    ]
     created_at: str
     updated_at: str
     detail: str = ""
@@ -145,7 +180,7 @@ class ServiceControlAction:
             raise ValueError(f"unsupported target: {self.target}")
         if self.deployment_generation < 1:
             raise ValueError("deployment_generation must be positive")
-        if self.status not in {"accepted", "running", "succeeded", "failed"}:
+        if self.status not in _ACTION_STATUSES:
             raise ValueError(f"invalid action status: {self.status}")
 
     def to_dict(self) -> dict[str, Any]:
@@ -297,11 +332,46 @@ class ManagedServiceDeploymentStore:
     def _write_action_unlocked(self, action: ServiceControlAction) -> None:
         _atomic_json(self.action_path(action.action_id), action.to_dict())
 
+    def _reap_stale_waiting_actions_unlocked(self) -> None:
+        """Fail waiting actions whose detached worker died; defense in depth."""
+        stale_before = datetime.now(UTC).timestamp() - (
+            _REQUESTER_EXIT_TIMEOUT_S + _IDLE_TIMEOUT_S + _STALE_WAITING_MARGIN_S
+        )
+        for path in sorted(self.actions_dir.glob("*.json")):
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                action = ServiceControlAction.from_dict(raw)
+            except (OSError, ValueError):
+                continue
+            if action.status not in {"waiting_for_requester_exit", "waiting_for_idle"}:
+                continue
+            try:
+                updated_ts = datetime.fromisoformat(action.updated_at).timestamp()
+            except ValueError:
+                updated_ts = 0.0
+            if updated_ts >= stale_before:
+                continue
+            self._write_action_unlocked(
+                dataclasses.replace(
+                    action,
+                    status="failed",
+                    updated_at=_utc_now(),
+                    detail="stale waiting state reaped: detached worker presumed dead",
+                )
+            )
+
     def update_action(
         self,
         action_id: str,
         *,
-        status: Literal["accepted", "running", "succeeded", "failed"],
+        status: Literal[
+            "accepted",
+            "waiting_for_requester_exit",
+            "waiting_for_idle",
+            "running",
+            "succeeded",
+            "failed",
+        ],
         detail: str = "",
     ) -> ServiceControlAction:
         with self.lease():
@@ -335,6 +405,7 @@ class ManagedServiceDeploymentStore:
                     f"deployment generation changed: expected={expected_generation} "
                     f"current={deployment.generation}"
                 )
+            self._reap_stale_waiting_actions_unlocked()
             now = _utc_now()
             action = ServiceControlAction(
                 schema=_ACTION_SCHEMA,
@@ -693,43 +764,158 @@ def spawn_service_control_worker(store: ManagedServiceDeploymentStore, action_id
         stream.close()
 
 
-def _prepare_action_for_worker(
-    store: ManagedServiceDeploymentStore,
-    action_id: str,
-) -> tuple[ServiceControlAction | None, RestartPlan | None, int]:
-    """Under the short state lock, bind an accepted action to current desired state."""
-    with store.lease():
-        action = store.read_action(action_id)
-        deployment = store._read_unlocked()
-        if action is None or deployment is None:
-            return None, None, 2
+def _target_busy_reason(*, target: str, runtime_root: str) -> str:
+    """Target-scoped busy probe mirroring the official restart gates.
+
+    feishu/all additionally require an idle Feishu bridge heartbeat; web/all
+    require no mechanically-held foreground run locks. learning has no busy
+    gate, matching restart_mirror.sh.
+    """
+    reasons: list[str] = []
+    if target in {"feishu", "all"}:
+        heartbeat_path = Path(runtime_root) / "data" / "feishu_heartbeat.json"
         try:
-            plan = build_restart_plan(action, deployment)
-        except (ValueError, DeploymentGenerationConflictError) as exc:
-            failed = dataclasses.replace(
+            heartbeat = json.loads(heartbeat_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            heartbeat = None
+        if isinstance(heartbeat, dict):
+            processing = str(heartbeat.get("processing_msg_id") or "")
+            queue_depth = int(heartbeat.get("queue_depth") or 0)
+            if processing or queue_depth > 0:
+                reasons.append(
+                    f"feishu busy: processing={processing!r} queue_depth={queue_depth}"
+                )
+    if target in {"web", "all"}:
+        sessions_dir = Path(runtime_root) / "data" / "sessions"
+        held = active_run_locks(sessions_dir)
+        if held:
+            reasons.append(f"active run locks: {len(held)}")
+    return "; ".join(reasons)
+
+
+def _requester_run_active(sessions_dir: Path, requester_session_id: str) -> bool:
+    """True while the requester session's whole-run lease is still held."""
+    if not requester_session_id:
+        return False
+    wanted = f"{requester_session_id}.run.lock"
+    return any(path.name == wanted for path in active_run_locks(sessions_dir))
+
+
+def _mark_action(
+    store: ManagedServiceDeploymentStore,
+    action: ServiceControlAction,
+    *,
+    status: str,
+    detail: str = "",
+) -> ServiceControlAction:
+    with store.lease():
+        updated = dataclasses.replace(
+            action,
+            status=status,  # type: ignore[arg-type]
+            updated_at=_utc_now(),
+            detail=str(detail or "")[:2000],
+        )
+        store._write_action_unlocked(updated)
+        return updated
+
+
+def _wait_for(
+    store: ManagedServiceDeploymentStore,
+    action: ServiceControlAction,
+    *,
+    status: str,
+    busy_probe: Callable[[], str],
+    poll_s: float,
+    timeout_s: float,
+    timeout_detail: str,
+) -> bool:
+    """Poll a busy probe while holding no lifecycle lease; fail closed."""
+    _mark_action(store, action, status=status)
+    deadline = time.monotonic() + timeout_s
+    while True:
+        if not busy_probe():
+            return True
+        if time.monotonic() >= deadline:
+            _mark_action(
+                store,
                 action,
                 status="failed",
-                updated_at=_utc_now(),
-                detail=str(exc),
+                detail=f"{timeout_detail} after {timeout_s:.0f}s: {busy_probe()}",
             )
-            store._write_action_unlocked(failed)
-            return failed, None, 3
-        running = dataclasses.replace(
-            action, status="running", updated_at=_utc_now(), detail=""
-        )
-        store._write_action_unlocked(running)
-        return running, plan, 0
+            return False
+        time.sleep(poll_s)
 
 
 def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> int:
-    # Hold the global lifecycle lease through the physical restart. Desired-state
-    # publication acquires the same lease, closing check->execute TOCTOU. The short
-    # state-file lock is released before invoking restart_mirror so its read-only
-    # binding preflight can inspect the atomic desired-state file.
+    action = store.read_action(action_id)
+    deployment = store.read()
+    if action is None or deployment is None:
+        return 2
+    # Fail fast on stale binding before entering any waiting phase.
+    try:
+        build_restart_plan(action, deployment)
+    except (ValueError, DeploymentGenerationConflictError) as exc:
+        _mark_action(store, action, status="failed", detail=str(exc))
+        return 3
+
+    sessions_dir = Path(deployment.runtime_root) / "data" / "sessions"
+    # Phase 1 - requester exit (web/all only): never kill the dispatching
+    # session mid-turn, and never hold the lifecycle lease while waiting for
+    # it, so desired-state publication stays unblocked.
+    if action.target in {"web", "all"} and _requester_run_active(
+        sessions_dir, action.requester_session_id
+    ):
+        if not _wait_for(
+            store,
+            action,
+            status="waiting_for_requester_exit",
+            busy_probe=lambda: _requester_run_active(
+                sessions_dir, action.requester_session_id
+            ),
+            poll_s=_REQUESTER_EXIT_POLL_S,
+            timeout_s=_REQUESTER_EXIT_TIMEOUT_S,
+            timeout_detail="requester run still active",
+        ):
+            return 1
+
+    # Phase 2 - target idle, same target-scoped semantics as the official
+    # restart gates (still without the lifecycle lease).
+    if not _wait_for(
+        store,
+        action,
+        status="waiting_for_idle",
+        busy_probe=lambda: _target_busy_reason(
+            target=action.target, runtime_root=deployment.runtime_root
+        ),
+        poll_s=_IDLE_POLL_S,
+        timeout_s=_IDLE_TIMEOUT_S,
+        timeout_detail="target still busy",
+    ):
+        return 1
+
+    # Phase 3 - physical restart under the global lifecycle lease with a
+    # fresh generation recheck: publication acquires the same lease, closing
+    # the check->execute TOCTOU between waiting and execution.
     with store.lifecycle_lease():
-        running, plan, prepare_rc = _prepare_action_for_worker(store, action_id)
-        if prepare_rc != 0 or running is None or plan is None:
-            return prepare_rc
+        with store.lease():
+            latest = store.read_action(action_id)
+            desired_now = store._read_unlocked()
+        if latest is None or desired_now is None:
+            _mark_action(
+                store, action, status="failed", detail="action or desired state missing"
+            )
+            return 2
+        try:
+            plan = build_restart_plan(latest, desired_now)
+        except (ValueError, DeploymentGenerationConflictError) as exc:
+            _mark_action(
+                store,
+                latest,
+                status="failed",
+                detail=f"desired deployment advanced while waiting: {exc}",
+            )
+            return 3
+        running = _mark_action(store, latest, status="running")
 
         env = _control_subprocess_env(
             code_root=plan.env["LFL_RESTART_CODE_ROOT"],
@@ -742,18 +928,16 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             env=env,
             check=False,
         )
-        with store.lease():
-            terminal = dataclasses.replace(
-                running,
-                status="succeeded" if proc.returncode == 0 else "failed",
-                updated_at=_utc_now(),
-                detail=(
-                    "restart_mirror rc=0"
-                    if proc.returncode == 0
-                    else f"restart_mirror rc={proc.returncode}"
-                ),
-            )
-            store._write_action_unlocked(terminal)
+        _mark_action(
+            store,
+            running,
+            status="succeeded" if proc.returncode == 0 else "failed",
+            detail=(
+                "restart_mirror rc=0"
+                if proc.returncode == 0
+                else f"restart_mirror rc={proc.returncode}"
+            ),
+        )
         return 0 if proc.returncode == 0 else int(proc.returncode or 1)
 
 
