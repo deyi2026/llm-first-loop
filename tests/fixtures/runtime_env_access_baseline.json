@@ -1016,6 +1016,8 @@
     "src/llm_loop/introspection/tools_feishu_outbound.py|_get_rate_limit|read|FEISHU_OUTBOUND_RATE_PER_MIN": 1,
     "src/llm_loop/introspection/tools_feishu_outbound.py|_is_outbound_enabled|read|FEISHU_OUTBOUND_ENABLED": 1,
     "src/llm_loop/introspection/tools_playwright_exec.py|_child_env|bulk:items|<all>": 1,
+    "src/llm_loop/knowledge/injection_ledger.py|_resolved_path|read|INJECTION_LEDGER_PATH": 1,
+    "src/llm_loop/knowledge/injection_ledger.py|_switch_enabled|read|KNOWLEDGE_INJECTION_LEDGER": 1,
     "src/llm_loop/llm/client.py|LLMClient/__post_init__|read|LLM_TRUST_ENV": 1,
     "src/llm_loop/llm/client.py|LLMClient/_anthropic_cache_enabled|read|ANTHROPIC_CACHE_CONTROL": 1,
     "src/llm_loop/llm/client.py|LLMClient/_stream_openai|bulk:raw|<all>": 1,
