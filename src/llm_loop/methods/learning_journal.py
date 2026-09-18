@@ -14,6 +14,7 @@ Design (Learning Plane, DESIGN-20260910):
 - Corrupt/partial lines are skipped, orphan events (no queued) are ignored.
 - Program proves identity and lineage here; it never judges method quality.
 """
+
 from __future__ import annotations
 
 import fcntl
@@ -43,6 +44,7 @@ class LearningJob:
     source_episode_ref: str
     session_id: str = ""
     source_model: str = ""
+    kind: str = "reflection"
     trigger_facts: dict[str, Any] = field(default_factory=dict)
     state: str = "queued"
     reason: str = ""
@@ -137,6 +139,7 @@ class LearningJournal:
                     source_episode_ref=str(evt.get("source_episode_ref", "")),
                     session_id=str(evt.get("session_id", "")),
                     source_model=str(evt.get("source_model", "")),
+                    kind=str(evt.get("kind") or "reflection"),
                     trigger_facts=dict(evt.get("trigger_facts") or {}),
                     created_at=float(evt.get("ts") or 0.0),
                     updated_at=float(evt.get("ts") or 0.0),
@@ -183,6 +186,7 @@ class LearningJournal:
         *,
         session_id: str,
         source_model: str = "",
+        kind: str = "reflection",
         trigger_facts: dict[str, Any] | None = None,
     ) -> LearningJob | None:
         """Idempotent enqueue; returns None once the episode reached terminal."""
@@ -204,6 +208,7 @@ class LearningJournal:
                     "source_episode_ref": source_episode_ref,
                     "session_id": session_id,
                     "source_model": source_model,
+                    "kind": kind,
                     "trigger_facts": dict(trigger_facts or {}),
                 }
             )
@@ -212,6 +217,7 @@ class LearningJournal:
                 source_episode_ref=source_episode_ref,
                 session_id=session_id,
                 source_model=source_model,
+                kind=kind,
                 trigger_facts=dict(trigger_facts or {}),
             )
 

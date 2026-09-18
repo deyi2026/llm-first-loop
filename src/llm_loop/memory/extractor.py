@@ -1,11 +1,17 @@
 """独立记忆提取 MemoryExtractor（design.md §3.3 / FR-P1-EXT 系列）.
 
-边界说明（M11）: 本模块为独立提取调度器（触发时机/预算/异步/审计）;记忆块解析纯函数在 memory/extract.py（被复用）。
+边界说明（M11）: 本模块为独立提取调度器（触发时机/预算/审计）;记忆块解析纯函数在 memory/extract.py（被复用）。
 
 - 三触发: 会话结束（session_end）/ 定期（interval）/ 手动（manual）
+- P0-C（2026-09-18）: interval 触发的执行调度迁入 Learning Plane——maybe_trigger 仅做
+  门控判定（阈值/冷却），通过后向 LearningJournal 投递 durable 任务
+  （kind=memory_extract，episode_ref=memory-extract:<sid>:<message_count>），
+  由 LearningPlane 在学习车道内执行 extract_session(trigger="interval")。
+  不再自建线程调度（不残留双实现）。LEARNING_PLANE_ENABLED=false 时 journal 未装配，
+  interval 触发不排程（手动/会话结束路径不受影响）。
 - 输出与即时 [[memory]] 沉淀完全同构（复用 memory/extract.py）
 - 内容指纹去重（与既有条目共存不重复）
-- 异步失败隔离（不阻塞主循环）；预算/频次冷却；审计落盘可检索
+- 失败隔离（LearningPlane worker 内执行，不阻塞主循环）；预算/频次冷却；审计落盘可检索
 """
 
 from __future__ import annotations
@@ -104,6 +110,7 @@ class MemoryExtractor:
         timeout_s: float = 60.0,
         audit_dir: str | Path | None = None,
         provider_call_coordinator: ProviderCallCoordinator | None = None,
+        learning_journal: Any | None = None,
     ) -> None:
         self.llm = llm_client
         self.memory = memory
@@ -115,15 +122,19 @@ class MemoryExtractor:
         self.timeout_s = timeout_s
         self._audit_dir = Path(audit_dir) if audit_dir else None
         self.provider_call_coordinator = provider_call_coordinator
+        # P0-C: LearningJournal（Learning Plane durable 队列）。interval 触发的唯一
+        # 调度路径；未装配时 maybe_trigger 不排程（见模块 docstring）。
+        self.learning_journal = learning_journal
+        self.model_ref: str = ""  # factory 注入，用于 job.source_model（学习车道资源请求）
         self._last_trigger_ts: OrderedDict[str, float] = OrderedDict()
         self._lock = threading.Lock()
 
     # ── 触发判定 ──
     def maybe_trigger(self, session_id: str) -> bool:
-        """定期触发判定（消息数 ≥ 阈值 且 过冷却 → 异步执行）.
+        """定期触发判定（消息数 ≥ 阈值 且 过冷却 → 向 Learning Plane 投递 durable 任务）.
 
-        Returns:
-            True 已提交异步提取；False 未满足（不产生审计噪音）。
+        P0-C: 本方法只做门控与入队，执行由 LearningPlane 消费 journal 完成；
+        返回 True 表示"已投递/已有在途任务"，False 表示"未满足或不可排程"。
 
         FIX(2026-08-14, CI 抓到的平台 bug): 首次触发判定不得用 0.0 与 monotonic 比较——
         容器/新命名空间里 time.monotonic() 从 0 开始（CI runner 启动 < cooldown_s 时），
@@ -150,8 +161,29 @@ class MemoryExtractor:
                 return False
             self._last_trigger_ts[session_id] = now
             self._last_trigger_ts.move_to_end(session_id)
-        self._run_async(session_id, trigger="interval")
-        return True
+        journal = self.learning_journal
+        if journal is None:
+            # P0-C: Learning Plane 未启用 → interval 提取无调度路径（fail-closed，
+            # 不自建线程，避免双实现）。手动/会话结束触发不受影响。
+            logger.debug(
+                "memory extractor: journal 未装配（Learning Plane 未启用），跳过 interval 排程 sid=%s",
+                session_id,
+            )
+            return False
+        episode_ref = f"memory-extract:{session_id}:{meta.message_count}"
+        job = journal.enqueue(
+            episode_ref,
+            session_id=session_id,
+            source_model=self.model_ref,
+            kind="memory_extract",
+            trigger_facts={
+                "kind": "memory_extract",
+                "trigger": "interval",
+                "message_count": int(meta.message_count),
+                "interval_msgs": int(self.interval_msgs),
+            },
+        )
+        return job is not None
 
     def extract_session(self, session_id: str, trigger: ExtractTrigger = "manual") -> ExtractResult:
         """同步提取（会话结束/手动，受预算与冷却约束）."""
@@ -177,14 +209,10 @@ class MemoryExtractor:
         coordinator = self.provider_call_coordinator
         background = trigger == "interval"
         execution_class = (
-            ExecutionClass.BACKGROUND_LEARNING
-            if background
-            else ExecutionClass.FOREGROUND_TASK
+            ExecutionClass.BACKGROUND_LEARNING if background else ExecutionClass.FOREGROUND_TASK
         )
         service_priority = (
-            ServicePriority.P3_BACKGROUND_LEARNING
-            if background
-            else ServicePriority.P0_FOREGROUND
+            ServicePriority.P3_BACKGROUND_LEARNING if background else ServicePriority.P0_FOREGROUND
         )
         provider_call = (
             coordinator.open_shadow_call_for_client(
@@ -285,19 +313,6 @@ class MemoryExtractor:
             skipped_duplicates=skipped,
         )
 
-    # ── 异步执行（失败隔离）──
-    def _run_async(self, session_id: str, trigger: ExtractTrigger) -> None:
-        def worker() -> None:
-            try:
-                self.extract_session(session_id, trigger=trigger)
-            except Exception as exc:  # noqa: BLE001 — 异步失败隔离，不影响主循环
-                logger.warning("异步独立提取异常（fail-open）: %s", exc)
-                self._audit(
-                    session_id, trigger, "会话全量", 0, [f"异步异常: {exc}"], note="提取失败"
-                )
-
-        threading.Thread(target=worker, daemon=True).start()
-
     # ── 辅助 ──
     def _build_history_text(self, messages: list[Any]) -> str:
         lines = []
@@ -312,7 +327,9 @@ class MemoryExtractor:
             # B3 边界修正：prefix 兜底过滤 assistant/system，不误伤 user 角色同前缀正常文本
             if (m.metadata or {}).get("answer_origin") == "program":
                 continue
-            if role in ("assistant", "system") and str(m.content or "").startswith(PROGRAM_FEEDBACK_PREFIXES):
+            if role in ("assistant", "system") and str(m.content or "").startswith(
+                PROGRAM_FEEDBACK_PREFIXES
+            ):
                 continue
             lines.append(f"[{role}] {content}")
         return "\n".join(lines)
