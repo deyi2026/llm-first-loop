@@ -63,8 +63,8 @@ _ACTION_FIELDS = frozenset(
         "detail",
     }
 )
-_MANAGED_SERVICES = ("web", "feishu")
-_ACTION_TARGETS = ("web", "feishu", "all")
+_MANAGED_SERVICES = ("web", "feishu", "learning")
+_ACTION_TARGETS = ("web", "feishu", "learning", "all")
 
 
 class DeploymentGenerationConflictError(RuntimeError):
@@ -125,7 +125,7 @@ class ServiceControlAction:
     schema: str
     action_id: str
     action: Literal["restart"]
-    target: Literal["web", "feishu", "all"]
+    target: Literal["web", "feishu", "learning", "all"]
     deployment_id: str
     deployment_generation: int
     requester_session_id: str
@@ -396,6 +396,7 @@ class ManagedServiceMutationGuard:
     _PID_SOURCE_MARKERS = (
         "runtime_manifest.web.json",
         "runtime_manifest.feishu.json",
+        "runtime_manifest.learning.json",
         "feishu_heartbeat.json",
     )
 
@@ -504,7 +505,7 @@ class ManagedServiceMutationGuard:
         if action_idx >= len(core):
             # restart_mirror default is a real Web restart, so an omitted action mutates.
             return script == "restart_mirror.sh"
-        return core[action_idx] in {"web", "feishu", "all", "restart", "start", "stop"}
+        return core[action_idx] in {"web", "feishu", "learning", "all", "restart", "start", "stop"}
 
     def _guard_text(
         self,
@@ -565,6 +566,8 @@ class ManagedServiceMutationGuard:
                             hit.add("web")
                         elif ".feishu." in marker or "feishu_" in marker:
                             hit.add("feishu")
+                        elif ".learning." in marker:
+                            hit.add("learning")
                 if "lsof" in low and "8903" in low:
                     hit.add("web")
                 # kill -SIGNAL -1 targets every process the caller may signal.

@@ -131,6 +131,7 @@ def test_guard_blocks_official_restart_and_direct_launch_from_generic_shell(tmp_
         "sh /repo/scripts/restart_system.sh restart",
         ".venv/bin/python -m llm_loop.runtime.launch web",
         "python3 -m llm_loop.runtime.launch feishu",
+        "python3 -m llm_loop.runtime.launch learning",
         "python -m llm_loop.runtime.service_control publish --expected-generation 1",
     ]
     for command in blocked:

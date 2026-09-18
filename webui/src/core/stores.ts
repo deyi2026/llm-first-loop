@@ -6,6 +6,7 @@ import type { SessionMeta } from "./api";
 export type ThemePreference = "system" | "light" | "dark";
 export type ThinkingMode = "auto" | "off" | "on";
 export type SidebarView = "sessions" | "files" | "evo" | "archived";
+export type MainView = "chat" | "learning";
 
 interface SessionState {
   sessions: SessionMeta[];
@@ -155,6 +156,19 @@ export const sidebarViewStore = {
 
 export function useSidebarView(): SidebarView {
   return useSyncExternalStore(sidebarViewStore.subscribe, () => sidebarViewStore.getState().view);
+}
+
+// ── 主区视图：Learning Plane 是固定系统通道，不伪装成普通聊天 Session。 ──
+const mainViewStoreRaw = createStore<{ view: MainView }>({ view: "chat" });
+
+export const mainViewStore = {
+  getState: mainViewStoreRaw.getState,
+  setView: (view: MainView) => mainViewStoreRaw.setState({ view }),
+  subscribe: mainViewStoreRaw.subscribe,
+};
+
+export function useMainView(): MainView {
+  return useSyncExternalStore(mainViewStore.subscribe, () => mainViewStore.getState().view);
 }
 
 // ── 主题 store（偏好持久化 localStorage + 跟随系统；body[data-ds-dark-theme] 属性生效） ──

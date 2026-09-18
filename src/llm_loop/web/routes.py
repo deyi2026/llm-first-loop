@@ -312,6 +312,81 @@ def _engine_from(request: Request) -> Any:
     return request.app.state.engine
 
 
+@router.get("/api/v1/learning/status")
+def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=200)) -> Response:
+    """Read-only Learning Plane observability without exposing hidden reasoning."""
+    engine = _engine_from(request)
+    journal = getattr(engine, "learning_journal", None)
+    jobs = []
+    if journal is not None:
+        try:
+            for job in journal.recent_jobs(limit=limit):
+                jobs.append(
+                    {
+                        "job_id": job.job_id,
+                        "source_episode_ref": job.source_episode_ref,
+                        "source_session_id": job.session_id,
+                        "source_model": job.source_model,
+                        "state": job.state,
+                        "attempt": job.attempt,
+                        "candidate_ref": job.candidate_ref or None,
+                        "reason": job.reason or None,
+                        "created_at": job.created_at,
+                        "updated_at": job.updated_at or job.created_at,
+                        "started_at": job.started_at or None,
+                        "finished_at": job.finished_at or None,
+                        # Only mechanical trigger facts are surfaced. Raw hidden reasoning is never stored here.
+                        "trigger_facts": dict(job.trigger_facts or {}),
+                    }
+                )
+        except Exception:  # noqa: BLE001 - observability must never break chat serving
+            logger.warning("learning status journal read failed", exc_info=True)
+
+    counts: dict[str, int] = {}
+    for row in jobs:
+        state = str(row.get("state") or "unknown")
+        counts[state] = counts.get(state, 0) + 1
+
+    settings = getattr(engine, "settings", None)
+    data_dir = Path(getattr(settings, "data_dir", "./data")).expanduser()
+    manifest_path = data_dir / "runtime" / "runtime_manifest.learning.json"
+    worker: dict[str, Any] = {"running": False, "manifest_present": manifest_path.is_file()}
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            pid = int(manifest.get("pid") or 0)
+            running = False
+            if pid > 0:
+                try:
+                    os.kill(pid, 0)
+                    running = True
+                except OSError:
+                    running = False
+            worker.update(
+                {
+                    "running": running,
+                    "pid": pid or None,
+                    "started_at": manifest.get("started_at"),
+                    "git_head": manifest.get("git_head"),
+                    "build": manifest.get("build_identity") or {},
+                    "model_ref": manifest.get("model_ref"),
+                    "provider_id": manifest.get("provider_id"),
+                }
+            )
+        except Exception:  # noqa: BLE001
+            worker["manifest_error"] = True
+
+    return JSONResponse(
+        {
+            "enabled": bool(getattr(settings, "learning_plane_enabled", False)),
+            "producer_only": getattr(engine, "learning_plane", None) is None,
+            "worker": worker,
+            "counts": counts,
+            "jobs": jobs,
+        }
+    )
+
+
 def _evolution_store_from(engine: Any) -> Any | None:
     """解析 production EvolutionStore authority（factory.py 唯一装配位置）.
 
@@ -3088,6 +3163,7 @@ def list_dirs(request: Request, path: str = "") -> Response:
 # 只声明"本后端注册了哪些产品路由"这一机械事实，供前端一次拉取，
 # 替代启动期 404/405 路由探测。不表达策略、健康度或业务判断。
 _CAPABILITY_ROUTES: dict[str, tuple[tuple[str, str], ...]] = {
+    "learning": (("GET", "/api/v1/learning/status"),),
     "attachments": (
         ("GET", "/api/v1/attachments/recent"),
         ("POST", "/api/v1/attachments/import-workspace"),

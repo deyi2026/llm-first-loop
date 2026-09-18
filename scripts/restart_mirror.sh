@@ -158,7 +158,7 @@ _log() { echo "[mirror] $(date '+%H:%M:%S') $*"; }
 _service_control_preflight() {
   local target="$1"
   local rc=0
-  if [[ "$target" == "feishu" ]]; then
+  if [[ "$target" == "feishu" || "$target" == "learning" ]]; then
     LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" \
       "$VENV_PY" -m llm_loop.runtime.service_control verify \
       --data-dir "$RUNTIME_ROOT/data" \
@@ -500,6 +500,50 @@ _feishu_stop() {
   _log "飞书桥已停止"
 }
 
+# ── 专门 Learning Plane worker ──
+# 无网络监听；runtime manifest 的 pid + argv 是机械身份。Web/Feishu 只入队，
+# Reflection consumer 只能由这个独立进程持有。
+_learning_pids() {
+  local mf="$MIRROR_DIR/data/runtime/runtime_manifest.learning.json"
+  local mf_pid=""
+  if [[ -f "$mf" ]]; then
+    mf_pid="$("$VENV_PY" -c "
+import json
+try: print(json.load(open('$mf')).get('pid') or '')
+except Exception: pass" 2>/dev/null || true)"
+  fi
+  {
+    [[ -n "$mf_pid" ]] && echo "$mf_pid"
+    pgrep -f "^$VENV_PY -m llm_loop\.runtime\.launch learning( |$)" 2>/dev/null || true
+  } | awk 'NF && !seen[$1]++ {print $1}'
+}
+
+_learning_stop() {
+  local pids pid survivors
+  pids="$(_learning_pids || true)"
+  if [[ -z "$pids" ]]; then
+    _log "无 Learning Plane worker"
+    return 0
+  fi
+  _log "停止 Learning Plane worker pid(s): $(echo "$pids" | tr '\n' ' ')..."
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] && kill -TERM "$pid" 2>/dev/null || true
+  done <<< "$pids"
+  for _ in $(seq 1 20); do
+    survivors=""
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] && _pid_alive "$pid" && survivors+="${pid} "
+    done <<< "$pids"
+    [[ -z "$survivors" ]] && break
+    sleep 0.5
+  done
+  if [[ -n "${survivors:-}" ]]; then
+    _log "10s 后 Learning worker 仍存活，强制 kill: $survivors"
+    for pid in $survivors; do kill -KILL "$pid" 2>/dev/null || true; done
+  fi
+  _log "Learning Plane worker 已停止"
+}
+
 # ── 回执落盘（修4, 2026-09-09）──
 # 实证教训：上轮"watchdog armed, pgid=18559"回执只活在 stdout——载体随宿主死亡，
 # 回执无处验证。落盘是唯一可独立核查的载体（设计本身正确，并入脚本）。
@@ -507,14 +551,15 @@ RECEIPT_JSON="$MIRROR_DIR/data/restart-receipt.json"   # 最新一次（覆盖�
 RECEIPT_LOG="$MIRROR_DIR/data/restart-receipt.log"     # 历史（追加）
 _write_receipt() {
   local action="$1" rc="$2" detail="${3:-}"
-  local head head_full web_pid feishu_pid
+  local head head_full web_pid feishu_pid learning_pid
   head="$(git -C "$CODE_ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
   head_full="$(git -C "$CODE_ROOT" rev-parse HEAD 2>/dev/null || echo '?')"
   web_pid="$(_port_pid "$RESTART_PORT" || true)"
   feishu_pid="$(_feishu_pids 2>/dev/null | head -1 || true)"
-  "$VENV_PY" - "$RECEIPT_JSON" "$RECEIPT_LOG" "$action" "$rc" "$head" "$head_full" "$detail" "$web_pid" "$feishu_pid" <<'PY' 2>/dev/null || { _log "⚠️ 回执落盘失败（不影响服务状态）"; return 0; }
+  learning_pid="$(_learning_pids 2>/dev/null | head -1 || true)"
+  "$VENV_PY" - "$RECEIPT_JSON" "$RECEIPT_LOG" "$action" "$rc" "$head" "$head_full" "$detail" "$web_pid" "$feishu_pid" "$learning_pid" <<'PY' 2>/dev/null || { _log "⚠️ 回执落盘失败（不影响服务状态）"; return 0; }
 import datetime, json, sys
-jpath, lpath, action, rc, head, head_full, detail, web_pid, feishu_pid = sys.argv[1:10]
+jpath, lpath, action, rc, head, head_full, detail, web_pid, feishu_pid, learning_pid = sys.argv[1:11]
 rec = {
     "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
     "action": action,
@@ -523,6 +568,7 @@ rec = {
     "git_head_full": head_full,
     "web_pid": int(web_pid) if web_pid.strip().isdigit() else None,
     "feishu_pid": int(feishu_pid) if feishu_pid.strip().isdigit() else None,
+    "learning_pid": int(learning_pid) if learning_pid.strip().isdigit() else None,
     "detail": detail,
 }
 line = json.dumps(rec, ensure_ascii=False)
@@ -612,6 +658,37 @@ sys.exit(0 if d.get('pid') == $pid and d.get('state') == 'connected' else 1)
   fi
 }
 
+_start_learning() {
+  _log "启动专门 Learning Plane worker..."
+  _prep_dsh_env
+  unset WEB_PORT WEB_HOST LFL_DATA_DIR DATA_DIR
+  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/learning.log "$VENV_PY" -m llm_loop.runtime.launch learning
+  local pid=$!
+  local mf="$MIRROR_DIR/data/runtime/runtime_manifest.learning.json"
+  for _ in $(seq 1 30); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      _log "✗ Learning worker 提前退出，日志:"
+      tail -10 data/learning.log || true
+      return 1
+    fi
+    if [[ -f "$mf" ]] && "$VENV_PY" -c "
+import json, sys
+try:
+    d=json.load(open('$mf'))
+except Exception:
+    raise SystemExit(1)
+sys.exit(0 if d.get('service') == 'learning' and d.get('pid') == $pid else 1)
+" 2>/dev/null; then
+      _log "✅ Learning Plane worker ready (pid $pid)"
+      return 0
+    fi
+    sleep 1
+  done
+  _log "✗ Learning worker 30s 未就绪，最近日志:"
+  tail -10 data/learning.log || true
+  return 1
+}
+
 
 _knowledge_preflight() {
   _log "Knowledge health preflight..."
@@ -626,10 +703,11 @@ _knowledge_preflight() {
 
 _status() {
   echo "=== 镜像服务状态 ==="
-  local web_pid feishu_pid
+  local web_pid feishu_pid learning_pid
   web_pid="$(_port_pid "$WEB_PORT" || true)"
   # 修5(2026-09-09): 判定源换 _feishu_pids（心跳 pid 优先 ∪ argv 兜底，uv 改写 argv 场景不再盲）
   feishu_pid="$(_feishu_pids 2>/dev/null | head -1 || true)"
+  learning_pid="$(_learning_pids 2>/dev/null | head -1 || true)"
   if [[ -n "$web_pid" ]]; then
     echo "web    : ✅ pid $web_pid $(curl -sf --max-time 2 "http://$WEB_HOST:$WEB_PORT/auth/status" | head -c 80 || echo '(readiness 异常)')"
   else
@@ -639,6 +717,11 @@ _status() {
     echo "feishu : ✅ pid $feishu_pid (hb: $("$VENV_PY" -c "import json;print(json.load(open('$MIRROR_DIR/data/feishu_heartbeat.json')).get('state','-'))" 2>/dev/null || echo '?'))"
   else
     echo "feishu : ❌ 未运行"
+  fi
+  if [[ -n "$learning_pid" ]] && _pid_alive "$learning_pid"; then
+    echo "learning: ✅ pid $learning_pid (dedicated Reflection worker)"
+  else
+    echo "learning: ❌ 未运行"
   fi
   echo "主区 web（:8902）: $(curl -sf --max-time 2 http://127.0.0.1:8902/health >/dev/null 2>&1 && echo '✅ 健康' || echo '⚠️ 未运行/不可达')"
 }
@@ -674,15 +757,27 @@ case "${1:-web}" in
            fi
            _write_receipt feishu "$_rc" ""
            exit "$_rc" ;;
+  learning) _service_control_preflight learning || { _write_receipt learning "1" "service_control_binding_failed"; exit 1; }
+           _knowledge_preflight || { _write_receipt learning "1" "knowledge_preflight_failed"; exit 1; }
+           _rc=0
+           if ! _learning_stop; then
+             _rc=1
+             _log "Learning worker 停止失败，跳过启动"
+           else
+             _start_learning || _rc=1
+           fi
+           _write_receipt learning "$_rc" ""
+           exit "$_rc" ;;
   all)     _webui_artifact_preflight || { _write_receipt all "1" "webui_artifact_preflight_failed"; exit 1; }
            _service_control_preflight all || { _write_receipt all "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck
            _knowledge_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }
            # 修2(2026-09-09): 失败补偿——web 停/启失败不再 && 短路吞掉 feishu 恢复；
            # 各服务按自身停止成败独立决定是否重启（停失败强启=制造双进程，禁止）。
-           _rc=0; _web_stopped=0; _feishu_stopped=0
+           _rc=0; _web_stopped=0; _feishu_stopped=0; _learning_stopped=0
            _stop_web "$RESTART_PORT" && _web_stopped=1 || _rc=1
            _feishu_stop && _feishu_stopped=1 || _rc=1
+           _learning_stop && _learning_stopped=1 || _rc=1
            if [[ "$_web_stopped" -eq 1 ]]; then
              _start_web || _rc=1
            else
@@ -693,8 +788,13 @@ case "${1:-web}" in
            else
              _log "feishu 停止失败，跳过其启动"
            fi
-           _write_receipt all "$_rc" "web_stopped=$_web_stopped feishu_stopped=$_feishu_stopped"
+           if [[ "$_learning_stopped" -eq 1 ]]; then
+             _start_learning || _rc=1
+           else
+             _log "Learning worker 停止失败，跳过其启动"
+           fi
+           _write_receipt all "$_rc" "web_stopped=$_web_stopped feishu_stopped=$_feishu_stopped learning_stopped=$_learning_stopped"
            exit "$_rc" ;;
   status)  _status ;;
-  *)       echo "用法: $0 {web|feishu|all|status}"; exit 1 ;;
+  *)       echo "用法: $0 {web|feishu|learning|all|status}"; exit 1 ;;
 esac

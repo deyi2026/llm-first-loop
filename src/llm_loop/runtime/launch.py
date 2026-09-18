@@ -3,6 +3,7 @@
 用法：
   python -m llm_loop.runtime.launch web   [--model X] [--port N]
   python -m llm_loop.runtime.launch feishu [--model X]
+  python -m llm_loop.runtime.launch learning [--model X]
   python -m llm_loop.runtime.launch web --dry-run   # 只打印 effective 配置
 
 shell 脚本（restart_system.sh/restart_mirror.sh）只负责进程管理（stop/PID/nohup/日志）；
@@ -21,6 +22,7 @@ from .resolver import apply_to_environ, legacy_env_snapshot, resolve_effective
 _SERVICES = {
     "web": "llm_loop.web",
     "feishu": "llm_loop.feishu",
+    "learning": "llm_loop.learning_runtime",
 }
 
 
