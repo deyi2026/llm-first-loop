@@ -45,6 +45,26 @@ def _deployment(tmp_path: Path, generation: int = 1) -> ManagedServiceDeployment
     )
 
 
+def _git_deployment(tmp_path: Path, generation: int = 1) -> ManagedServiceDeployment:
+    """Git-backed deployment for tests that reach Phase 3.
+
+    The P0-A.1 in-lease binding reverify rejects targets that are not a
+    clean git checkout matching the published HEAD, so success-path tests
+    must build their deployment via ``build_deployment`` over a real repo.
+    """
+    import subprocess
+
+    dist = tmp_path / "webui" / "dist"
+    dist.mkdir(parents=True, exist_ok=True)
+    (dist / "index.html").write_text("<html>fixture</html>\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "fixture"], check=True)
+    return sc.build_deployment(
+        code_root=str(tmp_path), runtime_root=str(tmp_path), generation=generation
+    )
+
+
 class _HeldRunLock:
     """Hold a session run lock exactly like an active foreground run."""
 
@@ -109,7 +129,7 @@ def test_web_restart_waits_for_requester_without_lifecycle_lease(
 ) -> None:
     store = ManagedServiceDeploymentStore(tmp_path / "data")
     _record_target_script(tmp_path)
-    store.compare_and_swap(_deployment(tmp_path), expected_generation=0)
+    store.compare_and_swap(_git_deployment(tmp_path), expected_generation=0)
     action = store.accept_restart(
         target="web", expected_generation=1, requester_session_id="session-A"
     )
@@ -233,7 +253,7 @@ def test_feishu_restart_skips_requester_gate(
 ) -> None:
     store = ManagedServiceDeploymentStore(tmp_path / "data")
     _record_target_script(tmp_path)
-    store.compare_and_swap(_deployment(tmp_path), expected_generation=0)
+    store.compare_and_swap(_git_deployment(tmp_path), expected_generation=0)
     action = store.accept_restart(
         target="feishu", expected_generation=1, requester_session_id="session-A"
     )
