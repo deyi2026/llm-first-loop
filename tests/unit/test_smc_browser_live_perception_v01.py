@@ -224,7 +224,7 @@ def test_factory_registers_browser_perceive_only_when_explicitly_opted_in(
     factory.CdpReadOnlyBrowserHost.assert_called_once_with(
         "http://127.0.0.1:9222",
         target_id="target-1",
-        max_frame_bytes=67_108_864,
+        max_frame_bytes=134_217_728,
     )
     tool = engine.registry.get("browser_perceive")
     assert tool._backend is fake_host
@@ -283,7 +283,7 @@ def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeyp
     factory.CdpBrowserMutationActuator.assert_called_once_with(
         "http://127.0.0.1:9222",
         target_id="target-1",
-        max_frame_bytes=67_108_864,
+        max_frame_bytes=134_217_728,
     )
     tool = enabled.registry.get("browser_action")
     assert tool._adapter.actuator is fake_write
