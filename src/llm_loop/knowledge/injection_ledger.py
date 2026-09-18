@@ -28,11 +28,15 @@ def _switch_enabled() -> bool:
 
 
 def _resolved_path() -> Path:
-    if _LEDGER_PATH is not None:
-        return _LEDGER_PATH
+    # 优先级：显式环境 override（测试/运维）> factory configure 绑定 > 包位置默认。
+    # 2026-09-18 全量顺序暴露：configure 的模块级固化一旦先行（任一前置测试
+    # build_engine），env override 被短路，ledger 写到错误文件且测试/运维无法
+    # 重定向——override 必须永远最高（与 KNOWLEDGE_INJECTION_LEDGER 开关同语义层级）。
     override = (os.environ.get("INJECTION_LEDGER_PATH", "") or "").strip()
     if override:
         return Path(override)
+    if _LEDGER_PATH is not None:
+        return _LEDGER_PATH
     # Fallback：包位置锚定（factory 已绑定运行时 data_dir 时不会走到这里）
     return Path(__file__).resolve().parents[3] / "data" / "audit" / "injection_ledger.jsonl"
 
