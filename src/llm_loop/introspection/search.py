@@ -61,6 +61,25 @@ class InvalidSearchQueryError(ValueError):
 
 
 
+def _query_terms(query: str) -> list[str]:
+    """空白分词并小写化；空串返回空列表（空=不过滤，保持列表模式契约）.
+
+    小写化与 hay 的 .lower() 对齐（对齐旧实现 ``q = query.lower()`` 语义，
+    大写查询如 ``EVO-20260918-c63f0c21``/``DC-1`` 不再结构性落空）。
+    """
+    return [t.lower() for t in str(query or "").split() if t]
+
+
+def _hay_matches(hay: str, terms: list[str]) -> bool:
+    """词项 AND 匹配（每词独立子串命中）；terms 为空视为不过滤.
+
+    EVO-20260918 修复: 原 ``q not in hay`` 整串子串导致多词查询（如
+    ``浏览器 感知``）对原文含 ``browser_perceive`` 的记录结构性落空；
+    分词 AND 是原单串行为的严格超集，不减少既有命中。
+    """
+    return all(t in hay for t in terms)
+
+
 def _jsonl_search(
     path: Path,
     query: str,
@@ -70,10 +89,15 @@ def _jsonl_search(
     summary_keys: tuple[str, ...],
     content_key: str = "content",
 ) -> list[dict]:
-    """JSONL 全文关键词匹配，返回结构化可溯源记录."""
+    """JSONL 全文关键词匹配，返回结构化可溯源记录.
+
+    EVO-20260918 修复: 检索域从 summary_keys+content 扩展为恒含 ``id``/``ts``
+    ——按记录 id（如 ``EVO-20260918-c63f0c21``）查询不再结构性落空；
+    多词查询按空白分词 AND 匹配。summary 呈现字段保持不变。
+    """
     if not path.exists():
         return []
-    q = query.lower()
+    terms = _query_terms(query)
     hits: list[dict] = []
     with path.open("r", encoding="utf-8") as f:
         for line in f:
@@ -84,13 +108,22 @@ def _jsonl_search(
                 entry = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            hay = " ".join(str(entry.get(k, "")) for k in summary_keys + (content_key,)).lower()
-            if q and q not in hay:
+            ts = entry.get("ts", entry.get("created_at", entry.get("timestamp", "")))
+            hay = " ".join(
+                str(v)
+                for v in (
+                    entry.get("id", ""),
+                    ts,
+                    *(entry.get(k, "") for k in summary_keys),
+                    entry.get(content_key, ""),
+                )
+            ).lower()
+            if terms and not _hay_matches(hay, terms):
                 continue
             hits.append(
                 {
                     "kind": kind,
-                    "ts": entry.get("ts", entry.get("created_at", entry.get("timestamp", ""))),
+                    "ts": ts,
                     "id": entry.get("id", ""),
                     "summary": " ".join(str(entry.get(k, "")) for k in summary_keys)[:300],
                     "file": str(path),
@@ -605,7 +638,8 @@ class RecordSearcher:
             names = list(self._EVENT_STREAMS)
         else:
             names = [s.strip() for s in streams.split(",") if s.strip()]
-        q = query.lower()
+        # EVO-20260918: 多词分词 AND + id/ts 入检索域（与 _jsonl_search 对齐）
+        terms = _query_terms(query)
         merged: list[dict] = []
         for name in names:
             fname, keys = self._EVENT_STREAMS.get(name, (None, ()))
@@ -630,9 +664,16 @@ class RecordSearcher:
                     if session_id is not None and entry_session_id != session_id:
                         continue
                     hay = " ".join(
-                        str(entry.get(k, "")) for k in keys + ("content", "note")
+                        str(v)
+                        for v in (
+                            entry.get("id", ""),
+                            ts,
+                            *(entry.get(k, "") for k in keys),
+                            entry.get("content", ""),
+                            entry.get("note", ""),
+                        )
                     ).lower()
-                    if q and q not in hay:
+                    if terms and not _hay_matches(hay, terms):
                         continue
                     merged.append(
                         {
@@ -650,10 +691,38 @@ class RecordSearcher:
         return merged
 
     def _search_method(self, query: str, limit: int) -> list[dict]:
-        """Method cards by default; exact ``method:<id>`` hydrates one full record."""
+        """Method discovery uses lexical cards plus optional semantic RRF.
+
+        Exact stable refs remain exact hydration and never go through semantic fallback.
+        Semantic recall only broadens discovery; applicability stays ``not_evaluated``.
+        """
         if self._method_store is None:
             return []
-        return self._method_store.list(query, limit)
+        raw = str(query or "").strip()
+        if raw.lower().startswith("method:"):
+            return self._method_store.list(raw, limit)
+        keyword_limit = max(limit * 4, 20)
+        keyword = self._method_store.list(raw, keyword_limit)
+        if self._semantic is None or not self._semantic.semantic_available() or not raw:
+            return keyword[:limit]
+        result = self._semantic.search(
+            raw,
+            top_k=limit,
+            scope="method",
+            method=self._method_store,
+            keyword_results=keyword,
+        )
+        rows: list[dict] = []
+        for hit in result.entries:
+            ref = str(hit.get("key") or "")
+            record = self._method_store.get(ref)
+            if record is None:
+                continue
+            card = record.card()
+            if record.freshness_refs:
+                card["freshness"] = self._method_store.freshness(record.method_ref)
+            rows.append(card)
+        return rows[:limit]
 
     def _search_experience(
         self,
@@ -806,6 +875,8 @@ class RecordSearcher:
     def _search_self_eval(self, path: Path, query: str, limit: int) -> list[dict]:
         """self_eval 检索（EVAL-04 可检索 + EVAL-05 双向溯源: 返回关联建议 ID）."""
         q = query.lower()
+        # EVO-20260918: 多词分词 AND + ts 入检索域（与 _jsonl_search 对齐）
+        terms = _query_terms(query)
         hits: list[dict] = []
         try:
             with path.open("r", encoding="utf-8") as f:
@@ -818,10 +889,17 @@ class RecordSearcher:
                     except json.JSONDecodeError:
                         continue
                     hay = " ".join(
-                        str(entry.get(k, ""))
-                        for k in ("eval_id", "session_id", "trigger", "summary", "note")
+                        str(v)
+                        for v in (
+                            entry.get("ts", ""),
+                            entry.get("eval_id", ""),
+                            entry.get("session_id", ""),
+                            entry.get("trigger", ""),
+                            entry.get("summary", ""),
+                            entry.get("note", ""),
+                        )
                     ).lower()
-                    if q and q not in hay:
+                    if terms and not _hay_matches(hay, terms):
                         continue
                     summary = f"{entry.get('eval_id', '')} trigger={entry.get('trigger', '')}: {entry.get('summary', '')[:200]}"
                     linked = self._evolution_linked_to_eval(str(entry.get("eval_id", "")))

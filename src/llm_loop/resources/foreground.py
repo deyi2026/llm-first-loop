@@ -7,26 +7,41 @@ from pathlib import Path
 from typing import Any
 
 
-def _locks_dir_busy(sessions_dir: str | Path) -> bool:
-    """True when any workspace partition holds an exclusive whole-run lease."""
+def active_run_locks(sessions_dir: str | Path) -> list[Path]:
+    """Return whole-run lease files that are mechanically held right now.
+
+    ``*.run.lock`` files are stable/tombstoned by design, so file existence is not
+    activity. A non-blocking shared flock succeeds only when no foreground owner
+    holds the exclusive whole-run lease. Inspection uncertainty is treated as busy.
+    """
+    busy: list[Path] = []
     try:
-        for lock_path in Path(sessions_dir).rglob("*.run.lock"):
-            if not lock_path.exists():
-                continue
-            try:
-                fd = lock_path.open("r")
-            except OSError:
-                continue
+        lock_paths = list(Path(sessions_dir).rglob("*.run.lock"))
+    except Exception:  # noqa: BLE001 - uncertainty must yield to foreground
+        return [Path(sessions_dir) / "<scan-uncertain>.run.lock"]
+
+    for lock_path in lock_paths:
+        if not lock_path.exists():
+            continue
+        try:
+            fd = lock_path.open("r")
+        except OSError:
+            busy.append(lock_path)
+            continue
+        try:
             try:
                 fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
                 fcntl.flock(fd, fcntl.LOCK_UN)
             except OSError:
-                return True
-            finally:
-                fd.close()
-    except Exception:  # noqa: BLE001 - admission uncertainty yields to foreground
-        return True
-    return False
+                busy.append(lock_path)
+        finally:
+            fd.close()
+    return busy
+
+
+def _locks_dir_busy(sessions_dir: str | Path) -> bool:
+    """True when any workspace partition holds an exclusive whole-run lease."""
+    return bool(active_run_locks(sessions_dir))
 
 
 class ForegroundActivityProbe:

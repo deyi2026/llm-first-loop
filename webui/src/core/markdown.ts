@@ -65,6 +65,39 @@ function renderMath(src: string): string {
   return out;
 }
 
+/**
+ * 在数学预处理阶段保护 Markdown 代码字面量。
+ *
+ * renderMath() 发生在 marked.parse() 之前；若直接扫描整段 Markdown，shell 代码里的
+ * `"$PWD" ... "$PWD"` 会被误识别成一段 `$...$` 数学，然后 KaTeX HTML 再被代码块
+ * renderer 转义成可见文本，最终连“复制代码”都会复制污染后的 `<span class="katex">`。
+ *
+ * 这里只做机械字面量隔离：先暂存 fenced/inline code，数学处理结束后逐字恢复，随后仍
+ * 交给 marked 正常解析。不会判断代码语义，也不会改变真正的数学文本。
+ */
+function protectCodeFromMath(src: string): { masked: string; restore: (value: string) => string } {
+  const segments: string[] = [];
+  const stash = (value: string): string => {
+    const index = segments.push(value) - 1;
+    return `\uE000LFL_CODE_${index}\uE001`;
+  };
+
+  let masked = src.replace(
+    /(^|\n)([ \t]{0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\2\3[ \t]*(?=\n|$)/g,
+    (match: string, prefix: string) => `${prefix}${stash(match.slice(prefix.length))}`
+  );
+
+  masked = masked.replace(/(`+)([^`\n]*?)\1/g, (match: string) => stash(match));
+
+  const restore = (value: string): string =>
+    value.replace(/\uE000LFL_CODE_(\d+)\uE001/g, (match: string, rawIndex: string) => {
+      const segment = segments[Number(rawIndex)];
+      return segment === undefined ? match : segment;
+    });
+
+  return { masked, restore };
+}
+
 /** 已知文件扩展名（路径样式判定用） */
 const PATH_EXT = /\.(py|ts|tsx|js|jsx|md|json|sh|css|yaml|yml|toml|html|txt|sql|go|rs|java|vue|svg|c|h|cpp|lock|ini|cfg)$/i;
 
@@ -87,7 +120,11 @@ export function renderMarkdown(
 ): string {
   if (!src) return "";
   try {
-    const math = options.enableMath === false ? src : renderMath(src);
+    let math = src;
+    if (options.enableMath !== false) {
+      const protectedCode = protectCodeFromMath(src);
+      math = protectedCode.restore(renderMath(protectedCode.masked));
+    }
     const raw = marked.parse(math) as string;
     let clean = DOMPurify.sanitize(raw, {
       ALLOWED_TAGS,

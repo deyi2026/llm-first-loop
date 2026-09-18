@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -125,6 +126,7 @@ class SemanticRetriever:
         self._top_k_provider: Callable[[], int] | None = None
         self._mem_emb_cache: dict[str, list[float]] = {}
         self._arch_emb_cache: dict[str, list[float]] = {}
+        self._method_emb_cache: dict[str, list[float]] = {}
         # T8 缓存文件按向量版本分离（embeddings-<tag>.json）：不同 provider/算法
         # 各写各的文件，根治"两代代码/两种 embedder 共写 embeddings.json 互踩覆写"
         # （2026-09-16 实测事故：worktree 旧代码无版本键整体覆写，1487 条 bge 缓存丢失）。
@@ -135,6 +137,15 @@ class SemanticRetriever:
             self._arch_emb_cache = self._load_emb_cache_versioned(Path(archive_dir))
         self._mem_cache_path = self._cache_path(Path(memory_dir)) if memory_dir else None
         self._arch_cache_path = self._cache_path(Path(archive_dir)) if archive_dir else None
+        self._method_cache_path: Path | None = None
+
+    def configure_method_dir(self, method_dir: str | Path) -> None:
+        """Bind Method semantic-cache storage after RuntimePaths authority is resolved."""
+        directory = Path(method_dir)
+        self._method_emb_cache = self._load_emb_cache_versioned(directory)
+        self._method_cache_path = self._cache_path(directory)
+        # Rebuild lazy fallback state so its Method cache/path uses the same authority.
+        self._fb_state = None
 
     def _cache_tag(self, embedder: Embedder | None = None) -> str:
         """向量版本 → 文件名安全 tag（空版本 → legacy，防旧代码/None embedder 覆写主版本）."""
@@ -184,6 +195,8 @@ class SemanticRetriever:
                 "arch_cache": {},
                 "mem_path": None,
                 "arch_path": None,
+                "method_cache": {},
+                "method_path": None,
             }
             if self._mem_cache_path is not None:
                 state["mem_path"] = self._cache_path(self._mem_cache_path.parent, self.fallback_embedder)
@@ -191,6 +204,9 @@ class SemanticRetriever:
             if self._arch_cache_path is not None:
                 state["arch_path"] = self._cache_path(self._arch_cache_path.parent, self.fallback_embedder)
                 state["arch_cache"] = self._load_emb_cache_for(state["arch_path"], self.fallback_embedder)
+            if self._method_cache_path is not None:
+                state["method_path"] = self._cache_path(self._method_cache_path.parent, self.fallback_embedder)
+                state["method_cache"] = self._load_emb_cache_for(state["method_path"], self.fallback_embedder)
             self._fb_state = state
         return self._fb_state
 
@@ -260,6 +276,7 @@ class SemanticRetriever:
         session_id: str = "",
         memory: Any | None = None,
         archive: Any | None = None,
+        method: Any | None = None,
         keyword_results: list[dict] | None = None,
     ) -> RetrievalResult:
         """语义检索（预算内）→ 与关键词结果融合.
@@ -291,6 +308,8 @@ class SemanticRetriever:
                 "arch_cache": self._arch_emb_cache,
                 "mem_path": self._mem_cache_path,
                 "arch_path": self._arch_cache_path,
+                "method_cache": self._method_emb_cache,
+                "method_path": self._method_cache_path,
             }
         else:
             fb = self._fallback_state()
@@ -313,7 +332,7 @@ class SemanticRetriever:
 
         # 语义召回（预算内）
         semantic_hits: list[dict] = []
-        candidates = self._candidates(scope, session_id, memory, archive)
+        candidates = self._candidates(scope, session_id, memory, archive, method)
         for c in candidates:
             if time.monotonic() - start > self.timeout_s:
                 return RetrievalResult(
@@ -360,7 +379,7 @@ class SemanticRetriever:
         return RetrievalResult(entries=fused, mode=mode, note=fallback_note)
 
     # ── 候选条目（惰性向量化）──
-    def _candidates(self, scope: str, session_id: str, memory: Any, archive: Any) -> list[dict]:
+    def _candidates(self, scope: str, session_id: str, memory: Any, archive: Any, method: Any = None) -> list[dict]:
         cands: list[dict] = []
         if scope in {"memory", "all"} and memory is not None:
             for e in memory.all():
@@ -387,21 +406,31 @@ class SemanticRetriever:
                         "key": f"archive:{h.get('id', '')}",
                     }
                 )
+        if scope in {"method", "all"} and method is not None:
+            with contextlib.suppress(Exception):
+                cands.extend(method.semantic_candidates())
         return cands
 
     def _embed_cached(self, cand: dict, engine: dict) -> list[float] | None:
         # 修复: 按候选自身 kind 路由缓存（scope="all" 时此前误走 archive 缓存，
         # 导致 memory 候选逐条重嵌入+缓存文件交叉污染；候选 dict 已带 kind 字段）
         # T0-B: 缓存/嵌入/落盘路径全部取自当前 engine（主或 fallback，空间自洽）
-        is_memory = cand.get("kind", "memory") == "memory"
-        cache = engine["mem_cache"] if is_memory else engine["arch_cache"]
+        kind = cand.get("kind", "memory")
+        if kind == "method":
+            cache = engine.get("method_cache", {})
+            path = engine.get("method_path")
+        elif kind == "archive":
+            cache = engine["arch_cache"]
+            path = engine["arch_path"]
+        else:
+            cache = engine["mem_cache"]
+            path = engine["mem_path"]
         key = cand["key"]
         if key not in cache:
             vec = engine["embedder"].embed(cand["content"])
             if vec is None:
                 return None
             cache[key] = vec
-            path = engine["mem_path"] if is_memory else engine["arch_path"]
             self._persist_emb_cache(path, cache, engine["embedder"])
         return cache.get(key)
 

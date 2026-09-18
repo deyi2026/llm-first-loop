@@ -29,6 +29,7 @@ export interface StreamChatRequestBody {
   message: string;
   session_id?: string | null;
   model?: string | null;
+  model_change?: boolean;
   resume?: boolean;
   run_generation?: string;
   reasoning_mode?: string;
@@ -258,7 +259,8 @@ export async function enqueueQueueMessage(
   attachments: { ref: string }[],
   model: string | null,
   reasoningEffort: string | null,
-  reasoningMode: string | null
+  reasoningMode: string | null,
+  modelChange = false
 ): Promise<QueueEnqueueResponse> {
   try {
     const resp = await fetch("/api/v1/chat/queue", {
@@ -269,6 +271,7 @@ export async function enqueueQueueMessage(
         message,
         attachments,
         model: model || undefined,
+        model_change: modelChange || undefined,
         reasoning_effort: reasoningEffort || undefined,
         reasoning_mode: reasoningMode || "auto",
       }),

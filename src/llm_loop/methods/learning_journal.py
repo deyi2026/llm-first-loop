@@ -49,6 +49,9 @@ class LearningJob:
     attempt: int = 0
     candidate_ref: str = ""
     created_at: float = field(default_factory=time.time)
+    updated_at: float = 0.0
+    started_at: float = 0.0
+    finished_at: float = 0.0
 
     @property
     def method_ref(self) -> str:  # backward-compatible alias
@@ -136,12 +139,14 @@ class LearningJournal:
                     source_model=str(evt.get("source_model", "")),
                     trigger_facts=dict(evt.get("trigger_facts") or {}),
                     created_at=float(evt.get("ts") or 0.0),
+                    updated_at=float(evt.get("ts") or 0.0),
                 )
                 jobs[job_id] = job
                 continue
             if kind == "started":
                 job.state = "started"
                 job.attempt += 1
+                job.started_at = float(evt.get("ts") or job.started_at or 0.0)
             elif kind == "admitted":
                 job.state = "admitted"
             elif kind == "requeued":
@@ -150,15 +155,20 @@ class LearningJournal:
                 job.state = "saved"
                 job.candidate_ref = str(evt.get("candidate_ref", ""))
                 job.reason = ""
+                job.finished_at = float(evt.get("ts") or 0.0)
             elif kind == "none":
                 job.state = "none"
                 job.reason = _truncate(evt.get("reason", ""))
+                job.finished_at = float(evt.get("ts") or 0.0)
             elif kind == "failed":
                 job.state = "failed"
                 job.reason = _truncate(evt.get("reason", ""))
+                job.finished_at = float(evt.get("ts") or 0.0)
             elif kind == "cancelled":
                 job.state = "cancelled"
                 job.reason = _truncate(evt.get("reason", ""))
+                job.finished_at = float(evt.get("ts") or 0.0)
+            job.updated_at = float(evt.get("ts") or job.updated_at or 0.0)
         return jobs
 
     def _snapshot(self) -> dict[str, LearningJob]:
@@ -241,6 +251,12 @@ class LearningJournal:
         ]
         out.sort(key=lambda j: j.created_at)
         return out[:max_n]
+
+    def recent_jobs(self, limit: int = 50) -> list[LearningJob]:
+        """Return recent durable learning lifecycle facts for read-only observability."""
+        jobs = list(self._snapshot().values())
+        jobs.sort(key=lambda job: (job.updated_at or job.created_at, job.created_at), reverse=True)
+        return jobs[: max(1, min(int(limit), 200))]
 
     # ---------- transitions (append-only) ----------
 

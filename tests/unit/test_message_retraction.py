@@ -79,6 +79,28 @@ def test_session_json_read_path_overlays_append_only_retraction(tmp_path: Path):
     assert "原始 JSON 仍保留这个正文" in raw_path.read_text(encoding="utf-8")
 
 
+def test_session_retraction_overlay_reuses_exact_event_read_cache(tmp_path: Path, monkeypatch):
+    sessions, events = _stores(tmp_path)
+    sid = _seed_user(sessions, "缓存前仍应正确撤回")
+    assert sessions.retract_message_by_source_id(SOURCE_ID)["status"] == "retracted"
+    events._invalidate_read_cache(sid)  # noqa: SLF001 - force one cold-read baseline
+
+    canonical_read = events.read
+    calls = 0
+
+    def counted_read(session_id: str):
+        nonlocal calls
+        calls += 1
+        return canonical_read(session_id)
+
+    monkeypatch.setattr(events, "read", counted_read)
+    first = sessions.load(sid)
+    second = sessions.load(sid)
+
+    assert first.messages[0].content == second.messages[0].content == "[RETRACTED]"
+    assert calls == 1
+
+
 def test_retraction_is_idempotent_and_does_not_append_duplicate_events(tmp_path: Path):
     sessions, events = _stores(tmp_path)
     sid = _seed_user(sessions)

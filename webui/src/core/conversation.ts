@@ -423,6 +423,7 @@ export interface SendAttachment {
 export interface SendQueueOpts {
   queueId: string;
   frozenModel: string | null;
+  frozenModelChange: boolean;
   frozenEffort: string | null;
   frozenReasoningMode: string | null;
 }
@@ -475,15 +476,21 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     streamStartedAt: Date.now(),
   });
 
-  // 2026-08-18 修复跳回旧会话: handleNew 后发送需 new_session=true（消费标记）
+  // 2026-08-18 修复跳回旧会话: handleNew 后发送需 new_session=true。
+  // 2026-09-18: pending guard 必须保持到 run_started 绑定真实新 session；如果在
+  // 发请求前就清掉，current 仍为空的窗口会被 SSE/watchdog 用旧 shared/current
+  // 回填，session-store subscriber 随即 detach 本次新会话 SSE。
   const newSessionPending = sessionStore.getState().newSessionPending;
-  if (newSessionPending) sessionStore.setNewSessionPending(false);
+  const modelChangeIntent = opts
+    ? opts.frozenModelChange
+    : sessionStore.getState().modelChangePending;
   const body = {
     message: text,
     attachments: attachmentRefs,
     session_id: sessionId,
     // 队列接力：用排队时冻结的模型/effort/mode（不取当前 UI 值——冻结语义）
     model: opts ? opts.frozenModel : sessionStore.getState().model,
+    model_change: modelChangeIntent || undefined,
     reasoning_effort: opts ? opts.frozenEffort : sessionStore.getState().reasoningEffort,
     reasoning_mode: opts ? opts.frozenReasoningMode ?? undefined : sessionStore.getState().thinkingMode,
     new_session: newSessionPending || undefined,
@@ -508,6 +515,8 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
         // Update abort ownership before publishing the new session id; the session-store
         // subscriber must not mistake this mechanical bind for a user session switch.
         abortSessionId = sid;
+        if (newSessionPending) sessionStore.setNewSessionPending(false);
+        if (!opts && modelChangeIntent) sessionStore.setModelChangePending(false);
         if (sessionStore.getState().currentSessionId !== sid) sessionStore.setCurrentSession(sid);
       },
       onAnswerDelta: (d) => {
@@ -585,7 +594,16 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
 
   if (outcome.ok && outcome.data) {
     const data = outcome.data as ChatDoneData;
-    if (data.session_id) sessionStore.setCurrentSession(data.session_id);
+    if (data.session_id) {
+      if (newSessionPending) sessionStore.setNewSessionPending(false);
+      sessionStore.setCurrentSession(data.session_id);
+    }
+    if (!opts && modelChangeIntent) sessionStore.setModelChangePending(false);
+    // done.model_used is the actual routed model, including an in-run switch_model.
+    // Sync the selector mechanically without creating new human model-change intent;
+    // otherwise the UI can keep showing a stale model even though session authority
+    // has already moved to another model.
+    if (data.model_used) sessionStore.setModel(data.model_used);
     const finalText = (data.final_answer ?? "").trim();
     if (finalText) {
       finalize({
@@ -712,11 +730,12 @@ export async function enqueueQueueTurn(
   const refs = sendable.map((a) => ({ ref: a.attachment_ref! }));
   const st = sessionStore.getState();
   const resp = await enqueueQueueMessage(
-    sessionId, text.trim(), refs, st.model, st.reasoningEffort, st.thinkingMode
+    sessionId, text.trim(), refs, st.model, st.reasoningEffort, st.thinkingMode, st.modelChangePending
   );
   if (!resp.ok) {
     return { ok: false, detail: resp.detail ?? "排队失败，请稍后重试" };
   }
+  if (st.modelChangePending) sessionStore.setModelChangePending(false);
   await refreshQueue(sessionId);
   return { ok: true };
 }
@@ -769,6 +788,7 @@ export async function relayNextQueued(sessionId: string): Promise<void> {
     void sendMessage(claimed.message || "", frozenAttachments, {
       queueId: claimed.queue_id,
       frozenModel: claimed.model ?? null,
+      frozenModelChange: Boolean((claimed as { model_change?: boolean }).model_change),
       frozenEffort: claimed.reasoning_effort ?? null,
       frozenReasoningMode: (claimed as { reasoning_mode?: string }).reasoning_mode ?? null,
     }).catch(() => {

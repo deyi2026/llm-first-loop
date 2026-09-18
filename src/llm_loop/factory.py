@@ -17,7 +17,7 @@ from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from llm_loop.browser.action import BrowserActionAdapter, BrowserActionReceiptStore
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
@@ -187,8 +187,17 @@ def _read_workspace_changed_flag(data_dir: str) -> dict | None:
         return None
 
 
-def build_engine(settings: Settings) -> LoopEngine:
-    """装配全部组件并返回 LoopEngine."""
+def build_engine(
+    settings: Settings,
+    *,
+    runtime_role: Literal["task", "learning"] = "task",
+) -> LoopEngine:
+    """装配组件并返回 LoopEngine。
+
+    ``task`` runtime（Web/Feishu/CLI）只生产 durable learning jobs；真正的
+    Reflection consumer 仅由独立 ``learning`` runtime 启动。这样 Learning Plane
+    保持脱离 Task completion critical path，也不会因 Web/Feishu 双进程而重复消费。
+    """
     # ERC rollout is explicit.  ``off`` remains the default; shadow/enforce stores are only
     # constructed when the corresponding mode is requested.  No provider call occurs here.
     settings.ensure_dirs()
@@ -1085,6 +1094,11 @@ def build_engine(settings: Settings) -> LoopEngine:
             data_dir_explicit=False,
         )
 
+    if semantic_retriever is not None:
+        # RuntimePaths is the authority for mutable Method cache placement; do not let
+        # cwd decide where semantic Method vectors are persisted.
+        semantic_retriever.configure_method_dir(_runtime_paths.methods_dir)
+
     def _knowledge_health_snapshot() -> dict[str, Any]:
         return inspect_knowledge_health(_runtime_paths)
 
@@ -1498,10 +1512,10 @@ def build_engine(settings: Settings) -> LoopEngine:
     # M50（design §5.6）: 注入增强版 refresh_config executor — 重读 providers.json
     install_refresh_executor(engine)
 
-    # Learning Plane（design §5.3）: durable journal + 后台 ReflectionRun 消费者。
-    # 默认开启（2026-09-17 用户裁决：学习闭环为运行时一等能力，config.LEARNING_PLANE_ENABLED
-    # 默认 True）；显式 LEARNING_PLANE_ENABLED=0 时不挂载 engine.learning_journal，
-    # post_run 反射检查保持静默 —— 零模型调用、无队列积压。
+    # Learning Plane（design §5.3）职责拆分：所有 task runtime 仅挂 durable journal
+    # 作为 producer；只有独立 learning runtime 启动 Reflection consumer。
+    # 这恢复 Architecture SoT 的 Task/Learning 运行时分离，避免 Web + Feishu 对共享
+    # journal 双消费、双发 provider 请求。
     engine.learning_plane = None
     foreground_probe = ForegroundActivityProbe(engine, settings.sessions_dir)
     resource_governor = ResourceGovernor(foreground_probe=foreground_probe.active)
@@ -1533,25 +1547,33 @@ def build_engine(settings: Settings) -> LoopEngine:
             candidate_lookup=method_store.find_by_evidence,
         )
         engine.learning_journal = learning_journal
+        if runtime_role == "learning":
+            def _resolve_learning_resource_target(model_ref: str) -> tuple[str, str]:
+                return model_pool.registry.resolve(model_ref or settings.llm_model)
 
-        def _resolve_learning_resource_target(model_ref: str) -> tuple[str, str]:
-            return model_pool.registry.resolve(model_ref or settings.llm_model)
-
-        learning_plane = LearningPlane(
-            journal=learning_journal,
-            episode_store=episode_store,
-            method_store=method_store,
-            engine=engine,
-            model_resolver=model_pool.get_client,
-            resource_governor=resource_governor,
-            resource_target_resolver=_resolve_learning_resource_target,
-            provider_call_coordinator=provider_call_coordinator,
-        )
-        learning_plane.start()
-        engine.learning_plane = learning_plane
-        logger.info("Learning Plane 已装配并启动 journal=%s", learning_journal._path)
+            learning_plane = LearningPlane(
+                journal=learning_journal,
+                episode_store=episode_store,
+                method_store=method_store,
+                engine=engine,
+                model_resolver=model_pool.get_client,
+                resource_governor=resource_governor,
+                resource_target_resolver=_resolve_learning_resource_target,
+                provider_call_coordinator=provider_call_coordinator,
+            )
+            learning_plane.start()
+            engine.learning_plane = learning_plane
+            logger.info("Learning Plane dedicated consumer 已启动 journal=%s", learning_journal._path)
+        else:
+            logger.info("Learning journal producer 已挂载；task runtime 不启动 Reflection consumer")
     else:
         logger.debug("Learning Plane 未启用（LEARNING_PLANE_ENABLED）")
+
+    # Dedicated Learning runtime has no user ingress and must not duplicate the Task
+    # plane's BackgroundRunner / Scheduler / Inbox watcher. Everything Reflection needs
+    # has already been assembled above, so stop assembly at the plane boundary.
+    if runtime_role == "learning":
+        return engine
 
     # EVO 后台 run 改造（对齐 DSH 后台任务）：装配后台 run 执行器——SSE 端点改订阅，
     # run 在后台 daemon 线程执行，断连只停订阅、结果落盘；RUNNER_BACKGROUND=0 回退旧直驱

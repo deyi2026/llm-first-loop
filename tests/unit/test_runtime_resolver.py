@@ -89,6 +89,18 @@ def test_secret_keys_env_first(tmp_path):
     assert ec2.sources["LLM_API_KEY"] == "dotenv_secret"
 
 
+def test_glm_provider_secret_is_projected_from_dotenv(tmp_path, monkeypatch):
+    """Dedicated Learning runtime receives the provider-specific GLM credential."""
+    _make_env_file(tmp_path, ["GLM_API_KEY=glm-dotenv-secret"])
+    ec = resolve_effective("learning", env={}, workspace_root=tmp_path)
+    assert ec.values["GLM_API_KEY"] == "glm-dotenv-secret"
+    assert ec.sources["GLM_API_KEY"] == "dotenv_secret"
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+    apply_to_environ(ec)
+    assert os.environ["GLM_API_KEY"] == "glm-dotenv-secret"
+    assert "glm-dotenv-secret" not in str(ec.to_summary())
+
+
 def test_apply_to_environ_sets_and_unsets(tmp_path, monkeypatch):
     """effective 值写入环境；被忽略残留键在 .env 未定义时清除。"""
     _make_env_file(tmp_path, ["LLM_MODEL=glm/glm-5.3"])

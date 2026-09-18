@@ -28,6 +28,10 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, description="会话 ID，可选；不传则新建会话")
     new_session: bool = Field(default=False, description="2026-08-18: true=强制新建会话（/new 语义——前端清 currentSessionId 但后端复用共享当前导致'新开不成功'）；与 session_id 互斥（同传时 new_session 优先）")
     model: str | None = Field(default=None, description="模型名，可选；不传用装配默认模型")
+    model_change: bool = Field(
+        default=False,
+        description="true=本次是人类显式模型选择；false=payload.model 仅为客户端快照，不得覆盖既有会话模型 authority",
+    )
     reasoning_effort: str | None = Field(default=None, description="推理等级（low/medium/high），可选；不传用装配默认")
     reasoning_mode: Literal["auto", "off", "on"] = Field(
         default="auto",
@@ -101,6 +105,7 @@ class QueueEnqueueRequest(BaseModel):
         description="服务端签发的附件引用（入队时冻结）",
     )
     model: str | None = Field(default=None, description="排队时的模型选择（冻结）")
+    model_change: bool = Field(default=False, description="排队时是否为显式模型切换意图（冻结）")
     reasoning_effort: str | None = Field(default=None, description="排队时的推理等级（冻结）")
     reasoning_mode: Literal["auto", "off", "on"] = Field(
         default="auto", description="排队时的 reasoning 模式（冻结）"

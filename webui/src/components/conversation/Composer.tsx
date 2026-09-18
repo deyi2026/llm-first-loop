@@ -153,13 +153,13 @@ export function Composer() {
           modelsRef.current.map((m) => ({
             label: m,
             run: () => {
-              sessionStore.setModel(m);
+              sessionStore.selectModel(m);
               flashHint(`已选择模型：${m}（当前请求生效）`);
             },
           })),
         run: (arg) => {
           if (arg) {
-            sessionStore.setModel(arg);
+            sessionStore.selectModel(arg);
             flashHint(`已选择模型：${arg}（当前请求生效）`);
           }
         },

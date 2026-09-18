@@ -154,4 +154,28 @@ describe("EvolutionPanel approval feedback", () => {
     expect(body.extra_confirm).toBe(true);
     expect(body.expected_status).toBe("pending_review");
   });
+
+  it("shows a copyable AI notification receipt after approval (EVO-20260918-d1182270)", async () => {
+    installFetch({
+      reviewBody: { ok: true, message: "✅ 已批准", id: baseItem.id, new_status: "accepted" },
+    });
+    render(<EvolutionPanel />);
+
+    await screen.findByText(baseItem.id);
+    fireEvent.click(screen.getByText(baseItem.id));
+    fireEvent.click(await screen.findByTestId("evo-approve"));
+    fireEvent.click(screen.getByTestId("evo-confirm-ok"));
+
+    const receipt = await screen.findByTestId("evo-review-receipt");
+    expect(receipt).toHaveTextContent("AI 会话不会自动收到");
+    const receiptText = screen.getByTestId("evo-review-receipt-text");
+    expect(receiptText).toHaveTextContent(`已批准 ${baseItem.id}`);
+    expect(receiptText).toHaveTextContent("新状态 accepted");
+    expect(receiptText).toHaveTextContent("【人工审批回执】");
+    expect(screen.getByTestId("evo-review-receipt-copy")).toBeInTheDocument();
+
+    // 关闭回执：用户明确放弃后才隐藏
+    fireEvent.click(screen.getByTitle("关闭回执"));
+    expect(screen.queryByTestId("evo-review-receipt")).toBeNull();
+  });
 });

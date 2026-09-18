@@ -55,6 +55,46 @@ export interface SessionListResponse {
   count: number;
 }
 
+export interface LearningJobInfo {
+  job_id: string;
+  source_episode_ref: string;
+  source_session_id: string;
+  source_model: string;
+  state: string;
+  attempt: number;
+  candidate_ref?: string | null;
+  reason?: string | null;
+  created_at: number;
+  updated_at: number;
+  started_at?: number | null;
+  finished_at?: number | null;
+  trigger_facts?: Record<string, unknown>;
+}
+
+export interface LearningStatusInfo {
+  enabled: boolean;
+  producer_only: boolean;
+  worker: {
+    running?: boolean;
+    pid?: number | null;
+    started_at?: string | null;
+    git_head?: string | null;
+    model_ref?: string | null;
+    provider_id?: string | null;
+    build?: BuildIdentityInfo;
+    manifest_present?: boolean;
+  };
+  counts: Record<string, number>;
+  jobs: LearningJobInfo[];
+}
+
+export async function fetchLearningStatus(limit = 50): Promise<LearningStatusInfo | null> {
+  const { status, data } = await api<LearningStatusInfo>(
+    `/api/v1/learning/status?limit=${Math.max(1, Math.min(limit, 200))}`
+  );
+  return status === 200 && Array.isArray(data.jobs) ? data : null;
+}
+
 export async function fetchHealth(): Promise<HealthInfo | null> {
   const { status, data } = await api<HealthInfo>("/health");
   return status === 200 ? data : null;

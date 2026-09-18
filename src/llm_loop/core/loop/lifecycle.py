@@ -381,6 +381,13 @@ class _RunEntrypointMixin:
 
     def close(self: LoopEngine) -> None:
         """释放底层 LLM 客户端连接，幂等且 fail-open."""
+        learning_plane = getattr(self, "learning_plane", None)
+        stopper = getattr(learning_plane, "stop", None)
+        if callable(stopper):
+            try:
+                stopper()
+            except Exception as exc:  # noqa: BLE001 — 后台学习线程关闭失败不遮蔽主关闭
+                logger.warning("Learning Plane 关闭失败（fail-open）: %s", exc)
         target = self.llm_pool if self.llm_pool is not None else self.llm
         closer = getattr(target, "close", None)
         if closer is None:
