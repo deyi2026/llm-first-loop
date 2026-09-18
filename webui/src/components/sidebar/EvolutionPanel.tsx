@@ -156,6 +156,42 @@ export function EvolutionPanel() {
     setViewerLoading(false);
   };
 
+  // 人工审批回执（EVO-20260918-d1182270）: AI 会话无推送 → 生成可复制回执，避免"批了但没人知道"
+  const [reviewReceipt, setReviewReceipt] = useState<{ text: string; hint: string } | null>(null);
+
+  const buildReceipt = (ids: string[], decision: string, reason: string, newStatus?: string) => {
+    const time = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    const verb = decision === "accepted" ? "已批准" : "已拒绝";
+    const why = decision === "rejected" && reason ? `（理由：${reason}）` : "";
+    const status = newStatus ? `，新状态 ${newStatus}` : "";
+    return `【人工审批回执】${verb} ${ids.join("、")}${why}（web 面板 ${time}）${status}。AI 会话不会自动收到本操作，请核实 evolution 状态后继续执行。`;
+  };
+
+  const copyReceipt = async (text: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        setActionMsg("回执已复制到剪贴板");
+        return;
+      }
+    } catch {
+      /* 回退 execCommand */
+    }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setActionMsg("回执已复制到剪贴板");
+    } catch {
+      setActionMsg("复制失败，请手动选中回执文本复制");
+    }
+  };
+
   const review = (id: string, decision: string, reason: string, extraConfirm = false) => {
     setBusy(true);
     setActionMsg("");
@@ -178,6 +214,12 @@ export function EvolutionPanel() {
           : `⚠️ ${String(d.detail || d.message || `失败(${r.status})`)}`;
         setActionMsg(message);
         setConfirmMsg(message);
+        if (r.ok) {
+          setReviewReceipt({
+            text: buildReceipt([id], decision, reason, d.new_status ? String(d.new_status) : undefined),
+            hint: "审批已生效。AI 会话不会自动收到推送，请复制回执发给当前 AI 会话：",
+          });
+        }
         if (r.status === 409 || r.ok) load();
         return r.ok; // 成功才关闭；失败原因必须留在当前弹窗内可见
       })
@@ -209,6 +251,12 @@ export function EvolutionPanel() {
         const ok = d.ok_count ?? 0;
         const fail = d.fail_count ?? 0;
         setActionMsg(`批量完成：成功 ${ok} / 失败 ${fail}`);
+        if (ok > 0) {
+          setReviewReceipt({
+            text: buildReceipt(Array.from(selected), "accepted", ""),
+            hint: `批量批准已生效（成功 ${ok} 条）。AI 会话不会自动收到推送，请复制回执发给当前 AI 会话：`,
+          });
+        }
         setSelected(new Set());
         load();
       })
@@ -263,6 +311,34 @@ export function EvolutionPanel() {
       {/* 面板级操作反馈（UX 修复: 原渲染在条目 map 内，条目刷新消失后消息跟着消失 → 用户感知"没反应"） */}
       {actionMsg && (
         <div className="v2-evo-action-msg" data-testid="evo-action-msg">{actionMsg}</div>
+      )}
+
+      {/* 审批回执（EVO-20260918-d1182270）: AI 会话无推送 → 一键复制告知话术，闭环"批完之后下一步" */}
+      {reviewReceipt && (
+        <div
+          className="v2-evo-receipt"
+          data-testid="evo-review-receipt"
+          style={{ margin: "6px 0", padding: "8px 10px", border: "1px solid #2f6f4f", borderRadius: 8, background: "rgba(47,111,79,0.08)" }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 12 }}>{reviewReceipt.hint}</span>
+            <button type="button" className="v2-icon-btn" title="关闭回执" onClick={() => setReviewReceipt(null)}>×</button>
+          </div>
+          <pre
+            data-testid="evo-review-receipt-text"
+            style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: "6px 0 0", fontSize: 12, userSelect: "text" }}
+          >
+            {reviewReceipt.text}
+          </pre>
+          <button
+            type="button"
+            className="v2-evo-btn approve"
+            data-testid="evo-review-receipt-copy"
+            onClick={() => void copyReceipt(reviewReceipt.text)}
+          >
+            复制回执
+          </button>
+        </div>
       )}
 
       {/* 批量栏（仅待审批 Tab + 有可选） */}

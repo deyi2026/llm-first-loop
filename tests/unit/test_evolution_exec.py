@@ -129,7 +129,8 @@ def test_plan_allowed_level2():
 
 
 def test_maybe_auto_execute_level0_returns_none(tmp_path):
-    """级别 0 → maybe_auto_execute 返回 None（accepted 保持，等待人工执行）."""
+    """级别 0 → maybe_auto_execute 返回 None（accepted 保持，等待人工执行）；
+    exec_log 记 skipped 终态（政策跳过≠执行失败，EVO-20260918-a6088cb7）."""
     store = EvolutionStore(tmp_path / "audit")
     sug = store.submit(content="优化超时参数", impact_scope="timeout_s")
     store.review(sug.id, "accepted")
@@ -137,20 +138,31 @@ def test_maybe_auto_execute_level0_returns_none(tmp_path):
     outcome = executor.maybe_auto_execute(sug)
     assert outcome is None
     assert store.list(status="accepted")[0]["id"] == sug.id  # 状态保持 accepted
-    log = (tmp_path / "audit" / "evolution_exec_log.jsonl").read_text(encoding="utf-8")
-    assert "仅建议级" in log
+    import json as _json
+    record = _json.loads(
+        (tmp_path / "audit" / "evolution_exec_log.jsonl").read_text(encoding="utf-8").strip()
+    )
+    assert record["status"] == "skipped"  # 政策跳过是终态事实，不再误记 failed
+    assert record["suggestion_id"] == sug.id
+    assert "仅建议级" in record["note"]
 
 
 def test_maybe_auto_execute_boundary_returns_none(tmp_path):
-    """涉边界 → maybe_auto_execute 返回 None + 边界原因（EXEC-03，级别 2 也不放行）."""
+    """涉边界 → maybe_auto_execute 返回 None + 边界原因（EXEC-03，级别 2 也不放行）；
+    exec_log 同样记 skipped 终态（EVO-20260918-a6088cb7）."""
     store = EvolutionStore(tmp_path / "audit")
     sug = store.submit(content="调整安全策略", impact_scope="safety")
     store.review(sug.id, "accepted")
     executor = EvolutionExecutor(exec_level=2, store=store, audit_dir=tmp_path / "audit")
     outcome = executor.maybe_auto_execute(sug)
     assert outcome is None
-    log = (tmp_path / "audit" / "evolution_exec_log.jsonl").read_text(encoding="utf-8")
-    assert "涉边界需人工执行" in log
+    import json as _json
+    record = _json.loads(
+        (tmp_path / "audit" / "evolution_exec_log.jsonl").read_text(encoding="utf-8").strip()
+    )
+    assert record["status"] == "skipped"
+    assert record["boundary"]["touches_boundary"] is True
+    assert "涉边界需人工执行" in record["note"]
 
 
 def test_maybe_auto_execute_allowed_sets_executing(tmp_path):
