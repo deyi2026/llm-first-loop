@@ -28,7 +28,8 @@ from llm_loop.core.message import (
     ToolResult,
     ToolResultStatus,
 )
-from llm_loop.core.run_context import current_run_generation
+from llm_loop.core.run_context import current_run_generation, current_session_id
+from llm_loop.knowledge.injection_ledger import append_row
 from llm_loop.tools.pipeline import ImmutableResult, MaterializationError
 from llm_loop.tools.safety import CatastrophicGuard
 
@@ -210,8 +211,6 @@ _HYDRATION_TOOLS = frozenset({"search_records", "skill_load"})
 def _ledger_session_id() -> str:
     """P1 归因窗口按 session 划分所需的机械归属（fail-open，取不到则空串）."""
     try:
-        from llm_loop.core.run_context import current_session_id
-
         return str(current_session_id.get() or "")
     except Exception:  # noqa: BLE001 - 观测字段永不阻断主路径
         return ""
@@ -220,8 +219,6 @@ def _ledger_session_id() -> str:
 def _ledger_receipt_pointer(*, tool: str, status: str, source: str, chars: int) -> None:
     """登记"建议文本实际进入模型可见正文"的时刻（on/shadow 模式；off 态不触发）."""
     with contextlib.suppress(Exception):
-        from llm_loop.knowledge.injection_ledger import append_row
-
         append_row(
             kind="receipt_pointer",
             tool=tool,
@@ -257,8 +254,6 @@ def _observe_knowledge_hydration(call: "ToolCall", result: "ToolResult") -> None
         status = str(getattr(result.status, "value", "") or "")
         if status not in {"success", "ok"}:
             return
-        from llm_loop.knowledge.injection_ledger import append_row
-
         args = getattr(call, "arguments", None)
         if not isinstance(args, dict):
             args = {}
