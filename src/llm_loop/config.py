@@ -360,6 +360,9 @@ class Settings:
     # target_id 为空仅允许 endpoint 恰好一个 page，防程序替操作者猜 tab。
     browser_perception_cdp_url: str = ""
     browser_perception_target_id: str = ""
+    # EVO-20260918-753b4a91: CDP websocket 单帧上限（websockets max_size）。库默认 1MiB 会让
+    # DOM+AX 大页的 CDP 响应帧 1009 断连并困死会话；默认提升到 64MiB，env 可覆盖。
+    browser_cdp_max_frame_bytes: int = 67_108_864
     # Mutation is a separate capability grant: perception opt-in never implies write access.
     browser_action_enabled: bool = False
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
@@ -827,6 +830,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             "LFL_BROWSER_PERCEPTION_TARGET_ID", ""
         ).strip(),
         browser_action_enabled=env_bool("LFL_BROWSER_ACTION_ENABLED", False),
+        browser_cdp_max_frame_bytes=env_int("LFL_BROWSER_CDP_MAX_FRAME_BYTES", 67_108_864),
         exec_mode=env_one(_env_exec_mode, "EXEC_MODE"),
         exec_allowlist=env_values.get("EXEC_ALLOWLIST", "").strip(),
         run_mode=env_one(_env_run_mode, "RUN_MODE"),

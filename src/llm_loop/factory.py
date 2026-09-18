@@ -884,6 +884,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         _browser_host = CdpReadOnlyBrowserHost(
             settings.browser_perception_cdp_url,
             target_id=settings.browser_perception_target_id,
+            max_frame_bytes=settings.browser_cdp_max_frame_bytes,
         )
         _browser_adapter = BrowserPerceptionAdapter(
             store=BrowserPerceptionStore(Path(settings.data_dir) / "browser_perception")
@@ -914,6 +915,7 @@ def build_engine(settings: Settings) -> LoopEngine:
             _browser_actuator = CdpBrowserMutationActuator(
                 settings.browser_perception_cdp_url,
                 target_id=settings.browser_perception_target_id,
+                max_frame_bytes=settings.browser_cdp_max_frame_bytes,
             )
             _browser_action_adapter = BrowserActionAdapter(
                 perception=_browser_adapter,
