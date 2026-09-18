@@ -188,15 +188,6 @@ def run_history_postprocess(
                     "cache_boundary_mode": _compact_stats.get("cache_boundary_mode"),
                     "cache_protected_messages": _compact_stats.get("cache_protected_messages"),
                     "cache_protected_chars": _compact_stats.get("cache_protected_chars"),
-                    # EVO-20260916-ccc978b2: pinned（锚钉 user 指令）/summarized
-                    # （被折叠消息）原 session 索引——事后审计可直接区分压缩存活
-                    # 锚点与被投影内容，不必反推。
-                    "pinned_msg_seqs": _compact_stats.get("pinned_msg_seqs") or [],
-                    "pinned_user_message_count": _compact_stats.get(
-                        "pinned_user_message_count"
-                    ),
-                    "summarized_msg_seqs": _compact_stats.get("summarized_msg_seqs")
-                    or [],
                     "cache_epoch_reset": out.cache_epoch_reset,
                     "anchor_before": sess_anchor,
                     "anchor_after": _anchor_after,

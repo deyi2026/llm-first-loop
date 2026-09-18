@@ -86,3 +86,16 @@ diff -ru "$MAIN/src" "$M/src"   # 按目录逐个
 | Python 包解析 | **必须 PYTHONPATH=镜像src**（共享 venv editable 安装指向主区 src；不带则镜像加载主区代码） | 测试/启动镜像 web 一律带 PYTHONPATH |
 
 **防混乱总则**：运行时权威（记忆/经验/会话/配置生效值）永远以主区为准；镜像只是"变更实验场"，其任何产出只有经审批 promotion 才进入权威源。
+
+## T0 工作树治理（2026-09-16）
+
+- 代码根事实源链：现役服务以 `data/runtime/runtime_manifest.json` 的
+  `workspace_root` + `data/restart-receipt.json` 为准，不以 mirror 主检出的分支/HEAD 推断。
+- worktree registry：`data/audit/worktree_registry.json`（bootstrap 见
+  `scripts/bootstrap_worktree_registry.py`）。默认全部标 legacy；protected 仅
+  现役 code root 与显式回滚候选；retired 为人工标记；**永不自动删除**（A4 GC 9/19 再议）。
+- 嵌套禁令：禁止在任何 linked worktree 内部再建 worktree（2026-09-16 事故：
+  判基线 worktree 误建于现役 code root 内，弄脏 dual-root clean 校验）。创建前
+  `bootstrap_worktree_registry.py --check-add <path>`；restart preflight 亦拒绝。
+- 会话环境残留 `LFL_RESTART_CODE_ROOT` 是高危默认值：官方重启调用必须显式双根
+  导出并按需 `LFL_RESTART_CODE_ROOT_CONFIRMED=1`（见 restart guide §12）。

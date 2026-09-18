@@ -804,8 +804,6 @@ _INJECTED_USER_PREFIXES = (
     "[程序反馈",
     "[程序续跑",
     "[上下文超限",
-    "[任务锚点",  # EVO-20260916-ccc978b2: 锚快照注入块（当前仅进提交列表不落
-    # session；入表防未来持久化路径把它当真实 user 指令 pin——自强化回路）
 )
 
 
@@ -868,13 +866,6 @@ def build_history_messages(
     preserve_active_ingress_message: Message | None = None,  # exact active-run ingress identity from filtered Session mapping
     preserve_human_message: Message | None = None,  # compatibility alias for older direct callers
     current_turn_ref: int | None = None,  # G6-v2: render source-attached boundary facts only in owning human turn
-    task_anchor_pin_user_messages: int = 0,  # EVO-20260916-ccc978b2（人工已审）: 锚点保护
-    # 从最后 1 条真实 user 指令扩到最近 N 条（建议 N≥2——原始任务指令常是倒数第 2
-    # 条而非最新条），压缩下原文逐字在场；0/1 = 既有行为（零回归，直连调用方不受影响）。
-    task_anchor_snapshot_provider: Any | None = None,  # 惰性快照回调（engine 侧组装的
-    # durable 事实逐字投影：Goal objective/最近 checkpoint/frontier/evidence 引用锚）。
-    # 仅压缩生效（本轮归档或窗口已处于压缩态）时调用；异常/空 → 不注入（fail-open，
-    # 程序不得合成语义——只投影已记录字符串）。
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
 
@@ -1018,7 +1009,6 @@ def build_history_messages(
     # A previously bad compaction may already have advanced the persisted anchor past
     # the active run ingress. Re-open only as far as that exact identity; provider markers
     # still suppress every other already-compacted message.
-    _markers_folded = False  # EVO-20260916-ccc978b2: 窗口压缩态判定标志（见注入处注释）
     if (
         _preserved_ingress_source_index is not None
         and history_anchor > _preserved_ingress_source_index
@@ -1060,16 +1050,11 @@ def build_history_messages(
         session_messages = kept_msgs
         total_chars = sum(_wire_size(m, current_turn_ref) for m in session_messages)
     elif cache_archive_provider:
-        _pre_marker_count = len(session_messages)
         session_messages = [
             m
             for m in session_messages
             if m is _preserved_ingress or not _marker_active(m)
         ]
-        if len(session_messages) != _pre_marker_count:
-            # EVO-20260916-ccc978b2: 锚点未前移但 marker 已折叠（head 保留式压缩的
-            # 稳态）——窗口实际处于压缩态，任务锚快照注入条件之一。
-            _markers_folded = True
         total_chars = sum(_wire_size(m, current_turn_ref) for m in session_messages)
 
     # 2026-09-03 P0 projected-wire pressure: 明确不会进入 provider wire 的推送式
@@ -1079,50 +1064,6 @@ def build_history_messages(
     if skip_injected_system:
         session_messages = [m for m in session_messages if not _is_injected_system(m)]
     total_chars = sum(_wire_size(m, current_turn_ref) for m in session_messages)
-
-    def _maybe_inject_task_anchor_block(new_compaction: bool) -> None:
-        """EVO-20260916-ccc978b2（人工已审）: 压缩生效窗口持续 pin 任务锚快照.
-
-        触发: 本轮发生归档（new_compaction）或窗口已处于压缩态（锚点>0 / marker
-        折叠 / 压缩后稳态早退）——瞬态注入在下一轮锚点前移后会消失，故持续注入
-        直到压缩态解除。内容: engine 侧 provider 回调组装的 durable 事实逐字投影
-        （Goal objective / 最近 checkpoint / frontier / evidence 引用锚），程序不
-        合成语义、不摘要用户消息（用户消息原文由锚组保护逐字保留）；同状态同
-        字节 → 前缀缓存友好。异常/空 → 跳过（fail-open，不阻断提交）。
-        """
-        if task_anchor_snapshot_provider is None:
-            return
-        if not (new_compaction or int(history_anchor or 0) > 0 or _markers_folded):
-            return
-        try:
-            block = str(task_anchor_snapshot_provider() or "")
-        except Exception:  # noqa: BLE001 — fail-open: 锚快照失败不阻断提交
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "任务锚快照 provider 异常（fail-open，跳过注入）", exc_info=True
-            )
-            return
-        if not block.strip():
-            return
-        if new_compaction:
-            block += (
-                "\n[锚提示] 本轮上下文刚压缩，旧 tool 回执已折叠：请以本块 + "
-                "get_goal/task_frontier/read_evidence 核对任务状态，勿凭记忆断言。"
-            )
-        cap = max(512, min(3000, int(max_chars) // 8))
-        if len(block) > cap:
-            block = (
-                block[:cap]
-                + "\n…[锚快照超限截断；完整事实经 get_goal/task_frontier/read_evidence 恢复]…"
-            )
-        # EVO-20260917-2f5ae9cb（人工已审）P1: 追加 wire 尾部而非插头部。
-        # 锚块内容跨轮必然变化（Goal/checkpoint/frontier 投影 + 压缩轮一次性
-        # [锚提示] 行）——"同状态同字节"只在状态冻结时成立；头部插入时其变化
-        # 打穿其后全部历史前缀（会话观测 96%→2% 全量失效的同类机制）。
-        # 仿 memory 注入先例移尾部: 变化只落在 wire 末尾，前缀命中保持；system
-        # 仍在首位（qwen 模板约束不受影响），尾部 user 块不与工具配对冲突。
-        out.append({"role": "user", "content": block})
 
     # Physical history pressure is handled by the single atomic-group compaction path.
     # There is no separate tool-result relevance/age/threshold rewrite policy.
@@ -1141,10 +1082,6 @@ def build_history_messages(
                 continue
             _d = _provider_dict(m)
             _append_or_merge(_d, dynamic=_is_dynamic_inject(m))
-        # EVO-20260916-ccc978b2: 压缩后稳态（锚点已前移/marker 已折叠但本轮无需
-        # 再归档）——早退前仍需持续注入任务锚快照，否则快照只在压缩轮出现、随后
-        # 消失（压缩态稳态恰是最依赖锚点的时刻）。
-        _maybe_inject_task_anchor_block(new_compaction=False)
         return _repair_tool_call_pairing(out)
 
     # 兼容既有语义：无 boundary 的超大真实 user 即使 R6 禁止删字节，也要如实标记
@@ -1186,22 +1123,6 @@ def build_history_messages(
         if any(mm.role == "user" and not _is_injected_block(mm) for mm in atomic_groups[_gi]):
             _anchor_group_idx = _gi
             break
-    # EVO-20260916-ccc978b2（人工已审）: 锚点保护扩到最近 N 条真实 user 指令（N=
-    # task_anchor_pin_user_messages，建议 N≥2——原始任务指令常是倒数第 2 条而非
-    # 最新条，仅保最后 1 条会在压缩中丢失任务起点）。_anchor_group_idx 语义不变
-    # （最新真实 user 组，供既有 _exact_ingress_group/入口保护路径使用）；
-    # _anchor_pin_group_idx=第 N 新真实 user 组，保护区起点取较旧者。0/1 或找不到
-    # → 完全退化为既有行为（直连调用零回归）。
-    _anchor_pin_user_messages = max(0, min(int(task_anchor_pin_user_messages or 0), 8))
-    _anchor_pin_group_idx: int | None = _anchor_group_idx
-    if _anchor_pin_user_messages > 1 and _anchor_group_idx is not None:
-        _found = 1
-        for _gi in range(_anchor_group_idx - 1, -1, -1):
-            if any(mm.role == "user" and not _is_injected_block(mm) for mm in atomic_groups[_gi]):
-                _found += 1
-                _anchor_pin_group_idx = _gi
-                if _found >= _anchor_pin_user_messages:
-                    break
     # The current run ingress is a provider-structural invariant, not a compression
     # source. Keep its exact atomic group byte-for-byte even if surrounding tool groups
     # compact. Hard physical overflow remains the routing/context guard's responsibility.
@@ -1264,28 +1185,11 @@ def build_history_messages(
     # 旧自动压缩摘要曾把任务复述回来形成伪 PASS。program-only 组仍可按普通
     # archive/budget 规则淘汰，不能获得与用户任务相同的保护权。
     _anchor_protected_groups: set[int] = set()
-    _anchor_protect_start = (
-        _anchor_pin_group_idx
-        if _anchor_pin_group_idx is not None
-        else _anchor_group_idx
-    )
-    if _anchor_protect_start is not None:
-        for _pgi in range(_anchor_protect_start, len(atomic_groups)):
+    if _anchor_group_idx is not None:
+        for _pgi in range(_anchor_group_idx, len(atomic_groups)):
             _pg = atomic_groups[_pgi]
             if not all(_is_injected_block(mm) for mm in _pg):
                 _anchor_protected_groups.add(_pgi)
-    # EVO-20260916-ccc978b2: 被钉 user 指令的 base 局部索引（口径与 1482 行归档索引
-    # 一致；postprocess 前由 projection 段映射回原 session 序，写入压缩事件
-    # pinned_msg_seqs，使"证据投影"与"真实压缩"可审计区分）。
-    _anchor_pin_user_source_indices: list[int] = []
-    if _anchor_pin_group_idx is not None:
-        for _pgi in range(_anchor_pin_group_idx, len(atomic_groups)):
-            for mm in atomic_groups[_pgi]:
-                if mm.role == "user" and not _is_injected_block(mm):
-                    _si = _source_index_by_id.get(id(mm))
-                    if _si is not None:
-                        _anchor_pin_user_source_indices.append(_si)
-        _anchor_pin_user_source_indices.sort()
     _anchor_protect_valid = True
     if head_keep_chars > 0:
         acc = 0
@@ -1606,11 +1510,6 @@ def build_history_messages(
                     "cache_boundary_reported_messages": _reported_cached_messages,
                     "cache_protected_messages": _protected_message_count,
                     "cache_protected_chars": _protected_chars,
-                    # EVO-20260916-ccc978b2: 压缩事件审计字段（local=base 编号，由
-                    # projection 段映射回原 session 序后写入 history.compaction 事件，
-                    # 使 pinned（锚钉）与 summarized（被折叠）可逐条审计区分）。
-                    "pinned_msg_seqs_local": list(_anchor_pin_user_source_indices),
-                    "pinned_user_message_count": _anchor_pin_user_messages,
                 }
             )
             if _drop_pct < 5:
@@ -1642,10 +1541,6 @@ def build_history_messages(
             logging.getLogger(__name__).debug(
                 "压缩视图统计失败（fail-open）", exc_info=True
             )
-    # EVO-20260916-ccc978b2: 压缩轮（本轮发生归档）注入任务锚快照 + 一次性轻量锚
-    # 提示（"压缩后首轮"的锚提示随压缩轮出现——快照块持续在场，后续轮不再重复
-    # 提示行，避免前缀缓存逐轮失效）。
-    _maybe_inject_task_anchor_block(new_compaction=bool(archived))
     return _repair_tool_call_pairing(out)
 
 

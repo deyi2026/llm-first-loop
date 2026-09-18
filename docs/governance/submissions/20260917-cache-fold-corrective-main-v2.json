@@ -1,0 +1,135 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260917-cache-fold-corrective-main-v2",
+  "summary": "Correct the PR #23 convergence scope on top of formal main bb59de20 while preserving all later T0 worktree/retrieval changes. Restore only the 30 convergence-only paths that remain independent after direct-overlap and dependency adjudication; retain six T0-owned/dependency paths at current-main state.",
+  "components": [
+    {
+      "component_id": "corrective-v2-runtime-restore",
+      "paths": [
+        "src/llm_loop/config.py",
+        "src/llm_loop/core/cache_health.py",
+        "src/llm_loop/core/history.py",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/prompt_build/stages/history_pipeline.py",
+        "src/llm_loop/core/prompt_build/stages/history_postprocess.py",
+        "src/llm_loop/core/prompt_build/stages/history_projection.py",
+        "src/llm_loop/introspection/proc_version.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "formal-main corrective restoration excluding T0-owned overlap",
+      "disposition": "RESTORE only the convergence-only runtime paths that remain independent after fresh-main adjudication. Preserve current-main memory/retriever.py and runtime/resolver.py because T0 adds behavior/config ownership that depends on the convergence-era embedding/versioned-cache substrate; also preserve memory/embedder.py because retriever's versioned cache and T0 fallback require stable vector_version identity for API embeddings.",
+      "evidence": [
+        "Old corrective edde8958 and new main bb59de20 share merge-base 3eaae8f6; direct merge conflicts only in memory/retriever.py and runtime/resolver.py.",
+        "Three-way audit shows T0 retrieval fallback extends the versioned embedding-cache/threshold/candidate-kind routing present in current main; restoring edde's retriever would remove that dependency substrate.",
+        "Focused qualification exposed the transitive dependency mechanically: restoring old memory/embedder.py removed APIEmbedder.vector_version and restoring old test_embedder_v2.py expected the obsolete single embeddings.json path. Both are therefore retained byte-identical to bb59de20 rather than forcing an incompatible historical test/runtime pair.",
+        "Three-way audit shows T0 keeps embedding configuration in resolver legacy governance; restoring edde's resolver would remove those governed keys and conflict with current T0 configuration ownership.",
+        "The same-run cache-fold implementation remains present in the retained six-path cache fix lineage; this corrective introduces no new cache authority."
+      ],
+      "verification_level": "Staged v2 candidate on exact parent bb59de20: focused/adjacent 233/233 PASS; Ruff PASS; Pyright src 0 errors / 0 warnings; py_compile and diff-check PASS; A.5 PASS at 31 paths / 4 components / 1 control; whole-tree security 1935 files PASS. Full committed-state ci_gate/security/A.5 remain mandatory before remote publication.",
+      "model_evidence_veto_recovery_exit": "This correction changes repository/runtime mechanics only. Semantic relevance, strategy, evidence choice and task completion remain model-owned. The preserved T0 overlap remains current-main authority for retrieval/config mechanics.",
+      "rollback_route": "Revert the v2 corrective commit to return to formal main bb59de20; no persistent data/schema migration is performed.",
+      "declaration_id": "corrective-v2-runtime-restore"
+    },
+    {
+      "component_id": "corrective-v2-eval-asset-removal",
+      "paths": [
+        "evals/embedding_stage1/calib_candidate_keys.npy",
+        "evals/embedding_stage1/calib_sample.py",
+        "evals/embedding_stage1/calib_semantic_queries.json",
+        "evals/embedding_stage1/calib_threshold.py",
+        "evals/embedding_stage1/threshold_calibration.json",
+        "evals/embedding_stage2/README.md",
+        "evals/embedding_stage2/ab_e2e_results.json",
+        "evals/embedding_stage2/ab_labels.json",
+        "evals/embedding_stage2/ab_results.json",
+        "evals/embedding_stage2/run_ab.py",
+        "evals/embedding_stage2/run_ab_e2e.py",
+        "evals/memory_compile/adjudication.json",
+        "evals/memory_compile/merge_ledger.json",
+        "evals/retrieval_ab/goldset.json",
+        "evals/retrieval_ab/results-20260916-144432.json",
+        "evals/retrieval_ab/run_ab_retrieval.py",
+        "scripts/memory_cluster_report.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "PR #23 convergence-only evaluation and memory-analysis assets not re-adopted by T0",
+      "disposition": "REMOVE only assets still absent from the intended v2 target. The two cluster_report files are already deleted by T0/main and therefore are intentionally not part of this corrective diff.",
+      "evidence": [
+        "These 17 paths remain convergence-only after excluding later T0 work.",
+        "Historical artifacts remain reachable through a0f79a53/PR #23; this corrective does not rewrite evidence history.",
+        "evals/memory_compile/cluster_report.json and .md are already absent in bb59de20 and require no corrective change."
+      ],
+      "verification_level": "Staged exact A.5 coverage PASS at 31 changed paths; whole-tree security 1935 files PASS; full committed-state repository gates remain mandatory before publication.",
+      "model_evidence_veto_recovery_exit": "These evaluation/reporting assets own no production semantic authority in this corrective change.",
+      "rollback_route": "Revert the v2 corrective commit to restore the bb59de20 tree."
+    },
+    {
+      "component_id": "corrective-v2-test-restore",
+      "paths": [
+        "tests/unit/test_proc_version.py",
+        "tests/unit/test_run_prefix_stability.py",
+        "tests/unit/test_task_anchor_pin_compaction.py",
+        "tests/unit/test_task_anchor_snapshot_goal_projection.py",
+        "tests/unit/test_tool_result_factualization.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "tests coupled to the non-overlap convergence-only runtime/evaluation deltas",
+      "disposition": "RESTORE the five test paths that remain coupled only to removed convergence behavior. Preserve test_embedder_v2.py at bb59de20 because it is the active contract for version-tagged embedding caches required by the retained retriever/embedder path.",
+      "evidence": [
+        "These five paths correspond to runtime/eval lines being restored or removed by v2.",
+        "All T0-only test files and modifications outside these six paths remain byte-identical to bb59de20."
+      ],
+      "verification_level": "Focused/adjacent 233/233 PASS on the staged v2 tree; full committed-state ci_gate remains mandatory before publication.",
+      "model_evidence_veto_recovery_exit": "Tests own no runtime authority and are restored only to match the corrected production surface.",
+      "rollback_route": "Revert the v2 corrective commit to restore the bb59de20 test tree."
+    },
+    {
+      "component_id": "corrective-v2-a5-record",
+      "paths": [
+        "docs/governance/submissions/20260917-cache-fold-corrective-main-v2.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as the single v2 corrective coverage manifest. Historical PR #23/T0 submission records remain unchanged.",
+      "evidence": [
+        "This manifest partitions the exact v2 changed-path set and records the four-path overlap adjudication."
+      ],
+      "verification_level": "Staged A.5 exact coverage PASS at 31 changed paths / 4 components / 1 control; committed-state A.5 recheck required before remote publication.",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth and promotion; this file is mechanical governance metadata only.",
+      "rollback_route": "Revert this metadata together with the v2 corrective commit."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "corrective-v2-runtime-restore",
+      "g1": {
+        "necessity": "PR #23 merged a 42-file convergence scope into formal main. The first corrective was qualified on 3eaae8f6, but formal main later advanced to bb59de20 with T0 work that directly overlaps four corrective paths and transitively depends on the convergence-era embedder/test cache contract. A fresh-main corrective is required to remove only the remaining unintended convergence scope without deleting later T0 behavior."
+      },
+      "g2": {
+        "authority_owner": "existing bb59de20 runtime plus the independently qualified cache-fold behavior",
+        "relationship": "replace",
+        "non_duplication": "No new runtime authority is introduced. Non-overlap convergence deltas are removed; current-main retriever/resolver ownership is retained where T0 depends on it; cache-fold mechanics remain the existing qualified implementation."
+      },
+      "g3": {
+        "model_evidence": [
+          "three-way Git comparison: 3eaae8f6 base, edde8958 old corrective, bb59de20 current main",
+          "exact overlap audit for cluster_report files, memory/retriever.py and runtime/resolver.py plus focused dependency audit for memory/embedder.py and test_embedder_v2.py",
+          "focused/adjacent and full repository test gates on the fresh v2 tree"
+        ],
+        "recovery_or_reason": "The correction is a normal Git tree restoration with no hidden migration. Historical convergence evidence remains reachable through a0f79a53/PR #23, and later T0 changes remain in current history. If qualification or a later separately authorized runtime canary fails, revert the v2 corrective commit."
+      },
+      "g4": {
+        "rollback": "Revert the v2 corrective commit to return exactly to formal main bb59de20; no persistent-data conversion, credential mutation, service restart or deployment is part of this change.",
+        "verification": [
+          "the 30 retained corrective paths must match the intended old-corrective state",
+          "memory/retriever.py, runtime/resolver.py, memory/embedder.py and test_embedder_v2.py must remain byte-identical to bb59de20",
+          "cluster_report.json/md must remain absent as already established by T0",
+          "all T0-only paths outside the corrective set must remain byte-identical to bb59de20",
+          "focused/adjacent regression, Ruff, Pyright, py_compile and diff-check must pass",
+          "A.5 must exactly cover the v2 changed-path set",
+          "whole-tree security and full committed-state ci_gate must pass before remote publication"
+        ]
+      }
+    }
+  ]
+}

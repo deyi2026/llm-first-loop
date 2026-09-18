@@ -1,0 +1,176 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "SUB-2026-09-16-T0-PLAN-V2",
+  "summary": "T0 批次（方案 v2 人工批准）: ①A1/A2 worktree registry+嵌套禁令（fail-open 非承重，永不自动删除）; ②A3 restart CODE_ROOT 来源判定（环境残留=当日事故根因，自动化通道 abort 除非显式 CONFIRMED）+ preflight dry-run 模式; ③B 语义检索主嵌入(api@8765/bge)不可用时引擎级整套回退 hash（查询/缓存/阈值同空间切换，防向量空间互踩）+ 收编生产 embedding_server.py 为 tracked; ④C1 经验写时近重复无损链接（link-not-merge: 新条目 supersedes 指针+检索端 supersede 去重，不改写旧条目，存量合并仍走人工批准）。部署窗口 2026-09-17 早，任一 gate 红整批不部署，部署后冻结至 09-19 复审。",
+  "declarations": [
+    {
+      "declaration_id": "decl-t0-governance",
+      "g1": {
+        "necessity": "2026-09-16 两起生产运维事故: (a) 会话环境残留 LFL_RESTART_CODE_ROOT 指向旧 worktree，restart 脚本静默加载旧代码（service_control 缺失才暴露）; (b) 判基线 worktree 误建于现役 code root 内部，弄脏 dual-root clean 校验阻断部署。需制度化防复发而非靠人记忆。"
+      },
+      "g2": {
+        "authority_owner": "scripts/restart_mirror.sh（来源判定+嵌套拒绝，位于根校验前）+ src/llm_loop/runtime/worktree_registry.py（registry/嵌套检测，运维辅助）",
+        "relationship": "new_authority",
+        "non_duplication": "registry 明确 fail-open 非承重（缺失/损坏降级既有校验+告警，绝不阻断重启）; restart 脚本判定三态显式化既有隐式默认值，不新增第二套事实源; 不与 service_control/restart fence 的职责重叠（那是生命周期权威，这是防误用 preflight）。"
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/unit/test_worktree_registry.py 5 用例全过（嵌套检测/protected 标记/fail-open/retired 保留/guard 审计）",
+          "tests/scripts/test_restart_preflight_source.py: 复现当日残留 env 场景→自动化通道 abort; CONFIRMED=1→通过; 脚本目录默认→通过",
+          "bash -n 通过; tests/scripts/test_restart_mirror_hardening.py 既有断言全绿（显式 CONFIRMED 契约同步）"
+        ],
+        "recovery_or_reason": "registry 任何损坏路径 fail-open; A3 abort 路径给出明确修复指引; preflight 只读不触服务。"
+      },
+      "g4": {
+        "rollback": "git revert 组件提交即回滚; registry 文件在 data/（运行数据）不在 git。",
+        "verification": [
+          "tests/unit/test_worktree_registry.py",
+          "tests/scripts/test_restart_preflight_source.py",
+          "scripts/check_architecture_submission.py（本清单）"
+        ]
+      }
+    },
+    {
+      "declaration_id": "decl-t0-merge-increment",
+      "g1": {
+        "necessity": "merge main 3eaae8f6 后全量套件门禁暴露两处部署阻断级缺陷: (a) factory provider=api 分支 UnboundLocalError（目标套件未覆盖）; (b) 近重复语义探测绕过 embedding cache 复用不变量。且冲突消解引入未在原 submission 覆盖的变更路径（resolver.py 治理键并集/cluster_report 删除定性/eval 复跑产物），按 A.5 机制补全覆盖与 G1-G4 记录。"
+      },
+      "g2": {
+        "authority_owner": "src/llm_loop/runtime/resolver.py 维持既有 runtime 启动解析权威: 消解为治理键并集（worktree 禁令键 ∪ 受控 env 前缀键），不新增事实源; eval 产物为记录性 artifact 非权威。",
+        "relationship": "reuse",
+        "non_duplication": "resolver 冲突消解为并集语义，两侧行为各自保留; cluster_report.* 删除维持 main 已批准的迁出决定; eval 复跑结果仅落 evals/retrieval_ab/ 记录目录; 未新增第二套治理/评测机制。"
+      },
+      "g3": {
+        "model_evidence": [
+          "全量 tests/ -q: 仅 2 个已知 worktree 环境失败（纯 main 代码在 worktree 同样失败、主检出通过，交叉定性为环境依赖，与本批代码无关）; 两处修复的目标用例全过",
+          "eval A/B 复跑: 答案级 Recall@5 64%≥30% GREEN，gold 级与 09-16 完全一致; 结果入库 evals/retrieval_ab/results-20260917-164554.json",
+          "CI 门禁 run 35202394667 pytest+ruff+pyright 全过; 本地 ruff clean"
+        ],
+        "recovery_or_reason": "provider=api 分支缺 HashEmbedder 由模块级导入修复，不再依赖分支内局部导入; cache 复用不变量由复用文档向量缓存恢复; 两项均有独立测试断言。"
+      },
+      "g4": {
+        "rollback": "git revert 对应 fix/merge 提交; resolver.py 回滚至 main 版本即恢复单侧行为（需同步检查并集键调用方）。",
+        "verification": [
+          "tests/unit/test_embedding_factory.py",
+          "tests/unit/test_semantic_memory_dedup.py",
+          "scripts/check_architecture_submission.py（本清单）"
+        ]
+      }
+    }
+  ],
+  "components": [
+    {
+      "component_id": "worktree-registry-nesting-guard",
+      "paths": [
+        "src/llm_loop/runtime/worktree_registry.py",
+        "scripts/bootstrap_worktree_registry.py",
+        "tests/unit/test_worktree_registry.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "decl-t0-governance",
+      "owning_subsystem": "runtime.workspace",
+      "rollback_route": "git revert 组件提交; registry 文件在 data/ 非 git",
+      "verification_level": "component-tests",
+      "disposition": "component-tests-passed",
+      "evidence": [
+        "tests/unit/test_worktree_registry.py 5/5",
+        "bash -n restart_mirror.sh"
+      ],
+      "model_evidence_veto_recovery_exit": "registry fail-open; 嵌套拒绝给修复指引; 审计 data/audit/worktree_guard.log"
+    },
+    {
+      "component_id": "restart-code-root-source-check",
+      "paths": [
+        "scripts/restart_mirror.sh",
+        "tests/scripts/test_restart_preflight_source.py",
+        "tests/scripts/test_restart_mirror_hardening.py",
+        "docs/MIRROR-RESTART-GUIDE.md",
+        "docs/MIRROR-workspace-protocol.md",
+        "docs/governance/submissions/2026-09-16-t0-worktree-embedding-dedup.json"
+      ],
+      "control_machinery": true,
+      "declaration_id": "decl-t0-governance",
+      "owning_subsystem": "runtime.restart",
+      "rollback_route": "git revert 组件提交",
+      "verification_level": "component-tests",
+      "disposition": "component-tests-passed",
+      "evidence": [
+        "tests/scripts/test_restart_preflight_source.py 4/4",
+        "tests/scripts/test_restart_mirror_hardening.py 全绿"
+      ],
+      "model_evidence_veto_recovery_exit": "残留 abort 路径给显式 CONFIRMED 修复指引; 交互通道 y/N 确认"
+    },
+    {
+      "component_id": "retrieval-bge-fallback",
+      "paths": [
+        "src/llm_loop/memory/retriever.py",
+        "src/llm_loop/factory.py",
+        "scripts/embedding_server.py",
+        "tests/unit/test_retriever_fallback.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "memory.retrieval",
+      "rollback_route": "git revert; 语义通道回既有行为(关键词降级); 8765 进程不重启",
+      "verification_level": "component-tests+eval-gate",
+      "disposition": "component-tests-passed-eval-gate-pending",
+      "evidence": [
+        "tests/unit/test_retriever_fallback.py 5/5",
+        "tests/unit/test_embedder_retriever.py 全绿"
+      ],
+      "model_evidence_veto_recovery_exit": "fallback 引擎惰性构建; 缓存写失败 fail-open; 部署前 eval gate+kill-8765 演练不过则整批不部署"
+    },
+    {
+      "component_id": "experience-supersede-link",
+      "paths": [
+        "src/llm_loop/experiences/store.py",
+        "src/llm_loop/experiences/document.py",
+        "tests/unit/test_experience_supersede_link.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "experiences.store",
+      "rollback_route": "git revert; supersedes 字段为附加信息旧 reader 忽略无损",
+      "verification_level": "component-tests",
+      "disposition": "component-tests-passed",
+      "evidence": [
+        "tests/unit/test_experience_supersede_link.py 4/4",
+        "experience 既有套件全绿"
+      ],
+      "model_evidence_veto_recovery_exit": "探测 fail-open 不阻断写入; 已写字段旧 reader 忽略无损"
+    },
+    {
+      "component_id": "merge-resolution-resolver-governance-keys",
+      "paths": [
+        "src/llm_loop/runtime/resolver.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "decl-t0-merge-increment",
+      "owning_subsystem": "runtime.startup",
+      "disposition": "component-tests-passed",
+      "evidence": [
+        "全量 tests/ 通过（除 2 个已知环境依赖项）",
+        "CI 门禁 run 35202394667 pytest+ruff+pyright 通过"
+      ],
+      "verification_level": "component-tests",
+      "model_evidence_veto_recovery_exit": "resolver 对未知治理键冲突 fail-closed; 回滚路由见 g4。",
+      "rollback_route": "git revert merge 提交 6f077439"
+    },
+    {
+      "component_id": "t0-gate-artifacts-and-report-retirement",
+      "paths": [
+        "evals/memory_compile/cluster_report.json",
+        "evals/memory_compile/cluster_report.md",
+        "evals/retrieval_ab/results-20260917-164554.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "evals.retrieval",
+      "disposition": "artifact-recording",
+      "evidence": [
+        "evals/retrieval_ab/results-20260917-164554.json 复跑结果入库",
+        "cluster_report.* 删除与 main 09-17 已合并的迁出决定一致"
+      ],
+      "verification_level": "artifact-present",
+      "model_evidence_veto_recovery_exit": "无行为影响; 产物缺失不阻断运行时。",
+      "rollback_route": "git revert 对应提交恢复文件"
+    }
+  ]
+}

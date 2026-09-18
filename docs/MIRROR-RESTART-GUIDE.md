@@ -127,3 +127,27 @@ $ cat data/restart-receipt.json
 - `tests/scripts/test_restart_mirror_hardening.py`、`tests/unit/test_restart_mirror_script.py` — 脚本行为回归
 - `experiences/EXPERIENCE-20260828-mirror-restart-launchd-trap.md` — launchctl 无限复活事故
 - `experiences/EXPERIENCE-20260829-restart-mirror-r2-triple-failure.md` — 共享 venv/PYTHONPATH/凭证错配三连环事故
+
+## 12. T0 增补（2026-09-16）: CODE_ROOT 来源判定 / 嵌套禁令 / worktree registry
+
+同日两起事故的制度化修复（实现见 `scripts/restart_mirror.sh` T0-A3 块、
+`src/llm_loop/runtime/worktree_registry.py`、`scripts/bootstrap_worktree_registry.py`）：
+
+1. **CODE_ROOT 来源三态**（`_code_root_source_check`，位于根校验之前）：
+   - 脚本目录默认（未设 `LFL_RESTART_CODE_ROOT`）→ 通过；
+   - 调用点显式（环境值==脚本目录，或 `LFL_RESTART_CODE_ROOT_CONFIRMED=1`）→ 通过；
+   - 疑似会话残留（环境值≠脚本目录且未确认）→ 告警+审计
+     `data/audit/restart_preflight.log`；**自动化通道（非 tty 或 FORCE=1）直接 abort**。
+   事故案例：17:22 会话环境残留指向旧 worktree，`service_control` 缺失才暴露。
+2. **嵌套 worktree 禁令**（dual-root 校验内 + `--check-add` guard）：
+   CODE_ROOT 内含嵌套 worktree 一律拒绝；创建前用
+   `scripts/bootstrap_worktree_registry.py --check-add <path>` 预检（拒绝 rc=2，
+   审计 `data/audit/worktree_guard.log`）。主 worktree 下挂 `.worktrees/` 是既定布局，不算嵌套。
+3. **worktree registry**（`data/audit/worktree_registry.json`，fail-open 非承重）：
+   bootstrap 全量落表，默认唯一 protected=现役 code root（`runtime_manifest.json`
+   的 workspace_root）+显式回滚候选，其余标 legacy；人工 retired 标记不被覆盖；
+   缺失/损坏时消费方降级既有校验。GC（A4，9/19 再议）：只标记永不自动删除。
+4. `restart_mirror.sh preflight`：只读 dry-run（根校验+来源判定+webui 产物预检），
+   不触服务、不验 service_control 绑定；测试与运维共用。
+5. bash 陷阱记录：`$VAR` 后紧跟多字节字符（如全角括号）会被吞首字节成
+   `VAR\xef: unbound variable`——一律 `${VAR}`。

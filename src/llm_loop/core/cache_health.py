@@ -161,12 +161,6 @@ class _SessionBucket:
     # anchor_moved>0 且 streak 低 → 破坏型（持续断点）。模型切换重建桶时自然重置。
     trend: deque = field(default_factory=lambda: deque(maxlen=30))
     trend_rounds: int = 0
-    # EVO-20260917-2f5ae9cb（人工已审）P0: wire 前缀扰动因素状态（跨 run，纯观测）。
-    # 上轮任务锚快照块 sha 与上轮锚位——用于本轮构建时 diff 出已知打穿成因，
-    # 归因从"人工翻半天 wire"降为"一行结构化日志"。fail-open，不参与任何门禁。
-    last_anchor_block_sha: str | None = None
-    last_anchor_arg_used: int | None = None
-    last_prefix_factors: list[str] = field(default_factory=list)
 
 # Legacy wire compatibility text for pre-R8.11 gate-note history/recovery fixtures.
 # R8.11 no longer emits this text into live provider prompts; cache-gate state is
@@ -484,65 +478,6 @@ class CacheHealthMonitor:
             b.anchor_moved_since_record = True
         except Exception:  # noqa: BLE001
             logger.debug("anchor_move 计数异常（fail-open）", exc_info=True)
-
-    def note_prefix_disturbance(
-        self,
-        session_id: str = "",
-        *,
-        anchor_block_sha: str | None = None,
-        anchor_arg_used: int = 0,
-        marker_fold_count: int = 0,
-        new_compaction: bool = False,
-    ) -> None:
-        """EVO-20260917-2f5ae9cb（人工已审）P0: wire 前缀扰动成因分类（纯观测）.
-
-        构建 wire 时由 history_projection 喂入本轮事实（锚快照块 sha、实际锚位、
-        marker 折叠数、本轮是否新压缩），与上轮状态 diff 得出已知打穿成因分类，
-        单行结构化日志输出。设计不变量: 只记日志不改行为、不进门禁、fail-open。
-        已知成因枚举（与建议原文对齐）:
-          anchor_advance          锚点前移（压缩后稳态，合法但断前缀）
-          markers_folded          压缩 marker 折叠（归档重写历史段）
-          anchor_block_byte_change 锚快照块字节变化（Goal/checkpoint/frontier 投影变）
-          anchor_block_appeared   锚块本轮出现（首入压缩态窗口）
-          anchor_block_vanished   锚块本轮消失（退出压缩态窗口）
-          new_compaction          本轮发生新的压缩（含锚提示一次性行）
-        """
-        try:
-            b = self._get_bucket(session_id)
-            factors: list[str] = []
-            if b.last_anchor_arg_used is not None and anchor_arg_used > b.last_anchor_arg_used:
-                factors.append("anchor_advance")
-            if marker_fold_count:
-                factors.append("markers_folded")
-            if new_compaction:
-                factors.append("new_compaction")
-            if anchor_block_sha is not None and b.last_anchor_block_sha is None:
-                factors.append("anchor_block_appeared")
-            elif anchor_block_sha is None and b.last_anchor_block_sha is not None:
-                factors.append("anchor_block_vanished")
-            elif (
-                anchor_block_sha is not None
-                and b.last_anchor_block_sha is not None
-                and anchor_block_sha != b.last_anchor_block_sha
-            ):
-                factors.append("anchor_block_byte_change")
-            if factors:
-                logger.info(
-                    "[prefix-disturbance] sid=%s factors=%s anchor_block_sha=%s "
-                    "anchor_arg=%d->%d marker_fold=%d new_compaction=%s",
-                    session_id or "-",
-                    ",".join(factors),
-                    anchor_block_sha or "-",
-                    b.last_anchor_arg_used if b.last_anchor_arg_used is not None else 0,
-                    anchor_arg_used,
-                    marker_fold_count,
-                    new_compaction,
-                )
-            b.last_prefix_factors = factors
-            b.last_anchor_block_sha = anchor_block_sha
-            b.last_anchor_arg_used = anchor_arg_used
-        except Exception:  # noqa: BLE001
-            logger.debug("prefix_disturbance 观测异常（fail-open）", exc_info=True)
 
     # ── P0 压缩风暴熔断（2026-08-25 规格）──
     def _breaker(self, session_id: str) -> _BreakerState:
