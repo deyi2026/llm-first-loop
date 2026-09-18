@@ -61,6 +61,46 @@ def test_queue_id_metadata_is_provider_invisible():
 
 
 class TestHumanTurnQueueUnit:
+    def test_interject_pending_is_durable_and_restart_falls_back_to_queue(self, tmp_path):
+        hq = HumanTurnQueue(tmp_path)
+        item = hq.enqueue("s1", "steer-now")
+        claimed = hq.claim_interject("s1", item["queue_id"])
+        assert claimed is not None
+        assert claimed["status"] == "interject_pending"
+
+        # A process restart destroys the live RunHandle mailbox. Durable intent must not
+        # pretend it is still pending delivery; it falls back to ordinary FIFO queue.
+        reloaded = HumanTurnQueue(tmp_path)
+        active = reloaded.list_active("s1")
+        assert active[0]["queue_id"] == item["queue_id"]
+        assert active[0]["status"] == "queued"
+        assert active[0]["requeued_from"] == "interject_process_restart"
+
+    def test_interject_received_receipt_is_visible_after_engine_ack(self, tmp_path):
+        hq = HumanTurnQueue(tmp_path)
+        item = hq.enqueue("s1", "steer-now")
+        assert hq.claim_interject("s1", item["queue_id"]) is not None
+        assert hq.mark_interject_received("s1", item["queue_id"]) is True
+        active = hq.list_active("s1")
+        assert active[0]["status"] == "interject_received"
+        assert active[0]["received_at"] > 0
+
+    def test_cancel_with_item_returns_frozen_facts_for_withdraw_edit(self, tmp_path):
+        hq = HumanTurnQueue(tmp_path)
+        item = hq.enqueue(
+            "s1",
+            "restore me",
+            attachments=[{"ref": "attachment://a"}],
+            attachment_facts=[{"ref": "attachment://a", "filename": "a.txt"}],
+        )
+        cancelled = hq.cancel_with_item("s1", item["queue_id"])
+        assert cancelled is not None
+        assert cancelled["message"] == "restore me"
+        assert cancelled["attachment_facts"] == [
+            {"ref": "attachment://a", "filename": "a.txt"}
+        ]
+        assert hq.list_active("s1") == []
+
     def test_fifo_and_atomic_claim(self, tmp_path):
         hq = HumanTurnQueue(tmp_path)
         a = hq.enqueue("s1", "first")
