@@ -21,9 +21,20 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 import httpx
+from websockets.exceptions import ConnectionClosed as _WsConnectionClosed
 from websockets.sync.client import connect as websocket_connect
 
 from llm_loop.browser.perception import PlaywrightPageCaptureBackend
+
+# EVO-20260918-753b4a91: websockets 默认 max_size=1MiB；DOM+AX 大页（如 GitHub 仓库页）
+# 的 CDP 响应帧超限即 1009 断连且死连接永不重建，会话困死。帧上限参数化 + 同 target 断线重建。
+DEFAULT_CDP_MAX_FRAME_BYTES = 67_108_864
+_CONNECTION_LOST_ERRORS: tuple[type[BaseException], ...] = (
+    ConnectionError,
+    EOFError,
+    OSError,
+    _WsConnectionClosed,
+)
 
 _READ_ONLY_CDP_METHODS = frozenset(
     {
@@ -83,8 +94,11 @@ def _default_http_get_json(url: str) -> list[dict[str, Any]]:
     return [item for item in payload if isinstance(item, dict)]
 
 
-def _default_ws_connect(url: str) -> _WebSocketLike:
-    return cast(_WebSocketLike, websocket_connect(url, open_timeout=5.0))
+def _default_ws_connect(url: str, *, max_frame_bytes: int = DEFAULT_CDP_MAX_FRAME_BYTES) -> _WebSocketLike:
+    return cast(
+        _WebSocketLike,
+        websocket_connect(url, open_timeout=5.0, max_size=max(1, int(max_frame_bytes))),
+    )
 
 
 class _ReadOnlyCdpSession:
@@ -161,18 +175,24 @@ class CdpReadOnlyBrowserHost:
         *,
         target_id: str = "",
         node_cap: int = 20_000,
+        max_frame_bytes: int = DEFAULT_CDP_MAX_FRAME_BYTES,
         http_get_json: Callable[[str], list[dict[str, Any]]] | None = None,
         ws_connect: Callable[[str], _WebSocketLike] | None = None,
     ) -> None:
         if node_cap < 1:
             raise ValueError("node_cap must be >= 1")
+        if max_frame_bytes < 1:
+            raise ValueError("max_frame_bytes must be >= 1")
         self.debug_base_url = _normalize_loopback_debug_url(debug_base_url)
         self._configured_target_id = str(target_id or "").strip()
         self._bound_target_id = ""
         self._bound_websocket_url = ""
         self._node_cap = int(node_cap)
         self._http_get_json = http_get_json or _default_http_get_json
-        self._ws_connect: Callable[[str], _WebSocketLike] = ws_connect or _default_ws_connect
+        self._max_frame_bytes = int(max_frame_bytes)
+        self._ws_connect: Callable[[str], _WebSocketLike] = ws_connect or (
+            lambda url: _default_ws_connect(url, max_frame_bytes=self._max_frame_bytes)
+        )
         self._websocket: _WebSocketLike | None = None
         self._session: _ReadOnlyCdpSession | None = None
         self._capture_lock = threading.Lock()
@@ -222,12 +242,30 @@ class CdpReadOnlyBrowserHost:
             self._session = _ReadOnlyCdpSession(websocket)
         return self._session
 
+    def _drop_session(self) -> None:
+        # EVO-20260918-753b4a91: same-target reconnect only — bound target identity
+        # stays pinned; dropping a dead websocket never grants access to another tab.
+        websocket = self._websocket
+        self._session = None
+        self._websocket = None
+        if websocket is not None:
+            try:
+                websocket.close()
+            except Exception:  # noqa: BLE001 - best-effort close of a dead socket
+                pass
+
     def capture(self) -> dict[str, Any]:
         with self._capture_lock:
             target = self._resolve_target()
             session = self._ensure_session(target)
             page = _CdpPageShim(url=str(target.get("url") or ""), session=session)
-            return PlaywrightPageCaptureBackend(page, node_cap=self._node_cap).capture()
+            try:
+                return PlaywrightPageCaptureBackend(page, node_cap=self._node_cap).capture()
+            except _CONNECTION_LOST_ERRORS as exc:
+                self._drop_session()
+                raise RuntimeError(
+                    "CDP observation connection lost; dropped session for same-target reconnect"
+                ) from exc
 
     def close(self) -> None:
         websocket = self._websocket
