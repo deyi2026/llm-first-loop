@@ -131,14 +131,20 @@ def _default_ws_connect(url: str, *, max_frame_bytes: int = DEFAULT_CDP_MAX_FRAM
 class _ReadOnlyCdpSession:
     """One persistent page-target websocket with a hard method allowlist."""
 
-    def __init__(self, websocket: _WebSocketLike, *, timeout_s: float = 5.0) -> None:
+    def __init__(self, websocket: _WebSocketLike, *, timeout_s: float = 20.0) -> None:
         self._websocket = websocket
+        # 2026-09-18 live huge-page retest (10.4MB HTML / ~100k nodes): the
+        # DOMSnapshot frame itself returns in ~1.4s at ~47MB, but the follow-up
+        # observation requests (AX tree capture) exceed a 5s single-recv budget.
+        # 20s keeps big-page observation viable inside the 60s tool budget while
+        # the drop-session/same-target-reconnect semantics stay unchanged.
         self._timeout_s = float(timeout_s)
         self._request_id = 0
         self._lock = threading.Lock()
-        # EVO-20260918-a2727fb2: last request diagnostics so connection-lost
-        # failures can be classified (timeout vs frame limit vs transport) instead
-        # of surfacing as one undistinguishable error string.
+        # EVO-20260918-a2727fb2: diagnostics of the LAST SUCCESSFUL request so
+        # connection-lost failures can be classified (timeout vs frame limit vs
+        # transport). Note: when the failing request times out, these fields
+        # still describe the prior completed request — never the failing one.
         self.last_diag: dict[str, Any] = {}
 
     def _request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
