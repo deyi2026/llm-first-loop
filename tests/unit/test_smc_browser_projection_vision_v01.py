@@ -113,6 +113,20 @@ def test_tool_vision_evidence_is_persisted_with_ref_and_sha(tmp_path: Path) -> N
     assert "vision" not in payload["snapshot"]
 
 
+def test_heading_kind_is_not_masked_by_generic_dom_kind() -> None:
+    from llm_loop.browser.perception import _kind_for, _merge_kind
+
+    assert _kind_for("", "h1") == "heading"
+    assert _kind_for("", "h3") == "heading"
+    assert _kind_for("heading", "") == "heading"
+    # Live bug shape: DOM tag fallback produced generic while AX role said heading.
+    assert _merge_kind("generic", "heading") == "heading"
+    # A specific DOM kind still wins; two generics stay generic.
+    assert _merge_kind("button", "generic") == "button"
+    assert _merge_kind("generic", "generic") == "generic"
+    assert _merge_kind(None, "heading") == "heading"
+
+
 def test_tool_vision_unavailable_and_failure_never_mask_snapshot(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)
 

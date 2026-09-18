@@ -1295,7 +1295,7 @@ class BrowserPerceptionAdapter:
                 "domain": "browser",
                 "scope_ref": scope["scope_ref"],
                 "id": semantic_id,
-                "kind": _normalize_kind(dom_node.get("kind") or ax_node.get("kind")),
+                "kind": _merge_kind(dom_node.get("kind"), ax_node.get("kind")),
                 "attributes": attributes,
                 "state": object_state,
                 "relations": [],
@@ -2157,8 +2157,41 @@ def _kind_for(role: str, tag: str) -> str:
         "th": "cell",
         "html": "document",
         "iframe": "frame",
+        # DOM-side heading without an explicit role attribute must still land
+        # on the schema's heading kind; previously it fell through to generic
+        # and masked the AX heading role during kind merging.
+        "h1": "heading",
+        "h2": "heading",
+        "h3": "heading",
+        "h4": "heading",
+        "h5": "heading",
+        "h6": "heading",
     }
     return role_map.get(role.lower(), tag_map.get(tag.lower(), "generic"))
+
+
+def _merge_kind(dom_kind: Any, ax_kind: Any) -> str:
+    """Merge DOM and AX kind evidence without letting a generic shadow a specific kind.
+
+    DOM kinds are structural (tag-driven) and can be generic for semantic
+    elements (e.g. before AX role evidence arrives); the AX role is the more
+    authoritative semantic source, so a specific AX kind must not be masked by
+    a generic DOM kind.
+    """
+
+    dom = _normalize_kind(dom_kind)
+    ax = _normalize_kind(ax_kind)
+    # _normalize_kind maps absent evidence to "unknown"; that is a missing-
+    # value default, not an observation, so it must not shadow the other side.
+    if dom in ("", "unknown"):
+        dom = ""
+    if ax in ("", "unknown"):
+        ax = ""
+    if dom and dom != "generic":
+        return dom
+    if ax and ax != "generic":
+        return ax
+    return dom or ax or "generic"
 
 
 def _ax_property_map(node: dict[str, Any]) -> dict[str, Any]:
