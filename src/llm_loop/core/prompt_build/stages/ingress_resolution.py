@@ -301,7 +301,8 @@ def run_ingress_prelude(
     # Same-run tool follow-ups (logical round > 1) defer opportunistic receipt
     # rewrites so the provider-visible prefix remains append-only. Offline/recovery
     # builds do not carry a logical round and preserve historical projection behavior.
-    # The projector always keeps its hard result-count safety valve.
+    # The projector always keeps its hard result-count and resource-safety byte
+    # valves; only the opportunistic rewrites are deferred for same-run rounds.
     _opportunistic_fold_allowed = logical_round is None or logical_round <= 1
     _provider_base, _working_set_stats = project_active_tool_working_set_with_stats(
         _scrub.base,

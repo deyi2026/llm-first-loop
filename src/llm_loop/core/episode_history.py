@@ -902,6 +902,12 @@ def project_active_tool_working_set_with_stats(
                         and pending_net_gain >= min_net_gain_chars
                     ):
                         fold_trigger = "soft_cap_net_gain"
+                elif pending_chars >= batch_chars:
+                    # Resource-safety valve: the byte hard boundary outranks the
+                    # append-only preference. Without it, a same-run prefix can
+                    # grow unbounded (e.g. a few very large results) far past any
+                    # provider budget long before the result-count cap fires.
+                    fold_trigger = "resource_safety_bytes"
                 elif len(pending) >= hard_result_cap:
                     # Same-run tool follow-ups keep the already-sent provider prefix
                     # append-only whenever resource bounds permit. The hard result
