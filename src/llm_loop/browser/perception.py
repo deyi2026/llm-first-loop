@@ -2173,10 +2173,12 @@ def _kind_for(role: str, tag: str) -> str:
 def _merge_kind(dom_kind: Any, ax_kind: Any) -> str:
     """Merge DOM and AX kind evidence without letting a generic shadow a specific kind.
 
-    DOM kinds are structural (tag-driven) and can be generic for semantic
-    elements (e.g. before AX role evidence arrives); the AX role is the more
-    authoritative semantic source, so a specific AX kind must not be masked by
-    a generic DOM kind.
+    The merge is symmetric by specificity, not by fixed sensor authority: a
+    generic (or normalize-default unknown) kind from either sensor is treated as
+    missing structural/semantic specificity and never masks a specific kind
+    reported by the other sensor. DOM kinds are structural (tag-driven) and may
+    legitimately land on generic for semantic elements; AX roles are semantic
+    and may equally default when the AX tree under-reports.
     """
 
     dom = _normalize_kind(dom_kind)

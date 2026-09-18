@@ -557,7 +557,9 @@ def test_navigate_survives_structural_capture_failure_via_lightweight_probe(tmp_
     assert len(actuator.calls) == 1
     assert actuator.calls[0]["verb"] == "navigate"
     assert backend.probe_calls == 1
-    assert "pre_observation_lightweight_probe" in result["completeness"]["reasons"]
+    # 单列的通道事实字段，不再混入 completeness.reasons（reasons 保留给不完整/失败语义）
+    assert result["pre_observation_mode"] == "lightweight_probe"
+    assert "pre_observation_lightweight_probe" not in result["completeness"]["reasons"]
 
 
 def test_navigate_lightweight_probe_failure_still_rejects(tmp_path: Path) -> None:

@@ -31,6 +31,11 @@ from llm_loop.browser.perception import PlaywrightPageCaptureBackend
 # EVO-20260918-753b4a91: websockets 默认 max_size=1MiB；DOM+AX 大页（如 GitHub 仓库页）
 # 的 CDP 响应帧超限即 1009 断连且死连接永不重建，会话困死。帧上限参数化 + 同 target 断线重建。
 DEFAULT_CDP_MAX_FRAME_BYTES = 67_108_864
+# Absolute ceiling: a misconfigured/oversized LFL_BROWSER_CDP_MAX_FRAME_BYTES can
+# never lift a single CDP frame past this bound (memory safety). Oversized
+# DOMSnapshot payloads are bounded by node_cap projection, never by unbounded
+# frame buffering.
+HARD_CAP_CDP_MAX_FRAME_BYTES = 268_435_456  # 256 MiB
 _CONNECTION_LOST_ERRORS: tuple[type[BaseException], ...] = (
     ConnectionError,
     EOFError,
@@ -221,7 +226,9 @@ class CdpReadOnlyBrowserHost:
         self._bound_websocket_url = ""
         self._node_cap = int(node_cap)
         self._http_get_json = http_get_json or _default_http_get_json
-        self._max_frame_bytes = int(max_frame_bytes)
+        # Hard-capped at the absolute ceiling regardless of configuration:
+        # a single oversized frame can never buffer unbounded memory.
+        self._max_frame_bytes = min(int(max_frame_bytes), HARD_CAP_CDP_MAX_FRAME_BYTES)
         self._ws_connect: Callable[[str], _WebSocketLike] = ws_connect or (
             lambda url: _default_ws_connect(url, max_frame_bytes=self._max_frame_bytes)
         )

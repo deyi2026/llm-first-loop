@@ -635,10 +635,11 @@ class BrowserActionAdapter:
         }
         reasons = list(post_reasons)
         if light_mode:
-            # EVO-20260918-4766011b: make the lightweight precondition observable
-            # in the terminal receipt so callers can distinguish degraded-channel
-            # dispatches from fully-observed ones.
-            reasons.append("pre_observation_lightweight_probe")
+            # EVO-20260918-4766011b follow-up: standalone channel-fact field so
+            # callers can distinguish degraded-channel dispatches from fully
+            # observed ones. completeness.reasons stays reserved for incomplete/
+            # failed semantics, not channel modes.
+            terminal["pre_observation_mode"] = "lightweight_probe"
         if dispatch_authority_lost:
             terminal["status"] = "failed"
             reasons.append("dispatch_authority_lost")
