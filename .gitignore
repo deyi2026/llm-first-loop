@@ -13,8 +13,9 @@ venv/
 htmlcov/
 .mypy_cache/
 
-# 运行时数据（会话/记忆/审计——不入库）
-data/
+# 运行时数据（会话/记忆/审计——不入库）；例外：data/methods/ 是学习方法资产，入库保全
+data/*
+!data/methods/
 # SMX 感知运行时数据（快照/回执/runs——不入库，任意层级）
 .smx/
 
@@ -49,8 +50,8 @@ docs/metrics/
 # 本地学习/经验文档（不入库、不上传 GitHub）
 docs/local/
 
-# 运行时经验库产物（并行会话沉淀，不入库）
-experiences/
+# 运行时经验库（并行会话沉淀的知识资产——2026-09-17 起入库保全，防单点丢失）
+# experiences/
 
 # Web V2（React+TS，独立目录；构建产物由 UI_V2_DIR/本地构建提供，不入库）
 webui/node_modules/
@@ -78,3 +79,4 @@ Nexitally_Surge*.conf
 
 # Web/local provider registry overlay (may contain private endpoints; no secrets)
 data/providers.local.json
+evals/embedding_stage2/bge_cache.json
