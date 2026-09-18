@@ -5,11 +5,23 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from llm_loop.tools.registry import (
     ToolResult,
     ToolResultStatus,
     tool_result_to_message,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_ledger_binding(monkeypatch):
+    """顺序隔离：factory 构建路径会把 injection_ledger._LEDGER_PATH 钉到运行时
+    audit 目录，该全局在 _resolved_path() 中遮蔽 INJECTION_LEDGER_PATH env 覆盖
+    （全量套件顺序依赖根因）。逐例重置回 None，恢复 env 优先语义。"""
+    from llm_loop.knowledge import injection_ledger
+
+    monkeypatch.setattr(injection_ledger, "_LEDGER_PATH", None)
 
 
 def _fail_result() -> ToolResult:
