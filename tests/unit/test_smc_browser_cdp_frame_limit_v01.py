@@ -138,7 +138,7 @@ def test_settings_default_frame_limit_is_64mib() -> None:
     from llm_loop.config import Settings
 
     field = {f.name: f for f in dataclasses.fields(Settings)}["browser_cdp_max_frame_bytes"]
-    assert field.default == 67_108_864
+    assert field.default == 134_217_728
 
 
 # --- EVO-20260918-a2727fb2: connection-loss classification + diagnostics ---

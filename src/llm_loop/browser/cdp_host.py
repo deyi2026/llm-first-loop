@@ -30,7 +30,9 @@ from llm_loop.browser.perception import PlaywrightPageCaptureBackend
 
 # EVO-20260918-753b4a91: websockets 默认 max_size=1MiB；DOM+AX 大页（如 GitHub 仓库页）
 # 的 CDP 响应帧超限即 1009 断连且死连接永不重建，会话困死。帧上限参数化 + 同 target 断线重建。
-DEFAULT_CDP_MAX_FRAME_BYTES = 67_108_864
+# 2026-09-18 huge-page retest: 10.4MB HTML / ~100k nodes 的 DOMSnapshot 帧约 47MB（可过），
+# 但随后的 Accessibility.getFullAXTree 全树帧 >64MiB 仍撞 1009；默认提升到 128MiB，env 可覆盖。
+DEFAULT_CDP_MAX_FRAME_BYTES = 134_217_728
 # Absolute ceiling: a misconfigured/oversized LFL_BROWSER_CDP_MAX_FRAME_BYTES can
 # never lift a single CDP frame past this bound (memory safety). Oversized
 # DOMSnapshot payloads are bounded by node_cap projection, never by unbounded
