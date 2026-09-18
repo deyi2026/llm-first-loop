@@ -29,6 +29,7 @@ from llm_loop.core.message import (
     ToolResultStatus,
 )
 from llm_loop.core.run_context import current_run_generation
+from llm_loop.tools.eligibility import runtime_tool_health
 from llm_loop.tools.pipeline import ImmutableResult, MaterializationError
 from llm_loop.tools.safety import CatastrophicGuard
 
@@ -909,7 +910,6 @@ class ToolRegistry:
         # R8.7: runtime health + deterministic preflight happen before real execution.
         # Hidden/quarantined schemas may still be referenced by stale model context; the
         # execution boundary independently enforces health and returns typed recovery.
-        from llm_loop.tools.eligibility import runtime_tool_health
         from llm_loop.tools.recovery import health_quarantine_advice, web_fetch_preflight
 
         health = runtime_tool_health(call.name)
@@ -1747,7 +1747,6 @@ class GetToolSchemaTool:
             )
         if name == "*" or name.lower() == "list" or name.startswith("?"):
             query = name[1:].strip().lower() if name.startswith("?") else ""
-            from llm_loop.tools.eligibility import runtime_tool_health
 
             rows: list[str] = []
             scope = current_tool_discovery_scope.get()
@@ -1809,7 +1808,6 @@ class GetToolSchemaTool:
             ensure_ascii=False,
             indent=2,
         )
-        from llm_loop.tools.eligibility import runtime_tool_health
 
         health = runtime_tool_health(name)
         health_note = ""

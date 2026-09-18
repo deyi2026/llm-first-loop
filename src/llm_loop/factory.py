@@ -2117,11 +2117,9 @@ def _build_pending_actions_fn(settings) -> Any:
 
     def _aggregate() -> dict:
         try:
-            from llm_loop.core.run_context import current_session_id as _current_session_id
-
             store = EvolutionStore(settings.audit_dir)
             items = store.list()
-            _sid = str(_current_session_id.get() or "")
+            _sid = str(current_session_id_ctx.get() or "")
             # Capability-bearing executing hints are session-owned facts.  Human
             # pending-review count may remain global because it does not grant a model tool.
             executing = sum(
