@@ -297,7 +297,7 @@ def test_structural_blindspots_and_cross_origin_frame_are_explicit(tmp_path: Pat
     assert "canvas" in reasons
     assert "cross_origin_frame" in reasons
     dumped = json.dumps(result, ensure_ascii=False)
-    assert "vision" not in dumped.lower() or "explicit_only_deferred_phase2" in dumped
+    assert "vision" not in dumped.lower() or "explicit_only_evidence_layer" in dumped
 
 
 def test_relations_are_structural_only(tmp_path: Path) -> None:

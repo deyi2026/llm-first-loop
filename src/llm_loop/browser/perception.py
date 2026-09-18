@@ -40,7 +40,9 @@ from llm_loop.browser.predicate import evaluate_predicate as evaluate_browser_pr
 _SENSOR_CONTRACT = {
     "id": "browser-dom-ax-v0.1",
     "active_sources": ["dom", "ax"],
-    "vision": "explicit_only_deferred_phase2",
+    # EVO-20260918-f2310800: vision phase 1 is live as an evidence-layer
+    # opt-in (snapshot vision=evidence); grounding/version stay DOM+AX only.
+    "vision": "explicit_only_evidence_layer",
 }
 
 _ATTRIBUTE_FIELDS = {
