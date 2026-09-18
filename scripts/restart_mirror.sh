@@ -260,30 +260,111 @@ if parts:
     print(' '.join(parts))
 " 2>/dev/null
 }
+_web_run_busy() {
+  PYTHONPATH="$CODE_ROOT/src" "$VENV_PY" - "$RUNTIME_ROOT/data/sessions" <<'PY' 2>/dev/null
+import sys
+from pathlib import Path
+
+from llm_loop.resources.foreground import active_run_locks
+
+busy = active_run_locks(Path(sys.argv[1]))
+if busy:
+    labels = []
+    for path in busy[:4]:
+        name = path.name
+        if name.endswith(".run.lock"):
+            name = name[:-9]
+        labels.append(name[:12])
+    suffix = ",..." if len(busy) > 4 else ""
+    print("web-runs:%d[%s%s]" % (len(busy), ",".join(labels), suffix))
+PY
+}
+_web_run_recovery_ready() {
+  PYTHONPATH="$CODE_ROOT/src" "$VENV_PY" - "$RUNTIME_ROOT/data/sessions" "$RUNTIME_ROOT/data/event_logs" <<'PY' 2>/dev/null
+import sys
+from pathlib import Path
+
+from llm_loop.event_log.store import EventStore
+from llm_loop.resources.foreground import active_run_locks
+
+sessions_dir = Path(sys.argv[1])
+event_dir = Path(sys.argv[2])
+store = EventStore(event_dir)
+missing = []
+facts = []
+for lock_path in active_run_locks(sessions_dir):
+    name = lock_path.name
+    sid = name[:-9] if name.endswith(".run.lock") else lock_path.stem
+    events = store.read_cached(sid)
+    last_end = max((i for i, event in enumerate(events) if event.type == "run.end"), default=-1)
+    open_events = events[last_end + 1 :]
+    checkpoints = [event for event in open_events if event.type == "llm.partial_checkpoint"]
+    if not checkpoints:
+        missing.append(sid)
+        continue
+    facts.append(f"{sid[:12]}:cp{checkpoints[-1].seq}")
+if missing:
+    print("missing-open-checkpoint:" + ",".join(sid[:12] for sid in missing))
+    raise SystemExit(1)
+if facts:
+    print("recovery-ready[" + ",".join(facts) + "]")
+PY
+}
+_restart_busy() {
+  local target="${1:-all}" hb="" runs="" parts=""
+  if [[ "$target" == "feishu" || "$target" == "all" ]]; then
+    hb="$(_heartbeat_busy)"
+  fi
+  if [[ "$target" == "web" || "$target" == "all" ]]; then
+    runs="$(_web_run_busy)"
+  fi
+  [[ -n "$hb" ]] && parts="$hb"
+  if [[ -n "$runs" ]]; then
+    [[ -n "$parts" ]] && parts="$parts "
+    parts="${parts}${runs}"
+  fi
+  printf '%s' "$parts"
+}
 _restart_precheck() {
-  local waited=0 busy
+  local target="${1:-all}" waited=0 busy run_busy
   if [[ "${RESTART_WAIT_IDLE:-0}" == "1" ]]; then
     local idle_timeout="${RESTART_WAIT_IDLE_TIMEOUT_S:-300}" idle_poll="${RESTART_WAIT_IDLE_POLL_S:-5}"
     while :; do
-      busy="$(_heartbeat_busy)"
+      busy="$(_restart_busy "$target")"
       if [[ -z "$busy" ]]; then
-        (( waited > 0 )) && _log "飞书桥已空闲（等待 ${waited}s），继续重启"
+        (( waited > 0 )) && _log "目标服务已无活跃任务（等待 ${waited}s），继续重启"
         return 0
       fi
       if (( waited >= idle_timeout )); then
         _log "等待空闲超时（${waited}s ≥ ${idle_timeout}s），回退确认流程"
         break
       fi
-      _log "飞书桥忙（${busy}），等待任务完成（${waited}/${idle_timeout}s）..."
+      _log "检测到活跃任务（${busy}），等待任务完成（${waited}/${idle_timeout}s）..."
       sleep "$idle_poll"
       (( waited += idle_poll ))
     done
   fi
-  busy="$(_heartbeat_busy)"
+  busy="$(_restart_busy "$target")"
   [[ -z "$busy" ]] && return 0
-  _log "⚠️ 飞书桥忙（${busy}）——重启会中断该任务且无回复。"
+  run_busy=""
+  if [[ "$target" == "web" || "$target" == "all" ]]; then
+    run_busy="$(_web_run_busy)"
+  fi
+  _log "⚠️ 检测到活跃任务（${busy}）——重启会中断正在运行的流/任务。"
+  if [[ -n "$run_busy" && "${RESTART_FORCE_ACTIVE_RUNS:-0}" != "1" ]]; then
+    _log "✗ Web active run fail-closed：即使 FORCE=1 也拒绝硬切。仅紧急人工裁决可额外设置 RESTART_FORCE_ACTIVE_RUNS=1。"
+    return 1
+  fi
+  if [[ -n "$run_busy" && "${RESTART_FORCE_ACTIVE_RUNS:-0}" == "1" ]]; then
+    local recovery_ready
+    if ! recovery_ready="$(_web_run_recovery_ready)"; then
+      _log "✗ 紧急强切拒绝：active run 缺少 open llm.partial_checkpoint（${recovery_ready:-unknown}）。"
+      return 1
+    fi
+    _log "紧急强切恢复证据已核验：${recovery_ready}"
+  fi
   if [[ "${FORCE:-0}" == "1" ]]; then
-    _log "FORCE=1：跳过交互确认，强制继续（自动化模式，责任在调用方）"
+    _log "FORCE=1：跳过交互确认，强制继续（无 Web active run，或已显式 RESTART_FORCE_ACTIVE_RUNS=1）"
     return 0
   fi
   echo -n "确认继续重启? (y/N) "
@@ -734,7 +815,7 @@ case "${1:-web}" in
              exit 0 ;;
   web)     _webui_artifact_preflight || { _write_receipt web "1" "webui_artifact_preflight_failed"; exit 1; }
            _service_control_preflight web || { _write_receipt web "1" "service_control_binding_failed"; exit 1; }
-           _restart_precheck
+           _restart_precheck web || { _write_receipt web "1" "active_run_precheck_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt web "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _stop_web "$RESTART_PORT"; then
@@ -746,7 +827,7 @@ case "${1:-web}" in
            _write_receipt web "$_rc" "port=$RESTART_PORT"
            exit "$_rc" ;;
   feishu)  _service_control_preflight feishu || { _write_receipt feishu "1" "service_control_binding_failed"; exit 1; }
-           _restart_precheck
+           _restart_precheck feishu || { _write_receipt feishu "1" "active_run_precheck_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt feishu "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _feishu_stop; then
@@ -770,7 +851,7 @@ case "${1:-web}" in
            exit "$_rc" ;;
   all)     _webui_artifact_preflight || { _write_receipt all "1" "webui_artifact_preflight_failed"; exit 1; }
            _service_control_preflight all || { _write_receipt all "1" "service_control_binding_failed"; exit 1; }
-           _restart_precheck
+           _restart_precheck all || { _write_receipt all "1" "active_run_precheck_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }
            # 修2(2026-09-09): 失败补偿——web 停/启失败不再 && 短路吞掉 feishu 恢复；
            # 各服务按自身停止成败独立决定是否重启（停失败强启=制造双进程，禁止）。

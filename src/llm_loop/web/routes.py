@@ -190,6 +190,7 @@ def _queue_claim_matches(
         and frozen_refs == payload_refs
         and list(claimed.get("attachment_facts") or []) == list(attachment_facts)
         and (claimed.get("model") or None) == (payload.model or None)
+        and bool(claimed.get("model_change", False)) == bool(payload.model_change)
         and (claimed.get("reasoning_effort") or None) == (payload.reasoning_effort or None)
         and str(claimed.get("reasoning_mode") or "auto") == str(payload.reasoning_mode or "auto")
     )
@@ -558,8 +559,17 @@ def chat(
     if lock is not None:
         acquired = True
     _persist_model_ref = _canonical_persist_model(engine, payload.model)
+    # Known model refs route through accepted Session authority. This prevents a
+    # stale browser payload from regaining authority after in-run switch_model.
+    # Unknown refs still pass through per-call routing for the normal unavailable fact.
+    _route_model = payload.model if (payload.model and _persist_model_ref is None) else None
+    _explicit_model_change = bool(payload.model_change or payload.new_session)
     _on_run_acquired = (
-        (lambda sess: _apply_session_model_override(sess, _persist_model_ref))
+        (
+            lambda sess: _apply_session_model_override(
+                sess, _persist_model_ref, explicit_change=_explicit_model_change
+            )
+        )
         if _persist_model_ref else None
     )
     try:
@@ -569,7 +579,7 @@ def chat(
         from llm_loop.core.trace_leak.ingress_token import issue_ingress
 
         result = engine._run_with_acquired(
-            session_id, payload.message, model=payload.model,
+            session_id, payload.message, model=_route_model,
             reasoning_effort=payload.reasoning_effort,
             reasoning_mode=payload.reasoning_mode,
             on_run_acquired=_on_run_acquired,
@@ -684,20 +694,31 @@ def _canonical_persist_model(engine: Any, model: str | None) -> str | None:
         return None
 
 
-def _apply_session_model_override(session: Any, model_ref: str | None) -> None:
-    """接单成功后修改本轮 run-owned Session；持久化由 engine accepted 边界统一执行。"""
-    # EVO-20260829-ad8c5984 装配漂移防御层：前端 stale state.model 经 payload.model
-    # 无条件写回会静默覆盖 run 内 switch_model 的切换。前端回填（stream-chat.js
-    # buildAssistantNote 用 done.model_used 回填 state.model）已闭合主环；
-    # 此告警为可观测兜底——任何残余漂移尝试都会进日志，便于验证根治效果。
-    if model_ref and getattr(session, "model_override", None) != model_ref:
-        old = getattr(session, "model_override", None)
-        if old:
-            logger.warning(
-                "model_override 写回覆盖: %s → %s（前轮 switch_model 可能被 web payload.model 覆盖）",
-                old,
-                model_ref,
-            )
+def _apply_session_model_override(
+    session: Any,
+    model_ref: str | None,
+    *,
+    explicit_change: bool = False,
+) -> None:
+    """Apply one accepted Web model selection without letting stale UI regain authority.
+
+    ``payload.model`` is sent on every Web request for routing/UI continuity, but an
+    in-run ``switch_model`` may have changed the authoritative session override since
+    that browser snapshot was taken.  Therefore a differing existing override wins
+    unless the request carries explicit human ``model_change`` intent.  An empty
+    session may still adopt the first valid model for backwards compatibility.
+    """
+    if not model_ref:
+        return
+    old = getattr(session, "model_override", None)
+    if old and old != model_ref and not explicit_change:
+        logger.info(
+            "忽略 stale payload.model：session authority=%s payload=%s（无显式 model_change）",
+            old,
+            model_ref,
+        )
+        return
+    if old != model_ref:
         session.model_override = model_ref
 
 
@@ -997,13 +1018,19 @@ def chat_stream(
     # Web 模型选择只在请求成功接单后持久化。未知模型不写 session，
     # 仍交本次 per-call 路由生成“模型不可用”反馈；busy/resume 必须零副作用。
     _persist_model_ref = _canonical_persist_model(engine, payload.model)
+    _route_model = payload.model if (payload.model and _persist_model_ref is None) else None
+    _explicit_model_change = bool(payload.model_change or payload.new_session)
 
     def event_stream():
         # 后台 run 模式（EVO 后台 run 改造，对齐 DSH）：提交 + 订阅；断连只停订阅
         runner = getattr(engine, "runner", None)
         _resume = bool(getattr(payload, "resume", False))
         _before_start = (
-            (lambda sess: _apply_session_model_override(sess, _persist_model_ref))
+            (
+                lambda sess: _apply_session_model_override(
+                    sess, _persist_model_ref, explicit_change=_explicit_model_change
+                )
+            )
             if (_persist_model_ref and not _resume)
             else None
         )
@@ -1027,7 +1054,7 @@ def chat_stream(
                 runner,
                 session_id,
                 payload.message,
-                payload.model,
+                _route_model,
                 reasoning_effort=payload.reasoning_effort,
                 reasoning_mode=payload.reasoning_mode,
                 resume=_resume,
@@ -1070,7 +1097,7 @@ def chat_stream(
             from llm_loop.core.trace_leak.ingress_token import issue_ingress
 
             it = engine._run_stream_with_acquired(
-                session_id, payload.message, model=payload.model,
+                session_id, payload.message, model=_route_model,
                 reasoning_effort=payload.reasoning_effort,
                 reasoning_mode=payload.reasoning_mode,
                 on_run_acquired=_before_start,
@@ -1271,6 +1298,7 @@ def queue_enqueue(payload: QueueEnqueueRequest, request: Request) -> Response:
         payload.message,
         attachments=[ref.model_dump() if hasattr(ref, "model_dump") else dict(ref) for ref in payload.attachments],
         model=payload.model,
+        model_change=payload.model_change,
         reasoning_effort=payload.reasoning_effort,
         reasoning_mode=payload.reasoning_mode,
         attachment_facts=attachment_facts,
@@ -2416,6 +2444,17 @@ def get_session_messages(
                 "detail": f"[程序异常] 会话加载失败（{type(exc).__name__}: {exc}）。",
             },
         )
+    source_messages = session.messages
+    total = len(source_messages)
+    start = 0
+    end = total
+    if limit is not None:
+        start = max(0, total - offset - limit)
+        end = max(0, total - offset)
+        source_messages = source_messages[start:end]
+    # Project only the requested page. Previously limit=100 still constructed
+    # MessageItem objects for every message in multi-thousand-message sessions and
+    # sliced afterwards, amplifying CPU/GIL pressure during Web polling.
     messages = [
         MessageItem(
             role=m.role,
@@ -2435,15 +2474,11 @@ def get_session_messages(
             if getattr(m, "role", "") == "user"
             else [],
         )
-        for m in session.messages
+        for m in source_messages
     ]
-    total = len(messages)
     if limit is not None:
-        start = max(0, total - offset - limit)
-        end = total - offset
-        page = messages[start:end]
         return SessionMessagesResponse(
-            session_id=session_id, messages=page, has_more=start > 0, total=total
+            session_id=session_id, messages=messages, has_more=start > 0, total=total
         )
     return SessionMessagesResponse(session_id=session_id, messages=messages, total=total)
 

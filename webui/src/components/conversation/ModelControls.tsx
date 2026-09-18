@@ -68,7 +68,7 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
       <select
         className="v2-control-pill v2-model-pill"
         value={selected}
-        onChange={(e) => sessionStore.setModel(e.target.value || null)}
+        onChange={(e) => sessionStore.selectModel(e.target.value || null)}
         aria-label="选择模型"
         title={selected || "默认模型"}
         data-testid="model-select"

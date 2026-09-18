@@ -49,6 +49,8 @@ function mockBackend(overrides: { streamFrames?: string[] } = {}) {
 describe("发送链路", () => {
   beforeEach(() => {
     sessionStore.setCurrentSession("s1");
+    sessionStore.setModel(null);
+    sessionStore.setModelChangePending(false);
     conv.setState({ messages: [], streaming: false, streamingIndex: -1, lastError: null });
   });
   afterEach(() => {
@@ -56,6 +58,52 @@ describe("发送链路", () => {
     vi.unstubAllGlobals();
     conv.setState({ messages: [], streaming: false, streamingIndex: -1, lastError: null });
     sessionStore.setCurrentSession("s1");
+    sessionStore.setModel(null);
+    sessionStore.setModelChangePending(false);
+  });
+
+  it("done.model_used mechanically syncs selector without creating model-change intent", async () => {
+    mockBackend({
+      streamFrames: [
+        `data: {"type":"done","data":${JSON.stringify({ ...DONE, model_used: "glm/glm-5.3-flash" })}}`,
+      ],
+    });
+    sessionStore.setModel("glm/glm-5.3");
+    render(<><MessageList /><Composer /></>);
+    const ta = screen.getByTestId("composer-input");
+    fireEvent.change(ta, { target: { value: "switch result" } });
+    fireEvent.click(screen.getByText("发送"));
+
+    await waitFor(() => expect(conv.getState().streaming).toBe(false));
+    expect(sessionStore.getState().model).toBe("glm/glm-5.3-flash");
+    expect(sessionStore.getState().modelChangePending).toBe(false);
+  });
+
+  it("显式模型选择只随下一条 human turn 发送一次 model_change 意图", async () => {
+    let sentBody: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/v1/chat/stream")) {
+        sentBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        return new Response(sseStream([
+          'data: {"type":"run_started","data":{"session_id":"s1","run_generation":"g1"}}',
+          `data: {"type":"done","data":${JSON.stringify(DONE)}}`,
+        ]), { status: 200 });
+      }
+      if (url.includes("/api/v1/models")) {
+        return new Response(JSON.stringify({ models: ["glm/glm-5.3", "glm/glm-5.3-flash"], current: "glm/glm-5.3" }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    sessionStore.selectModel("glm/glm-5.3-flash");
+    render(<><MessageList /><Composer /></>);
+    const ta = screen.getByTestId("composer-input");
+    fireEvent.change(ta, { target: { value: "use flash" } });
+    fireEvent.click(screen.getByText("发送"));
+    await waitFor(() => expect(conv.getState().streaming).toBe(false));
+    expect(sentBody.model).toBe("glm/glm-5.3-flash");
+    expect(sentBody.model_change).toBe(true);
+    expect(sessionStore.getState().modelChangePending).toBe(false);
   });
 
   it("输入→发送→流式→done：输入清空、用户消息与回答出现", async () => {

@@ -426,6 +426,7 @@ describe("Composer", () => {
     await waitFor(() => expect(select.options.length).toBeGreaterThan(1)); // 模型选项加载
     fireEvent.change(select, { target: { value: "kimi/k3" } });
     expect(sessionStore.getState().model).toBe("kimi/k3");
+    expect(sessionStore.getState().modelChangePending).toBe(true);
     // 响应式：select 受控值跟随 store（再渲染不回弹）
     expect(select.value).toBe("kimi/k3");
   });

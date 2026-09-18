@@ -4,6 +4,7 @@ import type { StreamOutcome } from "./core/types";
 const h = vi.hoisted(() => ({
   pending: [] as Array<{
     body: Record<string, unknown>;
+    handlers: any;
     signal?: AbortSignal;
     resolve: (value: StreamOutcome) => void;
   }>,
@@ -63,21 +64,50 @@ describe("conversation stream ownership", () => {
     h.fetchHistory.mockReset();
     h.fetchStreamStatus.mockReset();
     h.streamChatRequest.mockImplementation(
-      (body: Record<string, unknown>, _handlers: unknown, signal?: AbortSignal) =>
-        new Promise<StreamOutcome>((resolve) => h.pending.push({ body, signal, resolve }))
+      (body: Record<string, unknown>, handlers: any, signal?: AbortSignal) =>
+        new Promise<StreamOutcome>((resolve) => h.pending.push({ body, handlers, signal, resolve }))
     );
     h.fetchHistory.mockResolvedValue({ messages: [], has_more: false });
     h.fetchStreamStatus.mockResolvedValue(null);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ status: "ok" }), { status: 200 })));
     sessionStore.setCurrentSession("s1");
+    sessionStore.setNewSessionPending(false);
     resetConversation();
   });
 
   afterEach(() => {
     for (const p of h.pending) p.resolve(stopped);
     sessionStore.setCurrentSession("");
+    sessionStore.setNewSessionPending(false);
     resetConversation();
     vi.unstubAllGlobals();
+  });
+
+  it("new-session guard stays armed until run_started binds the exact new session", async () => {
+    sessionStore.setCurrentSession("");
+    sessionStore.setNewSessionPending(true);
+
+    const run = sendMessage("fresh", []);
+    await nextTurn();
+    expect(h.pending).toHaveLength(1);
+    const pending = h.pending[0];
+    expect(pending.body).toMatchObject({ new_session: true });
+    expect(sessionStore.getState().currentSessionId).toBe("");
+    expect(sessionStore.getState().newSessionPending).toBe(true);
+    expect(pending.signal?.aborted).toBe(false);
+
+    pending.handlers.onRunStarted?.({ session_id: "s-new", run_generation: "g-new" });
+    expect(sessionStore.getState().currentSessionId).toBe("s-new");
+    expect(sessionStore.getState().newSessionPending).toBe(false);
+    expect(pending.signal?.aborted).toBe(false);
+
+    pending.resolve({
+      ok: true,
+      errorType: null,
+      error: null,
+      data: { session_id: "s-new", final_answer: "ok" },
+    } satisfies StreamOutcome);
+    await run;
   });
 
   it("fresh run 网络断流后只用 run_started 的 exact generation 续联，不猜 latest", async () => {

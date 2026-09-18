@@ -174,6 +174,7 @@ export interface QueueItem {
   /** 服务端 opaque 引用（与 /chat 请求同格式） */
   attachments: { ref: string }[];
   model: string | null;
+  model_change?: boolean;
   reasoning_effort: string | null;
   reasoning_mode: string;
   attachment_facts: AttachmentFact[];

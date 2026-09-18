@@ -13,6 +13,8 @@ interface SessionState {
   currentSessionId: string | null;
   /** 会话级模型覆盖（chat 请求携带；M47 语义） */
   model: string | null;
+  /** 用户刚刚显式选择了模型；仅下一条 human turn 可把该选择写回会话 authority。 */
+  modelChangePending: boolean;
   /** 会话级推理等级覆盖（对齐 DSH 模型+推理等级选择；chat 请求携带） */
   reasoningEffort: string | null;
   /** 思维链开关（reasoning_mode：auto/off/on；本地 chat_template 模型选 on 才显式发 enable_thinking） */
@@ -81,6 +83,7 @@ const sessionStoreRaw = createStore<SessionState>({
   sessions: [],
   currentSessionId: null,
   model: readSavedModel(),
+  modelChangePending: false,
   reasoningEffort: readSavedEffort(),
   thinkingMode: readSavedThinking(),
   newSessionPending: false,
@@ -99,6 +102,16 @@ export const sessionStore = {
     }
     sessionStoreRaw.setState({ model });
   },
+  selectModel: (model: string | null) => {
+    try {
+      if (model) localStorage.setItem(MODEL_KEY, model);
+      else localStorage.removeItem(MODEL_KEY);
+    } catch {
+      /* fail-open */
+    }
+    sessionStoreRaw.setState({ model, modelChangePending: true });
+  },
+  setModelChangePending: (value: boolean) => sessionStoreRaw.setState({ modelChangePending: value }),
   setReasoningEffort: (effort: string | null) => {
     try {
       if (effort) localStorage.setItem(EFFORT_KEY, effort);

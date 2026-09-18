@@ -61,6 +61,14 @@ def test_queue_id_metadata_is_provider_invisible():
 
 
 class TestHumanTurnQueueUnit:
+    def test_model_change_intent_is_frozen_with_queue_item(self, tmp_path):
+        hq = HumanTurnQueue(tmp_path)
+        item = hq.enqueue("s1", "switch then run", model="glm/x", model_change=True)
+        assert item["model"] == "glm/x"
+        assert item["model_change"] is True
+        reloaded = HumanTurnQueue(tmp_path).list_active("s1")
+        assert reloaded[0]["model_change"] is True
+
     def test_fifo_and_atomic_claim(self, tmp_path):
         hq = HumanTurnQueue(tmp_path)
         a = hq.enqueue("s1", "first")
