@@ -404,6 +404,31 @@ def _web_data_dir(engine: Any) -> Path:
     return Path(getattr(getattr(engine, "settings", None), "data_dir", "./data")).expanduser().resolve()
 
 
+# TASK-005: 受管服务 desired/live/stable 身份视图（与 service_control 工具同一 composer 单一数据源）
+from llm_loop.runtime.service_control import (  # noqa: E402
+    ManagedServiceDeploymentStore,
+    compose_service_identity_view,
+)
+
+
+@router.get("/api/v1/services/status")
+def services_status(request: Request) -> Response:
+    """Read-only managed-service identity view: desired vs live vs stable."""
+    store = ManagedServiceDeploymentStore(_web_data_dir(_engine_from(request)))
+    try:
+        view = compose_service_identity_view(store)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        logger.warning("services status compose failed: %s: %s", type(exc).__name__, exc)
+        return UTF8JSONResponse(
+            status_code=500,
+            content={
+                "error": "service_status_unavailable",
+                "detail": f"{type(exc).__name__}: {exc}",
+            },
+        )
+    return UTF8JSONResponse(view)
+
+
 _locks_guard = threading.Lock()
 _LOCK_TIMEOUT_S = 30
 _SSE_QUEUE_TIMEOUT_S = 15  # 后台 run 订阅队列 get 超时（防御；正常 run 必有 done/error 终态）

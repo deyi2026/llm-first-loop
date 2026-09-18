@@ -466,6 +466,119 @@ def _kill_signal_is_probe(tokens: list[str]) -> bool:
     return False
 
 
+def _pid_alive(pid: int) -> bool:
+    """Signal-0 liveness probe (observation only; never mutates the process)."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def latest_succeeded_actions(
+    store: ManagedServiceDeploymentStore,
+) -> dict[str, ServiceControlAction]:
+    """Most recent succeeded restart receipt per target (read-only observation)."""
+    latest: dict[str, ServiceControlAction] = {}
+    if not store.actions_dir.is_dir():
+        return latest
+    for path in sorted(store.actions_dir.glob("*.json")):
+        try:
+            action = ServiceControlAction.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if action.action != "restart" or action.status != "succeeded":
+            continue
+        current = latest.get(action.target)
+        if current is None or action.updated_at > current.updated_at:
+            latest[action.target] = action
+    return latest
+
+
+def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
+    """Desired/live/stable identity view per managed service (read-only).
+
+    - desired: operator-published deployment (generation + git_head + roots).
+    - live: each service's own startup runtime manifest (pid/started_at/git_head).
+    - stable: the latest succeeded controlled-restart receipt covering the
+      service.  ``git_head`` is asserted only when that receipt still matches
+      the current desired generation; older receipts keep generation-only
+      facts (no invented identity).
+    """
+    deployment = store.read()
+    succeeded = latest_succeeded_actions(store)
+    services: dict[str, Any] = {}
+    for service in _MANAGED_SERVICES:
+        manifest_path = store.runtime_dir / f"runtime_manifest.{service}.json"
+        live: dict[str, Any] = {"manifest_present": manifest_path.is_file()}
+        if live["manifest_present"]:
+            try:
+                raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+                pid = int(raw.get("pid") or 0)
+                live.update(
+                    {
+                        "pid": pid or None,
+                        "pid_alive": _pid_alive(pid),
+                        "started_at": raw.get("started_at"),
+                        "git_head": raw.get("git_head"),
+                        "build": raw.get("build_identity") or {},
+                        "model_ref": raw.get("model_ref"),
+                        "provider_id": raw.get("provider_id"),
+                    }
+                )
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                live["manifest_error"] = True
+        candidates = [
+            action
+            for target, action in succeeded.items()
+            if target == service or target == "all"
+        ]
+        receipt = max(candidates, key=lambda a: a.updated_at) if candidates else None
+        stable: dict[str, Any] | None = None
+        if receipt is not None:
+            matches = (
+                deployment is not None
+                and receipt.deployment_generation == deployment.generation
+            )
+            stable = {
+                "action_id": receipt.action_id,
+                "target": receipt.target,
+                "generation": receipt.deployment_generation,
+                "succeeded_at": receipt.updated_at,
+                "git_head": deployment.git_head if matches and deployment else None,
+                "matches_desired_generation": matches,
+            }
+        reasons: list[str] = []
+        if deployment is None:
+            reasons.append("desired_deployment_missing")
+        elif not live["manifest_present"]:
+            reasons.append("live_manifest_missing")
+        elif live.get("manifest_error"):
+            reasons.append("live_manifest_unreadable")
+        else:
+            if live.get("pid") and not live.get("pid_alive"):
+                reasons.append("live_pid_not_running")
+            live_head = str(live.get("git_head") or "")
+            if not live_head:
+                reasons.append("live_git_head_missing")
+            elif live_head != deployment.git_head:
+                reasons.append(
+                    f"live_git_head_mismatch live={live_head} desired={deployment.git_head}"
+                )
+        services[service] = {
+            "live": live,
+            "stable": stable,
+            "restart_required": bool(reasons),
+            "reasons": reasons,
+        }
+    return {
+        "deployment": deployment.to_dict() if deployment else None,
+        "services": services,
+    }
+
+
 class ManagedServiceMutationGuard:
     """Narrow tool-layer fence around LFL shared-service lifecycle mutations."""
 
@@ -982,16 +1095,18 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             env=env,
             check=False,
         )
-        _mark_action(
-            store,
-            running,
-            status="succeeded" if proc.returncode == 0 else "failed",
-            detail=(
-                "restart_mirror rc=0"
-                if proc.returncode == 0
-                else f"restart_mirror rc={proc.returncode}"
-            ),
-        )
+        final_status = "succeeded" if proc.returncode == 0 else "failed"
+        if proc.returncode == 0:
+            # Record the exact desired identity the physical restart deployed so
+            # identity views can cite a stable receipt without inventing history.
+            detail = (
+                "restart_mirror rc=0; "
+                f"identity generation={desired_now.generation} "
+                f"git_head={desired_now.git_head}"
+            )
+        else:
+            detail = f"restart_mirror rc={proc.returncode}"
+        _mark_action(store, running, status=final_status, detail=detail)
         return 0 if proc.returncode == 0 else int(proc.returncode or 1)
 
 
