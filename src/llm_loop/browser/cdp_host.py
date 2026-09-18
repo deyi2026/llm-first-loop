@@ -60,6 +60,9 @@ _READ_ONLY_CDP_METHODS = frozenset(
         "Page.getFrameTree",
         "DOMSnapshot.captureSnapshot",
         "Accessibility.getFullAXTree",
+        # EVO-20260918-f2310800 vision phase 1: fixed-parameter screenshot as an
+        # evidence-layer observation only; the PNG never feeds grounding/version.
+        "Page.captureScreenshot",
     }
 )
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
@@ -322,6 +325,27 @@ class CdpReadOnlyBrowserHost:
                 "url": str(target.get("url") or ""),
                 "type": str(target.get("type") or ""),
             }
+
+    def capture_vision_evidence(self) -> bytes:
+        """EVO-20260918-f2310800: fixed-parameter screenshot of the bound page.
+
+        PNG bytes only - an evidence-layer observation. Callers persist and
+        reference it; it never feeds objects/grounding/version paths.
+        """
+
+        import base64
+
+        with self._capture_lock:
+            target = self._resolve_target()
+            session = self._ensure_session(target)
+            result = session.send(
+                "Page.captureScreenshot",
+                {"format": "png", "fromSurface": True},
+            )
+            data = result.get("data") if isinstance(result, dict) else None
+            if not isinstance(data, str) or not data:
+                raise RuntimeError("Page.captureScreenshot returned no image data")
+            return base64.b64decode(data)
 
     def close(self) -> None:
         websocket = self._websocket

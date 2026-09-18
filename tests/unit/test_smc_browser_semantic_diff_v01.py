@@ -91,6 +91,9 @@ def test_model_surface_adds_only_readonly_diff_arguments(tmp_path: Path) -> None
     assert set(props) == {
         "action",
         "projection_limit",
+        "projection_kinds",
+        "projection_cursor",
+        "vision",
         "grounding_ref",
         "from_version",
         "to_version",

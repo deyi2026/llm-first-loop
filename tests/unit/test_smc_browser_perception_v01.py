@@ -72,6 +72,9 @@ def test_model_surface_is_read_only_and_has_no_backend_locator_parameters(tmp_pa
     assert set(props) == {
         "action",
         "projection_limit",
+        "projection_kinds",
+        "projection_cursor",
+        "vision",
         "grounding_ref",
         "from_version",
         "to_version",
