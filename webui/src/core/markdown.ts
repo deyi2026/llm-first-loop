@@ -82,12 +82,17 @@ function protectCodeFromMath(src: string): { masked: string; restore: (value: st
     return `\uE000LFL_CODE_${index}\uE001`;
   };
 
-  let masked = src.replace(
-    /(^|\n)([ \t]{0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\2\3[ \t]*(?=\n|$)/g,
-    (match: string, prefix: string) => `${prefix}${stash(match.slice(prefix.length))}`
-  );
-
-  masked = masked.replace(/(`+)([^`\n]*?)\1/g, (match: string) => stash(match));
+  // Use the same Markdown grammar as the renderer: this includes unfinished
+  // fences during streaming, indented blocks and multiline code spans.
+  const literals: string[] = [];
+  marked.walkTokens(marked.lexer(src), (token) => {
+    if (token.type === "code" || token.type === "codespan") literals.push(token.raw);
+  });
+  let masked = src;
+  // Outer code blocks must be protected before any shorter inline literal.
+  for (const literal of literals.sort((a, b) => b.length - a.length)) {
+    if (literal && masked.includes(literal)) masked = masked.split(literal).join(stash(literal));
+  }
 
   const restore = (value: string): string =>
     value.replace(/\uE000LFL_CODE_(\d+)\uE001/g, (match: string, rawIndex: string) => {
