@@ -317,6 +317,68 @@ def test_method_exact_miss_teaches_discovery_without_silent_fallback(tmp_path: P
     assert "projection_complete=False" not in discovery.content
 
 
+def test_method_use_receipt_is_append_only_observation_not_lifecycle_transition(tmp_path: Path) -> None:
+    seed = tmp_path / "seed"
+    runtime = tmp_path / "runtime"
+    _seed_method(seed, "root-cause", status="active", body="find first divergent fact")
+    store = MethodStore(runtime, seed_dir=seed)
+
+    entry = store.record_use(
+        "method:root-cause",
+        episode_ref="episode:use-test:2:bead",
+        decision="adapted",
+        model="glm/glm-5.3",
+        note="Used discriminator but adapted verification to current repo.",
+        evidence_refs=["evidence://v1/use"],
+    )
+
+    assert entry["decision"] == "adapted"
+    assert entry["application_proven"] is True
+    assert entry["task_benefit"] == "not_evaluated"
+    assert entry["promotion"] == "not_evaluated"
+    assert entry["method_status"] == "active"
+    assert entry["method_content_hash"] == store.get("method:root-cause").content_hash
+    assert store.get("method:root-cause").status == "active"
+    # Recording use of a tracked seed must not create a mutable Method overlay.
+    assert not (runtime / "root-cause" / "METHOD.md").exists()
+    assert store.usage_entries("method:root-cause") == [entry]
+
+
+def test_method_manage_record_use_derives_episode_and_model_and_never_promotes(tmp_path: Path) -> None:
+    store = MethodStore(tmp_path / "methods")
+    record = store.save_candidate(name="bounded lookup", description="reuse known path", body="body")
+    host = _Host(store)
+    host.episode_ref = "episode:method-test-session:77:use"
+
+    from llm_loop.core.run_context import current_model_label
+
+    token = current_model_label.set("glm/glm-5.3")
+    try:
+        result = execute_experience_tool(
+            "method_manage",
+            {
+                "action": "record_use",
+                "method_ref": record.method_ref,
+                "use_decision": "applied",
+                "note": "Applied the bounded lookup path.",
+                "evidence_refs": ["evidence://v1/applied"],
+            },
+            cast(Any, host),
+        )
+    finally:
+        current_model_label.reset(token)
+
+    assert result is not None and result.status.value == "success"
+    entry = store.usage_entries(record.method_ref)[-1]
+    assert entry["episode_ref"] == "episode:method-test-session:77:use"
+    assert entry["model"] == "glm/glm-5.3"
+    assert entry["decision"] == "applied"
+    assert entry["application_proven"] is True
+    assert store.get(record.method_ref).status == "candidate"
+    assert store.qualification_entries(record.method_ref) == []
+    assert host.audit_rows[-1][0] == "record_method_use"
+
+
 def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
     host = _Host(store)
@@ -324,6 +386,8 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     assert "method_manage" in tool_defs
     assert {"save_method_candidate", "record_method_qualification", "refine_method"}.isdisjoint(tool_defs)
     save_props = tool_defs["method_manage"]["parameters"]["properties"]
+    assert "record_use" in tool_defs["method_manage"]["parameters"]["properties"]["action"]["enum"]
+    assert save_props["use_decision"]["enum"] == ["applied", "adapted", "not_applicable", "rejected"]
     assert "source_model" not in save_props
     assert "source_episode_refs" not in save_props
     assert "teacher_ref" not in save_props
@@ -409,6 +473,18 @@ def test_model_facing_method_writes_require_runtime_episode_provenance(tmp_path:
     )
     assert qualified is not None and qualified.status.value == "failure"
     assert "provenance" in qualified.content
+
+    use = execute_experience_tool(
+        "method_manage",
+        {
+            "action": "record_use",
+            "method_ref": record.method_ref,
+            "use_decision": "applied",
+        },
+        cast(Any, host),
+    )
+    assert use is not None and use.status.value == "failure"
+    assert "provenance" in use.content
 
 
 def test_repository_seed_methods_are_complete() -> None:

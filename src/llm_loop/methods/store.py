@@ -388,6 +388,75 @@ class MethodStore:
             raise RuntimeError("runtime Method overlay did not round-trip")
         return copied
 
+    def record_use(
+        self,
+        method_ref: str,
+        *,
+        episode_ref: str,
+        decision: str,
+        note: str = "",
+        model: str = "",
+        evidence_refs: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Append one model-authored Method applicability/use declaration.
+
+        This is observability, not qualification: it never changes lifecycle status and
+        never proves task benefit. Seed Methods are not copied into the runtime overlay
+        merely because the model declared how it treated them.
+        """
+        self._require_write_safe()
+        record = self.get(method_ref)
+        if record is None:
+            raise FileNotFoundError(method_ref)
+        allowed = {"applied", "adapted", "not_applicable", "rejected"}
+        clean_decision = decision.strip().lower()
+        if clean_decision not in allowed:
+            raise ValueError(f"decision must be one of {sorted(allowed)}")
+        clean_episode = episode_ref.strip()
+        if not clean_episode.startswith("episode:"):
+            raise ValueError("Method use declaration requires runtime episode provenance")
+        entry = {
+            "ts": _now(),
+            "method_ref": record.method_ref,
+            "method_content_hash": record.content_hash,
+            "method_status": record.status,
+            "episode_ref": clean_episode,
+            "decision": clean_decision,
+            "model": model.strip()[:256],
+            "evidence_refs": [str(v).strip() for v in (evidence_refs or []) if str(v).strip()],
+            "note": note.strip()[:2000],
+            "application_proven": clean_decision in {"applied", "adapted"},
+            "task_benefit": "not_evaluated",
+            "promotion": "not_evaluated",
+        }
+        self._dir.mkdir(parents=True, exist_ok=True)
+        path = self._dir / "usage.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+        return entry
+
+    def usage_entries(self, method_ref: str = "") -> list[dict[str, Any]]:
+        """Read bounded-size local use declarations; semantic interpretation stays model-owned."""
+        path = self._dir / "usage.jsonl"
+        if not path.is_file():
+            return []
+        wanted = method_ref.strip().lower()
+        result: list[dict[str, Any]] = []
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(value, dict):
+                    continue
+                if wanted and str(value.get("method_ref", "")).lower() != wanted:
+                    continue
+                result.append(value)
+        except OSError:
+            return []
+        return result
+
     def record_qualification(
         self,
         method_ref: str,
