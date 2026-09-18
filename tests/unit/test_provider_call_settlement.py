@@ -317,11 +317,11 @@ def test_llmclient_disconnect_retry_becomes_two_physical_attempts_under_one_call
         model="deepseek-flash",
         provider="deepseek",
         guard_enabled=False,
+        retry_disconnect=1,
         transport_observer=recorder,
     )
     client._client.close()
     client._client = httpx.Client(transport=httpx.MockTransport(handler))
-    monkeypatch.setenv("LLM_RETRY_DISCONNECT", "1")
     try:
         with bind_provider_call_site(_site(call)):
             response = client.chat([{"role": "user", "content": "x"}], tools=[])

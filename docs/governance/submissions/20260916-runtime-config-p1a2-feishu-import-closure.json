@@ -1,0 +1,127 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260916-runtime-config-p1a2-feishu-import-closure",
+  "summary": "Close the corrected proof-layer gap in P1-A by migrating the final five helper-projected Feishu module-import business env reads to the existing immutable canonical RuntimeConfig snapshot boundary. This tranche is non-secret, preserves defaults and explicit runtime override semantics, and does not start P1-C.",
+  "components": [
+    {
+      "component_id": "p1a2-feishu-import-time-config-control",
+      "paths": [
+        "src/llm_loop/feishu/__init__.py",
+        "src/llm_loop/feishu/bridge.py",
+        "src/llm_loop/feishu/config.py",
+        "src/llm_loop/runtime/resolver.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "canonical runtime configuration ownership for Feishu import-time mechanical timing policy",
+      "disposition": "ADMIT as a narrow completion of the existing P1 RuntimeConfig migration. The model owns no semantic decision here; program code only owns typed configuration provenance, precedence, defaults, and immutable import-time mechanics.",
+      "evidence": [
+        "Corrected scanner on fe209 proves exactly five helper-projected import-time env reads across four non-secret Feishu timing keys.",
+        "Candidate inventory is 132 direct / 143 effective / 0 module-import, versus base 134 / 150 / 5, with no new env signature and dynamic-secret signatures unchanged at six.",
+        "RuntimeConfig precedence tests prove runtime.toml beats stale shell while LFL_ALLOW_RUNTIME_OVERRIDE=1 remains an explicit operator override.",
+        "Legacy invalid .env timing strings still fail open to the historical 10/3/300/1800 defaults."
+      ],
+      "verification_level": "Committed-state focused and adjacent pytest, corrected env inventory, Ruff, Pyright, py_compile, diff-check, whole-tree security, and full ci_gate",
+      "model_evidence_veto_recovery_exit": "RuntimeConfig sources and ignored-shell provenance remain inspectable. Operators can omit all four fields to retain historical defaults, explicitly enable runtime override for emergency shell authority, or revert the single implementation commit. No model semantic judgment is encoded.",
+      "rollback_route": "Revert 4ba02f4e. The four runtime.toml fields are optional, current production does not set them, and no persistent data conversion is required.",
+      "declaration_id": "p1a2-feishu-import-time-config-control"
+    },
+    {
+      "component_id": "p1a2-runtime-config-example",
+      "paths": [
+        "runtime.toml.example"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "operator-facing non-secret runtime.toml example",
+      "disposition": "ADMIT as documentation of the closed typed schema and historical defaults; it is not loaded automatically as production configuration.",
+      "evidence": [
+        "The example parses through the production closed-schema parser.",
+        "Existing no-secret-field gate remains green."
+      ],
+      "verification_level": "Closed-schema parse plus repository runtime-config tests and security gate",
+      "model_evidence_veto_recovery_exit": "Operators may omit these optional example fields; omission preserves the historical defaults.",
+      "rollback_route": "Revert the example lines with no runtime effect."
+    },
+    {
+      "component_id": "p1a2-feishu-import-time-tests",
+      "paths": [
+        "tests/feishu/test_exit_contract.py",
+        "tests/unit/test_runtime_config_p1a2_feishu_timing.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "RuntimeConfig precedence and Feishu lifecycle regression qualification",
+      "disposition": "ADMIT as deterministic test coverage only; tests own no runtime authority.",
+      "evidence": [
+        "P1-A2 focused 10/10 PASS.",
+        "Runtime/config adjacency 132/132 PASS and Feishu adjacency 55/55 PASS.",
+        "Tests explicitly freeze corrected scanner module-import count at zero."
+      ],
+      "verification_level": "Focused, adjacent, tier0, and full xdist pytest",
+      "model_evidence_veto_recovery_exit": "Tests expose mechanical configuration facts and can be revised independently of runtime state.",
+      "rollback_route": "Revert with the implementation if the tranche is abandoned."
+    },
+    {
+      "component_id": "p1a2-qualification-record",
+      "paths": [
+        "docs/QUALIFICATION-20260916-runtime-config-p1a2-feishu-import-closure.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "qualification evidence record",
+      "disposition": "ADMIT as a factual review record; runtime does not consume it.",
+      "evidence": [
+        "Records exact identities, before/after env inventory, qualification results, non-secret boundary, remaining P1-C scope, and rollback."
+      ],
+      "verification_level": "Exact Git and test evidence review plus A.5 path coverage",
+      "model_evidence_veto_recovery_exit": "Human/model reviewers may amend or reject the record without changing runtime behavior.",
+      "rollback_route": "Revert or delete the record with no runtime effect."
+    },
+    {
+      "component_id": "p1a2-a5-submission-record",
+      "paths": [
+        "docs/governance/submissions/20260916-runtime-config-p1a2-feishu-import-closure.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations. A.5 does not decide semantic quality, deployment, or promotion.",
+      "evidence": [
+        "Manifest partitions the exact base...head path set and references the single declared control component."
+      ],
+      "verification_level": "Local exact A.5 self-gate before any publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth and promotion; metadata has no runtime authority.",
+      "rollback_route": "Revert together with the qualification metadata."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "p1a2-feishu-import-time-config-control",
+      "g1": {
+        "necessity": "Five real helper-projected Feishu business env reads still executed at module import after the original P1-A direct-syntax migration. Leaving them preserves hidden ambient-process authority and violates the file-backed RuntimeConfig ownership goal."
+      },
+      "g2": {
+        "authority_owner": "existing canonical RuntimeConfig resolver rooted at LFL_RUNTIME_ROOT/runtime.toml, with legacy .env compatibility and explicit operator override",
+        "relationship": "reuse",
+        "non_duplication": "The tranche adds four schema fields to the existing resolver and reuses immutable business_config_snapshot. It creates no second config store, no new environment wrapper authority, and no secret store."
+      },
+      "g3": {
+        "model_evidence": [
+          "RuntimeConfig source precedence and ignored-shell provenance",
+          "closed runtime.toml schema and example",
+          "corrected env inventory counts and exact module-import signature set",
+          "Feishu lifecycle timing defaults and test receipts"
+        ],
+        "recovery_or_reason": "Missing fields retain historical defaults; malformed legacy .env strings fail open to those defaults; explicit LFL_ALLOW_RUNTIME_OVERRIDE=1 remains available for operator recovery; otherwise stale shell business values are non-authoritative."
+      },
+      "g4": {
+        "rollback": "Revert 4ba02f4e; no data migration, secret migration, provider change, or service-state rewrite is required.",
+        "verification": [
+          "P1-A2 focused 10/10 PASS",
+          "runtime/config/resolver/identity/manifest/startup/proc-version adjacency 132/132 PASS",
+          "Feishu bridge/ws/interruption/exit adjacency 55/55 PASS",
+          "corrected inventory 132 direct / 143 effective / 0 module-import / six dynamic-secret signatures",
+          "changed Ruff PASS; production Pyright 0/0/0; py_compile and diff-check PASS",
+          "whole-tree security 1911 tracked files PASS",
+          "full committed-state scripts/ci_gate.sh exit 0 with env-pin 585/0, tier0 PASS, and xdist full PASS"
+        ]
+      }
+    }
+  ]
+}

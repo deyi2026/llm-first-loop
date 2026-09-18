@@ -23,11 +23,11 @@ class _FakeProc:
         return self.returncode
 
 
-def _fresh_registry(monkeypatch, max_concurrent: int = 5) -> JobRegistry:
-    """单例隔离: 重建实例 + 设并发上限."""
-    monkeypatch.setenv("JOB_MAX_CONCURRENT", str(max_concurrent))
+def _fresh_registry(monkeypatch, max_concurrent: int = 5, data_dir: Path | None = None) -> JobRegistry:
+    """单例隔离: 重建实例 + 显式注入启动期并发上限."""
     JobRegistry._instance = None
     reg = JobRegistry.instance()
+    reg.configure(event_store=None, data_dir=data_dir, max_concurrent=max_concurrent)
     reg._jobs.clear()  # 防历史 job 残留
     reg._seq = 0
     return reg
@@ -68,8 +68,7 @@ def test_limit_freed_after_kill(monkeypatch):
 # ── 建议 A: 终态通知写入 interop inbox ──
 def test_watcher_notifies_completed(tmp_path, monkeypatch):
     """正常完成(exit=0) → inbox 出现 [任务完成] completed 通知."""
-    reg = _fresh_registry(monkeypatch)
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    reg = _fresh_registry(monkeypatch, data_dir=tmp_path)
     job_id = reg.create(_FakeProc(exit_code=0), "echo ok")
     reg.start_readers(job_id)
     _wait_for(lambda: _inbox_files(tmp_path) != [], timeout=3)
@@ -87,8 +86,7 @@ def test_watcher_notifies_completed(tmp_path, monkeypatch):
 
 def test_watcher_notifies_failed(tmp_path, monkeypatch):
     """失败(exit=1) → [任务完成] failed 通知."""
-    reg = _fresh_registry(monkeypatch)
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    reg = _fresh_registry(monkeypatch, data_dir=tmp_path)
     job_id = reg.create(_FakeProc(exit_code=1), "boom")
     reg.start_readers(job_id)
     _wait_for(lambda: _inbox_files(tmp_path) != [], timeout=3)
@@ -98,8 +96,7 @@ def test_watcher_notifies_failed(tmp_path, monkeypatch):
 
 def test_watcher_notifies_killed(tmp_path, monkeypatch):
     """killed 终态 → [任务完成] killed 通知（kill 由 job_kill 置位，watcher 兜底通知）."""
-    reg = _fresh_registry(monkeypatch)
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    reg = _fresh_registry(monkeypatch, data_dir=tmp_path)
     job_id = reg.create(_FakeProc(exit_code=-15), "sleep 100")
     entry = reg.get(job_id)
     with entry._lock:
@@ -112,13 +109,14 @@ def test_watcher_notifies_killed(tmp_path, monkeypatch):
 
 def test_notify_fail_open_no_inbox_dir(tmp_path, monkeypatch, caplog):
     """LFL_DATA_DIR 不可写 → 通知失败仅日志（fail-open），job 状态不受影响."""
-    reg = _fresh_registry(monkeypatch)
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path / "no" / "such" / "dir"))
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not-a-directory", encoding="utf-8")
+    reg = _fresh_registry(monkeypatch, data_dir=blocked)
     job_id = reg.create(_FakeProc(exit_code=0), "cmd")
     reg.start_readers(job_id)
     _wait_for(lambda: reg.get(job_id).done, timeout=3)
     assert reg.get(job_id).done is True  # 状态标记不受通知失败影响
-    assert not (tmp_path / "no" / "such" / "dir").exists()  # 未创建目录
+    assert blocked.is_file()  # fail-open 未改写绑定路径
 
 
 # ── 辅助 ──

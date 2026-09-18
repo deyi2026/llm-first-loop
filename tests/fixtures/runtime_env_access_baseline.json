@@ -1,0 +1,1103 @@
+{
+  "access_class_counts": {
+    "bootstrap_os": 2,
+    "business_config": 74,
+    "debug_test": 12,
+    "dynamic_or_bulk": 48,
+    "dynamic_secret": 8,
+    "secret": 6
+  },
+  "access_count": 134,
+  "baseline_context": {
+    "alias_recovered_direct_access_count": 8,
+    "corrected_direct_access_count": 134,
+    "corrected_effective_access_count": 150,
+    "corrected_module_import_access_count": 5,
+    "parent_commit": "32a9a26611e147a32d4dc0fcccdf10dbc0d40c06",
+    "phase": "runtime-config-c0a-proof-gate-20260916",
+    "previous_scanner_access_count": 126,
+    "previous_schema_version": 1,
+    "prior_p0_context": {
+      "candidate_access_count": 204,
+      "parent_access_count": 245,
+      "parent_commit": "e5bfe24985efd3328592692b496241b0ed743781",
+      "phase": "runtime-config-p0-fresh-main-20260916",
+      "review_rationale": "fresh-main inherited nonconvergence env reads are frozen as existing debt; P0 adds only central injected-env/bootstrap compatibility boundaries and no new business-key reads",
+      "reviewed_new_signatures": [
+        "src/llm_loop/runtime/identity.py|_find_runtime_root|bulk:raw|<all>",
+        "src/llm_loop/runtime/identity.py|_find_workspace_root|bulk:raw|<all>",
+        "src/llm_loop/runtime/identity.py|_mode|bulk:raw|<all>",
+        "src/llm_loop/runtime/resolver.py|_default_runtime_root|bulk:raw|<all>",
+        "src/llm_loop/runtime/resolver.py|apply_to_environ|bulk:pop|<all>",
+        "src/llm_loop/runtime/resolver.py|legacy_env_snapshot|bulk:raw|<all>",
+        "src/llm_loop/runtime/resolver.py|legacy_settings_snapshot|bulk:raw|<all>"
+      ]
+    },
+    "review_rationale": "C0-A corrects proof instrumentation only: alias-aware os access, local literal-wrapper projection/import-time truth, and dynamic secret-boundary classification. Existing newly visible debt is frozen as inherited debt and must only decrease."
+  },
+  "class_key_counts": {
+    "bootstrap_os": 2,
+    "business_config": 39,
+    "debug_test": 10,
+    "dynamic_or_bulk": 2,
+    "dynamic_secret": 1,
+    "secret": 4
+  },
+  "direct_access_count": 134,
+  "dynamic_helper_access_count": 3,
+  "dynamic_secret_signatures": [
+    "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>",
+    "src/llm_loop/web/provider_admin.py|_credential_fact|read|<dynamic>",
+    "src/llm_loop/web/provider_admin.py|_sanitize_provider|read|<dynamic>",
+    "src/llm_loop/web/provider_admin.py|_set_credential_locked|write|<dynamic>",
+    "src/llm_loop/web/vision.py|_describe_provider|read|<dynamic>",
+    "src/llm_loop/web/vision.py|_pick_provider_model|read|<dynamic>"
+  ],
+  "effective_access_count": 150,
+  "effective_file_count": 44,
+  "file_count": 44,
+  "helper_class_key_counts": {
+    "business_config": 11,
+    "dynamic_secret": 1
+  },
+  "helper_keys": {
+    "<dynamic>": {
+      "class": "dynamic_secret",
+      "classes": [
+        "dynamic_secret"
+      ],
+      "files": [
+        "src/llm_loop/web/provider_admin.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 1
+    },
+    "FEISHU_CHUNK_LIMIT": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/config.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_EXIT_DRAIN_S": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/__init__.py",
+        "src/llm_loop/feishu/bridge.py"
+      ],
+      "module_import_reads": 2,
+      "reads": 2,
+      "writes": 0
+    },
+    "FEISHU_EXIT_WAIT_S": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/__init__.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_MSG_PROCESS_TIMEOUT_S": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/bridge.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_SILENT_THRESHOLD_S": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/bridge.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_STREAMING": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/config.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_TYPING_ACK": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/config.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_INSTANCE": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/runtime/route_context.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_ROUTE": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/runtime/route_context.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_ZONE": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/runtime/route_context.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_MODEL": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/provider_admin.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 1
+    }
+  },
+  "helper_signature_counts": {
+    "src/llm_loop/feishu/__init__.py|<module>|read|FEISHU_EXIT_DRAIN_S": 1,
+    "src/llm_loop/feishu/__init__.py|<module>|read|FEISHU_EXIT_WAIT_S": 1,
+    "src/llm_loop/feishu/bridge.py|<module>|read|FEISHU_EXIT_DRAIN_S": 1,
+    "src/llm_loop/feishu/bridge.py|<module>|read|FEISHU_MSG_PROCESS_TIMEOUT_S": 1,
+    "src/llm_loop/feishu/bridge.py|<module>|read|FEISHU_SILENT_THRESHOLD_S": 1,
+    "src/llm_loop/feishu/config.py|load_feishu_config|read|FEISHU_CHUNK_LIMIT": 1,
+    "src/llm_loop/feishu/config.py|load_feishu_config|read|FEISHU_STREAMING": 1,
+    "src/llm_loop/feishu/config.py|load_feishu_config|read|FEISHU_TYPING_ACK": 1,
+    "src/llm_loop/runtime/route_context.py|_resolve|read|LFL_INSTANCE": 1,
+    "src/llm_loop/runtime/route_context.py|_resolve|read|LFL_ROUTE": 1,
+    "src/llm_loop/runtime/route_context.py|_resolve|read|LFL_ZONE": 1,
+    "src/llm_loop/web/provider_admin.py|_credential_fact|read|<dynamic>": 1,
+    "src/llm_loop/web/provider_admin.py|_sanitize_provider|read|<dynamic>": 1,
+    "src/llm_loop/web/provider_admin.py|_set_credential_locked|write|<dynamic>": 1,
+    "src/llm_loop/web/provider_admin.py|_set_default_model_locked|write|LLM_MODEL": 1,
+    "src/llm_loop/web/provider_admin.py|snapshot|read|LLM_MODEL": 1
+  },
+  "helper_unique_key_count": 12,
+  "keys": {
+    "<all>": {
+      "class": "dynamic_or_bulk",
+      "classes": [
+        "dynamic_or_bulk"
+      ],
+      "files": [
+        "src/llm_loop/codearts/audit.py",
+        "src/llm_loop/cognitive/cache_tags.py",
+        "src/llm_loop/config.py",
+        "src/llm_loop/introspection/tools_playwright_exec.py",
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/runtime/identity.py",
+        "src/llm_loop/runtime/knowledge_health.py",
+        "src/llm_loop/runtime/manifest.py",
+        "src/llm_loop/runtime/paths.py",
+        "src/llm_loop/runtime/resolver.py",
+        "src/llm_loop/tools/builtin/dsh_task.py",
+        "src/llm_loop/tools/builtin/execute_command.py",
+        "src/llm_loop/tools/mcp_client.py",
+        "src/llm_loop/web/__init__.py",
+        "src/llm_loop/web/provider_admin.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 30,
+      "writes": 0
+    },
+    "<dynamic>": {
+      "class": "mixed",
+      "classes": [
+        "dynamic_or_bulk",
+        "dynamic_secret"
+      ],
+      "files": [
+        "src/llm_loop/cache_guard/guard.py",
+        "src/llm_loop/config.py",
+        "src/llm_loop/core/loop/engine_services/tool_reachability.py",
+        "src/llm_loop/core/loop/events.py",
+        "src/llm_loop/core/loop/input_authorization.py",
+        "src/llm_loop/core/trace_leak/leak_events.py",
+        "src/llm_loop/core/trace_leak/trace_signature.py",
+        "src/llm_loop/core/trace_leak/user_ingress_guard.py",
+        "src/llm_loop/feishu/__init__.py",
+        "src/llm_loop/feishu/bridge.py",
+        "src/llm_loop/feishu/compensation.py",
+        "src/llm_loop/feishu/config.py",
+        "src/llm_loop/llm/providers.py",
+        "src/llm_loop/runtime/resolver.py",
+        "src/llm_loop/runtime/route_context.py",
+        "src/llm_loop/web/provider_admin.py",
+        "src/llm_loop/web/vision.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 20,
+      "writes": 3
+    },
+    "ANTHROPIC_CACHE_CONTROL": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "CACHE_GUARD_HIT_TELEMETRY": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "COG_RUNTIME_MODE": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/core/history.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "COG_RUNTIME_TELEMETRY": {
+      "class": "debug_test",
+      "classes": [
+        "debug_test"
+      ],
+      "files": [
+        "src/llm_loop/cognitive/telemetry.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "DATA_DIR": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/__init__.py",
+        "src/llm_loop/feishu/approval.py",
+        "src/llm_loop/feishu/config.py",
+        "src/llm_loop/feishu/handlers.py",
+        "src/llm_loop/feishu/rest.py",
+        "src/llm_loop/introspection/proc_version.py",
+        "src/llm_loop/runtime/knowledge_health.py",
+        "src/llm_loop/runtime/manifest.py",
+        "src/llm_loop/web/__init__.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 9,
+      "writes": 0
+    },
+    "ERR1210_DEFER_TRACE": {
+      "class": "debug_test",
+      "classes": [
+        "debug_test"
+      ],
+      "files": [
+        "src/llm_loop/core/loop/injection_span.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "ERR1210_RECOVERY": {
+      "class": "debug_test",
+      "classes": [
+        "debug_test"
+      ],
+      "files": [
+        "src/llm_loop/core/loop/engine_services/recovery_controller.py",
+        "src/llm_loop/core/loop/injection_span.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 0
+    },
+    "ERR1210_SNAPSHOT": {
+      "class": "debug_test",
+      "classes": [
+        "debug_test"
+      ],
+      "files": [
+        "src/llm_loop/core/loop/err1210.py",
+        "src/llm_loop/core/loop/injection_span.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 0
+    },
+    "FEISHU_APPROVAL_ALLOWED": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/approval.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_APP_ID": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/config.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_APP_SECRET": {
+      "class": "secret",
+      "classes": [
+        "secret"
+      ],
+      "files": [
+        "src/llm_loop/feishu/config.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_FOLD_LONG_REPLY": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/handlers.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_HEARTBEAT_HISTORY_MAX_MB": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/bridge.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_OUTBOUND_ALLOWED_USERS": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/introspection/tools_feishu_outbound.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_OUTBOUND_ENABLED": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/introspection/tools_feishu_outbound.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_OUTBOUND_RATE_PER_MIN": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/introspection/tools_feishu_outbound.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_OWNER_OPEN_ID": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/config.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_SESSION_MAP_PATH": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/config.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_WS_ENABLED": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/config.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_DATA_DIR": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/web/routes.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 5,
+      "writes": 0
+    },
+    "LFL_ENV_FILE": {
+      "class": "bootstrap_os",
+      "classes": [
+        "bootstrap_os"
+      ],
+      "files": [
+        "src/llm_loop/web/provider_admin.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_RESTART_CONFIRM_TTL_S": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/feishu/restart_guard.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_WORKSPACE_ROOT": {
+      "class": "bootstrap_os",
+      "classes": [
+        "bootstrap_os"
+      ],
+      "files": [
+        "src/llm_loop/introspection/proc_version.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_MODEL": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/provider_admin.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_PAYLOAD_TRACE": {
+      "class": "debug_test",
+      "classes": [
+        "debug_test"
+      ],
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_PAYLOAD_TRACE_PATH": {
+      "class": "debug_test",
+      "classes": [
+        "debug_test"
+      ],
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_PAYLOAD_TRACE_RETAIN_DAYS": {
+      "class": "debug_test",
+      "classes": [
+        "debug_test"
+      ],
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_RETRY_DISCONNECT": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_TRUST_ENV": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LMS_CHAT_TAIL": {
+      "class": "debug_test",
+      "classes": [
+        "debug_test"
+      ],
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LMS_DIRECT": {
+      "class": "debug_test",
+      "classes": [
+        "debug_test"
+      ],
+      "files": [
+        "src/llm_loop/llm/providers.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LOCAL_ENABLE_THINKING": {
+      "class": "debug_test",
+      "classes": [
+        "debug_test"
+      ],
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "MINIMAX_ANTHROPIC_BASE_URL": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/vision.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "MINIMAX_API_KEY": {
+      "class": "secret",
+      "classes": [
+        "secret"
+      ],
+      "files": [
+        "src/llm_loop/web/vision.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 3,
+      "writes": 0
+    },
+    "MODEL_PROVIDERS": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/runtime/manifest.py",
+        "src/llm_loop/web/provider_admin.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 4,
+      "writes": 0
+    },
+    "SESSION_CONCURRENCY_LOCK": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/__init__.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "UI_V2_DIR": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/__init__.py",
+        "src/llm_loop/web/routes.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 0
+    },
+    "WEB_API_KEY": {
+      "class": "secret",
+      "classes": [
+        "secret"
+      ],
+      "files": [
+        "src/llm_loop/web/auth.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_AUTH_REQUIRE": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/auth.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 0
+    },
+    "WEB_DOC_BACKEND": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/upload_handlers.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_DOC_IMAGE_MAX": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/upload_handlers.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_DOC_IMAGE_RECOGNITION": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/upload_handlers.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_DOC_TIMEOUT": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/upload_handlers.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_FETCH_BLOCK_FAKE_IP": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/tools/builtin/web_fetch.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_FETCH_BLOCK_PRIVATE": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/tools/builtin/web_fetch.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_HOST": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/__init__.py",
+        "src/llm_loop/web/auth.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 0
+    },
+    "WEB_LOGIN_PASSWORD_HASH": {
+      "class": "secret",
+      "classes": [
+        "secret"
+      ],
+      "files": [
+        "src/llm_loop/web/auth.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_MODELS": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/routes.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 0
+    },
+    "WEB_ORIGIN_ALLOWLIST": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/auth.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 3,
+      "writes": 0
+    },
+    "WEB_PDF_VISION_FALLBACK": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/upload_handlers.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_PORT": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/__init__.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_SESSION_TTL_SECONDS": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/auth.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_VISION_BACKEND": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/vision.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_VISION_MODEL": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/vision.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 0
+    },
+    "WEB_VISION_TIMEOUT": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/web/vision.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    }
+  },
+  "literal_helper_access_count": 13,
+  "module_import_access_count": 5,
+  "module_import_direct_access_count": 0,
+  "module_import_helper_access_count": 5,
+  "module_import_signature_counts": {
+    "src/llm_loop/feishu/__init__.py|<module>|read|FEISHU_EXIT_DRAIN_S": 1,
+    "src/llm_loop/feishu/__init__.py|<module>|read|FEISHU_EXIT_WAIT_S": 1,
+    "src/llm_loop/feishu/bridge.py|<module>|read|FEISHU_EXIT_DRAIN_S": 1,
+    "src/llm_loop/feishu/bridge.py|<module>|read|FEISHU_MSG_PROCESS_TIMEOUT_S": 1,
+    "src/llm_loop/feishu/bridge.py|<module>|read|FEISHU_SILENT_THRESHOLD_S": 1
+  },
+  "schema_version": 2,
+  "signature_counts": {
+    "src/llm_loop/cache_guard/guard.py|_check_privacy|read|<dynamic>": 1,
+    "src/llm_loop/codearts/audit.py|_redact|bulk:items|<all>": 1,
+    "src/llm_loop/cognitive/cache_tags.py|tagging_enabled_for|bulk:raw|<all>": 1,
+    "src/llm_loop/cognitive/telemetry.py|telemetry_enabled|read|COG_RUNTIME_TELEMETRY": 1,
+    "src/llm_loop/config.py|_raw_env|bulk:raw|<all>": 1,
+    "src/llm_loop/config.py|load_env_file|bulk:raw|<all>": 1,
+    "src/llm_loop/config.py|load_env_file|write|<dynamic>": 1,
+    "src/llm_loop/config.py|load_settings|bulk:raw|<all>": 1,
+    "src/llm_loop/core/history.py|_persist_semantic_state|read|COG_RUNTIME_MODE": 1,
+    "src/llm_loop/core/loop/engine_services/recovery_controller.py|RecoveryController/_try_err1210_recovery|read|ERR1210_RECOVERY": 1,
+    "src/llm_loop/core/loop/engine_services/tool_reachability.py|_log_path|read|<dynamic>": 1,
+    "src/llm_loop/core/loop/err1210.py|snapshot_offending_payload|read|ERR1210_SNAPSHOT": 1,
+    "src/llm_loop/core/loop/events.py|_EventsMixin/_env_tail_limit|read|<dynamic>": 1,
+    "src/llm_loop/core/loop/injection_span.py|_Err1210Mixin/_try_err1210_recovery|read|ERR1210_RECOVERY": 1,
+    "src/llm_loop/core/loop/injection_span.py|record_defer_event|read|ERR1210_DEFER_TRACE": 1,
+    "src/llm_loop/core/loop/injection_span.py|snapshot_offending_payload|read|ERR1210_SNAPSHOT": 1,
+    "src/llm_loop/core/loop/input_authorization.py|current_latent_channel_mode|read|<dynamic>": 1,
+    "src/llm_loop/core/trace_leak/leak_events.py|current_quarantine_mode|read|<dynamic>": 1,
+    "src/llm_loop/core/trace_leak/trace_signature.py|current_signature_mode|read|<dynamic>": 1,
+    "src/llm_loop/core/trace_leak/user_ingress_guard.py|current_guard_mode|read|<dynamic>": 1,
+    "src/llm_loop/feishu/__init__.py|_env_float|read|<dynamic>": 1,
+    "src/llm_loop/feishu/__init__.py|main|read|DATA_DIR": 1,
+    "src/llm_loop/feishu/approval.py|_allowed_open_ids|read|DATA_DIR": 1,
+    "src/llm_loop/feishu/approval.py|_allowed_open_ids|read|FEISHU_APPROVAL_ALLOWED": 1,
+    "src/llm_loop/feishu/bridge.py|_env_float|read|<dynamic>": 1,
+    "src/llm_loop/feishu/bridge.py|_heartbeat_history_max_bytes|read|FEISHU_HEARTBEAT_HISTORY_MAX_MB": 1,
+    "src/llm_loop/feishu/compensation.py|compensation_path|read|<dynamic>": 1,
+    "src/llm_loop/feishu/compensation.py|legacy_interrupted_path|read|<dynamic>": 1,
+    "src/llm_loop/feishu/config.py|_env_flag|read|<dynamic>": 1,
+    "src/llm_loop/feishu/config.py|_env_int|read|<dynamic>": 1,
+    "src/llm_loop/feishu/config.py|load_feishu_config|read|DATA_DIR": 1,
+    "src/llm_loop/feishu/config.py|load_feishu_config|read|FEISHU_APP_ID": 1,
+    "src/llm_loop/feishu/config.py|load_feishu_config|read|FEISHU_APP_SECRET": 1,
+    "src/llm_loop/feishu/config.py|load_feishu_config|read|FEISHU_OWNER_OPEN_ID": 1,
+    "src/llm_loop/feishu/config.py|load_feishu_config|read|FEISHU_SESSION_MAP_PATH": 1,
+    "src/llm_loop/feishu/config.py|load_feishu_config|read|FEISHU_WS_ENABLED": 1,
+    "src/llm_loop/feishu/handlers.py|FeishuMessageHandler/_default_audit_dir|read|DATA_DIR": 1,
+    "src/llm_loop/feishu/handlers.py|FeishuMessageHandler/_reply_chunked|read|FEISHU_FOLD_LONG_REPLY": 1,
+    "src/llm_loop/feishu/rest.py|_default_audit_dir|read|DATA_DIR": 1,
+    "src/llm_loop/feishu/restart_guard.py|confirm_ttl_s|read|LFL_RESTART_CONFIRM_TTL_S": 1,
+    "src/llm_loop/introspection/proc_version.py|_audit_dir|read|DATA_DIR": 1,
+    "src/llm_loop/introspection/proc_version.py|_source_workspace|read|LFL_WORKSPACE_ROOT": 1,
+    "src/llm_loop/introspection/tools_feishu_outbound.py|_get_allowed_users|read|FEISHU_OUTBOUND_ALLOWED_USERS": 1,
+    "src/llm_loop/introspection/tools_feishu_outbound.py|_get_rate_limit|read|FEISHU_OUTBOUND_RATE_PER_MIN": 1,
+    "src/llm_loop/introspection/tools_feishu_outbound.py|_is_outbound_enabled|read|FEISHU_OUTBOUND_ENABLED": 1,
+    "src/llm_loop/introspection/tools_playwright_exec.py|_child_env|bulk:items|<all>": 1,
+    "src/llm_loop/llm/client.py|LLMClient/__post_init__|read|LLM_TRUST_ENV": 1,
+    "src/llm_loop/llm/client.py|LLMClient/_anthropic_cache_enabled|read|ANTHROPIC_CACHE_CONTROL": 1,
+    "src/llm_loop/llm/client.py|LLMClient/_stream_openai|bulk:raw|<all>": 1,
+    "src/llm_loop/llm/client.py|LLMClient/_stream_openai|read|LLM_RETRY_DISCONNECT": 1,
+    "src/llm_loop/llm/client.py|LLMClient/ensure_guard|read|CACHE_GUARD_HIT_TELEMETRY": 1,
+    "src/llm_loop/llm/client.py|LLMClient/reasoning_contract_state|bulk:raw|<all>": 2,
+    "src/llm_loop/llm/client.py|LLMClient/reasoning_contract_state|read|LOCAL_ENABLE_THINKING": 1,
+    "src/llm_loop/llm/client.py|LLMClient|read|LMS_CHAT_TAIL": 1,
+    "src/llm_loop/llm/client.py|_cleanup_trace_shards|read|LLM_PAYLOAD_TRACE_RETAIN_DAYS": 1,
+    "src/llm_loop/llm/client.py|_trace_payload_fingerprint|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/llm/client.py|_trace_payload_fingerprint|read|LLM_PAYLOAD_TRACE": 1,
+    "src/llm_loop/llm/client.py|_trace_payload_fingerprint|read|LLM_PAYLOAD_TRACE_PATH": 1,
+    "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>": 1,
+    "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|LMS_DIRECT": 1,
+    "src/llm_loop/runtime/identity.py|_find_runtime_root|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/identity.py|_find_workspace_root|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/identity.py|_mode|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/identity.py|compute_identity|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/knowledge_health.py|_paths_from_process_env|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/knowledge_health.py|_paths_from_process_env|read|DATA_DIR": 1,
+    "src/llm_loop/runtime/manifest.py|_knowledge_runtime_paths|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/manifest.py|_manifest_model_providers_raw|read|MODEL_PROVIDERS": 1,
+    "src/llm_loop/runtime/manifest.py|default_data_dir|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/manifest.py|default_data_dir|read|DATA_DIR": 1,
+    "src/llm_loop/runtime/manifest.py|providers_hashes|read|MODEL_PROVIDERS": 1,
+    "src/llm_loop/runtime/paths.py|resolve_runtime_paths|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/resolver.py|_default_runtime_root|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/resolver.py|apply_to_environ|bulk:pop|<all>": 1,
+    "src/llm_loop/runtime/resolver.py|apply_to_environ|write|<dynamic>": 1,
+    "src/llm_loop/runtime/resolver.py|legacy_env_snapshot|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/resolver.py|legacy_settings_snapshot|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/resolver.py|resolve_effective|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/route_context.py|_env_or_none|read|<dynamic>": 1,
+    "src/llm_loop/tools/builtin/dsh_task.py|DshTaskTool/_redact|bulk:items|<all>": 1,
+    "src/llm_loop/tools/builtin/dsh_task.py|_dsh_env|bulk:raw|<all>": 1,
+    "src/llm_loop/tools/builtin/execute_command.py|_scrubbed_env|bulk:items|<all>": 1,
+    "src/llm_loop/tools/builtin/web_fetch.py|_block_private_enabled|read|WEB_FETCH_BLOCK_PRIVATE": 1,
+    "src/llm_loop/tools/builtin/web_fetch.py|_strict_fake_ip|read|WEB_FETCH_BLOCK_FAKE_IP": 1,
+    "src/llm_loop/tools/mcp_client.py|McpConnection/_start_process|bulk:raw|<all>": 1,
+    "src/llm_loop/web/__init__.py|_install_exit_signal_log|read|DATA_DIR": 1,
+    "src/llm_loop/web/__init__.py|build_app|read|SESSION_CONCURRENCY_LOCK": 1,
+    "src/llm_loop/web/__init__.py|build_app|read|UI_V2_DIR": 1,
+    "src/llm_loop/web/__init__.py|main|bulk:setdefault|<all>": 2,
+    "src/llm_loop/web/__init__.py|main|read|WEB_HOST": 1,
+    "src/llm_loop/web/__init__.py|main|read|WEB_PORT": 1,
+    "src/llm_loop/web/auth.py|_web_api_key|read|WEB_API_KEY": 1,
+    "src/llm_loop/web/auth.py|_web_login_password_hash|read|WEB_LOGIN_PASSWORD_HASH": 1,
+    "src/llm_loop/web/auth.py|auth_required|read|WEB_AUTH_REQUIRE": 1,
+    "src/llm_loop/web/auth.py|auth_required|read|WEB_HOST": 1,
+    "src/llm_loop/web/auth.py|auth_required|read|WEB_ORIGIN_ALLOWLIST": 1,
+    "src/llm_loop/web/auth.py|configured_origin_allowlist|read|WEB_ORIGIN_ALLOWLIST": 1,
+    "src/llm_loop/web/auth.py|session_ttl_seconds|read|WEB_SESSION_TTL_SECONDS": 1,
+    "src/llm_loop/web/auth.py|validate_auth_require|read|WEB_AUTH_REQUIRE": 1,
+    "src/llm_loop/web/auth.py|validate_origin_allowlist|read|WEB_ORIGIN_ALLOWLIST": 1,
+    "src/llm_loop/web/provider_admin.py|_clear_dotenv_value|bulk:pop|<all>": 2,
+    "src/llm_loop/web/provider_admin.py|_configured_default_ref|read|LLM_MODEL": 1,
+    "src/llm_loop/web/provider_admin.py|_credential_fact|read|<dynamic>": 1,
+    "src/llm_loop/web/provider_admin.py|_dotenv_value_source|read|<dynamic>": 1,
+    "src/llm_loop/web/provider_admin.py|_effective_config|read|MODEL_PROVIDERS": 1,
+    "src/llm_loop/web/provider_admin.py|_ensure_mutable|read|MODEL_PROVIDERS": 1,
+    "src/llm_loop/web/provider_admin.py|_set_dotenv_value|write|<dynamic>": 1,
+    "src/llm_loop/web/provider_admin.py|env_file_path|read|LFL_ENV_FILE": 1,
+    "src/llm_loop/web/routes.py|evolution_detail|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/web/routes.py|evolution_diff|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/web/routes.py|evolution_list|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/web/routes.py|list_interop_messages|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/web/routes.py|list_models|read|WEB_MODELS": 2,
+    "src/llm_loop/web/routes.py|root|read|UI_V2_DIR": 1,
+    "src/llm_loop/web/upload_handlers.py|_extract_doc_arkcli|read|WEB_DOC_BACKEND": 1,
+    "src/llm_loop/web/upload_handlers.py|_extract_doc_arkcli|read|WEB_DOC_TIMEOUT": 1,
+    "src/llm_loop/web/upload_handlers.py|_extract_pdf_vision|read|WEB_PDF_VISION_FALLBACK": 1,
+    "src/llm_loop/web/upload_handlers.py|_recognize_doc_images|read|WEB_DOC_IMAGE_MAX": 1,
+    "src/llm_loop/web/upload_handlers.py|_recognize_doc_images|read|WEB_DOC_IMAGE_RECOGNITION": 1,
+    "src/llm_loop/web/vision.py|_describe_minimax|read|MINIMAX_ANTHROPIC_BASE_URL": 1,
+    "src/llm_loop/web/vision.py|_describe_minimax|read|MINIMAX_API_KEY": 1,
+    "src/llm_loop/web/vision.py|_describe_provider|read|<dynamic>": 1,
+    "src/llm_loop/web/vision.py|_pick_provider_model|read|<dynamic>": 2,
+    "src/llm_loop/web/vision.py|_vision_backend|read|WEB_VISION_BACKEND": 1,
+    "src/llm_loop/web/vision.py|_vision_model|read|WEB_VISION_MODEL": 1,
+    "src/llm_loop/web/vision.py|_vision_timeout|read|WEB_VISION_TIMEOUT": 1,
+    "src/llm_loop/web/vision.py|vision_enabled|read|MINIMAX_API_KEY": 2,
+    "src/llm_loop/web/vision.py|vision_enabled|read|WEB_VISION_MODEL": 1
+  },
+  "unique_key_count": 57
+}

@@ -189,3 +189,26 @@ def test_active_background_lease_is_not_fake_preempted_when_foreground_appears()
     assert governor.in_flight(key) == 1
     assert governor.release(decision.lease) is True
     assert governor.release(decision.lease) is False
+
+
+def test_capacity_generation_can_be_replaced_and_invalidated_without_touching_active_lease() -> None:
+    key = _key()
+    governor = ResourceGovernor()
+    governor.set_concurrency_limit(key, 1, source_ref="lfrt:pid:10", generation="pid:10")
+    assert governor.concurrency_limit(key) == 1
+    assert governor.concurrency_limit_source(key) == "lfrt:pid:10"
+    assert governor.concurrency_limit_generation(key) == "pid:10"
+
+    active = governor.try_acquire(_request("active"))
+    assert active.lease is not None
+    governor.set_concurrency_limit(key, 2, source_ref="lfrt:pid:11", generation="pid:11")
+    assert governor.in_flight(key) == 1
+    assert governor.concurrency_limit(key) == 2
+    assert governor.concurrency_limit_generation(key) == "pid:11"
+
+    assert governor.invalidate_concurrency_limit(key) is True
+    assert governor.concurrency_limit(key) is None
+    assert governor.concurrency_limit_source(key) is None
+    assert governor.concurrency_limit_generation(key) is None
+    assert governor.in_flight(key) == 1
+    assert governor.release(active.lease) is True

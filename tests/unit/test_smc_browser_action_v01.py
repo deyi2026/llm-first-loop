@@ -125,6 +125,20 @@ def test_stale_precondition_rejects_before_dispatch(tmp_path: Path) -> None:
     assert receipts.list_action("s1", "act-1")[0]["receipt_seq"] == 1
 
 
+def test_model_surface_without_args_normalization_still_validates(tmp_path: Path) -> None:
+    """Regression (2026-09-18 live mount test): the model-facing browser_action tool
+    legitimately omits the machine-authored args_normalization field; execute() must
+    inject the canonical default instead of rejecting with semantic_action_fields_mismatch."""
+    perception, receipts, backend, actuator, action = _stack(tmp_path, [FIXTURES["base"]])
+    first = perception.snapshot("s1", FIXTURES["base"])
+    bare = _click_action(first)
+    del bare["args_normalization"]
+    result = action.execute("s1", bare)
+    assert result["status"] == "ok"
+    assert result["args_normalization"] == {"applied": False, "rule": None}
+    assert len(actuator.calls) == 1
+
+
 def test_same_name_replacement_never_rebinds(tmp_path: Path) -> None:
     replaced = json.loads(json.dumps(FIXTURES["base"]))
     for node in replaced["dom"]["nodes"]:
@@ -486,3 +500,98 @@ def test_browser_dispatch_fails_closed_after_tool_attempt_revocation(tmp_path: P
     assert result["status"] == "failed"
     assert len(actuator.calls) == 0
     assert "dispatch_authority_lost" in result["completeness"]["reasons"]
+
+
+# --- EVO-20260918-4766011b: navigate lightweight precondition on uncapturable pages ---
+
+
+class _ProbingCaptureBackend(_CaptureBackend):
+    """Full capture fails structurally, but the lightweight page-target probe works."""
+
+    def __init__(self, probe_error: Exception | None = None) -> None:
+        super().__init__([])
+        self.probe_calls = 0
+        self._probe_error = probe_error
+
+    def probe_page_target(self) -> dict[str, Any]:
+        self.probe_calls += 1
+        if self._probe_error is not None:
+            raise self._probe_error
+        return {"target_id": "page-target-1", "url": "http://127.0.0.1:8768/", "type": "page"}
+
+
+def _navigate_action(first: dict[str, Any], *, action_id: str = "act-nav-1") -> dict[str, Any]:
+    page_scope = next(f for f in first["scope_facts"] if f.get("kind") == "page")
+    return {
+        "schema": "smc.semantic_action.v0.1",
+        "domain": "browser",
+        "scope_ref": page_scope["scope_ref"],
+        "action_id": action_id,
+        "verb": "navigate",
+        "target_id": page_scope["scope_ref"],
+        "args": {"url": "http://127.0.0.1:8768/"},
+        "operation_class": "mutate",
+        "idempotency_class": "unknown",
+        "atomicity_class": "single_dispatch",
+        "expected_version": first["snapshot"]["snapshot_id"],
+        "version_scope": "resource",
+        "version_precondition": "required",
+    }
+
+
+def test_navigate_survives_structural_capture_failure_via_lightweight_probe(tmp_path: Path) -> None:
+    perception = BrowserPerceptionAdapter(store=BrowserPerceptionStore(tmp_path / "perception"))
+    backend = _ProbingCaptureBackend()
+    actuator = _Actuator()
+    action = BrowserActionAdapter(
+        perception=perception,
+        receipt_store=BrowserActionReceiptStore(tmp_path / "actions"),
+        capture_backend=backend,
+        actuator=actuator,
+    )
+    # The model's declared version comes from a real earlier snapshot of the page.
+    first = perception.snapshot("s1", FIXTURES["base"])
+    result = action.execute("s1", _navigate_action(first))
+
+    assert result["status"] == "ok"
+    assert len(actuator.calls) == 1
+    assert actuator.calls[0]["verb"] == "navigate"
+    assert backend.probe_calls == 1
+    assert "pre_observation_lightweight_probe" in result["completeness"]["reasons"]
+
+
+def test_navigate_lightweight_probe_failure_still_rejects(tmp_path: Path) -> None:
+    perception = BrowserPerceptionAdapter(store=BrowserPerceptionStore(tmp_path / "perception"))
+    backend = _ProbingCaptureBackend(probe_error=RuntimeError("probe dead"))
+    actuator = _Actuator()
+    action = BrowserActionAdapter(
+        perception=perception,
+        receipt_store=BrowserActionReceiptStore(tmp_path / "actions"),
+        capture_backend=backend,
+        actuator=actuator,
+    )
+    first = perception.snapshot("s1", FIXTURES["base"])
+    result = action.execute("s1", _navigate_action(first))
+
+    assert result["status"] == "rejected"
+    assert "lightweight_probe_failed:RuntimeError" in result["retry"]["reason"]
+    assert len(actuator.calls) == 0
+
+
+def test_object_verbs_do_not_use_the_lightweight_fallback(tmp_path: Path) -> None:
+    perception = BrowserPerceptionAdapter(store=BrowserPerceptionStore(tmp_path / "perception"))
+    backend = _ProbingCaptureBackend()
+    actuator = _Actuator()
+    action = BrowserActionAdapter(
+        perception=perception,
+        receipt_store=BrowserActionReceiptStore(tmp_path / "actions"),
+        capture_backend=backend,
+        actuator=actuator,
+    )
+    first = perception.snapshot("s1", FIXTURES["base"])
+    result = action.execute("s1", _click_action(first, action_id="act-click-x"))
+
+    assert result["status"] == "rejected"
+    assert result["retry"]["reason"].startswith("pre_dispatch_observation_failed")
+    assert backend.probe_calls == 0
+    assert len(actuator.calls) == 0

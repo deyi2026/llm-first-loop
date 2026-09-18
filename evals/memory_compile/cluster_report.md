@@ -65,12 +65,12 @@
 - `MEM-20260909-ed25c5d0` 2026-09-09 v1 :: WebUI 文案诚实化裁决：分享按钮改为“复制链接/复制会话链接”（实际行为仅复制部署 URL + ?session=id，受部署自身鉴权保护，不存在快照/公开分享后端，文案不得暗示公开分享）；听写按钮文案标注“浏览器听
 
 ## 簇#6 size=6 cos[max=0.9755 mean=0.9321] 主题≈timeout缺失,osxkeychain,security语法,后台任务
-- `MEM-20260908-62cda663` 2026-09-08 v5 :: MCP 沙盒环境陷阱：shell $HOME 是 mcp-console 沙盒目录而非 /Users/yyj，读用户配置必须用绝对路径；git credential fill/osxkeychain 在沙盒中搜不到 lo
-- `MEM-20260908-ada520ea` 2026-09-08 v3 :: 沙盒/环境注意事项：MCP console shell 的 $HOME 是临时沙盒目录而非 /Users/yyj，查 gh/ssh 配置需用绝对路径；沙盒默认 keychain 搜索列表不含 login.keychain
-- `MEM-20260908-d5cc16b4` 2026-09-08 v1 :: MCP console 沙盒环境要点：$HOME 是沙盒临时目录而非 /Users/yyj（查用户配置/SSH/keychain 必须用绝对路径）；进程默认 keychain 列表不含 login.keychain-db
-- `MEM-20260908-8ae81f15` 2026-09-08 v1 :: 沙盒环境陷阱：MCP console shell 的 $HOME 是沙盒目录而非 /Users/yyj（查用户配置必须用绝对路径）；macOS 无 timeout 命令；security 命令的 keychain 路径必
-- `MEM-20260908-55cc4879` 2026-09-08 v2 :: 本机环境要点：MCP console 沙盒 $HOME 是 /var/folders/.../mcp-console/.../home 而非 /Users/yyj，读用户配置（.ssh/.config/gh/.gitco
-- `MEM-20260908-fd257b1f` 2026-09-08 v1 :: 执行环境特性：MCP console 沙盒 $HOME 不是 /Users/yyj，其默认 keychain 列表不含 login.keychain-db，故 git credential fill（osxkeychai
+- `MEM-20260908-62cda663` 2026-09-08 v5 :: MCP 沙盒环境陷阱：shell $HOME 是 mcp-console 沙盒目录而非 ~，读用户配置必须用绝对路径；git credential fill/osxkeychain 在沙盒中搜不到 lo
+- `MEM-20260908-ada520ea` 2026-09-08 v3 :: 沙盒/环境注意事项：MCP console shell 的 $HOME 是临时沙盒目录而非 ~，查 gh/ssh 配置需用绝对路径；沙盒默认 keychain 搜索列表不含 login.keychain
+- `MEM-20260908-d5cc16b4` 2026-09-08 v1 :: MCP console 沙盒环境要点：$HOME 是沙盒临时目录而非 ~（查用户配置/SSH/keychain 必须用绝对路径）；进程默认 keychain 列表不含 login.keychain-db
+- `MEM-20260908-8ae81f15` 2026-09-08 v1 :: 沙盒环境陷阱：MCP console shell 的 $HOME 是沙盒目录而非 ~（查用户配置必须用绝对路径）；macOS 无 timeout 命令；security 命令的 keychain 路径必
+- `MEM-20260908-55cc4879` 2026-09-08 v2 :: 本机环境要点：MCP console 沙盒 $HOME 是 /var/folders/.../mcp-console/.../home 而非 ~，读用户配置（.ssh/.config/gh/.gitco
+- `MEM-20260908-fd257b1f` 2026-09-08 v1 :: 执行环境特性：MCP console 沙盒 $HOME 不是 ~，其默认 keychain 列表不含 login.keychain-db，故 git credential fill（osxkeychai
 
 ## 簇#7 size=6 cos[max=0.9649 mean=0.9343] 主题≈noreply,deyi2026,隐私,git
 - `MEM-20260817-0518f5bf` 2026-08-17 v4 :: 提交前必须核验 git author/committer 身份为 public-safe 格式 deyi2026 <deyi2026@users.noreply.github.com>，不得以 MCP Console 等
@@ -186,10 +186,10 @@
 - `MEM-20260911-d6b70b9f` 2026-09-11 v1 :: 2026-09-09 审查结论：当天约 30 个 commit 分三线——Web 后端闭环 B1-B4（496cf56 附件 recent+导入 / cecb6a9 session jobs+kill+continuit
 
 ## 簇#24 size=4 cos[max=0.9405 mean=0.9229] 主题≈§12.1,downloads,文档路径,v1.1设计文档
-- `MEM-20260915-efc3acc7` 2026-09-15 v1 :: LFL 设计文档 v1.1 权威路径为 /Users/yyj/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md；§12.1 不在 evals/pilot/GOVERNANCE.v1.md
-- `MEM-20260915-80947c75` 2026-09-15 v5 :: 《LFL 执行力优化需求设计》v1.1 权威原文位于 /Users/yyj/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md（775 行，sha256 577ef08e…），§12.1/
-- `MEM-20260915-f0299d12` 2026-09-15 v2 :: 《LFL 执行力优化需求设计》v1.1 真实路径：/Users/yyj/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md（775 行，sha256 577ef08e…）。§12.1 阶段
-- `MEM-20260915-17a3b4e5` 2026-09-15 v1 :: LFL 执行力优化设计 v1.1 真实路径为 /Users/yyj/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md（775 行，sha256 577ef08e…），§12.1 阶段表/
+- `MEM-20260915-efc3acc7` 2026-09-15 v1 :: LFL 设计文档 v1.1 权威路径为 ~/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md；§12.1 不在 evals/pilot/GOVERNANCE.v1.md
+- `MEM-20260915-80947c75` 2026-09-15 v5 :: 《LFL 执行力优化需求设计》v1.1 权威原文位于 ~/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md（775 行，sha256 577ef08e…），§12.1/
+- `MEM-20260915-f0299d12` 2026-09-15 v2 :: 《LFL 执行力优化需求设计》v1.1 真实路径：~/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md（775 行，sha256 577ef08e…）。§12.1 阶段
+- `MEM-20260915-17a3b4e5` 2026-09-15 v1 :: LFL 执行力优化设计 v1.1 真实路径为 ~/Downloads/LFL_执行力优化_需求设计_v1.1_20260915.md（775 行，sha256 577ef08e…），§12.1 阶段表/
 
 ## 簇#25 size=4 cos[max=0.9303 mean=0.92] 主题≈spawn_subagent,experience-20260903,get_tool_schema,tool.eligibility
 - `MEM-20260903-ff7e29cd` 2026-09-03 v1 :: 2026-09-03 breaker 拦截裁决（call_900b930c8c0542919f366360）：get_tool_schema('spawn_subagent') 首次 SUCCESS 后 x3/x4/x5
@@ -210,9 +210,9 @@
 - `MEM-20260822-2b9ad98a` 2026-08-22 v1 :: 2026-08-22 确认模型切换前缀不变机制：commit c7e91fe `_inject_switch_notice` 在切换时额外追加一条切换通知（任务目标+AI 最近进度+切换不改变任务），不修改已有前缀字节。
 
 ## 簇#28 size=4 cos[max=0.9187 mean=0.912] 主题≈p0-1,cache-hit-governance,final-execution-plan-cache-hit-governance,cache_hit_show_in_answer
-- `MEM-20260820-02f62ad4` 2026-08-20 v5 :: docs/FINAL-EXECUTION-PLAN-cache-hit-governance.md 为定稿执行方案（三方综合），执行方=镜像 LFL（本 agent，工作区 /Users/yyj/Project/llm-
+- `MEM-20260820-02f62ad4` 2026-08-20 v5 :: docs/FINAL-EXECUTION-PLAN-cache-hit-governance.md 为定稿执行方案（三方综合），执行方=镜像 LFL（本 agent，工作区 ~/Project/llm-
 - `MEM-20260820-ec95c284` 2026-08-20 v4 :: 按 docs/FINAL-EXECUTION-PLAN-cache-hit-governance.md 定稿方案实施缓存命中率治理，执行方为镜像 LFL（当前工作区）；从 P0-1 开始：config.py 中 cach
-- `MEM-20260820-3ea18f00` 2026-08-20 v2 :: 缓存命中治理执行方案已定稿并确认可执行：docs/FINAL-EXECUTION-PLAN-cache-hit-governance.md（2026-08-20），执行方=镜像 LFL（/Users/yyj/Projec
+- `MEM-20260820-3ea18f00` 2026-08-20 v2 :: 缓存命中治理执行方案已定稿并确认可执行：docs/FINAL-EXECUTION-PLAN-cache-hit-governance.md（2026-08-20），执行方=镜像 LFL（~/Projec
 - `MEM-20260820-421a0346` 2026-08-20 v1 :: FINAL-EXECUTION-PLAN-cache-hit-governance.md 已定稿并确认适合执行，执行方为镜像 LFL。P0-1：cache_hit_show_in_answer 默认值 True→Fals
 
 ## 簇#29 size=3 cos[max=0.9805 mean=0.9746] 主题≈飞书,p2p,chat_id,open_id
@@ -326,8 +326,8 @@
 - `MEM-20260817-e05abab3` 2026-08-17 v1 :: 工具使用原则：先复用已验证最短工具路径，不重复探测；失败只做定向修正（参数错改参数、权限/开关错换路径、瞬态错误才重试），连续同类失败即停止试错；不确定时先 search_records/search_docs 查历史执
 
 ## 簇#51 size=3 cos[max=0.9467 mean=0.937] 主题≈lfl,llm-first core loop,agent runtime,harness
-- `MEM-20260827-aa3752ca` 2026-08-27 v16 :: LFL（LLM-First Core Loop）项目：位于 /Users/yyj/Project/llm-first-loop-mirror，v0.6.14，Apache-2.0，开源框架化（B 路线）进行中。自我定位为
-- `MEM-20260824-595f8cf5` 2026-08-24 v28 :: 用户核心项目为 LFL（LLM-First Core Loop），本地路径 /Users/yyj/Project/llm-first-loop-mirror，版本 0.6.14，Apache-2.0，开源框架化（B 路线
+- `MEM-20260827-aa3752ca` 2026-08-27 v16 :: LFL（LLM-First Core Loop）项目：位于 ~/Project/llm-first-loop-mirror，v0.6.14，Apache-2.0，开源框架化（B 路线）进行中。自我定位为
+- `MEM-20260824-595f8cf5` 2026-08-24 v28 :: 用户核心项目为 LFL（LLM-First Core Loop），本地路径 ~/Project/llm-first-loop-mirror，版本 0.6.14，Apache-2.0，开源框架化（B 路线
 - `MEM-20260811-f17e578e` 2026-08-11 v53 :: 用户的项目 LFL（LLM-First Core Loop）版本 0.6.14，Apache-2.0 许可，状态为开源框架化（B 路线）进行中。自我定位：一个'AI 优先'（LLM-first）的 Agent 运行时（H
 
 ## 簇#52 size=3 cos[max=0.9466 mean=0.9369] 主题≈记忆待修正,搜索空结果,停止搜索,不伪造结果

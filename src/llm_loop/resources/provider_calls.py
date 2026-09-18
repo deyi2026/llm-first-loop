@@ -17,10 +17,12 @@ from llm_loop.resources.contracts import (
     AdmissionOutcome,
     AdmissionRequest,
     ExecutionClass,
+    ObservedResourceState,
     ResourceLease,
     ServicePriority,
 )
 from llm_loop.resources.governor import ResourceGovernor
+from llm_loop.resources.lfrt_runtime import LocalRuntimeTargetState
 from llm_loop.resources.local_runtime import LocalRuntimeConcurrencyAdapter
 from llm_loop.resources.provider_settlement import (
     ProviderAttemptKind,
@@ -46,11 +48,18 @@ class ProviderCallCoordinator:
         *,
         local_runtime: LocalRuntimeConcurrencyAdapter | Any,
         settlement_journal: ProviderCallSettlementJournal | None = None,
+        admission_authority: str = "legacy",
+        lfrt_runtime: Any | None = None,
         clock=time.time,
     ) -> None:
         self._governor = governor
         self._local_runtime = local_runtime
+        authority = str(admission_authority or "legacy").strip().lower()
+        if authority not in {"legacy", "lfrt"}:
+            raise ValueError("admission_authority must be legacy or lfrt")
         self._settlement_journal = settlement_journal
+        self._admission_authority = authority
+        self._lfrt_runtime = lfrt_runtime
         self._clock = clock
 
     @property
@@ -148,6 +157,101 @@ class ProviderCallCoordinator:
         except Exception:
             return
 
+    def _legacy_shadow_conflicts(
+        self,
+        client: object,
+        *,
+        provider: str,
+        model: str,
+        state: ObservedResourceState,
+        generation: str | None,
+    ) -> bool:
+        """Return only a mechanical contradiction; shadow absence is neutral."""
+        try:
+            legacy_state = self._local_runtime.observe(
+                client, provider_id=provider, model_id=model
+            )
+        except Exception:  # noqa: BLE001 - unavailable shadow is not authority
+            return False
+        if legacy_state is None:
+            return False
+        return bool(
+            legacy_state.key != state.key
+            or legacy_state.runtime_type is not state.runtime_type
+            or legacy_state.max_concurrency != state.max_concurrency
+            or generation is None
+            or not legacy_state.provenance.source_ref.endswith(generation)
+        )
+
+    def revalidate_request_for_client(
+        self,
+        client: object,
+        request: AdmissionRequest,
+        *,
+        expected_generation: str | None,
+    ) -> None:
+        """Recheck LFRT immediately before a delayed transport without renewing its lease."""
+        if self._admission_authority != "lfrt":
+            return
+        if len(request.resource_keys) != 1:
+            raise ResourceAdmissionError(
+                "provider resource admission failed: fact_conflict"
+            )
+        expected_key = request.resource_keys[0]
+        adapter = self._lfrt_runtime
+        if adapter is None:
+            self._governor.invalidate_concurrency_limit(expected_key)
+            raise ResourceAdmissionError(
+                "provider resource admission failed: required_fact_unknown"
+            )
+        try:
+            target = adapter.observe_target(
+                client, provider_id=request.provider_id, model_id=request.model_id
+            )
+        except Exception as exc:  # noqa: BLE001 - authority failure is terminal
+            self._governor.invalidate_concurrency_limit(expected_key)
+            raise ResourceAdmissionError(
+                "provider resource admission failed: required_fact_unknown"
+            ) from exc
+        if target.state is LocalRuntimeTargetState.NOT_APPLICABLE:
+            # Non-managed target (e.g. cloud provider, non-loopback base_url): LFRT
+            # has no authority fact here, mirroring build_request_for_client's
+            # NOT_APPLICABLE -> None -> RG-1 fallback. The RG-1 lease stands and
+            # this is not a conflict. (Root cause of the 6350/6350 learning
+            # requeue starvation observed 2026-09-17 on cloud-model deployments.)
+            return
+        if target.state is LocalRuntimeTargetState.MANAGED_BUT_UNKNOWN:
+            self._governor.invalidate_concurrency_limit(expected_key)
+            raise ResourceAdmissionError(
+                "provider resource admission failed: required_fact_unknown"
+            )
+        if target.state is not LocalRuntimeTargetState.OBSERVED or target.resource is None:
+            self._governor.invalidate_concurrency_limit(expected_key)
+            raise ResourceAdmissionError(
+                "provider resource admission failed: fact_conflict"
+            )
+        state = target.resource
+        installed_limit = self._governor.concurrency_limit(expected_key)
+        installed_generation = self._governor.concurrency_limit_generation(expected_key)
+        if (
+            state.key != expected_key
+            or expected_generation is None
+            or target.generation != expected_generation
+            or installed_generation != expected_generation
+            or state.max_concurrency != installed_limit
+            or self._legacy_shadow_conflicts(
+                client,
+                provider=request.provider_id,
+                model=request.model_id,
+                state=state,
+                generation=target.generation,
+            )
+        ):
+            self._governor.invalidate_concurrency_limit(expected_key)
+            raise ResourceAdmissionError(
+                "provider resource admission failed: fact_conflict"
+            )
+
     def build_request_for_client(
         self,
         client: object,
@@ -165,19 +269,69 @@ class ProviderCallCoordinator:
         )
         if not provider or not model:
             return None
-        try:
-            state = self._local_runtime.observe(
+        generation = None
+        if self._admission_authority == "lfrt":
+            adapter = self._lfrt_runtime
+            if adapter is None:
+                raise ResourceAdmissionError(
+                    "provider resource admission failed: required_fact_unknown"
+                )
+            try:
+                target = adapter.observe_target(
+                    client, provider_id=provider, model_id=model
+                )
+            except Exception as exc:  # noqa: BLE001 - authority failure is terminal
+                raise ResourceAdmissionError(
+                    "provider resource admission failed: required_fact_unknown"
+                ) from exc
+            if target.state is LocalRuntimeTargetState.NOT_APPLICABLE:
+                return None
+            if target.state is not LocalRuntimeTargetState.OBSERVED or target.resource is None:
+                if target.key is not None:
+                    self._governor.invalidate_concurrency_limit(target.key)
+                raise ResourceAdmissionError(
+                    "provider resource admission failed: required_fact_unknown"
+                )
+            state = target.resource
+            generation = target.generation
+            # LFRT is the only positive authority. Legacy is a shadow veto only.
+            if self._legacy_shadow_conflicts(
                 client,
-                provider_id=provider,
-                model_id=model,
-            )
-        except Exception:  # noqa: BLE001 - adapter failures leave scope unknown
-            state = None
-        if state is None or state.max_concurrency is None:
+                provider=provider,
+                model=model,
+                state=state,
+                generation=generation,
+            ):
+                self._governor.invalidate_concurrency_limit(state.key)
+                raise ResourceAdmissionError(
+                    "provider resource admission failed: fact_conflict"
+                )
+        else:
+            try:
+                state = self._local_runtime.observe(
+                    client,
+                    provider_id=provider,
+                    model_id=model,
+                )
+            except Exception:  # noqa: BLE001 - legacy adapter failures preserve old behavior
+                state = None
+            if state is None or state.max_concurrency is None:
+                return None
+        if state.max_concurrency is None:
+            if self._admission_authority == "lfrt":
+                self._governor.invalidate_concurrency_limit(state.key)
+                raise ResourceAdmissionError(
+                    "provider resource admission failed: required_fact_unknown"
+                )
             return None
         if state.key.provider_id != provider:
             raise ValueError("runtime resource provider_id does not match provider target")
-        self._governor.set_concurrency_limit(state.key, state.max_concurrency)
+        self._governor.set_concurrency_limit(
+            state.key,
+            state.max_concurrency,
+            source_ref=(state.provenance.source_ref if self._admission_authority == "lfrt" else None),
+            generation=generation,
+        )
         return AdmissionRequest(
             request_id=request_id or f"provider:{uuid.uuid4().hex}",
             owner_ref=str(owner_ref),
@@ -202,9 +356,10 @@ class ProviderCallCoordinator:
     ) -> Iterator[ResourceLease | None]:
         """Hold a qualified local-runtime lease across exactly one provider call.
 
-        ``None`` means no RG-2-qualified local scope exists (notably cloud or an
-        unknown local listener), so behavior is preserved rather than inventing a
-        concurrency fact. Cloud resource enforcement is intentionally later.
+        ``None`` means the target is mechanically not applicable to the selected
+        local authority (notably cloud). Under LFRT authority, a managed local
+        target with unknown facts raises before transport instead of bypassing RG-2.
+        Cloud resource enforcement is intentionally later.
         """
         request = self.build_request_for_client(
             client,

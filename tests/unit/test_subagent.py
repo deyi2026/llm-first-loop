@@ -595,6 +595,11 @@ def test_parent_stop_cancels_child_before_post_llm_tool_execution(build_test_eng
         current_session_id.reset(tok)
     assert terminal.status.value == "failure"
     assert "child_outcome=cancelled" in terminal.content
+    # Cancelled internal children are terminal execution history, not active sessions.
+    # The durable topology event remains authoritative for the exact outcome; the
+    # Session.status projection should only stop advertising the child as active.
+    assert engine.session.load(child_id).status == "archived"
+    assert child_id not in {m.session_id for m in engine.session.list_sessions()}
 
 
 

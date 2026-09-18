@@ -139,27 +139,23 @@ def test_parse_slots_interop_fold_roundtrip():
 # ── history 投影持久化（tasks 2.4）──
 
 
-def test_cog_anchor_mode_default_auto(monkeypatch):
+def test_cog_anchor_mode_default_auto():
     from llm_loop.core.history import _cog_anchor_mode
 
-    monkeypatch.delenv("COG_RUNTIME_ANCHOR_MODE", raising=False)
     assert _cog_anchor_mode() == "auto"
-    monkeypatch.setenv("COG_RUNTIME_ANCHOR_MODE", "anchor")
-    assert _cog_anchor_mode() == "anchor"
-    monkeypatch.setenv("COG_RUNTIME_ANCHOR_MODE", "bogus")
-    assert _cog_anchor_mode() == "auto"  # 非法回退 auto
+    assert _cog_anchor_mode("anchor") == "anchor"
+    assert _cog_anchor_mode("bogus") == "auto"  # 非法回退 auto
 
 
 def test_persist_semantic_state_roundtrip(tmp_path: Path, monkeypatch):
     from llm_loop.core.history import _persist_semantic_state
     from llm_loop.introspection.goal import GoalStore
 
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     store = GoalStore(tmp_path / "audit")
     g = store.create("压缩后目标任务", session_id="s1")
     store.checkpoint(g.id, what="完成阶段一", next_step="开始阶段二")
 
-    assert _persist_semantic_state("s1") is True
+    assert _persist_semantic_state("s1", data_dir=str(tmp_path)) is True
     loaded_env = SemanticStateStore(tmp_path / "audit").load("s1")
     assert isinstance(loaded_env, StateEnvelope)
     assert loaded_env.identity.session_id == "s1"  # CR-R1：identity 头随分片写入
@@ -172,8 +168,7 @@ def test_persist_semantic_state_roundtrip(tmp_path: Path, monkeypatch):
 def test_persist_semantic_state_no_goal_keeps_old(tmp_path: Path, monkeypatch):
     from llm_loop.core.history import _persist_semantic_state
 
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
-    assert _persist_semantic_state("s-none") is False  # 无 goal → 不覆盖
+    assert _persist_semantic_state("s-none", data_dir=str(tmp_path)) is False  # 无 goal → 不覆盖
     assert SemanticStateStore(tmp_path / "audit").load("s-none") is None
 
 
@@ -190,17 +185,16 @@ def test_history_cognitive_reads_are_strict_session(tmp_path: Path, monkeypatch)
     from llm_loop.core.history import _decision_line_frame, _persist_semantic_state
     from llm_loop.introspection.goal import GoalStore
 
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     store = GoalStore(tmp_path / "audit")
     ga = store.create("A 已完成目标", session_id="session-A")
     store.update(ga.id, "complete")
     store.create("B foreign active", session_id="session-B")
 
     # 旧版这里会把 B active 写进 A shard；strict-session 后 A 只看到自己的终态。
-    assert _persist_semantic_state("session-A") is False
+    assert _persist_semantic_state("session-A", data_dir=str(tmp_path)) is False
     assert SemanticStateStore(tmp_path / "audit").load("session-A") is None
     # anchor 过渡路径同样不得把 B 的 active Goal 显示成 A 的决策线。
-    assert _decision_line_frame("session-A") == ""
+    assert _decision_line_frame("session-A", data_dir=str(tmp_path)) == ""
     # 缺失会话身份 fail-closed，不允许退化成 GoalStore 全局读取。
     assert _persist_semantic_state("") is False
     assert _decision_line_frame("") == ""

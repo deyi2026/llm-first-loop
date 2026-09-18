@@ -10,7 +10,6 @@ normal tools/status APIs.
 from __future__ import annotations
 
 import logging
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,9 +22,16 @@ logger = logging.getLogger(__name__)
 class LoopSignalDetector:
     """Human/operator pending-review helper; never a model-loop signal injector."""
 
-    def __init__(self, *, popup_pending_review: bool = False) -> None:
+    def __init__(
+        self, *, popup_pending_review: bool = False, data_dir: str | Path | None = None
+    ) -> None:
         self.popup_pending_review = popup_pending_review
         self._prompted_ids: set[str] = set()
+        self._data_dir = (
+            Path(data_dir).expanduser().resolve()
+            if data_dir is not None
+            else Path(__file__).resolve().parents[3] / "data"
+        )
 
     def check_pending_review(self, store) -> ArchitectureEvent | None:
         """pending_review 演进检测（授权确认弹窗；确认即自动审阅 accepted）.
@@ -106,13 +112,12 @@ class LoopSignalDetector:
 
 
     # ── EVO-20260811-f94e5306 补丁: 幽灵建议防御（确认后存储不存在的建议持久化忽略）──
-    @staticmethod
-    def _ghost_ignore_path(store) -> Path:
-        """忽略清单路径（与 store 同目录；store 无 _path 时用 DATA_DIR/audit 兜底）."""
+    def _ghost_ignore_path(self, store) -> Path:
+        """忽略清单路径；store 无路径时使用已解析的 runtime data owner。"""
         p = getattr(store, "_path", None)
         if p:
             return Path(p).parent / "pending_ignored.jsonl"
-        return Path(os.environ.get("DATA_DIR", "./data")) / "audit" / "pending_ignored.jsonl"
+        return self._data_dir / "audit" / "pending_ignored.jsonl"
 
     def _is_ghost_ignored(self, store, sid: str, content_preview: str = "") -> bool:
         """是否在忽略清单（按 id 或内容指纹匹配；fail-open: 读取失败视为未忽略）.

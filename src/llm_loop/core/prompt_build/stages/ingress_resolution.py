@@ -12,6 +12,7 @@ import contextlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from llm_loop.core.episode_history import (
@@ -197,6 +198,8 @@ def run_ingress_prelude(
     logical_round: int | None = None,
     record_action: Any,
     event_append: Any,
+    data_dir: str | Path | None = None,
+    history_policy: Any | None = None,
 ) -> IngressPreludeOutcome:
     """入口解析 → 泄漏隔离 → provider 预清洗（语义原样迁自 build.py 步D）.
 
@@ -234,6 +237,7 @@ def run_ingress_prelude(
         current_ingress=_r6_ingress_truth,
         event_sink=event_append,
         decision=decision,
+        data_dir=data_dir,
     )
     inputs = resolve_ingress(
         sess_messages=_trace_base,
@@ -296,12 +300,13 @@ def run_ingress_prelude(
     # unselected groups keep the existing batch/grace mechanics unchanged.
     # Same-run tool follow-ups (logical round > 1) defer opportunistic receipt
     # rewrites so the provider-visible prefix remains append-only. Offline/recovery
-    # builds do not carry a logical round and preserve the historical projection
-    # behavior. The projector always keeps its hard result-count safety valve.
+    # builds do not carry a logical round and preserve historical projection behavior.
+    # The projector always keeps its hard result-count safety valve.
     _opportunistic_fold_allowed = logical_round is None or logical_round <= 1
     _provider_base, _working_set_stats = project_active_tool_working_set_with_stats(
         _scrub.base,
         preserve_group_digests=_preserve_digests,
+        policy=history_policy,
         allow_opportunistic_fold=_opportunistic_fold_allowed,
     )
     if _working_set_stats.enabled:

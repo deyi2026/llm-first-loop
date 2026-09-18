@@ -80,3 +80,6 @@ Nexitally_Surge*.conf
 # Web/local provider registry overlay (may contain private endpoints; no secrets)
 data/providers.local.json
 evals/embedding_stage2/bge_cache.json
+
+# Local runtime business configuration SoT
+runtime.toml

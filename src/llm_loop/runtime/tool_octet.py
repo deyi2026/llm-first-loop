@@ -7,7 +7,7 @@ introspection.status.ArchitectureStatusProvider._write_audit（经 factory 装�
 冻结契约（design M2-R1/M3-R1/勘误二）:
 - record_tool_octet 冻结 API 不加 sink 参数；调用点不依赖 ArchitectureStatusProvider；
 - 未注册 sink 时 observer 静默丢弃该条（fail-open）；
-- 开关门控在 observer 首行（env LFL_TOOL_OCTET，默认 0=关），装配不判环境；
+- 开关在 factory 启动装配时冻结为机械 enabled flag；observer 不读取进程环境；
 - args_digest 输入 = canonical 化 arguments（sort_keys）；result_digest 输入 =
   ToolResult.content 全文（hash 前绝不截断）；digest 为 one-way 摘要，
   非 secret-redaction / 安全边界（低熵原文可被字典枚举，禁止称"不可逆脱敏"）；
@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -32,12 +31,14 @@ OctetSink = Callable[[str, dict], None]
 _STREAM = "tool_octet.jsonl"
 
 _SINK: OctetSink | None = None
+_ENABLED = False
 
 
-def register_octet_sink(fn: OctetSink | None) -> None:
-    """模块级 sink 注册（factory 装配一次性调用；传 None 注销）."""
-    global _SINK
+def register_octet_sink(fn: OctetSink | None, *, enabled: bool = False) -> None:
+    """Register the process observer sink and its startup-resolved enablement."""
+    global _SINK, _ENABLED
     _SINK = fn
+    _ENABLED = bool(enabled)
 
 
 def get_octet_sink() -> OctetSink | None:
@@ -66,7 +67,7 @@ def record_tool_octet(*, session_id: str, round_index: int,
 
     fail-open 全吞：任何异常静默降级，绝不向上抛、绝不改变调用方控制流。
     """
-    if os.environ.get("LFL_TOOL_OCTET", "0") != "1":
+    if not _ENABLED:
         return
     if not tool_call_id:  # 缺 id 的协议异常输入不入本流（design §1.2）
         return

@@ -94,11 +94,15 @@ class TestWritePathGuard:
     def _sess(self) -> SimpleNamespace:
         return SimpleNamespace(session_id="s-regression", messages=[])
 
-    def test_enforce_denies_evidence_write(self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_enforce_denies_evidence_write(
+        self, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         from llm_loop.core.trace_leak.user_ingress_guard import GuardAction, guard_user_write
 
         monkeypatch.setenv(GUARD_MODE_ENV, "enforce")
-        verdict = guard_user_write(self._sess(), _evidence_message(), None)
+        verdict = guard_user_write(
+            self._sess(), _evidence_message(), None, data_dir=tmp_path
+        )
         assert verdict.action is GuardAction.DENY
         assert leak_events.LEAK_CHANNEL_DENIED in sink.kinds()
 

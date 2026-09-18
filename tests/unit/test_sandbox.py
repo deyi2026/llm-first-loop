@@ -17,8 +17,7 @@ from llm_loop.tools.registry import ToolResultStatus
 from llm_loop.tools.sandbox import bwrap_argv, sandbox_argv, sandbox_mode
 
 
-def test_sandbox_mode_default_none(monkeypatch):
-    monkeypatch.delenv("EXEC_SANDBOX", raising=False)
+def test_sandbox_mode_default_none():
     assert sandbox_mode() == "none"
 
 
@@ -32,34 +31,30 @@ def test_bwrap_argv_structure():
     assert argv[-3:] == ["/bin/sh", "-c", "echo hi"]
 
 
-def test_sandbox_argv_disabled(monkeypatch):
-    monkeypatch.delenv("EXEC_SANDBOX", raising=False)
-    argv, note = sandbox_argv("cmd", ".")
+def test_sandbox_argv_disabled():
+    argv, note = sandbox_argv("cmd", ".", mode="none")
     assert argv is None and note == ""
 
 
 def test_sandbox_argv_bwrap_ok(monkeypatch):
-    monkeypatch.setenv("EXEC_SANDBOX", "bwrap")
     with mock.patch("llm_loop.tools.sandbox.shutil.which", return_value="/usr/bin/bwrap"):
-        argv, note = sandbox_argv("echo hi", "/w")
+        argv, note = sandbox_argv("echo hi", "/w", mode="bwrap")
     assert argv is not None and argv[0] == "bwrap"
     assert note == "（已启用 bwrap 沙箱）"
 
 
 def test_sandbox_argv_bwrap_missing_fail_closed(monkeypatch):
-    monkeypatch.setenv("EXEC_SANDBOX", "bwrap")
     with (
         mock.patch("llm_loop.tools.sandbox.shutil.which", return_value=None),
         pytest.raises(RuntimeError) as ei,
     ):
-        sandbox_argv("echo hi", "/w")
+        sandbox_argv("echo hi", "/w", mode="bwrap")
     assert "fail-closed" in str(ei.value)
     assert "bwrap" in str(ei.value)
 
 
 def test_execute_bwrap_uses_argv_and_marks_receipt(monkeypatch, tmp_path):
     """启用 bwrap：Popen 收 argv（shell=False），回执含沙箱标注."""
-    monkeypatch.setenv("EXEC_SANDBOX", "bwrap")
     with (
         mock.patch("llm_loop.tools.sandbox.shutil.which", return_value="/usr/bin/bwrap"),
         mock.patch("subprocess.Popen") as popen,
@@ -68,7 +63,7 @@ def test_execute_bwrap_uses_argv_and_marks_receipt(monkeypatch, tmp_path):
         fake.communicate.return_value = ("输出内容", "")
         fake.returncode = 0
         popen.return_value = fake
-        tool = ExecuteCommandTool()
+        tool = ExecuteCommandTool(sandbox_mode="bwrap")
         r = tool.execute(command="echo hi", workdir=str(tmp_path))
     assert r.status == ToolResultStatus.SUCCESS
     assert "已启用 bwrap 沙箱" in r.content
@@ -80,12 +75,11 @@ def test_execute_bwrap_uses_argv_and_marks_receipt(monkeypatch, tmp_path):
 
 def test_execute_bwrap_missing_fail_closed(monkeypatch, tmp_path):
     """显式 bwrap 而缺失：命令不执行，ERROR 如实（fail-closed）."""
-    monkeypatch.setenv("EXEC_SANDBOX", "bwrap")
     with (
         mock.patch("llm_loop.tools.sandbox.shutil.which", return_value=None),
         mock.patch("subprocess.Popen") as popen,
     ):
-        tool = ExecuteCommandTool()
+        tool = ExecuteCommandTool(sandbox_mode="bwrap")
         r = tool.execute(command="echo hi", workdir=str(tmp_path))
     assert r.status == ToolResultStatus.ERROR
     assert "沙箱不可用" in r.content
@@ -94,7 +88,6 @@ def test_execute_bwrap_missing_fail_closed(monkeypatch, tmp_path):
 
 def test_execute_default_none_zero_regression(monkeypatch, tmp_path):
     """未启用：shell=True 路径不变（零回归）."""
-    monkeypatch.delenv("EXEC_SANDBOX", raising=False)
     with mock.patch("subprocess.Popen") as popen:
         fake = mock.MagicMock()
         fake.communicate.return_value = ("ok", "")
@@ -109,9 +102,8 @@ def test_execute_default_none_zero_regression(monkeypatch, tmp_path):
 
 # ---- docker 后端（2026-09-12）----
 
-def test_sandbox_mode_docker(monkeypatch):
-    monkeypatch.setenv("EXEC_SANDBOX", "docker")
-    assert sandbox_mode() == "docker"
+def test_sandbox_mode_docker():
+    assert sandbox_mode("docker") == "docker"
 
 
 def test_docker_argv_structure():
@@ -126,35 +118,31 @@ def test_docker_argv_structure():
     assert argv[-3:] == ["sh", "-c", "echo hi"]
 
 
-def test_docker_argv_image_env(monkeypatch):
+def test_docker_argv_explicit_image():
     from llm_loop.tools.sandbox import docker_argv
-    monkeypatch.setenv("EXEC_SANDBOX_IMAGE", "alpine:3.20")
-    argv = docker_argv("true", "/w")
+    argv = docker_argv("true", "/w", image="alpine:3.20")
     assert "alpine:3.20" in argv
 
 
 def test_sandbox_argv_docker_ok(monkeypatch):
-    monkeypatch.setenv("EXEC_SANDBOX", "docker")
     with mock.patch("llm_loop.tools.sandbox.shutil.which", return_value="/usr/local/bin/docker"):
-        argv, note = sandbox_argv("echo hi", "/w")
+        argv, note = sandbox_argv("echo hi", "/w", mode="docker")
     assert argv is not None and argv[0] == "docker"
     assert "docker" in note
 
 
 def test_sandbox_argv_docker_missing_fail_closed(monkeypatch):
-    monkeypatch.setenv("EXEC_SANDBOX", "docker")
     with (
         mock.patch("llm_loop.tools.sandbox.shutil.which", return_value=None),
         pytest.raises(RuntimeError) as ei,
     ):
-        sandbox_argv("echo hi", "/w")
+        sandbox_argv("echo hi", "/w", mode="docker")
     assert "fail-closed" in str(ei.value) and "docker" in str(ei.value)
 
 
 def test_sandbox_argv_workdir_made_absolute(monkeypatch):
-    monkeypatch.setenv("EXEC_SANDBOX", "docker")
     import os as _os
     with mock.patch("llm_loop.tools.sandbox.shutil.which", return_value="/usr/local/bin/docker"):
-        argv, _ = sandbox_argv("true", "rel/dir")
+        argv, _ = sandbox_argv("true", "rel/dir", mode="docker")
     vol_i = argv.index("--volume") + 1
     assert _os.path.isabs(argv[vol_i].split(":")[0])

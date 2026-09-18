@@ -10,7 +10,6 @@ import contextlib
 import copy
 import json
 import logging
-import os
 import re
 import threading
 import time
@@ -73,6 +72,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
     "execute_command": "在本地 shell 执行命令并返回 stdout/stderr；每次为独立进程，灾难性命令由硬安全边界阻断。",
+    "service_control": "共享Web/Feishu生命周期控制：status只读；restart需exact deployment generation并异步走desired-state绑定的official restart。",
     "job_output": "查询 execute_command 后台任务的状态与已收集输出。",
     "job_kill": "终止仍在运行的 execute_command 后台任务。",
     "search_files": "按文件名/glob 或内容搜索当前工作区；默认排除 .tmp-ci/.backup/.worktrees 等旁路副本，需审这些副本时显式 root 到对应目录。pattern+content 表示先限定文件再搜内容。root 只接受搜索根目录，不能填文件路径；查单个已知文件内容用 root=<父目录> + pattern=<文件名> + content=<关键词>，或直接 read_file。path 只做精确存在/stat，不执行内容搜索。",
@@ -176,7 +176,7 @@ _COMPACT_PARAMETER_DESCRIPTIONS: dict[str, dict[str, str]] = {
 }
 
 
-def _tool_guidance_mode() -> str:
+def _tool_guidance_mode(raw: str = "off") -> str:
     """R8.24-C C-1.1（C-D2）: 工具回执建议源渲染模式（三态）.
 
     建议源四类: _FAILURE_GUIDANCE / ToolRecoveryAdvice.render() / guidance_extra /
@@ -188,8 +188,8 @@ def _tool_guidance_mode() -> str:
     - "off"（默认，R9-P0-01 批 2/3 切换 2026-09-01，前置=C 包 shadow 期指标达标）:
                   四源模型可见 chars=0（enforce 态）
     """
-    raw = (os.environ.get("LFL_TOOL_GUIDANCE", "off") or "off").strip().lower()
-    return raw if raw in {"on", "shadow", "off"} else "off"
+    mode = str(raw or "off").strip().lower()
+    return mode if mode in {"on", "shadow", "off"} else "off"
 
 
 def _emit_guidance_shadow_event(
@@ -207,12 +207,48 @@ def _emit_guidance_shadow_event(
 _HYDRATION_TOOLS = frozenset({"search_records", "skill_load"})
 
 
+def _ledger_session_id() -> str:
+    """P1 归因窗口按 session 划分所需的机械归属（fail-open，取不到则空串）."""
+    try:
+        from llm_loop.core.run_context import current_session_id
+
+        return str(current_session_id.get() or "")
+    except Exception:  # noqa: BLE001 - 观测字段永不阻断主路径
+        return ""
+
+
 def _ledger_receipt_pointer(*, tool: str, status: str, source: str, chars: int) -> None:
     """登记"建议文本实际进入模型可见正文"的时刻（on/shadow 模式；off 态不触发）."""
     with contextlib.suppress(Exception):
         from llm_loop.knowledge.injection_ledger import append_row
 
-        append_row(kind="receipt_pointer", tool=tool, status=status, source=source, chars=chars)
+        append_row(
+            kind="receipt_pointer",
+            tool=tool,
+            status=status,
+            source=source,
+            chars=chars,
+            session_id=_ledger_session_id(),
+        )
+
+
+# P1: 从水合回执正文提取 stable ref 字面（机械正则；观测字段，不改投影）
+_HYDRATION_REF_RE = re.compile(
+    r"(?:experience|lesson|method|memory|episode|rule|synopsis):[A-Za-z0-9][A-Za-z0-9_\-/:.]*"
+)
+
+
+def _extract_hydration_refs(content: object, *, limit: int = 8) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for m in _HYDRATION_REF_RE.findall(str(content or "")):
+        ref = m[:120]
+        if ref not in seen:
+            seen.add(ref)
+            refs.append(ref)
+        if len(refs) >= limit:
+            break
+    return refs
 
 
 def _observe_knowledge_hydration(call: "ToolCall", result: "ToolResult") -> None:
@@ -226,6 +262,7 @@ def _observe_knowledge_hydration(call: "ToolCall", result: "ToolResult") -> None
         args = getattr(call, "arguments", None)
         if not isinstance(args, dict):
             args = {}
+        session_id = _ledger_session_id()
         if (getattr(result, "tool_name", "") or getattr(call, "name", "")) == "search_records":
             append_row(
                 kind="hydration",
@@ -233,6 +270,8 @@ def _observe_knowledge_hydration(call: "ToolCall", result: "ToolResult") -> None
                 status=status,
                 record_kind=str(args.get("kind", ""))[:32],
                 query=str(args.get("query", ""))[:120],
+                session_id=session_id,
+                refs=_extract_hydration_refs(getattr(result, "content", "")),
             )
         else:
             append_row(
@@ -240,6 +279,7 @@ def _observe_knowledge_hydration(call: "ToolCall", result: "ToolResult") -> None
                 tool="skill_load",
                 status=status,
                 skill=str(args.get("name", ""))[:64],
+                session_id=session_id,
             )
 
 # execute 包裹的扩展钩子（由外部装配: 如架构自省 record_action）
@@ -262,6 +302,7 @@ class ToolRegistry:
         max_output_chars: int = 100000,
         archive_store: Any | None = None,
         failure_guidance_enabled: bool = True,
+        tool_guidance_mode: str = "off",
         # EVO-d78b270c: 经验库（MemoryStore）注入——失败回执按错误关键词检索
         # procedure 经验条目，命中则注入【已验解法】段（None = 无经验库，零回归）
         memory_store: Any | None = None,
@@ -280,6 +321,9 @@ class ToolRegistry:
         # task_quality 路径 A（2026-08-17）: 参数预检层（None = 关闭，零回归；
         # 注入后 execute 步骤 1 后、安全检查前执行预检，失败返回字段级引导反馈）
         precheck_layer: Any | None = None,
+        # P0-A: narrow shared Web/Feishu lifecycle ownership fence. This does not
+        # make execute_command globally readonly.
+        managed_service_guard: Any | None = None,
     ) -> None:
         self._tools: dict[str, Any] = {}
         self._lock = threading.Lock()
@@ -294,6 +338,7 @@ class ToolRegistry:
         self.tool_timeout_s = tool_timeout_s
         self.max_output_chars = max_output_chars
         self.failure_guidance_enabled = failure_guidance_enabled
+        self.tool_guidance_mode = _tool_guidance_mode(tool_guidance_mode)
         self._memory_store = memory_store  # EVO-d78b270c: 经验库（fail-open 零回归）
         self.exec_mode = exec_mode  # readonly/allowlist/blocked（空 = 不启用分级）
         self.exec_allowlist = [s.strip() for s in (exec_allowlist or "").split(",") if s.strip()]
@@ -310,7 +355,12 @@ class ToolRegistry:
         self._evidence_source_resolver: Any | None = None
         self._evidence_manifest_provider: EvidenceManifestProvider | None = None
         self._evidence_history_capture_hook: EvidenceHistoryCaptureHook | None = None
+        # R05/T05: production may explicitly allow exact read_file ranges up to the
+        # real tool hard cap. None deliberately preserves the historical generic 5K
+        # Evidence projection used by frozen/manual qualification harnesses.
+        self._exact_read_projection_budget_chars: int | None = None
         self.precheck_layer = precheck_layer  # task_quality 路径 A（None=关闭零回归）
+        self._managed_service_guard = managed_service_guard
         self._archive_store = archive_store  # ArchiveStore（T22 超长结果另存）
         # EVO-20260813-9ced1f4c: 工具执行瀑布（默认 None = 零回归；set_pipeline 显式装配）
         self._pipeline: Any = None
@@ -406,8 +456,32 @@ class ToolRegistry:
             return None
         return self._evidence_history_capture_hook(session_id, message, msg_seq, archive_id)
 
-    def _evidence_projection_budget(self) -> int:
-        """Bound one evidence projection page; full bytes remain retrievable by stable ref."""
+    def set_exact_read_projection_budget(self, budget_chars: int | None) -> None:
+        """Configure the exact read_file projection budget for production assembly.
+
+        ``None`` keeps the historical generic Evidence budget.  A positive explicit
+        value lets the factory bind exact file reads to the runtime's real output cap
+        without changing frozen/manual Evidence harness semantics.
+        """
+        if budget_chars is not None and budget_chars <= 0:
+            raise ValueError("exact read projection budget must be > 0")
+        self._exact_read_projection_budget_chars = budget_chars
+
+    def _evidence_projection_budget(self, tool_name: str | None = None) -> int:
+        """Return the model-visible Evidence projection budget for one tool result.
+
+        ``read_file`` already has an explicit source-range contract: the selected range is
+        the requested observation and its provider-facing description promises that range
+        verbatim until the registry's real per-result hard cap. Applying the generic 5K
+        Evidence excerpt budget after that read can hide middle lines the model explicitly
+        requested. Keep capture-before-projection, but let read_file use the existing hard
+        cap. Other tools retain the bounded 5K Evidence projection.
+        """
+        if tool_name == "read_file" and self._exact_read_projection_budget_chars is not None:
+            return max(
+                128,
+                min(self.max_output_chars, self._exact_read_projection_budget_chars),
+            )
         return max(128, min(self.max_output_chars, 5000))
 
     def set_pipeline(self, pipeline: Any) -> None:
@@ -918,6 +992,26 @@ class ToolRegistry:
                     duration_ms=0.0,
                 )
 
+        # P0-A shared-service lifecycle ownership fence. It is intentionally
+        # independent of EXEC_MODE/approval: generic-shell approval never mints
+        # shared Web/Feishu lifecycle authority.
+        if call.name == "execute_command" and self._managed_service_guard is not None:
+            command = str(call.arguments.get("command", "") or "")
+            decision = self._managed_service_guard.guard(command)
+            if decision is not None and decision.blocked:
+                return ToolResult(
+                    status=ToolResultStatus.BLOCKED,
+                    content=f"[共享服务控制权拦截] {decision.reason}",
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    error_detail=(
+                        "managed_services=" + ",".join(decision.services)
+                        if decision.services
+                        else "managed_service_lifecycle"
+                    ),
+                    duration_ms=0.0,
+                )
+
         # 2.5 EXEC_MODE 命令分级校验（EVO-20260810-2549e9b6 + 20260814 fail-closed 覆盖所有破坏性工具）
         if self._is_destructive_tool(call.name):
             blocked = self._check_exec_mode(call.name, call.arguments)
@@ -1136,7 +1230,7 @@ class ToolRegistry:
         # experience has no model authority.  Do not even query/mutate the experience
         # store in that mode; explicit on/shadow remain compatibility/experiment paths.
         if (
-            _tool_guidance_mode() != "off"
+            self.tool_guidance_mode != "off"
             and status in (ToolResultStatus.FAILURE, ToolResultStatus.ERROR, ToolResultStatus.TIMEOUT)
         ):
             result.guidance_extra = self._inject_experience_guidance(result)
@@ -1239,14 +1333,13 @@ class ToolRegistry:
         "“已完成/成功”，需用 search_archive 取回原文核验后再如实声明（RULE-AI-12）。"
     )
 
-    @staticmethod
-    def _distill_guidance_or_empty() -> str:
+    def _distill_guidance_or_empty(self) -> str:
         """R8.24-C C-D2: _DISTILL_GUIDANCE 受 LFL_TOOL_GUIDANCE 三态控制.
 
         off=enforce 态模型可见 chars=0（元任务建议退出）；shadow=照旧投影 + 观测事件。
         """
         guidance = ToolRegistry._DISTILL_GUIDANCE
-        mode = _tool_guidance_mode()
+        mode = self.tool_guidance_mode
         if mode == "off":
             return ""
         if mode == "shadow":
@@ -1422,7 +1515,7 @@ class ToolRegistry:
             result = self._evidence_enforcer.apply(
                 call,
                 result,
-                budget_chars=self._evidence_projection_budget(),
+                budget_chars=self._evidence_projection_budget(call.name),
                 temperature="hot",
             )
             if result.tool_call_id != call.id:
@@ -1488,6 +1581,7 @@ def tool_result_to_message(
     failure_guidance_enabled: bool = True,
     # 阶段4-A: 经验注入独立开关（None=跟随主开关；子代理用 True 可仅注入经验不注入默认模板）
     experience_guidance_enabled: bool | None = None,
+    tool_guidance_mode: str = "off",
 ) -> Message:
     """ToolResult → tool 消息（如实承载状态，T21: content 前置状态标注）.
 
@@ -1524,7 +1618,7 @@ def tool_result_to_message(
     if exp_enabled and result.guidance_extra and typed_recovery is None:
         _experience = result.guidance_extra
     # R8.24-C C-1.1: 程序建议层三态投影（off=enforce: 建议文本不进模型可见正文）
-    _mode = _tool_guidance_mode()
+    _mode = _tool_guidance_mode(tool_guidance_mode)
     if _mode != "off":
         if _mode == "shadow":
             if _advisory:

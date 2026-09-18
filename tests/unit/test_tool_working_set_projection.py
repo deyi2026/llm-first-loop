@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import os
-
-import pytest
-
+from llm_loop.config import HistoryPolicySettings
 from llm_loop.core.episode_history import project_active_tool_working_set
 from llm_loop.core.message import (
     Message,
@@ -15,11 +12,10 @@ from llm_loop.core.message import (
 from llm_loop.tools.registry import tool_result_to_message
 
 
-@pytest.fixture(autouse=True)
-def _isolate_tool_working_set_env(monkeypatch):
-    """Keep runtime-exported working-set knobs from changing test semantics."""
-    for key in [k for k in os.environ if k.startswith("LFL_TOOL_WORKING_SET_")]:
-        monkeypatch.delenv(key, raising=False)
+def _policy(**overrides) -> HistoryPolicySettings:
+    values = {"working_set_receipts": True}
+    values.update(overrides)
+    return HistoryPolicySettings(**values)
 
 
 def _assistant(call_id: str) -> Message:
@@ -61,9 +57,8 @@ def _tool(call_id: str, text: str, *, ref: str | None) -> Message:
     )
 
 
-def test_working_set_receipt_compacts_only_older_exposed_group(monkeypatch):
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "4096")
+def test_working_set_receipt_compacts_only_older_exposed_group():
+    policy = _policy(working_set_batch_chars=4096)
     first_raw = "FIRST-RAW-" * 1000
     latest_raw = "LATEST-RAW-" * 1000
     messages = [
@@ -74,7 +69,7 @@ def test_working_set_receipt_compacts_only_older_exposed_group(monkeypatch):
         _tool("c2", latest_raw, ref="evidence://v1/latest"),
     ]
 
-    projected = project_active_tool_working_set(messages)
+    projected = project_active_tool_working_set(messages, policy=policy)
 
     assert messages[2].content == first_raw  # storage truth untouched
     assert projected[1].tool_calls == messages[1].tool_calls
@@ -84,10 +79,8 @@ def test_working_set_receipt_compacts_only_older_exposed_group(monkeypatch):
     assert "prior_full_result_exposed=true" in projected[2].content
     assert projected[4].content == latest_raw  # newest group must stay fully visible
 
-
-def test_working_set_receipt_fails_open_without_durable_ref(monkeypatch):
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "4096")
+def test_working_set_receipt_fails_open_without_durable_ref():
+    policy = _policy(working_set_batch_chars=4096)
     raw = "NO-DURABLE-REF" * 100
     messages = [
         Message(role="user", content="task", source=MessageSource.USER),
@@ -96,12 +89,10 @@ def test_working_set_receipt_fails_open_without_durable_ref(monkeypatch):
         _assistant("c2"),
         _tool("c2", "latest", ref="evidence://v1/latest"),
     ]
-    assert project_active_tool_working_set(messages)[2].content == raw
+    assert project_active_tool_working_set(messages, policy=policy)[2].content == raw
 
-
-def test_working_set_receipts_keep_small_incomplete_batch_raw(monkeypatch):
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "32768")
+def test_working_set_receipts_keep_small_incomplete_batch_raw():
+    policy = _policy(working_set_batch_chars=32768)
     first_raw = "A" * 12000
     messages = [
         Message(role="user", content="task", source=MessageSource.USER),
@@ -110,13 +101,12 @@ def test_working_set_receipts_keep_small_incomplete_batch_raw(monkeypatch):
         _assistant("c2"),
         _tool("c2", "latest", ref="evidence://v1/latest"),
     ]
-    projected = project_active_tool_working_set(messages)
+    projected = project_active_tool_working_set(messages, policy=policy)
     assert projected[2].content == first_raw
     assert projected[4].content == "latest"
 
-
-def test_working_set_receipts_default_off(monkeypatch):
-    monkeypatch.delenv("LFL_TOOL_WORKING_SET_RECEIPTS", raising=False)
+def test_working_set_receipts_default_off():
+    policy = HistoryPolicySettings()
     raw = "RAW" * 100
     messages = [
         Message(role="user", content="task", source=MessageSource.USER),
@@ -125,10 +115,9 @@ def test_working_set_receipts_default_off(monkeypatch):
         _assistant("c2"),
         _tool("c2", "latest", ref="evidence://v1/latest"),
     ]
-    projected = project_active_tool_working_set(messages)
+    projected = project_active_tool_working_set(messages, policy=policy)
     assert projected is messages
     assert projected[2].content == raw
-
 
 def test_tool_result_helper_preserves_evidence_metadata_without_raw_wire_leak():
     result = ToolResult(
@@ -174,11 +163,10 @@ def test_tool_result_helper_preserves_evidence_metadata_without_raw_wire_leak():
     assert "evidence://v1/abc" not in wire["content"]
 
 
-def test_working_set_stats_report_only_mechanical_projection_facts(monkeypatch):
+def test_working_set_stats_report_only_mechanical_projection_facts():
+    policy = _policy(working_set_batch_chars=8000)
     from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
 
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "8000")
     messages = [
         Message(role="user", content="task", source=MessageSource.USER),
         _assistant("c1"),
@@ -189,7 +177,7 @@ def test_working_set_stats_report_only_mechanical_projection_facts(monkeypatch):
         _tool("c3", "C" * 5000, ref="evidence://v1/c"),
     ]
 
-    projected, stats = project_active_tool_working_set_with_stats(messages)
+    projected, stats = project_active_tool_working_set_with_stats(messages, policy=policy)
 
     assert stats.enabled is True
     assert stats.batch_chars == 8000
@@ -207,12 +195,10 @@ def test_working_set_stats_report_only_mechanical_projection_facts(monkeypatch):
     assert stats.receipt_chars == len(projected[2].content) + len(projected[4].content)
     assert projected[6].content == "C" * 5000
 
-
-def test_working_set_stats_expose_small_incomplete_batch_without_folding(monkeypatch):
+def test_working_set_stats_expose_small_incomplete_batch_without_folding():
+    policy = _policy(working_set_batch_chars=16000)
     from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
 
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "16000")
     messages = [
         Message(role="user", content="task", source=MessageSource.USER),
         _assistant("c1"),
@@ -221,7 +207,7 @@ def test_working_set_stats_expose_small_incomplete_batch_without_folding(monkeyp
         _tool("c2", "B" * 5000, ref="evidence://v1/b"),
     ]
 
-    projected, stats = project_active_tool_working_set_with_stats(messages)
+    projected, stats = project_active_tool_working_set_with_stats(messages, policy=policy)
 
     assert stats.folded_results == 0
     assert stats.folded_groups == 0
@@ -234,14 +220,11 @@ def test_working_set_stats_expose_small_incomplete_batch_without_folding(monkeyp
     assert projected[2].content == "A" * 5000
     assert projected[4].content == "B" * 5000
 
-
-def test_soft_result_cap_defers_low_gain_small_results_without_prefix_rewrite(monkeypatch):
+def test_soft_result_cap_defers_low_gain_small_results_without_prefix_rewrite():
     """Soft count pressure alone must not rewrite a prefix for a small byte saving."""
+    policy = _policy(working_set_batch_chars=65536, working_set_grace_groups=1)
     from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
 
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "65536")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "1")
     messages = [Message(role="user", content="task", source=MessageSource.USER)]
     for idx in range(1, 21):
         messages.extend(
@@ -251,7 +234,7 @@ def test_soft_result_cap_defers_low_gain_small_results_without_prefix_rewrite(mo
             ]
         )
 
-    projected, stats = project_active_tool_working_set_with_stats(messages)
+    projected, stats = project_active_tool_working_set_with_stats(messages, policy=policy)
 
     assert stats.raw_tool_chars == 20000
     assert stats.soft_result_cap == 12
@@ -270,15 +253,11 @@ def test_soft_result_cap_defers_low_gain_small_results_without_prefix_rewrite(mo
     assert "tool_result_receipt" not in projected[-3].content
     assert "tool_result_receipt" not in projected[-1].content
 
-
-def test_hard_result_cap_still_bounds_long_small_result_episode(monkeypatch):
+def test_hard_result_cap_still_bounds_long_small_result_episode():
     """A hard mechanical count valve prevents a return to 60+ raw pending results."""
+    policy = _policy(working_set_batch_chars=65536, working_set_grace_groups=1, working_set_min_net_gain_chars=1048576)
     from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
 
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "65536")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS", "1048576")
     messages = [Message(role="user", content="task", source=MessageSource.USER)]
     for idx in range(1, 37):
         messages.extend(
@@ -288,7 +267,7 @@ def test_hard_result_cap_still_bounds_long_small_result_episode(monkeypatch):
             ]
         )
 
-    projected, stats = project_active_tool_working_set_with_stats(messages)
+    projected, stats = project_active_tool_working_set_with_stats(messages, policy=policy)
 
     assert stats.raw_tool_chars == 36000
     assert stats.folded_results == 32
@@ -300,13 +279,11 @@ def test_hard_result_cap_still_bounds_long_small_result_episode(monkeypatch):
     assert "tool_result_receipt" in projected[2].content
 
 
-def test_same_run_defers_soft_fold_without_rewriting_provider_prefix(monkeypatch):
+def test_same_run_defers_soft_fold_without_rewriting_provider_prefix():
     """Same-run cache continuity must defer an opportunistic soft-cap rewrite."""
+    policy = _policy(working_set_batch_chars=65536, working_set_grace_groups=1)
     from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
 
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "65536")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "1")
     messages = [Message(role="user", content="task", source=MessageSource.USER)]
     for idx in range(1, 16):
         messages.extend(
@@ -318,6 +295,7 @@ def test_same_run_defers_soft_fold_without_rewriting_provider_prefix(monkeypatch
 
     projected, stats = project_active_tool_working_set_with_stats(
         messages,
+        policy=policy,
         allow_opportunistic_fold=False,
     )
 
@@ -330,13 +308,11 @@ def test_same_run_defers_soft_fold_without_rewriting_provider_prefix(monkeypatch
     assert projected[2].content == "B" * 2000
 
 
-def test_same_run_defers_coarse_byte_fold_without_rewriting_provider_prefix(monkeypatch):
+def test_same_run_defers_coarse_byte_fold_without_rewriting_provider_prefix():
     """Same-run cache continuity must also defer the coarse-byte opportunistic fold."""
+    policy = _policy(working_set_batch_chars=4096, working_set_grace_groups=0)
     from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
 
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "4096")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "0")
     messages = [Message(role="user", content="task", source=MessageSource.USER)]
     for idx in range(1, 4):
         messages.extend(
@@ -348,6 +324,7 @@ def test_same_run_defers_coarse_byte_fold_without_rewriting_provider_prefix(monk
 
     projected, stats = project_active_tool_working_set_with_stats(
         messages,
+        policy=policy,
         allow_opportunistic_fold=False,
     )
 
@@ -359,14 +336,15 @@ def test_same_run_defers_coarse_byte_fold_without_rewriting_provider_prefix(monk
     assert projected[2].content == "B" * 2500
 
 
-def test_same_run_still_applies_hard_result_cap_safety_valve(monkeypatch):
+def test_same_run_still_applies_hard_result_cap_safety_valve():
     """Disabling opportunistic rewrites must not disable the hard bounded-result valve."""
+    policy = _policy(
+        working_set_batch_chars=1048576,
+        working_set_grace_groups=1,
+        working_set_min_net_gain_chars=1048576,
+    )
     from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
 
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "1048576")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS", "1048576")
     messages = [Message(role="user", content="task", source=MessageSource.USER)]
     for idx in range(1, 37):
         messages.extend(
@@ -378,6 +356,7 @@ def test_same_run_still_applies_hard_result_cap_safety_valve(monkeypatch):
 
     projected, stats = project_active_tool_working_set_with_stats(
         messages,
+        policy=policy,
         allow_opportunistic_fold=False,
     )
 
@@ -386,14 +365,11 @@ def test_same_run_still_applies_hard_result_cap_safety_valve(monkeypatch):
     assert stats.fold_triggers == ("hard_result_cap",)
     assert "tool_result_receipt" in projected[2].content
 
-
-def test_soft_result_cap_folds_when_net_saving_is_material(monkeypatch):
+def test_soft_result_cap_folds_when_net_saving_is_material():
     """Soft cap may fold before 64K when the raw->receipt byte saving is large."""
+    policy = _policy(working_set_batch_chars=65536, working_set_grace_groups=1)
     from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
 
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "65536")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "1")
     messages = [Message(role="user", content="task", source=MessageSource.USER)]
     for idx in range(1, 16):
         messages.extend(
@@ -403,7 +379,7 @@ def test_soft_result_cap_folds_when_net_saving_is_material(monkeypatch):
             ]
         )
 
-    projected, stats = project_active_tool_working_set_with_stats(messages)
+    projected, stats = project_active_tool_working_set_with_stats(messages, policy=policy)
 
     assert stats.raw_tool_chars == 30000
     assert stats.folded_results >= stats.soft_result_cap
@@ -411,13 +387,10 @@ def test_soft_result_cap_folds_when_net_saving_is_material(monkeypatch):
     assert stats.fold_boundaries
     assert stats.projected_tool_chars < stats.raw_tool_chars
 
-
-def test_working_set_grace_keeps_recent_exposed_groups_raw(monkeypatch):
+def test_working_set_grace_keeps_recent_exposed_groups_raw():
+    policy = _policy(working_set_batch_chars=8000, working_set_grace_groups=2)
     from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
 
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "8000")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "2")
     messages = [Message(role="user", content="task", source=MessageSource.USER)]
     for idx in range(1, 6):
         messages.extend(
@@ -427,7 +400,7 @@ def test_working_set_grace_keeps_recent_exposed_groups_raw(monkeypatch):
             ]
         )
 
-    projected, stats = project_active_tool_working_set_with_stats(messages)
+    projected, stats = project_active_tool_working_set_with_stats(messages, policy=policy)
 
     assert stats.grace_groups == 2
     assert stats.folded_groups == 2
@@ -441,10 +414,8 @@ def test_working_set_grace_keeps_recent_exposed_groups_raw(monkeypatch):
     assert projected[8].content == "D" * 5000
     assert projected[10].content == "E" * 5000
 
-
-def test_working_set_receipt_exposes_mechanical_origin_not_task_judgment(monkeypatch):
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
-    monkeypatch.setenv("LFL_TOOL_WORKING_SET_BATCH_CHARS", "4096")
+def test_working_set_receipt_exposes_mechanical_origin_not_task_judgment():
+    policy = _policy(working_set_batch_chars=4096)
     older = _tool("c1", "A" * 5000, ref="evidence://v1/a")
     older.metadata["evidence_origin_facts"] = {
         "acquired_at": "2026-08-28T12:00:00+00:00",
@@ -465,7 +436,7 @@ def test_working_set_receipt_exposes_mechanical_origin_not_task_judgment(monkeyp
         _tool("c2", "latest", ref="evidence://v1/b"),
     ]
 
-    receipt = project_active_tool_working_set(messages)[2].content
+    receipt = project_active_tool_working_set(messages, policy=policy)[2].content
 
     assert "acquired_at=2026-08-28T12:00:00+00:00" in receipt
     assert "version_policy=probeable" in receipt

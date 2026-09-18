@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_loop.config import Settings
+from llm_loop.config import Settings, ToolRuntimeSettings
 from llm_loop.core.message import ToolCall, ToolResultStatus
 from llm_loop.core.run_context import current_session_id
 from llm_loop.factory import build_engine
@@ -65,7 +65,6 @@ def test_evidence_compatible_pipeline_rejects_future_hooks_but_allows_guard_conf
 def test_factory_current_production_pipeline_subset_builds_with_enforce_and_preserves_capture(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "on")  # R9-P0-01 批 1/3：on 态机制测试钉住前提
     data_dir = tmp_path / "data"
     settings = Settings(
         llm_api_key="k",
@@ -77,6 +76,7 @@ def test_factory_current_production_pipeline_subset_builds_with_enforce_and_pres
         tool_materialize_enabled=True,
         tool_guard_enabled=False,
         extract_enabled=False,
+        tool_runtime=ToolRuntimeSettings(evidence_capsule="on"),
     )
     engine = build_engine(settings)
     assert engine.registry.evidence_mode == "enforce"

@@ -83,42 +83,40 @@ def _task_anchor_goal_parts(audit_dir: str, session_id: str) -> list[str]:
         status = str(goal.get("status") or "")
         updated = str(goal.get("updated_at") or "")
         if status != "active":
-            bits = ["[Goal %s] status: %s" % (goal.get("id", ""), status or "-")]
+            bits = [f"[Goal {goal.get('id', '')}] status: {status or '-'}"]
             if goal.get("completed_at"):
-                bits.append("completed_at: %s" % goal["completed_at"])
+                bits.append(f"completed_at: {goal['completed_at']}")
             if goal.get("blocked_reason"):
                 bits.append(
-                    "blocked_reason: %s" % str(goal["blocked_reason"])[:200]
+                    f"blocked_reason: {str(goal['blocked_reason'])[:200]}"
                 )
             if updated:
-                bits.append("updated_at: %s" % updated)
+                bits.append(f"updated_at: {updated}")
             bits.append("objective/checkpoints 不投影（终态，其 next 可能已过时）")
             parts.append(" | ".join(bits))
             return parts
         obj = str(goal.get("objective") or "").strip()
         if obj:
             parts.append(
-                "[Goal %s] status: %s | updated_at: %s\nobjective: %s"
-                % (goal.get("id", ""), status or "-", updated or "-", obj[:1200])
+                f"[Goal {goal.get('id', '')}] status: {status or '-'} | updated_at: {updated or '-'}\nobjective: {obj[:1200]}"
             )
         cps = goal.get("checkpoints") or []
         if cps:
             cp = cps[-1]
-            cp_line = "[Checkpoint ts: %s] %s" % (
-                str(cp.get("ts") or "-"),
-                str(cp.get("what") or "")[:400],
+            cp_line = (
+                f"[Checkpoint ts: {str(cp.get('ts') or '-')}] {str(cp.get('what') or '')[:400]}"
             )
             if cp.get("next"):
-                cp_line += " | next: %s" % str(cp["next"])[:400]
+                cp_line += f" | next: {str(cp['next'])[:400]}"
             if cp.get("evidence"):
-                cp_line += " | evidence: %s" % str(cp["evidence"])[:200]
+                cp_line += f" | evidence: {str(cp['evidence'])[:200]}"
             parts.append(cp_line)
         try:
             from llm_loop.introspection.task_store import TaskStore
 
             line = TaskStore(audit_dir).summary_line(str(goal.get("id")))
             if line:
-                parts.append("[Frontier] %s" % line)
+                parts.append(f"[Frontier] {line}")
         except Exception:  # noqa: BLE001 — frontier fail-open
             pass
     except Exception:  # noqa: BLE001 — goal fail-open（与原实现一致）
@@ -461,7 +459,7 @@ class _BuildMixin:
             # 不终止 run，超限载荷由 _build_llm_messages 内置 compaction 链
             # （衔接 B 包 E17 runtime compact）压缩后继续；指令性输出取消
             # （通知面属 B 包 E19 改道）。
-            if os.environ.get("LFL_BREAKER_PRESSURE_NARROW", "1") == "1":
+            if self.settings.tool_runtime.breaker_pressure_narrow:
                 logger.info(
                     "event=breaker.context_pressure_narrowed chars=%d budget=%d model=%s"
                     "（内部水位超安全水位——run 不终止，compaction 链自行压缩后继续）",
@@ -516,6 +514,8 @@ class _BuildMixin:
             logical_round=logical_round,
             record_action=lambda *_args, **_kwargs: None,
             event_append=lambda *_args, **_kwargs: None,
+            data_dir=self.settings.data_dir,
+            history_policy=self.settings.history_policy,
         )
         return build_conservative_active_run_projection(
             base=_pre.base,
@@ -554,6 +554,8 @@ class _BuildMixin:
             logical_round=logical_round,
             record_action=self._record_action,
             event_append=self._event_append,
+            data_dir=self.settings.data_dir,
+            history_policy=self.settings.history_policy,
         )
         resolved_label = _pre.resolved_label
         provider_id = _pre.provider_id
@@ -595,7 +597,7 @@ class _BuildMixin:
             # evidence 引用锚）。只投影已记录字符串，不合成决策/摘要；惰性求值
             # （仅压缩生效轮被调用）；任一存储异常 → 尽力返回已取部分（fail-open，
             # 不阻断窗口构建）。
-            from pathlib import Path as _P
+            from pathlib import Path
 
             _audit_dir = os.path.join(str(self.settings.data_dir), "audit")
             # 通道A/B 修正（2026-09-16 拷问）: Goal 段逻辑收敛到模块级
@@ -603,13 +605,18 @@ class _BuildMixin:
             # 终态只投状态行（旧 next 不投影）+ active 增投 status/时间戳。
             parts: list[str] = _task_anchor_goal_parts(_audit_dir, sess.session_id)
             try:
+                from llm_loop.core.run_context import workspace_base
                 from llm_loop.memory.evidence import EvidenceLedgerStore, OwnerScope
 
                 _ledger = EvidenceLedgerStore(
-                    _P(os.path.join(str(self.settings.evidence_dir), "ledger"))
+                    Path(os.path.join(str(self.settings.evidence_dir), "ledger"))
                 )
                 _recs = _ledger.list_recent(
-                    OwnerScope(session=sess.session_id), limit=6
+                    OwnerScope(
+                        workspace_id=os.path.abspath(workspace_base()),
+                        session_id=sess.session_id,
+                    ),
+                    limit=6,
                 )
                 _lines = []
                 for _r in _recs:
@@ -617,8 +624,7 @@ class _BuildMixin:
                     _ref = getattr(getattr(_p, "evidence_ref", None), "ref", "")
                     if _ref:
                         _lines.append(
-                            "- %s (%s)"
-                            % (_ref, getattr(_p, "tool_name", "") or "evidence")
+                            f"- {_ref} ({getattr(_p, 'tool_name', '') or 'evidence'})"
                         )
                 if _lines:
                     parts.append(

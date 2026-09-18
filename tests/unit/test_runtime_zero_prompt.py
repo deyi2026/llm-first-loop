@@ -7,6 +7,7 @@ payload）扫描断言，strict census 口径。
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from llm_loop.core.message import ToolCall
@@ -177,7 +178,6 @@ class TestE18RoundExhaustion:
 
     def test_hard_stop_off_keeps_pure_fact(self, tmp_path: Path, monkeypatch):
         """LFL_E18_HARD_STOP=0: 终态去掉"可继续"提示行（纯事实），硬停不变."""
-        monkeypatch.setenv("LFL_E18_HARD_STOP", "0")
         engine, fake = _mk(
             tmp_path, monkeypatch,
             responses=[
@@ -185,6 +185,10 @@ class TestE18RoundExhaustion:
                 _tool_resp("c2", "read_file", {"path": "/nonexistent/e18b"}),
                 _tool_resp("c3", "read_file", {"path": "/nonexistent/e18b"}),
             ],
+        )
+        engine.settings = replace(
+            engine.settings,
+            tool_runtime=replace(engine.settings.tool_runtime, e18_hard_stop=False),
         )
         object.__setattr__(engine.settings, "max_iterations", 2)
         sid = engine.session.create()
