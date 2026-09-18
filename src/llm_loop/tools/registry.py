@@ -28,7 +28,8 @@ from llm_loop.core.message import (
     ToolResult,
     ToolResultStatus,
 )
-from llm_loop.core.run_context import current_run_generation
+from llm_loop.core.run_context import current_run_generation, current_session_id
+from llm_loop.knowledge.injection_ledger import append_row
 from llm_loop.tools.pipeline import ImmutableResult, MaterializationError
 from llm_loop.tools.safety import CatastrophicGuard
 
@@ -201,6 +202,80 @@ def _emit_guidance_shadow_event(
             "event=tool_guidance_shadow tool=%s status=%s source=%s chars=%d failure_class=%s",
             tool, status, source, chars, failure_class,
         )
+
+
+# EVO-20260917-abdb3247 P0: 知识注入观测（零模型可见行为变化；KNOWLEDGE_INJECTION_LEDGER=0 关闭）
+_HYDRATION_TOOLS = frozenset({"search_records", "skill_load"})
+
+
+def _ledger_session_id() -> str:
+    """P1 归因窗口按 session 划分所需的机械归属（fail-open，取不到则空串）."""
+    try:
+        return str(current_session_id.get() or "")
+    except Exception:  # noqa: BLE001 - 观测字段永不阻断主路径
+        return ""
+
+
+def _ledger_receipt_pointer(*, tool: str, status: str, source: str, chars: int) -> None:
+    """登记"建议文本实际进入模型可见正文"的时刻（on/shadow 模式；off 态不触发）."""
+    with contextlib.suppress(Exception):
+        append_row(
+            kind="receipt_pointer",
+            tool=tool,
+            status=status,
+            source=source,
+            chars=chars,
+            session_id=_ledger_session_id(),
+        )
+
+
+# P1: 从水合回执正文提取 stable ref 字面（机械正则；观测字段，不改投影）
+_HYDRATION_REF_RE = re.compile(
+    r"(?:experience|lesson|method|memory|episode|rule|synopsis):[A-Za-z0-9][A-Za-z0-9_\-/:.]*"
+)
+
+
+def _extract_hydration_refs(content: object, *, limit: int = 8) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for m in _HYDRATION_REF_RE.findall(str(content or "")):
+        ref = m[:120]
+        if ref not in seen:
+            seen.add(ref)
+            refs.append(ref)
+        if len(refs) >= limit:
+            break
+    return refs
+
+
+def _observe_knowledge_hydration(call: ToolCall, result: ToolResult) -> None:
+    """登记知识水合调用（search_records/skill_load 成功执行；fail-open）."""
+    with contextlib.suppress(Exception):
+        status = str(getattr(result.status, "value", "") or "")
+        if status not in {"success", "ok"}:
+            return
+        args = getattr(call, "arguments", None)
+        if not isinstance(args, dict):
+            args = {}
+        session_id = _ledger_session_id()
+        if (getattr(result, "tool_name", "") or getattr(call, "name", "")) == "search_records":
+            append_row(
+                kind="hydration",
+                tool="search_records",
+                status=status,
+                record_kind=str(args.get("kind", ""))[:32],
+                query=str(args.get("query", ""))[:120],
+                session_id=session_id,
+                refs=_extract_hydration_refs(getattr(result, "content", "")),
+            )
+        else:
+            append_row(
+                kind="hydration",
+                tool="skill_load",
+                status=status,
+                skill=str(args.get("name", ""))[:64],
+                session_id=session_id,
+            )
 
 # execute 包裹的扩展钩子（由外部装配: 如架构自省 record_action）
 PreExecuteHook = Callable[[ToolCall], None]
@@ -1457,6 +1532,10 @@ class ToolRegistry:
                     "evidence shadow capture failed (action result preserved)", exc_info=True
                 )
 
+        # EVO-20260917-abdb3247 P0: 知识水合观测（成功执行时登记；fail-open，不改投影）
+        if (getattr(result, "tool_name", "") or call.name) in _HYDRATION_TOOLS:
+            _observe_knowledge_hydration(call, result)
+
         # Rule-first tool-result projection: exact bytes stay model-visible until the
         # real per-result hard cap. Crossing that cap triggers exact archival when
         # available, then truthful truncation; there is no soft/local summary policy.
@@ -1558,8 +1637,20 @@ def tool_result_to_message(
                 )
         if _advisory:
             content += "\n" + _advisory
+            _ledger_receipt_pointer(
+                tool=result.tool_name or "",
+                status=status_label,
+                source="typed_recovery" if typed_recovery is not None else "failure_guidance",
+                chars=len(_advisory),
+            )
         if _experience:
             content += "\n" + _experience
+            _ledger_receipt_pointer(
+                tool=result.tool_name or "",
+                status=status_label,
+                source="guidance_extra",
+                chars=len(_experience),
+            )
     metadata: dict = {}
     # Preserve the same recoverability/provenance facts as ToolResult.to_message().
     # ToolCycle uses this helper, so dropping them here made durable Evidence

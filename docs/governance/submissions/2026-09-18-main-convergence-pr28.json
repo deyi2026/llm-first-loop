@@ -1,0 +1,256 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "SUB-2026-09-18-MAIN-CONVERGENCE-PR28",
+  "summary": "PR #28 main 收敛：lfl/main 七提交 ort 合并 + 我方线（注入观测/学习默认开启/五维哨兵/revalidate 修复/validator 误报治理/SMC browser eval v01/文档）+ 两笔既有债修复（8f2eae5f1/6e1d4cef8）+ 13 处 ruff 清理；diff base ddd108a2e...head 精确分区申报；6b64cb9a7 显式登记 injection_ledger 两处 env 读取入棘轮基线（合并暴露的父提交既有债，按政策显式审查登记）",
+  "components": [
+    {
+      "component_id": "knowledge-injection-observability",
+      "paths": [
+        "docs/DESIGN-20260917-knowledge-injection-layering.md",
+        "scripts/aggregate_injection_ledger.py",
+        "scripts/attribute_injection_usage.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/knowledge/__init__.py",
+        "src/llm_loop/knowledge/injection_ledger.py",
+        "src/llm_loop/tools/registry.py",
+        "tests/unit/test_injection_attribution.py",
+        "tests/unit/test_injection_ledger.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "src/llm_loop/knowledge + tools/registry + factory",
+      "disposition": "我方线 EVO-20260917-abdb3247 P0 注入观测台账（fail-open，无 veto）；registry.py 含 8f2eae5f1 import 棘轮上提与 UP037 清理；test_injection_ledger.py 含 6e1d4cef8 autouse 隔离修复",
+      "evidence": [
+        "commit 9022aa492",
+        "commit 8f2eae5f1",
+        "commit 6e1d4cef8",
+        "docs/DESIGN-20260917-knowledge-injection-layering.md"
+      ],
+      "verification_level": "CI_Green（ruff+pyright+pytest -m \"not real_llm\"，PR #28 门禁）",
+      "model_evidence_veto_recovery_exit": "台账失败 fail-open 不阻断调用；恢复=关闭注入观测 env 或 revert 9022aa492",
+      "rollback_route": "git revert 9022aa492 8f2eae5f1 6e1d4cef8；无状态迁移"
+    },
+    {
+      "component_id": "method-learning-defaults",
+      "paths": [
+        ".env.example",
+        "README.md",
+        "docs/configuration.md",
+        "src/llm_loop/config.py",
+        "tests/unit/test_config.py",
+        "tests/unit/test_learning_journal.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "src/llm_loop/config",
+      "disposition": "2026-09-17 用户裁决：reflection auto + learning plane 默认开启（d386b2a14/dbbfa0b4c）；仅默认值与文档，无新增机械",
+      "evidence": [
+        "commit d386b2a14",
+        "commit dbbfa0b4c",
+        "tests/unit/test_config.py"
+      ],
+      "verification_level": "CI_Green（ruff+pyright+pytest -m \"not real_llm\"，PR #28 门禁）",
+      "model_evidence_veto_recovery_exit": "非控制机械：默认值翻转，无模型 veto 交互",
+      "rollback_route": "env 显式关闭或 git revert d386b2a14；无状态迁移"
+    },
+    {
+      "component_id": "self-eval-five-axis-sentinel",
+      "paths": [
+        "src/llm_loop/introspection/evaluator.py",
+        "tests/unit/test_evaluator.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "src/llm_loop/introspection",
+      "disposition": "EVO-20260917-45863aeb 五维口径自证+哨兵补全（B(i) 对齐提案 / B(ii) 相邻突变），测试锁定",
+      "evidence": [
+        "commit ccfdba0f7",
+        "tests/unit/test_evaluator.py"
+      ],
+      "verification_level": "CI_Green（ruff+pyright+pytest -m \"not real_llm\"，PR #28 门禁）",
+      "model_evidence_veto_recovery_exit": "哨兵只产生自评记录，不产生模型裁决门；恢复=回滚后回到旧口径",
+      "rollback_route": "git revert ccfdba0f7；无状态迁移",
+      "declaration_id": "DEC-2026-09-18-EVAL-5AXIS"
+    },
+    {
+      "component_id": "resources-revalidate-factconflict-fix",
+      "paths": [
+        "src/llm_loop/resources/provider_calls.py",
+        "tests/unit/test_lfrt_runtime_authority.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "src/llm_loop/resources",
+      "disposition": "corrective fix：revalidate 对云目标 NOT_APPLICABLE 误判 fact_conflict（学习面云模型部署结构性饿死根因，9bfb7cd56）",
+      "evidence": [
+        "commit 9bfb7cd56",
+        "tests/unit/test_lfrt_runtime_authority.py"
+      ],
+      "verification_level": "CI_Green（ruff+pyright+pytest -m \"not real_llm\"，PR #28 门禁）",
+      "model_evidence_veto_recovery_exit": "非控制机械：错误分类修复，无模型 veto 交互",
+      "rollback_route": "git revert 9bfb7cd56；无状态迁移"
+    },
+    {
+      "component_id": "validator-declaration-misreport-governance",
+      "paths": [
+        "src/llm_loop/feedback/validator.py",
+        "tests/unit/test_validator_sentence_unit.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "src/llm_loop/feedback",
+      "disposition": "EVO-20260917-27cd77ed declaration_check 误报治理 A/B/C/D（句单位判定收敛，f85f76379）+ 本轮 SIM103 清理",
+      "evidence": [
+        "commit f85f76379",
+        "tests/unit/test_validator_sentence_unit.py"
+      ],
+      "verification_level": "CI_Green（ruff+pyright+pytest -m \"not real_llm\"，PR #28 门禁）",
+      "model_evidence_veto_recovery_exit": "validator 为纯函数文本规则，无模型 veto 交互；恢复=回滚旧规则",
+      "rollback_route": "git revert f85f76379；无状态迁移",
+      "declaration_id": "DEC-2026-09-18-VALIDATOR-DECL"
+    },
+    {
+      "component_id": "smc-browser-eval-v01",
+      "paths": [
+        "evals/browser_smc_gt_qualification_v01/PLAN.v1.json",
+        "evals/browser_smc_gt_qualification_v01/PROTOCOL.v1.md",
+        "evals/browser_smc_gt_qualification_v01/results/run_20260917T222212Z/summary.json",
+        "evals/browser_smc_gt_qualification_v01/results/run_20260917T231329Z/summary.json",
+        "evals/browser_smc_gt_qualification_v01/run_qualification.py",
+        "evals/browser_smc_subject_v01/PLAN.v1.json",
+        "evals/browser_smc_subject_v01/PROTOCOL.v1.md",
+        "evals/browser_smc_subject_v01/RESULT.v1.md",
+        "evals/browser_smc_subject_v01/results/run_20260917T231757Z/summary.json",
+        "evals/browser_smc_subject_v01/results/run_20260917T234859Z/summary.json",
+        "evals/browser_smc_subject_v01/run_smoke.py",
+        "evals/fixtures/README.md",
+        "evals/fixtures/browser_smoke.py",
+        "evals/fixtures/smc_ground_truth_server.py",
+        "scripts/git_security_scan.sh",
+        "src/llm_loop/tools/builtin/browser_action.py",
+        "tests/unit/test_smc_browser_action_tool_authorship_v01.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "evals/ + tools/builtin/browser_action",
+      "disposition": "subject_v01 冻结回执（RESULT.v1.md 字节级零改动）+ gt qualification 重跑回执 + browser_action 机器署名修复（71ce26740）+ security scan 支线（a3a790c3b）",
+      "evidence": [
+        "commit a3a790c3b",
+        "commit 71ce26740",
+        "evals/browser_smc_subject_v01/RESULT.v1.md"
+      ],
+      "verification_level": "CI_Green（ruff+pyright+pytest -m \"not real_llm\"，PR #28 门禁）",
+      "model_evidence_veto_recovery_exit": "评测资产与工具署名修复，无模型 veto 交互",
+      "rollback_route": "git revert 71ce26740 a3a790c3b；冻结回执文件不回滚"
+    },
+    {
+      "component_id": "restart-guide-docs",
+      "paths": [
+        "docs/LFL-restart-guide.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs",
+      "disposition": "纯文档：restart guide §5/§6.2/§7/§10 实证补全（a42af11b2/34807a849）",
+      "evidence": [
+        "commit a42af11b2",
+        "commit 34807a849"
+      ],
+      "verification_level": "CI_Green（ruff+pyright+pytest -m \"not real_llm\"，PR #28 门禁）",
+      "model_evidence_veto_recovery_exit": "文档无运行时交互",
+      "rollback_route": "git revert a42af11b2 34807a849"
+    },
+    {
+      "component_id": "verify-docs-sync-fix",
+      "paths": [
+        "scripts/verify_docs_sync.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "scripts",
+      "disposition": "corrective fix：verify_docs_sync 第3项委托 test_ai_rules_sync 单一真相源（6063c6c31）",
+      "evidence": [
+        "commit 6063c6c31"
+      ],
+      "verification_level": "CI_Green（ruff+pyright+pytest -m \"not real_llm\"，PR #28 门禁）",
+      "model_evidence_veto_recovery_exit": "校验脚本修复，无模型 veto 交互",
+      "rollback_route": "git revert 6063c6c31"
+    },
+    {
+      "component_id": "main-convergence-manifest",
+      "paths": [
+        "docs/governance/submissions/2026-09-18-main-convergence-pr28.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs/governance",
+      "disposition": "本 manifest：PR #28 合并（38b0db069 ort 零文本冲突）+ A.5 覆盖申报 + 本轮 13 处 ruff 清理",
+      "evidence": [
+        "merge 38b0db069",
+        "PR #28"
+      ],
+      "verification_level": "CI_Green（ruff+pyright+pytest -m \"not real_llm\"，PR #28 门禁）",
+      "model_evidence_veto_recovery_exit": "申报文档无运行时交互",
+      "rollback_route": "删除本文件并 revert 合并提交"
+    },
+    {
+      "component_id": "runtime-env-ratchet-baseline-registration",
+      "paths": [
+        "tests/fixtures/runtime_env_access_baseline.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "runtime-env-audit",
+      "disposition": "登记分支侧 9022aa492 引入的 injection_ledger.py 两处直接 env 读取（KNOWLEDGE_INJECTION_LEDGER kill switch / INJECTION_LEDGER_PATH 台账落点覆写）进入棘轮基线；38b0db069 合并 main 侧审计后暴露，属父提交既有债，按基线政策『新增债务需显式审查登记』：仅增 2 条 signature_counts，计数帽 134/134 不变（当前实测 130，收缩余量留待后续 PR 收紧）",
+      "evidence": [
+        "tests/unit/test_runtime_env_access_gate.py",
+        "scripts/audit_runtime_env.py",
+        "本地三件套镜像：ruff clean / pyright 0 错 / pytest tests/ 非 real_llm exit=0 全绿"
+      ],
+      "verification_level": "unit",
+      "model_evidence_veto_recovery_exit": "若评审否决登记，revert 6b64cb9a7 后改为迁移 injection_ledger 至集中 env 读取通道或去除 kill switch 直读",
+      "rollback_route": "revert 6b64cb9a7 单提交；无行为代码变更，基线回到合并态"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "DEC-2026-09-18-EVAL-5AXIS",
+      "g1": {
+        "necessity": "自评五维口径（成功率/效率/诚实性/停滞/异常）需机械锚点，防结论无锁定；B(ii) 相邻突变确保哨兵非平凡"
+      },
+      "g2": {
+        "authority_owner": "src/llm_loop/introspection/evaluator.py",
+        "relationship": "reuse",
+        "non_duplication": "复用既有 self_evaluate 通道；与 declaration_check（validator）正交：validator 管 feedback 判定，本哨兵管自评口径边界"
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/unit/test_evaluator.py 锁定五维口径与 B(i)/B(ii) 哨兵（commit ccfdba0f7）"
+        ],
+        "recovery_or_reason": "哨兵仅产出自评记录，不构成模型裁决门；恢复=revert 后回到旧口径"
+      },
+      "g4": {
+        "rollback": "git revert ccfdba0f7；无状态迁移",
+        "verification": [
+          "PR #28 CI：ruff+pyright+pytest -m \"not real_llm\"",
+          "tests/unit/test_evaluator.py 全绿"
+        ]
+      }
+    },
+    {
+      "declaration_id": "DEC-2026-09-18-VALIDATOR-DECL",
+      "g1": {
+        "necessity": "declaration_check 对句边界误报污染 A/B/C/D 口径，需句单位判定收敛以保证 G3 证据面可信"
+      },
+      "g2": {
+        "authority_owner": "src/llm_loop/feedback/validator.py",
+        "relationship": "reuse",
+        "non_duplication": "在既有 validator 判定器内收敛规则；与 introspection 哨兵、knowledge 台账无重叠"
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/unit/test_validator_sentence_unit.py 锁定句单位判定（commit f85f76379）",
+          "EVO-20260917-27cd77ed 治理记录"
+        ],
+        "recovery_or_reason": "纯函数文本规则，无模型 veto 交互；恢复=revert 回旧规则"
+      },
+      "g4": {
+        "rollback": "git revert f85f76379；无状态迁移",
+        "verification": [
+          "PR #28 CI：ruff+pyright+pytest -m \"not real_llm\"",
+          "tests/unit/test_validator_sentence_unit.py 全绿"
+        ]
+      }
+    }
+  ]
+}

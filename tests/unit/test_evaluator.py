@@ -351,3 +351,159 @@ def test_declaration_check_legacy_line_ref_hydrates_exact_sample(tmp_path):
     )
     assert hit and hit[0]["source_ref"] == "declaration_check.jsonl:L1"
     assert hit[0]["detail"]["receipts"] == ["legacy full receipt"]
+
+
+# ── EVO-20260917-45863aeb: 口径自证 + 矛盾哨兵 + 窗口分母主路径锁定 ──
+
+
+def _seed_llm_rounds_action_trace(tmp_path, n_rounds):
+    """写入 n 条 action.llm_decide/llm_response 轮次记录（exception_rate 窗口分母来源）."""
+    _write_jsonl(
+        tmp_path / "action_trace.jsonl",
+        [
+            {
+                "ts": f"r{i}",
+                "phase": "action.llm_decide",
+                "action_type": "llm_response",
+                "detail": f"resp-{i}",
+            }
+            for i in range(n_rounds)
+        ],
+    )
+
+
+def test_exception_rate_window_denominator_main_path(tmp_path):
+    """主修复路径锁定: action_trace 窗口内 llm 轮次作分母（优先于进程快照）.
+
+    EVO-20260827-c6908267 主路径此前无测试——现有用例 llm_rounds 快照恒生效、
+    窗口分母路径（win_rounds>0 → rounds_src=window_action_trace）一旦被重构破坏，
+    测试仍全绿。本用例进程快照故意给大值（100），误走快照路径时 value=1/100。
+    """
+    _seed_llm_rounds_action_trace(tmp_path, n_rounds=6)
+    _write_jsonl(
+        tmp_path / "exception_log.jsonl",
+        [{"ts": "x0", "error_type": "ValueError"}],
+    )
+    status = _Status(llm_rounds=100)  # 进程快照虚高，反向锁定窗口分母优先
+    ev = SelfEvaluator(
+        status_provider=status, audit_dir=tmp_path, min_samples=5, span=50, window_hours=0
+    )
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    exc = metrics["exception_rate"]
+    assert exc.value == round(1 / 6, 4)  # 窗口轮次 6 作分母（非进程快照 100）
+    assert "window_action_trace" in exc.note
+    assert "process_snapshot" not in exc.note
+    # 分子=1 < 分母=6 → 无封顶标注
+    assert "封顶" not in exc.note
+
+
+def test_metric_notes_carry_caliber_on_normal_path(tmp_path):
+    """A: 五维指标正常计算时 note 均自带分子/分母口径（数字自带口径可审计，无需读源码）."""
+    _seed_llm_rounds_action_trace(tmp_path, n_rounds=8)
+    _write_jsonl(
+        tmp_path / "tool_history.jsonl",
+        [{"name": "read_file", "status": "success"} for _ in range(8)]
+        + [{"name": "read_file", "status": "failure"} for _ in range(2)],
+    )
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        [{"ts": f"c{i}", "consistent": True} for i in range(10)],
+    )
+    _write_jsonl(
+        tmp_path / "exception_log.jsonl",
+        [{"ts": f"x{i}", "error_type": "ValueError"} for i in range(2)],
+    )
+    ev = SelfEvaluator(
+        status_provider=None, audit_dir=tmp_path, min_samples=5, span=50, window_hours=0
+    )
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    assert metrics["success_rate"].note == "分子=8 条成功动作/分母=8 条动作(近span)"
+    assert metrics["tool_efficiency"].note == "分子=8 条成功调用/分母=10 条调用"
+    assert metrics["honesty_rate"].note == "分子=10 条一致声明/分母=10 条声明(近span)"
+    assert metrics["exception_rate"].note == "分子=2 条(近span)/分母=8 轮(window_action_trace)"
+    assert "连续重复口径" in metrics["stagnation_rate"].note
+    # 正常组合（exception=0.25, success=1.0）→ 无哨兵、无 diagnostics 键
+    assert "矛盾哨兵" not in report.note
+    assert "consistency_alerts" not in report.diagnostics
+
+
+def test_consistency_sentinel_flags_exception_success_conflict(tmp_path):
+    """B: exception_rate 与 success_rate 矛盾组合 → report 显式标注（只标注不阻断）.
+
+    复现 2026-08-27 SE 案例形态: exception_rate=1.00 与 success_rate=1.00 同现。
+    """
+    _seed_llm_rounds_action_trace(tmp_path, n_rounds=6)
+    _write_jsonl(
+        tmp_path / "exception_log.jsonl",
+        [{"ts": f"x{i}", "error_type": "ValueError"} for i in range(6)],
+    )
+    ev = SelfEvaluator(
+        status_provider=_Status(), audit_dir=tmp_path, min_samples=5, span=50, window_hours=0
+    )
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    assert metrics["exception_rate"].value == 1.0  # 6/6 封顶
+    assert metrics["success_rate"].value == 1.0
+    assert "封顶" in metrics["exception_rate"].note  # 截断显式化
+    assert "矛盾哨兵" in report.note
+    alerts = report.diagnostics["consistency_alerts"]
+    assert len(alerts) == 1
+    assert "EVO-20260827-c6908267" in alerts[0]
+    # 只标注不阻断: 评估照常完成并落盘，哨兵随 diagnostics 持久化
+    assert report.eval_id.startswith("SE-")
+    row = json.loads((tmp_path / "self_eval_log.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert row["diagnostics"]["consistency_alerts"] == alerts
+
+
+def test_adjacent_shift_sentinel_flags_metric_jump(tmp_path):
+    """B(ii) 相邻突变: 与 self_eval_log 上一条同指标 |Δ|≥0.5 → 口径存疑标注（只标注不阻断）.
+
+    复现 2026-08-27 案例的单次跳变形态（exception_rate 0.06 → 1.00 此前只能人工比对发现）。
+    """
+    _write_jsonl(
+        tmp_path / "action_trace.jsonl",
+        [
+            {"ts": f"t{i}", "phase": "action.tool_loop", "action_type": "tool_call", "detail": f"f{i}"}
+            for i in range(10)
+        ],
+    )
+    ev = SelfEvaluator(
+        status_provider=_Status(), audit_dir=tmp_path, min_samples=5, span=50, window_hours=0
+    )
+    first = ev.evaluate(session_id="s1", trigger="manual")
+    fm = {m.name: m for m in first.metrics}
+    assert fm["success_rate"].value == 1.0
+    assert "哨兵" not in first.note  # 首次评估无上一条可比，不触发
+
+    # 第二次: success_rate 1.0 → 0.2（|Δ|=0.8 ≥ 0.5）；错误 detail 互异避免停滞率联动告警
+    (tmp_path / "action_trace.jsonl").write_text(
+        "\n".join(
+            json.dumps(
+                {"ts": f"s{i}", "phase": "action.tool_loop", "action_type": "tool_call", "detail": f"g{i}"}
+            )
+            for i in range(2)
+        )
+        + "\n"
+        + "\n".join(
+            json.dumps(
+                {"ts": f"e{i}", "phase": "action.llm_decide", "action_type": "llm_error", "detail": f"err{i}"}
+            )
+            for i in range(8)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    second = ev.evaluate(session_id="s1", trigger="manual")
+    sm = {m.name: m for m in second.metrics}
+    assert sm["success_rate"].value == 0.2
+    alerts = second.diagnostics["consistency_alerts"]
+    shift = [a for a in alerts if "相邻突变" in a]
+    assert len(shift) == 1
+    assert "success_rate" in shift[0]
+    assert "口径存疑，需复核" in shift[0]
+    assert "相邻突变" in second.note
+    # 只标注不阻断: 两次评估均正常落盘
+    rows = (tmp_path / "self_eval_log.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(rows) == 2

@@ -437,6 +437,12 @@ def build_engine(settings: Settings) -> LoopEngine:
         leak_data_dir=settings.data_dir,
     )
 
+    # EVO-20260917-abdb3247 P0: 注入观测 ledger 路径绑定（跟随运行时 data_dir；fail-open）
+    with suppress(Exception):
+        from llm_loop.knowledge.injection_ledger import configure
+
+        configure(Path(settings.data_dir) / "audit")
+
     # 工具注册表（3 基础工具 + 自省/修正/检索工具）
     registry = ToolRegistry(
         tool_timeout_s=settings.tool_timeout_s,
@@ -1407,6 +1413,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         audit_dir=settings.audit_dir,
         semantic_matcher=semantic_matcher,
         semantic_threshold=settings.validate_semantic_threshold,
+        recent_window=settings.validate_recent_window,  # EVO-20260917-27cd77ed C: VALIDATE_RECENT_WINDOW
     )
 
     # P1: LLM 摘要器（SUMMARY_MODE，§3.6）
@@ -1490,8 +1497,9 @@ def build_engine(settings: Settings) -> LoopEngine:
     install_refresh_executor(engine)
 
     # Learning Plane（design §5.3）: durable journal + 后台 ReflectionRun 消费者。
-    # 默认关闭（LEARNING_PLANE_ENABLED）；关闭时不挂载 engine.learning_journal，
-    # post_run 反射检查保持静默 —— 零行为变化、无队列积压。
+    # 默认开启（2026-09-17 用户裁决：学习闭环为运行时一等能力，config.LEARNING_PLANE_ENABLED
+    # 默认 True）；显式 LEARNING_PLANE_ENABLED=0 时不挂载 engine.learning_journal，
+    # post_run 反射检查保持静默 —— 零模型调用、无队列积压。
     engine.learning_plane = None
     foreground_probe = ForegroundActivityProbe(engine, settings.sessions_dir)
     resource_governor = ResourceGovernor(foreground_probe=foreground_probe.active)

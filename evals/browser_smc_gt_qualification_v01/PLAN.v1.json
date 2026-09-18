@@ -1,0 +1,15 @@
+{
+  "schema": "smc.browser_gt_qualification_v01.plan",
+  "fixture": "smc_ground_truth_server.v1",
+  "manifest_is_plan_source": true,
+  "clause_families": [
+    "index",
+    "dispatch",
+    "grounding_probe",
+    "halt",
+    "wait_then_dispatch",
+    "wait_observe",
+    "navigate_pair"
+  ],
+  "notes": "The route set, canonical objects, and expected events are read from GET /manifest at run time. Nothing route-specific is frozen in this file; freezing it would defeat the shared-fixture purpose."
+}

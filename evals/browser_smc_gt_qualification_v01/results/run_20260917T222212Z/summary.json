@@ -1,0 +1,137 @@
+{
+  "schema": "smc.browser_gt_qualification_v01.plan",
+  "fixture": "smc_ground_truth_server.v1",
+  "manifest_sha256": "44b4e156e72c00a5ad9695b537bf453f7afd9c291089b4f0c7f370feade8b306",
+  "gate": "PASS",
+  "generated_at": "2026-09-17T22:22:14.572605+00:00",
+  "clauses": [
+    {
+      "route": "/",
+      "family": "index",
+      "failures": [],
+      "baseline": 0,
+      "pass": true
+    },
+    {
+      "route": "/ambiguous/two-buttons",
+      "family": "halt",
+      "failures": [],
+      "baseline": 0,
+      "pass": true
+    },
+    {
+      "route": "/htmx/click",
+      "family": "dispatch",
+      "failures": [],
+      "baseline": 0,
+      "pass": true
+    },
+    {
+      "route": "/pollution/button-text-child",
+      "family": "grounding_probe",
+      "failures": [],
+      "baseline": 1,
+      "pass": true
+    },
+    {
+      "route": "/unique/click",
+      "family": "dispatch",
+      "failures": [],
+      "baseline": 2,
+      "pass": true
+    },
+    {
+      "route": "/unique/fill",
+      "family": "dispatch",
+      "failures": [],
+      "baseline": 3,
+      "pass": true
+    },
+    {
+      "route": "/unique/scroll",
+      "family": "dispatch",
+      "failures": [],
+      "baseline": 4,
+      "pass": true
+    },
+    {
+      "route": "/unique/select",
+      "family": "dispatch",
+      "failures": [],
+      "baseline": 5,
+      "pass": true
+    },
+    {
+      "route": "/wait/delayed-appear",
+      "family": "wait_observe",
+      "failures": [],
+      "baseline": 6,
+      "pass": true
+    },
+    {
+      "route": "/wait/delayed-enable",
+      "family": "wait_then_dispatch",
+      "failures": [],
+      "baseline": 6,
+      "pass": true
+    },
+    {
+      "route": "/navigate/page-a -> /navigate/page-b",
+      "family": "navigate_pair",
+      "failures": [],
+      "baseline": 7,
+      "pass": true
+    }
+  ],
+  "final_state": {
+    "count": 7,
+    "events": [
+      {
+        "element_id": "hx-commit",
+        "kind": "hx_click",
+        "seq": 1,
+        "server_ts": 1789683732.741
+      },
+      {
+        "element_id": "commit",
+        "kind": "click",
+        "seq": 2,
+        "server_ts": 1789683732.79
+      },
+      {
+        "element_id": "run-check",
+        "kind": "click",
+        "seq": 3,
+        "server_ts": 1789683732.823
+      },
+      {
+        "element_id": "code",
+        "kind": "fill",
+        "seq": 4,
+        "server_ts": 1789683732.874,
+        "value": "qual-v01"
+      },
+      {
+        "element_id": "scroll-area",
+        "kind": "scroll",
+        "scrollTop": 300,
+        "seq": 5,
+        "server_ts": 1789683733.012
+      },
+      {
+        "element_id": "region",
+        "kind": "select",
+        "seq": 6,
+        "server_ts": 1789683733.357,
+        "value": "west"
+      },
+      {
+        "element_id": "run-check",
+        "kind": "ready_click",
+        "seq": 7,
+        "server_ts": 1789683734.013
+      }
+    ],
+    "fixture": "smc_ground_truth_server.v1"
+  }
+}

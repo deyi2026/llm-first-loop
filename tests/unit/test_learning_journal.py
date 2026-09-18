@@ -165,7 +165,7 @@ def test_find_by_evidence_roundtrip(tmp_path):
 
 
 def test_factory_assembles_learning_plane_only_when_enabled(tmp_path):
-    """factory 装配：默认关闭零挂载；开启时 journal+plane 就绪且可停."""
+    """factory 装配：显式关闭零挂载；开启时 journal+plane 就绪且可停."""
     from llm_loop.config import Settings
     from llm_loop.factory import build_engine
 

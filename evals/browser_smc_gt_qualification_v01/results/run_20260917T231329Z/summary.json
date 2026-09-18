@@ -1,0 +1,199 @@
+{
+  "schema": "smc.browser_gt_qualification_v01.plan",
+  "fixture": "smc_ground_truth_server.v1.1",
+  "manifest_sha256": "328dde665631ea0dbe0c5880cd37cdee7622a2f490d773b93a3650bfeb9b99dc",
+  "gate": "PASS",
+  "generated_at": "2026-09-17T23:13:32.315406+00:00",
+  "clauses": [
+    {
+      "route": "/",
+      "family": "index",
+      "failures": [],
+      "baseline": 0,
+      "pass": true
+    },
+    {
+      "route": "/ambiguous/two-buttons",
+      "family": "halt",
+      "failures": [],
+      "baseline": 0,
+      "pass": true
+    },
+    {
+      "route": "/htmx/click",
+      "family": "dispatch",
+      "failures": [],
+      "baseline": 0,
+      "pass": true
+    },
+    {
+      "route": "/pollution/button-text-child",
+      "family": "grounding_probe",
+      "failures": [],
+      "baseline": 1,
+      "pass": true
+    },
+    {
+      "route": "/unique/click",
+      "family": "dispatch",
+      "failures": [],
+      "baseline": 2,
+      "pass": true
+    },
+    {
+      "route": "/unique/fill",
+      "family": "dispatch",
+      "failures": [],
+      "baseline": 3,
+      "pass": true
+    },
+    {
+      "route": "/unique/scroll",
+      "family": "dispatch",
+      "failures": [],
+      "baseline": 4,
+      "pass": true
+    },
+    {
+      "route": "/unique/select",
+      "family": "dispatch",
+      "failures": [],
+      "baseline": 5,
+      "pass": true
+    },
+    {
+      "route": "/wait/delayed-appear",
+      "family": "wait_observe",
+      "failures": [],
+      "baseline": 6,
+      "pass": true
+    },
+    {
+      "route": "/wait/delayed-enable",
+      "family": "wait_then_dispatch",
+      "failures": [],
+      "baseline": 6,
+      "pass": true
+    },
+    {
+      "route": "/navigate/page-a -> /navigate/page-b",
+      "family": "navigate_pair",
+      "failures": [],
+      "baseline": 7,
+      "pass": true
+    }
+  ],
+  "final_state": {
+    "count": 7,
+    "events": [
+      {
+        "element_id": "hx-commit",
+        "kind": "hx_click",
+        "seq": 1,
+        "server_ts": 1789686810.478
+      },
+      {
+        "element_id": "commit",
+        "kind": "click",
+        "seq": 2,
+        "server_ts": 1789686810.516
+      },
+      {
+        "element_id": "run-check",
+        "kind": "click",
+        "seq": 3,
+        "server_ts": 1789686810.55
+      },
+      {
+        "element_id": "code",
+        "kind": "fill",
+        "seq": 4,
+        "server_ts": 1789686810.584,
+        "value": "qual-v01"
+      },
+      {
+        "element_id": "scroll-area",
+        "kind": "scroll",
+        "scrollTop": 300,
+        "seq": 5,
+        "server_ts": 1789686810.721
+      },
+      {
+        "element_id": "region",
+        "kind": "select",
+        "seq": 6,
+        "server_ts": 1789686811.085,
+        "value": "west"
+      },
+      {
+        "element_id": "run-check",
+        "kind": "ready_click",
+        "seq": 7,
+        "server_ts": 1789686811.756
+      }
+    ],
+    "fixture": "smc_ground_truth_server.v1.1",
+    "visits": [
+      {
+        "path": "/",
+        "seq": 1,
+        "server_ts": 1789686810.38
+      },
+      {
+        "path": "/ambiguous/two-buttons",
+        "seq": 2,
+        "server_ts": 1789686810.416
+      },
+      {
+        "path": "/htmx/click",
+        "seq": 3,
+        "server_ts": 1789686810.431
+      },
+      {
+        "path": "/pollution/button-text-child",
+        "seq": 4,
+        "server_ts": 1789686810.483
+      },
+      {
+        "path": "/unique/click",
+        "seq": 5,
+        "server_ts": 1789686810.518
+      },
+      {
+        "path": "/unique/fill",
+        "seq": 6,
+        "server_ts": 1789686810.551
+      },
+      {
+        "path": "/unique/scroll",
+        "seq": 7,
+        "server_ts": 1789686810.585
+      },
+      {
+        "path": "/unique/select",
+        "seq": 8,
+        "server_ts": 1789686811.006
+      },
+      {
+        "path": "/wait/delayed-appear",
+        "seq": 9,
+        "server_ts": 1789686811.087
+      },
+      {
+        "path": "/wait/delayed-enable",
+        "seq": 10,
+        "server_ts": 1789686811.397
+      },
+      {
+        "path": "/navigate/page-a",
+        "seq": 11,
+        "server_ts": 1789686811.761
+      },
+      {
+        "path": "/navigate/page-b",
+        "seq": 12,
+        "server_ts": 1789686811.804
+      }
+    ]
+  }
+}

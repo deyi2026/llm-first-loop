@@ -270,8 +270,8 @@ def test_exact_duplicate_tool_fold_is_explicit_opt_in(monkeypatch):
     assert settings.to_status_dict()["exact_duplicate_tool_fold"] is True
 
 
-def test_load_settings_learning_plane_default_off(monkeypatch):
-    """Learning Plane 默认关闭；LEARNING_PLANE_ENABLED=1 → 开启."""
+def test_load_settings_learning_plane_default_on(monkeypatch):
+    """Learning Plane 默认开启（2026-09-17 用户裁决）；LEARNING_PLANE_ENABLED=0 → 显式关闭."""
     from llm_loop.config import load_settings
 
     monkeypatch.setenv("LLM_API_KEY", "k")
@@ -280,11 +280,29 @@ def test_load_settings_learning_plane_default_off(monkeypatch):
     monkeypatch.delenv("DATA_DIR", raising=False)
     monkeypatch.delenv("LEARNING_PLANE_ENABLED", raising=False)
     s = load_settings()
-    assert s.learning_plane_enabled is False  # 默认关闭：后台 LLM 反思需显式开启
+    assert s.learning_plane_enabled is True  # 默认开启：学习闭环为运行时一等能力
 
-    monkeypatch.setenv("LEARNING_PLANE_ENABLED", "1")
+    monkeypatch.setenv("LEARNING_PLANE_ENABLED", "0")
     s2 = load_settings()
-    assert s2.learning_plane_enabled is True
+    assert s2.learning_plane_enabled is False
+
+
+def test_load_settings_method_reflection_mode_default_auto(monkeypatch):
+    """METHOD_REFLECTION_MODE 默认 auto；显式 off 生效；非法值 fail-safe 回 off."""
+    from llm_loop.config import load_settings
+
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("LLM_BASE_URL", "https://x/v1")
+    monkeypatch.setenv("LLM_MODEL", "m")
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.delenv("METHOD_REFLECTION_MODE", raising=False)
+    assert load_settings().method_reflection_mode == "auto"
+
+    monkeypatch.setenv("METHOD_REFLECTION_MODE", "off")
+    assert load_settings().method_reflection_mode == "off"
+
+    monkeypatch.setenv("METHOD_REFLECTION_MODE", "banana")
+    assert load_settings().method_reflection_mode == "off"  # 非法值 fail-safe，不静默开启
 
 
 def test_local_eval_requires_explicit_data_dir(monkeypatch):

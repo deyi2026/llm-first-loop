@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from llm_loop.resources.contracts import (
+    AdmissionOutcome,
+    AdmissionRequest,
     ExecutionClass,
     ResourceKey,
     ResourceScopeKind,
@@ -499,3 +501,55 @@ def test_legacy_default_never_invokes_supplied_lfrt_authority_adapter():
 def test_lfrt_authority_requires_absolute_executable_path():
     with pytest.raises(ValueError, match="absolute"):
         LFRTAdmissionRuntimeAdapter("relative/lfrt")
+
+
+def test_lfrt_revalidation_cloud_target_rg1_lease_is_not_a_conflict():
+    """云目标（非 loopback）RG-1 兜底租约：revalidate 不得误判 fact_conflict（2026-09-17 修复锁定）.
+
+    根因：build 阶段 NOT_APPLICABLE → None → RG-1 兜底；revalidate 缺同分支，
+    对 lfrt 权限引擎下的云模型部署恒拒（6350/6350 resource_authority_changed）。
+    """
+    class CloudClient:
+        provider = "glm"
+        model = "glm-5.3"
+        base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+
+    coordinator = ProviderCallCoordinator(
+        ResourceGovernor(),
+        local_runtime=SimpleNamespace(observe=lambda *_a, **_k: None),
+        admission_authority="lfrt",
+        lfrt_runtime=LFRTAdmissionRuntimeAdapter(
+            "/opt/lfrt", runner=lambda _argv, _timeout: (0, "{}", "")
+        ),
+    )
+    client = CloudClient()
+    assert (
+        coordinator.build_request_for_client(
+            client,
+            execution_class=ExecutionClass.BACKGROUND_LEARNING,
+            service_priority=ServicePriority.P3_BACKGROUND_LEARNING,
+            owner_ref="learning:x",
+        )
+        is None
+    )  # 云目标 → NOT_APPLICABLE → RG-1 兜底
+    key = ResourceKey(
+        provider_id="glm",
+        scope_kind=ResourceScopeKind.RUNTIME,
+        scope_id="rg1-learning-process:glm-5.3",
+    )
+    coordinator.governor.set_concurrency_limit(key, 1)
+    request = AdmissionRequest(
+        request_id="learning:x:a:1",
+        owner_ref="learning:x",
+        execution_class=ExecutionClass.BACKGROUND_LEARNING,
+        service_priority=ServicePriority.P3_BACKGROUND_LEARNING,
+        provider_id="glm",
+        model_id="glm-5.3",
+        resource_keys=(key,),
+        submitted_at=0.0,
+    )
+    assert coordinator.governor.try_acquire(request).outcome is AdmissionOutcome.ADMITTED
+    # 修复前：fact_conflict；修复后：NOT_APPLICABLE → 通过（LFRT 无权限事实，RG-1 租约成立）
+    coordinator.revalidate_request_for_client(
+        client, request, expected_generation=None
+    )
