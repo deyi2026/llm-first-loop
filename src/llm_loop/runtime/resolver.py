@@ -170,6 +170,7 @@ BUSINESS_KEYS = tuple(dict.fromkeys((*_TOML_ENV_KEYS, *_LEGACY_GOVERNED_KEYS)))
 # Secret/credential material is never accepted by runtime.toml.
 _SECRET_KEYS = (
     "LLM_API_KEY",
+    "GLM_API_KEY",
     "DEEPSEEK_API_KEY",
     "MINIMAX_API_KEY",
     "ZHIPU_API_KEY",

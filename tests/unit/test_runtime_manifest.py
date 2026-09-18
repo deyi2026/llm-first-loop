@@ -200,6 +200,13 @@ def test_write_read_roundtrip_and_health_identity(tmp_path, monkeypatch):
     assert ident["build_identity"] == m["build_identity"]
 
 
+def test_learning_manifest_has_service_specific_live_identity(tmp_path):
+    manifest = {"service": "learning", "pid": 12345}
+    write_manifest(manifest, tmp_path)
+    specific = tmp_path / "runtime" / "runtime_manifest.learning.json"
+    assert json.loads(specific.read_text(encoding="utf-8")) == manifest
+
+
 def test_launch_writes_manifest_end_to_end(tmp_path, monkeypatch, capsys):
     """端到端：launch main() 真实路径（runpy 劫持不真启动）→ manifest 落盘。
 
