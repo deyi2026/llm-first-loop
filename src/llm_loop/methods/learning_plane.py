@@ -14,7 +14,12 @@ Power boundaries (by design, not by convention):
   JSON schema; the single write path is MethodStore.save_candidate with
   runtime-derived provenance (real episode ref + learning job ref).
 - Fail-open: any error marks the job failed and leaves the user plane untouched.
+- P0-C (2026-09-18): the queue also carries ``kind=memory_extract`` jobs
+  (MemoryExtractor interval scheduling). They run under the same admission,
+  foreground-barrier and preemption semantics; execution is delegated to the
+  wired MemoryExtractor (see ``_run_memory_extract_job``).
 """
+
 from __future__ import annotations
 
 import logging
@@ -44,7 +49,6 @@ from llm_loop.resources.provider_settlement import (
 logger = logging.getLogger(__name__)
 
 
-
 class LearningPlane:
     """Background consumer of the durable learning queue.
 
@@ -66,6 +70,7 @@ class LearningPlane:
         resource_governor: ResourceGovernor,
         resource_target_resolver: Callable[[str], tuple[str, str]],
         provider_call_coordinator: ProviderCallCoordinator | None = None,
+        memory_extractor: Any | None = None,
         poll_interval_s: float = 5.0,
         quiet_period_s: float = 15.0,
         preempt_poll_s: float = 0.25,
@@ -78,6 +83,7 @@ class LearningPlane:
         self._resource_governor = resource_governor
         self._resource_target_resolver = resource_target_resolver
         self._provider_call_coordinator = provider_call_coordinator
+        self._memory_extractor = memory_extractor  # P0-C: kind=memory_extract 执行体
         self._poll_interval_s = max(1.0, float(poll_interval_s))
         self._quiet_period_s = max(0.0, float(quiet_period_s))
         self._thread: threading.Thread | None = None
@@ -92,7 +98,9 @@ class LearningPlane:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run_loop, name="lfl-learning-plane", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run_loop, name="lfl-learning-plane", daemon=True
+        )
         self._thread.start()
 
     def stop(self, timeout_s: float = 5.0) -> None:
@@ -201,7 +209,9 @@ class LearningPlane:
                     try:
                         self._journal.mark_failed(job.job_id, "worker_exception")
                     except Exception:  # noqa: BLE001
-                        logger.warning("learning job %s mark_failed failed", job.job_id, exc_info=True)
+                        logger.warning(
+                            "learning job %s mark_failed failed", job.job_id, exc_info=True
+                        )
             if not progressed:
                 self._stop.wait(self._poll_interval_s)
 
@@ -230,6 +240,12 @@ class LearningPlane:
             if self.foreground_busy():  # re-check between admission and start
                 self._journal.mark_requeued(job.job_id, "foreground_arrived")
                 return False
+
+            # P0-C: memory-extraction jobs share admission/foreground semantics,
+            # but delegate execution to the wired MemoryExtractor.
+            if str(getattr(job, "kind", "reflection")) == "memory_extract":
+                return self._run_memory_extract_job(job, request)
+
             entry = self._episode_store.get(job.session_id, job.source_episode_ref)
             if entry is None:
                 self._journal.mark_failed(job.job_id, "episode_not_found")
@@ -315,7 +331,9 @@ class LearningPlane:
                                 episode_entry=entry,
                                 trigger_facts=dict(job.trigger_facts or {}),
                                 tool_trace=[],
-                                run_end_reason=str((job.trigger_facts or {}).get("run_end_reason", "")),
+                                run_end_reason=str(
+                                    (job.trigger_facts or {}).get("run_end_reason", "")
+                                ),
                                 final_answer=final_answer,
                                 timeout_s=timeout_s,
                             )
@@ -391,3 +409,76 @@ class LearningPlane:
             return True
         finally:
             self._resource_governor.release(lease)
+
+    def _run_memory_extract_job(self, job: LearningJob, request: Any) -> bool:
+        """P0-C: run a kind=memory_extract job in the settled, foreground-free lane.
+
+        Semantics mirror the reflection path: the worker owns the attempt
+        (MemoryExtractor opens and settles its own shadow call for the actual
+        transport), mid-call preemption abandons the worker (tracked as a
+        straggler), requeues the job and lets ``finally`` release the lease.
+        An abandoned extraction may still complete its memory write — that
+        write path is late-write-safe (version snapshot +
+        promote-only-if-observed) and content-fingerprint deduped, so a
+        requeued rerun cannot create duplicate memory entries.
+        """
+        extractor = self._memory_extractor
+        if extractor is None:
+            self._journal.mark_failed(job.job_id, "memory_extractor_not_wired")
+            return True
+        self._journal.mark_started(job.job_id)
+        coordinator = self._provider_call_coordinator
+        if coordinator is not None:
+            expected_generation = (
+                self._resource_governor.concurrency_limit_generation(request.resource_keys[0])
+                if len(request.resource_keys) == 1
+                else None
+            )
+            try:
+                client = self._model_resolver(job.source_model)
+                coordinator.revalidate_request_for_client(
+                    client, request, expected_generation=expected_generation
+                )
+            except ResourceAdmissionError:
+                self._journal.mark_requeued(job.job_id, "resource_authority_changed")
+                return False
+        result: dict[str, Any] = {}
+
+        def _run_extract() -> None:
+            try:
+                result["outcome"] = extractor.extract_session(job.session_id, trigger="interval")
+            except BaseException as exc:  # noqa: BLE001 - transported to the learning thread
+                result["error"] = exc
+
+        worker = threading.Thread(
+            target=_run_extract,
+            name=f"lfl-memory-extract:{job.job_id}",
+            daemon=True,
+        )
+        worker.start()
+        preempted = False
+        while True:
+            worker.join(self._preempt_poll_s)
+            if not worker.is_alive():
+                break
+            if self.foreground_busy():  # foreground always wins, mid-call included
+                preempted = True
+                break
+        if preempted:
+            self._track_straggler(worker)
+            self._journal.mark_requeued(job.job_id, "preempted_by_foreground")
+            return False
+        if "error" in result:
+            raise result["error"]
+        outcome = result["outcome"]
+        entries_n = len(getattr(outcome, "entries", None) or [])
+        skipped = int(getattr(outcome, "skipped_duplicates", 0) or 0)
+        if entries_n > 0:
+            # candidate_ref is an opaque pointer here: memory entries live in
+            # MemoryStore (deposit_path=extract); the journal keeps the count.
+            self._journal.mark_saved(
+                job.job_id, f"memory-extract:{job.session_id}:entries={entries_n}"
+            )
+        else:
+            self._journal.mark_none(job.job_id, f"no_new_entries; skipped_duplicates={skipped}")
+        return True

@@ -127,6 +127,18 @@ METHOD_LEARNING_MAX_ATTEMPTS=2
   验收：done 时延不再含任何 LLM 调用；reflection 不写用户事件流（除 enqueued）；
   ruff/mypy/pytest 全绿。
 - **P0-B**：registry_experience provenance + store lineage 检查 + 存量兼容。
+- **P0-C（2026-09-18 已落地）**：MemoryExtractor interval 调度迁入 Learning Plane。
+  `LearningJob` 增加 `kind` 字段（默认 `reflection`，存量 journal 兼容读）；`MemoryExtractor.maybe_trigger`
+  仅保留门控（enabled/session/阈值/冷却），通过后向 LearningJournal 投递 durable 任务
+  （`kind=memory_extract`，episode_ref=`memory-extract:<sid>:<message_count>`），删除自带
+  线程调度（`_run_async`）——Learning Plane 成为 interval 提取的唯一消费者。执行沿用本
+  design 的全部功率边界：idle admission、前台 barrier（含 mid-call 抢占 requeue + straggler）、
+  Coordinator authority revalidate；被抛弃 worker 的记忆写入本身 late-write-safe
+  （version snapshot + promote-only-if-observed + 内容指纹去重），requeue 重跑不会产生重复
+  记忆。终态映射：有新条目 → `saved`（candidate_ref=`memory-extract:<sid>:entries=<n>`，
+  不透明指针，记忆本体在 MemoryStore）；零新条目 → `none`；异常 → fail-open `failed`。
+  显式契约变化：`LEARNING_PLANE_ENABLED=false` 时 journal 未装配，interval 提取不排程
+  （fail-closed，不残留线程调度双实现）；manual / session_end 触发与 CLI 直跑路径不变。
 - **P1**：closed schema、downvote 触发、跨进程 `*.run.lock` 探测、旧 `method.reflection`
   用户事件退役。
 - **P2**：cache 干扰 A/B、fork/derived lineage、method_search/method_get 只读窄工具、

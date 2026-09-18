@@ -1547,6 +1547,11 @@ def build_engine(
             candidate_lookup=method_store.find_by_evidence,
         )
         engine.learning_journal = learning_journal
+        # P0-C: MemoryExtractor interval 调度迁入 Learning Plane——journal 是唯一
+        # durable 调度路径，LearningPlane 是唯一消费者；extractor 不再自建线程。
+        if extractor is not None:
+            extractor.learning_journal = learning_journal
+            extractor.model_ref = settings.llm_model or ""
         if runtime_role == "learning":
             def _resolve_learning_resource_target(model_ref: str) -> tuple[str, str]:
                 return model_pool.registry.resolve(model_ref or settings.llm_model)
@@ -1560,6 +1565,7 @@ def build_engine(
                 resource_governor=resource_governor,
                 resource_target_resolver=_resolve_learning_resource_target,
                 provider_call_coordinator=provider_call_coordinator,
+                memory_extractor=extractor,
             )
             learning_plane.start()
             engine.learning_plane = learning_plane
