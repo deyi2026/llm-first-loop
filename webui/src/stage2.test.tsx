@@ -20,6 +20,26 @@ describe("renderMarkdown", () => {
     expect(html).toContain("katex");
   });
 
+  it("fenced shell 命令中的 $PWD 不经过 KaTeX，且代码文本逐字保持", () => {
+    const command = [
+      'LFL_WORKSPACE_ROOT="$PWD" LFL_RUNTIME_ROOT="$PWD" PYTHONPATH="$PWD/src" \\',
+      '.venv/bin/python -m llm_loop.runtime.service_control publish \\',
+      '  --expected-generation 30 --code-root "$PWD" --runtime-root "$PWD" --data-dir "$PWD/data"',
+    ].join("\n");
+    const html = renderMarkdown(`\`\`\`bash\n${command}\n\`\`\``);
+    expect(html).not.toContain("katex");
+    expect(html).not.toContain("katex-mathml");
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    expect(host.querySelector("pre code")?.textContent).toBe(command);
+  });
+
+  it("inline code 保护 shell 变量，同时保留相邻真正数学", () => {
+    const html = renderMarkdown('运行 `echo "$PWD"`，然后计算 $x^2$');
+    expect(html).toContain('<code>echo "$PWD"</code>');
+    expect(html).toContain("katex");
+  });
+
   it("出产物内联路径：正文中的文件路径 code 变为可点击链接", () => {
     const html = renderMarkdown(
       "已修改 `src/llm_loop/core/a.py` 与 `src/llm_loop/core/b.py`",
@@ -107,6 +127,18 @@ describe("MessageItem", () => {
     vi.advanceTimersByTime(1000);
     vi.useRealTimers();
     await waitFor(() => expect(screen.getByText("复制")).toBeInTheDocument());
+    vi.unstubAllGlobals();
+  });
+
+  it("代码块复制 shell 命令时使用未污染的原始可见代码文本", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const command = 'LFL_WORKSPACE_ROOT="$PWD" LFL_RUNTIME_ROOT="$PWD" PYTHONPATH="$PWD/src"';
+    render(<MessageItem msg={{ role: "assistant", content: `\`\`\`bash\n${command}\n\`\`\`` }} />);
+    const button = document.querySelector(".v2-code-copy") as HTMLButtonElement;
+    expect(button).toBeTruthy();
+    fireEvent.click(button);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(command));
     vi.unstubAllGlobals();
   });
 
