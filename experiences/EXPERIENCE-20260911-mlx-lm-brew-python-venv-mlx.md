@@ -6,7 +6,9 @@ solution: 用 .venv/bin/python（mlx 0.32.2，含 new_thread_local_stream）启�
 evidence: "evidence://v1/88ec9bd10dcea08f13502ec86a47d7aa30f45fbd37dc4b410b177da1bd687308；崩溃日志 /Users/yyj/Project/research/runtime/logs/qwen8901.stderr.log 2026-09-11 07:31-07:33 三次 AttributeError；.venv mlx 0.32.2 vs brew python mlx 0.31.1"
 tags: [mlx-lm, python-环境, 版本不匹配, launchd, 并发]
 source: {}
-status: invalid
+status: archived
+archived_at: 2026-09-18
+archived_reason: lifecycle-batch1: invalid 标记收尾（已判失效，归档保留全文可追溯）
 created_at: "2026-09-11T07:36:25.207794+08:00"
 updated_at: "2026-09-11T14:11:48.720587+08:00"
 ---

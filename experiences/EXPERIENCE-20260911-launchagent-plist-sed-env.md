@@ -6,7 +6,9 @@ solution: "1) 先 cp -p 留备份并 ls 验证存在；2) 修改用按 key 定�
 evidence: ""
 tags: [macos, launchd, plist, mlx-lm, sed, sed-collateral-damage, launchagent, model-alias]
 source: {}
-status: invalid
+status: archived
+archived_at: 2026-09-18
+archived_reason: lifecycle-batch1: invalid 标记收尾（已判失效，归档保留全文可追溯）
 created_at: "2026-09-11T07:44:21.275804+08:00"
 updated_at: "2026-09-11T14:11:48.724265+08:00"
 ---

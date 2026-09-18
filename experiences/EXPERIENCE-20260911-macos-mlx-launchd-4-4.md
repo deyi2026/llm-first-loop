@@ -6,7 +6,9 @@ solution: 1) 根因：启动参数 --prompt-concurrency 2 --decode-concurrency 2
 evidence: /Users/yyj/Project/research/runtime/launchd/local.mlx.qwen8901.plist（--prompt-concurrency 4 --decode-concurrency 4）；qwen8901-control.sh；2026-09-11 多开测试实测：4/4 下 5-7 并发会话仅部分排队（active 峰值 7），16tok 延迟探针 1.3s，swap 持续回收 15.4G→9.3G，模型 rss 65GB 稳定无重载。
 tags: [mlx, mlx_lm.server, concurrency, launchd, macos, local-llm, multi-session, performance]
 source: {}
-status: invalid
+status: archived
+archived_at: 2026-09-18
+archived_reason: lifecycle-batch1: invalid 标记收尾（已判失效，归档保留全文可追溯）
 created_at: "2026-09-11T14:01:58.229608+08:00"
 updated_at: "2026-09-11T14:11:48.717151+08:00"
 ---

@@ -6,7 +6,9 @@ solution: "macOS 上直接用 `nohup bash script.sh </dev/null >/dev/null 2>&1 &
 evidence: ""
 tags: [macOS, launchd, nohup, setsid, 后台任务, 静默失败]
 source: {}
-status: invalid
+status: archived
+archived_at: 2026-09-18
+archived_reason: lifecycle-batch1: invalid 标记收尾（已判失效，归档保留全文可追溯）
 created_at: "2026-09-11T08:44:56.462938+08:00"
 updated_at: "2026-09-11T14:11:48.726933+08:00"
 ---
