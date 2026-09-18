@@ -30,7 +30,9 @@ for e in idx:
 print(f"corpus: {len(corpus_key)} entries")
 
 # ── bge 候选矩阵（复用缓存, 缺失现场补）──
-cachef = ROOT / "data/memory/embeddings.json"
+cachef = Path(__file__).parent / "bge_cache.json"
+if not cachef.exists():
+    cachef.write_text(json.dumps({"v": "api-v1-bge", "data": {}}))
 raw = json.load(open(cachef))
 assert "api-v1" in str(raw.get("v", "")), f"cache version mismatch: {raw.get('v')}"
 bge_cache = raw["data"]

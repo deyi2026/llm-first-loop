@@ -1,6 +1,6 @@
 {
  "epoch": "2026-09-16",
- "corpus": 1488,
+ "corpus": 1411,
  "labels": 40,
  "thresholds": {
   "hash": 0.22,
@@ -13,58 +13,58 @@
     "recall@5": 0.0,
     "mrr@10": 0.0,
     "miss_ranks": [
-     929,
-     209,
-     339,
-     626,
-     23,
-     482,
-     1323,
-     800,
-     1144,
-     528,
-     285,
-     565,
-     269,
-     549,
-     558,
-     670,
+     878,
+     199,
      331,
-     589,
-     1450,
-     210
+     590,
+     23,
+     463,
+     1251,
+     758,
+     1094,
+     495,
+     275,
+     539,
+     257,
+     520,
+     534,
+     638,
+     427,
+     560,
+     1375,
+     203
     ]
    },
    "B": {
     "n": 10,
     "recall@5": 0.9,
-    "mrr@10": 0.62,
+    "mrr@10": 0.7,
     "miss_ranks": [
      14
     ]
    },
    "C": {
     "n": 10,
-    "top1_mean": 0.4713789731264114,
+    "top1_mean": 0.47088070809841154,
     "top1_max": 0.58817058801651,
     "returned_gt0_pct": 1.0,
-    "returned_mean": 1293.4
+    "returned_mean": 1226.5
    }
   },
   "bge": {
    "A": {
     "n": 20,
     "recall@5": 0.5,
-    "mrr@10": 0.3246428571428571,
+    "mrr@10": 0.36464285714285716,
     "miss_ranks": [
-     107,
+     105,
      42,
-     94,
-     26,
-     319,
+     92,
+     25,
+     311,
      7,
      33,
-     126,
+     123,
      11,
      31
     ]
@@ -82,7 +82,7 @@
     "top1_mean": 0.5160171985626221,
     "top1_max": 0.6453565955162048,
     "returned_gt0_pct": 0.5,
-    "returned_mean": 116.9
+    "returned_mean": 113.0
    }
   }
  },
@@ -96,10 +96,6 @@
     "memory:MEM-20260911-3b15564f"
    ],
    "top5": [
-    [
-     "memory:MEM-20260909-c2b0ff7f",
-     0.576
-    ],
     [
      "memory:MEM-20260909-3130370b",
      0.5748
@@ -115,13 +111,17 @@
     [
      "memory:MEM-20260821-fc9b6eff",
      0.5651
+    ],
+    [
+     "memory:MEM-20260818-b41c2fdc",
+     0.565
     ]
    ],
    "top1": [
-    "memory:MEM-20260909-c2b0ff7f",
-    0.5760234594345093
+    "memory:MEM-20260909-3130370b",
+    0.5747764706611633
    ],
-   "rank": 929,
+   "rank": 878,
    "hash_lexical_cos_q_target": 0.4281,
    "bge_cos_q_target": 0.5276
   },
@@ -160,7 +160,7 @@
     "memory:MEM-20260914-d3f267a5",
     0.5792462825775146
    ],
-   "rank": 209,
+   "rank": 199,
    "hash_lexical_cos_q_target": 0.4475,
    "bge_cos_q_target": 0.5799
   },
@@ -198,7 +198,7 @@
     "memory:MEM-20260818-5ad82b5c",
     0.5499249696731567
    ],
-   "rank": 339,
+   "rank": 331,
    "hash_lexical_cos_q_target": 0.4033,
    "bge_cos_q_target": 0.4836
   },
@@ -236,7 +236,7 @@
     "memory:MEM-20260908-aace10a4",
     0.5480482578277588
    ],
-   "rank": 626,
+   "rank": 590,
    "hash_lexical_cos_q_target": 0.4134,
    "bge_cos_q_target": 0.572
   },
@@ -312,7 +312,7 @@
     "memory:MEM-20260811-5815989c",
     0.5892028212547302
    ],
-   "rank": 482,
+   "rank": 463,
    "hash_lexical_cos_q_target": 0.4422,
    "bge_cos_q_target": 0.4836
   },
@@ -350,7 +350,7 @@
     "memory:MEM-20260901-ea24a1b8",
     0.5382891297340393
    ],
-   "rank": 1323,
+   "rank": 1251,
    "hash_lexical_cos_q_target": 0.3174,
    "bge_cos_q_target": 0.5559
   },
@@ -368,10 +368,6 @@
      0.5478
     ],
     [
-     "memory:MEM-20260815-512e3572",
-     0.5384
-    ],
-    [
      "memory:MEM-20260815-559477ae",
      0.5369
     ],
@@ -382,13 +378,17 @@
     [
      "memory:MEM-20260913-76187e38",
      0.5322
+    ],
+    [
+     "memory:MEM-20260901-536fa4e0",
+     0.5301
     ]
    ],
    "top1": [
     "memory:MEM-20260815-c98a8edc",
     0.5478055477142334
    ],
-   "rank": 800,
+   "rank": 758,
    "hash_lexical_cos_q_target": 0.416,
    "bge_cos_q_target": 0.6817
   },
@@ -426,7 +426,7 @@
     "memory:MEM-20260814-85f8fb3d",
     0.6149734854698181
    ],
-   "rank": 1144,
+   "rank": 1094,
    "hash_lexical_cos_q_target": 0.4466,
    "bge_cos_q_target": 0.5935
   },
@@ -456,15 +456,15 @@
      0.5951
     ],
     [
-     "memory:MEM-20260911-0dec12d1",
-     0.5859
+     "memory:MEM-20260811-7a4afa41",
+     0.584
     ]
    ],
    "top1": [
     "memory:MEM-20260901-39197400",
     0.6127673983573914
    ],
-   "rank": 528,
+   "rank": 495,
    "hash_lexical_cos_q_target": 0.4888,
    "bge_cos_q_target": 0.5695
   },
@@ -478,31 +478,31 @@
    ],
    "top5": [
     [
-     "memory:MEM-20260909-b3462011",
-     0.5644
-    ],
-    [
-     "memory:MEM-20260909-c241681e",
-     0.5548
-    ],
-    [
      "memory:MEM-20260909-cd632077",
-     0.5514
-    ],
-    [
-     "memory:MEM-20260909-6400494f",
-     0.5209
+     0.5635
     ],
     [
      "memory:MEM-20260908-7f78724a",
      0.5114
+    ],
+    [
+     "memory:MEM-20260825-24197389",
+     0.5054
+    ],
+    [
+     "memory:MEM-20260810-dcd005c5",
+     0.5017
+    ],
+    [
+     "memory:MEM-20260812-7cee0080",
+     0.4915
     ]
    ],
    "top1": [
-    "memory:MEM-20260909-b3462011",
-    0.5643905401229858
+    "memory:MEM-20260909-cd632077",
+    0.5634807348251343
    ],
-   "rank": 285,
+   "rank": 275,
    "hash_lexical_cos_q_target": 0.4172,
    "bge_cos_q_target": 0.6621
   },
@@ -540,7 +540,7 @@
     "memory:MEM-20260819-4516fe70",
     0.5705209970474243
    ],
-   "rank": 565,
+   "rank": 539,
    "hash_lexical_cos_q_target": 0.4273,
    "bge_cos_q_target": 0.6874
   },
@@ -578,7 +578,7 @@
     "memory:MEM-20260813-e639f8b4",
     0.6020386219024658
    ],
-   "rank": 269,
+   "rank": 257,
    "hash_lexical_cos_q_target": 0.4835,
    "bge_cos_q_target": 0.5908
   },
@@ -604,19 +604,19 @@
      0.6076
     ],
     [
-     "memory:MEM-20260914-1adf5a13",
-     0.5926
+     "memory:MEM-20260916-4ade5cfe",
+     0.6047
     ],
     [
-     "memory:MEM-20260830-45577c5d",
-     0.5888
+     "memory:MEM-20260910-2edb4cb5",
+     0.5964
     ]
    ],
    "top1": [
     "memory:MEM-20260810-48177358",
     0.6079769730567932
    ],
-   "rank": 549,
+   "rank": 520,
    "hash_lexical_cos_q_target": 0.4809,
    "bge_cos_q_target": 0.7114
   },
@@ -654,7 +654,7 @@
     "memory:MEM-20260902-24558eca",
     0.5766345262527466
    ],
-   "rank": 558,
+   "rank": 534,
    "hash_lexical_cos_q_target": 0.4059,
    "bge_cos_q_target": 0.6214
   },
@@ -692,7 +692,7 @@
     "memory:MEM-20260914-8a635b61",
     0.5886522531509399
    ],
-   "rank": 670,
+   "rank": 638,
    "hash_lexical_cos_q_target": 0.4612,
    "bge_cos_q_target": 0.6735
   },
@@ -700,9 +700,9 @@
    "arm": "hash",
    "class": "A",
    "query": "提交代码时作者邮箱用什么格式才不暴露真实邮箱",
-   "target": "memory:MEM-20260908-0b262a8b",
+   "target": "memory:MEM-20260817-0518f5bf",
    "accept": [
-    "memory:MEM-20260908-0b262a8b"
+    "memory:MEM-20260817-0518f5bf"
    ],
    "top5": [
     [
@@ -730,9 +730,9 @@
     "memory:MEM-20260910-5f273533",
     0.5201558470726013
    ],
-   "rank": 331,
-   "hash_lexical_cos_q_target": 0.4149,
-   "bge_cos_q_target": 0.5942
+   "rank": 427,
+   "hash_lexical_cos_q_target": 0.4044,
+   "bge_cos_q_target": 0.6159
   },
   {
    "arm": "hash",
@@ -768,7 +768,7 @@
     "memory:MEM-20260901-536fa4e0",
     0.5324853658676147
    ],
-   "rank": 589,
+   "rank": 560,
    "hash_lexical_cos_q_target": 0.3789,
    "bge_cos_q_target": 0.5991
   },
@@ -806,7 +806,7 @@
     "memory:MEM-20260906-7a7ebf40",
     0.5753735303878784
    ],
-   "rank": 1450,
+   "rank": 1375,
    "hash_lexical_cos_q_target": 0.3122,
    "bge_cos_q_target": 0.5643
   },
@@ -837,15 +837,15 @@
      0.5845
     ],
     [
-     "memory:MEM-20260813-e64cae62",
-     0.5844
+     "memory:MEM-20260818-1d57ee70",
+     0.5796
     ]
    ],
    "top1": [
     "memory:MEM-20260909-b894cd5a",
     0.5911500453948975
    ],
-   "rank": 210,
+   "rank": 203,
    "hash_lexical_cos_q_target": 0.5,
    "bge_cos_q_target": 0.5115
   },
@@ -902,20 +902,20 @@
      0.5815
     ],
     [
-     "memory:MEM-20260908-1ccc9e17",
-     0.563
-    ],
-    [
      "memory:MEM-20260914-41df1b03",
      0.5605
+    ],
+    [
+     "memory:MEM-20260908-dc9823a9",
+     0.5527
     ],
     [
      "memory:MEM-20260826-fc46cdf8",
      0.5497
     ],
     [
-     "memory:MEM-20260815-9b493fdf",
-     0.5446
+     "memory:MEM-20260815-512e3572",
+     0.5455
     ]
    ],
    "top1": [
@@ -1158,39 +1158,39 @@
    "arm": "hash",
    "class": "B",
    "query": "noreply git 提交身份",
-   "target": "memory:MEM-20260908-0b262a8b",
+   "target": "memory:MEM-20260817-0518f5bf",
    "accept": [
-    "memory:MEM-20260908-0b262a8b"
+    "memory:MEM-20260817-0518f5bf"
    ],
    "top5": [
     [
-     "memory:MEM-20260909-680c5495",
-     0.6806
+     "memory:MEM-20260817-0518f5bf",
+     0.6506
     ],
     [
-     "memory:MEM-20260825-3d7642f3",
-     0.6694
+     "memory:MEM-20260912-ce531df0",
+     0.5413
     ],
     [
-     "memory:MEM-20260909-7f2594a8",
-     0.6605
+     "memory:MEM-20260904-224fbff0",
+     0.5324
     ],
     [
-     "memory:MEM-20260908-6011fc77",
-     0.6
+     "memory:MEM-20260904-ce810739",
+     0.5243
     ],
     [
-     "memory:MEM-20260908-0b262a8b",
-     0.5883
+     "memory:MEM-20260909-f41d3efd",
+     0.5145
     ]
    ],
    "top1": [
-    "memory:MEM-20260909-680c5495",
-    0.6806209087371826
+    "memory:MEM-20260817-0518f5bf",
+    0.6505652070045471
    ],
-   "rank": 5,
-   "hash_lexical_cos_q_target": 0.5883,
-   "bge_cos_q_target": 0.8405
+   "rank": 1,
+   "hash_lexical_cos_q_target": 0.6506,
+   "bge_cos_q_target": 0.8153
   },
   {
    "arm": "hash",
@@ -1228,7 +1228,7 @@
    ],
    "rank": 1,
    "hash_lexical_cos_q_target": 0.6314,
-   "bge_cos_q_target": 0.6183
+   "bge_cos_q_target": 0.7627
   },
   {
    "arm": "hash",
@@ -1260,7 +1260,7 @@
     "memory:MEM-20260908-aaaa9225",
     0.58817058801651
    ],
-   "returned_above_thr": 1484
+   "returned_above_thr": 1407
   },
   {
    "arm": "hash",
@@ -1292,7 +1292,7 @@
     "memory:MEM-20260821-bbf37bfb",
     0.43695205450057983
    ],
-   "returned_above_thr": 1273
+   "returned_above_thr": 1198
   },
   {
    "arm": "hash",
@@ -1324,17 +1324,13 @@
     "memory:MEM-20260901-29edbed2",
     0.44875550270080566
    ],
-   "returned_above_thr": 1255
+   "returned_above_thr": 1195
   },
   {
    "arm": "hash",
    "class": "C",
    "query": "日语 N2 备考三个月计划",
    "top5": [
-    [
-     "memory:MEM-20260811-c54bb631",
-     0.422
-    ],
     [
      "memory:MEM-20260818-797586b2",
      0.417
@@ -1350,13 +1346,17 @@
     [
      "memory:MEM-20260911-46330948",
      0.4079
+    ],
+    [
+     "memory:MEM-20260814-6d8fbc48",
+     0.4062
     ]
    ],
    "top1": [
-    "memory:MEM-20260811-c54bb631",
-    0.4219764769077301
+    "memory:MEM-20260818-797586b2",
+    0.4169938266277313
    ],
-   "returned_above_thr": 1312
+   "returned_above_thr": 1246
   },
   {
    "arm": "hash",
@@ -1388,7 +1388,7 @@
     "memory:MEM-20260912-edcb37da",
     0.5441787838935852
    ],
-   "returned_above_thr": 1446
+   "returned_above_thr": 1378
   },
   {
    "arm": "hash",
@@ -1420,7 +1420,7 @@
     "memory:MEM-20260831-0dc1d536",
     0.5197334885597229
    ],
-   "returned_above_thr": 1471
+   "returned_above_thr": 1393
   },
   {
    "arm": "hash",
@@ -1440,19 +1440,19 @@
      0.4132
     ],
     [
-     "memory:MEM-20260901-4c548cbe",
-     0.4052
+     "memory:MEM-20260829-3b5d6c24",
+     0.4095
     ],
     [
-     "memory:MEM-20260820-bf81be1f",
-     0.3984
+     "memory:MEM-20260901-4c548cbe",
+     0.4052
     ]
    ],
    "top1": [
     "memory:MEM-20260817-2b65d024",
     0.433214396238327
    ],
-   "returned_above_thr": 1288
+   "returned_above_thr": 1224
   },
   {
    "arm": "hash",
@@ -1462,10 +1462,6 @@
     [
      "memory:MEM-20260903-0149b356",
      0.4185
-    ],
-    [
-     "memory:MEM-20260817-950817c8",
-     0.3766
     ],
     [
      "memory:MEM-20260821-96f2bc99",
@@ -1478,13 +1474,17 @@
     [
      "memory:MEM-20260829-83fd33c8",
      0.3595
+    ],
+    [
+     "memory:MEM-20260813-bfe8d0a8",
+     0.3588
     ]
    ],
    "top1": [
     "memory:MEM-20260903-0149b356",
     0.4185031056404114
    ],
-   "returned_above_thr": 911
+   "returned_above_thr": 864
   },
   {
    "arm": "hash",
@@ -1494,6 +1494,10 @@
     [
      "memory:MEM-20260813-ba852c4d",
      0.4624
+    ],
+    [
+     "memory:MEM-20260815-7c6017b5",
+     0.4599
     ],
     [
      "memory:MEM-20260826-7014474f",
@@ -1506,17 +1510,13 @@
     [
      "memory:MEM-20260910-78728a8a",
      0.4317
-    ],
-    [
-     "memory:MEM-20260815-7c6017b5",
-     0.4242
     ]
    ],
    "top1": [
     "memory:MEM-20260813-ba852c4d",
     0.462445467710495
    ],
-   "returned_above_thr": 1305
+   "returned_above_thr": 1241
   },
   {
    "arm": "hash",
@@ -1532,23 +1532,23 @@
      0.4152
     ],
     [
-     "memory:MEM-20260828-7d57e2a6",
-     0.4128
-    ],
-    [
-     "memory:MEM-20260816-48c0a66e",
-     0.4014
-    ],
-    [
      "memory:MEM-20260829-8d99244e",
      0.4003
+    ],
+    [
+     "memory:MEM-20260816-54ed599e",
+     0.3975
+    ],
+    [
+     "memory:MEM-20260902-4b971df6",
+     0.3956
     ]
    ],
    "top1": [
     "memory:MEM-20260829-53e66cbd",
     0.43985986709594727
    ],
-   "returned_above_thr": 1189
+   "returned_above_thr": 1119
   },
   {
    "arm": "bge",
@@ -1584,7 +1584,7 @@
     "memory:MEM-20260824-83e6abad",
     0.6227184534072876
    ],
-   "rank": 107,
+   "rank": 105,
    "hash_lexical_cos_q_target": 0.4281,
    "bge_cos_q_target": 0.5276
   },
@@ -1661,7 +1661,7 @@
     "memory:MEM-20260825-9acb845b",
     0.6452401876449585
    ],
-   "rank": 94,
+   "rank": 92,
    "hash_lexical_cos_q_target": 0.4033,
    "bge_cos_q_target": 0.4836
   },
@@ -1699,7 +1699,7 @@
     "memory:MEM-20260813-b2364eeb",
     0.6374074816703796
    ],
-   "rank": 26,
+   "rank": 25,
    "hash_lexical_cos_q_target": 0.4134,
    "bge_cos_q_target": 0.572
   },
@@ -1775,7 +1775,7 @@
     "memory:MEM-20260831-263c7cb4",
     0.569475531578064
    ],
-   "rank": 319,
+   "rank": 311,
    "hash_lexical_cos_q_target": 0.4422,
    "bge_cos_q_target": 0.4836
   },
@@ -1927,7 +1927,7 @@
     "memory:MEM-20260829-23664cf0",
     0.6281473636627197
    ],
-   "rank": 126,
+   "rank": 123,
    "hash_lexical_cos_q_target": 0.4888,
    "bge_cos_q_target": 0.5695
   },
@@ -2163,39 +2163,39 @@
    "arm": "bge",
    "class": "A",
    "query": "提交代码时作者邮箱用什么格式才不暴露真实邮箱",
-   "target": "memory:MEM-20260908-0b262a8b",
+   "target": "memory:MEM-20260817-0518f5bf",
    "accept": [
-    "memory:MEM-20260908-0b262a8b"
+    "memory:MEM-20260817-0518f5bf"
    ],
    "top5": [
     [
      "memory:MEM-20260817-0518f5bf",
-     0.6627
-    ],
-    [
-     "memory:MEM-20260909-7f2594a8",
-     0.6282
-    ],
-    [
-     "memory:MEM-20260825-3d7642f3",
-     0.6268
+     0.6159
     ],
     [
      "memory:MEM-20260908-92569756",
      0.609
     ],
     [
-     "memory:MEM-20260908-0b262a8b",
-     0.5942
+     "memory:MEM-20260824-6a2b2484",
+     0.593
+    ],
+    [
+     "memory:MEM-20260904-ff5431d1",
+     0.5794
+    ],
+    [
+     "memory:MEM-20260818-c019800a",
+     0.579
     ]
    ],
    "top1": [
     "memory:MEM-20260817-0518f5bf",
-    0.6627363562583923
+    0.6159008145332336
    ],
-   "rank": 5,
-   "hash_lexical_cos_q_target": 0.4149,
-   "bge_cos_q_target": 0.5942
+   "rank": 1,
+   "hash_lexical_cos_q_target": 0.4044,
+   "bge_cos_q_target": 0.6159
   },
   {
    "arm": "bge",
@@ -2605,8 +2605,8 @@
      0.4682
     ],
     [
-     "memory:MEM-20260810-698de3fb",
-     0.4634
+     "memory:MEM-20260811-23ddb650",
+     0.4635
     ]
    ],
    "top1": [
@@ -2621,39 +2621,39 @@
    "arm": "bge",
    "class": "B",
    "query": "noreply git 提交身份",
-   "target": "memory:MEM-20260908-0b262a8b",
+   "target": "memory:MEM-20260817-0518f5bf",
    "accept": [
-    "memory:MEM-20260908-0b262a8b"
+    "memory:MEM-20260817-0518f5bf"
    ],
    "top5": [
     [
-     "memory:MEM-20260908-0b262a8b",
-     0.8405
+     "memory:MEM-20260817-0518f5bf",
+     0.8153
     ],
     [
-     "memory:MEM-20260908-6011fc77",
-     0.8343
+     "memory:MEM-20260908-92569756",
+     0.7098
     ],
     [
-     "memory:MEM-20260909-680c5495",
-     0.822
+     "memory:MEM-20260908-79725726",
+     0.6808
     ],
     [
-     "memory:MEM-20260825-3d7642f3",
-     0.8194
+     "memory:MEM-20260911-9c89ebfb",
+     0.6735
     ],
     [
-     "memory:MEM-20260909-7f2594a8",
-     0.8141
+     "memory:MEM-20260904-ff5431d1",
+     0.6699
     ]
    ],
    "top1": [
-    "memory:MEM-20260908-0b262a8b",
-    0.8405224084854126
+    "memory:MEM-20260817-0518f5bf",
+    0.8152925968170166
    ],
    "rank": 1,
-   "hash_lexical_cos_q_target": 0.5883,
-   "bge_cos_q_target": 0.8405
+   "hash_lexical_cos_q_target": 0.6506,
+   "bge_cos_q_target": 0.8153
   },
   {
    "arm": "bge",
@@ -2666,7 +2666,7 @@
    "top5": [
     [
      "memory:MEM-20260822-37dfe618",
-     0.6183
+     0.7627
     ],
     [
      "memory:MEM-20260910-4a44c859",
@@ -2687,11 +2687,11 @@
    ],
    "top1": [
     "memory:MEM-20260822-37dfe618",
-    0.6182810664176941
+    0.7627471685409546
    ],
    "rank": 1,
    "hash_lexical_cos_q_target": 0.6314,
-   "bge_cos_q_target": 0.6183
+   "bge_cos_q_target": 0.7627
   },
   {
    "arm": "bge",
@@ -2707,23 +2707,23 @@
      0.6032
     ],
     [
+     "memory:MEM-20260908-ada520ea",
+     0.5958
+    ],
+    [
      "memory:MEM-20260815-9157878c",
      0.5941
     ],
     [
      "memory:MEM-20260908-329c7730",
      0.5904
-    ],
-    [
-     "memory:MEM-20260909-838414f6",
-     0.5854
     ]
    ],
    "top1": [
     "memory:MEM-20260829-5aa86e2f",
     0.6339459419250488
    ],
-   "returned_above_thr": 412
+   "returned_above_thr": 395
   },
   {
    "arm": "bge",
@@ -2735,10 +2735,6 @@
      0.3803
     ],
     [
-     "memory:MEM-20260909-77a6c25a",
-     0.3764
-    ],
-    [
      "memory:MEM-20260915-5562fbca",
      0.3717
     ],
@@ -2748,6 +2744,10 @@
     ],
     [
      "memory:MEM-20260821-7b009f1d",
+     0.3667
+    ],
+    [
+     "memory:MEM-20260909-910dfea4",
      0.3667
     ]
    ],
@@ -2767,6 +2767,10 @@
      0.4906
     ],
     [
+     "memory:MEM-20260904-09f79770",
+     0.4853
+    ],
+    [
      "memory:MEM-20260829-49badbc8",
      0.4852
     ],
@@ -2777,10 +2781,6 @@
     [
      "memory:MEM-20260813-7c44d35d",
      0.4825
-    ],
-    [
-     "memory:MEM-20260908-76183642",
-     0.4781
     ]
    ],
    "top1": [
@@ -2883,7 +2883,7 @@
     "memory:MEM-20260827-8f0ddc04",
     0.6453565955162048
    ],
-   "returned_above_thr": 741
+   "returned_above_thr": 719
   },
   {
    "arm": "bge",
