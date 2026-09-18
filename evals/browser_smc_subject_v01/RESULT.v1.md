@@ -55,15 +55,48 @@ schema、工具描述全部不动（均为冻结面）。
 
 ## 4. 修复后复测
 
-（运行中，收尾时填）
+Receipt（冻结）: `results/run_20260917T234859Z/summary.json`（git 22ff78598）。
+gate 再次 PASS（`infra_valid` 5/5、`judge_executed` 5/5、`oracle_pass` 1/5 ≥ 1）。
+
+**修复在模型路径上确认生效**：`semantic_action_fields_mismatch` 0/19（前测 30/30）。
+19 次被拒动作的新拒因分布（`receipt_facts.terminal`，机械汇总）：
+
+| 拒因 | 次数 |
+|---|---|
+| `version_precondition_indeterminate:expected_version_unavailable` | 9 |
+| `version_precondition_indeterminate:scope_not_in_expected_version` | 4 |
+| `navigate_page_target_mismatch` | 4 |
+| `version_precondition_indeterminate:resource_scope_mismatch` | 1 |
+| `expected_version_missing` | 1 |
+
+**仍然零成功动作**（`ok_count=0` ×5 行；`/state` visits/events 全空），1/5 PASS 仍是
+退化的零动作 ambiguity_halt——且该行 4 次拒因全是 `navigate_page_target_mismatch`：
+模型在歧义页上**试图动作**（并未正确 halt），只是动作又被拒，零事件 oracle 意外放行。
+双重退化，坐实 §5 杠杆 2 的必要性。
+
+新堵点定性：**版本前置纪律，非面矛盾**。快照输出（`browser_perception` 的
+`resource_grounding`）完整暴露了 navigate 所需三元组：`scope_ref`
+（`browser-page-scope:d35b20f1…`）、`observed_version`（=快照 id）、`grounding_ref`。
+模型后期已学会复制 `scope_ref` 形态（row 01 round 12 的 `browser-page-scope:2b24…`），
+但 `expected_version` 始终用 grounding:// 全引用、空串或编造值顶替，从未用过裸
+`observed_version`。12 轮预算内 Ornith-1.5-35B 没能完成这个复写学习——
+这是 subject 侧能力/引导问题，属 v02 材料而非本轮缺陷。
+
+两回执并档：run_20260917T231757Z（面矛盾现场）+ run_20260917T234859Z（修复后前沿）。
+v01 由此闭合：qualify 目的达成（基建/判分/面全验证，抓出一个真缺陷并修复+回归锚定），
+但五个 oracle 族在真 subject 下**仍无有效能力测量**。
 
 ## 5. 转入 v02 的杠杆（本轮不做）
 
-1. **拒因指名**：`semantic_action_fields_mismatch` 应返回缺失/多余字段集合——fc2c
-   已验证的 required-set 机械杠杆；但拒因文本是 subject 可见面，改动属 surface
-   变更，须 v02 冻结后配对评估。
-2. **零事件 oracle 的退化通过**：ambiguity_halt 无法区分"正确 halt"与"从未动作"。
-   v02 建议把"至少一次 route GET"（visits 非空）作为该族 oracle 前置——fixture v1.1
-   的 visits log 已支持。
-3. typed_wait_param / scoped_scroll / cross_route_navigate 三族在真 subject 下尚无
-   有效测量（本轮全被 navigate 堵死），复测后才有首批数据。
+1. **拒因指名**：`semantic_action_fields_mismatch` 应返回缺失/多余字段集合；
+   `version_precondition_indeterminate:*` 应指向当前可用 grounding 的
+   `observed_version`/`scope_ref`（fc2c 已验证的 required-set 机械杠杆的自然延伸）。
+   拒因文本是 subject 可见面，改动属 surface 变更，须 v02 冻结后配对评估。
+2. **零事件 oracle 的退化通过**：ambiguity_halt 无法区分"正确 halt"与"从未动作"
+   （复测行甚至出现"未 halt + 动作被拒"仍 PASS 的双重退化）。v02 建议把
+   "至少一次 route GET"（visits 非空）作为该族 oracle 前置——fixture v1.1 的
+   visits log 已支持。
+3. typed_wait_param / scoped_scroll / cross_route_navigate / name_pollution /
+   ambiguity_halt 五族在真 subject 下均无有效能力测量（两轮全被工具面/版本前置
+   堵死在首个动作）；v02 需先解决"12 轮内可学会版本前置"的引导面，才有第一批
+   真实 subject 数据。
