@@ -184,6 +184,15 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         <span>🧠 学习通道</span>
         <small>Reflection · Methods</small>
       </button>
+      <button
+        type="button"
+        className={`v2-learning-entry ${mainView === "services" ? "active" : ""}`}
+        data-testid="services-entry"
+        onClick={() => mainViewStore.setView("services")}
+      >
+        <span>🛠 服务身份</span>
+        <small>desired · live · stable</small>
+      </button>
       <div className="v2-sidebar-tabs">
         <button
           type="button"

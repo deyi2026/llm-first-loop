@@ -11,6 +11,7 @@ from llm_loop.core.run_context import current_session_id
 from llm_loop.runtime.service_control import (
     DeploymentGenerationConflictError,
     ManagedServiceDeploymentStore,
+    compose_service_identity_view,
     spawn_service_control_worker,
 )
 
@@ -77,10 +78,13 @@ class ServiceControlTool:
                 body = {"action": receipt.to_dict()}
             else:
                 try:
-                    deployment = self.store.read()
+                    view = compose_service_identity_view(self.store)
                 except (OSError, ValueError, json.JSONDecodeError) as exc:
                     return self._failure(f"[service_control status failed] {type(exc).__name__}: {exc}")
-                body = {"deployment": deployment.to_dict() if deployment else None}
+                body = {
+                    "deployment": view["deployment"],
+                    "services": view["services"],
+                }
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 content=json.dumps(body, ensure_ascii=False, sort_keys=True),
