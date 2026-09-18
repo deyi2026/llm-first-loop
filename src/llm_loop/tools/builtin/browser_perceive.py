@@ -49,6 +49,29 @@ class BrowserPerceiveTool:
                 "maximum": 500,
                 "description": "仅 snapshot：首屏投影对象上限；不改变底层 observation completeness",
             },
+            "projection_kinds": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "description": (
+                    "仅 snapshot（EVO-20260918-c69527a1）：按 SemanticObject.kind 过滤投影"
+                    "（如 button/input/select/link）；matched_total/next_cursor 支持模型驱动分页；"
+                    "零程序策略，服务端只机械限幅并如实回执"
+                ),
+            },
+            "projection_cursor": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "仅 snapshot：配合 projection_kinds/limit 的投影窗口起点（0-based）",
+            },
+            "vision": {
+                "type": "string",
+                "enum": ["evidence"],
+                "description": (
+                    "仅 snapshot（EVO-20260918-f2310800）：请求视觉证据。固定参数截图（PNG）落盘并"
+                    "在回执 vision 块返回 ref+path+sha256；视觉输出永远停在证据层，不进 objects/"
+                    "grounding/version；模型用 read_image 消费并自行裁决"
+                ),
+            },
             "grounding_ref": {
                 "type": "string",
                 "description": "仅 hydrate：精确 grounding://browser/v0.1/... 引用",
@@ -97,7 +120,13 @@ class BrowserPerceiveTool:
 
     def _field_mismatch(self, action: str, kwargs: dict[str, Any]) -> ToolResult | None:
         allowed_by_action = {
-            "snapshot": {"action", "projection_limit"},
+            "snapshot": {
+                "action",
+                "projection_limit",
+                "projection_kinds",
+                "projection_cursor",
+                "vision",
+            },
             "hydrate": {"action", "grounding_ref"},
             "diff": {"action", "from_version", "to_version"},
         }
@@ -185,15 +214,74 @@ class BrowserPerceiveTool:
                     tool_name=self.name,
                 )
             projection_limit = max(1, min(projection_limit, 500))
+            projection_kinds_raw = kwargs.get("projection_kinds")
+            projection_kinds: list[str] | None = None
+            if projection_kinds_raw is not None:
+                if not isinstance(projection_kinds_raw, list) or not all(
+                    isinstance(item, str) and item.strip() for item in projection_kinds_raw
+                ):
+                    return ToolResult(
+                        status=ToolResultStatus.FAILURE,
+                        content="[browser_perceive:snapshot] projection_kinds 必须是非空字符串数组。",
+                        tool_call_id="",
+                        tool_name=self.name,
+                    )
+                projection_kinds = [str(item).strip() for item in projection_kinds_raw]
+            try:
+                projection_cursor = int(kwargs.get("projection_cursor", 0) or 0)
+            except (TypeError, ValueError):
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[browser_perceive:snapshot] projection_cursor 必须是 >=0 的整数。",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            if projection_cursor < 0:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[browser_perceive:snapshot] projection_cursor 必须是 >=0 的整数。",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            vision_request = str(kwargs.get("vision") or "").strip() or None
+            if vision_request is not None and vision_request != "evidence":
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[browser_perceive:snapshot] vision 只接受 evidence。",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
             try:
                 raw = self._backend.capture()
-                return self._json_result(
-                    self._adapter.snapshot(
-                        session_id,
-                        raw,
-                        projection_limit=projection_limit,
-                    )
+                result = self._adapter.snapshot(
+                    session_id,
+                    raw,
+                    projection_limit=projection_limit,
+                    projection_kinds=projection_kinds,
+                    projection_cursor=projection_cursor,
                 )
+                if vision_request == "evidence":
+                    # EVO-20260918-f2310800: evidence-layer vision only. The
+                    # DOM+AX snapshot above already succeeded; vision failure is
+                    # reported in the vision block and never masks the main result.
+                    capture_vision = getattr(self._backend, "capture_vision_evidence", None)
+                    if not callable(capture_vision):
+                        result["vision"] = {"status": "unavailable"}
+                    else:
+                        try:
+                            result["vision"] = {
+                                "status": "ok",
+                                **self._adapter.store_vision_evidence(
+                                    session_id, capture_vision()
+                                ),
+                            }
+                        except Exception as vision_exc:  # noqa: BLE001 - vision failure must stay visible, non-fatal.
+                            result["vision"] = {
+                                "status": "failed",
+                                "error_type": type(vision_exc).__name__,
+                                "error": str(vision_exc),
+                            }
+                return self._json_result(result)
             except Exception as exc:  # noqa: BLE001 - observation failure must remain explicit.
                 return ToolResult(
                     status=ToolResultStatus.ERROR,

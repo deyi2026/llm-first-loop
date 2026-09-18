@@ -30,6 +30,7 @@ from llm_loop.core.message import (
 )
 from llm_loop.core.run_context import current_run_generation, current_session_id
 from llm_loop.knowledge.injection_ledger import append_row
+from llm_loop.tools.eligibility import runtime_tool_health
 from llm_loop.tools.pipeline import ImmutableResult, MaterializationError
 from llm_loop.tools.safety import CatastrophicGuard
 
@@ -248,7 +249,7 @@ def _extract_hydration_refs(content: object, *, limit: int = 8) -> list[str]:
     return refs
 
 
-def _observe_knowledge_hydration(call: "ToolCall", result: "ToolResult") -> None:
+def _observe_knowledge_hydration(call: ToolCall, result: ToolResult) -> None:
     """登记知识水合调用（search_records/skill_load 成功执行；fail-open）."""
     with contextlib.suppress(Exception):
         status = str(getattr(result.status, "value", "") or "")
@@ -904,7 +905,6 @@ class ToolRegistry:
         # R8.7: runtime health + deterministic preflight happen before real execution.
         # Hidden/quarantined schemas may still be referenced by stale model context; the
         # execution boundary independently enforces health and returns typed recovery.
-        from llm_loop.tools.eligibility import runtime_tool_health
         from llm_loop.tools.recovery import health_quarantine_advice, web_fetch_preflight
 
         health = runtime_tool_health(call.name)
@@ -1742,7 +1742,6 @@ class GetToolSchemaTool:
             )
         if name == "*" or name.lower() == "list" or name.startswith("?"):
             query = name[1:].strip().lower() if name.startswith("?") else ""
-            from llm_loop.tools.eligibility import runtime_tool_health
 
             rows: list[str] = []
             scope = current_tool_discovery_scope.get()
@@ -1804,7 +1803,6 @@ class GetToolSchemaTool:
             ensure_ascii=False,
             indent=2,
         )
-        from llm_loop.tools.eligibility import runtime_tool_health
 
         health = runtime_tool_health(name)
         health_note = ""

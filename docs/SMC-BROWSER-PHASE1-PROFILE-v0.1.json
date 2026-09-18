@@ -56,7 +56,7 @@
       "dom",
       "ax"
     ],
-    "vision": "explicit_only_deferred_phase2",
+    "vision": "explicit_only_evidence_layer",
     "silent_source_priority": false,
     "sensor_contract_id": "browser-dom-ax-v0.1",
     "blind_spot_vocabulary": [
@@ -701,7 +701,7 @@
           "dom",
           "ax"
         ],
-        "vision": "explicit_only_deferred_phase2"
+        "vision": "explicit_only_evidence_layer"
       },
       "completeness": {
         "complete": true,

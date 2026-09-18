@@ -885,6 +885,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         _browser_host = CdpReadOnlyBrowserHost(
             settings.browser_perception_cdp_url,
             target_id=settings.browser_perception_target_id,
+            max_frame_bytes=settings.browser_cdp_max_frame_bytes,
         )
         _browser_adapter = BrowserPerceptionAdapter(
             store=BrowserPerceptionStore(Path(settings.data_dir) / "browser_perception")
@@ -915,6 +916,7 @@ def build_engine(settings: Settings) -> LoopEngine:
             _browser_actuator = CdpBrowserMutationActuator(
                 settings.browser_perception_cdp_url,
                 target_id=settings.browser_perception_target_id,
+                max_frame_bytes=settings.browser_cdp_max_frame_bytes,
             )
             _browser_action_adapter = BrowserActionAdapter(
                 perception=_browser_adapter,
@@ -2123,11 +2125,9 @@ def _build_pending_actions_fn(settings) -> Any:
 
     def _aggregate() -> dict:
         try:
-            from llm_loop.core.run_context import current_session_id as _current_session_id
-
             store = EvolutionStore(settings.audit_dir)
             items = store.list()
-            _sid = str(_current_session_id.get() or "")
+            _sid = str(current_session_id_ctx.get() or "")
             # Capability-bearing executing hints are session-owned facts.  Human
             # pending-review count may remain global because it does not grant a model tool.
             executing = sum(

@@ -605,3 +605,83 @@ def test_cache_window_uses_request_snapshot_cpt_after_reload(tmp_path, monkeypat
     result = engine.run(engine.session.create(), "hello")
     assert result.final_answer == "ok"
     assert captured["cpt"] == 0.6
+
+
+def test_transport_failure_retires_cached_client_so_next_call_rebuilds(monkeypatch):
+    """2026-09-18 实测自愈：连接级失败后，同一 provider/model 的下次调用必须重建实例。
+
+    场景：provider client 在构造时固定代理/连接配置（trust_env 经 urllib 读系统代理），
+    代理拓扑变化后旧实例持续打旧端点（3ms 内 ECONNREFUSED），而新进程正常。
+    """
+    registry = ProviderRegistry(
+        providers={
+            "shared": ProviderSpec(
+                id="shared",
+                base_url="http://configured/v1",
+                api_key_env="X",
+                models={"model-a": ModelSpec(thinking=False)},
+            )
+        }
+    )
+    monkeypatch.setattr(
+        ProviderRegistry,
+        "client_params",
+        lambda self, pid, mid: {
+            "api_key": "k",
+            "base_url": "http://configured/v1",
+            "model": mid,
+            "timeout_s": None,
+            "max_tokens": None,
+        },
+    )
+    built: list[SimpleNamespace] = []
+
+    def build_client(**kwargs):
+        client = SimpleNamespace(**kwargs)
+        built.append(client)
+        return client
+
+    with mock.patch("llm_loop.llm.pool.LLMClient", side_effect=build_client):
+        pool = ModelClientPool(registry=registry, default_client=_default_client())
+        first = pool.get_client("shared/model-a")
+        assert pool.get_client("shared/model-a") is first  # 同一实例命中缓存
+        assert callable(first.on_transport_failure)  # 回调已注入
+
+        # 传输级失败回调（client 侧 _notify_transport_failure 会以异常类型名调用）
+        first.on_transport_failure("ConnectError")
+
+        second = pool.get_client("shared/model-a")
+        assert second is not first  # 缓存已退休 → 重建
+        assert len(built) == 2
+
+
+def test_retire_client_for_returns_false_when_not_cached(monkeypatch):
+    registry = ProviderRegistry(
+        providers={
+            "shared": ProviderSpec(
+                id="shared",
+                base_url="http://configured/v1",
+                api_key_env="X",
+                models={"model-a": ModelSpec(thinking=False)},
+            )
+        }
+    )
+    monkeypatch.setattr(
+        ProviderRegistry,
+        "client_params",
+        lambda self, pid, mid: {
+            "api_key": "k",
+            "base_url": "http://configured/v1",
+            "model": mid,
+            "timeout_s": None,
+            "max_tokens": None,
+        },
+    )
+    with mock.patch(
+        "llm_loop.llm.pool.LLMClient", side_effect=lambda **kw: SimpleNamespace(**kw)
+    ):
+        pool = ModelClientPool(registry=registry, default_client=_default_client())
+        assert pool.retire_client_for("shared", "model-a") is False  # 未缓存 → 无副作用
+        pool.get_client("shared/model-a")
+        assert pool.retire_client_for("shared", "model-a") is True
+        assert pool.retire_client_for("shared", "model-a") is False  # 幂等
