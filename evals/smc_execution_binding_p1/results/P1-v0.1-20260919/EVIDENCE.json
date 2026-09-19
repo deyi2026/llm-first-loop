@@ -1,0 +1,213 @@
+{
+  "artifact_sha256": {
+    "docs/SMC-EXECUTION-BINDING-P1-SPEC-20260919.md": "b53e247cd1444480e1aa7284e282b69ae3f05966df6f260d174a3847585ee82f",
+    "evals/smc_execution_binding_p1/P1-FIXTURES.v0.1.json": "6297c1c395667f140012d6b078c6860151deeffc5b559e778fe848028066bbb9",
+    "evals/smc_execution_binding_p1/reference.py": "9aeda3eb4165518bfd6d930931a9addf245a347a3d4a8abd22e1878159bbdaf9",
+    "evals/smc_execution_binding_p1/schema_validator.py": "f1b0881b623708bc7c867f991bb6b5bdeb74a97e43ffd6bb24bde4cf7abe34a9",
+    "tests/unit/test_smc_execution_binding_p1.py": "d5d2f05500803c6915e48e33c68f42ac5e7d9074cd5732722ef000619183fc2f"
+  },
+  "candidate_git_sha": "11559ea640e4bdb19e39331975d824d7a0aacc58",
+  "deterministic_double_run": {
+    "canonical_evidence_sha256": "62a8bea3be27a2e354d04fa1cdd57e62117bce5398120f56eb126572dadfcb47",
+    "equal": true,
+    "run_1_sha256": "4e8dbc64781ce2327dedf43249cb8aebc5c849a85aef2bfea5a8cb343dbaba6a",
+    "run_2_sha256": "4e8dbc64781ce2327dedf43249cb8aebc5c849a85aef2bfea5a8cb343dbaba6a"
+  },
+  "effect_boundary": {
+    "queued_effect_count": 0,
+    "real_os_dispatch_count": 0,
+    "synthetic_dispatch_count": 1
+  },
+  "focused_adjacency": {
+    "passed": 66,
+    "suites": {
+      "test_smc_contract_v01_conformance.py": 15,
+      "test_smc_execution_binding_contract_v01.py": 13,
+      "test_smc_execution_binding_p1.py": 19,
+      "test_smc_semantic_logic_p4d.py": 19
+    },
+    "total": 66
+  },
+  "frozen_execution_binding_contract_git_sha": "3b7163a11dca88e7a4e2bd6c6b7146e5925adc31",
+  "full_ci": {
+    "audit_test_side_effects_existing_nonblocking_warnings": 44,
+    "env_pin": {
+      "files_scanned": 628,
+      "undeclared": 0
+    },
+    "exit_code": 0,
+    "ruff": "pass",
+    "src_pyright": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "tier0": "pass",
+    "wall_time_seconds_observed": 72.3,
+    "xdist_full": "pass"
+  },
+  "gates": {
+    "P1-G1": "pass",
+    "P1-G10": "pass",
+    "P1-G11": "pass",
+    "P1-G12": "pass",
+    "P1-G2": "pass",
+    "P1-G3": "pass",
+    "P1-G4": "pass",
+    "P1-G5": "pass",
+    "P1-G6": "pass",
+    "P1-G7": "pass",
+    "P1-G8": "pass",
+    "P1-G9": "pass"
+  },
+  "intrinsic_run": {
+    "canonical_evidence_sha256": "62a8bea3be27a2e354d04fa1cdd57e62117bce5398120f56eb126572dadfcb47",
+    "evidence": [
+      {
+        "first_complete": false,
+        "gate": "P1-G1",
+        "mobile_capability_count": 3,
+        "mobile_revision": 3,
+        "revision_reject": "manifest_revision_changed",
+        "second_complete": true
+      },
+      {
+        "action_ref": "ar_12063919f5ec",
+        "decision": {
+          "decision": "reject",
+          "reason": "stale"
+        },
+        "gate": "P1-G2"
+      },
+      {
+        "gate": "P1-G3",
+        "mixed_reject": "binding_not_equivalent",
+        "selected_binding": "binding.desktop.save.native"
+      },
+      {
+        "decision": {
+          "decision": "reject",
+          "reason": "permission_denied"
+        },
+        "gate": "P1-G4"
+      },
+      {
+        "direct": {
+          "decision": "allow",
+          "reason": null
+        },
+        "gate": "P1-G5",
+        "mobile_context_preconditions": [
+          "foreground_scene",
+          "orientation"
+        ],
+        "shortcut": {
+          "decision": "reject",
+          "reason": "context_changed"
+        }
+      },
+      {
+        "dispatched": {
+          "automatic_replay": false,
+          "boundary_events": [
+            "human_interaction_observed"
+          ],
+          "decision": "settle_receipt",
+          "reason": "effect_may_have_occurred"
+        },
+        "gate": "P1-G6",
+        "pending": {
+          "automatic_replay": false,
+          "boundary_events": [
+            "human_interaction_observed",
+            "context_changed_by_external_actor"
+          ],
+          "decision": "reject",
+          "reason": "context_changed"
+        }
+      },
+      {
+        "gate": "P1-G7",
+        "synthetic_effect": {
+          "after_version": "doc-v2",
+          "before_version": "doc-v1",
+          "observed_effects": [
+            {
+              "from": "doc-v1",
+              "kind": "synthetic_version_change",
+              "to": "doc-v2"
+            }
+          ]
+        },
+        "user_edit": {
+          "decision": "allow_user_modified",
+          "reason": null,
+          "user_modified_parameters": [
+            "destination"
+          ]
+        }
+      },
+      {
+        "gate": "P1-G8",
+        "issuer_backed": {
+          "decision": "link_allowed",
+          "reason": null
+        },
+        "similarity_only": {
+          "decision": "reject",
+          "reason": "portable_identity_unproven"
+        }
+      },
+      {
+        "gate": "P1-G9",
+        "positive_envelope_count": 6,
+        "schema_negative_cases": [
+          "P1-SCHEMA-01",
+          "P1-SCHEMA-02",
+          "P1-SCHEMA-03"
+        ]
+      },
+      {
+        "gate": "P1-G11",
+        "queued_effect_count": 0,
+        "real_os_dispatch_count": 0,
+        "synthetic_dispatch_count": 1
+      }
+    ],
+    "external_gates": {
+      "P1-G10": "pending_full_ci",
+      "P1-G12": "pending_double_run_qualification"
+    },
+    "fixture_schema": "smc.execution_binding_p1_fixture.v0.1",
+    "intrinsic_gates": {
+      "P1-G1": "pass",
+      "P1-G11": "pass",
+      "P1-G2": "pass",
+      "P1-G3": "pass",
+      "P1-G4": "pass",
+      "P1-G5": "pass",
+      "P1-G6": "pass",
+      "P1-G7": "pass",
+      "P1-G8": "pass",
+      "P1-G9": "pass"
+    },
+    "queued_effect_count": 0,
+    "real_os_dispatch_count": 0,
+    "schema": "smc.execution_binding_p1_evidence.v0.1",
+    "synthetic_dispatch_count": 1
+  },
+  "non_claims": [
+    "no real OS adapter qualified",
+    "no real OS mutation qualified",
+    "no live human-AI co-control safety qualified",
+    "no model First-Call-Ready qualified",
+    "no P4-FCR v0.2 qualified",
+    "no P4-LIVE qualified",
+    "no production provider-visible tool added",
+    "no deployment or restart performed"
+  ],
+  "parent_execution_binding_result_git_sha": "50cbee7a619b26cac48817e00dd5d20d327b0acc",
+  "qualification_date": "2026-09-19",
+  "reviewed_spec_git_sha": "22692bd6cc4d61aa045f6ae99d529076ac2db349",
+  "schema": "smc.execution_binding_p1_qualification_evidence.v0.1",
+  "status": "qualified_deterministic_non_production"
+}
