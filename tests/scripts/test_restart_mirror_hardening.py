@@ -38,6 +38,50 @@ def test_wait_idle_precheck_on_all_restart_branches():
         assert body.index("_webui_artifact_preflight") < body.index("_restart_precheck")
 
 
+def test_restart_precheck_guards_web_whole_run_leases_not_only_feishu_heartbeat():
+    src = _src()
+    assert "_web_run_busy()" in src
+    run_body = src.split("_web_run_busy()", 1)[1].split("\n}", 1)[0]
+    assert "active_run_locks" in run_body
+    assert '"$RUNTIME_ROOT/data/sessions"' in run_body
+
+    busy_body = src.split("_restart_busy()", 1)[1].split("\n}", 1)[0]
+    assert '[[ "$target" == "web" || "$target" == "all" ]]' in busy_body
+    assert "_web_run_busy" in busy_body
+
+    precheck = src.split("_restart_precheck()", 1)[1].split("\n}", 1)[0]
+    assert "RESTART_FORCE_ACTIVE_RUNS" in precheck
+    assert "Web active run fail-closed" in precheck
+    assert "_web_run_recovery_ready" in precheck
+    assert "缺少 open llm.partial_checkpoint" in precheck
+    assert '[[ "$target" == "web" || "$target" == "all" ]]' in precheck
+
+
+def test_emergency_active_run_restart_requires_durable_open_checkpoint():
+    src = _src()
+    assert "_web_run_recovery_ready()" in src
+    body = src.split("_web_run_recovery_ready()", 1)[1].split("\n}", 1)[0]
+    assert "active_run_locks" in body
+    assert "EventStore" in body
+    assert 'event.type == "run.end"' in body
+    assert 'event.type == "llm.partial_checkpoint"' in body
+    assert "missing-open-checkpoint" in body
+
+
+def test_restart_branches_pass_target_to_activity_precheck():
+    src = _src()
+    case_body = src.split("\ncase ", 1)[1]
+    expected = {
+        "web)": "_restart_precheck web",
+        "feishu)": "_restart_precheck feishu",
+        "all)": "_restart_precheck all",
+    }
+    for branch, token in expected.items():
+        body = case_body.split(branch, 1)[1].split(";;", 1)[0]
+        assert token in body
+        assert "active_run_precheck_failed" in body
+
+
 def test_stop_source_web_port_first_and_wait_pid_exit():
     body = _src().split("_stop_web()", 1)[1].split("\n}", 1)[0]
     assert "_port_pid" in body          # 端口判定（权威锚点）

@@ -145,6 +145,83 @@ def _background_note_active(engine: Any, session_id: str, round_no: int) -> None
             logger.debug("runner.note_active 失败（忽略）", exc_info=True)
 
 
+def _consume_live_interjections(engine: Any, session_id: str, sess: Any) -> list[str]:
+    """Persist pending genuine-human steer messages at a safe model-round boundary.
+
+    The Web thread only queues frozen facts into the active RunHandle.  This function
+    runs on the owning engine worker, keeping Session mutation single-writer.  A row is
+    acknowledged only after it has crossed the same ingress guard and Session/Event
+    persistence path as an ordinary human message.
+    """
+    runner = getattr(engine, "runner", None)
+    take = getattr(runner, "take_interjections", None)
+    if runner is None or not getattr(runner, "enabled", False) or not callable(take):
+        return []
+    rows = cast(list[dict[str, Any]], take(session_id))
+    if not rows:
+        return []
+
+    accepted_texts: list[str] = []
+    for row in rows:
+        text = str(row.get("message") or "")
+        metadata: dict[str, Any] = {}
+        raw_attachments = row.get("attachment_facts")
+        if isinstance(raw_attachments, list):
+            metadata["attachments"] = [
+                dict(item) for item in raw_attachments if isinstance(item, dict)
+            ]
+        queue_id = str(row.get("queue_id") or "")
+        if queue_id:
+            metadata["human_turn_queue_id"] = queue_id
+            metadata["human_interjection"] = True
+        metadata.update(origin_metadata(InjectionLayer.USER_INSTRUCTION))
+        msg = Message(
+            role="user",
+            content=text,
+            source=MessageSource.USER,
+            metadata=metadata,
+        )
+
+        try:
+            from llm_loop.core.trace_leak.user_ingress_guard import GuardAction, guard_user_write
+
+            verdict = guard_user_write(
+                sess,
+                msg,
+                row.get("_ingress"),
+                entry="engine.interject",
+                data_dir=engine.settings.data_dir,
+            )
+            if verdict.action is GuardAction.DENY:
+                logger.warning("interjection ingress denied: sid=%s qid=%s", session_id, queue_id)
+                continue
+            msg = verdict.message
+        except ImportError:  # pragma: no cover - same fail-open assembly rule as run ingress
+            logger.warning("interjection ingress guard unavailable (fail-open)", exc_info=True)
+
+        try:
+            if metadata_satisfies_invariant(msg.metadata) is False:
+                msg.metadata = correct_mislabeled_metadata(msg.metadata)
+        except Exception:  # noqa: BLE001 - invariant diagnostics must not invent a denial
+            logger.warning("interjection metadata invariant check failed (fail-open)", exc_info=True)
+
+        sess.messages.append(msg)
+        engine._append_message_event(sess, msg)
+        engine.session.save(sess)
+        engine._run_state().current_turn_ref = len(sess.messages) - 1
+        accepted_texts.append(text)
+        ack = getattr(runner, "acknowledge_interjection", None)
+        if callable(ack):
+            ack(row)
+        with contextlib.suppress(Exception):
+            engine._record_action(
+                "human.interjection",
+                "received",
+                f"queue_id={queue_id}; turn_ref={len(sess.messages) - 1}",
+            )
+    return accepted_texts
+
+
 # M53 拆分: _json_dumps_args/_tool_args_summary → llm_loop/core/loop/tool_exec.py（_ToolExecMixin）
 # 迁移注释保留（REQ-REF-06）: 原路径可导入（对齐 test_tool_round_visible.py），行为与迁移前一致。
 # 模块级函数随工具执行职责单元迁移，经此 re-export 保持 `engine._tool_args_summary` 等可导入。
@@ -737,6 +814,14 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 _run_end_reason = "cancelled"
                 final_answer = _CANCELLED_ANSWER
                 break
+            _interjected = _consume_live_interjections(self, session_id, sess)
+            if _interjected:
+                # user_text is used by model-visible tool projection/routing in addition to
+                # Session history. Keep that auxiliary view aligned with the newest genuine
+                # human steer without rewriting the original run ingress.
+                _nonempty_interjected = [row for row in _interjected if row.strip()]
+                if _nonempty_interjected:
+                    user_text = "\n\n".join(_nonempty_interjected)
             rounds += 1
             _projection_mandatory_only = False
             # CR-R1.1（审查项7）: 轮次入 contextvar——cognitive telemetry 等 build 期
@@ -1556,7 +1641,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     _fallback_metadata: dict[str, Any] = {}
 
                     def _fallback_request_builder(
-                        fallback_label: str, fallback_registry: Any, _round: int = rounds
+                        fallback_label: str,
+                        fallback_registry: Any,
+                        _round: int = rounds,
+                        _user_text: str = user_text,
                     ) -> tuple[list[dict], list[dict]]:
                         fallback_budget_info = self._effective_history_budget_detail(
                             fallback_label, registry_snapshot=fallback_registry
@@ -1566,7 +1654,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         )
                         fallback_schemas, fallback_tools = self._project_request_tools(
                             session_id=session_id,
-                            user_text=user_text,
+                            user_text=_user_text,
                             planned_label=fallback_label,
                             session_messages=sess.messages,
                             advance_state_round=False,
@@ -1829,6 +1917,24 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
 
             # 无工具调用 → 最终回答 → 真诚回答阶段
             if not resp.tool_calls:
+                # A human steer may arrive while this provider response is in flight.  A
+                # no-tool response is only terminal if the mailbox is still empty at the
+                # settlement boundary; otherwise continue the same run so the next model
+                # decision includes the newly persisted genuine-human turn.
+                _late_interjected = _consume_live_interjections(self, session_id, sess)
+                if _late_interjected:
+                    _nonempty_interjected = [row for row in _late_interjected if row.strip()]
+                    if _nonempty_interjected:
+                        user_text = "\n\n".join(_nonempty_interjected)
+                    with contextlib.suppress(Exception):
+                        self._record_action(
+                            "human.interjection",
+                            "continued_before_final",
+                            f"round={rounds}; count={len(_late_interjected)}",
+                        )
+                    final_answer = ""
+                    resp = None
+                    continue
                 final_answer = resp.content or ""
                 # Internal protocol tokens are not model answers.  Historical builds
                 # leaked ``[program-final]`` into provider-visible assistant content;

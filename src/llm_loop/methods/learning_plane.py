@@ -4,13 +4,22 @@ Power boundaries (by design, not by convention):
 
 - Task plane owns the user session; this module never touches it.
 - Foreground always wins: any active run (in-process registry or cross-process
-  ``*.run.lock``) makes learning yield (requeue, never busy-wait).
+  ``*.run.lock``) makes learning yield (requeue, never busy-wait).  As of P0-B
+  this includes mid-call preemption: an in-flight reflection is abandoned and
+  requeued once the foreground barrier activates mid-call; the abandoned
+  provider call still settles itself with its real mechanical outcome, but it
+  never touches the journal, MethodStore, or governor after abandonment.
 - A ReflectionRun has no user channel, no normal agent tools, no hidden CoT.
   The model only receives one hydrated episode snapshot and returns a closed
   JSON schema; the single write path is MethodStore.save_candidate with
   runtime-derived provenance (real episode ref + learning job ref).
 - Fail-open: any error marks the job failed and leaves the user plane untouched.
+- P0-C (2026-09-18): the queue also carries ``kind=memory_extract`` jobs
+  (MemoryExtractor interval scheduling). They run under the same admission,
+  foreground-barrier and preemption semantics; execution is delegated to the
+  wired MemoryExtractor (see ``_run_memory_extract_job``).
 """
+
 from __future__ import annotations
 
 import logging
@@ -40,7 +49,6 @@ from llm_loop.resources.provider_settlement import (
 logger = logging.getLogger(__name__)
 
 
-
 class LearningPlane:
     """Background consumer of the durable learning queue.
 
@@ -62,8 +70,10 @@ class LearningPlane:
         resource_governor: ResourceGovernor,
         resource_target_resolver: Callable[[str], tuple[str, str]],
         provider_call_coordinator: ProviderCallCoordinator | None = None,
+        memory_extractor: Any | None = None,
         poll_interval_s: float = 5.0,
         quiet_period_s: float = 15.0,
+        preempt_poll_s: float = 0.25,
     ) -> None:
         self._journal = journal
         self._episode_store = episode_store
@@ -73,10 +83,14 @@ class LearningPlane:
         self._resource_governor = resource_governor
         self._resource_target_resolver = resource_target_resolver
         self._provider_call_coordinator = provider_call_coordinator
+        self._memory_extractor = memory_extractor  # P0-C: kind=memory_extract 执行体
         self._poll_interval_s = max(1.0, float(poll_interval_s))
         self._quiet_period_s = max(0.0, float(quiet_period_s))
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._preempt_poll_s = max(0.01, float(preempt_poll_s))
+        # Abandoned reflection threads; mutated only by the learning thread.
+        self._stragglers: list[threading.Thread] = []
 
     # ---------- lifecycle ----------
 
@@ -84,7 +98,9 @@ class LearningPlane:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run_loop, name="lfl-learning-plane", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run_loop, name="lfl-learning-plane", daemon=True
+        )
         self._thread.start()
 
     def stop(self, timeout_s: float = 5.0) -> None:
@@ -99,6 +115,21 @@ class LearningPlane:
         return self._resource_governor.higher_priority_active(
             ServicePriority.P3_BACKGROUND_LEARNING
         )
+
+    def _track_straggler(self, worker: threading.Thread) -> None:
+        """Track an abandoned reflection thread until it drains."""
+        self._stragglers.append(worker)
+
+    def _straggler_busy(self) -> bool:
+        """Whether an abandoned reflection is still draining.
+
+        Only the learning thread mutates ``_stragglers``; abandoned workers
+        never touch shared state, so no lock is needed.  While a straggler is
+        alive, no new learning transport starts: preemption must not stack
+        reflection calls on a runtime whose claimed concurrency was one.
+        """
+        self._stragglers = [t for t in self._stragglers if t.is_alive()]
+        return any(self._stragglers)
 
     def _resource_request(self, job: LearningJob) -> AdmissionRequest:
         """Build the Learning lease request, sharing a qualified local runtime key.
@@ -178,11 +209,15 @@ class LearningPlane:
                     try:
                         self._journal.mark_failed(job.job_id, "worker_exception")
                     except Exception:  # noqa: BLE001
-                        logger.warning("learning job %s mark_failed failed", job.job_id, exc_info=True)
+                        logger.warning(
+                            "learning job %s mark_failed failed", job.job_id, exc_info=True
+                        )
             if not progressed:
                 self._stop.wait(self._poll_interval_s)
 
     def _try_execute(self, job: LearningJob) -> bool:
+        if self._straggler_busy():
+            return False  # an abandoned reflection still drains; never stack transports
         if self.foreground_busy():
             return False  # foreground wins; leave queued, no busy-wait
         if not self._quiet_elapsed(job):
@@ -205,9 +240,12 @@ class LearningPlane:
             if self.foreground_busy():  # re-check between admission and start
                 self._journal.mark_requeued(job.job_id, "foreground_arrived")
                 return False
-            if self.foreground_busy():  # last early check before preparing model input
-                self._journal.mark_requeued(job.job_id, "foreground_arrived")
-                return False
+
+            # P0-C: memory-extraction jobs share admission/foreground semantics,
+            # but delegate execution to the wired MemoryExtractor.
+            if str(getattr(job, "kind", "reflection")) == "memory_extract":
+                return self._run_memory_extract_job(job, request)
+
             entry = self._episode_store.get(job.session_id, job.source_episode_ref)
             if entry is None:
                 self._journal.mark_failed(job.job_id, "episode_not_found")
@@ -238,60 +276,109 @@ class LearningPlane:
                     self._journal.mark_requeued(job.job_id, "resource_authority_changed")
                     return False
             self._journal.mark_started(job.job_id)
-            provider_call = (
-                coordinator.open_shadow_call_for_client(
-                    client,
-                    session_id=job.session_id,
-                    idempotency_key=f"learning:{job.job_id}:attempt:{job.attempt + 1}",
-                    owner_ref=f"learning:{job.job_id}",
-                    execution_class=ExecutionClass.BACKGROUND_LEARNING,
-                    service_priority=ServicePriority.P3_BACKGROUND_LEARNING,
-                    purpose=ProviderCallPurpose.LEARNING,
-                )
-                if coordinator is not None
-                else None
-            )
-            site_scope = (
-                coordinator.bind_shadow_call_site(
-                    provider_call,
-                    client,
-                    attempt_kind=ProviderAttemptKind.PRIMARY,
-                    site_index=0,
-                )
-                if coordinator is not None
-                else None
-            )
-            if site_scope is None:
-                outcome = reflect_on_episode(
-                    llm_client=client,
-                    store=self._method_store,
-                    episode_entry=entry,
-                    trigger_facts=dict(job.trigger_facts or {}),
-                    tool_trace=[],
-                    run_end_reason=str((job.trigger_facts or {}).get("run_end_reason", "")),
-                    final_answer=final_answer,
-                    timeout_s=timeout_s,
-                )
-            else:
-                with site_scope:
-                    outcome = reflect_on_episode(
-                        llm_client=client,
-                        store=self._method_store,
-                        episode_entry=entry,
-                        trigger_facts=dict(job.trigger_facts or {}),
-                        tool_trace=[],
-                        run_end_reason=str((job.trigger_facts or {}).get("run_end_reason", "")),
-                        final_answer=final_answer,
-                        timeout_s=timeout_s,
+            result: dict[str, Any] = {}
+
+            def _run_reflection() -> None:
+                """Worker: owns this attempt's provider-call lifecycle.
+
+                On preemption the learning thread stops waiting, but this
+                worker still settles its shadow call with the real mechanical
+                outcome and never touches journal, MethodStore, or governor.
+                """
+                provider_call = None
+                transport_started = False
+                try:
+                    provider_call = (
+                        coordinator.open_shadow_call_for_client(
+                            client,
+                            session_id=job.session_id,
+                            idempotency_key=f"learning:{job.job_id}:attempt:{job.attempt + 1}",
+                            owner_ref=f"learning:{job.job_id}",
+                            execution_class=ExecutionClass.BACKGROUND_LEARNING,
+                            service_priority=ServicePriority.P3_BACKGROUND_LEARNING,
+                            purpose=ProviderCallPurpose.LEARNING,
+                        )
+                        if coordinator is not None
+                        else None
                     )
-            if coordinator is not None:
-                if not outcome.attempted:
-                    call_outcome = ProviderCallOutcome.BLOCKED_BEFORE_TRANSPORT
-                elif outcome.reason == "reflection_call_failed":
-                    call_outcome = ProviderCallOutcome.ERROR
-                else:
-                    call_outcome = ProviderCallOutcome.SUCCESS
-                coordinator.settle_shadow_call(provider_call, call_outcome)
+                    site_scope = (
+                        coordinator.bind_shadow_call_site(
+                            provider_call,
+                            client,
+                            attempt_kind=ProviderAttemptKind.PRIMARY,
+                            site_index=0,
+                        )
+                        if coordinator is not None
+                        else None
+                    )
+                    transport_started = True
+                    if site_scope is None:
+                        result["outcome"] = reflect_on_episode(
+                            llm_client=client,
+                            store=self._method_store,
+                            episode_entry=entry,
+                            trigger_facts=dict(job.trigger_facts or {}),
+                            tool_trace=[],
+                            run_end_reason=str((job.trigger_facts or {}).get("run_end_reason", "")),
+                            final_answer=final_answer,
+                            timeout_s=timeout_s,
+                        )
+                    else:
+                        with site_scope:
+                            result["outcome"] = reflect_on_episode(
+                                llm_client=client,
+                                store=self._method_store,
+                                episode_entry=entry,
+                                trigger_facts=dict(job.trigger_facts or {}),
+                                tool_trace=[],
+                                run_end_reason=str(
+                                    (job.trigger_facts or {}).get("run_end_reason", "")
+                                ),
+                                final_answer=final_answer,
+                                timeout_s=timeout_s,
+                            )
+                except BaseException as exc:  # noqa: BLE001 - transported to the learning thread
+                    result["error"] = exc
+                finally:
+                    if coordinator is not None and provider_call is not None:
+                        outcome = result.get("outcome")
+                        if outcome is not None:
+                            if not outcome.attempted:
+                                call_outcome = ProviderCallOutcome.BLOCKED_BEFORE_TRANSPORT
+                            elif outcome.reason == "reflection_call_failed":
+                                call_outcome = ProviderCallOutcome.ERROR
+                            else:
+                                call_outcome = ProviderCallOutcome.SUCCESS
+                        elif transport_started:
+                            call_outcome = ProviderCallOutcome.ERROR
+                        else:
+                            call_outcome = ProviderCallOutcome.BLOCKED_BEFORE_TRANSPORT
+                        coordinator.settle_shadow_call(provider_call, call_outcome)
+
+            worker = threading.Thread(
+                target=_run_reflection,
+                name=f"lfl-learning-reflect:{job.job_id}",
+                daemon=True,
+            )
+            worker.start()
+            preempted = False
+            while True:
+                worker.join(self._preempt_poll_s)
+                if not worker.is_alive():
+                    break
+                if self.foreground_busy():  # foreground always wins, mid-call included
+                    preempted = True
+                    break
+            if preempted:
+                # Yield immediately: abandon the reflection worker (it settles
+                # itself), requeue the job, and let ``finally`` release the
+                # lease so any waiting foreground admission proceeds now.
+                self._track_straggler(worker)
+                self._journal.mark_requeued(job.job_id, "preempted_by_foreground")
+                return False
+            if "error" in result:
+                raise result["error"]
+            outcome = result["outcome"]
             if outcome.candidate_payload is not None:  # reason == schema_ok
                 try:
                     record = self._method_store.save_candidate(
@@ -322,3 +409,76 @@ class LearningPlane:
             return True
         finally:
             self._resource_governor.release(lease)
+
+    def _run_memory_extract_job(self, job: LearningJob, request: Any) -> bool:
+        """P0-C: run a kind=memory_extract job in the settled, foreground-free lane.
+
+        Semantics mirror the reflection path: the worker owns the attempt
+        (MemoryExtractor opens and settles its own shadow call for the actual
+        transport), mid-call preemption abandons the worker (tracked as a
+        straggler), requeues the job and lets ``finally`` release the lease.
+        An abandoned extraction may still complete its memory write — that
+        write path is late-write-safe (version snapshot +
+        promote-only-if-observed) and content-fingerprint deduped, so a
+        requeued rerun cannot create duplicate memory entries.
+        """
+        extractor = self._memory_extractor
+        if extractor is None:
+            self._journal.mark_failed(job.job_id, "memory_extractor_not_wired")
+            return True
+        self._journal.mark_started(job.job_id)
+        coordinator = self._provider_call_coordinator
+        if coordinator is not None:
+            expected_generation = (
+                self._resource_governor.concurrency_limit_generation(request.resource_keys[0])
+                if len(request.resource_keys) == 1
+                else None
+            )
+            try:
+                client = self._model_resolver(job.source_model)
+                coordinator.revalidate_request_for_client(
+                    client, request, expected_generation=expected_generation
+                )
+            except ResourceAdmissionError:
+                self._journal.mark_requeued(job.job_id, "resource_authority_changed")
+                return False
+        result: dict[str, Any] = {}
+
+        def _run_extract() -> None:
+            try:
+                result["outcome"] = extractor.extract_session(job.session_id, trigger="interval")
+            except BaseException as exc:  # noqa: BLE001 - transported to the learning thread
+                result["error"] = exc
+
+        worker = threading.Thread(
+            target=_run_extract,
+            name=f"lfl-memory-extract:{job.job_id}",
+            daemon=True,
+        )
+        worker.start()
+        preempted = False
+        while True:
+            worker.join(self._preempt_poll_s)
+            if not worker.is_alive():
+                break
+            if self.foreground_busy():  # foreground always wins, mid-call included
+                preempted = True
+                break
+        if preempted:
+            self._track_straggler(worker)
+            self._journal.mark_requeued(job.job_id, "preempted_by_foreground")
+            return False
+        if "error" in result:
+            raise result["error"]
+        outcome = result["outcome"]
+        entries_n = len(getattr(outcome, "entries", None) or [])
+        skipped = int(getattr(outcome, "skipped_duplicates", 0) or 0)
+        if entries_n > 0:
+            # candidate_ref is an opaque pointer here: memory entries live in
+            # MemoryStore (deposit_path=extract); the journal keeps the count.
+            self._journal.mark_saved(
+                job.job_id, f"memory-extract:{job.session_id}:entries={entries_n}"
+            )
+        else:
+            self._journal.mark_none(job.job_id, f"no_new_entries; skipped_duplicates={skipped}")
+        return True

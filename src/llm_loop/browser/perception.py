@@ -40,7 +40,9 @@ from llm_loop.browser.predicate import evaluate_predicate as evaluate_browser_pr
 _SENSOR_CONTRACT = {
     "id": "browser-dom-ax-v0.1",
     "active_sources": ["dom", "ax"],
-    "vision": "explicit_only_deferred_phase2",
+    # EVO-20260918-f2310800: vision phase 1 is live as an evidence-layer
+    # opt-in (snapshot vision=evidence); grounding/version stay DOM+AX only.
+    "vision": "explicit_only_evidence_layer",
 }
 
 _ATTRIBUTE_FIELDS = {
@@ -1293,7 +1295,7 @@ class BrowserPerceptionAdapter:
                 "domain": "browser",
                 "scope_ref": scope["scope_ref"],
                 "id": semantic_id,
-                "kind": _normalize_kind(dom_node.get("kind") or ax_node.get("kind")),
+                "kind": _merge_kind(dom_node.get("kind"), ax_node.get("kind")),
                 "attributes": attributes,
                 "state": object_state,
                 "relations": [],
@@ -1487,6 +1489,8 @@ class BrowserPerceptionAdapter:
         raw_capture: dict[str, Any],
         *,
         projection_limit: int = 200,
+        projection_kinds: list[str] | tuple[str, ...] | None = None,
+        projection_cursor: int = 0,
     ) -> dict[str, Any]:
         """Canonicalize one read-only DOM+AX capture without task-semantic input."""
         state = self._state(session_id)
@@ -1529,6 +1533,31 @@ class BrowserPerceptionAdapter:
 
         objects_sorted = sorted(build.semantic_objects, key=lambda item: item["id"])
         projection_limit = max(1, min(int(projection_limit), 500))
+        # EVO-20260918-c69527a1: model-declared projection window. The runtime
+        # applies no policy: kinds/cursor only filter and paginate the projection
+        # of the already-persisted full observation; matched/returned/truncated/
+        # next_cursor are reported verbatim so the model can drive pagination.
+        kinds_norm: frozenset[str] | None = None
+        if projection_kinds is not None:
+            cleaned = {str(k).strip() for k in projection_kinds if str(k).strip()}
+            kinds_norm = frozenset(cleaned) if cleaned else None
+        try:
+            cursor_norm = max(0, int(projection_cursor))
+        except (TypeError, ValueError):
+            cursor_norm = 0
+        if kinds_norm is None:
+            matched_objects = objects_sorted
+        else:
+            matched_objects = [
+                item
+                for item in objects_sorted
+                if str(item.get("kind") or "") in kinds_norm
+            ]
+        matched_total = len(matched_objects)
+        projection_window = matched_objects[cursor_norm : cursor_norm + projection_limit]
+        returned_count = len(projection_window)
+        projection_truncated = cursor_norm + returned_count < matched_total
+        next_cursor = (cursor_norm + returned_count) if projection_truncated else None
         objects_ref = f"{_GROUNDING_PREFIX}{snapshot_id}/objects"
         scopes_ref = f"{_GROUNDING_PREFIX}{snapshot_id}/scopes"
         resource_ref = self._resource_ref(snapshot_id)
@@ -1620,12 +1649,47 @@ class BrowserPerceptionAdapter:
             "scope_facts": scope_facts,
             "scope_facts_ref": scopes_ref,
             "resource_ref": resource_ref,
-            "objects": objects_sorted[:projection_limit],
+            "objects": projection_window,
             "objects_projection": {
-                "returned": min(len(objects_sorted), projection_limit),
+                "returned": returned_count,
                 "total": len(objects_sorted),
-                "complete": len(objects_sorted) <= projection_limit,
+                "matched_total": matched_total,
+                "cursor": cursor_norm,
+                "limit": projection_limit,
+                "kinds": (sorted(kinds_norm) if kinds_norm is not None else None),
+                "truncated": projection_truncated,
+                "next_cursor": next_cursor,
+                "complete": (cursor_norm == 0 and returned_count == matched_total),
             },
+        }
+
+    def store_vision_evidence(self, session_id: str, payload: bytes) -> dict[str, Any]:
+        """EVO-20260918-f2310800: persist a vision evidence blob (evidence layer only).
+
+        The stored PNG never enters objects/grounding/version paths; the returned
+        reference is consumed by the model via read_image and judged by the model.
+        """
+
+        if not isinstance(payload, (bytes, bytearray)) or not payload:
+            raise ValueError("vision evidence payload must be non-empty bytes")
+        raw = bytes(payload)
+        digest = hashlib.sha256(raw).hexdigest()
+        vision_root = self.store.root / "vision"
+        vision_root.mkdir(parents=True, exist_ok=True)
+        path = vision_root / f"{digest}.png"
+        if not path.exists():
+            tmp = path.with_name(f".{path.name}.tmp")
+            tmp.write_bytes(raw)
+            os.replace(tmp, path)
+        return {
+            "schema": "smc.browser_vision_evidence.v0.1",
+            "owner_session_sha256": _session_hash(session_id),
+            "ref": f"vision://browser/v0.1/{digest}",
+            "path": str(path),
+            "mime": "image/png",
+            "bytes": len(raw),
+            "sha256": digest,
+            "invariant": "evidence_layer_only",
         }
 
     @staticmethod
@@ -2093,8 +2157,43 @@ def _kind_for(role: str, tag: str) -> str:
         "th": "cell",
         "html": "document",
         "iframe": "frame",
+        # DOM-side heading without an explicit role attribute must still land
+        # on the schema's heading kind; previously it fell through to generic
+        # and masked the AX heading role during kind merging.
+        "h1": "heading",
+        "h2": "heading",
+        "h3": "heading",
+        "h4": "heading",
+        "h5": "heading",
+        "h6": "heading",
     }
     return role_map.get(role.lower(), tag_map.get(tag.lower(), "generic"))
+
+
+def _merge_kind(dom_kind: Any, ax_kind: Any) -> str:
+    """Merge DOM and AX kind evidence without letting a generic shadow a specific kind.
+
+    The merge is symmetric by specificity, not by fixed sensor authority: a
+    generic (or normalize-default unknown) kind from either sensor is treated as
+    missing structural/semantic specificity and never masks a specific kind
+    reported by the other sensor. DOM kinds are structural (tag-driven) and may
+    legitimately land on generic for semantic elements; AX roles are semantic
+    and may equally default when the AX tree under-reports.
+    """
+
+    dom = _normalize_kind(dom_kind)
+    ax = _normalize_kind(ax_kind)
+    # _normalize_kind maps absent evidence to "unknown"; that is a missing-
+    # value default, not an observation, so it must not shadow the other side.
+    if dom in ("", "unknown"):
+        dom = ""
+    if ax in ("", "unknown"):
+        ax = ""
+    if dom and dom != "generic":
+        return dom
+    if ax and ax != "generic":
+        return ax
+    return dom or ax or "generic"
 
 
 def _ax_property_map(node: dict[str, Any]) -> dict[str, Any]:

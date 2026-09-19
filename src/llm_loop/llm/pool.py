@@ -161,6 +161,12 @@ class ModelClientPool:
             top_k=top_k,
             min_p=min_p,
             guard_audit_file=self.guard_audit_file,
+            # 2026-09-18（会话挂载实测自愈）: 连接级失败 → 退休本 provider/model 缓存实例。
+            # 本实例的代理/连接配置在构造时固定（trust_env 经 urllib 读系统代理），代理拓扑
+            # 变化后旧实例会持续打旧端点；退休后下次调用按当前配置重建，无需外部 refresh/重启。
+            on_transport_failure=(
+                lambda _error_type, _p=provider_id, _m=model_id: self.retire_client_for(_p, _m)
+            ),
             **(
                 {"transport_observer": self.transport_observer}
                 if self.transport_observer is not None
@@ -248,6 +254,33 @@ class ModelClientPool:
         with self._guard:
             if all(existing is not client for existing in self._retired_ducks):
                 self._retired_ducks.append(client)
+
+    def retire_client_for(self, provider_id: str, model_id: str) -> bool:
+        """退休单个 provider/model 的缓存 client（2026-09-18 自愈：连接级失败后重建）。
+
+        与 replace_registry 同一退休语义：只在最后引用释放后关闭 transport，在途请求
+        持有的旧实例不受影响、不会被强杀。返回是否确有缓存实例被退休。
+        """
+        key = f"{provider_id}/{model_id}"
+        legacy_key = str(provider_id)
+        with self._guard:
+            client = self._provider_cache.pop(key, None)
+            if client is None and legacy_key != key:
+                client = self._provider_cache.pop(legacy_key, None)
+        if client is None:
+            return False
+        try:
+            self._retire_client(client)
+        except Exception:  # noqa: BLE001 — 自愈退休失败绝不能影响本次调用结果
+            logger.warning(
+                "LLM client 自愈退休登记失败（缓存已移除，下次调用重建）", exc_info=True
+            )
+        logger.info(
+            "LLM client 自愈退休: provider=%s model=%s（连接级失败，下次调用按当前配置重建）",
+            provider_id,
+            model_id,
+        )
+        return True
 
     def replace_registry(self, new_registry: ProviderRegistry) -> None:
         """原子替换 registry 并退休旧 cache（refresh_config 并发安全入口）."""

@@ -158,7 +158,7 @@ def test_model_surface_splits_readonly_wait_from_general_perception(tmp_path: Pa
     )
     props = tool.parameters["properties"]
     assert props["action"]["enum"] == ["snapshot", "hydrate", "diff"]
-    assert set(props) == {"action", "projection_limit", "grounding_ref", "from_version", "to_version"}
+    assert set(props) == {"action", "projection_limit", "projection_kinds", "projection_cursor", "vision", "grounding_ref", "from_version", "to_version"}
 
     scope = BrowserWaitScopeTool.parameters
     obj = BrowserWaitObjectTool.parameters

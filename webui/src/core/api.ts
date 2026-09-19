@@ -55,6 +55,94 @@ export interface SessionListResponse {
   count: number;
 }
 
+export interface LearningJobInfo {
+  job_id: string;
+  source_episode_ref: string;
+  source_session_id: string;
+  source_model: string;
+  state: string;
+  attempt: number;
+  candidate_ref?: string | null;
+  reason?: string | null;
+  created_at: number;
+  updated_at: number;
+  started_at?: number | null;
+  finished_at?: number | null;
+  trigger_facts?: Record<string, unknown>;
+}
+
+export interface LearningStatusInfo {
+  enabled: boolean;
+  producer_only: boolean;
+  worker: {
+    running?: boolean;
+    pid?: number | null;
+    started_at?: string | null;
+    git_head?: string | null;
+    model_ref?: string | null;
+    provider_id?: string | null;
+    build?: BuildIdentityInfo;
+    manifest_present?: boolean;
+  };
+  counts: Record<string, number>;
+  jobs: LearningJobInfo[];
+}
+
+export async function fetchLearningStatus(limit = 50): Promise<LearningStatusInfo | null> {
+  const { status, data } = await api<LearningStatusInfo>(
+    `/api/v1/learning/status?limit=${Math.max(1, Math.min(limit, 200))}`
+  );
+  return status === 200 && Array.isArray(data.jobs) ? data : null;
+}
+
+// ── TASK-005: 受管服务 desired/live/stable 身份视图 ──────────────────────────
+export interface ServiceLiveInfo {
+  manifest_present?: boolean;
+  pid?: number | null;
+  pid_alive?: boolean;
+  started_at?: string | null;
+  git_head?: string | null;
+  build?: Record<string, unknown>;
+  model_ref?: string | null;
+  provider_id?: string | null;
+  manifest_error?: boolean;
+}
+
+export interface ServiceStableInfo {
+  action_id: string;
+  target: string;
+  generation: number;
+  succeeded_at: string;
+  git_head: string | null;
+  matches_desired_generation: boolean;
+}
+
+export interface ServiceIdentityInfo {
+  live: ServiceLiveInfo;
+  stable: ServiceStableInfo | null;
+  restart_required: boolean;
+  reasons: string[];
+}
+
+export interface DesiredDeploymentInfo {
+  generation: number;
+  git_head: string;
+  code_root: string;
+  runtime_root: string;
+  deployment_id: string;
+  webui_artifact_sha256: string;
+}
+
+export interface ServicesStatusInfo {
+  deployment: DesiredDeploymentInfo | null;
+  services: Record<string, ServiceIdentityInfo>;
+}
+
+export async function fetchServicesStatus(): Promise<ServicesStatusInfo | null> {
+  const { status, data } = await api<ServicesStatusInfo>("/api/v1/services/status");
+  return status === 200 && data.services ? data : null;
+}
+
 export async function fetchHealth(): Promise<HealthInfo | null> {
   const { status, data } = await api<HealthInfo>("/health");
   return status === 200 ? data : null;

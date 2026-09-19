@@ -71,7 +71,7 @@
       "dom",
       "ax"
     ],
-    "vision": "explicit_only_deferred_phase2",
+    "vision": "explicit_only_evidence_layer",
     "verbs": [
       "observe",
       "hydrate",

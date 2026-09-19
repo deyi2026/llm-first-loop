@@ -902,6 +902,12 @@ def project_active_tool_working_set_with_stats(
                         and pending_net_gain >= min_net_gain_chars
                     ):
                         fold_trigger = "soft_cap_net_gain"
+                elif pending_chars >= batch_chars:
+                    # Resource-safety valve: the byte hard boundary outranks the
+                    # append-only preference. Without it, a same-run prefix can
+                    # grow unbounded (e.g. a few very large results) far past any
+                    # provider budget long before the result-count cap fires.
+                    fold_trigger = "resource_safety_bytes"
                 elif len(pending) >= hard_result_cap:
                     # Same-run tool follow-ups keep the already-sent provider prefix
                     # append-only whenever resource bounds permit. The hard result
@@ -1132,6 +1138,12 @@ def _index_range(
     if not _completed_model_answer(final_message) and not resolution_proven:
         return None
     existing_ref = resolved_episode_ref(user_message)
+    if existing_ref and store.get(session_id, existing_ref) is not None:
+        # 该 human turn 的 episode 身份已持久落盘并被标记。恢复/重试在同一
+        # human-turn 窗口内追加的新 completed answer 会让 backfill 重算出漂移的
+        # end，把不同 transcript 送进 append-only store 会触发 fail-closed
+        # collision。已持久化的身份不重写：新追加内容保持 provider 可见。
+        return existing_ref
     ref = existing_ref or stable_episode_ref(session_id, user_message, start)
     store.index_episode(
         session_id,

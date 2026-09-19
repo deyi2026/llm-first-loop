@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { App } from "./App";
+import { mainViewStore } from "./core/stores";
 
 describe("App 布局壳", () => {
   beforeEach(() => {
@@ -16,6 +17,7 @@ describe("App 布局壳", () => {
   });
   afterEach(() => {
     cleanup();
+    mainViewStore.setView("chat");
     vi.unstubAllGlobals();
     document.body.removeAttribute("data-ds-dark-theme");
     localStorage.clear();
@@ -31,6 +33,45 @@ describe("App 布局壳", () => {
     expect(screen.getByText("LLM-First Loop")).toBeInTheDocument();
     // 空状态 hero（对齐 DSH 文案风格）
     expect(screen.getByText("描述你想要构建的内容")).toBeInTheDocument();
+  });
+
+  it("固定学习通道入口打开独立 Learning Plane 观察页", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/learning/status")) {
+        return new Response(JSON.stringify({
+          enabled: true,
+          producer_only: true,
+          worker: { running: true, model_ref: "glm/glm-5.3" },
+          counts: { queued: 1, started: 0, saved: 2, failed: 0 },
+          jobs: [{
+            job_id: "learn:abc",
+            source_episode_ref: "episode:s1:1:x",
+            source_session_id: "s1",
+            source_model: "glm/glm-5.3",
+            state: "saved",
+            attempt: 1,
+            candidate_ref: "method:probe",
+            created_at: 1,
+            updated_at: 2,
+            finished_at: 2,
+            trigger_facts: { rounds: 8 },
+          }],
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ sessions: [], count: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+
+    render(<App />);
+    expect(screen.getByTestId("learning-entry")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("learning-entry"));
+    expect(await screen.findByTestId("learning-panel")).toBeInTheDocument();
+    expect(screen.getByText("● Worker 运行中")).toBeInTheDocument();
+    expect(screen.getByText("method:probe")).toBeInTheDocument();
+    expect(screen.queryByTestId("conversation")).toBeNull();
   });
 
   it("主题切换：暗色 → body 属性生效，偏好持久化", () => {

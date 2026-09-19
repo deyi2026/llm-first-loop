@@ -6,9 +6,11 @@ import { channelLabel, archiveSession, deleteSession, fetchAgentsTree, fetchSess
 import { refreshSessionsAndCurrent } from "../../core/events";
 import { useCapabilities } from "../../core/capabilities";
 import {
+  mainViewStore,
   sessionStore,
   sidebarViewStore,
   useCurrentSessionId,
+  useMainView,
   useSessions,
   useSidebarView,
 } from "../../core/stores";
@@ -23,6 +25,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const caps = useCapabilities();
   const sessions = useSessions();
   const currentId = useCurrentSessionId();
+  const mainView = useMainView();
   const [query, setQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -63,6 +66,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const handleNew = () => {
     if (busyAction) return;
     setActionError("");
+    mainViewStore.setView("chat");
     sessionStore.setCurrentSession("");
     sessionStore.setNewSessionPending(true);  // 2026-08-18 修复跳回旧会话
     conversationStore.setState({
@@ -121,6 +125,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       return;
     }
     if (currentId === sid) {
+      mainViewStore.setView("chat");
       sessionStore.setCurrentSession("");
       conversationStore.setState({
         messages: [],
@@ -141,6 +146,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       finishAction();
       return;
     }
+    mainViewStore.setView("chat");
     sessionStore.setCurrentSession(report.new_session_id);
     await refreshSessionsAndCurrent();
     await loadHistory(report.new_session_id);
@@ -168,6 +174,24 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       </div>
       <button type="button" className="v2-new-session" data-testid="new-session" onClick={handleNew} disabled={Boolean(busyAction)}>
         ＋ {zh.newSession}
+      </button>
+      <button
+        type="button"
+        className={`v2-learning-entry ${mainView === "learning" ? "active" : ""}`}
+        data-testid="learning-entry"
+        onClick={() => mainViewStore.setView("learning")}
+      >
+        <span>🧠 学习通道</span>
+        <small>Reflection · Methods</small>
+      </button>
+      <button
+        type="button"
+        className={`v2-learning-entry ${mainView === "services" ? "active" : ""}`}
+        data-testid="services-entry"
+        onClick={() => mainViewStore.setView("services")}
+      >
+        <span>🛠 服务身份</span>
+        <small>desired · live · stable</small>
       </button>
       <div className="v2-sidebar-tabs">
         <button
@@ -226,7 +250,10 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                 <button
                   type="button"
                   className="v2-session-item"
-                  onClick={() => sessionStore.setCurrentSession(s.session_id)}
+                  onClick={() => {
+                    mainViewStore.setView("chat");
+                    sessionStore.setCurrentSession(s.session_id);
+                  }}
                 >
                   <span className="v2-session-title">🗄 {s.title || "未命名"}</span>
                   <span className="v2-session-preview">
@@ -266,11 +293,13 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         activeSessionId={currentId ?? undefined}
         onOpenOtherSession={(_wsId, sid) => {
           // 工作区已由 WorkspaceGroups 切换；打开会话（Conversation 随 currentId 加载历史）
+          mainViewStore.setView("chat");
           sessionStore.setCurrentSession(sid);
           void refreshSessionsAndCurrent();
         }}
         onWorkspaceChanged={() => {
           // 新工作区无旧会话上下文：清空当前会话与对话区（对齐 handleNew）
+          mainViewStore.setView("chat");
           sessionStore.setCurrentSession("");
           conversationStore.setState({ messages: [], hasMoreHistory: false, loadedHistoryCount: 0 });
           void refreshSessionsAndCurrent();
@@ -324,7 +353,10 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   <button
                     type="button"
                     className="v2-session-item"
-                    onClick={() => sessionStore.setCurrentSession(s.session_id)}
+                    onClick={() => {
+                      mainViewStore.setView("chat");
+                      sessionStore.setCurrentSession(s.session_id);
+                    }}
                   >
                     <span className="v2-session-title">
                       {s.pinned ? "📌 " : ""}

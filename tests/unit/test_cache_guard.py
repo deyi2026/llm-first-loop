@@ -340,3 +340,61 @@ class TestValidateRequest:
         d = g.check(session_id="s-fixed", system_text="sys", messages=_sys("sys"))
         assert d.verdict == "WARN"
         assert d.rule == "low_hit_rate"
+
+
+class TestSubmitRatioWireCaliber:
+    """EVO-20260918-be2ff060: submit_ratio 分子改用 wire 口径（统一计量准绳）.
+
+    2026-08-26 事故同型盲区：assistant 带 tool_calls/reasoning_content 时
+    content-only 计量低估提交体积 → ratio 失真、该拦不拦。
+    """
+
+    def test_submit_ratio_counts_tool_calls_and_reasoning(self, tmp_path, monkeypatch):
+        """content-only 口径 ratio=0.5（ALLOW，旧口径漏判），wire 口径 ratio≈1.27。
+
+        monkeypatch _PERF_BLOCK_MODE="on" + breaker_active=False（与
+        test_submit_ratio_block 同构）锁定完整 BLOCK 语义，证明口径变更
+        改变判定结果。
+        """
+        import llm_loop.cache_guard.guard as guard_mod
+
+        monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "on")
+        # 总 content 3000，budget 6000：content-only ratio=0.5 → ALLOW（旧口径漏判）
+        msgs = [
+            {"role": "system", "content": "s" * 1000},
+            {
+                "role": "assistant",
+                "content": "a" * 2000,
+                "reasoning_content": "r" * 2000,
+                "tool_calls": [
+                    {"function": {"name": "shell", "arguments": "x" * 2600}},
+                ],
+            },
+        ]
+        d = validate_request(
+            system_text="s" * 1000, messages=msgs,
+            meta={"history_budget": 6000, "breaker_active": False},
+            audit_file=tmp_path / "g.jsonl",
+        )
+        wire_chars = guard_mod.dict_wire_chars(msgs[1])
+        assert wire_chars == 2000 + 2000 + 2600 + len("shell")  # wire 口径全字段
+        assert d.verdict == "BLOCK"
+        assert d.rule == "submit_ratio"
+
+    def test_dict_wire_chars_is_single_source(self):
+        """history._dict_wire_size 与准绳 core.message.dict_wire_chars 同一实现
+        （压缩预算与守卫共用同一计量函数，禁止口径分叉）。"""
+        from llm_loop.cache_guard.guard import dict_wire_chars as guard_ref
+        from llm_loop.core.history import _dict_wire_size as history_ref
+        from llm_loop.core.message import dict_wire_chars as pulp
+
+        d = {
+            "role": "assistant",
+            "content": "c" * 10,
+            "reasoning_content": "r" * 5,
+            "tool_calls": [{"function": {"name": "t", "arguments": "a" * 7}}],
+        }
+        assert history_ref(d) == pulp(d) == guard_ref(d) == 10 + 5 + 7 + 1
+        # _provider_replay.reasoning_details 分支与 reasoning_content 互斥覆盖
+        d2 = dict(d, _provider_replay={"fields": {"reasoning_details": [{"t": "x" * 20}]}})
+        assert pulp(d2) == 10 + len(json.dumps([{"t": "x" * 20}], ensure_ascii=False)) + 7 + 1

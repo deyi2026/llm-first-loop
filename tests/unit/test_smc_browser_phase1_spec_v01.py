@@ -244,7 +244,7 @@ def test_scope_sensor_and_c28_conflict_contract_are_closed() -> None:
     assert profile["scope_model"]["id_uniqueness"] == "runtime_session"
     assert profile["scope_model"]["navigation_changes_document_generation"] is True
     assert profile["sensors"]["active"] == ["dom", "ax"]
-    assert profile["sensors"]["vision"] == "explicit_only_deferred_phase2"
+    assert profile["sensors"]["vision"] == "explicit_only_evidence_layer"
     assert profile["sensors"]["silent_source_priority"] is False
     assert profile["conflict_contract"]["unresolved_canonical_value"] is None
     assert profile["conflict_contract"]["preserve_source_value_grounding"] is True

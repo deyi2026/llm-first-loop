@@ -257,7 +257,7 @@ def write_manifest(manifest: dict, data_dir: str | Path) -> Path:
     # addition to the historical last-writer compatibility manifest. PID is an
     # observation only; it never grants lifecycle authority.
     service = str(manifest.get("service") or "").strip()
-    if service in {"web", "feishu"}:
+    if service in {"web", "feishu", "learning"}:
         specific = rt_dir / f"runtime_manifest.{service}.json"
         specific_tmp = specific.with_suffix(specific.suffix + ".tmp")
         specific_tmp.write_text(

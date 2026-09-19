@@ -153,13 +153,13 @@ export function Composer() {
           modelsRef.current.map((m) => ({
             label: m,
             run: () => {
-              sessionStore.setModel(m);
+              sessionStore.selectModel(m);
               flashHint(`已选择模型：${m}（当前请求生效）`);
             },
           })),
         run: (arg) => {
           if (arg) {
-            sessionStore.setModel(arg);
+            sessionStore.selectModel(arg);
             flashHint(`已选择模型：${arg}（当前请求生效）`);
           }
         },
@@ -185,9 +185,21 @@ export function Composer() {
   useEffect(() => {
     const prefill = conv.composerPrefill;
     if (!prefill) return;
-    setText(prefill.text);
-    setAttachments(
-      prefill.attachments.map((item) => ({
+    // “撤回编辑”必须保留用户此刻已有草稿；正文按现有草稿→撤回内容顺序合并，
+    // 附件按 opaque ref 去重，不覆盖正在编辑的附件集合。
+    setText((current) => {
+      const restored = prefill.text || "";
+      if (!restored) return current;
+      if (!current) return restored;
+      return `${current}${current.endsWith("\n") ? "" : "\n"}${restored}`;
+    });
+    setAttachments((current) => {
+      const knownRefs = new Set(
+        current.map((item) => item.attachment_ref).filter((ref): ref is string => Boolean(ref))
+      );
+      const restored = prefill.attachments
+        .filter((item) => !knownRefs.has(item.ref))
+        .map((item) => ({
         id: newAttachmentId(),
         filename: item.filename,
         result_text: "",
@@ -196,8 +208,9 @@ export function Composer() {
         content_type: item.content_type,
         size_bytes: item.size_bytes,
         sha256: item.sha256,
-      }))
-    );
+        }));
+      return [...current, ...restored];
+    });
     conversationStore.setState({ composerPrefill: null });
     window.setTimeout(() => taRef.current?.focus(), 0);
   }, [conv.composerPrefill]);
@@ -246,7 +259,7 @@ export function Composer() {
   }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Cmd/Ctrl+Enter：流式生成中 → 排队插话（P0 假对齐修复：zh.ts 早已宣称此能力）
+    // Cmd/Ctrl+Enter：流式生成中 → 普通排队；真“立即插入”由队列项按钮显式触发。
     // 必须在普通 Enter 分支之前判断（普通分支条件会先命中同为 Enter 的组合键）
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       // IME 保护同普通 Enter：组合中（含候选选择）回车交给输入法

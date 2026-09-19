@@ -262,6 +262,11 @@ def test_launch_dry_run_uses_dual_root_runtime_toml_and_reports_provenance(
 
     code_root = Path(__file__).resolve().parents[2]
     runtime_root = tmp_path / "runtime-root"
+    # code_root is the real repo root; a gitignored runtime.toml may legitimately
+    # pre-exist there on dev machines. The intent of the final assertion is
+    # "dry-run never writes to code_root", so compare content, not existence.
+    _code_toml = code_root / "runtime.toml"
+    _pre = _code_toml.read_bytes() if _code_toml.exists() else None
     _runtime_toml(
         runtime_root,
         f"""
@@ -289,4 +294,4 @@ port = 8991
     assert "identity_ok=True" in captured.err
     assert "local-eval" not in captured.out
     assert "local-eval" not in captured.err
-    assert not (code_root / "runtime.toml").exists()
+    assert (_code_toml.read_bytes() if _code_toml.exists() else None) == _pre

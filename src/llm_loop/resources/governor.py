@@ -4,9 +4,12 @@ RG-1 owns only mechanical resource admission:
 
 - explicit concurrency limits over ``ResourceKey`` scopes;
 - atomic multi-key leases;
-- non-preemptive service ordering for waiters;
-- a narrow external foreground barrier used while Task runs have not yet moved
-  to ResourceGovernor leases.
+- service ordering for waiters is non-preemptive among peer requests;
+- a narrow external foreground barrier, plus foreground preemption for P0-B:
+  when a foreground-class request (priority above the barrier) attempts
+  admission while the external foreground probe is active, overlapping
+  background-class leases are revoked immediately, so the user plane never
+  queues behind background learning.
 
 It does not inspect prompts, task content, model quality, Method applicability,
 completion, rate/cost/trust policy, or provider cancellation.  Unknown capacity
@@ -148,7 +151,11 @@ class ResourceGovernor:
             return True
 
     def higher_priority_active(self, priority: ServicePriority) -> bool:
-        """Whether known active work outranks ``priority``; no preemption is attempted."""
+        """Whether known active work outranks ``priority``.
+
+        Observation alone never preempts: revocation happens only inside a
+        foreground-class admission attempt (see ``_attempt_locked``).
+        """
         with self._condition:
             if (
                 priority >= self._foreground_barrier_min_priority
@@ -156,6 +163,47 @@ class ResourceGovernor:
             ):
                 return True
             return any(lease.service_priority < priority for lease in self._leases.values())
+
+    # ---------- foreground preemption ----------
+
+    def _revoke_overlapping_background_locked(
+        self, request: AdmissionRequest
+    ) -> tuple[ResourceLease, ...]:
+        """Revoke active background-class leases overlapping ``request``.
+
+        Mechanical yield enforcement for P0-B: the lease and its in-flight
+        accounting are removed immediately, so a foreground-class request can
+        be admitted without waiting for the preempted background call to
+        finish.  The preempted holder later calling ``release`` gets ``False``
+        (the existing idempotent path).  Only leases at or below the
+        foreground barrier (the background service classes) are revocable.
+        """
+        request_keys = set(request.resource_keys)
+        revoked: list[ResourceLease] = []
+        for lease in list(self._leases.values()):
+            if lease.service_priority < self._foreground_barrier_min_priority:
+                continue  # foreground-class leases are never revocable here
+            if not request_keys.intersection(lease.resource_keys):
+                continue  # no shared capacity: nothing to yield
+            self._leases.pop(lease.lease_id, None)
+            self._leases_by_request.pop(lease.request_id, None)
+            for key in lease.resource_keys:
+                current = self._in_flight.get(key, 0)
+                if current <= 1:
+                    self._in_flight.pop(key, None)
+                else:
+                    self._in_flight[key] = current - 1
+            revoked.append(lease)
+        if revoked:
+            self._condition.notify_all()
+        return tuple(revoked)
+
+    def revoke_overlapping_background(
+        self, request: AdmissionRequest
+    ) -> tuple[ResourceLease, ...]:
+        """Public, explicit form of foreground preemption (tests/tools)."""
+        with self._condition:
+            return self._revoke_overlapping_background_locked(request)
 
     # ---------- admission ----------
 
@@ -234,6 +282,15 @@ class ResourceGovernor:
                 reason=AdmissionReason.AVAILABLE,
                 lease=existing,
             )
+
+        if (
+            request.service_priority < self._foreground_barrier_min_priority
+            and self._external_foreground_active()
+        ):
+            # Foreground always wins: a foreground-class admission attempt
+            # revokes overlapping background-class leases before this request
+            # is evaluated, so the user plane never queues behind learning.
+            self._revoke_overlapping_background_locked(request)
 
         if (
             request.service_priority >= self._foreground_barrier_min_priority

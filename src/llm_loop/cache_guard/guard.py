@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from llm_loop.core.message import dict_wire_chars
 from llm_loop.llm.errors import LLMError
 from llm_loop.runtime.resolver import business_config_snapshot
 
@@ -216,11 +217,19 @@ def _check_submit_ratio(messages: list[dict], meta: dict) -> GuardDecision | Non
     P0 压缩风暴熔断协调（2026-08-25）: breaker 冻结期（breaker_active）程序压缩
     已冻结，超限载荷由 engine 前置 context_pressure 管控（安全水位 = 0.95 与
     本规则 BLOCK 阈值对齐）——此处 BLOCK 降级 WARN，避免"禁压缩 + 禁提交"双拦死锁。
+
+    口径修正（breaking change, EVO-20260918-be2ff060, 2026-09-18 人工批准执行）:
+    分子原按 content-only 计（len(content)）——assistant 消息带大量 tool_calls /
+    reasoning_content 时被低估，ratio 失真、该拦不拦（与 2026-08-26 压缩器
+    content 口径事故同型）。现改用准绳 core.message.dict_wire_chars（wire 口径：
+    content + reasoning + tool_calls 参数），与压缩预算（history._wire_size /
+    _dict_wire_size）同口径。**行为变化：ratio 普遍升高，85%/95% 阈值触发更早
+    ——这正是修正目的（阈值语义首次真正成立），阈值数值无需变更。**
     """
     budget = int(meta.get("history_budget") or 0)
     if budget <= 0:
         return None
-    total_chars = sum(len(str(m.get("content") or "")) for m in messages)
+    total_chars = sum(dict_wire_chars(m) for m in messages)
     ratio = total_chars / budget
     if ratio > _SUBMIT_RATIO_BLOCK:
         # D'-1.1（R8.24 D-D3）: enforce 态性能类退出 BLOCK——breaker_active 三分支

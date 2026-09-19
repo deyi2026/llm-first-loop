@@ -117,15 +117,43 @@ def _run_adjust_strategy(args: dict, host: RegistryHost) -> ToolResult:
         runtime.record_adjust_multi(proposed)
     host.audit("adjust_strategy", proposed, "success")
     diffs = ", ".join(f"{k}: {before.get(k, '<默认>')} → {v}" for k, v in proposed.items())
+    chain = _effective_chain_lines(proposed, whitelist)
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=(
-            f"[已生效] 循环策略已更新: {{{diffs}}}（生效范围: 当前 run 起全部后续轮次；"
-            f"受全局硬上限 500 约束）。\n当前生效值: {json.dumps(host.current_params(), ensure_ascii=False)}"
+            f"[已生效] 循环策略已更新: {{{diffs}}}（生效范围: 当前 run 起全部后续轮次）。\n"
+            f"生效链:\n{chain}"
+            f"当前生效值: {json.dumps(host.current_params(), ensure_ascii=False)}"
         ),
         tool_call_id="",
         tool_name="adjust_strategy",
     )
+
+
+def _effective_chain_lines(proposed: dict, whitelist: dict) -> str:
+    """生效链回执（EVO-20260918-8417246d, 2026-09-18 人工批准执行）.
+
+    按 key 输出机械可判定的压制层与档位（绿=申请值生效 / 红=被白名单硬上限
+    压制；history_budget 因 provider 层仍可能在引擎侧收敛而恒标黄），使模型
+    能感知"值由哪层决定"，不再把回执数值当成无上下文的裸数。
+    """
+    lines: list[str] = []
+    for key, val in proposed.items():
+        spec = whitelist.get(key) or {}
+        max_cap = spec.get("max")
+        if max_cap is not None and val >= max_cap:
+            tier, note = "红", f"被白名单硬上限压制（上限 {max_cap}，已打满）"
+        elif key == "history_budget":
+            tier = "黄"
+            note = (
+                "申请值生效（白名单上限 "
+                f"{max_cap}）；provider 层（模型窗口−输出预留）仍可能在引擎侧进一步收敛"
+                "——实际预算以守卫/回执 budget= 为准"
+            )
+        else:
+            tier, note = "绿", f"申请值生效（白名单上限 {max_cap}）"
+        lines.append(f"- {key}: {val}（{tier}｜{note}）")
+    return "\n".join(lines) + "\n"
 
 
 def _run_retry(args: dict, host: RegistryHost) -> ToolResult:

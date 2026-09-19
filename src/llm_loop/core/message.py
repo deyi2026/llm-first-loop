@@ -300,3 +300,32 @@ class ToolResult:
             duration_ms=self.duration_ms,
             metadata=metadata,
         )
+
+
+def dict_wire_chars(d: dict) -> int:
+    """提交视图口径体积（wire dict 版）——压缩预算与守卫的统一计量准绳.
+
+    EVO-20260918-be2ff060（人工批准执行）: 所有压缩/守卫/预算计量必须采用
+    同一单位与同一字段集，禁止两套口径并存。口径 = content + reasoning_content
+    （或 _provider_replay.reasoning_details）+ tool_calls(function.name+arguments)。
+
+    历史教训（2026-08-26 glm 超限死循环）: 压缩按 content 计（159K < 255K 判不超）、
+    守卫按全字段计（907K 超限拦截）→ 压缩器恒不触发。同理 2026-09-18 发现守卫
+    submit_ratio（规则 F）仍按 content-only 计——assistant 消息带大量 tool_calls /
+    reasoning_content 时分子被低估，ratio 失真、该拦不拦（storm_breaker 实测 5 次
+    预算口径矛盾）。
+
+    口径变更视为 breaking change：须同步受影响的守卫阈值并显式记录（本文件注释 +
+    调用方 docstring），不得静默变更。
+    """
+    n = len(str(d.get("content") or ""))
+    replay = d.get("_provider_replay")
+    replay_fields = replay.get("fields") if isinstance(replay, dict) else None
+    if isinstance(replay_fields, dict) and replay_fields.get("reasoning_details") is not None:
+        n += len(json.dumps(replay_fields["reasoning_details"], ensure_ascii=False))
+    else:
+        n += len(str(d.get("reasoning_content") or ""))
+    for tc in d.get("tool_calls") or []:
+        fn = (tc or {}).get("function") or {}
+        n += len(str(fn.get("arguments") or "")) + len(str(fn.get("name") or ""))
+    return n

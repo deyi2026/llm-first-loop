@@ -862,3 +862,28 @@ def test_later_unresolved_exact_duplicate_does_not_supersede_earlier_attempt():
     second_partial = _final("未完成2", completed=False, ts=2.5)
     messages = [first, first_partial, second, second_partial]
     assert provider_view_without_resolved_episodes(messages) == messages
+
+
+def test_backfill_skips_durable_episode_when_recovery_appends_in_same_window(tmp_path):
+    """已持久 episode 在恢复追加后不得重写（regression: 7f642f54 ref collision）。
+
+    场景：episode 0..1 已索引并标记；恢复期在同一 human-turn 窗口内追加了新的
+    completed answer。backfill 重算的 end 漂移到新 answer，旧实现会以同一 ref、
+    不同 transcript 触发 append-only store 的 fail-closed collision 并每次恢复
+    重复失败。期望：身份不重写、新追加消息保持 provider 可见。
+    """
+    store = EpisodeStore(tmp_path / "episodes")
+    sess = Session(session_id="sid-drift", messages=[_user("Q", ts=1.0), _final("A", ts=2.0)])
+    ref = index_current_completed_episode(store, sess, turn_ref=0, final_answer_index=1)
+    assert ref
+    assert store.get("sid-drift", ref) is not None
+
+    # 模拟恢复重试在同一窗口追加的 completed answer（无新 human turn）。
+    sess.messages.append(_final("A2-retry-after-recovery", ts=3.0))
+
+    refs = backfill_completed_episodes(store, sess)
+    assert refs == [ref]
+    entry = store.get("sid-drift", ref)
+    assert entry is not None and entry["message_count"] == 2
+    assert RESOLVED_EPISODE_REF_KEY not in sess.messages[2].metadata
+    assert provider_view_without_resolved_episodes(sess.messages) == [sess.messages[2]]

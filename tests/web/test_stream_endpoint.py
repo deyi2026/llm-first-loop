@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from llm_loop.core.loop import LoopResult
 from llm_loop.web import build_app
+from llm_loop.web.routes import _apply_session_model_override
 from tests.unit.test_stream_equivalence import StreamingFakeLLM
 
 
@@ -469,6 +470,25 @@ def test_chat_stream_accepted_persists_canonical_model_override(build_test_engin
     assert resp.status_code == 200
     assert _parse_sse(resp.text)[-1]["type"] == "done"
     assert engine.session.load(sid).model_override == expected
+
+
+def test_stale_web_model_snapshot_cannot_overwrite_session_switch_model_authority():
+    """A repeated payload.model snapshot is not an implicit model-change command."""
+    session = type("SessionStub", (), {})()
+    session.model_override = "glm/glm-5.3-flash"
+
+    _apply_session_model_override(session, "glm/glm-5.3", explicit_change=False)
+
+    assert session.model_override == "glm/glm-5.3-flash"
+
+
+def test_explicit_web_model_change_can_replace_session_model_authority():
+    session = type("SessionStub", (), {})()
+    session.model_override = "glm/glm-5.3-flash"
+
+    _apply_session_model_override(session, "glm/glm-5.3", explicit_change=True)
+
+    assert session.model_override == "glm/glm-5.3"
 
 
 class _EffortRecordingLLM(StreamingFakeLLM):

@@ -112,6 +112,9 @@ def test_v06_provider_surface_separates_perception_scope_wait_and_object_wait() 
     assert set(perceive_props) == {
         "action",
         "projection_limit",
+        "projection_kinds",
+        "projection_cursor",
+        "vision",
         "grounding_ref",
         "from_version",
         "to_version",
