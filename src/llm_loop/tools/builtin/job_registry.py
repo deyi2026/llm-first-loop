@@ -513,7 +513,9 @@ def format_session_jobs_facts(session_id: str, *, registry: JobRegistry | None =
         return raw[:60]
 
     def _output_tail(snap: dict[str, object]) -> str:
-        lines = [str(line) for line in (snap.get("output") or []) if str(line).strip()]
+        raw_output = snap.get("output")
+        entries = raw_output if isinstance(raw_output, list) else []
+        lines = [str(line) for line in entries if str(line).strip()]
         return lines[-1].strip()[:80] if lines else ""
 
     lines: list[str] = []
