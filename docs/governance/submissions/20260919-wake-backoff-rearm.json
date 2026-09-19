@@ -1,0 +1,196 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-wake-backoff-rearm",
+  "summary": "EVO-20260919-f119847d（人工已审）: wake 交付瞬态失败的机械退避与 grant 重铸。defer_wake_retry 按 30→480s 指数退避推迟，双上限（WAKE_MAX_RETRIES=10 / WAKE_RETRY_WINDOW_S=1800），任一到顶降级为可见通知并消费条目；rearm_wake_grants 在同会话下一次真人 run 启动时重铸丢失的 wake grant（仅 owner 已死且 wake_started_at==0 的条目；委派 token 不可再委派）。无新 store/无 watcher，全部复用既有 ScheduleStore 与 lifecycle run 启动点，rearm 钩子缺省 None、异常 fail-open。",
+  "components": [
+    {
+      "component_id": "wake-backoff-scheduler",
+      "paths": [
+        "src/llm_loop/core/scheduler.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "SchedulerThread 交付路径（_deliver/defer/consume 语义）",
+      "disposition": "ADMIT as bounded retry policy on the already-authorized wake delivery path: transient startup failures no longer burn the grant via mark_triggered nor retry immediately in a tight loop; exponential backoff 30→480s with dual caps (retries=10 / window=1800s), first cap hit degrades to visible notification and consumes the entry.",
+      "evidence": [
+        "事故基线（2026-09-19 本会话实证）: 瞬态失败时 wake 立即重投形成紧循环；mark_triggered 先消费导致 grant 丢失后 run 不再被唤醒。",
+        "tests/unit/test_schedule_wake.py 17 tests green（退避序列、双上限、降级通知、重铸路径、委派禁令）。",
+        "ruff clean；pyright 0 errors（含本提交补的 LoopEngine.rearm_wake_grants 属性声明）。"
+      ],
+      "verification_level": "Focused TDD (17 tests) + ruff + pyright + CI 门禁",
+      "model_evidence_veto_recovery_exit": "Backoff is delivery-timing only; wake message and completion semantics unchanged. Exit: revert the single commit, delivery returns to immediate retry.",
+      "rollback_route": "Revert the single commit; no data or schema migration.",
+      "declaration_id": "wake-backoff-scheduler"
+    },
+    {
+      "component_id": "wake-rearm-hook-wiring",
+      "paths": [
+        "src/llm_loop/core/loop/lifecycle.py",
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/factory.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "factory 装配 + LoopEngine 属性声明 + lifecycle run 启动点消费",
+      "disposition": "ADMIT as an optional engine hook: factory injects rearm_wake_grants next to the existing scheduler wiring; lifecycle consumes it via getattr on human ingress only (delegated tokens excluded); missing hook or hook failure fails open and never blocks a human run. engine.py adds only the type declaration for pyright (mirrors the existing scheduler: Any | None = None pattern).",
+      "evidence": [
+        "lifecycle.py: getattr(self, \"rearm_wake_grants\", None) + callable check + try/except fail-open（唤醒重铸绝不阻断真人 run）。",
+        "engine.py: rearm_wake_grants: Callable[[str, object], None] | None = None —— 与 scheduler 声明同区同模式，pyright 0 errors。",
+        "tests/unit/test_schedule_wake.py 覆盖：仅未委派 human ingress 重铸、委派 token 拒绝、钩子异常 fail-open。"
+      ],
+      "verification_level": "Focused TDD + adjacent factory/schedule suites + pyright",
+      "model_evidence_veto_recovery_exit": "Hook is opt-in by assembly; absent wiring leaves runtime identical to pre-EVO. Exit: revert or leave unwired.",
+      "rollback_route": "Revert the single commit.",
+      "declaration_id": "wake-rearm-hook-wiring"
+    },
+    {
+      "component_id": "ingress-delegation-entry",
+      "paths": [
+        "src/llm_loop/core/trace_leak/ingress_token.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "IngressToken delegation 审计面",
+      "disposition": "ADMIT as audit-label widening only: delegation records gain entry=\"schedule_wake\" so rearm can distinguish wake-issued delegated tokens from human ones; no authority change, delegated tokens remain non-rearmable.",
+      "evidence": [
+        "提交 diff: ingress delegation 增加 entry=schedule_wake（4 行）。",
+        "trace_leak 相邻测试与 test_schedule_wake.py 委派禁令用例 green。"
+      ],
+      "verification_level": "Adjacent suites + focused tests",
+      "model_evidence_veto_recovery_exit": "Label is audit metadata; rearm still hard-excludes delegated tokens by predicate.",
+      "rollback_route": "Revert with the commit.",
+      "declaration_id": "ingress-delegation-entry"
+    },
+    {
+      "component_id": "schedule-schema-note",
+      "paths": [
+        "src/llm_loop/tools/builtin/schedule.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "ScheduleTool schema surface（wake 退避行为在模型可读契约上的说明）",
+      "disposition": "ADMIT as description-layer only (2 lines): tool description states that wake delivery failures back off before visible notification; no schema/logic change (same precedent as ae675930 description clarification).",
+      "evidence": [
+        "diff: 2 行描述补充，无逻辑变更。",
+        "schedule 相邻测试全绿。"
+      ],
+      "verification_level": "Adjacent schedule tests",
+      "model_evidence_veto_recovery_exit": "Advisory text; model/human review retains judgment.",
+      "rollback_route": "Revert with the commit.",
+      "declaration_id": "schedule-schema-note"
+    },
+    {
+      "component_id": "wake-backoff-rearm-tests",
+      "paths": [
+        "tests/unit/test_schedule_wake.py",
+        "docs/governance/submissions/20260919-wake-backoff-rearm.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic regression + this submission manifest (non-control docs)",
+      "disposition": "ADMIT as tests + the submission manifest itself (non-control).",
+      "evidence": [
+        "17 tests green locally; covers backoff cadence 30→480s, both caps, notify-and-consume on cap, rearm only for dead-owner/wake-not-started entries, delegated-token exclusion, hook fail-open."
+      ],
+      "verification_level": "pytest",
+      "model_evidence_veto_recovery_exit": "Tests only.",
+      "rollback_route": "Revert with the commit."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "wake-backoff-scheduler",
+      "g1": {
+        "necessity": "2026-09-19 实证：wake 交付瞬态失败（runner busy/不可启动）时立即重投形成紧循环；且 mark_triggered 先行消费使 grant 丢失，后续 run 不再被唤醒，续跑链路静默断裂。需要机械退避节奏 + 丢失 grant 的重铸路径。"
+      },
+      "g2": {
+        "authority_owner": "既有 SchedulerThread 交付与 ScheduleStore 条目生命周期（owner 唯一）",
+        "relationship": "reuse",
+        "non_duplication": "不新增 store/线程/投影：退避字段写在既有条目上，双上限常量与交付路径同处 scheduler.py。"
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/unit/test_schedule_wake.py 17 tests PASS（本提交新增退避/重铸覆盖）",
+          "ruff clean；pyright 0 errors",
+          "退避序列机械验证：30→60→120→240→480s，retries 与 window 任一到顶即降级通知并消费"
+        ],
+        "recovery_or_reason": "单提交 revert 即完全退出；无数据/模式迁移。"
+      },
+      "g4": {
+        "rollback": "Revert the single commit; wake delivery returns to prior immediate-retry semantics.",
+        "verification": [
+          "tests/unit/test_schedule_wake.py 17/17 PASS",
+          "ruff clean；pyright 0 errors",
+          "CI 门禁（pytest+ruff+pyright）在 PR 上复核"
+        ]
+      }
+    },
+    {
+      "declaration_id": "wake-rearm-hook-wiring",
+      "g1": {
+        "necessity": "grant 丢失后（进程重启/装配失败吞掉条目）唯一恢复途径依赖真人再次介入；同会话下一次真人 run 是机械上最安全的重铸时机（ingress 已验证为未委派 human）。"
+      },
+      "g2": {
+        "authority_owner": "既有 factory 装配点（与 scheduler 同一 try 块）+ 既有 lifecycle run 启动序列",
+        "relationship": "reuse",
+        "non_duplication": "钩子是单一函数引用挂在 engine 属性上（与 scheduler/runner 同模式），lifecycle 用 getattr 消费，不新增接口面；engine.py 仅补类型声明。"
+      },
+      "g3": {
+        "model_evidence": [
+          "getattr + callable 检查 + try/except fail-open 三重防护（lifecycle.py:144-150）",
+          "未装配钩子时行为与 pre-EVO 完全一致（默认 None）",
+          "pyright 0 errors（factory.py/engine.py/lifecycle.py）"
+        ],
+        "recovery_or_reason": "钩子异常仅告警不阻断；不装配即禁用；单提交 revert 退出。"
+      },
+      "g4": {
+        "rollback": "Revert the single commit.",
+        "verification": [
+          "test_schedule_wake.py 重铸路径与委派禁令用例 PASS",
+          "pyright 0 errors"
+        ]
+      }
+    },
+    {
+      "declaration_id": "ingress-delegation-entry",
+      "g1": {
+        "necessity": "rearm 需要区分 wake 发出的委派 token 与真人 ingress；delegation 记录缺 entry 标签时只能靠启发式。"
+      },
+      "g2": {
+        "authority_owner": "既有 IngressToken delegation 审计记录",
+        "relationship": "reuse",
+        "non_duplication": "仅加一个审计标签字段，无新校验面；委派不可再委派的安全不变量由既有代码保持。"
+      },
+      "g3": {
+        "model_evidence": [
+          "委派禁令用例 PASS（delegated token 不触发 rearm）"
+        ],
+        "recovery_or_reason": "纯审计标签；revert 即移除。"
+      },
+      "g4": {
+        "rollback": "Revert with the commit.",
+        "verification": [
+          "test_schedule_wake.py delegation 用例 PASS"
+        ]
+      }
+    },
+    {
+      "declaration_id": "schedule-schema-note",
+      "g1": {
+        "necessity": "退避行为改变模型可见的 wake 语义（失败不再立即重投），需在契约面说明，避免唤醒侧误判为链路断裂。"
+      },
+      "g2": {
+        "authority_owner": "既有 ScheduleTool description（唯一契约面）",
+        "relationship": "reuse",
+        "non_duplication": "仅 2 行描述文本。"
+      },
+      "g3": {
+        "model_evidence": [
+          "描述层 diff 无逻辑变更（先例 ae675930）"
+        ],
+        "recovery_or_reason": "纯文本。"
+      },
+      "g4": {
+        "rollback": "Revert with the commit.",
+        "verification": [
+          "schedule 相邻测试 PASS"
+        ]
+      }
+    }
+  ]
+}
