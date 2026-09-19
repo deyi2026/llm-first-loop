@@ -1,0 +1,647 @@
+{
+  "artifact_sha256": {
+    "docs/SMC-EXECUTION-BINDING-P1.1-SPEC-20260919.md": "f0ded0b9f6339eb26e930dfcde1c97ac3d41978bca5c41cea2b32eeaff4bdfd0",
+    "evals/smc_execution_binding_p11/__init__.py": "54dd5bfe9f6804e24bd033a72b6c426768a38bb1110d702685e82043b515e07b",
+    "evals/smc_execution_binding_p11/reference.py": "b30f680e055ef89e0844da64c52f30bb53a5397f1b6e9125dad85ef1c76b39e1",
+    "tests/fixtures/smc_execution_binding_v01.json": "78ec36a749fe2dcdb2c2ba6627363407c807745042f3fc0971c7831310821a95",
+    "tests/unit/test_smc_execution_binding_contract_v01.py": "25f134ff5159b9b80690cb3a2e7322b7c2e5270506276d943b38dbb6e489ae77",
+    "tests/unit/test_smc_execution_binding_p11.py": "9009c52af1ec57346224eb847bcfc5bc7b553f80dfd1e0cb77646cff0e22a710"
+  },
+  "candidate_git_sha": "3b723ecc5899dee8f17efe9055ac77e091e43672",
+  "deterministic_double_run": {
+    "canonical_evidence_sha256": "a29dbcdd4e4688b5ee5b3da42a4ae484bd8d89b36dc17fe959bb6792c034d163",
+    "equal": true,
+    "interleaving_sha256": "b4ba233d1c5292a5923d48b5ef15a54c5b09b34ec6409d6a2f0086186efd4ef9",
+    "lifecycle_sha256": "88b492935b82b91a1270a911d95a521e66e40f4378a3ebf4f34370e370d1b48c",
+    "run_1_sha256": "f1a9fb6272d620d17f4bf4de9c5a96c1ede92cd7b258c35dedcc002fdba5ab65",
+    "run_2_sha256": "f1a9fb6272d620d17f4bf4de9c5a96c1ede92cd7b258c35dedcc002fdba5ab65",
+    "scale_sha256": "304dfd1570ab444600edb2f09b3f86064d2e89d0b2743b48a6bbec7f0ace6562"
+  },
+  "effect_boundary": {
+    "automatic_replay_count": 0,
+    "probability_claim": null,
+    "real_os_dispatch_count": 0,
+    "residual_window_count": 1,
+    "synthetic_dispatch_count": 2
+  },
+  "focused_adjacency": {
+    "passed": 74,
+    "pyright": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "ruff": "pass",
+    "ruff_format": "pass",
+    "suites": {
+      "test_smc_contract_v01_conformance.py": 15,
+      "test_smc_execution_binding_contract_v01.py": 13,
+      "test_smc_execution_binding_p1.py": 19,
+      "test_smc_execution_binding_p11.py": 8,
+      "test_smc_semantic_logic_p4d.py": 19
+    },
+    "total": 74
+  },
+  "frozen_execution_binding_contract_git_sha": "3b7163a11dca88e7a4e2bd6c6b7146e5925adc31",
+  "full_ci": {
+    "audit_test_side_effects_existing_nonblocking_warnings": 44,
+    "env_pin": {
+      "files_scanned": 629,
+      "undeclared": 0
+    },
+    "exit_code": 0,
+    "src_pyright": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "tier0": "pass",
+    "wall_time_seconds_observed": 78.7,
+    "xdist_full": "pass"
+  },
+  "gates": {
+    "P1.1-G1": "pass",
+    "P1.1-G10": "pass",
+    "P1.1-G11": "pass",
+    "P1.1-G12": "pass",
+    "P1.1-G2": "pass",
+    "P1.1-G3": "pass",
+    "P1.1-G4": "pass",
+    "P1.1-G5": "pass",
+    "P1.1-G6": "pass",
+    "P1.1-G7": "pass",
+    "P1.1-G8": "pass",
+    "P1.1-G9": "pass"
+  },
+  "intrinsic_run": {
+    "canonical_evidence_sha256": "a29dbcdd4e4688b5ee5b3da42a4ae484bd8d89b36dc17fe959bb6792c034d163",
+    "evidence": {
+      "interleaving": {
+        "automatic_replay_count": 0,
+        "note": "counts enumerate deterministic interleavings; they are not real-world probabilities",
+        "post_dispatch_settlement_count": 1,
+        "prevented_before_dispatch_count": 2,
+        "probability_claim": null,
+        "real_os_dispatch_count": 0,
+        "residual_window_count": 1,
+        "rows": [
+          {
+            "classification": "prevented_before_dispatch",
+            "dispatch_occurred": false,
+            "injection_point": "before_prepare",
+            "receipt": {
+              "automatic_replay": false,
+              "boundary_events": [
+                "human_interaction_observed"
+              ],
+              "observed_effects": [],
+              "reason": "context_changed",
+              "rollback_claimed": false,
+              "status": "rejected"
+            },
+            "timeline": [
+              "human_context_change",
+              "prepare"
+            ],
+            "zero_race_claimed": false
+          },
+          {
+            "classification": "prevented_before_dispatch",
+            "dispatch_occurred": false,
+            "injection_point": "after_prepare_before_revalidate",
+            "receipt": {
+              "automatic_replay": false,
+              "boundary_events": [
+                "human_interaction_observed"
+              ],
+              "observed_effects": [],
+              "reason": "context_changed",
+              "rollback_claimed": false,
+              "status": "rejected"
+            },
+            "timeline": [
+              "prepare",
+              "human_context_change",
+              "revalidate"
+            ],
+            "zero_race_claimed": false
+          },
+          {
+            "classification": "residual_toctou_window",
+            "dispatch_occurred": true,
+            "injection_point": "after_revalidate_before_dispatch",
+            "receipt": {
+              "automatic_replay": false,
+              "boundary_events": [
+                "human_interaction_observed",
+                "context_changed_by_external_actor"
+              ],
+              "observed_effects": [
+                {
+                  "actual_context": "ctx-v2",
+                  "expected_context": "ctx-v1",
+                  "kind": "synthetic_dispatch_under_changed_context"
+                }
+              ],
+              "reason": "context_changed_after_revalidate",
+              "rollback_claimed": false,
+              "status": "ambiguous"
+            },
+            "timeline": [
+              "prepare",
+              "revalidate",
+              "human_context_change",
+              "dispatch"
+            ],
+            "zero_race_claimed": false
+          },
+          {
+            "classification": "post_dispatch_settlement",
+            "dispatch_occurred": true,
+            "injection_point": "after_dispatch",
+            "receipt": {
+              "automatic_replay": false,
+              "boundary_events": [
+                "human_interaction_observed_after_dispatch"
+              ],
+              "observed_effects": [
+                {
+                  "context_at_dispatch": "ctx-v1",
+                  "kind": "synthetic_effect_committed"
+                }
+              ],
+              "reason": null,
+              "rollback_claimed": false,
+              "status": "ok"
+            },
+            "timeline": [
+              "prepare",
+              "revalidate",
+              "dispatch",
+              "human_context_change"
+            ],
+            "zero_race_claimed": false
+          }
+        ],
+        "schema": "smc.execution_binding_p11_interleaving.v0.1",
+        "synthetic_dispatch_count": 2
+      },
+      "lifecycle": {
+        "ar1": "ar_12063919f5ec",
+        "ar2": "ar_0eeca5ec9257",
+        "old_ref_revalidated": false,
+        "real_os_dispatch_count": 0,
+        "schema": "smc.execution_binding_p11_actionref_lifecycle.v0.1",
+        "silent_successor_used": false,
+        "steps": [
+          {
+            "event": "observe_v1",
+            "observation_ref": "obs:desktop:1",
+            "version": "doc-v1"
+          },
+          {
+            "action_ref": "ar_12063919f5ec",
+            "event": "issue_ar1",
+            "expires_at": "2026-09-19T21:00:00Z",
+            "issued_at": "2026-09-19T20:00:00Z",
+            "version": "doc-v1"
+          },
+          {
+            "event": "admit_ar1_v1",
+            "result": {
+              "decision": "allow",
+              "reason": null
+            }
+          },
+          {
+            "event": "mutate_v2",
+            "observation_ref": "obs:desktop:2",
+            "version": "doc-v2"
+          },
+          {
+            "event": "reject_ar1_stale",
+            "result": {
+              "decision": "reject",
+              "reason": "stale"
+            }
+          },
+          {
+            "event": "reobserve_v2",
+            "observation_ref": "obs:desktop:2",
+            "version": "doc-v2"
+          },
+          {
+            "action_ref": "ar_0eeca5ec9257",
+            "event": "issue_ar2",
+            "expires_at": "2026-09-19T21:10:00Z",
+            "issued_at": "2026-09-19T20:10:00Z",
+            "version": "doc-v2"
+          },
+          {
+            "event": "reject_ar1_still_stale",
+            "result": {
+              "decision": "reject",
+              "reason": "stale"
+            }
+          },
+          {
+            "event": "admit_ar2_v2",
+            "result": {
+              "decision": "allow",
+              "reason": null
+            }
+          },
+          {
+            "event": "advance_past_ar2_expiry",
+            "logical_now": "2026-09-19T21:10:01Z"
+          },
+          {
+            "event": "reject_ar2_expired",
+            "result": {
+              "decision": "reject",
+              "reason": "expired"
+            }
+          }
+        ],
+        "synthetic_dispatch_count": 0
+      },
+      "oracle_parity": {
+        "all_cases_include_receipt_obligations": true,
+        "binding_equivalence_case_count": 3,
+        "receipt_only_reject_case_count": 1
+      },
+      "scale": [
+        {
+          "approx_tokens_char4": 4183,
+          "capability_count": 32,
+          "filter": {
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          "filtered_count": 1,
+          "filtered_page_count": 1,
+          "filtered_wire_chars": 929,
+          "full_wire_chars": 16730,
+          "individual_filter_counts": {
+            "combined": 1,
+            "control_capability_class=DIRECT_SEMANTIC": 16,
+            "semantic_verb=save": 8,
+            "target_kind=document": 8
+          },
+          "largest_page_wire_chars": 8386,
+          "page_count": 2,
+          "page_size": 16,
+          "schema_validated": true,
+          "semantic_ranking_used": false,
+          "token_estimate_note": "mechanical char/4 heuristic; not provider tokenizer"
+        },
+        {
+          "approx_tokens_char4": 4075,
+          "capability_count": 32,
+          "filter": {
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          "filtered_count": 1,
+          "filtered_page_count": 1,
+          "filtered_wire_chars": 929,
+          "full_wire_chars": 16300,
+          "individual_filter_counts": {
+            "combined": 1,
+            "control_capability_class=DIRECT_SEMANTIC": 16,
+            "semantic_verb=save": 8,
+            "target_kind=document": 8
+          },
+          "largest_page_wire_chars": 16300,
+          "page_count": 1,
+          "page_size": 32,
+          "schema_validated": true,
+          "semantic_ranking_used": false,
+          "token_estimate_note": "mechanical char/4 heuristic; not provider tokenizer"
+        },
+        {
+          "approx_tokens_char4": 4075,
+          "capability_count": 32,
+          "filter": {
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          "filtered_count": 1,
+          "filtered_page_count": 1,
+          "filtered_wire_chars": 929,
+          "full_wire_chars": 16300,
+          "individual_filter_counts": {
+            "combined": 1,
+            "control_capability_class=DIRECT_SEMANTIC": 16,
+            "semantic_verb=save": 8,
+            "target_kind=document": 8
+          },
+          "largest_page_wire_chars": 16300,
+          "page_count": 1,
+          "page_size": 64,
+          "schema_validated": true,
+          "semantic_ranking_used": false,
+          "token_estimate_note": "mechanical char/4 heuristic; not provider tokenizer"
+        },
+        {
+          "approx_tokens_char4": 16714,
+          "capability_count": 128,
+          "filter": {
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          "filtered_count": 3,
+          "filtered_page_count": 1,
+          "filtered_wire_chars": 1925,
+          "full_wire_chars": 66855,
+          "individual_filter_counts": {
+            "combined": 3,
+            "control_capability_class=DIRECT_SEMANTIC": 48,
+            "semantic_verb=save": 32,
+            "target_kind=document": 32
+          },
+          "largest_page_wire_chars": 8479,
+          "page_count": 8,
+          "page_size": 16,
+          "schema_validated": true,
+          "semantic_ranking_used": false,
+          "token_estimate_note": "mechanical char/4 heuristic; not provider tokenizer"
+        },
+        {
+          "approx_tokens_char4": 16283,
+          "capability_count": 128,
+          "filter": {
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          "filtered_count": 3,
+          "filtered_page_count": 1,
+          "filtered_wire_chars": 1925,
+          "full_wire_chars": 65130,
+          "individual_filter_counts": {
+            "combined": 3,
+            "control_capability_class=DIRECT_SEMANTIC": 48,
+            "semantic_verb=save": 32,
+            "target_kind=document": 32
+          },
+          "largest_page_wire_chars": 16503,
+          "page_count": 4,
+          "page_size": 32,
+          "schema_validated": true,
+          "semantic_ranking_used": false,
+          "token_estimate_note": "mechanical char/4 heuristic; not provider tokenizer"
+        },
+        {
+          "approx_tokens_char4": 16067,
+          "capability_count": 128,
+          "filter": {
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          "filtered_count": 3,
+          "filtered_page_count": 1,
+          "filtered_wire_chars": 1925,
+          "full_wire_chars": 64268,
+          "individual_filter_counts": {
+            "combined": 3,
+            "control_capability_class=DIRECT_SEMANTIC": 48,
+            "semantic_verb=save": 32,
+            "target_kind=document": 32
+          },
+          "largest_page_wire_chars": 32191,
+          "page_count": 2,
+          "page_size": 64,
+          "schema_validated": true,
+          "semantic_ranking_used": false,
+          "token_estimate_note": "mechanical char/4 heuristic; not provider tokenizer"
+        },
+        {
+          "approx_tokens_char4": 66842,
+          "capability_count": 512,
+          "filter": {
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          "filtered_count": 11,
+          "filtered_page_count": 1,
+          "filtered_wire_chars": 5911,
+          "full_wire_chars": 267367,
+          "individual_filter_counts": {
+            "combined": 11,
+            "control_capability_class=DIRECT_SEMANTIC": 176,
+            "semantic_verb=save": 128,
+            "target_kind=document": 128
+          },
+          "largest_page_wire_chars": 8526,
+          "page_count": 32,
+          "page_size": 16,
+          "schema_validated": true,
+          "semantic_ranking_used": false,
+          "token_estimate_note": "mechanical char/4 heuristic; not provider tokenizer"
+        },
+        {
+          "approx_tokens_char4": 65115,
+          "capability_count": 512,
+          "filter": {
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          "filtered_count": 11,
+          "filtered_page_count": 1,
+          "filtered_wire_chars": 5911,
+          "full_wire_chars": 260458,
+          "individual_filter_counts": {
+            "combined": 11,
+            "control_capability_class=DIRECT_SEMANTIC": 176,
+            "semantic_verb=save": 128,
+            "target_kind=document": 128
+          },
+          "largest_page_wire_chars": 16615,
+          "page_count": 16,
+          "page_size": 32,
+          "schema_validated": true,
+          "semantic_ranking_used": false,
+          "token_estimate_note": "mechanical char/4 heuristic; not provider tokenizer"
+        },
+        {
+          "approx_tokens_char4": 64251,
+          "capability_count": 512,
+          "filter": {
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          "filtered_count": 11,
+          "filtered_page_count": 1,
+          "filtered_wire_chars": 5911,
+          "full_wire_chars": 257004,
+          "individual_filter_counts": {
+            "combined": 11,
+            "control_capability_class=DIRECT_SEMANTIC": 176,
+            "semantic_verb=save": 128,
+            "target_kind=document": 128
+          },
+          "largest_page_wire_chars": 32607,
+          "page_count": 8,
+          "page_size": 64,
+          "schema_validated": true,
+          "semantic_ranking_used": false,
+          "token_estimate_note": "mechanical char/4 heuristic; not provider tokenizer"
+        },
+        {
+          "approx_tokens_char4": 133678,
+          "capability_count": 1024,
+          "filter": {
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          "filtered_count": 22,
+          "filtered_page_count": 2,
+          "filtered_wire_chars": 11839,
+          "full_wire_chars": 534712,
+          "individual_filter_counts": {
+            "combined": 22,
+            "control_capability_class=DIRECT_SEMANTIC": 352,
+            "semantic_verb=save": 256,
+            "target_kind=document": 256
+          },
+          "largest_page_wire_chars": 8527,
+          "page_count": 64,
+          "page_size": 16,
+          "schema_validated": true,
+          "semantic_ranking_used": false,
+          "token_estimate_note": "mechanical char/4 heuristic; not provider tokenizer"
+        },
+        {
+          "approx_tokens_char4": 130215,
+          "capability_count": 1024,
+          "filter": {
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          "filtered_count": 22,
+          "filtered_page_count": 1,
+          "filtered_wire_chars": 11389,
+          "full_wire_chars": 520858,
+          "individual_filter_counts": {
+            "combined": 22,
+            "control_capability_class=DIRECT_SEMANTIC": 352,
+            "semantic_verb=save": 256,
+            "target_kind=document": 256
+          },
+          "largest_page_wire_chars": 16616,
+          "page_count": 32,
+          "page_size": 32,
+          "schema_validated": true,
+          "semantic_ranking_used": false,
+          "token_estimate_note": "mechanical char/4 heuristic; not provider tokenizer"
+        },
+        {
+          "approx_tokens_char4": 128483,
+          "capability_count": 1024,
+          "filter": {
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          "filtered_count": 22,
+          "filtered_page_count": 1,
+          "filtered_wire_chars": 11389,
+          "full_wire_chars": 513932,
+          "individual_filter_counts": {
+            "combined": 22,
+            "control_capability_class=DIRECT_SEMANTIC": 352,
+            "semantic_verb=save": 256,
+            "target_kind=document": 256
+          },
+          "largest_page_wire_chars": 32793,
+          "page_count": 16,
+          "page_size": 64,
+          "schema_validated": true,
+          "semantic_ranking_used": false,
+          "token_estimate_note": "mechanical char/4 heuristic; not provider tokenizer"
+        }
+      ]
+    },
+    "external_gates": {
+      "P1.1-G10": "pending_focused_adjacency",
+      "P1.1-G11": "pending_full_ci",
+      "P1.1-G12": "pending_boundary_audit",
+      "P1.1-G9": "pending_double_run_qualification"
+    },
+    "intrinsic_gates": {
+      "P1.1-G1": "pass",
+      "P1.1-G2": "pass",
+      "P1.1-G3": "pass",
+      "P1.1-G4": "pass",
+      "P1.1-G5": "pass",
+      "P1.1-G6": "pass",
+      "P1.1-G7": "pass",
+      "P1.1-G8": "pass"
+    },
+    "real_os_dispatch_count": 0,
+    "schema": "smc.execution_binding_p11_evidence.v0.1",
+    "synthetic_dispatch_count": 2
+  },
+  "non_claims": [
+    "scale char/4 numbers are heuristic estimates, not provider-tokenizer counts",
+    "deterministic interleaving counts are not real-world race probabilities",
+    "no real OS adapter qualified",
+    "no real OS mutation qualified",
+    "no model First-Call-Ready qualified",
+    "no P4-FCR v0.2 or P4-LIVE qualified",
+    "no production src change",
+    "no deployment or restart performed",
+    "parent P1 remote evidence branch is not yet verified"
+  ],
+  "parent_p1_implementation_git_sha": "11559ea640e4bdb19e39331975d824d7a0aacc58",
+  "parent_p1_result_git_sha": "d0af187baa2819b76a6df31a962f3c0f0fa6c814",
+  "qualification_date": "2026-09-19",
+  "remote_anchor": {
+    "parent_p1_branch": "review/smc-execution-binding-p1-20260919",
+    "remote_mutation_from_failed_attempt": false,
+    "status": "pending_auth",
+    "verified_remote_sha": null
+  },
+  "scale_headline_page_size_32": {
+    "1024": {
+      "approx_tokens_char4": 130215,
+      "filtered_count": 22,
+      "filtered_wire_chars": 11389,
+      "full_wire_chars": 520858,
+      "page_count": 32
+    },
+    "128": {
+      "approx_tokens_char4": 16283,
+      "filtered_count": 3,
+      "filtered_wire_chars": 1925,
+      "full_wire_chars": 65130,
+      "page_count": 4
+    },
+    "32": {
+      "approx_tokens_char4": 4075,
+      "filtered_count": 1,
+      "filtered_wire_chars": 929,
+      "full_wire_chars": 16300,
+      "page_count": 1
+    },
+    "512": {
+      "approx_tokens_char4": 65115,
+      "filtered_count": 11,
+      "filtered_wire_chars": 5911,
+      "full_wire_chars": 260458,
+      "page_count": 16
+    }
+  },
+  "schema": "smc.execution_binding_p11_qualification_evidence.v0.1",
+  "scope_git_sha": "a7204efc757ffda210c783b0026b0bf27d45c809",
+  "status": "qualified_deterministic_synthetic_non_production"
+}
