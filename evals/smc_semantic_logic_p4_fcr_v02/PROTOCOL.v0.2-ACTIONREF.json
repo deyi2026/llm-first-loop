@@ -1,0 +1,50 @@
+{
+  "schema": "smc.semantic_logic_p4_fcr_actionref_protocol.v0.2",
+  "status": "frozen_candidate_no_real_model",
+  "parent_negative_git_sha": "52d5e78e650e1693db3453285febf36e8ab9cb68",
+  "execution_binding_contract_git_sha": "3b7163a11dca88e7a4e2bd6c6b7146e5925adc31",
+  "p1_git_sha": "d0af187baa2819b76a6df31a962f3c0f0fa6c814",
+  "p11_git_sha": "5d11c5866e0e9349163577a1382b8469c32dca51",
+  "matrix": {
+    "tasks": ["navigate", "click", "fill", "select", "scroll"],
+    "repeats": 4,
+    "arms": ["A", "B"],
+    "rows": 40,
+    "rotation_and_arm_order": "identical_to_v0.1"
+  },
+  "arm_a": {
+    "surface": "browser_semantic_execute(verb,target_ref,args)",
+    "ref_representation": "full_grounding_ref"
+  },
+  "arm_b": {
+    "tools": [
+      "browser_semantic_click",
+      "browser_semantic_fill",
+      "browser_semantic_select",
+      "browser_semantic_scroll",
+      "browser_semantic_navigate"
+    ],
+    "ref_field": "action_ref",
+    "ref_representation": "short_opaque_action_ref",
+    "fallback_policy": "none"
+  },
+  "bindings": {
+    "navigate": "ar_5f8c2a",
+    "click": "ar_a17d93",
+    "fill": "ar_c42e11",
+    "select": "ar_7b31f0",
+    "scroll": "ar_d9054c"
+  },
+  "hard_gate": {
+    "arm_b_structural": "20/20",
+    "arm_b_mechanical": "20/20",
+    "targeted_errors": 0,
+    "tool_execution_total": 0,
+    "browser_runtime_rows": 0,
+    "fallback_rows": 0,
+    "normalization": false,
+    "retry": false,
+    "task_completion_judgment": false
+  },
+  "pre_model_stop": true
+}
