@@ -1,7 +1,10 @@
 """ProjectCoordinator runtime wiring: run-boundary lease lifecycle (20260919 step-4).
 
-Mechanical contract (DESIGN-20260919-fleet-minimal-slice):
-- begin at run boundary (acquire; crash recovery = reclaim-with-supersede);
+Mechanical contract (DESIGN-20260919-fleet-minimal-slice + Gate R0):
+- begin at run boundary (acquire; crash recovery = expiry-licensed,
+  generation-CAS reclaim -- a live unexpired/expiry-free lease fails closed
+  with the precise remaining window; live takeover is operator
+  force_reclaim with recorded justification);
 - fenced facts during the run;
 - exactly-once settle at a real terminal (result is not None);
 - crash leaves the durable active lease for the next coordinator to reclaim;
@@ -11,6 +14,7 @@ Mechanical contract (DESIGN-20260919-fleet-minimal-slice):
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -18,7 +22,12 @@ from llm_loop.core.run_context import current_session_id
 from llm_loop.core.session import SessionStore
 from llm_loop.event_log.store import EventStore
 from llm_loop.fleet.coordinator import ProjectCoordinator
-from llm_loop.fleet.store import FencedError, FleetStore, SettlementError
+from llm_loop.fleet.store import (
+    FencedError,
+    FleetStore,
+    LeaseActiveError,
+    SettlementError,
+)
 from llm_loop.llm.client import LLMResponse
 from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.registry import ToolRegistry
@@ -80,10 +89,18 @@ def test_run_boundary_lifecycle_attach_begin_fact_finish(tmp_path) -> None:
 
 def test_begin_run_after_crash_reclaims_and_fences_old_generation(tmp_path) -> None:
     crashed = _coordinator(tmp_path, owner="parent-1")
-    stale_lease = crashed.begin_run("child-1", worker_id="w1")
-    # crash: no fact, no settle; a fresh coordinator process reads the same disk
+    stale_lease = crashed.begin_run("child-1", worker_id="w1", ttl_seconds=0.05)
+    # crash: no fact, no settle; a fresh coordinator process reads the same disk.
 
+    # Gate R0: while the crashed lease is still unexpired, resume is
+    # fail-closed -- no silent takeover of a worker that may still be alive.
     fresh = _coordinator(tmp_path, owner="parent-2")
+    with pytest.raises(LeaseActiveError) as blocked:
+        fresh.begin_run("child-1", worker_id="w2")
+    assert blocked.value.remaining_seconds is not None
+    assert 0 < blocked.value.remaining_seconds <= 0.05
+
+    time.sleep(0.15)  # the bounded lease really expires: time licenses takeover
     new_lease = fresh.begin_run("child-1", worker_id="w2")
     assert new_lease.generation == 2
 

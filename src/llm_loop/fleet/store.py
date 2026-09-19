@@ -47,7 +47,15 @@ class LeaseConflictError(RuntimeError):
 
 
 class LeaseActiveError(RuntimeError):
-    """A live lease is not mechanically reclaimable (unexpired or expiry-free)."""
+    """A live lease is not mechanically reclaimable (unexpired or expiry-free).
+
+    ``remaining_seconds`` is the precise live window at raise time; ``None``
+    means the lease declares no expiry at all (no window exists to race).
+    """
+
+    def __init__(self, message: str, *, remaining_seconds: float | None = None):
+        super().__init__(message)
+        self.remaining_seconds = remaining_seconds
 
 
 @dataclass(frozen=True)
@@ -370,15 +378,24 @@ class FleetStore:
             return lease
 
     def renew_lease(self, lease: WorkerLease, *, extend_seconds: float) -> WorkerLease:
-        """Current active holder extends its own expiry (fenced)."""
+        """Rolling-TTL heartbeat: expiry resets to ``now + extend_seconds``.
+
+        R0 semantics: never cumulative -- each heartbeat is measured from the
+        moment it beats, so a crash can never leave a phantom blocking window
+        of stacked TTLs.  An expiry-free lease stays expiry-free (a heartbeat
+        must not change takeover authority).  The holder fence is
+        ``_require_current`` (active + current generation + unexpired), so an
+        expired lease cannot renew itself back to life.
+        """
+        if extend_seconds <= 0:
+            raise ValueError(f"extend_seconds must be positive: {extend_seconds}")
         with self._lock():
             state = self._load()
             self._require_current(state, lease)
             raw = state["leases"][lease.lease_id]
             now = _now()
-            base = raw.get("expires_at")
-            base = now if base is None or base < now else base
-            raw["expires_at"] = base + extend_seconds
+            if raw.get("expires_at") is not None:
+                raw["expires_at"] = now + extend_seconds
             self._save(state)
             return self._lease_from_raw(raw)
 
@@ -388,13 +405,16 @@ class FleetStore:
         workspace_id: str,
         owner_id: str,
         *,
+        expected_generation: int | None = None,
         ttl_seconds: float | None = None,
     ) -> WorkerLease:
-        """Time-licensed takeover: only a lease past its declared expiry may pass.
+        """Time-licensed takeover with generation CAS: only a lease past its
+        declared expiry may pass, and only while the observed generation still
+        holds (concurrent takeovers serialize into exactly one winner).
 
         Expiry-free or unexpired leases raise ``LeaseActiveError`` -- taking
         over a live lease without a time fact stays an explicit operator
-        decision (plain ``reclaim``).
+        decision (``force_reclaim``).
         """
         with self._lock():
             state = self._load()
@@ -414,7 +434,13 @@ class FleetStore:
             if now < expires_at:
                 raise LeaseActiveError(
                     f"lease {current['lease_id']} not expired "
-                    f"(remaining {expires_at - now:.3f}s)"
+                    f"(remaining {expires_at - now:.3f}s)",
+                    remaining_seconds=expires_at - now,
+                )
+            if expected_generation is not None and current["generation"] != expected_generation:
+                raise LeaseConflictError(
+                    f"reclaim raced: {workspace_id} moved to generation "
+                    f"{current['generation']} (expected {expected_generation})"
                 )
             current["state"] = "superseded"
             generation = current["generation"] + 1
@@ -439,6 +465,86 @@ class FleetStore:
                 "acquired_at": lease.acquired_at,
                 "state": lease.state,
                 "expires_at": lease.expires_at,
+                "takeover": {
+                    "kind": "expiry_reclaim",
+                    "superseded_lease_id": current["lease_id"],
+                    "at": now,
+                },
+            }
+            self._save(state)
+            return lease
+
+    def force_reclaim(
+        self,
+        project_id: str,
+        workspace_id: str,
+        owner_id: str,
+        *,
+        expected_lease_id: str,
+        expected_generation: int,
+        reason: str,
+        authorized_by: str,
+        ttl_seconds: float | None = None,
+    ) -> WorkerLease:
+        """R0 live takeover: the ONLY way to supersede an unexpired/expiry-free
+        lease.  Double CAS (lease id + generation) against the exact observed
+        holder; mandatory non-empty ``reason``/``authorized_by`` recorded
+        on-disk in the successor lease's ``takeover`` block for audit.
+        """
+        if not str(reason).strip() or not str(authorized_by).strip():
+            raise ValueError(
+                "force_reclaim requires a non-empty reason and authorized_by "
+                "(operator decision must be recorded on disk)"
+            )
+        with self._lock():
+            state = self._load()
+            self._require_workspace(state, project_id, workspace_id)
+            current = self._current_lease_raw(state, workspace_id)
+            if current is None:
+                raise KeyError(f"no lease to reclaim: {workspace_id}")
+            if current["state"] == "settled":
+                raise SettlementError(f"workspace already settled: {workspace_id}")
+            if current["lease_id"] != expected_lease_id:
+                raise LeaseConflictError(
+                    f"force_reclaim raced: {workspace_id} current lease is "
+                    f"{current['lease_id']} (expected {expected_lease_id})"
+                )
+            if current["generation"] != expected_generation:
+                raise LeaseConflictError(
+                    f"force_reclaim raced: {workspace_id} moved to generation "
+                    f"{current['generation']} (expected {expected_generation})"
+                )
+            current["state"] = "superseded"
+            now = _now()
+            generation = current["generation"] + 1
+            lease = WorkerLease(
+                lease_id=f"lease-{workspace_id}-g{generation}",
+                project_id=project_id,
+                workspace_id=workspace_id,
+                worker_id=f"worker-g{generation}",
+                generation=generation,
+                owner_id=owner_id,
+                acquired_at=now,
+                state="active",
+                expires_at=now + ttl_seconds if ttl_seconds is not None else None,
+            )
+            state["leases"][lease.lease_id] = {
+                "lease_id": lease.lease_id,
+                "project_id": lease.project_id,
+                "workspace_id": lease.workspace_id,
+                "worker_id": lease.worker_id,
+                "generation": lease.generation,
+                "owner_id": lease.owner_id,
+                "acquired_at": lease.acquired_at,
+                "state": lease.state,
+                "expires_at": lease.expires_at,
+                "takeover": {
+                    "kind": "operator_force_reclaim",
+                    "reason": reason,
+                    "authorized_by": authorized_by,
+                    "superseded_lease_id": current["lease_id"],
+                    "at": now,
+                },
             }
             self._save(state)
             return lease
@@ -465,6 +571,13 @@ class FleetStore:
         return max(candidates, key=lambda raw: raw["generation"])
 
     def _require_current(self, state: dict[str, Any], lease: WorkerLease) -> None:
+        """Holder fence: current generation + active + (R0) not expired.
+
+        TTL is authority, not a hint: once the declared window has passed, the
+        holder loses every write right (facts, renew, settle) even before any
+        successor exists -- a rival's ``reclaim_if_expired`` then cannot race
+        a zombie back to life.
+        """
         current = self._current_lease_raw(state, lease.workspace_id)
         if (
             current is None
@@ -475,6 +588,28 @@ class FleetStore:
                 f"stale worker rejected: lease {lease.lease_id} "
                 f"is not the current active generation of {lease.workspace_id}"
             )
+        expires_at = current.get("expires_at")
+        if expires_at is not None and _now() >= expires_at:
+            raise FencedError(
+                f"expired lease fenced: {lease.lease_id} window closed "
+                f"{_now() - expires_at:.3f}s ago (TTL is authority)"
+            )
+
+    def lease_is_current(self, lease: WorkerLease) -> bool:
+        """R1 effect-fence probe: read-only "is this lease still the writable authority?".
+
+        Mirrors ``_require_current`` exactly (current generation + active +
+        unexpired) so effect commit boundaries and settlement can never
+        disagree.  Returns False instead of raising so side-effect gates can
+        fail closed without exception control flow.  Never mutates state.
+        """
+        with self._lock():
+            state = self._load()
+            try:
+                self._require_current(state, lease)
+            except FencedError:
+                return False
+            return True
 
     # ------------------------------------------------------------ facts
 
@@ -498,11 +633,26 @@ class FleetStore:
     def settle(self, lease: WorkerLease, result: dict[str, Any]) -> SettlementRecord:
         with self._lock():
             state = self._load()
+            # R0/R1 settlement fence, layered with exactly-once:
+            #   stale or expired holder  -> FencedError  (never writes)
+            #   current holder re-settle -> SettlementError (exactly-once)
+            # A settled lease state alone is NOT a fence: only a *different*
+            # current lease or a passed TTL removes settlement authority.
             current = self._current_lease_raw(state, lease.workspace_id)
-            if current is None or current["lease_id"] != lease.lease_id:
+            if (
+                current is None
+                or current["lease_id"] != lease.lease_id
+                or current["state"] not in ("active", "settled")
+            ):
                 raise FencedError(
                     f"stale worker rejected: lease {lease.lease_id} "
                     f"is not the current generation of {lease.workspace_id}"
+                )
+            expires_at = current.get("expires_at")
+            if expires_at is not None and _now() >= expires_at:
+                raise FencedError(
+                    f"expired lease fenced: {lease.lease_id} window closed "
+                    f"{_now() - expires_at:.3f}s ago (TTL is authority)"
                 )
             if lease.workspace_id in state["settlements"]:
                 raise SettlementError(

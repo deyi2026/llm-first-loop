@@ -312,6 +312,20 @@ class EditFileTool:
                 "执行效果准备事实未能持久化或目标路径越出当前工作区；为避免无主写入已拒绝修改。",
                 "EffectPreparedUnavailable",
             )
+        if exc.error_type == "EffectAuthorityLost":
+            # R1: file 提交窗口内 lease 权威丢失（或超时撤销）。UNAUTHORIZED
+            # 而非 ERROR——这是一次类型化的权限拒绝，本次未写入。
+            return ToolResult(
+                status=ToolResultStatus.UNAUTHORIZED,
+                content=(
+                    "[状态: unauthorized] effect authority 丢失（run lease fenced/"
+                    "attempt 已撤销），本次写入未发生: " + path_str
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type="EffectAuthorityLost",
+                error_detail="mutation authority denied at commit boundary",
+            )
         if exc.error_type == "WriteFailed":
             return self._fail(
                 f"写入失败: {exc.cause_type}: {exc.detail}（文件保持原状，原子写入未产生半成品）",
