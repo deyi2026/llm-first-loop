@@ -71,7 +71,7 @@ def test_watcher_notifies_completed(tmp_path, monkeypatch):
     reg = _fresh_registry(monkeypatch, data_dir=tmp_path)
     job_id = reg.create(_FakeProc(exit_code=0), "echo ok")
     reg.start_readers(job_id)
-    _wait_for(lambda: _inbox_files(tmp_path) != [], timeout=3)
+    _wait_for(lambda: _inbox_files(tmp_path) != [], timeout=10)
     files = _inbox_files(tmp_path)
     assert len(files) == 1
     msg = json.loads(files[0].read_text(encoding="utf-8"))
@@ -89,7 +89,7 @@ def test_watcher_notifies_failed(tmp_path, monkeypatch):
     reg = _fresh_registry(monkeypatch, data_dir=tmp_path)
     job_id = reg.create(_FakeProc(exit_code=1), "boom")
     reg.start_readers(job_id)
-    _wait_for(lambda: _inbox_files(tmp_path) != [], timeout=3)
+    _wait_for(lambda: _inbox_files(tmp_path) != [], timeout=10)
     msg = json.loads(_inbox_files(tmp_path)[0].read_text(encoding="utf-8"))
     assert "failed" in msg["body"] and "exit=1" in msg["body"]
 
@@ -102,7 +102,7 @@ def test_watcher_notifies_killed(tmp_path, monkeypatch):
     with entry._lock:
         entry.killed = True  # 模拟 job_kill 已置 killed
     reg.start_readers(job_id)
-    _wait_for(lambda: _inbox_files(tmp_path) != [], timeout=3)
+    _wait_for(lambda: _inbox_files(tmp_path) != [], timeout=10)
     msg = json.loads(_inbox_files(tmp_path)[0].read_text(encoding="utf-8"))
     assert "killed" in msg["body"]
 
@@ -114,7 +114,7 @@ def test_notify_fail_open_no_inbox_dir(tmp_path, monkeypatch, caplog):
     reg = _fresh_registry(monkeypatch, data_dir=blocked)
     job_id = reg.create(_FakeProc(exit_code=0), "cmd")
     reg.start_readers(job_id)
-    _wait_for(lambda: reg.get(job_id).done, timeout=3)
+    _wait_for(lambda: reg.get(job_id).done, timeout=10)
     assert reg.get(job_id).done is True  # 状态标记不受通知失败影响
     assert blocked.is_file()  # fail-open 未改写绑定路径
 
@@ -127,7 +127,11 @@ def _inbox_files(tmp_path: Path) -> list[Path]:
     return sorted(base.glob("*.json"))
 
 
-def _wait_for(cond, timeout: float = 3.0, interval: float = 0.05) -> None:
+def _wait_for(cond, timeout: float = 10.0, interval: float = 0.05) -> None:
+    # 2026-09-19: observed once-failing on a slow CI runner
+    # (test_watcher_notifies_failed); local 30/30 green. Watcher is a daemon
+    # thread doing file I/O, so allow generous wall-clock budget instead of
+    # asserting fast completion. Assertion content is unchanged.
     deadline = time.time() + timeout
     while time.time() < deadline:
         if cond():
