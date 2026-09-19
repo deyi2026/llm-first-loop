@@ -776,8 +776,13 @@ class SubAgentRunner:
             if lease is None:
                 # Lease gone from this runner (settled/taken over): deny.
                 return False
+            coordinator = self._project_coordinator
+            if coordinator is None:
+                # Coordinator detached after fence creation: fail closed (deny).
+                # (Outer None-check cannot narrow into a closure for pyright.)
+                return False
             try:
-                return bool(self._project_coordinator.store.lease_is_current(lease))
+                return bool(coordinator.store.lease_is_current(lease))
             except Exception:  # noqa: BLE001 - unreadable disk truth fails closed
                 return False
 
