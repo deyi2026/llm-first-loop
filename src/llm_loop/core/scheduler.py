@@ -2,7 +2,9 @@
 
 程序只承载机械边界：schedule.json 持久化、跨进程 claim/lease、一次性 wake
 capability 与失败重试。普通提醒只走 notify/UI，不进入模型 prompt；wake 只能消费
-当前真人 run 降权委派出的同会话 capability，重启后 capability 不恢复。
+当前真人 run 降权委派出的同会话 capability；grant 永不落盘、永不伪造。重启后
+grant 丢失不再直接丢弃：同会话下一次真人 run 会 re-arm 重铸（EVO-20260919-f119847d），
+有界退避窗口内未恢复才降级为通知。
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from llm_loop.runtime.resolver import business_config_snapshot
 
@@ -29,6 +31,16 @@ _SCHEDULER_CONFIG = business_config_snapshot("scheduler")
 # 避免配置 LFL_DATA_DIR 时提醒写错位置静默丢失（原硬编码相对 data/）。
 _SCHEDULE_PATH = Path(_SCHEDULER_CONFIG.get("LFL_DATA_DIR", "data")) / "schedule.json"
 _TICK_INTERVAL_S = 10.0  # 检查周期
+
+# EVO-20260919-f119847d: wake 交付瞬态失败的有界指数退避（秒）与双上限。
+# 30s→1m→2m→4m→8m 后按 8m 平台重试；次数上限或"首败+30min"窗口任一到达即降级。
+WAKE_RETRY_DELAYS_S = (30.0, 60.0, 120.0, 240.0, 480.0)
+WAKE_MAX_RETRIES = 10
+WAKE_RETRY_WINDOW_S = 1800.0
+
+# 交付回调哨兵：返回本对象表示交付方已自行 defer（条目保留、下次触发时间已排好），
+# SchedulerThread 既不得 mark_triggered 消费，也不得 retry_later 覆盖退避节奏。
+WAKE_DEFERRED = object()
 
 # Wake authorization is process-local, not Store-instance-local. Multiple ScheduleStore
 # objects may legitimately point at the same schedule.json in one process (tests/hot rebuild/
@@ -57,6 +69,9 @@ class ScheduleEntry:
         lease_owner: str = "",
         lease_until: float = 0.0,
         wake_owner_pid: int = 0,
+        wake_started_at: float = 0.0,
+        retry_count: int = 0,
+        retry_deadline_at: float = 0.0,
     ) -> None:
         self.sid = sid
         self.message = message
@@ -70,6 +85,9 @@ class ScheduleEntry:
         self.lease_owner = str(lease_owner or "")
         self.lease_until = float(lease_until or 0.0)
         self.wake_owner_pid = int(wake_owner_pid or 0)
+        self.wake_started_at = float(wake_started_at or 0.0)
+        self.retry_count = int(retry_count or 0)
+        self.retry_deadline_at = float(retry_deadline_at or 0.0)
 
     def to_dict(self) -> dict:
         return {
@@ -85,6 +103,9 @@ class ScheduleEntry:
             "lease_owner": self.lease_owner,
             "lease_until": self.lease_until,
             "wake_owner_pid": self.wake_owner_pid,
+            "wake_started_at": self.wake_started_at,
+            "retry_count": self.retry_count,
+            "retry_deadline_at": self.retry_deadline_at,
         }
 
     @classmethod
@@ -102,7 +123,24 @@ class ScheduleEntry:
             lease_owner=str(d.get("lease_owner", "") or ""),
             lease_until=float(d.get("lease_until", 0) or 0),
             wake_owner_pid=int(d.get("wake_owner_pid", 0) or 0),
+            wake_started_at=float(d.get("wake_started_at", 0.0) or 0.0),
+            retry_count=int(d.get("retry_count", 0) or 0),
+            retry_deadline_at=float(d.get("retry_deadline_at", 0.0) or 0.0),
         )
+
+
+class WakeDefer(NamedTuple):
+    """defer_wake_retry 的机械结果。
+
+    present=条目仍在磁盘且未被其他 claim 接管；exhausted=重试预算耗尽
+    （双上限任一到达，调用方应降级为通知并消费）；retry_count/next_delay_s
+    供审计记录。
+    """
+
+    present: bool
+    exhausted: bool
+    retry_count: int
+    next_delay_s: float
 
 
 class ScheduleStore:
@@ -264,6 +302,58 @@ class ScheduleStore:
         with _WAKE_GRANT_LOCK:
             _WAKE_GRANTS.pop(self._wake_grant_key(sid), None)
 
+    def note_wake_started(self, sid: str) -> None:
+        """EVO-20260919-f119847d: 启动自动续跑前先落 started 标记（幂等）。
+
+        该标记让跨进程/重启后仍能区分"grant 已消费（run 已启动过，stale 条目）"
+        与"grant 随 owner 死亡丢失（可 re-arm 抢救）"，保证 re-arm 永不会把
+        同一条目二次启动为自治 run。
+        """
+        now = time.time()
+
+        def _mark(entries: dict[str, ScheduleEntry]) -> None:
+            e = entries.get(sid)
+            if e is not None and e.wake and e.wake_started_at <= 0.0:
+                e.wake_started_at = now
+
+        self._mutate(_mark)
+
+    def defer_wake_retry(self, sid: str, *, owner: str = "") -> WakeDefer:
+        """EVO-20260919-f119847d: wake 交付瞬态失败 → 有界指数退避。
+
+        推迟：retry_count+1、trigger_at=now+退避间隔、释放 lease（条目保留，
+        下次到点重新 claim）。exhausted=True：重试预算耗尽（WAKE_MAX_RETRIES 次
+        或首败+WAKE_RETRY_WINDOW_S 窗口任一到达）——保留 lease 供调用方降级
+        通知后 mark_triggered 消费。present=False：条目已被他方消费/接管，
+        调用方无需处理。
+        """
+        now = time.time()
+        result: list[WakeDefer] = [WakeDefer(False, False, 0, 0.0)]
+
+        def _defer(entries: dict[str, ScheduleEntry]) -> None:
+            e = entries.get(sid)
+            if e is None:
+                return
+            if owner and e.lease_owner and e.lease_owner != owner:
+                return
+            deadline = e.retry_deadline_at
+            if deadline <= 0.0:
+                deadline = now + WAKE_RETRY_WINDOW_S
+                e.retry_deadline_at = deadline
+            count = e.retry_count + 1
+            delay = WAKE_RETRY_DELAYS_S[min(count - 1, len(WAKE_RETRY_DELAYS_S) - 1)]
+            e.retry_count = count
+            if count >= WAKE_MAX_RETRIES or now + delay >= deadline:
+                result[0] = WakeDefer(True, True, count, delay)
+                return
+            e.trigger_at = now + delay
+            e.lease_owner = ""
+            e.lease_until = 0.0
+            result[0] = WakeDefer(True, False, count, delay)
+
+        self._mutate(_defer)
+        return result[0]
+
     def cancel(self, sid: str) -> bool:
         removed: list[bool] = []
         self._mutate(lambda es: removed.append(es.pop(sid, None) is not None))
@@ -376,6 +466,64 @@ def _advance(entries: dict[str, ScheduleEntry], sid: str, now: float) -> None:
         entries.pop(sid, None)
 
 
+def rearm_wake_grants(store: ScheduleStore, session_id: str, ingress: Any) -> int:
+    """EVO-20260919-f119847d: 同会话下一次真人 run 重铸丢失的 wake grant。
+
+    全部满足才重铸：
+    - ingress 是未委派的真人 human token（委派 token 不能再委派——wake
+      不可递归的禁令不变，也不存在伪造授权路径）；
+    - 条目 wake=True 且 session_id 精确等于本次真人 run 会话；
+    - 条目仍在（已消费/降级/取消的不存在）；
+    - wake_started_at 为 0（run 已启动过的一律不重启第二次）；
+    - 本进程无该 grant；wake_owner_pid 为 0 或已死（owner 存活时 grant 在
+      那边；等于本进程 pid 时表示本进程 grant 已被消费）。
+
+    重铸后 owner 归属迁至当前进程并重置退避预算：授权是新的、窗口也是新的，
+    且仍受双上限约束；re-arm 只由真人 run 驱动，无自动放大回路。
+    """
+    if ingress is None or getattr(ingress, "delegated", True):
+        return 0
+    target = str(session_id or "")
+    if not target:
+        return 0
+    from llm_loop.core.trace_leak.ingress_token import delegate_ingress
+
+    rearmed = 0
+    for snapshot in store.list():
+        if not snapshot.get("wake") or str(snapshot.get("session_id", "")) != target:
+            continue
+        sid = str(snapshot.get("sid", ""))
+        if not sid or store.wake_grant(sid) is not None:
+            continue
+        if float(snapshot.get("wake_started_at", 0.0) or 0.0) > 0.0:
+            continue
+        owner_pid = int(snapshot.get("wake_owner_pid", 0) or 0)
+        if owner_pid == os.getpid():
+            continue
+        if owner_pid and _pid_alive(owner_pid):
+            continue
+        try:
+            grant = delegate_ingress(ingress, entry="schedule_wake")
+        except ValueError:
+            logger.warning("wake grant re-arm 委派被拒（跳过）sid=%s", sid)
+            continue
+        store._set_wake_grant(sid, grant)
+
+        def _adopt(entries: dict[str, ScheduleEntry], _sid: str = sid) -> None:
+            e = entries.get(_sid)
+            if e is None:
+                return
+            e.wake_owner_pid = os.getpid()
+            e.retry_count = 0
+            e.retry_deadline_at = 0.0
+
+        # 不触碰 lease：他进程若正持有 claim，到期后自然让渡给 owner（本进程）。
+        store._mutate(_adopt)
+        rearmed += 1
+        logger.info("wake grant 已重铸（re-arm）sid=%s session=%s", sid, target)
+    return rearmed
+
+
 class SchedulerThread:
     """常驻检查线程：每 TICK 检查到点提醒 → 回调（默认写 interop notify）.
 
@@ -387,7 +535,7 @@ class SchedulerThread:
         store: ScheduleStore,
         *,
         tick_interval: float = _TICK_INTERVAL_S,
-        notify: Callable[[ScheduleEntry], bool | None] | None = None,
+        notify: Callable[[ScheduleEntry], Any] | None = None,
     ) -> None:
         self._store = store
         self._tick = tick_interval
@@ -421,7 +569,10 @@ class SchedulerThread:
                                 e.sid, self._owner, delay_s=max(5.0, self._tick)
                             )
                             continue
-                        self._store.mark_triggered(e.sid, owner=self._owner)
+                        if outcome is not WAKE_DEFERRED:
+                            # WAKE_DEFERRED：交付方已自行 defer（条目保留、退避
+                            # 已排）；此时 ack 会把等待 re-arm 的 wake 提前消费掉。
+                            self._store.mark_triggered(e.sid, owner=self._owner)
                     except Exception:  # noqa: BLE001 — 单条失败保留提醒并退避重试
                         logger.warning("提醒触发失败（保留并重试）: %s", e.sid, exc_info=True)
                         self._store.retry_later(

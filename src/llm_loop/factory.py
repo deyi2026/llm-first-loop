@@ -1598,25 +1598,70 @@ def build_engine(
     # BUGFIX(2026-08-27): 复用上方工具注册处的 _schedule_store（原此处再建
     # 新实例，双 Store 内存互不可见 → 提醒永不触发）
     try:
-        from llm_loop.core.scheduler import ScheduleEntry, SchedulerThread
+        from llm_loop.core.scheduler import (
+            WAKE_DEFERRED,
+            ScheduleEntry,
+            SchedulerThread,
+        )
 
-        def _deliver_schedule(entry: ScheduleEntry) -> bool:
-            """提醒交付：普通通知；或持有效 one-shot grant 的同会话续跑。"""
+        def _deliver_schedule(entry: ScheduleEntry) -> object:
+            """提醒交付：普通通知；或持有效 one-shot grant 的同会话续跑。
+
+            EVO-20260919-f119847d：wake 交付失败不再即时丢弃——瞬态失败
+            （会话忙 / workspace 切换守卫占用 / runner 暂不可用）与 grant 随
+            owner 进程死亡丢失，统一进入有界指数退避（30s→1m→2m→4m→8m，
+            双上限：次数 / 首败+30min）；窗口内同会话下一次真人 run 会 re-arm
+            重铸 grant（scheduler.rearm_wake_grants），超窗才降级为可见通知。
+            run 已启动过的 stale 条目（wake_started_at>0 或本进程 grant 已消费）
+            一律降级收尾，绝不二次启动自治 run。
+            """
             if not getattr(entry, "wake", False):
                 SchedulerThread._notify_via_interop(entry, data_dir=settings.data_dir)
                 return True
 
-            grant = _schedule_store.wake_grant(entry.sid)
-            session_id = str(getattr(entry, "session_id", "") or "")
-            if grant is None or not session_id:
-                # grant 不持久化：进程重启/owner 退出后安全降级为通知，不伪造授权。
+            def _degrade(reason: str) -> bool:
+                body = f"[定时提醒] {entry.message}"
                 SchedulerThread._notify_via_interop(entry, data_dir=settings.data_dir)
+                # 审计修正：通知正文字符数如实记录；prompt_chars 恒 0（无字符
+                # 进入模型 prompt），不再以单一 0 掩盖"完整消息已送达"的事实。
                 engine._record_action(
                     "schedule.wake",
                     "degraded_to_notify",
-                    f"sid={entry.sid};reason=grant_unavailable;prompt_chars=0",
+                    f"sid={entry.sid};reason={reason}"
+                    f";notify_chars={len(body)};prompt_chars=0",
                 )
                 return True
+
+            def _defer_or_degrade(reason: str) -> object:
+                res = _schedule_store.defer_wake_retry(entry.sid)
+                if not res.present or res.exhausted:
+                    return _degrade(f"{reason}_retry_cap")
+                engine._record_action(
+                    "schedule.wake",
+                    "deferred_retry",
+                    f"sid={entry.sid};reason={reason}"
+                    f";retry_count={res.retry_count}"
+                    f";next_delay_s={res.next_delay_s:.0f}",
+                )
+                return WAKE_DEFERRED
+
+            grant = _schedule_store.wake_grant(entry.sid)
+            session_id = str(getattr(entry, "session_id", "") or "")
+            if grant is None or not session_id:
+                if grant is None and session_id and (
+                    float(getattr(entry, "wake_started_at", 0.0) or 0.0) > 0.0
+                    or int(getattr(entry, "wake_owner_pid", 0) or 0) == os.getpid()
+                ):
+                    # grant 已消费：自动续跑 run 已真实启动过（成功 start 后 ack
+                    # 落盘失败的 stale 条目，或跨进程重启残留）。不再启动第二次
+                    # 自治 run，也不等待 re-arm——收尾为通知。
+                    return _degrade("grant_consumed_stale")
+                # grant 不持久化：owner 进程死亡后 grant 结构性丢失，重试本身
+                # 救不回；但同会话下一次真人 run 的 re-arm 可以重铸 grant——
+                # 在有界退避窗口内保留条目等待，超窗才降级为通知，不伪造授权。
+                if grant is None and session_id:
+                    return _defer_or_degrade("grant_lost_owner_dead")
+                return _degrade("grant_unavailable")
 
             # EVO-20260919-eee9d3b8（人工已审）: 唤醒 prompt 追加本会话后台任务机械现状，
             # 避免唤醒 run 在无终态回执可见时盲目重放/重复轮询；投影失败 fail-open。
@@ -1630,6 +1675,13 @@ def build_engine(
             if jobs_facts:
                 wake_prompt = f"{wake_prompt}\n{jobs_facts}"
 
+            # EVO-20260919-f119847d: 先落 started 标记再启动。极端情况下（启动
+            # 后 ack 落盘失败的 stale 条目）宁可退化为一次通知，也不能让
+            # re-arm 误判为"grant 丢失"而把同一 wake 二次启动为自治 run。
+            try:
+                _schedule_store.note_wake_started(entry.sid)
+            except Exception:  # noqa: BLE001 — 标记失败不阻断已授权续跑
+                logger.warning("wake started 标记落盘失败 sid=%s", entry.sid)
             handle, _q = background_runner.start(
                 session_id,
                 wake_prompt,
@@ -1647,24 +1699,25 @@ def build_engine(
                 )
                 return True
             if background_runner.is_running(session_id) or background_runner.is_sync_active(session_id):
-                engine._record_action(
-                    "schedule.wake",
-                    "session_busy_retry",
-                    f"sid={entry.sid};session={session_id}",
-                )
-                return False
+                return _defer_or_degrade("session_busy")
 
-            # runner disabled/不可启动时不丢提醒，退化为可见通知。
-            SchedulerThread._notify_via_interop(entry, data_dir=settings.data_dir)
-            engine._record_action(
-                "schedule.wake",
-                "degraded_to_notify",
-                f"sid={entry.sid};reason=runner_unavailable;prompt_chars=0",
-            )
-            return True
+            if not background_runner.enabled:
+                # RUNNER_BACKGROUND=0 是持久配置而非瞬态：退避重试无意义，
+                # 维持原语义——立即降级为可见通知，不延迟送达。
+                return _degrade("runner_disabled")
+            # workspace 切换守卫占用等瞬态不可启动：退避窗口内保留重试。
+            return _defer_or_degrade("runner_unavailable")
 
         engine.scheduler = SchedulerThread(_schedule_store, notify=_deliver_schedule)
         engine.scheduler.start()
+
+        def _rearm_wake_grants(session_id: str, ingress: object) -> None:
+            """真人 run 启动钩子（lifecycle 在 run_stream 中调用）：重铸本会话丢失的 wake grant。"""
+            from llm_loop.core.scheduler import rearm_wake_grants
+
+            rearm_wake_grants(_schedule_store, session_id, ingress)
+
+        engine.rearm_wake_grants = _rearm_wake_grants
     except Exception:  # noqa: BLE001 — 调度装配失败不影响核心链路
         logger.exception("调度提醒线程装配失败（fail-open）")
         engine.scheduler = None
