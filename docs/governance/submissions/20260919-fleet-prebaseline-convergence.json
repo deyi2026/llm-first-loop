@@ -1,0 +1,709 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-fleet-prebaseline-convergence",
+  "summary": "Fresh convergence candidate for the Fleet pre-baseline: merge the local production main line (4327d5ee2, P0-A.1 service-control contracts, true live interjection handoff, TASK-005 service identity view, P0-B foreground preemption, browser SMC phase-1 surface, Learning Plane P0-C migration, method discovery/declaration records) onto remote lfl/main@d8a748adf (PR #28 gate/A.5 fixes), resolving the single real hunk (test rename) explicitly, then clearing accumulated committed-state ruff/pyright debt. Measurement-only lineage (7766dbe1e gen43 prereg) is deliberately NOT part of this production baseline.",
+  "components": [
+    {
+      "component_id": "browser-smc-phase1-surface",
+      "paths": [
+        "src/llm_loop/browser/action.py",
+        "src/llm_loop/browser/cdp_action_host.py",
+        "src/llm_loop/browser/cdp_host.py",
+        "src/llm_loop/browser/perception.py",
+        "src/llm_loop/tools/builtin/browser_perceive.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "browser semantic-operation capture/perception/action control plane (CDP host, projection, receipts)",
+      "disposition": "ADMIT. Mechanical browser facts only: capture-loss classification, navigate lightweight probe precondition, model-driven projection window, evidence-layer vision, parameterized CDP frame ceiling with same-target reconnect. No judgment of page/task semantics is encoded; the model stays the authority.",
+      "evidence": [
+        "Commits on the merged line: 3892982ac (capture-loss classification + navigate lightweight precondition), 26c649b08 (model-driven projection window + evidence-layer vision phase 1), 7b42d9cfb/22f7c7b07 (parameterized CDP frame limit + same-target reconnect), d808456a3 (heading kind unmasked), e30478643 (machine-authored adapter args default), 086249703/e5be80a52 (128MiB frame default pinned in factory tests), 5cfea26cc (20s observation recv budget), c085418ba (standalone probe-mode field).",
+        "77f4cb472 additionally binds probe_page_target via getattr before calling (optional-capability semantics preserved) and adds a mechanical bytes boundary on vision payload (non-bytes becomes vision unavailable, never a crash)."
+      ],
+      "verification_level": "Browser focused tests, full committed-state suite (not real_llm), Ruff, Pyright, tree security scan, A.5 coverage",
+      "model_evidence_veto_recovery_exit": "Snapshot/diff/vision evidence refs remain model-readable; every hard ceiling is a physical boundary fact, not a content verdict. Operators may revert the lineage; no persistent state migration.",
+      "rollback_route": "Revert the component lineage commits; no data migration, no runtime.toml rewrite, no service state.",
+      "declaration_id": "browser-smc-phase1-surface"
+    },
+    {
+      "component_id": "service-control-two-phase",
+      "paths": [
+        "src/llm_loop/runtime/service_control.py",
+        "src/llm_loop/tools/builtin/service_control.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "runtime service lifecycle control authority (service_control + its builtin tool)",
+      "disposition": "ADMIT. P0-A.1 contract closure and two-phase restart are mechanical lifecycle facts: zero-write reads, controller/target identity separation, in-lease exact binding reverify before execution. The program answers 'does this controller still own this binding', never task semantics.",
+      "evidence": [
+        "efb676cb1 closes P0-A.1 gaps (_control_code_root, detached worker python_src binding, verify_deployment_binding before execution); 1103a7493 adapts the worker success test to in-lease binding reverify; cf8288822 introduces two-phase restart without lifecycle-lease waits.",
+        "External GPT review 2026-09-19 verified all three contracts present on the converged line and moved P0-A.1 out of the open-items list."
+      ],
+      "verification_level": "Service-control focused + adjacent suites, full committed-state suite, Ruff, Pyright, security, A.5",
+      "model_evidence_veto_recovery_exit": "Every read is zero-write; restart identity and generation are inspectable receipts; operators can revert without state migration.",
+      "rollback_route": "Revert cf8288822..efb676cb1 lineage; no persisted lease data survives a revert (bindings are re-derived).",
+      "declaration_id": "service-control-two-phase"
+    },
+    {
+      "component_id": "core-loop-continuity-preemption",
+      "paths": [
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/loop/lifecycle.py",
+        "src/llm_loop/core/loop/runner.py",
+        "src/llm_loop/core/session.py",
+        "src/llm_loop/core/message.py",
+        "src/llm_loop/core/history.py",
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/core/prompt_build/stages/ingress_resolution.py",
+        "src/llm_loop/resources/foreground.py",
+        "src/llm_loop/resources/governor.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "core loop / session / history continuity and foreground preemption authority",
+      "disposition": "ADMIT. True live interjection handoff, foreground true preemption for background learning, active-run/session protection, unified wire-caliber budget metering and same-run byte valve are mechanical continuity and resource facts; which content matters remains the model's judgment.",
+      "evidence": [
+        "26e47ee6a (true live interjection handoff), 80c1db9cc (P0-B foreground true preemption), a8557d326 (protect active runs and session authority), 696f97268 (unified wire-caliber metering + effective-chain receipts), c182e3bef (same-run resource-safety byte valve).",
+        "P0-B result recorded in docs/PREEMPTION-P0B-RESULT-v1.md on this line."
+      ],
+      "verification_level": "Continuity/preemption focused + adjacent suites, full committed-state suite, Ruff, Pyright, A.5",
+      "model_evidence_veto_recovery_exit": "Interjection queue and run/session receipts stay model-inspectable; preemption restores historical behavior on revert.",
+      "rollback_route": "Revert the lineage commits; no data migration (queues are transient).",
+      "declaration_id": "core-loop-continuity-preemption"
+    },
+    {
+      "component_id": "learning-memory-methods-plane",
+      "paths": [
+        "src/llm_loop/memory/extractor.py",
+        "src/llm_loop/memory/retriever.py",
+        "src/llm_loop/methods/learning_journal.py",
+        "src/llm_loop/methods/learning_plane.py",
+        "src/llm_loop/methods/store.py",
+        "src/llm_loop/learning_runtime.py",
+        "src/llm_loop/introspection/evolution_exec.py",
+        "src/llm_loop/introspection/registry_correction.py",
+        "src/llm_loop/introspection/registry_experience.py",
+        "src/llm_loop/introspection/registry_introspection.py",
+        "src/llm_loop/introspection/search.py",
+        "src/llm_loop/introspection/tools_status.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Learning Plane: memory extraction scheduling, method store/journal, introspection registries",
+      "disposition": "ADMIT. P0-C migrates MemoryExtractor interval scheduling into the Learning Plane (one scheduling authority), method discovery v2 exposes freshness facts, model-declared method use is recorded, exec skipped becomes a terminal state with web approval receipt closure. All are mechanical bookkeeping facts.",
+      "evidence": [
+        "4327d5ee2 == 79d9b8cb8 by patch-id (b658f8522...) — identical P0-C patch, verified during this convergence; this baseline takes the main-lineage copy.",
+        "ce7aee491 (discovery v2 + freshness facts), 0cdd8bbb3 (record model-declared method use), c32c02f75 (exec skipped terminal + web receipt closure), 403dc4bff (multi-term tokenization), ff6ccc343 (retriever re-index skip on recovery end-drift), 4980d58c4 (dedicated plane + observability)."
+      ],
+      "verification_level": "Learning/methods focused + adjacent suites, full committed-state suite, Ruff, Pyright, A.5",
+      "model_evidence_veto_recovery_exit": "Method/memory records stay model-searchable with explicit use declarations and freshness facts; scheduling authority is inspectable; revert restores the prior extractor-local scheduling.",
+      "rollback_route": "Revert 4327d5ee2 and the supporting lineage; journal/store formats are additive.",
+      "declaration_id": "learning-memory-methods-plane"
+    },
+    {
+      "component_id": "web-runtime-config-surface",
+      "paths": [
+        "src/llm_loop/web/human_turn_queue.py",
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/web/schemas.py",
+        "src/llm_loop/config.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/llm/pool.py",
+        "src/llm_loop/runtime/launch.py",
+        "src/llm_loop/runtime/manifest.py",
+        "src/llm_loop/runtime/resolver.py",
+        "src/llm_loop/cache_guard/guard.py",
+        "src/llm_loop/knowledge/injection_ledger.py",
+        "src/llm_loop/tools/registry.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "web server surface, runtime config/launch, LLM client/pool, cache guard, injection ledger, tools registry",
+      "disposition": "ADMIT. TASK-005 desired/live/stable service identity facts, streaming math-code protection, stale provider-client self-heal, INJECTION_LEDGER_PATH precedence fix, local-import ratchet repayment and registry observability are mechanical server/config facts; the web layer renders and receives, it does not judge semantics.",
+      "evidence": [
+        "1d89b2740/06552a114 (TASK-005 identity view + missing ServicesPanel), 4e5ad6c12/d25111b31 (math-stream preprocessing protection), 3bf8364be (self-heal stale provider client on transport connect failure), 94dcac048 (INJECTION_LEDGER_PATH outranks configure()), 03520a147 (function-local import debt repayment, dev-env-proof runtime tests), 38bc06802 (full-suite green restore before main merge), 9a02ce67f (resolved data dir for review audit)."
+      ],
+      "verification_level": "Web/config/client focused + adjacent suites, full committed-state suite, Ruff, Pyright, security, A.5",
+      "model_evidence_veto_recovery_exit": "Identity/ledger/config facts remain inspectable via APIs and ledgers; every fix is revertible without state migration.",
+      "rollback_route": "Revert lineage commits; config additions are optional with historical defaults.",
+      "declaration_id": "web-runtime-config-surface"
+    },
+    {
+      "component_id": "webui-client",
+      "paths": [
+        "webui/src/App.test.tsx",
+        "webui/src/App.tsx",
+        "webui/src/components/conversation/ChatQueue.tsx",
+        "webui/src/components/conversation/Composer.tsx",
+        "webui/src/components/conversation/ModelControls.tsx",
+        "webui/src/components/learning/LearningPanel.tsx",
+        "webui/src/components/services/ServicesPanel.tsx",
+        "webui/src/components/sidebar/EvolutionPanel.tsx",
+        "webui/src/components/sidebar/Sidebar.tsx",
+        "webui/src/conversation-stream.test.ts",
+        "webui/src/core/api.ts",
+        "webui/src/core/chat.ts",
+        "webui/src/core/conversation.ts",
+        "webui/src/core/markdown.ts",
+        "webui/src/core/stores.ts",
+        "webui/src/core/types.ts",
+        "webui/src/evolution-panel.test.tsx",
+        "webui/src/i18n/zh.ts",
+        "webui/src/markdown-stream.test.ts",
+        "webui/src/queue-interject-product.test.tsx",
+        "webui/src/sendflow.test.tsx",
+        "webui/src/stage2.test.tsx",
+        "webui/src/tokens/app.css"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "operator-facing WebUI client (React view layer)",
+      "disposition": "ADMIT as client view/test surface. Renders server-owned facts (service identity, conversation, learning/evolution panels, queue interjection UI); no autonomous control policy runs in the client.",
+      "evidence": [
+        "Component-level vitest/jest-style tests accompany the panels (App.test.tsx, evolution-panel, queue-interject-product, sendflow, stage2, markdown/conversation-stream tests)."
+      ],
+      "verification_level": "Client unit tests + full server suite adjacency",
+      "model_evidence_veto_recovery_exit": "Operators may revert UI pieces independently; server authority unchanged.",
+      "rollback_route": "Revert client files; server unaffected."
+    },
+    {
+      "component_id": "tests-regression",
+      "paths": [
+        "tests/scripts/test_restart_mirror_hardening.py",
+        "tests/unit/test_cache_guard.py",
+        "tests/unit/test_evolution_exec.py",
+        "tests/unit/test_extractor.py",
+        "tests/unit/test_foreground_preemption.py",
+        "tests/unit/test_injection_attribution.py",
+        "tests/unit/test_learning_journal.py",
+        "tests/unit/test_learning_observability.py",
+        "tests/unit/test_learning_plane_memory.py",
+        "tests/unit/test_m57_config_convergence.py",
+        "tests/unit/test_managed_service_control_p0a.py",
+        "tests/unit/test_message_retraction.py",
+        "tests/unit/test_method_learning.py",
+        "tests/unit/test_model_pool_per_model.py",
+        "tests/unit/test_peer_scorecard_v0_1.py",
+        "tests/unit/test_resolved_episode.py",
+        "tests/unit/test_runner_background.py",
+        "tests/unit/test_runtime_config_p0.py",
+        "tests/unit/test_runtime_manifest.py",
+        "tests/unit/test_runtime_resolver.py",
+        "tests/unit/test_selective_evidence_s1.py",
+        "tests/unit/test_service_control_two_phase_restart.py",
+        "tests/unit/test_service_identity_view.py",
+        "tests/unit/test_smc_browser_action_v01.py",
+        "tests/unit/test_smc_browser_args_normalization_v01.py",
+        "tests/unit/test_smc_browser_cdp_frame_limit_v01.py",
+        "tests/unit/test_smc_browser_live_perception_v01.py",
+        "tests/unit/test_smc_browser_perception_v01.py",
+        "tests/unit/test_smc_browser_phase1_spec_v01.py",
+        "tests/unit/test_smc_browser_predicate_wait_v01.py",
+        "tests/unit/test_smc_browser_projection_vision_v01.py",
+        "tests/unit/test_smc_browser_semantic_diff_v01.py",
+        "tests/unit/test_smc_browser_typed_wait_v06.py",
+        "tests/unit/test_tool_working_set_projection.py",
+        "tests/web/test_chat_queue.py",
+        "tests/web/test_history_lazy_load.py",
+        "tests/web/test_stream_endpoint.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic regression and qualification tests",
+      "disposition": "ADMIT as tests only; they pin mechanical contracts and own no runtime authority.",
+      "evidence": [
+        "Includes the merged-injection-attribution rename resolution (caliber_terms, the newer local rename kept over the PR #28 ruff rename)."
+      ],
+      "verification_level": "Full committed-state suite",
+      "model_evidence_veto_recovery_exit": "Tests expose exact mechanical behavior; revisable independently.",
+      "rollback_route": "Revert with their implementations."
+    },
+    {
+      "component_id": "docs-records",
+      "paths": [
+        "docs/DESIGN-20260910-learning-plane.md",
+        "docs/LFL-restart-guide.md",
+        "docs/METHOD_LEARNING_V1.md",
+        "docs/PREEMPTION-P0B-RESULT-v1.md",
+        "docs/SMC-BROWSER-PHASE1-BSPEC-RESULT-20260913.json",
+        "docs/SMC-BROWSER-PHASE1-PROFILE-v0.1.json",
+        "docs/SMC-BROWSER-PHASE1-SCHEMA-v0.1.json",
+        "docs/analysis/METHOD-DISCOVERY-V2-AUDIT-20260918.md",
+        "docs/analysis/PEER-SCORECARD-v0.1.json",
+        "docs/analysis/PEER-SCORECARD-v0.2.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "design/measurement/result documentation",
+      "disposition": "ADMIT as factual records; runtime does not consume them.",
+      "evidence": [
+        "Learning-plane design, P0-B result, method-learning v1, restart guide, SMC browser phase-1 schema/profile/result records, method discovery v2 audit.",
+        "3d3428560 commits the two frozen scorecard contract JSONs previously left untracked."
+      ],
+      "verification_level": "A.5 path coverage",
+      "model_evidence_veto_recovery_exit": "Reviewers may amend records without runtime effect.",
+      "rollback_route": "Revert/delete records; no runtime effect."
+    },
+    {
+      "component_id": "operator-scripts",
+      "paths": [
+        "scripts/ab_test_embedding.py",
+        "scripts/embedding_warmup.py",
+        "scripts/gen-cloudflared-config.sh",
+        "scripts/git_security_scan.sh",
+        "scripts/qualification/peer_scorecard_v0_1.py",
+        "scripts/restart_mirror.sh",
+        "scripts/start-web-tunnel.sh"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "operator shell helpers, embedding experiment scripts, read-only qualification tooling",
+      "disposition": "ADMIT as non-runtime tooling; peer scorecard script is read-only qualification; embedding scripts are offline experiments; shell helpers are operational conveniences with security-scan coverage.",
+      "evidence": [
+        "77f4cb472 clears their committed-state ruff debt (E401/I001/E70x/E722/SIM115/B905) with zero behavior change."
+      ],
+      "verification_level": "Ruff on scripts; restart-mirror hardening test",
+      "model_evidence_veto_recovery_exit": "Scripts are invocable, optional, and revertible individually.",
+      "rollback_route": "Revert individually; no runtime dependency."
+    },
+    {
+      "component_id": "experiences-records",
+      "paths": [
+        "experiences/2026-09-03-parallel-worktree-baseline-snapshot.md",
+        "experiences/2026-09-03-venv-first-dep-check.md",
+        "experiences/EXPERIENCE-20260815-llm-env.md",
+        "experiences/EXPERIENCE-20260815-untitled.md",
+        "experiences/EXPERIENCE-20260816-agent.md",
+        "experiences/EXPERIENCE-20260816-ai-ax-ai.md",
+        "experiences/EXPERIENCE-20260816-cache-first-llm.md",
+        "experiences/EXPERIENCE-20260816-curl-html-render-data.md",
+        "experiences/EXPERIENCE-20260816-evolve-review-venv-bin-python-m-llm-loop-cli.md",
+        "experiences/EXPERIENCE-20260816-hermes-browser-exec-code-as-action-8.md",
+        "experiences/EXPERIENCE-20260816-llm-first-loop-guard.md",
+        "experiences/EXPERIENCE-20260816-llm-ttl.md",
+        "experiences/EXPERIENCE-20260816-post-hook-experiencestore.md",
+        "experiences/EXPERIENCE-20260816-self-evaluate-trigger.md",
+        "experiences/EXPERIENCE-20260816-session-model-override-env.md",
+        "experiences/EXPERIENCE-20260816-sse.md",
+        "experiences/EXPERIENCE-20260816-untitled.md",
+        "experiences/EXPERIENCE-20260817-80-90.md",
+        "experiences/EXPERIENCE-20260817-80.md",
+        "experiences/EXPERIENCE-20260817-agent-dsh.md",
+        "experiences/EXPERIENCE-20260817-api-grep.md",
+        "experiences/EXPERIENCE-20260817-cache-health-0-0.md",
+        "experiences/EXPERIENCE-20260817-contextvar-finally-reset-subagent-report.md",
+        "experiences/EXPERIENCE-20260817-execute-command.md",
+        "experiences/EXPERIENCE-20260817-lfl-data-dir-interop.md",
+        "experiences/EXPERIENCE-20260817-llm-0-system.md",
+        "experiences/EXPERIENCE-20260817-llm-bash-env-engine-api.md",
+        "experiences/EXPERIENCE-20260817-llm-call.md",
+        "experiences/EXPERIENCE-20260817-llm-key-provider-providers-json-strip.md",
+        "experiences/EXPERIENCE-20260817-llm.md",
+        "experiences/EXPERIENCE-20260817-miss-7.md",
+        "experiences/EXPERIENCE-20260817-swe-bench-11-bug.md",
+        "experiences/EXPERIENCE-20260817-swe-bench-docker-venv.md",
+        "experiences/EXPERIENCE-20260817-swe-bench-harness-model-patch.md",
+        "experiences/EXPERIENCE-20260817-swe-patch.md",
+        "experiences/EXPERIENCE-20260817-sympy-swe-bench-collections-python3-13-venv-15-17.md",
+        "experiences/EXPERIENCE-20260817-system-run.md",
+        "experiences/EXPERIENCE-20260817-untitled.md",
+        "experiences/EXPERIENCE-20260818-flock.md",
+        "experiences/EXPERIENCE-20260818-swe-bench-f2p-pytest-rc.md",
+        "experiences/EXPERIENCE-20260818-swe-bench-harness-orbstack-pull-numpy-repr.md",
+        "experiences/EXPERIENCE-20260818-sympy-swe-p2p-11-12.md",
+        "experiences/EXPERIENCE-20260818-untitled.md",
+        "experiences/EXPERIENCE-20260819-debug-14011.md",
+        "experiences/EXPERIENCE-20260819-docker-hub-429-swe-429-30.md",
+        "experiences/EXPERIENCE-20260819-llm-http-402-insufficient-balance.md",
+        "experiences/EXPERIENCE-20260819-llm-sub2api-dns-tls.md",
+        "experiences/EXPERIENCE-20260819-reasoning-tail-0-1.md",
+        "experiences/EXPERIENCE-20260819-swe-bench-django-batch4.md",
+        "experiences/EXPERIENCE-20260819-untitled.md",
+        "experiences/EXPERIENCE-20260819-web-model-override-cli.md",
+        "experiences/EXPERIENCE-20260820-6-rule-ai-19.md",
+        "experiences/EXPERIENCE-20260820-architecture-status.md",
+        "experiences/EXPERIENCE-20260820-dsh-lfl-agent-session-ui.md",
+        "experiences/EXPERIENCE-20260820-evidence-first-independent-review-methodology-for.md",
+        "experiences/EXPERIENCE-20260820-foreignkey-deconstruct-app-label-lazy-reference.md",
+        "experiences/EXPERIENCE-20260820-git-users.md",
+        "experiences/EXPERIENCE-20260820-jsonfield-keytransform-in-lookup-sqlite-key-in.md",
+        "experiences/EXPERIENCE-20260820-lfl-dsh-node-mcp-stdio.md",
+        "experiences/EXPERIENCE-20260820-mcp-llm-tool.md",
+        "experiences/EXPERIENCE-20260820-pdf-venv-pep668-pymupdf-read-image.md",
+        "experiences/EXPERIENCE-20260820-report-pdf-diagram-quality-toolkit.md",
+        "experiences/EXPERIENCE-20260820-search-files-pattern.md",
+        "experiences/EXPERIENCE-20260820-swe-bench-django-9-130.md",
+        "experiences/EXPERIENCE-20260820-swe-bench-django-batch12-10-namedtuple-lazy-proxy.md",
+        "experiences/EXPERIENCE-20260820-swe-bench-django-batch13-10-q-conditional-multiwid.md",
+        "experiences/EXPERIENCE-20260820-swe-bench-django-full.md",
+        "experiences/EXPERIENCE-20260820-swe.md",
+        "experiences/EXPERIENCE-20260820-untitled.md",
+        "experiences/EXPERIENCE-20260820-validator-2026-08-20.md",
+        "experiences/EXPERIENCE-20260820-vs-2026-08-20.md",
+        "experiences/EXPERIENCE-20260821-9b-vs-27b-9b-3-3.md",
+        "experiences/EXPERIENCE-20260821-grill-me.md",
+        "experiences/EXPERIENCE-20260821-pythonpath-src.md",
+        "experiences/EXPERIENCE-20260821-ttl-p14-cached-tokens.md",
+        "experiences/EXPERIENCE-20260821-ttl-provider.md",
+        "experiences/EXPERIENCE-20260821-urllib-sse-lm-studio-400.md",
+        "experiences/EXPERIENCE-20260821-web.md",
+        "experiences/EXPERIENCE-20260822-gamma-3-omega-1.md",
+        "experiences/EXPERIENCE-20260822-lfl-pythonpath.md",
+        "experiences/EXPERIENCE-20260822-map-retrieve-consume.md",
+        "experiences/EXPERIENCE-20260822-p0-p1-precheck-p2-schema.md",
+        "experiences/EXPERIENCE-20260822-provider-provider-model.md",
+        "experiences/EXPERIENCE-20260822-qwen3-8-27b-v2-100-58.md",
+        "experiences/EXPERIENCE-20260822-requires-human.md",
+        "experiences/EXPERIENCE-20260822-untitled.md",
+        "experiences/EXPERIENCE-20260823-3.md",
+        "experiences/EXPERIENCE-20260823-lfl.md",
+        "experiences/EXPERIENCE-20260823-path-registry.md",
+        "experiences/EXPERIENCE-20260823-untitled.md",
+        "experiences/EXPERIENCE-20260823-vs-kv.md",
+        "experiences/EXPERIENCE-20260824-200-43.md",
+        "experiences/EXPERIENCE-20260825-env-api-key-deepseek-401-key.md",
+        "experiences/EXPERIENCE-20260826-glm-5-3.md",
+        "experiences/EXPERIENCE-20260826-untitled.md",
+        "experiences/EXPERIENCE-20260827-400-tool-calls-tool-v2.md",
+        "experiences/EXPERIENCE-20260827-agent.md",
+        "experiences/EXPERIENCE-20260827-architecture-status-services-utc-cli.md",
+        "experiences/EXPERIENCE-20260827-codeartsdoer-specs-sdd.md",
+        "experiences/EXPERIENCE-20260827-coding-http-400-code-1210-tool-call-function-argum.md",
+        "experiences/EXPERIENCE-20260827-content-json.md",
+        "experiences/EXPERIENCE-20260827-exception-rate-1-0.md",
+        "experiences/EXPERIENCE-20260827-git-stash-bug-wire-size-toolcall-dataclass.md",
+        "experiences/EXPERIENCE-20260827-glm-coding-plan-cache-hit-0.md",
+        "experiences/EXPERIENCE-20260827-python-import-pth-pythonpath-merge-venv.md",
+        "experiences/EXPERIENCE-20260827-stash.md",
+        "experiences/EXPERIENCE-20260827-tail-pytest.md",
+        "experiences/EXPERIENCE-20260827-vs-p0.md",
+        "experiences/EXPERIENCE-20260828-glm-1210-user.md",
+        "experiences/EXPERIENCE-20260828-mirror-restart-launchd-trap.md",
+        "experiences/EXPERIENCE-20260829-1210.md",
+        "experiences/EXPERIENCE-20260829-a-b.md",
+        "experiences/EXPERIENCE-20260829-a.md",
+        "experiences/EXPERIENCE-20260829-a1.md",
+        "experiences/EXPERIENCE-20260829-agent-shell-opt-homebrew-bin-gh-brew-export-path.md",
+        "experiences/EXPERIENCE-20260829-audit-baseline-facts-20260829.md",
+        "experiences/EXPERIENCE-20260829-audit-baseline-facts-b.md",
+        "experiences/EXPERIENCE-20260829-audit-baseline-facts.md",
+        "experiences/EXPERIENCE-20260829-baseline-facts.md",
+        "experiences/EXPERIENCE-20260829-dsh-dsh-home-plugin-verify-schema-boot-repeat-stop.md",
+        "experiences/EXPERIENCE-20260829-err1210-2026-08-29-b-a.md",
+        "experiences/EXPERIENCE-20260829-memchain-20260828.md",
+        "experiences/EXPERIENCE-20260829-memchain-594215ce.md",
+        "experiences/EXPERIENCE-20260829-memchain-7361.md",
+        "experiences/EXPERIENCE-20260829-port-hijack-main-web-on-8903.md",
+        "experiences/EXPERIENCE-20260829-project-audit-baseline-facts-memory-link-validatio.md",
+        "experiences/EXPERIENCE-20260829-restart-mirror-r2-triple-failure.md",
+        "experiences/EXPERIENCE-20260829-untitled.md",
+        "experiences/EXPERIENCE-20260829-v2.md",
+        "experiences/EXPERIENCE-20260830-cognilocal-8901.md",
+        "experiences/EXPERIENCE-20260830-evolutionstore-split-brain-data-dir-cwd-env.md",
+        "experiences/EXPERIENCE-20260830-stale-state-model-switch-model.md",
+        "experiences/EXPERIENCE-20260830-untitled.md",
+        "experiences/EXPERIENCE-20260831-lfl-env-refresh-config.md",
+        "experiences/EXPERIENCE-20260902-task-restart-requires-user-confirm.md",
+        "experiences/EXPERIENCE-20260902-task-startup-discipline-no-auto-restart-ask-user-f.md",
+        "experiences/EXPERIENCE-20260902-task-startup-discipline.md",
+        "experiences/EXPERIENCE-20260903-death-loop-switch-tool-and-breaker-lessons.md",
+        "experiences/EXPERIENCE-20260903-evolution-approval-semantics.md",
+        "experiences/EXPERIENCE-20260903-fail-open-callsite-argument-evaluation.md",
+        "experiences/EXPERIENCE-20260903-frozen-contract-vs-program-fact.md",
+        "experiences/EXPERIENCE-20260903-parallel-line-drift-callsite-enumeration.md",
+        "experiences/EXPERIENCE-20260903-self-evaluate-trigger-schema.md",
+        "experiences/EXPERIENCE-20260903-tool-discovery-callability-schema-breaker-terminat.md",
+        "experiences/EXPERIENCE-20260903-untitled.md",
+        "experiences/EXPERIENCE-20260903-user-rule-no-auto-restart-done-tasks.md",
+        "experiences/EXPERIENCE-20260903-venv-first.md",
+        "experiences/EXPERIENCE-20260904-pytest-tail-grep-exit-0-pipefail.md",
+        "experiences/EXPERIENCE-20260904-untitled.md",
+        "experiences/EXPERIENCE-20260904-web-data-runtime-manifest.md",
+        "experiences/EXPERIENCE-20260905-pdf-dxf.md",
+        "experiences/EXPERIENCE-20260905-zip-234001-file-type-zip-stream.md",
+        "experiences/EXPERIENCE-20260906-err1210-current-tail-user-contract.md",
+        "experiences/EXPERIENCE-20260907-development-repair-safety-contract.md",
+        "experiences/EXPERIENCE-20260907-llm-loop-feishu-cpu-1-5s-list-sessions-json.md",
+        "experiences/EXPERIENCE-20260909-cache-health-per-session-ttl-session-model.md",
+        "experiences/EXPERIENCE-20260909-env.md",
+        "experiences/EXPERIENCE-20260909-github.md",
+        "experiences/EXPERIENCE-20260909-hosted-runner-rg-ext4-mtime-ci.md",
+        "experiences/EXPERIENCE-20260909-lfl-llm-pytest-tail.md",
+        "experiences/EXPERIENCE-20260909-lfl-shell-pytest-web-auth-require-web-origin-allow.md",
+        "experiences/EXPERIENCE-20260909-lfl.md",
+        "experiences/EXPERIENCE-20260909-llmclient-registry-engine-provider-base-url-key-mo.md",
+        "experiences/EXPERIENCE-20260909-origin-vs-breaker-authority.md",
+        "experiences/EXPERIENCE-20260909-real-llm-402.md",
+        "experiences/EXPERIENCE-20260910-r9-registry-vs.md",
+        "experiences/EXPERIENCE-20260910-run-real-smoke-sh-v1.md",
+        "experiences/EXPERIENCE-20260911-4.md",
+        "experiences/EXPERIENCE-20260911-agent-working-set.md",
+        "experiences/EXPERIENCE-20260911-edit-file.md",
+        "experiences/EXPERIENCE-20260911-execute-command-home-path-home.md",
+        "experiences/EXPERIENCE-20260911-execute-command-json-curl-utf-8-ascii.md",
+        "experiences/EXPERIENCE-20260911-github-token-read-org-gh-auth-login-git-push.md",
+        "experiences/EXPERIENCE-20260911-launchagent-plist-sed-env.md",
+        "experiences/EXPERIENCE-20260911-llama-cpp-0-3-0-9b-draft-27b-target-apple-silicon.md",
+        "experiences/EXPERIENCE-20260911-llm-first-loop-mirror-2026-09-11.md",
+        "experiences/EXPERIENCE-20260911-llm-traceback-http-swap.md",
+        "experiences/EXPERIENCE-20260911-macos-mlx-launchd-4-4.md",
+        "experiences/EXPERIENCE-20260911-macos-setsid-nohup.md",
+        "experiences/EXPERIENCE-20260911-mlx-lm-brew-python-venv-mlx.md",
+        "experiences/EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1.md",
+        "experiences/EXPERIENCE-20260911-mlx-lm.md",
+        "experiences/EXPERIENCE-20260911-pytest-q-addopts-exit-0-n-passed.md",
+        "experiences/EXPERIENCE-20260911-skill-shell-skill-list.md",
+        "experiences/EXPERIENCE-20260911-statebraid-phase9-main.md",
+        "experiences/EXPERIENCE-20260911-untitled.md",
+        "experiences/EXPERIENCE-20260911-worktree-git-checkout-stash-pop.md",
+        "experiences/EXPERIENCE-20260912-agent-pilot.md",
+        "experiences/EXPERIENCE-20260912-cline-cli-id-resume-headless-3-0-61-nightly-unsupp.md",
+        "experiences/EXPERIENCE-20260912-cline-headless-resume-t12.md",
+        "experiences/EXPERIENCE-20260912-gh-run-watch-watch-exit-0-ci.md",
+        "experiences/EXPERIENCE-20260912-lfl-workdir-code-mirror-archived-shell-workdir.md",
+        "experiences/EXPERIENCE-20260912-schedule-wake-workdir-v3.md",
+        "experiences/EXPERIENCE-20260912-shell-git.md",
+        "experiences/EXPERIENCE-20260912-sigkill-mid-turn-cli-stdout-sid-lfl-resume-session.md",
+        "experiences/EXPERIENCE-20260912-smx-shell-poc-poc.md",
+        "experiences/EXPERIENCE-20260912-worktree-env.md",
+        "experiences/EXPERIENCE-20260914-evidence-note.md",
+        "experiences/EXPERIENCE-20260914-launchd-runs-lsof.md",
+        "experiences/EXPERIENCE-20260914-research-execute-command-eperm-tmp-mirror-staging.md",
+        "experiences/EXPERIENCE-20260914-statebraid-fork-server.md",
+        "experiences/EXPERIENCE-20260915-2026-09-15-m1-g2.md",
+        "experiences/EXPERIENCE-20260915-llm-first-loop-evals-pilot-evals-pilot-pytest.md",
+        "experiences/EXPERIENCE-20260915-memory-schema-fail-closed.md",
+        "experiences/EXPERIENCE-20260915-pgrep-f-argv-venv-python.md",
+        "experiences/EXPERIENCE-20260916-a-b-hashembedder-2-5.md",
+        "experiences/EXPERIENCE-20260916-embedder-a-b.md",
+        "experiences/EXPERIENCE-20260916-embedding-provider-2-bug.md",
+        "experiences/EXPERIENCE-20260916-grep-search-files-token.md",
+        "experiences/EXPERIENCE-20260916-hev0-harness.md",
+        "experiences/EXPERIENCE-20260916-proc-version-lfl-workspace-root-worktree.md",
+        "experiences/EXPERIENCE-20260916-provider-embedding.md",
+        "experiences/EXPERIENCE-20260916-untitled.md",
+        "experiences/EXPERIENCE-20260917-api-env.md",
+        "experiences/EXPERIENCE-20260917-edit-file.md",
+        "experiences/EXPERIENCE-20260917-fetch-push.md",
+        "experiences/EXPERIENCE-20260917-git-stash-pop-pytest-60s-stash.md",
+        "experiences/EXPERIENCE-20260917-http-303-200.md",
+        "experiences/EXPERIENCE-20260917-hybrid-attention-ssm-backends-need-content-identit.md",
+        "experiences/EXPERIENCE-20260917-learning-plane-rg-1-fallback-lfrt-revalidate-fact.md",
+        "experiences/EXPERIENCE-20260917-lfl-execute-command-lfl-workspace-root-git.md",
+        "experiences/EXPERIENCE-20260917-lfrt-revalidate-not-applicable-fact-conflict.md",
+        "experiences/EXPERIENCE-20260917-llm-first-loop-mirror-origin-legacy-lfl.md",
+        "experiences/EXPERIENCE-20260917-macos-ppid-1-launchagent.md",
+        "experiences/EXPERIENCE-20260917-managed-service-cas-cas.md",
+        "experiences/EXPERIENCE-20260917-manifest-port-8787-8903.md",
+        "experiences/EXPERIENCE-20260917-method-learning-venv-worktree.md",
+        "experiences/EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree.md",
+        "experiences/EXPERIENCE-20260917-mirror-service-control.md",
+        "experiences/EXPERIENCE-20260917-schedule-wake-grant-unavailable-4-4.md",
+        "experiences/EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static.md",
+        "experiences/EXPERIENCE-20260917-surge-200-profile-v1-profiles-current.md",
+        "experiences/EXPERIENCE-20260918-browser-action-semantic-action-fields-mismatch-mac.md",
+        "experiences/EXPERIENCE-20260918-browser-action-target-id-id-grounding-ref.md",
+        "experiences/EXPERIENCE-20260918-browser-smc-duplicate-action-id-identity-unstable.md",
+        "experiences/EXPERIENCE-20260918-browser-smc-identity-ref-diff.md",
+        "experiences/EXPERIENCE-20260918-cdp-timeout-vs-frame-too-large-vs.md",
+        "experiences/EXPERIENCE-20260918-doh-cloudflared.md",
+        "experiences/EXPERIENCE-20260918-kind-kind-dom-ax-or.md",
+        "experiences/EXPERIENCE-20260918-laap-cn-api-cloudflare.md",
+        "experiences/EXPERIENCE-20260918-lfl-harness-worktree-pytest.md",
+        "experiences/EXPERIENCE-20260918-minimax-tokenplan-key-h3.md",
+        "experiences/EXPERIENCE-20260918-playwright-content-aria-snapshot-delta.md",
+        "experiences/EXPERIENCE-20260918-provider-client-econnrefused.md",
+        "experiences/README.md",
+        "experiences/archive/2026-09-03-frozen-contract-vs-program-fact.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "model-authored experience/knowledge records and archive",
+      "disposition": "ADMIT as knowledge records; runtime treats them as evidence artifacts, not instructions. Batch qualifications explicitly marked; archived lifecycle records moved under experiences/archive.",
+      "evidence": [
+        "Per-file qualification lines in batch commits (618590805, e12a1c905, 14c49481e); scan exemption narrowed per-rule (eca8130c3)."
+      ],
+      "verification_level": "Security scan allowlist discipline",
+      "model_evidence_veto_recovery_exit": "Records are model-readable facts; humans/models may invalidate entries without runtime effect.",
+      "rollback_route": "Revert/delete records; no runtime authority."
+    },
+    {
+      "component_id": "evals-records",
+      "paths": [
+        "evals/peer_scorecard_v0/PROTOCOL.v0.1.md",
+        "evals/peer_scorecard_v0/PROTOCOL.v0.2.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "qualification/protocol artifacts under evals/",
+      "disposition": "ADMIT as frozen protocol artifacts required by the committed scorecard suite; runtime does not consume them.",
+      "evidence": [
+        "3d3428560/9649c8cf8 restore clean-checkout green: ec6688646 committed the suite without its contract fixtures and protocol docs."
+      ],
+      "verification_level": "Scorecard suite green in committed state",
+      "model_evidence_veto_recovery_exit": "Artifacts are review-anchored files; revisable by explicit new identity.",
+      "rollback_route": "Revert the fixture commits alongside the suite if the protocol retires."
+    },
+    {
+      "component_id": "repo-housekeeping",
+      "paths": [
+        ".gitignore"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository hygiene (.gitignore)",
+      "disposition": "ADMIT as ignore-rule housekeeping (3802a6ea0).",
+      "evidence": [
+        "Pre-merge housekeeping commit on the production line."
+      ],
+      "verification_level": "Security scan",
+      "model_evidence_veto_recovery_exit": "Operators may amend ignore rules freely.",
+      "rollback_route": "Revert the ignore entries."
+    },
+    {
+      "component_id": "a5-manifest",
+      "paths": [
+        "docs/governance/submissions/20260919-fleet-prebaseline-convergence.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations for the 20260919 fleet pre-baseline convergence. A.5 remains a mechanical presence/coverage gate.",
+      "evidence": [
+        "Manifest partitions the exact d8a748adf...fleet-prebaseline changed-path set (364 paths + this manifest)."
+      ],
+      "verification_level": "Local exact A.5 self-gate before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains the authority for classification truth; metadata has no runtime authority.",
+      "rollback_route": "Revert together with the convergence metadata."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "browser-smc-phase1-surface",
+      "g1": {
+        "necessity": "Full-snapshot preconditions could permanently reject navigate after capture loss, unbounded CDP frame payloads could kill capture on huge pages, and vision evidence had no durable layer at all; these are mechanical observation-boundary gaps, not model-delegation gaps."
+      },
+      "g2": {
+        "authority_owner": "existing browser capture/perception/receipt planes (cdp_host, perception, action receipts)",
+        "relationship": "reuse",
+        "non_duplication": "Extends existing capture/projection/receipt objects; adds no new semantic verdict layer, no second controller, no page-content policy."
+      },
+      "g3": {
+        "model_evidence": [
+          "snapshot/diff/vision evidence refs and WorldSnapshot projections",
+          "capture-loss and probe receipts in action results",
+          "frame-ceiling and recv-budget boundary facts"
+        ],
+        "recovery_or_reason": "Navigate keeps a lightweight probe escape when full observation fails; vision failure is reported and never masks the main snapshot; all additions are fail-visible, revertible lineages."
+      },
+      "g4": {
+        "rollback": "Revert the lineage commits; no migration of any persistent store.",
+        "verification": [
+          "browser focused suites green",
+          "Ruff PASS / Pyright 0-0-0 on committed candidate",
+          "committed-state ci_gate full chain PASS in isolated worktree, clean env (ruff + env-pin declaration + Pyright 0/0/0 + tier0 + full xdist pytest 'not real_llm')",
+          "tree security scan PASS on the merge commit (365 files)"
+        ]
+      }
+    },
+    {
+      "declaration_id": "service-control-two-phase",
+      "g1": {
+        "necessity": "Pre-P0-A.1 control could read with side effects, conflate controller and target identity, and bind workers without exact re-verification, all mechanical ownership facts the model cannot safely judge from outside."
+      },
+      "g2": {
+        "authority_owner": "existing runtime/service_control authority",
+        "relationship": "reuse",
+        "non_duplication": "Closes gaps inside the existing authority; creates no second controller, scheduler, or semantic policy."
+      },
+      "g3": {
+        "model_evidence": [
+          "controller/target identity and generation receipts",
+          "zero-write read coverage",
+          "in-lease binding reverify test receipts"
+        ],
+        "recovery_or_reason": "Binding verify is fail-closed: a stale worker is rejected mechanically instead of trusted."
+      },
+      "g4": {
+        "rollback": "Revert the lineage; lease/bindings re-derive from disk state.",
+        "verification": [
+          "TASK-005 worker success + in-lease reverify tests green",
+          "two-phase restart suites green",
+          "committed-state ci_gate full chain PASS in isolated worktree, clean env (ruff + env-pin declaration + Pyright 0/0/0 + tier0 + full xdist pytest 'not real_llm')",
+          "Ruff PASS / Pyright 0-0-0"
+        ]
+      }
+    },
+    {
+      "declaration_id": "core-loop-continuity-preemption",
+      "g1": {
+        "necessity": "Interjections could be lost at handoff and background learning could starve the foreground turn; both are mechanical ordering/ownership facts, not semantic ones."
+      },
+      "g2": {
+        "authority_owner": "existing loop/lifecycle/foreground-governor planes",
+        "relationship": "reuse",
+        "non_duplication": "Reuses existing loop, session and governor authorities; no new scheduler policy or content filter."
+      },
+      "g3": {
+        "model_evidence": [
+          "interjection queue receipts and handoff tests",
+          "foreground preemption result records",
+          "budget metering receipts per wire caliber"
+        ],
+        "recovery_or_reason": "Queue items remain durable facts until handed off; revert restores pre-P0-B ordering."
+      },
+      "g4": {
+        "rollback": "Revert lineage; transient queues only.",
+        "verification": [
+          "interjection/preemption/budget focused suites green",
+          "committed-state ci_gate full chain PASS in isolated worktree, clean env (ruff + env-pin declaration + Pyright 0/0/0 + tier0 + full xdist pytest 'not real_llm')",
+          "Ruff PASS / Pyright 0-0-0"
+        ]
+      }
+    },
+    {
+      "declaration_id": "learning-memory-methods-plane",
+      "g1": {
+        "necessity": "Two scheduling authorities (extractor-local intervals vs Learning Plane) could diverge; method use and freshness lacked durable facts — mechanical duplication and observability gaps."
+      },
+      "g2": {
+        "authority_owner": "existing Learning Plane (learning_runtime, methods/learning_plane)",
+        "relationship": "replace",
+        "non_duplication": "Replaces extractor-local interval scheduling with the single existing plane authority; adds no parallel scheduler."
+      },
+      "g3": {
+        "model_evidence": [
+          "learning plane observability receipts",
+          "method journal use declarations",
+          "discovery freshness facts"
+        ],
+        "recovery_or_reason": "Migration is behavior-preserving per focused suites; revert restores prior scheduling without data conversion."
+      },
+      "g4": {
+        "rollback": "Revert lineage; additive journal records only.",
+        "verification": [
+          "P0-C migration focused suites green",
+          "committed-state ci_gate full chain PASS in isolated worktree, clean env (ruff + env-pin declaration + Pyright 0/0/0 + tier0 + full xdist pytest 'not real_llm')",
+          "Ruff PASS / Pyright 0-0-0"
+        ]
+      }
+    },
+    {
+      "declaration_id": "web-runtime-config-surface",
+      "g1": {
+        "necessity": "Service identity was not observable in one view; streaming code could be corrupted by math preprocessing; stale clients survived transport failures; env precedence could silently flip — all mechanical correctness/observability gaps."
+      },
+      "g2": {
+        "authority_owner": "existing web routes/schemas, runtime resolver/launch, LLM client/pool authorities",
+        "relationship": "reuse",
+        "non_duplication": "Adds facts to existing authorities; no new store, no second config source, no UI-side policy engine."
+      },
+      "g3": {
+        "model_evidence": [
+          "desired/live/stable identity API receipts",
+          "stream regression fixtures",
+          "ledger precedence tests",
+          "ratchet inventory counts"
+        ],
+        "recovery_or_reason": "All changes keep historical defaults when optional fields are omitted; revert is single-lineage."
+      },
+      "g4": {
+        "rollback": "Revert lineage; no data migration.",
+        "verification": [
+          "web/config/client focused suites green",
+          "committed-state ci_gate full chain PASS in isolated worktree, clean env (ruff + env-pin declaration + Pyright 0/0/0 + tier0 + full xdist pytest 'not real_llm')",
+          "Ruff PASS / Pyright 0-0-0",
+          "tree security scan PASS"
+        ]
+      }
+    }
+  ]
+}
