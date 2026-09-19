@@ -149,6 +149,19 @@ class ProjectCoordinator:
             lease = self.store.current_lease(workspace.workspace_id)
         except KeyError:
             lease = None
+        # fleet slice 5 (G2): 重启后从盘上 facts 直接读出归属/结算计数（机械汇总，
+        # 不做语义判断；last_parent_session_id 为最近一次 run_started 携带的非空归属）
+        facts = self.store.list_facts(workspace.workspace_id)
+        starts = [f for f in facts if f.get("event") == "run_started"]
+        settles = [f for f in facts if f.get("event") == "run_settled"]
+        last_parent = next(
+            (
+                str(f.get("parent_session_id"))
+                for f in reversed(starts)
+                if str(f.get("parent_session_id") or "")
+            ),
+            None,
+        )
         return {
             "workspace_id": workspace.workspace_id,
             "lease": None
@@ -170,5 +183,10 @@ class ProjectCoordinator:
                 "lease_id": record.lease_id,
                 "generation": record.generation,
                 "result": record.result,
+            },
+            "facts_summary": {
+                "run_started": len(starts),
+                "run_settled": len(settles),
+                "last_parent_session_id": last_parent,
             },
         }

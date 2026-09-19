@@ -116,6 +116,7 @@ from llm_loop.tools.builtin.source_synopsis import SourceSynopsisTool
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.subagent_lease import SubAgentLeaseTool
 from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
+from llm_loop.tools.builtin.subagent_topology import SubagentTopologyTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
 from llm_loop.tools.builtin.web_search import WebSearchTool
 from llm_loop.tools.builtin.workflow import WorkflowRunTool
@@ -1825,6 +1826,8 @@ def build_engine(
     registry.register(SubAgentResultTool(subagent_runner))
     # fleet slice 3: 子代理 fleet 租约磁盘事实（expires_at/expired）只读工具面。
     registry.register(SubAgentLeaseTool(subagent_runner))
+    # fleet slice 5 (G3): 拓扑 + 租约合并只读视图（跨会话接管/前情 children/超期可回收判断）。
+    registry.register(SubagentTopologyTool(subagent_runner))
     # EVO-20260914-e6b8aa22: 终止 child 的有界同会话续话（程序侧硬预算/窗口）。
     registry.register(AgentFollowupTool(subagent_runner))
     engine._tool_receipt_committed_hook = subagent_runner.settle_committed_receipt

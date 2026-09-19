@@ -709,7 +709,7 @@ class SubAgentRunner:
             self.session_store.save(sess)
         return sid, cancel_event, sess
 
-    def _begin_fleet_run(self, sid: str, depth: int) -> WorkerLease | None:
+    def _begin_fleet_run(self, sid: str, depth: int, parent_sid: str = "") -> WorkerLease | None:
         """Acquire the fleet lease at the run boundary; None keeps fleet off.
 
         A durable active lease from a crashed predecessor is superseded by
@@ -728,6 +728,8 @@ class SubAgentRunner:
                 "event": "run_started",
                 "depth": depth,
                 "runner_owner": self._runner_owner_id,
+                # fleet slice 5 (G2): 归属随 fact 落盘，重启后 recover() 可直接读出
+                "parent_session_id": parent_sid or "",
             },
         )
         return lease
@@ -766,21 +768,75 @@ class SubAgentRunner:
             return False, f"workspace 不存在: {sid}", {}
         return True, "ok", view
 
+    def topology_lease_view(
+        self, parent_id: str = "", child_id: str = ""
+    ) -> tuple[bool, str, dict]:
+        """fleet slice 5 (G3): 拓扑 + 租约合并只读 disk-truth 视图.
+
+        - child_id: 该 child 的 parent 归属、topology_snapshot 与 lease recover() 视图
+        - parent_id: 该 parent 的 active children、pending obligations 与每 child 租约
+        两面都只读；coordinator 未接入时租约块如实 unavailable，拓扑面仍可用。
+        """
+        child = str(child_id or "").strip()
+        parent = str(parent_id or "").strip()
+        if child:
+            ok, detail, lease_view = self.lease_facts(child)
+            view = {
+                "child_id": child,
+                "parent_id": self.parent_of(child) or None,
+                "topology": self.topology_snapshot(child),
+                "lease": (
+                    {"status": "ok", "detail": detail, "facts": lease_view}
+                    if ok
+                    else {"status": "unavailable", "detail": detail, "facts": lease_view}
+                ),
+            }
+            return True, "ok", view
+        if parent:
+            children = self.active_children(parent)
+            per_child = []
+            for sid in children:
+                ok, detail, facts = self.lease_facts(sid)
+                per_child.append(
+                    {
+                        "child_id": sid,
+                        "lease": (
+                            {"status": "ok", "detail": detail, "facts": facts}
+                            if ok
+                            else {"status": "unavailable", "detail": detail, "facts": facts}
+                        ),
+                    }
+                )
+            view = {
+                "parent_id": parent,
+                "active_children": children,
+                "children": per_child,
+                "pending_obligations": self.pending_obligations(parent),
+            }
+            return True, "ok", view
+        return False, "缺少 parent_id 或 child_id", {}
+
     def _settle_fleet_run(self, sid: str, result: SubAgentResult) -> None:
         """Exactly-once settlement at a real terminal; late fenced writes stay visible."""
         lease = self._fleet_leases.pop(sid, None)
         if lease is None or self._project_coordinator is None:
             return
         try:
-            self._project_coordinator.finish_run(
-                lease,
-                {
-                    "event": "run_settled",
-                    "outcome": result.outcome,
-                    "depth": result.depth,
-                    "runner_owner": self._runner_owner_id,
-                },
-            )
+            fact = {
+                "event": "run_settled",
+                "outcome": result.outcome,
+                "depth": result.depth,
+                "runner_owner": self._runner_owner_id,
+                # fleet slice 5 (G2): 结算 fact 同样携带归属（parent_of 走 active+durable 机械源）
+                "parent_session_id": self.parent_of(sid),
+            }
+            # fleet slice 5 (G2): 结算事实必须在 finish_run 之前进入 facts 流——store 的
+            # record_fact 只接受 active lease（settle 后 state=settled 会被 FencedError
+            # 拒绝）。此时 runner 持有该 lease 且 exactly-once 由 _fleet_leases.pop +
+            # store SettlementError 双重保证；崩溃窗口内 fact 是真实的终局叙述，
+            # 权威结算状态仍在 state.json。
+            self._project_coordinator.run_fact(lease, fact)
+            self._project_coordinator.finish_run(lease, fact)
         except Exception as exc:  # noqa: BLE001 - fencing is a mechanical fact; never mask the child result
             logging.getLogger(__name__).warning(
                 "fleet settlement fenced/failed for child %s (lease %s gen %d): %s: %s",
@@ -1133,7 +1189,7 @@ class SubAgentRunner:
 
         if self._project_coordinator is not None:
             try:
-                self._begin_fleet_run(sid, depth)
+                self._begin_fleet_run(sid, depth, parent_sid=sess.parent_id or "")
             except Exception as exc:  # noqa: BLE001 - mechanical boundary rejection before any child/provider/tool action
                 refused = SubAgentResult(
                     final_answer=(
@@ -1709,7 +1765,7 @@ class SubAgentRunner:
         sid, cancel_event, sess = self._reserve_child(parent_sid)
         if self._project_coordinator is not None:
             try:
-                self._begin_fleet_run(sid, depth)
+                self._begin_fleet_run(sid, depth, parent_sid=parent_sid or "")
             except Exception as exc:  # noqa: BLE001 - mechanical boundary rejection before any child/provider/tool action
                 refused = SubAgentResult(
                     final_answer=(
