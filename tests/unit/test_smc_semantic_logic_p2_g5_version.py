@@ -20,6 +20,12 @@ P1A = runpy.run_path(str(ROOT / "tests/unit/test_smc_semantic_logic_p1a.py"))
 P1C = runpy.run_path(str(VALIDATOR_ROOT / "harness.py"))
 P1D = runpy.run_path(str(ROOT / "tools/semantic_logic/p1d_qualification.py"))
 
+BACKEND_READY = P1C["backend_installation_available"]()
+LIVE_BACKEND = pytest.mark.skipif(
+    not BACKEND_READY,
+    reason="qualification-only pinned N3 backend is not installed in this checkout",
+)
+
 RED = RED_HARNESS["RED"]
 build_case = RED_HARNESS["build_case"]
 G5_VERSION_BRIDGE = VALIDATOR_ROOT / "p2_g5_version_bridge.mjs"
@@ -188,6 +194,7 @@ def _run_n3_shadow(gate_id: str, input_document: dict[str, Any]) -> dict[str, An
     return receipt
 
 
+@LIVE_BACKEND
 @pytest.mark.parametrize("gate", _version_gates(), ids=lambda gate: gate["gate_id"])
 def test_g5_version_python_typed_and_restricted_n3_shadow(
     gate: dict[str, Any], tmp_path: Path

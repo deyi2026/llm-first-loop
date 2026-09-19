@@ -22,6 +22,12 @@ RED_HARNESS = runpy.run_path(str(ROOT / "tests/unit/test_smc_semantic_logic_p2_r
 P1C = runpy.run_path(str(VALIDATOR_ROOT / "harness.py"))
 P1D = runpy.run_path(str(ROOT / "tools/semantic_logic/p1d_qualification.py"))
 
+BACKEND_READY = P1C["backend_installation_available"]()
+LIVE_BACKEND = pytest.mark.skipif(
+    not BACKEND_READY,
+    reason="qualification-only pinned N3 backend is not installed in this checkout",
+)
+
 PACK = RED_HARNESS["PACK"]
 RED = RED_HARNESS["RED"]
 build_case = RED_HARNESS["build_case"]
@@ -167,6 +173,7 @@ def _run_n3_shadow(gate_id: str, values: dict[str, Any]) -> dict[str, Any]:
     return receipt
 
 
+@LIVE_BACKEND
 @pytest.mark.parametrize("gate", _g1_gates(), ids=lambda gate: gate["gate_id"])
 def test_g1_python_typed_and_restricted_n3_shadow(gate: dict[str, Any]) -> None:
     gate_id = str(gate["gate_id"])

@@ -17,6 +17,12 @@ qualify_case = P1D["qualify_case"]
 sentinel_result = P1D["sentinel_result"]
 verify_p1d_parser_identity = P1D["verify_p1d_parser_identity"]
 
+BACKEND_READY = P1D["P1C_HARNESS"]["backend_installation_available"]()
+LIVE_BACKEND = pytest.mark.skipif(
+    not BACKEND_READY,
+    reason="qualification-only pinned N3 backend is not installed in this checkout",
+)
+
 
 def _manifest_cases() -> list[tuple[str, str]]:
     return [
@@ -44,6 +50,7 @@ def test_p1d_reuses_exact_frozen_15_case_manifest() -> None:
     assert set(CASE_BUILDERS) == {fixture_id for _, fixture_id in cases}
 
 
+@LIVE_BACKEND
 @pytest.mark.parametrize(("gate_id", "fixture_id"), _manifest_cases())
 def test_all_15_cases_are_relation_equivalent_across_python_typed_and_eye(
     tmp_path: Path, gate_id: str, fixture_id: str
@@ -79,6 +86,7 @@ def test_all_15_cases_are_relation_equivalent_across_python_typed_and_eye(
         ("S5", "S5-duplicate-action-id"),
     ],
 )
+@LIVE_BACKEND
 def test_frozen_narrow_sentinels_match_python_oracle_without_generic_rulepack(
     tmp_path: Path, gate_id: str, fixture_id: str
 ) -> None:
@@ -89,6 +97,7 @@ def test_frozen_narrow_sentinels_match_python_oracle_without_generic_rulepack(
     assert result["expectation_source"] == "independent_python_frozen_oracle"
 
 
+@LIVE_BACKEND
 def test_p1d_parser_is_exactly_pinned_by_existing_p1c_lock() -> None:
     identity = verify_p1d_parser_identity()
     assert identity == {
