@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import json
+import logging
 import threading
 import uuid
 from collections import OrderedDict
@@ -31,6 +32,8 @@ from llm_loop.core.session import Session, SessionStore
 from llm_loop.core.subagent_delivery import SubAgentDeliveryJournal
 from llm_loop.core.subagent_topology import SubAgentTopologyJournal, SubAgentTopologyState
 from llm_loop.core.tool_execution_journal import ToolExecutionJournal
+from llm_loop.fleet.coordinator import ProjectCoordinator
+from llm_loop.fleet.store import WorkerLease
 from llm_loop.llm.client import LLMClient
 from llm_loop.resources.contracts import ExecutionClass, ServicePriority
 from llm_loop.resources.provider_calls import ProviderCallCoordinator, subagent_provider_chat
@@ -125,6 +128,7 @@ class SubAgentRunner:
         provider_call_coordinator: ProviderCallCoordinator | None = None,
         llm_resolver: Callable[[str], LLMClient] | None = None,
         parent_session_provider: Callable[[str], Session | None] | None = None,
+        project_coordinator: ProjectCoordinator | None = None,
     ) -> None:
         self.llm = llm
         self._llm_resolver = llm_resolver
@@ -150,6 +154,10 @@ class SubAgentRunner:
         self._delivery_journal = SubAgentDeliveryJournal(self.session_store.event_store)
         self._runner_owner_id = uuid.uuid4().hex
         self._children_guard = threading.Lock()
+        # Fleet run-boundary wiring (DESIGN-20260919 step-4): None keeps every
+        # fleet behavior off; explicit injection is the opt-in/exit path.
+        self._project_coordinator = project_coordinator
+        self._fleet_leases: dict[str, WorkerLease] = {}
         # Local-active maps remain strictly process-local.  Recovered topology is kept
         # separately so restart never fabricates Thread/Event/Future or a writable mailbox.
         self._children_by_parent: dict[str, set[str]] = {}
@@ -698,6 +706,52 @@ class SubAgentRunner:
             self.session_store.save(sess)
         return sid, cancel_event, sess
 
+    def _begin_fleet_run(self, sid: str, depth: int) -> WorkerLease | None:
+        """Acquire the fleet lease at the run boundary; None keeps fleet off.
+
+        A durable active lease from a crashed predecessor is superseded by
+        reclaim inside ``begin_run`` (mechanical crash recovery, on-disk
+        provenance); a settled workspace rejects the run fail-closed.
+        """
+        if self._project_coordinator is None:
+            return None
+        lease = self._project_coordinator.begin_run(sid, worker_id=sid[-8:])
+        self._fleet_leases[sid] = lease
+        self._project_coordinator.run_fact(
+            lease,
+            {
+                "event": "run_started",
+                "depth": depth,
+                "runner_owner": self._runner_owner_id,
+            },
+        )
+        return lease
+
+    def _settle_fleet_run(self, sid: str, result: SubAgentResult) -> None:
+        """Exactly-once settlement at a real terminal; late fenced writes stay visible."""
+        lease = self._fleet_leases.pop(sid, None)
+        if lease is None or self._project_coordinator is None:
+            return
+        try:
+            self._project_coordinator.finish_run(
+                lease,
+                {
+                    "event": "run_settled",
+                    "outcome": result.outcome,
+                    "depth": result.depth,
+                    "runner_owner": self._runner_owner_id,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - fencing is a mechanical fact; never mask the child result
+            logging.getLogger(__name__).warning(
+                "fleet settlement fenced/failed for child %s (lease %s gen %d): %s: %s",
+                sid,
+                lease.lease_id,
+                lease.generation,
+                type(exc).__name__,
+                exc,
+            )
+
     def _finalize_child(
         self,
         sid: str,
@@ -723,6 +777,11 @@ class SubAgentRunner:
                 or self._delivery_journal.result(sid, generation) is not None
             )
         )
+        if result is not None:
+            # real terminal (completed/failed/cancelled): fleet settlement is
+            # exactly-once; a crash leaves no terminal here, so the durable
+            # active lease remains for the next coordinator to reclaim.
+            self._settle_fleet_run(sid, result)
         if result_is_durable:
             terminal_durable = self._topology_journal.terminal(
                 child_id=sid,
@@ -1032,6 +1091,32 @@ class SubAgentRunner:
                 "detail": f"后台子代理资源已达硬上限（{self._max_handles}）",
             }
         sid, cancel_event, sess, handle = reserved
+
+        if self._project_coordinator is not None:
+            try:
+                self._begin_fleet_run(sid, depth)
+            except Exception as exc:  # noqa: BLE001 - mechanical boundary rejection before any child/provider/tool action
+                refused = SubAgentResult(
+                    final_answer=(
+                        f"[状态: failure] fleet run 边界拒绝（lease acquire 失败），"
+                        f"未启动任何 child/provider/tool 动作: {type(exc).__name__}: {exc}"
+                    ),
+                    outcome="refused",
+                    refused=True,
+                    depth=depth,
+                )
+                finalized = self._finalize_child(sid, parent_sid, refused)
+                with self._children_guard:
+                    if sid in self._handles:
+                        self._handles[sid].collected = True
+                assert finalized is not None
+                return {
+                    "accepted": False,
+                    "child_id": sid,
+                    "state": "refused",
+                    "depth": depth,
+                    "detail": refused.final_answer,
+                }
 
         caller_ctx = contextvars.copy_context()
         startup_event = threading.Event()
@@ -1583,6 +1668,22 @@ class SubAgentRunner:
 
         parent_sid = current_session_id.get()
         sid, cancel_event, sess = self._reserve_child(parent_sid)
+        if self._project_coordinator is not None:
+            try:
+                self._begin_fleet_run(sid, depth)
+            except Exception as exc:  # noqa: BLE001 - mechanical boundary rejection before any child/provider/tool action
+                refused = SubAgentResult(
+                    final_answer=(
+                        f"[状态: failure] fleet run 边界拒绝（lease acquire 失败），"
+                        f"未启动任何 child/provider/tool 动作: {type(exc).__name__}: {exc}"
+                    ),
+                    outcome="refused",
+                    refused=True,
+                    depth=depth,
+                )
+                finalized = self._finalize_child(sid, parent_sid, refused)
+                assert finalized is not None
+                return finalized
         try:
             result = self._run_reserved_child(
                 sid=sid,
