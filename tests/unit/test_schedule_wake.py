@@ -7,10 +7,18 @@ import os
 import time
 
 from llm_loop.core.run_context import current_session_id
-from llm_loop.core.scheduler import ScheduleEntry, SchedulerThread, ScheduleStore
+from llm_loop.core.scheduler import (
+    WAKE_DEFERRED,
+    WAKE_MAX_RETRIES,
+    ScheduleEntry,
+    SchedulerThread,
+    ScheduleStore,
+    rearm_wake_grants,
+)
 from llm_loop.core.trace_leak.ingress_token import (
     current_ingress_session_id,
     current_ingress_token,
+    delegate_ingress,
     issue_test_ingress,
 )
 from llm_loop.tools.builtin.schedule import ScheduleTool
@@ -209,3 +217,159 @@ def test_schedule_message_has_mechanical_context_bound(tmp_path):
     assert result.status.value == "failure"
     assert "4000" in result.content
     assert tool._store.list() == []
+
+
+# ── EVO-20260919-f119847d: 有界退避 + re-arm ──────────────────────────────
+
+
+def test_defer_wake_retry_exponential_then_caps(tmp_path):
+    store = ScheduleStore(tmp_path / "schedule.json")
+    grant = object()
+    sid = store.add("w", after=0, wake=True, session_id="s", wake_grant=grant)
+    store.claim_due("owner-x", lease_s=30)
+
+    r1 = store.defer_wake_retry(sid, owner="owner-x")
+    assert r1.present and not r1.exhausted
+    assert r1.retry_count == 1 and r1.next_delay_s == 30.0
+    snap = {x["sid"]: x for x in store.list()}[sid]
+    assert snap["retry_count"] == 1
+    assert snap["trigger_at"] > time.time()
+    assert snap["retry_deadline_at"] > time.time()
+    assert snap["lease_owner"] == ""  # 已释放，等下次到点重新 claim
+
+    # 次数上限：逼近上限后 exhausted，且保留 lease 供降级路径 mark_triggered ack。
+    def _force_count(entries):
+        e = entries[sid]
+        e.retry_count = WAKE_MAX_RETRIES - 1
+        e.lease_owner = "owner-x"
+        e.lease_until = time.time() + 30
+
+    store._mutate(_force_count)
+    r2 = store.defer_wake_retry(sid, owner="owner-x")
+    assert r2.exhausted
+    snap2 = {x["sid"]: x for x in store.list()}[sid]
+    assert snap2["lease_owner"] == "owner-x"
+
+    # 窗口上限：deadline 已过 → exhausted。
+    def _force_window(entries):
+        e = entries[sid]
+        e.retry_count = 1
+        e.retry_deadline_at = time.time() - 1
+        e.lease_owner = "owner-x"
+
+    store._mutate(_force_window)
+    r3 = store.defer_wake_retry(sid, owner="owner-x")
+    assert r3.exhausted
+
+    # 条目已消费 → present=False（调用方无需处理）。
+    store.mark_triggered(sid, owner="owner-x")
+    r4 = store.defer_wake_retry(sid, owner="owner-x")
+    assert not r4.present and not r4.exhausted
+
+
+def test_scheduler_wake_deferred_sentinel_keeps_entry_without_ack(tmp_path):
+    store = ScheduleStore(tmp_path / "schedule.json")
+    grant = object()
+    sid = store.add("w", after=0, wake=True, session_id="s", wake_grant=grant)
+    seen: list[str] = []
+
+    def defer_delivery(entry):
+        seen.append(entry.sid)
+        res = store.defer_wake_retry(entry.sid)
+        assert res.present and not res.exhausted
+        return WAKE_DEFERRED
+
+    th = SchedulerThread(store, tick_interval=0.02, notify=defer_delivery)
+    th.start()
+    try:
+        deadline = time.time() + 1
+        while not seen and time.time() < deadline:
+            time.sleep(0.01)
+        assert seen == [sid]
+        time.sleep(0.05)
+        snap = {x["sid"]: x for x in store.list()}[sid]
+        # 不 ack：条目保留、count 不变；不 retry_later：退避节奏不被覆盖。
+        assert snap["count"] == 0
+        assert snap["retry_count"] == 1
+        assert snap["trigger_at"] > time.time()
+        assert snap["lease_owner"] == ""
+    finally:
+        th.stop()
+
+
+def test_note_wake_started_marks_entry_idempotently(tmp_path):
+    store = ScheduleStore(tmp_path / "schedule.json")
+    grant = object()
+    sid = store.add("w", after=0, wake=True, session_id="s", wake_grant=grant)
+    store.note_wake_started(sid)
+    snap = {x["sid"]: x for x in store.list()}[sid]
+    assert snap["wake_started_at"] > 0
+    store.note_wake_started(sid)
+    snap2 = {x["sid"]: x for x in store.list()}[sid]
+    assert snap2["wake_started_at"] == snap["wake_started_at"]
+
+
+def test_rearm_wake_grants_rebuilds_after_owner_process_death(tmp_path):
+    import llm_loop.core.scheduler as scheduler_mod
+
+    store = ScheduleStore(tmp_path / "schedule.json")
+    tool = ScheduleTool(store=store)
+    ingress = issue_test_ingress()
+    sid_tok = current_session_id.set("sess-r")
+    ing_tok = current_ingress_token.set(ingress)
+    ing_sid_tok = current_ingress_session_id.set("sess-r")
+    try:
+        result = tool.execute(message="续跑", after=30, wake=True)
+    finally:
+        current_ingress_session_id.reset(ing_sid_tok)
+        current_ingress_token.reset(ing_tok)
+        current_session_id.reset(sid_tok)
+    assert result.status.value == "success"
+    entry = store.list()[0]
+    sid = entry["sid"]
+
+    # 模拟 owner 进程死亡：pid 指向不存在的进程 + 本进程 grant 丢失。
+    def _kill(entries):
+        entries[sid].wake_owner_pid = 999_999_999
+
+    store._mutate(_kill)
+    with scheduler_mod._WAKE_GRANT_LOCK:
+        scheduler_mod._WAKE_GRANTS.clear()
+    assert store.wake_grant(sid) is None
+
+    # 他会话 / 委派 token 均不重铸（授权边界与递归禁令不变）。
+    assert rearm_wake_grants(store, "other-sess", ingress) == 0
+    delegated = delegate_ingress(ingress, entry="schedule_wake")
+    assert rearm_wake_grants(store, "sess-r", delegated) == 0
+    assert store.wake_grant(sid) is None
+
+    # 同会话真人 run → 重铸成功，owner 迁移到当前进程并重置退避预算。
+    assert rearm_wake_grants(store, "sess-r", ingress) == 1
+    grant = store.wake_grant(sid)
+    assert grant is not None and grant.delegated is True
+    snap = {x["sid"]: x for x in store.list()}[sid]
+    assert snap["wake_owner_pid"] == os.getpid()
+    assert snap["retry_count"] == 0 and snap["retry_deadline_at"] == 0.0
+    # 幂等：grant 已存在时不重复重铸。
+    assert rearm_wake_grants(store, "sess-r", ingress) == 0
+
+
+def test_rearm_skips_already_started_wake(tmp_path):
+    import llm_loop.core.scheduler as scheduler_mod
+
+    store = ScheduleStore(tmp_path / "schedule.json")
+    ingress = issue_test_ingress()
+    grant = object()
+    sid = store.add("续跑", after=30, wake=True, session_id="sess-r", wake_grant=grant)
+    store.note_wake_started(sid)
+
+    def _kill(entries):
+        entries[sid].wake_owner_pid = 999_999_999
+
+    store._mutate(_kill)
+    with scheduler_mod._WAKE_GRANT_LOCK:
+        scheduler_mod._WAKE_GRANTS.clear()
+
+    # run 已启动过的条目绝不 re-arm——不允许二次自治 run。
+    assert rearm_wake_grants(store, "sess-r", ingress) == 0
+    assert store.wake_grant(sid) is None

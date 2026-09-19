@@ -97,7 +97,9 @@ def delegate_ingress(token: IngressToken, *, entry: str) -> IngressToken:
     """把真实 human ingress 降权为一次性程序续跑凭据。
 
     委派 token 保留原 human channel 以复用既有白名单，但显式标记 delegated，
-    且只驻留进程内、不写 schedule.json；进程重启后自动唤醒安全降级为通知。
+    且只驻留进程内、不写 schedule.json；进程重启后 grant 丢失——同会话下一次
+    真人 run 会 re-arm 重铸（EVO-20260919-f119847d），有界退避窗口内未恢复
+    才降级为通知。
     """
     if not isinstance(token, IngressToken) or token.delegated or not is_whitelisted(token):
         raise ValueError("ingress 不可委派：必须是未委派的真实 human ingress")

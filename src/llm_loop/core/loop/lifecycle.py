@@ -136,6 +136,18 @@ class _RunEntrypointMixin:
                 self._sync_active.add(session_id)
             run_workspace = self.workspace_root or ""
 
+        # EVO-20260919-f119847d: 同会话真人 run 启动即重铸丢失的 wake grant。
+        # 仅未委派 human ingress（委派 token 不能再委派——wake 递归禁令不变）；
+        # 装配未注入钩子或 re-arm 自身失败均 fail-open，绝不阻断真人 run。
+        _human_ingress = ingress if isinstance(ingress, IngressToken) else None
+        if _human_ingress is not None and not _human_ingress.delegated:
+            _rearm = getattr(self, "rearm_wake_grants", None)
+            if callable(_rearm):
+                try:
+                    _rearm(session_id, _human_ingress)
+                except Exception:  # noqa: BLE001 - rearm must never block a human run
+                    logger.warning("wake grant re-arm 失败（fail-open）", exc_info=True)
+
         run_effort = reasoning_effort or ""
         run_reasoning_mode = (reasoning_mode or "auto").strip().lower()
         if run_reasoning_mode not in {"auto", "off", "on"}:
