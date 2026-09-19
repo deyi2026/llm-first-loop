@@ -427,7 +427,24 @@ class WorkflowRunTool:
                 session_id = current_session_id.get() or ""
             except Exception:  # noqa: BLE001
                 pass
-            result = self._codearts_scheduler.dispatch(dispatch_task, session_id=session_id)
+            # R1 effect fence: 远端 dispatch 即副作用提交点（同 codearts_dispatch）。
+            from llm_loop.core.tool_execution_journal import (
+                current_effect_mutation_authority,
+            )
+
+            with current_effect_mutation_authority() as mutation_allowed:
+                if not mutation_allowed:
+                    return (
+                        f"[步骤 {i}/{total}] [状态: unauthorized] effect authority 丢失"
+                        "（run lease fenced），远端步骤拒绝发起",
+                        True,
+                        False,
+                        "",
+                        budget,
+                    )
+                result = self._codearts_scheduler.dispatch(
+                    dispatch_task, session_id=session_id
+                )
         except Exception as exc:  # noqa: BLE001 — 委派异常如实标注
             return (
                 f"[步骤 {i}/{total}] [状态: error] CodeArts 委派异常: {type(exc).__name__}: {exc}",

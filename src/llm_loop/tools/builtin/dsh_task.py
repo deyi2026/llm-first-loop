@@ -211,6 +211,14 @@ class DshTaskTool:
                     tool_call_id="",
                     tool_name=self.name,
                 )
+            if code == "fenced":
+                # R1 effect fence: lease 权威丢失，类型化拒绝且不重试。
+                return ToolResult(
+                    status=ToolResultStatus.UNAUTHORIZED,
+                    content="[状态: unauthorized] effect authority 丢失（run lease fenced），DSH 任务拒绝启动。",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
             # 非 0 退出码
             if attempts <= retry:
                 logger.warning("dsh_task 失败（退出码 %s），重试 %d/%d", code, attempts, retry)
@@ -242,15 +250,31 @@ class DshTaskTool:
         if patch_path:
             cmd += ["--patch", patch_path]
         cmd.append(task)
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            cwd=cwd,
-            start_new_session=True,
+        from llm_loop.core.tool_execution_journal import (
+            current_effect_mutation_authority,
         )
+
+        with current_effect_mutation_authority() as mutation_allowed:
+            # R1 effect fence: 后台 DSH spawn 即副作用提交点（同前台路径）。
+            if not mutation_allowed:
+                return ToolResult(
+                    status=ToolResultStatus.UNAUTHORIZED,
+                    content=(
+                        "[状态: unauthorized] effect authority 丢失（run lease "
+                        "fenced），后台 DSH 任务拒绝启动。"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                cwd=cwd,
+                start_new_session=True,
+            )
         # DSH 借鉴 021-B: owner 并发上限——超限释放已启动进程并如实拒绝
         _sid = current_session_id.get() or ""
         try:
@@ -340,16 +364,30 @@ class DshTaskTool:
         if patch_path:
             cmd += ["--patch", patch_path]
         cmd.append(task)
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            cwd=cwd,
-            env=_dsh_env(cwd),
-            start_new_session=True,  # 独立进程组：超时整树终止（防孤儿）
+        from llm_loop.core.tool_execution_journal import (
+            current_effect_mutation_authority,
         )
+
+        with current_effect_mutation_authority() as mutation_allowed:
+            # R1 effect fence: DSH 进程 spawn 即副作用提交点。lease 权威丢失
+            # （过期/被接管）时拒绝 spawn，返回类型化 "fenced"（调用方不重试）。
+            if not mutation_allowed:
+                return (
+                    "fenced",
+                    "",
+                    "[状态: unauthorized] effect authority 丢失（run lease fenced）",
+                    0.0,
+                )
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                cwd=cwd,
+                env=_dsh_env(cwd),
+                start_new_session=True,  # 独立进程组：超时整树终止（防孤儿）
+            )
         try:
             out, err = proc.communicate(timeout=timeout_s)
         except subprocess.TimeoutExpired:

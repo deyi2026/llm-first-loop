@@ -1,0 +1,145 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-fleet-reclaim-fence",
+  "summary": "Fleet R0 reclaim authority + R1 effect-fence binding, one branch. R0: rolling-TTL renew (renew = now + extend, non-cumulative), expiry becomes the single fence authority, begin_run fails closed on an expired lease, expired/force reclaim goes through CAS with recorded justification. R1: the effect execution path (subagent runner, tool execution journal, five builtin effect tools) is bound to the lease fence so expiry actually stops effects. Also adopts the R0 spec test file that had lived untracked in the main tree and survived the 14:26 reset only because untracked.",
+  "components": [
+    {
+      "component_id": "fleet-reclaim-authority-store-coordinator",
+      "paths": [
+        "src/llm_loop/fleet/store.py",
+        "src/llm_loop/fleet/coordinator.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "FleetStore closed-schema disk state + ProjectCoordinator run-boundary control plane (fleet slices 1-4)",
+      "disposition": "ADMIT as one reclaim-authority tranche on the existing FleetStore/ProjectCoordinator: renew recomputes expiry as now + extend instead of cumulative accumulation; expiry is the single fence authority; begin_run fails closed when the lease is expired; expired-reclaim and force_reclaim pass through CAS with recorded justification. No second store, no heartbeat or liveness controller, no new takeover policy owner.",
+      "evidence": [
+        "tests/unit/test_fleet_reclaim_authority_gate.py: 316-line R0 spec covering rolling-TTL renew, expiry fencing, begin_run fail-closed, force_reclaim double-CAS + justification",
+        "tests/unit/test_fleet_reclaim_race_and_ttl.py and tests/unit/test_fleet_project_coordinator.py extended for the new authority semantics",
+        "Local clean-archive run on branch tip ac7fc204d: 62/62 PASS; git diff --check PASS; 44 pre-existing non-blocking warnings unchanged",
+        "Goal checkpoint GOAL-20260919-107b59f2 records the rolling-TTL decision (renew = now + extend; expiry-free leases stay unchanged)"
+      ],
+      "verification_level": "RED-first spec suite + adjacent fleet pytest on a clean archive + remote gates on PR #44",
+      "model_evidence_veto_recovery_exit": "Model-visible truth stays disk-truth: lease records with recomputed expiry, CAS receipts with justification, coordinator recover() facts. The program never decides lease liveness on the model behalf; expiry is computed mechanically from disk state. Exit: revert this tranche; pre-R0 renew and expiry behavior returns with no data migration required at review stage.",
+      "rollback_route": "Revert the fleet store/coordinator part of branch commit 754877b18 (whole-branch revert is acceptable pre-merge; nothing has been deployed or restarted).",
+      "declaration_id": "fleet-reclaim-authority"
+    },
+    {
+      "component_id": "fleet-r1-effect-fence-binding",
+      "paths": [
+        "src/llm_loop/subagent/runner.py",
+        "src/llm_loop/core/tool_execution_journal.py",
+        "src/llm_loop/tools/builtin/codearts_dispatch.py",
+        "src/llm_loop/tools/builtin/dsh_task.py",
+        "src/llm_loop/tools/builtin/edit_file.py",
+        "src/llm_loop/tools/builtin/execute_command.py",
+        "src/llm_loop/tools/builtin/workflow.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "effect execution path: SubAgentRunner + tool execution journal + builtin effect tools (codearts_dispatch, dsh_task, edit_file, execute_command, workflow)",
+      "disposition": "ADMIT as the R1 binding tranche: effect sites consult the lease fence before executing or recording effects, so the R0 expiry authority is enforced where effects actually happen. No new tool, no new writer, no second fence state; the fence fact comes from the existing FleetStore lease.",
+      "evidence": [
+        "tests/unit/test_fleet_effect_fence.py (new) covers fence enforcement at effect sites",
+        "tests/unit/test_fleet_runner_renew_and_tool.py extended for runner renew and tool binding",
+        "builtin tool diffs are fence checks plus journal binding only: codearts_dispatch +19, workflow +19, edit_file +14, execute_command +76, dsh_task +72, runner +73, journal +61 lines",
+        "Same clean-archive run: 62/62 PASS"
+      ],
+      "verification_level": "adjacent runner/tool/journal pytest on a clean archive + remote gates on PR #44",
+      "model_evidence_veto_recovery_exit": "Fence verdicts are mechanical lease-expiry facts read from disk; model evidence is journal records and tool receipts. Exit: revert this tranche and effect sites return to pre-R1 behavior.",
+      "rollback_route": "Revert the R1 hunks or the whole branch pre-merge; no runtime deployment exists to unwind.",
+      "declaration_id": "fleet-r1-effect-fence"
+    },
+    {
+      "component_id": "fleet-reclaim-fence-tests",
+      "paths": [
+        "tests/unit/test_fleet_effect_fence.py",
+        "tests/unit/test_fleet_project_coordinator.py",
+        "tests/unit/test_fleet_reclaim_authority_gate.py",
+        "tests/unit/test_fleet_reclaim_race_and_ttl.py",
+        "tests/unit/test_fleet_runner_renew_and_tool.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "fleet test evidence suites",
+      "disposition": "ADMIT as test evidence for the two control tranches above, including adoption of the previously untracked R0 spec file.",
+      "evidence": [
+        "62/62 PASS on the clean archive; git diff --check PASS",
+        "the spec file had been untracked in the main tree and was adopted in commit ac7fc204d"
+      ],
+      "verification_level": "pytest on a clean archive; remote gate run on PR #44",
+      "model_evidence_veto_recovery_exit": "Tests are model-authored evidence; human review stays the authority for classification truth. Exit: remove the tests together with the tranches they cover.",
+      "rollback_route": "Revert together with the covered tranches."
+    },
+    {
+      "component_id": "fleet-reclaim-fence-a5-record",
+      "paths": [
+        "docs/governance/submissions/20260919-fleet-reclaim-fence.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations for this PR; it fixes the A.5 failure on PR #44 which expected exactly one changed manifest and found 0.",
+      "evidence": [
+        "A.5 job 105861506397 failure line: expected exactly one changed architecture-submission manifest, found 0",
+        "local self-gate run with the same base c1ccf34a and three-dot semantics before push"
+      ],
+      "verification_level": "local A.5 self-gate PASS before push; the remote A.5 rerun is the final gate",
+      "model_evidence_veto_recovery_exit": "Metadata only; human review remains the authority for classification truth.",
+      "rollback_route": "Revert together with the branch."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "fleet-reclaim-authority",
+      "g1": {
+        "necessity": "Before R0, renew accumulated TTL instead of recomputing now + extend, so a once-renewed lease could outlive any liveness bound; expiry was not the single fence authority; begin_run did not fail closed on an expired lease; and expired/force reclaim lacked the CAS-with-justification path, leaving reclaim authority ambiguous under races. Without these, R1 fences have no authoritative expiry to enforce."
+      },
+      "g2": {
+        "authority_owner": "the existing FleetStore closed-schema disk state through the existing ProjectCoordinator run-boundary control plane",
+        "relationship": "reuse",
+        "non_duplication": "No second store, no second coordination authority, no heartbeat or liveness controller. The same FleetStore CAS remains the single mutation authority; this tranche changes the renew/expiry/reclaim semantics inside it."
+      },
+      "g3": {
+        "model_evidence": [
+          "lease records with expiry recomputed at renew (now + extend, non-cumulative)",
+          "CAS receipts for expired-reclaim and force_reclaim with recorded justification",
+          "coordinator recover() facts after restart",
+          "spec receipts from tests/unit/test_fleet_reclaim_authority_gate.py"
+        ],
+        "recovery_or_reason": "Review-stage change with no deployment: exit is a git revert of the tranche; no service state, secret, or schema migration is involved before merge."
+      },
+      "g4": {
+        "rollback": "Revert the branch before merge; nothing has been deployed or restarted, so rollback is pure git history.",
+        "verification": [
+          "clean archive run on branch tip ac7fc204d: 62/62 PASS",
+          "git diff --check PASS; 44 pre-existing non-blocking warnings unchanged",
+          "remote CI, security and full gates on PR #44 including the A.5 rerun after this manifest lands"
+        ]
+      }
+    },
+    {
+      "declaration_id": "fleet-r1-effect-fence",
+      "g1": {
+        "necessity": "R0 expiry has no teeth at the effect sites: without binding the runner, the tool execution journal and the five builtin effect tools to the lease fence, an expired lease would still execute and record effects, so reclaim authority could not actually stop a fenced owner."
+      },
+      "g2": {
+        "authority_owner": "the existing FleetStore lease as the single fence fact source; effect sites are enforcement points, not owners",
+        "relationship": "reuse",
+        "non_duplication": "No new tool, no new writer, no second fence state and no parallel expiry clock: every fence verdict is read from the existing lease state introduced by the fleet slices and made authoritative by R0."
+      },
+      "g3": {
+        "model_evidence": [
+          "tool execution journal records showing the fence verdict at each effect site",
+          "tool receipts from codearts_dispatch, dsh_task, edit_file, execute_command and workflow under expired and live leases",
+          "test receipts from tests/unit/test_fleet_effect_fence.py and tests/unit/test_fleet_runner_renew_and_tool.py"
+        ],
+        "recovery_or_reason": "Enforcement-only binding: exit is a git revert of the tranche returning effect sites to pre-R1 behavior; no deployment exists to unwind at review stage."
+      },
+      "g4": {
+        "rollback": "Revert the R1 hunks or the whole branch pre-merge; no runtime deployment exists to unwind.",
+        "verification": [
+          "clean archive run on branch tip ac7fc204d: 62/62 PASS including the effect-fence suite",
+          "git diff --check PASS",
+          "remote CI, security and full gates on PR #44"
+        ]
+      }
+    }
+  ]
+}

@@ -5,7 +5,9 @@ model tool surface.
 Mechanical contract (checkpoint 2026-09-19 slice 3):
 - SubAgentRunner attaches a bounded lease (ttl wired through the runner);
 - every round boundary renews the lease (heartbeat while genuinely alive);
-- renew failure is fail-soft: the authority boundary stays the fence at settle;
+- renew failure (R1) marks the child session sticky effect-fenced: the run
+  closes with a typed ``refused`` outcome and stops producing side effects;
+  the durable fence at settle is unchanged (fenced settle never merges);
 - a crashed lease past its ttl reads expired=true through the tool surface;
 - the tool fails closed when the runner has no coordinator / unknown workspace.
 """
@@ -132,7 +134,14 @@ def test_runner_attaches_bounded_lease_and_renews_each_round(tmp_path, monkeypat
     assert view["lease"]["state"] == "settled"
 
 
-def test_renew_failure_is_failsoft_and_fence_stays_at_settle(tmp_path, monkeypatch) -> None:
+def test_renew_failure_fences_effects_and_run_closes_typed(tmp_path, monkeypatch) -> None:
+    """R1: mid-run takeover no longer fail-soft for side effects.
+
+    The rival supersede fences the original holder on disk; renewal failure
+    marks the child session sticky effect-fenced, the run closes immediately
+    with a typed ``refused`` outcome (no further side effects), and the fenced
+    settle still never merges into the rival's settlement book.
+    """
     coord = _coordinator(tmp_path)
     runner = _runner(tmp_path, _two_round_llm(), coordinator=coord, ttl=300.0)
     rival = _coordinator(tmp_path, owner="rival-1")
@@ -145,11 +154,15 @@ def test_renew_failure_is_failsoft_and_fence_stays_at_settle(tmp_path, monkeypat
             reclaimed["workspace"] = lease.workspace_id
             # supersede mid-run: the original generation gets fenced on disk
             rival.reclaim_run(lease.workspace_id)
-        real(sid)  # must raise fail-soft internally, never kill the child loop
+        real(sid)  # raises fail-soft internally, then marks the sticky fence
 
     monkeypatch.setattr(runner, "_renew_fleet_run", rival_then_renew)
     result = _run_parent(runner, "contested child")
-    assert result.outcome == "completed", "renew failure must not kill the child run"
+    assert result.outcome == "refused", (
+        "R1: authority loss must stop the child from producing side effects, "
+        "closing with a typed refusal instead of continuing"
+    )
+    assert result.rounds == 1, "the fenced child must close at the takeover boundary"
 
     assert len(_fleet_state(tmp_path)["settlements"]) == 0, "fenced settle must be fail-soft, not merged"
     lease_rows = list(_fleet_state(tmp_path)["leases"].values())

@@ -4,16 +4,20 @@ This is the runtime adapter from DESIGN-20260919-fleet-minimal-slice step 4:
 
 - ``begin_run``  - at a run boundary.  Creates the per-run workspace on first
   sight (deterministic ``<physical_root>/runs/<run_key>`` identity), then
-  acquires the lease.  If the previous generation crashed without a terminal
-  (durable active lease), the old generation is explicitly superseded via
-  ``reclaim`` -- crash recovery at the boundary, recorded on disk.
+  acquires the lease.  A crashed predecessor is superseded only when its
+  lease has actually expired (time-licensed takeover, generation CAS);
+  a live unexpired or expiry-free lease fails closed with the precise
+  remaining window -- live takeover then needs ``force_reclaim_run``
+  (operator action with recorded justification).
 - ``run_fact``   - fenced append during the run.
 - ``finish_run`` - exactly-once settlement at a real terminal.
-- ``reclaim_run``/``recover`` - recovery surface for the next coordinator.
+- ``reclaim_run``/``reclaim_run_if_expired``/``force_reclaim_run``/``recover``
+  - recovery surface for the next coordinator.
 
 The program keeps mechanical facts only (identity, generation, fencing,
-exactly-once).  When to reclaim a *live* lease stays a model/operator
-decision; a crashed lease is reclaimed mechanically at the next begin.
+exactly-once).  Live-lease takeover authority is expiry or a recorded
+operator ``force_reclaim``; the model may propose a takeover, never decide
+one.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from typing import Any
 from llm_loop.fleet.store import (
     ExecutionWorkspace,
     FleetStore,
+    LeaseActiveError,
     SettlementError,
     SettlementRecord,
     WorkerLease,
@@ -88,16 +93,37 @@ class ProjectCoordinator:
                 f"run workspace already settled: {workspace.workspace_id} ({run_key})"
             )
         if current is not None and current.state == "active":
-            # crashed predecessor without a terminal: supersede it explicitly,
-            # CAS on the generation we observed so concurrent recoveries have
-            # exactly one winner and the losers get LeaseConflictError
-            return self.store.reclaim(
-                self.project_id,
-                workspace.workspace_id,
-                self.owner_id,
-                expected_generation=current.generation,
-                ttl_seconds=ttl_seconds,
+            # Reclaim Authority Gate: a live lease is superseded only by (a)
+            # expiry -- time-licensed, CAS on the observed generation so
+            # concurrent recoveries have exactly one winner -- or (b) an
+            # operator force_reclaim_run with recorded justification.  An
+            # unexpired or expiry-free lease fails closed with the precise
+            # blocking window; the runner turns this into a typed refusal,
+            # never a silent takeover of a worker that may still be alive.
+            expires_at = current.expires_at
+            if expires_at is not None and time.time() >= expires_at:
+                return self.store.reclaim_if_expired(
+                    self.project_id,
+                    workspace.workspace_id,
+                    self.owner_id,
+                    ttl_seconds=ttl_seconds,
+                    expected_generation=current.generation,
+                )
+            remaining = None if expires_at is None else expires_at - time.time()
+            message = (
+                f"run {run_key} ({workspace.workspace_id}) holds an active "
+                f"unexpired lease {current.lease_id} (generation "
+                f"{current.generation}, remaining {remaining:.3f}s); automatic "
+                "resume is fail-closed until expiry, or an operator "
+                "force_reclaim_run with the exact lease identity"
+                if remaining is not None
+                else f"run {run_key} ({workspace.workspace_id}) holds an "
+                f"expiry-free active lease {current.lease_id} (generation "
+                f"{current.generation}); automatic resume is fail-closed; an "
+                "operator force_reclaim_run with the exact lease identity is "
+                "required"
             )
+            raise LeaseActiveError(message, remaining_seconds=remaining)
         return self.store.acquire_lease(
             self.project_id,
             workspace.workspace_id,
@@ -142,6 +168,36 @@ class ProjectCoordinator:
             ttl_seconds=ttl_seconds,
         )
 
+    def force_reclaim_run(
+        self,
+        run_key: str,
+        *,
+        expected_lease_id: str,
+        expected_generation: int,
+        reason: str,
+        authorized_by: str,
+        ttl_seconds: float | None = None,
+    ) -> WorkerLease:
+        """Operator-authorized live takeover; the only unexpired takeover path.
+
+        Requires the exact observed lease identity (lease id + generation,
+        double CAS), a non-empty justification and an authorizer id; the
+        store records all of them on disk with the successor lease.  The
+        model may propose this action, never invoke it on its own liveness
+        judgment.
+        """
+        workspace = self._existing_workspace(run_key)
+        return self.store.force_reclaim(
+            self.project_id,
+            workspace.workspace_id,
+            self.owner_id,
+            expected_lease_id=expected_lease_id,
+            expected_generation=expected_generation,
+            reason=reason,
+            authorized_by=authorized_by,
+            ttl_seconds=ttl_seconds,
+        )
+
     def recover(self, run_key: str) -> dict[str, Any]:
         """Disk truth for a run's workspace: current lease + settlement facts."""
         workspace = self._existing_workspace(run_key)
@@ -175,6 +231,11 @@ class ProjectCoordinator:
                 "expires_at": lease.expires_at,
                 "expired": (
                     lease.expires_at is not None and time.time() >= lease.expires_at
+                ),
+                "remaining_seconds": (
+                    None
+                    if lease.expires_at is None
+                    else lease.expires_at - time.time()
                 ),
             },
             "settlement": None

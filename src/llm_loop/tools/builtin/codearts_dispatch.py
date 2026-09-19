@@ -124,4 +124,21 @@ class CodeArtsDispatchTool:
         except Exception:  # noqa: BLE001
             pass
 
-        return self._scheduler.dispatch(task, session_id=session_id)
+        # R1 effect fence: 远端 dispatch 即副作用提交点。lease 权威丢失
+        # （过期/被接管）时拒绝发起远端任务，fail-closed。
+        from llm_loop.core.tool_execution_journal import (
+            current_effect_mutation_authority,
+        )
+
+        with current_effect_mutation_authority() as mutation_allowed:
+            if not mutation_allowed:
+                return ToolResult(
+                    status=ToolResultStatus.UNAUTHORIZED,
+                    content=(
+                        "[状态: unauthorized] effect authority 丢失（run lease "
+                        "fenced），远端任务拒绝发起: " + task_description[:80]
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            return self._scheduler.dispatch(task, session_id=session_id)

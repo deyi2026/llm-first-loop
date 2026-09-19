@@ -712,9 +712,12 @@ class SubAgentRunner:
     def _begin_fleet_run(self, sid: str, depth: int, parent_sid: str = "") -> WorkerLease | None:
         """Acquire the fleet lease at the run boundary; None keeps fleet off.
 
-        A durable active lease from a crashed predecessor is superseded by
-        reclaim inside ``begin_run`` (mechanical crash recovery, on-disk
-        provenance); a settled workspace rejects the run fail-closed.
+        A crashed predecessor is superseded only once its lease has actually
+        expired (time-licensed takeover, generation CAS inside ``begin_run``);
+        a live unexpired or expiry-free lease rejects the run fail-closed with
+        the precise remaining window (operator ``force_reclaim_run`` with
+        recorded justification is the only live-takeover path); a settled
+        workspace rejects the run fail-closed too.
         """
         if self._project_coordinator is None:
             return None
@@ -737,9 +740,11 @@ class SubAgentRunner:
     def _renew_fleet_run(self, sid: str) -> None:
         """Round-boundary heartbeat: extend the bounded lease while genuinely alive.
 
-        Renewal failure (e.g. the lease was superseded by a rival coordinator)
-        is fail-soft by design: the authority boundary stays the fence at
-        settlement, never a mid-run kill of the child loop.
+        R1: renewal failure now marks the session effect-fenced (sticky) instead
+        of pure fail-soft.  Expired/superseded leases lost their write authority
+        (TTL is authority), so the child must stop producing new side effects;
+        the loop checks the fence right after this heartbeat and closes the run
+        with a typed ``refused`` outcome.  Settlement remains the durable fence.
         """
         if self._project_coordinator is None or self._fleet_lease_ttl_seconds is None:
             return
@@ -754,6 +759,48 @@ class SubAgentRunner:
             logging.getLogger(__name__).warning(
                 "fleet lease renew failed for %s: %s", sid, exc
             )
+            self._tool_journal.mark_effect_fence_lost(sid)
+
+    def _fleet_lease_fence(self, sid: str):
+        """R1 effect-fence probe handed to journal bindings for this child run.
+
+        Returns None when this run is not fleet-managed (pre-R1 behavior).  The
+        closure re-reads the live lease dict at each probe, so renewals and
+        takeovers are always seen at their exact commit boundary.
+        """
+        if self._project_coordinator is None:
+            return None
+
+        def probe() -> bool:
+            lease = self._fleet_leases.get(sid)
+            if lease is None:
+                # Lease gone from this runner (settled/taken over): deny.
+                return False
+            coordinator = self._project_coordinator
+            if coordinator is None:
+                # Coordinator detached after fence creation: fail closed (deny).
+                # (Outer None-check cannot narrow into a closure for pyright.)
+                return False
+            try:
+                return bool(coordinator.store.lease_is_current(lease))
+            except Exception:  # noqa: BLE001 - unreadable disk truth fails closed
+                return False
+
+        return probe
+
+    def _fleet_fence_lost(self, sid: str) -> bool:
+        """R1 loop-level fence check: journal fence OR live lease no longer current."""
+        if self._tool_journal.effect_fence_lost(sid):
+            return True
+        if self._project_coordinator is None:
+            return False
+        lease = self._fleet_leases.get(sid)
+        if lease is None:
+            return False
+        try:
+            return not bool(self._project_coordinator.store.lease_is_current(lease))
+        except Exception:  # noqa: BLE001 - unreadable disk truth fails closed
+            return True
 
     def lease_facts(self, child_id: str) -> tuple[bool, str, dict]:
         """Disk-truth recover() view for a workspace run_key (read-only surface)."""
@@ -1873,8 +1920,24 @@ class SubAgentRunner:
                 )
             rounds += 1
             # fleet slice 3: 每轮边界的租约心跳——只要子代理真实活着并在推进，
-            # expires_at 就被机械延长；renew 失败 fail-soft（权威边界仍在 settle fence）。
+            # expires_at 就被机械延长。R1 起 renew 失败不再仅 fail-soft：权威
+            # （TTL/supersede）一旦丢失即粘性围栏本 session 的全部副作用，
+            # 子代理拒绝继续产生新动作并立即收口。
             self._renew_fleet_run(sess.session_id)
+            if self._fleet_fence_lost(sess.session_id):
+                return SubAgentResult(
+                    final_answer=(
+                        "[状态: refused] fleet lease 权威已失效（过期或被接管），"
+                        "effect fence 已触发：本子代理停止产生新副作用并收口。"
+                        "后继持有者可按接管事实继续。"
+                    ),
+                    outcome="refused",
+                    rounds=rounds,
+                    tool_calls=tool_trace,
+                    depth=depth,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                )
             if rounds > 1:
                 # 非首轮 LLM 决策前再扫一次，缩小消息恰好在上个 boundary 后到达
                 # 的竞态窗口。首轮不注入，避免 task user 后连续 user wire。
@@ -2133,6 +2196,7 @@ class SubAgentRunner:
                                 round_no=rounds,
                                 call=call,
                                 workspace_root=current_workspace_root.get(),
+                                lease_fence=self._fleet_lease_fence(sess.session_id),
                             ):
                                 result = self.registry.execute(call)
                         except Exception as exc:  # noqa: BLE001 — 如实回传

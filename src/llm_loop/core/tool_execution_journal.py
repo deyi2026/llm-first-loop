@@ -40,6 +40,7 @@ class _EffectBinding:
         "tool_name",
         "workspace_root",
         "origin_run_generation",
+        "lease_fence",
         "_authority_lock",
         "_revoked",
     )
@@ -55,6 +56,7 @@ class _EffectBinding:
         tool_name: str,
         workspace_root: str,
         origin_run_generation: str,
+        lease_fence: Callable[[], bool] | None = None,
     ) -> None:
         self.journal = journal
         self.session_id = session_id
@@ -64,6 +66,10 @@ class _EffectBinding:
         self.tool_name = tool_name
         self.workspace_root = workspace_root
         self.origin_run_generation = str(origin_run_generation or "")
+        # R1 effect fence: probe "is the run still the writable authority?" at
+        # each physical mutation commit (fleet lease capability). None keeps the
+        # pre-R1 behavior (generation fencing only).
+        self.lease_fence = lease_fence
         self._authority_lock = threading.RLock()
         self._revoked = False
 
@@ -160,6 +166,11 @@ class ToolExecutionJournal:
         self._receipt_committed_hook = receipt_committed_hook
         # EVO-20260915-789eb9d5：receipt 提交单调计数（非收敛守卫持久写入探针）
         self._receipt_commit_count = 0
+        # R1 effect fence：session 粘性围栏——某 session 的 lease 权威一旦被观测
+        # 丢失，本进程内该 session 之后的 binding 全部以 revoked 起步（child 停止
+        # 产生新副作用）。进程本地态，不落盘；真正的权威判定在 store（lease）。
+        self._fence_guard = threading.Lock()
+        self._effect_fenced_sessions: set[str] = set()
 
     @property
     def enabled(self) -> bool:
@@ -331,18 +342,25 @@ class ToolExecutionJournal:
         round_no: int,
         call: Any,
         workspace_root: str,
+        lease_fence: Callable[[], bool] | None = None,
     ) -> Iterator[None]:
         """Bind one exact WAL attempt to effect-aware tool code without changing its schema."""
+        sid = _validate_session_id(session_id)
         binding = _EffectBinding(
             journal=self,
-            session_id=_validate_session_id(session_id),
+            session_id=sid,
             execution_id=str(execution_id),
             round_no=int(round_no or 0),
             tool_call_id=str(getattr(call, "id", "") or ""),
             tool_name=str(getattr(call, "name", "") or ""),
             workspace_root=str(Path(workspace_root).expanduser().resolve()),
             origin_run_generation=str(current_run_generation.get() or ""),
+            lease_fence=lease_fence,
         )
+        if self.effect_fence_lost(sid):
+            # R1 sticky fence: once lease authority loss was observed for this
+            # session in this process, later bindings start revoked.
+            binding.revoke()
         token = _current_effect_binding.set(binding)
         try:
             yield
@@ -358,17 +376,19 @@ class ToolExecutionJournal:
         round_no: int,
         calls: list[Any],
         workspace_root: str,
+        lease_fence: Callable[[], bool] | None = None,
     ) -> Iterator[None]:
         """Bind a batch by provider tool_call_id; ToolRegistry selects the active call mechanically."""
         sid = _validate_session_id(session_id)
         workspace = str(Path(workspace_root).expanduser().resolve())
+        fence_lost = self.effect_fence_lost(sid)
         bindings: dict[str, _EffectBinding] = {}
         for call in calls:
             call_id = str(getattr(call, "id", "") or "")
             execution_id = str(execution_ids.get(call_id) or "")
             if not call_id or not execution_id:
                 continue
-            bindings[call_id] = _EffectBinding(
+            binding = _EffectBinding(
                 journal=self,
                 session_id=sid,
                 execution_id=execution_id,
@@ -377,7 +397,12 @@ class ToolExecutionJournal:
                 tool_name=str(getattr(call, "name", "") or ""),
                 workspace_root=workspace,
                 origin_run_generation=str(current_run_generation.get() or ""),
+                lease_fence=lease_fence,
             )
+            if fence_lost:
+                # R1 sticky fence (batch path): see effect_context.
+                binding.revoke()
+            bindings[call_id] = binding
         token = _current_effect_bindings.set(bindings)
         try:
             yield
@@ -386,11 +411,29 @@ class ToolExecutionJournal:
 
     @contextlib.contextmanager
     def effect_mutation_authority(self, binding: _EffectBinding) -> Iterator[bool]:
-        """Hold exact attempt + run ownership across one physical mutation commit."""
+        """Hold exact attempt + run ownership across one physical mutation commit.
+
+        R1: when the binding carries a lease fence capability (fleet run), the
+        physical commit window first probes "is this run still the writable
+        authority?".  A lost fence revokes the binding and marks the session
+        sticky-fenced, so later commits fail closed without re-probing disk.
+        """
         with binding._authority_lock:
             if binding._revoked:
                 yield False
                 return
+            fence = binding.lease_fence
+            if fence is not None:
+                allowed = False
+                try:
+                    allowed = bool(fence())
+                except Exception:  # noqa: BLE001 - unreadable truth fails closed
+                    allowed = False
+                if not allowed:
+                    binding.revoke()
+                    self.mark_effect_fence_lost(binding.session_id)
+                    yield False
+                    return
             generation = str(binding.origin_run_generation or "")
             # Empty generation is legacy/non-run use. Preserve old behavior rather than
             # inventing ownership; runtime-owned effects always carry a generation now.
@@ -404,6 +447,18 @@ class ToolExecutionJournal:
                     yield False
                     return
                 yield True
+
+    def mark_effect_fence_lost(self, session_id: str) -> None:
+        """R1: sticky, process-local. Lease authority for this session was observed lost."""
+        sid = _validate_session_id(session_id)
+        with self._fence_guard:
+            self._effect_fenced_sessions.add(sid)
+
+    def effect_fence_lost(self, session_id: str) -> bool:
+        """R1: has lease authority loss been observed for this session in this process?"""
+        sid = _validate_session_id(session_id)
+        with self._fence_guard:
+            return sid in self._effect_fenced_sessions
 
     @staticmethod
     def _canonical_effect_scope(workspace_root: str, canonical_path: str) -> tuple[str, str] | None:

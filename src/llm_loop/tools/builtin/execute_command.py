@@ -289,17 +289,35 @@ class ExecuteCommandTool:
                         tool_call_id="",
                         tool_name=self.name,
                     )
-                proc = subprocess.Popen(
-                    bg_cmd if bg_cmd is not None else command,
-                    shell=bg_cmd is None,  # noqa: S602 — 安全校验由 CatastrophicGuard 前置
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    bufsize=1,
-                    cwd=workdir,
-                    env=env,
-                    start_new_session=True,  # 独立进程组：job_kill 可整树终止（防孤儿进程）
+                from llm_loop.core.tool_execution_journal import (
+                    current_effect_mutation_authority,
                 )
+
+                with current_effect_mutation_authority() as mutation_allowed:
+                    # R1 effect fence: 进程 spawn 即副作用提交点。lease 权威
+                    # 丢失（过期/被接管）时拒绝 spawn，fail-closed。
+                    if not mutation_allowed:
+                        return ToolResult(
+                            status=ToolResultStatus.UNAUTHORIZED,
+                            content=(
+                                "[状态: unauthorized] effect authority 丢失（run lease "
+                                "fenced），后台命令拒绝启动: "
+                                + command
+                            ),
+                            tool_call_id="",
+                            tool_name=self.name,
+                        )
+                    proc = subprocess.Popen(
+                        bg_cmd if bg_cmd is not None else command,
+                        shell=bg_cmd is None,  # noqa: S602 — 安全校验由 CatastrophicGuard 前置
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        bufsize=1,
+                        cwd=workdir,
+                        env=env,
+                        start_new_session=True,  # 独立进程组：job_kill 可整树终止（防孤儿进程）
+                    )
                 # DSH 借鉴 021-B: owner 并发上限——超限释放已启动进程并如实拒绝
                 # （current_session_id 用模块级 import：函数内重复 import 会遮蔽 198/320 行引用）
                 _sid = current_session_id.get() or ""
@@ -352,18 +370,34 @@ class ExecuteCommandTool:
                     tool_call_id="",
                     tool_name=self.name,
                 )
-            proc = subprocess.Popen(
-                sandbox_cmd if sandbox_cmd is not None else command,
-                shell=sandbox_cmd is None,  # noqa: S602 — 工具本质是执行命令，安全校验由 CatastrophicGuard 前置
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=workdir,  # B: workdir 支持（fresh shell，对齐 Harness）
-                env=env,  # EVO-20260814-61a52baf: 环境清洗，密钥不外泄 + LLM_EXEC_CWD 事实
-                # P1-5(审计发现 #11): 独立进程组——注册表超时 terminate 可整树终止（防孤儿）。
-                # 原 subprocess.run 封装无句柄可抓，且其超时只杀直接 shell、孙进程成孤儿。
-                start_new_session=True,
+            from llm_loop.core.tool_execution_journal import (
+                current_effect_mutation_authority,
             )
+
+            with current_effect_mutation_authority() as mutation_allowed:
+                # R1 effect fence: 进程 spawn 即副作用提交点（同后台路径）。
+                if not mutation_allowed:
+                    return ToolResult(
+                        status=ToolResultStatus.UNAUTHORIZED,
+                        content=(
+                            "[状态: unauthorized] effect authority 丢失（run lease "
+                            "fenced），命令拒绝执行: " + command
+                        ),
+                        tool_call_id="",
+                        tool_name=self.name,
+                    )
+                proc = subprocess.Popen(
+                    sandbox_cmd if sandbox_cmd is not None else command,
+                    shell=sandbox_cmd is None,  # noqa: S602 — 工具本质是执行命令，安全校验由 CatastrophicGuard 前置
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=workdir,  # B: workdir 支持（fresh shell，对齐 Harness）
+                    env=env,  # EVO-20260814-61a52baf: 环境清洗，密钥不外泄 + LLM_EXEC_CWD 事实
+                    # P1-5(审计发现 #11): 独立进程组——注册表超时 terminate 可整树终止（防孤儿）。
+                    # 原 subprocess.run 封装无句柄可抓，且其超时只杀直接 shell、孙进程成孤儿。
+                    start_new_session=True,
+                )
             self._sandbox_note = sandbox_note
             _proc_key = current_session_id.get() or "__default__"
             with self._active_proc_guard:

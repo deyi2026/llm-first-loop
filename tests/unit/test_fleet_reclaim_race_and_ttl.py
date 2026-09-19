@@ -249,9 +249,15 @@ def test_concurrent_begin_run_single_workspace_single_lease(tmp_path: Path) -> N
         worker.join()
 
     leases = [o for o in outcomes if not isinstance(o, Exception)]
-    conflicts = [o for o in outcomes if isinstance(o, LeaseConflictError)]
+    # either typed fail-closed rejection is correct: LeaseActiveError when the
+    # loser observed the live lease (begin_run branch), LeaseConflictError
+    # when the store lock serialized its acquire after the winner's
+    rejections = [
+        o for o in outcomes
+        if isinstance(o, (LeaseActiveError, LeaseConflictError))
+    ]
     assert len(leases) == 1, f"expected one lease winner, got {leases}"
-    assert len(conflicts) == threads - 1, outcomes
+    assert len(rejections) == threads - 1, outcomes
 
     state = _raw_state(fleet_dir)
     run_roots = [
