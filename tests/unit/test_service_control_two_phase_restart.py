@@ -59,7 +59,21 @@ def _git_deployment(tmp_path: Path, generation: int = 1) -> ManagedServiceDeploy
     (dist / "index.html").write_text("<html>fixture</html>\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(["git", "-C", str(tmp_path), "add", "-A", "."], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "fixture"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@test.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
     return sc.build_deployment(
         code_root=str(tmp_path), runtime_root=str(tmp_path), generation=generation
     )

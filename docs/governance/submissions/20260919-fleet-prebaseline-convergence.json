@@ -537,13 +537,15 @@
     {
       "component_id": "repo-housekeeping",
       "paths": [
+        ".github/workflows/ci.yml",
         ".gitignore"
       ],
       "control_machinery": false,
-      "owning_subsystem": "repository hygiene (.gitignore)",
-      "disposition": "ADMIT as ignore-rule housekeeping (3802a6ea0).",
+      "owning_subsystem": "repository hygiene (.gitignore, CI gate workflow checkout depth)",
+      "disposition": "ADMIT as non-runtime housekeeping: ignore-rule update (3802a6ea0) plus CI gate workflow checkout depth fix. The CI test job gets fetch-depth: 0 because the frozen peer-scorecard contract tests pin exact subject commits (e.g. 832b4dfaa) that exist in full repository history but are absent from depth-1 runner checkouts; the same shallow-clone ambiguity is already documented in architecture-review.yml. No runtime behavior changes.",
       "evidence": [
-        "Pre-merge housekeeping commit on the production line."
+        "Pre-merge housekeeping commit on the production line.",
+        "PR #30 first CI run failed 9 tests: 7 scorecard tests saw the pinned commit absent in the shallow clone, 2 service-control fixture tests hit bare git commit without runner git identity (exit 128). Both reproduced as environment-dependent only: local full-clone runs are green; the fixes are checkout depth (this file) and fixture-scoped git identity flags (tests-regression component), not baseline widening."
       ],
       "verification_level": "Security scan",
       "model_evidence_veto_recovery_exit": "Operators may amend ignore rules freely.",
