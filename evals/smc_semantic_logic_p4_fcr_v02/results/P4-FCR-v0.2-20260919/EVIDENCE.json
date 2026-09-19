@@ -1,0 +1,88 @@
+{
+  "artifact_sha256": {
+    "analysis.json": "cfe9ab37ad4b07e8a06cc8f59865fefd1e219441f64a9a259b5c2b609cae00db",
+    "execution-manifest.raw_external": "f6146cd79a4d59e4402316df3d2d632e9959b82ebaadc75f2e9c7f8d0995bb88",
+    "execution-manifest.sanitized.json": "b7526c12ccf76fe0c480b288c7a250c56daaa091e4805c45c520479f11f59267",
+    "fcr-gate.json": "17c6e6ed7aecd80dc20af81fa91964f65dba6ff444afa4603bbfac9754af7747",
+    "plan.json": "55133970a6e36c586b37de2c11641c3777b38d814990f0abbcec96633a4b37dc",
+    "preflight.json": "9ac8f60cc678e15877ba6af79edaa9768f407efc2a11729b9b9051b769c0901e",
+    "result-summary.json": "1ad30d4f701281e09f1c31f539ee6d4e7de533fba9fcebbd5aec141c9f0b0b66",
+    "results.jsonl": "92873e536eec1f613feacecd101ec27c35111c23c23942b5cde62cd56e656df1"
+  },
+  "date": "2026-09-19",
+  "execution": {
+    "browser_runtime_rows": 0,
+    "fallback_rows": 0,
+    "model_requests": 40,
+    "normalization": false,
+    "reorders": 0,
+    "reruns": 0,
+    "retries": 0,
+    "rows": 40,
+    "serial_requests": true,
+    "task_completion_judgment": false,
+    "tool_execution_total": 0
+  },
+  "execution_identity": {
+    "actionref_implementation_git_head": "eae7638c83503472918927f93df49a26469200a8",
+    "experiment_git_head": "a30e864a440cf5a89851fbde1fbccc458ea1a80c",
+    "formal_remote_main_at_authorization": "c9f33b4c3d2cbe92c7865d1aba1a6b9c8b165ed7",
+    "p4d_base": "596c4175dd6cb3f0bd27656735f886b923758c80",
+    "parent_negative": "52d5e78e650e1693db3453285febf36e8ab9cb68",
+    "protocol_git_sha": "d2945cfc5459cf69ae963b1b71a13976fdc6de75",
+    "remote_preflight_review_branch": "review/smc-semantic-logic-p4-fcr-v02-isolated-preflight-20260919",
+    "remote_preflight_review_sha": "d6141a52e56b2d99489fd6fcbef002250fd75197",
+    "source_bound_preflight_evidence_git_head": "d6141a52e56b2d99489fd6fcbef002250fd75197"
+  },
+  "hard_gate": {
+    "b_mechanical_20_of_20": true,
+    "b_structural_20_of_20": true,
+    "b_targeted_errors_zero": true,
+    "browser_runtime_zero": true,
+    "fallback_zero": true,
+    "manifest_normalization_false": true,
+    "manifest_retry_false": true,
+    "manifest_task_completion_false": true,
+    "tool_execution_zero": true
+  },
+  "manifest_sanitization_note": "Tracked manifest copy changes only machine-private absolute import path strings to repository-relative src/... paths. Raw execution manifest used by runner remains externally frozen by SHA256 f6146cd79a4d59e4402316df3d2d632e9959b82ebaadc75f2e9c7f8d0995bb88.",
+  "non_claims": [
+    "P4-LIVE has not started",
+    "ActionRef has not been wired into production Browser runtime",
+    "no deploy or service restart was performed",
+    "no Browser action was executed by this FCR"
+  ],
+  "offline_scoring": {
+    "b_mechanical_valid": 20,
+    "b_rows": 20,
+    "b_structural_valid": 20,
+    "b_targeted_cross_binding_errors": 0,
+    "browser_runtime_rows": 0,
+    "fallback_rows": 0,
+    "rows": 40,
+    "tool_execution_total": 0
+  },
+  "preflight_evidence": {
+    "focused_plus_adjacent": "53/53 PASS",
+    "full_ci": "PASS",
+    "qualification_isolation_all_imports_exact": true,
+    "sha256": "db24f355d1ac3e5f641cab0b304ab6bfb6cfec4bccd354e918bda6a58ddb43f2"
+  },
+  "safety": {
+    "browser_runtime_rows": 0,
+    "fallback_rows": 0,
+    "finish_reason_counts": {
+      "stop": 4,
+      "tool_calls": 36
+    },
+    "indices_exact": true,
+    "pairing_exact": true,
+    "provider_all_cognilocal": true,
+    "rows_complete": true,
+    "sequence_exact": true,
+    "tool_execution_total": 0,
+    "truncated_rows": 0
+  },
+  "schema": "smc.semantic_logic_p4_fcr.v0.2.final_evidence",
+  "verdict": "QUALIFIED"
+}

@@ -1,0 +1,322 @@
+[
+  {
+    "arm": "A",
+    "index": 1,
+    "pair_block": 1,
+    "prompt_sha256": "69eb78921ca1aed1d61f0624c700aec3faf145684bbd84ccd5a5388874f16259",
+    "repeat": 1,
+    "task_id": "navigate"
+  },
+  {
+    "arm": "B",
+    "index": 2,
+    "pair_block": 1,
+    "prompt_sha256": "69eb78921ca1aed1d61f0624c700aec3faf145684bbd84ccd5a5388874f16259",
+    "repeat": 1,
+    "task_id": "navigate"
+  },
+  {
+    "arm": "A",
+    "index": 3,
+    "pair_block": 2,
+    "prompt_sha256": "fae8ffe4de9c924940726e8a051564eca45800b91097a8056b923a0bc250a344",
+    "repeat": 1,
+    "task_id": "click"
+  },
+  {
+    "arm": "B",
+    "index": 4,
+    "pair_block": 2,
+    "prompt_sha256": "fae8ffe4de9c924940726e8a051564eca45800b91097a8056b923a0bc250a344",
+    "repeat": 1,
+    "task_id": "click"
+  },
+  {
+    "arm": "A",
+    "index": 5,
+    "pair_block": 3,
+    "prompt_sha256": "ef289e9ec72f8db6e794e98ce830dd5185066dee8ef1e080a05ee9555b9b8dab",
+    "repeat": 1,
+    "task_id": "fill"
+  },
+  {
+    "arm": "B",
+    "index": 6,
+    "pair_block": 3,
+    "prompt_sha256": "ef289e9ec72f8db6e794e98ce830dd5185066dee8ef1e080a05ee9555b9b8dab",
+    "repeat": 1,
+    "task_id": "fill"
+  },
+  {
+    "arm": "A",
+    "index": 7,
+    "pair_block": 4,
+    "prompt_sha256": "65f80c8e3ce154502924ee12f86aeddef086ea44c5335ed5ea9f74e8502fed7b",
+    "repeat": 1,
+    "task_id": "select"
+  },
+  {
+    "arm": "B",
+    "index": 8,
+    "pair_block": 4,
+    "prompt_sha256": "65f80c8e3ce154502924ee12f86aeddef086ea44c5335ed5ea9f74e8502fed7b",
+    "repeat": 1,
+    "task_id": "select"
+  },
+  {
+    "arm": "A",
+    "index": 9,
+    "pair_block": 5,
+    "prompt_sha256": "129a19570beea165b82684c62f2bb5a6ae32312bbf35e45c80b79484209d4cde",
+    "repeat": 1,
+    "task_id": "scroll"
+  },
+  {
+    "arm": "B",
+    "index": 10,
+    "pair_block": 5,
+    "prompt_sha256": "129a19570beea165b82684c62f2bb5a6ae32312bbf35e45c80b79484209d4cde",
+    "repeat": 1,
+    "task_id": "scroll"
+  },
+  {
+    "arm": "B",
+    "index": 11,
+    "pair_block": 6,
+    "prompt_sha256": "fae8ffe4de9c924940726e8a051564eca45800b91097a8056b923a0bc250a344",
+    "repeat": 2,
+    "task_id": "click"
+  },
+  {
+    "arm": "A",
+    "index": 12,
+    "pair_block": 6,
+    "prompt_sha256": "fae8ffe4de9c924940726e8a051564eca45800b91097a8056b923a0bc250a344",
+    "repeat": 2,
+    "task_id": "click"
+  },
+  {
+    "arm": "B",
+    "index": 13,
+    "pair_block": 7,
+    "prompt_sha256": "ef289e9ec72f8db6e794e98ce830dd5185066dee8ef1e080a05ee9555b9b8dab",
+    "repeat": 2,
+    "task_id": "fill"
+  },
+  {
+    "arm": "A",
+    "index": 14,
+    "pair_block": 7,
+    "prompt_sha256": "ef289e9ec72f8db6e794e98ce830dd5185066dee8ef1e080a05ee9555b9b8dab",
+    "repeat": 2,
+    "task_id": "fill"
+  },
+  {
+    "arm": "B",
+    "index": 15,
+    "pair_block": 8,
+    "prompt_sha256": "65f80c8e3ce154502924ee12f86aeddef086ea44c5335ed5ea9f74e8502fed7b",
+    "repeat": 2,
+    "task_id": "select"
+  },
+  {
+    "arm": "A",
+    "index": 16,
+    "pair_block": 8,
+    "prompt_sha256": "65f80c8e3ce154502924ee12f86aeddef086ea44c5335ed5ea9f74e8502fed7b",
+    "repeat": 2,
+    "task_id": "select"
+  },
+  {
+    "arm": "B",
+    "index": 17,
+    "pair_block": 9,
+    "prompt_sha256": "129a19570beea165b82684c62f2bb5a6ae32312bbf35e45c80b79484209d4cde",
+    "repeat": 2,
+    "task_id": "scroll"
+  },
+  {
+    "arm": "A",
+    "index": 18,
+    "pair_block": 9,
+    "prompt_sha256": "129a19570beea165b82684c62f2bb5a6ae32312bbf35e45c80b79484209d4cde",
+    "repeat": 2,
+    "task_id": "scroll"
+  },
+  {
+    "arm": "B",
+    "index": 19,
+    "pair_block": 10,
+    "prompt_sha256": "69eb78921ca1aed1d61f0624c700aec3faf145684bbd84ccd5a5388874f16259",
+    "repeat": 2,
+    "task_id": "navigate"
+  },
+  {
+    "arm": "A",
+    "index": 20,
+    "pair_block": 10,
+    "prompt_sha256": "69eb78921ca1aed1d61f0624c700aec3faf145684bbd84ccd5a5388874f16259",
+    "repeat": 2,
+    "task_id": "navigate"
+  },
+  {
+    "arm": "A",
+    "index": 21,
+    "pair_block": 11,
+    "prompt_sha256": "ef289e9ec72f8db6e794e98ce830dd5185066dee8ef1e080a05ee9555b9b8dab",
+    "repeat": 3,
+    "task_id": "fill"
+  },
+  {
+    "arm": "B",
+    "index": 22,
+    "pair_block": 11,
+    "prompt_sha256": "ef289e9ec72f8db6e794e98ce830dd5185066dee8ef1e080a05ee9555b9b8dab",
+    "repeat": 3,
+    "task_id": "fill"
+  },
+  {
+    "arm": "A",
+    "index": 23,
+    "pair_block": 12,
+    "prompt_sha256": "65f80c8e3ce154502924ee12f86aeddef086ea44c5335ed5ea9f74e8502fed7b",
+    "repeat": 3,
+    "task_id": "select"
+  },
+  {
+    "arm": "B",
+    "index": 24,
+    "pair_block": 12,
+    "prompt_sha256": "65f80c8e3ce154502924ee12f86aeddef086ea44c5335ed5ea9f74e8502fed7b",
+    "repeat": 3,
+    "task_id": "select"
+  },
+  {
+    "arm": "A",
+    "index": 25,
+    "pair_block": 13,
+    "prompt_sha256": "129a19570beea165b82684c62f2bb5a6ae32312bbf35e45c80b79484209d4cde",
+    "repeat": 3,
+    "task_id": "scroll"
+  },
+  {
+    "arm": "B",
+    "index": 26,
+    "pair_block": 13,
+    "prompt_sha256": "129a19570beea165b82684c62f2bb5a6ae32312bbf35e45c80b79484209d4cde",
+    "repeat": 3,
+    "task_id": "scroll"
+  },
+  {
+    "arm": "A",
+    "index": 27,
+    "pair_block": 14,
+    "prompt_sha256": "69eb78921ca1aed1d61f0624c700aec3faf145684bbd84ccd5a5388874f16259",
+    "repeat": 3,
+    "task_id": "navigate"
+  },
+  {
+    "arm": "B",
+    "index": 28,
+    "pair_block": 14,
+    "prompt_sha256": "69eb78921ca1aed1d61f0624c700aec3faf145684bbd84ccd5a5388874f16259",
+    "repeat": 3,
+    "task_id": "navigate"
+  },
+  {
+    "arm": "A",
+    "index": 29,
+    "pair_block": 15,
+    "prompt_sha256": "fae8ffe4de9c924940726e8a051564eca45800b91097a8056b923a0bc250a344",
+    "repeat": 3,
+    "task_id": "click"
+  },
+  {
+    "arm": "B",
+    "index": 30,
+    "pair_block": 15,
+    "prompt_sha256": "fae8ffe4de9c924940726e8a051564eca45800b91097a8056b923a0bc250a344",
+    "repeat": 3,
+    "task_id": "click"
+  },
+  {
+    "arm": "B",
+    "index": 31,
+    "pair_block": 16,
+    "prompt_sha256": "65f80c8e3ce154502924ee12f86aeddef086ea44c5335ed5ea9f74e8502fed7b",
+    "repeat": 4,
+    "task_id": "select"
+  },
+  {
+    "arm": "A",
+    "index": 32,
+    "pair_block": 16,
+    "prompt_sha256": "65f80c8e3ce154502924ee12f86aeddef086ea44c5335ed5ea9f74e8502fed7b",
+    "repeat": 4,
+    "task_id": "select"
+  },
+  {
+    "arm": "B",
+    "index": 33,
+    "pair_block": 17,
+    "prompt_sha256": "129a19570beea165b82684c62f2bb5a6ae32312bbf35e45c80b79484209d4cde",
+    "repeat": 4,
+    "task_id": "scroll"
+  },
+  {
+    "arm": "A",
+    "index": 34,
+    "pair_block": 17,
+    "prompt_sha256": "129a19570beea165b82684c62f2bb5a6ae32312bbf35e45c80b79484209d4cde",
+    "repeat": 4,
+    "task_id": "scroll"
+  },
+  {
+    "arm": "B",
+    "index": 35,
+    "pair_block": 18,
+    "prompt_sha256": "69eb78921ca1aed1d61f0624c700aec3faf145684bbd84ccd5a5388874f16259",
+    "repeat": 4,
+    "task_id": "navigate"
+  },
+  {
+    "arm": "A",
+    "index": 36,
+    "pair_block": 18,
+    "prompt_sha256": "69eb78921ca1aed1d61f0624c700aec3faf145684bbd84ccd5a5388874f16259",
+    "repeat": 4,
+    "task_id": "navigate"
+  },
+  {
+    "arm": "B",
+    "index": 37,
+    "pair_block": 19,
+    "prompt_sha256": "fae8ffe4de9c924940726e8a051564eca45800b91097a8056b923a0bc250a344",
+    "repeat": 4,
+    "task_id": "click"
+  },
+  {
+    "arm": "A",
+    "index": 38,
+    "pair_block": 19,
+    "prompt_sha256": "fae8ffe4de9c924940726e8a051564eca45800b91097a8056b923a0bc250a344",
+    "repeat": 4,
+    "task_id": "click"
+  },
+  {
+    "arm": "B",
+    "index": 39,
+    "pair_block": 20,
+    "prompt_sha256": "ef289e9ec72f8db6e794e98ce830dd5185066dee8ef1e080a05ee9555b9b8dab",
+    "repeat": 4,
+    "task_id": "fill"
+  },
+  {
+    "arm": "A",
+    "index": 40,
+    "pair_block": 20,
+    "prompt_sha256": "ef289e9ec72f8db6e794e98ce830dd5185066dee8ef1e080a05ee9555b9b8dab",
+    "repeat": 4,
+    "task_id": "fill"
+  }
+]
