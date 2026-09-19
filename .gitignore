@@ -83,3 +83,18 @@ evals/embedding_stage2/bge_cache.json
 
 # Local runtime business configuration SoT
 runtime.toml
+
+# 仓库卫生治理（2026-09-20）：可再生运行产物不入库
+# 评测运行产物（可重跑再生，~9G；单次 smoke 可 3G+）
+evals/*/results/
+# pilot 评测运行输出（同类产物；results.jsonl 历史已跟踪，保持不动）
+evals/pilot/data/results_*.jsonl
+# git worktrees（旁路工作区，登记在 .git/worktrees）
+.worktrees/
+.context-integrity-wt/
+# 临时/一次性目录（本地保留，不入库）
+.tmp-rebase-backup/
+.formal-v1/
+.research-notes/
+# 方法库中的 embedding 向量缓存（可再生，2.7M；同类先例 evals/embedding_stage2/bge_cache.json）
+data/methods/embeddings-*.json
