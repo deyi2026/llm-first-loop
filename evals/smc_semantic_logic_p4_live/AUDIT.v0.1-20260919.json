@@ -1,0 +1,94 @@
+{
+  "schema": "smc.semantic_logic_p4_live_actionref_audit.v0.1",
+  "date": "2026-09-19",
+  "status": "READ_ONLY_AUDIT_COMPLETE",
+  "audit_base_git_sha": "66f8d6147a67c4b439ca930149359674e500ba68",
+  "qualified_fcr": {
+    "review_branch": "review/smc-semantic-logic-p4-fcr-v02-final-result-20260919",
+    "git_sha": "66f8d6147a67c4b439ca930149359674e500ba68",
+    "evidence_sha256": "7110c7c0a6305d1482a7bf92d2f5f690b3015ab538fa788b0b24c5e2e155ae5e",
+    "verdict": "QUALIFIED"
+  },
+  "formal_remote_main_at_audit_start": "c9f33b4c3d2cbe92c7865d1aba1a6b9c8b165ed7",
+  "current_primitives": {
+    "session_fenced_grounding": true,
+    "snapshot_integrity_and_ttl": true,
+    "runtime_generation_and_nonce": true,
+    "page_document_frame_generations": true,
+    "exact_grounding_hydration": true,
+    "pre_dispatch_recapture": true,
+    "stale_version_guard": true,
+    "stable_physical_identity_required": true,
+    "single_dispatch_action_id_reservation": true,
+    "run_generation_mutation_authority": true,
+    "timeout_cancel_effect_revocation": true,
+    "tool_execution_wal_no_auto_replay": true,
+    "browser_receipt_no_auto_retry": true,
+    "bound_cdp_target_no_silent_rebind_after_binding": true,
+    "workspace_transition_blocked_during_active_run": true
+  },
+  "gaps": [
+    {
+      "id": "P4L-G01",
+      "name": "production_actionref_store_missing",
+      "severity": "P0",
+      "required_before_live": true
+    },
+    {
+      "id": "P4L-G02",
+      "name": "actionref_missing_workspace_run_runtime_target_authority",
+      "severity": "P0",
+      "required_before_live": true
+    },
+    {
+      "id": "P4L-G03",
+      "name": "independent_capture_actuator_first_bind_target_race",
+      "severity": "P0",
+      "required_before_live": true
+    },
+    {
+      "id": "P4L-G04",
+      "name": "outer_wal_to_browser_receipt_durable_bridge_missing",
+      "severity": "P0",
+      "required_before_live": true
+    },
+    {
+      "id": "P4L-G05",
+      "name": "actionref_path_must_reject_missing_effect_binding",
+      "severity": "P0",
+      "required_before_live": true
+    },
+    {
+      "id": "P4L-G06",
+      "name": "main_provider_surface_has_legacy_browser_mutation_bypasses",
+      "severity": "P0",
+      "required_before_live": true
+    },
+    {
+      "id": "P4L-G07",
+      "name": "actionref_workspace_defense_in_depth_missing",
+      "severity": "P1",
+      "required_before_live": true
+    }
+  ],
+  "source_sha256": {
+    "src/llm_loop/browser/perception.py": "ea412f300036451fea9bc448d887d7d9cbb47be89fcc40d1284989f9a9c3bf29",
+    "src/llm_loop/browser/action.py": "01404c0b919fa7caa51ea4a85f012cb4b1307a7a47cd2b11180bc272c17d0777",
+    "src/llm_loop/browser/cdp_host.py": "8facb765161d3f9c11e5377adf3ef9d9c7c9b671e508b9a669598f8917c9ebdf",
+    "src/llm_loop/browser/cdp_action_host.py": "229e83caac450fb7285a6d75fc5d4a0dbc23fd5e5201bfb92b600a4ad34c778d",
+    "src/llm_loop/tools/builtin/browser_perceive.py": "d180b7880813b74b9a7c5fbda3e120576fa2657d53bd8fc4274d1cc08e4be072",
+    "src/llm_loop/tools/builtin/browser_semantic_execute.py": "920f2f794b0f6a2ea8481fa2f7bc5e71091e8fa71353e62125d94f08557c1008",
+    "src/llm_loop/tools/builtin/browser_semantic_operation.py": "2badb3ad281482cac5b3ffd61343311f78cf6cf09192ca947ae7edc87ab73bfb",
+    "src/llm_loop/core/tool_execution_journal.py": "a7d36cd0e0f24d4b26c5a88ccb4401c967b314cce25b692ae71a3f43d884b251",
+    "src/llm_loop/core/run_context.py": "99d613c1d69512ca868e80997069cafe5bea440710caba6921dd97786327ae3b",
+    "src/llm_loop/core/session.py": "add72ab34c870f52464d7bfacb7ab8fc7d9185636b93983aa97e119f49e552dc",
+    "src/llm_loop/core/loop/engine.py": "c3b60a6261d0bab111f1df76d9cd9821e3bb10a48d6bb97d25ff127cc379c848",
+    "src/llm_loop/core/loop/engine_services/tool_cycle.py": "8c7deb50438d557bc718b6617e9f8fb8ebe0b23e88887204c6bc314181d67114",
+    "src/llm_loop/factory.py": "6a738077a690b2e672520b09d7f11ed4a6e5ff082419ba5af8f9f73bbdf411ef",
+    "tools/semantic_logic/p4_fcr_v02_actionref_compiler.py": "a963a3a6ac40361d2389972aa677d2e5177036a41ab7c13675fd9c34df5bc9a6"
+  },
+  "selected_current_regression": "PASS",
+  "production_changes": 0,
+  "browser_actions_executed": 0,
+  "model_requests": 0
+}
