@@ -1,0 +1,687 @@
+{
+  "schema": "peer-scorecard/v0.1",
+  "status": "frozen_read_only_contract",
+  "blocking": false,
+  "aggregate_verdict": "not_evaluated",
+  "purpose": "Reproducible evidence inventory for a subject-vs-peers comparison. It replaces an unpublished six-dimension equal-weight point score whose numbers carried no provenance and were computed against a stale revision.",
+  "subject_anchor": {
+    "subject": "lfl",
+    "commit": "832b4dfaa2d6dba8143bd91239aa0b22b8f8dbf9",
+    "commit_date": "2026-09-16T16:32:27+08:00",
+    "branch": "evo-20260914-exec-surface-followup",
+    "resolution": "committed_tree",
+    "worktree_dirty_count_at_freeze": 62,
+    "superseded_anchor_note": "A prior external analysis scored the subject at integration/convergence-20260911 (2d247ba7, committed 2026-09-13T21:52:11+08:00) while describing 2026-09-12 and 2026-09-13 work as scored. That ref name does not match its content, and the current HEAD is 71 commits ahead of it."
+  },
+  "evidence_tiers": {
+    "V": "Subject only. The anchor string is present in the committed tree of the pinned subject commit, resolved via git object lookup. Never the working tree.",
+    "T1": "Verbatim quotation from a vendor-published page, with the exact URL and the retrieval date. Comparable across vendors.",
+    "T2": "A vendor-published page was identified and dated; the claim is a paraphrase, not a verbatim quotation.",
+    "T3": "A third-party report or press item, not vendor-published.",
+    "T4": "Model-derived prose with no retrievable source. Not evidence."
+  },
+  "rungs": {
+    "0": "No declared mechanical anchor for this dimension is present.",
+    "1": "Entry anchor present.",
+    "2": "Durable state plus a recovery or identity path present.",
+    "3": "Mechanical identity/generation binding or a settlement/authority path present.",
+    "4": "All declared anchors for this dimension present, including the dimension-declared counter-anchors."
+  },
+  "rung_semantics": "A rung is the highest declared evidence rung whose required anchors are all verified present and whose forbidden anchors are all verified absent. It is a verified lower bound on the evidence, not a measurement of capability degree. A rung is not comparable across dimensions and must not be averaged.",
+  "band_emission_rule": "A numeric rung may be emitted only from tier V (subject) or tier T1 (counterparty). T2/T3/T4 cells carry no number, at any position in any table.",
+  "products": [
+    "cursor",
+    "claude_code",
+    "copilot_agent",
+    "codex",
+    "openhands",
+    "antigravity"
+  ],
+  "dimensions": [
+    {
+      "id": "D1_long_horizon_autonomy",
+      "name": "Long-horizon autonomy",
+      "definition": "Whether a declared objective with durable state survives interrupted execution and continues without re-instruction.",
+      "anchors": [
+        {
+          "id": "d1.durable_task_frontier",
+          "path": "src/llm_loop/introspection/task_store.py",
+          "anchor": "def goal_completion_ready",
+          "proves": "Goal completion reads a mechanical task-frontier open count rather than prose."
+        },
+        {
+          "id": "d1.goal_checkpoint",
+          "path": "src/llm_loop/introspection/tools_goal.py",
+          "anchor": "def run_checkpoint_goal",
+          "proves": "The model can persist a goal checkpoint as a first-class action."
+        },
+        {
+          "id": "d1.recent_continuity",
+          "path": "src/llm_loop/core/recent_continuity.py",
+          "anchor": "def latest_model_assistant_before_turn",
+          "proves": "Mechanical adjacency reconstruction of the most recent completed exchange."
+        },
+        {
+          "id": "d1.program_recovery",
+          "path": "src/llm_loop/core/program_recovery.py",
+          "anchor": "def is_program_recovery_message",
+          "proves": "Program-originated recovery facts are distinguishable from human turns."
+        },
+        {
+          "id": "d1.subagent_topology_journal",
+          "path": "src/llm_loop/core/subagent_topology.py",
+          "anchor": "class SubAgentTopologyJournal",
+          "proves": "Parent/child delegation topology is journaled as a durable fact."
+        }
+      ],
+      "counter_anchors": [
+        {
+          "id": "d1.gap.cross_process_coordinator",
+          "path": "src/llm_loop/coordination",
+          "proves_absent": "No project/coordinator layer that plans and dispatches a fleet across processes."
+        }
+      ],
+      "rungs": [
+        {
+          "rung": 0,
+          "requires": [],
+          "forbids": []
+        },
+        {
+          "rung": 1,
+          "requires": [
+            "d1.durable_task_frontier"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 2,
+          "requires": [
+            "d1.durable_task_frontier",
+            "d1.goal_checkpoint",
+            "d1.recent_continuity"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 3,
+          "requires": [
+            "d1.durable_task_frontier",
+            "d1.goal_checkpoint",
+            "d1.recent_continuity",
+            "d1.program_recovery",
+            "d1.subagent_topology_journal"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 4,
+          "requires": [
+            "d1.durable_task_frontier",
+            "d1.goal_checkpoint",
+            "d1.recent_continuity",
+            "d1.program_recovery",
+            "d1.subagent_topology_journal"
+          ],
+          "forbids": [
+            "d1.gap.cross_process_coordinator"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D2_concurrency_isolation",
+      "name": "Concurrency and isolation",
+      "definition": "Whether concurrent execution is bounded by mechanical ownership and whether each concurrent unit has its own physical execution environment.",
+      "anchors": [
+        {
+          "id": "d2.resource_governor",
+          "path": "src/llm_loop/resources/governor.py",
+          "anchor": "class ResourceGovernor",
+          "proves": "A central governor leases and settles concurrent resource use."
+        },
+        {
+          "id": "d2.execution_class",
+          "path": "src/llm_loop/resources/contracts.py",
+          "anchor": "class ExecutionClass",
+          "proves": "Execution classes are declared as a typed contract."
+        },
+        {
+          "id": "d2.provider_call_identity",
+          "path": "src/llm_loop/resources/provider_settlement.py",
+          "anchor": "class ProviderCallIdentity",
+          "proves": "Each provider call carries a mechanical identity used for settlement."
+        },
+        {
+          "id": "d2.command_sandbox",
+          "path": "src/llm_loop/tools/sandbox.py",
+          "anchor": "def docker_argv",
+          "proves": "Command execution can be isolated in a container with no network and a read-only rootfs."
+        },
+        {
+          "id": "d2.subagent_runner",
+          "path": "src/llm_loop/subagent/runner.py",
+          "anchor": "class SubAgentRunner",
+          "proves": "A delegated child executes in its own session with a bounded depth."
+        }
+      ],
+      "counter_anchors": [
+        {
+          "id": "d2.gap.execution_workspace",
+          "path": "src/llm_loop/execution_workspace",
+          "proves_absent": "No per-agent execution-environment identity. Isolation today is command-scoped, not agent-scoped; the delegated child shares the caller's workspace."
+        },
+        {
+          "id": "d2.gap.worker_lease",
+          "path": "src/llm_loop/resources/worker_lease.py",
+          "proves_absent": "No worker lease/reclaim protocol distinct from the provider-call lease."
+        }
+      ],
+      "rungs": [
+        {
+          "rung": 0,
+          "requires": [],
+          "forbids": []
+        },
+        {
+          "rung": 1,
+          "requires": [
+            "d2.subagent_runner"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 2,
+          "requires": [
+            "d2.subagent_runner",
+            "d2.command_sandbox",
+            "d2.execution_class"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 3,
+          "requires": [
+            "d2.subagent_runner",
+            "d2.command_sandbox",
+            "d2.execution_class",
+            "d2.resource_governor",
+            "d2.provider_call_identity"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 4,
+          "requires": [
+            "d2.subagent_runner",
+            "d2.command_sandbox",
+            "d2.execution_class",
+            "d2.resource_governor",
+            "d2.provider_call_identity"
+          ],
+          "forbids": [
+            "d2.gap.execution_workspace",
+            "d2.gap.worker_lease"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D3_context_recovery",
+      "name": "Context and recovery",
+      "definition": "Whether interrupted or compacted execution can be resumed with the same execution semantics, and whether exact sources remain model-reachable.",
+      "anchors": [
+        {
+          "id": "d3.run_integrity_receipt",
+          "path": "src/llm_loop/runtime/causality.py",
+          "anchor": "def build_run_integrity_receipt",
+          "proves": "A prompt-neutral aggregate of the current provider attempt's mechanical identity facts."
+        },
+        {
+          "id": "d3.session_workspace_identity",
+          "path": "src/llm_loop/core/loop/engine_services/session_lifecycle.py",
+          "anchor": "def prepare_workspace",
+          "proves": "Session-scoped workspace identity and partition are established at lifecycle boundary."
+        },
+        {
+          "id": "d3.subagent_delivery_journal",
+          "path": "src/llm_loop/core/subagent_delivery.py",
+          "anchor": "class SubAgentDeliveryJournal",
+          "proves": "Mailbox, report, result and cancel records are journaled for delegated work."
+        },
+        {
+          "id": "d3.evidence_exact_read",
+          "path": "src/llm_loop/tools/evidence_tools.py",
+          "anchor": "class EvidenceReadTool",
+          "proves": "A model-invokable exact read path over durable evidence."
+        },
+        {
+          "id": "d3.evidence_auth_scope",
+          "path": "src/llm_loop/memory/evidence.py",
+          "anchor": "class EvidenceAuthDeniedError",
+          "proves": "Evidence access is scope-authorized and denial is a typed outcome."
+        },
+        {
+          "id": "d3.browser_mutation_receipt",
+          "path": "src/llm_loop/browser/action.py",
+          "anchor": "class BrowserActionReceiptStore",
+          "proves": "A dispatched mutation leaves a durable receipt usable for recovery."
+        }
+      ],
+      "counter_anchors": [],
+      "rungs": [
+        {
+          "rung": 0,
+          "requires": [],
+          "forbids": []
+        },
+        {
+          "rung": 1,
+          "requires": [
+            "d3.run_integrity_receipt"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 2,
+          "requires": [
+            "d3.run_integrity_receipt",
+            "d3.session_workspace_identity",
+            "d3.subagent_delivery_journal"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 3,
+          "requires": [
+            "d3.run_integrity_receipt",
+            "d3.session_workspace_identity",
+            "d3.subagent_delivery_journal",
+            "d3.evidence_exact_read",
+            "d3.evidence_auth_scope"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 4,
+          "requires": [
+            "d3.run_integrity_receipt",
+            "d3.session_workspace_identity",
+            "d3.subagent_delivery_journal",
+            "d3.evidence_exact_read",
+            "d3.evidence_auth_scope",
+            "d3.browser_mutation_receipt"
+          ],
+          "forbids": []
+        }
+      ]
+    },
+    {
+      "id": "D4_runtime_reliability",
+      "name": "Runtime reliability",
+      "definition": "Whether the live process's identity, configuration and authority are exact, declared and fail-closed.",
+      "anchors": [
+        {
+          "id": "d4.config_hash",
+          "path": "src/llm_loop/runtime/manifest.py",
+          "anchor": "def config_hash",
+          "proves": "A redacted effective-config fingerprint is computed and persisted."
+        },
+        {
+          "id": "d4.effective_config",
+          "path": "src/llm_loop/runtime/resolver.py",
+          "anchor": "class EffectiveConfig",
+          "proves": "Configuration precedence is resolved mechanically with per-key sources."
+        },
+        {
+          "id": "d4.build_identity",
+          "path": "src/llm_loop/runtime/build_identity.py",
+          "anchor": "def compute_build_identity",
+          "proves": "Exact tracked-source and release identity facts are computed."
+        },
+        {
+          "id": "d4.workspace_key",
+          "path": "src/llm_loop/workspace/store.py",
+          "anchor": "def workspace_key",
+          "proves": "Workspace identity is derived mechanically and validated."
+        },
+        {
+          "id": "d4.tool_execution_journal",
+          "path": "src/llm_loop/core/tool_execution_journal.py",
+          "anchor": "class ToolExecutionJournal",
+          "proves": "Tool effects and their mutation authority are bound to the exact call identity."
+        }
+      ],
+      "counter_anchors": [],
+      "rungs": [
+        {
+          "rung": 0,
+          "requires": [],
+          "forbids": []
+        },
+        {
+          "rung": 1,
+          "requires": [
+            "d4.config_hash"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 2,
+          "requires": [
+            "d4.config_hash",
+            "d4.effective_config",
+            "d4.build_identity"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 3,
+          "requires": [
+            "d4.config_hash",
+            "d4.effective_config",
+            "d4.build_identity",
+            "d4.workspace_key",
+            "d4.tool_execution_journal"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 4,
+          "requires": [
+            "d4.config_hash",
+            "d4.effective_config",
+            "d4.build_identity",
+            "d4.workspace_key",
+            "d4.tool_execution_journal"
+          ],
+          "forbids": []
+        }
+      ]
+    },
+    {
+      "id": "D5_observability_governance",
+      "name": "Observability and governance",
+      "definition": "Whether execution facts are auditable with provenance, and whether a declared policy can be enforced without being silently relaxed.",
+      "anchors": [
+        {
+          "id": "d5.task_evidence_verifier",
+          "path": "src/llm_loop/introspection/task_evidence.py",
+          "anchor": "class TaskEvidenceVerifier",
+          "proves": "Evidence refs are verified for authenticity and integrity at task completion."
+        },
+        {
+          "id": "d5.provider_resource_binding",
+          "path": "src/llm_loop/resources/ledger_projection.py",
+          "anchor": "class ProviderResourceBinding",
+          "proves": "Provider resource facts are projected with validity and freshness."
+        },
+        {
+          "id": "d5.provider_authoritative_snapshot",
+          "path": "src/llm_loop/resources/vendor_facts.py",
+          "anchor": "class ProviderAuthoritativeSnapshot",
+          "proves": "Vendor facts are attributed to an authoritative snapshot with declared applicability."
+        },
+        {
+          "id": "d5.cache_health_monitor",
+          "path": "src/llm_loop/core/cache_health.py",
+          "anchor": "class CacheHealthMonitor",
+          "proves": "Cache behaviour is tracked as a performance fact with a breaker."
+        },
+        {
+          "id": "d5.cache_window",
+          "path": "src/llm_loop/core/cache_window.py",
+          "anchor": "class CacheWindow",
+          "proves": "Cache prefix identity is described mechanically per window."
+        },
+        {
+          "id": "d5.typed_predicate_wait",
+          "path": "src/llm_loop/browser/predicate.py",
+          "anchor": "def validate_predicate",
+          "proves": "A wait condition is validated as a typed predicate rather than free text."
+        }
+      ],
+      "counter_anchors": [
+        {
+          "id": "d5.gap.control_plane_view",
+          "path": "src/llm_loop/web/agent_tree.py",
+          "proves_absent": "No user-facing surface presenting agent tree, lease, settlement, recovery provenance and evidence provenance together. The facts exist; the view does not."
+        }
+      ],
+      "rungs": [
+        {
+          "rung": 0,
+          "requires": [],
+          "forbids": []
+        },
+        {
+          "rung": 1,
+          "requires": [
+            "d5.task_evidence_verifier"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 2,
+          "requires": [
+            "d5.task_evidence_verifier",
+            "d5.provider_resource_binding",
+            "d5.cache_health_monitor"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 3,
+          "requires": [
+            "d5.task_evidence_verifier",
+            "d5.provider_resource_binding",
+            "d5.cache_health_monitor",
+            "d5.provider_authoritative_snapshot",
+            "d5.cache_window"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 4,
+          "requires": [
+            "d5.task_evidence_verifier",
+            "d5.provider_resource_binding",
+            "d5.cache_health_monitor",
+            "d5.provider_authoritative_snapshot",
+            "d5.cache_window",
+            "d5.typed_predicate_wait"
+          ],
+          "forbids": [
+            "d5.gap.control_plane_view"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "D6_ecosystem_ux",
+      "name": "Ecosystem and UX",
+      "definition": "Whether external models, harnesses, tools and humans can enter and drive the runtime through declared interfaces.",
+      "in_repo_measurable": false,
+      "in_repo_measurable_note": "Distribution and adoption cannot be observed from this repository at all. A rung here bounds only the declared interface anchors, never the dimension.",
+      "anchors": [
+        {
+          "id": "d6.mcp_client",
+          "path": "src/llm_loop/tools/mcp_client.py",
+          "anchor": "def register_mcp_tools",
+          "proves": "External MCP servers can be registered as model-visible tools."
+        },
+        {
+          "id": "d6.mcp_server",
+          "path": "src/llm_loop/cache_guard/mcp_server.py",
+          "anchor": "def build_mcp_server",
+          "proves": "The runtime can expose its own capability over MCP to an external harness."
+        },
+        {
+          "id": "d6.skill_scan",
+          "path": "src/llm_loop/skills/loader.py",
+          "anchor": "def scan_skills_dir",
+          "proves": "External skill packages are discoverable from a directory."
+        },
+        {
+          "id": "d6.web_stream_surface",
+          "path": "src/llm_loop/web/routes.py",
+          "anchor": "def chat_stream",
+          "proves": "A human-facing streaming surface exists."
+        },
+        {
+          "id": "d6.human_turn_queue",
+          "path": "src/llm_loop/web/routes.py",
+          "anchor": "def queue_enqueue",
+          "proves": "Human input can be queued durably against a live session."
+        },
+        {
+          "id": "d6.second_channel",
+          "path": "src/llm_loop/feishu/resume.py",
+          "anchor": "class ResumeCoordinator",
+          "proves": "A second human channel can resume work with anchor and precheck."
+        }
+      ],
+      "counter_anchors": [
+        {
+          "id": "d6.gap.acp_adapter",
+          "path": "src/llm_loop/acp",
+          "proves_absent": "No ACP or equivalent harness-neutral adapter layer, so a foreign harness cannot drive this runtime over a declared protocol."
+        },
+        {
+          "id": "d6.gap.adoption_telemetry",
+          "path": "docs/ADOPTION.md",
+          "proves_absent": "No distribution or adoption fact of any kind is tracked in-repo, so this dimension is not measurable from this repository at all."
+        }
+      ],
+      "rungs": [
+        {
+          "rung": 0,
+          "requires": [],
+          "forbids": []
+        },
+        {
+          "rung": 1,
+          "requires": [
+            "d6.mcp_client"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 2,
+          "requires": [
+            "d6.mcp_client",
+            "d6.skill_scan",
+            "d6.web_stream_surface"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 3,
+          "requires": [
+            "d6.mcp_client",
+            "d6.skill_scan",
+            "d6.web_stream_surface",
+            "d6.mcp_server",
+            "d6.human_turn_queue",
+            "d6.second_channel"
+          ],
+          "forbids": []
+        },
+        {
+          "rung": 4,
+          "requires": [
+            "d6.mcp_client",
+            "d6.skill_scan",
+            "d6.web_stream_surface",
+            "d6.mcp_server",
+            "d6.human_turn_queue",
+            "d6.second_channel"
+          ],
+          "forbids": [
+            "d6.gap.acp_adapter",
+            "d6.gap.adoption_telemetry"
+          ]
+        }
+      ]
+    }
+  ],
+  "counterparty_cells": [
+    {
+      "product": "cursor",
+      "dimension_id": "D1_long_horizon_autonomy",
+      "url": "https://cursor.com/cn/blog/projects",
+      "retrieved_at": "2026-09-16",
+      "evidence_tier": "T2",
+      "claim": "Vendor-published announcement of a project-level object that maintains shared context across months, with a coordinator that plans and dispatches execution agents.",
+      "rung_lower_bound": null
+    },
+    {
+      "product": "cursor",
+      "dimension_id": "D2_concurrency_isolation",
+      "url": "https://cursor.com/cn/blog/projects",
+      "retrieved_at": "2026-09-16",
+      "evidence_tier": "T2",
+      "claim": "Vendor states project execution runs on separate cloud computers and can additionally dispatch local agents.",
+      "rung_lower_bound": null
+    },
+    {
+      "product": "codex",
+      "dimension_id": "D2_concurrency_isolation",
+      "url": "https://github.com/openai/codex/releases/tag/python-v0.154.0",
+      "retrieved_at": "2026-09-16",
+      "evidence_tier": "T2",
+      "claim": "Release page exists for the named version; the worktree-isolation and external-message details are restated from a secondary description, not quoted from the page.",
+      "rung_lower_bound": null
+    },
+    {
+      "product": "claude_code",
+      "dimension_id": "D4_runtime_reliability",
+      "url": "https://github.com/anthropics/claude-code/releases",
+      "retrieved_at": "2026-09-16",
+      "evidence_tier": "T3",
+      "claim": "A release feed exists describing resume, subagent tool-list and background-session fixes; item-level text was not retrieved verbatim.",
+      "rung_lower_bound": null
+    },
+    {
+      "product": "copilot_agent",
+      "dimension_id": "D5_observability_governance",
+      "url": "https://github.blog/changelog/2026-09-09-enterprise-managed-permissions-for-github-copilot-agent-operations/",
+      "retrieved_at": "2026-09-16",
+      "evidence_tier": "T2",
+      "claim": "Vendor changelog entry exists for enterprise-managed permissions over agent operations; the precedence detail is restated from a secondary description.",
+      "rung_lower_bound": null
+    },
+    {
+      "product": "openhands",
+      "dimension_id": "D2_concurrency_isolation",
+      "url": "https://www.openhands.dev/product/canvas",
+      "retrieved_at": "2026-09-16",
+      "evidence_tier": "T2",
+      "claim": "Vendor product page exists describing concurrent agents; the per-agent git worktree detail is restated from a secondary description.",
+      "rung_lower_bound": null
+    },
+    {
+      "product": "antigravity",
+      "dimension_id": "D4_runtime_reliability",
+      "url": "https://www.antigravity.google/changelog",
+      "retrieved_at": "2026-09-16",
+      "evidence_tier": "T2",
+      "claim": "A vendor changelog page exists; no dated entry text was retrieved verbatim.",
+      "rung_lower_bound": null
+    }
+  ],
+  "declared_judgment_cells": [],
+  "declared_judgment_rule": "Subjective or model-authored bands may be recorded only here, each with judge, date and rationale. They are never merged into a measured rung, never averaged with counterparty tiers, and must be presented in a separate table.",
+  "invariants": {
+    "subject_resolution": "committed_tree",
+    "missing_counterparty_source_status": "unknown",
+    "band_requires_tier": [
+      "V",
+      "T1"
+    ],
+    "cross_vendor_composite": "not_evaluated",
+    "no_cross_tier_aggregation": true,
+    "rung_is_lower_bound_only": true,
+    "counterparty_cells_without_source_are_unknown": true
+  }
+}
