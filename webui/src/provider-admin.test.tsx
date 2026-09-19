@@ -35,6 +35,8 @@ const SNAPSHOT: ProviderAdminSnapshot = {
           context: 262144,
           reasoning_capable: true,
           reasoning_control: "always_on_effort",
+          reasoning_efforts: ["low", "high", "max"],
+          reasoning_default_effort: "max",
           wire_protocol: "openai",
           send_tool_choice: true,
           reasoning_split: false,
@@ -57,7 +59,8 @@ const MODEL_CATALOG = {
     reasoning_control: "always_on_effort",
     reasoning_control_supported: true,
     reasoning_can_disable: false,
-    reasoning_efforts: ["low", "medium", "high"],
+    reasoning_efforts: ["low", "high", "max"],
+    reasoning_default_effort: "max",
   }],
 };
 
@@ -162,6 +165,32 @@ describe("provider manager", () => {
     fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
     await waitFor(() => expect(testCalls).toBe(1));
     expect(await screen.findByText("连接成功 · 234 ms")).toBeInTheDocument();
+  });
+
+  it("模型可在设置页声明自己的推理档位和默认档位", async () => {
+    const putBodies: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/providers/glm" && init?.method === "PUT") {
+        putBodies.push(JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>);
+        return new Response(JSON.stringify(SNAPSHOT), { status: 200 });
+      }
+      if (url === "/api/v1/providers") return new Response(JSON.stringify(SNAPSHOT), { status: 200 });
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+
+    render(<ProviderManager />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    const editor = screen.getByTestId("provider-editor");
+    expect(within(editor).getByLabelText("推理档位")).toHaveValue("low,high,max");
+    expect(within(editor).getByLabelText("默认推理档位")).toHaveValue("max");
+    fireEvent.click(within(editor).getByRole("button", { name: "保存并热重载" }));
+
+    await waitFor(() => expect(putBodies).toHaveLength(1));
+    const provider = putBodies[0]!.provider as { models: Array<Record<string, unknown>> };
+    expect(provider.models[0]!.reasoning_efforts).toEqual(["low", "high", "max"]);
+    expect(provider.models[0]!.reasoning_default_effort).toBe("max");
   });
 });
 

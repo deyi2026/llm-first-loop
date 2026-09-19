@@ -34,6 +34,8 @@ const blankModel = (): ProviderModelAdminInput => ({
   reasoning_split: false,
   reasoning_replay: "configured",
   reasoning_effort_map: {},
+  reasoning_efforts: [],
+  reasoning_default_effort: null,
   runtime_identity: "",
   temperature: null,
   top_p: null,
@@ -396,6 +398,16 @@ function ProviderEditor({
               <label>协议<select value={model.wire_protocol ?? "openai"} onChange={(e) => patchModel(index, { wire_protocol: e.target.value })}><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="google">Google</option><option value="lms-chat">LM Studio Chat</option></select></label>
               <label>推理控制<select value={model.reasoning_control ?? "unknown"} onChange={(e) => patchModel(index, { reasoning_control: e.target.value })}><option value="unknown">未验证/unknown</option><option value="none">无显式控制</option><option value="thinking_type">thinking_type</option><option value="chat_template">chat_template</option><option value="always_on_effort">always_on_effort</option><option value="legacy">legacy</option></select></label>
               <label>Reasoning replay<select value={model.reasoning_replay ?? "configured"} onChange={(e) => patchModel(index, { reasoning_replay: e.target.value })}><option value="configured">configured</option><option value="none">none</option><option value="tool_calls">tool_calls</option><option value="full">full</option></select></label>
+              <label>推理档位<input aria-label="推理档位" value={(model.reasoning_efforts ?? []).join(",")} onChange={(e) => {
+                const efforts = e.target.value.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
+                patchModel(index, {
+                  reasoning_efforts: efforts,
+                  reasoning_default_effort: model.reasoning_default_effort && efforts.includes(model.reasoning_default_effort)
+                    ? model.reasoning_default_effort
+                    : null,
+                });
+              }} placeholder="low,high,max" /></label>
+              <label>默认推理档位<select aria-label="默认推理档位" value={model.reasoning_default_effort ?? ""} onChange={(e) => patchModel(index, { reasoning_default_effort: e.target.value || null })}><option value="">模型/provider 默认</option>{(model.reasoning_efforts ?? []).map((effort) => <option value={effort} key={effort}>{effort}</option>)}</select></label>
               <label>Cost tier<input value={model.cost_tier ?? "mid"} onChange={(e) => patchModel(index, { cost_tier: e.target.value })} /></label>
             </div>
             <div className="v2-provider-model-flags">
