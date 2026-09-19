@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import json
 import runpy
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -485,6 +487,55 @@ def test_p4_fcr_v02_runner_has_zero_model_preflight_and_no_browser_execution() -
     assert "BrowserActionAdapter" not in source
     assert "execute_request(" not in source
     assert "Factory" not in source
+
+
+def test_p4_fcr_v02_runner_binds_llm_loop_imports_to_exact_worktree() -> None:
+    script = f"""
+import importlib.util
+import json
+import pathlib
+import sys
+runner = pathlib.Path({str(RUNNER)!r})
+spec = importlib.util.spec_from_file_location("p4_fcr_v02_runner_probe", runner)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+print(json.dumps(module._import_identity(), sort_keys=True))
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    identity = json.loads(proc.stdout)
+    source_root = (ROOT / "src").resolve()
+    assert Path(identity["source_root"]).resolve() == source_root
+    assert identity["all_within_source_root"] is True
+    expected_modules = {
+        "llm_loop.core.prompt",
+        "llm_loop.core.run_context",
+        "llm_loop.llm.client",
+        "llm_loop.llm.schemas",
+        "llm_loop.tools.registry",
+        "llm_loop.tools.builtin.browser_perceive",
+        "llm_loop.tools.builtin.browser_semantic_execute",
+        "llm_loop.tools.builtin.browser_wait",
+        "llm_loop.browser.method_card",
+    }
+    assert set(identity["modules"]) == expected_modules
+    for facts in identity["modules"].values():
+        module_path = Path(facts["path"]).resolve()
+        assert module_path.is_relative_to(source_root)
+        assert len(facts["sha256"]) == 64
+
+
+def test_p4_fcr_v02_manifest_records_import_identity() -> None:
+    source = RUNNER.read_text(encoding="utf-8")
+    assert '"import_identity": _import_identity()' in source
+    assert "all_within_source_root" in source
 
 
 def test_p4_fcr_v02_has_no_production_wiring() -> None:

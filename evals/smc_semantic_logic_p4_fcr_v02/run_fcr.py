@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import subprocess
 import sys
@@ -20,7 +21,8 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-sys.path.insert(0, str(REPO))
+SRC = REPO / "src"
+sys.path.insert(0, str(SRC))
 sys.path.insert(0, str(HERE))
 
 from protocol import (  # noqa: E402
@@ -67,6 +69,49 @@ class _SchemaTool:
 
 def _sha_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+_IMPORT_IDENTITY_MODULES = (
+    "llm_loop.core.prompt",
+    "llm_loop.core.run_context",
+    "llm_loop.llm.client",
+    "llm_loop.llm.schemas",
+    "llm_loop.tools.registry",
+    "llm_loop.tools.builtin.browser_perceive",
+    "llm_loop.tools.builtin.browser_semantic_execute",
+    "llm_loop.tools.builtin.browser_wait",
+    "llm_loop.browser.method_card",
+)
+
+
+def _import_identity() -> dict[str, Any]:
+    source_root = SRC.resolve()
+    modules: dict[str, dict[str, Any]] = {}
+    outside: list[str] = []
+    for name in _IMPORT_IDENTITY_MODULES:
+        module = importlib.import_module(name)
+        raw_path = getattr(module, "__file__", None)
+        if not raw_path:
+            raise RuntimeError(f"qualification import has no file identity: {name}")
+        path = Path(raw_path).resolve()
+        try:
+            path.relative_to(source_root)
+            within_source_root = True
+        except ValueError:
+            within_source_root = False
+            outside.append(f"{name}={path}")
+        modules[name] = {
+            "path": str(path),
+            "sha256": _sha_file(path),
+            "within_source_root": within_source_root,
+        }
+    if outside:
+        raise RuntimeError("qualification import escaped exact worktree src: " + "; ".join(outside))
+    return {
+        "source_root": str(source_root),
+        "all_within_source_root": True,
+        "modules": modules,
+    }
 
 
 def _git(*args: str) -> str:
@@ -266,6 +311,7 @@ def _source_hashes() -> dict[str, str]:
         REPO / "src/llm_loop/tools/builtin/browser_wait.py",
         REPO / "src/llm_loop/tools/builtin/browser_semantic_execute.py",
         REPO / "src/llm_loop/tools/registry.py",
+        REPO / "src/llm_loop/browser/method_card.py",
         REPO / "src/llm_loop/llm/client.py",
         REPO / "src/llm_loop/llm/schemas.py",
         REPO / "src/llm_loop/core/prompt.py",
@@ -312,6 +358,7 @@ def execution_manifest(plan: list[dict[str, Any]]) -> dict[str, Any]:
         "model_ref": MODEL_REF,
         "model_server": server,
         "provider_contract": provider,
+        "import_identity": _import_identity(),
         "system_prompt_sha256": hashlib.sha256(build_system_prompt().encode("utf-8")).hexdigest(),
         "surfaces": {
             ARM_A: {
