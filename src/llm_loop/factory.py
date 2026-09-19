@@ -13,6 +13,7 @@ import logging
 import os
 import shutil
 import sys
+import uuid
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -40,6 +41,7 @@ from llm_loop.core.scheduler import ScheduleStore  # 2026-08-27 BUGFIX: 共享�
 from llm_loop.core.session import SessionStore, _validate_session_id
 from llm_loop.feedback.honesty import delete_feedback_for_session
 from llm_loop.feedback.validator import DeclarationValidator
+from llm_loop.fleet.coordinator import ProjectCoordinator  # fleet slice 4 (G1) 生产接线
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.docs_search import DocsSearcher
 from llm_loop.introspection.search import RecordSearcher
@@ -1786,6 +1788,20 @@ def build_engine(
         with engine._run_state_mgr.guard:
             return engine._run_sessions.get(parent_sid)
 
+    # fleet slice 4 (G1): 显式 opt-in 才构造 ProjectCoordinator；缺省（fleet_workspace_root
+    # 为空）保持 None → 全部 fleet 行为关闭（lease/心跳/结算/subagent_lease 工具事实面维持
+    # 既有 fail-closed 现状，零回归）。owner_id 每进程唯一：重启即新协调者身份，
+    # 跨代接管走盘上 CAS reclaim，程序不做 liveness 判断。
+    _fleet_coordinator: ProjectCoordinator | None = None
+    if settings.fleet_workspace_root:
+        _fleet_coordinator = ProjectCoordinator(
+            fleet_dir=settings.fleet_state_dir
+            or str(Path(settings.data_dir) / "fleet"),
+            project_id=settings.fleet_project_id or "default",
+            physical_root=settings.fleet_workspace_root,
+            repo_head=settings.fleet_repo_head,
+            owner_id=uuid.uuid4().hex,
+        )
     subagent_runner = SubAgentRunner(
         llm=llm,
         registry=registry,
@@ -1796,6 +1812,7 @@ def build_engine(
         provider_call_coordinator=provider_call_coordinator,
         llm_resolver=model_pool.get_client,
         parent_session_provider=_subagent_parent_session,
+        project_coordinator=_fleet_coordinator,
     )
     # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。

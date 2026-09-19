@@ -365,6 +365,14 @@ class Settings:
     browser_cdp_max_frame_bytes: int = 134_217_728
     # Mutation is a separate capability grant: perception opt-in never implies write access.
     browser_action_enabled: bool = False
+    # ── Fleet ExecutionWorkspace/WorkerLease 生产接线（2026-09-19 slice4 G1）──
+    # 缺省全空 = fleet 完全关闭（零行为零回归）；显式配置 LFL_FLEET_WORKSPACE_ROOT
+    # 后 factory 才构造 ProjectCoordinator 注入 SubAgentRunner（run 边界
+    # lease/心跳续约/结算与 subagent_lease 工具事实面随之开启）。
+    fleet_workspace_root: str = ""  # 空=关闭；非空=execution workspace 物理 root
+    fleet_project_id: str = ""  # 空=启用时取稳定默认 "default"
+    fleet_state_dir: str = ""  # 空=启用时派生 <data_dir>/fleet
+    fleet_repo_head: str = ""  # workspace 记录的机械事实；空=未提供
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
     exec_mode: str = ""
@@ -819,6 +827,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         tool_max_output_chars=env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
         mcp_servers_raw=env_values.get("MCP_SERVERS", "").strip(),  # P3-1 MCP stdio 服务器
         smx_perceive_path=env_values.get("LFL_SMX_PERCEIVE", "").strip(),  # EVO-20260912-10818cb5 smx 感知层 opt-in
+        # fleet slice 4 (G1): LFL_FLEET_WORKSPACE_ROOT 空=关闭（缺省），非空=接线
+        fleet_workspace_root=env_values.get("LFL_FLEET_WORKSPACE_ROOT", "").strip(),
+        fleet_project_id=env_values.get("LFL_FLEET_PROJECT_ID", "").strip(),
+        fleet_state_dir=env_values.get("LFL_FLEET_STATE_DIR", "").strip(),
+        fleet_repo_head=env_values.get("LFL_FLEET_REPO_HEAD", "").strip(),
         browser_perception_cdp_url=env_values.get(
             "LFL_BROWSER_PERCEPTION_CDP_URL", ""
         ).strip(),
