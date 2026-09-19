@@ -1,0 +1,202 @@
+{
+  "artifact_sha256": {
+    "docs/SMC-SEMANTIC-LOGIC-P4-FCR-v0.2-ACTIONREF-PROTOCOL-20260919.md": "f20b0803b68a1160bd72569edf2a111934d5ea7164a2b7786c80d28e1d937a59",
+    "evals/smc_semantic_logic_p4_fcr_v02/PLAN.v0.2-FCR.json": "55133970a6e36c586b37de2c11641c3777b38d814990f0abbcec96633a4b37dc",
+    "evals/smc_semantic_logic_p4_fcr_v02/PROTOCOL.v0.2-ACTIONREF.json": "a38701bd580853d1e6cefcdb9d84ee69696287a5a77d49d562d498d469e57908",
+    "evals/smc_semantic_logic_p4_fcr_v02/analyze.py": "4e74eabd81323f8719e43228bce5fc6927e2eff7d657965f1e692e1e5665f612",
+    "evals/smc_semantic_logic_p4_fcr_v02/protocol.py": "94aa7464d022b5f8c7d04826a94cf7308570feb1a7e8237ff46b8353d9e5f595",
+    "evals/smc_semantic_logic_p4_fcr_v02/run_fcr.py": "dbae581ee60e5de9f060706bcc1b044c3437cbb5093af4e416c802e139709bd3",
+    "tests/unit/test_smc_semantic_logic_p4_fcr_v02.py": "6e2d0657a5c670980750ceee47cd3f227c603fe1a266529a2e0be828d2586ff0",
+    "tools/semantic_logic/p4_fcr_v02_actionref_compiler.py": "a963a3a6ac40361d2389972aa677d2e5177036a41ab7c13675fd9c34df5bc9a6"
+  },
+  "candidate_git_sha": "eae7638c83503472918927f93df49a26469200a8",
+  "date": "2026-09-19",
+  "deterministic_qualification": {
+    "adjacent_p4d": {
+      "passed": 19,
+      "total": 19
+    },
+    "adjacent_v01_fcr_preflight": {
+      "passed": 7,
+      "total": 7
+    },
+    "combined": {
+      "passed": 51,
+      "total": 51
+    },
+    "focused_v02": {
+      "passed": 25,
+      "total": 25
+    },
+    "git_diff_check": "pass",
+    "json_parse": "pass",
+    "pyright": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "ruff": "pass",
+    "ruff_format": "pass",
+    "src_changes": 0
+  },
+  "full_ci": {
+    "audit_test_side_effects_nonblocking_warnings": 41,
+    "env_pin_files_scanned": 607,
+    "env_pin_undeclared": 0,
+    "exit_code": 0,
+    "serial_recheck": "pass",
+    "src_pyright": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "tier0": "pass",
+    "xdist_false_red_files": [
+      "tests/unit/test_schedule_wake.py"
+    ],
+    "xdist_full": "pass_with_serial_false_red_recheck"
+  },
+  "hard_boundary": {
+    "browser_runtime_used": false,
+    "measured_row_dirs": 0,
+    "model_requests": 0,
+    "qualification_gate_present": false,
+    "results_present": false,
+    "tool_execution_total": 0
+  },
+  "model_server": {
+    "command_sha256": "2bee17c3fb687fb9224f0f72cac6738c607515a3ba92b90ae867995dd7b85fcf",
+    "decode_concurrency_1": true,
+    "max_tokens_16000": true,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency_1": true
+  },
+  "non_claims": [
+    "no real P4-FCR v0.2 model row has executed",
+    "no Browser action executed",
+    "no P4-FCR v0.2 qualification outcome exists yet",
+    "no P4-LIVE qualification exists",
+    "no production ActionRef wiring was added",
+    "no deploy or restart was performed"
+  ],
+  "p11_remote_anchor": "5d11c5866e0e9349163577a1382b8469c32dca51",
+  "p1_remote_anchor": "d0af187baa2819b76a6df31a962f3c0f0fa6c814",
+  "p4d_base": "596c4175dd6cb3f0bd27656735f886b923758c80",
+  "parent_negative_git_sha": "52d5e78e650e1693db3453285febf36e8ab9cb68",
+  "preflight": {
+    "browser_runtime_used": false,
+    "experiment_git_head": "eae7638c83503472918927f93df49a26469200a8",
+    "measured_row_dirs": 0,
+    "model_requests": 0,
+    "p4d_base": "596c4175dd6cb3f0bd27656735f886b923758c80",
+    "parent_negative": "52d5e78e650e1693db3453285febf36e8ab9cb68",
+    "plan_rows": 40,
+    "plan_sha256": "62a4e18477d794140c46577efa32f33a4ef04da1659aa3a448499b5b74b54ad4",
+    "preflight": true,
+    "qualification_gate_present": false,
+    "results_present": false,
+    "schema": "smc.semantic_logic_p4_fcr.v0.2.preflight",
+    "shared_surface_identical": true,
+    "surface_a_sha256": "fe712ab451c3db44d043be4dc098e6f83c0a22701dc3dee1b32a606d893a42bf",
+    "surface_b_sha256": "18c5b1bd97f19cb2329871f644f48330d49d682d12f3e0fb65442afb95df1040",
+    "tool_execution_total": 0
+  },
+  "preflight_file_sha256": {
+    "execution-manifest.json": "13563c964b315ac1a82a5422c3658f47a5c16d8ce479de54844c4ed666470732",
+    "plan.json": "55133970a6e36c586b37de2c11641c3777b38d814990f0abbcec96633a4b37dc",
+    "preflight.json": "09d66f20cdacf48b5aa4366b5120f115f9cac22e8672367415f0d3c6a46e00a1"
+  },
+  "protocol_git_sha": "d2945cfc5459cf69ae963b1b71a13976fdc6de75",
+  "qualification_backend": {
+    "eye_version": "EYE v11.24.5 (2026-08-23)",
+    "eyereasoner_version": "21.1.18",
+    "git_state_changed": false,
+    "node_version": "v24.18.0",
+    "package_lock_sha256": "83d2ee38f112bea8929751a5a2c31dede5aec07312eb696ce660537d288c71be",
+    "restored_with": "npm ci --ignore-scripts",
+    "swipl_wasm_version": "7.0.10"
+  },
+  "schema": "smc.semantic_logic_p4_fcr_v02_preflight_qualification.v0.1",
+  "source_sha256": {
+    "docs/SMC-SEMANTIC-LOGIC-P4-FCR-v0.2-ACTIONREF-PROTOCOL-20260919.md": "f20b0803b68a1160bd72569edf2a111934d5ea7164a2b7786c80d28e1d937a59",
+    "evals/smc_semantic_logic_p4_fcr_v02/PLAN.v0.2-FCR.json": "55133970a6e36c586b37de2c11641c3777b38d814990f0abbcec96633a4b37dc",
+    "evals/smc_semantic_logic_p4_fcr_v02/PROTOCOL.v0.2-ACTIONREF.json": "a38701bd580853d1e6cefcdb9d84ee69696287a5a77d49d562d498d469e57908",
+    "evals/smc_semantic_logic_p4_fcr_v02/analyze.py": "4e74eabd81323f8719e43228bce5fc6927e2eff7d657965f1e692e1e5665f612",
+    "evals/smc_semantic_logic_p4_fcr_v02/protocol.py": "94aa7464d022b5f8c7d04826a94cf7308570feb1a7e8237ff46b8353d9e5f595",
+    "evals/smc_semantic_logic_p4_fcr_v02/run_fcr.py": "dbae581ee60e5de9f060706bcc1b044c3437cbb5093af4e416c802e139709bd3",
+    "src/llm_loop/core/prompt.py": "4a68cf7439b9417c539844489851629d0c2e2d6f22efb4b5325995bc76d91757",
+    "src/llm_loop/llm/client.py": "e548d63e56a754b4b43772ffd468d77fc6c124f270bb085627ab6fe28f39bfb6",
+    "src/llm_loop/llm/schemas.py": "59f9cc7ddb468d96ca0403de2bca474f8cf6a854fd7c30eee1acbca99af9b96a",
+    "src/llm_loop/tools/builtin/browser_perceive.py": "d180b7880813b74b9a7c5fbda3e120576fa2657d53bd8fc4274d1cc08e4be072",
+    "src/llm_loop/tools/builtin/browser_semantic_execute.py": "920f2f794b0f6a2ea8481fa2f7bc5e71091e8fa71353e62125d94f08557c1008",
+    "src/llm_loop/tools/builtin/browser_wait.py": "cf8c4830c0233df80920f6ee9d2ea8a414fd8a7558bdfb1d421770248fcd77f8",
+    "src/llm_loop/tools/registry.py": "b3ba32f63056a5d27ed4d46fe68f7a4824cde0ecd0b5087c21147df252eb7eb6",
+    "tools/semantic_logic/p4_fcr_v02_actionref_compiler.py": "a963a3a6ac40361d2389972aa677d2e5177036a41ab7c13675fd9c34df5bc9a6",
+    "tools/semantic_logic/p4d_typed_compiler.py": "682829616f3d511518b2719753c4372972092c28c99fc61b26e15c93fb57fed5"
+  },
+  "status": "QUALIFIED_DETERMINISTIC_PREFLIGHT_ONLY",
+  "surfaces": {
+    "A": {
+      "full_sha256": "a577bc74a3451a44fc4dec3411f63718050ca2bd3dcf59f61f039e1b95abd17a",
+      "lazy_json_chars": 6274,
+      "lazy_sha256": "68e03f25407957d1fbae0606999479e80a72fe760b16480964476248412025f6",
+      "names": [
+        "browser_perceive",
+        "browser_wait_scope_url",
+        "browser_wait_scope_ready",
+        "browser_wait_scope_count",
+        "browser_wait_object_state",
+        "browser_wait_object_text",
+        "get_tool_schema",
+        "browser_semantic_execute"
+      ],
+      "tool_count": 8,
+      "tool_sha256": {
+        "browser_perceive": "8223d4e0709acf06b38d39cc7bd95344da12a05893a2736538837b33088900ca",
+        "browser_semantic_execute": "b998e3d37d388aecc3c4acce7593cdc609f2b547cde5c8449d685bb7360833d2",
+        "browser_wait_object_state": "94ef49bd8223e4145cb033f0a531964c29c66f2c1c4debfb5a81f8b4c56c219d",
+        "browser_wait_object_text": "5eb198f0b04653da62480c79a14640aadc70f3b19e1d9174f15a4097f7078b39",
+        "browser_wait_scope_count": "4f37ffca2323b3f8b6e49e7995e12f3ef14fbf86de9a6dd12f4a1038c295e032",
+        "browser_wait_scope_ready": "f4f2ec322542313a8879e18a4ee5382330ded4f63c6751a2e45ae305d7f3786f",
+        "browser_wait_scope_url": "40704f19ff359f9a5556b44c98df0f0668c2a8a588af779715d3a68bda3a5151",
+        "get_tool_schema": "fe584b7c2a0d39ea553bcaf12cfa5f8d6eef3c764c1ab6b62c2312b7a1a1b4b0"
+      },
+      "wire_json_chars": 6546,
+      "wire_sha256": "fe712ab451c3db44d043be4dc098e6f83c0a22701dc3dee1b32a606d893a42bf"
+    },
+    "B": {
+      "full_sha256": "479cabf4e264853976fe4f0ca1a7ef83d393c5563cc62b786e3890c57429f3c0",
+      "lazy_json_chars": 6700,
+      "lazy_sha256": "76fe532b317cb50335cb88d34f1fcf1c57845b3eea117087ee2cc095b9b68537",
+      "names": [
+        "browser_perceive",
+        "browser_wait_scope_url",
+        "browser_wait_scope_ready",
+        "browser_wait_scope_count",
+        "browser_wait_object_state",
+        "browser_wait_object_text",
+        "get_tool_schema",
+        "browser_semantic_click",
+        "browser_semantic_fill",
+        "browser_semantic_select",
+        "browser_semantic_scroll",
+        "browser_semantic_navigate"
+      ],
+      "tool_count": 12,
+      "tool_sha256": {
+        "browser_perceive": "8223d4e0709acf06b38d39cc7bd95344da12a05893a2736538837b33088900ca",
+        "browser_semantic_click": "0abcbdbd8bee5285d6dbab52474daff413e9abfa0b1fc9dd406ee05da609f905",
+        "browser_semantic_fill": "4fb72331e334a906907f02c45056058f98191f62a05d4a0123d61193081076e2",
+        "browser_semantic_navigate": "37bf3afce38618ea16d14324e3f3e4945c7461d6416b2002432d1982516d3dd1",
+        "browser_semantic_scroll": "4eee677f8092c0cbcbd459d84d9ed7bf675ff6b81c0e9e792bd61771d997c864",
+        "browser_semantic_select": "98bb5d655278eb469547020bfea438409be64f01607540b966cf940807e2f9de",
+        "browser_wait_object_state": "94ef49bd8223e4145cb033f0a531964c29c66f2c1c4debfb5a81f8b4c56c219d",
+        "browser_wait_object_text": "5eb198f0b04653da62480c79a14640aadc70f3b19e1d9174f15a4097f7078b39",
+        "browser_wait_scope_count": "4f37ffca2323b3f8b6e49e7995e12f3ef14fbf86de9a6dd12f4a1038c295e032",
+        "browser_wait_scope_ready": "f4f2ec322542313a8879e18a4ee5382330ded4f63c6751a2e45ae305d7f3786f",
+        "browser_wait_scope_url": "40704f19ff359f9a5556b44c98df0f0668c2a8a588af779715d3a68bda3a5151",
+        "get_tool_schema": "fe584b7c2a0d39ea553bcaf12cfa5f8d6eef3c764c1ab6b62c2312b7a1a1b4b0"
+      },
+      "wire_json_chars": 7108,
+      "wire_sha256": "18c5b1bd97f19cb2329871f644f48330d49d682d12f3e0fb65442afb95df1040"
+    }
+  }
+}
