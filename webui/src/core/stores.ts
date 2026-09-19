@@ -89,26 +89,51 @@ const sessionStoreRaw = createStore<SessionState>({
   newSessionPending: false,
 });
 
+function persistModel(model: string | null): void {
+  try {
+    if (model) localStorage.setItem(MODEL_KEY, model);
+    else localStorage.removeItem(MODEL_KEY);
+  } catch {
+    /* fail-open */
+  }
+}
+
 export const sessionStore = {
   getState: sessionStoreRaw.getState,
-  setSessions: (sessions: SessionMeta[]) => sessionStoreRaw.setState({ sessions }),
-  setCurrentSession: (sessionId: string) => sessionStoreRaw.setState({ currentSessionId: sessionId }),
-  setModel: (model: string | null) => {
-    try {
-      if (model) localStorage.setItem(MODEL_KEY, model);
-      else localStorage.removeItem(MODEL_KEY);
-    } catch {
-      /* fail-open */
+  setSessions: (sessions: SessionMeta[]) => {
+    const state = sessionStoreRaw.getState();
+    const current = state.currentSessionId
+      ? sessions.find((item) => item.session_id === state.currentSessionId)
+      : undefined;
+    if (current && !state.modelChangePending) {
+      persistModel(current.model ?? null);
+      sessionStoreRaw.setState({ sessions, model: current.model ?? null });
+      return;
     }
+    sessionStoreRaw.setState({ sessions });
+  },
+  setCurrentSession: (sessionId: string) => {
+    const state = sessionStoreRaw.getState();
+    const target = sessionId
+      ? state.sessions.find((item) => item.session_id === sessionId)
+      : undefined;
+    if (target) {
+      persistModel(target.model ?? null);
+      sessionStoreRaw.setState({
+        currentSessionId: sessionId,
+        model: target.model ?? null,
+        modelChangePending: false,
+      });
+      return;
+    }
+    sessionStoreRaw.setState({ currentSessionId: sessionId, modelChangePending: false });
+  },
+  setModel: (model: string | null) => {
+    persistModel(model);
     sessionStoreRaw.setState({ model });
   },
   selectModel: (model: string | null) => {
-    try {
-      if (model) localStorage.setItem(MODEL_KEY, model);
-      else localStorage.removeItem(MODEL_KEY);
-    } catch {
-      /* fail-open */
-    }
+    persistModel(model);
     sessionStoreRaw.setState({ model, modelChangePending: true });
   },
   setModelChangePending: (value: boolean) => sessionStoreRaw.setState({ modelChangePending: value }),
