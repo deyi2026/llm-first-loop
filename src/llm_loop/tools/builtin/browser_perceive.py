@@ -269,18 +269,26 @@ class BrowserPerceiveTool:
                         result["vision"] = {"status": "unavailable"}
                     else:
                         try:
-                            result["vision"] = {
-                                "status": "ok",
-                                **self._adapter.store_vision_evidence(
-                                    session_id, capture_vision()
-                                ),
-                            }
+                            payload = capture_vision()
                         except Exception as vision_exc:  # noqa: BLE001 - vision failure must stay visible, non-fatal.
                             result["vision"] = {
                                 "status": "failed",
                                 "error_type": type(vision_exc).__name__,
                                 "error": str(vision_exc),
                             }
+                        else:
+                            if not isinstance(payload, bytes):
+                                # Mechanical payload boundary: the backend declared
+                                # the capability but did not return raw bytes.
+                                result["vision"] = {
+                                    "status": "unavailable",
+                                    "reason": "payload_not_bytes",
+                                }
+                            else:
+                                result["vision"] = {
+                                    "status": "ok",
+                                    **self._adapter.store_vision_evidence(session_id, payload),
+                                }
                 return self._json_result(result)
             except Exception as exc:  # noqa: BLE001 - observation failure must remain explicit.
                 return ToolResult(

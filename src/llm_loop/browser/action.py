@@ -457,9 +457,10 @@ class BrowserActionAdapter:
             # the full pre-observation fails structurally we fall back to a
             # lightweight probe instead of killing the model's only escape verb.
             # Object verbs (click/fill/select/scroll) keep the full precondition.
-            if str(action["verb"]) == "navigate" and callable(getattr(self.capture_backend, "probe_page_target", None)):
+            probe_page_target = getattr(self.capture_backend, "probe_page_target", None)
+            if str(action["verb"]) == "navigate" and callable(probe_page_target):
                 try:
-                    self.capture_backend.probe_page_target()
+                    probe_page_target()
                 except Exception as probe_exc:  # noqa: BLE001 - probe failure is a mechanical fact.
                     return self._append_rejected(
                         session_id,

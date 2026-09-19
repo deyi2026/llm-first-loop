@@ -13,9 +13,9 @@ import argparse
 import threading
 import time
 
+import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
-import uvicorn
 
 MODEL_NAME = "BAAI/bge-small-zh-v1.5"
 _lock = threading.Lock()

@@ -77,7 +77,7 @@ def main() -> int:
     dt = time.time() - t0
     assert len(vecs) == len(todo)
 
-    for (key, _), v in zip(todo, vecs):
+    for (key, _), v in zip(todo, vecs, strict=True):
         existing[key] = v
     payload = {"v": version, "data": existing}
     cache_path.write_text(
