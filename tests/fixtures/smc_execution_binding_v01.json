@@ -183,7 +183,8 @@
         "same_idempotency": true,
         "same_atomicity": true,
         "same_confirmation": true,
-        "same_permission_class": true
+        "same_permission_class": true,
+        "same_receipt_obligations": true
       },
       "expected": {
         "decision": "allow",
@@ -203,13 +204,35 @@
         "same_idempotency": true,
         "same_atomicity": true,
         "same_confirmation": true,
-        "same_permission_class": true
+        "same_permission_class": true,
+        "same_receipt_obligations": true
       },
       "expected": {
         "decision": "reject",
         "reason": "binding_not_equivalent"
       },
       "invariant": "Save cannot silently fall back to export/save-as."
+    },
+    {
+      "case_id": "EB3-03",
+      "gate": "EB3",
+      "kind": "binding_equivalence",
+      "input": {
+        "same_semantic_verb": true,
+        "same_target_contract": true,
+        "same_arg_contract": true,
+        "same_effect_class": true,
+        "same_idempotency": true,
+        "same_atomicity": true,
+        "same_confirmation": true,
+        "same_permission_class": true,
+        "same_receipt_obligations": false
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "binding_not_equivalent"
+      },
+      "invariant": "Receipt obligations are part of the frozen binding equivalence class."
     },
     {
       "case_id": "EB4-01",

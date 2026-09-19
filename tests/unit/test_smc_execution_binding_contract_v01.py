@@ -59,6 +59,7 @@ def _evaluate(case: dict[str, Any]) -> dict[str, Any]:
             "same_atomicity",
             "same_confirmation",
             "same_permission_class",
+            "same_receipt_obligations",
         )
         if not all(inp[field] for field in required):
             return _decision("reject", "binding_not_equivalent")
@@ -289,7 +290,7 @@ def test_cross_device_identity_requires_authoritative_portable_identity() -> Non
 
 def test_all_frozen_fixture_oracles_match() -> None:
     cases = FIXTURES["cases"]
-    assert len(cases) == 24
+    assert len(cases) == 25
     ids = [case["case_id"] for case in cases]
     assert len(ids) == len(set(ids))
     assert set(case["gate"] for case in cases) == {
