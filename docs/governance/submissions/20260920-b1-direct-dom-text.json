@@ -1,0 +1,68 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260920-b1-direct-dom-text",
+  "summary": "B1 extract from retired smc-model-friendly-v01 experimental branch: preserve direct DOM text on stable parents so unnamed elements keep their visible label in the WorldSnapshot. Cherry-picked RED test (ba2307bc0) + 21-line additive fix (058a5ae5e) onto c04ff0532; zero conflicts.",
+  "components": [
+    {
+      "component_id": "browser-perception-direct-dom-text",
+      "paths": [
+        "src/llm_loop/browser/perception.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "browser perception DOM ingestion (PlaywrightPageCaptureBackend)",
+      "disposition": "ADMIT as a mechanical fidelity refinement: when an element has no text attribute after the existing node-value pass, join its direct #text DOM children into the text attribute, excluding script/style/noscript/template. Canonical fields, projection, and AX-name authority are untouched; the branch order (existing node-value text first, direct-DOM fallback second) preserves prior behavior.",
+      "declaration_id": "b1-direct-dom-text",
+      "evidence": [
+        "commit 058a5ae5e on docs/smc-model-friendly-v01-20260916: fix(smc): preserve direct DOM text on stable parents (+21 lines, two additive hunks)",
+        "tests/unit/test_browser_cognition_preserving_direct_dom_text_b1.py (frozen RED from ba2307bc0): unnamed parent element with direct #text child gains text; nested/deep text is not promoted",
+        "local run: 58 tests passed incl. main's test_smc_browser_perception_v01 and test_smc_browser_projection_vision_v01; ruff clean"
+      ],
+      "verification_level": "committed-state pytest (B1 + perception/projection suites) + repository gate (pytest/ruff/pyright) on PR #50",
+      "model_evidence_veto_recovery_exit": "Reviewer can reject by reverting the fix commit; behavior returns to prior state where unnamed elements expose no text. No runtime authority beyond DOM attribute filling during ingestion.",
+      "rollback_route": "git revert of the fix commit restores the previous ingestion behavior; the frozen RED test is reverted with it or updated in the same revert."
+    },
+    {
+      "component_id": "b1-extract-tests-and-manifest",
+      "paths": [
+        "tests/unit/test_browser_cognition_preserving_direct_dom_text_b1.py",
+        "docs/governance/submissions/20260920-b1-direct-dom-text.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository tests + governance submission manifest",
+      "disposition": "ADMIT as test and governance artifacts: self-contained fake-CDP unit test (no playwright/network dependency) plus this A.5 manifest. No runtime code.",
+      "evidence": [
+        "test imports only llm_loop.browser.perception public surface; fake _TextCdp client simulates DOM.snapshot payloads"
+      ],
+      "verification_level": "committed-state pytest on this PR",
+      "model_evidence_veto_recovery_exit": "Reviewer can reject the frozen test expectations or this manifest; both are read-only artifacts for CI.",
+      "rollback_route": "git revert removes test and manifest together with the fix or independently."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "b1-direct-dom-text",
+      "g1": {
+        "necessity": "Elements whose AX-computed name is empty lose their visible label in the WorldSnapshot, degrading grounding to role/kind only; direct DOM text children are the last remaining fidelity source during ingestion."
+      },
+      "g2": {
+        "authority_owner": "PlaywrightPageCaptureBackend DOM ingestion in src/llm_loop/browser/perception.py",
+        "relationship": "reuse",
+        "non_duplication": "Existing node-value text pass and AX-name authority are untouched; the new fallback only fires when the text attribute is still absent, and script/style/noscript/template are excluded so no second authority competes for the same signal."
+      },
+      "g3": {
+        "model_evidence": [
+          "Frozen RED test ba2307bc0 demonstrated the missing-text failure before the fix",
+          "Post-fix local run: 58/58 tests pass across B1, test_smc_browser_perception_v01, test_smc_browser_projection_vision_v01"
+        ],
+        "recovery_or_reason": "No model-side confusion observed: the attribute only fills a previously-empty field; canonical order and projection stay unchanged."
+      },
+      "g4": {
+        "rollback": "git revert of the fix commit restores prior ingestion behavior in one step; the frozen RED test reverts with it.",
+        "verification": [
+          "pytest tests/unit/test_browser_cognition_preserving_direct_dom_text_b1.py",
+          "repository gate (pytest + ruff + pyright) on PR #50"
+        ]
+      }
+    }
+  ]
+}
