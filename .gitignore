@@ -98,3 +98,16 @@ evals/pilot/data/results_*.jsonl
 .research-notes/
 # 方法库中的 embedding 向量缓存（可再生，2.7M；同类先例 evals/embedding_stage2/bge_cache.json）
 data/methods/embeddings-*.json
+
+# 本地产出物/一次性分析（2026-09-20 收尾：/tmp 迁移产物与 unreferenced 脚本，不入库，本地保留）
+/output/
+/papers/
+/patches/
+/staging-*/
+/scripts/data/
+/tools/method-poc-defaults/
+evals/harness_evolution_v0/
+evals/pilot/qualification/
+evals/retrieval_ab/compile_report.json
+evals/retrieval_ab/compile_corpus.py
+evals/browser_smc_semantic_execute_recovery_smoke/summarize_comparison.py
