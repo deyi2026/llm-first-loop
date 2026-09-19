@@ -19,7 +19,13 @@ jobs:
     name: 发版门禁复核（零回归纪律）
     runs-on: ubuntu-latest
     steps:
+      # Full history: the gate suite includes pinned-commit contract tests
+      # (peer scorecard, e.g. 832b4dfaa) that need ancestor commit objects
+      # absent from a depth-1 checkout — same runner-proof discipline as the
+      # ci.yml gate job. v0.6.14 tag push failed on exactly this gap.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
