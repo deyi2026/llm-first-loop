@@ -152,6 +152,8 @@ def test_always_on_effort_reasoning_control_is_explicitly_supported() -> None:
                         "thinking": True,
                         "reasoning_capable": True,
                         "reasoning_control": "always_on_effort",
+                        "reasoning_efforts": ["low", "high", "max"],
+                        "reasoning_default_effort": "max",
                     }
                 },
             }
@@ -162,6 +164,33 @@ def test_always_on_effort_reasoning_control_is_explicitly_supported() -> None:
         True,
         "always_on_effort",
     )
+    spec = reg.providers["glm"].models["glm-5.3"]
+    assert spec.reasoning_efforts == ("low", "high", "max")
+    assert spec.reasoning_default_effort == "max"
+
+
+def test_reasoning_effort_capability_rejects_default_outside_supported_levels() -> None:
+    raw = json.dumps(
+        {
+            "glm": {
+                "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+                "api_key_env": "",
+                "models": {
+                    "glm-5.3": {
+                        "thinking": True,
+                        "reasoning_capable": True,
+                        "reasoning_control": "always_on_effort",
+                        "reasoning_efforts": ["low", "high", "max"],
+                        "reasoning_default_effort": "medium",
+                    }
+                },
+            }
+        }
+    )
+    reg = load_registry(_settings(model_providers_raw=raw))
+    spec = reg.providers["glm"].models["glm-5.3"]
+    assert spec.reasoning_efforts == ("low", "high", "max")
+    assert spec.reasoning_default_effort is None
 
 
 def test_file_channel_parsed(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:

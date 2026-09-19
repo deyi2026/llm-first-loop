@@ -559,6 +559,8 @@ export interface ProviderModelAdminFact {
   reasoning_split?: boolean;
   reasoning_replay?: string;
   reasoning_effort_map?: Record<string, string>;
+  reasoning_efforts?: string[];
+  reasoning_default_effort?: string | null;
   runtime_identity?: string;
   temperature?: number | null;
   top_p?: number | null;

@@ -34,6 +34,8 @@ def _provider(pid: str = "demo", *, enabled: bool = True, api_key_env: str = "")
                 "cost_tier": "mid",
                 "reasoning_capable": True,
                 "reasoning_control": "unknown",
+                "reasoning_efforts": ["low", "high", "max"],
+                "reasoning_default_effort": "max",
                 "wire_protocol": "openai",
                 "capability_tier": "unknown",
                 "send_tool_choice": True,
@@ -89,6 +91,8 @@ def test_provider_admin_create_uses_ignored_overlay_and_never_returns_secret(
     catalog = {item["id"]: item for item in models.json()["catalog"]}
     assert catalog["demo/m1"]["reasoning_capable"] is True
     assert catalog["demo/m1"]["reasoning_control_supported"] is False
+    assert catalog["demo/m1"]["reasoning_efforts"] == ["low", "high", "max"]
+    assert catalog["demo/m1"]["reasoning_default_effort"] == "max"
 
 
 def test_provider_admin_cas_conflict_and_disable_reload(

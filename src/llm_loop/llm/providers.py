@@ -75,6 +75,9 @@ class ModelSpec:
     # Optional model-owned mapping from LFL effort labels to chat-template effort labels.
     # Empty means do not send reasoning_effort through chat_template_kwargs (legacy behavior).
     reasoning_effort_map: dict[str, str] = field(default_factory=dict)
+    # Explicit model-owned capability surface. Distinct from wire/template mapping.
+    reasoning_efforts: tuple[str, ...] = ()
+    reasoning_default_effort: str | None = None
     # Factual runtime identity for observability only; never used for routing or prompt policy.
     runtime_identity: str = ""
     # Optional explicit generation profile. None means do not send that wire field.
@@ -335,6 +338,8 @@ class ProviderRegistry:
             **({"send_tool_choice": False} if not spec.models[model_id].send_tool_choice else {}),
             **({"reasoning_split": True} if spec.models[model_id].reasoning_split else {}),
             **({"reasoning_effort_map": dict(spec.models[model_id].reasoning_effort_map)} if spec.models[model_id].reasoning_effort_map else {}),
+            **({"reasoning_efforts": tuple(spec.models[model_id].reasoning_efforts)} if spec.models[model_id].reasoning_efforts else {}),
+            **({"reasoning_default_effort": spec.models[model_id].reasoning_default_effort} if spec.models[model_id].reasoning_default_effort else {}),
             **({"temperature": spec.models[model_id].temperature} if spec.models[model_id].temperature is not None else {}),
             **({"top_p": spec.models[model_id].top_p} if spec.models[model_id].top_p is not None else {}),
             **({"top_k": spec.models[model_id].top_k} if spec.models[model_id].top_k is not None else {}),
@@ -543,6 +548,51 @@ def _parse_reasoning_effort_map(pid: str, mid: str, mval: dict[str, Any]) -> dic
     return out
 
 
+_ALLOWED_REASONING_EFFORTS = ("low", "medium", "high", "max", "xhigh")
+
+
+def _parse_reasoning_efforts(pid: str, mid: str, mval: dict[str, Any]) -> tuple[str, ...]:
+    """Parse model-owned canonical effort labels without inferring from control/map."""
+    raw = mval.get("reasoning_efforts")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        logger.warning("模型 %s/%s reasoning_efforts=%r 非数组，忽略", pid, mid, raw)
+        return ()
+    allowed = set(_ALLOWED_REASONING_EFFORTS)
+    out: list[str] = []
+    for item in raw:
+        value = str(item).strip().lower()
+        if value not in allowed:
+            logger.warning("模型 %s/%s reasoning_efforts 含非法档位 %r，忽略", pid, mid, item)
+            continue
+        if value not in out:
+            out.append(value)
+    return tuple(out)
+
+
+def _parse_reasoning_default_effort(
+    pid: str,
+    mid: str,
+    mval: dict[str, Any],
+    supported: tuple[str, ...],
+) -> str | None:
+    raw = mval.get("reasoning_default_effort")
+    if raw is None or str(raw).strip() == "":
+        return None
+    value = str(raw).strip().lower()
+    if value not in supported:
+        logger.warning(
+            "模型 %s/%s reasoning_default_effort=%r 不在 reasoning_efforts=%r 中，忽略默认档位",
+            pid,
+            mid,
+            raw,
+            supported,
+        )
+        return None
+    return value
+
+
 def _parse_reasoning_replay(pid: str, mid: str, mval: dict[str, Any]) -> str:
     """Parse the model historical-reasoning replay wire contract."""
     raw = str(mval.get("reasoning_replay", "configured")).strip().lower()
@@ -689,6 +739,7 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
         if "reasoning_capable" in mval
         else bool(reasoning or thinking)
     )
+    reasoning_efforts = _parse_reasoning_efforts(pid, mid, mval)
     return ModelSpec(
         context=_parse_context(mval.get("context")),
         thinking=thinking,
@@ -712,6 +763,10 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
         ),
         reasoning_replay=_parse_reasoning_replay(pid, mid, mval),
         reasoning_effort_map=_parse_reasoning_effort_map(pid, mid, mval),
+        reasoning_efforts=reasoning_efforts,
+        reasoning_default_effort=_parse_reasoning_default_effort(
+            pid, mid, mval, reasoning_efforts
+        ),
         runtime_identity=str(mval.get("runtime_identity", "") or "").strip(),
         temperature=_parse_optional_float(pid, mid, "temperature", mval.get("temperature")),
         top_p=_parse_optional_float(pid, mid, "top_p", mval.get("top_p"), maximum=1.0, exclusive_min=True),

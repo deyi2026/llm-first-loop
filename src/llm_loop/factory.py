@@ -298,6 +298,8 @@ def build_engine(
         thinking_mode=settings.thinking_mode,
         reasoning_effort=settings.reasoning_effort,
         reasoning_effort_map=(llm_params or {}).get("reasoning_effort_map"),
+        reasoning_efforts=(llm_params or {}).get("reasoning_efforts"),
+        reasoning_default_effort=(llm_params or {}).get("reasoning_default_effort"),
         # M47 §5.5: 元数据驱动的思考支持判定（None 时退回硬编码，向后兼容）
         thinking_supported=thinking_supported,
         reasoning_capable=reasoning_capable,

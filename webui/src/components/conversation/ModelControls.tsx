@@ -52,7 +52,11 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
   const reasoningLabel = (() => {
     if (!capability?.reasoning_capable) return "推理:模型自管";
     if (!capability.reasoning_control_supported) return "推理:模型自管";
-    if (mode === "auto") return "推理:自动";
+    if (mode === "auto") {
+      return capability.reasoning_default_effort
+        ? `推理:自动(${capability.reasoning_default_effort})`
+        : "推理:自动";
+    }
     if (mode === "off" && capability.reasoning_control === "always_on_effort") return "推理:最低";
     if (mode === "off") return "推理:关";
     return effort ? `推理:${effort}` : "推理:开";
@@ -125,7 +129,7 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
                 >
                   关闭
                 </button>
-              ) : capability?.reasoning_control === "always_on_effort" ? (
+              ) : capability?.reasoning_control === "always_on_effort" && capability.reasoning_efforts.includes("low") ? (
                 <button
                   type="button"
                   className={mode === "off" ? "active" : ""}
@@ -155,7 +159,10 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
               </>
             ) : null}
             {capability?.reasoning_control === "always_on_effort" ? (
-              <div className="v2-mini-note">该模型始终启用推理，“最低”不是关闭。</div>
+              <div className="v2-mini-note">
+                该模型始终启用推理，“最低”不是关闭。
+                {capability.reasoning_default_effort ? ` 自动默认：${capability.reasoning_default_effort}。` : ""}
+              </div>
             ) : !capability?.reasoning_control_supported ? (
               <div className="v2-mini-note">没有已证实的显式控制协议，保持模型/provider 默认。</div>
             ) : null}

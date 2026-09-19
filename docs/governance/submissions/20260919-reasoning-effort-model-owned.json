@@ -1,0 +1,119 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-reasoning-effort-model-owned",
+  "summary": "Make reasoning-effort capability model-owned instead of inferred from control protocol: models explicitly declare supported canonical effort levels and an optional default; runtime request selection rejects stale unsupported effort values and falls back to the model-owned default; Web and Provider Admin render and persist those explicit facts without reusing reasoning_effort_map as a capability list.",
+  "components": [
+    {
+      "component_id": "reasoning-effort-runtime-authority",
+      "paths": [
+        "src/llm_loop/factory.py",
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/llm/pool.py",
+        "src/llm_loop/llm/providers.py",
+        "src/llm_loop/web/provider_admin.py",
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/web/schemas.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing provider registry, routed LLM client construction, request-scoped reasoning intent, and Web provider-administration authority",
+      "disposition": "ADMIT as a narrowing of mechanical control: provider/model metadata owns the declared canonical effort set and default, while request-scoped human intent remains an override only when valid for the selected model. Existing reasoning_effort_map remains solely a canonical-label to provider/template-label translation map. No semantic task judgment is moved into program logic.",
+      "evidence": [
+        "ProviderRegistry parses reasoning_efforts and reasoning_default_effort explicitly and no longer infers a universal effort list from always_on_effort or reasoning_effort_map.",
+        "LLMClient accepts a request effort only when the selected model declares it, otherwise falls back to the model-owned default and only then to the legacy global default when compatible.",
+        "always_on_effort preserves the existing mechanical contract that off/lowest intent keeps reasoning enabled and maps to low rather than sending thinking=disabled.",
+        "Provider Admin schema and runtime test path round-trip the new model-owned fields without introducing a second provider configuration store."
+      ],
+      "verification_level": "Committed-state provider/client/pool/factory/provider-admin/API adjacent pytest, Ruff, Pyright, diff-check, staged/commit-hook security, Web product tests, and production Web build",
+      "model_evidence_veto_recovery_exit": "The model/user remains free to select any declared effort through request intent; provider/model metadata is inspectable and editable through the existing Provider Admin authority; unsupported stale values are not silently forwarded. Reverting the implementation restores the prior global/inferred behavior without data migration.",
+      "rollback_route": "Revert product commit ce2acb1a31b0cb01b38005712793194174f21fc0 and this manifest follow-up; no runtime data migration is required. Live provider metadata can be reverted independently through Provider Admin/CAS.",
+      "declaration_id": "reasoning-effort-runtime-authority"
+    },
+    {
+      "component_id": "reasoning-effort-web-view",
+      "paths": [
+        "webui/src/components/conversation/ModelControls.tsx",
+        "webui/src/components/layout/ProviderManager.tsx",
+        "webui/src/core/api.ts",
+        "webui/src/core/chat.ts"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "operator-facing Web model controls and provider configuration editor",
+      "disposition": "ADMIT as presentation/editing of server-owned capability facts. ModelControls renders exactly the selected model's declared efforts and default; ProviderManager edits the same existing provider configuration authority. The browser owns no routing or provider truth.",
+      "evidence": [
+        "GLM product fixture renders Auto(max), low/high/max, no medium, and no true Off for always_on_effort.",
+        "Provider editor persists reasoning_efforts and reasoning_default_effort through the existing provider-admin API."
+      ],
+      "verification_level": "Canonical Web product suites 26/26 and TypeScript + Vite production build",
+      "model_evidence_veto_recovery_exit": "Web controls are a view/editor only; server registry remains authoritative and unsupported/stale browser values are filtered again at runtime.",
+      "rollback_route": "Revert with ce2acb1a31b0cb01b38005712793194174f21fc0; no browser storage migration is required."
+    },
+    {
+      "component_id": "reasoning-effort-regressions",
+      "paths": [
+        "tests/unit/test_llm_client.py",
+        "tests/unit/test_providers.py",
+        "tests/web/test_provider_admin.py",
+        "webui/src/composer-product.test.tsx",
+        "webui/src/provider-admin.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic regression coverage for provider capability, request wire behavior, Provider Admin round-trip, and Web rendering",
+      "disposition": "ADMIT as tests only; they establish the intended mechanical contract and own no runtime authority.",
+      "evidence": [
+        "Focused backend RED-to-GREEN coverage locks model-owned parsing/default validation, explicit override, stale-effort filtering, and always-on low mapping.",
+        "Committed-state adjacent backend suites exit 0 and canonical Web product suites pass 26/26."
+      ],
+      "verification_level": "Committed-state pytest and canonical Vitest product suites",
+      "model_evidence_veto_recovery_exit": "Tests can be revised or reverted independently; they do not write runtime provider configuration.",
+      "rollback_route": "Revert with the implementation commit."
+    },
+    {
+      "component_id": "reasoning-effort-a5-submission",
+      "paths": [
+        "docs/governance/submissions/20260919-reasoning-effort-model-owned.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 remains a mechanical presence/coverage gate and does not decide semantic quality, deployment, or promotion.",
+      "evidence": [
+        "Manifest partitions the exact formal-base-to-review-head changed-path set and declares the sole runtime control component."
+      ],
+      "verification_level": "Local exact A.5 self-gate against base c9f33b4c3d2cbe92c7865d1aba1a6b9c8b165ed7 before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth and promotion; the metadata has no runtime authority.",
+      "rollback_route": "Revert this docs-only follow-up without runtime effect."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "reasoning-effort-runtime-authority",
+      "g1": {
+        "necessity": "The previous /models catalog inferred low/medium/high from always_on_effort when a mapping was absent, while the global historical reasoning_effort default could override a model/provider-owned default. That conflated protocol shape, capability facts, and operator default authority, and could forward an effort selected for another model."
+      },
+      "g2": {
+        "authority_owner": "the existing per-model ProviderRegistry metadata loaded by the existing provider configuration authority and consumed by ModelClientPool/LLMClient",
+        "relationship": "reuse",
+        "non_duplication": "No new registry, state store, session authority, routing controller, or provider protocol is introduced. Two explicit fields are added to ModelSpec and carried through existing factory/pool/client/admin/catalog paths; reasoning_effort_map keeps its prior translation-only role."
+      },
+      "g3": {
+        "model_evidence": [
+          "selected model's explicit reasoning_efforts and reasoning_default_effort exposed in /api/v1/models",
+          "request-scoped current_reasoning_effort remains the explicit user/model intent carrier",
+          "wire payload regressions proving auto/default, explicit high/max, and stale unsupported effort behavior",
+          "Provider Admin round-trip facts for editable per-model capability"
+        ],
+        "recovery_or_reason": "Operators can alter or remove model-owned effort metadata through the existing Provider Admin/CAS authority; explicit supported request effort wins; omitting the new metadata preserves legacy behavior for models not yet qualified. Session model authority and queued frozen effort ownership are unchanged."
+      },
+      "g4": {
+        "rollback": "Revert ce2acb1a31b0cb01b38005712793194174f21fc0 and the docs-only A.5 follow-up. No schema migration, credential change, or persisted session rewrite is required; live provider metadata can be rolled back separately through Provider Admin/CAS.",
+        "verification": [
+          "committed-state provider/client/pool/factory/provider-admin/API adjacent pytest: exit 0",
+          "canonical Web product suites: 3 files / 26 tests PASS",
+          "TypeScript + Vite production build PASS",
+          "Ruff PASS; Pyright 0 errors / 0 warnings / 0 informations; commit diff-check PASS",
+          "staged and commit-hook security scan PASS for all 16 product/test files",
+          "formal remote review branch frozen first at exact product commit ce2acb1a31b0cb01b38005712793194174f21fc0 before this docs-only A.5 follow-up"
+        ]
+      }
+    }
+  ]
+}
