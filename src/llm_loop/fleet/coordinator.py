@@ -62,6 +62,13 @@ class ProjectCoordinator:
             self.project_id, run_root, self.repo_head
         )
 
+    def _existing_workspace(self, run_key: str) -> ExecutionWorkspace:
+        """Read-only workspace lookup; unknown run_key fails honestly."""
+        workspace = self.store.find_workspace(self.project_id, self.run_root(run_key))
+        if workspace is None:
+            raise KeyError(f"unknown run workspace: {run_key}")
+        return workspace
+
     # -------------------------------------------------------- run boundary
 
     def begin_run(
@@ -129,7 +136,7 @@ class ProjectCoordinator:
         self, run_key: str, *, ttl_seconds: float | None = None
     ) -> WorkerLease:
         """Time-licensed takeover of a run past its declared lease expiry."""
-        workspace = self._workspace_for(run_key)
+        workspace = self._existing_workspace(run_key)
         return self.store.reclaim_if_expired(
             self.project_id, workspace.workspace_id, self.owner_id,
             ttl_seconds=ttl_seconds,
@@ -137,7 +144,7 @@ class ProjectCoordinator:
 
     def recover(self, run_key: str) -> dict[str, Any]:
         """Disk truth for a run's workspace: current lease + settlement facts."""
-        workspace = self._workspace_for(run_key)
+        workspace = self._existing_workspace(run_key)
         try:
             lease = self.store.current_lease(workspace.workspace_id)
         except KeyError:
