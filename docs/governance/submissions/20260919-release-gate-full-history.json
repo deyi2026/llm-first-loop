@@ -1,0 +1,68 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-release-gate-full-history",
+  "summary": "release.yml gate job checkout switches to fetch-depth: 0. The v0.6.14 tag push failed the release gate solely because the pinned-commit peer-scorecard contract tests (subject_anchor.commit 832b4dfaa...) need ancestor commit objects that a default depth-1 checkout does not contain; ci.yml's gate job already uses full history for exactly this reason. No release-writer semantics, trigger, or step set changes.",
+  "components": [
+    {
+      "component_id": "release-gate-full-history-checkout",
+      "paths": [
+        ".github/workflows/release.yml"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "release.yml — tag-triggered release gate + single-writer GitHub Release workflow (B11 release cadence)",
+      "disposition": "ADMIT as a one-line environment parity fix inside the existing release gate: the gate's checkout must offer the same git object database depth as the CI gate, because the shared suite contains pinned-commit contract tests. No new workflow, no second Release writer, no gate step added or removed; the release job's checkout is untouched.",
+      "evidence": [
+        "Failed run 35425174211 (Release / v0.6.14 tag): all 7 failures are tests/unit/test_peer_scorecard_v0_1.py with 'subject_anchor.commit is not a commit in this repository: 832b4dfaa...' — the pinned ancestor is absent from the depth-1 clone.",
+        "CI gate on the same tag (run 35425174219) passed with identical ruff/pyright/pytest commands; its checkout already uses fetch-depth: 0 with a comment naming the same pinned commit.",
+        "scripts/qualification/peer_scorecard_v0_1.py resolves anchors via git cat-file/show <pinned-commit>:<path>, which requires the commit object locally."
+      ],
+      "verification_level": "Root-caused against both run logs; local A.5 self-gate; post-merge re-tag rerun of the full Release workflow is the end-to-end verification",
+      "model_evidence_veto_recovery_exit": "Checkout depth is mechanical environment provisioning; classification and release judgment stay with human review. Exit: revert the commit and the v0.6.14 tag returns to the previous (failing) gate state, no data involved.",
+      "rollback_route": "Revert this single commit; the v0.6.14 tag object can be re-pointed back to a6008021f if needed (it has no Release attached yet).",
+      "declaration_id": "release-gate-full-history-checkout"
+    },
+    {
+      "component_id": "release-gate-full-history-a5-record",
+      "paths": [
+        "docs/governance/submissions/20260919-release-gate-full-history.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 stays mechanical.",
+      "evidence": [
+        "Manifest partitions the exact changed-path set and declares the single control component."
+      ],
+      "verification_level": "Local exact A.5 self-gate before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth.",
+      "rollback_route": "Revert together with the workflow change."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "release-gate-full-history-checkout",
+      "g1": {
+        "necessity": "v0.6.14 is the first release after pinned-commit scorecard contract tests entered the gate suite (post 2026-09-13). The release gate's default depth-1 checkout cannot resolve the pinned subject commit 832b4dfaa, so every tag push would fail the gate even though the identical suite passes in CI — release cadence is blocked until the checkout depth matches."
+      },
+      "g2": {
+        "authority_owner": "existing release.yml single-writer Release workflow and the shared gate suite owned by ci.yml's gate job",
+        "relationship": "reuse",
+        "non_duplication": "No new workflow, gate, or writer: one checkout parameter is aligned with the already-established ci.yml gate discipline (fetch-depth: 0, comment naming 832b4dfaa). Release single-writer semantics are unchanged."
+      },
+      "g3": {
+        "model_evidence": [
+          "Release run 35425174211 failure log: only test_peer_scorecard_v0_1.py tests fail, all rooted at the missing pinned commit object",
+          "CI run 35425174219 success on the same tag with fetch-depth: 0",
+          "diff is +6 lines in one workflow file (comment + with-block), no other file touched"
+        ],
+        "recovery_or_reason": "Purely mechanical CI environment fix; exit is single-commit revert or tag re-point, no runtime or data coupling."
+      },
+      "g4": {
+        "rollback": "Revert the single commit; optionally re-point the un-released v0.6.14 tag to a6008021f.",
+        "verification": [
+          "local A.5 self-gate PASS on the changed-path set before push",
+          "end-to-end: after merge, re-push v0.6.14 tag on the merged head and require the Release workflow gate + draft creation to succeed"
+        ]
+      }
+    }
+  ]
+}
