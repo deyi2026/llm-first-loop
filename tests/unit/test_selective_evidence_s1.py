@@ -81,6 +81,16 @@ def _ws_policy() -> HistoryPolicySettings:
     )
 
 
+def _ws_policy_high_batch() -> HistoryPolicySettings:
+    """Same-run append-only variant: batch ceiling above every fixture group so the
+    resource-safety byte valve cannot fire and defer semantics are observable."""
+    return HistoryPolicySettings(
+        working_set_receipts=True,
+        working_set_batch_chars=32768,
+        working_set_grace_groups=0,
+    )
+
+
 def _checkpoint(messages: list[Message], *, selected_ids: list[str] | None = None) -> dict:
     return build_working_state_checkpoint(
         session_id="s1",
@@ -382,7 +392,7 @@ def test_checkpoint_round_trips_through_json_and_event_log(tmp_path: Path):
     assert len(replay_loaded.messages) == len(messages)
 
 
-def _settings(tmp_path: Path, *, working_set: bool = False) -> Settings:
+def _settings(tmp_path: Path, *, working_set: bool = False, working_set_policy: HistoryPolicySettings | None = None) -> Settings:
     return Settings(
         llm_api_key="k",
         llm_base_url="https://x.invalid/v1",
@@ -392,7 +402,7 @@ def _settings(tmp_path: Path, *, working_set: bool = False) -> Settings:
         evidence_mode="off",
         tool_pipeline_enabled=False,
         history_max_chars=200000,
-        history_policy=_ws_policy() if working_set else HistoryPolicySettings(),
+        history_policy=(working_set_policy or _ws_policy()) if working_set else HistoryPolicySettings(),
     )
 
 
@@ -423,10 +433,11 @@ def test_engine_projects_state_provider_only_and_preserves_selected_raw(tmp_path
 
 
 def test_engine_same_run_followup_defers_unselected_receipt_fold(tmp_path: Path):
-    """Round>1 keeps the already-sent raw tool prefix unless the hard valve is reached."""
+    """Round>1 keeps the already-sent raw tool prefix when the hard byte valve
+    (batch_chars=32768 > every fixture group) does not fire (c182e3bef semantics)."""
     from llm_loop.factory import build_engine
 
-    engine = build_engine(_settings(tmp_path, working_set=True))
+    engine = build_engine(_settings(tmp_path, working_set=True, working_set_policy=_ws_policy_high_batch()))
     sess = Session(session_id="s1", messages=_messages())
     sess.working_state_checkpoint = _checkpoint(sess.messages)
     original_message_count = len(sess.messages)
@@ -449,6 +460,34 @@ def test_engine_same_run_followup_defers_unselected_receipt_fold(tmp_path: Path)
         is False
     )
     assert len(sess.messages) == original_message_count
+
+
+def test_engine_same_run_resource_safety_byte_valve_folds_oversized_prefix(tmp_path: Path):
+    """Round>1 with the batch ceiling below the group size: the resource-safety
+    byte valve outranks the append-only preference and folds to receipts."""
+    from llm_loop.factory import build_engine
+
+    engine = build_engine(_settings(tmp_path, working_set=True))
+    sess = Session(session_id="s1", messages=_messages())
+    sess.working_state_checkpoint = _checkpoint(sess.messages)
+
+    wire = engine._build_llm_messages(
+        sess,
+        [],
+        max_chars=200000,
+        planned_label="deepseek/model",
+        logical_round=2,
+    )
+    texts = [str(row.get("content") or "") for row in wire]
+
+    assert any("SELECTED-RAW-" in text for text in texts)
+    assert not any("UNSELECTED-RAW-" in text for text in texts)
+    assert any("tool_result_receipt" in text and "unselected" in text for text in texts)
+    assert (
+        engine._run_state().last_request_influence["ingress"]["tool_working_set"]
+        ["opportunistic_fold_allowed"]
+        is False
+    )
 
 
 def test_new_human_task_removes_provider_state_without_mutating_checkpoint(tmp_path: Path):

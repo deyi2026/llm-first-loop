@@ -24,7 +24,7 @@ export const zh = {
   backToBottom: "回到底部",
   thinkingHint: "思考中…",
   composerPlaceholder: "输入消息，Enter 发送，Shift+Enter 换行；/ 唤起命令",
-  composerHint: "Cmd/Ctrl+Enter 插话发送（排队）",
+  composerHint: "Cmd/Ctrl+Enter 排队发送；已排队消息可选择立即插入",
   send: "发送",
   stop: "停止生成",
   attach: "添加附件（图片/文本/PDF/docx）",
@@ -63,12 +63,15 @@ export const zh = {
   sessionTreeRoot: "工作区会话",
 };
 
-// ══ Human Turn 排队（生成中 Cmd/Ctrl+Enter 插话；P0 假对齐修复）══
-// composerHint:27 已宣称"Cmd/Ctrl+Enter 插话发送（排队）"——本组文案补齐真实能力。
+// ══ Human Turn 排队 / live 插入 ══
 export const queueZh = {
-  queueBarTitle: (n: number) => `已排队 ${n} 条插话，生成完成后按序发送`,
-  queueItemSending: "最新一条发送中",
-  queueCancel: "取消",
+  queueBarTitle: (n: number) => `已排队 ${n} 条消息，当前任务结束后按序发送`,
+  queueItemSending: "发送中",
+  queueWithdraw: "撤回编辑",
+  queueInterject: "立即插入",
+  queueInterjectPending: "待接收",
+  queueInterjectReceived: "已接收",
+  queueWithdrawn: "已撤回到输入框",
   queueAttachmentsOnly: "［附件消息］",
   queueEnqueued: "已加入排队（生成完成后自动发送）",
   queueEnqueueFailed: "排队失败，内容已恢复到输入框",

@@ -61,6 +61,13 @@ _ALLOWLIST=(
   'evals/browser_smc_subject_v01/results/'  # subject_v01 measured 回执：引擎 provenance 路径记录=机器产物本体（同 tests/fixtures/wire/ 先例，回执不可改写；仅 summary.json 入库）
 )
 
+# ── 规则粒度豁免：仅跳过规则3（本地绝对路径）；规则1禁路径/规则2敏感内容/规则4大文件仍全量执行 ──
+# 用于"路径痕迹是记录本体、但目录会持续新增内容"的知识档案：历史文件按原样保留，
+# 新增文件仍必须过 secret/大文件安检，不能借目录逃逸（2026-09-18 审查：整目录全豁免属边界放宽）。
+_ABS_PATH_ONLY_ALLOWLIST=(
+  'experiences/'  # 经验档案：文档如实记录本机工作区路径=记录本体，非泄露；secret/大文件/禁路径检查不豁免
+)
+
 # macOS/Linux 兼容的 stat 大小
 _file_size() {
   if [[ "$(uname)" == "Darwin" ]]; then
@@ -73,6 +80,15 @@ _file_size() {
 _is_allowed() {
   local path="$1"
   for a in "${_ALLOWLIST[@]}"; do
+    [[ "$path" == *"$a"* ]] && return 0
+  done
+  return 1
+}
+
+# 规则粒度豁免：仅豁免"本地绝对路径"检查（experiences/ 等知识档案目录）
+_abs_path_only_allowed() {
+  local path="$1"
+  for a in "${_ABS_PATH_ONLY_ALLOWLIST[@]}"; do
     [[ "$path" == *"$a"* ]] && return 0
   done
   return 1
@@ -125,6 +141,7 @@ main() {
       fi
     done
     for pat in "${BLOCK_ABS_PATH_PATTERNS[@]}"; do
+      _abs_path_only_allowed "$f" && break  # 仅此规则豁免知识档案目录；secret/大文件/禁路径不豁免
       if LC_ALL=C grep -qE "$pat" <<<"$blob"; then
         _fail "本地绝对路径匹配 [$pat]" "$f"
       fi

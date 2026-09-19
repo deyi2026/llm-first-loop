@@ -7,6 +7,7 @@ from llm_loop.introspection.registry_experience import execute as execute_experi
 from llm_loop.introspection.registry_experience import tool_defs as experience_tool_defs
 from llm_loop.introspection.search import RecordSearcher
 from llm_loop.introspection.tools_status import run_search_records
+from llm_loop.memory.retriever import SemanticRetriever
 from llm_loop.methods.store import MethodStore
 
 
@@ -61,6 +62,125 @@ def test_method_store_compact_discovery_and_exact_hydration(tmp_path: Path) -> N
     assert len(exact) == 1
     assert exact[0]["projection_complete"] is True
     assert "first divergent fact" in exact[0]["body"]
+
+
+def test_method_discovery_v2_matches_id_fragments_and_partial_terms(tmp_path: Path) -> None:
+    root = tmp_path / "methods"
+    _seed_method(
+        root,
+        "poc-a-b-6dd78baba7e8",
+        body="冻结件 PoC 验证法：预写边界、判定器、A/B、审计链",
+    )
+    _seed_method(
+        root,
+        "lfl-mirror-qualified-worktree-33ba78f2f2e7",
+        status="active",
+        body="restart mirror worktree 服务上线，推进 deployment 代次并验收",
+    )
+    store = MethodStore(root)
+
+    by_id_fragment = store.list("poc-a-b", 5)
+    assert by_id_fragment[0]["key"] == "method:poc-a-b-6dd78baba7e8"
+
+    # Discovery no longer requires every mixed-language term to match.  A query may
+    # include broader task words while the relevant card wins on coverage + field weight.
+    deploy = store.list("restart deploy mirror worktree 服务上线 部署 代次", 5)
+    assert deploy[0]["key"] == "method:lfl-mirror-qualified-worktree-33ba78f2f2e7"
+    assert deploy[0]["task_applicability"] == "not_evaluated"
+
+    _seed_method(root, "semantic-operation", status="active", body="browser navigate semantic execution")
+    _seed_method(root, "incidental-navigation-note", body="diagnostic note", status="candidate")
+    incidental = root / "incidental-navigation-note" / "METHOD.md"
+    incidental.write_text(
+        incidental.read_text(encoding="utf-8").replace(
+            "description: diagnostic method incidental-navigation-note",
+            "description: navigate was mentioned incidentally",
+        ),
+        encoding="utf-8",
+    )
+    navigate = MethodStore(root).list("navigate", 5)
+    assert navigate[0]["key"] == "method:semantic-operation"
+
+
+def test_method_freshness_reports_contract_change_without_judging_applicability(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    seed = workspace / "methods"
+    runtime = workspace / "data" / "methods"
+    contract = workspace / "docs" / "contract.md"
+    contract.parent.mkdir(parents=True)
+    contract.write_text("v1 contract\n", encoding="utf-8")
+    method_dir = seed / "deploy-method"
+    method_dir.mkdir(parents=True)
+    (method_dir / "METHOD.md").write_text(
+        "---\n"
+        "method_id: deploy-method\n"
+        "name: deploy method\n"
+        "description: deployment workflow\n"
+        "status: candidate\n"
+        "freshness_refs: docs/contract.md\n"
+        "---\n"
+        "## Trigger\ndeploy\n",
+        encoding="utf-8",
+    )
+    store = MethodStore(runtime, seed_dir=seed)
+
+    store.record_qualification(
+        "method:deploy-method",
+        task_ref="episode:freshness:2:bb",
+        verdict="pass",
+        mechanism="pass",
+        task_benefit="pass",
+        promotion="not_evaluated",
+    )
+    current = store.list("method:deploy-method", 1)[0]
+    assert current["freshness"]["state"] == "current"
+    assert current["task_applicability"] == "not_evaluated"
+
+    contract.write_text("v2 changed contract\n", encoding="utf-8")
+    changed = store.list("method:deploy-method", 1)[0]
+    assert changed["freshness"]["state"] == "changed"
+    assert changed["freshness"]["changed_refs"] == ["docs/contract.md"]
+    # A contract delta is only a mechanical fact; the program still does not decide
+    # whether the Method remains semantically applicable.
+    assert changed["task_applicability"] == "not_evaluated"
+
+    searcher = RecordSearcher(audit_dir=workspace / "audit", method_store=store)
+    rendered = run_search_records(
+        _Ctx(),
+        lambda **kwargs: searcher.search(**kwargs),
+        {"kind": "method", "query": "method:deploy-method", "limit": 1},
+        lambda: "",
+    )
+    assert "freshness=changed" in rendered.content
+    assert "docs/contract.md" in rendered.content
+
+
+def test_method_discovery_v2_semantic_channel_recovers_nonlexical_match(tmp_path: Path) -> None:
+    root = tmp_path / "methods"
+    _seed_method(root, "deploy-flow", status="active", body="publish generation then restart services")
+    _seed_method(root, "unrelated", body="inspect parser diagnostics")
+    store = MethodStore(root)
+    assert store.list("release", 5) == []
+
+    class FakeSemanticEmbedder:
+        provider = "fake"
+        vector_version = "fake-method-v1"
+
+        def embed(self, text: str) -> list[float]:
+            raw = text.lower()
+            if "release" in raw or "publish generation" in raw or "deploy-flow" in raw:
+                return [1.0, 0.0]
+            return [0.0, 1.0]
+
+    retriever = SemanticRetriever(FakeSemanticEmbedder(), threshold=0.8)
+    searcher = RecordSearcher(
+        audit_dir=tmp_path / "audit",
+        method_store=store,
+        semantic_retriever=retriever,
+    )
+    rows = searcher.search(kind="method", query="release", limit=5)
+    assert rows[0]["key"] == "method:deploy-flow"
+    assert rows[0]["task_applicability"] == "not_evaluated"
 
 
 def test_candidate_is_immutable_and_cannot_jump_directly_active(tmp_path: Path) -> None:
@@ -197,6 +317,68 @@ def test_method_exact_miss_teaches_discovery_without_silent_fallback(tmp_path: P
     assert "projection_complete=False" not in discovery.content
 
 
+def test_method_use_receipt_is_append_only_observation_not_lifecycle_transition(tmp_path: Path) -> None:
+    seed = tmp_path / "seed"
+    runtime = tmp_path / "runtime"
+    _seed_method(seed, "root-cause", status="active", body="find first divergent fact")
+    store = MethodStore(runtime, seed_dir=seed)
+
+    entry = store.record_use(
+        "method:root-cause",
+        episode_ref="episode:use-test:2:bead",
+        decision="adapted",
+        model="glm/glm-5.3",
+        note="Used discriminator but adapted verification to current repo.",
+        evidence_refs=["evidence://v1/use"],
+    )
+
+    assert entry["decision"] == "adapted"
+    assert entry["application_proven"] is True
+    assert entry["task_benefit"] == "not_evaluated"
+    assert entry["promotion"] == "not_evaluated"
+    assert entry["method_status"] == "active"
+    assert entry["method_content_hash"] == store.get("method:root-cause").content_hash
+    assert store.get("method:root-cause").status == "active"
+    # Recording use of a tracked seed must not create a mutable Method overlay.
+    assert not (runtime / "root-cause" / "METHOD.md").exists()
+    assert store.usage_entries("method:root-cause") == [entry]
+
+
+def test_method_manage_record_use_derives_episode_and_model_and_never_promotes(tmp_path: Path) -> None:
+    store = MethodStore(tmp_path / "methods")
+    record = store.save_candidate(name="bounded lookup", description="reuse known path", body="body")
+    host = _Host(store)
+    host.episode_ref = "episode:method-test-session:77:use"
+
+    from llm_loop.core.run_context import current_model_label
+
+    token = current_model_label.set("glm/glm-5.3")
+    try:
+        result = execute_experience_tool(
+            "method_manage",
+            {
+                "action": "record_use",
+                "method_ref": record.method_ref,
+                "use_decision": "applied",
+                "note": "Applied the bounded lookup path.",
+                "evidence_refs": ["evidence://v1/applied"],
+            },
+            cast(Any, host),
+        )
+    finally:
+        current_model_label.reset(token)
+
+    assert result is not None and result.status.value == "success"
+    entry = store.usage_entries(record.method_ref)[-1]
+    assert entry["episode_ref"] == "episode:method-test-session:77:use"
+    assert entry["model"] == "glm/glm-5.3"
+    assert entry["decision"] == "applied"
+    assert entry["application_proven"] is True
+    assert store.get(record.method_ref).status == "candidate"
+    assert store.qualification_entries(record.method_ref) == []
+    assert host.audit_rows[-1][0] == "record_method_use"
+
+
 def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
     host = _Host(store)
@@ -204,6 +386,8 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     assert "method_manage" in tool_defs
     assert {"save_method_candidate", "record_method_qualification", "refine_method"}.isdisjoint(tool_defs)
     save_props = tool_defs["method_manage"]["parameters"]["properties"]
+    assert "record_use" in tool_defs["method_manage"]["parameters"]["properties"]["action"]["enum"]
+    assert save_props["use_decision"]["enum"] == ["applied", "adapted", "not_applicable", "rejected"]
     assert "source_model" not in save_props
     assert "source_episode_refs" not in save_props
     assert "teacher_ref" not in save_props
@@ -289,6 +473,18 @@ def test_model_facing_method_writes_require_runtime_episode_provenance(tmp_path:
     )
     assert qualified is not None and qualified.status.value == "failure"
     assert "provenance" in qualified.content
+
+    use = execute_experience_tool(
+        "method_manage",
+        {
+            "action": "record_use",
+            "method_ref": record.method_ref,
+            "use_decision": "applied",
+        },
+        cast(Any, host),
+    )
+    assert use is not None and use.status.value == "failure"
+    assert "provenance" in use.content
 
 
 def test_repository_seed_methods_are_complete() -> None:

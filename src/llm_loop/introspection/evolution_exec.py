@@ -136,7 +136,7 @@ class ExecutionOutcome:
     suggestion_id: str
     executor: Literal["ai", "human"]  # 执行者（EXEC-06 审计）
     actions: list[dict]  # 已登记执行动作（AI 执行后由 complete 回传）
-    status: Literal["executing", "executed", "failed", "rolled_back"]
+    status: Literal["executing", "executed", "failed", "rolled_back", "skipped"]
     verify_result: Literal["unverified", "ai_reported"] = "unverified"  # 程序不做硬判定
     rollback_result: Literal["none", "ai_reported"] = "none"  # 程序不做硬判定
     note: str = ""  # 如实说明（含验证/回滚引导）
@@ -217,7 +217,7 @@ class EvolutionExecutor:
                     suggestion_id=suggestion.id,
                     executor="ai",
                     actions=list(suggestion.actions),
-                    status="failed",
+                    status="skipped",  # 政策跳过（非执行失败）: 终态如实区分（EVO-20260918-a6088cb7）
                     note=f"未自动执行: {plan.reason}（保持 accepted，等待人工执行）",
                     ts_start=_now(),
                     ts_end=_now(),

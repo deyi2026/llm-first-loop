@@ -51,6 +51,10 @@ from llm_loop.runtime.causality import effective_generation_contract
 
 logger = logging.getLogger(__name__)
 
+# 2026-09-18（gen20 自愈）: 连接被拒绝时的单次重试前退避秒数。毫秒级原地重试对瞬断/
+# 陈旧连接无效（实测两次尝试相隔 2.8ms 同因 ECONNREFUSED）；仅作用于 ConnectError。
+_TRANSPORT_RETRY_BACKOFF_S = 0.5
+
 _SAFE_PROVIDER_CODE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 
@@ -852,6 +856,12 @@ class LLMClient:
     # RG-3B: bounded process-local shadow recorder. It receives only typed transport
     # facts and is never consulted for admission/routing/fallback in this phase.
     transport_observer: Any | None = field(default=None, repr=False, compare=False)
+    # 2026-09-18（会话挂载实测自愈）: 传输级连接失败回调。本实例的连接/代理配置在构造时固定
+    # （远程 provider trust_env 经 urllib 读取 macOS 系统代理；Surge 等工具换实例后，旧实例会
+    # 持续打旧端点 → 每次调用 3ms 内 ECONNREFUSED，而新进程一切正常）。连接级失败时通知持有者
+    # （ModelClientPool）退休该 provider/model 缓存实例，使下次调用按当前配置重建。
+    # 仅传递机械异常事实，不改变重试次数/降级/严格模式语义。
+    on_transport_failure: Any | None = field(default=None, repr=False, compare=False)
     # 模型切换检测（拷问②）: 记录上次模型——切换时重置 guard 窗口（防旧模型低命中误拦）
     guard_last_model: str = ""
     def __post_init__(self) -> None:
@@ -877,6 +887,24 @@ class LLMClient:
             headers = {"Connection": "close"}
         trust_env = bool(self.trust_env) if self.trust_env is not None else not _is_local_base
         self._client = httpx.Client(timeout=self.timeout_s, headers=headers, trust_env=trust_env)
+
+    def _notify_transport_failure(self, exc: BaseException) -> None:
+        """Report a transport-level connection failure to the owner (ModelClientPool).
+
+        The httpx client is built once per provider/model and freezes its proxy mounts
+        (trust_env reads the macOS system proxy through urllib). When the proxy topology
+        changes after construction, this instance keeps dialing the stale endpoint and
+        every call fails with an instant ECONNREFUSED. The owner retires the cached
+        instance so the next call rebuilds it from current settings. Observation only:
+        it never changes retry count, fallback, or strict-override semantics.
+        """
+        hook = self.on_transport_failure
+        if hook is None:
+            return
+        try:
+            hook(type(exc).__name__)
+        except Exception:  # noqa: BLE001 - self-healing hook can never break a call
+            logger.debug("transport failure notify failed (self-heal)", exc_info=True)
 
     def _observe_transport_response(self, resp: httpx.Response, *, model_id: str) -> None:
         observer = self.transport_observer
@@ -1799,12 +1827,19 @@ class LLMClient:
                 raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
             except (httpx.NetworkError, httpx.ProtocolError) as exc:
                 # 传输级断连（peer closed / 连接重置 / 协议中断）→ 无输出已产出时重试一次
+                # 2026-09-18: 连接级失败先上报持有者（退休本实例，使后续调用按当前系统代理/
+                # 网络配置重建），再按既有单次重试语义决定是否重试。
+                self._notify_transport_failure(exc)
                 _output_seen = bool(acc.content_parts or acc.reasoning_parts) or _tc_seen
                 if _attempt <= _retry_disconnect and not _output_seen:
                     logger.warning(
                         "LLM 流式传输中断（尚无输出已产出），重试 %d/%d: %s",
                         _attempt, _retry_disconnect, exc,
                     )
+                    # 连接被瞬时拒绝时，毫秒级原地重试无意义（实测两次尝试相隔 2.8ms 同因失败）：
+                    # 换连接前短退避；超时类失败不退避，保持既有节奏。
+                    if isinstance(exc, httpx.ConnectError):
+                        time.sleep(_TRANSPORT_RETRY_BACKOFF_S)
                     continue
                 raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
             except LLMHTTPError:

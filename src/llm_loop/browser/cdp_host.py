@@ -14,16 +14,53 @@ DOM+AX parser.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
+import time
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 import httpx
+from websockets.exceptions import ConnectionClosed as _WsConnectionClosed
 from websockets.sync.client import connect as websocket_connect
 
 from llm_loop.browser.perception import PlaywrightPageCaptureBackend
+
+# EVO-20260918-753b4a91: websockets 默认 max_size=1MiB；DOM+AX 大页（如 GitHub 仓库页）
+# 的 CDP 响应帧超限即 1009 断连且死连接永不重建，会话困死。帧上限参数化 + 同 target 断线重建。
+# 2026-09-18 huge-page retest: 10.4MB HTML / ~100k nodes 的 DOMSnapshot 帧约 47MB（可过），
+# 但随后的 Accessibility.getFullAXTree 全树帧 >64MiB 仍撞 1009；默认提升到 128MiB，env 可覆盖。
+DEFAULT_CDP_MAX_FRAME_BYTES = 134_217_728
+# Absolute ceiling: a misconfigured/oversized LFL_BROWSER_CDP_MAX_FRAME_BYTES can
+# never lift a single CDP frame past this bound (memory safety). Oversized
+# DOMSnapshot payloads are bounded by node_cap projection, never by unbounded
+# frame buffering.
+HARD_CAP_CDP_MAX_FRAME_BYTES = 268_435_456  # 256 MiB
+_CONNECTION_LOST_ERRORS: tuple[type[BaseException], ...] = (
+    ConnectionError,
+    EOFError,
+    OSError,
+    _WsConnectionClosed,
+)
+
+
+def _classify_connection_loss(exc: BaseException) -> str:
+    """EVO-20260918-a2727fb2: classify a connection-lost failure for callers.
+
+    timeout       - the fixed recv timeout expired before any complete frame
+                    (websockets sync recv raises TimeoutError, an OSError subclass).
+    frame_too_large - the peer closed with close code 1009 (message too big),
+                    i.e. the response frame exceeded the configured limit.
+    connection    - transport-level loss that is neither of the above.
+    """
+
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, _WsConnectionClosed) and "1009" in str(exc):
+        return "frame_too_large"
+    return "connection"
 
 _READ_ONLY_CDP_METHODS = frozenset(
     {
@@ -31,6 +68,9 @@ _READ_ONLY_CDP_METHODS = frozenset(
         "Page.getFrameTree",
         "DOMSnapshot.captureSnapshot",
         "Accessibility.getFullAXTree",
+        # EVO-20260918-f2310800 vision phase 1: fixed-parameter screenshot as an
+        # evidence-layer observation only; the PNG never feeds grounding/version.
+        "Page.captureScreenshot",
     }
 )
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
@@ -83,21 +123,35 @@ def _default_http_get_json(url: str) -> list[dict[str, Any]]:
     return [item for item in payload if isinstance(item, dict)]
 
 
-def _default_ws_connect(url: str) -> _WebSocketLike:
-    return cast(_WebSocketLike, websocket_connect(url, open_timeout=5.0))
+def _default_ws_connect(url: str, *, max_frame_bytes: int = DEFAULT_CDP_MAX_FRAME_BYTES) -> _WebSocketLike:
+    return cast(
+        _WebSocketLike,
+        websocket_connect(url, open_timeout=5.0, max_size=max(1, int(max_frame_bytes))),
+    )
 
 
 class _ReadOnlyCdpSession:
     """One persistent page-target websocket with a hard method allowlist."""
 
-    def __init__(self, websocket: _WebSocketLike, *, timeout_s: float = 5.0) -> None:
+    def __init__(self, websocket: _WebSocketLike, *, timeout_s: float = 20.0) -> None:
         self._websocket = websocket
+        # 2026-09-18 live huge-page retest (10.4MB HTML / ~100k nodes): the
+        # DOMSnapshot frame itself returns in ~1.4s at ~47MB, but the follow-up
+        # observation requests (AX tree capture) exceed a 5s single-recv budget.
+        # 20s keeps big-page observation viable inside the 60s tool budget while
+        # the drop-session/same-target-reconnect semantics stay unchanged.
         self._timeout_s = float(timeout_s)
         self._request_id = 0
         self._lock = threading.Lock()
+        # EVO-20260918-a2727fb2: diagnostics of the LAST SUCCESSFUL request so
+        # connection-lost failures can be classified (timeout vs frame limit vs
+        # transport). Note: when the failing request times out, these fields
+        # still describe the prior completed request — never the failing one.
+        self.last_diag: dict[str, Any] = {}
 
     def _request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         with self._lock:
+            started = time.monotonic()
             self._request_id += 1
             request_id = self._request_id
             self._websocket.send(
@@ -111,6 +165,11 @@ class _ReadOnlyCdpSession:
                 message = json.loads(raw)
                 if not isinstance(message, dict) or message.get("id") != request_id:
                     continue
+                self.last_diag = {
+                    "method": method,
+                    "resp_chars": len(raw) if isinstance(raw, str) else len(str(raw)),
+                    "elapsed_ms": round((time.monotonic() - started) * 1000.0, 1),
+                }
                 if "error" in message:
                     error = message.get("error") or {}
                     raise RuntimeError(
@@ -161,18 +220,26 @@ class CdpReadOnlyBrowserHost:
         *,
         target_id: str = "",
         node_cap: int = 20_000,
+        max_frame_bytes: int = DEFAULT_CDP_MAX_FRAME_BYTES,
         http_get_json: Callable[[str], list[dict[str, Any]]] | None = None,
         ws_connect: Callable[[str], _WebSocketLike] | None = None,
     ) -> None:
         if node_cap < 1:
             raise ValueError("node_cap must be >= 1")
+        if max_frame_bytes < 1:
+            raise ValueError("max_frame_bytes must be >= 1")
         self.debug_base_url = _normalize_loopback_debug_url(debug_base_url)
         self._configured_target_id = str(target_id or "").strip()
         self._bound_target_id = ""
         self._bound_websocket_url = ""
         self._node_cap = int(node_cap)
         self._http_get_json = http_get_json or _default_http_get_json
-        self._ws_connect: Callable[[str], _WebSocketLike] = ws_connect or _default_ws_connect
+        # Hard-capped at the absolute ceiling regardless of configuration:
+        # a single oversized frame can never buffer unbounded memory.
+        self._max_frame_bytes = min(int(max_frame_bytes), HARD_CAP_CDP_MAX_FRAME_BYTES)
+        self._ws_connect: Callable[[str], _WebSocketLike] = ws_connect or (
+            lambda url: _default_ws_connect(url, max_frame_bytes=self._max_frame_bytes)
+        )
         self._websocket: _WebSocketLike | None = None
         self._session: _ReadOnlyCdpSession | None = None
         self._capture_lock = threading.Lock()
@@ -222,12 +289,77 @@ class CdpReadOnlyBrowserHost:
             self._session = _ReadOnlyCdpSession(websocket)
         return self._session
 
+    def _drop_session(self) -> None:
+        # EVO-20260918-753b4a91: same-target reconnect only — bound target identity
+        # stays pinned; dropping a dead websocket never grants access to another tab.
+        websocket = self._websocket
+        self._session = None
+        self._websocket = None
+        if websocket is not None:
+            with contextlib.suppress(Exception):  # noqa: BLE001 - best-effort close of a dead socket
+                websocket.close()
+
     def capture(self) -> dict[str, Any]:
         with self._capture_lock:
             target = self._resolve_target()
             session = self._ensure_session(target)
             page = _CdpPageShim(url=str(target.get("url") or ""), session=session)
-            return PlaywrightPageCaptureBackend(page, node_cap=self._node_cap).capture()
+            try:
+                return PlaywrightPageCaptureBackend(page, node_cap=self._node_cap).capture()
+            except _CONNECTION_LOST_ERRORS as exc:
+                diag = dict(getattr(session, "last_diag", {}) or {})
+                mode = _classify_connection_loss(exc)
+                self._drop_session()
+                raise RuntimeError(
+                    f"capture_channel_degraded[mode={mode}]; "
+                    "CDP observation connection lost; dropped session for same-target reconnect"
+                    f"; diag={diag}; error_type={type(exc).__name__}"
+                ) from exc
+
+    def probe_page_target(self) -> dict[str, Any]:
+        """EVO-20260918-4766011b: lightweight page-target existence probe.
+
+        Uses only the already-allowlisted read-only CDP surface
+        (Target.getTargetInfo) - no DOM/AX capture - so resource-level
+        transition verbs can verify their precondition when a full capture
+        is structurally unavailable on the current page.
+        """
+
+        with self._capture_lock:
+            target = self._resolve_target()
+            target_id = str(target.get("id") or "")
+            session = self._ensure_session(target)
+            info = session.send("Target.getTargetInfo", {"targetId": target_id})
+            target_info = info.get("targetInfo") if isinstance(info, dict) else None
+            probed_id = str((target_info or {}).get("targetId") or "") or target_id
+            if probed_id != target_id:
+                raise RuntimeError("Browser target probe returned a different target id")
+            return {
+                "target_id": target_id,
+                "url": str(target.get("url") or ""),
+                "type": str(target.get("type") or ""),
+            }
+
+    def capture_vision_evidence(self) -> bytes:
+        """EVO-20260918-f2310800: fixed-parameter screenshot of the bound page.
+
+        PNG bytes only - an evidence-layer observation. Callers persist and
+        reference it; it never feeds objects/grounding/version paths.
+        """
+
+        import base64
+
+        with self._capture_lock:
+            target = self._resolve_target()
+            session = self._ensure_session(target)
+            result = session.send(
+                "Page.captureScreenshot",
+                {"format": "png", "fromSurface": True},
+            )
+            data = result.get("data") if isinstance(result, dict) else None
+            if not isinstance(data, str) or not data:
+                raise RuntimeError("Page.captureScreenshot returned no image data")
+            return base64.b64decode(data)
 
     def close(self) -> None:
         websocket = self._websocket

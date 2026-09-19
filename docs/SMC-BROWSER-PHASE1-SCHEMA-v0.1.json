@@ -143,7 +143,7 @@
           ]
         },
         "vision": {
-          "const": "explicit_only_deferred_phase2"
+          "const": "explicit_only_evidence_layer"
         }
       },
       "additionalProperties": false

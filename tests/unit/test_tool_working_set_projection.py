@@ -308,8 +308,14 @@ def test_same_run_defers_soft_fold_without_rewriting_provider_prefix():
     assert projected[2].content == "B" * 2000
 
 
-def test_same_run_defers_coarse_byte_fold_without_rewriting_provider_prefix():
-    """Same-run cache continuity must also defer the coarse-byte opportunistic fold."""
+def test_same_run_byte_hard_boundary_is_a_resource_safety_valve():
+    """Same-run continuity defers opportunistic rewrites, not the byte hard boundary.
+
+    The append-only preference ranks below resource safety: pending raw tool bytes
+    at/above batch_chars must fold even in logical round > 1 (trigger
+    ``resource_safety_bytes``), so a few very large results cannot grow the
+    provider prefix unbounded before the result-count cap ever fires.
+    """
     policy = _policy(working_set_batch_chars=4096, working_set_grace_groups=0)
     from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
 
@@ -329,11 +335,15 @@ def test_same_run_defers_coarse_byte_fold_without_rewriting_provider_prefix():
     )
 
     assert stats.raw_tool_chars == 7500
-    assert stats.folded_results == 0
-    assert stats.folded_groups == 0
-    assert stats.fold_triggers == ()
-    assert stats.pending_raw_chars >= stats.batch_chars
-    assert projected[2].content == "B" * 2500
+    # 第 2 组末 pending 累计 5000 ≥ 4096 → 立即折前 2 组；第 3 组是本轮最新
+    # 未暴露组，保持 raw（append-only 对"已发送前缀"的保留只排到资源边界之下）。
+    assert stats.folded_results == 2
+    assert stats.folded_groups == 2
+    assert stats.fold_boundaries == (5,)
+    assert stats.fold_triggers == ("resource_safety_bytes",)
+    assert "tool_result_receipt" in projected[2].content
+    assert stats.latest_raw_chars == 2500
+    assert stats.projected_tool_chars < stats.raw_tool_chars
 
 
 def test_same_run_still_applies_hard_result_cap_safety_valve():

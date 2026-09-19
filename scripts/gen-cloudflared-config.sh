@@ -44,6 +44,7 @@ cat > "$CONFIG" << YAML_EOF
 #      ./scripts/start-web-tunnel.sh named
 #
 tunnel: $TUNNEL_ID
+protocol: http2
 credentials-file: ./tunnel.json
 
 ingress:

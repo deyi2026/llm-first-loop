@@ -72,6 +72,9 @@ def test_model_surface_is_read_only_and_has_no_backend_locator_parameters(tmp_pa
     assert set(props) == {
         "action",
         "projection_limit",
+        "projection_kinds",
+        "projection_cursor",
+        "vision",
         "grounding_ref",
         "from_version",
         "to_version",
@@ -294,7 +297,7 @@ def test_structural_blindspots_and_cross_origin_frame_are_explicit(tmp_path: Pat
     assert "canvas" in reasons
     assert "cross_origin_frame" in reasons
     dumped = json.dumps(result, ensure_ascii=False)
-    assert "vision" not in dumped.lower() or "explicit_only_deferred_phase2" in dumped
+    assert "vision" not in dumped.lower() or "explicit_only_evidence_layer" in dumped
 
 
 def test_relations_are_structural_only(tmp_path: Path) -> None:

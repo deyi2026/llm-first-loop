@@ -24,7 +24,7 @@ from llm_loop.core.injection_labels import (
     REFERENCE_LABEL,
     STATUS_LABEL,
 )
-from llm_loop.core.message import Message, MessageSource, ToolCall
+from llm_loop.core.message import Message, MessageSource, ToolCall, dict_wire_chars
 from llm_loop.core.reference_injection import (
     is_active_run_ingress_message,
     is_human_user_message,
@@ -47,11 +47,11 @@ def _message_time_marker(m: Message) -> float | None:
 
 
 def _wire_size(m: Message, current_turn_ref: int | None = None) -> int:
-    """提交视图口径体积（与守卫估算 routing._estimate_request_chars 对齐）.
+    """提交视图口径体积（Message 对象版；准绳口径见 core.message.dict_wire_chars）.
 
-    content + reasoning_content + tool_calls 参数。history 压缩预算原只看
-    content——reasoning_content 可占 40%+（实测 fb8f8987: 287K/598K 全字段），
-    压缩器看不见 → 恒不触发（2026-08-26 glm 超限
+    content + capability 边界块 + reasoning_content + tool_calls 参数。history
+    压缩预算原只看 content——reasoning_content 可占 40%+（实测 fb8f8987:
+    287K/598K 全字段），压缩器看不见 → 恒不触发（2026-08-26 glm 超限
     死循环根因：守卫按全字段 907K tokens 拦截、压缩按 content 159K<255K 判
     不超）。预算判定一律改用本口径；纯展示/审计统计不变。
     """
@@ -78,18 +78,12 @@ def _wire_size(m: Message, current_turn_ref: int | None = None) -> int:
 
 
 def _dict_wire_size(d: dict) -> int:
-    """to_llm_dict 后的提交口径体积（out 列表元素用）."""
-    n = len(str(d.get("content") or ""))
-    replay = d.get("_provider_replay")
-    replay_fields = replay.get("fields") if isinstance(replay, dict) else None
-    if isinstance(replay_fields, dict) and replay_fields.get("reasoning_details") is not None:
-        n += len(json.dumps(replay_fields["reasoning_details"], ensure_ascii=False))
-    else:
-        n += len(str(d.get("reasoning_content") or ""))
-    for tc in d.get("tool_calls") or []:
-        fn = (tc or {}).get("function") or {}
-        n += len(str(fn.get("arguments") or "")) + len(str(fn.get("name") or ""))
-    return n
+    """to_llm_dict 后的提交口径体积（out 列表元素用）.
+
+    EVO-20260918-be2ff060: 实现已上收为公共准绳 core.message.dict_wire_chars，
+    压缩与 cache_guard submit_ratio 守卫共用同一函数，禁止口径分叉。
+    """
+    return dict_wire_chars(d)
 
 
 def _same_turn_ref(raw: Any, current_turn_ref: int | None) -> bool:

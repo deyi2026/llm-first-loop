@@ -131,7 +131,7 @@ code = pathlib.Path(os.environ['LFL_OP_CODE']).resolve()
 sha = os.environ['LFL_OP_SHA']
 action = os.environ['LFL_OP_ACTION']
 assert re.fullmatch(r'[0-9a-f]{40}', sha), '先填写完整目标 SHA'
-assert action in {'web', 'feishu', 'all'}, '动作必须是 web/feishu/all'
+assert action in {'web', 'feishu', 'learning', 'all'}, '动作必须是 web/feishu/learning/all'
 assert code.is_dir(), 'code root 不存在'
 head = subprocess.check_output(['git', '-C', str(code), 'rev-parse', 'HEAD'], text=True).strip()
 assert head == sha, f'目标不一致：{head}'
@@ -201,7 +201,7 @@ Feishu-only restart 的正式脚本会跳过 WebUI artifact 比对，但仍严�
 
 **控制面边界：** LFL 模型会话不能再用普通 `execute_command` 直接 `kill` managed Web/Feishu PID、运行 mutating restart script、或直接 `runtime.launch web|feishu`。这些路径会被机械 fence；合法路径是先 `service_control(action=status)` 取得当前 generation，再由模型判断是否需要 `service_control(action=restart, target=..., expected_generation=...)`。程序不替模型决定“要不要重启”，只限定物理控制权和 exact deployment binding。`ps`、`kill -0`、`runtime.launch --dry-run`、restart `status` 等只读观测仍保留。
 
-`service_control restart` 会先落 durable `accepted` action receipt，再启动脱离当前 Web 进程组的 worker；worker 对 generation/deployment_id 再检查，并持有跨进程 lifecycle lease 直到 official restart 结束和 terminal receipt 落盘。期间新的 desired deployment publish 会等待，而不会在 check→execute 窗口替换部署目标。
+`service_control restart` 会先落 durable `accepted` action receipt，再启动脱离当前 Web 进程组的 worker。worker 两阶段执行：先在**不持有 lifecycle lease** 的前提下等待 requester 会话结束（仅 web/all，run.lock 释放即过）与目标空闲（feishu 心跳/活跃 run.lock，分 target 判定；均 900s fail-closed 超时），随后才获取跨进程 lifecycle lease、复核 generation/deployment_id，并执行 official restart 直到 terminal receipt 落盘。因此等待阶段的 desired deployment publish 不会被阻塞；物理执行阶段 publish 会等待，不会在 check→execute 窗口替换部署目标。发起 restart 的模型会话应在收到 accepted receipt 后立即结束本轮，而不是轮询等待终态。
 
 ### 4.5 确认任务空闲
 

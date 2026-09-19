@@ -406,6 +406,12 @@ class BrowserActionAdapter:
     def execute(self, session_id: str, action: dict[str, Any]) -> dict[str, Any]:
         if not session_id:
             raise ValueError("session_id is required")
+        # args_normalization is machine-authored and never part of the model-owned
+        # surface (see _valid_args_normalization). The model-facing browser_action
+        # tool legitimately omits it, so inject the canonical "not applied" default
+        # instead of failing validation with semantic_action_fields_mismatch.
+        if "args_normalization" not in action:
+            action = {**action, "args_normalization": {"applied": False, "rule": None}}
         validation_error = self._validate(action)
         action_id = str(action.get("action_id") or "invalid")
         if validation_error is not None:
@@ -437,6 +443,7 @@ class BrowserActionAdapter:
         if not self.receipt_store.reserve(session_id, action_id, fingerprint):
             return self._append_rejected(session_id, action, "duplicate_action_id")
 
+        light_mode = False
         try:
             before_raw = self.capture_backend.capture()
             before_result = self.perception.snapshot(session_id, before_raw, projection_limit=1)
@@ -444,28 +451,70 @@ class BrowserActionAdapter:
             before_version = str(before_snapshot.get("snapshot_id") or "")
             before_ref = str(before_snapshot.get("objects_ref") or "") or None
         except Exception as exc:  # noqa: BLE001 - observer failure is a mechanical rejection fact.
-            return self._append_rejected(
-                session_id,
-                action,
-                f"pre_dispatch_observation_failed:{type(exc).__name__}",
-            )
+            # EVO-20260918-4766011b: navigate is a resource-level transition verb.
+            # Its precondition needs only the page target's existence, not a full
+            # DOM+AX snapshot of the (possibly uncapturable) current page, so when
+            # the full pre-observation fails structurally we fall back to a
+            # lightweight probe instead of killing the model's only escape verb.
+            # Object verbs (click/fill/select/scroll) keep the full precondition.
+            probe_page_target = getattr(self.capture_backend, "probe_page_target", None)
+            if str(action["verb"]) == "navigate" and callable(probe_page_target):
+                try:
+                    probe_page_target()
+                except Exception as probe_exc:  # noqa: BLE001 - probe failure is a mechanical fact.
+                    return self._append_rejected(
+                        session_id,
+                        action,
+                        f"pre_dispatch_observation_failed:{type(exc).__name__}"
+                        f"; lightweight_probe_failed:{type(probe_exc).__name__}",
+                    )
+                before_version = str(action["expected_version"])
+                before_ref = None
+                light_mode = True
+            else:
+                return self._append_rejected(
+                    session_id,
+                    action,
+                    f"pre_dispatch_observation_failed:{type(exc).__name__}",
+                )
 
-        assessment = self.perception.assess_version_precondition(
-            session_id,
-            expected_version=str(action["expected_version"]),
-            observed_version=before_version,
-            version_scope=str(action["version_scope"]),
-            scope_ref=str(action["scope_ref"]),
-            target_id=(str(action["target_id"]) if action["version_scope"] == "object" else None),
-        )
-        if assessment.get("result") != "match":
-            return self._append_rejected(
+        if not light_mode:
+            assessment = self.perception.assess_version_precondition(
                 session_id,
-                action,
-                f"version_precondition_{assessment.get('result')}:{assessment.get('reason')}",
-                before_version=before_version,
-                before_ref=before_ref,
+                expected_version=str(action["expected_version"]),
+                observed_version=before_version,
+                version_scope=str(action["version_scope"]),
+                scope_ref=str(action["scope_ref"]),
+                target_id=(str(action["target_id"]) if action["version_scope"] == "object" else None),
             )
+            if assessment.get("result") != "match":
+                return self._append_rejected(
+                    session_id,
+                    action,
+                    f"version_precondition_{assessment.get('result')}:{assessment.get('reason')}",
+                    before_version=before_version,
+                    before_ref=before_ref,
+                )
+        else:
+            # Lightweight resource-level precondition: reuse the full mechanical
+            # assessment against the model-declared version itself (both sides of
+            # the comparison are the expected bundle; availability, scope lineage
+            # and resource-scope matching still run inside assess).
+            assessment = self.perception.assess_version_precondition(
+                session_id,
+                expected_version=before_version,
+                observed_version=before_version,
+                version_scope="resource",
+                scope_ref=str(action["scope_ref"]),
+            )
+            if assessment.get("result") != "match":
+                return self._append_rejected(
+                    session_id,
+                    action,
+                    f"version_precondition_lightweight_{assessment.get('result')}:{assessment.get('reason')}",
+                    before_version=before_version,
+                    before_ref=before_ref,
+                )
 
         before_bundle = self.perception.store.load_snapshot_bundle(session_id, before_version)
         verb = str(action["verb"])
@@ -586,6 +635,12 @@ class BrowserActionAdapter:
             "dispatch": running_receipt["grounding_refs"]["dispatch"],
         }
         reasons = list(post_reasons)
+        if light_mode:
+            # EVO-20260918-4766011b follow-up: standalone channel-fact field so
+            # callers can distinguish degraded-channel dispatches from fully
+            # observed ones. completeness.reasons stays reserved for incomplete/
+            # failed semantics, not channel modes.
+            terminal["pre_observation_mode"] = "lightweight_probe"
         if dispatch_authority_lost:
             terminal["status"] = "failed"
             reasons.append("dispatch_authority_lost")

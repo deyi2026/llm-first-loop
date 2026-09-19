@@ -124,6 +124,33 @@ def test_adjust_strategy_retrieve_semantic_top_k_whitelist():
     assert r2.status == ToolResultStatus.FAILURE
 
 
+def test_adjust_strategy_receipt_has_effective_chain():
+    """EVO-20260918-8417246d: 成功回执带"生效链"（档位+压制方），模型可感知
+    值由哪层决定，不再是无上下文裸数."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    # 绿：申请值未打满白名单上限
+    r = reg.execute("adjust_strategy", {"strategy": {"memory_top_k": 12}})
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "生效链" in r.content
+    assert "memory_top_k: 12（绿｜申请值生效" in r.content
+    # 红：打满白名单上限 → 显式标注被压制
+    ctx2 = CorrectionContext()
+    reg2 = CorrectionToolRegistry(ctx2)
+    whitelist_max = ctx2.strategy_whitelist["memory_top_k"]["max"]
+    r2 = reg2.execute("adjust_strategy", {"strategy": {"memory_top_k": whitelist_max}})
+    assert r2.status == ToolResultStatus.SUCCESS
+    assert "红｜被白名单硬上限压制" in r2.content
+    # 黄：history_budget 恒标黄（provider 层仍可能在引擎侧收敛）
+    ctx3 = CorrectionContext()
+    reg3 = CorrectionToolRegistry(ctx3)
+    hb_max = ctx3.strategy_whitelist["history_budget"]["max"]
+    r3 = reg3.execute("adjust_strategy", {"strategy": {"history_budget": hb_max // 2}})
+    assert r3.status == ToolResultStatus.SUCCESS
+    assert "history_budget" in r3.content and "黄｜" in r3.content
+    assert "以守卫/回执 budget= 为准" in r3.content
+
+
 def test_semantic_retriever_dynamic_top_k_provider():
     """SemanticRetriever.set_top_k_provider 动态生效（未注入用构造值；异常回退）."""
     from llm_loop.memory.retriever import SemanticRetriever

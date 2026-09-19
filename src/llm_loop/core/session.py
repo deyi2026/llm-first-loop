@@ -491,7 +491,11 @@ class SessionStore:
         if store is None or getattr(store, "enabled", False) is False:
             return session
         try:
-            events = store.read(session.session_id)
+            # Retraction overlay is a high-frequency read-path projection. EventStore
+            # already provides an exact bounded replay cache keyed by durable tail seq;
+            # bypassing it here forced every SessionStore.load() to JSON-replay the
+            # whole event log again, multiplying CPU cost for large Web sessions.
+            events = getattr(store, "read_cached", store.read)(session.session_id)
         except Exception:
             return session
         if not events:

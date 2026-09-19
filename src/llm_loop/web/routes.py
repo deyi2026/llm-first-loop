@@ -55,6 +55,7 @@ from .schemas import (
     QueueCancelRequest,
     QueueDispatchRequest,
     QueueEnqueueRequest,
+    QueueInterjectRequest,
     QueueReleaseRequest,
     SessionListResponse,
     SessionMessagesResponse,
@@ -190,6 +191,7 @@ def _queue_claim_matches(
         and frozen_refs == payload_refs
         and list(claimed.get("attachment_facts") or []) == list(attachment_facts)
         and (claimed.get("model") or None) == (payload.model or None)
+        and bool(claimed.get("model_change", False)) == bool(payload.model_change)
         and (claimed.get("reasoning_effort") or None) == (payload.reasoning_effort or None)
         and str(claimed.get("reasoning_mode") or "auto") == str(payload.reasoning_mode or "auto")
     )
@@ -312,6 +314,81 @@ def _engine_from(request: Request) -> Any:
     return request.app.state.engine
 
 
+@router.get("/api/v1/learning/status")
+def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=200)) -> Response:
+    """Read-only Learning Plane observability without exposing hidden reasoning."""
+    engine = _engine_from(request)
+    journal = getattr(engine, "learning_journal", None)
+    jobs = []
+    if journal is not None:
+        try:
+            for job in journal.recent_jobs(limit=limit):
+                jobs.append(
+                    {
+                        "job_id": job.job_id,
+                        "source_episode_ref": job.source_episode_ref,
+                        "source_session_id": job.session_id,
+                        "source_model": job.source_model,
+                        "state": job.state,
+                        "attempt": job.attempt,
+                        "candidate_ref": job.candidate_ref or None,
+                        "reason": job.reason or None,
+                        "created_at": job.created_at,
+                        "updated_at": job.updated_at or job.created_at,
+                        "started_at": job.started_at or None,
+                        "finished_at": job.finished_at or None,
+                        # Only mechanical trigger facts are surfaced. Raw hidden reasoning is never stored here.
+                        "trigger_facts": dict(job.trigger_facts or {}),
+                    }
+                )
+        except Exception:  # noqa: BLE001 - observability must never break chat serving
+            logger.warning("learning status journal read failed", exc_info=True)
+
+    counts: dict[str, int] = {}
+    for row in jobs:
+        state = str(row.get("state") or "unknown")
+        counts[state] = counts.get(state, 0) + 1
+
+    settings = getattr(engine, "settings", None)
+    data_dir = Path(getattr(settings, "data_dir", "./data")).expanduser()
+    manifest_path = data_dir / "runtime" / "runtime_manifest.learning.json"
+    worker: dict[str, Any] = {"running": False, "manifest_present": manifest_path.is_file()}
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            pid = int(manifest.get("pid") or 0)
+            running = False
+            if pid > 0:
+                try:
+                    os.kill(pid, 0)
+                    running = True
+                except OSError:
+                    running = False
+            worker.update(
+                {
+                    "running": running,
+                    "pid": pid or None,
+                    "started_at": manifest.get("started_at"),
+                    "git_head": manifest.get("git_head"),
+                    "build": manifest.get("build_identity") or {},
+                    "model_ref": manifest.get("model_ref"),
+                    "provider_id": manifest.get("provider_id"),
+                }
+            )
+        except Exception:  # noqa: BLE001
+            worker["manifest_error"] = True
+
+    return JSONResponse(
+        {
+            "enabled": bool(getattr(settings, "learning_plane_enabled", False)),
+            "producer_only": getattr(engine, "learning_plane", None) is None,
+            "worker": worker,
+            "counts": counts,
+            "jobs": jobs,
+        }
+    )
+
+
 def _evolution_store_from(engine: Any) -> Any | None:
     """解析 production EvolutionStore authority（factory.py 唯一装配位置）.
 
@@ -320,6 +397,36 @@ def _evolution_store_from(engine: Any) -> Any | None:
     """
     ctx = getattr(engine, "correction_ctx", None)
     return getattr(ctx, "evolution_store", None)
+
+
+def _web_data_dir(engine: Any) -> Path:
+    """Resolve Web route storage from the already-resolved engine settings authority."""
+    return Path(getattr(getattr(engine, "settings", None), "data_dir", "./data")).expanduser().resolve()
+
+
+# TASK-005: 受管服务 desired/live/stable 身份视图（与 service_control 工具同一 composer 单一数据源）
+from llm_loop.runtime.service_control import (  # noqa: E402
+    ManagedServiceDeploymentStore,
+    compose_service_identity_view,
+)
+
+
+@router.get("/api/v1/services/status")
+def services_status(request: Request) -> Response:
+    """Read-only managed-service identity view: desired vs live vs stable."""
+    store = ManagedServiceDeploymentStore(_web_data_dir(_engine_from(request)))
+    try:
+        view = compose_service_identity_view(store)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        logger.warning("services status compose failed: %s: %s", type(exc).__name__, exc)
+        return UTF8JSONResponse(
+            status_code=500,
+            content={
+                "error": "service_status_unavailable",
+                "detail": f"{type(exc).__name__}: {exc}",
+            },
+        )
+    return UTF8JSONResponse(view)
 
 
 _locks_guard = threading.Lock()
@@ -483,8 +590,17 @@ def chat(
     if lock is not None:
         acquired = True
     _persist_model_ref = _canonical_persist_model(engine, payload.model)
+    # Known model refs route through accepted Session authority. This prevents a
+    # stale browser payload from regaining authority after in-run switch_model.
+    # Unknown refs still pass through per-call routing for the normal unavailable fact.
+    _route_model = payload.model if (payload.model and _persist_model_ref is None) else None
+    _explicit_model_change = bool(payload.model_change or payload.new_session)
     _on_run_acquired = (
-        (lambda sess: _apply_session_model_override(sess, _persist_model_ref))
+        (
+            lambda sess: _apply_session_model_override(
+                sess, _persist_model_ref, explicit_change=_explicit_model_change
+            )
+        )
         if _persist_model_ref else None
     )
     try:
@@ -494,7 +610,7 @@ def chat(
         from llm_loop.core.trace_leak.ingress_token import issue_ingress
 
         result = engine._run_with_acquired(
-            session_id, payload.message, model=payload.model,
+            session_id, payload.message, model=_route_model,
             reasoning_effort=payload.reasoning_effort,
             reasoning_mode=payload.reasoning_mode,
             on_run_acquired=_on_run_acquired,
@@ -609,20 +725,31 @@ def _canonical_persist_model(engine: Any, model: str | None) -> str | None:
         return None
 
 
-def _apply_session_model_override(session: Any, model_ref: str | None) -> None:
-    """接单成功后修改本轮 run-owned Session；持久化由 engine accepted 边界统一执行。"""
-    # EVO-20260829-ad8c5984 装配漂移防御层：前端 stale state.model 经 payload.model
-    # 无条件写回会静默覆盖 run 内 switch_model 的切换。前端回填（stream-chat.js
-    # buildAssistantNote 用 done.model_used 回填 state.model）已闭合主环；
-    # 此告警为可观测兜底——任何残余漂移尝试都会进日志，便于验证根治效果。
-    if model_ref and getattr(session, "model_override", None) != model_ref:
-        old = getattr(session, "model_override", None)
-        if old:
-            logger.warning(
-                "model_override 写回覆盖: %s → %s（前轮 switch_model 可能被 web payload.model 覆盖）",
-                old,
-                model_ref,
-            )
+def _apply_session_model_override(
+    session: Any,
+    model_ref: str | None,
+    *,
+    explicit_change: bool = False,
+) -> None:
+    """Apply one accepted Web model selection without letting stale UI regain authority.
+
+    ``payload.model`` is sent on every Web request for routing/UI continuity, but an
+    in-run ``switch_model`` may have changed the authoritative session override since
+    that browser snapshot was taken.  Therefore a differing existing override wins
+    unless the request carries explicit human ``model_change`` intent.  An empty
+    session may still adopt the first valid model for backwards compatibility.
+    """
+    if not model_ref:
+        return
+    old = getattr(session, "model_override", None)
+    if old and old != model_ref and not explicit_change:
+        logger.info(
+            "忽略 stale payload.model：session authority=%s payload=%s（无显式 model_change）",
+            old,
+            model_ref,
+        )
+        return
+    if old != model_ref:
         session.model_override = model_ref
 
 
@@ -922,13 +1049,19 @@ def chat_stream(
     # Web 模型选择只在请求成功接单后持久化。未知模型不写 session，
     # 仍交本次 per-call 路由生成“模型不可用”反馈；busy/resume 必须零副作用。
     _persist_model_ref = _canonical_persist_model(engine, payload.model)
+    _route_model = payload.model if (payload.model and _persist_model_ref is None) else None
+    _explicit_model_change = bool(payload.model_change or payload.new_session)
 
     def event_stream():
         # 后台 run 模式（EVO 后台 run 改造，对齐 DSH）：提交 + 订阅；断连只停订阅
         runner = getattr(engine, "runner", None)
         _resume = bool(getattr(payload, "resume", False))
         _before_start = (
-            (lambda sess: _apply_session_model_override(sess, _persist_model_ref))
+            (
+                lambda sess: _apply_session_model_override(
+                    sess, _persist_model_ref, explicit_change=_explicit_model_change
+                )
+            )
             if (_persist_model_ref and not _resume)
             else None
         )
@@ -952,7 +1085,7 @@ def chat_stream(
                 runner,
                 session_id,
                 payload.message,
-                payload.model,
+                _route_model,
                 reasoning_effort=payload.reasoning_effort,
                 reasoning_mode=payload.reasoning_mode,
                 resume=_resume,
@@ -995,7 +1128,7 @@ def chat_stream(
             from llm_loop.core.trace_leak.ingress_token import issue_ingress
 
             it = engine._run_stream_with_acquired(
-                session_id, payload.message, model=payload.model,
+                session_id, payload.message, model=_route_model,
                 reasoning_effort=payload.reasoning_effort,
                 reasoning_mode=payload.reasoning_mode,
                 on_run_acquired=_before_start,
@@ -1196,6 +1329,7 @@ def queue_enqueue(payload: QueueEnqueueRequest, request: Request) -> Response:
         payload.message,
         attachments=[ref.model_dump() if hasattr(ref, "model_dump") else dict(ref) for ref in payload.attachments],
         model=payload.model,
+        model_change=payload.model_change,
         reasoning_effort=payload.reasoning_effort,
         reasoning_mode=payload.reasoning_mode,
         attachment_facts=attachment_facts,
@@ -1212,7 +1346,8 @@ def queue_enqueue(payload: QueueEnqueueRequest, request: Request) -> Response:
 def queue_cancel(payload: QueueCancelRequest, request: Request) -> Response:
     """取消排队项（仅 queued 可取消；claimed 已进入发送流程不可取消）."""
     hq = _human_turn_queue(request)
-    if not hq.cancel(payload.session_id, payload.queue_id):
+    item = hq.cancel_with_item(payload.session_id, payload.queue_id)
+    if item is None:
         return UTF8JSONResponse(
             status_code=409,
             content={
@@ -1220,7 +1355,80 @@ def queue_cancel(payload: QueueCancelRequest, request: Request) -> Response:
                 "detail": "排队项不存在或已在发送中，无法取消",
             },
         )
-    return UTF8JSONResponse(content={"ok": True})
+    return UTF8JSONResponse(content={"ok": True, "item": item})
+
+
+@router.post("/api/v1/chat/queue/interject", status_code=202)
+def queue_interject(payload: QueueInterjectRequest, request: Request) -> Response:
+    """Hand one queued human turn to the exact currently-running Web run.
+
+    "立即" means the next safe model-decision boundary.  This endpoint never mutates
+    Session history from the Web thread and never cancels an in-flight tool/provider
+    operation merely to make the handoff look immediate.
+    """
+    engine = _engine_from(request)
+    runner = getattr(engine, "runner", None)
+    if runner is None or not getattr(runner, "enabled", False):
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": "interject_no_live_run",
+                "detail": "当前会话没有可接收插话的运行任务；消息仍保留在排队中",
+            },
+        )
+    handle = runner.get_handle(payload.session_id)
+    if not handle:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": "interject_no_live_run",
+                "detail": "当前会话没有可接收插话的运行任务；消息仍保留在排队中",
+            },
+        )
+
+    hq = _human_turn_queue(request)
+    item = hq.claim_interject(payload.session_id, payload.queue_id)
+    if item is None:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": "interject_claim_conflict",
+                "detail": "该排队项已被领取、取消或不存在，无法立即插入",
+            },
+        )
+
+    from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
+    accepted = runner.enqueue_interjection(
+        payload.session_id,
+        {
+            "queue_id": payload.queue_id,
+            "message": item.get("message", ""),
+            "attachment_facts": list(item.get("attachment_facts") or []),
+            "_ingress": issue_ingress("web"),
+            "_on_received": lambda: hq.mark_interject_received(
+                payload.session_id, payload.queue_id
+            ),
+        },
+        expected_run_generation=str(handle.get("run_generation") or ""),
+    )
+    if not accepted:
+        hq.release_interject(payload.session_id, payload.queue_id)
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": "interject_run_changed",
+                "detail": "当前任务刚刚结束或停止；消息已恢复为普通排队",
+            },
+        )
+    return UTF8JSONResponse(
+        status_code=202,
+        content={"ok": True, "queue_id": payload.queue_id, "state": "interject_pending"},
+    )
 
 
 @router.post("/api/v1/chat/queue/dispatch")
@@ -1549,6 +1757,43 @@ def evolution_detail(request: Request, id: str = "") -> Response:
         return UTF8JSONResponse(status_code=500, content={"error": "read_failed", "detail": "建议文件读取失败。"})
 
 
+def _log_web_review(
+    evo_id: str,
+    decision: str,
+    ok: bool,
+    *,
+    data_dir: str | Path,
+    note: str = "",
+    reason: str = "",
+) -> None:
+    """web 面板审批动作审计行（EVO-20260918-d1182270: 人工决策写可检索事实）.
+
+    追加 JSONL 到 data/audit/evolution_review_log.jsonl，行内含 action=EVO_REVIEW_WEB + 建议 id，
+    AI 侧（search_files content="EVO_REVIEW_WEB"）可直接定位人工何时批了什么；
+    fail-open：审计写入失败不影响审批回执本身。
+    """
+    from datetime import UTC, datetime
+
+    try:
+        base = Path(data_dir).expanduser().resolve()
+        audit_dir = base / "audit"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": datetime.now(UTC).isoformat(),
+            "source": "web_panel",
+            "action": "EVO_REVIEW_WEB",
+            "id": evo_id,
+            "decision": decision,
+            "ok": bool(ok),
+            "reason": reason,
+            "note": note,
+        }
+        with (audit_dir / "evolution_review_log.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        pass  # fail-open（DFX-REL-06）
+
+
 @router.post("/api/v1/evolution/review")
 def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Response:
     """web 演进建议审批（EVO-20260818: 用户要求审批按钮，替代仅飞书/CLI）.
@@ -1619,12 +1864,33 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
         else:
             ok, resp = reject(store, evo_id, reason)
     except Exception as exc:  # noqa: BLE001 — 审批异常如实回执
+        _log_web_review(
+            evo_id,
+            decision,
+            False,
+            data_dir=_web_data_dir(engine),
+            note=f"异常: {type(exc).__name__}: {exc}",
+            reason=reason,
+        )
         return UTF8JSONResponse(
             status_code=500,
             content={"error": "review_failed", "detail": f"审批异常: {type(exc).__name__}: {exc}"},
         )
+    # 人工审批落可检索审计行 + 回执带新状态（EVO-20260918-d1182270: 面板反馈闭环）
+    new_status = ""
+    cur_after = _find_suggestion(store, evo_id)
+    if cur_after is not None:
+        new_status = str(cur_after.get("status") or "")
+    _log_web_review(
+        evo_id,
+        decision,
+        bool(ok),
+        data_dir=_web_data_dir(engine),
+        note=resp,
+        reason=reason,
+    )
     return UTF8JSONResponse(
-        content={"ok": ok, "message": resp},
+        content={"ok": ok, "message": resp, "id": evo_id, "new_status": new_status},
         status_code=200 if ok else 400,
     )
 
@@ -1687,9 +1953,25 @@ async def evolution_review_batch(request: Request) -> Response:
                     continue
                 ok, resp = reject(store, evo_id, reason)
             results.append({"id": evo_id, "ok": bool(ok), "message": resp})
+            _log_web_review(
+                evo_id,
+                decision,
+                bool(ok),
+                data_dir=_web_data_dir(engine),
+                note=resp,
+                reason=reason,
+            )  # EVO-20260918-d1182270
             ok_count += bool(ok)
             fail_count += not ok
         except Exception as exc:  # noqa: BLE001 — 单条失败不影响其余
+            _log_web_review(
+                evo_id,
+                decision,
+                False,
+                data_dir=_web_data_dir(engine),
+                note=f"异常: {type(exc).__name__}: {exc}",
+                reason=reason,
+            )
             results.append({"id": evo_id, "ok": False, "message": f"异常: {type(exc).__name__}: {exc}"})
             fail_count += 1
     return UTF8JSONResponse(
@@ -2341,6 +2623,17 @@ def get_session_messages(
                 "detail": f"[程序异常] 会话加载失败（{type(exc).__name__}: {exc}）。",
             },
         )
+    source_messages = session.messages
+    total = len(source_messages)
+    start = 0
+    end = total
+    if limit is not None:
+        start = max(0, total - offset - limit)
+        end = max(0, total - offset)
+        source_messages = source_messages[start:end]
+    # Project only the requested page. Previously limit=100 still constructed
+    # MessageItem objects for every message in multi-thousand-message sessions and
+    # sliced afterwards, amplifying CPU/GIL pressure during Web polling.
     messages = [
         MessageItem(
             role=m.role,
@@ -2360,15 +2653,11 @@ def get_session_messages(
             if getattr(m, "role", "") == "user"
             else [],
         )
-        for m in session.messages
+        for m in source_messages
     ]
-    total = len(messages)
     if limit is not None:
-        start = max(0, total - offset - limit)
-        end = total - offset
-        page = messages[start:end]
         return SessionMessagesResponse(
-            session_id=session_id, messages=page, has_more=start > 0, total=total
+            session_id=session_id, messages=messages, has_more=start > 0, total=total
         )
     return SessionMessagesResponse(session_id=session_id, messages=messages, total=total)
 
@@ -3088,6 +3377,7 @@ def list_dirs(request: Request, path: str = "") -> Response:
 # 只声明"本后端注册了哪些产品路由"这一机械事实，供前端一次拉取，
 # 替代启动期 404/405 路由探测。不表达策略、健康度或业务判断。
 _CAPABILITY_ROUTES: dict[str, tuple[tuple[str, str], ...]] = {
+    "learning": (("GET", "/api/v1/learning/status"),),
     "attachments": (
         ("GET", "/api/v1/attachments/recent"),
         ("POST", "/api/v1/attachments/import-workspace"),

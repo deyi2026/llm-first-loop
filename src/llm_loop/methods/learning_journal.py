@@ -14,6 +14,7 @@ Design (Learning Plane, DESIGN-20260910):
 - Corrupt/partial lines are skipped, orphan events (no queued) are ignored.
 - Program proves identity and lineage here; it never judges method quality.
 """
+
 from __future__ import annotations
 
 import fcntl
@@ -43,12 +44,16 @@ class LearningJob:
     source_episode_ref: str
     session_id: str = ""
     source_model: str = ""
+    kind: str = "reflection"
     trigger_facts: dict[str, Any] = field(default_factory=dict)
     state: str = "queued"
     reason: str = ""
     attempt: int = 0
     candidate_ref: str = ""
     created_at: float = field(default_factory=time.time)
+    updated_at: float = 0.0
+    started_at: float = 0.0
+    finished_at: float = 0.0
 
     @property
     def method_ref(self) -> str:  # backward-compatible alias
@@ -134,14 +139,17 @@ class LearningJournal:
                     source_episode_ref=str(evt.get("source_episode_ref", "")),
                     session_id=str(evt.get("session_id", "")),
                     source_model=str(evt.get("source_model", "")),
+                    kind=str(evt.get("kind") or "reflection"),
                     trigger_facts=dict(evt.get("trigger_facts") or {}),
                     created_at=float(evt.get("ts") or 0.0),
+                    updated_at=float(evt.get("ts") or 0.0),
                 )
                 jobs[job_id] = job
                 continue
             if kind == "started":
                 job.state = "started"
                 job.attempt += 1
+                job.started_at = float(evt.get("ts") or job.started_at or 0.0)
             elif kind == "admitted":
                 job.state = "admitted"
             elif kind == "requeued":
@@ -150,15 +158,20 @@ class LearningJournal:
                 job.state = "saved"
                 job.candidate_ref = str(evt.get("candidate_ref", ""))
                 job.reason = ""
+                job.finished_at = float(evt.get("ts") or 0.0)
             elif kind == "none":
                 job.state = "none"
                 job.reason = _truncate(evt.get("reason", ""))
+                job.finished_at = float(evt.get("ts") or 0.0)
             elif kind == "failed":
                 job.state = "failed"
                 job.reason = _truncate(evt.get("reason", ""))
+                job.finished_at = float(evt.get("ts") or 0.0)
             elif kind == "cancelled":
                 job.state = "cancelled"
                 job.reason = _truncate(evt.get("reason", ""))
+                job.finished_at = float(evt.get("ts") or 0.0)
+            job.updated_at = float(evt.get("ts") or job.updated_at or 0.0)
         return jobs
 
     def _snapshot(self) -> dict[str, LearningJob]:
@@ -173,6 +186,7 @@ class LearningJournal:
         *,
         session_id: str,
         source_model: str = "",
+        kind: str = "reflection",
         trigger_facts: dict[str, Any] | None = None,
     ) -> LearningJob | None:
         """Idempotent enqueue; returns None once the episode reached terminal."""
@@ -194,6 +208,7 @@ class LearningJournal:
                     "source_episode_ref": source_episode_ref,
                     "session_id": session_id,
                     "source_model": source_model,
+                    "kind": kind,
                     "trigger_facts": dict(trigger_facts or {}),
                 }
             )
@@ -202,6 +217,7 @@ class LearningJournal:
                 source_episode_ref=source_episode_ref,
                 session_id=session_id,
                 source_model=source_model,
+                kind=kind,
                 trigger_facts=dict(trigger_facts or {}),
             )
 
@@ -241,6 +257,12 @@ class LearningJournal:
         ]
         out.sort(key=lambda j: j.created_at)
         return out[:max_n]
+
+    def recent_jobs(self, limit: int = 50) -> list[LearningJob]:
+        """Return recent durable learning lifecycle facts for read-only observability."""
+        jobs = list(self._snapshot().values())
+        jobs.sort(key=lambda job: (job.updated_at or job.created_at, job.created_at), reverse=True)
+        return jobs[: max(1, min(int(limit), 200))]
 
     # ---------- transitions (append-only) ----------
 

@@ -135,6 +135,17 @@ When a run exact-hydrates `method:<id>` through `search_records`, LFL emits `met
 
 This intentionally avoids claiming that loading means applying. Qualification remains explicit through independent A/B/counterexample evidence.
 
+After the model has actually considered one hydrated Method in a real task, it may call `method_manage(action=record_use)` with one explicit declaration:
+
+- `applied`: followed the Method substantially as written;
+- `adapted`: used it but materially adapted the path;
+- `not_applicable`: inspected it and judged it inapplicable to this task;
+- `rejected`: inspected it but deliberately rejected the Method itself for this task.
+
+The runtime derives the Episode/model identity and appends `data/methods/usage.jsonl` with the exact Method content hash/status at use time. `applied/adapted` set only the narrow fact `application_proven=true`; every use receipt still records `task_benefit=not_evaluated` and `promotion=not_evaluated`. A use declaration never changes lifecycle status and is never itself qualification evidence.
+
+For non-trivial/high-friction/repeated tasks, the model may perform one bounded Method discovery (normally `limit<=5`) when a reusable path could reduce exploration. Simple, fully specified tasks should not mechanically search the Method store. This remains a model choice, not automatic Method injection.
+
 The post-run reflection emits `method.reflection` with attempted/triggered/saved-ref/teacher-fallback/reason. These are prompt-neutral durable facts.
 
 ## Privacy and chain-of-thought

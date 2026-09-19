@@ -92,6 +92,28 @@ class TestHistoryPagination:
                 "ts", "attachments", "status", "tool_name", "duration_ms",
             }
 
+    def test_limit_projects_only_requested_page(self, build_test_engine, monkeypatch):
+        """limit bounds MessageItem projection work instead of slicing after projection."""
+        engine, sid, total = _build_session(build_test_engine, 8)
+        import llm_loop.web.routes as routes
+
+        original = routes.MessageItem
+        calls = 0
+
+        def counted_message_item(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(routes, "MessageItem", counted_message_item)
+        client = _make_client(engine)
+        resp = client.get(f"/api/v1/sessions/{sid}/messages?limit=3")
+
+        assert resp.status_code == 200
+        assert resp.json()["total"] == total
+        assert len(resp.json()["messages"]) == 3
+        assert calls == 3
+
 
 class TestFrontendLazyLoad:
     def test_load_session_messages_uses_limit(self, app_js_src: str):

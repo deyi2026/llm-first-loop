@@ -48,11 +48,19 @@ def test_trigger_below_threshold_no_action(tmp_path):
     assert ex.maybe_trigger(sid) is False
 
 
+def _mk_journal(tmp_path):
+    """P0-C: maybe_trigger 的唯一调度路径是 durable LearningJournal."""
+    from llm_loop.methods.learning_journal import LearningJournal
+
+    return LearningJournal(path=tmp_path / "learning" / "journal.jsonl", candidate_lookup=None)
+
+
 def test_trigger_async_when_threshold_met(tmp_path):
-    """消息数 ≥ 阈值且过冷却 → 异步提交."""
+    """消息数 ≥ 阈值且过冷却 → 向 Learning Plane 投递 durable 任务（不自建线程）."""
     store = SessionStore(tmp_path / "sessions")
     sid = _mk_session(store, 25)
     mem = MemoryStore(tmp_path / "memory")
+    journal = _mk_journal(tmp_path)
     ex = MemoryExtractor(
         llm_client=_FakeLLMExtract(),
         memory=mem,
@@ -60,8 +68,18 @@ def test_trigger_async_when_threshold_met(tmp_path):
         interval_msgs=20,
         cooldown_s=0,
         audit_dir=tmp_path / "audit",
+        learning_journal=journal,
     )
     assert ex.maybe_trigger(sid) is True
+    runnable = journal.runnable_jobs()
+    assert len(runnable) == 1
+    job = runnable[0]
+    assert job.kind == "memory_extract"
+    assert job.session_id == sid
+    assert job.state == "queued"
+    assert job.source_episode_ref == f"memory-extract:{sid}:{store.get_meta(sid).message_count}"
+    # 只排程不执行：extract_session 由 LearningPlane 消费，本调用不得产生审计产物
+    assert not (tmp_path / "audit").exists()
 
 
 def test_cooldown_blocks_repeat(tmp_path):
@@ -76,6 +94,7 @@ def test_cooldown_blocks_repeat(tmp_path):
         interval_msgs=20,
         cooldown_s=600,
         audit_dir=tmp_path / "audit",
+        learning_journal=_mk_journal(tmp_path),
     )
     # 诊断断言（CI 平台差异排查用；失败时输出 meta 实际值）
     meta = store.get_meta(sid)
@@ -100,6 +119,7 @@ def test_cooldown_first_trigger_when_monotonic_starts_at_zero(tmp_path):
         interval_msgs=20,
         cooldown_s=600,
         audit_dir=tmp_path / "audit",
+        learning_journal=_mk_journal(tmp_path),
     )
     with mock.patch.object(extractor_mod.time, "monotonic", return_value=1.0):
         assert ex.maybe_trigger(sid) is True  # 首次（从未触发）→ 只查消息数阈值
@@ -121,8 +141,8 @@ def test_cooldown_timestamp_state_retires_after_semantic_expiry(tmp_path, monkey
         interval_msgs=20,
         cooldown_s=600,
         audit_dir=tmp_path / "audit",
+        learning_journal=_mk_journal(tmp_path),
     )
-    monkeypatch.setattr(ex, "_run_async", lambda *args, **kwargs: None)
     now = [1.0]
     monkeypatch.setattr(extractor_mod.time, "monotonic", lambda: now[0])
 

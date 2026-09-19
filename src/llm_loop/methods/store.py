@@ -67,6 +67,7 @@ class MethodRecord:
     created_at: str = ""
     updated_at: str = ""
     qualification: dict[str, Any] = field(default_factory=dict)
+    freshness_refs: tuple[str, ...] = ()
 
     @property
     def method_ref(self) -> str:
@@ -98,6 +99,7 @@ class MethodRecord:
             "parent_ref": self.parent_ref,
             "supersedes": self.supersedes,
             "qualification": self.qualification,
+            "freshness_refs": list(self.freshness_refs),
             "projection_complete": True,
         })
         return result
@@ -112,10 +114,17 @@ class MethodStore:
         *,
         seed_dir: str | Path | None = None,
         write_guard: Callable[[], bool] | None = None,
+        workspace_root: str | Path | None = None,
     ) -> None:
         self._dir = Path(methods_dir)
         self._seed_dir = Path(seed_dir) if seed_dir is not None else None
         self._write_guard = write_guard
+        if workspace_root is not None:
+            self._workspace_root = Path(workspace_root).resolve()
+        elif self._seed_dir is not None:
+            self._workspace_root = self._seed_dir.resolve().parent
+        else:
+            self._workspace_root = None
 
     def _require_write_safe(self) -> None:
         if self._write_guard is None:
@@ -190,6 +199,7 @@ class MethodStore:
             created_at=str(meta.get("created_at") or ""),
             updated_at=str(meta.get("updated_at") or ""),
             qualification=qualification,
+            freshness_refs=tuple_field("freshness_refs"),
         )
 
     def get(self, method_ref: str) -> MethodRecord | None:
@@ -205,6 +215,72 @@ class MethodStore:
                 return self._load_path(seed_path)
         return None
 
+    @staticmethod
+    def _search_terms(query: str) -> list[str]:
+        """Normalize discovery terms without assigning semantic applicability.
+
+        Hyphenated stable-id fragments become separately searchable (``poc-a-b`` ->
+        ``poc``), while CJK runs remain intact. This is intentionally mechanical.
+        """
+        raw = query.lower().strip()
+        return [t for t in re.findall(r"[a-z0-9]{2,}|[\u4e00-\u9fff]+", raw) if t]
+
+    @staticmethod
+    def _normalized_search_text(value: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", value.lower()))
+
+    def _freshness_snapshot(self, record: MethodRecord) -> dict[str, str]:
+        if not record.freshness_refs or self._workspace_root is None:
+            return {}
+        out: dict[str, str] = {}
+        root = self._workspace_root
+        for raw in record.freshness_refs:
+            rel = Path(raw)
+            if rel.is_absolute() or ".." in rel.parts:
+                out[raw] = "unsupported"
+                continue
+            target = (root / rel).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                out[raw] = "unsupported"
+                continue
+            if not target.is_file():
+                out[raw] = "missing"
+                continue
+            try:
+                out[raw] = hashlib.sha256(target.read_bytes()).hexdigest()
+            except OSError:
+                out[raw] = "unreadable"
+        return out
+
+    def freshness(self, method_ref: str) -> dict[str, Any]:
+        record = self.get(method_ref)
+        if record is None:
+            return {"state": "missing_method", "refs": []}
+        if not record.freshness_refs:
+            return {"state": "not_tracked", "refs": []}
+        current = self._freshness_snapshot(record)
+        baseline: dict[str, str] | None = None
+        for entry in reversed(self.qualification_entries(method_ref)):
+            value = entry.get("freshness_hashes")
+            if isinstance(value, dict):
+                baseline = {str(k): str(v) for k, v in value.items()}
+                break
+        if baseline is None:
+            return {"state": "unbaselined", "refs": list(record.freshness_refs), "current": current}
+        changed = [ref for ref in record.freshness_refs if current.get(ref) != baseline.get(ref)]
+        missing = [ref for ref in record.freshness_refs if current.get(ref) == "missing"]
+        state = "current" if not changed else ("missing" if missing else "changed")
+        return {
+            "state": state,
+            "refs": list(record.freshness_refs),
+            "changed_refs": changed,
+            "missing_refs": missing,
+            "current": current,
+            "baseline": baseline,
+        }
+
     def list(self, query: str = "", limit: int = 20) -> list[dict[str, Any]]:
         query = query.strip()
         if query.lower().startswith("method:"):
@@ -213,21 +289,76 @@ class MethodStore:
                 return []
             hydrated = record.hydrated()
             hydrated["qualification_entries"] = self.qualification_entries(query)
+            hydrated["freshness"] = self.freshness(query)
             return [hydrated]
-        terms = [t for t in re.split(r"\s+", query.lower()) if t]
-        ranked: list[tuple[int, MethodRecord]] = []
+        terms = self._search_terms(query)
+        # Generic lifecycle nouns are useful as standalone inventory queries, but when
+        # mixed with task language they add noise rather than discrimination.
+        if len(terms) > 1:
+            specific = [t for t in terms if t not in {"method", "candidate", "qualified", "active"}]
+            if specific:
+                terms = specific
+        raw_chunks = [chunk for chunk in re.split(r"\s+", query.lower()) if chunk]
+        ranked: list[tuple[int, float, MethodRecord]] = []
         for path in self._iter_paths():
             record = self._load_path(path)
             if record is None or record.status == "retired":
                 continue
-            hay = f"{record.name} {record.description} {record.body}".lower()
-            if terms and not all(term in hay for term in terms):
+            id_text = self._normalized_search_text(record.method_id + " " + record.method_ref)
+            name_text = self._normalized_search_text(record.name)
+            desc_text = self._normalized_search_text(record.description)
+            body_text = self._normalized_search_text(record.body)
+            fields = ((id_text, 10), (name_text, 8), (desc_text, 4), (body_text, 1))
+            matched = 0
+            lexical = 0
+            for term in terms:
+                term_score = max((weight for text, weight in fields if term in text), default=0)
+                if term_score:
+                    matched += 1
+                    lexical += term_score
+            identifier_bonus = 0
+            for chunk in raw_chunks:
+                # A stable-id-like fragment is strong mechanical evidence of identity.
+                # This fixes historical misses such as `poc-a-b` without treating it as
+                # a guessed exact `method:<id>` hydration ref.
+                if "-" not in chunk:
+                    continue
+                chunk_norm = self._normalized_search_text(chunk)
+                if len(chunk_norm) >= 3 and chunk_norm in id_text:
+                    identifier_bonus = max(identifier_bonus, 250)
+            if terms and matched == 0 and identifier_bonus == 0:
                 continue
-            lexical = sum(5 if t in record.name.lower() else 3 if t in record.description.lower() else 1 for t in terms)
-            life = {"active": 3, "qualified": 2, "candidate": 1, "teacher": 0, "hold": -1, "invalidated": -2}.get(record.status, -3)
-            ranked.append((lexical * 10 + life, record))
-        ranked.sort(key=lambda item: (item[0], item[1].method_id), reverse=True)
-        return [r.card() for _, r in ranked[:max(0, limit)]]
+            coverage = (matched / len(terms)) if terms else 0.0
+            life = {"active": 35, "qualified": 25, "candidate": 0, "teacher": -5, "hold": -10, "invalidated": -20}.get(record.status, -25)
+            score = identifier_bonus + lexical * 10 + int(coverage * 50) + life
+            ranked.append((score, coverage, record))
+        ranked.sort(key=lambda item: (item[0], item[1], item[2].method_id), reverse=True)
+        result: list[dict[str, Any]] = []
+        for _, _, record in ranked[:max(0, limit)]:
+            card = record.card()
+            if record.freshness_refs:
+                card["freshness"] = self.freshness(record.method_ref)
+            result.append(card)
+        return result
+
+    def semantic_candidates(self) -> list[dict[str, Any]]:
+        """Project Method records for mechanical semantic recall.
+
+        The projection exposes content for vectorization only; it does not assert task
+        applicability and retired records stay excluded exactly as in lexical discovery.
+        """
+        result: list[dict[str, Any]] = []
+        for path in self._iter_paths():
+            record = self._load_path(path)
+            if record is None or record.status == "retired":
+                continue
+            result.append({
+                "kind": "method",
+                "id": record.method_id,
+                "key": record.method_ref,
+                "content": f"{record.method_id} {record.name} {record.description} {record.body}",
+            })
+        return result
 
     def _ensure_runtime_copy(self, record: MethodRecord) -> MethodRecord:
         """Copy a tracked seed to runtime storage before any mutable lifecycle write."""
@@ -256,6 +387,75 @@ class MethodStore:
         if copied is None:
             raise RuntimeError("runtime Method overlay did not round-trip")
         return copied
+
+    def record_use(
+        self,
+        method_ref: str,
+        *,
+        episode_ref: str,
+        decision: str,
+        note: str = "",
+        model: str = "",
+        evidence_refs: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Append one model-authored Method applicability/use declaration.
+
+        This is observability, not qualification: it never changes lifecycle status and
+        never proves task benefit. Seed Methods are not copied into the runtime overlay
+        merely because the model declared how it treated them.
+        """
+        self._require_write_safe()
+        record = self.get(method_ref)
+        if record is None:
+            raise FileNotFoundError(method_ref)
+        allowed = {"applied", "adapted", "not_applicable", "rejected"}
+        clean_decision = decision.strip().lower()
+        if clean_decision not in allowed:
+            raise ValueError(f"decision must be one of {sorted(allowed)}")
+        clean_episode = episode_ref.strip()
+        if not clean_episode.startswith("episode:"):
+            raise ValueError("Method use declaration requires runtime episode provenance")
+        entry = {
+            "ts": _now(),
+            "method_ref": record.method_ref,
+            "method_content_hash": record.content_hash,
+            "method_status": record.status,
+            "episode_ref": clean_episode,
+            "decision": clean_decision,
+            "model": model.strip()[:256],
+            "evidence_refs": [str(v).strip() for v in (evidence_refs or []) if str(v).strip()],
+            "note": note.strip()[:2000],
+            "application_proven": clean_decision in {"applied", "adapted"},
+            "task_benefit": "not_evaluated",
+            "promotion": "not_evaluated",
+        }
+        self._dir.mkdir(parents=True, exist_ok=True)
+        path = self._dir / "usage.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+        return entry
+
+    def usage_entries(self, method_ref: str = "") -> list[dict[str, Any]]:
+        """Read bounded-size local use declarations; semantic interpretation stays model-owned."""
+        path = self._dir / "usage.jsonl"
+        if not path.is_file():
+            return []
+        wanted = method_ref.strip().lower()
+        result: list[dict[str, Any]] = []
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(value, dict):
+                    continue
+                if wanted and str(value.get("method_ref", "")).lower() != wanted:
+                    continue
+                result.append(value)
+        except OSError:
+            return []
+        return result
 
     def record_qualification(
         self,
@@ -304,6 +504,9 @@ class MethodStore:
             "note": note.strip()[:4000],
             "evaluator": evaluator.strip()[:128] or "model",
         }
+        freshness_hashes = self._freshness_snapshot(record)
+        if freshness_hashes:
+            entry["freshness_hashes"] = freshness_hashes
         qpath = Path(record.path).parent / "qualification.jsonl"
         with qpath.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
@@ -362,7 +565,7 @@ class MethodStore:
         meta, body = _parse_frontmatter(raw)
         meta["status"] = target
         meta["updated_at"] = _now()
-        ordered = ["method_id", "name", "description", "status", "source_model", "teacher_refs", "source_episode_refs", "evidence_refs", "parent_ref", "supersedes", "created_at", "updated_at"]
+        ordered = ["method_id", "name", "description", "status", "source_model", "teacher_refs", "source_episode_refs", "evidence_refs", "freshness_refs", "parent_ref", "supersedes", "created_at", "updated_at"]
         lines: list[str] = []
         for key in ordered:
             value = meta.pop(key, None)

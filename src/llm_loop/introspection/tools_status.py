@@ -722,11 +722,17 @@ def _finalize_search_records(
             method_ref = str(r.get("key", ""))
             status = str(r.get("status", ""))
             description = str(r.get("description", ""))
-            card = f"{summary} ({method_ref}, status={status}) — {description}".strip()
+            freshness_value = r.get("freshness")
+            freshness: dict[str, Any] = freshness_value if isinstance(freshness_value, dict) else {}
+            freshness_state = str(freshness.get("state") or "")
+            freshness_part = f", freshness={freshness_state}" if freshness_state else ""
+            card = f"{summary} ({method_ref}, status={status}{freshness_part}) — {description}".strip()
             if r.get("projection_complete"):
                 body = str(r.get("body", ""))
                 quals = r.get("qualification_entries") or []
                 full = card + f"\n--- exact Method ---\n{body}"
+                if freshness_state and freshness_state != "not_tracked":
+                    full += "\n--- freshness ---\n" + json.dumps(freshness, ensure_ascii=False)
                 if quals:
                     full += "\n--- qualification ---\n" + json.dumps(quals, ensure_ascii=False)
                 lines.append(prefix + full)

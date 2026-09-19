@@ -164,8 +164,8 @@ def test_find_by_evidence_roundtrip(tmp_path):
     assert store.find_by_evidence("") is None
 
 
-def test_factory_assembles_learning_plane_only_when_enabled(tmp_path):
-    """factory 装配：显式关闭零挂载；开启时 journal+plane 就绪且可停."""
+def test_factory_separates_learning_journal_producer_from_dedicated_consumer(tmp_path):
+    """Task runtimes only enqueue; the dedicated Learning runtime owns Reflection consumption."""
     from llm_loop.config import Settings
     from llm_loop.factory import build_engine
 
@@ -188,19 +188,26 @@ def test_factory_assembles_learning_plane_only_when_enabled(tmp_path):
 
     engine_on = build_engine(_mk(True))
     try:
-        plane = engine_on.learning_plane
-        assert plane is not None and plane._thread.is_alive()
-        assert engine_on.resource_governor is plane._resource_governor
-        assert plane._provider_call_coordinator is engine_on.provider_call_coordinator
-        assert engine_on.provider_call_coordinator.governor is engine_on.resource_governor
+        # Web/Feishu/CLI task runtimes may enqueue learning work but never consume it.
+        assert engine_on.learning_plane is None
         journal = engine_on.learning_journal
         assert journal is not None
         assert journal._path.parent.name == "learning"  # sessions/learning/journal.jsonl
         assert journal.runnable_jobs() == []  # journal 与文件系统协同（惰性建文件，无积压）
     finally:
-        if engine_on.learning_plane is not None:
-            engine_on.learning_plane.stop()
-    assert engine_on.learning_plane._thread is None or not engine_on.learning_plane._thread.is_alive()
+        engine_on.close()
+
+    engine_learning = build_engine(_mk(True), runtime_role="learning")
+    plane = engine_learning.learning_plane
+    try:
+        assert plane is not None and plane._thread.is_alive()
+        assert engine_learning.resource_governor is plane._resource_governor
+        assert plane._provider_call_coordinator is engine_learning.provider_call_coordinator
+        assert engine_learning.provider_call_coordinator.governor is engine_learning.resource_governor
+        assert engine_learning.learning_journal is not None
+    finally:
+        engine_learning.close()
+    assert plane._thread is None or not plane._thread.is_alive()
 
 
 def _resource_target(model_ref: str) -> tuple[str, str]:

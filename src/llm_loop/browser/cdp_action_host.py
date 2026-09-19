@@ -7,6 +7,7 @@ to fixed internal CDP sequences.  It performs no retry and never silently rebind
 
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
 from collections.abc import Callable
@@ -16,6 +17,8 @@ from websockets.sync.client import connect as websocket_connect
 
 from llm_loop.browser.action import BrowserDispatchResult
 from llm_loop.browser.cdp_host import (
+    _CONNECTION_LOST_ERRORS,
+    DEFAULT_CDP_MAX_FRAME_BYTES,
     _default_http_get_json,
     _normalize_loopback_debug_url,
     _validate_loopback_ws_url,
@@ -36,8 +39,11 @@ class _WebSocketLike(Protocol):
     def close(self) -> None: ...
 
 
-def _default_ws_connect(url: str) -> _WebSocketLike:
-    return cast(_WebSocketLike, websocket_connect(url, open_timeout=5.0))
+def _default_ws_connect(url: str, *, max_frame_bytes: int = DEFAULT_CDP_MAX_FRAME_BYTES) -> _WebSocketLike:
+    return cast(
+        _WebSocketLike,
+        websocket_connect(url, open_timeout=5.0, max_size=max(1, int(max_frame_bytes))),
+    )
 
 
 class _MutationCdpSession:
@@ -89,15 +95,21 @@ class CdpBrowserMutationActuator:
         debug_base_url: str,
         *,
         target_id: str = "",
+        max_frame_bytes: int = DEFAULT_CDP_MAX_FRAME_BYTES,
         http_get_json: Callable[[str], list[dict[str, Any]]] | None = None,
         ws_connect: Callable[[str], _WebSocketLike] | None = None,
     ) -> None:
+        if max_frame_bytes < 1:
+            raise ValueError("max_frame_bytes must be >= 1")
         self.debug_base_url = _normalize_loopback_debug_url(debug_base_url)
         self._configured_target_id = str(target_id or "").strip()
         self._bound_target_id = ""
         self._bound_websocket_url = ""
         self._http_get_json = http_get_json or _default_http_get_json
-        self._ws_connect = ws_connect or _default_ws_connect
+        self._max_frame_bytes = int(max_frame_bytes)
+        self._ws_connect: Callable[[str], _WebSocketLike] = ws_connect or (
+            lambda url: _default_ws_connect(url, max_frame_bytes=self._max_frame_bytes)
+        )
         self._websocket: _WebSocketLike | None = None
         self._session: _MutationCdpSession | None = None
         self._dispatch_lock = threading.Lock()
@@ -231,59 +243,81 @@ class CdpBrowserMutationActuator:
         if result.get("exceptionDetails"):
             raise RuntimeError("fixed Browser actuator function raised")
 
+    def _drop_session(self) -> None:
+        # EVO-20260918-753b4a91: same-target reconnect only — bound target identity
+        # stays pinned; page events must be re-enabled on the new connection.
+        websocket = self._websocket
+        self._session = None
+        self._websocket = None
+        self._page_events_enabled = False
+        if websocket is not None:
+            with contextlib.suppress(Exception):  # noqa: BLE001 - best-effort close of a dead socket
+                websocket.close()
+
     def dispatch(self, *, verb: str, physical_target: str | None, args: dict[str, Any]) -> BrowserDispatchResult:
         with self._dispatch_lock:
-            session = self._ensure_session()
-            before_page_ids = self._page_target_ids()
-            if verb == "navigate":
-                session.send("Page.navigate", {"url": str(args["url"])})
-                detected = self._boundary_events(session, before_page_ids=before_page_ids)
-                return BrowserDispatchResult(
-                    acknowledged=True,
-                    boundary_events=(
-                        {
-                            "event": "navigation_started",
-                            "scope_ref": None,
-                            "detector": "Page.navigate_ack",
-                            "complete": False,
-                        },
-                    )
-                    + detected,
-                    completeness_reasons=("boundary_detector_non_exhaustive",),
-                )
+            try:
+                return self._dispatch_locked(verb=verb, physical_target=physical_target, args=args)
+            except _CONNECTION_LOST_ERRORS as exc:
+                self._drop_session()
+                raise RuntimeError(
+                    "CDP mutation connection lost; dropped session for same-target reconnect"
+                ) from exc
 
-            object_id = self._object_id(session, physical_target)
-            if verb == "click":
-                self._call(session, object_id, "function(){ this.click(); }")
-            elif verb == "fill":
-                self._call(
-                    session,
-                    object_id,
-                    "function(value,mode){ const next=mode==='append' ? String(this.value||'')+value : value; this.value=next; this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true})); }",
-                    [{"value": str(args["text"])}, {"value": str(args["mode"])}],
-                )
-            elif verb == "select":
-                self._call(
-                    session,
-                    object_id,
-                    "function(value){ this.value=value; this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true})); }",
-                    [{"value": str(args["value"])}],
-                )
-            elif verb == "scroll":
-                self._call(
-                    session,
-                    object_id,
-                    "function(pages){ this.scrollIntoView({block:'center',inline:'nearest'}); window.scrollBy(0, Number(pages)*window.innerHeight); }",
-                    [{"value": float(args["delta_pages"])}],
-                )
-            else:
-                raise ValueError(f"unsupported Browser mutation verb: {verb}")
+    def _dispatch_locked(
+        self, *, verb: str, physical_target: str | None, args: dict[str, Any]
+    ) -> BrowserDispatchResult:
+        session = self._ensure_session()
+        before_page_ids = self._page_target_ids()
+        if verb == "navigate":
+            session.send("Page.navigate", {"url": str(args["url"])})
             detected = self._boundary_events(session, before_page_ids=before_page_ids)
             return BrowserDispatchResult(
                 acknowledged=True,
-                boundary_events=detected,
+                boundary_events=(
+                    {
+                        "event": "navigation_started",
+                        "scope_ref": None,
+                        "detector": "Page.navigate_ack",
+                        "complete": False,
+                    },
+                )
+                + detected,
                 completeness_reasons=("boundary_detector_non_exhaustive",),
             )
+
+        object_id = self._object_id(session, physical_target)
+        if verb == "click":
+            self._call(session, object_id, "function(){ this.click(); }")
+        elif verb == "fill":
+            self._call(
+                session,
+                object_id,
+                "function(value,mode){ const next=mode==='append' ? String(this.value||'')+value : value; this.value=next; this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true})); }",
+                [{"value": str(args["text"])}, {"value": str(args["mode"])}],
+            )
+        elif verb == "select":
+            self._call(
+                session,
+                object_id,
+                "function(value){ this.value=value; this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true})); }",
+                [{"value": str(args["value"])}],
+            )
+        elif verb == "scroll":
+            self._call(
+                session,
+                object_id,
+                "function(pages){ this.scrollIntoView({block:'center',inline:'nearest'}); window.scrollBy(0, Number(pages)*window.innerHeight); }",
+                [{"value": float(args["delta_pages"])}],
+            )
+        else:
+            raise ValueError(f"unsupported Browser mutation verb: {verb}")
+        detected = self._boundary_events(session, before_page_ids=before_page_ids)
+        return BrowserDispatchResult(
+            acknowledged=True,
+            boundary_events=detected,
+            completeness_reasons=("boundary_detector_non_exhaustive",),
+        )
 
     def close(self) -> None:
         websocket = self._websocket

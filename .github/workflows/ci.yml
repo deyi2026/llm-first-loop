@@ -29,7 +29,13 @@ jobs:
     name: 门禁（pytest + ruff + pyright）
     runs-on: ubuntu-latest
     steps:
+      # Full history: the peer-scorecard contract tests pin exact subject
+      # commits (e.g. 832b4dfaa) that are ancestors of PR heads but absent
+      # from a depth-1 checkout. Same shallow-clone ambiguity already
+      # documented in architecture-review.yml.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"

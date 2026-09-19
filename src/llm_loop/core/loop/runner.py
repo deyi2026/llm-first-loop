@@ -103,6 +103,9 @@ class RunHandle:
     # EVO-20260825（任务12 §5.12）: 压测残留 run 巡检数据源——最后活跃时间 + 当前轮数
     last_active_ts: float = field(default_factory=time.time)
     current_round: int = 0
+    # Human steer mailbox. Web threads may append only through BackgroundRunner;
+    # the engine worker is the sole consumer at a safe round boundary.
+    interjections: list[dict[str, Any]] = field(default_factory=list, repr=False)
 
     def snapshot(self) -> dict:
         return {
@@ -115,6 +118,7 @@ class RunHandle:
             "cancelled": self.cancelled,
             "last_active_ts": self.last_active_ts,
             "current_round": self.current_round,
+            "interjection_pending": len(self.interjections),
         }
 
 
@@ -419,6 +423,49 @@ class BackgroundRunner:
         with self._guard:
             h = self._registry.get(session_id)
             return h.snapshot() if h else None
+
+    def enqueue_interjection(
+        self,
+        session_id: str,
+        payload: dict[str, Any],
+        *,
+        expected_run_generation: str | None = None,
+    ) -> bool:
+        """Queue one human interjection into the currently running generation.
+
+        This is intentionally process-local and run-owned: the durable queue item is the
+        transport/source-of-truth, while this mailbox is only the handoff into the exact
+        live worker.  The engine worker consumes it at a safe model-round boundary.
+        """
+        with self._guard:
+            h = self._registry.get(session_id)
+            if h is None or h.status != "running" or h.cancelled:
+                return False
+            expected = str(expected_run_generation or "")
+            if expected and expected != h.run_generation:
+                return False
+            h.interjections.append(dict(payload))
+            return True
+
+    def take_interjections(self, session_id: str) -> list[dict[str, Any]]:
+        """Atomically drain pending human interjections for the current run worker."""
+        with self._guard:
+            h = self._registry.get(session_id)
+            if h is None or h.status != "running" or not h.interjections:
+                return []
+            rows = list(h.interjections)
+            h.interjections.clear()
+            return rows
+
+    @staticmethod
+    def acknowledge_interjection(payload: dict[str, Any]) -> None:
+        """Best-effort transport acknowledgement after the engine persisted the steer."""
+        callback = payload.get("_on_received")
+        if callable(callback):
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 - UI acknowledgement cannot rewrite run truth
+                logger.warning("interjection acknowledgement failed (fail-open)", exc_info=True)
 
     def cancel(self, session_id: str, reason: str = CANCEL_REASON_USER_STOP) -> bool:
         """请求取消进行中的 run（2026-08-23 停止按钮修复；双路径扩展）.
