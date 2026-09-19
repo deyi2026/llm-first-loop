@@ -1,0 +1,127 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-wake-jobs-projection",
+  "summary": "EVO-20260919-eee9d3b8（人工已审）: schedule wake 续跑 prompt 追加本会话后台任务机械现状投影（JobRegistry 快照的有界投影：active 全列封顶 8 + terminal 最近 3 + 计数摘要），并把 schedule.message 语义收紧为「哨兵+完成判据+核验动作」。无新 store/无 watcher/无 liveness 推断，投影 fail-open。",
+  "components": [
+    {
+      "component_id": "wake-jobs-facts-projection",
+      "paths": [
+        "src/llm_loop/tools/builtin/job_registry.py",
+        "src/llm_loop/factory.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "schedule wake 交付路径（factory._deliver_schedule）+ JobRegistry 快照读取面（format_session_jobs_facts）",
+      "disposition": "ADMIT as one narrow injection tranche: the already-authorized wake continuation prompt gains a mechanical registry projection; no new authority, no auto-retry, no cross-session data; projection failure degrades to the prior prompt (fail-open).",
+      "evidence": [
+        "事故基线（2026-09-19 本会话实证）: 唤醒 run 看不到沉睡前后台任务终态回执 → 对已完成的发布步骤整清单重放、对已结束 job 重复轮询 ×3；程序侧 JobRegistry/EventStore 一直持有真相但从未注入。",
+        "tests/unit/test_wake_jobs_projection.py 6/6：空会话空注册表、running cmd_head 截断 60、terminal exit+output_tail、封顶最近 3 条+省略计数、registry 异常 fail-open、跨会话隔离。",
+        "相邻套件 test_job_registry/test_schedule*/test_factory/test_err1214_human_wire 60/60 PASS；ruff clean。"
+      ],
+      "verification_level": "Focused TDD on projection + adjacent suite + ruff + CI 门禁",
+      "model_evidence_veto_recovery_exit": "Projection is read-only facts labeled 机械事实·非建议; model still verifies via job_output. Exit: fail-open(投影异常回退旧 prompt)或单提交 revert。",
+      "rollback_route": "Revert the single commit; no data or schema migration.",
+      "declaration_id": "wake-jobs-facts-projection"
+    },
+    {
+      "component_id": "schedule-message-semantics",
+      "paths": [
+        "src/llm_loop/tools/builtin/schedule.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "ScheduleTool schema surface（wake message 语义契约，模型可读面）",
+      "disposition": "ADMIT as description-layer only: message 参数描述改为「哨兵+完成判据+核验动作」并在工具描述声明 wake 自动注入；无逻辑变更（同类先例：method_manage schema 描述澄清 ae675930）。",
+      "evidence": [
+        "实证: sched-133d7aee 的 wake message 为完整步骤清单，唤醒后被逐步重放；描述层是模型实际读取的契约面。",
+        "schedule 相关测试全绿（描述变更无逻辑影响）。"
+      ],
+      "verification_level": "Adjacent schedule tests + ruff",
+      "model_evidence_veto_recovery_exit": "描述是建议性文本；模型/人工复核保留判断权。",
+      "rollback_route": "Revert with the commit.",
+      "declaration_id": "schedule-message-semantics"
+    },
+    {
+      "component_id": "wake-jobs-projection-tests",
+      "paths": [
+        "tests/unit/test_wake_jobs_projection.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic regression for wake projection bounds, fail-open, and session isolation",
+      "disposition": "ADMIT as tests only (6 cases).",
+      "evidence": [
+        "6/6 PASS pre-publication."
+      ],
+      "verification_level": "Focused + adjacent pytest",
+      "model_evidence_veto_recovery_exit": "Tests expose mechanical facts and can be revised independently.",
+      "rollback_route": "Revert with the implementation."
+    },
+    {
+      "component_id": "wake-jobs-projection-a5-record",
+      "paths": [
+        "docs/governance/submissions/20260919-wake-jobs-projection.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 stays mechanical.",
+      "evidence": [
+        "Manifest partitions the exact changed-path set (2 control components + tests + record)."
+      ],
+      "verification_level": "Local exact A.5 self-gate before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth.",
+      "rollback_route": "Revert together with the implementation."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "wake-jobs-facts-projection",
+      "g1": {
+        "necessity": "Wake 续跑与沉睡前 run 隔离：后台任务终态回执在睡眠期间产生（压缩折叠/跨进程不可见），唤醒 run 以「无从知晓已完成」启动。2026-09-19 实证事故：唤醒后对已结束 job 重复轮询 ×3、把已完成发布当未完成整清单重放。程序侧一直持有机械真相（JobRegistry 进程内 + EventStore durable），缺少的只是唤醒交付时的注入。"
+      },
+      "g2": {
+        "authority_owner": "既有 JobRegistry.snapshots_for_session（owner 范围会话快照，local+durable orphan 事实）与既有 factory._deliver_schedule prompt 路径",
+        "relationship": "reuse",
+        "non_duplication": "无新 store/watcher/轮询线程：交付时一次性读快照投影；与 job_output 工具共用同一数据面，不形成第二真相源。"
+      },
+      "g3": {
+        "model_evidence": [
+          "format_session_jobs_facts 单测 6/6（含 fail-open 与跨会话隔离）",
+          "相邻 job_registry/schedule/factory/err1214 套件 60/60 PASS",
+          "投影有界：active≤8 行、terminal≤3 行、cmd_head≤60、tail≤80，附计数摘要"
+        ],
+        "recovery_or_reason": "投影异常 try/except 回退空串（唤醒照旧发出）；单提交 revert 即完全退出，无数据/模式迁移。"
+      },
+      "g4": {
+        "rollback": "Revert the single commit; wake path returns to the pre-EVO prompt verbatim.",
+        "verification": [
+          "tests/unit/test_wake_jobs_projection.py 6/6 PASS",
+          "相邻套件 60/60 PASS；ruff clean",
+          "CI 门禁（pytest+ruff+pyright）在 PR 上复核"
+        ]
+      }
+    },
+    {
+      "declaration_id": "schedule-message-semantics",
+      "g1": {
+        "necessity": "schedule.message 原描述不区分普通提醒与 wake 续跑语义；wake 消息写成可重放步骤清单时（sched-133d7aee 实证），唤醒 run 在看不到终态回执的前提下逐步重放已完成步骤。描述层是模型实际读取的契约面，需在 schema 上写明「哨兵+完成判据+核验动作」。"
+      },
+      "g2": {
+        "authority_owner": "既有 ScheduleTool parameters schema（唯一契约面）",
+        "relationship": "reuse",
+        "non_duplication": "仅修改既有 schema 内的 description 字符串与工具 description，不新增任何文件/面/存储。"
+      },
+      "g3": {
+        "model_evidence": [
+          "描述层 diff 无逻辑变更（同类先例 ae675930 method_manage schema 澄清）",
+          "schedule 相邻测试全绿"
+        ],
+        "recovery_or_reason": "纯文本回退：revert 即恢复原文，无运行时耦合。"
+      },
+      "g4": {
+        "rollback": "Revert with the commit.",
+        "verification": [
+          "tests/unit/test_schedule_wake.py 等相邻套件 PASS",
+          "ruff clean"
+        ]
+      }
+    }
+  ]
+}
