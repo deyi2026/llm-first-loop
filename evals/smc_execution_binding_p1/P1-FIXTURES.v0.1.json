@@ -1,0 +1,765 @@
+{
+  "determinism": {
+    "logical_now": "2026-09-19T20:00:00Z",
+    "network": "forbidden",
+    "opaque_id_seed": "smc-execution-binding-p1-v0.1"
+  },
+  "frozen_contract_commit": "3b7163a11dca88e7a4e2bd6c6b7146e5925adc31",
+  "positive_envelopes": {
+    "action_ref_record": {
+      "action_ref": "ar_fixture",
+      "authority_scope": "authority:user-p1",
+      "device_id": "device-desktop",
+      "domain": "desktop",
+      "expires_at": "2026-09-19T21:00:00Z",
+      "grounding_ref": null,
+      "integrity": {
+        "algorithm": "sha256",
+        "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "issued_at": "2026-09-19T20:00:00Z",
+      "observation_ref": "obs:desktop:1",
+      "observed_version": "doc-v1",
+      "provider_object_ref": "providerobj:desktop:doc_17",
+      "schema": "smc.action_ref_record.v0.1",
+      "scope_ref": "scope:desktop:doc",
+      "semantic_object_id": "doc_17",
+      "session_id": "session-p1",
+      "validity_class": "observation_exact"
+    },
+    "binding_dispatch": {
+      "action_id": "action-fixture",
+      "action_ref": "ar_fixture",
+      "authority_check_ref": "authcheck:1",
+      "binding_id": "binding.desktop.save.native",
+      "capability_ref": "capref:desktop.synthetic:7:cap.document.save",
+      "confirmation_ref": null,
+      "effect_reservation_ref": "reservation:doc_17",
+      "expected_context_ref": null,
+      "expected_context_version": null,
+      "expected_observation_ref": "obs:desktop:1",
+      "expected_version": "doc-v1",
+      "manifest_revision": 7,
+      "requested_action": {
+        "args": {},
+        "semantic_verb": "save",
+        "target_id": "doc_17"
+      },
+      "schema": "smc.binding_dispatch.v0.1"
+    },
+    "binding_receipt": {
+      "action_id": "action-fixture",
+      "after_version": "doc-v2",
+      "attempt": 1,
+      "automatic_replay": false,
+      "before_version": "doc-v1",
+      "binding_class": "native_api",
+      "binding_id": "binding.desktop.save.native",
+      "boundary_events": [],
+      "completeness": {
+        "complete": true,
+        "reasons": []
+      },
+      "confirmation_ref": null,
+      "context_after": null,
+      "context_before": null,
+      "effective_action": {
+        "args": {},
+        "semantic_verb": "save",
+        "target_id": "doc_17"
+      },
+      "observed_effects": [
+        {
+          "from": "doc-v1",
+          "kind": "synthetic_version_change",
+          "to": "doc-v2"
+        }
+      ],
+      "reason": null,
+      "requested_action": {
+        "args": {},
+        "semantic_verb": "save",
+        "target_id": "doc_17"
+      },
+      "schema": "smc.binding_receipt.v0.1",
+      "status": "ok",
+      "user_modified_parameters": []
+    },
+    "capability_manifest_page": {
+      "domain": "desktop",
+      "filters": {
+        "control_capability_class": null,
+        "semantic_verb": null,
+        "target_kind": null
+      },
+      "items": [
+        {
+          "atomicity_class": "single_dispatch",
+          "binding_equivalence_class_id": "eq.document.export",
+          "capability_id": "cap.document.export",
+          "capability_ref": "capref:desktop.synthetic:7:cap.document.export",
+          "confirmation_requirement": "platform_managed",
+          "control_capability_class": "DIRECT_SEMANTIC",
+          "effect_class": "create_artifact",
+          "idempotency_class": "unknown",
+          "parameter_schema_ref": "params:cap.document.export:v0.1",
+          "permission_requirements": [
+            "document.read",
+            "destination.write"
+          ],
+          "schema": "smc.capability.v0.1",
+          "semantic_verb": "export",
+          "target_kind": "document"
+        },
+        {
+          "atomicity_class": "single_dispatch",
+          "binding_equivalence_class_id": "eq.document.save",
+          "capability_id": "cap.document.save",
+          "capability_ref": "capref:desktop.synthetic:7:cap.document.save",
+          "confirmation_requirement": "none",
+          "control_capability_class": "DIRECT_SEMANTIC",
+          "effect_class": "update_document",
+          "idempotency_class": "idempotent",
+          "parameter_schema_ref": "params:cap.document.save:v0.1",
+          "permission_requirements": [
+            "document.write"
+          ],
+          "schema": "smc.capability.v0.1",
+          "semantic_verb": "save",
+          "target_kind": "document"
+        },
+        {
+          "atomicity_class": "single_dispatch",
+          "binding_equivalence_class_id": "eq.document.share",
+          "capability_id": "cap.document.share",
+          "capability_ref": "capref:desktop.synthetic:7:cap.document.share",
+          "confirmation_requirement": "runtime_user_required",
+          "control_capability_class": "DIRECT_SEMANTIC",
+          "effect_class": "external_share",
+          "idempotency_class": "non_idempotent",
+          "parameter_schema_ref": "params:cap.document.share:v0.1",
+          "permission_requirements": [
+            "document.read",
+            "share.send"
+          ],
+          "schema": "smc.capability.v0.1",
+          "semantic_verb": "share",
+          "target_kind": "document"
+        },
+        {
+          "atomicity_class": "single_dispatch",
+          "binding_equivalence_class_id": "eq.system.unlock",
+          "capability_id": "cap.system.unlock",
+          "capability_ref": "capref:desktop.synthetic:7:cap.system.unlock",
+          "confirmation_requirement": "human_only",
+          "control_capability_class": "HUMAN_REQUIRED",
+          "effect_class": "security_transition",
+          "idempotency_class": "unknown",
+          "parameter_schema_ref": "params:cap.system.unlock:v0.1",
+          "permission_requirements": [],
+          "schema": "smc.capability.v0.1",
+          "semantic_verb": "unlock",
+          "target_kind": "system"
+        }
+      ],
+      "manifest_ref": "manifest:desktop:7",
+      "manifest_revision": 7,
+      "ordering": "provider_target_verb_capability_v0.1",
+      "projection": {
+        "complete": true,
+        "next_cursor": null,
+        "returned_count": 4,
+        "total_count": 4
+      },
+      "provider_id": "desktop.synthetic",
+      "schema": "smc.capability_manifest_page.v0.1",
+      "scope_ref": "scope:desktop"
+    },
+    "execution_binding": {
+      "atomicity_class": "single_dispatch",
+      "binding_class": "native_api",
+      "binding_id": "binding.desktop.save.native",
+      "capability_ref": "capref:desktop.synthetic:7:cap.document.save",
+      "confirmation_requirement": "none",
+      "context_preconditions": [],
+      "effect_class": "update_document",
+      "equivalence_class_id": "eq.document.save",
+      "fallback_policy": "equivalent_only",
+      "idempotency_class": "idempotent",
+      "manifest_revision": 7,
+      "permission_requirements": [
+        "document.write"
+      ],
+      "receipt_obligations": [
+        "observed_effects",
+        "version_after",
+        "binding_used"
+      ],
+      "schema": "smc.execution_binding.v0.1",
+      "semantic_verb": "save",
+      "target_kind": "document"
+    },
+    "interaction_context": {
+      "active_application": "app_editor",
+      "active_window": "win_doc",
+      "completeness": {
+        "complete": true,
+        "reasons": []
+      },
+      "context_ref": "ctxref:desktop",
+      "context_version": "ctx-desktop-1",
+      "focused_object": "doc_17",
+      "foreground_scene": null,
+      "input_method": "synthetic-ime",
+      "keyboard_layout": "synthetic-us",
+      "lock_state": "unlocked",
+      "modifier_state": "none",
+      "orientation": "landscape",
+      "schema": "smc.interaction_context.v0.1",
+      "selection": null,
+      "system_overlay": null,
+      "virtual_keyboard": "hidden"
+    }
+  },
+  "profiles": {
+    "desktop": {
+      "authority_scope": "authority:user-p1",
+      "bindings": {
+        "cap.document.export": [
+          {
+            "atomicity_class": "single_dispatch",
+            "binding_class": "native_api",
+            "binding_id": "binding.desktop.export.native",
+            "capability_ref": "capref:desktop.synthetic:7:cap.document.export",
+            "confirmation_requirement": "platform_managed",
+            "context_preconditions": [],
+            "effect_class": "create_artifact",
+            "equivalence_class_id": "eq.document.export",
+            "fallback_policy": "equivalent_only",
+            "idempotency_class": "unknown",
+            "manifest_revision": 7,
+            "permission_requirements": [
+              "document.read",
+              "destination.write"
+            ],
+            "receipt_obligations": [
+              "observed_effects",
+              "version_after",
+              "binding_used"
+            ],
+            "schema": "smc.execution_binding.v0.1",
+            "semantic_verb": "export",
+            "target_kind": "document"
+          }
+        ],
+        "cap.document.save": [
+          {
+            "atomicity_class": "single_dispatch",
+            "binding_class": "native_api",
+            "binding_id": "binding.desktop.save.native",
+            "capability_ref": "capref:desktop.synthetic:7:cap.document.save",
+            "confirmation_requirement": "none",
+            "context_preconditions": [],
+            "effect_class": "update_document",
+            "equivalence_class_id": "eq.document.save",
+            "fallback_policy": "equivalent_only",
+            "idempotency_class": "idempotent",
+            "manifest_revision": 7,
+            "permission_requirements": [
+              "document.write"
+            ],
+            "receipt_obligations": [
+              "observed_effects",
+              "version_after",
+              "binding_used"
+            ],
+            "schema": "smc.execution_binding.v0.1",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          {
+            "atomicity_class": "single_dispatch",
+            "binding_class": "keyboard_shortcut",
+            "binding_id": "binding.desktop.save.shortcut",
+            "capability_ref": "capref:desktop.synthetic:7:cap.document.save",
+            "confirmation_requirement": "none",
+            "context_preconditions": [
+              "active_application",
+              "active_window",
+              "focused_object",
+              "keyboard_layout",
+              "modifier_state"
+            ],
+            "effect_class": "update_document",
+            "equivalence_class_id": "eq.document.save",
+            "fallback_policy": "equivalent_only",
+            "idempotency_class": "idempotent",
+            "manifest_revision": 7,
+            "permission_requirements": [
+              "document.write"
+            ],
+            "receipt_obligations": [
+              "observed_effects",
+              "version_after",
+              "binding_used"
+            ],
+            "schema": "smc.execution_binding.v0.1",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          }
+        ],
+        "cap.document.share": [
+          {
+            "atomicity_class": "single_dispatch",
+            "binding_class": "native_semantic",
+            "binding_id": "binding.desktop.share.native",
+            "capability_ref": "capref:desktop.synthetic:7:cap.document.share",
+            "confirmation_requirement": "runtime_user_required",
+            "context_preconditions": [],
+            "effect_class": "external_share",
+            "equivalence_class_id": "eq.document.share",
+            "fallback_policy": "equivalent_only",
+            "idempotency_class": "non_idempotent",
+            "manifest_revision": 7,
+            "permission_requirements": [
+              "document.read",
+              "share.send"
+            ],
+            "receipt_obligations": [
+              "observed_effects",
+              "version_after",
+              "binding_used"
+            ],
+            "schema": "smc.execution_binding.v0.1",
+            "semantic_verb": "share",
+            "target_kind": "document"
+          }
+        ],
+        "cap.system.unlock": []
+      },
+      "capabilities": [
+        {
+          "atomicity_class": "single_dispatch",
+          "binding_equivalence_class_id": "eq.document.export",
+          "capability_id": "cap.document.export",
+          "capability_ref": "capref:desktop.synthetic:7:cap.document.export",
+          "confirmation_requirement": "platform_managed",
+          "control_capability_class": "DIRECT_SEMANTIC",
+          "effect_class": "create_artifact",
+          "idempotency_class": "unknown",
+          "parameter_schema_ref": "params:cap.document.export:v0.1",
+          "permission_requirements": [
+            "document.read",
+            "destination.write"
+          ],
+          "schema": "smc.capability.v0.1",
+          "semantic_verb": "export",
+          "target_kind": "document"
+        },
+        {
+          "atomicity_class": "single_dispatch",
+          "binding_equivalence_class_id": "eq.document.save",
+          "capability_id": "cap.document.save",
+          "capability_ref": "capref:desktop.synthetic:7:cap.document.save",
+          "confirmation_requirement": "none",
+          "control_capability_class": "DIRECT_SEMANTIC",
+          "effect_class": "update_document",
+          "idempotency_class": "idempotent",
+          "parameter_schema_ref": "params:cap.document.save:v0.1",
+          "permission_requirements": [
+            "document.write"
+          ],
+          "schema": "smc.capability.v0.1",
+          "semantic_verb": "save",
+          "target_kind": "document"
+        },
+        {
+          "atomicity_class": "single_dispatch",
+          "binding_equivalence_class_id": "eq.document.share",
+          "capability_id": "cap.document.share",
+          "capability_ref": "capref:desktop.synthetic:7:cap.document.share",
+          "confirmation_requirement": "runtime_user_required",
+          "control_capability_class": "DIRECT_SEMANTIC",
+          "effect_class": "external_share",
+          "idempotency_class": "non_idempotent",
+          "parameter_schema_ref": "params:cap.document.share:v0.1",
+          "permission_requirements": [
+            "document.read",
+            "share.send"
+          ],
+          "schema": "smc.capability.v0.1",
+          "semantic_verb": "share",
+          "target_kind": "document"
+        },
+        {
+          "atomicity_class": "single_dispatch",
+          "binding_equivalence_class_id": "eq.system.unlock",
+          "capability_id": "cap.system.unlock",
+          "capability_ref": "capref:desktop.synthetic:7:cap.system.unlock",
+          "confirmation_requirement": "human_only",
+          "control_capability_class": "HUMAN_REQUIRED",
+          "effect_class": "security_transition",
+          "idempotency_class": "unknown",
+          "parameter_schema_ref": "params:cap.system.unlock:v0.1",
+          "permission_requirements": [],
+          "schema": "smc.capability.v0.1",
+          "semantic_verb": "unlock",
+          "target_kind": "system"
+        }
+      ],
+      "context": {
+        "active_application": "app_editor",
+        "active_window": "win_doc",
+        "completeness": {
+          "complete": true,
+          "reasons": []
+        },
+        "context_ref": "ctxref:desktop",
+        "context_version": "ctx-desktop-1",
+        "focused_object": "doc_17",
+        "foreground_scene": null,
+        "input_method": "synthetic-ime",
+        "keyboard_layout": "synthetic-us",
+        "lock_state": "unlocked",
+        "modifier_state": "none",
+        "orientation": "landscape",
+        "schema": "smc.interaction_context.v0.1",
+        "selection": null,
+        "system_overlay": null,
+        "virtual_keyboard": "hidden"
+      },
+      "device_id": "device-desktop",
+      "domain": "desktop",
+      "manifest_ref": "manifest:desktop:7",
+      "manifest_revision": 7,
+      "objects": {
+        "doc_17": {
+          "grounding_ref": null,
+          "observation_ref": "obs:desktop:1",
+          "observed_version": "doc-v1",
+          "provider_object_ref": "providerobj:desktop:doc_17",
+          "scope_ref": "scope:desktop:doc"
+        }
+      },
+      "provider_id": "desktop.synthetic",
+      "scope_ref": "scope:desktop",
+      "session_id": "session-p1"
+    },
+    "mobile": {
+      "authority_scope": "authority:user-p1",
+      "bindings": {
+        "cap.mobile.note.save": [
+          {
+            "atomicity_class": "single_dispatch",
+            "binding_class": "app_intent",
+            "binding_id": "binding.mobile.note.save.intent",
+            "capability_ref": "capref:mobile.synthetic:3:cap.mobile.note.save",
+            "confirmation_requirement": "none",
+            "context_preconditions": [],
+            "effect_class": "update_note",
+            "equivalence_class_id": "eq.note.save",
+            "fallback_policy": "equivalent_only",
+            "idempotency_class": "idempotent",
+            "manifest_revision": 3,
+            "permission_requirements": [
+              "note.write"
+            ],
+            "receipt_obligations": [
+              "observed_effects",
+              "version_after",
+              "binding_used"
+            ],
+            "schema": "smc.execution_binding.v0.1",
+            "semantic_verb": "save",
+            "target_kind": "note"
+          }
+        ],
+        "cap.mobile.photo.share": [
+          {
+            "atomicity_class": "single_dispatch",
+            "binding_class": "system_command",
+            "binding_id": "binding.mobile.photo.share.system",
+            "capability_ref": "capref:mobile.synthetic:3:cap.mobile.photo.share",
+            "confirmation_requirement": "platform_managed",
+            "context_preconditions": [
+              "foreground_scene",
+              "orientation"
+            ],
+            "effect_class": "external_share",
+            "equivalence_class_id": "eq.photo.share",
+            "fallback_policy": "equivalent_only",
+            "idempotency_class": "non_idempotent",
+            "manifest_revision": 3,
+            "permission_requirements": [
+              "photo.read",
+              "share.send"
+            ],
+            "receipt_obligations": [
+              "observed_effects",
+              "version_after",
+              "binding_used"
+            ],
+            "schema": "smc.execution_binding.v0.1",
+            "semantic_verb": "share",
+            "target_kind": "photo"
+          }
+        ],
+        "cap.mobile.system.unlock": []
+      },
+      "capabilities": [
+        {
+          "atomicity_class": "single_dispatch",
+          "binding_equivalence_class_id": "eq.note.save",
+          "capability_id": "cap.mobile.note.save",
+          "capability_ref": "capref:mobile.synthetic:3:cap.mobile.note.save",
+          "confirmation_requirement": "none",
+          "control_capability_class": "DIRECT_SEMANTIC",
+          "effect_class": "update_note",
+          "idempotency_class": "idempotent",
+          "parameter_schema_ref": "params:cap.mobile.note.save:v0.1",
+          "permission_requirements": [
+            "note.write"
+          ],
+          "schema": "smc.capability.v0.1",
+          "semantic_verb": "save",
+          "target_kind": "note"
+        },
+        {
+          "atomicity_class": "single_dispatch",
+          "binding_equivalence_class_id": "eq.photo.share",
+          "capability_id": "cap.mobile.photo.share",
+          "capability_ref": "capref:mobile.synthetic:3:cap.mobile.photo.share",
+          "confirmation_requirement": "platform_managed",
+          "control_capability_class": "SYSTEM_COMMAND",
+          "effect_class": "external_share",
+          "idempotency_class": "non_idempotent",
+          "parameter_schema_ref": "params:cap.mobile.photo.share:v0.1",
+          "permission_requirements": [
+            "photo.read",
+            "share.send"
+          ],
+          "schema": "smc.capability.v0.1",
+          "semantic_verb": "share",
+          "target_kind": "photo"
+        },
+        {
+          "atomicity_class": "single_dispatch",
+          "binding_equivalence_class_id": "eq.mobile.unlock",
+          "capability_id": "cap.mobile.system.unlock",
+          "capability_ref": "capref:mobile.synthetic:3:cap.mobile.system.unlock",
+          "confirmation_requirement": "human_only",
+          "control_capability_class": "HUMAN_REQUIRED",
+          "effect_class": "security_transition",
+          "idempotency_class": "unknown",
+          "parameter_schema_ref": "params:cap.mobile.system.unlock:v0.1",
+          "permission_requirements": [],
+          "schema": "smc.capability.v0.1",
+          "semantic_verb": "unlock",
+          "target_kind": "system"
+        }
+      ],
+      "context": {
+        "active_application": "app_notes",
+        "active_window": "scene_note",
+        "completeness": {
+          "complete": true,
+          "reasons": []
+        },
+        "context_ref": "ctxref:mobile",
+        "context_version": "ctx-mobile-1",
+        "focused_object": "note_9",
+        "foreground_scene": "scene_note",
+        "input_method": "synthetic-ime",
+        "keyboard_layout": "synthetic-us",
+        "lock_state": "unlocked",
+        "modifier_state": "none",
+        "orientation": "portrait",
+        "schema": "smc.interaction_context.v0.1",
+        "selection": null,
+        "system_overlay": null,
+        "virtual_keyboard": "visible"
+      },
+      "device_id": "device-mobile",
+      "domain": "mobile",
+      "manifest_ref": "manifest:mobile:3",
+      "manifest_revision": 3,
+      "objects": {
+        "note_9": {
+          "grounding_ref": null,
+          "observation_ref": "obs:mobile:1",
+          "observed_version": "note-v1",
+          "provider_object_ref": "providerobj:mobile:note_9",
+          "scope_ref": "scope:mobile:note"
+        }
+      },
+      "provider_id": "mobile.synthetic",
+      "scope_ref": "scope:mobile",
+      "session_id": "session-p1"
+    }
+  },
+  "schema": "smc.execution_binding_p1_fixture.v0.1",
+  "schema_negative_cases": [
+    {
+      "case_id": "P1-SCHEMA-01",
+      "error_contains": "const",
+      "instance": {
+        "domain": "desktop",
+        "filters": {
+          "control_capability_class": null,
+          "semantic_verb": null,
+          "target_kind": null
+        },
+        "items": [
+          {
+            "atomicity_class": "single_dispatch",
+            "binding_equivalence_class_id": "eq.document.export",
+            "capability_id": "cap.document.export",
+            "capability_ref": "capref:desktop.synthetic:7:cap.document.export",
+            "confirmation_requirement": "platform_managed",
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "effect_class": "create_artifact",
+            "idempotency_class": "unknown",
+            "parameter_schema_ref": "params:cap.document.export:v0.1",
+            "permission_requirements": [
+              "document.read",
+              "destination.write"
+            ],
+            "schema": "smc.capability.v0.1",
+            "semantic_verb": "export",
+            "target_kind": "document"
+          },
+          {
+            "atomicity_class": "single_dispatch",
+            "binding_equivalence_class_id": "eq.document.save",
+            "capability_id": "cap.document.save",
+            "capability_ref": "capref:desktop.synthetic:7:cap.document.save",
+            "confirmation_requirement": "none",
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "effect_class": "update_document",
+            "idempotency_class": "idempotent",
+            "parameter_schema_ref": "params:cap.document.save:v0.1",
+            "permission_requirements": [
+              "document.write"
+            ],
+            "schema": "smc.capability.v0.1",
+            "semantic_verb": "save",
+            "target_kind": "document"
+          },
+          {
+            "atomicity_class": "single_dispatch",
+            "binding_equivalence_class_id": "eq.document.share",
+            "capability_id": "cap.document.share",
+            "capability_ref": "capref:desktop.synthetic:7:cap.document.share",
+            "confirmation_requirement": "runtime_user_required",
+            "control_capability_class": "DIRECT_SEMANTIC",
+            "effect_class": "external_share",
+            "idempotency_class": "non_idempotent",
+            "parameter_schema_ref": "params:cap.document.share:v0.1",
+            "permission_requirements": [
+              "document.read",
+              "share.send"
+            ],
+            "schema": "smc.capability.v0.1",
+            "semantic_verb": "share",
+            "target_kind": "document"
+          },
+          {
+            "atomicity_class": "single_dispatch",
+            "binding_equivalence_class_id": "eq.system.unlock",
+            "capability_id": "cap.system.unlock",
+            "capability_ref": "capref:desktop.synthetic:7:cap.system.unlock",
+            "confirmation_requirement": "human_only",
+            "control_capability_class": "HUMAN_REQUIRED",
+            "effect_class": "security_transition",
+            "idempotency_class": "unknown",
+            "parameter_schema_ref": "params:cap.system.unlock:v0.1",
+            "permission_requirements": [],
+            "schema": "smc.capability.v0.1",
+            "semantic_verb": "unlock",
+            "target_kind": "system"
+          }
+        ],
+        "manifest_ref": "manifest:desktop:7",
+        "manifest_revision": 7,
+        "ordering": "task_relevance_score",
+        "projection": {
+          "complete": true,
+          "next_cursor": null,
+          "returned_count": 4,
+          "total_count": 4
+        },
+        "provider_id": "desktop.synthetic",
+        "schema": "smc.capability_manifest_page.v0.1",
+        "scope_ref": "scope:desktop"
+      }
+    },
+    {
+      "case_id": "P1-SCHEMA-02",
+      "error_contains": "pattern",
+      "instance": {
+        "action_ref": "ar_fixture",
+        "authority_scope": "authority:user-p1",
+        "device_id": "device-desktop",
+        "domain": "desktop",
+        "expires_at": "2026-09-19T21:00:00Z",
+        "grounding_ref": null,
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "not-a-digest"
+        },
+        "issued_at": "2026-09-19T20:00:00Z",
+        "observation_ref": "obs:desktop:1",
+        "observed_version": "doc-v1",
+        "provider_object_ref": "providerobj:desktop:doc_17",
+        "schema": "smc.action_ref_record.v0.1",
+        "scope_ref": "scope:desktop:doc",
+        "semantic_object_id": "doc_17",
+        "session_id": "session-p1",
+        "validity_class": "observation_exact"
+      }
+    },
+    {
+      "case_id": "P1-SCHEMA-03",
+      "error_contains": "additional property",
+      "instance": {
+        "action_id": "action-fixture",
+        "after_version": "doc-v2",
+        "attempt": 1,
+        "automatic_replay": false,
+        "before_version": "doc-v1",
+        "binding_class": "native_api",
+        "binding_id": "binding.desktop.save.native",
+        "boundary_events": [],
+        "completeness": {
+          "complete": true,
+          "reasons": []
+        },
+        "confirmation_ref": null,
+        "context_after": null,
+        "context_before": null,
+        "effective_action": {
+          "args": {},
+          "semantic_verb": "save",
+          "target_id": "doc_17"
+        },
+        "hidden_rewrite": true,
+        "observed_effects": [
+          {
+            "from": "doc-v1",
+            "kind": "synthetic_version_change",
+            "to": "doc-v2"
+          }
+        ],
+        "reason": null,
+        "requested_action": {
+          "args": {},
+          "semantic_verb": "save",
+          "target_id": "doc_17"
+        },
+        "schema": "smc.binding_receipt.v0.1",
+        "status": "ok",
+        "user_modified_parameters": []
+      }
+    }
+  ]
+}
