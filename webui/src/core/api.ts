@@ -48,6 +48,7 @@ export interface SessionMeta {
   last_message_preview: string;
   pinned: boolean;
   channel: string;
+  model?: string | null;
 }
 
 export interface SessionListResponse {

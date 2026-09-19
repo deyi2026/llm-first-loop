@@ -159,6 +159,7 @@ class SessionMetaItem(BaseModel):
     channel: str = "web"   # M56: 展示/跨端来源（web / feishu:p2p:* / feishu:group:*）
     origin_channel: str = ""  # 第一条真实 human ingress 的机械来源（web/feishu/cli/...）
     web_reusable: bool = True  # Web 是否可继续写入；列表可浏览但不代表可跨 ingress 接管
+    model: str | None = None  # 该会话当前有效模型（override 或装配默认）；只读事实
 
 
 class SessionListResponse(BaseModel):

@@ -2,13 +2,21 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
-## v0.6.14 — Runtime integrity and truthful development build identity（2026-09-13）
+## v0.6.14 — Runtime integrity, fleet foundations and truthful build identity（2026-09-19）
 
 - **Release / build 身份分层**：正式语义版本继续由 `pyproject.toml` / Web `SERVICE_VERSION` / README / CHANGELOG / release tag 一致性约束；未打 tag 的开发构建不再冒充最后一个 release，启动 manifest 机械记录 expected/nearest release tag、距最近 tag 的 commit 数、Git SHA、tracked dirty 与 exact-release 事实，Web `/health` / `/api/info` 和 V2 顶栏/设置页显示真实 build identity。
 - **会话与模型防串线**：Web resume 绑定精确 run generation；同 run 路由 registry 以 routing epoch 冻结，显式模型切换仍由模型拥有；provider-native 隐藏 replay 只在 exact provider/model/generation contract 下复用；运行时增加薄 `Run Integrity Receipt` 汇总既有机械身份事实，不根据回答文本、system fingerprint 或祖先历史做语义污染裁决。
 - **Web 长会话连续性**：EventStore 热读缓存和前端 single-flight/hidden-tab 抑制消除大事件日志轮询风暴；active-run reasoning/text replay 改为 lossless bounded-spool + 相邻纯流片段机械合并，重连保留完整推理进展而不把 tool/terminal 事件混写。
 - **Provider / Tool 机械契约**：模型 ID 支持 HF/本地路径/注册短名的唯一归一；lazy schema 保留被真实 first-call 失败证明必要的参数上限/状态机事实；工具失败回执只提供当前能力、Schema、PATH、权限等机械事实，不替模型指定语义修复策略。
 - **Browser Semantic Operations 底座**：补齐 Browser Phase 1 perception、SemanticDiff、typed predicate wait、version pressure、mutation receipt 与 bounded semantic operation 的机械边界；否定推断要求完整 coverage，snapshot-local identity 不伪装稳定世界对象，wait timeout 作为 observation 而非自动失败/重试。
+- **Fleet 子代理生命周期底座（显式 opt-in）**：Project / ExecutionWorkspace / WorkerLease 最小纵切与 crash/reclaim 门；原子 reclaim + CAS 恢复 + 有界 lease TTL（真实 SubAgentRunner 生命周期内逐轮 renew 心跳）；新增只读 `subagent_lease` / `subagent_topology` 工具——topology journal 与 lease 磁盘真相合并视图，spawn facts 携带 parent_session_id 使重启后可机械恢复归属；factory 生产装配仅在显式 opt-in 下生效，未启用时各面诚实降级；已在 merged main 上完成 live spawn/reclaim qualification。
+- **运行时完整性收敛**：缺失会话权威 fail-closed；provider 溢出权威化、无效 provider 投影重建与 exact wire integrity；late child 结果按 run generation fencing；进程状态生命周期上限、lifetime 高水位保留退役；共享服务生命周期权威 fence；legacy shared authority fallback 退役；支持精确双根重启。
+- **服务控制与资源治理**：service-control 两阶段 restart（不再等待 lifecycle-lease）；P0-A.1 零写读路径 + controller identity + in-lease binding reverify；P0-B 后台学习的前台真实抢占；LFRT 只读观察者与 admission authority；Web 端 TASK-005 desired/live/stable 服务身份视图（ServicesPanel）。
+- **知识 / 记忆 / 方法学习闭环**：学习闭环默认启用（reflection auto + learning plane on）；知识注入观测闭环（receipt_pointer / hydration 登记注入台账）与 P1 注入归因层（A 级机械归因 + per-ref/per-surface 报告）；MemoryExtractor 调度迁入 Learning Plane；记忆近重复聚类报告（只读）与检索 A/B 评测（同系统只换 embedder，改写查询端到端 Recall@5 0%→45%）、threshold 按 embedder 校准、embedding 缓存按向量版本分文件；method discovery v2（freshness 事实）与 record_use 模型使用声明。
+- **压缩与缓存连续性**：锚快照块移出 wire 尾部降低前缀扰动；同 run 资源安全字节阀。**勘误（2026-09-19）**：本条曾依据提交 7004b9b89 的信息记录"压缩触发时任务锚点强制 pinning（task_anchor_pin_messages）"；该机制随后在人审收敛修复 edde89582（restore cache-only scope after convergence）中被移出主线，**未包含在本版本发布内容中**，特此更正（对最终树逐项核验，其余各条均在）。
+- **Browser SMC 评测与稳定性**：共享 ground-truth fixture（数据化期望 + 服务端事件日志）、GT qualification v01（11/11）与首个 subject-facing 单臂 smoke v01（冻结回执收口）；CDP frame ceiling 参数化 + 硬上限（默认 128MiB）与观测接收预算；capture-loss 分类与 navigate 轻量前置；模型驱动 projection window + evidence-layer vision phase 1。
+- **内省工具与 Web 修复**：`method_manage` schema 参数语义澄清（verdict/mechanism/task_benefit/promotion 仅 record_qualification 消费；note 仅随 record_use/record_qualification 持久化；evidence_refs 绑定当次 episode 不自动证明归属；refine 需持久化内容走 save_candidate(parent_ref)——仅描述层，无行为变更）；Web 模型权威改为 session-scoped；流式代码与 KaTeX 预处理隔离；live interjection handoff；review audit 改用 resolved data dir。
+- **CI / 门禁加固**：runner-proof 门禁套件（全历史 checkout + fixture git identity）；累计 ruff / pyright 债清零；A.5 覆盖申报协议化（含 merge 增量全路径覆盖与合流定性）；scorecard 冻结协议合同 fixtures；injection ledger env 读取登记进棘轮基线。
 - **版本边界**：`v0.6.13` tag 保持不可移动；本版本建立后续 patch 边界。候选在正式 tag 前仍显示 `v0.6.14-dev.<distance>+g<sha>`，只有 exact `v0.6.14` tag 且 tracked source clean 时才显示纯 `v0.6.14`。
 
 ## v0.6.13 — Web reviewability and release single-writer boundary（2026-09-12）

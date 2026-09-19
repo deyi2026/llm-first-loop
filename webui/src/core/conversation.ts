@@ -600,11 +600,8 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
       sessionStore.setCurrentSession(data.session_id);
     }
     if (!opts && modelChangeIntent) sessionStore.setModelChangePending(false);
-    // done.model_used is the actual routed model, including an in-run switch_model.
-    // Sync the selector mechanically without creating new human model-change intent;
-    // otherwise the UI can keep showing a stale model even though session authority
-    // has already moved to another model.
-    if (data.model_used) sessionStore.setModel(data.model_used);
+    // model_used is per-run telemetry (and may be a fallback), not session authority.
+    // Session authority is synchronized from the session list instead.
     const finalText = (data.final_answer ?? "").trim();
     if (finalText) {
       finalize({

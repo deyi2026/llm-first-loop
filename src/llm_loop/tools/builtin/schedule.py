@@ -23,7 +23,7 @@ class ScheduleTool:
     description = (
         "注册定时提醒：after（N 秒后一次）/ at（绝对时间）/ rate（每 N 秒重复，可限次数）。"
         "默认到点仅通知；wake=true 时仅在当前真实用户 run 可签发一次性同会话续跑，"
-        "后台续跑不能递归再唤醒。"
+        "后台续跑不能递归再唤醒；wake 续跑 prompt 会自动追加本会话后台任务机械现状投影。"
         "何时用: 需要延迟/周期性提醒（如 60 秒后检查后台任务、每 5 分钟汇报状态）。"
         "何时不用: 即时动作直接执行；一次性协调消息走 interop。"
         "失败对策: 参数校验失败如实返回；存储异常 fail-open。"
@@ -34,7 +34,12 @@ class ScheduleTool:
             "message": {
                 "type": "string",
                 "maxLength": _MAX_SCHEDULE_MESSAGE_CHARS,
-                "description": "提醒/一次性续跑内容（必填，最多 4000 字符）",
+                "description": (
+                    "提醒/一次性续跑内容（必填，最多 4000 字符）。wake=true 时应为"
+                    "「哨兵+完成判据+核验动作」：写明到点时用什么读操作（如 job_output/"
+                    "ls-remote/status 查询）核验哪些完成标志，而不是可逐步重放的操作清单"
+                    "——唤醒 run 看不到沉睡前的终态回执，步骤清单易被误当未完成而重放。"
+                ),
             },
             "after": {
                 "type": "number",
