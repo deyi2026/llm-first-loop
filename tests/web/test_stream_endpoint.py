@@ -465,7 +465,12 @@ def test_chat_stream_accepted_persists_canonical_model_override(build_test_engin
     client = _make_client(engine)
     resp = client.post(
         "/api/v1/chat/stream",
-        json={"message": "hi", "session_id": sid, "model": "fake-model"},
+        json={
+            "message": "hi",
+            "session_id": sid,
+            "model": "fake-model",
+            "model_change": True,
+        },
     )
     assert resp.status_code == 200
     assert _parse_sse(resp.text)[-1]["type"] == "done"
@@ -480,6 +485,16 @@ def test_stale_web_model_snapshot_cannot_overwrite_session_switch_model_authorit
     _apply_session_model_override(session, "glm/glm-5.3", explicit_change=False)
 
     assert session.model_override == "glm/glm-5.3-flash"
+
+
+def test_web_model_snapshot_cannot_create_session_authority_without_explicit_change():
+    """A session with no override must stay untouched until the human changes model."""
+    session = type("SessionStub", (), {})()
+    session.model_override = None
+
+    _apply_session_model_override(session, "glm/glm-5.3", explicit_change=False)
+
+    assert session.model_override is None
 
 
 def test_explicit_web_model_change_can_replace_session_model_authority():

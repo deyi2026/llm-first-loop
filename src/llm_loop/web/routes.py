@@ -733,22 +733,16 @@ def _apply_session_model_override(
 ) -> None:
     """Apply one accepted Web model selection without letting stale UI regain authority.
 
-    ``payload.model`` is sent on every Web request for routing/UI continuity, but an
-    in-run ``switch_model`` may have changed the authoritative session override since
-    that browser snapshot was taken.  Therefore a differing existing override wins
-    unless the request carries explicit human ``model_change`` intent.  An empty
-    session may still adopt the first valid model for backwards compatibility.
+    ``payload.model`` is sent on every Web request for routing/UI continuity, but only
+    explicit human ``model_change`` (or the new-session path) may mutate session
+    authority. A stale browser snapshot must not create an override on an old session
+    that previously had none.
     """
     if not model_ref:
         return
-    old = getattr(session, "model_override", None)
-    if old and old != model_ref and not explicit_change:
-        logger.info(
-            "忽略 stale payload.model：session authority=%s payload=%s（无显式 model_change）",
-            old,
-            model_ref,
-        )
+    if not explicit_change:
         return
+    old = getattr(session, "model_override", None)
     if old != model_ref:
         session.model_override = model_ref
 
@@ -2174,6 +2168,7 @@ def list_sessions(request: Request, include_archived: bool = False) -> SessionLi
     """会话列表：复用 engine.session.list_sessions，不遍历会话目录."""
     engine = _engine_from(request)
     metas = engine.session.list_sessions(include_archived=include_archived)
+    default_model = getattr(getattr(engine, "llm", None), "model", None)
     items = [
         SessionMetaItem(
             session_id=m.session_id,
@@ -2187,6 +2182,7 @@ def list_sessions(request: Request, include_archived: bool = False) -> SessionLi
             channel=m.channel,    # M56: 来源通道透传
             origin_channel=m.origin_channel,
             web_reusable=_web_session_reusable_meta(m),
+            model=m.model_override or default_model,
         )
         for m in metas
     ]

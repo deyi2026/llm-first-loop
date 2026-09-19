@@ -159,6 +159,18 @@ def test_list_sessions(build_test_engine, fake_settings):
     assert body["sessions"][0]["session_id"]
 
 
+def test_list_sessions_exposes_each_session_effective_model(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([])
+    sid_a = engine.session.create(model_override="glm/glm-5.3")
+    sid_b = engine.session.create(model_override="minimax/MiniMax-M2.1")
+    client = _make_client(engine)
+
+    sessions = {row["session_id"]: row for row in client.get("/api/v1/sessions").json()["sessions"]}
+
+    assert sessions[sid_a]["model"] == "glm/glm-5.3"
+    assert sessions[sid_b]["model"] == "minimax/MiniMax-M2.1"
+
+
 def test_delete_session_requires_confirm(build_test_engine, fake_settings):
     engine, _ = build_test_engine([{"content": "a"}])
     client = _make_client(engine)
@@ -241,11 +253,14 @@ def test_get_session_messages_not_found(build_test_engine, fake_settings):
 
 
 def test_chat_model_passthrough(build_test_engine, fake_settings):
-    """per-call 模型经池解析：provider/model → 裸模型名透传给 LLM 调用（Web 模型切换）."""
+    """显式 Web 模型切换经池解析：provider/model → 裸模型名透传给 LLM 调用."""
     engine, fake = build_test_engine([{"content": "用 pro 模型回答"}])
     client = _make_client(engine)
     # "default" 为 L0 合成单 provider id（fake.local），"fake-model" 为其唯一模型
-    resp = client.post("/api/v1/chat", json={"message": "x", "model": "default/fake-model"})
+    resp = client.post(
+        "/api/v1/chat",
+        json={"message": "x", "model": "default/fake-model", "model_change": True},
+    )
     assert resp.status_code == 200
     assert resp.json()["final_answer"] == "用 pro 模型回答"
     assert fake.calls and fake.calls[0]["model"] == "fake-model"
@@ -570,7 +585,12 @@ def test_chat_cross_process_busy_does_not_persist_model_override(build_test_engi
     fake._responses = [LLMResponse(content="accepted later", tool_calls=[], provider="fake")]
     r2 = cli.post(
         "/api/v1/chat",
-        json={"message": "accepted", "session_id": sid, "model": "fake-model"},
+        json={
+            "message": "accepted",
+            "session_id": sid,
+            "model": "fake-model",
+            "model_change": True,
+        },
     )
     assert r2.status_code == 200
     pid, mid = engine.llm_pool.registry.resolve("fake-model")
