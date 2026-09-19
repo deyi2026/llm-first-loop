@@ -823,3 +823,83 @@ def test_record_searcher_global_archive_search_sees_new_segment_layout(tmp_path)
 
     assert len(hits) == 1
     assert "NEEDLE" in hits[0]["content_preview"]
+
+
+# ---------- record_skill: Applicability 适用边界 + auto_submit 前置门（EVO-20260919-7e8e4b20） ----------
+
+_RS_LOG = [
+    {"action": "click", "target": "#submit", "args": {}},
+    {"action": "click", "target": "#confirm", "args": {}},
+    {"action": "fill", "target": "#name", "args": {"name": "alice"}},
+]  # click×2（进 common_actions）；fill×1（不进 common_actions，但必须在覆盖全集内）
+
+
+def test_record_skill_applicability_covers_full_action_set(tmp_path):
+    """Applicability 段覆盖动作取全集：仅出现 1 次的 fill 也必须出现在边界声明里."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    r = _bound_call(
+        reg.execute,
+        "record_skill",
+        {"skill_name": "demo_flow", "action_log": _RS_LOG},
+    )
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "## Applicability 适用边界" in r.content
+    covered_line = next(ln for ln in r.content.splitlines() if "覆盖动作（全集）" in ln)
+    assert "`fill`×1" in covered_line  # 全集而非 common_actions 子集
+    assert "`click`×2" in covered_line
+    assert "越界判定" in r.content
+
+
+def test_record_skill_auto_submit_gate_blocks_todo(tmp_path):
+    """auto_submit=true 且草案含未解决 TODO 时必须被前置门拦截，且不落盘."""
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store, session_id="s-rs")
+    reg = CorrectionToolRegistry(ctx)
+    log_with_todo = _RS_LOG + [
+        {"action": "fill", "target": "#memo", "args": {"memo": "TODO: 待补内容"}}
+    ]
+    r = _bound_call(
+        reg.execute,
+        "record_skill",
+        {"skill_name": "todo_flow", "action_log": log_with_todo, "auto_submit": True},
+    )
+    assert r.status == ToolResultStatus.FAILURE
+    assert "前置门" in r.content
+    assert store.list() == []  # 门禁生效：未提交任何建议
+
+
+def test_record_skill_auto_submit_success(tmp_path):
+    """auto_submit=true 通过前置门后经 submit_evolution 落盘，草案含 Applicability 段."""
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store, session_id="s-rs")
+    reg = CorrectionToolRegistry(ctx)
+    r = _bound_call(
+        reg.execute,
+        "record_skill",
+        {"skill_name": "demo_flow", "action_log": _RS_LOG, "auto_submit": True},
+    )
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "已自动提交" in r.content
+    rows = store.list()
+    assert len(rows) == 1
+    assert "## Applicability 适用边界" in rows[0]["content"]
+    assert rows[0]["impact_scope"] == "skills/demo_flow"
+
+
+def test_record_skill_auto_submit_without_store_fails_openly(tmp_path):
+    """evolution_store 未装配时 auto_submit 如实失败并给出人工提交路径，不静默."""
+    ctx = CorrectionContext(session_id="s-rs")
+    reg = CorrectionToolRegistry(ctx)
+    r = _bound_call(
+        reg.execute,
+        "record_skill",
+        {"skill_name": "demo_flow", "action_log": _RS_LOG, "auto_submit": True},
+    )
+    assert r.status == ToolResultStatus.FAILURE
+    assert "[auto_submit 提交失败]" in r.content
+    assert "auto_submit=false" in r.content
