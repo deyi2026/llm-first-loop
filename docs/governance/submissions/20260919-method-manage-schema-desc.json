@@ -1,0 +1,70 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-method-manage-schema-desc",
+  "summary": "Description-only clarification of the method_manage tool schema in the introspection registry (EVO-20260919-122ddd9b): verdict/mechanism/task_benefit/promotion are consumed only by record_qualification; note persists only with record_use/record_qualification; evidence_refs bind to the calling episode without proving ref ownership; use_decision does not consume evaluation fields; refine-persistable content must go through save_candidate(parent_ref). No executable-line change.",
+  "components": [
+    {
+      "component_id": "method-manage-schema-desc-clarification",
+      "paths": [
+        "src/llm_loop/introspection/registry_experience.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "introspection tool registry — _METHOD_MANAGE_TOOL_DEF, the model-facing control contract of the Method Learning lifecycle tool",
+      "disposition": "ADMIT as a documentation-accuracy fix to existing control machinery: 8 description strings inside the single existing tool definition are clarified; no enum, type, handler, storage, or control-flow change. The schema surface is what the model reads to operate method_manage, so misleading descriptions caused real mis-usage (EVO-20260919-122ddd9b).",
+      "evidence": [
+        "git show ae675930c: 8 insertions/8 deletions, all inside _METHOD_MANAGE_TOOL_DEF description literals; no executable line touched.",
+        "tests/unit/test_method_learning.py: 19 passed at ae675930 before publication.",
+        "All three live processes (web/feishu/learning) run v0.6.14-dev.348+gae675930 with manifest_present=true, restart_required=false; desired deployment generation 47 binds git_head=ae675930."
+      ],
+      "verification_level": "Focused unit suite (test_method_learning 19 passed) + live three-process deployment check pinned to the same git head + local A.5 self-gate",
+      "model_evidence_veto_recovery_exit": "Descriptions are advisory prose consumed by the model; human/model review retains authority over classification truth. Exit: revert ae675930 together with this manifest commit; description strings are inert to disk state and data schemas.",
+      "rollback_route": "Revert ae675930 and this manifest commit; no data or schema migration (string literals in one tool definition only).",
+      "declaration_id": "method-manage-schema-desc-clarification"
+    },
+    {
+      "component_id": "method-manage-schema-desc-a5-record",
+      "paths": [
+        "docs/governance/submissions/20260919-method-manage-schema-desc.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 stays mechanical.",
+      "evidence": [
+        "Manifest partitions the exact changed-path set and declares the single control component."
+      ],
+      "verification_level": "Local exact A.5 self-gate before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth.",
+      "rollback_route": "Revert together with the implementation."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "method-manage-schema-desc-clarification",
+      "g1": {
+        "necessity": "The prior method_manage schema descriptions were misleading and caused real mis-parameterization: verdict/mechanism/task_benefit/promotion looked like generally consumable fields while only record_qualification reads them; note silently persisted with some actions and not others; evidence_refs implied program-side proof of ref ownership; use_decision implied evaluation-field consumption; refine needed save_candidate(parent_ref) for persisted revisions. EVO-20260919-122ddd9b recorded this gap; the schema surface is the contract the model actually reads, so the fix belongs there."
+      },
+      "g2": {
+        "authority_owner": "existing _METHOD_MANAGE_TOOL_DEF in the introspection registry — the single authority defining the method_manage tool contract",
+        "relationship": "reuse",
+        "non_duplication": "No new file, surface, store, or second contract: the same single tool definition remains the only authority; only description strings inside it change."
+      },
+      "g3": {
+        "model_evidence": [
+          "diff of ae675930 touches only description literals inside _METHOD_MANAGE_TOOL_DEF (8/8 lines), no executable change",
+          "tests/unit/test_method_learning.py: 19 passed at ae675930",
+          "live web/feishu/learning processes at build v0.6.14-dev.348+gae675930, desired generation 47 binds the same head, restart_required=false",
+          "local A.5 self-gate PASS on the base...head pair before publication"
+        ],
+        "recovery_or_reason": "Exit is plain revert of the two commits; the change is inert to all disk state and data schemas, so no recovery path beyond git is needed."
+      },
+      "g4": {
+        "rollback": "Revert ae675930 and the manifest commit; no data or schema migration.",
+        "verification": [
+          "tests/unit/test_method_learning.py: 19 passed at ae675930",
+          "three live processes verified running at v0.6.14-dev.348+gae675930 with manifest_present=true and restart_required=false",
+          "local A.5 self-gate PASS with --base 55d676b795648e41392a7829a441de11336073b0 before pushing"
+        ]
+      }
+    }
+  ]
+}
