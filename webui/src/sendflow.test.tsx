@@ -62,7 +62,7 @@ describe("发送链路", () => {
     sessionStore.setModelChangePending(false);
   });
 
-  it("done.model_used mechanically syncs selector without creating model-change intent", async () => {
+  it("done.model_used is display telemetry only and cannot rewrite session model authority", async () => {
     mockBackend({
       streamFrames: [
         `data: {"type":"done","data":${JSON.stringify({ ...DONE, model_used: "glm/glm-5.3-flash" })}}`,
@@ -75,7 +75,47 @@ describe("发送链路", () => {
     fireEvent.click(screen.getByText("发送"));
 
     await waitFor(() => expect(conv.getState().streaming).toBe(false));
-    expect(sessionStore.getState().model).toBe("glm/glm-5.3-flash");
+    expect(sessionStore.getState().model).toBe("glm/glm-5.3");
+    expect(sessionStore.getState().modelChangePending).toBe(false);
+  });
+
+  it("switching sessions restores each session model without creating change intent", () => {
+    sessionStore.setSessions([
+      {
+        session_id: "s1",
+        title: "A",
+        created_at: "",
+        updated_at: "",
+        message_count: 1,
+        status: "active",
+        last_message_preview: "",
+        pinned: false,
+        channel: "web",
+        model: "glm/glm-5.3",
+      },
+      {
+        session_id: "s2",
+        title: "B",
+        created_at: "",
+        updated_at: "",
+        message_count: 1,
+        status: "active",
+        last_message_preview: "",
+        pinned: false,
+        channel: "web",
+        model: "minimax/MiniMax-M2.1",
+      },
+    ]);
+
+    sessionStore.selectModel("deepseek/deepseek-v4-flash");
+    expect(sessionStore.getState().modelChangePending).toBe(true);
+
+    sessionStore.setCurrentSession("s2");
+    expect(sessionStore.getState().model).toBe("minimax/MiniMax-M2.1");
+    expect(sessionStore.getState().modelChangePending).toBe(false);
+
+    sessionStore.setCurrentSession("s1");
+    expect(sessionStore.getState().model).toBe("glm/glm-5.3");
     expect(sessionStore.getState().modelChangePending).toBe(false);
   });
 

@@ -139,6 +139,7 @@ class SessionMeta:
     pinned: bool = False   # 置顶
     channel: str = "web"   # 当前展示/跨端来源通道（旧字段，向后兼容）
     origin_channel: str = ""  # 第一条真实 human ingress 的机械来源；不从顶层 channel 猜
+    model_override: str | None = None  # 会话级模型 authority；列表只读透传
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -1628,6 +1629,7 @@ class SessionStore:
             pinned=session.pinned,
             channel=session.channel,
             origin_channel=first_human_ingress_channel(session.messages),
+            model_override=session.model_override,
         )
 
     def list_sessions(self, include_archived: bool = False) -> list[SessionMeta]:
@@ -1701,6 +1703,7 @@ class SessionStore:
                     pinned=bool(data.get("pinned", False)),
                     channel=data.get("channel", "web"),
                     origin_channel=first_human_ingress_channel(messages),
+                    model_override=data.get("model_override"),
                 )
                 new_cache[p] = (fkey, meta)
             new_cache.move_to_end(p)
@@ -1990,6 +1993,7 @@ class SessionStore:
                     pinned=bool(data.get("pinned", False)),
                     channel=data.get("channel", "web"),
                     origin_channel=first_human_ingress_channel(messages),
+                    model_override=data.get("model_override"),
                 )
             )
         metas.sort(key=lambda m: m.updated_at, reverse=True)
