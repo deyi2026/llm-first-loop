@@ -1,0 +1,93 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-fleet-slice3-lease-ttl-renew-tool",
+  "summary": "Third fleet vertical slice: wire bounded leases (TTL) and per-round renew heartbeat into the real SubAgentRunner lifecycle, expose the coordinator's recover() disk facts (expires_at/expired/settlement) through a read-only subagent_lease tool surface, and close the silent-workspace-creation hazard in recover()/reclaim_run_if_expired() (read-only lookups now fail honestly on unknown run keys).",
+  "components": [
+    {
+      "component_id": "fleet-slice3-control",
+      "paths": [
+        "src/llm_loop/fleet/coordinator.py",
+        "src/llm_loop/fleet/store.py",
+        "src/llm_loop/subagent/runner.py",
+        "src/llm_loop/tools/builtin/subagent_lease.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/tools/registry.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "fleet workspace/lease lifecycle owned by ProjectCoordinator/FleetStore (fleet state.json); runner-side heartbeat is a lifecycle fact, not a new authority",
+      "disposition": "ADMIT. TTL and renew reuse slice-2 primitives; the runner passes ttl_seconds at begin_run and renews once per child round while genuinely alive. Renew failure is fail-soft: the authority boundary stays the fence at settlement, never a mid-run kill. The new subagent_lease tool is read-only projection of recover() facts; recover()/reclaim_run_if_expired() switch to a read-only workspace lookup (KeyError on unknown run key) so observation no longer mutates fleet state. No model-semantic judgment is added.",
+      "evidence": [
+        "RED first: test_fleet_runner_renew_and_tool.py collected with ModuleNotFoundError for tools.builtin.subagent_lease and TypeError for missing fleet_lease_ttl_seconds kwarg before implementation.",
+        "Round-boundary renew strictly extends expires_at (monotonic) in a real two-round child run; settled lease retains expires_at.",
+        "Rival reclaim mid-run: child completes, fenced settle yields zero settlements, superseded(gen1)/active(gen2) rows visible on disk.",
+        "Crashed child with ttl=0.15s: after real 0.25s sleep, subagent_lease reports expired=true state=active expires_at present.",
+        "recover('never-begun-run') now raises KeyError and leaves workspaces empty (no silent creation)."
+      ],
+      "verification_level": "RED-first focused TDD (7 tests), adjacent fleet/subagent suites, full pytest (not real_llm), Ruff, Pyright, A.5 self-gate",
+      "model_evidence_veto_recovery_exit": "subagent_lease only reports mechanical facts (expired=true is a lease-expiry fact, not a takeover instruction); ttl=None on SubAgentRunner preserves the previous never-expire behavior explicitly; operators can revert the single commit without any fleet-state migration.",
+      "rollback_route": "Revert this commit; no fleet state.json migration is required (expires_at is an additive optional field).",
+      "declaration_id": "fleet-slice3-control"
+    },
+    {
+      "component_id": "fleet-slice3-tests",
+      "paths": [
+        "tests/unit/test_fleet_runner_renew_and_tool.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic regression for runner TTL/renew heartbeat, fail-soft fencing, tool surface, and read-only recover",
+      "disposition": "ADMIT as deterministic tests only; real filesystem, real clock for expiry; no runtime authority.",
+      "evidence": [
+        "7/7 PASS after implementation; before implementation the file failed at collection/import for the missing tool module and ttl kwarg.",
+        "Adjacent suites (test_fleet_project_coordinator, test_fleet_reclaim_race_and_ttl, test_fleet_reclaim_gate, test_subagent) stay green after the read-only recover change."
+      ],
+      "verification_level": "Focused + adjacent pytest, full suite gate",
+      "model_evidence_veto_recovery_exit": "Tests expose exact mechanical lease behavior and can be revised independently of production state.",
+      "rollback_route": "Revert with the implementation commit."
+    },
+    {
+      "component_id": "fleet-slice3-a5-record",
+      "paths": [
+        "docs/governance/submissions/20260919-fleet-slice3-lease-ttl-renew-tool.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 stays a mechanical presence/coverage gate.",
+      "evidence": [
+        "Manifest partitions the exact formal-base-to-candidate changed-path set and declares the single control component."
+      ],
+      "verification_level": "Local exact A.5 self-gate before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth; the metadata has no runtime authority.",
+      "rollback_route": "Revert together with the slice."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "fleet-slice3-control",
+      "g1": {
+        "necessity": "Slice-2 introduced TTL primitives, but the real SubAgentRunner lifecycle never passed a ttl and never renewed: leases were unbounded in practice, a crashed child left an immortal active lease, and no model-facing surface exposed expires_at/expired, so time-licensed takeover had no observable facts and no honest unknown-key behavior (recover silently created workspace state)."
+      },
+      "g2": {
+        "authority_owner": "FleetStore state.json under the existing ProjectCoordinator project scope",
+        "relationship": "reuse",
+        "non_duplication": "No new store, controller, scheduler, or verdict mechanism. begin_run/renew_run/settle fencing are reused as-is; the runner only supplies ttl_seconds and a per-round heartbeat call. subagent_lease is a read-only projection of recover(); recover()/reclaim_run_if_expired() reuse the same store through a new find_workspace read path instead of get_or_create."
+      },
+      "g3": {
+        "model_evidence": [
+          "subagent_lease tool reports workspace_id, lease generation/worker/owner/state, expires_at, expired, and settlement outcome straight from disk",
+          "runner logs a warning on renew failure with the exact exception type",
+          "tests show expired=true after real clock expiry on a crashed child and settled outcome=completed on a healthy child"
+        ],
+        "recovery_or_reason": "fleet_lease_ttl_seconds=None keeps the previous never-expire behavior as an explicit exit; fenced renew/settle never kills a live child loop; reverting the single commit removes the wiring with no data migration."
+      },
+      "g4": {
+        "rollback": "Revert the single commit; expires_at is an additive optional field in lease rows and no migration of existing fleet state is required.",
+        "verification": [
+          "RED-first: 7 new tests failed before implementation (missing tool module / ttl kwarg), 7/7 PASS after",
+          "adjacent fleet + subagent suites green after the read-only recover change",
+          "full pytest (not real_llm), Ruff, Pyright gates green on the candidate",
+          "A.5 self-gate PASS locally against the exact base...head path set"
+        ]
+      }
+    }
+  ]
+}

@@ -129,6 +129,7 @@ class SubAgentRunner:
         llm_resolver: Callable[[str], LLMClient] | None = None,
         parent_session_provider: Callable[[str], Session | None] | None = None,
         project_coordinator: ProjectCoordinator | None = None,
+        fleet_lease_ttl_seconds: float | None = 900.0,
     ) -> None:
         self.llm = llm
         self._llm_resolver = llm_resolver
@@ -158,6 +159,8 @@ class SubAgentRunner:
         # fleet behavior off; explicit injection is the opt-in/exit path.
         self._project_coordinator = project_coordinator
         self._fleet_leases: dict[str, WorkerLease] = {}
+        # fleet slice 3: 有界租约 + 每轮心跳续约；None 显式保留旧的永不过期行为。
+        self._fleet_lease_ttl_seconds = fleet_lease_ttl_seconds
         # Local-active maps remain strictly process-local.  Recovered topology is kept
         # separately so restart never fabricates Thread/Event/Future or a writable mailbox.
         self._children_by_parent: dict[str, set[str]] = {}
@@ -715,7 +718,9 @@ class SubAgentRunner:
         """
         if self._project_coordinator is None:
             return None
-        lease = self._project_coordinator.begin_run(sid, worker_id=sid[-8:])
+        lease = self._project_coordinator.begin_run(
+            sid, worker_id=sid[-8:], ttl_seconds=self._fleet_lease_ttl_seconds
+        )
         self._fleet_leases[sid] = lease
         self._project_coordinator.run_fact(
             lease,
@@ -726,6 +731,40 @@ class SubAgentRunner:
             },
         )
         return lease
+
+    def _renew_fleet_run(self, sid: str) -> None:
+        """Round-boundary heartbeat: extend the bounded lease while genuinely alive.
+
+        Renewal failure (e.g. the lease was superseded by a rival coordinator)
+        is fail-soft by design: the authority boundary stays the fence at
+        settlement, never a mid-run kill of the child loop.
+        """
+        if self._project_coordinator is None or self._fleet_lease_ttl_seconds is None:
+            return
+        lease = self._fleet_leases.get(sid)
+        if lease is None:
+            return
+        try:
+            self._fleet_leases[sid] = self._project_coordinator.renew_run(
+                lease, extend_seconds=self._fleet_lease_ttl_seconds
+            )
+        except Exception as exc:  # noqa: BLE001 - heartbeat failure is a mechanical fact
+            logging.getLogger(__name__).warning(
+                "fleet lease renew failed for %s: %s", sid, exc
+            )
+
+    def lease_facts(self, child_id: str) -> tuple[bool, str, dict]:
+        """Disk-truth recover() view for a workspace run_key (read-only surface)."""
+        sid = str(child_id or "").strip()
+        if not sid:
+            return False, "缺少 child_id", {}
+        if self._project_coordinator is None:
+            return False, "本 runner 未接入 fleet lease（project_coordinator 未配置）", {}
+        try:
+            view = self._project_coordinator.recover(sid)
+        except KeyError:
+            return False, f"workspace 不存在: {sid}", {}
+        return True, "ok", view
 
     def _settle_fleet_run(self, sid: str, result: SubAgentResult) -> None:
         """Exactly-once settlement at a real terminal; late fenced writes stay visible."""
@@ -1777,6 +1816,9 @@ class SubAgentRunner:
                     tokens_out=tokens_out,
                 )
             rounds += 1
+            # fleet slice 3: 每轮边界的租约心跳——只要子代理真实活着并在推进，
+            # expires_at 就被机械延长；renew 失败 fail-soft（权威边界仍在 settle fence）。
+            self._renew_fleet_run(sess.session_id)
             if rounds > 1:
                 # 非首轮 LLM 决策前再扫一次，缩小消息恰好在上个 boundary 后到达
                 # 的竞态窗口。首轮不注入，避免 task user 后连续 user wire。

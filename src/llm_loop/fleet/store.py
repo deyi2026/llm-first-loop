@@ -206,6 +206,15 @@ class FleetStore:
             created_at=raw["created_at"],
         )
 
+    def find_workspace(self, project_id: str, physical_root: str) -> ExecutionWorkspace | None:
+        """Read-only lookup by physical root; never creates state."""
+        state = self._load()
+        root = str(Path(physical_root))
+        for raw in state["workspaces"].values():
+            if raw["project_id"] == project_id and raw["physical_root"] == root:
+                return self._workspace_from_raw(raw)
+        return None
+
     def get_or_create_workspace(
         self, project_id: str, physical_root: str, repo_head: str
     ) -> ExecutionWorkspace:
