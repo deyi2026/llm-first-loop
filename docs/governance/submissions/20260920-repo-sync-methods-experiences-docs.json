@@ -1,7 +1,7 @@
 {
   "schema": "lfl.architecture_submission.v0.1",
   "submission_id": "20260920-repo-sync-methods-experiences-docs",
-  "summary": "Repository sync batch: backfill 270 method cards (data/methods) and 28 experience cards (experiences/) that previous .gitignore/hook gate desync had kept out of version control; land 7 governance/design docs; .gitignore hygiene for regenerable artifacts; security-scan gains a path-only allowlist that narrows ONLY the forbidden-path rule while content/large-file/absolute-path checks stay full; record_skill introspection gains an Applicability boundary section and auto_submit pre-gate.",
+  "summary": "Repository sync batch: backfill 272 method cards (data/methods) and 28 experience cards...",
   "components": [
     {
       "component_id": "record-skill-applicability-introspection",
@@ -81,6 +81,7 @@
         "data/methods/absence-check-via-definition-site-then-vcs-history-4a2c300a684f/METHOD.md",
         "data/methods/act-on-provenance-rich-record-hit-receipt-verifies-ca3c9572705a/METHOD.md",
         "data/methods/alien-literal-polluter-hunt-fceef795e7c0/METHOD.md",
+        "data/methods/align-repo-advice-with-recorded-decisions-first-0973b39f2d2e/METHOD.md",
         "data/methods/align-session-gap-with-restart-timestamps-before-broad-search-73202fbb57ff/METHOD.md",
         "data/methods/anaphora-artifact-first-context-recovery-42e2e7649585/METHOD.md",
         "data/methods/anchor-and-derive-environment-parameters-8d332b7db8e5/METHOD.md",
@@ -188,6 +189,7 @@
         "data/methods/id-keyed-state-lookup-before-layout-enumeration-e1448b14a10d/METHOD.md",
         "data/methods/identical-truncation-author-provenance-first-dda883f6db50/METHOD.md",
         "data/methods/in-session-provenance-before-refetch-aa9132287223/METHOD.md",
+        "data/methods/intent-state-contradiction-probe-veto-gates-6051991d5cf0/METHOD.md",
         "data/methods/interrupt-reconcile-from-receipts-yield-to-active-owner-df8e729aafcf/METHOD.md",
         "data/methods/invalid-choice-error-is-interface-truth-map-verb-to-owner-layer-cb58a78c027d/METHOD.md",
         "data/methods/inventory-driven-salvage-commit-5b505795e3f4/METHOD.md",
