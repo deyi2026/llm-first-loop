@@ -479,9 +479,82 @@ class JobRegistry:
             logger.warning("job 终态通知写入失败（fail-open）: job_id=%s", job_id, exc_info=True)
 
 
+_ACTIVE_JOB_STATES = ("running", "orphaned")
+_MAX_ACTIVE_JOB_LINES = 8
+_MAX_TERMINAL_JOB_LINES = 3
+
+
+def format_session_jobs_facts(session_id: str, *, registry: JobRegistry | None = None) -> str:
+    """Mechanical wake-time projection of session-owned background jobs.
+
+    EVO-20260919-eee9d3b8（人工已审）: schedule wake continuations historically started
+    without the final receipts of jobs the same session launched before sleeping, which
+    led to blind re-polling and replaying already-finished steps.  This helper projects
+    registry facts only — no liveness inference, no advice, no cross-session data.
+    Output is bounded (active first, then the most recent terminal entries).
+    """
+    if not session_id:
+        return ""
+    reg = registry if registry is not None else JobRegistry.instance()
+    try:
+        snapshots = reg.snapshots_for_session(session_id)
+    except Exception:  # noqa: BLE001 — projection is fail-open observability
+        return ""
+    if not snapshots:
+        return ""
+
+    active: list[dict[str, object]] = []
+    terminal: list[dict[str, object]] = []
+    for snap in snapshots:
+        (active if str(snap.get("state", "")) in _ACTIVE_JOB_STATES else terminal).append(snap)
+
+    def _cmd_head(snap: dict[str, object]) -> str:
+        raw = str(snap.get("command", "") or "").strip().replace("\n", " ")
+        return raw[:60]
+
+    def _output_tail(snap: dict[str, object]) -> str:
+        lines = [str(line) for line in (snap.get("output") or []) if str(line).strip()]
+        return lines[-1].strip()[:80] if lines else ""
+
+    lines: list[str] = []
+    for snap in active[:_MAX_ACTIVE_JOB_LINES]:
+        lines.append(
+            f"{snap.get('job_id')} state={snap.get('state')}"
+            f" executor={snap.get('executor')} cmd_head={_cmd_head(snap)}"
+        )
+    for snap in terminal[-_MAX_TERMINAL_JOB_LINES:]:
+        exit_code = snap.get("exit_code")
+        extra = f" exit={exit_code}" if exit_code is not None else ""
+        tail = _output_tail(snap)
+        tail_part = f" output_tail={tail}" if tail else ""
+        lines.append(
+            f"{snap.get('job_id')} state={snap.get('state')}{extra}"
+            f" executor={snap.get('executor')}{tail_part}"
+        )
+    if not lines:
+        return ""
+    skipped_active = max(0, len(active) - _MAX_ACTIVE_JOB_LINES)
+    skipped_terminal = max(0, len(terminal) - _MAX_TERMINAL_JOB_LINES)
+    summary = (
+        f"registry={len(snapshots)} active={len(active)} terminal={len(terminal)}"
+        f"（active 列 {min(len(active), _MAX_ACTIVE_JOB_LINES)} 条"
+        + (f"，省略 {skipped_active}" if skipped_active else "")
+        + f"；terminal 列最近 {min(len(terminal), _MAX_TERMINAL_JOB_LINES)} 条"
+        + (f"，省略 {skipped_terminal}" if skipped_terminal else "")
+        + "）"
+    )
+    body = "\n".join(f"[程序投影·后台任务现状] {line}" for line in lines)
+    return (
+        "[程序投影·后台任务现状（机械事实·非建议·核验用 job_output）]\n"
+        + body
+        + f"\n[程序投影·后台任务现状] {summary}"
+    )
+
+
 __all__ = [
     "JobDurabilityError",
     "JobEntry",
     "JobLimitExceeded",
     "JobRegistry",
+    "format_session_jobs_facts",
 ]

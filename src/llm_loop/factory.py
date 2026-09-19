@@ -1618,9 +1618,21 @@ def build_engine(
                 )
                 return True
 
+            # EVO-20260919-eee9d3b8（人工已审）: 唤醒 prompt 追加本会话后台任务机械现状，
+            # 避免唤醒 run 在无终态回执可见时盲目重放/重复轮询；投影失败 fail-open。
+            wake_prompt = f"[定时续跑·先前真人授权的程序委派·非新真人输入] {entry.message}"
+            try:
+                from llm_loop.tools.builtin.job_registry import format_session_jobs_facts
+
+                jobs_facts = format_session_jobs_facts(session_id)
+            except Exception:  # noqa: BLE001 — 投影失败不阻断已授权续跑
+                jobs_facts = ""
+            if jobs_facts:
+                wake_prompt = f"{wake_prompt}\n{jobs_facts}"
+
             handle, _q = background_runner.start(
                 session_id,
-                f"[定时续跑·先前真人授权的程序委派·非新真人输入] {entry.message}",
+                wake_prompt,
                 ingress=grant,
             )
             if handle is not None:
