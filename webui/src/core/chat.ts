@@ -159,6 +159,7 @@ export interface ModelCapability {
   reasoning_control_supported: boolean;
   reasoning_can_disable: boolean;
   reasoning_efforts: string[];
+  reasoning_default_effort?: string | null;
 }
 
 export interface ModelCatalog {

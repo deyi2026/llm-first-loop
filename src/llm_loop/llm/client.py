@@ -829,6 +829,9 @@ class LLMClient:
     reasoning_effort: str = "high"
     # Model-owned chat-template vocabulary map. Empty preserves legacy enable_thinking-only wire.
     reasoning_effort_map: dict[str, str] | None = None
+    # Model-owned canonical effort capability/default. Empty preserves legacy behavior.
+    reasoning_efforts: tuple[str, ...] | None = None
+    reasoning_default_effort: str | None = None
 
     # M47（design §5.5）: 思考参数泛化 - 显式传入时以此为准（消除硬编码 deepseek.com）;
     # None 时保持原 _thinking_supported() 行为（向后兼容，零回归）.
@@ -1607,6 +1610,21 @@ class LLMClient:
             _reasoning_supported,
             _reasoning_requested,
         ) = self.reasoning_contract_state()
+        _request_effort = current_reasoning_effort.get()
+        _supported_efforts = tuple(self.reasoning_efforts or ())
+
+        def _effective_reasoning_effort() -> str | None:
+            requested = (_request_effort or "").strip().lower()
+            if requested and (not _supported_efforts or requested in _supported_efforts):
+                return requested
+            model_default = (self.reasoning_default_effort or "").strip().lower()
+            if model_default and (not _supported_efforts or model_default in _supported_efforts):
+                return model_default
+            legacy_default = (self.reasoning_effort or "").strip().lower()
+            if not _supported_efforts or legacy_default in _supported_efforts:
+                return legacy_default or None
+            return None
+
         if _reasoning_control == "chat_template":
             _legacy_local_override = (
                 _reasoning_mode == "auto" and "LOCAL_ENABLE_THINKING" in os.environ
@@ -1618,10 +1636,12 @@ class LLMClient:
                     "enable_thinking": _reasoning_requested
                 }
                 if _reasoning_requested and self.reasoning_effort_map:
-                    _requested_effort = (
-                        current_reasoning_effort.get() or self.reasoning_effort
-                    ).strip().lower()
-                    _mapped_effort = self.reasoning_effort_map.get(_requested_effort)
+                    _requested_effort = _effective_reasoning_effort()
+                    _mapped_effort = (
+                        self.reasoning_effort_map.get(_requested_effort)
+                        if _requested_effort
+                        else None
+                    )
                     if _mapped_effort:
                         _template_kwargs["reasoning_effort"] = _mapped_effort
                 payload["chat_template_kwargs"] = _template_kwargs
@@ -1630,23 +1650,26 @@ class LLMClient:
                 "type": "enabled" if _reasoning_requested else "disabled"
             }
             if _reasoning_requested:
-                payload["reasoning_effort"] = (
-                    current_reasoning_effort.get() or self.reasoning_effort
-                )
+                _effective_effort = _effective_reasoning_effort()
+                if _effective_effort:
+                    payload["reasoning_effort"] = _effective_effort
         elif _reasoning_control == "always_on_effort" and _reasoning_supported:
             # GLM-5.3-class contract: reasoning cannot be disabled. Provider docs
             # prescribe enabled+low as the migration equivalent of the old disabled
             # intent. Keep requested=False in telemetry; do not lie that reasoning
             # was actually disabled. In auto, leave thinking ownership with the
             # provider but still honor the independent operator/request effort.
-            _effective_effort = current_reasoning_effort.get() or self.reasoning_effort
+            _effective_effort = _effective_reasoning_effort()
             if _reasoning_requested is None:
-                payload["reasoning_effort"] = _effective_effort
+                if _effective_effort:
+                    payload["reasoning_effort"] = _effective_effort
             else:
                 payload["thinking"] = {"type": "enabled"}
-                payload["reasoning_effort"] = (
-                    _effective_effort if _reasoning_requested else "low"
-                )
+                if _reasoning_requested:
+                    if _effective_effort:
+                        payload["reasoning_effort"] = _effective_effort
+                else:
+                    payload["reasoning_effort"] = "low"
         # 本地 provider（api_key 为空）不发 Authorization 头
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:

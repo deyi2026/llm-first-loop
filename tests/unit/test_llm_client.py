@@ -510,8 +510,8 @@ def test_reasoning_capable_does_not_imply_control_protocol():
 
 
 def test_always_on_effort_honors_effort_in_auto_and_maps_off_to_low():
-    """GLM-5.3: auto keeps thinking provider-owned but honors configured effort."""
-    from llm_loop.core.run_context import current_reasoning_mode
+    """GLM-5.3: model-owned default wins in auto; explicit request still wins."""
+    from llm_loop.core.run_context import current_reasoning_effort, current_reasoning_mode
 
     payloads = []
 
@@ -530,24 +530,63 @@ def test_always_on_effort_honors_effort_in_auto_and_maps_off_to_low():
             reasoning_capable=True,
             reasoning_control="always_on_effort",
             reasoning_effort="high",
+            reasoning_efforts=("low", "high", "max"),
+            reasoning_default_effort="max",
         )
-        for mode in ("auto", "off", "on"):
+        for mode, request_effort in (("auto", None), ("off", None), ("on", None), ("on", "high")):
             token = current_reasoning_mode.set(mode)
+            effort_token = current_reasoning_effort.set(request_effort)
             try:
                 c.chat(messages=[{"role": "user", "content": mode}], tools=[])
             finally:
+                current_reasoning_effort.reset(effort_token)
                 current_reasoning_mode.reset(token)
 
     assert "thinking" not in payloads[0]
-    assert payloads[0]["reasoning_effort"] == "high"
+    assert payloads[0]["reasoning_effort"] == "max"
     assert payloads[1]["thinking"] == {"type": "enabled"}
     assert payloads[1]["reasoning_effort"] == "low"
     assert payloads[2]["thinking"] == {"type": "enabled"}
-    assert payloads[2]["reasoning_effort"] == "high"
+    assert payloads[2]["reasoning_effort"] == "max"
+    assert payloads[3]["reasoning_effort"] == "high"
     assert all(
         p.get("thinking") != {"type": "disabled"}
         for p in payloads
     )
+
+
+def test_always_on_effort_ignores_unsupported_request_effort() -> None:
+    """A stale/foreign UI effort must not be forwarded to a model that did not declare it."""
+    from llm_loop.core.run_context import current_reasoning_effort, current_reasoning_mode
+
+    payloads = []
+
+    def fake_stream(self, method, url, **kwargs):
+        payloads.append(kwargs.get("json", {}))
+        return _FakeStreamCtx([
+            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ])
+
+    with mock.patch("httpx.Client.stream", fake_stream):
+        c = _client(
+            provider="glm",
+            thinking_supported=True,
+            reasoning_capable=True,
+            reasoning_control="always_on_effort",
+            reasoning_effort="high",
+            reasoning_efforts=("low", "high", "max"),
+            reasoning_default_effort="max",
+        )
+        mode_token = current_reasoning_mode.set("on")
+        effort_token = current_reasoning_effort.set("medium")
+        try:
+            c.chat(messages=[{"role": "user", "content": "stale effort"}], tools=[])
+        finally:
+            current_reasoning_effort.reset(effort_token)
+            current_reasoning_mode.reset(mode_token)
+
+    assert payloads[0]["reasoning_effort"] == "max"
 
 
 def test_explicit_chat_template_contract_is_not_inferred_from_url():

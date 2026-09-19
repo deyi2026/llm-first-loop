@@ -33,6 +33,7 @@ function modelResponse() {
         reasoning_control_supported: true,
         reasoning_can_disable: false,
         reasoning_efforts: ["low", "high", "max"],
+        reasoning_default_effort: "max",
       },
       {
         id: "cognilocal/qwen3.8-27b-mlx-8bit",
@@ -359,10 +360,16 @@ describe("product composer", () => {
     vi.stubGlobal("fetch", baseFetch());
     render(<Composer />);
     await waitFor(() => expect((screen.getByTestId("model-select") as HTMLSelectElement).value).toBe("glm/glm-5.3"));
+    expect(screen.getByTestId("reasoning-button").textContent).toContain("自动(max)");
     fireEvent.click(screen.getByTestId("reasoning-button"));
     const popover = screen.getByTestId("reasoning-popover");
     expect(within(popover).queryByText("关闭")).toBeNull();
     expect(within(popover).getByText("最低")).toBeInTheDocument();
+    expect(within(popover).getByRole("button", { name: "low" })).toBeInTheDocument();
+    expect(within(popover).getByRole("button", { name: "high" })).toBeInTheDocument();
+    expect(within(popover).getByRole("button", { name: "max" })).toBeInTheDocument();
+    expect(within(popover).queryByRole("button", { name: "medium" })).toBeNull();
+    expect(within(popover).getByText(/自动默认：max/)).toBeInTheDocument();
     fireEvent.click(within(popover).getByText("最低"));
     expect(sessionStore.getState().thinkingMode).toBe("off");
     expect(screen.getByTestId("reasoning-button").textContent).toContain("最低");

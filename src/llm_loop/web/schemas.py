@@ -32,7 +32,10 @@ class ChatRequest(BaseModel):
         default=False,
         description="true=本次是人类显式模型选择；false=payload.model 仅为客户端快照，不得覆盖既有会话模型 authority",
     )
-    reasoning_effort: str | None = Field(default=None, description="推理等级（low/medium/high），可选；不传用装配默认")
+    reasoning_effort: str | None = Field(
+        default=None,
+        description="本次请求的 canonical 推理等级（如 low/medium/high/max/xhigh）；实际可用档位由所选模型声明，不传则用模型/provider 默认",
+    )
     reasoning_mode: Literal["auto", "off", "on"] = Field(
         default="auto",
         description="reasoning 模式：auto=尊重 provider/operator 默认，off/on=本请求显式关闭/开启",
@@ -106,7 +109,7 @@ class QueueEnqueueRequest(BaseModel):
     )
     model: str | None = Field(default=None, description="排队时的模型选择（冻结）")
     model_change: bool = Field(default=False, description="排队时是否为显式模型切换意图（冻结）")
-    reasoning_effort: str | None = Field(default=None, description="排队时的推理等级（冻结）")
+    reasoning_effort: str | None = Field(default=None, description="排队时冻结的模型级推理等级")
     reasoning_mode: Literal["auto", "off", "on"] = Field(
         default="auto", description="排队时的 reasoning 模式（冻结）"
     )
@@ -288,6 +291,11 @@ class ProviderModelAdminInput(BaseModel):
     reasoning_split: bool = False
     reasoning_replay: Literal["configured", "none", "tool_calls", "full"] = "configured"
     reasoning_effort_map: dict[str, str] = Field(default_factory=dict)
+    reasoning_efforts: list[Literal["low", "medium", "high", "max", "xhigh"]] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+    reasoning_default_effort: Literal["low", "medium", "high", "max", "xhigh"] | None = None
     runtime_identity: str = Field(default="", max_length=256)
     temperature: float | None = Field(default=None, ge=0)
     top_p: float | None = Field(default=None, gt=0, le=1)
@@ -315,6 +323,19 @@ class ProviderModelAdminInput(BaseModel):
                 raise ValueError("reasoning_effort_map 含非法条目")
             out[k] = v
         return out
+
+    @field_validator("reasoning_efforts")
+    @classmethod
+    def _reasoning_efforts_unique(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("reasoning_efforts 不得重复")
+        return value
+
+    @model_validator(mode="after")
+    def _default_effort_must_be_supported(self) -> "ProviderModelAdminInput":
+        if self.reasoning_default_effort and self.reasoning_default_effort not in self.reasoning_efforts:
+            raise ValueError("reasoning_default_effort 必须属于 reasoning_efforts")
+        return self
 
 
 class ProviderAdminProviderInput(BaseModel):

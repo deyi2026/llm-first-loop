@@ -1582,10 +1582,8 @@ def list_models(request: Request) -> dict:
             can_disable = control in {"thinking_type", "chat_template"} or (
                 control == "legacy" and bool(getattr(mspec, "thinking", False))
             )
-            effort_map = dict(getattr(mspec, "reasoning_effort_map", {}) or {})
-            efforts = sorted(effort_map) if effort_map else (
-                ["low", "medium", "high"] if control == "always_on_effort" else []
-            )
+            efforts = list(getattr(mspec, "reasoning_efforts", ()) or ())
+            default_effort = getattr(mspec, "reasoning_default_effort", None)
             catalog.append(
                 {
                     "id": model_ref,
@@ -1603,6 +1601,7 @@ def list_models(request: Request) -> dict:
                     "reasoning_control_supported": control_supported,
                     "reasoning_can_disable": can_disable,
                     "reasoning_efforts": efforts,
+                    "reasoning_default_effort": default_effort,
                 }
             )
     return {
