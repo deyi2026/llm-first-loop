@@ -1,0 +1,429 @@
+{
+  "schema": "smc.execution_binding_fixture_manifest.v0.1",
+  "status": "frozen_candidate_non_production",
+  "production_consumed": false,
+  "provider_visible_change": false,
+  "mutation_authority_change": false,
+  "cases": [
+    {
+      "case_id": "EB1-01",
+      "gate": "EB1",
+      "kind": "action_ref_admission",
+      "input": {
+        "session_match": true,
+        "integrity_ok": true,
+        "retained": true,
+        "version_match": false,
+        "identity_resolved": true
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "stale"
+      },
+      "invariant": "TTL retention never proves freshness."
+    },
+    {
+      "case_id": "EB1-02",
+      "gate": "EB1",
+      "kind": "action_ref_admission",
+      "input": {
+        "session_match": true,
+        "integrity_ok": true,
+        "retained": true,
+        "version_match": true,
+        "identity_resolved": true
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": null
+      },
+      "invariant": "Exact observation/version binding is eligible before other binding-specific gates."
+    },
+    {
+      "case_id": "EB1-03",
+      "gate": "EB1",
+      "kind": "action_ref_admission",
+      "input": {
+        "session_match": false,
+        "integrity_ok": true,
+        "retained": true,
+        "version_match": true,
+        "identity_resolved": true
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "unauthorized"
+      },
+      "invariant": "Cross-session ActionRef never resolves."
+    },
+    {
+      "case_id": "EB1-04",
+      "gate": "EB1",
+      "kind": "action_ref_admission",
+      "input": {
+        "session_match": true,
+        "integrity_ok": false,
+        "retained": true,
+        "version_match": true,
+        "identity_resolved": true
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "integrity_error"
+      },
+      "invariant": "Tampered ActionRef is unavailable rather than repaired."
+    },
+    {
+      "case_id": "EB1-05",
+      "gate": "EB1",
+      "kind": "action_ref_admission",
+      "input": {
+        "session_match": true,
+        "integrity_ok": true,
+        "retained": false,
+        "version_match": true,
+        "identity_resolved": true
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "expired"
+      },
+      "invariant": "Retention expiry is explicit."
+    },
+    {
+      "case_id": "EB1-06",
+      "gate": "EB1",
+      "kind": "action_ref_admission",
+      "input": {
+        "session_match": true,
+        "integrity_ok": true,
+        "retained": true,
+        "version_match": true,
+        "identity_resolved": false
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "identity_unresolved"
+      },
+      "invariant": "Same-looking replacement never inherits an ActionRef."
+    },
+    {
+      "case_id": "EB2-01",
+      "gate": "EB2",
+      "kind": "manifest_cursor",
+      "input": {
+        "cursor_revision": 41,
+        "current_revision": 41,
+        "projection_complete": false,
+        "next_cursor_present": true
+      },
+      "expected": {
+        "decision": "continue",
+        "reason": null
+      },
+      "invariant": "Paging may continue only within the same revision."
+    },
+    {
+      "case_id": "EB2-02",
+      "gate": "EB2",
+      "kind": "manifest_cursor",
+      "input": {
+        "cursor_revision": 41,
+        "current_revision": 42,
+        "projection_complete": false,
+        "next_cursor_present": true
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "manifest_revision_changed"
+      },
+      "invariant": "Cursor cannot cross manifest revision."
+    },
+    {
+      "case_id": "EB2-03",
+      "gate": "EB2",
+      "kind": "manifest_projection",
+      "input": {
+        "ordering": "provider_target_verb_capability_v0.1",
+        "task_relevance_ranking": false,
+        "projection_complete": false,
+        "next_cursor_present": true
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": null
+      },
+      "invariant": "Partial deterministic projection is valid when incompleteness is explicit."
+    },
+    {
+      "case_id": "EB2-04",
+      "gate": "EB2",
+      "kind": "manifest_projection",
+      "input": {
+        "ordering": "task_relevance_score",
+        "task_relevance_ranking": true,
+        "projection_complete": true,
+        "next_cursor_present": false
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "semantic_ranking_forbidden"
+      },
+      "invariant": "Program-side task relevance ranking is not a mechanical projection."
+    },
+    {
+      "case_id": "EB3-01",
+      "gate": "EB3",
+      "kind": "binding_equivalence",
+      "input": {
+        "same_semantic_verb": true,
+        "same_target_contract": true,
+        "same_arg_contract": true,
+        "same_effect_class": true,
+        "same_idempotency": true,
+        "same_atomicity": true,
+        "same_confirmation": true,
+        "same_permission_class": true
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": null
+      },
+      "invariant": "Mechanical binding choice is allowed only inside a full equivalence class."
+    },
+    {
+      "case_id": "EB3-02",
+      "gate": "EB3",
+      "kind": "binding_equivalence",
+      "input": {
+        "same_semantic_verb": false,
+        "same_target_contract": true,
+        "same_arg_contract": true,
+        "same_effect_class": false,
+        "same_idempotency": true,
+        "same_atomicity": true,
+        "same_confirmation": true,
+        "same_permission_class": true
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "binding_not_equivalent"
+      },
+      "invariant": "Save cannot silently fall back to export/save-as."
+    },
+    {
+      "case_id": "EB4-01",
+      "gate": "EB4",
+      "kind": "authority",
+      "input": {
+        "provider_declares_allowed": true,
+        "runtime_allowed": false,
+        "platform_allowed": true,
+        "protected_human_only": false
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "permission_denied"
+      },
+      "invariant": "Provider metadata cannot mint Runtime authority."
+    },
+    {
+      "case_id": "EB4-02",
+      "gate": "EB4",
+      "kind": "authority",
+      "input": {
+        "provider_declares_allowed": true,
+        "runtime_allowed": true,
+        "platform_allowed": false,
+        "protected_human_only": false
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "permission_denied"
+      },
+      "invariant": "Provider metadata cannot waive platform authority."
+    },
+    {
+      "case_id": "EB4-03",
+      "gate": "EB4",
+      "kind": "authority",
+      "input": {
+        "provider_declares_allowed": true,
+        "runtime_allowed": true,
+        "platform_allowed": true,
+        "protected_human_only": true
+      },
+      "expected": {
+        "decision": "human_required",
+        "reason": "protected_interaction"
+      },
+      "invariant": "Protected interaction remains human-required."
+    },
+    {
+      "case_id": "EB5-01",
+      "gate": "EB5",
+      "kind": "context",
+      "input": {
+        "binding_class": "keyboard_shortcut",
+        "requires_context": true,
+        "expected_context_version": "ctx_7",
+        "current_context_version": "ctx_8"
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "context_changed"
+      },
+      "invariant": "Shortcut dispatch fails closed after focus/context movement."
+    },
+    {
+      "case_id": "EB5-02",
+      "gate": "EB5",
+      "kind": "context",
+      "input": {
+        "binding_class": "native_api",
+        "requires_context": false,
+        "expected_context_version": null,
+        "current_context_version": "ctx_8"
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": null
+      },
+      "invariant": "Direct semantic/native binding is not coupled to irrelevant keyboard focus."
+    },
+    {
+      "case_id": "EB6-01",
+      "gate": "EB6",
+      "kind": "human_preemption",
+      "input": {
+        "dispatched": false,
+        "context_sensitive": true,
+        "human_interaction_after_prepare": true
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "context_changed"
+      },
+      "invariant": "Human input preempts pending context-sensitive AI dispatch."
+    },
+    {
+      "case_id": "EB6-02",
+      "gate": "EB6",
+      "kind": "human_preemption",
+      "input": {
+        "dispatched": true,
+        "context_sensitive": true,
+        "human_interaction_after_prepare": true
+      },
+      "expected": {
+        "decision": "settle_receipt",
+        "reason": "effect_may_have_occurred"
+      },
+      "invariant": "Already-dispatched effect is observed and settled, never erased by cancellation."
+    },
+    {
+      "case_id": "EB7-01",
+      "gate": "EB7",
+      "kind": "receipt_semantic_delta",
+      "input": {
+        "requested_args": {
+          "destination": "folder_A"
+        },
+        "effective_args": {
+          "destination": "folder_A"
+        },
+        "confirmation_allows_parameter_edit": false,
+        "user_confirmed": false
+      },
+      "expected": {
+        "decision": "allow",
+        "reason": null
+      },
+      "invariant": "Normal mechanical compilation has zero semantic delta."
+    },
+    {
+      "case_id": "EB7-02",
+      "gate": "EB7",
+      "kind": "receipt_semantic_delta",
+      "input": {
+        "requested_args": {
+          "destination": "folder_A"
+        },
+        "effective_args": {
+          "destination": "folder_B"
+        },
+        "confirmation_allows_parameter_edit": true,
+        "user_confirmed": true
+      },
+      "expected": {
+        "decision": "allow_user_modified",
+        "reason": null
+      },
+      "invariant": "Explicit authorized user confirmation may co-author effective semantic parameters."
+    },
+    {
+      "case_id": "EB7-03",
+      "gate": "EB7",
+      "kind": "receipt_semantic_delta",
+      "input": {
+        "requested_args": {
+          "destination": "folder_A"
+        },
+        "effective_args": {
+          "destination": "folder_B"
+        },
+        "confirmation_allows_parameter_edit": false,
+        "user_confirmed": false
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "semantic_rewrite_forbidden"
+      },
+      "invariant": "Compiler/runtime cannot silently rewrite semantic args."
+    },
+    {
+      "case_id": "EB8-01",
+      "gate": "EB8",
+      "kind": "cross_device_identity",
+      "input": {
+        "left": {
+          "entity_namespace": "com.example.documents",
+          "entity_id": "doc_123",
+          "issuer": "provider_xyz"
+        },
+        "right": {
+          "entity_namespace": "com.example.documents",
+          "entity_id": "doc_123",
+          "issuer": "provider_xyz"
+        },
+        "authoritative_provider_assertion": true
+      },
+      "expected": {
+        "decision": "link_allowed",
+        "reason": null
+      },
+      "invariant": "Issuer-backed portable identity may support cross-device linking."
+    },
+    {
+      "case_id": "EB8-02",
+      "gate": "EB8",
+      "kind": "cross_device_identity",
+      "input": {
+        "left": {
+          "display_name": "Report.docx",
+          "content_hash": "same"
+        },
+        "right": {
+          "display_name": "Report.docx",
+          "content_hash": "same"
+        },
+        "authoritative_provider_assertion": false
+      },
+      "expected": {
+        "decision": "reject",
+        "reason": "portable_identity_unproven"
+      },
+      "invariant": "Name/hash/path similarity never proves portable identity."
+    }
+  ]
+}

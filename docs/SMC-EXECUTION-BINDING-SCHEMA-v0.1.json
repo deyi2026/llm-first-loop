@@ -1,0 +1,746 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://llm-first-loop.local/schema/smc-execution-binding-v0.1.json",
+  "title": "SMC Execution Binding mechanical contract schema v0.1",
+  "description": "Non-production deterministic schema for capability discovery, ActionRef binding, physical binding selection, interaction context, dispatch and receipts.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/capability_manifest_page"
+    },
+    {
+      "$ref": "#/$defs/action_ref_record"
+    },
+    {
+      "$ref": "#/$defs/execution_binding"
+    },
+    {
+      "$ref": "#/$defs/interaction_context"
+    },
+    {
+      "$ref": "#/$defs/binding_dispatch"
+    },
+    {
+      "$ref": "#/$defs/binding_receipt"
+    }
+  ],
+  "$defs": {
+    "nonempty_string": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nullable_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "control_capability_class": {
+      "type": "string",
+      "enum": [
+        "DIRECT_SEMANTIC",
+        "ACCESSIBILITY_CONTROL",
+        "SYSTEM_COMMAND",
+        "SHORTCUT",
+        "STRUCTURED_INPUT",
+        "VISION_GROUNDED_INPUT",
+        "OBSERVE_ONLY",
+        "UNSUPPORTED",
+        "HUMAN_REQUIRED"
+      ]
+    },
+    "binding_class": {
+      "type": "string",
+      "enum": [
+        "native_semantic",
+        "app_intent",
+        "native_api",
+        "accessibility_action",
+        "system_command",
+        "application_command",
+        "keyboard_shortcut",
+        "structured_keyboard",
+        "structured_pointer",
+        "structured_gesture",
+        "vision_grounded_input"
+      ]
+    },
+    "idempotency_class": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "idempotent",
+        "non_idempotent",
+        "unknown"
+      ]
+    },
+    "atomicity_class": {
+      "type": "string",
+      "enum": [
+        "read_only",
+        "single_dispatch",
+        "best_effort",
+        "transactional",
+        "unknown"
+      ]
+    },
+    "confirmation_requirement": {
+      "type": "string",
+      "enum": [
+        "none",
+        "platform_managed",
+        "runtime_user_required",
+        "human_only"
+      ]
+    },
+    "completeness": {
+      "type": "object",
+      "required": [
+        "complete",
+        "reasons"
+      ],
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "projection": {
+      "type": "object",
+      "required": [
+        "complete",
+        "returned_count",
+        "total_count",
+        "next_cursor"
+      ],
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "returned_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "next_cursor": {
+          "$ref": "#/$defs/nullable_ref"
+        }
+      },
+      "additionalProperties": false
+    },
+    "capability_item": {
+      "type": "object",
+      "required": [
+        "schema",
+        "capability_id",
+        "capability_ref",
+        "target_kind",
+        "semantic_verb",
+        "parameter_schema_ref",
+        "control_capability_class",
+        "effect_class",
+        "idempotency_class",
+        "atomicity_class",
+        "permission_requirements",
+        "confirmation_requirement",
+        "binding_equivalence_class_id"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.capability.v0.1"
+        },
+        "capability_id": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "capability_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "target_kind": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "semantic_verb": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "parameter_schema_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "control_capability_class": {
+          "$ref": "#/$defs/control_capability_class"
+        },
+        "effect_class": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "idempotency_class": {
+          "$ref": "#/$defs/idempotency_class"
+        },
+        "atomicity_class": {
+          "$ref": "#/$defs/atomicity_class"
+        },
+        "permission_requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonempty_string"
+          },
+          "uniqueItems": true
+        },
+        "confirmation_requirement": {
+          "$ref": "#/$defs/confirmation_requirement"
+        },
+        "binding_equivalence_class_id": {
+          "$ref": "#/$defs/nonempty_string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "capability_manifest_page": {
+      "type": "object",
+      "required": [
+        "schema",
+        "manifest_ref",
+        "manifest_revision",
+        "provider_id",
+        "domain",
+        "scope_ref",
+        "ordering",
+        "filters",
+        "items",
+        "projection"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.capability_manifest_page.v0.1"
+        },
+        "manifest_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "manifest_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "provider_id": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "domain": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "scope_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "ordering": {
+          "const": "provider_target_verb_capability_v0.1"
+        },
+        "filters": {
+          "type": "object",
+          "properties": {
+            "target_kind": {
+              "$ref": "#/$defs/nullable_ref"
+            },
+            "semantic_verb": {
+              "$ref": "#/$defs/nullable_ref"
+            },
+            "control_capability_class": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/control_capability_class"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capability_item"
+          }
+        },
+        "projection": {
+          "$ref": "#/$defs/projection"
+        }
+      },
+      "additionalProperties": false
+    },
+    "action_ref_record": {
+      "type": "object",
+      "required": [
+        "schema",
+        "action_ref",
+        "validity_class",
+        "session_id",
+        "device_id",
+        "domain",
+        "scope_ref",
+        "semantic_object_id",
+        "observation_ref",
+        "observed_version",
+        "authority_scope",
+        "grounding_ref",
+        "provider_object_ref",
+        "issued_at",
+        "expires_at",
+        "integrity"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.action_ref_record.v0.1"
+        },
+        "action_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "validity_class": {
+          "const": "observation_exact"
+        },
+        "session_id": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "device_id": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "domain": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "scope_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "semantic_object_id": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "observation_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "observed_version": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "authority_scope": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "grounding_ref": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "provider_object_ref": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "issued_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "integrity": {
+          "type": "object",
+          "required": [
+            "algorithm",
+            "digest"
+          ],
+          "properties": {
+            "algorithm": {
+              "const": "sha256"
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "grounding_ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "provider_object_ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "execution_binding": {
+      "type": "object",
+      "required": [
+        "schema",
+        "binding_id",
+        "capability_ref",
+        "manifest_revision",
+        "binding_class",
+        "equivalence_class_id",
+        "semantic_verb",
+        "target_kind",
+        "effect_class",
+        "idempotency_class",
+        "atomicity_class",
+        "permission_requirements",
+        "confirmation_requirement",
+        "context_preconditions",
+        "fallback_policy",
+        "receipt_obligations"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.execution_binding.v0.1"
+        },
+        "binding_id": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "capability_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "manifest_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "binding_class": {
+          "$ref": "#/$defs/binding_class"
+        },
+        "equivalence_class_id": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "semantic_verb": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "target_kind": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "effect_class": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "idempotency_class": {
+          "$ref": "#/$defs/idempotency_class"
+        },
+        "atomicity_class": {
+          "$ref": "#/$defs/atomicity_class"
+        },
+        "permission_requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonempty_string"
+          },
+          "uniqueItems": true
+        },
+        "confirmation_requirement": {
+          "$ref": "#/$defs/confirmation_requirement"
+        },
+        "context_preconditions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "active_application",
+              "active_window",
+              "focused_object",
+              "selection",
+              "input_method",
+              "keyboard_layout",
+              "modifier_state",
+              "foreground_scene",
+              "orientation",
+              "virtual_keyboard",
+              "system_overlay",
+              "lock_state"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "fallback_policy": {
+          "const": "equivalent_only"
+        },
+        "receipt_obligations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonempty_string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "interaction_context": {
+      "type": "object",
+      "required": [
+        "schema",
+        "context_ref",
+        "context_version",
+        "active_application",
+        "active_window",
+        "focused_object",
+        "selection",
+        "input_method",
+        "keyboard_layout",
+        "modifier_state",
+        "foreground_scene",
+        "orientation",
+        "virtual_keyboard",
+        "system_overlay",
+        "lock_state",
+        "completeness"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.interaction_context.v0.1"
+        },
+        "context_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "context_version": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "active_application": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "active_window": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "focused_object": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "selection": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "input_method": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "keyboard_layout": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "modifier_state": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "foreground_scene": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "orientation": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "virtual_keyboard": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "system_overlay": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "lock_state": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "completeness": {
+          "$ref": "#/$defs/completeness"
+        }
+      },
+      "additionalProperties": false
+    },
+    "action_summary": {
+      "type": "object",
+      "required": [
+        "target_id",
+        "semantic_verb",
+        "args"
+      ],
+      "properties": {
+        "target_id": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "semantic_verb": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "args": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "binding_dispatch": {
+      "type": "object",
+      "required": [
+        "schema",
+        "action_id",
+        "action_ref",
+        "capability_ref",
+        "manifest_revision",
+        "binding_id",
+        "requested_action",
+        "expected_observation_ref",
+        "expected_version",
+        "expected_context_ref",
+        "expected_context_version",
+        "authority_check_ref",
+        "confirmation_ref",
+        "effect_reservation_ref"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.binding_dispatch.v0.1"
+        },
+        "action_id": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "action_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "capability_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "manifest_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "binding_id": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "requested_action": {
+          "$ref": "#/$defs/action_summary"
+        },
+        "expected_observation_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "expected_version": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "expected_context_ref": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "expected_context_version": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "authority_check_ref": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "confirmation_ref": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "effect_reservation_ref": {
+          "$ref": "#/$defs/nullable_ref"
+        }
+      },
+      "additionalProperties": false
+    },
+    "binding_receipt": {
+      "type": "object",
+      "required": [
+        "schema",
+        "action_id",
+        "requested_action",
+        "effective_action",
+        "user_modified_parameters",
+        "confirmation_ref",
+        "binding_id",
+        "binding_class",
+        "attempt",
+        "status",
+        "reason",
+        "before_version",
+        "after_version",
+        "context_before",
+        "context_after",
+        "observed_effects",
+        "boundary_events",
+        "automatic_replay",
+        "completeness"
+      ],
+      "properties": {
+        "schema": {
+          "const": "smc.binding_receipt.v0.1"
+        },
+        "action_id": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "requested_action": {
+          "$ref": "#/$defs/action_summary"
+        },
+        "effective_action": {
+          "$ref": "#/$defs/action_summary"
+        },
+        "user_modified_parameters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonempty_string"
+          },
+          "uniqueItems": true
+        },
+        "confirmation_ref": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "binding_id": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "binding_class": {
+          "$ref": "#/$defs/binding_class"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "rejected",
+            "failed",
+            "ambiguous",
+            "human_required"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "before_version": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "after_version": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "context_before": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "context_after": {
+          "$ref": "#/$defs/nullable_ref"
+        },
+        "observed_effects": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "boundary_events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonempty_string"
+          }
+        },
+        "automatic_replay": {
+          "type": "boolean"
+        },
+        "completeness": {
+          "$ref": "#/$defs/completeness"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
