@@ -4,7 +4,11 @@
 2. 语料同时含 memory.content + archive.summary/content(截断800字)
 3. 语义模型批量编码(一次前向), 查询加 bge 官方检索前缀
 """
-import sys, json, glob, time
+import glob
+import json
+import sys
+import time
+
 sys.path.insert(0, "src")
 from llm_loop.memory.embedder import HashEmbedder, cosine_similarity
 
@@ -31,27 +35,35 @@ TESTS = [
 
 def load_corpus(max_docs=100000):
     docs, seen = [], set()
-    mem = json.load(open("data/memory/index.json"))
+    with open("data/memory/index.json") as fh:
+        mem = json.load(fh)
     for e in mem:
         t = (e.get("content","") or "").strip()
         if len(t) > 60:
-            docs.append({"src":"mem","text":t[:800]}); seen.add(t[:200])
+            docs.append({"src": "mem", "text": t[:800]})
+            seen.add(t[:200])
     print(f"  memory docs: {len(docs)}", flush=True)
     for f in sorted(glob.glob("data/archives/*.jsonl")):
         try:
             with open(f) as fh:
                 for line in fh:
-                    try: d = json.loads(line)
-                    except: continue
+                    try:
+                        d = json.loads(line)
+                    except Exception:
+                        continue
                     for field in ("summary","content"):
                         t = (d.get(field,"") or "").strip()
                         if len(t) > 80:
                             k = t[:200]
                             if k not in seen:
-                                seen.add(k); docs.append({"src":f"arc:{field}","text":t[:800]})
-                    if len(docs) >= max_docs: break
-        except Exception: pass
-        if len(docs) >= max_docs: break
+                                seen.add(k)
+                                docs.append({"src": f"arc:{field}", "text": t[:800]})
+                    if len(docs) >= max_docs:
+                        break
+        except Exception:
+            pass
+        if len(docs) >= max_docs:
+            break
     return docs
 
 def main():
@@ -90,7 +102,8 @@ def main():
             scores = []
             for i, dv in enumerate(mat):
                 dl = dv.tolist() if hasattr(dv,"tolist") else dv
-                if dl is None: continue
+                if dl is None:
+                    continue
                 s = cosine_similarity(qlist, dl)
                 scores.append((s, i))
             scores.sort(reverse=True)
