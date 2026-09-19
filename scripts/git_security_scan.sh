@@ -68,6 +68,14 @@ _ABS_PATH_ONLY_ALLOWLIST=(
   'experiences/'  # 经验档案：文档如实记录本机工作区路径=记录本体，非泄露；secret/大文件/禁路径检查不豁免
 )
 
+# ── 规则粒度豁免：仅跳过规则1（禁路径）；规则2敏感内容/规则3绝对路径/规则4大文件仍全量执行 ──
+# 用于"路径前缀属历史禁区、但内容已定性为知识资产"的目录（复刻 _ABS_PATH_ONLY_ALLOWLIST 粒度模式，
+# 2026-09-18 审查精神：不整目录全豁免；2026-09-20 首例 data/methods——.gitignore 09-18 已声明
+# !data/methods/ 入库保全，270 文件内容全检通过后登记；后续新增文件仍过全部内容安检）
+_PATH_ONLY_ALLOWLIST=(
+  'data/methods/'  # 学习方法资产（METHOD.md 方法卡 + qualification.jsonl；embeddings-*.json 由 gitignore 排除）
+)
+
 # macOS/Linux 兼容的 stat 大小
 _file_size() {
   if [[ "$(uname)" == "Darwin" ]]; then
@@ -94,6 +102,15 @@ _abs_path_only_allowed() {
   return 1
 }
 
+# 规则粒度豁免：仅豁免"禁路径"检查（data/methods/ 等知识资产目录；内容/大文件/绝对路径检查不豁免）
+_path_only_allowed() {
+  local path="$1"
+  for a in "${_PATH_ONLY_ALLOWLIST[@]}"; do
+    [[ "$path" == *"$a"* ]] && return 0
+  done
+  return 1
+}
+
 _fail() {
   echo "❌ [git_security_scan] 命中安全规则（提交被拦截）: $1"
   echo "   文件: $2"
@@ -115,8 +132,8 @@ main() {
   for f in "${files[@]}"; do
     _is_allowed "$f" && continue
 
-    # 规则 1: 路径
-    for pat in "${BLOCK_PATH_PATTERNS[@]}"; do
+    # 规则 1: 路径（_PATH_ONLY_ALLOWLIST 仅豁免本规则；规则2/3/4 仍全量执行）
+    _path_only_allowed "$f" || for pat in "${BLOCK_PATH_PATTERNS[@]}"; do
       [[ "$f" =~ $pat ]] && _fail "禁止路径匹配 [$pat]" "$f"
     done
 
