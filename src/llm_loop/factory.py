@@ -1602,6 +1602,7 @@ def build_engine(
             WAKE_DEFERRED,
             ScheduleEntry,
             SchedulerThread,
+            rearm_wake_grants,
         )
 
         def _deliver_schedule(entry: ScheduleEntry) -> object:
@@ -1713,8 +1714,6 @@ def build_engine(
 
         def _rearm_wake_grants(session_id: str, ingress: object) -> None:
             """真人 run 启动钩子（lifecycle 在 run_stream 中调用）：重铸本会话丢失的 wake grant。"""
-            from llm_loop.core.scheduler import rearm_wake_grants
-
             rearm_wake_grants(_schedule_store, session_id, ingress)
 
         engine.rearm_wake_grants = _rearm_wake_grants
