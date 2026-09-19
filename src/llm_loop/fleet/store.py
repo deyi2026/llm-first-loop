@@ -5,6 +5,19 @@ cross-process ``fcntl`` lock, so a stale coordinator handle can never win
 against a newer generation written by another process (stale-generation
 fencing).  Facts append to per-workspace JSONL; settlement is exactly-once
 per workspace.
+
+Round-2 race/expiry contract (measured in test_fleet_reclaim_race_and_ttl):
+
+- ``reclaim`` is one atomic critical section (supersede + mint successor):
+  racing reclaims serialize into takeover chains, never phantom actives;
+- ``expected_generation`` makes recovery CAS: one winner, losers get
+  ``LeaseConflictError``;
+- ``acquire_lease`` refuses a live active lease (``LeaseConflictError``)
+  instead of silently stacking a generation on top of it;
+- leases may declare ``ttl_seconds``; ``reclaim_if_expired`` is the only
+  time-licensed takeover path, and refuses expiry-free/unexpired leases
+  with ``LeaseActiveError`` (live takeover stays an explicit reclaim);
+- ``renew_lease`` lets the current holder extend its own expiry (fenced).
 """
 
 from __future__ import annotations
@@ -27,6 +40,14 @@ class FencedError(RuntimeError):
 
 class SettlementError(RuntimeError):
     """A workspace already settled exactly once; no further settlement exists."""
+
+
+class LeaseConflictError(RuntimeError):
+    """An acquisition/recovery lost the race against another lease generation."""
+
+
+class LeaseActiveError(RuntimeError):
+    """A live lease is not mechanically reclaimable (unexpired or expiry-free)."""
 
 
 @dataclass(frozen=True)
@@ -55,6 +76,7 @@ class WorkerLease:
     owner_id: str
     acquired_at: float
     state: str  # active | superseded | settled
+    expires_at: float | None = None  # None = expiry-free: takeover needs an explicit reclaim
 
 
 @dataclass(frozen=True)
@@ -116,6 +138,25 @@ class FleetStore:
 
     # ------------------------------------------------------- construction
 
+    def get_or_create_project(self, project_id: str) -> ProjectRecord:
+        """Find-or-create under one lock: concurrent first sight cannot lose."""
+        with self._lock():
+            state = self._load()
+            raw = state["projects"].get(project_id)
+            if raw is None:
+                raw = {
+                    "project_id": project_id,
+                    "created_at": _now(),
+                    "workspaces": [],
+                }
+                state["projects"][project_id] = raw
+                self._save(state)
+            return ProjectRecord(
+                project_id=raw["project_id"],
+                created_at=raw["created_at"],
+                workspaces=tuple(raw["workspaces"]),
+            )
+
     def create_project(self, project_id: str) -> ProjectRecord:
         with self._lock():
             state = self._load()
@@ -156,6 +197,46 @@ class FleetStore:
             self._save(state)
             return record
 
+    def _workspace_from_raw(self, raw: dict[str, Any]) -> ExecutionWorkspace:
+        return ExecutionWorkspace(
+            workspace_id=raw["workspace_id"],
+            project_id=raw["project_id"],
+            physical_root=raw["physical_root"],
+            repo_head=raw["repo_head"],
+            created_at=raw["created_at"],
+        )
+
+    def get_or_create_workspace(
+        self, project_id: str, physical_root: str, repo_head: str
+    ) -> ExecutionWorkspace:
+        """Find-or-create under one lock: concurrent first sight cannot fork identities."""
+        with self._lock():
+            state = self._load()
+            if project_id not in state["projects"]:
+                raise KeyError(f"unknown project: {project_id}")
+            root = str(Path(physical_root))
+            for raw in state["workspaces"].values():
+                if raw["project_id"] == project_id and raw["physical_root"] == root:
+                    return self._workspace_from_raw(raw)
+            workspace_id = f"ws-{len(state['workspaces']) + 1}"
+            record = ExecutionWorkspace(
+                workspace_id=workspace_id,
+                project_id=project_id,
+                physical_root=root,
+                repo_head=repo_head,
+                created_at=_now(),
+            )
+            state["workspaces"][workspace_id] = {
+                "workspace_id": record.workspace_id,
+                "project_id": record.project_id,
+                "physical_root": record.physical_root,
+                "repo_head": record.repo_head,
+                "created_at": record.created_at,
+            }
+            state["projects"][project_id]["workspaces"].append(workspace_id)
+            self._save(state)
+            return record
+
     def _lease_from_raw(self, raw: dict[str, Any]) -> WorkerLease:
         return WorkerLease(
             lease_id=raw["lease_id"],
@@ -166,6 +247,7 @@ class FleetStore:
             owner_id=raw["owner_id"],
             acquired_at=raw["acquired_at"],
             state=raw["state"],
+            expires_at=raw.get("expires_at"),
         )
 
     def acquire_lease(
@@ -174,6 +256,7 @@ class FleetStore:
         workspace_id: str,
         owner_id: str,
         worker_id: str | None = None,
+        ttl_seconds: float | None = None,
     ) -> WorkerLease:
         with self._lock():
             state = self._load()
@@ -181,6 +264,12 @@ class FleetStore:
             current = self._current_lease_raw(state, workspace_id)
             if current is not None and current["state"] == "settled":
                 raise SettlementError(f"workspace already settled: {workspace_id}")
+            if current is not None and current["state"] == "active":
+                # never silently step on a live lease; takeover is reclaim's job
+                raise LeaseConflictError(
+                    f"active lease exists for {workspace_id} "
+                    f"(generation {current['generation']}); explicit reclaim required"
+                )
             generation = (current["generation"] + 1) if current else 1
             lease = WorkerLease(
                 lease_id=f"lease-{workspace_id}-g{generation}",
@@ -191,6 +280,9 @@ class FleetStore:
                 owner_id=owner_id,
                 acquired_at=_now(),
                 state="active",
+                expires_at=(
+                    _now() + ttl_seconds if ttl_seconds is not None else None
+                ),
             )
             state["leases"][lease.lease_id] = {
                 "lease_id": lease.lease_id,
@@ -201,12 +293,29 @@ class FleetStore:
                 "owner_id": lease.owner_id,
                 "acquired_at": lease.acquired_at,
                 "state": lease.state,
+                "expires_at": lease.expires_at,
             }
             self._save(state)
             return lease
 
-    def reclaim(self, project_id: str, workspace_id: str, owner_id: str) -> WorkerLease:
-        """Mark the current generation superseded and issue the next one (CAS)."""
+    def reclaim(
+        self,
+        project_id: str,
+        workspace_id: str,
+        owner_id: str,
+        *,
+        expected_generation: int | None = None,
+        ttl_seconds: float | None = None,
+    ) -> WorkerLease:
+        """Atomically supersede the current generation and issue the next one.
+
+        One critical section: mark the observed lease superseded and mint the
+        successor, so racing reclaims serialize into clean takeover chains and
+        can never leave a phantom second ``active`` lease.  ``expected_generation``
+        turns this into CAS crash recovery: if the observed stale generation
+        already moved, the loser gets ``LeaseConflictError`` instead of a
+        doomed lease.
+        """
         with self._lock():
             state = self._load()
             self._require_workspace(state, project_id, workspace_id)
@@ -215,9 +324,115 @@ class FleetStore:
                 raise KeyError(f"no lease to reclaim: {workspace_id}")
             if current["state"] == "settled":
                 raise SettlementError(f"workspace already settled: {workspace_id}")
+            if (
+                expected_generation is not None
+                and current["generation"] != expected_generation
+            ):
+                raise LeaseConflictError(
+                    f"reclaim raced: {workspace_id} moved to generation "
+                    f"{current['generation']} (expected {expected_generation})"
+                )
             current["state"] = "superseded"
+            now = _now()
+            generation = current["generation"] + 1
+            lease = WorkerLease(
+                lease_id=f"lease-{workspace_id}-g{generation}",
+                project_id=project_id,
+                workspace_id=workspace_id,
+                worker_id=f"worker-g{generation}",
+                generation=generation,
+                owner_id=owner_id,
+                acquired_at=now,
+                state="active",
+                expires_at=now + ttl_seconds if ttl_seconds is not None else None,
+            )
+            state["leases"][lease.lease_id] = {
+                "lease_id": lease.lease_id,
+                "project_id": lease.project_id,
+                "workspace_id": lease.workspace_id,
+                "worker_id": lease.worker_id,
+                "generation": lease.generation,
+                "owner_id": lease.owner_id,
+                "acquired_at": lease.acquired_at,
+                "state": lease.state,
+                "expires_at": lease.expires_at,
+            }
             self._save(state)
-        return self.acquire_lease(project_id, workspace_id, owner_id)
+            return lease
+
+    def renew_lease(self, lease: WorkerLease, *, extend_seconds: float) -> WorkerLease:
+        """Current active holder extends its own expiry (fenced)."""
+        with self._lock():
+            state = self._load()
+            self._require_current(state, lease)
+            raw = state["leases"][lease.lease_id]
+            now = _now()
+            base = raw.get("expires_at")
+            base = now if base is None or base < now else base
+            raw["expires_at"] = base + extend_seconds
+            self._save(state)
+            return self._lease_from_raw(raw)
+
+    def reclaim_if_expired(
+        self,
+        project_id: str,
+        workspace_id: str,
+        owner_id: str,
+        *,
+        ttl_seconds: float | None = None,
+    ) -> WorkerLease:
+        """Time-licensed takeover: only a lease past its declared expiry may pass.
+
+        Expiry-free or unexpired leases raise ``LeaseActiveError`` -- taking
+        over a live lease without a time fact stays an explicit operator
+        decision (plain ``reclaim``).
+        """
+        with self._lock():
+            state = self._load()
+            self._require_workspace(state, project_id, workspace_id)
+            current = self._current_lease_raw(state, workspace_id)
+            if current is None:
+                raise KeyError(f"no lease to reclaim: {workspace_id}")
+            if current["state"] == "settled":
+                raise SettlementError(f"workspace already settled: {workspace_id}")
+            expires_at = current.get("expires_at")
+            now = _now()
+            if expires_at is None:
+                raise LeaseActiveError(
+                    f"lease {current['lease_id']} declares no expiry; "
+                    "mechanical expiry reclaim refused (explicit reclaim required)"
+                )
+            if now < expires_at:
+                raise LeaseActiveError(
+                    f"lease {current['lease_id']} not expired "
+                    f"(remaining {expires_at - now:.3f}s)"
+                )
+            current["state"] = "superseded"
+            generation = current["generation"] + 1
+            lease = WorkerLease(
+                lease_id=f"lease-{workspace_id}-g{generation}",
+                project_id=project_id,
+                workspace_id=workspace_id,
+                worker_id=f"worker-g{generation}",
+                generation=generation,
+                owner_id=owner_id,
+                acquired_at=now,
+                state="active",
+                expires_at=now + ttl_seconds if ttl_seconds is not None else None,
+            )
+            state["leases"][lease.lease_id] = {
+                "lease_id": lease.lease_id,
+                "project_id": lease.project_id,
+                "workspace_id": lease.workspace_id,
+                "worker_id": lease.worker_id,
+                "generation": lease.generation,
+                "owner_id": lease.owner_id,
+                "acquired_at": lease.acquired_at,
+                "state": lease.state,
+                "expires_at": lease.expires_at,
+            }
+            self._save(state)
+            return lease
 
     # ------------------------------------------------------------- guards
 
