@@ -1,0 +1,120 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "2026-09-20-ops-restart-selfverify-evo-213965a1",
+  "summary": "EVO-20260920-213965a1（accepted/executing）案1+案2+第4项排查修复：①service_control 重启后控制面自核验（物理重启收进 lifecycle lease 含发布绑定复检，关闭 waiting→execute TOCTOU；自核验在 lease 外执行，终态判定写 durable action 记录与事件流；失败有界重跑后标 unhealthy 进下一会话 pending 投影）；②wake 降级通知结构化落盘 + 跨会话 pending 投影可见化（含最近 24h 失败 restart 动作）；③delegated span recovery 身份修复（EVO 第4项排查产物）。案3（pinned-wake 跨重启重铸）未实施：触碰委派链，需安全评审。控制机械组件附 G1-G4 声明。",
+  "components": [
+    {
+      "component_id": "restart-selfverify-service-control",
+      "paths": [
+        "src/llm_loop/runtime/service_control.py",
+        "tests/unit/test_service_control_two_phase_restart.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "dec-213965a1-restart-selfverify",
+      "owning_subsystem": "src/llm_loop/runtime/service_control.py（service 生命周期控制面）",
+      "disposition": "案1 全量落地：Phase3/4 物理重启收进 lifecycle lease（含 desired 发布绑定复检，关闭 waiting→execute TOCTOU）；重启后自核验在 lease 外执行（慢启动不阻塞发布）；终态判定（pid_alive/git_head==deployment.git_head/manifest_present，含 EPERM=异属主进程、manifest started_at 秒级截断宽限）由控制面写入 durable action 记录；核验失败按有界次数重跑脚本，仍败则动作 failed(unhealthy) 进下一会话 pending 投影——核验结论不再依赖模型侧 wake 轮询。",
+      "evidence": [
+        "data/audit/evolution_suggestions.jsonl EVO-20260920-213965a1 status=accepted（主案·低风险：restart 动作自核验）",
+        "实机动机：2026-09-20 12:49 注册的重启核验 wake 在 12:50 全量重启后静默失联（wake grant 按设计仅驻进程内，救援 rearm 依赖同会话真人在退避窗口内），13:09 真人补查，盲窗 18 分钟",
+        "pytest tests/unit/test_service_control_two_phase_restart.py 全绿（本 worktree exit=0；覆盖 lease 复检/started_at 截断宽限/EPERM 判定/自核验终态记录）"
+      ],
+      "verification_level": "单测全绿 + CI 门禁（pytest/ruff/pyright）+ A.5 presence；实机自核验待合并后下一重启窗口验证",
+      "model_evidence_veto_recovery_exit": "无新增模型 veto 交互；核验失败→unhealthy→写入 durable action 并进下一会话 pending 投影，由下一会话/真人处置",
+      "rollback_route": "git revert 单提交（无 schema 迁移）；回退后恢复模型侧 wake 轮询核验路径"
+    },
+    {
+      "component_id": "wake-degrade-visibility-recovery-identity",
+      "paths": [
+        "src/llm_loop/core/scheduler.py",
+        "src/llm_loop/core/loop/events.py",
+        "src/llm_loop/factory.py",
+        "tests/unit/test_pending_actions_visibility.py",
+        "tests/unit/test_scheduler.py",
+        "tests/unit/test_recovery_identity_delegated_span.py"
+      ],
+      "control_machinery": true,
+      "declaration_id": "dec-213965a1-wake-visibility",
+      "owning_subsystem": "src/llm_loop/core/scheduler.py（pending 投影扫描）+ core/loop/events.py（事件字段）+ factory.py（装配与 recovery 身份）",
+      "disposition": "案2+第4项修复：wake 条目降级为 notify 时原因结构化落盘（wake_degraded_reason）；下一会话 pending 投影列出降级通知（sid/降级时间/原因）与最近 24h 失败 restart 动作（≤10 条）；factory 修复 delegated span 的 recovery 身份归属，消除 EVO 第4项排查到的 prefix_mismatch 类身份错配来源。",
+      "evidence": [
+        "EVO-20260920-213965a1 第2项原文：'wake 条目降级为 notify 或 re-arm 被拒时，在下一会话 recovery/pending 投影中列出（sid、降级时间、原因）'",
+        "pytest tests/unit/test_pending_actions_visibility.py + test_recovery_identity_delegated_span.py + test_scheduler.py 全绿（本 worktree exit=0，合计 32 用例含 restart 自核验套件）",
+        "源码标注：_scan_degraded_wake_notify / _scan_failed_service_actions（EVO-20260920-213965a1 案2 注释）"
+      ],
+      "verification_level": "单测全绿 + CI 门禁（pytest/ruff/pyright）",
+      "model_evidence_veto_recovery_exit": "只读扫描+投影可见化，不新增 veto 交互；降级/失败条目可见后由下一会话或真人处置",
+      "rollback_route": "git revert 单提交；投影为增量字段，旧读取方忽略未知键"
+    },
+    {
+      "component_id": "submission-manifest",
+      "paths": [
+        "docs/governance/submissions/2026-09-20-ops-restart-selfverify-evo-213965a1.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs/governance/submissions/（架构提交声明，非运行时）",
+      "disposition": "本 PR 的 A.5 机械覆盖声明：分区全部变更路径并声明控制机械组件；补齐首次推送缺失的 manifest（A.5 fail 根因）",
+      "evidence": [
+        "scripts/check_architecture_submission.py --staged 本地校验 PASS（提交前执行）"
+      ],
+      "verification_level": "本地 staged 校验 + CI A.5",
+      "model_evidence_veto_recovery_exit": "非控制机械：纯声明文件",
+      "rollback_route": "git revert（manifest 为纯声明文件）"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "dec-213965a1-restart-selfverify",
+      "g1": {
+        "necessity": "2026-09-20 实测盲窗 18 分钟（12:49 注册核验 wake→12:50 全量重启→13:09 真人补查）；根因是 wake grant 仅驻进程内、救援 rearm 依赖同会话真人在退避窗口内，全量重启下前提不成立。重启核验依赖模型侧 wake 是最高频失联场景，控制面自核验是唯一不依赖该前提的终态判定路径。"
+      },
+      "g2": {
+        "authority_owner": "src/llm_loop/runtime/service_control.py（service 生命周期控制面）",
+        "relationship": "replace",
+        "non_duplication": "复用既有 status 判据（pid_alive/git_head==deployment/manifest_present）与 lifecycle lease；不新增判据来源；与 scheduler wake 机制不重叠（wake 仍管跨会话续跑，不管重启终态判定）"
+      },
+      "g3": {
+        "model_evidence": [
+          "evolution_suggestions.jsonl EVO-20260920-213965a1 主案原文与盲窗事实",
+          "pytest tests/unit/test_service_control_two_phase_restart.py exit=0",
+          "本会话实机回执（修复前）：feishu/learning restart_required=true 悬置、stable action generation 停留 51 未随 gen53 更新"
+        ],
+        "recovery_or_reason": "核验失败有界重跑后标 unhealthy，写 durable action 进下一会话 pending 投影；无新增模型 veto 交互"
+      },
+      "g4": {
+        "rollback": "git revert 单提交（无 schema 迁移）；回退后恢复模型侧 wake 轮询核验路径",
+        "verification": [
+          "tests/unit/test_service_control_two_phase_restart.py 全绿",
+          "CI 门禁 pytest+ruff+pyright",
+          "合并后下一重启窗口实机 restart+status 终态自核验回执"
+        ]
+      }
+    },
+    {
+      "declaration_id": "dec-213965a1-wake-visibility",
+      "g1": {
+        "necessity": "wake 降级为 notify / re-arm 被拒此前仅 output-side 无人消费，下一会话零可见（案2原文）；delegated span recovery 身份错配致每真人 run repair_failed(prefix_mismatch)（2026-09-20 12:03 起 ≥7 次），恢复续跑存在错接上下文风险。"
+      },
+      "g2": {
+        "authority_owner": "src/llm_loop/core/scheduler.py（pending 投影）与 factory.py（装配/recovery 身份）",
+        "relationship": "reuse",
+        "non_duplication": "扩展现有 pending 投影管线（新增两个只读扫描器），不新建权威；不触碰 wake grant 铸造链（案3 未实施，待安全评审）"
+      },
+      "g3": {
+        "model_evidence": [
+          "EVO-20260920-213965a1 第2项建议原文",
+          "pytest test_pending_actions_visibility.py / test_recovery_identity_delegated_span.py / test_scheduler.py exit=0",
+          "本会话 prefix_mismatch 每真人 run 必现的异常日志（EVO 第4项）"
+        ],
+        "recovery_or_reason": "降级/失败条目进入 pending 投影后由下一会话或真人处置；recovery 身份修复使 delegated span 正确归属，消除错接"
+      },
+      "g4": {
+        "rollback": "git revert 单提交；投影字段为增量，旧读取方忽略未知键",
+        "verification": [
+          "tests/unit/test_pending_actions_visibility.py 全绿",
+          "tests/unit/test_recovery_identity_delegated_span.py 全绿",
+          "tests/unit/test_scheduler.py 全绿 + CI 门禁"
+        ]
+      }
+    }
+  ]
+}
