@@ -347,6 +347,13 @@ class SessionStore:
         # run 内 save 的显式所有权：仅绑定到本轮 load 出来的 Session 对象。
         # 不依赖 ContextVar（ASGI 生成器可跨 Context resume），也不会序列化到 JSON。
         self._run_save_tokens: dict[str, object] = {}
+        # EVO-20260920（工作区切换与运行解耦）: sid → (归属目录fs, identity owner key)。
+        # 首次物化（create/load/run_lease）时 pin；此后根切换不影响该会话的
+        # save 路径 / 锁路径 / 身份归属校验，运行中 run 的落盘始终指向真实归属目录。
+        # OrderedDict + cap：非运行中会话 LRU 淘汰（见 _pin_session_location）。
+        self._pinned_locations: OrderedDict[str, tuple[str, str]] = OrderedDict()
+        self._pinned_locations_cap = 512
+        self._pinned_locations_guard = threading.Lock()
         # P3: externally auditable execution generation for the currently active run.
         # The opaque token remains the in-process save capability; generation is identity,
         # never a substitute capability.
@@ -372,6 +379,60 @@ class SessionStore:
     def _forget_identity_verified(self, session_id: str) -> None:
         with self._identity_cache_guard:
             self._identity_verified.pop(session_id, None)
+
+    # ── EVO-20260920: 会话归属目录/身份键 pin（工作区切换与运行解耦前提） ──
+    def _pin_session_location(self, session_id: str, *, overwrite: bool = True) -> None:
+        """在首次物化时记录 sid 的归属目录与 identity owner key（有界缓存）.
+
+        overwrite=True（load/create 物化）：未 pin 时以当前根为准；已 pin 且归属
+        文件仍存在（或 sid 运行中持 token）时不重定向——归属以真实落点为准，
+        否则跨根 load 会把会话（含运行中 run 的落盘）重定向到当前根，且在
+        identity 校验处误判“已被其他工作区占用”。
+        overwrite=False（run_lease 准入）：仅 set-if-absent。
+
+        内存契约（P4 plateau）：非运行中会话的 pin 走 LRU 有界淘汰（cap 512），
+        运行中（持 run save token）永不淘汰——正确性锚点只属于它们；
+        其余 pin 属于 best-effort 归属复用，淘汰后回落当前根语义。
+        """
+        with self._pinned_locations_guard:
+            existing = self._pinned_locations.get(session_id)
+            if existing is not None:
+                self._pinned_locations.move_to_end(session_id)
+                if not overwrite:
+                    return
+                home_exists = os.path.exists(
+                    os.path.join(existing[0], f"{session_id}.json")
+                )
+                with self._run_save_tokens_guard:
+                    run_active = session_id in self._run_save_tokens
+                if run_active or home_exists:
+                    return
+            self._pinned_locations[session_id] = (
+                self._dir_fs,
+                self._identity_owner_key(),
+            )
+            while len(self._pinned_locations) > self._pinned_locations_cap:
+                with self._run_save_tokens_guard:
+                    for victim in self._pinned_locations:
+                        if victim not in self._run_save_tokens:
+                            del self._pinned_locations[victim]
+                            break
+                    else:
+                        break  # 全部运行中：宁可超限也不破坏正确性
+
+    def _unpin_session_location(self, session_id: str) -> None:
+        with self._pinned_locations_guard:
+            self._pinned_locations.pop(session_id, None)
+
+    def _session_dir_fs(self, session_id: str) -> str:
+        """会话文件/锁文件所在目录：优先归属 pin，未 pin 时退回当前根."""
+        pinned = self._pinned_locations.get(session_id)
+        return pinned[0] if pinned is not None else self._dir_fs
+
+    def _identity_owner_key_for(self, session_id: str) -> str:
+        """身份归属 key：优先归属 pin（运行中 run 切区后仍按原工作区校验）."""
+        pinned = self._pinned_locations.get(session_id)
+        return pinned[1] if pinned is not None else self._identity_owner_key()
 
     @property
     def root(self) -> Path:
@@ -542,7 +603,13 @@ class SessionStore:
         return target
 
     def activate_prepared_root(self, sessions_dir: str | Path) -> None:
-        """激活已准备好的会话根；不执行文件系统I/O。"""
+        """激活已准备好的会话根；不执行文件系统I/O。
+
+        EVO-20260920（切换与运行解耦）: 不再清空 run save token / fallback 锁表 /
+        pinned locations——运行中 run 的落盘权、进程内互斥与归属锚必须跨根切换
+        存续；其最终写路径由 sid pin 指向原归属目录。身份校验缓存仍清空
+        （按 pin 的 owner key 重新核对，语义不变）。
+        """
         self._dir = Path(sessions_dir)
         self._dir_fs = os.path.abspath(os.fspath(self._dir))
         if not self._identity_root_pinned:
@@ -551,12 +618,6 @@ class SessionStore:
             self._identity_dir_fs = os.path.join(self._identity_root_fs, ".identity")
         with self._identity_cache_guard:
             self._identity_verified.clear()
-        self._fallback_locks.clear()
-        self._fallback_run_gates.clear()
-        self._fallback_locks_guard = threading.Lock()
-        with self._run_save_tokens_guard:
-            self._run_save_tokens.clear()
-            self._run_save_generations.clear()
 
     def set_root(self, sessions_dir: str | Path) -> None:
         """切换会话根目录；先准备成功再原子更新内存根。"""
@@ -702,7 +763,7 @@ class SessionStore:
             return
         with self._identity_lock(session_id):
             owner_path = self._identity_path(session_id)
-            current_owner = self._identity_owner_key()
+            current_owner = self._identity_owner_key_for(session_id)
             if os.path.exists(owner_path):
                 try:
                     with open(owner_path, encoding="utf-8") as f:
@@ -753,7 +814,7 @@ class SessionStore:
             return
         with self._identity_lock(session_id):
             owner_path = self._identity_path(session_id)
-            current_owner = self._identity_owner_key()
+            current_owner = self._identity_owner_key_for(session_id)
             if os.path.exists(owner_path):
                 try:
                     with open(owner_path, encoding="utf-8") as f:
@@ -860,7 +921,7 @@ class SessionStore:
         打开文件描述符互斥）。持锁路径内部必须走 ``_save_locked``。
         """
         session_id = _validate_session_id(session_id)
-        lock_path = os.path.join(self._dir_fs, f"{session_id}.lock")
+        lock_path = os.path.join(self._session_dir_fs(session_id), f"{session_id}.lock")
         try:
             import fcntl
         except ImportError:
@@ -902,8 +963,10 @@ class SessionStore:
         应映射为 session_busy 而不是无锁继续造成 last-writer-wins。
         """
         session_id = _validate_session_id(session_id)
-        session_id = _validate_session_id(session_id)
-        lock_path = os.path.join(self._dir_fs, f"{session_id}.run.lock")
+        # EVO-20260920: 准入即 pin（set-if-absent）——本轮所有锁/读写/身份校验
+        # 都锚定取得 lease 时的归属目录，此后工作区根切换不影响本 run。
+        self._pin_session_location(session_id, overwrite=False)
+        lock_path = os.path.join(self._session_dir_fs(session_id), f"{session_id}.run.lock")
         try:
             import fcntl
         except ImportError:
@@ -1029,7 +1092,7 @@ class SessionStore:
         run busy。真正 load→modify→write 仍由 `<sid>.lock` 的排他锁保证顺序一致。
         """
         session_id = _validate_session_id(session_id)
-        lock_path = os.path.join(self._dir_fs, f"{session_id}.run.lock")
+        lock_path = os.path.join(self._session_dir_fs(session_id), f"{session_id}.run.lock")
         try:
             import fcntl
         except ImportError:
@@ -1181,6 +1244,8 @@ class SessionStore:
         """
         sid = str(uuid.uuid4())
         session = Session(session_id=sid, model_override=model_override)
+        # EVO-20260920: 新会话归属锚定当前根；此后根切换不影响该 sid 的路径/身份。
+        self._pin_session_location(sid)
         self.save(session)
         return sid
 
@@ -1223,7 +1288,7 @@ class SessionStore:
 
     def _path(self, session_id: str) -> str:
         session_id = _validate_session_id(session_id)
-        return os.path.join(self._dir_fs, f"{session_id}.json")
+        return os.path.join(self._session_dir_fs(session_id), f"{session_id}.json")
 
     def save(self, session: Session) -> None:
         """保存会话；本轮显式 run-owned 快照复用独占 lease，其余写先取管理门。
@@ -1315,6 +1380,10 @@ class SessionStore:
         ``event_log`` 从事件日志 replay 重建（退役后切换），replay 异常 fail-open 回退。
         """
         session_id = _validate_session_id(session_id)
+        # EVO-20260920: 物化即 pin——本次 load 的文件即归属目录（run_lease 已先行
+        # set-if-absent pin，正常路径二者一致；此处的 overwrite 兼容同 sid 在
+        # 不同根先后被物化的罕见场景）。
+        self._pin_session_location(session_id)
         self._check_identity_read(session_id)
         if self._read_path_source == "event_log" and self._event_store is not None:
             session = self._load_from_event_log(session_id)
@@ -1906,6 +1975,7 @@ class SessionStore:
                         event_delete(session_id)
                     os.unlink(p)
                 # owner tombstone与稳定lock/run.lock故意保留：旧sid不可跨workspace重新分配。
+                self._unpin_session_location(session_id)
                 return True
             except Exception:  # noqa: BLE001 — destructive cleanup失败必须如实返回false
                 logger.exception("物理删除会话失败（可能已部分清理sidecar）: sid=%s", session_id)
@@ -1930,6 +2000,8 @@ class SessionStore:
             channel=seed.channel,
         )
         try:
+            # EVO-20260920: 分支会话同样锚定当前根。
+            self._pin_session_location(seed.new_session_id)
             self.save(branch)
         except Exception as exc:  # noqa: BLE001 — fail-open
             logger.warning("fork session JSON 保存失败（fail-open）: %s", exc)

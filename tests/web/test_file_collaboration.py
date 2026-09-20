@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from llm_loop.factory import build_engine
@@ -169,15 +168,21 @@ def test_file_edit_route_holds_workspace_snapshot_and_session_lease_together(
 
     other = tmp_path / "other-workspace"
     other.mkdir()
-    from llm_loop.workspace.store import WorkspaceBusyError
 
-    with pytest.raises(WorkspaceBusyError):
-        engine.set_workspace(str(other), workspace_id="p3other")
-    assert Path(engine.workspace_root).resolve() == workspace.resolve()
-    assert target.read_text(encoding="utf-8") == "base\n"
+    # EVO-20260920（灵活切换）: 编辑持有整run lease 时切换不再 fail-fast；
+    # 切换成功、不打断编辑，编辑结果写回原工作区文件，会话JSON不漂移到新分区。
+    engine.set_workspace(str(other), workspace_id="p3other")
+    assert Path(engine.workspace_root).resolve() == other.resolve()
 
     release.set()
     thread.join(timeout=10)
     assert not thread.is_alive()
     assert responses == [200]
     assert target.read_text(encoding="utf-8") == "after\n"
+
+    sessions_dir = Path(engine.session.root).parent
+    p3other_json = sessions_dir / "p3other" / f"{sid}.json"
+    assert not p3other_json.exists()
+    engine.set_workspace(str(workspace), workspace_id="p3test")
+    assert engine.session.exists(sid)
+    engine.session.load(sid)

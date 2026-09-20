@@ -711,3 +711,39 @@ def test_session_list_marks_cli_origin_as_not_web_reusable(build_test_engine, fa
     )
     assert item["origin_channel"] == "cli"
     assert item["web_reusable"] is False
+
+
+def test_chat_new_session_allowed_while_other_session_running(build_test_engine):
+    """EVO-20260920（灵活新建）: 会话 A 推理进行中，new_session=true 的新建请求
+    必须成功（多会话并发是既定能力）；共享当前切到新会话且 A 的 run 不受影响。"""
+    from llm_loop.llm.client import LLMResponse, StreamDelta
+
+    engine, _ = build_test_engine([])
+    cli = _make_client(engine)
+
+    def slow_stream(**_kwargs):
+        yield StreamDelta(text="A1")
+        yield StreamDelta(text="A2")
+        return LLMResponse(content="A1A2", tool_calls=[], provider="fake")
+
+    engine.llm_pool.default_client.chat_stream = slow_stream
+    sid_a = engine.session.create()
+    engine.session.set_shared_current(sid_a)
+    stream = engine.run_stream(sid_a, "hold")
+    try:
+        assert next(stream).text == "A1"  # A 已在推理中（sync run active）
+
+        def quick_stream(**_kwargs):
+            yield StreamDelta(text="新")
+            return LLMResponse(content="新会话完成", tool_calls=[], provider="fake")
+
+        engine.llm_pool.default_client.chat_stream = quick_stream
+        resp = cli.post("/api/v1/chat", json={"message": "hi", "new_session": True})
+        assert resp.status_code == 200, resp.text
+        new_sid = resp.json()["session_id"]
+        assert new_sid != sid_a
+        assert engine.session.get_shared_current() == new_sid
+        # A 的 run 不被打断：继续产出
+        assert next(stream).text == "A2"
+    finally:
+        stream.close()

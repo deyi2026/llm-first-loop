@@ -145,6 +145,24 @@ sessionStore.subscribe(() => {
   }
   // 切换会话：停上一会话的空闲轮询（新会话由 loadHistory 重新 ensure）
   stopIdlePoll();
+  // EVO-20260920（灵活新建/切换）: streaming 语义收敛为"当前视图会话在流式"。
+  // 用户切走/新建会话时，旧会话 run 转后台（服务端继续，切回经 resume 接管），
+  // 视图解除输入锁——否则旧流式终态守卫提前 return，streaming 永久卡 true，
+  // 新会话无法发送首条消息。机械绑定（run_started 先行令 abortSessionId 等于
+  // 新 sid 再 publish）不视为用户切换，不重置。
+  const foregroundFollows = abortCtrl !== null && abortSessionId === nextSessionId;
+  const resumeFollows = resumeAbort !== null && resumeSessionId === nextSessionId;
+  const st = conversationStore.getState();
+  if (st.streaming && !foregroundFollows && !resumeFollows) {
+    conversationStore.setState({
+      streaming: false,
+      streamingIndex: -1,
+      streamStartedAt: null,
+    });
+  }
+  if (st.backgroundRunning && !resumeFollows) {
+    conversationStore.setState({ backgroundRunning: false });
+  }
 });
 
 /** 服务端最新消息指纹（limit=1 探针，成本低） */

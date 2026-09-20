@@ -83,16 +83,20 @@ def edit_human_file(request: Request, session_id: str, payload: HumanFileEditReq
     if service is None:
         return _error(503, "file_collaboration_unavailable")
     try:
+        # EVO-20260920: 快照仅覆盖 scope 捕获（短临界区）。编辑全程不持 workspace
+        # 守卫——service.edit 以捕获的绝对 scope 解析文件路径，会话事件经 sid
+        # 归属 pin 落回原工作区；长编辑不再阻塞工作区切换（切换也不打断编辑）。
         with engine.workspace_snapshot():
-            receipt = service.edit(
-                session_id=session_id,
-                workspace_scope=_workspace_scope(engine),
-                request_id=payload.request_id,
-                relative_path=payload.path,
-                expected_snapshot_ref=payload.expected_snapshot_ref,
-                content=payload.content,
-                file_contract_version=payload.file_contract_version,
-            )
+            workspace_scope = _workspace_scope(engine)
+        receipt = service.edit(
+            session_id=session_id,
+            workspace_scope=workspace_scope,
+            request_id=payload.request_id,
+            relative_path=payload.path,
+            expected_snapshot_ref=payload.expected_snapshot_ref,
+            content=payload.content,
+            file_contract_version=payload.file_contract_version,
+        )
     except HumanFileOperationError as exc:
         return _map_error(exc)
     return receipt.public_facts()
