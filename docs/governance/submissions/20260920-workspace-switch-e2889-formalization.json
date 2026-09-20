@@ -1,0 +1,108 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260920-workspace-switch-e2889-formalization",
+  "summary": "Formalize the already-deployed generation57 workspace-switch/session-lifecycle behavior from source commit e2889b420c7c2977d98699d4fa8b9a7330642f7a onto official main after PR #56. The ten deployed change paths were replayed from exact source bytes on top of main 7130eba7de168d145f71a26f98ec088059e6d49d; one follow-up contains only two nonsemantic Ruff cleanups. No deployment, restart, model-service, or runtime-config change is part of this submission.",
+  "components": [
+    {
+      "component_id": "workspace-session-location-pinning",
+      "paths": [
+        "src/llm_loop/core/loop/engine_services/session_lifecycle.py",
+        "src/llm_loop/core/session.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "core session lifecycle and workspace authority",
+      "disposition": "ADMIT: pin session storage/lock/identity ownership to the materialized workspace so an already-running session continues writing to its original workspace while shared workspace selection changes independently.",
+      "evidence": [
+        "source generation57 commit e2889b420c7c2977d98699d4fa8b9a7330642f7a",
+        "exact replay commit cc06c46ad2b3b186f95c240eca40b28e21e71dd9 initially matched all ten source-path blobs byte-for-byte",
+        "focused workspace/session/Web Python test set PASS after the replay and lint-only follow-up"
+      ],
+      "verification_level": "focused deterministic tests + full repository CI on committed PR head",
+      "model_evidence_veto_recovery_exit": "No model semantic authority is introduced; pinning is mechanical storage/identity ownership. Failures remain explicit through existing session/workspace errors.",
+      "rollback_route": "Revert the workspace-switch formalization range; any deployed rollback must use a new service-control generation rather than decrement generation."
+    },
+    {
+      "component_id": "workspace-transition-file-route",
+      "paths": [
+        "src/llm_loop/web/file_routes.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "web workspace/file collaboration routing",
+      "disposition": "ADMIT: capture workspace scope for the edit operation instead of holding the global workspace guard for the full edit, allowing workspace switching while the edit writes to its captured original scope.",
+      "evidence": [
+        "tests/web/test_file_collaboration.py",
+        "tests/web/test_workspaces_api.py"
+      ],
+      "verification_level": "focused web API tests + full repository CI",
+      "model_evidence_veto_recovery_exit": "No model authority; path scope is mechanically captured and existing path/session validation remains authoritative.",
+      "rollback_route": "Revert this formalization range."
+    },
+    {
+      "component_id": "current-view-streaming-semantics",
+      "paths": [
+        "webui/src/core/conversation.ts"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "webui conversation/session view state",
+      "disposition": "ADMIT: streaming denotes the currently viewed session; switching/creating a session releases the new view while the previous run continues in background and can be resumed when revisited.",
+      "evidence": [
+        "webui vitest: 24 test files / 157 tests PASS",
+        "webui production build PASS"
+      ],
+      "verification_level": "full webui unit suite + TypeScript/Vite production build",
+      "model_evidence_veto_recovery_exit": "UI state only; server run/session truth remains authoritative.",
+      "rollback_route": "Revert conversation.ts change together with backend workspace-switch formalization."
+    },
+    {
+      "component_id": "workspace-switch-contract-tests",
+      "paths": [
+        "tests/unit/test_runner_background.py",
+        "tests/unit/test_session_run_lease.py",
+        "tests/web/test_api.py",
+        "tests/web/test_file_collaboration.py",
+        "tests/web/test_workspaces_api.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "workspace/session regression tests",
+      "disposition": "ADMIT as deterministic coverage for background-run continuity, run-lease/session pinning, new-session while another run is active, file-edit scope capture, and run-time workspace switching without persistence drift.",
+      "evidence": [
+        "focused five-file Python suite PASS",
+        "Ruff PASS and Pyright 0 errors / 0 warnings on changed production paths after the lint-only follow-up"
+      ],
+      "verification_level": "pytest focused subset + full repository CI",
+      "model_evidence_veto_recovery_exit": "Test-only artifacts; no runtime authority.",
+      "rollback_route": "Revert tests with the governed behavior."
+    },
+    {
+      "component_id": "workspace-switch-design-record",
+      "paths": [
+        "docs/DESIGN-20260920-workspace-switch-decouple-run.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "workspace/session design documentation",
+      "disposition": "ADMIT as the source design record for invariants, root cause, contract changes, and accepted residual race window.",
+      "evidence": [
+        "source blob is identical to generation57 e2889 design record"
+      ],
+      "verification_level": "content review + exact replay evidence",
+      "model_evidence_veto_recovery_exit": "Documentation only.",
+      "rollback_route": "Revert with the governed feature."
+    },
+    {
+      "component_id": "a5-workspace-switch-e2889-formalization",
+      "paths": [
+        "docs/governance/submissions/20260920-workspace-switch-e2889-formalization.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 is a mechanical presence/coverage gate, not deployment authorization.",
+      "evidence": [
+        "local exact A.5 self-gate against official base 7130eba7de168d145f71a26f98ec088059e6d49d"
+      ],
+      "verification_level": "scripts/check_architecture_submission.py --base 7130eba7de168d145f71a26f98ec088059e6d49d --head HEAD",
+      "model_evidence_veto_recovery_exit": "Reviewer may amend classifications; checker reports exact coverage mismatch.",
+      "rollback_route": "Remove this manifest in the same revert range."
+    }
+  ],
+  "declarations": []
+}
