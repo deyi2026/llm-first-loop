@@ -21,6 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from llm_loop.browser.target_identity import (
+    browser_target_id_sha256,
+    raw_browser_target_id_from_page_token,
+)
+
 ACTION_REF_SCHEMA = "smc.browser_action_ref_binding.v0.1"
 ACTION_REF_PREFIX = "actionref://browser/v0.1/"
 ACTION_REF_INTEGRITY_ALGORITHM = "sha256"
@@ -233,7 +238,7 @@ class ActionRefBindingStore:
             "origin_run_generation_sha256": _sha_text(origin_run_generation),
             "browser_runtime_generation": int(browser_runtime_generation),
             "browser_runtime_nonce_sha256": _sha_text(browser_runtime_nonce),
-            "browser_target_id_sha256": _sha_text(browser_target_id),
+            "browser_target_id_sha256": browser_target_id_sha256(browser_target_id),
             "observed_snapshot_id": observed_snapshot_id,
             "scope_ref": scope_ref,
             "semantic_object_or_resource_identity": semantic_object_or_resource_identity,
@@ -317,13 +322,20 @@ class ActionRefIssuer:
         retention = bundle.get("retention") or {}
         source_expiry = float(retention.get("expires_at_epoch") or 0.0)
         page_token = str((bundle.get("private_capture") or {}).get("page_token") or "")
+        try:
+            browser_target_id = raw_browser_target_id_from_page_token(page_token)
+        except ValueError as exc:
+            raise ActionRefError(
+                "action_ref_source_unavailable",
+                "Browser target identity unavailable from persisted capture",
+            ) from exc
         record = self.binding_store.issue(
             session_id=session_id,
             workspace_scope=context.workspace_scope,
             origin_run_generation=context.origin_run_generation,
             browser_runtime_generation=int(self.perception_store.runtime_generation),
             browser_runtime_nonce=str(self.perception_store.runtime_nonce),
-            browser_target_id=page_token,
+            browser_target_id=browser_target_id,
             observed_snapshot_id=str((bundle.get("snapshot") or {}).get("snapshot_id") or ""),
             scope_ref=scope_ref,
             semantic_object_or_resource_identity=identity,

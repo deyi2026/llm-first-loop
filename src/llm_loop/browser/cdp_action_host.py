@@ -7,7 +7,6 @@ to fixed internal CDP sequences.  It performs no retry and never silently rebind
 
 from __future__ import annotations
 
-import hashlib
 import json
 import threading
 from collections.abc import Callable
@@ -21,6 +20,7 @@ from llm_loop.browser.cdp_host import (
     _normalize_loopback_debug_url,
     _validate_loopback_ws_url,
 )
+from llm_loop.browser.target_identity import browser_target_id_sha256
 
 _ALLOWED = frozenset({"DOM.resolveNode", "Runtime.callFunctionOn", "Page.enable", "Page.navigate"})
 
@@ -134,7 +134,7 @@ class CdpBrowserMutationActuator:
                     "browser_target_precondition_mismatch",
                     "current Browser target has no exact target id",
                 )
-            actual_hash = hashlib.sha256(target_id.encode("utf-8")).hexdigest()
+            actual_hash = browser_target_id_sha256(target_id)
             if actual_hash != expected_hash:
                 raise BrowserTargetPreconditionError(
                     "browser_target_precondition_mismatch",
