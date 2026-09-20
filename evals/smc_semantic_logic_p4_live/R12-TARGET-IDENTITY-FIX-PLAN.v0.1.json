@@ -1,0 +1,32 @@
+{
+  "schema": "smc.semantic_logic_p4_live_r12_target_identity_fix_plan.v0.1",
+  "date": "2026-09-20",
+  "base_negative_qualification": "9a11fe4c43cc83f53bf2baf62d0782c91e1d4242",
+  "frozen_failure": "browser_target_precondition_mismatch",
+  "root_cause": "real capture page_token wraps the raw CDP target id as target:<raw>, while actuator compares sha256(raw)",
+  "canonical_contract": {
+    "perception_page_token_unchanged": true,
+    "actionref_binding_target_identity": "sha256(raw_cdp_target_id)",
+    "actuator_target_identity": "sha256(raw_cdp_target_id)",
+    "real_capture_mapping": "target:<raw_cdp_target_id> -> <raw_cdp_target_id>",
+    "synthetic_nonprefixed_page_token_compatibility": "preserve exact token as target identity for deterministic non-CDP fixtures",
+    "empty_prefixed_target_rejected": true,
+    "no_search_guess_rebind": true,
+    "no_model_semantic_change": true
+  },
+  "minimal_production_surface": [
+    "src/llm_loop/browser/target_identity.py",
+    "src/llm_loop/browser/action_ref.py",
+    "src/llm_loop/browser/cdp_action_host.py"
+  ],
+  "red": "production ActionRef issuance from page_token=target:target-A must bind successfully against actuator /json/list raw target-A without opening websocket or dispatching",
+  "preserve": [
+    "wrong target rejects before websocket/dispatch",
+    "bound target never silently rebinds",
+    "websocket identity change remains fail-closed",
+    "legacy actuator path unchanged",
+    "scope/version/lifetime/effect-binding fences unchanged",
+    "frozen L02 negative result immutable"
+  ],
+  "stop": "before any new LIVE qualification or deployment/restart/merge"
+}
