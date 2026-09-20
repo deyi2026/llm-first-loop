@@ -1,0 +1,32 @@
+{
+  "automatic_retry_performed": false,
+  "browser_dispatches": 0,
+  "click_effects": 0,
+  "condition": "effect_binding_absent_and_revoked",
+  "facts": {
+    "absent": {
+      "content": "[browser_semantic_click] rejected before successful mutation; reason_code=action_ref_effect_binding_required; no automatic retry/search/rebind.",
+      "error_detail": "action_ref_effect_binding_required: ActionRef execution requires a ToolExecutionJournal binding",
+      "error_type": "ActionRefEffectBindingError",
+      "status": "failure"
+    },
+    "revoked": {
+      "content": "[browser_semantic_click] rejected before successful mutation; reason_code=action_ref_effect_binding_revoked; no automatic retry/search/rebind.",
+      "error_detail": "action_ref_effect_binding_revoked: ToolExecutionJournal binding was revoked",
+      "error_type": "ActionRefEffectBindingError",
+      "status": "failure"
+    }
+  },
+  "fixture_setup_mutations": 0,
+  "model_requests": 0,
+  "model_server": {
+    "count": 1,
+    "decode_concurrency_1": true,
+    "established_client_count": 0,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency_1": true
+  },
+  "row": "V02-L15",
+  "schema": "smc.p4_live.v02.rejection_row.v0.2",
+  "status": "PASS"
+}

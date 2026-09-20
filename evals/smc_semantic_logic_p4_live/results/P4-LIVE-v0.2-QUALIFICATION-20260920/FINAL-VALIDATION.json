@@ -1,0 +1,91 @@
+{
+  "base_prelive_result_sha": "5849992e7dc39dad0409337e54b29956b61aba78",
+  "date": "2026-09-20",
+  "full_ci_failure_list_sha256": "67cb4e57ea0f23572c7e4d91ee576468da0502f183b7bf6e6ccb92fc10583412",
+  "governance": {
+    "deploy_restart_pr_merge_main": false,
+    "next_boundary": "BEFORE_DEPLOY_OR_MERGE",
+    "production_patch_during_live": false,
+    "row_retry_or_substitution": false,
+    "v01_not_qualified_result_immutable": true
+  },
+  "matrix": {
+    "all_rows_pass": true,
+    "automatic_replays": 0,
+    "automatic_row_retries": 0,
+    "model_requests": 5,
+    "row_count": 20,
+    "total_candidate_dispatches": 8
+  },
+  "matrix_result_sha256": "e31bd88132395d68132d297dbf8f32996b362189e3ae9e5dcaf4dc8e5df67e37",
+  "post_live_gates": {
+    "focused_current_descendant_tests": "177/177 PASS",
+    "full_ci_base_failures": 72,
+    "full_ci_base_only": 0,
+    "full_ci_candidate_exit_code": 1,
+    "full_ci_candidate_failures": 72,
+    "full_ci_candidate_only": 0,
+    "full_ci_classification": "BASELINE_EQUIVALENT_RED_NO_NEW_FAILURES",
+    "full_ci_failure_set_sha256": "67cb4e57ea0f23572c7e4d91ee576468da0502f183b7bf6e6ccb92fc10583412",
+    "production_src_delta_from_prelive": 0,
+    "pyright": "0 errors / 0 warnings",
+    "ruff": "PASS",
+    "validator_recheck": "PASS"
+  },
+  "protocol_sha": "267ad5778be2af324e38ba8422a5d1a29bbe053d",
+  "recovery_rows": {
+    "all_no_automatic_replay": true,
+    "l17_state": "prepared_before_browser_running",
+    "l18_state": "browser_running_outcome_unknown",
+    "l19_state": "browser_terminal_exact",
+    "l20_ambiguity_preserved": true
+  },
+  "recovery_runner_sha": "052cda3a7b530517a7bcc30762d29587e33fa850",
+  "rejection_rows": {
+    "l06_l15_zero_candidate_dispatch": true,
+    "l06_l15_zero_candidate_effect": true,
+    "l16_total_dispatches": 1,
+    "l16_total_effects": 1
+  },
+  "rejection_runner_sha": "85a5e826a8b63a2dca40279d92c87df133492925",
+  "row_artifact_sha256": {
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L01.json": "729770a0b08dd3ef5287f9a748d9dc90fc2abcc8435ed20164cdcd7a7424c817",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L02.json": "1eded0125859ec0538b0cccc741a8c99af7c8b3eaa6fa6b628c22d39c138d054",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L03.json": "ffa73a56262c3ba079eaf062825cea06bc9df14beb3e253cdd7cf3c5d6cb36eb",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L04.json": "63549f07952f434584b7f69c0ab7c09645c5d51a3c47736af6544c27c20cfa10",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L05.json": "775eccdbd4bbb5cad8523a67cc4fe6f3b0ed6e6234456b51307d2c22c307d67b",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L06.json": "cfef28a491cb363baa40c51adba228c49a1f44aaf559d68b7df085c4bdf432ae",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L07.json": "9882ad7d6e2a7cf38a2723724bb47d4c4663a760227b151bea69e47abebadcdd",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L08.json": "1eda5bc9b45fb34cdbb7bd2114063d10cef65737ab3d90ffe068777d1a91c77f",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L09.json": "0670007d6fa564d2b26afab9f3dadb92eacd10a0d2c0d36034e68be89215412c",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L10.json": "666a3b9df72978914885d2d58d5f0b0e85fd44feaa427a2c535c570152e14ab9",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L11.json": "7ddacbba812379c35eb0278687a35accc2819cc296249b932ef53d1ba6a5497a",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L12.json": "572daff9f0a64d59d6e18e1636004f40d2c05d0ad32a508ed8066fa9782fb0d4",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L13.json": "3db24193843fff0b4040a813b3d9328403337e6d523d34ee364e68e84d437b55",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L14.json": "c156fab606367ab1fc20339a91faf8b8ef213c5d81273461f8f0e196b9954601",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L15.json": "d20871f17dc635458babbf1c4cef1ef233c358dbb5f3b8561379d44c336e9fc5",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L16.json": "644099882f555c0242f189897eff7a3eae365ca5e011a0f78872a1930eb7a3e7",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L17.json": "4101aadeb207783bca6a559d5ac0b7f6334e9861227565365a6a3b4746d6cb21",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L18.json": "99e1d6194d258f5bb30422a493c37383c072704b60fab66714036270f39db7c2",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L19.json": "db52094bb62bd24bf2990b0c632f0b8154343d191691fd4231517d4361720e1a",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920/V02-L20.json": "712d61258648e66716186f1bd51b5adcdc65349a3e7e3cb0c2080ffd70ba027c"
+  },
+  "schema": "smc.semantic_logic_p4_live_v02_final_validation.v0.2",
+  "status": "QUALIFIED",
+  "success_rows": {
+    "all_exact_single_declaration": true,
+    "all_one_dispatch": true,
+    "all_outer_receipt_committed": true,
+    "all_physical_effect_ok": true,
+    "all_running_ok": true,
+    "count": 5,
+    "tools": [
+      "browser_semantic_navigate",
+      "browser_semantic_click",
+      "browser_semantic_fill",
+      "browser_semantic_select",
+      "browser_semantic_scroll"
+    ]
+  },
+  "success_runner_sha": "74c962d389379e75431acc01ae27a4845ffddd6b"
+}

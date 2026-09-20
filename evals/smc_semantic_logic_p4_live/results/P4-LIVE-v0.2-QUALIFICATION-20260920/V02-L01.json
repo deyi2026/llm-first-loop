@@ -1,0 +1,58 @@
+{
+  "actual": [
+    {
+      "arguments": {
+        "action_ref": "actionref://browser/v0.1/9c46dce5c0ec41d03757185fc366f446",
+        "url": "http://127.0.0.1:56796/dest"
+      },
+      "id": "d63ed15d-b0d8-48fc-8e61-3fefac180605",
+      "name": "browser_semantic_navigate"
+    }
+  ],
+  "automatic_retry_performed": false,
+  "bind_count": 1,
+  "browser_dispatches": 1,
+  "browser_target_id_sha256": "ca2340f13f449ee16b644ab3a73a7d34ee82ec709d3462b3045613310a1299a9",
+  "completion_tokens": 140,
+  "execution_bridge_id": "0ab4702258ec9ebd0851536f9c75a9f78b30a1ee9090894b36816004591e3f3f",
+  "execution_id": "c14bbef42e470a95e159b0a53251c349",
+  "expected": {
+    "arguments": {
+      "action_ref": "actionref://browser/v0.1/9c46dce5c0ec41d03757185fc366f446",
+      "url": "http://127.0.0.1:56796/dest"
+    },
+    "name": "browser_semantic_navigate"
+  },
+  "grounding_ref": "grounding://browser/v0.1/bsnap-1-48f49e1a007cd323/resource/page",
+  "inner_action_id": "sact-39e0c9802a666c50da6229da",
+  "model_requests": 1,
+  "model_server": {
+    "count": 1,
+    "decode_concurrency_1": true,
+    "established_client_count": 0,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency_1": true
+  },
+  "model_wall_s": 31.359,
+  "outer_receipt_committed": true,
+  "physical_effect": {
+    "title": "P4LIVE-Destination",
+    "url": "http://127.0.0.1:56796/dest"
+  },
+  "physical_effect_ok": true,
+  "prompt_tokens": 2559,
+  "receipt_seqs": [
+    1,
+    2
+  ],
+  "receipt_statuses": [
+    "running",
+    "ok"
+  ],
+  "row": "V02-L01",
+  "schema": "smc.p4_live.v02.success_row.v0.2",
+  "status": "PASS",
+  "target_id": "110B51861B21C57BB67CAC6683712463",
+  "tool_content": "{\"action_id\":\"sact-39e0c9802a666c50da6229da\",\"after_version\":\"bsnap-1-fd7188018d2318cd\",\"args_normalization\":{\"applied\":false,\"rule\":null},\"atomicity_class\":\"single_dispatch\",\"before_version\":\"bsnap-1-dbbcfc3e0efa6d09\",\"boundary_events\":[{\"complete\":false,\"detector\":\"Page.navigate_ack\",\"event\":\"navigation_started\",\"scope_ref\":null}],\"completeness\":{\"complete\":false,\"reasons\":[\"boundary_detector_non_exhaustive\",\"document_generation_changed\",\"scope_changed\"]},\"domain\":\"browser\",\"grounding_refs\":{\"after\":\"grounding://browser/v0.1/bsnap-1-fd7188018d2318cd/objects\",\"before\":\"grounding://browser/v0.1/bsnap-1-dbbcfc3e0efa6d09/objects\",\"dispatch\":\"grounding://browser-action/v0.1/3dcf3a9164bf1dc70d8e533e4ea1fc7fdbce392adfaae744d102211168a6c141/dispatch\"},\"idempotency_class\":\"unknown\",\"observed_effects\":{\"diff_ref\":\"grounding://browser/v0.1/bsnap-1-fd7188018d2318cd/diff/bsnap-1-dbbcfc3e0efa6d09\",\"provisional\":true,\"scope_transition_ref\":null},\"operation_class\":\"mutate\",\"predicate_result\":null,\"receipt_id\":\"rcp_3dcf3a9164bf1dc7_0002\",\"receipt_seq\":2,\"retry\":{\"attempt_count\":1,\"automatic_retry_performed\":false,\"mechanism\":null,\"reason\":null},\"schema\":\"smc.action_receipt.v0.1\",\"scope_ref\":\"browser-page-scope:78bb7120d208ad7c0a1a885d\",\"status\":\"ok\",\"target_id\":\"browser-page-scope:78bb7120d208ad7c0a1a885d\",\"verb\":\"navigate\"}",
+  "tool_status": "success"
+}

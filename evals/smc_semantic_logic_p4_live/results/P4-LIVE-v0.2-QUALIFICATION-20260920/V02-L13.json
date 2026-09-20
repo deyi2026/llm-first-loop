@@ -1,0 +1,27 @@
+{
+  "automatic_retry_performed": false,
+  "browser_dispatches": 0,
+  "click_effects": 0,
+  "condition": "stale_document_generation",
+  "facts": {
+    "fixture_setup_navigation": true,
+    "result": {
+      "content": "{\"action_id\":\"sact-34f5ce287ce4883be4ed7c4c\",\"after_version\":null,\"args_normalization\":{\"applied\":false,\"rule\":null},\"atomicity_class\":\"single_dispatch\",\"before_version\":\"bsnap-1-d52e988ffb1bab51\",\"boundary_events\":[],\"completeness\":{\"complete\":false,\"reasons\":[\"version_precondition_stale:document_generation_changed\"]},\"domain\":\"browser\",\"grounding_refs\":{\"after\":null,\"before\":\"grounding://browser/v0.1/bsnap-1-d52e988ffb1bab51/objects\",\"dispatch\":null},\"idempotency_class\":\"unknown\",\"observed_effects\":{\"diff_ref\":null,\"provisional\":true,\"scope_transition_ref\":null},\"operation_class\":\"mutate\",\"predicate_result\":null,\"receipt_id\":\"rcp_f7f801b1e57ba69a_0001\",\"receipt_seq\":1,\"retry\":{\"attempt_count\":1,\"automatic_retry_performed\":false,\"mechanism\":null,\"reason\":\"version_precondition_stale:document_generation_changed\"},\"schema\":\"smc.action_receipt.v0.1\",\"scope_ref\":\"browser-document-scope:8328588c19ba91f063d365bb\",\"status\":\"rejected\",\"target_id\":\"el_c12f83d04da954180d85\",\"verb\":\"click\"}",
+      "error_detail": null,
+      "error_type": null,
+      "status": "failure"
+    }
+  },
+  "fixture_setup_mutations": 1,
+  "model_requests": 0,
+  "model_server": {
+    "count": 1,
+    "decode_concurrency_1": true,
+    "established_client_count": 0,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency_1": true
+  },
+  "row": "V02-L13",
+  "schema": "smc.p4_live.v02.rejection_row.v0.2",
+  "status": "PASS"
+}

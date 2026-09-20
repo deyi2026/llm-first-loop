@@ -1,0 +1,43 @@
+{
+  "automatic_replay_performed": false,
+  "browser_dispatches": 1,
+  "click_effects": 1,
+  "condition": "terminal_browser_receipt_outer_finished_missing_recover_exactly",
+  "execution_id": "53da899765259773c14c3691418bd162",
+  "facts": {
+    "clicks": 1,
+    "receipt_statuses_before_recovery": [
+      "running",
+      "ok"
+    ],
+    "recovery": {
+      "classification": "browser_terminal_exact",
+      "recovered_content": "[状态: success] {\"action_id\":\"sact-9d0484b15ad3908bd89ab845\",\"after_version\":\"bsnap-1-3b2cc478d6b5ec3d\",\"args_normalization\":{\"applied\":false,\"rule\":null},\"atomicity_class\":\"single_dispatch\",\"before_version\":\"bsnap-1-b21630b97380279c\",\"boundary_events\":[],\"completeness\":{\"complete\":false,\"reasons\":[\"boundary_detector_non_exhaustive\",\"identity_unstable_objects\"]},\"domain\":\"browser\",\"grounding_refs\":{\"after\":\"grounding://browser/v0.1/bsnap-1-3b2cc478d6b5ec3d/objects\",\"before\":\"grounding://browser/v0.1/bsnap-1-b21630b97380279c/objects\",\"dispatch\":\"grounding://browser-action/v0.1/3ba69d4341ab50b06c919f647c86ed80a8368dfe6cf459e9d5a9c0f33909644e/dispatch\"},\"idempotency_class\":\"unknown\",\"observed_effects\":{\"diff_ref\":\"grounding://browser/v0.1/bsnap-1-3b2cc478d6b5ec3d/diff/bsnap-1-b21630b97380279c\",\"provisional\":true,\"scope_transition_ref\":null},\"operation_class\":\"mutate\",\"predicate_result\":null,\"receipt_id\":\"rcp_3ba69d4341ab50b0_0002\",\"receipt_seq\":2,\"retry\":{\"attempt_count\":1,\"automatic_retry_performed\":false,\"mechanism\":null,\"reason\":null},\"schema\":\"smc.action_receipt.v0.1\",\"scope_ref\":\"browser-document-scope:7a9a5c3f605d8440971f4b20\",\"status\":\"ok\",\"target_id\":\"el_da9609f2f8c87ee6a3e3\",\"verb\":\"click\"}",
+      "recovered_count": 1,
+      "recovered_status": "success",
+      "recovery_metadata": {
+        "action_id": "sact-9d0484b15ad3908bd89ab845",
+        "auto_reexecuted": false,
+        "bridge_id": "abe09e9a3ca66a1b74871c4bdfdf02ce38556204ff25e12e4718ff22ad75b2b1",
+        "browser_receipt_seq": 2,
+        "browser_receipt_status": "ok",
+        "execution_id": "53da899765259773c14c3691418bd162",
+        "receipt_seq_before": 0,
+        "running_receipt_present": true,
+        "state": "browser_terminal_exact"
+      }
+    },
+    "tool_status_before_crash": "success"
+  },
+  "model_requests": 0,
+  "model_server": {
+    "count": 1,
+    "decode_concurrency_1": true,
+    "established_client_count": 0,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency_1": true
+  },
+  "row": "V02-L19",
+  "schema": "smc.p4_live.v02.recovery_row.v0.2",
+  "status": "PASS"
+}

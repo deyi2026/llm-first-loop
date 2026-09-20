@@ -1,0 +1,36 @@
+{
+  "automatic_retry_performed": false,
+  "browser_dispatches": 1,
+  "click_effects": 1,
+  "condition": "duplicate_exact_declaration_at_most_once",
+  "facts": {
+    "first": {
+      "content": "{\"action_id\":\"sact-dbd9c8266d45fbb0a9721837\",\"after_version\":\"bsnap-1-4448d2185bc2994b\",\"args_normalization\":{\"applied\":false,\"rule\":null},\"atomicity_class\":\"single_dispatch\",\"before_version\":\"bsnap-1-42567f4bcf8c92a0\",\"boundary_events\":[],\"completeness\":{\"complete\":false,\"reasons\":[\"boundary_detector_non_exhaustive\",\"identity_unstable_objects\"]},\"domain\":\"browser\",\"grounding_refs\":{\"after\":\"grounding://browser/v0.1/bsnap-1-4448d2185bc2994b/objects\",\"before\":\"grounding://browser/v0.1/bsnap-1-42567f4bcf8c92a0/objects\",\"dispatch\":\"grounding://browser-action/v0.1/e87eb7bb1b60286b4dc0dec0c4490222d0c8bacd1fbd074b6327e252b86466bb/dispatch\"},\"idempotency_class\":\"unknown\",\"observed_effects\":{\"diff_ref\":\"grounding://browser/v0.1/bsnap-1-4448d2185bc2994b/diff/bsnap-1-42567f4bcf8c92a0\",\"provisional\":true,\"scope_transition_ref\":null},\"operation_class\":\"mutate\",\"predicate_result\":null,\"receipt_id\":\"rcp_e87eb7bb1b60286b_0002\",\"receipt_seq\":2,\"retry\":{\"attempt_count\":1,\"automatic_retry_performed\":false,\"mechanism\":null,\"reason\":null},\"schema\":\"smc.action_receipt.v0.1\",\"scope_ref\":\"browser-document-scope:b266d338618959545e4287f2\",\"status\":\"ok\",\"target_id\":\"el_503a57b1b386e75cc599\",\"verb\":\"click\"}",
+      "error_detail": null,
+      "error_type": null,
+      "status": "success"
+    },
+    "first_clicks": 1,
+    "first_dispatches": 1,
+    "first_execution_id": "b112466770c032bf54fba32888b3ed7c",
+    "second": {
+      "content": "{\"action_id\":\"sact-dbd9c8266d45fbb0a9721837\",\"after_version\":null,\"args_normalization\":{\"applied\":false,\"rule\":null},\"atomicity_class\":\"single_dispatch\",\"before_version\":null,\"boundary_events\":[],\"completeness\":{\"complete\":false,\"reasons\":[\"duplicate_action_id\"]},\"domain\":\"browser\",\"grounding_refs\":{\"after\":null,\"before\":null,\"dispatch\":null},\"idempotency_class\":\"unknown\",\"observed_effects\":{\"diff_ref\":null,\"provisional\":true,\"scope_transition_ref\":null},\"operation_class\":\"mutate\",\"predicate_result\":null,\"receipt_id\":\"rcp_e87eb7bb1b60286b_0003\",\"receipt_seq\":3,\"retry\":{\"attempt_count\":1,\"automatic_retry_performed\":false,\"mechanism\":null,\"reason\":\"duplicate_action_id\"},\"schema\":\"smc.action_receipt.v0.1\",\"scope_ref\":\"browser-document-scope:b266d338618959545e4287f2\",\"status\":\"rejected\",\"target_id\":\"el_503a57b1b386e75cc599\",\"verb\":\"click\"}",
+      "error_detail": null,
+      "error_type": null,
+      "status": "failure"
+    },
+    "second_execution_id": "67d4b110b47fecc25d587fac76104d39"
+  },
+  "fixture_setup_mutations": 0,
+  "model_requests": 0,
+  "model_server": {
+    "count": 1,
+    "decode_concurrency_1": true,
+    "established_client_count": 0,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency_1": true
+  },
+  "row": "V02-L16",
+  "schema": "smc.p4_live.v02.rejection_row.v0.2",
+  "status": "PASS"
+}

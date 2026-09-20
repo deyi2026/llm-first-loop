@@ -1,0 +1,57 @@
+{
+  "actual": [
+    {
+      "arguments": {
+        "action_ref": "actionref://browser/v0.1/513f070f915fed755d6b3ca0510eead6",
+        "value": "beta"
+      },
+      "id": "ddc6557b-57fc-4f0d-90d8-e76297dad29d",
+      "name": "browser_semantic_select"
+    }
+  ],
+  "automatic_retry_performed": false,
+  "bind_count": 1,
+  "browser_dispatches": 1,
+  "browser_target_id_sha256": "f25fc8e2b8638df29fe1233197453327817588b31ac4c3e9eb9c286885b9ccf0",
+  "completion_tokens": 102,
+  "execution_bridge_id": "b8416453286ed31fea16c43dfbe69a5f3c7339b1944e5f97e6418500a172d37b",
+  "execution_id": "46c9ef7ac4b721545ce094c06d4cd6b8",
+  "expected": {
+    "arguments": {
+      "action_ref": "actionref://browser/v0.1/513f070f915fed755d6b3ca0510eead6",
+      "value": "beta"
+    },
+    "name": "browser_semantic_select"
+  },
+  "grounding_ref": "grounding://browser/v0.1/bsnap-1-1d7cd1462b293c1d/object/el_2d386b7218311474947a",
+  "inner_action_id": "sact-53879b70885601a5aee9e60a",
+  "model_requests": 1,
+  "model_server": {
+    "count": 1,
+    "decode_concurrency_1": true,
+    "established_client_count": 0,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency_1": true
+  },
+  "model_wall_s": 7.755,
+  "outer_receipt_committed": true,
+  "physical_effect": {
+    "value": "beta"
+  },
+  "physical_effect_ok": true,
+  "prompt_tokens": 2540,
+  "receipt_seqs": [
+    1,
+    2
+  ],
+  "receipt_statuses": [
+    "running",
+    "ok"
+  ],
+  "row": "V02-L04",
+  "schema": "smc.p4_live.v02.success_row.v0.2",
+  "status": "PASS",
+  "target_id": "618B471E53944A080BC9FF714DB3F63F",
+  "tool_content": "{\"action_id\":\"sact-53879b70885601a5aee9e60a\",\"after_version\":\"bsnap-1-7dad3e1449f5b829\",\"args_normalization\":{\"applied\":false,\"rule\":null},\"atomicity_class\":\"single_dispatch\",\"before_version\":\"bsnap-1-b97d11acb15c9312\",\"boundary_events\":[],\"completeness\":{\"complete\":false,\"reasons\":[\"boundary_detector_non_exhaustive\",\"identity_unstable_objects\"]},\"domain\":\"browser\",\"grounding_refs\":{\"after\":\"grounding://browser/v0.1/bsnap-1-7dad3e1449f5b829/objects\",\"before\":\"grounding://browser/v0.1/bsnap-1-b97d11acb15c9312/objects\",\"dispatch\":\"grounding://browser-action/v0.1/0502b3fec228f70718134af3f241b909ff81723b1f84842f802bb2a76a9d950d/dispatch\"},\"idempotency_class\":\"unknown\",\"observed_effects\":{\"diff_ref\":\"grounding://browser/v0.1/bsnap-1-7dad3e1449f5b829/diff/bsnap-1-b97d11acb15c9312\",\"provisional\":true,\"scope_transition_ref\":null},\"operation_class\":\"mutate\",\"predicate_result\":null,\"receipt_id\":\"rcp_0502b3fec228f707_0002\",\"receipt_seq\":2,\"retry\":{\"attempt_count\":1,\"automatic_retry_performed\":false,\"mechanism\":null,\"reason\":null},\"schema\":\"smc.action_receipt.v0.1\",\"scope_ref\":\"browser-document-scope:02d49a92ba0ddea21f6b08c2\",\"status\":\"ok\",\"target_id\":\"el_2d386b7218311474947a\",\"verb\":\"select\"}",
+  "tool_status": "success"
+}

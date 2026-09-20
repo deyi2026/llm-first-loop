@@ -1,0 +1,57 @@
+{
+  "actual": [
+    {
+      "arguments": {
+        "action_ref": "actionref://browser/v0.1/a56935edce74896b103defe50997871d",
+        "delta_pages": 1
+      },
+      "id": "452046a1-1fa6-439d-83da-f7ab626f30b3",
+      "name": "browser_semantic_scroll"
+    }
+  ],
+  "automatic_retry_performed": false,
+  "bind_count": 1,
+  "browser_dispatches": 1,
+  "browser_target_id_sha256": "bf4c91aefb8957768dabae729ff35220d166dcaa1fd7ed4b5e4b865ed713260b",
+  "completion_tokens": 99,
+  "execution_bridge_id": "dc4334637c833fc576db16530bbc7b1f5d7c4e130070d5883204a4e3e39018f7",
+  "execution_id": "d3c3c32378cd2b36d7c396b2608d1ab1",
+  "expected": {
+    "arguments": {
+      "action_ref": "actionref://browser/v0.1/a56935edce74896b103defe50997871d",
+      "delta_pages": 1
+    },
+    "name": "browser_semantic_scroll"
+  },
+  "grounding_ref": "grounding://browser/v0.1/bsnap-1-2782da8f791e8d52/object/el_1c53bddb330140695739",
+  "inner_action_id": "sact-2d195ad629e21c45afbca1da",
+  "model_requests": 1,
+  "model_server": {
+    "count": 1,
+    "decode_concurrency_1": true,
+    "established_client_count": 0,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency_1": true
+  },
+  "model_wall_s": 7.715,
+  "outer_receipt_committed": true,
+  "physical_effect": {
+    "scroll_y": 2111.0
+  },
+  "physical_effect_ok": true,
+  "prompt_tokens": 2543,
+  "receipt_seqs": [
+    1,
+    2
+  ],
+  "receipt_statuses": [
+    "running",
+    "ok"
+  ],
+  "row": "V02-L05",
+  "schema": "smc.p4_live.v02.success_row.v0.2",
+  "status": "PASS",
+  "target_id": "08FEDEAC26586FF22A8464817802FEC8",
+  "tool_content": "{\"action_id\":\"sact-2d195ad629e21c45afbca1da\",\"after_version\":\"bsnap-1-4d47e029868b7eb7\",\"args_normalization\":{\"applied\":false,\"rule\":null},\"atomicity_class\":\"single_dispatch\",\"before_version\":\"bsnap-1-d62284fcce1fb637\",\"boundary_events\":[],\"completeness\":{\"complete\":false,\"reasons\":[\"boundary_detector_non_exhaustive\",\"identity_unstable_objects\"]},\"domain\":\"browser\",\"grounding_refs\":{\"after\":\"grounding://browser/v0.1/bsnap-1-4d47e029868b7eb7/objects\",\"before\":\"grounding://browser/v0.1/bsnap-1-d62284fcce1fb637/objects\",\"dispatch\":\"grounding://browser-action/v0.1/85ad22b6fc4b9c5695446eafc5f26c0d93e1f7d45fb244965c89b4e7f943831e/dispatch\"},\"idempotency_class\":\"unknown\",\"observed_effects\":{\"diff_ref\":\"grounding://browser/v0.1/bsnap-1-4d47e029868b7eb7/diff/bsnap-1-d62284fcce1fb637\",\"provisional\":true,\"scope_transition_ref\":null},\"operation_class\":\"mutate\",\"predicate_result\":null,\"receipt_id\":\"rcp_85ad22b6fc4b9c56_0002\",\"receipt_seq\":2,\"retry\":{\"attempt_count\":1,\"automatic_retry_performed\":false,\"mechanism\":null,\"reason\":null},\"schema\":\"smc.action_receipt.v0.1\",\"scope_ref\":\"browser-document-scope:e7b4b699d514a7298dab5a22\",\"status\":\"ok\",\"target_id\":\"el_1c53bddb330140695739\",\"verb\":\"scroll\"}",
+  "tool_status": "success"
+}

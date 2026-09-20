@@ -1,0 +1,59 @@
+{
+  "actual": [
+    {
+      "arguments": {
+        "action_ref": "actionref://browser/v0.1/a9eeb7b9dd3265349a92d344695e13c2",
+        "mode": "replace",
+        "text": "AB-7319"
+      },
+      "id": "75d19d0e-0d07-4bf6-89d6-15a68db9f36e",
+      "name": "browser_semantic_fill"
+    }
+  ],
+  "automatic_retry_performed": false,
+  "bind_count": 1,
+  "browser_dispatches": 1,
+  "browser_target_id_sha256": "748bbcfb977271b28464531f0123a5968cb733fcf38ae4e9117a82991c7be7da",
+  "completion_tokens": 136,
+  "execution_bridge_id": "73cf969982ecbd5662c629609a37661f270397e83e0d7f906630755bfdc0ca53",
+  "execution_id": "8b469a1207f7eda66a662605d48f4511",
+  "expected": {
+    "arguments": {
+      "action_ref": "actionref://browser/v0.1/a9eeb7b9dd3265349a92d344695e13c2",
+      "mode": "replace",
+      "text": "AB-7319"
+    },
+    "name": "browser_semantic_fill"
+  },
+  "grounding_ref": "grounding://browser/v0.1/bsnap-1-67d811c2776b3658/object/el_031d9a513458d37787e8",
+  "inner_action_id": "sact-a6d72191f04d336013511522",
+  "model_requests": 1,
+  "model_server": {
+    "count": 1,
+    "decode_concurrency_1": true,
+    "established_client_count": 0,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency_1": true
+  },
+  "model_wall_s": 7.918,
+  "outer_receipt_committed": true,
+  "physical_effect": {
+    "value": "AB-7319"
+  },
+  "physical_effect_ok": true,
+  "prompt_tokens": 2549,
+  "receipt_seqs": [
+    1,
+    2
+  ],
+  "receipt_statuses": [
+    "running",
+    "ok"
+  ],
+  "row": "V02-L03",
+  "schema": "smc.p4_live.v02.success_row.v0.2",
+  "status": "PASS",
+  "target_id": "353647DF97374A1E8D8AE3109E0CC05F",
+  "tool_content": "{\"action_id\":\"sact-a6d72191f04d336013511522\",\"after_version\":\"bsnap-1-5d97c3b0452daeb3\",\"args_normalization\":{\"applied\":false,\"rule\":null},\"atomicity_class\":\"single_dispatch\",\"before_version\":\"bsnap-1-0fd99d2aec82d721\",\"boundary_events\":[],\"completeness\":{\"complete\":false,\"reasons\":[\"boundary_detector_non_exhaustive\",\"identity_unstable_objects\"]},\"domain\":\"browser\",\"grounding_refs\":{\"after\":\"grounding://browser/v0.1/bsnap-1-5d97c3b0452daeb3/objects\",\"before\":\"grounding://browser/v0.1/bsnap-1-0fd99d2aec82d721/objects\",\"dispatch\":\"grounding://browser-action/v0.1/78249e9ca09f05358539f3571aac186083e67b0c9dd423d6608f3265d0f67fde/dispatch\"},\"idempotency_class\":\"unknown\",\"observed_effects\":{\"diff_ref\":\"grounding://browser/v0.1/bsnap-1-5d97c3b0452daeb3/diff/bsnap-1-0fd99d2aec82d721\",\"provisional\":true,\"scope_transition_ref\":null},\"operation_class\":\"mutate\",\"predicate_result\":null,\"receipt_id\":\"rcp_78249e9ca09f0535_0002\",\"receipt_seq\":2,\"retry\":{\"attempt_count\":1,\"automatic_retry_performed\":false,\"mechanism\":null,\"reason\":null},\"schema\":\"smc.action_receipt.v0.1\",\"scope_ref\":\"browser-document-scope:d2e842773be036aab0346e57\",\"status\":\"ok\",\"target_id\":\"el_031d9a513458d37787e8\",\"verb\":\"fill\"}",
+  "tool_status": "success"
+}

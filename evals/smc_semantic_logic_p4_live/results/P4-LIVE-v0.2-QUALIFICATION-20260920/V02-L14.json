@@ -1,0 +1,27 @@
+{
+  "automatic_retry_performed": false,
+  "browser_dispatches": 0,
+  "click_effects": 0,
+  "condition": "target_replacement_before_first_use",
+  "facts": {
+    "replacement_is_distinct": true,
+    "result": {
+      "content": "[browser_semantic_click] rejected before successful mutation; reason_code=browser_target_precondition_mismatch; no automatic retry/search/rebind.",
+      "error_detail": "browser_target_precondition_mismatch: current Browser target differs from the ActionRef-observed target",
+      "error_type": "BrowserTargetPreconditionError",
+      "status": "failure"
+    }
+  },
+  "fixture_setup_mutations": 0,
+  "model_requests": 0,
+  "model_server": {
+    "count": 1,
+    "decode_concurrency_1": true,
+    "established_client_count": 0,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency_1": true
+  },
+  "row": "V02-L14",
+  "schema": "smc.p4_live.v02.rejection_row.v0.2",
+  "status": "PASS"
+}

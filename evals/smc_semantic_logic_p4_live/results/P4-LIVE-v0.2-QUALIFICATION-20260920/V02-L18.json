@@ -1,0 +1,39 @@
+{
+  "automatic_replay_performed": false,
+  "browser_dispatches": 0,
+  "click_effects": 0,
+  "condition": "running_receipt_dispatch_ambiguity_no_replay",
+  "execution_id": "4a5e5897cf5602ba692df93ba8dd34e0",
+  "facts": {
+    "fault": "v02-l18-stop-after-running",
+    "receipt_statuses_before_recovery": [
+      "running"
+    ],
+    "recovery": {
+      "classification": "browser_running_outcome_unknown",
+      "recovered_content": "[状态: error] execution_outcome=unknown_after_restart; browser_running_receipt=true; auto_reexecuted=false",
+      "recovered_count": 1,
+      "recovered_status": "error",
+      "recovery_metadata": {
+        "action_id": "sact-68dba20d26ce6b95b3262c81",
+        "auto_reexecuted": false,
+        "bridge_id": "079722f9b631fc0d70b480927adcb48f1e53d8dc32694bf183547b368047126f",
+        "execution_id": "4a5e5897cf5602ba692df93ba8dd34e0",
+        "receipt_seq_before": 0,
+        "running_receipt_present": true,
+        "state": "browser_running_outcome_unknown"
+      }
+    }
+  },
+  "model_requests": 0,
+  "model_server": {
+    "count": 1,
+    "decode_concurrency_1": true,
+    "established_client_count": 0,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency_1": true
+  },
+  "row": "V02-L18",
+  "schema": "smc.p4_live.v02.recovery_row.v0.2",
+  "status": "PASS"
+}
