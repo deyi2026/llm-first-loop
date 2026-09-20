@@ -1,0 +1,348 @@
+{
+  "all_rows_remain_red": true,
+  "all_taxonomies_match": true,
+  "expected_failures_file": "evals/smc_semantic_logic_p4_live/EXPECTED-FAILURES.v0.1.json",
+  "harness_errors": [],
+  "model_requests_sent": 0,
+  "parent_fcr_qualified_sha": "66f8d6147a67c4b439ca930149359674e500ba68",
+  "production_src_modified": false,
+  "protocol_git_sha": "e946eab26032aa4faa6698a3244ebd30c836cce1",
+  "pytest": {
+    "command": "python -m pytest tests/unit/test_smc_p4_live_actionref_red.py -q --tb=short",
+    "exact_20_failed": true,
+    "exit_code": 1,
+    "failed_rows": [
+      "P4L-R01",
+      "P4L-R02",
+      "P4L-R03",
+      "P4L-R04",
+      "P4L-R05",
+      "P4L-R06",
+      "P4L-R07",
+      "P4L-R08",
+      "P4L-R09",
+      "P4L-R10",
+      "P4L-R11",
+      "P4L-R12",
+      "P4L-R13",
+      "P4L-R14",
+      "P4L-R15",
+      "P4L-R16",
+      "P4L-R17",
+      "P4L-R18",
+      "P4L-R19",
+      "P4L-R20"
+    ],
+    "output_tail": "E   AssertionError: P4L-R14|actionref_inner_action_id_bridge_absent|EXPECTED_PRODUCTION_CAPABILITY_MISSING|existing GroundingRef action_id and reservation are deterministic/at-most-once, but no ActionRef resolver delegates into that identity basis|facts={'production_actionref_source_mentions': [], 'groundingref_inner_action_id_deterministic': True, 'groundingref_action_id': 'sact-4c11c1583f8a262a5f7b9b98', 'first_reservation': True, 'duplicate_reservation_rejected': True}\nE   assert False\nE    +  where False = ProbeResult(row_id='P4L-R14', contract_satisfied=False, failure_code='actionref_inner_action_id_bridge_absent', detail...ingref_action_id': 'sact-4c11c1583f8a262a5f7b9b98', 'first_reservation': True, 'duplicate_reservation_rejected': True}).contract_satisfied\n_________________ test_p4_live_actionref_contract_red[P4L-R15] _________________\n<repo>/tests/unit/test_smc_p4_live_actionref_red.py:32: in test_p4_live_actionref_contract_red\n    assert probe.contract_satisfied, (\nE   AssertionError: P4L-R15|predispatch_execution_bridge_absent|EXPECTED_PRODUCTION_CAPABILITY_MISSING|ToolExecutionJournal and BrowserActionReceiptStore have no durable pre-dispatch identity join|facts={'journal_mentions_action_ref': False, 'journal_mentions_inner_action_id': False, 'browser_action_mentions_execution_id': False, 'browser_receipt_mentions_tool_call_id': False, 'required_bridge_tokens_jointly_present': False}\nE   assert False\nE    +  where False = ProbeResult(row_id='P4L-R15', contract_satisfied=False, failure_code='predispatch_execution_bridge_absent', detail='To...execution_id': False, 'browser_receipt_mentions_tool_call_id': False, 'required_bridge_tokens_jointly_present': False}).contract_satisfied\n_________________ test_p4_live_actionref_contract_red[P4L-R16] _________________\n<repo>/tests/unit/test_smc_p4_live_actionref_red.py:32: in test_p4_live_actionref_contract_red\n    assert probe.contract_satisfied, (\nE   AssertionError: P4L-R16|prepare_without_running_recovery_contract_absent|EXPECTED_PRODUCTION_CAPABILITY_MISSING|outer WAL has no ActionRef execution-binding state that can distinguish prepared-without-Browser-running recovery|facts={'started_unknown_state_exists': True, 'auto_reexecute_false_exists': True, 'browser_receipt_store_consulted': False, 'browser_action_id_consulted': False, 'action_ref_consulted': False}\nE   assert False\nE    +  where False = ProbeResult(row_id='P4L-R16', contract_satisfied=False, failure_code='prepare_without_running_recovery_contract_absent...: True, 'browser_receipt_store_consulted': False, 'browser_action_id_consulted': False, 'action_ref_consulted': False}).contract_satisfied\n_________________ test_p4_live_actionref_contract_red[P4L-R17] _________________\n<repo>/tests/unit/test_smc_p4_live_actionref_red.py:32: in test_p4_live_actionref_contract_red\n    assert probe.contract_satisfied, (\nE   AssertionError: P4L-R17|running_unknown_browser_correlation_absent|EXPECTED_PRODUCTION_CAPABILITY_MISSING|outer WAL safely marks started outcome unknown/no replay, but cannot correlate an ActionRef Browser running receipt|facts={'started_unknown_state_exists': True, 'auto_reexecute_false_exists': True, 'browser_receipt_store_consulted': False, 'browser_action_id_consulted': False, 'action_ref_consulted': False}\nE   assert False\nE    +  where False = ProbeResult(row_id='P4L-R17', contract_satisfied=False, failure_code='running_unknown_browser_correlation_absent', det...: True, 'browser_receipt_store_consulted': False, 'browser_action_id_consulted': False, 'action_ref_consulted': False}).contract_satisfied\n_________________ test_p4_live_actionref_contract_red[P4L-R18] _________________\n<repo>/tests/unit/test_smc_p4_live_actionref_red.py:32: in test_p4_live_actionref_contract_red\n    assert probe.contract_satisfied, (\nE   AssertionError: P4L-R18|terminal_browser_outer_wal_correlation_absent|EXPECTED_PRODUCTION_CAPABILITY_MISSING|no exact Browser terminal receipt -> outer execution correlation path exists|facts={'started_unknown_state_exists': True, 'auto_reexecute_false_exists': True, 'browser_receipt_store_consulted': False, 'browser_action_id_consulted': False, 'action_ref_consulted': False}\nE   assert False\nE    +  where False = ProbeResult(row_id='P4L-R18', contract_satisfied=False, failure_code='terminal_browser_outer_wal_correlation_absent', ...: True, 'browser_receipt_store_consulted': False, 'browser_action_id_consulted': False, 'action_ref_consulted': False}).contract_satisfied\n_________________ test_p4_live_actionref_contract_red[P4L-R19] _________________\n<repo>/tests/unit/test_smc_p4_live_actionref_red.py:32: in test_p4_live_actionref_contract_red\n    assert probe.contract_satisfied, (\nE   AssertionError: P4L-R19|actionref_version_guard_delegation_absent|EXPECTED_PRODUCTION_CAPABILITY_MISSING|existing GroundingRef stale guard is fail-closed, but no ActionRef path delegates into it|facts={'existing_version_guard_ok': True, 'production_actionref_source_mentions': [], 'result': 'stale', 'reason': 'document_generation_changed', 'automatic_refresh_performed': False, 'silent_rebind_performed': False}\nE   assert False\nE    +  where False = ProbeResult(row_id='P4L-R19', contract_satisfied=False, failure_code='actionref_version_guard_delegation_absent', deta...ale', 'reason': 'document_generation_changed', 'automatic_refresh_performed': False, 'silent_rebind_performed': False}).contract_satisfied\n_________________ test_p4_live_actionref_contract_red[P4L-R20] _________________\n<repo>/tests/unit/test_smc_p4_live_actionref_red.py:32: in test_p4_live_actionref_contract_red\n    assert probe.contract_satisfied, (\nE   AssertionError: P4L-R20|actionref_disabled_compatibility_gate_absent|EXPECTED_PRODUCTION_CAPABILITY_MISSING|existing GroundingRef Browser path exists, but there is no ActionRef feature flag/wiring whose disabled mode can prove compatibility|facts={'legacy_browser_action_flag_exists': True, 'actionref_feature_flag_exists': False}\nE   assert False\nE    +  where False = ProbeResult(row_id='P4L-R20', contract_satisfied=False, failure_code='actionref_disabled_compatibility_gate_absent', d...de can prove compatibility', facts={'legacy_browser_action_flag_exists': True, 'actionref_feature_flag_exists': False}).contract_satisfied\n=========================== short test summary info ============================\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R01]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R02]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R03]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R04]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R05]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R06]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R07]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R08]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R09]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R10]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R11]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R12]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R13]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R14]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R15]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R16]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R17]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R18]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R19]\nFAILED tests/unit/test_smc_p4_live_actionref_red.py::test_p4_live_actionref_contract_red[P4L-R20]"
+  },
+  "qualified_red_freeze": true,
+  "real_browser_actions_executed": 0,
+  "row_count": 20,
+  "rows": [
+    {
+      "contract_satisfied": false,
+      "detail": "persisted production perception has no model-visible ActionRef annotation",
+      "expected_code": "actionref_issuer_absent_after_persist",
+      "expected_red": true,
+      "facts": {
+        "object_action_ref_count": 0,
+        "resource_action_ref_present": false,
+        "resource_ref_present": true,
+        "snapshot_id_present": true,
+        "snapshot_persisted": true
+      },
+      "id": "P4L-R01",
+      "observed_code": "actionref_issuer_absent_after_persist",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "GroundingRef exact hydration exists, but no production ActionRef exact resolver exists",
+      "expected_code": "actionref_exact_resolver_absent",
+      "expected_red": true,
+      "facts": {
+        "cross_session_grounding_ref_availability": "unauthorized",
+        "cross_session_grounding_ref_reason": "session_scope",
+        "grounding_ref_round_trip_exact": true,
+        "production_actionref_source_mentions": []
+      },
+      "id": "P4L-R02",
+      "observed_code": "actionref_exact_resolver_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "GroundingRef is session fenced, but no ActionRef owner-session fence exists",
+      "expected_code": "actionref_session_fence_absent",
+      "expected_red": true,
+      "facts": {
+        "cross_session_grounding_ref_availability": "unauthorized",
+        "cross_session_grounding_ref_reason": "session_scope",
+        "grounding_ref_round_trip_exact": true,
+        "production_actionref_source_mentions": []
+      },
+      "id": "P4L-R03",
+      "observed_code": "actionref_session_fence_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "no production ActionRef record/resolver exists to bind canonical workspace identity",
+      "expected_code": "actionref_workspace_fence_absent",
+      "expected_red": true,
+      "facts": {
+        "production_actionref_source_mentions": []
+      },
+      "id": "P4L-R04",
+      "observed_code": "actionref_workspace_fence_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "no production ActionRef record exists to bind origin run generation or invalidate at run termination",
+      "expected_code": "actionref_run_lifetime_fence_absent",
+      "expected_red": true,
+      "facts": {
+        "production_actionref_source_mentions": []
+      },
+      "id": "P4L-R05",
+      "observed_code": "actionref_run_lifetime_fence_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "no production ActionRef lifetime exists to cap alias expiry by source snapshot expiry",
+      "expected_code": "actionref_expiry_fence_absent",
+      "expected_red": true,
+      "facts": {
+        "production_actionref_source_mentions": []
+      },
+      "id": "P4L-R06",
+      "observed_code": "actionref_expiry_fence_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "no production ActionRef record binds Browser runtime generation/nonce",
+      "expected_code": "actionref_browser_incarnation_fence_absent",
+      "expected_red": true,
+      "facts": {
+        "production_actionref_source_mentions": []
+      },
+      "id": "P4L-R07",
+      "observed_code": "actionref_browser_incarnation_fence_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "existing GroundingRef compiler validates projection kind, but ActionRef target_kind does not exist in production",
+      "expected_code": "actionref_kind_fence_absent",
+      "expected_red": true,
+      "facts": {
+        "production_actionref_source_mentions": []
+      },
+      "id": "P4L-R08",
+      "observed_code": "actionref_kind_fence_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "qualification-only FCR bindings have integrity, but production has no ActionRef binding integrity record",
+      "expected_code": "actionref_integrity_fence_absent",
+      "expected_red": true,
+      "facts": {
+        "production_actionref_source_mentions": []
+      },
+      "id": "P4L-R09",
+      "observed_code": "actionref_integrity_fence_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "legacy direct mutation remains allowed without ToolExecutionJournal binding and no ActionRef-specific rejection exists",
+      "expected_code": "actionref_effect_binding_requirement_absent",
+      "expected_red": true,
+      "facts": {
+        "production_actionref_source_mentions": [],
+        "unbound_current_effect_mutation_authority": true
+      },
+      "id": "P4L-R10",
+      "observed_code": "actionref_effect_binding_requirement_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "generic effect binding revocation exists, but there is no ActionRef mutation tool wired through it",
+      "expected_code": "actionref_revocation_wiring_absent",
+      "expected_red": true,
+      "facts": {
+        "generic_revocation_primitive_present": true,
+        "production_actionref_source_mentions": []
+      },
+      "id": "P4L-R11",
+      "observed_code": "actionref_revocation_wiring_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "perception and mutation actuator independently choose different sole-page targets when both are initially unbound",
+      "expected_code": "browser_target_independent_first_bind_gap",
+      "expected_red": true,
+      "facts": {
+        "actuator_candidate": "target-B",
+        "actuator_unconfigured": true,
+        "identity_gap_observed": true,
+        "perception_candidate": "target-A",
+        "perception_unconfigured": true
+      },
+      "id": "P4L-R12",
+      "observed_code": "browser_target_independent_first_bind_gap",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "main LoopEngine provider projection ignores current_tool_discovery_scope while legacy Browser mutation tools remain registered",
+      "expected_code": "main_provider_legacy_browser_surface_gap",
+      "expected_red": true,
+      "facts": {
+        "get_tool_schema_reads_discovery_scope": true,
+        "legacy_tools_registered_when_browser_action_enabled": true,
+        "main_projection_reads_discovery_scope": false
+      },
+      "id": "P4L-R13",
+      "observed_code": "main_provider_legacy_browser_surface_gap",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "existing GroundingRef action_id and reservation are deterministic/at-most-once, but no ActionRef resolver delegates into that identity basis",
+      "expected_code": "actionref_inner_action_id_bridge_absent",
+      "expected_red": true,
+      "facts": {
+        "duplicate_reservation_rejected": true,
+        "first_reservation": true,
+        "groundingref_action_id": "sact-4c11c1583f8a262a5f7b9b98",
+        "groundingref_inner_action_id_deterministic": true,
+        "production_actionref_source_mentions": []
+      },
+      "id": "P4L-R14",
+      "observed_code": "actionref_inner_action_id_bridge_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "ToolExecutionJournal and BrowserActionReceiptStore have no durable pre-dispatch identity join",
+      "expected_code": "predispatch_execution_bridge_absent",
+      "expected_red": true,
+      "facts": {
+        "browser_action_mentions_execution_id": false,
+        "browser_receipt_mentions_tool_call_id": false,
+        "journal_mentions_action_ref": false,
+        "journal_mentions_inner_action_id": false,
+        "required_bridge_tokens_jointly_present": false
+      },
+      "id": "P4L-R15",
+      "observed_code": "predispatch_execution_bridge_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "outer WAL has no ActionRef execution-binding state that can distinguish prepared-without-Browser-running recovery",
+      "expected_code": "prepare_without_running_recovery_contract_absent",
+      "expected_red": true,
+      "facts": {
+        "action_ref_consulted": false,
+        "auto_reexecute_false_exists": true,
+        "browser_action_id_consulted": false,
+        "browser_receipt_store_consulted": false,
+        "started_unknown_state_exists": true
+      },
+      "id": "P4L-R16",
+      "observed_code": "prepare_without_running_recovery_contract_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "outer WAL safely marks started outcome unknown/no replay, but cannot correlate an ActionRef Browser running receipt",
+      "expected_code": "running_unknown_browser_correlation_absent",
+      "expected_red": true,
+      "facts": {
+        "action_ref_consulted": false,
+        "auto_reexecute_false_exists": true,
+        "browser_action_id_consulted": false,
+        "browser_receipt_store_consulted": false,
+        "started_unknown_state_exists": true
+      },
+      "id": "P4L-R17",
+      "observed_code": "running_unknown_browser_correlation_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "no exact Browser terminal receipt -> outer execution correlation path exists",
+      "expected_code": "terminal_browser_outer_wal_correlation_absent",
+      "expected_red": true,
+      "facts": {
+        "action_ref_consulted": false,
+        "auto_reexecute_false_exists": true,
+        "browser_action_id_consulted": false,
+        "browser_receipt_store_consulted": false,
+        "started_unknown_state_exists": true
+      },
+      "id": "P4L-R18",
+      "observed_code": "terminal_browser_outer_wal_correlation_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "existing GroundingRef stale guard is fail-closed, but no ActionRef path delegates into it",
+      "expected_code": "actionref_version_guard_delegation_absent",
+      "expected_red": true,
+      "facts": {
+        "automatic_refresh_performed": false,
+        "existing_version_guard_ok": true,
+        "production_actionref_source_mentions": [],
+        "reason": "document_generation_changed",
+        "result": "stale",
+        "silent_rebind_performed": false
+      },
+      "id": "P4L-R19",
+      "observed_code": "actionref_version_guard_delegation_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "existing GroundingRef Browser path exists, but there is no ActionRef feature flag/wiring whose disabled mode can prove compatibility",
+      "expected_code": "actionref_disabled_compatibility_gate_absent",
+      "expected_red": true,
+      "facts": {
+        "actionref_feature_flag_exists": false,
+        "legacy_browser_action_flag_exists": true
+      },
+      "id": "P4L-R20",
+      "observed_code": "actionref_disabled_compatibility_gate_absent",
+      "row_ok": true,
+      "taxonomy_match": true
+    }
+  ],
+  "schema": "smc.semantic_logic_p4_live_red_evidence.v0.1"
+}

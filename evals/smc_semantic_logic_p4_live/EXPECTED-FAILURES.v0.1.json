@@ -1,0 +1,26 @@
+{
+  "schema": "smc.semantic_logic_p4_live_red_expected_failures.v0.1",
+  "protocol_git_sha": "e946eab26032aa4faa6698a3244ebd30c836cce1",
+  "rows": [
+    {"id": "P4L-R01", "code": "actionref_issuer_absent_after_persist", "class": "missing_production_capability"},
+    {"id": "P4L-R02", "code": "actionref_exact_resolver_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R03", "code": "actionref_session_fence_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R04", "code": "actionref_workspace_fence_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R05", "code": "actionref_run_lifetime_fence_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R06", "code": "actionref_expiry_fence_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R07", "code": "actionref_browser_incarnation_fence_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R08", "code": "actionref_kind_fence_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R09", "code": "actionref_integrity_fence_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R10", "code": "actionref_effect_binding_requirement_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R11", "code": "actionref_revocation_wiring_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R12", "code": "browser_target_independent_first_bind_gap", "class": "known_p0_production_gap"},
+    {"id": "P4L-R13", "code": "main_provider_legacy_browser_surface_gap", "class": "known_p0_production_gap"},
+    {"id": "P4L-R14", "code": "actionref_inner_action_id_bridge_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R15", "code": "predispatch_execution_bridge_absent", "class": "known_p0_production_gap"},
+    {"id": "P4L-R16", "code": "prepare_without_running_recovery_contract_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R17", "code": "running_unknown_browser_correlation_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R18", "code": "terminal_browser_outer_wal_correlation_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R19", "code": "actionref_version_guard_delegation_absent", "class": "missing_production_capability"},
+    {"id": "P4L-R20", "code": "actionref_disabled_compatibility_gate_absent", "class": "missing_production_capability"}
+  ]
+}
