@@ -23,7 +23,8 @@
       ],
       "verification_level": "per-batch pytest during port + repository gate (pytest/ruff/pyright) on this PR",
       "model_evidence_veto_recovery_exit": "Reviewer rejects by reverting the port range; v01 branch and 3.2G untracked archive remain preserved for re-derivation.",
-      "rollback_route": "git revert of the port commits on feature/smc-model-friendly-v02-20260920 restores the pre-port main surfaces."
+      "rollback_route": "git revert of the port commits on feature/smc-model-friendly-v02-20260920 restores the pre-port main surfaces.",
+      "declaration_id": "smc-model-friendly-v02-surface"
     },
     {
       "component_id": "smc-browser-contract-tests-v02",
@@ -254,6 +255,34 @@
       "verification_level": "A.5 checker on this PR",
       "model_evidence_veto_recovery_exit": "Manifest can be amended by follow-up commit.",
       "rollback_route": "git revert removes the manifest with the port."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "smc-model-friendly-v02-surface",
+      "g1": {
+        "necessity": "The v01 line froze a working model-friendly evolution of the browser SMC surfaces (root-direct wait, two-capability registry, compact receipts, evidence-quality projection, URL-role separation, grounding-ref unification); without this port the capabilities stay stranded on a retired worktree branch while main's surfaces keep the pre-v01 shape."
+      },
+      "g2": {
+        "authority_owner": "src/llm_loop/tools/builtin/browser_perceive.py, browser_semantic_execute/operation surfaces, tools/registry.py, factory.py, src/llm_loop/browser/perception.py",
+        "relationship": "reuse",
+        "non_duplication": "The port evolves the existing tool surfaces in place (same tool names, same typed predicate machinery, same host-bound CDP read-only path) rather than adding a parallel control plane; the only new schema authority is the root-discriminated wait branch compiled to the same typed waits."
+      },
+      "g3": {
+        "model_evidence": [
+          "per-batch frozen RED->fix sequences ported intact; batch runs 40+40+126+93+96+60+122+13 tests green",
+          "three semantic merges (root-direct x EVO params, quality order x projection window, facade schema x exact-set assertion) each resolved with both sides' contracts asserted in the merged tests",
+          "MF5.3.1 frozen branch assertion adapted to the merged surface with an in-test v02 note"
+        ],
+        "recovery_or_reason": "No observed model-facing regression: batch test suites from both lineages pass on the merged tree; ruff clean, pyright 0 errors."
+      },
+      "g4": {
+        "rollback": "git revert of the port commits on feature/smc-model-friendly-v02-20260920 restores pre-port main surfaces; v01 branch docs/smc-model-friendly-v01-20260916 and the 3.2G untracked archive remain available for re-derivation.",
+        "verification": [
+          "repository gate (pytest not real_llm + ruff + pyright) on this PR",
+          "A.5 coverage check on this PR"
+        ]
+      }
     }
   ]
 }
