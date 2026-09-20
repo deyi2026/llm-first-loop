@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { LocalRuntimePanel } from "./LocalRuntimePanel";
 import {
   createProvider,
   deleteProviderConfig,
@@ -309,6 +310,8 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
         ))}
         {snapshot.providers.length === 0 ? <div className="v2-placeholder">当前没有 Provider。可从 Web 添加云端或本地 OpenAI-compatible 端点。</div> : null}
       </div>
+
+      <LocalRuntimePanel onSynced={() => finish("本地运行时已同步。")} />
 
       {editor ? (
         <ProviderEditor

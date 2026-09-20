@@ -44,6 +44,7 @@ from .attachments import AttachmentError, AttachmentStore
 from .attachments import workspace_scope as attachment_workspace_scope
 from .human_turn_queue import HumanTurnQueue
 from .provider_routes import router as provider_admin_router
+from .local_runtime_admin import router as local_runtime_router
 from .schemas import (
     ChatCancelRequest,
     ChatRequest,
@@ -79,6 +80,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 router.include_router(provider_admin_router)
+router.include_router(local_runtime_router)
 
 
 def _attachment_store(engine: Any) -> AttachmentStore:
