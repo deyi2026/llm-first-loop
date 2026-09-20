@@ -74,6 +74,7 @@ from llm_loop.resources.local_runtime import LocalRuntimeConcurrencyAdapter
 from llm_loop.resources.provider_calls import ProviderCallCoordinator
 from llm_loop.resources.provider_settlement import ProviderCallSettlementJournal
 from llm_loop.resources.transport_observation import ShadowTransportRecorder
+from llm_loop.runtime.admission_barrier import task_admission_barrier
 from llm_loop.runtime.causal_diagnose import diagnose_event_store
 from llm_loop.runtime.causality import build_runtime_causal_snapshot
 from llm_loop.runtime.knowledge_health import inspect_knowledge_health
@@ -1631,6 +1632,9 @@ def build_engine(
                 resource_target_resolver=_resolve_learning_resource_target,
                 provider_call_coordinator=provider_call_coordinator,
                 memory_extractor=extractor,
+                restart_admission_blocked=lambda: task_admission_barrier(
+                    Path(settings.data_dir).expanduser(), "learning_job"
+                ),
             )
             learning_plane.start()
             engine.learning_plane = learning_plane
@@ -1735,12 +1739,10 @@ def build_engine(
             # 任务不得连续抢占排空窗口。退避保留条目，屏障释放后自动重试；
             # grant 不消费（one-shot 能力留给窗口后的下一次投递）。
             try:
-                from pathlib import Path as _Path
-
-                from llm_loop.runtime.admission_barrier import service_restart_barrier as _srb
-
                 _data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
-                _restart_barrier = _srb(_Path(str(_data_dir)).expanduser(), "web")
+                _restart_barrier = task_admission_barrier(
+                    Path(str(_data_dir)).expanduser(), "web_schedule_wake"
+                )
             except Exception:  # noqa: BLE001 — 屏障读取失败不阻断已授权续跑
                 _restart_barrier = None
             if _restart_barrier is not None:

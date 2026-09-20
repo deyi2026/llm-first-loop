@@ -239,3 +239,40 @@ class AdmissionBarrierRegistry:
 def service_restart_barrier(data_dir: str | os.PathLike[str], service: str) -> ServiceAdmissionBarrier | None:
     """Convenience read for admission hot paths (web/scheduler/feishu)."""
     return AdmissionBarrierRegistry(data_dir).blocked(service)
+
+
+# --------------------------------------------------------------------------
+# 任务注册表（缺口②·依赖范围准入）
+#
+# 任务种类 → 声明依赖的受管服务。准入按声明范围检查屏障：未被声明的
+# 服务重启不阻塞该任务（learning 不依赖 web/feishu 进程，web 屏障不
+# 得让 Reflection 停摆；反之亦然）。闭表——新增入口必须先登记依赖，
+# 调用点不允许临时指定服务名，防止准入范围在散落调用点漂移。
+# --------------------------------------------------------------------------
+TASK_ADMISSION_DEPENDENCIES: dict[str, tuple[str, ...]] = {
+    "web_chat": ("web",),
+    "web_chat_stream": ("web",),
+    "web_queue_dispatch": ("web",),
+    "web_schedule_wake": ("web",),
+    "feishu_message": ("feishu",),
+    "learning_job": ("learning",),
+}
+
+
+def task_admission_barrier(
+    data_dir: str | os.PathLike[str], task_kind: str
+) -> ServiceAdmissionBarrier | None:
+    """First active barrier among the task's declared dependency services.
+
+    未登记的任务种类直接抛 ``KeyError``——准入范围是声明事实，不是调用
+    点的自选参数。
+    """
+    services = TASK_ADMISSION_DEPENDENCIES.get(task_kind)
+    if services is None:
+        raise KeyError(f"unregistered task kind for admission: {task_kind!r}")
+    registry = AdmissionBarrierRegistry(data_dir)
+    for service in services:
+        barrier = registry.blocked(service)
+        if barrier is not None:
+            return barrier
+    return None

@@ -46,6 +46,7 @@ from llm_loop.runtime.admission_barrier import (
     AdmissionBarrierRegistry,
     BarrierConflictError,
 )
+from llm_loop.runtime.learning_idle import learning_busy_reason
 
 _DEPLOYMENT_SCHEMA = "managed-service-deployment/v1"
 
@@ -1003,8 +1004,10 @@ def _target_busy_reason(*, target: str, runtime_root: str) -> str:
     """Target-scoped busy probe mirroring the official restart gates.
 
     feishu/all additionally require an idle Feishu bridge heartbeat; web/all
-    require no mechanically-held foreground run locks. learning has no busy
-    gate, matching restart_mirror.sh.
+    require no mechanically-held foreground run locks; learning/all require
+    the learning consumer to hold no in-flight journal job（缺口②空闲门：
+    持锁 + admitted/started 在飞才 busy，进程死亡的 started 残留不阻塞，
+    由 post-crash reconcile 重跑）。
     """
     reasons: list[str] = []
     if target in {"feishu", "all"}:
@@ -1025,6 +1028,12 @@ def _target_busy_reason(*, target: str, runtime_root: str) -> str:
         held = active_run_locks(sessions_dir)
         if held:
             reasons.append(f"active run locks: {len(held)}")
+    if target in {"learning", "all"}:
+        learning_reason = learning_busy_reason(
+            Path(runtime_root) / "data" / "sessions"
+        )
+        if learning_reason:
+            reasons.append(learning_reason)
     return "; ".join(reasons)
 
 

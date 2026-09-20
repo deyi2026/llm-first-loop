@@ -77,12 +77,18 @@ _BARRIER_DEFER_WAIT_S = float(_BRIDGE_CONFIG.get("FEISHU_BARRIER_DEFER_WAIT_S", 
 
 
 def _feishu_admission_barrier():
-    """只读读取 feishu 服务准入屏障；读取失败 fail-open（不阻断消息流）."""
+    """只读读取 feishu 服务准入屏障；读取失败 fail-open（不阻断消息流）.
+
+    依赖范围走任务注册表（``feishu_message → ("feishu",)``，缺口②闭表），
+    调用点不指定服务名。KeyError 未捕获属编码错误，当场暴露。
+    """
     try:
-        from llm_loop.runtime.admission_barrier import service_restart_barrier
+        from llm_loop.runtime.admission_barrier import task_admission_barrier
 
         data_root = Path(_HEARTBEAT_PATH).parent  # "data"
-        return service_restart_barrier(data_root, "feishu")
+        return task_admission_barrier(data_root, "feishu_message")
+    except KeyError:
+        raise  # 编码错误：未登记的任务种类必须当场暴露
     except Exception as exc:  # noqa: BLE001 — fail-open
         logger.warning("飞书准入屏障读取失败（fail-open）: %s", exc)
         return None

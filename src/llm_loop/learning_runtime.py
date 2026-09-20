@@ -12,17 +12,17 @@ import fcntl
 import logging
 import signal
 import threading
-from pathlib import Path
 
 from llm_loop.config import load_settings
 from llm_loop.factory import build_engine
+from llm_loop.runtime.learning_idle import consumer_lock_path
 
 logger = logging.getLogger(__name__)
 
 
 def main() -> int:
     settings = load_settings()
-    lock_path = Path(settings.sessions_dir) / "learning" / "consumer.lock"
+    lock_path = consumer_lock_path(settings.sessions_dir)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_fh = lock_path.open("a+", encoding="utf-8")
     try:

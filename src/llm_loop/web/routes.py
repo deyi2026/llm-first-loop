@@ -33,7 +33,10 @@ from llm_loop.feedback.honesty import (
     session_deleted_message,
     session_not_found_message,
 )
-from llm_loop.runtime.admission_barrier import ServiceAdmissionBarrier, service_restart_barrier
+from llm_loop.runtime.admission_barrier import (
+    ServiceAdmissionBarrier,
+    task_admission_barrier,
+)
 from llm_loop.workspace.store import (
     WorkspaceBusyError,
     WorkspaceChangedError,
@@ -92,16 +95,22 @@ def _attachment_store(engine: Any) -> AttachmentStore:
 _BARRIER_QUEUE_CAP = 20
 
 
-def _service_restart_barrier(request: Request) -> ServiceAdmissionBarrier | None:
-    """§8.2 消息准入屏障（只读）：web 服务的重启 waiting 窗口是否活跃.
+def _service_restart_barrier(
+    request: Request, task_kind: str
+) -> ServiceAdmissionBarrier | None:
+    """§8.2 消息准入屏障（只读）：本任务声明的依赖服务是否有重启屏障.
 
-    读失败 fail-open（可用性优先，日志告警）：屏障目录不存在是常态路径，
-    物理性不可读属运行异常，由状态视图/CLI 兜底，不在消息热路径炸服务。
+    依赖范围来自 ``TASK_ADMISSION_DEPENDENCIES`` 闭表（缺口②统一注册表），
+    调用点不再各自指定服务名。读失败 fail-open（可用性优先，日志告警）：
+    屏障目录不存在是常态路径，物理性不可读属运行异常，由状态视图/CLI 兜
+    底，不在消息热路径炸服务。
     """
     engine = _engine_from(request)
     data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
     try:
-        return service_restart_barrier(Path(data_dir).expanduser(), "web")
+        return task_admission_barrier(Path(data_dir).expanduser(), task_kind)
+    except KeyError:
+        raise  # 编码错误：未登记的任务种类必须当场暴露
     except Exception as exc:  # noqa: BLE001 — fail-open
         logger.warning("service admission barrier check failed (fail-open): %s", exc)
         return None
@@ -365,7 +374,7 @@ router.include_router(file_router)
 from llm_loop.feishu.approval import approve, reject  # noqa: E402
 
 SERVICE_NAME = "llm-first-loop-web"
-SERVICE_VERSION = "0.6.14"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
+SERVICE_VERSION = "0.6.15"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -646,7 +655,7 @@ def chat(
 
     # §8.2-2 消息准入屏障：重启 waiting 窗口内新消息只获持久化排队回执
     # （带操作号），不得立即成为新活跃 run。
-    _barrier = _service_restart_barrier(request)
+    _barrier = _service_restart_barrier(request, "web_chat")
     if _barrier is not None:
         return _barrier_queued_response(request, session_id, payload.message, _barrier)
 
@@ -1094,7 +1103,7 @@ def chat_stream(
     # - 有 queue_id：服务端把 claim 回滚为 queued（保 FIFO），回执仍带
     #   queue_id 与操作号；前端按 session_busy 家族语义刷新队列继续等待。
     # - 无 queue_id（直接发送）：服务端 durable 入队后回执带 queue_id。
-    _barrier = _service_restart_barrier(request)
+    _barrier = _service_restart_barrier(request, "web_chat_stream")
     if _barrier is not None:
         if _queue_id and _queue_store is not None:
             # 领取项回滚 queued（保持 FIFO 原位）——冻结事实已在队列中，
@@ -1537,7 +1546,7 @@ def queue_dispatch(payload: QueueDispatchRequest, request: Request) -> Response:
     hq = _human_turn_queue(request)
     # §8.2-2: waiting 窗口内不派发 claim（领取→/chat/stream 只会再被
     # 屏障拒绝）。claimed=None 让前端接力循环本轮停住，恢复后自动续。
-    _barrier = _service_restart_barrier(request)
+    _barrier = _service_restart_barrier(request, "web_queue_dispatch")
     if _barrier is not None:
         return UTF8JSONResponse(
             content={

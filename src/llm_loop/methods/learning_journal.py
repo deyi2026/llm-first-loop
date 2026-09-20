@@ -178,6 +178,16 @@ class LearningJournal:
         with self._lock:
             return self._fold()
 
+    def inflight_jobs(self) -> list[LearningJob]:
+        """Jobs in ``admitted``/``started``（在飞，含准入后未开跑的）.
+
+        供 restart 空闲门等外部探测使用；``requeued`` 折回 ``queued`` 不算
+        在飞，``queued`` 只是积压。
+        """
+        with self._lock:
+            jobs = self._fold()
+        return [job for job in jobs.values() if job.state in ("admitted", "started")]
+
     # ---------- enqueue / query ----------
 
     def enqueue(
