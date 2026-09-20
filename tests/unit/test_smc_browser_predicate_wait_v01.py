@@ -160,6 +160,8 @@ def test_model_surface_aggregates_wait_while_typed_primitives_remain_closed(tmp_
     )
     props = tool.parameters["properties"]
     assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
+    # v02-20260920 合并面：URL-role 分离改 url→expected_url；
+    # grounding-ref 统一后对象等待引用统一为 grounding_ref（原 object_ref 退出）。
     assert set(props) == {
         "action",
         "projection_limit",
@@ -172,8 +174,7 @@ def test_model_surface_aggregates_wait_while_typed_primitives_remain_closed(tmp_
         "kind",
         "state",
         "match",
-        "url",
-        "object_ref",
+        "expected_url",
         "value",
         "field",
         "text",

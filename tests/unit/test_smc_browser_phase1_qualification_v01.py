@@ -168,7 +168,8 @@ def test_bqual_lazy_provider_surface_describes_full_qualified_browser_contract()
     perceive = _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"]
     for action in ("snapshot", "hydrate", "diff", "wait"):
         assert action in perceive
-    for boundary in ("不导航", "不mutation", "不fuzzy", "object_ref"):
+    # v02-20260920：grounding-ref 统一后对象等待引用为 grounding_ref（原 object_ref 退出）
+    for boundary in ("不导航", "不mutation", "不fuzzy", "grounding_ref"):
         assert boundary in perceive
     assert "host-bound page" in perceive
     # Qualified typed waits remain available as internal mechanical primitives.
