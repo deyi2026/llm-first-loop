@@ -55,6 +55,12 @@ _RECOVERY_DERIVED_METADATA_KEYS = frozenset(
         "cache_compacted_for",
         "cache_compaction_scope",
         "consumed",
+        # EVO-20260920-213965a1: delegated-span marking (episode_history
+        # DELEGATED_SPAN_REF_KEY/DELEGATED_SPAN_STATE_KEY) is written onto the
+        # session-JSON copy after message.appended and never replayed from the
+        # event log. Treat it as derived, same as episode/tool-span annotations.
+        "delegated_span_ref",
+        "delegated_span_state",
     }
 )
 

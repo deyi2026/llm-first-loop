@@ -36,7 +36,7 @@ import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -93,6 +93,13 @@ _REQUESTER_EXIT_TIMEOUT_S = 900.0
 _IDLE_POLL_S = 5.0
 _IDLE_TIMEOUT_S = 900.0
 _STALE_WAITING_MARGIN_S = 300.0
+# EVO-20260920-213965a1 案1: 重启后自核验——控制面自己判定终态并写进
+# durable action 记录，核验不再依赖模型侧 wake 轮询。核验失败按有界次数
+# 重跑脚本；仍失败则动作 failed（unhealthy），进下一会话 pending 投影。
+_VERIFY_POLL_S = 2.0
+_VERIFY_TIMEOUT_S = 180.0
+_VERIFY_MANIFEST_WAIT_S = 2.0
+_VERIFY_MAX_ATTEMPTS = 2
 
 
 class DeploymentGenerationConflictError(RuntimeError):
@@ -472,6 +479,9 @@ def _pid_alive(pid: int) -> bool:
         return False
     try:
         os.kill(pid, 0)
+    except PermissionError:
+        # EPERM = 进程存在但属主不同（macOS 上 pid 1/系统服务即此情形）。
+        return True
     except OSError:
         return False
     return True
@@ -992,6 +1002,110 @@ def _wait_for(
         time.sleep(poll_s)
 
 
+def _parse_iso(value: Any) -> datetime | None:
+    """Parse an ISO timestamp as aware UTC; None on missing/unparsable input."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+# started_at 宽限：真实服务 manifest 的 started_at 常为秒级精度（向下截断），
+# 与 worker 捕获的微秒级重启发起时刻比较需容忍截断误差，否则新进程会被
+# 误判 started_before_restart。
+_STARTED_AT_GRACE_S = 2.0
+
+
+def _read_runtime_manifest(
+    store: ManagedServiceDeploymentStore, service: str
+) -> dict[str, Any] | None:
+    """Best-effort read of a service's startup runtime manifest (None if absent)."""
+    path = store.runtime_dir / f"runtime_manifest.{service}.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _verify_restart_targets(
+    store: ManagedServiceDeploymentStore,
+    deployment: Any,
+    services: list[str],
+    restarted_at: str,
+) -> tuple[bool, str]:
+    """EVO-20260920-213965a1 案1: restart 后机械终态核验（有界等待）.
+
+    判据与 compose_service_identity_view 同源：manifest 存在、pid 存活、
+    git_head 等于 desired、started_at 不早于本次重启发起时刻（解析失败
+    不作判据）。manifest 在首现窗口（_VERIFY_MANIFEST_WAIT_S）内从未
+    出现的目标视为不受 manifest 管辖——跳过（no_manifest_skip）而非判
+    unhealthy。返回 (ok, summary)；summary 上限 400 字符写入 detail。
+    """
+    services = list(services)
+    began = _parse_iso(restarted_at)
+    deadline = time.monotonic() + _VERIFY_TIMEOUT_S
+    # manifest 首现窗口：窗口内从未出现 manifest 的目标视为不受 manifest
+    # 管辖（测试 fixture、非受管部署）——判据缺失≠核验失败，跳过该目标而
+    # 非判 unhealthy，也不陪跑到 180s 死线。一旦出现（哪怕随后消失），
+    # 目标进入严格核验。窗口取一个轮询周期量级：受管服务重启后由启动
+    # 进程写 manifest，正常在秒级出现。
+    manifest_wait_deadline = time.monotonic() + _VERIFY_MANIFEST_WAIT_S
+    seen: set[str] = set()
+    skipped: set[str] = set()
+    while True:
+        parts: list[str] = []
+        ok = True
+        now = time.monotonic()
+        for service in services:
+            if service in skipped:
+                continue
+            raw = _read_runtime_manifest(store, service)
+            if raw is not None:
+                seen.add(service)
+            elif service not in seen and now >= manifest_wait_deadline:
+                skipped.add(service)
+                continue
+            if raw is None:
+                ok = False
+                parts.append(f"{service}[manifest_missing]")
+                continue
+            try:
+                pid = int(raw.get("pid") or 0)
+            except (TypeError, ValueError):
+                pid = 0
+            head = str(raw.get("git_head") or "")
+            problems: list[str] = []
+            if not _pid_alive(pid):
+                problems.append(f"pid_dead:{pid or 0}")
+            if not head:
+                problems.append("git_head_missing")
+            elif deployment is not None and head != deployment.git_head:
+                problems.append("git_head_mismatch")
+            started = _parse_iso(raw.get("started_at"))
+            if (
+                started is not None
+                and began is not None
+                and started < began - timedelta(seconds=_STARTED_AT_GRACE_S)
+            ):
+                problems.append("started_before_restart")
+            if problems:
+                ok = False
+                parts.append(f"{service}[" + ",".join(problems) + "]")
+            else:
+                parts.append(f"{service}[ok pid={pid} head={head[:12]}]")
+        if skipped:
+            parts.extend(f"{service}[no_manifest_skip]" for service in sorted(skipped))
+        summary = "verify=" + ("ok" if ok else "unhealthy") + " " + " ".join(parts)
+        if ok or now >= deadline:
+            return ok, summary[:400]
+        time.sleep(_VERIFY_POLL_S)
+
+
 def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> int:
     action = store.read_action(action_id)
     deployment = store.read()
@@ -1038,76 +1152,123 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
     ):
         return 1
 
-    # Phase 3 - physical restart under the global lifecycle lease with a
-    # fresh generation recheck: publication acquires the same lease, closing
-    # the check->execute TOCTOU between waiting and execution.
-    with store.lifecycle_lease():
-        with store.lease():
-            latest = store.read_action(action_id)
-            desired_now = store._read_unlocked()
-        if latest is None or desired_now is None:
-            _mark_action(
-                store, action, status="failed", detail="action or desired state missing"
+    # Phase 3 + 4 - EVO-20260920-213965a1 案1. 物理重启在 lifecycle lease
+    # 内（含发布绑定复检，关闭 waiting→execute TOCTOU）；重启后自核验在
+    # lease 外执行（慢启动不阻塞 desired-state 发布）。终态判定由控制面
+    # 写入 durable action 记录：核验不过则按有界次数重跑脚本；仍不过则
+    # 动作 failed（unhealthy），进入下一会话 pending 投影——核验结论不再
+    # 依赖模型侧 wake 轮询。
+    def _run_physical_restart_once() -> tuple[int, Any, str]:
+        with store.lifecycle_lease():
+            with store.lease():
+                latest = store.read_action(action_id)
+                desired_now = store._read_unlocked()
+            if latest is None or desired_now is None:
+                _mark_action(
+                    store, action, status="failed", detail="action or desired state missing"
+                )
+                return 2, None, ""
+            try:
+                plan = build_restart_plan(latest, desired_now)
+            except (ValueError, DeploymentGenerationConflictError) as exc:
+                _mark_action(
+                    store,
+                    latest,
+                    status="failed",
+                    detail=f"desired deployment advanced while waiting: {exc}",
+                )
+                return 3, None, ""
+            # P0-A.1: byte-level reverify of the desired binding inside the
+            # lifecycle lease, immediately before the physical restart. The
+            # generation CAS above only proves identity/generation agreement;
+            # this proves the target tree still matches the published commit
+            # and WebUI artifact hash at execution time. Drift => fail closed
+            # without executing the (possibly pre-P0-A) restart script.
+            # Feishu-only restarts do not consume WebUI artifacts, so the dist
+            # tree hash is not a hard gate for them.
+            binding_problems = verify_deployment_binding(
+                desired_now,
+                code_root=desired_now.code_root,
+                runtime_root=desired_now.runtime_root,
+                verify_webui=(latest.target != "feishu"),
             )
-            return 2
-        try:
-            plan = build_restart_plan(latest, desired_now)
-        except (ValueError, DeploymentGenerationConflictError) as exc:
-            _mark_action(
-                store,
-                latest,
-                status="failed",
-                detail=f"desired deployment advanced while waiting: {exc}",
-            )
-            return 3
-        # P0-A.1: byte-level reverify of the desired binding inside the
-        # lifecycle lease, immediately before the physical restart. The
-        # generation CAS above only proves identity/generation agreement;
-        # this proves the target tree still matches the published commit
-        # and WebUI artifact hash at execution time. Drift => fail closed
-        # without executing the (possibly pre-P0-A) restart script.
-        # Feishu-only restarts do not consume WebUI artifacts, so the dist
-        # tree hash is not a hard gate for them.
-        binding_problems = verify_deployment_binding(
-            desired_now,
-            code_root=desired_now.code_root,
-            runtime_root=desired_now.runtime_root,
-            verify_webui=(latest.target != "feishu"),
-        )
-        if binding_problems:
-            _mark_action(
-                store,
-                latest,
-                status="failed",
-                detail="deployment binding failed: " + "; ".join(binding_problems),
-            )
-            return 4
-        running = _mark_action(store, latest, status="running")
+            if binding_problems:
+                _mark_action(
+                    store,
+                    latest,
+                    status="failed",
+                    detail="deployment binding failed: " + "; ".join(binding_problems),
+                )
+                return 4, None, ""
+            running = _mark_action(store, latest, status="running")
 
-        env = _control_subprocess_env(
-            code_root=plan.env["LFL_RESTART_CODE_ROOT"],
-            runtime_root=plan.env["LFL_RESTART_RUNTIME_ROOT"],
-            extra=plan.env,
-        )
-        proc = subprocess.run(  # noqa: S603 - desired-state-bound fixed argv, no shell
-            list(plan.argv),
-            cwd=plan.cwd,
-            env=env,
-            check=False,
-        )
-        final_status = "succeeded" if proc.returncode == 0 else "failed"
-        if proc.returncode == 0:
-            # Record the exact desired identity the physical restart deployed so
-            # identity views can cite a stable receipt without inventing history.
-            detail = (
-                "restart_mirror rc=0; "
-                f"identity generation={desired_now.generation} "
-                f"git_head={desired_now.git_head}"
+            env = _control_subprocess_env(
+                code_root=plan.env["LFL_RESTART_CODE_ROOT"],
+                runtime_root=plan.env["LFL_RESTART_RUNTIME_ROOT"],
+                extra=plan.env,
             )
-        else:
-            detail = f"restart_mirror rc={proc.returncode}"
-        _mark_action(store, running, status=final_status, detail=detail)
-        return 0 if proc.returncode == 0 else int(proc.returncode or 1)
+            restarted_at = _utc_now()
+            proc = subprocess.run(  # noqa: S603 - desired-state-bound fixed argv, no shell
+                list(plan.argv),
+                cwd=plan.cwd,
+                env=env,
+                check=False,
+            )
+            rc = int(proc.returncode or 0)
+            if rc != 0:
+                _mark_action(store, running, status="failed", detail=f"restart_mirror rc={rc}")
+                return rc, desired_now, restarted_at
+            return rc, desired_now, restarted_at
+
+    # 自核验目标（EVO-20260920-213965a1 案1）：目标全集传入，"是否受
+    # manifest 管辖"由 _verify_restart_targets 的首现窗口判定（不受管辖
+    # 的目标记 no_manifest_skip，见其 docstring）。
+    verify_targets: list[str] = list(_MANAGED_SERVICES) if action.target == "all" else [action.target]
+
+    def _verify_once() -> tuple[bool, str]:
+        return _verify_restart_targets(store, desired_now, verify_targets, restarted_at)
+
+    rc, desired_now, restarted_at = _run_physical_restart_once()
+    if rc != 0 or desired_now is None:
+        return rc or 1
+
+    # Phase 4 - self-verification, outside the lifecycle lease.
+    ok, summary = _verify_once()
+    attempts = 1
+    while not ok and attempts < _VERIFY_MAX_ATTEMPTS:
+        rc, desired_now, restarted_at = _run_physical_restart_once()
+        attempts += 1
+        if rc != 0 or desired_now is None:
+            return rc or 1
+        ok, summary = _verify_once()
+
+    identity = (
+        f"identity generation={desired_now.generation} git_head={desired_now.git_head}"
+    )
+    final = store.read_action(action_id)
+    if final is None:
+        return 2
+    if ok:
+        # Record the exact desired identity the physical restart deployed so
+        # identity views can cite a stable receipt without inventing history,
+        # plus the control-plane's own verification verdict.
+        _mark_action(
+            store,
+            final,
+            status="succeeded",
+            detail=f"restart_mirror rc=0; {identity}; {summary}",
+        )
+        return 0
+    _mark_action(
+        store,
+        final,
+        status="failed",
+        detail=(
+            f"restart_mirror rc=0 but verify failed after {attempts} attempt(s); "
+            f"{identity}; {summary}（unhealthy，下一会话 pending 投影可见）"
+        ),
+    )
+    return 5
 
 
 def _tree_sha256(root: Path) -> str:

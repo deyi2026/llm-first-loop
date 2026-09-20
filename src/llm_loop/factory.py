@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -166,6 +167,84 @@ class _CorrectionAdapterTool:
 
     def execute(self, **kwargs: Any) -> ToolResult:
         return self._corrections.execute(self.name, kwargs)
+
+
+def _scan_degraded_wake_notify(data_dir: str | Path) -> list[dict[str, Any]]:
+    """EVO-20260920-213965a1 案2: 扫 scheduler interop pending 中的 wake 降级通知.
+
+    只挑带 wake_degraded_reason 的条目（普通提醒走既有回显消费路径），
+    输出 sid/ts/reason/body，fail-open：扫描失败返回 []。
+    """
+    results: list[dict[str, Any]] = []
+    try:
+        inbox = Path(data_dir) / "interop" / "lfl_to_dsh" / "pending"
+        for path in sorted(
+            (p for p in inbox.glob("*-sched-*.json") if p.is_file()),
+            key=lambda p: p.name,
+            reverse=True,
+        )[:20]:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            if payload.get("from") != "lfl-scheduler" or payload.get("topic") != "notify":
+                continue
+            if not payload.get("wake_degraded_reason"):
+                continue
+            results.append(
+                {
+                    "sid": payload.get("ref"),
+                    "ts": payload.get("ts"),
+                    "reason": payload.get("wake_degraded_reason"),
+                    "body": str(payload.get("body") or "")[:120],
+                }
+            )
+    except Exception:  # noqa: BLE001 — 投影扫描 fail-open
+        return []
+    return results
+
+
+def _scan_failed_service_actions(data_dir: str | Path) -> list[dict[str, Any]]:
+    """EVO-20260920-213965a1 案1: 扫最近 24h 失败的 restart 动作（≤10 条）.
+
+    终态由控制面自核验写入 durable 记录后，此处让下一会话 pending 投影
+    直接看到 unhealthy 动作（action_id/target/generation/detail）。
+    """
+    results: list[dict[str, Any]] = []
+    try:
+        store = ManagedServiceDeploymentStore(data_dir)
+        cutoff = datetime.now(UTC).timestamp() - 24 * 3600
+        for path in sorted(
+            (p for p in store.actions_dir.glob("*.json") if p.is_file()),
+            key=lambda p: p.name,
+            reverse=True,
+        )[:40]:
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            if raw.get("action") != "restart" or raw.get("status") != "failed":
+                continue
+            try:
+                updated_ts = datetime.fromisoformat(str(raw.get("updated_at"))).timestamp()
+            except ValueError:
+                updated_ts = 0.0
+            if updated_ts < cutoff:
+                continue
+            results.append(
+                {
+                    "action_id": raw.get("action_id"),
+                    "target": raw.get("target"),
+                    "generation": raw.get("deployment_generation"),
+                    "updated_at": raw.get("updated_at"),
+                    "detail": str(raw.get("detail") or "")[:160],
+                }
+            )
+            if len(results) >= 10:
+                break
+    except Exception:  # noqa: BLE001 — 投影扫描 fail-open
+        return []
+    return results
 
 
 def _read_workspace_changed_flag(data_dir: str) -> dict | None:
@@ -1604,7 +1683,13 @@ def build_engine(
 
             def _degrade(reason: str) -> bool:
                 body = f"[定时提醒] {entry.message}"
-                SchedulerThread._notify_via_interop(entry, data_dir=settings.data_dir)
+                # EVO-20260920-213965a1 案2: 降级原因随通知结构化落盘，
+                # 下一会话 pending 投影可见（sid/时间/原因），不再零可见。
+                SchedulerThread._notify_via_interop(
+                    entry,
+                    data_dir=settings.data_dir,
+                    wake_degraded_reason=reason,
+                )
                 # 审计修正：通知正文字符数如实记录；prompt_chars 恒 0（无字符
                 # 进入模型 prompt），不再以单一 0 掩盖"完整消息已送达"的事实。
                 engine._record_action(
@@ -2249,6 +2334,26 @@ def _build_pending_actions_fn(settings) -> Any:
             hint_parts.append(f"{executing} 项演进执行中（可经 evolution_complete 登记）")
         if pending_review:
             hint_parts.append(f"{pending_review} 项演进待审阅")
+
+        # EVO-20260920-213965a1 案2: 跨会话可见化——wake 降级通知与失败的
+        # 服务控制动作进入 pending 投影，下一会话直接读到 sid/时间/原因，
+        # 不再零可见。两段各自 fail-open，不侵蚀上方演进计数。
+        scan_data_dir = getattr(settings, "data_dir", None)
+        degraded_wake_notify = (
+            _scan_degraded_wake_notify(scan_data_dir) if scan_data_dir else []
+        )
+        failed_service_actions = (
+            _scan_failed_service_actions(scan_data_dir) if scan_data_dir else []
+        )
+
+        if degraded_wake_notify:
+            hint_parts.append(
+                f"{len(degraded_wake_notify)} 个 wake 降级通知待处理（原因见 degraded_wake_notify）"
+            )
+        if failed_service_actions:
+            hint_parts.append(
+                f"{len(failed_service_actions)} 个服务控制重启动作失败待处理"
+            )
         return {
             "executing_evolutions": executing,
             "pending_reviews": pending_review,
@@ -2256,6 +2361,8 @@ def _build_pending_actions_fn(settings) -> Any:
             "hint": "；".join(hint_parts) if hint_parts else None,
             # R2 P0-1: hint 文案与结构化字段同一函数产出（§5.7.1-2a；executing>0 → evolution_complete）
             "capability_requirements": ("evolution_complete",) if executing else (),
+            "degraded_wake_notify": degraded_wake_notify,
+            "failed_service_actions": failed_service_actions,
             "note": None,
         }
 
