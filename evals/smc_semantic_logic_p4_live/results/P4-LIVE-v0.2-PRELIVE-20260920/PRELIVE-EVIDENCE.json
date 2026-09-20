@@ -1,0 +1,77 @@
+{
+  "base_result_git_sha": "faffd569d6d5a99c6bde9fdf68348c56aef92df3",
+  "browser_mutations": 0,
+  "deployment_restart_merge": 0,
+  "git_head": "267ad5778be2af324e38ba8422a5d1a29bbe053d",
+  "lineage_ok": true,
+  "manifest": {
+    "all_rows_v02_namespaced": true,
+    "new_result_namespace": true,
+    "prelive_only": true,
+    "row_count": 20,
+    "row_order_unique": true
+  },
+  "manifest_sha256": "4216825b7fe195ec0663c5ef4d94d1ffb62413652c0863c17f10b89d3f616ca3",
+  "model_requests": 0,
+  "model_server": {
+    "count": 1,
+    "decode_concurrency_1": true,
+    "established_client_count": 0,
+    "max_tokens_16000": true,
+    "model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency_1": true
+  },
+  "next_stop": "HUMAN_CHECKPOINT_BEFORE_V02_L01_MODEL_REQUEST",
+  "prior_negative_git_sha": "9a11fe4c43cc83f53bf2baf62d0782c91e1d4242",
+  "prior_negative_hashes": {
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-QUALIFICATION-v0.1-20260920/LIVE-RESULT.json": "0c9d32e7d4c1fef7223c35a0f9c13e64c19b4cd1db9b1d21b8bbb763d2598689",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-QUALIFICATION-v0.1-20260920/TARGET-IDENTITY-ADJUDICATION.json": "799bcec754a84471eb7a5bfec831f76172d8a863ee823e919c269401b93890d6"
+  },
+  "prior_negative_hashes_exact": true,
+  "protocol_contract": {
+    "base_exact": true,
+    "next_stop_exact": true,
+    "prior_l02_rerun_forbidden": true,
+    "prior_negative_immutable": true,
+    "schema_exact": true
+  },
+  "protocol_sha256": "4527e141fff58d90c9c5ef4c6c7fe56fb7e3130306f2dfa417498121bbf21310",
+  "qualification_id": "smc-p4-live-v0.2-20260920",
+  "qualified_v02_pre_live_stop": true,
+  "r12_source_hashes": {
+    "src/llm_loop/browser/action_ref.py": "c16d4d540ab3ff78ae99c0dc1d20fcb42820e2179f8034b676549d5c7dc6b65d",
+    "src/llm_loop/browser/cdp_action_host.py": "594b41e7ed7955e5133e9ad9d2adf6a9abf6130a8f3351d9cbe68a6021c19cbb",
+    "src/llm_loop/browser/target_identity.py": "bfed11a8f63de4c57db60ac2d5f00fe75ac554f2ecbf8a9bf1255d7423e76f44"
+  },
+  "r12_source_hashes_exact": true,
+  "runtime_flags": {
+    "browser_action_enabled": true,
+    "browser_action_ref_enabled": true,
+    "browser_action_ref_mutation_enabled": true,
+    "browser_target_id_nonempty": true
+  },
+  "schema": "smc.semantic_logic_p4_live_v02_prelive_evidence.v0.2",
+  "target_identity": {
+    "bound_target_exact": true,
+    "explicit_raw_target_id_nonempty": true,
+    "mutation_websocket_open_count": 0,
+    "page_token_mapping_exact": true
+  },
+  "tool_scope": {
+    "catalog_exact_scope": true,
+    "count": 12,
+    "exact": true,
+    "legacy_direct_execution_blocked": {
+      "browser_action": true,
+      "browser_semantic_execute": true,
+      "browser_semantic_operation": true
+    },
+    "legacy_discovery_blocked": {
+      "browser_action": true,
+      "browser_semantic_execute": true,
+      "browser_semantic_operation": true
+    },
+    "legacy_provider_visible": false,
+    "schemas_exact": true
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "smc.semantic_logic_p4_live_v02_s5_scope_supersede_adjudication.v0.1",
+  "status": "HISTORICAL_SCOPE_ASSERTION_SUPERSEDED_BY_QUALIFIED_R12_SUCCESSOR",
+  "s5_qualified_s5_pre_live_stop": false,
+  "r01_r20_all_green": true,
+  "inherited_behavior_all_passed": true,
+  "canary_scope_exact_match": true,
+  "legacy_browser_mutations_excluded": true,
+  "sole_false_reason": "run_green2_s5_qualification.py exact production scope still expects only the pre-R12 S5 files, while the separately qualified R12 successor legitimately adds action_ref.py, cdp_action_host.py, and target_identity.py",
+  "v02_ruling": "Do not use the historical S5 exact-src-scope predicate as a current v0.2 qualification predicate; preserve its R01-R20, inherited, source-order, and canary-scope evidence as inherited GREEN facts.",
+  "production_fix_result_sha": "faffd569d6d5a99c6bde9fdf68348c56aef92df3",
+  "production_green_sha": "f1efef6b57ef90562410a93cd310bae98e33a983"
+}

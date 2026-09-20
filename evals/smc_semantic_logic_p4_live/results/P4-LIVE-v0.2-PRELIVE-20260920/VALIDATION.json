@@ -1,0 +1,47 @@
+{
+  "artifact_sha256": {
+    "docs/SMC-SEMANTIC-LOGIC-P4-LIVE-ACTIONREF-PROTOCOL-v0.2-20260920.md": "67aa00935298f90551d2814fa749438b63d0303040e607240c037ded2548b1ec",
+    "docs/SMC-SEMANTIC-LOGIC-P4-LIVE-v0.2-PRELIVE-RESULT-20260920.md": "755d1db15ff112ba484852f72cc89373bd9757cf2e9009ebbfdedaa16b711e0d",
+    "evals/smc_semantic_logic_p4_live/P4-LIVE-v0.2-EXECUTION-MANIFEST.json": "4216825b7fe195ec0663c5ef4d94d1ffb62413652c0863c17f10b89d3f616ca3",
+    "evals/smc_semantic_logic_p4_live/PROTOCOL.v0.2-ACTIONREF.json": "4527e141fff58d90c9c5ef4c6c7fe56fb7e3130306f2dfa417498121bbf21310",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-PRELIVE-20260920/FULL-CI-SHARED-FAILURES.txt": "67cb4e57ea0f23572c7e4d91ee576468da0502f183b7bf6e6ccb92fc10583412",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-PRELIVE-20260920/PRELIVE-EVIDENCE.json": "5eae9842d250305988d495b92e0832e704fe5dec2f6b86607a828f121912699b",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-PRELIVE-20260920/S5-SCOPE-SUPERSEDE-ADJUDICATION.json": "e2d750fdf6b43a2955eb5fa4ca958f1b465f8e60954e2b78f2d2ead127659b0a",
+    "evals/smc_semantic_logic_p4_live/run_v02_prelive.py": "ffce5f4696cd43d45a5c483d58e21fe0302736ed596caec6f16858f814032a77",
+    "tests/unit/test_smc_p4_live_v02_prelive.py": "f159ab5bbebf7c66a0938553ab779553c4b350a13f6f8b34c4f02d7f6efb0449"
+  },
+  "base_result_git_sha": "faffd569d6d5a99c6bde9fdf68348c56aef92df3",
+  "browser_mutations": 0,
+  "diff_check": "PASS",
+  "focused_current_descendant_tests": 177,
+  "focused_errors": 0,
+  "focused_failures": 0,
+  "focused_skipped": 0,
+  "full_ci": {
+    "base_failure_count": 72,
+    "base_only_failures": 0,
+    "candidate_exit_code": 1,
+    "candidate_failure_count": 72,
+    "candidate_only_failures": 0,
+    "classification": "BASELINE_EQUIVALENT_RED_NO_NEW_FAILURES",
+    "failure_set_sha256": "67cb4e57ea0f23572c7e4d91ee576468da0502f183b7bf6e6ccb92fc10583412"
+  },
+  "git_security_scan": "PASS",
+  "historical_s5_replay": {
+    "canary_scope_exact": true,
+    "inherited_all_green": true,
+    "overall_qualified_false_due_only_to_superseded_pre_r12_exact_src_scope": true,
+    "r01_r20_all_green": true
+  },
+  "model_requests": 0,
+  "mutation_websocket_opens": 0,
+  "next_stop": "HUMAN_CHECKPOINT_BEFORE_V02_L01_MODEL_REQUEST",
+  "production_src_delta_from_r12_result": 0,
+  "protocol_commit": "267ad5778be2af324e38ba8422a5d1a29bbe053d",
+  "pyright": "0 errors / 0 warnings",
+  "qualified_v02_pre_live_stop": true,
+  "ruff": "PASS",
+  "schema": "smc.semantic_logic_p4_live_v02_prelive_validation.v0.2",
+  "status": "QUALIFIED_V02_PRE_LIVE_STOP",
+  "zero_action_preflight": "PASS"
+}
