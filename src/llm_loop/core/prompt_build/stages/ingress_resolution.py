@@ -23,6 +23,7 @@ from llm_loop.core.episode_history import (
     resolve_working_state_checkpoint,
     superseded_human_attempt_spans,
 )
+from llm_loop.core.prefix_stability import observe_checkpoint
 from llm_loop.core.program_recovery import is_program_recovery_message
 from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.prompt_build.context import BuildInputs
@@ -257,6 +258,9 @@ def run_ingress_prelude(
         base=base,
         base_original_indices=_base_original_indices,
     )
+    # EVO-20260920-3fb8aa0a 阶段A: head 检查点（ingress 过滤+scrub 后的 head 视图）。
+    # 纯测量 fail-open：不改消息列表、不进门闸，异常由 observe_checkpoint 内部吞掉。
+    observe_checkpoint(sess.session_id, provider_id, "head", _scrub.base)
     # S1 canary: validate persisted model-authored working state against storage
     # truth, then confirm the same evidence identity still exists in the scrubbed
     # provider view. Program logic checks identity/pairing/scope/resource bounds only.
@@ -310,6 +314,8 @@ def run_ingress_prelude(
         policy=history_policy,
         allow_opportunistic_fold=_opportunistic_fold_allowed,
     )
+    # 阶段A working_set 检查点（工具 working-set 投影后的 provider 视图；纯测量 fail-open）。
+    observe_checkpoint(sess.session_id, provider_id, "working_set", _provider_base)
     if _working_set_stats.enabled:
         with contextlib.suppress(Exception):
             record_action(
