@@ -73,7 +73,19 @@ def test_mf5_3_1_perceive_wait_fields_are_flat_not_nested_condition() -> None:
 def test_mf5_3_1_action_specific_branches_exclude_cross_action_fields() -> None:
     branches = _branches(BrowserPerceiveTool.parameters)
     expected = {
-        ("snapshot", ""): ({"action", "projection_limit"}, {"action"}),
+        # v02-20260920 适配：main 侧 EVO-20260918 投影参数（kinds/cursor/vision）
+        # 并入 root-direct snapshot 分支（分支 additionalProperties=False，
+        # 不列则 oneOf 拒绝合法快照调用）。
+        ("snapshot", ""): (
+            {
+                "action",
+                "projection_limit",
+                "projection_kinds",
+                "projection_cursor",
+                "vision",
+            },
+            {"action"},
+        ),
         ("hydrate", ""): ({"action", "grounding_ref"}, {"action", "grounding_ref"}),
         ("diff", ""): (
             {"action", "from_version", "to_version"},
