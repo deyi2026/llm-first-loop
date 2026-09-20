@@ -1,0 +1,91 @@
+{
+  "architecture_semantics": "UNCHANGED_FROM_V0.1",
+  "authorization": {
+    "deploy_restart_merge_main": false,
+    "this_protocol_authorizes_browser_mutations": 0,
+    "this_protocol_authorizes_live_model_requests": 0
+  },
+  "base_result_git_sha": "faffd569d6d5a99c6bde9fdf68348c56aef92df3",
+  "date": "2026-09-20",
+  "exact_canary_tool_scope": [
+    "browser_perceive",
+    "browser_wait_scope_url",
+    "browser_wait_scope_ready",
+    "browser_wait_scope_count",
+    "browser_wait_object_state",
+    "browser_wait_object_text",
+    "get_tool_schema",
+    "browser_semantic_click",
+    "browser_semantic_fill",
+    "browser_semantic_select",
+    "browser_semantic_scroll",
+    "browser_semantic_navigate"
+  ],
+  "forbidden_browser_mutation_tools": [
+    "browser_action",
+    "browser_semantic_execute",
+    "browser_semantic_operation"
+  ],
+  "forbidden_program_behaviors": "UNCHANGED_FROM_V0.1",
+  "frozen_prior_negative_qualification": {
+    "adjudication_sha256": "799bcec754a84471eb7a5bfec831f76172d8a863ee823e919c269401b93890d6",
+    "git_sha": "9a11fe4c43cc83f53bf2baf62d0782c91e1d4242",
+    "immutable": true,
+    "rerun_or_reclassify_old_l02": false,
+    "result_path": "evals/smc_semantic_logic_p4_live/results/P4-LIVE-QUALIFICATION-v0.1-20260920/LIVE-RESULT.json",
+    "result_sha256": "0c9d32e7d4c1fef7223c35a0f9c13e64c19b4cd1db9b1d21b8bbb763d2598689"
+  },
+  "live_row_order": [
+    "V02-L01_navigate_success",
+    "V02-L02_click_success",
+    "V02-L03_fill_success",
+    "V02-L04_select_success",
+    "V02-L05_scroll_success",
+    "V02-L06_cross_session_zero_dispatch",
+    "V02-L07_cross_workspace_zero_dispatch",
+    "V02-L08_prior_run_zero_dispatch",
+    "V02-L09_expired_zero_dispatch",
+    "V02-L10_browser_runtime_restart_zero_dispatch",
+    "V02-L11_wrong_kind_zero_dispatch",
+    "V02-L12_integrity_corruption_zero_dispatch",
+    "V02-L13_stale_document_zero_dispatch",
+    "V02-L14_target_replacement_zero_dispatch",
+    "V02-L15_missing_or_revoked_effect_binding_zero_dispatch",
+    "V02-L16_duplicate_exact_declaration_at_most_once",
+    "V02-L17_crash_after_execution_prepare_no_replay",
+    "V02-L18_running_receipt_dispatch_ambiguity_no_replay",
+    "V02-L19_terminal_browser_receipt_outer_finished_missing_recover_exactly",
+    "V02-L20_transport_ambiguity_no_replay"
+  ],
+  "live_row_semantics": "UNCHANGED_FROM_V0.1",
+  "model_authority": "UNCHANGED_FROM_V0.1",
+  "next_stop": "HUMAN_CHECKPOINT_BEFORE_V02_L01_MODEL_REQUEST",
+  "parent_protocol": "evals/smc_semantic_logic_p4_live/PROTOCOL.v0.1-ACTIONREF.json",
+  "prelive_requirements": {
+    "browser_action_enabled": true,
+    "browser_action_ref_enabled": true,
+    "browser_action_ref_mutation_enabled": true,
+    "browser_mutations": 0,
+    "exact_12_tool_scope": true,
+    "explicit_nonempty_raw_browser_target_id": true,
+    "legacy_mutation_directly_executable": false,
+    "legacy_mutation_discoverable": false,
+    "legacy_mutation_provider_visible": false,
+    "model_requests": 0,
+    "single_local_ornith_server": true,
+    "sole_page_implicit_mutation_binding_forbidden": true
+  },
+  "production_green_git_sha": "f1efef6b57ef90562410a93cd310bae98e33a983",
+  "program_authority": "UNCHANGED_FROM_V0.1",
+  "r12_target_identity_contract": {
+    "actuator_identity_digest": "sha256(raw_cdp_target_id)",
+    "binding_identity_digest": "sha256(raw_cdp_target_id)",
+    "empty_or_malformed_identity": "FAIL_CLOSED",
+    "mapping": "strip_exactly_one_internal_target_prefix_at_actionref_issuance_boundary",
+    "perception_private_page_token": "target:<raw_cdp_target_id>",
+    "qualified_fix_result_sha": "faffd569d6d5a99c6bde9fdf68348c56aef92df3",
+    "target_search_guess_rebind_or_successor_substitution": false
+  },
+  "schema": "smc.semantic_logic_p4_live_actionref_protocol.v0.2",
+  "status": "FROZEN_PRELIVE_REQUALIFICATION_PROTOCOL"
+}

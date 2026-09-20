@@ -1,0 +1,71 @@
+{
+  "base_result_git_sha": "faffd569d6d5a99c6bde9fdf68348c56aef92df3",
+  "browser_mutations_authorized_before_human_checkpoint": 0,
+  "failure_policy": "FREEZE_FIRST_VALID_ROW_FAILURE_AND_STOP_FOR_ADJUDICATION",
+  "first_live_boundary": "BEFORE_V02-L01_navigate_success_MODEL_REQUEST",
+  "fixture_policy": "EXPLICIT_ISOLATED_FIXTURE_BOUNDARY_BETWEEN_ROWS_WHEN_STATE_ISOLATION_REQUIRED",
+  "flags": {
+    "browser_action_enabled": true,
+    "browser_action_ref_enabled": true,
+    "browser_action_ref_mutation_enabled": true
+  },
+  "forbidden_tools": [
+    "browser_action",
+    "browser_semantic_execute",
+    "browser_semantic_operation"
+  ],
+  "model_requests_authorized_before_human_checkpoint": 0,
+  "prelive_only": true,
+  "prior_v01_result_namespace_read_only": "evals/smc_semantic_logic_p4_live/results/P4-LIVE-QUALIFICATION-v0.1-20260920",
+  "protocol_path": "evals/smc_semantic_logic_p4_live/PROTOCOL.v0.2-ACTIONREF.json",
+  "qualification_id": "smc-p4-live-v0.2-20260920",
+  "result_namespace": "evals/smc_semantic_logic_p4_live/results/P4-LIVE-v0.2-QUALIFICATION-20260920",
+  "retry_policy": "NO_RETRY_NO_SUBSTITUTION_NO_ROW_REORDER",
+  "row_order": [
+    "V02-L01_navigate_success",
+    "V02-L02_click_success",
+    "V02-L03_fill_success",
+    "V02-L04_select_success",
+    "V02-L05_scroll_success",
+    "V02-L06_cross_session_zero_dispatch",
+    "V02-L07_cross_workspace_zero_dispatch",
+    "V02-L08_prior_run_zero_dispatch",
+    "V02-L09_expired_zero_dispatch",
+    "V02-L10_browser_runtime_restart_zero_dispatch",
+    "V02-L11_wrong_kind_zero_dispatch",
+    "V02-L12_integrity_corruption_zero_dispatch",
+    "V02-L13_stale_document_zero_dispatch",
+    "V02-L14_target_replacement_zero_dispatch",
+    "V02-L15_missing_or_revoked_effect_binding_zero_dispatch",
+    "V02-L16_duplicate_exact_declaration_at_most_once",
+    "V02-L17_crash_after_execution_prepare_no_replay",
+    "V02-L18_running_receipt_dispatch_ambiguity_no_replay",
+    "V02-L19_terminal_browser_receipt_outer_finished_missing_recover_exactly",
+    "V02-L20_transport_ambiguity_no_replay"
+  ],
+  "runtime": {
+    "canary_scope_required": true,
+    "decode_concurrency": 1,
+    "explicit_browser_target_id_required": true,
+    "model_alias": "cognilocal/ornith-1.5-35b-a3b-mlx",
+    "model_endpoint": "http://localhost:8901/v1",
+    "physical_model_basename": "Ornith-1.5-35B-A3B-MLX",
+    "prompt_concurrency": 1
+  },
+  "schema": "smc.semantic_logic_p4_live_v02_execution_manifest.v0.2",
+  "serial_execution": true,
+  "tool_scope": [
+    "browser_perceive",
+    "browser_wait_scope_url",
+    "browser_wait_scope_ready",
+    "browser_wait_scope_count",
+    "browser_wait_object_state",
+    "browser_wait_object_text",
+    "get_tool_schema",
+    "browser_semantic_click",
+    "browser_semantic_fill",
+    "browser_semantic_select",
+    "browser_semantic_scroll",
+    "browser_semantic_navigate"
+  ]
+}
