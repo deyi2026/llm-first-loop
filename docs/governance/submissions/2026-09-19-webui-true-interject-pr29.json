@@ -1,0 +1,114 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "SUB-2026-09-19-WEBUI-TRUE-INTERJECT-PR29",
+  "summary": "PR #29：把普通 FIFO 排队与真正 live interjection 分离。立即插入绑定 exact run_generation，经 RunHandle mailbox 进入当前 run，只由 Engine 在安全模型决策边界消费并单写 Session；撤回编辑原子取消后恢复冻结正文/附件并合并现有草稿；UI 显示 pending/received 与取消冲突详情。fresh candidate 直接基于 main@d8a748ad 重建，未夹带渲染修复。",
+  "components": [
+    {
+      "component_id": "live-interjection-run-control",
+      "paths": [
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/loop/runner.py",
+        "src/llm_loop/web/human_turn_queue.py",
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/web/schemas.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "core/loop runner+engine and web human-turn ingress",
+      "disposition": "复用 BackgroundRunner 当前 run 所有权与 Engine Session 单写边界：Web 仅把 durable queue 冻结事实交给 exact run_generation mailbox；Engine 在每轮开始前及 no-tool final 结算前消费。generation 变化 fail-closed 并恢复普通 queued；Web 重启时 interject_pending 机械降级回 queued，避免假送达。",
+      "evidence": [
+        "tests/unit/test_runner_background.py::test_interjection_handoff_rejects_stale_run_generation",
+        "tests/unit/test_runner_background.py::test_live_interjection_reaches_same_run_before_stale_final_settles",
+        "tests/web/test_chat_queue.py interject durable/restart/received/cancel-with-item tests"
+      ],
+      "verification_level": "focused committed-state: backend 62/62 PASS; Pyright 0 errors/0 warnings; Ruff PASS; git diff --check PASS",
+      "model_evidence_veto_recovery_exit": "模型仍在每个安全决策边界自主处理新 user turn；程序只决定真实 human ingress 的所有权、持久化和并发边界，不判断消息语义。若 exact generation 不匹配或 live run 不存在，fail-closed 保留/恢复 FIFO 排队；rollback 后回到纯终态 relay。",
+      "rollback_route": "revert PR #29 的 live-interjection commit；durable interject_pending 在重启加载时回 queued，无不可逆状态迁移",
+      "declaration_id": "DEC-2026-09-19-LIVE-INTERJECT"
+    },
+    {
+      "component_id": "web-interjection-product-surface",
+      "paths": [
+        "webui/src/components/conversation/ChatQueue.tsx",
+        "webui/src/components/conversation/Composer.tsx",
+        "webui/src/core/chat.ts",
+        "webui/src/core/conversation.ts",
+        "webui/src/core/types.ts",
+        "webui/src/i18n/zh.ts"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "webui conversation/composer",
+      "disposition": "产品交互面明确拆分排队/撤回编辑/立即插入；队列默认展开；撤回合并已有草稿并附件 ref 去重；409/网络失败可见；pending/received 只展示后端真实状态，不做乐观伪造。",
+      "evidence": [
+        "webui/src/queue-interject-product.test.tsx",
+        "webui/src/composer-product.test.tsx",
+        "webui/src/queue-handoff.test.ts"
+      ],
+      "verification_level": "web focused 19/19 PASS; tsc + vite production build PASS",
+      "model_evidence_veto_recovery_exit": "UI 无模型裁决权；失败仅显示后端事实并保留消息",
+      "rollback_route": "revert PR #29；恢复旧队列 UI/文案"
+    },
+    {
+      "component_id": "interjection-qualification-tests",
+      "paths": [
+        "tests/unit/test_runner_background.py",
+        "tests/web/test_chat_queue.py",
+        "webui/src/queue-interject-product.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "tests",
+      "disposition": "锁定 exact generation 所有权、late steer 阻止 stale final、pending 重启恢复、received 回执、撤回冻结事实、UI 反馈与独立 handoff API。",
+      "evidence": [
+        "backend focused 62/62 PASS",
+        "web focused 19/19 PASS"
+      ],
+      "verification_level": "focused unit/product qualification",
+      "model_evidence_veto_recovery_exit": "测试无运行时模型裁决权",
+      "rollback_route": "随功能 commit 一并 revert"
+    },
+    {
+      "component_id": "pr29-architecture-submission",
+      "paths": [
+        "docs/governance/submissions/2026-09-19-webui-true-interject-pr29.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs/governance",
+      "disposition": "PR #29 A.5 changed-path 精确覆盖申报；不改变运行时。",
+      "evidence": [
+        "scripts/check_architecture_submission.py",
+        "PR #29"
+      ],
+      "verification_level": "A.5 local mechanical checker",
+      "model_evidence_veto_recovery_exit": "申报文档无运行时交互",
+      "rollback_route": "删除本 manifest 并关闭/回滚 PR #29"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "DEC-2026-09-19-LIVE-INTERJECT",
+      "g1": {
+        "necessity": "真正插话必须改变当前 run 的下一次模型决策输入，而普通队列只在 run 终态后开新 turn；没有 run-owned handoff 就只能是假插话或跨线程直接改 Session。"
+      },
+      "g2": {
+        "authority_owner": "BackgroundRunner exact run_generation ownership + LoopEngine Session single-writer boundary",
+        "relationship": "reuse",
+        "non_duplication": "复用现有 RunHandle registry、run_generation、Engine ingress guard/EventStore/Session save；新增 mailbox 只做当前 run 的机械 handoff，不建立第二套会话历史或模型调度 authority。"
+      },
+      "g3": {
+        "model_evidence": [
+          "test_live_interjection_reaches_same_run_before_stale_final_settles：provider 在途时插话，旧 no-tool final 不结算，同一 run 第二次模型请求看到新 user turn",
+          "test_interjection_handoff_rejects_stale_run_generation：旧 generation 无权把消息交给后续 run",
+          "HumanTurnQueue 重启测试：interject_pending 在 process restart 后回 queued，不伪造 received"
+        ],
+        "recovery_or_reason": "handoff 无 live run/代次变化即 fail-closed；消息恢复 FIFO。Engine 只在安全模型决策边界消费，不强杀在途 provider/tool 副作用。"
+      },
+      "g4": {
+        "rollback": "revert PR #29；无 schema migration，重启加载会把遗留 interject_pending 自动恢复为 queued",
+        "verification": [
+          "backend focused pytest 62/62 PASS",
+          "Pyright 0 errors / 0 warnings; Ruff PASS; git diff --check PASS",
+          "Web focused Vitest 19/19 PASS; production tsc+vite build PASS"
+        ]
+      }
+    }
+  ]
+}
