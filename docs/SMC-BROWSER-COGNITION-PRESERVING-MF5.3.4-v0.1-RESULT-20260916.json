@@ -1,0 +1,441 @@
+{
+  "adjudication": {
+    "external_task_correctness_6_of_6": true,
+    "grounding_ref_treatment_succeeded": true,
+    "infra_valid": true,
+    "no_row_replay": true,
+    "production_change_authorized_by_this_result": false,
+    "qualified": false,
+    "remaining_hard_gate_failure": "Row3 first Browser call misrouted navigate to browser_perceive, causing one Perceive failure and one protocol-repair episode",
+    "routing_residual_is_independent": true,
+    "surface_exact": true
+  },
+  "artifacts": {
+    "execution-manifest.json": {
+      "bytes": 56051,
+      "sha256": "c21f245cfab710c8f4e6710ce1b51ed8c200d3233f32df1ef3108e7dce24d820"
+    },
+    "plan.json": {
+      "bytes": 1261,
+      "sha256": "3be7bac592c6971a9910020a17a76798b4f9b2d50735fc27790f0f5886a6c718"
+    },
+    "qualification-gate.json": {
+      "bytes": 1504,
+      "sha256": "0f9f090b25309a5ceff414848748aaf7b6a9fc1d84551888f971c196ebfd80a5"
+    },
+    "results.jsonl": {
+      "bytes": 26955,
+      "sha256": "d5e30a9cbbe322bbb4c27c697126b6fbf4c81e8faaa09235deb9aff623dedd78"
+    },
+    "row3_raw_event_log": {
+      "bytes": 134503,
+      "path": "evals/browser_smc_cognition_preserving_actuation_mf534/results/MF534-ORNITH-v0.1-MEASURED-03d012b5/03-delayed_wait-r1-peer-capability-quality-projection/.lfldata/event_logs/246826fd-1945-4024-a4a7-c80b848919b7.jsonl",
+      "sha256": "b2ff5c34d83fc8b8eb20449f3b25ef2ca8bd36c1ccb52987c275bc9262d221e9"
+    }
+  },
+  "date": "2026-09-16",
+  "deterministic_treatment_base": "d644e379a250f9787f51c4d16967828972a4eecd",
+  "frozen_invariants": {
+    "model_ref": "cognilocal/ornith-1.5-35b-a3b-mlx",
+    "original_six_row_prompts_fixture_oracles_hard_gate_runtime_unchanged": true
+  },
+  "gate": {
+    "automatic_retry_true": 0,
+    "complete_rows": 6,
+    "diagnostics": {
+      "browser_arg_chars": 2505,
+      "browser_result_chars": 86258,
+      "cache_hit_tokens": 233157,
+      "delta_only": 3,
+      "delta_to_hydrate": 0,
+      "delta_to_hydrate_then_snapshot": 0,
+      "delta_to_snapshot": 11,
+      "operation_calls": 14,
+      "perceive_calls": 23,
+      "perceive_diff_calls": 0,
+      "perceive_hydrate_calls": 0,
+      "perceive_snapshot_calls": 13,
+      "perceive_wait_calls": 9,
+      "read_evidence_calls": 0,
+      "rounds": 43,
+      "tokens_in": 282396,
+      "tokens_out": 4235
+    },
+    "direct_atomic_browser_calls": 0,
+    "duplicate_successful_mutations": 0,
+    "expected_rows": 6,
+    "first_browser_call_contract_valid": 5,
+    "first_browser_call_contract_valid_required": 6,
+    "get_tool_schema_calls": 0,
+    "ground_probe_amplification": 0,
+    "infra_valid": true,
+    "model_no_fallback": true,
+    "operation_automatic_retry_true": 0,
+    "operation_tool_errors": 0,
+    "operation_tool_failures": 0,
+    "operation_unparsed_results": 0,
+    "pass": false,
+    "per_task_pass": {
+      "click_commit": 2,
+      "delayed_wait": 2,
+      "fill_submit": 2
+    },
+    "per_task_pass_required": 2,
+    "perceive_tool_errors": 0,
+    "perceive_tool_failures": 1,
+    "protocol_repair_episodes": 1,
+    "schema": "smc.browser_cognition_preserving_actuation_mf534.v0.1.gate",
+    "security_agent_spawned": false,
+    "surface_exact": true,
+    "task_completion_violations": 0,
+    "task_pass": 6,
+    "task_pass_required": 6,
+    "undeclared_boundary_continuations": 0
+  },
+  "harness_freeze": "03d012b5c6f2dfb0bb1b37cb9bb90bba78c8d1f3",
+  "measured_identity": "MF534-ORNITH-v0.1-MEASURED-03d012b5",
+  "routing_residual": {
+    "first_browser_call": {
+      "arg_keys": [
+        "action",
+        "url"
+      ],
+      "args_chars": 56,
+      "args_sha256": "b7ca36408758afd035c0e073e5d425e9e1cbed59831d379786faaa61712e1180",
+      "index": 1,
+      "name": "browser_perceive",
+      "perceive_action": "navigate",
+      "status": "failure"
+    },
+    "first_browser_call_contract_valid": false,
+    "not_grounding_ref_failure": true,
+    "perceive_failure_count": 1,
+    "protocol_repair_count": 1,
+    "recovery": "model immediately switched to browser_operate navigate; no automatic runtime retry/rebind; task oracle passed",
+    "row": 3,
+    "runtime_rejection": "browser_perceive action must be snapshot, hydrate, diff, or wait",
+    "task": "delayed_wait-r1"
+  },
+  "rows": [
+    {
+      "duplicates": 0,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "args_chars": 52,
+        "args_sha256": "9207988a6daf5d71aa09c904baa94f0476d465b2509cb85afbc1b112c66d6c84",
+        "index": 1,
+        "name": "browser_operate",
+        "operation_direct": true,
+        "operation_do": "navigate",
+        "status": "success"
+      },
+      "first_browser_call_contract_valid": true,
+      "ground_probe": 0,
+      "grounding_ref_object_wait_calls": [],
+      "index": 1,
+      "operate_calls": 2,
+      "operate_failures": 0,
+      "oracle": {
+        "commit_count": 1,
+        "pass": true
+      },
+      "perceive_calls": 2,
+      "perceive_failures": 0,
+      "protocol_repairs": 0,
+      "repeat": 1,
+      "rounds": 5,
+      "status": "PASS",
+      "task_id": "click_commit",
+      "worker_result": {
+        "bytes": 9879,
+        "sha256": "767e8156758690d0e26fd16b7b84fc7b19ca9bd16974ca0df14c3592d2ffaf2b"
+      }
+    },
+    {
+      "duplicates": 0,
+      "first_browser_call": {
+        "arg_keys": [
+          "action"
+        ],
+        "args_chars": 22,
+        "args_sha256": "975d604e4d09afb89817dd0e10fbce3f92c639d3efcb967e79a925c42cfabc0e",
+        "index": 1,
+        "name": "browser_perceive",
+        "perceive_action": "snapshot",
+        "status": "success"
+      },
+      "first_browser_call_contract_valid": true,
+      "ground_probe": 0,
+      "grounding_ref_object_wait_calls": [],
+      "index": 2,
+      "operate_calls": 3,
+      "operate_failures": 0,
+      "oracle": {
+        "pass": true,
+        "save_count": 1,
+        "value_match": true
+      },
+      "perceive_calls": 5,
+      "perceive_failures": 0,
+      "protocol_repairs": 0,
+      "repeat": 1,
+      "rounds": 9,
+      "status": "PASS",
+      "task_id": "fill_submit",
+      "worker_result": {
+        "bytes": 11345,
+        "sha256": "44c7f5ad7cf0eccfeda1978bccbdec4255b6953b06419f89fdb46d464b9486fb"
+      }
+    },
+    {
+      "duplicates": 0,
+      "first_browser_call": {
+        "arg_keys": [
+          "action",
+          "url"
+        ],
+        "args_chars": 56,
+        "args_sha256": "b7ca36408758afd035c0e073e5d425e9e1cbed59831d379786faaa61712e1180",
+        "index": 1,
+        "name": "browser_perceive",
+        "perceive_action": "navigate",
+        "status": "failure"
+      },
+      "first_browser_call_contract_valid": false,
+      "ground_probe": 0,
+      "grounding_ref_object_wait_calls": [
+        {
+          "arg_keys": [
+            "action",
+            "field",
+            "grounding_ref",
+            "kind",
+            "match",
+            "text",
+            "within_ms"
+          ],
+          "args_chars": 227,
+          "args_sha256": "e4c45d669fc18cc046a3c3869b6c3d057fa901d450809588493456c84634a8db",
+          "index": 6,
+          "name": "browser_perceive",
+          "perceive_action": "wait",
+          "status": "success"
+        }
+      ],
+      "index": 3,
+      "operate_calls": 2,
+      "operate_failures": 0,
+      "oracle": {
+        "early_click_count": 0,
+        "pass": true,
+        "ready_click_count": 1
+      },
+      "perceive_calls": 5,
+      "perceive_failures": 1,
+      "protocol_repairs": 1,
+      "repeat": 1,
+      "rounds": 8,
+      "status": "PASS",
+      "task_id": "delayed_wait",
+      "worker_result": {
+        "bytes": 10971,
+        "sha256": "276587d1994b376ce90a3f4e1f4492560e3df571674dcc232bc387d65745dcb4"
+      }
+    },
+    {
+      "duplicates": 0,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "args_chars": 52,
+        "args_sha256": "e3c1a6ee67014a0acc703f5b1c9cb184fc0498e907741af6742fd4983a03bf33",
+        "index": 1,
+        "name": "browser_operate",
+        "operation_direct": true,
+        "operation_do": "navigate",
+        "status": "success"
+      },
+      "first_browser_call_contract_valid": true,
+      "ground_probe": 0,
+      "grounding_ref_object_wait_calls": [],
+      "index": 4,
+      "operate_calls": 2,
+      "operate_failures": 0,
+      "oracle": {
+        "early_click_count": 0,
+        "pass": true,
+        "ready_click_count": 1
+      },
+      "perceive_calls": 2,
+      "perceive_failures": 0,
+      "protocol_repairs": 0,
+      "repeat": 2,
+      "rounds": 5,
+      "status": "PASS",
+      "task_id": "delayed_wait",
+      "worker_result": {
+        "bytes": 9955,
+        "sha256": "27db51778657aee3903023ecee2e7bad99832b1cc6de4631e37849385311eb56"
+      }
+    },
+    {
+      "duplicates": 0,
+      "first_browser_call": {
+        "arg_keys": [
+          "action"
+        ],
+        "args_chars": 22,
+        "args_sha256": "975d604e4d09afb89817dd0e10fbce3f92c639d3efcb967e79a925c42cfabc0e",
+        "index": 1,
+        "name": "browser_perceive",
+        "perceive_action": "snapshot",
+        "status": "success"
+      },
+      "first_browser_call_contract_valid": true,
+      "ground_probe": 0,
+      "grounding_ref_object_wait_calls": [
+        {
+          "arg_keys": [
+            "action",
+            "field",
+            "grounding_ref",
+            "kind",
+            "match",
+            "text",
+            "within_ms"
+          ],
+          "args_chars": 226,
+          "args_sha256": "d623f442bdfcc45bf2b8e32605874a25c24a398e26db263d98594f09e270f794",
+          "index": 7,
+          "name": "browser_perceive",
+          "perceive_action": "wait",
+          "status": "success"
+        }
+      ],
+      "index": 5,
+      "operate_calls": 3,
+      "operate_failures": 0,
+      "oracle": {
+        "pass": true,
+        "save_count": 1,
+        "value_match": true
+      },
+      "perceive_calls": 5,
+      "perceive_failures": 0,
+      "protocol_repairs": 0,
+      "repeat": 2,
+      "rounds": 9,
+      "status": "PASS",
+      "task_id": "fill_submit",
+      "worker_result": {
+        "bytes": 11404,
+        "sha256": "fe564f6e91249eb30b7e46ecb8e2f315fcc1bad72f18c3ebb716fd47ad558c33"
+      }
+    },
+    {
+      "duplicates": 0,
+      "first_browser_call": {
+        "arg_keys": [
+          "do",
+          "url"
+        ],
+        "args_chars": 52,
+        "args_sha256": "b7ffcb5180f5356731e8efd97f39dcbf6c507f9a50f2b0cafb64c6617ee2965a",
+        "index": 1,
+        "name": "browser_operate",
+        "operation_direct": true,
+        "operation_do": "navigate",
+        "status": "success"
+      },
+      "first_browser_call_contract_valid": true,
+      "ground_probe": 0,
+      "grounding_ref_object_wait_calls": [],
+      "index": 6,
+      "operate_calls": 2,
+      "operate_failures": 0,
+      "oracle": {
+        "commit_count": 1,
+        "pass": true
+      },
+      "perceive_calls": 4,
+      "perceive_failures": 0,
+      "protocol_repairs": 0,
+      "repeat": 2,
+      "rounds": 7,
+      "status": "PASS",
+      "task_id": "click_commit",
+      "worker_result": {
+        "bytes": 10609,
+        "sha256": "42f10c8853bbd0bd1ee31772a66e955245713c1fdeae73319656ccc5051679c1"
+      }
+    }
+  ],
+  "schema": "smc.browser_cognition_preserving_actuation_mf534.result.v0.1",
+  "status": "COMPLETE_NOT_QUALIFIED",
+  "treatment": "provider-visible object_state/object_text waits use grounding_ref; historical object_ref remains hidden compatibility only",
+  "treatment_evidence": {
+    "interpretation": "MF534 Row5 replaced the prior bare object_ref failure mode with a successful full grounding_ref object wait. Row3 also used grounding_ref successfully after a separate capability-routing repair.",
+    "mf533_row5_prior_object_wait": {
+      "arg_keys": [
+        "action",
+        "field",
+        "kind",
+        "match",
+        "object_ref",
+        "text",
+        "within_ms"
+      ],
+      "args_chars": 162,
+      "args_sha256": "cc40c8010ee44c1035840fd5d23c161ade374e7f62af8686cae7bccec0ed8129",
+      "index": 7,
+      "name": "browser_perceive",
+      "perceive_action": "wait",
+      "status": "failure"
+    },
+    "mf533_row5_prior_repair": 1,
+    "mf534_row3_object_wait": [
+      {
+        "arg_keys": [
+          "action",
+          "field",
+          "grounding_ref",
+          "kind",
+          "match",
+          "text",
+          "within_ms"
+        ],
+        "args_chars": 227,
+        "args_sha256": "e4c45d669fc18cc046a3c3869b6c3d057fa901d450809588493456c84634a8db",
+        "index": 6,
+        "name": "browser_perceive",
+        "perceive_action": "wait",
+        "status": "success"
+      }
+    ],
+    "mf534_row5_object_wait": [
+      {
+        "arg_keys": [
+          "action",
+          "field",
+          "grounding_ref",
+          "kind",
+          "match",
+          "text",
+          "within_ms"
+        ],
+        "args_chars": 226,
+        "args_sha256": "d623f442bdfcc45bf2b8e32605874a25c24a398e26db263d98594f09e270f794",
+        "index": 7,
+        "name": "browser_perceive",
+        "perceive_action": "wait",
+        "status": "success"
+      }
+    ],
+    "mf534_row5_repair": 0
+  }
+}

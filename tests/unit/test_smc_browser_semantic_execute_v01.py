@@ -209,23 +209,17 @@ def test_semantic_execute_tool_surface_exposes_only_model_owned_choices() -> Non
 def test_semantic_execute_compact_description_teaches_the_minimum_call_path() -> None:
     compact = _COMPACT_TOOL_DESCRIPTIONS["browser_semantic_execute"]
     for marker in (
-        "snapshot",
         "GroundingRef",
-        "target_ref",
         "resource_ref",
-        "click={}",
-        "fill={text,mode(replace|append)}",
-        "select={value}",
-        "navigate={url}",
-        "scroll={delta_pages}",
+        "single-dispatch",
         "ActionReceipt",
-        "再 snapshot",
-        "不自动 retry/rebind",
-        "不等于任务完成",
-        "没有 snapshot/ref 不要调用",
-        "不要把 URL 当 target_ref",
+        "post-capture/diff",
+        "snapshot",
+        "不retry/rebind/完成判断",
     ):
         assert marker in compact
+
+    assert "再 snapshot" not in compact
 
     from llm_loop.tools.registry import ToolRegistry
 

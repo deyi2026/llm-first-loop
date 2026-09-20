@@ -15,7 +15,10 @@ from llm_loop.browser.perception import (
     BrowserPerceptionStore,
 )
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
-from llm_loop.tools.builtin.browser_semantic_operation import BrowserSemanticOperationTool
+from llm_loop.tools.builtin.browser_semantic_operation import (
+    BrowserSemanticOperationReceiptStore,
+    BrowserSemanticOperationTool,
+)
 from llm_loop.tools.registry import ToolRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -66,6 +69,7 @@ def _stack(tmp_path: Path, raw: dict[str, Any] | None = None):
         perception=perception,
         capture_backend=backend,
         semantic_execute=execute,
+        receipt_store=BrowserSemanticOperationReceiptStore(tmp_path / "operation_receipts"),
         session_id_getter=lambda: "s1",
     )
     return operation, actuator
@@ -196,7 +200,7 @@ def test_model_declared_sequence_can_navigate_then_exact_ground_object(tmp_path:
 
 
 def test_model_surface_is_closed_and_carries_no_policy_authority() -> None:
-    schema = BrowserSemanticOperationTool.parameters
+    schema = BrowserSemanticOperationTool._CLAUSE_PARAMETERS
     assert schema["additionalProperties"] is False
     assert schema["properties"]["clauses"]["maxItems"] == 8
     variants = schema["properties"]["clauses"]["items"]["oneOf"]
@@ -208,7 +212,7 @@ def test_model_surface_is_closed_and_carries_no_policy_authority() -> None:
 
 
 def test_provider_schema_is_recursively_closed_and_verb_specific() -> None:
-    schema = BrowserSemanticOperationTool.parameters
+    schema = BrowserSemanticOperationTool._CLAUSE_PARAMETERS
 
     def walk(node: Any) -> None:
         if isinstance(node, dict):
@@ -244,7 +248,7 @@ def test_provider_schema_is_recursively_closed_and_verb_specific() -> None:
 
 
 def test_identity_kind_schema_reuses_canonical_semantic_object_vocabulary() -> None:
-    schema = BrowserSemanticOperationTool.parameters
+    schema = BrowserSemanticOperationTool._CLAUSE_PARAMETERS
     branches = schema["properties"]["clauses"]["items"]["oneOf"]
     object_kind_enums: list[list[str]] = []
     for branch in branches:
@@ -265,7 +269,7 @@ def test_identity_kind_schema_reuses_canonical_semantic_object_vocabulary() -> N
 def test_lazy_provider_surface_preserves_bounded_operation_first_call_contract() -> None:
     reg = ToolRegistry()
     reg.register(BrowserSemanticOperationTool.__new__(BrowserSemanticOperationTool))
-    params = reg.schemas(lazy=True)[0]["parameters"]
+    params = BrowserSemanticOperationTool._CLAUSE_LAZY_PARAMETERS
 
     assert params["additionalProperties"] is False
     clauses = params["properties"]["clauses"]

@@ -1,0 +1,404 @@
+{
+  "adjudication": {
+    "external_task_correctness_6_of_6": true,
+    "first_browser_call_contract_valid_6_of_6": true,
+    "ground_probe_amplification_zero": true,
+    "infra_valid": true,
+    "next_deterministic_candidate": "rename model-visible object wait field object_ref -> grounding_ref; retain old object_ref only as hidden/internal compatibility",
+    "no_row_replay": true,
+    "production_change_authorized_by_this_result": false,
+    "qualified": false,
+    "remaining_hard_gate_failure": "one Row5 browser_perceive object_text wait repair caused by bare semantic id supplied to provider-visible object_ref",
+    "runtime_exact_ref_validation_was_correct": true,
+    "surface_exact": true
+  },
+  "artifacts": {
+    "execution-manifest.json": {
+      "bytes": 56027,
+      "sha256": "bce6c5a13789fdf3f94e26919e9d487fbec61228ebbaf5e22e9defb789d5d856"
+    },
+    "plan.json": {
+      "bytes": 1321,
+      "sha256": "e1a53f539e8781377056575b687026100a18df61f3f1d9ea5899c9c0345f4802"
+    },
+    "qualification-gate.json": {
+      "bytes": 1505,
+      "sha256": "92d5cdab60a633a30eb1655a786aec03ffbb2d936bc39f6f22386520f65c1fb7"
+    },
+    "results.jsonl": {
+      "bytes": 28169,
+      "sha256": "94c7efa27e4efc529de0c3f877c3243c5bc301499a6a9b43d06085a6d62a2184"
+    }
+  },
+  "comparison_to_mf532": {
+    "first_browser_call_contract_valid_frozen_gate": {
+      "mf532": 1,
+      "mf533": 6
+    },
+    "ground_probe_amplification": {
+      "mf532": 0,
+      "mf533": 0
+    },
+    "infra_valid": {
+      "mf532": false,
+      "mf533": true
+    },
+    "mf532_first_call_raw_reconstructed": 2,
+    "operation_tool_failures": {
+      "mf532": 0,
+      "mf533": 0
+    },
+    "perceive_tool_failures": {
+      "mf532": 4,
+      "mf533": 1
+    },
+    "protocol_repair_episodes": {
+      "mf532": 4,
+      "mf533": 1
+    },
+    "task_pass": {
+      "mf532": 6,
+      "mf533": 6
+    }
+  },
+  "date": "2026-09-16",
+  "deterministic_base": "14dfdb407a098d4efa3c9c16476dd0a5239ceb39",
+  "first_browser_calls": [
+    {
+      "arg_keys": [
+        "do",
+        "url"
+      ],
+      "operation_do": "navigate",
+      "perceive_action": null,
+      "row": 1,
+      "status": "success",
+      "task": "click_commit",
+      "tool": "browser_operate"
+    },
+    {
+      "arg_keys": [
+        "action"
+      ],
+      "operation_do": null,
+      "perceive_action": "snapshot",
+      "row": 2,
+      "status": "success",
+      "task": "fill_submit",
+      "tool": "browser_perceive"
+    },
+    {
+      "arg_keys": [
+        "action",
+        "expected_url",
+        "kind",
+        "match",
+        "within_ms"
+      ],
+      "operation_do": null,
+      "perceive_action": "wait",
+      "row": 3,
+      "status": "success",
+      "task": "delayed_wait",
+      "tool": "browser_perceive"
+    },
+    {
+      "arg_keys": [
+        "do",
+        "url"
+      ],
+      "operation_do": "navigate",
+      "perceive_action": null,
+      "row": 4,
+      "status": "success",
+      "task": "delayed_wait",
+      "tool": "browser_operate"
+    },
+    {
+      "arg_keys": [
+        "action"
+      ],
+      "operation_do": null,
+      "perceive_action": "snapshot",
+      "row": 5,
+      "status": "success",
+      "task": "fill_submit",
+      "tool": "browser_perceive"
+    },
+    {
+      "arg_keys": [
+        "do",
+        "url"
+      ],
+      "operation_do": "navigate",
+      "perceive_action": null,
+      "row": 6,
+      "status": "success",
+      "task": "click_commit",
+      "tool": "browser_operate"
+    }
+  ],
+  "gate": {
+    "automatic_retry_true": 0,
+    "complete_rows": 6,
+    "diagnostics": {
+      "browser_arg_chars": 2624,
+      "browser_result_chars": 92940,
+      "cache_hit_tokens": 308079,
+      "delta_only": 2,
+      "delta_to_hydrate": 0,
+      "delta_to_hydrate_then_snapshot": 1,
+      "delta_to_snapshot": 11,
+      "operation_calls": 14,
+      "perceive_calls": 25,
+      "perceive_diff_calls": 0,
+      "perceive_hydrate_calls": 1,
+      "perceive_snapshot_calls": 14,
+      "perceive_wait_calls": 10,
+      "read_evidence_calls": 3,
+      "rounds": 47,
+      "tokens_in": 364917,
+      "tokens_out": 5275
+    },
+    "direct_atomic_browser_calls": 0,
+    "duplicate_successful_mutations": 0,
+    "expected_rows": 6,
+    "first_browser_call_contract_valid": 6,
+    "first_browser_call_contract_valid_required": 6,
+    "get_tool_schema_calls": 0,
+    "ground_probe_amplification": 0,
+    "infra_valid": true,
+    "model_no_fallback": true,
+    "operation_automatic_retry_true": 0,
+    "operation_tool_errors": 0,
+    "operation_tool_failures": 0,
+    "operation_unparsed_results": 0,
+    "pass": false,
+    "per_task_pass": {
+      "click_commit": 2,
+      "delayed_wait": 2,
+      "fill_submit": 2
+    },
+    "per_task_pass_required": 2,
+    "perceive_tool_errors": 0,
+    "perceive_tool_failures": 1,
+    "protocol_repair_episodes": 1,
+    "schema": "smc.browser_cognition_preserving_actuation_mf533.v0.1.gate",
+    "security_agent_spawned": false,
+    "surface_exact": true,
+    "task_completion_violations": 0,
+    "task_pass": 6,
+    "task_pass_required": 6,
+    "undeclared_boundary_continuations": 0
+  },
+  "harness_freeze_commit": "fc01ddc1eb4b7a075318ea86b71652fbf12cb46a",
+  "measured_identity": "MF533-ORNITH-v0.1-MEASURED-fc01ddc1",
+  "row5_failure": {
+    "arg_keys": [
+      "action",
+      "field",
+      "kind",
+      "match",
+      "object_ref",
+      "text",
+      "within_ms"
+    ],
+    "args_sha256": "cc40c8010ee44c1035840fd5d23c161ade374e7f62af8686cae7bccec0ed8129",
+    "call_index": 7,
+    "exact_error": "[状态: failure] [browser_wait_object_text] semantic predicate compile rejected; reason=object_ref_unavailable:invalid_ref; no polling started.",
+    "mechanical_class": "bare_semantic_id_used_where_full_grounding_ref_required",
+    "name": "browser_perceive",
+    "perceive_action": "wait",
+    "recovery": "model re-snapshotted, hydrated exact full grounding_ref, then completed task without runtime auto-rebind/retry",
+    "status": "failure"
+  },
+  "row5_raw_event_log": {
+    "bytes": 229536,
+    "relative_path": "05-fill_submit-r2-peer-capability-quality-projection/.lfldata/event_logs/5632e148-4afd-444c-86b3-481bab4b1d32.jsonl",
+    "sha256": "61ede2c1321855b48dbaa20267f47a7df6ae567cfc7de8b2e93e7ac60ea35b00"
+  },
+  "row_worker_artifacts": {
+    "1": {
+      "run_id": "01-click_commit-r1-peer-capability-quality-projection",
+      "worker-result.json": {
+        "bytes": 10199,
+        "sha256": "d15cd0ffc7e3b8396023843cf2b6f0317fb69e3a7a63583784acf6ffdd25466b"
+      }
+    },
+    "2": {
+      "run_id": "02-fill_submit-r1-peer-capability-quality-projection",
+      "worker-result.json": {
+        "bytes": 11946,
+        "sha256": "f5588b68931db4b8fe78f9a1e4570ef4309d8dd84c1d3f3d4d9650b2767b77e5"
+      }
+    },
+    "3": {
+      "run_id": "03-delayed_wait-r1-peer-capability-quality-projection",
+      "worker-result.json": {
+        "bytes": 10292,
+        "sha256": "5617ffd9058ea60d641f4b1acae44d4f99229dd0ec0bb27d367d7c52acc821ee"
+      }
+    },
+    "4": {
+      "run_id": "04-delayed_wait-r2-peer-capability-quality-projection",
+      "worker-result.json": {
+        "bytes": 10641,
+        "sha256": "16ec82edd13c3beedef7354103db5bfe0b540c7eb5623c4ff8125216cc6c5cd8"
+      }
+    },
+    "5": {
+      "run_id": "05-fill_submit-r2-peer-capability-quality-projection",
+      "worker-result.json": {
+        "bytes": 12658,
+        "sha256": "82a2572f1fd496a6194e9e6d59cf0be3b4aa355dd0213020b4b6e4c484e8569a"
+      }
+    },
+    "6": {
+      "run_id": "06-click_commit-r2-peer-capability-quality-projection",
+      "worker-result.json": {
+        "bytes": 9855,
+        "sha256": "d35b984ca59b9d3a668ec9489e91d41ba938f8a06630b995a4a7cb0a0bf24d09"
+      }
+    }
+  },
+  "rows": [
+    {
+      "duplicate_successful_mutation": 0,
+      "first_browser_call_contract_valid": true,
+      "ground_probe": 0,
+      "operate_calls": 2,
+      "operate_errors": 0,
+      "operate_failures": 0,
+      "oracle": {
+        "commit_count": 1,
+        "pass": true
+      },
+      "perceive_calls": 3,
+      "perceive_errors": 0,
+      "perceive_failures": 0,
+      "protocol_repair": 0,
+      "repeat": 1,
+      "rounds": 6,
+      "row": 1,
+      "status": "PASS",
+      "task": "click_commit"
+    },
+    {
+      "duplicate_successful_mutation": 0,
+      "first_browser_call_contract_valid": true,
+      "ground_probe": 0,
+      "operate_calls": 3,
+      "operate_errors": 0,
+      "operate_failures": 0,
+      "oracle": {
+        "pass": true,
+        "save_count": 1,
+        "value_match": true
+      },
+      "perceive_calls": 5,
+      "perceive_errors": 0,
+      "perceive_failures": 0,
+      "protocol_repair": 0,
+      "repeat": 1,
+      "rounds": 11,
+      "row": 2,
+      "status": "PASS",
+      "task": "fill_submit"
+    },
+    {
+      "duplicate_successful_mutation": 0,
+      "first_browser_call_contract_valid": true,
+      "ground_probe": 0,
+      "operate_calls": 2,
+      "operate_errors": 0,
+      "operate_failures": 0,
+      "oracle": {
+        "early_click_count": 0,
+        "pass": true,
+        "ready_click_count": 1
+      },
+      "perceive_calls": 3,
+      "perceive_errors": 0,
+      "perceive_failures": 0,
+      "protocol_repair": 0,
+      "repeat": 1,
+      "rounds": 6,
+      "row": 3,
+      "status": "PASS",
+      "task": "delayed_wait"
+    },
+    {
+      "duplicate_successful_mutation": 0,
+      "first_browser_call_contract_valid": true,
+      "ground_probe": 0,
+      "operate_calls": 2,
+      "operate_errors": 0,
+      "operate_failures": 0,
+      "oracle": {
+        "early_click_count": 0,
+        "pass": true,
+        "ready_click_count": 1
+      },
+      "perceive_calls": 4,
+      "perceive_errors": 0,
+      "perceive_failures": 0,
+      "protocol_repair": 0,
+      "repeat": 2,
+      "rounds": 7,
+      "row": 4,
+      "status": "PASS",
+      "task": "delayed_wait"
+    },
+    {
+      "duplicate_successful_mutation": 0,
+      "first_browser_call_contract_valid": true,
+      "ground_probe": 0,
+      "operate_calls": 3,
+      "operate_errors": 0,
+      "operate_failures": 0,
+      "oracle": {
+        "pass": true,
+        "save_count": 1,
+        "value_match": true
+      },
+      "perceive_calls": 8,
+      "perceive_errors": 0,
+      "perceive_failures": 1,
+      "protocol_repair": 1,
+      "repeat": 2,
+      "rounds": 12,
+      "row": 5,
+      "status": "PASS",
+      "task": "fill_submit"
+    },
+    {
+      "duplicate_successful_mutation": 0,
+      "first_browser_call_contract_valid": true,
+      "ground_probe": 0,
+      "operate_calls": 2,
+      "operate_errors": 0,
+      "operate_failures": 0,
+      "oracle": {
+        "commit_count": 1,
+        "pass": true
+      },
+      "perceive_calls": 2,
+      "perceive_errors": 0,
+      "perceive_failures": 0,
+      "protocol_repair": 0,
+      "repeat": 2,
+      "rounds": 5,
+      "row": 6,
+      "status": "PASS",
+      "task": "click_commit"
+    }
+  ],
+  "schema": "smc.browser_cognition_preserving_mf533_result.v0.1",
+  "status": "COMPLETE_NOT_QUALIFIED",
+  "treatment": {
+    "a_prime_url_role_implementation": "e4ee5352",
+    "b1_direct_dom_text_implementation": "058a5ae5",
+    "contract_alignment": "0e4eb293",
+    "deterministic_closure": "14dfdb40"
+  }
+}

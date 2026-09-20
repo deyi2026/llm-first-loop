@@ -1,0 +1,130 @@
+[
+  {
+    "arm": "A",
+    "index": 1,
+    "pair_id": "delayed_wait-r1",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 1,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "B",
+    "index": 2,
+    "pair_id": "delayed_wait-r1",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 1,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "B",
+    "index": 3,
+    "pair_id": "delayed_wait-r2",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 2,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "A",
+    "index": 4,
+    "pair_id": "delayed_wait-r2",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 2,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "A",
+    "index": 5,
+    "pair_id": "delayed_wait-r3",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 3,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "B",
+    "index": 6,
+    "pair_id": "delayed_wait-r3",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 3,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "B",
+    "index": 7,
+    "pair_id": "delayed_wait-r4",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 4,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "A",
+    "index": 8,
+    "pair_id": "delayed_wait-r4",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 4,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "A",
+    "index": 9,
+    "pair_id": "delayed_wait-r5",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 5,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "B",
+    "index": 10,
+    "pair_id": "delayed_wait-r5",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 5,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "B",
+    "index": 11,
+    "pair_id": "delayed_wait-r6",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 6,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "A",
+    "index": 12,
+    "pair_id": "delayed_wait-r6",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 6,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "A",
+    "index": 13,
+    "pair_id": "delayed_wait-r7",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 7,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "B",
+    "index": 14,
+    "pair_id": "delayed_wait-r7",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 7,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "B",
+    "index": 15,
+    "pair_id": "delayed_wait-r8",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 8,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "A",
+    "index": 16,
+    "pair_id": "delayed_wait-r8",
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 8,
+    "task_id": "delayed_wait"
+  }
+]

@@ -66,23 +66,31 @@ def test_semantic_operation_method_teaches_facts_not_target_policy() -> None:
         assert forbidden_authority not in body
 
 
-def test_browser_surfaces_carry_compact_method_card_and_exact_ref() -> None:
-    card_surfaces = (
-        _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"],
+def test_browser_perceive_stable_prefix_drops_method_ref_but_full_schema_keeps_progressive_disclosure() -> None:
+    compact = _COMPACT_TOOL_DESCRIPTIONS["browser_perceive"]
+    full = BrowserPerceiveTool.description
+
+    assert METHOD_REF not in compact
+    assert METHOD_REF in full
+    for surface in (compact, full):
+        assert "Observe -> Ground -> Execute -> Receipt -> Re-observe/Verify" not in surface
+        assert "browser_semantic_execute" not in surface
+
+    legacy_execution_card_surfaces = (
         _COMPACT_TOOL_DESCRIPTIONS["browser_action"],
-        BrowserPerceiveTool.description,
         BrowserActionTool.description,
         BrowserSemanticExecuteTool.description,
     )
-    for surface in card_surfaces:
+    for surface in legacy_execution_card_surfaces:
         assert METHOD_REF in surface
         assert "Observe -> Ground -> Execute -> Receipt -> Re-observe/Verify" in surface
         assert "receipt ok != task complete" in surface
+
     semantic_surface = _COMPACT_TOOL_DESCRIPTIONS["browser_semantic_execute"]
-    for marker in ("snapshot", "GroundingRef", "target_ref", "resource_ref", "ActionReceipt"):
+    for marker in ("snapshot", "GroundingRef", "resource_ref", "verb/args", "ActionReceipt"):
         assert marker in semantic_surface
-    # Keep the always-visible card compact; detailed recovery remains progressive disclosure.
-    for surface in card_surfaces:
+    # Keep always-visible surfaces compact; detailed recovery remains progressive disclosure.
+    for surface in (compact, full, *legacy_execution_card_surfaces):
         assert "expected_version_unavailable" not in surface
         assert "resource_scope_mismatch" not in surface
         assert "args_contract_mismatch" not in surface
