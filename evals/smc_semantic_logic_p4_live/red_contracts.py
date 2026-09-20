@@ -8,10 +8,13 @@ distinguish an expected missing production capability from a broken RED harness.
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import json
+import re
 import tempfile
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -49,6 +52,18 @@ def load_expected_failures() -> dict[str, dict[str, str]]:
 
 
 RED_IDS = tuple(load_expected_failures())
+PHASE1_GREEN_IDS = (
+    "P4L-R01",
+    "P4L-R02",
+    "P4L-R03",
+    "P4L-R04",
+    "P4L-R05",
+    "P4L-R06",
+    "P4L-R07",
+    "P4L-R08",
+    "P4L-R09",
+    "P4L-R20",
+)
 
 
 @lru_cache(maxsize=1)
@@ -71,6 +86,77 @@ def _find_named_object(result: dict[str, Any], name: str) -> dict[str, Any]:
         if (obj.get("attributes") or {}).get("name") == name:
             return dict(obj)
     raise AssertionError(f"fixture object not found: {name}")
+
+
+def _action_ref_module() -> Any | None:
+    try:
+        return importlib.import_module("llm_loop.browser.action_ref")
+    except ModuleNotFoundError as exc:
+        if exc.name == "llm_loop.browser.action_ref":
+            return None
+        raise
+
+
+@contextmanager
+def _action_ref_fixture() -> Any:
+    module = _action_ref_module()
+    if module is None:
+        raise RuntimeError("production ActionRef core is absent")
+    clock = [1_000.0]
+    with tempfile.TemporaryDirectory(prefix="p4live-green1-") as td:
+        root = Path(td)
+        perception_store = BrowserPerceptionStore(
+            root / "browser",
+            retention_seconds=60,
+            now_fn=lambda: clock[0],
+        )
+        binding_store = module.ActionRefBindingStore(
+            root / "action_refs",
+            now_fn=lambda: clock[0],
+        )
+        issuer = module.ActionRefIssuer(
+            binding_store=binding_store,
+            perception_store=perception_store,
+        )
+        issue_context = module.ActionRefIssueContext(
+            workspace_scope="/workspace/A",
+            origin_run_generation="run-generation-A",
+        )
+        adapter = BrowserPerceptionAdapter(
+            store=perception_store,
+            action_ref_issuer=issuer,
+            action_ref_context_getter=lambda: issue_context,
+        )
+        projection = adapter.snapshot(
+            "p4live-session-A",
+            _fixtures()["base"],
+            projection_limit=100,
+        )
+        resolver = module.ActionRefResolver(
+            binding_store=binding_store,
+            perception_store=perception_store,
+        )
+        target = _find_named_object(projection, "Submit")
+        resolve_context = module.ActionRefResolveContext(
+            session_id="p4live-session-A",
+            workspace_scope="/workspace/A",
+            current_run_generation="run-generation-A",
+            run_active=True,
+        )
+        yield {
+            "module": module,
+            "clock": clock,
+            "root": root,
+            "perception_store": perception_store,
+            "binding_store": binding_store,
+            "issuer": issuer,
+            "issue_context": issue_context,
+            "adapter": adapter,
+            "projection": projection,
+            "resolver": resolver,
+            "target": target,
+            "resolve_context": resolve_context,
+        }
 
 
 def _perception_projection_facts() -> dict[str, Any]:
@@ -271,91 +357,350 @@ def _missing_actionref_result(row_id: str, code: str, detail: str, **facts: Any)
 
 
 def probe_r01() -> ProbeResult:
-    facts = _perception_projection_facts()
-    if not facts["snapshot_persisted"]:
-        return ProbeResult("P4L-R01", False, "harness_snapshot_not_persisted", "snapshot fixture failed to persist", facts)
-    satisfied = bool(facts["resource_action_ref_present"] or facts["object_action_ref_count"])
-    return ProbeResult(
-        "P4L-R01",
-        satisfied,
-        "contract_present" if satisfied else "actionref_issuer_absent_after_persist",
-        "persisted production perception has no model-visible ActionRef annotation",
-        facts,
-    )
+    if _action_ref_module() is None:
+        facts = _perception_projection_facts()
+        return ProbeResult(
+            "P4L-R01",
+            False,
+            "actionref_issuer_absent_after_persist",
+            "persisted production perception has no model-visible ActionRef annotation",
+            facts,
+        )
+    with _action_ref_fixture() as fixture:
+        projection = fixture["projection"]
+        store = fixture["perception_store"]
+        snapshot_id = str(projection["snapshot"]["snapshot_id"])
+        persisted = store.load_snapshot_bundle("p4live-session-A", snapshot_id) is not None
+        resource_ref = str(projection.get("resource_action_ref") or "")
+        object_refs = [
+            str(obj.get("action_ref") or "")
+            for obj in projection.get("objects", [])
+            if isinstance(obj, dict) and obj.get("action_ref")
+        ]
+        issued_again = fixture["issuer"].annotate_projection(
+            session_id="p4live-session-A",
+            projection=projection,
+            context=fixture["issue_context"],
+        )
+        original_by_id = {
+            str(obj.get("id") or ""): str(obj.get("action_ref") or "")
+            for obj in projection.get("objects", [])
+            if isinstance(obj, dict) and obj.get("action_ref")
+        }
+        repeated_by_id = {
+            str(obj.get("id") or ""): str(obj.get("action_ref") or "")
+            for obj in issued_again.get("objects", [])
+            if isinstance(obj, dict) and obj.get("action_ref")
+        }
+        handles = [resource_ref, *object_refs]
+        high_entropy = bool(handles) and all(
+            re.fullmatch(r"actionref://browser/v0\.1/[0-9a-f]{32}", handle)
+            for handle in handles
+        )
+        opaque = all(
+            "Submit" not in handle
+            and "grounding://" not in handle
+            and "p4live-session-A" not in handle
+            for handle in handles
+        )
+        same_resource_ref = issued_again.get("resource_action_ref") == resource_ref
+        same_objects = repeated_by_id == original_by_id
+        facts = {
+            "snapshot_persisted": persisted,
+            "resource_action_ref_present": bool(resource_ref),
+            "object_action_ref_count": len(object_refs),
+            "opaque_128bit_handles": high_entropy and opaque,
+            "same_binding_resource_idempotent": same_resource_ref,
+            "same_binding_object_idempotent": same_objects,
+        }
+        satisfied = all(
+            (persisted, bool(resource_ref), bool(object_refs), high_entropy, opaque, same_resource_ref, same_objects)
+        )
+        return ProbeResult(
+            "P4L-R01",
+            satisfied,
+            "contract_present" if satisfied else "actionref_issuer_absent_after_persist",
+            "persisted Browser projection issues stable opaque ActionRefs after exact snapshot persistence",
+            facts,
+        )
 
 
 def probe_r02() -> ProbeResult:
-    facts = _grounding_exact_hydration_facts()
-    return _missing_actionref_result(
-        "P4L-R02",
-        "actionref_exact_resolver_absent",
-        "GroundingRef exact hydration exists, but no production ActionRef exact resolver exists",
-        **facts,
-    )
+    if _action_ref_module() is None:
+        return _missing_actionref_result(
+            "P4L-R02",
+            "actionref_exact_resolver_absent",
+            "GroundingRef exact hydration exists, but no production ActionRef exact resolver exists",
+            **_grounding_exact_hydration_facts(),
+        )
+    with _action_ref_fixture() as fixture:
+        target = fixture["target"]
+        resolution = fixture["resolver"].resolve(
+            str(target["action_ref"]),
+            context=fixture["resolve_context"],
+            expected_kind="object",
+        )
+        exact = resolution.grounding_ref == str(target["grounding_ref"])
+        return ProbeResult(
+            "P4L-R02",
+            exact,
+            "contract_present" if exact else "actionref_exact_resolver_absent",
+            "exact ActionRef resolves only to its stored byte-identical GroundingRef",
+            {"byte_identical_grounding_ref": exact, "resolved_target_kind": resolution.target_kind},
+        )
 
 
 def probe_r03() -> ProbeResult:
-    facts = _grounding_exact_hydration_facts()
-    return _missing_actionref_result(
-        "P4L-R03",
-        "actionref_session_fence_absent",
-        "GroundingRef is session fenced, but no ActionRef owner-session fence exists",
-        **facts,
-    )
+    if _action_ref_module() is None:
+        return _missing_actionref_result(
+            "P4L-R03",
+            "actionref_session_fence_absent",
+            "GroundingRef is session fenced, but no ActionRef owner-session fence exists",
+            **_grounding_exact_hydration_facts(),
+        )
+    with _action_ref_fixture() as fixture:
+        module = fixture["module"]
+        ctx = module.ActionRefResolveContext(
+            session_id="p4live-session-B",
+            workspace_scope="/workspace/A",
+            current_run_generation="run-generation-A",
+            run_active=True,
+        )
+        code = ""
+        try:
+            fixture["resolver"].resolve(
+                str(fixture["target"]["action_ref"]), context=ctx, expected_kind="object"
+            )
+        except module.ActionRefError as exc:
+            code = exc.code
+        satisfied = code == "action_ref_session_mismatch"
+        return ProbeResult(
+            "P4L-R03",
+            satisfied,
+            "contract_present" if satisfied else "actionref_session_fence_absent",
+            "cross-session ActionRef resolution fails closed before any mutation path exists",
+            {"rejection_code": code},
+        )
 
 
 def probe_r04() -> ProbeResult:
-    return _missing_actionref_result(
-        "P4L-R04",
-        "actionref_workspace_fence_absent",
-        "no production ActionRef record/resolver exists to bind canonical workspace identity",
-    )
+    if _action_ref_module() is None:
+        return _missing_actionref_result(
+            "P4L-R04",
+            "actionref_workspace_fence_absent",
+            "no production ActionRef record/resolver exists to bind canonical workspace identity",
+        )
+    with _action_ref_fixture() as fixture:
+        module = fixture["module"]
+        ctx = module.ActionRefResolveContext(
+            session_id="p4live-session-A",
+            workspace_scope="/workspace/B",
+            current_run_generation="run-generation-A",
+            run_active=True,
+        )
+        code = ""
+        try:
+            fixture["resolver"].resolve(
+                str(fixture["target"]["action_ref"]), context=ctx, expected_kind="object"
+            )
+        except module.ActionRefError as exc:
+            code = exc.code
+        satisfied = code == "action_ref_workspace_mismatch"
+        return ProbeResult(
+            "P4L-R04",
+            satisfied,
+            "contract_present" if satisfied else "actionref_workspace_fence_absent",
+            "workspace identity mismatch rejects exact ActionRef resolution",
+            {"rejection_code": code},
+        )
 
 
 def probe_r05() -> ProbeResult:
-    return _missing_actionref_result(
-        "P4L-R05",
-        "actionref_run_lifetime_fence_absent",
-        "no production ActionRef record exists to bind origin run generation or invalidate at run termination",
-    )
+    if _action_ref_module() is None:
+        return _missing_actionref_result(
+            "P4L-R05",
+            "actionref_run_lifetime_fence_absent",
+            "no production ActionRef record exists to bind origin run generation or invalidate at run termination",
+        )
+    with _action_ref_fixture() as fixture:
+        module = fixture["module"]
+        target_ref = str(fixture["target"]["action_ref"])
+        contexts = (
+            module.ActionRefResolveContext(
+                session_id="p4live-session-A",
+                workspace_scope="/workspace/A",
+                current_run_generation="run-generation-B",
+                run_active=True,
+            ),
+            module.ActionRefResolveContext(
+                session_id="p4live-session-A",
+                workspace_scope="/workspace/A",
+                current_run_generation="run-generation-A",
+                run_active=False,
+            ),
+        )
+        codes: list[str] = []
+        for ctx in contexts:
+            try:
+                fixture["resolver"].resolve(target_ref, context=ctx, expected_kind="object")
+            except module.ActionRefError as exc:
+                codes.append(exc.code)
+        satisfied = codes == [
+            "action_ref_run_generation_mismatch",
+            "action_ref_run_generation_mismatch",
+        ]
+        return ProbeResult(
+            "P4L-R05",
+            satisfied,
+            "contract_present" if satisfied else "actionref_run_lifetime_fence_absent",
+            "run-generation mismatch and explicit inactive-run resolution both fail closed",
+            {"rejection_codes": codes},
+        )
 
 
 def probe_r06() -> ProbeResult:
-    return _missing_actionref_result(
-        "P4L-R06",
-        "actionref_expiry_fence_absent",
-        "no production ActionRef lifetime exists to cap alias expiry by source snapshot expiry",
-    )
+    if _action_ref_module() is None:
+        return _missing_actionref_result(
+            "P4L-R06",
+            "actionref_expiry_fence_absent",
+            "no production ActionRef lifetime exists to cap alias expiry by source snapshot expiry",
+        )
+    with _action_ref_fixture() as fixture:
+        module = fixture["module"]
+        fixture["clock"][0] = 1_061.0
+        code = ""
+        try:
+            fixture["resolver"].resolve(
+                str(fixture["target"]["action_ref"]),
+                context=fixture["resolve_context"],
+                expected_kind="object",
+            )
+        except module.ActionRefError as exc:
+            code = exc.code
+        satisfied = code == "action_ref_expired"
+        return ProbeResult(
+            "P4L-R06",
+            satisfied,
+            "contract_present" if satisfied else "actionref_expiry_fence_absent",
+            "ActionRef expiry is bounded by the persisted source snapshot expiry",
+            {"rejection_code": code},
+        )
 
 
 def probe_r07() -> ProbeResult:
-    return _missing_actionref_result(
-        "P4L-R07",
-        "actionref_browser_incarnation_fence_absent",
-        "no production ActionRef record binds Browser runtime generation/nonce",
-    )
+    if _action_ref_module() is None:
+        return _missing_actionref_result(
+            "P4L-R07",
+            "actionref_browser_incarnation_fence_absent",
+            "no production ActionRef record binds Browser runtime generation/nonce",
+        )
+    with _action_ref_fixture() as fixture:
+        module = fixture["module"]
+        new_store = BrowserPerceptionStore(
+            fixture["root"] / "browser",
+            retention_seconds=60,
+            now_fn=lambda: fixture["clock"][0],
+        )
+        resolver = module.ActionRefResolver(
+            binding_store=fixture["binding_store"], perception_store=new_store
+        )
+        code = ""
+        try:
+            resolver.resolve(
+                str(fixture["target"]["action_ref"]),
+                context=fixture["resolve_context"],
+                expected_kind="object",
+            )
+        except module.ActionRefError as exc:
+            code = exc.code
+        satisfied = code == "action_ref_browser_runtime_mismatch"
+        return ProbeResult(
+            "P4L-R07",
+            satisfied,
+            "contract_present" if satisfied else "actionref_browser_incarnation_fence_absent",
+            "Browser runtime generation/nonce change rejects old ActionRef",
+            {"rejection_code": code},
+        )
 
 
 def probe_r08() -> ProbeResult:
-    return _missing_actionref_result(
-        "P4L-R08",
-        "actionref_kind_fence_absent",
-        "existing GroundingRef compiler validates projection kind, but ActionRef target_kind does not exist in production",
-    )
+    if _action_ref_module() is None:
+        return _missing_actionref_result(
+            "P4L-R08",
+            "actionref_kind_fence_absent",
+            "existing GroundingRef compiler validates projection kind, but ActionRef target_kind does not exist in production",
+        )
+    with _action_ref_fixture() as fixture:
+        module = fixture["module"]
+        code = ""
+        try:
+            fixture["resolver"].resolve(
+                str(fixture["target"]["action_ref"]),
+                context=fixture["resolve_context"],
+                expected_kind="resource",
+            )
+        except module.ActionRefError as exc:
+            code = exc.code
+        satisfied = code == "action_ref_kind_mismatch"
+        return ProbeResult(
+            "P4L-R08",
+            satisfied,
+            "contract_present" if satisfied else "actionref_kind_fence_absent",
+            "typed expected-kind mismatch rejects exact ActionRef",
+            {"rejection_code": code},
+        )
 
 
 def probe_r09() -> ProbeResult:
-    return _missing_actionref_result(
-        "P4L-R09",
-        "actionref_integrity_fence_absent",
-        "qualification-only FCR bindings have integrity, but production has no ActionRef binding integrity record",
-    )
+    if _action_ref_module() is None:
+        return _missing_actionref_result(
+            "P4L-R09",
+            "actionref_integrity_fence_absent",
+            "qualification-only FCR bindings have integrity, but production has no ActionRef binding integrity record",
+        )
+    with _action_ref_fixture() as fixture:
+        module = fixture["module"]
+        action_ref = str(fixture["target"]["action_ref"])
+        record_path = fixture["binding_store"].record_path(action_ref)
+        raw = json.loads(record_path.read_text(encoding="utf-8"))
+        raw["grounding_ref"] = "grounding://browser/v0.1/tampered"
+        record_path.write_text(
+            json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        code = ""
+        try:
+            fixture["resolver"].resolve(
+                action_ref,
+                context=fixture["resolve_context"],
+                expected_kind="object",
+            )
+        except module.ActionRefError as exc:
+            code = exc.code
+        satisfied = code == "action_ref_integrity_error"
+        return ProbeResult(
+            "P4L-R09",
+            satisfied,
+            "contract_present" if satisfied else "actionref_integrity_fence_absent",
+            "tampering any signed binding field invalidates the ActionRef",
+            {"rejection_code": code},
+        )
 
 
 def probe_r10() -> ProbeResult:
     unbound_allowed = _unbound_effect_authority_fact()
-    mentions = _production_actionref_mentions()
-    satisfied = bool(mentions) and not unbound_allowed
+    factory_source = (ROOT / "src/llm_loop/factory.py").read_text(encoding="utf-8")
+    typed_actionref_tools_wired = all(
+        f'"{name}"' in factory_source
+        for name in (
+            "browser_semantic_click",
+            "browser_semantic_fill",
+            "browser_semantic_select",
+            "browser_semantic_scroll",
+            "browser_semantic_navigate",
+        )
+    )
+    satisfied = typed_actionref_tools_wired and not unbound_allowed
     return ProbeResult(
         "P4L-R10",
         satisfied,
@@ -363,18 +708,26 @@ def probe_r10() -> ProbeResult:
         "legacy direct mutation remains allowed without ToolExecutionJournal binding and no ActionRef-specific rejection exists",
         {
             "unbound_current_effect_mutation_authority": unbound_allowed,
-            "production_actionref_source_mentions": list(mentions),
+            "typed_actionref_tools_wired": typed_actionref_tools_wired,
         },
     )
 
 
 def probe_r11() -> ProbeResult:
     journal_source = inspect.getsource(ToolExecutionJournal)
-    return _missing_actionref_result(
+    factory_source = (ROOT / "src/llm_loop/factory.py").read_text(encoding="utf-8")
+    actionref_mutation_wired = "browser_semantic_click" in factory_source
+    generic_revocation = "_revoked" in journal_source and "effect_mutation_authority" in journal_source
+    satisfied = actionref_mutation_wired and generic_revocation
+    return ProbeResult(
         "P4L-R11",
-        "actionref_revocation_wiring_absent",
+        satisfied,
+        "contract_present" if satisfied else "actionref_revocation_wiring_absent",
         "generic effect binding revocation exists, but there is no ActionRef mutation tool wired through it",
-        generic_revocation_primitive_present=("_revoked" in journal_source and "effect_mutation_authority" in journal_source),
+        {
+            "generic_revocation_primitive_present": generic_revocation,
+            "actionref_mutation_wired": actionref_mutation_wired,
+        },
     )
 
 
@@ -408,11 +761,19 @@ def probe_r13() -> ProbeResult:
 
 def probe_r14() -> ProbeResult:
     facts = _inner_id_prerequisite_facts()
-    return _missing_actionref_result(
+    factory_source = (ROOT / "src/llm_loop/factory.py").read_text(encoding="utf-8")
+    bridge_wired = "browser_semantic_click" in factory_source
+    satisfied = bool(
+        bridge_wired
+        and facts["groundingref_inner_action_id_deterministic"]
+        and facts["duplicate_reservation_rejected"]
+    )
+    return ProbeResult(
         "P4L-R14",
-        "actionref_inner_action_id_bridge_absent",
-        "existing GroundingRef action_id and reservation are deterministic/at-most-once, but no ActionRef resolver delegates into that identity basis",
-        **facts,
+        satisfied,
+        "contract_present" if satisfied else "actionref_inner_action_id_bridge_absent",
+        "existing GroundingRef action_id and reservation are deterministic/at-most-once, but no ActionRef mutation path delegates into that identity basis",
+        {**facts, "actionref_compiler_bridge_wired": bridge_wired},
     )
 
 
@@ -471,26 +832,34 @@ def probe_r19() -> ProbeResult:
         and facts["automatic_refresh_performed"] is False
         and facts["silent_rebind_performed"] is False
     )
-    mentions = _production_actionref_mentions()
-    satisfied = guard_ok and bool(mentions)
+    factory_source = (ROOT / "src/llm_loop/factory.py").read_text(encoding="utf-8")
+    mutation_bridge_wired = "browser_semantic_click" in factory_source
+    satisfied = guard_ok and mutation_bridge_wired
     return ProbeResult(
         "P4L-R19",
         satisfied,
         "contract_present" if satisfied else "actionref_version_guard_delegation_absent",
         "existing GroundingRef stale guard is fail-closed, but no ActionRef path delegates into it",
-        {"existing_version_guard_ok": guard_ok, "production_actionref_source_mentions": list(mentions), **facts},
+        {"existing_version_guard_ok": guard_ok, "actionref_mutation_bridge_wired": mutation_bridge_wired, **facts},
     )
 
 
 def probe_r20() -> ProbeResult:
     facts = _feature_flag_facts()
-    satisfied = bool(facts["actionref_feature_flag_exists"])
+    default_projection = _perception_projection_facts()
+    config_source = (ROOT / "src/llm_loop/config.py").read_text(encoding="utf-8")
+    default_off = "browser_action_ref_enabled: bool = False" in config_source
+    untouched = (
+        not default_projection["resource_action_ref_present"]
+        and default_projection["object_action_ref_count"] == 0
+    )
+    satisfied = bool(facts["actionref_feature_flag_exists"] and default_off and untouched)
     return ProbeResult(
         "P4L-R20",
         satisfied,
         "contract_present" if satisfied else "actionref_disabled_compatibility_gate_absent",
         "existing GroundingRef Browser path exists, but there is no ActionRef feature flag/wiring whose disabled mode can prove compatibility",
-        facts,
+        {**facts, "feature_default_off": default_off, "default_projection_unchanged": untouched},
     )
 
 

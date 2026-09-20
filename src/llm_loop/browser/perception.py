@@ -35,6 +35,7 @@ from typing import Any
 from urllib.parse import urlparse
 from weakref import WeakValueDictionary
 
+from llm_loop.browser.action_ref import ActionRefIssueContext, ActionRefIssuer
 from llm_loop.browser.predicate import evaluate_predicate as evaluate_browser_predicate
 
 _SENSOR_CONTRACT = {
@@ -761,11 +762,15 @@ class BrowserPerceptionAdapter:
         store: BrowserPerceptionStore,
         capture_node_cap: int = 20_000,
         max_session_states: int = 128,
+        action_ref_issuer: ActionRefIssuer | None = None,
+        action_ref_context_getter: Callable[[], ActionRefIssueContext] | None = None,
     ) -> None:
         if capture_node_cap < 1:
             raise ValueError("capture_node_cap must be >= 1")
         self.store = store
         self.capture_node_cap = int(capture_node_cap)
+        self._action_ref_issuer = action_ref_issuer
+        self._action_ref_context_getter = action_ref_context_getter
         self._max_session_states = max(1, int(max_session_states))
         self._sessions: OrderedDict[str, _SessionState] = OrderedDict()
         self._session_state_guard = threading.RLock()
@@ -1614,7 +1619,7 @@ class BrowserPerceptionAdapter:
         }
         self.store.persist(session_id, bundle)
         self.store.persist_session_state(session_id, state.to_wire())
-        return {
+        projection = {
             "action": "snapshot",
             "snapshot": snapshot,
             "scope_facts": scope_facts,
@@ -1627,6 +1632,15 @@ class BrowserPerceptionAdapter:
                 "complete": len(objects_sorted) <= projection_limit,
             },
         }
+        if self._action_ref_issuer is not None:
+            if self._action_ref_context_getter is None:
+                raise RuntimeError("ActionRef issuer configured without context getter")
+            projection = self._action_ref_issuer.annotate_projection(
+                session_id=session_id,
+                projection=projection,
+                context=self._action_ref_context_getter(),
+            )
+        return projection
 
     @staticmethod
     def _diff_scope_relation(

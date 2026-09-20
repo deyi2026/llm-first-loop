@@ -20,6 +20,11 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.browser.action import BrowserActionAdapter, BrowserActionReceiptStore
+from llm_loop.browser.action_ref import (
+    ActionRefBindingStore,
+    ActionRefIssueContext,
+    ActionRefIssuer,
+)
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
@@ -30,9 +35,11 @@ from llm_loop.core.message import ToolResult
 from llm_loop.core.run_context import (
     current_model_label as current_model_label_ctx,
 )
+from llm_loop.core.run_context import current_run_generation as current_run_generation_ctx
 from llm_loop.core.run_context import (
     current_session_id as current_session_id_ctx,
 )
+from llm_loop.core.run_context import current_workspace_root as current_workspace_root_ctx
 from llm_loop.core.run_context import (
     workspace_base as runtime_workspace_base,
 )
@@ -880,8 +887,28 @@ def build_engine(settings: Settings) -> LoopEngine:
             settings.browser_perception_cdp_url,
             target_id=settings.browser_perception_target_id,
         )
+        _browser_store = BrowserPerceptionStore(Path(settings.data_dir) / "browser_perception")
+        _action_ref_issuer: ActionRefIssuer | None = None
+        if settings.browser_action_ref_enabled:
+            _action_ref_issuer = ActionRefIssuer(
+                binding_store=ActionRefBindingStore(
+                    Path(settings.data_dir) / "browser_action_ref"
+                ),
+                perception_store=_browser_store,
+            )
+        _action_ref_context_getter: Callable[[], ActionRefIssueContext] | None = None
+        if _action_ref_issuer is not None:
+            def _current_action_ref_issue_context() -> ActionRefIssueContext:
+                return ActionRefIssueContext(
+                    workspace_scope=current_workspace_root_ctx.get(),
+                    origin_run_generation=current_run_generation_ctx.get(),
+                )
+
+            _action_ref_context_getter = _current_action_ref_issue_context
         _browser_adapter = BrowserPerceptionAdapter(
-            store=BrowserPerceptionStore(Path(settings.data_dir) / "browser_perception")
+            store=_browser_store,
+            action_ref_issuer=_action_ref_issuer,
+            action_ref_context_getter=_action_ref_context_getter,
         )
         _register_basic(
             "browser_perceive",

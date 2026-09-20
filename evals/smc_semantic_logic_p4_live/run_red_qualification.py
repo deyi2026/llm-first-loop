@@ -1,8 +1,8 @@
-"""Classify and optionally execute the frozen P4-LIVE RED suite.
+"""Classify the frozen P4-LIVE matrix at the GREEN-1 stop boundary.
 
-Exit 0 means all 20 probes matched their expected production-missing taxonomy and,
-when --pytest is requested, pytest produced exactly 20 RED failures.  A harness error,
-unexpected GREEN, taxonomy drift, or a different pytest failure shape exits non-zero.
+Exit 0 means R01-R09/R20 are GREEN, R10-R19 remain RED for their exact frozen
+taxonomy, and the pytest matrix is fully green. Any extra GREEN, missing GREEN,
+harness error, or taxonomy drift exits non-zero.
 """
 
 from __future__ import annotations
@@ -15,10 +15,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from evals.smc_semantic_logic_p4_live.red_contracts import (
+ROOT = Path(__file__).resolve().parents[2]
+SRC_ROOT = ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from evals.smc_semantic_logic_p4_live.red_contracts import (  # noqa: E402
     EXPECTED_PATH,
+    PHASE1_GREEN_IDS,
     RED_IDS,
-    ROOT,
     load_expected_failures,
     run_probe,
 )
@@ -34,9 +39,18 @@ def classify() -> tuple[bool, list[dict[str, Any]]]:
     for row_id in RED_IDS:
         result = run_probe(row_id)
         expected_code = expected[row_id]["code"]
-        taxonomy_match = result.failure_code == expected_code
+        expected_green = row_id in PHASE1_GREEN_IDS
+        taxonomy_match = (
+            result.failure_code == "contract_present"
+            if expected_green
+            else result.failure_code == expected_code
+        )
         remains_red = not result.contract_satisfied
-        row_ok = taxonomy_match and remains_red and result.failure_code != "harness_error"
+        row_ok = (
+            taxonomy_match
+            and result.failure_code != "harness_error"
+            and (result.contract_satisfied if expected_green else remains_red)
+        )
         ok = ok and row_ok
         rows.append(
             {
@@ -45,6 +59,7 @@ def classify() -> tuple[bool, list[dict[str, Any]]]:
                 "observed_code": result.failure_code,
                 "taxonomy_match": taxonomy_match,
                 "contract_satisfied": result.contract_satisfied,
+                "expected_green": expected_green,
                 "expected_red": remains_red,
                 "row_ok": row_ok,
                 "detail": result.detail,
@@ -71,12 +86,11 @@ def run_pytest() -> dict[str, Any]:
         r"test_p4_live_actionref_contract_red\[(P4L-R\d{2})\]$",
         sanitized_output,
     )
-    exact_rows = tuple(failed_rows) == RED_IDS
     return {
         "command": f"python -m pytest {target} -q --tb=short",
         "exit_code": proc.returncode,
         "failed_rows": failed_rows,
-        "exact_20_failed": exact_rows,
+        "all_20_passed": proc.returncode == 0 and not failed_rows,
         "output_tail": "\n".join(sanitized_output.splitlines()[-60:]),
     }
 
@@ -92,23 +106,29 @@ def main() -> int:
     pytest_ok = (
         True
         if pytest_evidence is None
-        else pytest_evidence["exit_code"] == 1 and pytest_evidence["exact_20_failed"]
+        else pytest_evidence["all_20_passed"]
     )
     ok = classified and pytest_ok and len(rows) == 20
     evidence = {
-        "schema": "smc.semantic_logic_p4_live_red_evidence.v0.1",
+        "schema": "smc.semantic_logic_p4_live_green1_evidence.v0.1",
         "protocol_git_sha": PROTOCOL_SHA,
         "parent_fcr_qualified_sha": PARENT_FCR_SHA,
         "expected_failures_file": str(EXPECTED_PATH.relative_to(ROOT)),
-        "production_src_modified": False,
+        "phase1_green_rows": list(PHASE1_GREEN_IDS),
+        "phase1_red_rows": [row_id for row_id in RED_IDS if row_id not in PHASE1_GREEN_IDS],
         "real_browser_actions_executed": 0,
         "model_requests_sent": 0,
         "row_count": len(rows),
         "all_taxonomies_match": all(row["taxonomy_match"] for row in rows),
-        "all_rows_remain_red": all(row["expected_red"] for row in rows),
+        "all_phase1_green": all(
+            row["contract_satisfied"] for row in rows if row["expected_green"]
+        ),
+        "all_remaining_rows_red": all(
+            row["expected_red"] for row in rows if not row["expected_green"]
+        ),
         "harness_errors": [row["id"] for row in rows if row["observed_code"] == "harness_error"],
         "pytest": pytest_evidence,
-        "qualified_red_freeze": ok,
+        "qualified_green1_stop": ok,
         "rows": rows,
     }
     rendered = json.dumps(evidence, ensure_ascii=False, sort_keys=True, indent=2) + "\n"

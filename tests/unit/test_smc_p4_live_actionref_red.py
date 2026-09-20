@@ -1,10 +1,9 @@
-"""Frozen P4-LIVE ActionRef RED-only qualification tests.
+"""P4-LIVE ActionRef staged qualification over the frozen RED matrix.
 
-These tests are intentionally RED on protocol base e946eab26032.  The first
-assertion in each case guarantees that the failure is the frozen production-gap
-taxonomy rather than an import/setup/harness failure.  The second assertion is the
-actual RED contract and must fail until a later, separately authorized production
-GREEN phase implements that specific capability.
+GREEN Phase 1 is deliberately narrow: R01-R09/R20 must be satisfied by a
+non-dispatching production core, while R10-R19 must remain RED for the exact frozen
+production-gap taxonomy.  This makes accidental execution-bridge/provider-surface
+scope creep visible immediately.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from evals.smc_semantic_logic_p4_live.red_contracts import (
+    PHASE1_GREEN_IDS,
     RED_IDS,
     load_expected_failures,
     run_probe,
@@ -25,11 +25,21 @@ def test_p4_live_actionref_contract_red(row_id: str) -> None:
     probe = run_probe(row_id)
     expected = EXPECTED[row_id]
 
+    if row_id in PHASE1_GREEN_IDS:
+        assert probe.failure_code == "contract_present", (
+            f"{row_id} Phase-1 GREEN missing: observed={probe.failure_code}; "
+            f"detail={probe.detail}; facts={probe.facts}"
+        )
+        assert probe.contract_satisfied, (
+            f"{row_id}|{probe.failure_code}|EXPECTED_PHASE1_GREEN|"
+            f"{probe.detail}|facts={probe.facts}"
+        )
+        return
+
     assert probe.failure_code == expected["code"], (
         f"{row_id} RED taxonomy mismatch: expected={expected['code']} "
         f"observed={probe.failure_code}; detail={probe.detail}; facts={probe.facts}"
     )
-    assert probe.contract_satisfied, (
-        f"{row_id}|{probe.failure_code}|EXPECTED_PRODUCTION_CAPABILITY_MISSING|"
-        f"{probe.detail}|facts={probe.facts}"
+    assert not probe.contract_satisfied, (
+        f"{row_id}|UNEXPECTED_GREEN_BEYOND_PHASE1|{probe.detail}|facts={probe.facts}"
     )
