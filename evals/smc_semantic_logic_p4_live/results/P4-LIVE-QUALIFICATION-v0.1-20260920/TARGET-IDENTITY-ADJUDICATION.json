@@ -1,0 +1,28 @@
+{
+  "schema": "smc.semantic_logic_p4_live_target_identity_adjudication.v0.1",
+  "status": "PRODUCTION_BUG_CONFIRMED",
+  "classification": "R12 target identity representation mismatch",
+  "causal_chain": [
+    "CdpReadOnlyBrowserHost real capture obtains the raw CDP target id",
+    "Browser capture represents page identity as page_token = target:<raw_target_id>",
+    "ActionRefIssuer hashes that page_token into binding.browser_target_id_sha256",
+    "CdpBrowserMutationActuator.bind_observed_target resolves the raw target id from /json/list and hashes the raw id without the target: prefix",
+    "The two SHA-256 values cannot match, so a correctly observed real ActionRef is rejected before dispatch with browser_target_precondition_mismatch"
+  ],
+  "mechanical_zero_mutation_proof": {
+    "capture_page_token_expected_form": true,
+    "binding_matches_capture_page_token_hash": true,
+    "binding_matches_actuator_raw_target_hash": false,
+    "hashes_equal": false,
+    "model_requests": 0,
+    "browser_mutations": 0
+  },
+  "code_evidence": {
+    "issuer_source": "src/llm_loop/browser/action_ref.py::_issue",
+    "capture_source": "src/llm_loop/browser/perception.py real Browser capture page_token construction",
+    "actuator_source": "src/llm_loop/browser/cdp_action_host.py::CdpBrowserMutationActuator.bind_observed_target"
+  },
+  "why_deterministic_fake_green_missed_it": "The deterministic S2/S4 fake actuator compares a test target id hash against the supplied hash but does not reproduce the real capture representation target:<raw_target_id> versus actuator raw-target-id boundary.",
+  "qualification_ruling": "The current LIVE qualification remains NOT_QUALIFIED. L02 is not retried and later LIVE rows are not executed in this run.",
+  "production_fix_in_this_goal": false
+}

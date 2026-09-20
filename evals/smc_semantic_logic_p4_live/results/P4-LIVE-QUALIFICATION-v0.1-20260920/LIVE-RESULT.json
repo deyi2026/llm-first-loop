@@ -1,0 +1,75 @@
+{
+  "artifact_sha256": {
+    "docs/SMC-SEMANTIC-LOGIC-P4-LIVE-QUALIFICATION-RESULT-v0.1-20260920.md": "fe97ffaa322429d83ed17c30b9d15876d33378462b925d499c507855239effc7",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-QUALIFICATION-v0.1-20260920/TARGET-IDENTITY-ADJUDICATION.json": "799bcec754a84471eb7a5bfec831f76172d8a863ee823e919c269401b93890d6",
+    "evals/smc_semantic_logic_p4_live/target_identity_adjudication.py": "d396332f4e0377414b49dbcfe3d5c5f1246d670b159b2585da03a842fcdd0939",
+    "tests/unit/test_smc_p4_live_target_identity_adjudication.py": "f58e1bb80409299b467d5161b83714adb3a947a831ce83b914f8964dc75974f9"
+  },
+  "base_s5_sha": "afba3e2e3c52b2b3de141c2bfa14cc223ef720bd",
+  "date": "2026-09-20",
+  "deploy_restart_merge_performed": false,
+  "live_rows": [
+    {
+      "browser_effect_count": 0,
+      "browser_receipt_statuses": [],
+      "completion_tokens": 92,
+      "execution_binding_prepared": true,
+      "failure_reason_code": "browser_target_precondition_mismatch",
+      "inner_action_id": "sact-702739567c8182809b275d5e",
+      "model_declaration_exact": true,
+      "model_requests": 1,
+      "model_tool": "browser_semantic_click",
+      "note": "Frozen first real P4-LIVE row. No retry or reclassification is permitted by the frozen protocol.",
+      "physical_dispatches": 0,
+      "prompt_tokens": 985,
+      "retry_performed": false,
+      "row": "L02_click_success",
+      "status": "FAIL"
+    }
+  ],
+  "production_code_modified": false,
+  "rows_not_executed_after_first_live_failure": [
+    "L01_navigate_success",
+    "L03_fill_success",
+    "L04_select_success",
+    "L05_scroll_success",
+    "L06_cross_session_zero_dispatch",
+    "L07_cross_workspace_zero_dispatch",
+    "L08_prior_run_zero_dispatch",
+    "L09_expired_zero_dispatch",
+    "L10_browser_runtime_restart_zero_dispatch",
+    "L11_wrong_kind_zero_dispatch",
+    "L12_integrity_corruption_zero_dispatch",
+    "L13_stale_document_zero_dispatch",
+    "L14_target_replacement_zero_dispatch",
+    "L15_missing_or_revoked_effect_binding_zero_dispatch",
+    "L16_duplicate_exact_declaration_at_most_once",
+    "L17_crash_after_execution_prepare_no_replay",
+    "L18_running_receipt_dispatch_ambiguity_no_replay",
+    "L19_terminal_browser_receipt_outer_finished_missing_recover_exactly",
+    "L20_transport_ambiguity_no_replay"
+  ],
+  "schema": "smc.semantic_logic_p4_live_qualification_result.v0.1",
+  "status": "NOT_QUALIFIED",
+  "validation": {
+    "current_descendant_tests": "158 PASS",
+    "diff_check": "PASS",
+    "git_security_scan": "PASS",
+    "production_src_diff_empty": true,
+    "pyright": "0 errors / 0 warnings",
+    "ruff": "PASS",
+    "s5_official_qualifier_replay": {
+      "inherited_all_green": true,
+      "qualified_s5_pre_live_stop": true,
+      "r01_r20_all_green": true
+    }
+  },
+  "zero_action_preflight": {
+    "browser_mutations": 0,
+    "exact_canary_scope_count": 12,
+    "legacy_browser_mutation_provider_visible": false,
+    "model_requests": 0,
+    "required_action_flags": true,
+    "status": "PASS"
+  }
+}
