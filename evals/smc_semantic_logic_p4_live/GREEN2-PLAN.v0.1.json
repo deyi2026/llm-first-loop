@@ -1,0 +1,214 @@
+{
+  "schema": "smc.semantic_logic_p4_live_green2_plan.v0.1",
+  "base_green1_sha": "62529729c5888ae863a1fe1715e2590a9519d182",
+  "red_freeze_sha": "6730aae362a1f3c1a44088517e7da882820f368b",
+  "protocol_sha": "e946eab26032aa4faa6698a3244ebd30c836cce1",
+  "scope": {
+    "rows": ["P4L-R10", "P4L-R11", "P4L-R12", "P4L-R13", "P4L-R14", "P4L-R15", "P4L-R16", "P4L-R17", "P4L-R18", "P4L-R19"],
+    "production_edits_in_this_plan": false,
+    "browser_actions": 0,
+    "model_requests": 0,
+    "deployment_actions": 0
+  },
+  "reused_authorities": [
+    {
+      "name": "tool_execution_effect_binding",
+      "owner": "ToolExecutionJournal",
+      "facts": [
+        "runtime model tool calls already receive execution_id/tool_call_id/session/workspace/origin_run_generation in _EffectBinding",
+        "ToolRegistry copies the exact binding into the worker context",
+        "timeout revokes the shared binding before TIMEOUT becomes externally visible",
+        "legacy callers without a binding intentionally retain current_effect_mutation_authority=true"
+      ]
+    },
+    {
+      "name": "browser_action_receipt_authority",
+      "owner": "BrowserActionReceiptStore + BrowserActionAdapter",
+      "facts": [
+        "action_id reservation is create-only and prevents duplicate physical dispatch",
+        "dispatch grounding is persisted before the running receipt",
+        "running receipt is durable before current_effect_mutation_authority opens the physical commit window",
+        "terminal receipt is append-only after the single dispatch attempt"
+      ]
+    },
+    {
+      "name": "semantic_compile_and_version_guard",
+      "owner": "BrowserSemanticExecuteTool + BrowserActionAdapter + BrowserPerceptionAdapter",
+      "facts": [
+        "inner action_id is deterministic over exact GroundingRef + verb + normalized args",
+        "compiler never recaptures or searches for a replacement target",
+        "BrowserActionAdapter performs a fresh pre-dispatch observation and existing version precondition",
+        "stable physical identity is required before dispatch"
+      ]
+    },
+    {
+      "name": "outer_wal_no_replay",
+      "owner": "ToolExecutionJournal.recover",
+      "facts": [
+        "declared-not-started recovers as executed=false",
+        "started-without-finished recovers as started_outcome_unknown",
+        "recovery sets auto_reexecuted=false",
+        "current recovery cannot correlate Browser action_id/receipts"
+      ]
+    }
+  ],
+  "confirmed_gaps": [
+    {
+      "id": "P0-target-first-bind",
+      "rows": ["P4L-R12"],
+      "code": "browser_target_independent_first_bind_gap",
+      "fact": "CdpReadOnlyBrowserHost and CdpBrowserMutationActuator may independently first-bind different sole-page targets when target_id is empty."
+    },
+    {
+      "id": "P0-execution-bridge",
+      "rows": ["P4L-R15", "P4L-R16", "P4L-R17", "P4L-R18"],
+      "code": "predispatch_execution_bridge_absent",
+      "fact": "Outer execution identity and Browser action receipt identity are not durably joined before Browser dispatch."
+    },
+    {
+      "id": "P0-provider-surface",
+      "rows": ["P4L-R13"],
+      "code": "main_provider_legacy_browser_surface_gap",
+      "fact": "main LoopEngine provider projection starts from the full registry while get_tool_schema/subagent paths honor current_tool_discovery_scope."
+    }
+  ],
+  "slices": [
+    {
+      "id": "G2-S1",
+      "name": "strict execution binding + durable Browser execution-join foundation",
+      "dispatch_capability": "none",
+      "provider_visibility": "unchanged",
+      "target_rows": ["P4L-R10", "P4L-R11", "P4L-R15", "P4L-R16"],
+      "intent": "Add the prerequisites that make an ActionRef mutation illegal without a live exact ToolExecutionJournal binding and make the outer/browser identity join durable before any future dispatch path exists.",
+      "authority_rules": [
+        "Do not change current_effect_mutation_authority legacy-unbound semantics.",
+        "Add a strict ActionRef-only binding accessor that rejects missing/revoked bindings.",
+        "Execution identity comes only from the current _EffectBinding, never model/tool arguments.",
+        "Persist execution_id/tool_call_id/session/workspace/run-generation + ActionRef/binding digest/GroundingRef/action_id/expected-version/browser-target hash in one immutable execution-binding record.",
+        "Prepared binding without a Browser running receipt is a durable no-dispatch recovery state."
+      ],
+      "write_order": [
+        "outer tool.execution.declared durable",
+        "outer tool.execution.started durable",
+        "worker exact effect binding active",
+        "ActionRef exact resolution and existing semantic compile",
+        "ActionRef execution-binding PREPARED durable",
+        "STOP: no BrowserActionAdapter.execute in this slice"
+      ],
+      "tests": [
+        "unbound/direct ActionRef mutation authority helper rejects while legacy current_effect_mutation_authority remains unchanged",
+        "revoked binding rejects",
+        "prepared record round-trips exact execution_id/tool_call_id/ActionRef/GroundingRef/action_id facts",
+        "prepare write failure prevents transition to any dispatch-capable continuation",
+        "recovery of PREPARED with no running receipt is no-dispatch and auto_reexecuted=false"
+      ],
+      "expected_matrix_after_slice": "Do not claim end-to-end R10/R15 GREEN until a typed ActionRef path actually consumes the strict gate/bridge; subcomponent tests GREEN, frozen row taxonomy may remain RED."
+    },
+    {
+      "id": "G2-S2",
+      "name": "exact Browser target precondition + hidden GroundingRef compiler bridge",
+      "dispatch_capability": "not provider-exposed; deterministic fake-actuator qualification only",
+      "provider_visibility": "unchanged",
+      "target_rows": ["P4L-R12", "P4L-R14", "P4L-R19"],
+      "intent": "Carry the perception-bound Browser target identity and hidden exact GroundingRef into existing compiler/guard machinery without search, rebind, or a new semantic decision layer.",
+      "authority_rules": [
+        "ActionRef resolver remains the only ActionRef->GroundingRef authority.",
+        "Existing BrowserSemanticExecuteTool.compile_request remains the inner semantic action/action_id authority.",
+        "ActionRef path supplies the resolved GroundingRef; it does not recapture/search/select.",
+        "Actuator must verify the ActionRef-observed Browser target hash before first bind/physical commit.",
+        "Legacy GroundingRef path keeps its existing optional target behavior.",
+        "Initial live canary later requires explicit non-empty browser_perception_target_id."
+      ],
+      "tests": [
+        "observation target A + unbound actuator seeing only target B rejects before dispatch",
+        "exact target A passes target precondition with fake actuator",
+        "same ActionRef->same GroundingRef + same verb/args produces same existing inner action_id",
+        "duplicate action_id reservation dispatch count <=1 with fake actuator",
+        "stale document/page/unstable physical target delegates to existing fail-closed guard; no refresh/rebind"
+      ]
+    },
+    {
+      "id": "G2-S3",
+      "name": "Browser receipt <-> outer WAL crash correlator",
+      "dispatch_capability": "none added; recovery-only",
+      "provider_visibility": "unchanged",
+      "target_rows": ["P4L-R16", "P4L-R17", "P4L-R18"],
+      "intent": "Teach outer recovery to classify the exact Browser execution binding/receipt state without ever replaying the Browser action.",
+      "authority_rules": [
+        "Recovery starts from outer execution_id, loads its immutable Browser execution binding, then only the exact bound action_id receipt history.",
+        "No receipt lookup by semantic target/name/URL and no latest/successor matching.",
+        "PREPARED + no running receipt => executed=false/no dispatch.",
+        "running + no terminal => outcome unknown/no replay.",
+        "terminal receipt + no outer finished => reconstruct exact tool result/provenance from that receipt and settle WAL without dispatch."
+      ],
+      "tests": [
+        "fault injection immediately after PREPARED fsync",
+        "fault injection immediately after running receipt fsync",
+        "fault injection immediately after terminal Browser receipt fsync before outer finished",
+        "all recovery rows assert physical dispatch counter remains unchanged during recover"
+      ]
+    },
+    {
+      "id": "G2-S4",
+      "name": "five typed ActionRef mutation facades behind default-OFF mutation gate",
+      "dispatch_capability": "first production code path capable of physical Browser dispatch when explicitly enabled",
+      "provider_visibility": "still hidden by default; no canary exposure yet",
+      "target_rows": ["P4L-R10", "P4L-R11", "P4L-R12", "P4L-R14", "P4L-R15", "P4L-R16", "P4L-R17", "P4L-R18", "P4L-R19"],
+      "intent": "Compose only previously qualified mechanical primitives into click/fill/select/scroll/navigate tools; no new semantic matching layer.",
+      "required_order_per_call": [
+        "require live non-revoked ToolExecutionJournal binding",
+        "exact ActionRef resolve using binding session/workspace/run generation",
+        "delegate hidden GroundingRef + verb + model-owned args to existing compiler",
+        "persist exact execution bridge PREPARED",
+        "verify ActionRef-observed Browser target precondition",
+        "existing fresh version/stable-identity guard",
+        "persist Browser dispatch grounding and running receipt",
+        "enter existing effect_mutation_authority critical section",
+        "exactly one actuator dispatch attempt",
+        "persist terminal Browser receipt",
+        "return exact receipt for normal outer WAL finish/commit"
+      ],
+      "feature_boundary": "Introduce a separate ActionRef-mutation exposure flag default false; do not overload GREEN-1 perception annotation flag and do not change legacy browser_action_enabled compatibility.",
+      "tests": [
+        "all five tools have closed schemas exposing only ActionRef and verb-specific semantic args",
+        "direct/unbound call zero-dispatch",
+        "timeout/revocation race zero post-timeout dispatch",
+        "same exact request physically dispatches at most once in fake actuator harness",
+        "all R10-R12/R14-R19 deterministic matrix rows GREEN before any live Browser authorization"
+      ]
+    },
+    {
+      "id": "G2-S5",
+      "name": "main provider/discovery/execution canary surface isolation",
+      "dispatch_capability": "no new actuator semantics; controls model-visible/callable surface",
+      "provider_visibility": "P4-LIVE canary only",
+      "target_rows": ["P4L-R13"],
+      "intent": "Make current_tool_discovery_scope a real main-loop execution-domain boundary without changing legacy behavior when scope=None.",
+      "authority_rules": [
+        "main LoopEngine provider projection filters schemas by explicit current_tool_discovery_scope before provider call",
+        "get_tool_schema continues to honor the same scope",
+        "actual ToolRegistry execution also rejects a tool outside an explicit scope so hidden legacy tools cannot be called by hallucinated/unadvertised tool calls",
+        "scope=None preserves the full legacy registry",
+        "P4-LIVE canary scope removes browser_action/browser_semantic_execute/browser_semantic_operation and admits the five typed ActionRef mutation tools; unrelated non-Browser tools are not globally removed",
+        "live canary preflight later requires explicit non-empty Browser target id"
+      ],
+      "tests": [
+        "main provider schemas omit all three legacy Browser mutation tools under canary scope",
+        "get_tool_schema list/exact lookup cannot reveal those tools under canary scope",
+        "explicit execution of an out-of-scope legacy tool is rejected before tool.execute",
+        "scope=None compatibility keeps legacy provider/discovery/execution behavior",
+        "five ActionRef tools are the only Browser mutation tools visible/callable in canary scope"
+      ]
+    }
+  ],
+  "first_physical_dispatch_boundary": {
+    "slice": "G2-S4",
+    "rule": "No live or real Browser dispatch is allowed when implementing G2-S1 through G2-S3. G2-S4 may introduce dispatch-capable code but remains default-OFF and deterministic/fake-actuator-only until G2-S5 and all R10-R19 qualification pass."
+  },
+  "recommended_first_implementation_slice": "G2-S1",
+  "rollback": {
+    "green1_core": "leave GREEN-1 ActionRef issuer/resolver/default-OFF perception behavior unchanged",
+    "green2": "each slice must be independently revertible; mutation exposure remains default OFF until all deterministic R10-R19 gates pass",
+    "legacy": "legacy GroundingRef/browser_action/browser_semantic_execute/browser_semantic_operation behavior remains unchanged outside an explicit canary scope"
+  }
+}
