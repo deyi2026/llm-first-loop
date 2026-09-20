@@ -1,0 +1,9 @@
+{
+  "schema": "smc.semantic_logic_p4_live_green2_s4_expected_failures.v0.1",
+  "base_s3_sha": "b0b3e1da438e2e3c248390f4cbe7c666a23e10cd",
+  "rows": [
+    {"id":"G2S4-TYPED-TOOLS","code":"actionref_typed_mutation_tools_absent"},
+    {"id":"G2S4-MUTATION-GATE","code":"actionref_mutation_gate_absent"},
+    {"id":"G2S4-ORDERED-KERNEL","code":"actionref_ordered_mutation_kernel_absent"}
+  ]
+}

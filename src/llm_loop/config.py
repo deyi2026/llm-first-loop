@@ -364,6 +364,8 @@ class Settings:
     # P4-LIVE ActionRef projection is an independent, default-off capability.
     # Phase-1 only annotates read-only Browser perception; it registers no mutation tool.
     browser_action_ref_enabled: bool = False
+    # P4-LIVE typed ActionRef mutation is a separate default-off capability grant.
+    browser_action_ref_mutation_enabled: bool = False
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
     exec_mode: str = ""
@@ -821,6 +823,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ).strip(),
         browser_action_enabled=env_bool("LFL_BROWSER_ACTION_ENABLED", False),
         browser_action_ref_enabled=env_bool("LFL_BROWSER_ACTION_REF_ENABLED", False),
+        browser_action_ref_mutation_enabled=env_bool(
+            "LFL_BROWSER_ACTION_REF_MUTATION_ENABLED", False
+        ),
         exec_mode=env_one(_env_exec_mode, "EXEC_MODE"),
         exec_allowlist=env_values.get("EXEC_ALLOWLIST", "").strip(),
         run_mode=env_one(_env_run_mode, "RUN_MODE"),

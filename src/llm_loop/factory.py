@@ -24,7 +24,10 @@ from llm_loop.browser.action_ref import (
     ActionRefBindingStore,
     ActionRefIssueContext,
     ActionRefIssuer,
+    ActionRefResolver,
 )
+from llm_loop.browser.action_ref_execution import ActionRefExecutionBridgeStore
+from llm_loop.browser.action_ref_recovery import ActionRefCrashCorrelator
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
@@ -92,6 +95,11 @@ from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.builtin.agent_followup import AgentFollowupTool
 from llm_loop.tools.builtin.agent_message import AgentMessageTool
 from llm_loop.tools.builtin.browser_action import BrowserActionTool
+from llm_loop.tools.builtin.browser_action_ref_kernel import ActionRefSemanticCompileBridge
+from llm_loop.tools.builtin.browser_action_ref_mutation import (
+    ActionRefMutationKernel,
+    build_typed_action_ref_mutation_tools,
+)
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
 from llm_loop.tools.builtin.browser_semantic_operation import BrowserSemanticOperationTool
@@ -889,11 +897,13 @@ def build_engine(settings: Settings) -> LoopEngine:
         )
         _browser_store = BrowserPerceptionStore(Path(settings.data_dir) / "browser_perception")
         _action_ref_issuer: ActionRefIssuer | None = None
+        _action_ref_binding_store: ActionRefBindingStore | None = None
         if settings.browser_action_ref_enabled:
+            _action_ref_binding_store = ActionRefBindingStore(
+                Path(settings.data_dir) / "browser_action_ref"
+            )
             _action_ref_issuer = ActionRefIssuer(
-                binding_store=ActionRefBindingStore(
-                    Path(settings.data_dir) / "browser_action_ref"
-                ),
+                binding_store=_action_ref_binding_store,
                 perception_store=_browser_store,
             )
         _action_ref_context_getter: Callable[[], ActionRefIssueContext] | None = None
@@ -937,9 +947,12 @@ def build_engine(settings: Settings) -> LoopEngine:
                 settings.browser_perception_cdp_url,
                 target_id=settings.browser_perception_target_id,
             )
+            _browser_receipt_store = BrowserActionReceiptStore(
+                Path(settings.data_dir) / "browser_action"
+            )
             _browser_action_adapter = BrowserActionAdapter(
                 perception=_browser_adapter,
-                receipt_store=BrowserActionReceiptStore(Path(settings.data_dir) / "browser_action"),
+                receipt_store=_browser_receipt_store,
                 capture_backend=_browser_host,
                 actuator=_browser_actuator,
             )
@@ -965,6 +978,45 @@ def build_engine(settings: Settings) -> LoopEngine:
                     session_id_getter=lambda: current_session_id_ctx.get(),
                 ),
             )
+            if (
+                settings.browser_action_ref_mutation_enabled
+                and _action_ref_binding_store is not None
+            ):
+                _action_ref_execution_bridge = ActionRefExecutionBridgeStore(
+                    Path(settings.data_dir) / "audit" / "action_ref_execution"
+                )
+                _action_ref_mutation_kernel = ActionRefMutationKernel(
+                    resolver=ActionRefResolver(
+                        binding_store=_action_ref_binding_store,
+                        perception_store=_browser_store,
+                    ),
+                    compiler=ActionRefSemanticCompileBridge(
+                        compiler=_browser_semantic_execute
+                    ),
+                    execution_bridge=_action_ref_execution_bridge,
+                    crash_correlator=ActionRefCrashCorrelator(
+                        bridge_store=_action_ref_execution_bridge,
+                        receipt_store=_browser_receipt_store,
+                    ),
+                    action_adapter=_browser_action_adapter,
+                )
+                _typed_action_ref_tools = build_typed_action_ref_mutation_tools(
+                    _action_ref_mutation_kernel
+                )
+                for _expected_name, _typed_action_ref_tool in zip(
+                    (
+                        "browser_semantic_click",
+                        "browser_semantic_fill",
+                        "browser_semantic_select",
+                        "browser_semantic_scroll",
+                        "browser_semantic_navigate",
+                    ),
+                    _typed_action_ref_tools,
+                    strict=True,
+                ):
+                    if _typed_action_ref_tool.name != _expected_name:
+                        raise RuntimeError("typed ActionRef Browser tool order mismatch")
+                    _register_basic(_expected_name, _typed_action_ref_tool)
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
     _register_basic("inspect_code", InspectCodeTool())
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）

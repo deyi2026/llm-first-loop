@@ -1,0 +1,295 @@
+{
+  "base_s3_sha": "b0b3e1da438e2e3c248390f4cbe7c666a23e10cd",
+  "boundary": {
+    "deployment_actions": 0,
+    "factory_gate_present": true,
+    "first_dispatch_capable_code_added": true,
+    "forbidden_semantic_tokens": [],
+    "live_config_mutations": 0,
+    "model_requests_sent": 0,
+    "production_exposure_default_off": true,
+    "real_browser_actions_executed": 0,
+    "s5_scope_logic_added_in_mutation_module": false,
+    "separate_default_off_gate": true
+  },
+  "critical_imports": {
+    "all_under_exact_worktree_src": true,
+    "modules": [
+      {
+        "module": "llm_loop.config",
+        "path": "src/llm_loop/config.py",
+        "sha256": "c8ea84c53d756cf3ca0c0504eb3abcd35631322d431d79c2d40c7eec2918198f",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.factory",
+        "path": "src/llm_loop/factory.py",
+        "sha256": "e86bcb31c5c09d78c29ed59564b6afdc6d0fe412869fb0f5edfc5d04bf846d4f",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.tools.builtin.browser_action_ref_mutation",
+        "path": "src/llm_loop/tools/builtin/browser_action_ref_mutation.py",
+        "sha256": "eb1903d3294152829f2e4cd0a87d70ae303687a4b8ba4807562874964596ca4f",
+        "under_exact_worktree_src": true
+      }
+    ]
+  },
+  "focused_pytest": {
+    "all_passed": true,
+    "collect_exit_code": 0,
+    "collected_count": 22,
+    "expected_count": 22,
+    "output_tail": "  - <repo>/tests/unit/test_source_synopsis.py:406 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_source_synopsis.py:504 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:348 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:400 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  … 共 41 处\n......................                                                   [100%]",
+    "run_exit_code": 0
+  },
+  "frozen_parent_matrix": {
+    "harness_errors": [],
+    "phase1_and_r20_green": true,
+    "r13": {
+      "contract_satisfied": false,
+      "detail": "main LoopEngine provider projection ignores current_tool_discovery_scope while legacy Browser mutation tools remain registered",
+      "expected_code": "main_provider_legacy_browser_surface_gap",
+      "expected_green": false,
+      "expected_red": true,
+      "facts": {
+        "get_tool_schema_reads_discovery_scope": true,
+        "legacy_tools_registered_when_browser_action_enabled": true,
+        "main_projection_reads_discovery_scope": false
+      },
+      "id": "P4L-R13",
+      "observed_code": "main_provider_legacy_browser_surface_gap",
+      "row_ok": true,
+      "taxonomy_match": true
+    },
+    "r13_still_red": true,
+    "runner_exit_code": 2
+  },
+  "inherited_behavior": {
+    "all_passed": true,
+    "exit_code": 0,
+    "output_tail": "  - <repo>/tests/unit/test_source_synopsis.py:406 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_source_synopsis.py:504 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:348 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:400 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  … 共 41 处\n.................................................................        [100%]",
+    "targets": [
+      "tests/unit/test_smc_p4_live_g2_s1.py",
+      "tests/unit/test_smc_p4_live_g2_s2_green.py",
+      "tests/unit/test_smc_p4_live_g2_s3_green.py",
+      "tests/unit/test_smc_browser_action_v01.py",
+      "tests/unit/test_smc_browser_semantic_execute_v01.py",
+      "tests/unit/test_tool_execution_restart.py"
+    ]
+  },
+  "production_scope": {
+    "changed_src_paths": [
+      "src/llm_loop/config.py",
+      "src/llm_loop/factory.py",
+      "src/llm_loop/tools/builtin/browser_action_ref_mutation.py"
+    ],
+    "exact_scope": true,
+    "expected_src_paths": [
+      "src/llm_loop/config.py",
+      "src/llm_loop/factory.py",
+      "src/llm_loop/tools/builtin/browser_action_ref_mutation.py"
+    ]
+  },
+  "qualified_s4_stop": true,
+  "s4_matrix": {
+    "qualified_except_r13": true,
+    "rows": [
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_green1_contract",
+        "id": "P4L-R01",
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_green1_contract",
+        "id": "P4L-R02",
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_green1_contract",
+        "id": "P4L-R03",
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_green1_contract",
+        "id": "P4L-R04",
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_green1_contract",
+        "id": "P4L-R05",
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_green1_contract",
+        "id": "P4L-R06",
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_green1_contract",
+        "id": "P4L-R07",
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_green1_contract",
+        "id": "P4L-R08",
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_green1_contract",
+        "id": "P4L-R09",
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "typed_actionref_fake_only_path",
+        "id": "P4L-R10",
+        "mapped_tests": [
+          "test_s4_unbound_and_revoked_calls_are_zero_dispatch"
+        ],
+        "mapped_tests_present": true,
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "typed_actionref_fake_only_path",
+        "id": "P4L-R11",
+        "mapped_tests": [
+          "test_s4_revocation_after_prepared_before_physical_authority_is_zero_dispatch"
+        ],
+        "mapped_tests_present": true,
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "typed_actionref_fake_only_path",
+        "id": "P4L-R12",
+        "mapped_tests": [
+          "test_s4_target_mismatch_and_stale_version_are_zero_dispatch"
+        ],
+        "mapped_tests_present": true,
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": false,
+        "evidence": "deferred_to_g2_s5_provider_scope",
+        "id": "P4L-R13",
+        "observed_code": "main_provider_legacy_browser_surface_gap",
+        "s4_state": "deferred_red"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "typed_actionref_fake_only_path",
+        "id": "P4L-R14",
+        "mapped_tests": [
+          "test_s4_duplicate_exact_request_dispatches_at_most_once"
+        ],
+        "mapped_tests_present": true,
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "typed_actionref_fake_only_path",
+        "id": "P4L-R15",
+        "mapped_tests": [
+          "test_s4_bound_click_persists_bridge_cursor_running_terminal_before_one_dispatch",
+          "test_s4_kernel_order_has_cursor_and_target_bind_before_browser_entry"
+        ],
+        "mapped_tests_present": true,
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "typed_actionref_fake_only_path",
+        "id": "P4L-R16",
+        "mapped_tests": [
+          "test_s4_crash_after_prepared_before_cursor_recovers_no_dispatch_no_replay"
+        ],
+        "mapped_tests_present": true,
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "typed_actionref_fake_only_path",
+        "id": "P4L-R17",
+        "mapped_tests": [
+          "test_s4_crash_after_running_receipt_recovers_unknown_without_replay"
+        ],
+        "mapped_tests_present": true,
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "typed_actionref_fake_only_path",
+        "id": "P4L-R18",
+        "mapped_tests": [
+          "test_s4_terminal_receipt_recovers_outer_wal_exactly_without_replay"
+        ],
+        "mapped_tests_present": true,
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "typed_actionref_fake_only_path",
+        "id": "P4L-R19",
+        "mapped_tests": [
+          "test_s4_target_mismatch_and_stale_version_are_zero_dispatch"
+        ],
+        "mapped_tests_present": true,
+        "s4_state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_green1_contract",
+        "id": "P4L-R20",
+        "s4_state": "green"
+      }
+    ]
+  },
+  "schema": "smc.semantic_logic_p4_live_green2_s4_evidence.v0.1",
+  "slice": "G2-S4",
+  "structural_rows": [
+    {
+      "contract_satisfied": true,
+      "facts": {
+        "all_five_declared": true,
+        "all_five_factory_wired": true,
+        "module_present": true
+      },
+      "id": "G2S4-TYPED-TOOLS",
+      "observed_code": "contract_present",
+      "row_ok": true
+    },
+    {
+      "contract_satisfied": true,
+      "facts": {
+        "default_off_field": true,
+        "env_loader": true,
+        "factory_gate": true
+      },
+      "id": "G2S4-MUTATION-GATE",
+      "observed_code": "contract_present",
+      "row_ok": true
+    },
+    {
+      "contract_satisfied": true,
+      "facts": {
+        "forbidden_tokens": [],
+        "module_present": true,
+        "required_tokens_present": true
+      },
+      "id": "G2S4-ORDERED-KERNEL",
+      "observed_code": "contract_present",
+      "row_ok": true
+    }
+  ]
+}
