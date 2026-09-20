@@ -584,11 +584,16 @@ class SchedulerThread:
 
     @staticmethod
     def _notify_via_interop(
-        entry: ScheduleEntry, *, data_dir: str | Path | None = None
+        entry: ScheduleEntry,
+        *,
+        data_dir: str | Path | None = None,
+        wake_degraded_reason: str | None = None,
     ) -> None:
         """默认通知：写 interop LFL inbox（lfl_to_dsh/pending/，topic=notify）.
 
         LFL 下轮 run 读到并回显 [外部协调·from DSH] 或 [定时提醒]——web/飞书可见。
+        wake_degraded_reason（EVO-20260920-213965a1 案2）：wake 降级为通知时
+        携带结构化原因，供下一会话 pending 投影列出（sid/时间/原因）。
         """
         from datetime import datetime as _dt
 
@@ -610,4 +615,6 @@ class SchedulerThread:
             "body": f"[定时提醒] {entry.message}",
             "status": "pending",
         }
+        if wake_degraded_reason:
+            payload["wake_degraded_reason"] = wake_degraded_reason
         (inbox / fname).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

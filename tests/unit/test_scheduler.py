@@ -7,7 +7,7 @@ import threading
 import time
 from pathlib import Path
 
-from llm_loop.core.scheduler import SchedulerThread, ScheduleStore
+from llm_loop.core.scheduler import ScheduleEntry, SchedulerThread, ScheduleStore
 from llm_loop.tools.builtin.schedule import ScheduleTool
 
 
@@ -261,3 +261,18 @@ def test_non_posix_file_lock_fallback_is_reentrant(tmp_path, monkeypatch):
     thread.start()
     assert done.wait(1.0), "non-POSIX fallback must not deadlock on nested store lock"
     assert len(store.list()) == 1
+
+
+def test_notify_via_interop_carries_wake_degraded_reason(tmp_path):
+    """EVO-20260920-213965a1 案2: wake 降级原因随通知结构化落盘."""
+    entry = ScheduleEntry(sid="sched-xyz", message="核对重启", trigger_at=time.time())
+    SchedulerThread._notify_via_interop(
+        entry, data_dir=tmp_path, wake_degraded_reason="grant_lost_owner_dead"
+    )
+    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    files = list(inbox.glob("*-sched-*.json"))
+    assert len(files) == 1
+    payload = json.loads(files[0].read_text(encoding="utf-8"))
+    assert payload["ref"] == "sched-xyz"
+    assert payload["wake_degraded_reason"] == "grant_lost_owner_dead"
+    assert payload["body"] == "[定时提醒] 核对重启"

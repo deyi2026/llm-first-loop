@@ -107,13 +107,30 @@ def _write_heartbeat(
 def _record_target_script(tmp_path: Path) -> None:
     script = tmp_path / "scripts" / "restart_mirror.sh"
     script.parent.mkdir(parents=True, exist_ok=True)
+    # EVO-20260920-213965a1 案1: 模拟"新进程"写 runtime manifest——
+    # git_head 取 verify_head.txt（测试在部署构建后写入），pid=1 恒存活，
+    # started_at 取当前 UTC（晚于 worker 捕获的 restarted_at）。
     script.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        'printf "target=%s\\n" "$1" > "$LFL_RESTART_RUNTIME_ROOT/marker.txt"\n',
+        'printf "target=%s\\n" "$1" > "$LFL_RESTART_RUNTIME_ROOT/marker.txt"\n'
+        'head=$(cat "$LFL_RESTART_RUNTIME_ROOT/verify_head.txt" 2>/dev/null || echo "")\n'
+        'started=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)\n'
+        'mkdir -p "$LFL_RESTART_RUNTIME_ROOT/data/runtime"\n'
+        'svcs="$1"\n'
+        'if [ "$svcs" = "all" ]; then svcs="web feishu learning"; fi\n'
+        "for svc in $svcs; do\n"
+        '  printf \'{"pid": 1, "git_head": "%s", "started_at": "%s"}\\n\' "$head" "$started" \\\n'
+        '    > "$LFL_RESTART_RUNTIME_ROOT/data/runtime/runtime_manifest.$svc.json"\n'
+        "done\n",
         encoding="utf-8",
     )
     script.chmod(0o755)
+
+
+def _write_verify_head(tmp_path: Path, deployment: ManagedServiceDeployment) -> None:
+    """成功路径: manifest head 与 desired 一致（自核验通过）."""
+    (tmp_path / "verify_head.txt").write_text(deployment.git_head, encoding="utf-8")
 
 
 @pytest.fixture()
@@ -123,6 +140,8 @@ def fast_waits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sc, "_IDLE_POLL_S", 0.02)
     monkeypatch.setattr(sc, "_IDLE_TIMEOUT_S", 0.5)
     monkeypatch.setattr(sc, "_STALE_WAITING_MARGIN_S", 0.0)
+    monkeypatch.setattr(sc, "_VERIFY_POLL_S", 0.02)
+    monkeypatch.setattr(sc, "_VERIFY_TIMEOUT_S", 0.3)
 
 
 def _wait_for_status(
@@ -143,7 +162,9 @@ def test_web_restart_waits_for_requester_without_lifecycle_lease(
 ) -> None:
     store = ManagedServiceDeploymentStore(tmp_path / "data")
     _record_target_script(tmp_path)
-    store.compare_and_swap(_git_deployment(tmp_path), expected_generation=0)
+    deployment = _git_deployment(tmp_path)
+    _write_verify_head(tmp_path, deployment)
+    store.compare_and_swap(deployment, expected_generation=0)
     action = store.accept_restart(
         target="web", expected_generation=1, requester_session_id="session-A"
     )
@@ -180,6 +201,8 @@ def test_web_restart_waits_for_requester_without_lifecycle_lease(
     final = store.read_action(action.action_id)
     assert final is not None
     assert final.status == "succeeded"
+    # EVO-20260920-213965a1 案1: 终态记录含控制面自核验结论。
+    assert "verify=ok" in (final.detail or "")
     assert (tmp_path / "marker.txt").read_text(encoding="utf-8").strip() == "target=web"
 
 
@@ -267,7 +290,9 @@ def test_feishu_restart_skips_requester_gate(
 ) -> None:
     store = ManagedServiceDeploymentStore(tmp_path / "data")
     _record_target_script(tmp_path)
-    store.compare_and_swap(_git_deployment(tmp_path), expected_generation=0)
+    deployment = _git_deployment(tmp_path)
+    _write_verify_head(tmp_path, deployment)
+    store.compare_and_swap(deployment, expected_generation=0)
     action = store.accept_restart(
         target="feishu", expected_generation=1, requester_session_id="session-A"
     )
@@ -280,6 +305,7 @@ def test_feishu_restart_skips_requester_gate(
     final = store.read_action(action.action_id)
     assert final is not None
     assert final.status == "succeeded"
+    assert "verify=ok" in (final.detail or "")
     assert (tmp_path / "marker.txt").read_text(encoding="utf-8").strip() == "target=feishu"
 
 
@@ -333,3 +359,36 @@ def test_stale_waiting_action_reaped_on_next_accept(
     assert reaped.status == "failed"
     assert "stale waiting state reaped" in reaped.detail
     assert fresh.status == "accepted"
+
+
+def test_verify_failure_retries_then_fails_action(
+    tmp_path: Path, fast_waits: None
+) -> None:
+    """EVO-20260920-213965a1 案1: 脚本 rc=0 但核验不过 → 有界重试 → failed(rc=5).
+
+    manifest git_head 持续 mismatch，模拟"新进程没起来/起的还是旧版本"。
+    终态 detail 必须含控制面判定（verify=unhealthy + git_head_mismatch +
+    尝试次数），供下一会话 pending 投影消费。
+    """
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    _record_target_script(tmp_path)
+    deployment = _git_deployment(tmp_path)
+    (tmp_path / "verify_head.txt").write_text("f" * 40, encoding="utf-8")
+    store.compare_and_swap(deployment, expected_generation=0)
+    action = store.accept_restart(
+        target="feishu", expected_generation=1, requester_session_id="session-A"
+    )
+    lock = _HeldRunLock(tmp_path / "data" / "sessions", "session-A")
+    try:
+        rc = run_action_worker(store, action.action_id)
+    finally:
+        lock.release()
+    assert rc == 5
+    final = store.read_action(action.action_id)
+    assert final is not None
+    assert final.status == "failed"
+    assert "verify failed after 2 attempt(s)" in (final.detail or "")
+    assert "verify=unhealthy" in (final.detail or "")
+    assert "git_head_mismatch" in (final.detail or "")
+    # 有界重试确实重跑了物理脚本（marker 仍写入），且不是无界循环。
+    assert (tmp_path / "marker.txt").read_text(encoding="utf-8").strip() == "target=feishu"
