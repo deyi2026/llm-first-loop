@@ -17,11 +17,16 @@ import logging
 import threading
 import uuid
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
-from llm_loop.core.run_context import current_run_generation
+from llm_loop.core.run_context import (
+    current_run_generation,
+    current_session_id,
+    current_workspace_root,
+)
 from llm_loop.core.session import Session, SessionStore, _validate_session_id
 from llm_loop.event_log.model import build_message_payload
 
@@ -91,6 +96,97 @@ _current_effect_bindings: contextvars.ContextVar[dict[str, _EffectBinding] | Non
 def current_tool_effect_binding() -> _EffectBinding | None:
     """Return the exact process-local execution binding visible to the current tool call."""
     return _current_effect_binding.get()
+
+
+class ActionRefEffectBindingError(RuntimeError):
+    """Stable fail-closed rejection for the strict ActionRef execution domain."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        self.code = str(code)
+        self.detail = str(detail)
+        super().__init__(f"{self.code}: {self.detail}")
+
+
+@dataclass(frozen=True)
+class ActionRefEffectBindingView:
+    """Immutable outer-WAL identity available to future ActionRef mutation code."""
+
+    session_id: str
+    execution_id: str
+    round_no: int
+    tool_call_id: str
+    tool_name: str
+    workspace_root: str
+    origin_run_generation: str
+
+
+@contextlib.contextmanager
+def current_action_ref_effect_binding_authority() -> Iterator[ActionRefEffectBindingView]:
+    """Require one live exact ToolExecutionJournal binding for ActionRef work.
+
+    This is deliberately stricter than :func:`current_effect_mutation_authority`.
+    Existing direct/control-plane callers keep the legacy unbound behavior; only the
+    future ActionRef mutation domain must enter through this exact attempt/run fence.
+    The binding/run locks are held across the caller's short mechanical preparation
+    window so timeout/run termination cannot race a durable PREPARED write.
+    """
+    binding = _current_effect_binding.get()
+    if binding is None:
+        raise ActionRefEffectBindingError(
+            "action_ref_effect_binding_required",
+            "ActionRef execution requires a ToolExecutionJournal binding",
+        )
+
+    with binding._authority_lock:
+        if binding._revoked:
+            raise ActionRefEffectBindingError(
+                "action_ref_effect_binding_revoked",
+                "ToolExecutionJournal binding was revoked",
+            )
+
+        current_sid = str(current_session_id.get() or "")
+        current_workspace = str(current_workspace_root.get() or "")
+        current_generation = str(current_run_generation.get() or "")
+        canonical_workspace = (
+            str(Path(current_workspace).expanduser().resolve()) if current_workspace else ""
+        )
+        if (
+            current_sid != binding.session_id
+            or canonical_workspace != binding.workspace_root
+            or current_generation != binding.origin_run_generation
+        ):
+            raise ActionRefEffectBindingError(
+                "action_ref_effect_binding_owner_mismatch",
+                "current session/workspace/run does not match the exact WAL binding",
+            )
+        if not binding.origin_run_generation:
+            raise ActionRefEffectBindingError(
+                "action_ref_effect_binding_inactive_run",
+                "ActionRef execution requires a non-empty active run generation",
+            )
+
+        with binding.journal.session_store.run_generation_authority(
+            binding.session_id, binding.origin_run_generation
+        ) as owned:
+            if not owned:
+                raise ActionRefEffectBindingError(
+                    "action_ref_effect_binding_inactive_run",
+                    "origin run generation is no longer active",
+                )
+            if binding._revoked:
+                raise ActionRefEffectBindingError(
+                    "action_ref_effect_binding_revoked",
+                    "ToolExecutionJournal binding was revoked",
+                )
+            yield ActionRefEffectBindingView(
+                session_id=binding.session_id,
+                execution_id=binding.execution_id,
+                round_no=binding.round_no,
+                tool_call_id=binding.tool_call_id,
+                tool_name=binding.tool_name,
+                workspace_root=binding.workspace_root,
+                origin_run_generation=binding.origin_run_generation,
+            )
 
 
 @contextlib.contextmanager

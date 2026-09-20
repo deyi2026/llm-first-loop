@@ -1,0 +1,216 @@
+{
+  "base_plan_sha": "0d868fe074a8cad746fffbd7d771c24100eac74a",
+  "boundary": {
+    "bridge_has_browser_dispatch_dependency": false,
+    "browser_actions_executed": 0,
+    "first_physical_dispatch_boundary_crossed": false,
+    "model_requests_sent": 0,
+    "typed_actionref_tools_registered": []
+  },
+  "focused_pytest": {
+    "all_passed": true,
+    "collect_exit_code": 0,
+    "collected_count": 11,
+    "expected_count": 11,
+    "output_tail": "  - <repo>/tests/unit/test_source_synopsis.py:249 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_source_synopsis.py:327 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_source_synopsis.py:406 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_source_synopsis.py:504 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:348 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:400 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  … 共 41 处\n...........                                                              [100%]",
+    "run_exit_code": 0
+  },
+  "green1_matrix": {
+    "classified": true,
+    "pytest_all_20_passed": true,
+    "r10_r19_all_remain_red": true,
+    "r10_r19_taxonomy_preserved": true,
+    "rows": [
+      {
+        "contract_satisfied": false,
+        "detail": "legacy direct mutation remains allowed without ToolExecutionJournal binding and no ActionRef-specific rejection exists",
+        "expected_code": "actionref_effect_binding_requirement_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "typed_actionref_tools_wired": false,
+          "unbound_current_effect_mutation_authority": true
+        },
+        "id": "P4L-R10",
+        "observed_code": "actionref_effect_binding_requirement_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      {
+        "contract_satisfied": false,
+        "detail": "generic effect binding revocation exists, but there is no ActionRef mutation tool wired through it",
+        "expected_code": "actionref_revocation_wiring_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "actionref_mutation_wired": false,
+          "generic_revocation_primitive_present": true
+        },
+        "id": "P4L-R11",
+        "observed_code": "actionref_revocation_wiring_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      {
+        "contract_satisfied": false,
+        "detail": "perception and mutation actuator independently choose different sole-page targets when both are initially unbound",
+        "expected_code": "browser_target_independent_first_bind_gap",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "actuator_candidate": "target-B",
+          "actuator_unconfigured": true,
+          "identity_gap_observed": true,
+          "perception_candidate": "target-A",
+          "perception_unconfigured": true
+        },
+        "id": "P4L-R12",
+        "observed_code": "browser_target_independent_first_bind_gap",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      {
+        "contract_satisfied": false,
+        "detail": "main LoopEngine provider projection ignores current_tool_discovery_scope while legacy Browser mutation tools remain registered",
+        "expected_code": "main_provider_legacy_browser_surface_gap",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "get_tool_schema_reads_discovery_scope": true,
+          "legacy_tools_registered_when_browser_action_enabled": true,
+          "main_projection_reads_discovery_scope": false
+        },
+        "id": "P4L-R13",
+        "observed_code": "main_provider_legacy_browser_surface_gap",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      {
+        "contract_satisfied": false,
+        "detail": "existing GroundingRef action_id and reservation are deterministic/at-most-once, but no ActionRef mutation path delegates into that identity basis",
+        "expected_code": "actionref_inner_action_id_bridge_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "actionref_compiler_bridge_wired": false,
+          "duplicate_reservation_rejected": true,
+          "first_reservation": true,
+          "groundingref_action_id": "sact-4c11c1583f8a262a5f7b9b98",
+          "groundingref_inner_action_id_deterministic": true
+        },
+        "id": "P4L-R14",
+        "observed_code": "actionref_inner_action_id_bridge_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      {
+        "contract_satisfied": false,
+        "detail": "ToolExecutionJournal and BrowserActionReceiptStore have no durable pre-dispatch identity join",
+        "expected_code": "predispatch_execution_bridge_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "browser_action_mentions_execution_id": false,
+          "browser_receipt_mentions_tool_call_id": false,
+          "journal_mentions_action_ref": false,
+          "journal_mentions_inner_action_id": false,
+          "required_bridge_tokens_jointly_present": false
+        },
+        "id": "P4L-R15",
+        "observed_code": "predispatch_execution_bridge_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      {
+        "contract_satisfied": false,
+        "detail": "outer WAL has no ActionRef execution-binding state that can distinguish prepared-without-Browser-running recovery",
+        "expected_code": "prepare_without_running_recovery_contract_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "action_ref_consulted": false,
+          "auto_reexecute_false_exists": true,
+          "browser_action_id_consulted": false,
+          "browser_receipt_store_consulted": false,
+          "started_unknown_state_exists": true
+        },
+        "id": "P4L-R16",
+        "observed_code": "prepare_without_running_recovery_contract_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      {
+        "contract_satisfied": false,
+        "detail": "outer WAL safely marks started outcome unknown/no replay, but cannot correlate an ActionRef Browser running receipt",
+        "expected_code": "running_unknown_browser_correlation_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "action_ref_consulted": false,
+          "auto_reexecute_false_exists": true,
+          "browser_action_id_consulted": false,
+          "browser_receipt_store_consulted": false,
+          "started_unknown_state_exists": true
+        },
+        "id": "P4L-R17",
+        "observed_code": "running_unknown_browser_correlation_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      {
+        "contract_satisfied": false,
+        "detail": "no exact Browser terminal receipt -> outer execution correlation path exists",
+        "expected_code": "terminal_browser_outer_wal_correlation_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "action_ref_consulted": false,
+          "auto_reexecute_false_exists": true,
+          "browser_action_id_consulted": false,
+          "browser_receipt_store_consulted": false,
+          "started_unknown_state_exists": true
+        },
+        "id": "P4L-R18",
+        "observed_code": "terminal_browser_outer_wal_correlation_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      {
+        "contract_satisfied": false,
+        "detail": "existing GroundingRef stale guard is fail-closed, but no ActionRef path delegates into it",
+        "expected_code": "actionref_version_guard_delegation_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "actionref_mutation_bridge_wired": false,
+          "automatic_refresh_performed": false,
+          "existing_version_guard_ok": true,
+          "reason": "document_generation_changed",
+          "result": "stale",
+          "silent_rebind_performed": false
+        },
+        "id": "P4L-R19",
+        "observed_code": "actionref_version_guard_delegation_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      }
+    ]
+  },
+  "green1_sha": "62529729c5888ae863a1fe1715e2590a9519d182",
+  "protocol_sha": "e946eab26032aa4faa6698a3244ebd30c836cce1",
+  "qualified_s1_stop": true,
+  "schema": "smc.semantic_logic_p4_live_green2_s1_evidence.v0.1",
+  "slice": "G2-S1",
+  "subcontracts_green": [
+    "strict_unbound_actionref_binding_rejection",
+    "strict_revoked_binding_rejection",
+    "strict_session_workspace_run_owner_fence",
+    "strict_inactive_run_rejection",
+    "outer_identity_only_from_current_tool_execution_binding",
+    "durable_immutable_prepared_execution_bridge",
+    "same_execution_idempotent_same_binding",
+    "same_execution_rebind_conflict",
+    "prepare_write_failure_fail_closed",
+    "prepared_without_browser_running_no_dispatch_no_replay"
+  ]
+}
