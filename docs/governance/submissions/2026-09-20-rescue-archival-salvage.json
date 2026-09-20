@@ -1,0 +1,45 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "2026-09-20-rescue-archival-salvage",
+  "summary": "收尾审计裁决的档案收口：runtime-config-SoT 资格文档与环境盘点审计（设计已弃置，纯存档）+ resume-continuation 方法卡（qualification pass 激活）。全部为新增文件，无控制机械。PR29 治理记录因门禁禁止回溯性 manifest（其 src 路径属已合并的 26e47ee6a，无法在本 PR 变更）而撤下，留 rescue/webui-true-interject-canary 分支保底。",
+  "components": [
+    {
+      "component_id": "runtime-config-sot-archival",
+      "paths": [
+        "docs/QUALIFICATION-20260914-runtime-config-sot-v1.md",
+        "docs/audit/ENV-CONFIG-INVENTORY-20260914.json",
+        "docs/audit/ENV-CONFIG-INVENTORY-20260914.md",
+        "docs/governance/submissions/2026-09-20-rescue-archival-salvage.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "docs/（档案，无运行时）",
+      "disposition": "rescue/runtime-config-sot-wip-20260920 triage：核心 refactor 被 main 自有 typed-settings→LFRT→startup-freeze 线超集（49/65 文件双边同改，main 侧 runtime.toml.example/config.py 更长更演化），仅提取 3 个零冲突档案文件；13 个 src 小改写（+5 级机械调整）随设计弃置",
+      "evidence": [
+        "merge-base 6d04158f（2026-09-14 起点）",
+        "main 侧五连提交 7ef5d9622/27d364cc5/c53755736/4ba02f4e3/742bc2db9",
+        "本会话吸收度 A/B/C 分类扫描（wt_class.tsv）"
+      ],
+      "verification_level": "CI_Green（docs-only，PR #53 门禁）",
+      "model_evidence_veto_recovery_exit": "非控制机械：纯文档，无模型 veto 交互",
+      "rollback_route": "git revert 单提交；无状态迁移"
+    },
+    {
+      "component_id": "method-card-resume-continuation",
+      "paths": [
+        "data/methods/resume-continuation-via-named-provenance-and-git-delta-948a229d7f50/METHOD.md",
+        "data/methods/resume-continuation-via-named-provenance-and-git-delta-948a229d7f50/qualification.jsonl"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "data/methods（知识记录）",
+      "disposition": "2026-09-20 qualification=pass（mechanism/task_benefit/promotion 全 pass）激活；来源 episode 32d694c9 span#1226 以双授权线闭合收尾",
+      "evidence": [
+        "method_manage record_qualification 回执 2026-09-20T03:42Z",
+        "episode:delegated:32d694c9-dbcd-4dc8-a941-0885c617868c:1226"
+      ],
+      "verification_level": "CI_Green + 卡片六段结构人工核验（Trigger/Discriminator/Short path/Stop/Verification/Counterexamples）",
+      "model_evidence_veto_recovery_exit": "非控制机械：导航型方法卡，Counterexamples 段显式划界四类不适用场景",
+      "rollback_route": "method_manage invalidate + git revert；无状态迁移"
+    }
+  ],
+  "declarations": []
+}
