@@ -98,6 +98,7 @@ _STALE_WAITING_MARGIN_S = 300.0
 # 重跑脚本；仍失败则动作 failed（unhealthy），进下一会话 pending 投影。
 _VERIFY_POLL_S = 2.0
 _VERIFY_TIMEOUT_S = 180.0
+_VERIFY_MANIFEST_WAIT_S = 2.0
 _VERIFY_MAX_ATTEMPTS = 2
 
 
@@ -1034,23 +1035,41 @@ def _read_runtime_manifest(
 def _verify_restart_targets(
     store: ManagedServiceDeploymentStore,
     deployment: Any,
-    target: str,
+    services: list[str],
     restarted_at: str,
 ) -> tuple[bool, str]:
     """EVO-20260920-213965a1 案1: restart 后机械终态核验（有界等待）.
 
     判据与 compose_service_identity_view 同源：manifest 存在、pid 存活、
     git_head 等于 desired、started_at 不早于本次重启发起时刻（解析失败
-    不作判据）。返回 (ok, summary)；summary 上限 400 字符写入 action detail。
+    不作判据）。manifest 在首现窗口（_VERIFY_MANIFEST_WAIT_S）内从未
+    出现的目标视为不受 manifest 管辖——跳过（no_manifest_skip）而非判
+    unhealthy。返回 (ok, summary)；summary 上限 400 字符写入 detail。
     """
-    services = list(_MANAGED_SERVICES) if target == "all" else [target]
+    services = list(services)
     began = _parse_iso(restarted_at)
     deadline = time.monotonic() + _VERIFY_TIMEOUT_S
+    # manifest 首现窗口：窗口内从未出现 manifest 的目标视为不受 manifest
+    # 管辖（测试 fixture、非受管部署）——判据缺失≠核验失败，跳过该目标而
+    # 非判 unhealthy，也不陪跑到 180s 死线。一旦出现（哪怕随后消失），
+    # 目标进入严格核验。窗口取一个轮询周期量级：受管服务重启后由启动
+    # 进程写 manifest，正常在秒级出现。
+    manifest_wait_deadline = time.monotonic() + _VERIFY_MANIFEST_WAIT_S
+    seen: set[str] = set()
+    skipped: set[str] = set()
     while True:
         parts: list[str] = []
         ok = True
+        now = time.monotonic()
         for service in services:
+            if service in skipped:
+                continue
             raw = _read_runtime_manifest(store, service)
+            if raw is not None:
+                seen.add(service)
+            elif service not in seen and now >= manifest_wait_deadline:
+                skipped.add(service)
+                continue
             if raw is None:
                 ok = False
                 parts.append(f"{service}[manifest_missing]")
@@ -1079,8 +1098,10 @@ def _verify_restart_targets(
                 parts.append(f"{service}[" + ",".join(problems) + "]")
             else:
                 parts.append(f"{service}[ok pid={pid} head={head[:12]}]")
+        if skipped:
+            parts.extend(f"{service}[no_manifest_skip]" for service in sorted(skipped))
         summary = "verify=" + ("ok" if ok else "unhealthy") + " " + " ".join(parts)
-        if ok or time.monotonic() >= deadline:
+        if ok or now >= deadline:
             return ok, summary[:400]
         time.sleep(_VERIFY_POLL_S)
 
@@ -1199,19 +1220,27 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                 return rc, desired_now, restarted_at
             return rc, desired_now, restarted_at
 
+    # 自核验目标（EVO-20260920-213965a1 案1）：目标全集传入，"是否受
+    # manifest 管辖"由 _verify_restart_targets 的首现窗口判定（不受管辖
+    # 的目标记 no_manifest_skip，见其 docstring）。
+    verify_targets: list[str] = list(_MANAGED_SERVICES) if action.target == "all" else [action.target]
+
+    def _verify_once() -> tuple[bool, str]:
+        return _verify_restart_targets(store, desired_now, verify_targets, restarted_at)
+
     rc, desired_now, restarted_at = _run_physical_restart_once()
     if rc != 0 or desired_now is None:
         return rc or 1
 
     # Phase 4 - self-verification, outside the lifecycle lease.
-    ok, summary = _verify_restart_targets(store, desired_now, action.target, restarted_at)
+    ok, summary = _verify_once()
     attempts = 1
     while not ok and attempts < _VERIFY_MAX_ATTEMPTS:
         rc, desired_now, restarted_at = _run_physical_restart_once()
         attempts += 1
         if rc != 0 or desired_now is None:
             return rc or 1
-        ok, summary = _verify_restart_targets(store, desired_now, action.target, restarted_at)
+        ok, summary = _verify_once()
 
     identity = (
         f"identity generation={desired_now.generation} git_head={desired_now.git_head}"

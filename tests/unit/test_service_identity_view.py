@@ -198,6 +198,13 @@ def test_worker_success_detail_records_identity(
         "llm_loop.runtime.service_control.verify_deployment_binding",
         lambda *_a, **_k: [],
     )
+    # EVO-20260920-213965a1 案1: Phase-4 post-restart self-verify has its own
+    # coverage in test_service_control_two_phase_restart.py; stub it here so
+    # this test still isolates success-detail identity recording.
+    monkeypatch.setattr(
+        "llm_loop.runtime.service_control._verify_restart_targets",
+        lambda *_a, **_k: (True, "verify=ok(stub)"),
+    )
     assert run_action_worker(store, action.action_id) == 0
     receipt = store.read_action(action.action_id)
     assert receipt is not None and receipt.status == "succeeded"

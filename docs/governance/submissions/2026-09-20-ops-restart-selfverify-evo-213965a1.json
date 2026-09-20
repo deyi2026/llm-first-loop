@@ -7,16 +7,18 @@
       "component_id": "restart-selfverify-service-control",
       "paths": [
         "src/llm_loop/runtime/service_control.py",
-        "tests/unit/test_service_control_two_phase_restart.py"
+        "tests/unit/test_service_control_two_phase_restart.py",
+        "tests/unit/test_service_identity_view.py"
       ],
       "control_machinery": true,
       "declaration_id": "dec-213965a1-restart-selfverify",
       "owning_subsystem": "src/llm_loop/runtime/service_control.py（service 生命周期控制面）",
-      "disposition": "案1 全量落地：Phase3/4 物理重启收进 lifecycle lease（含 desired 发布绑定复检，关闭 waiting→execute TOCTOU）；重启后自核验在 lease 外执行（慢启动不阻塞发布）；终态判定（pid_alive/git_head==deployment.git_head/manifest_present，含 EPERM=异属主进程、manifest started_at 秒级截断宽限）由控制面写入 durable action 记录；核验失败按有界次数重跑脚本，仍败则动作 failed(unhealthy) 进下一会话 pending 投影——核验结论不再依赖模型侧 wake 轮询。",
+      "disposition": "案1 全量落地：Phase3/4 物理重启收进 lifecycle lease（含 desired 发布绑定复检，关闭 waiting→execute TOCTOU）；重启后自核验在 lease 外执行（慢启动不阻塞发布）；终态判定（pid_alive/git_head==deployment.git_head/manifest_present，含 EPERM=异属主进程、manifest started_at 秒级截断宽限）由控制面写入 durable action 记录；核验失败按有界次数重跑脚本，仍败则动作 failed(unhealthy) 进下一会话 pending 投影——核验结论不再依赖模型侧 wake 轮询。修订（CI 门禁回归修复）：核验目标引入 manifest 首现窗口（_VERIFY_MANIFEST_WAIT_S=2s）——首窗内从未出现 manifest 的目标视为不受 manifest 管辖，记 no_manifest_skip（判据缺失≠核验失败），不再误判 unhealthy 也不空转死线；一旦 manifest 出现即严格核验（pid/head/started_at）。identity_view 的 success-detail 用例沿用其既有 stub 哲学隔离 Phase-4 核验；factory.py 函数内 import 上提回基线。",
       "evidence": [
         "data/audit/evolution_suggestions.jsonl EVO-20260920-213965a1 status=accepted（主案·低风险：restart 动作自核验）",
         "实机动机：2026-09-20 12:49 注册的重启核验 wake 在 12:50 全量重启后静默失联（wake grant 按设计仅驻进程内，救援 rearm 依赖同会话真人在退避窗口内），13:09 真人补查，盲窗 18 分钟",
-        "pytest tests/unit/test_service_control_two_phase_restart.py 全绿（本 worktree exit=0；覆盖 lease 复检/started_at 截断宽限/EPERM 判定/自核验终态记录）"
+        "pytest tests/unit/test_service_control_two_phase_restart.py 全绿（本 worktree exit=0；覆盖 lease 复检/started_at 截断宽限/EPERM 判定/自核验终态记录）",
+        "回归全绿：test_managed_service_control_p0a.py（26 用例）、test_service_identity_view.py、test_arch_guards.py（ratchet 63=基线）、本组件 4 个测试文件"
       ],
       "verification_level": "单测全绿 + CI 门禁（pytest/ruff/pyright）+ A.5 presence；实机自核验待合并后下一重启窗口验证",
       "model_evidence_veto_recovery_exit": "无新增模型 veto 交互；核验失败→unhealthy→写入 durable action 并进下一会话 pending 投影，由下一会话/真人处置",

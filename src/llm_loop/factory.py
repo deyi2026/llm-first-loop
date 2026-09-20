@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -174,8 +175,6 @@ def _scan_degraded_wake_notify(data_dir: str | Path) -> list[dict[str, Any]]:
     只挑带 wake_degraded_reason 的条目（普通提醒走既有回显消费路径），
     输出 sid/ts/reason/body，fail-open：扫描失败返回 []。
     """
-    import json as _json
-
     results: list[dict[str, Any]] = []
     try:
         inbox = Path(data_dir) / "interop" / "lfl_to_dsh" / "pending"
@@ -185,8 +184,8 @@ def _scan_degraded_wake_notify(data_dir: str | Path) -> list[dict[str, Any]]:
             reverse=True,
         )[:20]:
             try:
-                payload = _json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, _json.JSONDecodeError):
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
                 continue
             if payload.get("from") != "lfl-scheduler" or payload.get("topic") != "notify":
                 continue
@@ -211,10 +210,6 @@ def _scan_failed_service_actions(data_dir: str | Path) -> list[dict[str, Any]]:
     终态由控制面自核验写入 durable 记录后，此处让下一会话 pending 投影
     直接看到 unhealthy 动作（action_id/target/generation/detail）。
     """
-    import json as _json
-
-    from llm_loop.runtime.service_control import ManagedServiceDeploymentStore
-
     results: list[dict[str, Any]] = []
     try:
         store = ManagedServiceDeploymentStore(data_dir)
@@ -225,8 +220,8 @@ def _scan_failed_service_actions(data_dir: str | Path) -> list[dict[str, Any]]:
             reverse=True,
         )[:40]:
             try:
-                raw = _json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, _json.JSONDecodeError):
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
                 continue
             if raw.get("action") != "restart" or raw.get("status") != "failed":
                 continue
