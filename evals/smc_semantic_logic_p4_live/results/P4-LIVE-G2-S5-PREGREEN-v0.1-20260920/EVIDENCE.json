@@ -1,0 +1,76 @@
+{
+  "base_s4_sha": "44b38540691f7cddc1d34cf709dc92bb8e6b0e66",
+  "channels": [
+    {
+      "expected_code": "main_provider_scope_bypass",
+      "expected_state": "red",
+      "facts": {
+        "main_projection_reads_shared_scope": false
+      },
+      "id": "G2S5-R13-PROVIDER",
+      "observed_code": "main_provider_scope_bypass",
+      "observed_state": "red",
+      "row_ok": true
+    },
+    {
+      "expected_code": "discovery_scope_already_enforced",
+      "expected_state": "green_prerequisite",
+      "facts": {
+        "get_tool_schema_scope_enforced": true
+      },
+      "id": "G2S5-R13-DISCOVERY",
+      "observed_code": "discovery_scope_already_enforced",
+      "observed_state": "green_prerequisite",
+      "row_ok": true
+    },
+    {
+      "expected_code": "registry_execution_scope_bypass",
+      "expected_state": "red",
+      "facts": {
+        "legacy_tool_calls": 1,
+        "registry_execution_scope_enforced": false,
+        "result_status": "success"
+      },
+      "id": "G2S5-R13-EXECUTION",
+      "observed_code": "registry_execution_scope_bypass",
+      "observed_state": "red",
+      "row_ok": true
+    },
+    {
+      "expected_code": "p4_live_canary_scope_authority_absent",
+      "expected_state": "red",
+      "facts": {
+        "module_present": false
+      },
+      "id": "G2S5-R13-CANARY-SCOPE",
+      "observed_code": "p4_live_canary_scope_authority_absent",
+      "observed_state": "red",
+      "row_ok": true
+    }
+  ],
+  "exact_canary_tools": [
+    "browser_perceive",
+    "browser_wait_scope_url",
+    "browser_wait_scope_ready",
+    "browser_wait_scope_count",
+    "browser_wait_object_state",
+    "browser_wait_object_text",
+    "get_tool_schema",
+    "browser_semantic_click",
+    "browser_semantic_fill",
+    "browser_semantic_select",
+    "browser_semantic_scroll",
+    "browser_semantic_navigate"
+  ],
+  "legacy_browser_mutations_forbidden": [
+    "browser_action",
+    "browser_semantic_execute",
+    "browser_semantic_operation"
+  ],
+  "model_requests_sent": 0,
+  "production_green_started": false,
+  "qualified_pregreen": true,
+  "real_browser_actions_executed": 0,
+  "schema": "smc.semantic_logic_p4_live_green2_s5_pregreen_evidence.v0.1",
+  "src_diff_from_base": []
+}

@@ -2048,7 +2048,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         """Build the stable owner tool surface, then apply mechanical runtime health."""
         # P1-B: provider schema representation may be compact/lazy, but user text
         # never chooses which tools receive callable parameter schemas.
-        schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
+        schemas = self.registry.schemas_for_current_scope(lazy=self.settings.tool_schema_lazy)
         projected = self._tool_cycle._project_tool_schemas_for_round(
             schemas,
             planned_label=planned_label,

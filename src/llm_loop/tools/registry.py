@@ -28,7 +28,7 @@ from llm_loop.core.message import (
     ToolResult,
     ToolResultStatus,
 )
-from llm_loop.core.run_context import current_run_generation
+from llm_loop.core.run_context import current_run_generation, current_tool_discovery_scope
 from llm_loop.tools.pipeline import ImmutableResult, MaterializationError
 from llm_loop.tools.safety import CatastrophicGuard
 
@@ -498,6 +498,20 @@ class ToolRegistry:
         with self._lock:
             return sorted(self._tools)
 
+    @staticmethod
+    def current_scope_allows(name: str) -> bool:
+        """Return whether the exact tool name is callable in the current mechanical scope."""
+        scope = current_tool_discovery_scope.get()
+        return scope is None or str(name) in scope
+
+    def names_for_current_scope(self) -> list[str]:
+        """Return registered names after the current explicit scope boundary."""
+        names = self.names()
+        scope = current_tool_discovery_scope.get()
+        if scope is None:
+            return names
+        return [name for name in names if name in scope]
+
     def _track_active(self, session_id: str, future: Any, tool: Any) -> None:
         if not session_id:
             return
@@ -623,6 +637,14 @@ class ToolRegistry:
                     for t in self._tools.values()
                 ]
         return defs
+
+    def schemas_for_current_scope(self, lazy: bool = False) -> list[dict]:
+        """Project schemas through the same explicit scope used by discovery/execution."""
+        schemas = self.schemas(lazy=lazy)
+        scope = current_tool_discovery_scope.get()
+        if scope is None:
+            return schemas
+        return [schema for schema in schemas if str(schema.get("name", "")) in scope]
 
     @staticmethod
     def _compact_description(t: Any) -> str:
@@ -804,6 +826,17 @@ class ToolRegistry:
                 content="[参数错误] 工具调用缺少 tool_call_id，无法绑定执行。请重新声明（程序不会伪造执行）。",
                 tool_call_id="",
                 tool_name=call.name,
+                duration_ms=0.0,
+            )
+
+        if not self.current_scope_allows(call.name):
+            return self._result(
+                ToolResultStatus.FAILURE,
+                call,
+                (
+                    f"[当前执行域不可用] 工具 '{call.name}' 不在当前可调用集合。"
+                    f"当前集合: {', '.join(self.names_for_current_scope())}"
+                ),
                 duration_ms=0.0,
             )
 
@@ -1639,7 +1672,6 @@ class GetToolSchemaTool:
 
     def execute(self, **kwargs) -> Any:
         from llm_loop.core.message import ToolResult, ToolResultStatus
-        from llm_loop.core.run_context import current_tool_discovery_scope
 
         name = str(kwargs.get("tool_name", "")).strip()
         if not name:
@@ -1654,10 +1686,7 @@ class GetToolSchemaTool:
             from llm_loop.tools.eligibility import runtime_tool_health
 
             rows: list[str] = []
-            scope = current_tool_discovery_scope.get()
-            names = self._registry.names()
-            if scope is not None:
-                names = [tool_name for tool_name in names if tool_name in scope]
+            names = self._registry.names_for_current_scope()
             for tool_name in names:
                 tool_obj = self._registry.get(tool_name)
                 desc = str(getattr(tool_obj, "description", "") or "").replace("\n", " ")
@@ -1681,13 +1710,12 @@ class GetToolSchemaTool:
                 tool_name=self.name,
             )
 
-        scope = current_tool_discovery_scope.get()
-        if scope is not None and name not in scope:
+        if not self._registry.current_scope_allows(name):
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
                 content=(
                     f"[当前执行域不可用] 工具 '{name}' 不在当前可调用集合。"
-                    f"当前集合: {', '.join(sorted(scope))}"
+                    f"当前集合: {', '.join(self._registry.names_for_current_scope())}"
                 ),
                 tool_call_id="",
                 tool_name=self.name,

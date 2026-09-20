@@ -1,0 +1,37 @@
+{
+  "schema": "smc.semantic_logic_p4_live_canary_preflight.v0.1",
+  "base_s5_parent_sha": "44b38540691f7cddc1d34cf709dc92bb8e6b0e66",
+  "purpose": "Requirements to satisfy before any live P4-LIVE model/Browser canary. This file does not activate runtime configuration.",
+  "required_runtime_facts": {
+    "browser_perception_cdp_url": "explicit loopback CDP URL",
+    "browser_perception_target_id": "explicit non-empty exact Browser target id; sole-page implicit binding is forbidden for initial live canary",
+    "browser_action_enabled": true,
+    "browser_action_ref_enabled": true,
+    "browser_action_ref_mutation_enabled": true,
+    "p4_live_canary_tool_scope": "explicitly activated for the canary run",
+    "legacy_browser_mutations_provider_visible": false,
+    "legacy_browser_mutations_directly_executable": false
+  },
+  "exact_tool_scope": [
+    "browser_perceive",
+    "browser_wait_scope_url",
+    "browser_wait_scope_ready",
+    "browser_wait_scope_count",
+    "browser_wait_object_state",
+    "browser_wait_object_text",
+    "get_tool_schema",
+    "browser_semantic_click",
+    "browser_semantic_fill",
+    "browser_semantic_select",
+    "browser_semantic_scroll",
+    "browser_semantic_navigate"
+  ],
+  "forbidden_browser_mutation_tools": [
+    "browser_action",
+    "browser_semantic_execute",
+    "browser_semantic_operation"
+  ],
+  "pre_live_stop": true,
+  "real_browser_actions_authorized_by_this_file": 0,
+  "model_requests_authorized_by_this_file": 0
+}

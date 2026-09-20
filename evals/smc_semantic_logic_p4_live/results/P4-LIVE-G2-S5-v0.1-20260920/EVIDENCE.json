@@ -1,0 +1,303 @@
+{
+  "base_s4_sha": "44b38540691f7cddc1d34cf709dc92bb8e6b0e66",
+  "canary_scope": {
+    "exact_match": true,
+    "legacy_browser_mutations_excluded": true,
+    "tools": [
+      "browser_perceive",
+      "browser_semantic_click",
+      "browser_semantic_fill",
+      "browser_semantic_navigate",
+      "browser_semantic_scroll",
+      "browser_semantic_select",
+      "browser_wait_object_state",
+      "browser_wait_object_text",
+      "browser_wait_scope_count",
+      "browser_wait_scope_ready",
+      "browser_wait_scope_url",
+      "get_tool_schema"
+    ]
+  },
+  "critical_imports": {
+    "all_under_exact_worktree_src": true,
+    "modules": [
+      {
+        "module": "llm_loop.core.loop.engine",
+        "path": "src/llm_loop/core/loop/engine.py",
+        "sha256": "ab76cfc3c56345bb7a6e94510ac3891d370f04f4facc6b62114fc4eee6ef9441",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.tools.registry",
+        "path": "src/llm_loop/tools/registry.py",
+        "sha256": "eb2d4cb41731aadda3f92923eed164b46c4e7fb88a4b63ae8bcff07566545396",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.tools.p4_live_scope",
+        "path": "src/llm_loop/tools/p4_live_scope.py",
+        "sha256": "8025348459e1b3ba60278bf64d2dbc22c7ddbb9aab28b9d7a83f294200b255b5",
+        "under_exact_worktree_src": true
+      }
+    ]
+  },
+  "deployment_actions": 0,
+  "final_matrix": {
+    "all_20_green": true,
+    "rows": [
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R01",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R02",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R03",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R04",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R05",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R06",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R07",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R08",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R09",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R10",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R11",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R12",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "g2_s5_provider_discovery_execution_scope",
+        "id": "P4L-R13",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R14",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R15",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R16",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R17",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R18",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R19",
+        "state": "green"
+      },
+      {
+        "contract_satisfied": true,
+        "evidence": "frozen_g2_s4_evidence",
+        "id": "P4L-R20",
+        "state": "green"
+      }
+    ]
+  },
+  "focused_pytest": {
+    "all_passed": true,
+    "collect_exit_code": 0,
+    "collected_count": 7,
+    "expected_count": 7,
+    "output_tail": "  - <repo>/tests/unit/test_source_synopsis.py:406 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_source_synopsis.py:504 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:348 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:400 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  … 共 41 处\n.......                                                                  [100%]",
+    "run_exit_code": 0
+  },
+  "frozen_s4": {
+    "expected_sha256": "f0737cfaa8e8068d4a839d7cbad8f17f77bb50fd4230310866b81dedf5a0db1c",
+    "hash_exact": true,
+    "inherited_r01_r12_r14_r20_green": true,
+    "parent_r13_deferred_red": true,
+    "qualified_s4_stop": true,
+    "sha256": "f0737cfaa8e8068d4a839d7cbad8f17f77bb50fd4230310866b81dedf5a0db1c"
+  },
+  "inherited_behavior": {
+    "all_passed": true,
+    "exit_code": 0,
+    "output_tail": "  - <repo>/tests/unit/test_workspace_artifacts.py:348 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:400 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  … 共 41 处\n........................................................................ [ 45%]\n........................................................................ [ 91%]\n.............                                                            [100%]",
+    "targets": [
+      "tests/unit/test_smc_p4_live_g2_s4_green.py",
+      "tests/unit/test_smc_p4_live_g2_s3_green.py",
+      "tests/unit/test_smc_p4_live_g2_s2_green.py",
+      "tests/unit/test_smc_p4_live_g2_s1.py",
+      "tests/unit/test_smc_browser_action_v01.py",
+      "tests/unit/test_smc_browser_cdp_action_host_v01.py",
+      "tests/unit/test_smc_browser_semantic_execute_v01.py",
+      "tests/unit/test_smc_browser_perception_v01.py",
+      "tests/unit/test_tool_execution_effects.py",
+      "tests/unit/test_tool_execution_restart.py",
+      "tests/unit/test_run_generation_ownership.py"
+    ]
+  },
+  "live_canary_preflight": {
+    "explicit_nonempty_target_id_required": true,
+    "pre_live_stop": true,
+    "sha256": "b1e3dd2d34313571023bb1042535d0bf186062191b6272b70fc0797fe32e3b0e",
+    "valid": true
+  },
+  "live_config_mutations": 0,
+  "model_requests_sent": 0,
+  "production_scope": {
+    "changed_src_paths": [
+      "src/llm_loop/core/loop/engine.py",
+      "src/llm_loop/tools/p4_live_scope.py",
+      "src/llm_loop/tools/registry.py"
+    ],
+    "exact_scope": true,
+    "expected_src_paths": [
+      "src/llm_loop/core/loop/engine.py",
+      "src/llm_loop/tools/p4_live_scope.py",
+      "src/llm_loop/tools/registry.py"
+    ]
+  },
+  "qualified_s5_pre_live_stop": true,
+  "real_browser_actions_executed": 0,
+  "s5_channels": {
+    "channels": [
+      {
+        "code": "contract_present",
+        "facts": {
+          "main_projection_reads_shared_scope": true
+        },
+        "id": "G2S5-R13-PROVIDER",
+        "state": "green"
+      },
+      {
+        "code": "discovery_scope_already_enforced",
+        "facts": {
+          "get_tool_schema_scope_enforced": true
+        },
+        "id": "G2S5-R13-DISCOVERY",
+        "state": "green_prerequisite"
+      },
+      {
+        "code": "contract_present",
+        "facts": {
+          "legacy_tool_calls": 0,
+          "registry_execution_scope_enforced": true,
+          "result_status": "failure"
+        },
+        "id": "G2S5-R13-EXECUTION",
+        "state": "green"
+      },
+      {
+        "code": "contract_present",
+        "facts": {
+          "actual": [
+            "browser_perceive",
+            "browser_semantic_click",
+            "browser_semantic_fill",
+            "browser_semantic_navigate",
+            "browser_semantic_scroll",
+            "browser_semantic_select",
+            "browser_wait_object_state",
+            "browser_wait_object_text",
+            "browser_wait_scope_count",
+            "browser_wait_scope_ready",
+            "browser_wait_scope_url",
+            "get_tool_schema"
+          ],
+          "exact_scope_match": true,
+          "expected": [
+            "browser_perceive",
+            "browser_semantic_click",
+            "browser_semantic_fill",
+            "browser_semantic_navigate",
+            "browser_semantic_scroll",
+            "browser_semantic_select",
+            "browser_wait_object_state",
+            "browser_wait_object_text",
+            "browser_wait_scope_count",
+            "browser_wait_scope_ready",
+            "browser_wait_scope_url",
+            "get_tool_schema"
+          ],
+          "module_present": true
+        },
+        "id": "G2S5-R13-CANARY-SCOPE",
+        "state": "green"
+      }
+    ],
+    "qualified": true
+  },
+  "schema": "smc.semantic_logic_p4_live_green2_s5_evidence.v0.1",
+  "slice": "G2-S5",
+  "source_order": {
+    "discovery_uses_shared_membership": true,
+    "discovery_uses_shared_names": true,
+    "execution_scope_check_before_tool_lookup": true,
+    "provider_uses_scoped_schemas": true
+  }
+}
