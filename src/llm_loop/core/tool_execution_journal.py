@@ -247,6 +247,7 @@ class ToolExecutionJournal:
         event_append: Callable[[str, str, dict], Any] | None = None,
         message_event_append: Callable[[Session, Message], Any] | None = None,
         receipt_committed_hook: Callable[[str, Message], object] | None = None,
+        action_ref_recovery: Callable[[str, str, str, str], Message | None] | None = None,
     ) -> None:
         self.event_store = event_store
         self.result_root = Path(result_root)
@@ -254,6 +255,7 @@ class ToolExecutionJournal:
         self._event_append_override = event_append
         self._message_event_append_override = message_event_append
         self._receipt_committed_hook = receipt_committed_hook
+        self._action_ref_recovery = action_ref_recovery
         # EVO-20260915-789eb9d5：receipt 提交单调计数（非收敛守卫持久写入探针）
         self._receipt_commit_count = 0
 
@@ -895,37 +897,51 @@ class ToolExecutionJournal:
                         )
                 elif state.get("started"):
                     result_sha = ""
-                    from llm_loop.core.run_context import current_workspace_root
+                    action_ref_msg: Message | None = None
+                    if self._action_ref_recovery is not None:
+                        try:
+                            action_ref_msg = self._action_ref_recovery(
+                                session_id, execution_id, call_id, tool_name
+                            )
+                        except Exception:  # noqa: BLE001 - fallback remains no-replay unknown.
+                            logger.warning(
+                                "ActionRef Browser recovery correlation failed; no replay",
+                                exc_info=True,
+                            )
+                    if action_ref_msg is not None:
+                        msg = action_ref_msg
+                    else:
+                        from llm_loop.core.run_context import current_workspace_root
 
-                    effect = self.effect_snapshot(
-                        session_id,
-                        execution_id,
-                        workspace_root=current_workspace_root.get(),
-                    )
-                    effect_suffix = (
-                        f"; effect_state={effect['effect_state']}; causation_proven=false"
-                        if effect is not None and effect.get("effect_state")
-                        else ""
-                    )
-                    recovery_meta: dict[str, Any] = {
-                        "state": "started_outcome_unknown",
-                        "auto_reexecuted": False,
-                        "execution_id": execution_id,
-                    }
-                    if effect is not None:
-                        recovery_meta["effect"] = effect
-                    msg = Message(
-                        role="tool",
-                        content=(
-                            "[状态: error] execution_outcome=unknown_after_restart; "
-                            f"auto_reexecuted=false{effect_suffix}"
-                        ),
-                        source=MessageSource.SYSTEM,
-                        tool_call_id=call_id,
-                        tool_name=tool_name,
-                        status=ToolResultStatus.ERROR,
-                        metadata={"tool_execution_recovery": recovery_meta},
-                    )
+                        effect = self.effect_snapshot(
+                            session_id,
+                            execution_id,
+                            workspace_root=current_workspace_root.get(),
+                        )
+                        effect_suffix = (
+                            f"; effect_state={effect['effect_state']}; causation_proven=false"
+                            if effect is not None and effect.get("effect_state")
+                            else ""
+                        )
+                        recovery_meta: dict[str, Any] = {
+                            "state": "started_outcome_unknown",
+                            "auto_reexecuted": False,
+                            "execution_id": execution_id,
+                        }
+                        if effect is not None:
+                            recovery_meta["effect"] = effect
+                        msg = Message(
+                            role="tool",
+                            content=(
+                                "[状态: error] execution_outcome=unknown_after_restart; "
+                                f"auto_reexecuted=false{effect_suffix}"
+                            ),
+                            source=MessageSource.SYSTEM,
+                            tool_call_id=call_id,
+                            tool_name=tool_name,
+                            status=ToolResultStatus.ERROR,
+                            metadata={"tool_execution_recovery": recovery_meta},
+                        )
                 else:
                     result_sha = ""
                     msg = Message(

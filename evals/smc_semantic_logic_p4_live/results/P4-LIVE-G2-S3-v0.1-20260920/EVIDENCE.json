@@ -1,0 +1,175 @@
+{
+  "base_s2_sha": "dee507cd7aa69bc5425b57953a581f9b062f35b6",
+  "boundary": {
+    "dispatch_capability_added": false,
+    "forbidden_surface_tokens": [],
+    "model_requests_sent": 0,
+    "real_browser_actions_executed": 0
+  },
+  "critical_imports": {
+    "all_under_exact_worktree_src": true,
+    "modules": [
+      {
+        "module": "llm_loop.browser.action_ref_execution",
+        "path": "src/llm_loop/browser/action_ref_execution.py",
+        "sha256": "cee65ead6dbce8bec36bbd5b161c16dc42c27aaa3333b5fca5e1f5cd4dda6908",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.browser.action_ref_recovery",
+        "path": "src/llm_loop/browser/action_ref_recovery.py",
+        "sha256": "87fd00c54441432dd02b108c7f5334bb9267549276ad1ad4cf60a279115d17f2",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.core.tool_execution_journal",
+        "path": "src/llm_loop/core/tool_execution_journal.py",
+        "sha256": "44d81ec1c092000e7339862f28393046710b3333c388ec74387f5fb73223c8b8",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.core.loop.events",
+        "path": "src/llm_loop/core/loop/events.py",
+        "sha256": "9caead41416df7296b09c78fee617d37664d58e7f3f397c898e8fa9d6b08e42e",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.subagent.runner",
+        "path": "src/llm_loop/subagent/runner.py",
+        "sha256": "52f53fe59129c0d25cc34181230e6fe962b80233987526086c220c249f739e2e",
+        "under_exact_worktree_src": true
+      }
+    ]
+  },
+  "focused_pytest": {
+    "all_passed": true,
+    "collect_exit_code": 0,
+    "collected_count": 12,
+    "expected_count": 12,
+    "output_tail": "  - <repo>/tests/unit/test_source_synopsis.py:406 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_source_synopsis.py:504 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:348 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:400 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  … 共 41 处\n............                                                             [100%]",
+    "run_exit_code": 0
+  },
+  "green1_matrix": {
+    "all_remaining_rows_red": true,
+    "exit_code": 0,
+    "green1_stop_qualified": true,
+    "harness_errors": [],
+    "parent_rows": {
+      "P4L-R16": {
+        "contract_satisfied": false,
+        "detail": "outer WAL has no ActionRef execution-binding state that can distinguish prepared-without-Browser-running recovery",
+        "expected_code": "prepare_without_running_recovery_contract_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "action_ref_consulted": true,
+          "auto_reexecute_false_exists": true,
+          "browser_action_id_consulted": false,
+          "browser_receipt_store_consulted": false,
+          "started_unknown_state_exists": true
+        },
+        "id": "P4L-R16",
+        "observed_code": "prepare_without_running_recovery_contract_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      "P4L-R17": {
+        "contract_satisfied": false,
+        "detail": "outer WAL safely marks started outcome unknown/no replay, but cannot correlate an ActionRef Browser running receipt",
+        "expected_code": "running_unknown_browser_correlation_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "action_ref_consulted": true,
+          "auto_reexecute_false_exists": true,
+          "browser_action_id_consulted": false,
+          "browser_receipt_store_consulted": false,
+          "started_unknown_state_exists": true
+        },
+        "id": "P4L-R17",
+        "observed_code": "running_unknown_browser_correlation_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      "P4L-R18": {
+        "contract_satisfied": false,
+        "detail": "no exact Browser terminal receipt -> outer execution correlation path exists",
+        "expected_code": "terminal_browser_outer_wal_correlation_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "action_ref_consulted": true,
+          "auto_reexecute_false_exists": true,
+          "browser_action_id_consulted": false,
+          "browser_receipt_store_consulted": false,
+          "started_unknown_state_exists": true
+        },
+        "id": "P4L-R18",
+        "observed_code": "terminal_browser_outer_wal_correlation_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      }
+    },
+    "parent_taxonomy_preserved": true
+  },
+  "production_scope": {
+    "changed_src_paths": [
+      "src/llm_loop/browser/action_ref_execution.py",
+      "src/llm_loop/browser/action_ref_recovery.py",
+      "src/llm_loop/core/loop/events.py",
+      "src/llm_loop/core/tool_execution_journal.py",
+      "src/llm_loop/subagent/runner.py"
+    ],
+    "exact_scope": true,
+    "expected_src_paths": [
+      "src/llm_loop/browser/action_ref_execution.py",
+      "src/llm_loop/browser/action_ref_recovery.py",
+      "src/llm_loop/core/loop/events.py",
+      "src/llm_loop/core/tool_execution_journal.py",
+      "src/llm_loop/subagent/runner.py"
+    ]
+  },
+  "qualified_s3_stop": true,
+  "s3_rows": [
+    {
+      "contract_satisfied": true,
+      "facts": {
+        "bridge_receipt_cursor_load_present": true,
+        "bridge_receipt_cursor_write_present": true,
+        "browser_exact_action_history_present": true,
+        "s1_prepared_no_running_classifier_present": true
+      },
+      "id": "G2S3-R16-RECEIPT-CURSOR",
+      "observed_code": "contract_present",
+      "row_ok": true
+    },
+    {
+      "contract_satisfied": true,
+      "facts": {
+        "correlator_present": true,
+        "decision_present": true,
+        "has_search_or_rebind_surface": false,
+        "recovery_module_present": true,
+        "tool_journal_actionref_recovery_hook_present": true
+      },
+      "id": "G2S3-R17-RUNNING-CORRELATION",
+      "observed_code": "contract_present",
+      "row_ok": true
+    },
+    {
+      "contract_satisfied": true,
+      "facts": {
+        "correlator_present": true,
+        "decision_present": true,
+        "has_search_or_rebind_surface": false,
+        "recovery_module_present": true,
+        "tool_journal_exact_terminal_settlement_present": true
+      },
+      "id": "G2S3-R18-TERMINAL-CORRELATION",
+      "observed_code": "contract_present",
+      "row_ok": true
+    }
+  ],
+  "schema": "smc.semantic_logic_p4_live_green2_s3_evidence.v0.1",
+  "slice": "G2-S3"
+}

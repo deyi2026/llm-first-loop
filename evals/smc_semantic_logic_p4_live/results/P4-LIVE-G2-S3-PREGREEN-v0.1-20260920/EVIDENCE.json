@@ -1,0 +1,55 @@
+{
+  "all_expected_red": true,
+  "base_s2_sha": "dee507cd7aa69bc5425b57953a581f9b062f35b6",
+  "model_requests_sent": 0,
+  "production_green_started": false,
+  "real_browser_actions_executed": 0,
+  "rows": [
+    {
+      "contract_satisfied": false,
+      "detail": "S3 requires an immutable execution-specific receipt baseline before Browser entry",
+      "expected_code": "actionref_exact_receipt_cursor_absent",
+      "facts": {
+        "bridge_receipt_cursor_load_present": false,
+        "bridge_receipt_cursor_write_present": false,
+        "browser_exact_action_history_present": true,
+        "s1_prepared_no_running_classifier_present": true
+      },
+      "id": "G2S3-R16-RECEIPT-CURSOR",
+      "observed_code": "actionref_exact_receipt_cursor_absent",
+      "row_ok": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "Outer WAL recover lacks an exact ActionRef Browser-running correlation hook",
+      "expected_code": "actionref_running_crash_correlator_absent",
+      "facts": {
+        "correlator_present": false,
+        "decision_present": false,
+        "has_search_or_rebind_surface": false,
+        "recovery_module_present": false,
+        "tool_journal_actionref_recovery_hook_present": false
+      },
+      "id": "G2S3-R17-RUNNING-CORRELATION",
+      "observed_code": "actionref_running_crash_correlator_absent",
+      "row_ok": true
+    },
+    {
+      "contract_satisfied": false,
+      "detail": "Outer WAL recover cannot yet settle from the exact bound terminal Browser receipt",
+      "expected_code": "actionref_terminal_wal_recovery_absent",
+      "facts": {
+        "correlator_present": false,
+        "decision_present": false,
+        "has_search_or_rebind_surface": false,
+        "recovery_module_present": false,
+        "tool_journal_exact_terminal_settlement_present": false
+      },
+      "id": "G2S3-R18-TERMINAL-CORRELATION",
+      "observed_code": "actionref_terminal_wal_recovery_absent",
+      "row_ok": true
+    }
+  ],
+  "schema": "smc.semantic_logic_p4_live_green2_s3_pregreen_evidence.v0.1",
+  "src_diff_from_base": []
+}

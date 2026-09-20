@@ -1,0 +1,25 @@
+{
+  "schema": "smc.semantic_logic_p4_live_green2_s3_expected_failures.v0.1",
+  "base_s2_sha": "dee507cd7aa69bc5425b57953a581f9b062f35b6",
+  "protocol_sha": "e946eab26032aa4faa6698a3244ebd30c836cce1",
+  "rows": [
+    {
+      "id": "G2S3-R16-RECEIPT-CURSOR",
+      "parent_row": "P4L-R16",
+      "code": "actionref_exact_receipt_cursor_absent",
+      "meaning": "PREPARED exists, but no create-only per-execution receipt-sequence baseline proves which exact Browser receipts were created after this outer execution entered the Browser path."
+    },
+    {
+      "id": "G2S3-R17-RUNNING-CORRELATION",
+      "parent_row": "P4L-R17",
+      "code": "actionref_running_crash_correlator_absent",
+      "meaning": "Exact Browser running receipt state is not correlated into outer WAL recovery, so the ActionRef-specific outcome-unknown/no-replay provenance is absent."
+    },
+    {
+      "id": "G2S3-R18-TERMINAL-CORRELATION",
+      "parent_row": "P4L-R18",
+      "code": "actionref_terminal_wal_recovery_absent",
+      "meaning": "An exact terminal Browser receipt cannot yet reconstruct and settle the missing outer tool receipt through the immutable execution bridge without replay."
+    }
+  ]
+}

@@ -24,6 +24,8 @@ from llm_loop.core.tool_execution_journal import current_action_ref_effect_bindi
 
 ACTION_REF_EXECUTION_SCHEMA = "smc.browser_action_ref_execution_binding.v0.1"
 ACTION_REF_EXECUTION_STATE = "prepared"
+ACTION_REF_RECEIPT_CURSOR_SCHEMA = "smc.browser_action_ref_receipt_cursor.v0.1"
+ACTION_REF_RECEIPT_CURSOR_STATE = "armed"
 _INTEGRITY_ALGORITHM = "sha256"
 
 
@@ -105,6 +107,15 @@ class ActionRefExecutionBridgeStore:
         safe = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:32]
         return self.root / "prepared" / f"{safe}.json"
 
+    def receipt_cursor_path(self, execution_id: str) -> Path:
+        raw = str(execution_id or "")
+        if not raw:
+            raise ActionRefExecutionBridgeError(
+                "action_ref_execution_binding_incomplete", "execution_id is required"
+            )
+        safe = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:32]
+        return self.root / "receipt_cursor" / f"{safe}.json"
+
     @staticmethod
     def _integrity_digest(record: dict[str, Any]) -> str:
         unsigned = {key: value for key, value in record.items() if key != "integrity"}
@@ -180,6 +191,111 @@ class ActionRefExecutionBridgeStore:
                 "PREPARED execution bridge id mismatch",
             )
         return record
+
+    def load_receipt_cursor(self, execution_id: str) -> dict[str, Any]:
+        """Load the exact immutable Browser-receipt baseline for one outer execution."""
+        bridge = self.load_exact(execution_id)
+        path = self.receipt_cursor_path(execution_id)
+        if not path.is_file():
+            raise ActionRefExecutionBridgeError(
+                "action_ref_receipt_cursor_unavailable",
+                "Browser receipt cursor does not exist",
+            )
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ActionRefExecutionBridgeError(
+                "action_ref_receipt_cursor_integrity_error",
+                "Browser receipt cursor is unreadable",
+            ) from exc
+        if not isinstance(record, dict):
+            raise ActionRefExecutionBridgeError(
+                "action_ref_receipt_cursor_integrity_error",
+                "Browser receipt cursor is not an object",
+            )
+        if (
+            record.get("schema") != ACTION_REF_RECEIPT_CURSOR_SCHEMA
+            or record.get("state") != ACTION_REF_RECEIPT_CURSOR_STATE
+            or record.get("execution_id") != str(execution_id)
+            or record.get("bridge_id") != bridge.get("bridge_id")
+            or record.get("session_id") != bridge.get("session_id")
+            or record.get("tool_call_id") != bridge.get("tool_call_id")
+            or record.get("inner_action_id") != bridge.get("inner_action_id")
+        ):
+            raise ActionRefExecutionBridgeError(
+                "action_ref_receipt_cursor_integrity_error",
+                "Browser receipt cursor identity mismatch",
+            )
+        integrity = record.get("integrity")
+        if not isinstance(integrity, dict) or integrity.get("algorithm") != _INTEGRITY_ALGORITHM:
+            raise ActionRefExecutionBridgeError(
+                "action_ref_receipt_cursor_integrity_error",
+                "Browser receipt cursor integrity metadata missing",
+            )
+        expected = str(integrity.get("digest") or "")
+        actual = self._integrity_digest(record)
+        if not expected or expected != actual:
+            raise ActionRefExecutionBridgeError(
+                "action_ref_receipt_cursor_integrity_error",
+                "Browser receipt cursor integrity mismatch",
+            )
+        seq = record.get("receipt_seq_before")
+        if isinstance(seq, bool) or not isinstance(seq, int) or seq < 0:
+            raise ActionRefExecutionBridgeError(
+                "action_ref_receipt_cursor_integrity_error",
+                "Browser receipt cursor sequence is invalid",
+            )
+        return record
+
+    def prepare_receipt_cursor(
+        self, execution_id: str, *, receipt_seq_before: int
+    ) -> dict[str, Any]:
+        """Durably fence recovery to receipts created after this exact execution entered Browser."""
+        if isinstance(receipt_seq_before, bool) or int(receipt_seq_before) < 0:
+            raise ActionRefExecutionBridgeError(
+                "action_ref_receipt_cursor_invalid",
+                "receipt_seq_before must be a non-negative integer",
+            )
+        bridge = self.load_exact(execution_id)
+        basis = {
+            "execution_id": str(bridge["execution_id"]),
+            "bridge_id": str(bridge["bridge_id"]),
+            "session_id": str(bridge["session_id"]),
+            "tool_call_id": str(bridge["tool_call_id"]),
+            "inner_action_id": str(bridge["inner_action_id"]),
+            "receipt_seq_before": int(receipt_seq_before),
+        }
+        path = self.receipt_cursor_path(execution_id)
+        with self._locked():
+            if path.is_file():
+                existing = self.load_receipt_cursor(execution_id)
+                if any(existing.get(key) != value for key, value in basis.items()):
+                    raise ActionRefExecutionBridgeError(
+                        "action_ref_receipt_cursor_conflict",
+                        "execution_id is already armed with a different Browser receipt baseline",
+                    )
+                return existing
+            record: dict[str, Any] = {
+                "schema": ACTION_REF_RECEIPT_CURSOR_SCHEMA,
+                "state": ACTION_REF_RECEIPT_CURSOR_STATE,
+                **basis,
+                "armed_at_epoch": float(self._now()),
+            }
+            record["integrity"] = {
+                "algorithm": _INTEGRITY_ALGORITHM,
+                "digest": self._integrity_digest(record),
+            }
+            try:
+                _write_json_create_only(path, record)
+            except FileExistsError:
+                existing = self.load_receipt_cursor(execution_id)
+                if any(existing.get(key) != value for key, value in basis.items()):
+                    raise ActionRefExecutionBridgeError(
+                        "action_ref_receipt_cursor_conflict",
+                        "execution_id raced with a different Browser receipt baseline",
+                    ) from None
+                return existing
+            return record
 
     @staticmethod
     def _validate_resolution(

@@ -140,11 +140,15 @@ class SubAgentRunner:
             if tool_execution_root is not None
             else str(self.session_store.root.parent / "audit" / "tool_execution")
         )
+        from llm_loop.browser.action_ref_recovery import build_action_ref_crash_correlator
+
+        correlator = build_action_ref_crash_correlator(self.session_store.root.parent)
         self._tool_journal = ToolExecutionJournal(
             event_store=self.session_store.event_store,
             result_root=journal_root,
             session_store=self.session_store,
             receipt_committed_hook=self.settle_committed_receipt,
+            action_ref_recovery=(correlator.recover_message if correlator is not None else None),
         )
         self._topology_journal = SubAgentTopologyJournal(self.session_store.event_store)
         self._delivery_journal = SubAgentDeliveryJournal(self.session_store.event_store)

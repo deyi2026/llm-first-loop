@@ -1038,6 +1038,9 @@ class _EventsMixin:
 
     def _tool_execution_journal(self) -> ToolExecutionJournal:
         """Return the shared mechanical WAL facade used by every execution loop."""
+        from llm_loop.browser.action_ref_recovery import build_action_ref_crash_correlator
+
+        correlator = build_action_ref_crash_correlator(self.settings.data_dir)
         return ToolExecutionJournal(
             event_store=getattr(self, "_event_store", None),
             result_root=Path(self.settings.data_dir) / "audit" / "tool_execution",
@@ -1045,6 +1048,7 @@ class _EventsMixin:
             event_append=self._event_append,
             message_event_append=self._append_message_event,
             receipt_committed_hook=getattr(self, "_tool_receipt_committed_hook", None),
+            action_ref_recovery=(correlator.recover_message if correlator is not None else None),
         )
 
     @staticmethod
