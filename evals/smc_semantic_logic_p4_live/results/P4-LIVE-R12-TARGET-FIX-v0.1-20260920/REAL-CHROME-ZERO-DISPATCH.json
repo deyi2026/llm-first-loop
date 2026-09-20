@@ -1,0 +1,11 @@
+{
+  "browser_dispatches": 0,
+  "capture_page_token_prefix_ok": true,
+  "git_head": "f1efef6b57ef90562410a93cd310bae98e33a983",
+  "model_requests": 0,
+  "resource_action_ref_present": true,
+  "same_exact_target": true,
+  "schema": "smc.p4_live.r12_real_zero_dispatch_green.v0.1",
+  "status": "PASS",
+  "websocket_open_count": 0
+}

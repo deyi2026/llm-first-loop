@@ -1,0 +1,99 @@
+{
+  "artifact_sha256": {
+    "docs/SMC-SEMANTIC-LOGIC-P4-LIVE-R12-TARGET-IDENTITY-FIX-RESULT-v0.1-20260920.md": "484fa938cdddfa21e5de9297bbe18458b32d43462632c4fa3a4f075627f8678d",
+    "evals/smc_semantic_logic_p4_live/R12-TARGET-IDENTITY-FIX-PLAN.v0.1.json": "cdb1ec9f1deb26fb4e13868d92dc66259b7f8e3e843ccfbbe51655d6405b973a",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-R12-TARGET-FIX-v0.1-20260920/FULL-CI-SHARED-FAILURES.txt": "67cb4e57ea0f23572c7e4d91ee576468da0502f183b7bf6e6ccb92fc10583412",
+    "evals/smc_semantic_logic_p4_live/results/P4-LIVE-R12-TARGET-FIX-v0.1-20260920/REAL-CHROME-ZERO-DISPATCH.json": "c17342ea72df40ffb230ed60922b7b7d636f03b97810939b989039c4f9b15b86",
+    "src/llm_loop/browser/action_ref.py": "c16d4d540ab3ff78ae99c0dc1d20fcb42820e2179f8034b676549d5c7dc6b65d",
+    "src/llm_loop/browser/cdp_action_host.py": "594b41e7ed7955e5133e9ad9d2adf6a9abf6130a8f3351d9cbe68a6021c19cbb",
+    "src/llm_loop/browser/target_identity.py": "bfed11a8f63de4c57db60ac2d5f00fe75ac554f2ecbf8a9bf1255d7423e76f44",
+    "tests/unit/test_smc_p4_live_r12_target_identity_fix.py": "cea8aa471357c012431ac9a861c97ea8e1da1596a7507531d52a66577d2dd7fc"
+  },
+  "base_negative_qualification": "9a11fe4c43cc83f53bf2baf62d0782c91e1d4242",
+  "browser_mutations_executed": 0,
+  "canonical_contract": {
+    "actionref_binding_target_identity": "sha256(raw_cdp_target_id)",
+    "actuator_target_identity": "sha256(raw_cdp_target_id)",
+    "empty_prefixed_target_fails_closed": true,
+    "model_authority_changed": false,
+    "perception_page_token_semantics_changed": false,
+    "real_capture_mapping": "target:<raw_cdp_target_id> -> <raw_cdp_target_id>",
+    "search_guess_rebind_added": false,
+    "synthetic_nonprefixed_token_preserved": true
+  },
+  "current_descendant_adjacent_suite": {
+    "errors": 0,
+    "failures": 0,
+    "historical_superseded_s2_factory_registration_test_excluded_per_frozen_s5_selection": true,
+    "skipped": 0,
+    "tests": 173
+  },
+  "date": "2026-09-20",
+  "deployment_restart_merge_performed": false,
+  "deterministic_green": {
+    "failures": 0,
+    "malformed_empty_raw_target_fail_closed": true,
+    "r12_tests": 3,
+    "same_real_representation_boundary_green": true,
+    "synthetic_fixture_digest_compatibility": true
+  },
+  "deterministic_red": {
+    "browser_dispatches": 0,
+    "failure_code": "browser_target_precondition_mismatch",
+    "status": "EXPECTED_FAIL_CONFIRMED",
+    "websocket_open_count": 0
+  },
+  "frozen_negative_result_unchanged": true,
+  "full_ci": {
+    "candidate_exit_code": 1,
+    "candidate_failure_count": 72,
+    "candidate_only_failures": 0,
+    "classification": "BASELINE_EQUIVALENT_RED_NO_NEW_FAILURES",
+    "failure_set_sha256_candidate": "67cb4e57ea0f23572c7e4d91ee576468da0502f183b7bf6e6ccb92fc10583412",
+    "failure_set_sha256_parent": "67cb4e57ea0f23572c7e4d91ee576468da0502f183b7bf6e6ccb92fc10583412",
+    "failure_sets_identical": true,
+    "parent_exit_code": 1,
+    "parent_failure_count": 72,
+    "parent_only_failures": 0,
+    "pre_pytest_gates": "Ruff PASS; env-pin PASS; Pyright 0/0"
+  },
+  "green_commit": "f1efef6b57ef90562410a93cd310bae98e33a983",
+  "green_source_sha256": {
+    "action_ref": "c16d4d540ab3ff78ae99c0dc1d20fcb42820e2179f8034b676549d5c7dc6b65d",
+    "cdp_action_host": "594b41e7ed7955e5133e9ad9d2adf6a9abf6130a8f3351d9cbe68a6021c19cbb",
+    "target_identity": "bfed11a8f63de4c57db60ac2d5f00fe75ac554f2ecbf8a9bf1255d7423e76f44"
+  },
+  "model_requests_sent": 0,
+  "negative_artifact_sha256": {
+    "live_result": "0c9d32e7d4c1fef7223c35a0f9c13e64c19b4cd1db9b1d21b8bbb763d2598689",
+    "target_identity_adjudication": "799bcec754a84471eb7a5bfec831f76172d8a863ee823e919c269401b93890d6"
+  },
+  "new_live_qualification_executed": false,
+  "next_stop": "HUMAN_CHECKPOINT_BEFORE_NEW_LIVE_REQUALIFICATION",
+  "production_surface": [
+    "src/llm_loop/browser/target_identity.py",
+    "src/llm_loop/browser/action_ref.py",
+    "src/llm_loop/browser/cdp_action_host.py"
+  ],
+  "real_chrome_zero_dispatch": {
+    "browser_dispatches": 0,
+    "capture_page_token_prefix_ok": true,
+    "git_head": "f1efef6b57ef90562410a93cd310bae98e33a983",
+    "model_requests": 0,
+    "resource_action_ref_present": true,
+    "same_exact_target": true,
+    "status": "PASS",
+    "websocket_open_count": 0
+  },
+  "red_commit": "19cd1ceacf31c961a59008002f951697cc266f5e",
+  "root_cause": "ActionRef issuance hashed perception page_token target:<raw>, while the actuator hashed raw CDP target id",
+  "schema": "smc.semantic_logic_p4_live_r12_target_identity_fix_evidence.v0.1",
+  "static_gates": {
+    "diff_check": "PASS",
+    "git_security_scan": "PASS",
+    "pyright": "0 errors / 0 warnings",
+    "ruff": "PASS",
+    "worktree_clean_at_green_commit": true
+  },
+  "status": "QUALIFIED_PRODUCTION_FIX_PRE_LIVE_STOP"
+}
