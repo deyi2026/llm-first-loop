@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from llm_loop.core.loop.focus import _INJECTION_PREFIX
+from llm_loop.core.prefix_stability import finalize_round, observe_checkpoint
 from llm_loop.core.prompt_build import BuildAudit
 from llm_loop.core.prompt_build.stages.compaction_audit import run_compaction_audit
 from llm_loop.core.prompt_build.stages.projection_gate import (
@@ -175,6 +176,16 @@ def run_tail_assembly(
         session_id=sess.session_id,
         anchor_sess=anchor_sess,
         data_dir=settings.data_dir,
+        record_action=record_action,
+    )
+    # EVO-20260920-3fb8aa0a 阶段A: final 检查点 + 轮末跨轮对比报告。
+    # 纯测量 fail-open：不改 built、不改变门闸/审计结果；压缩轮归因抑制
+    # （compressed → verdict=compressed）；多 provider 会话按 (session, provider) 分桶。
+    observe_checkpoint(sess.session_id, provider_id, "final", built)
+    finalize_round(
+        sess.session_id,
+        provider_id,
+        compressed=bool(last_history_compacted),
         record_action=record_action,
     )
     return TailAssemblyOutcome(
