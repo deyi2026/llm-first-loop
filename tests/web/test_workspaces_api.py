@@ -350,7 +350,12 @@ def test_session_events_follow_workspace_switch(build_test_engine, tmp_path, mon
 def test_workspace_mutations_reject_active_sync_run_without_partial_commit(
     build_test_engine, tmp_path
 ):
-    """active run期间register/switch都必须409，registry current与runtime根完全不动。"""
+    """EVO-20260920（灵活切换）: active run 期间 register/switch 不再 409。
+
+    新契约：切换原子生效（registry current 与 runtime 根一起指向目标）；
+    运行中 sync run 不被打断，最终落盘经 sid 归属 pin 写回原分区，
+    目标分区无该会话文件（无跨分区污染）。
+    """
     from llm_loop.llm.client import LLMResponse, StreamDelta
 
     client = _client(build_test_engine)
@@ -364,11 +369,7 @@ def test_workspace_mutations_reject_active_sync_run_without_partial_commit(
     new_root = tmp_path / "busy-register"
     new_root.mkdir()
 
-    before_current = store.get_current()
-    assert before_current is not None
-    before_root = engine.workspace_root
-    before_session_root = engine.session.root
-    before_ids = {w.id for w in store.list()}
+    before_session_root = Path(engine.session.root)
 
     def slow_stream(**_kwargs):
         yield StreamDelta(text="A")
@@ -384,14 +385,19 @@ def test_workspace_mutations_reject_active_sync_run_without_partial_commit(
         register_resp = client.post("/api/v1/workspaces", json={"path": str(new_root)})
         switch_resp = client.post("/api/v1/workspaces/switch", json={"id": target.id})
 
-        assert register_resp.status_code == 409
-        assert register_resp.json()["error"] == "workspace_busy"
-        assert switch_resp.status_code == 409
-        assert switch_resp.json()["error"] == "workspace_busy"
-        assert {w.id for w in store.list()} == before_ids
-        assert store.get_current() is not None
-        assert store.get_current().id == before_current.id
-        assert engine.workspace_root == before_root
-        assert engine.session.root == before_session_root
+        assert register_resp.status_code in (200, 201)
+        assert switch_resp.status_code == 200
+        # 切换原子生效：registry current 指向目标，runtime 根随动
+        assert store.get_current().id == target.id
+        assert Path(engine.workspace_root).resolve() == target_root.resolve()
+        assert Path(engine.session.root) != before_session_root
+        # 运行中的 sync run 不受切换影响：继续产出并收尾
+        assert next(stream).text == "B"
     finally:
         stream.close()
+
+    # 运行结束后的最终落盘：写回原分区，目标分区无污染
+    original_json = before_session_root / f"{sid}.json"
+    assert original_json.exists()
+    assert "AB" in original_json.read_text(encoding="utf-8")
+    assert not (Path(engine.session.root) / f"{sid}.json").exists()

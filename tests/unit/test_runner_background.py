@@ -690,7 +690,8 @@ def test_eventbus_subscriber_queue_bounded_keeps_terminal():
 
 
 def test_background_active_blocks_workspace_switch(build_test_engine, tmp_path):
-    """后台handle存续期间workspace根不可切换；run完成后旧分区仍是唯一session落点。"""
+    """EVO-20260920（灵活切换）: 后台handle存续期间可切换 workspace；run 完成后
+    旧分区仍是唯一 session 落点（sid 归属 pin 保证落盘不漂移）。"""
     from llm_loop.llm.client import LLMResponse, StreamDelta
 
     engine, fake = build_test_engine([])
@@ -718,12 +719,10 @@ def test_background_active_blocks_workspace_switch(build_test_engine, tmp_path):
     assert first["type"] == "delta" and first["delta"].text == "A"
 
     try:
-        try:
-            engine.set_workspace(str(workspace_b), "ws-b")
-            raise AssertionError("active background run期间workspace切换必须被拒绝")
-        except RuntimeError as exc:
-            assert "运行" in str(exc) or "workspace" in str(exc) or "工作区" in str(exc)
-        assert engine.session.root == root_a
+        # EVO-20260920: 切换成功（不再 fail-fast），run 不被打断。
+        engine.set_workspace(str(workspace_b), "ws-b")
+        assert engine.session.root != root_a
+        assert engine.session.load(sid) is not None
     finally:
         release.set()
 
@@ -732,6 +731,7 @@ def test_background_active_blocks_workspace_switch(build_test_engine, tmp_path):
         time.sleep(0.01)
     assert runner.is_running(sid) is False
     assert handle.status == "done"
+    # 切换后 load 经归属 pin 仍读到原分区会话
     stored = engine.session.load(sid)
     assert any(m.role == "assistant" and "AB" in m.content for m in stored.messages)
     assert not (engine.settings.sessions_dir / "ws-b" / f"{sid}.json").exists()
