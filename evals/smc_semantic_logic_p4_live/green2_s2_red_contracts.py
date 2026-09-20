@@ -126,7 +126,7 @@ def _target_precondition_behavior(expected_target_hash: str) -> dict[str, Any]:
             "id": target_id,
             "type": "page",
             "url": f"https://example.test/{target_id}",
-            "webSocketDebuggerUrl": f"ws://127.0.0.1/devtools/page/{target_id}",
+            "webSocketDebuggerUrl": f"ws://127.0.0.1:9222/devtools/page/{target_id}",
         }
 
     ws_calls: list[str] = []
@@ -245,6 +245,9 @@ def _existing_guard_behavior() -> dict[str, Any]:
                 return copy.deepcopy(_fixtures()["navigate"])
 
         class _Actuator:
+            def bind_observed_target(self, expected_target_id_sha256: str) -> None:
+                del expected_target_id_sha256
+
             def dispatch(self, **kwargs: Any) -> BrowserDispatchResult:
                 actuator_calls.append(dict(kwargs))
                 return BrowserDispatchResult(acknowledged=True)

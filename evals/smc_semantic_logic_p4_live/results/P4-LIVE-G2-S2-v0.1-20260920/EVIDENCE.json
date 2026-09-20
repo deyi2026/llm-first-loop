@@ -1,0 +1,250 @@
+{
+  "base_pregreen_sha": "8c000d74015af858d960d051ecb2619cf62ec8b9",
+  "base_qualifications": {
+    "green1_stop_qualified": true,
+    "matrix_exit_code": 0,
+    "matrix_harness_errors": [],
+    "parent_s2_rows": {
+      "P4L-R12": {
+        "contract_satisfied": false,
+        "detail": "perception and mutation actuator independently choose different sole-page targets when both are initially unbound",
+        "expected_code": "browser_target_independent_first_bind_gap",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "actuator_candidate": "target-B",
+          "actuator_unconfigured": true,
+          "identity_gap_observed": true,
+          "perception_candidate": "target-A",
+          "perception_unconfigured": true
+        },
+        "id": "P4L-R12",
+        "observed_code": "browser_target_independent_first_bind_gap",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      "P4L-R14": {
+        "contract_satisfied": false,
+        "detail": "existing GroundingRef action_id and reservation are deterministic/at-most-once, but no ActionRef mutation path delegates into that identity basis",
+        "expected_code": "actionref_inner_action_id_bridge_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "actionref_compiler_bridge_wired": false,
+          "duplicate_reservation_rejected": true,
+          "first_reservation": true,
+          "groundingref_action_id": "sact-4c11c1583f8a262a5f7b9b98",
+          "groundingref_inner_action_id_deterministic": true
+        },
+        "id": "P4L-R14",
+        "observed_code": "actionref_inner_action_id_bridge_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      },
+      "P4L-R19": {
+        "contract_satisfied": false,
+        "detail": "existing GroundingRef stale guard is fail-closed, but no ActionRef path delegates into it",
+        "expected_code": "actionref_version_guard_delegation_absent",
+        "expected_green": false,
+        "expected_red": true,
+        "facts": {
+          "actionref_mutation_bridge_wired": false,
+          "automatic_refresh_performed": false,
+          "existing_version_guard_ok": true,
+          "reason": "document_generation_changed",
+          "result": "stale",
+          "silent_rebind_performed": false
+        },
+        "id": "P4L-R19",
+        "observed_code": "actionref_version_guard_delegation_absent",
+        "row_ok": true,
+        "taxonomy_match": true
+      }
+    },
+    "parent_s2_taxonomy_preserved": true,
+    "r10_r19_all_red": true,
+    "s1_exit_code": 0,
+    "s1_qualified": true
+  },
+  "base_s1_sha": "06891fd144c635f0625644a0c2c2ea24ed009e52",
+  "critical_imports": {
+    "all_under_exact_worktree_src": true,
+    "modules": [
+      {
+        "module": "llm_loop.browser.action",
+        "path": "src/llm_loop/browser/action.py",
+        "sha256": "fd91bbebc2ea9651cbdb5bc12e6fbc9d8dfddb23794cf9addb155df46f6d9754",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.browser.cdp_action_host",
+        "path": "src/llm_loop/browser/cdp_action_host.py",
+        "sha256": "8f38b9b4f0a3dacf7c20d72d1b5f9c3f5fdf032b27f38ba370be539d7e89c92f",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.browser.action_ref",
+        "path": "src/llm_loop/browser/action_ref.py",
+        "sha256": "bf5cac2a8a9961fc3d69a2d31d96feaaef9ee9f08854ffc5a3ba6f9715d8f742",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.browser.action_ref_execution",
+        "path": "src/llm_loop/browser/action_ref_execution.py",
+        "sha256": "98af4b281f6791ebc6ed77a6b0acf40c07eb777af85d28b9eae47ef6e7f7a3c0",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.tools.builtin.browser_semantic_execute",
+        "path": "src/llm_loop/tools/builtin/browser_semantic_execute.py",
+        "sha256": "920f2f794b0f6a2ea8481fa2f7bc5e71091e8fa71353e62125d94f08557c1008",
+        "under_exact_worktree_src": true
+      },
+      {
+        "module": "llm_loop.tools.builtin.browser_action_ref_kernel",
+        "path": "src/llm_loop/tools/builtin/browser_action_ref_kernel.py",
+        "sha256": "66da434892505f838fde1a3d80ec7315620b0c5d6595ec7b48b6e929d480534f",
+        "under_exact_worktree_src": true
+      }
+    ]
+  },
+  "focused_pytest": {
+    "all_passed": true,
+    "collect_exit_code": 0,
+    "collected_count": 9,
+    "expected_count": 9,
+    "output_tail": "  - <repo>/tests/unit/test_source_synopsis.py:249 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_source_synopsis.py:327 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_source_synopsis.py:406 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_source_synopsis.py:504 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:348 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  - <repo>/tests/unit/test_workspace_artifacts.py:400 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://x.invalid/v1\",\n  … 共 41 处\n.........                                                                [100%]",
+    "run_exit_code": 0
+  },
+  "hidden_boundary": {
+    "factory_registration_present": false,
+    "first_physical_dispatch_boundary_crossed": false,
+    "kernel_dispatch_dependencies": [],
+    "model_requests_sent": 0,
+    "real_browser_actions_executed": 0,
+    "registry_registration_present": false
+  },
+  "production_scope": {
+    "changed_src_paths": [
+      "src/llm_loop/browser/action.py",
+      "src/llm_loop/browser/cdp_action_host.py",
+      "src/llm_loop/tools/builtin/browser_action_ref_kernel.py"
+    ],
+    "exact_three_file_candidate": true,
+    "expected_src_paths": [
+      "src/llm_loop/browser/action.py",
+      "src/llm_loop/browser/cdp_action_host.py",
+      "src/llm_loop/tools/builtin/browser_action_ref_kernel.py"
+    ],
+    "git_diff_exit_code": 0,
+    "git_untracked_exit_code": 0
+  },
+  "protocol_sha": "e946eab26032aa4faa6698a3244ebd30c836cce1",
+  "qualified_s2_stop": true,
+  "s2_rows": [
+    {
+      "contract_satisfied": true,
+      "detail": "ActionRef already carries the exact observed Browser target hash, but the sticky pre-dispatch target bind/verify seam is absent",
+      "facts": {
+        "actionref_target_hash_matches_observed_page": true,
+        "actionref_target_hash_present": true,
+        "actuator_candidate": "target-B",
+        "actuator_unconfigured": true,
+        "browser_action_adapter_has_sticky_target_bind_api": true,
+        "cdp_actuator_has_sticky_target_bind_api": true,
+        "identity_gap_observed": true,
+        "match_binds_exact_target_without_websocket": true,
+        "mismatch_error_code": "browser_target_precondition_mismatch",
+        "mismatch_rejected_before_websocket": true,
+        "perception_candidate": "target-A",
+        "perception_unconfigured": true,
+        "protocol_has_sticky_target_bind_api": true
+      },
+      "id": "G2S2-R12-TARGET-PRECONDITION",
+      "observed_code": "contract_present",
+      "row_ok": true
+    },
+    {
+      "contract_satisfied": true,
+      "detail": "Existing GroundingRef compiler/action-id authority is ready, but the hidden ActionRefResolution -> exact GroundingRef compiler bridge is absent",
+      "facts": {
+        "actionref_grounding_ref_round_trip_exact": true,
+        "bridge_delegates_exact_grounding_ref_once": true,
+        "bridge_has_dispatch_dependency": false,
+        "bridge_preserves_browser_target_hash": true,
+        "bridge_preserves_existing_action_id": true,
+        "bridge_preserves_expected_version": true,
+        "compiled_expected_version_matches_actionref": true,
+        "duplicate_reservation_rejected": true,
+        "existing_action_id_deterministic": true,
+        "first_reservation": true,
+        "groundingref_action_id": "sact-4c11c1583f8a262a5f7b9b98",
+        "groundingref_inner_action_id_deterministic": true,
+        "hidden_bridge_class_present": true,
+        "hidden_bridge_module_present": true
+      },
+      "id": "G2S2-R14-HIDDEN-COMPILER-BRIDGE",
+      "observed_code": "contract_present",
+      "row_ok": true
+    },
+    {
+      "contract_satisfied": true,
+      "detail": "Existing stale/version/stable-target guards fail closed, but no hidden ActionRef compiled result preserves their exact guard basis",
+      "facts": {
+        "bridge_delegates_exact_grounding_ref_once": true,
+        "bridge_has_dispatch_dependency": false,
+        "bridge_preserves_browser_target_hash": true,
+        "bridge_preserves_existing_action_id": true,
+        "bridge_preserves_expected_version": true,
+        "existing_guard_no_automatic_refresh": true,
+        "existing_guard_no_silent_rebind": true,
+        "existing_version_guard_stale": true,
+        "hidden_bridge_class_present": true,
+        "hidden_bridge_module_present": true,
+        "manually_compiled_action_rejected_stale_without_dispatch": true,
+        "stable_physical_target_resolves": true,
+        "unstable_physical_target_fails_closed": true
+      },
+      "id": "G2S2-R19-GUARD-BASIS",
+      "observed_code": "contract_present",
+      "row_ok": true
+    }
+  ],
+  "schema": "smc.semantic_logic_p4_live_green2_s2_evidence.v0.1",
+  "slice": "G2-S2",
+  "unchanged_execution_methods": {
+    "all_unchanged": true,
+    "methods": [
+      {
+        "base_sha256": "aa5c416ad006f16d9afab1bfe0825ebde18746ccdbe0064f295e1586c71039bb",
+        "current_sha256": "aa5c416ad006f16d9afab1bfe0825ebde18746ccdbe0064f295e1586c71039bb",
+        "name": "BrowserActionAdapter.execute",
+        "unchanged": true
+      },
+      {
+        "base_sha256": "cd0e9378cc6c42ebffe7c769feb2fc2029cb40ffa948fa139e59f0e43eaa39b4",
+        "current_sha256": "cd0e9378cc6c42ebffe7c769feb2fc2029cb40ffa948fa139e59f0e43eaa39b4",
+        "name": "BrowserActionAdapter._validate",
+        "unchanged": true
+      },
+      {
+        "base_sha256": "be030c16d91b221f039ef9a20657467f89c67b5eaf75758f9f723b00a02f9370",
+        "current_sha256": "be030c16d91b221f039ef9a20657467f89c67b5eaf75758f9f723b00a02f9370",
+        "name": "CdpBrowserMutationActuator.dispatch",
+        "unchanged": true
+      },
+      {
+        "base_sha256": "665f7097138291f96df3fd6bea26f7b62d6c2d326372589023989f95f8f4c54d",
+        "current_sha256": "665f7097138291f96df3fd6bea26f7b62d6c2d326372589023989f95f8f4c54d",
+        "name": "CdpBrowserMutationActuator._ensure_session",
+        "unchanged": true
+      },
+      {
+        "base_sha256": "e91eea03476f66c05526fb3267ad95bd2c1ac4a8b7512cf70c523426ca51a118",
+        "current_sha256": "e91eea03476f66c05526fb3267ad95bd2c1ac4a8b7512cf70c523426ca51a118",
+        "name": "CdpBrowserMutationActuator._resolve_target",
+        "unchanged": true
+      }
+    ]
+  }
+}

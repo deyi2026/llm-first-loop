@@ -97,6 +97,8 @@ class BrowserCaptureBackend(Protocol):
 
 
 class BrowserMutationActuator(Protocol):
+    def bind_observed_target(self, expected_target_id_sha256: str) -> None: ...
+
     def dispatch(
         self,
         *,
@@ -270,6 +272,10 @@ class BrowserActionAdapter:
         self.receipt_store = receipt_store
         self.capture_backend = capture_backend
         self.actuator = actuator
+
+    def bind_observed_target(self, expected_target_id_sha256: str) -> None:
+        """Mechanically sticky-bind the actuator to the already-observed Browser target."""
+        self.actuator.bind_observed_target(expected_target_id_sha256)
 
     @staticmethod
     def _validate(action: dict[str, Any]) -> str | None:

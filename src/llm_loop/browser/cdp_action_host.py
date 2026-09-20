@@ -7,6 +7,7 @@ to fixed internal CDP sequences.  It performs no retry and never silently rebind
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from collections.abc import Callable
@@ -38,6 +39,15 @@ class _WebSocketLike(Protocol):
 
 def _default_ws_connect(url: str) -> _WebSocketLike:
     return cast(_WebSocketLike, websocket_connect(url, open_timeout=5.0))
+
+
+class BrowserTargetPreconditionError(RuntimeError):
+    """Stable fail-closed rejection for an observed Browser target mismatch."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        self.code = str(code)
+        self.detail = str(detail)
+        super().__init__(f"{self.code}: {self.detail}")
 
 
 class _MutationCdpSession:
@@ -106,6 +116,47 @@ class CdpBrowserMutationActuator:
     @property
     def bound_target_id(self) -> str:
         return self._bound_target_id
+
+    def bind_observed_target(self, expected_target_id_sha256: str) -> None:
+        """Sticky-bind the exact observed page identity without opening a CDP session."""
+        expected_hash = str(expected_target_id_sha256 or "").strip().lower()
+        if len(expected_hash) != 64 or any(ch not in "0123456789abcdef" for ch in expected_hash):
+            raise BrowserTargetPreconditionError(
+                "browser_target_precondition_invalid",
+                "expected Browser target identity must be a sha256 hex digest",
+            )
+
+        with self._dispatch_lock:
+            target = self._resolve_target()
+            target_id = str(target.get("id") or "").strip()
+            if not target_id:
+                raise BrowserTargetPreconditionError(
+                    "browser_target_precondition_mismatch",
+                    "current Browser target has no exact target id",
+                )
+            actual_hash = hashlib.sha256(target_id.encode("utf-8")).hexdigest()
+            if actual_hash != expected_hash:
+                raise BrowserTargetPreconditionError(
+                    "browser_target_precondition_mismatch",
+                    "current Browser target differs from the ActionRef-observed target",
+                )
+            websocket_url = _validate_loopback_ws_url(
+                str(target.get("webSocketDebuggerUrl") or "")
+            )
+            if self._bound_target_id:
+                if target_id != self._bound_target_id:
+                    raise BrowserTargetPreconditionError(
+                        "browser_target_precondition_mismatch",
+                        "Browser target identity changed; no silent rebind",
+                    )
+                if self._bound_websocket_url and websocket_url != self._bound_websocket_url:
+                    raise BrowserTargetPreconditionError(
+                        "browser_target_precondition_mismatch",
+                        "bound Browser target websocket changed; no silent rebind",
+                    )
+                return
+            self._bound_target_id = target_id
+            self._bound_websocket_url = websocket_url
 
     def _resolve_target(self) -> dict[str, Any]:
         pages = [
