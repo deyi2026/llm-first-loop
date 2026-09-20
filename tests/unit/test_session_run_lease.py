@@ -201,9 +201,10 @@ def test_workspace_switch_rejected_while_sync_stream_is_active(build_test_engine
     stream = engine.run_stream(sid, "hello")
     try:
         assert next(stream).text == "A"
-        with pytest.raises(RuntimeError, match="运行|workspace|工作区"):
-            engine.set_workspace(str(workspace_b), "ws-b")
-        assert engine.session.root == root_a
+        # EVO-20260920（灵活切换）: sync run 活跃期间切换成功；
+        # sid 归属 pin 保证旧 run 最终 save 仍写入原分区。
+        engine.set_workspace(str(workspace_b), "ws-b")
+        assert engine.session.root != root_a
         list(stream)
     finally:
         stream.close()

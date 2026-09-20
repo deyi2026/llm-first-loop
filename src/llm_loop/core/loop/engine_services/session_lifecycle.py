@@ -128,23 +128,20 @@ class SessionLifecycle:
 
     @contextmanager
     def workspace_transition(self):
-        """独占workspace根切换窗口；任意active run存在时fail-fast。"""
+        """独占workspace根切换窗口。
+
+        EVO-20260920（灵活切换）: 不再对 active run fail-fast。正确性由
+        SessionStore 的 sid 归属 pin 保证——运行中 run 的 save/锁/身份校验
+        锚定其归属目录，不随 `_dir_fs` 漂移；工具 cwd 由 run 启动时的
+        ContextVar 锚定；事件库根为全局目录。此处仅保留切换与切换/运行准入
+        之间的互斥：准入窗口为毫秒级，故有界阻塞排队（10s）而非立即失败。
+        """
         from llm_loop.workspace.store import WorkspaceBusyError
 
-        acquired = self._host._workspace_transition_guard.acquire(blocking=False)
+        acquired = self._host._workspace_transition_guard.acquire(timeout=10.0)
         if not acquired:
             raise WorkspaceBusyError("工作区切换/运行准入正在进行，请稍后重试")
         try:
-            runner = getattr(self._host, "runner", None)
-            has_background = bool(
-                runner is not None
-                and getattr(runner, "enabled", False)
-                and getattr(runner, "has_running", lambda: False)()
-            )
-            with self._host._sync_guard:
-                has_sync = bool(self._host._sync_active)
-            if has_background or has_sync:
-                raise WorkspaceBusyError("存在进行中的会话运行，暂不能切换工作区")
             yield
         finally:
             self._host._workspace_transition_guard.release()
