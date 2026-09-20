@@ -19,7 +19,8 @@
       ],
       "verification_level": "focused deterministic tests + full repository CI on committed PR head",
       "model_evidence_veto_recovery_exit": "No model semantic authority is introduced; pinning is mechanical storage/identity ownership. Failures remain explicit through existing session/workspace errors.",
-      "rollback_route": "Revert the workspace-switch formalization range; any deployed rollback must use a new service-control generation rather than decrement generation."
+      "rollback_route": "Revert the workspace-switch formalization range; any deployed rollback must use a new service-control generation rather than decrement generation.",
+      "declaration_id": "decl-workspace-switch-authority"
     },
     {
       "component_id": "workspace-transition-file-route",
@@ -35,7 +36,8 @@
       ],
       "verification_level": "focused web API tests + full repository CI",
       "model_evidence_veto_recovery_exit": "No model authority; path scope is mechanically captured and existing path/session validation remains authoritative.",
-      "rollback_route": "Revert this formalization range."
+      "rollback_route": "Revert this formalization range.",
+      "declaration_id": "decl-workspace-switch-authority"
     },
     {
       "component_id": "current-view-streaming-semantics",
@@ -104,5 +106,31 @@
       "rollback_route": "Remove this manifest in the same revert range."
     }
   ],
-  "declarations": []
+  "declarations": [
+    {
+      "declaration_id": "decl-workspace-switch-authority",
+      "g1": {
+        "necessity": "Running-session persistence previously depended on mutable current-workspace routing, so switching workspace during an active run was blocked; generation57 requires mechanical session-location pinning and bounded transition admission so running work stays anchored while shared selection changes."
+      },
+      "g2": {
+        "authority_owner": "SessionStore pinned session location/identity plus workspace transition admission; file edit captures an immutable workspace scope for the operation.",
+        "relationship": "replace",
+        "non_duplication": "Replaces the coarse active-run workspace_busy guard rather than adding a parallel workspace authority; existing session identity/path validation remains authoritative."
+      },
+      "g3": {
+        "model_evidence": [
+          "not_applicable: this declaration governs mechanical workspace/session storage authority; deterministic tests and runtime identity, not model semantic judgment, are the validating evidence"
+        ],
+        "recovery_or_reason": "Deterministic tests cover run-lease pinning, background continuation, in-run workspace switch, file edit scope capture, and new-session admission; no model judgment is required for this mechanical authority."
+      },
+      "g4": {
+        "rollback": "Revert the workspace-switch formalization range; deployed rollback, if ever required, must publish a prior clean code root as a new generation.",
+        "verification": [
+          "focused workspace/session/Web Python suite PASS",
+          "WebUI 24 files / 157 tests PASS and production build PASS",
+          "full repository CI required on exact PR head before merge"
+        ]
+      }
+    }
+  ]
 }
