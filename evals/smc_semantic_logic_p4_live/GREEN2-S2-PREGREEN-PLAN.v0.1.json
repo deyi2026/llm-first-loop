@@ -1,0 +1,140 @@
+{
+  "schema": "smc.semantic_logic_p4_live_green2_s2_pregreen_plan.v0.1",
+  "base_s1_sha": "06891fd144c635f0625644a0c2c2ea24ed009e52",
+  "parent_plan_sha": "0d868fe074a8cad746fffbd7d771c24100eac74a",
+  "green1_sha": "62529729c5888ae863a1fe1715e2590a9519d182",
+  "protocol_sha": "e946eab26032aa4faa6698a3244ebd30c836cce1",
+  "stage": {
+    "id": "G2-S2-PREGREEN",
+    "production_edits": false,
+    "allowed_paths": ["tests/", "evals/", "docs/"],
+    "real_browser_actions": 0,
+    "model_requests": 0,
+    "deploy_restart_merge": false,
+    "live_config_mutation": false,
+    "stop_before_first_s2_production_green": true
+  },
+  "target_parent_rows": ["P4L-R12", "P4L-R14", "P4L-R19"],
+  "reused_authorities_unchanged": [
+    {
+      "owner": "ActionRefResolver",
+      "path": "src/llm_loop/browser/action_ref.py",
+      "contract": "Only authority for ActionRef -> exact hidden GroundingRef, observed snapshot id and observed Browser target hash. No search/rebind."
+    },
+    {
+      "owner": "BrowserSemanticExecuteTool.compile_request",
+      "path": "src/llm_loop/tools/builtin/browser_semantic_execute.py",
+      "contract": "Only inner semantic compiler authority. Hydrates exactly supplied GroundingRef; deterministic action_id basis is verb + exact target_ref + normalized args."
+    },
+    {
+      "owner": "BrowserActionAdapter + BrowserPerceptionAdapter",
+      "path": "src/llm_loop/browser/action.py",
+      "contract": "Existing fresh pre-dispatch observation, version precondition and stable physical-target guard remain authoritative and fail closed."
+    },
+    {
+      "owner": "ActionRefExecutionBridgeStore",
+      "path": "src/llm_loop/browser/action_ref_execution.py",
+      "contract": "S1 PREPARED bridge already durably preserves exact ActionRef binding digest, GroundingRef, inner action_id, expected version and Browser target hash. S2 does not rewrite it."
+    }
+  ],
+  "confirmed_missing_s2_seams": [
+    {
+      "id": "target_precondition_channel",
+      "parent_row": "P4L-R12",
+      "failure_code": "actionref_browser_target_precondition_absent",
+      "fact": "ActionRef carries browser_target_id_sha256 but BrowserActionAdapter/CDP actuator have no sticky non-dispatching bind/verify API that consumes it before first bind."
+    },
+    {
+      "id": "hidden_compiler_bridge",
+      "parent_row": "P4L-R14",
+      "failure_code": "actionref_hidden_groundingref_compiler_bridge_absent",
+      "fact": "Existing compile_request is exact and deterministic but no non-provider ActionRefResolution -> exact GroundingRef compiler adapter exists."
+    },
+    {
+      "id": "guard_basis_bridge",
+      "parent_row": "P4L-R19",
+      "failure_code": "actionref_guard_basis_bridge_absent",
+      "fact": "Existing stale/version/stable-target guards are GREEN, but no hidden ActionRef compiled result preserves exact expected-version/target-hash basis for later typed-path composition."
+    }
+  ],
+  "future_s2_green_candidate": {
+    "provider_visibility": "none",
+    "factory_registration": "none",
+    "dispatch_capability_added": "none; only a sticky target-identity precondition plus a non-dispatching compile bridge are added",
+    "candidate_edits": [
+      {
+        "path": "src/llm_loop/browser/action.py",
+        "changes": [
+          "Extend BrowserMutationActuator protocol with bind_observed_target(expected_target_id_sha256: str) -> None.",
+          "Add BrowserActionAdapter.bind_observed_target(expected_target_id_sha256: str) -> None as a mechanical forwarding method only.",
+          "Do not change BrowserActionAdapter.execute action schema, version guard, reservation, running receipt or dispatch semantics."
+        ]
+      },
+      {
+        "path": "src/llm_loop/browser/cdp_action_host.py",
+        "changes": [
+          "Add BrowserTargetPreconditionError with stable code browser_target_precondition_mismatch.",
+          "Implement CdpBrowserMutationActuator.bind_observed_target under the existing _dispatch_lock.",
+          "Resolve the current page target once, sha256 the exact target id, and reject mismatch before mutating _bound_target_id or opening a websocket.",
+          "On match, sticky-bind both exact target id and websocket URL without creating a CDP session or sending Page/DOM/Runtime commands.",
+          "Later dispatch reuses the sticky bound id; disappeared/different target or websocket continues to fail closed with no silent rebind."
+        ]
+      },
+      {
+        "path": "src/llm_loop/tools/builtin/browser_action_ref_kernel.py",
+        "changes": [
+          "Add hidden/non-registered CompiledActionRefMutation immutable result with semantic_action, grounding_ref, observed_snapshot_id and browser_target_id_sha256.",
+          "Add hidden/non-registered ActionRefSemanticCompileBridge(compiler=BrowserSemanticExecuteTool).",
+          "compile_resolved(session_id, resolution, verb, args) accepts an already-resolved ActionRefResolution, calls existing compile_request exactly once with target_ref=resolution.grounding_ref, and performs no resolve/search/recapture/rebind.",
+          "Verify compiled expected_version equals resolution.observed_snapshot_id and preserve the existing compiler-produced action_id byte-for-byte.",
+          "No BrowserActionAdapter, actuator, execute_request or dispatch dependency is allowed in this module."
+        ]
+      }
+    ],
+    "explicit_non_edits": [
+      "src/llm_loop/browser/action_ref.py",
+      "src/llm_loop/browser/action_ref_execution.py",
+      "src/llm_loop/browser/perception.py",
+      "src/llm_loop/tools/builtin/browser_semantic_execute.py",
+      "src/llm_loop/factory.py",
+      "src/llm_loop/tools/registry.py",
+      "src/llm_loop/core/loop/engine.py"
+    ]
+  },
+  "future_composition_order": [
+    "S4 future typed tool enters S1 strict ToolExecutionJournal ActionRef binding authority.",
+    "Resolve ActionRef exactly once with binding-owned session/workspace/run generation using existing ActionRefResolver.",
+    "Call hidden S2 compile_resolved with the resulting ActionRefResolution + verb + model-owned args; it delegates exact grounding_ref into existing compile_request.",
+    "Persist existing S1 PREPARED execution bridge using the same resolution and compiled inner action_id/expected_version.",
+    "Call BrowserActionAdapter.bind_observed_target with resolution.browser_target_id_sha256; CDP actuator sticky-binds exact page identity without websocket/CDP mutation.",
+    "Call existing BrowserActionAdapter.execute with the unchanged compiled SemanticAction; existing fresh version/stable-target guards remain authoritative.",
+    "Only after those guards, existing running receipt/effect authority/single actuator dispatch machinery may run in later S4 composition."
+  ],
+  "future_s2_green_tests": [
+    "Observed target A hash + actuator sole target B -> browser_target_precondition_mismatch before websocket connect; bound_target_id remains empty.",
+    "Observed target A hash + actuator target A -> sticky bound target A and websocket URL with zero websocket/CDP calls during bind.",
+    "After sticky bind A, replacing page list with B makes later fake dispatch reject instead of first-binding/rebinding B.",
+    "Legacy actuator path that never calls bind_observed_target preserves existing configured/sole-target behavior.",
+    "Hidden compile bridge calls compile_request exactly once with resolution.grounding_ref and no other target lookup.",
+    "Hidden compile bridge preserves existing action_id and expected_version and returns resolution.browser_target_id_sha256 unchanged.",
+    "Hidden compile bridge source has no BrowserActionAdapter/execute_request/dispatch dependency and is not registered in factory/provider schemas.",
+    "Existing stale document/page action compiled from exact GroundingRef is rejected by current BrowserActionAdapter before fake actuator dispatch; no refresh/rebind.",
+    "Existing unstable physical target guard remains fail closed.",
+    "Duplicate existing inner action_id reservation remains at-most-once in fake actuator harness."
+  ],
+  "rollback_and_exposure": {
+    "default_inert": "All S2 primitives are hidden and unregistered; legacy GroundingRef and Browser mutation paths do not call the new sticky-bind method.",
+    "rollback": "S2 future commit can be reverted independently without changing GREEN-1/S1 data formats or provider surface.",
+    "live_canary_deferred": "Explicit non-empty browser_perception_target_id remains a later live-canary preflight requirement; no live config change in S2.",
+    "first_actionref_physical_dispatch_boundary": "G2-S4"
+  },
+  "pregreen_qualification": {
+    "expected_red_taxonomy": "GREEN2-S2-EXPECTED-FAILURES.v0.1.json",
+    "focused_pytest": "tests/unit/test_smc_p4_live_g2_s2_red.py",
+    "require_exact_worktree_src_import": true,
+    "require_s1_qualification_green": true,
+    "require_green1_matrix_unchanged": true,
+    "require_r10_r19_frozen_red": true,
+    "require_zero_src_diff_from_base_s1": true
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "schema": "smc.semantic_logic_p4_live_green2_s2_expected_failures.v0.1",
+  "base_s1_sha": "06891fd144c635f0625644a0c2c2ea24ed009e52",
+  "protocol_sha": "e946eab26032aa4faa6698a3244ebd30c836cce1",
+  "rows": [
+    {
+      "id": "G2S2-R12-TARGET-PRECONDITION",
+      "parent_row": "P4L-R12",
+      "code": "actionref_browser_target_precondition_absent",
+      "meaning": "ActionRef carries the observed Browser target hash, but no sticky pre-dispatch target-binding API currently carries/verifies it across BrowserActionAdapter into the CDP actuator first-bind boundary."
+    },
+    {
+      "id": "G2S2-R14-HIDDEN-COMPILER-BRIDGE",
+      "parent_row": "P4L-R14",
+      "code": "actionref_hidden_groundingref_compiler_bridge_absent",
+      "meaning": "The existing GroundingRef compiler/action-id authority is deterministic, but no hidden non-provider ActionRefResolution -> exact GroundingRef -> compile_request bridge exists."
+    },
+    {
+      "id": "G2S2-R19-GUARD-BASIS",
+      "parent_row": "P4L-R19",
+      "code": "actionref_guard_basis_bridge_absent",
+      "meaning": "Existing stale/version/stable-target guards fail closed, but no hidden ActionRef compiler result object preserves their exact expected-version/target basis for later typed-path delegation."
+    }
+  ]
+}
