@@ -351,7 +351,7 @@ class SessionStore:
         # 首次物化（create/load/run_lease）时 pin；此后根切换不影响该会话的
         # save 路径 / 锁路径 / 身份归属校验，运行中 run 的落盘始终指向真实归属目录。
         # OrderedDict + cap：非运行中会话 LRU 淘汰（见 _pin_session_location）。
-        self._pinned_locations: "OrderedDict[str, tuple[str, str]]" = OrderedDict()
+        self._pinned_locations: OrderedDict[str, tuple[str, str]] = OrderedDict()
         self._pinned_locations_cap = 512
         self._pinned_locations_guard = threading.Lock()
         # P3: externally auditable execution generation for the currently active run.

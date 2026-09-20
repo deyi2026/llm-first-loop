@@ -46,7 +46,7 @@ def _payload(argv_tail):
         return STATUS_DATA
     if argv_tail[:2] == ["models", "--json"]:
         return MODELS_DATA
-    raise AssertionError("unexpected argv %s" % argv_tail)
+    raise AssertionError(f"unexpected argv {argv_tail}")
 
 
 @pytest.fixture
@@ -147,11 +147,11 @@ def test_switch_backend_rejects_noop_and_bad_value(client):
 def _drain_job(client: TestClient, job_id: str, timeout_s: float = 5.0) -> dict:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        body = client.get("/api/v1/local-runtime/jobs/%s" % job_id).json()
+        body = client.get(f"/api/v1/local-runtime/jobs/{job_id}").json()
         if body["status"] != "running":
             return body
         time.sleep(0.02)
-    pytest.fail("job did not finish in %.1fs" % timeout_s)
+    pytest.fail(f"job did not finish in {timeout_s:.1f}s")
 
 
 def test_switch_job_runs_lfrt_and_syncs_registry_preserving_custom_fields(

@@ -1072,6 +1072,7 @@
     "src/llm_loop/web/auth.py|session_ttl_seconds|read|WEB_SESSION_TTL_SECONDS": 1,
     "src/llm_loop/web/auth.py|validate_auth_require|read|WEB_AUTH_REQUIRE": 1,
     "src/llm_loop/web/auth.py|validate_origin_allowlist|read|WEB_ORIGIN_ALLOWLIST": 1,
+    "src/llm_loop/web/local_runtime_admin.py|_lfrt_path|read|LFL_LFRT_CLI": 1,
     "src/llm_loop/web/provider_admin.py|_clear_dotenv_value|bulk:pop|<all>": 2,
     "src/llm_loop/web/provider_admin.py|_configured_default_ref|read|LLM_MODEL": 1,
     "src/llm_loop/web/provider_admin.py|_credential_fact|read|<dynamic>": 1,

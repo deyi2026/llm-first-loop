@@ -22,7 +22,8 @@ import threading
 import time
 import uuid
 from collections import deque
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Request
@@ -78,12 +79,14 @@ def _run_lfrt(engine: Any, argv_tail: list[str], timeout_s: float) -> tuple[int,
         proc = subprocess.run(
             argv, cwd=os.path.dirname(path), capture_output=True, text=True,
             timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        raise LocalRuntimeError("local_runtime_timeout",
-                                "lfrt %s 超时" % " ".join(argv_tail[:2]))
+    except subprocess.TimeoutExpired as exc:
+        raise LocalRuntimeError(
+            "local_runtime_timeout", f"lfrt {' '.join(argv_tail[:2])} 超时"
+        ) from exc
     except OSError as exc:
-        raise LocalRuntimeError("local_runtime_spawn_failed",
-                                "无法启动 lfrt：%s" % exc, status_code=500)
+        raise LocalRuntimeError(
+            "local_runtime_spawn_failed", f"无法启动 lfrt：{exc}", status_code=500
+        ) from exc
     out = "\n".join(x for x in (proc.stdout, proc.stderr) if x).strip()
     return proc.returncode, out
 
@@ -92,17 +95,18 @@ def _lfrt_json(engine: Any, argv_tail: list[str], timeout_s: float) -> dict[str,
     rc, out = _run_lfrt(engine, argv_tail, timeout_s)
     if rc != 0:
         raise LocalRuntimeError("local_runtime_command_failed",
-                                "lfrt %s 失败：%s" % (" ".join(argv_tail), out[-500:]),
+                                f"lfrt {' '.join(argv_tail)} 失败：{out[-500:]}",
                                 status_code=502)
     try:
         payload = json.loads(out)
-    except json.JSONDecodeError:
-        raise LocalRuntimeError("local_runtime_bad_output",
-                                "lfrt 输出不是 JSON。", status_code=502)
+    except json.JSONDecodeError as exc:
+        raise LocalRuntimeError(
+            "local_runtime_bad_output", "lfrt 输出不是 JSON。", status_code=502
+        ) from exc
     if payload.get("ok") is not True:
         raise LocalRuntimeError("local_runtime_not_ok",
-                                "lfrt %s 未成功：%s" % (" ".join(argv_tail),
-                                                        json.dumps(payload)[:400]),
+                                f"lfrt {' '.join(argv_tail)} 未成功："
+                                f"{json.dumps(payload)[:400]}",
                                 status_code=502)
     return payload.get("data") or {}
 
@@ -155,7 +159,7 @@ def build_status(engine: Any, status_data: dict, models_data: dict,
     stash = sorted(stashed_backends or [])
     suggested_ref = None
     if provider and wire_ids:
-        suggested_ref = "%s/%s" % (provider["id"], wire_ids[0])
+        suggested_ref = f"{provider['id']}/{wire_ids[0]}"
     return {
         "backend": cfg.get("backend") or "mlx",
         "port": int(port),
@@ -183,7 +187,7 @@ def _stashed_backends(engine: Any) -> list[str]:
     """lfrt 同目录 config.json 里的可用后端存档（只读）。"""
     try:
         cfg_path = os.path.join(os.path.dirname(_lfrt_path(engine)), "config.json")
-        with open(cfg_path, "r", encoding="utf-8") as fh:
+        with open(cfg_path, encoding="utf-8") as fh:
             return sorted(json.load(fh).get("stashed_backends") or [])
     except (OSError, json.JSONDecodeError):
         return []
@@ -232,7 +236,7 @@ def sync_provider_model(engine: Any) -> dict[str, Any]:
     provider = _find_provider(engine, port)
     if not provider:
         return {"registry_synced": False,
-                "reason": "no_provider_on_port_%d" % port}
+                "reason": f"no_provider_on_port_{port}"}
     model_id = wire_ids[0]
     defaults = _model_defaults(cfg)
 
@@ -254,7 +258,7 @@ def sync_provider_model(engine: Any) -> dict[str, Any]:
                                   change=change)
             return {"registry_synced": True, "provider_id": provider["id"],
                     "model_id": model_id,
-                    "model_ref": "%s/%s" % (provider["id"], model_id)}
+                    "model_ref": f"{provider['id']}/{model_id}"}
         except provider_admin.ProviderAdminError as exc:
             last_error = exc
             if exc.status_code != 409:
@@ -301,14 +305,14 @@ def _job_command(action: str, body: Any, engine: Any) -> list[str]:
                  (_lfrt_json(engine, ["models", "--json"], 60).get("models") or [])}
         if body.model not in names:
             raise LocalRuntimeError("unknown_model",
-                                    "本地模型库里没有 %s。" % body.model, status_code=404)
+                                    f"本地模型库里没有 {body.model}。", status_code=404)
         return ["switch", "--model", body.model, "--yes"]
     if action == "switch_backend":
         if body.backend not in ("llama", "mlx"):
             raise LocalRuntimeError("backend_invalid", "backend 必须是 llama 或 mlx。")
         current = _lfrt_json(engine, ["status", "--json"], 30).get("config", {}).get("backend")
         if body.backend == current:
-            raise LocalRuntimeError("backend_noop", "后端已是 %s。" % body.backend)
+            raise LocalRuntimeError("backend_noop", f"后端已是 {body.backend}。")
         return ["switch", "--backend", body.backend, "--yes"]
     if action == "restart":
         return ["restart", "--yes"]
@@ -320,7 +324,7 @@ def _job_command(action: str, body: Any, engine: Any) -> list[str]:
         return ["stop", "--yes"]
     if action == "start":
         return ["start"]
-    raise LocalRuntimeError("action_invalid", "未知动作 %s。" % action)
+    raise LocalRuntimeError("action_invalid", f"未知动作 {action}。")
 
 
 _ACTION_LABELS = {
@@ -342,7 +346,7 @@ def _run_job(engine: Any, job: dict[str, Any], argv_tail: list[str],
             argv, cwd=os.path.dirname(path), stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, bufsize=1)
     except OSError as exc:
-        job.update(status="failed", error="spawn failed: %s" % exc,
+        job.update(status="failed", error=f"spawn failed: {exc}",
                    duration_s=time.time() - started)
         return
     timed_out = False
@@ -362,11 +366,12 @@ def _run_job(engine: Any, job: dict[str, Any], argv_tail: list[str],
         rc = proc.returncode
     job["duration_s"] = time.time() - started
     if timed_out:
-        job.update(status="failed", rc=rc, error="job timeout (>%.0fs)" % _JOB_TIMEOUT_S)
+        job.update(status="failed", rc=rc,
+                   error=f"job timeout (>{_JOB_TIMEOUT_S:.0f}s)")
         return
     job["rc"] = rc
     if rc != 0:
-        job.update(status="failed", error="lfrt 退出码 %d" % rc)
+        job.update(status="failed", error=f"lfrt 退出码 {rc}")
         return
     if post_hook is not None:
         try:
@@ -374,7 +379,7 @@ def _run_job(engine: Any, job: dict[str, Any], argv_tail: list[str],
         except Exception as exc:  # 同步失败不算切换失败，但要让面板看到
             logger.exception("local-runtime registry sync failed")
             job["result"] = {"registry_synced": False,
-                             "registry_sync_error": "%s: %s" % (type(exc).__name__, exc)}
+                             "registry_sync_error": f"{type(exc).__name__}: {exc}"}
     job["status"] = "done"  # result 就绪后才置 done，避免轮询方读到半成品
 
 
@@ -385,10 +390,11 @@ def start_job(engine: Any, body: Any) -> dict[str, Any]:
     with _JOBS_LOCK:
         running = [j for j in _JOBS.values() if j["status"] == "running"]
         if running:
-            raise LocalRuntimeError("job_busy",
-                                    "已有 %s 在执行（%s）。" %
-                                    (running[0]["label"], running[0]["id"]),
-                                    status_code=409)
+            raise LocalRuntimeError(
+                "job_busy",
+                f"已有 {running[0]['label']} 在执行（{running[0]['id']}）。",
+                status_code=409,
+            )
         job_id = uuid.uuid4().hex[:12]
         job = {
             "id": job_id,
@@ -407,7 +413,7 @@ def start_job(engine: Any, body: Any) -> dict[str, Any]:
         _prune_jobs()
     hook = sync_provider_model if action in ("switch_model", "switch_backend") else None
     thread = threading.Thread(target=_run_job, args=(engine, job, argv_tail, hook),
-                              daemon=True, name="lfl-local-runtime-%s" % job_id)
+                              daemon=True, name=f"lfl-local-runtime-{job_id}")
     thread.start()
     return _job_view(job_id)  # type: ignore[return-value]
 
@@ -436,7 +442,7 @@ def _error_response(exc: Exception) -> JSONResponse:
     return UTF8JSONResponse(
         status_code=500,
         content={"error": "local_runtime_failed",
-                 "detail": "本地运行时管理失败：%s" % type(exc).__name__})
+                 "detail": f"本地运行时管理失败：{type(exc).__name__}"})
 
 
 @router.get("/api/v1/local-runtime")

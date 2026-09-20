@@ -1731,6 +1731,21 @@ def build_engine(
                     return _defer_or_degrade("grant_lost_owner_dead")
                 return _degrade("grant_unavailable")
 
+            # §8.2-2/T08: 服务重启 waiting 窗口内不发起续跑 run——定时/委派
+            # 任务不得连续抢占排空窗口。退避保留条目，屏障释放后自动重试；
+            # grant 不消费（one-shot 能力留给窗口后的下一次投递）。
+            try:
+                from pathlib import Path as _Path
+
+                from llm_loop.runtime.admission_barrier import service_restart_barrier as _srb
+
+                _data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
+                _restart_barrier = _srb(_Path(str(_data_dir)).expanduser(), "web")
+            except Exception:  # noqa: BLE001 — 屏障读取失败不阻断已授权续跑
+                _restart_barrier = None
+            if _restart_barrier is not None:
+                return _defer_or_degrade("service_restart_barrier")
+
             # EVO-20260919-eee9d3b8（人工已审）: 唤醒 prompt 追加本会话后台任务机械现状，
             # 避免唤醒 run 在无终态回执可见时盲目重放/重复轮询；投影失败 fail-open。
             wake_prompt = f"[定时续跑·先前真人授权的程序委派·非新真人输入] {entry.message}"

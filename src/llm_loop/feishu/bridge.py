@@ -69,6 +69,24 @@ _HEARTBEAT_HISTORY_PATH = _BRIDGE_CONFIG.get(
     "FEISHU_HEARTBEAT_HISTORY_PATH", "data/feishu_heartbeat_history.jsonl"
 )
 
+# §8.2-2 消息准入屏障（feishu 侧）：服务重启 waiting 窗口内的消息延迟
+# 策略。屏障路径与 web 同源：<heartbeat 同级 data 根>/runtime/service-control-barriers/
+# feishu.json；feishu 进程 cwd 即运行时根，与心跳文件同一相对解析约定。
+_BARRIER_DEFER_POLL_S = float(_BRIDGE_CONFIG.get("FEISHU_BARRIER_DEFER_POLL_S", "1.0"))
+_BARRIER_DEFER_WAIT_S = float(_BRIDGE_CONFIG.get("FEISHU_BARRIER_DEFER_WAIT_S", "2.0"))
+
+
+def _feishu_admission_barrier():
+    """只读读取 feishu 服务准入屏障；读取失败 fail-open（不阻断消息流）."""
+    try:
+        from llm_loop.runtime.admission_barrier import service_restart_barrier
+
+        data_root = Path(_HEARTBEAT_PATH).parent  # "data"
+        return service_restart_barrier(data_root, "feishu")
+    except Exception as exc:  # noqa: BLE001 — fail-open
+        logger.warning("飞书准入屏障读取失败（fail-open）: %s", exc)
+        return None
+
 # ── T3a(2026-08-14): 心跳历史轮转（防无限膨胀；空=不限制零回归）──
 # 每 30s 一次心跳追加写，历史文件将无限增长（实测 5.4MB/万行）——超过阈值时
 # 当前文件轮转为 .1（保留 1 份最近段），健康检查/诊断数据源不丢近期数据。
@@ -591,7 +609,24 @@ class _WsConnector:
 
         P1-3-R3: 处理开始/完成时刻与消息 id 记录（心跳活性字段数据源）。
         中断补偿: 记录回复目标（chat_id / 私聊 open_id），优雅退出被打断时落盘供下次启动回复。
+        §8.2-2: feishu 服务重启 waiting 窗口内不发起 run——消息保留在有界
+        _msg_queue 中延迟处理（不丢、不静默：队列满走既有 QUEUE_FULL 补偿
+        回执；进程在窗口内停止由 drain 补偿兜底）。延迟会移到队尾，跨发送
+        方的相对顺序不保证；单发送方连续消息仍按到达序保留。
         """
+        barrier = _feishu_admission_barrier()
+        if barrier is not None:
+            logger.info(
+                "飞书消息延迟（服务重启 waiting 窗口，operation=%s）: message_id=%s",
+                barrier.operation_id,
+                str((payload.get("event") or {}).get("message", {}).get("message_id", "") or ""),
+            )
+            time.sleep(_BARRIER_DEFER_POLL_S)
+            try:
+                self._msg_queue.put(payload, timeout=_BARRIER_DEFER_WAIT_S)
+            except queue.Full:
+                self._handle_queue_full(payload)
+            return
         header = payload.get("header") or {}
         event = payload.get("event") or {}
         message = event.get("message") or {}
