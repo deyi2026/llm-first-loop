@@ -20,6 +20,29 @@ from llm_loop.core.session import SessionStore
 from llm_loop.web import build_app
 
 _INHERIT_MODEL = "minimax/MiniMax-M3"
+_EXPLICIT_MODEL = "glm/glm-5.3"
+_OTHER_EXPLICIT_MODEL = "cognilocal/qwen3.8-flash-next"
+
+
+class _Registry:
+    _KNOWN = {
+        _EXPLICIT_MODEL: ("glm", "glm-5.3"),
+        _OTHER_EXPLICIT_MODEL: ("cognilocal", "qwen3.8-flash-next"),
+    }
+
+    def resolve(self, model: str) -> tuple[str, str]:
+        try:
+            return self._KNOWN[model]
+        except KeyError as exc:
+            raise ValueError(model) from exc
+
+
+class _Pool:
+    def __init__(self) -> None:
+        self.registry = _Registry()
+
+    def registry_snapshot(self) -> _Registry:
+        return self.registry
 
 
 def _result_mock(sid: str) -> mock.Mock:
@@ -55,6 +78,7 @@ def _engine(store: SessionStore, captured: list[str]) -> mock.Mock:
     """最小 Mock engine：workspace CM + run 捕获 session_id."""
     engine = mock.Mock()
     engine.llm = mock.Mock(model="fake-model")
+    engine.llm_pool = None
     engine.settings = mock.Mock(history_max_chars=10000)
     engine.workspace_root = ""  # attachment scope fallback uses cwd; keep Mock from fabricating a path
     engine.session = store
@@ -99,6 +123,70 @@ def test_chat_new_session_inherits_shared_model_override(tmp_path):
     assert new_sid is not None and new_sid != old_sid
     assert store.load(new_sid).model_override == _INHERIT_MODEL
     assert captured == [new_sid]  # engine 实际执行在新会话上
+
+
+def test_chat_new_session_explicit_model_wins_at_creation_over_shared_current(tmp_path):
+    """新会话显式模型是创建 authority，不得先继承另一 tab/shared-current 模型。"""
+    store, captured = _setup(tmp_path)
+    old_sid = store.create(model_override=_INHERIT_MODEL)
+    store.set_shared_current(old_sid)
+    engine = _engine(store, captured)
+    engine.llm_pool = _Pool()
+
+    client = TestClient(build_app(engine=engine))
+    resp = client.post(
+        "/api/v1/chat",
+        json={"message": "hi", "new_session": True, "model": _EXPLICIT_MODEL},
+    )
+    assert resp.status_code == 200, resp.text
+
+    new_sid = store.get_shared_current()
+    assert new_sid is not None and new_sid != old_sid
+    assert store.load(old_sid).model_override == _INHERIT_MODEL
+    assert store.load(new_sid).model_override == _EXPLICIT_MODEL
+    assert captured == [new_sid]
+
+
+def test_chat_new_session_explicit_qwen_wins_over_shared_glm(tmp_path):
+    """反向并发 tab 场景也必须由本请求显式模型决定新会话初始 authority。"""
+    store, captured = _setup(tmp_path)
+    old_sid = store.create(model_override=_EXPLICIT_MODEL)
+    store.set_shared_current(old_sid)
+    engine = _engine(store, captured)
+    engine.llm_pool = _Pool()
+
+    client = TestClient(build_app(engine=engine))
+    resp = client.post(
+        "/api/v1/chat",
+        json={"message": "hi", "new_session": True, "model": _OTHER_EXPLICIT_MODEL},
+    )
+    assert resp.status_code == 200, resp.text
+
+    new_sid = store.get_shared_current()
+    assert new_sid is not None and new_sid != old_sid
+    assert store.load(old_sid).model_override == _EXPLICIT_MODEL
+    assert store.load(new_sid).model_override == _OTHER_EXPLICIT_MODEL
+
+
+def test_chat_new_session_invalid_explicit_model_does_not_inherit_shared_authority(tmp_path):
+    """显式但不可解析的模型走 per-call unavailable；不得静默继承别的会话 authority。"""
+    store, captured = _setup(tmp_path)
+    old_sid = store.create(model_override=_INHERIT_MODEL)
+    store.set_shared_current(old_sid)
+    engine = _engine(store, captured)
+    engine.llm_pool = _Pool()
+
+    client = TestClient(build_app(engine=engine))
+    resp = client.post(
+        "/api/v1/chat",
+        json={"message": "hi", "new_session": True, "model": "unknown/not-registered"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    new_sid = store.get_shared_current()
+    assert new_sid is not None and new_sid != old_sid
+    assert store.load(old_sid).model_override == _INHERIT_MODEL
+    assert store.load(new_sid).model_override is None
 
 
 def test_chat_new_session_no_shared_fail_open_none(tmp_path):
@@ -148,4 +236,28 @@ def test_chat_stream_new_session_inherits_shared_model_override(tmp_path):
     new_sid = store.get_shared_current()
     assert new_sid is not None and new_sid != old_sid
     assert store.load(new_sid).model_override == _INHERIT_MODEL
+    assert captured == [new_sid]
+
+
+def test_chat_stream_new_session_explicit_model_wins_at_creation(tmp_path):
+    """流式端点同样必须让本请求显式模型直接成为新会话创建 authority。"""
+    store, captured = _setup(tmp_path)
+    old_sid = store.create(model_override=_INHERIT_MODEL)
+    store.set_shared_current(old_sid)
+    engine = _engine(store, captured)
+    engine.llm_pool = _Pool()
+
+    client = TestClient(build_app(engine=engine))
+    with client.stream(
+        "POST",
+        "/api/v1/chat/stream",
+        json={"message": "hi", "new_session": True, "model": _EXPLICIT_MODEL},
+    ) as resp:
+        assert resp.status_code == 200, resp.text
+        list(resp.iter_text())
+
+    new_sid = store.get_shared_current()
+    assert new_sid is not None and new_sid != old_sid
+    assert store.load(old_sid).model_override == _INHERIT_MODEL
+    assert store.load(new_sid).model_override == _EXPLICIT_MODEL
     assert captured == [new_sid]

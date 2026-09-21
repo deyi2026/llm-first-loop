@@ -627,10 +627,11 @@ def chat(
                 )
             if getattr(payload, "new_session", False):
                 # schema 契约：new_session 与 session_id 同传时强制新建优先。
-                # M60（Web 对齐 M52）: 继承旧共享会话 model_override，不回落装配默认——
-                # 否则 Web 新建会话经 owner 跨端共享把飞书侧也拉回本地默认模型。
+                # 显式 model 是本次新会话的创建 authority；只有请求未携带 model 时
+                # 才沿用 M60 shared-current 继承兼容语义。不得先写入另一 tab 的模型
+                # 再在 run acquired 阶段静默纠正，避免 session.created 元数据污染。
                 session_id = engine.session.create(
-                    model_override=_inherit_shared_model_override(engine)
+                    model_override=_initial_web_new_session_model_override(engine, payload.model)
                 )
                 engine.session.set_shared_current(session_id)
             elif payload.session_id is not None:
@@ -803,6 +804,19 @@ def _canonical_persist_model(engine: Any, model: str | None) -> str | None:
         return f"{pid}/{mid}"
     except ValueError:
         return None
+
+
+def _initial_web_new_session_model_override(engine: Any, model: str | None) -> str | None:
+    """Resolve the model authority a Web-created session is born with.
+
+    A model explicitly carried by this new-session request owns creation authority.  If it
+    is unknown, keep the new session unbound so the normal per-call unavailable path can
+    report the routing fact; never inherit an unrelated shared-current model.  M60 shared
+    inheritance remains the compatibility fallback only when the request supplies no model.
+    """
+    if model is not None:
+        return _canonical_persist_model(engine, model)
+    return _inherit_shared_model_override(engine)
 
 
 def _apply_session_model_override(
@@ -1055,9 +1069,10 @@ def chat_stream(
                     content={"error": "invalid_attachment", "detail": str(exc)},
                 )
             if getattr(payload, "new_session", False):
-                # M60（Web 对齐 M52）: 继承旧共享会话 model_override（fail-open → None）
+                # 与同步端点相同：显式 model 直接成为创建 authority；仅缺省 model
+                # 才继承 shared-current，避免跨 tab 的瞬时 model_override 污染。
                 session_id = engine.session.create(
-                    model_override=_inherit_shared_model_override(engine)
+                    model_override=_initial_web_new_session_model_override(engine, payload.model)
                 )
                 engine.session.set_shared_current(session_id)
             elif payload.session_id is not None:
