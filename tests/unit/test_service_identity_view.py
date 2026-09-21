@@ -203,7 +203,7 @@ def test_worker_success_detail_records_identity(
     # this test still isolates success-detail identity recording.
     monkeypatch.setattr(
         "llm_loop.runtime.service_control._verify_restart_targets",
-        lambda *_a, **_k: (True, "verify=ok(stub)"),
+        lambda *_a, **_k: (True, "verify=ok(stub)", ()),
     )
     assert run_action_worker(store, action.action_id) == 0
     receipt = store.read_action(action.action_id)

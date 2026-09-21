@@ -28,6 +28,9 @@ def test_status_exposes_last_request_usage_without_prompt_injection():
     """context/cache/headroom 事实可按需查询，不需要动态系统提示注入。"""
     sp = _provider()
     usage = {
+        "effective_model_this_run": "deepseek/deepseek-v4-pro",
+        "model_source": "per_call",
+        "model_authority": "request_ephemeral",
         "context_window": 1_000_000,
         "context_headroom_tokens": 800_000,
         "cache_read_tokens": 100_000,

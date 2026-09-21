@@ -74,6 +74,7 @@ class LearningPlane:
         poll_interval_s: float = 5.0,
         quiet_period_s: float = 15.0,
         preempt_poll_s: float = 0.25,
+        restart_admission_blocked: Callable[[], Any] | None = None,
     ) -> None:
         self._journal = journal
         self._episode_store = episode_store
@@ -91,6 +92,10 @@ class LearningPlane:
         self._preempt_poll_s = max(0.01, float(preempt_poll_s))
         # Abandoned reflection threads; mutated only by the learning thread.
         self._stragglers: list[threading.Thread] = []
+        # 缺口②进程内准入：learning 屏障存在时新任务不准入（存量在飞任务
+        # 自然排空，供空闲门观察）。None = 未接线（旧行为）。
+        self._restart_admission_blocked = restart_admission_blocked
+        self._last_barrier_reason: str | None = None
 
     # ---------- lifecycle ----------
 
@@ -115,6 +120,29 @@ class LearningPlane:
         return self._resource_governor.higher_priority_active(
             ServicePriority.P3_BACKGROUND_LEARNING
         )
+
+    def _service_barrier_reason(self) -> str | None:
+        """Active learning-service restart barrier (缺口②进程内准入), or None.
+
+        与 ``service_restart_barrier`` 同为 fail-open：探测异常按无屏障处
+        理——learning 自身故障不得把退避变成永久停摆；屏障由释放单点撤销，
+        消失后本方法返回 None，消费自动恢复，无需人工干预。
+        """
+        if self._restart_admission_blocked is None:
+            return None
+        try:
+            barrier = self._restart_admission_blocked()
+        except Exception:  # noqa: BLE001 - probe is fail-open
+            logger.warning("learning admission barrier probe failed", exc_info=True)
+            return None
+        if barrier is None:
+            self._last_barrier_reason = None
+            return None
+        reason = f"{getattr(barrier, 'service', 'learning')}:{getattr(barrier, 'operation_id', '?')}"
+        if reason != self._last_barrier_reason:
+            logger.info("learning admission held by restart barrier %s", reason)
+            self._last_barrier_reason = reason
+        return reason
 
     def _track_straggler(self, worker: threading.Thread) -> None:
         """Track an abandoned reflection thread until it drains."""
@@ -220,6 +248,8 @@ class LearningPlane:
             return False  # an abandoned reflection still drains; never stack transports
         if self.foreground_busy():
             return False  # foreground wins; leave queued, no busy-wait
+        if self._service_barrier_reason() is not None:
+            return False  # learning 重启已受理：新任务不准入，等屏障释放自动恢复
         if not self._quiet_elapsed(job):
             return False
         try:
@@ -239,6 +269,9 @@ class LearningPlane:
                 return False
             if self.foreground_busy():  # re-check between admission and start
                 self._journal.mark_requeued(job.job_id, "foreground_arrived")
+                return False
+            if self._service_barrier_reason() is not None:
+                self._journal.mark_requeued(job.job_id, "service_restart_barrier")
                 return False
 
             # P0-C: memory-extraction jobs share admission/foreground semantics,
@@ -261,6 +294,9 @@ class LearningPlane:
             coordinator = self._provider_call_coordinator
             if self.foreground_busy():  # final check immediately before authority/transport
                 self._journal.mark_requeued(job.job_id, "foreground_arrived")
+                return False
+            if self._service_barrier_reason() is not None:
+                self._journal.mark_requeued(job.job_id, "service_restart_barrier")
                 return False
             if coordinator is not None:
                 expected_generation = (

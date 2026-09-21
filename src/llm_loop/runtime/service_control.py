@@ -25,6 +25,7 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import pwd
 import re
@@ -41,8 +42,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 from llm_loop.resources.foreground import active_run_locks
+from llm_loop.runtime.admission_barrier import (
+    AdmissionBarrierRegistry,
+    BarrierConflictError,
+)
+from llm_loop.runtime.learning_idle import learning_busy_reason
 
 _DEPLOYMENT_SCHEMA = "managed-service-deployment/v1"
+
+logger = logging.getLogger(__name__)
 _ACTION_SCHEMA = "service-control-action/v1"
 _DEPLOYMENT_FIELDS = frozenset(
     {
@@ -100,6 +108,16 @@ _VERIFY_POLL_S = 2.0
 _VERIFY_TIMEOUT_S = 180.0
 _VERIFY_MANIFEST_WAIT_S = 2.0
 _VERIFY_MAX_ATTEMPTS = 2
+
+# §8.2: 准入屏障覆盖目标服务的全部入口——target=all 覆盖三个受管服务。
+_MANAGED_SERVICE_NAMES = ("web", "feishu", "learning")
+
+
+def _barrier_services_for_target(target: str) -> tuple[str, ...]:
+    """Services whose NEW-run admission a restart target must gate (§8.2)."""
+    if target == "all":
+        return _MANAGED_SERVICE_NAMES
+    return (target,)
 
 
 class DeploymentGenerationConflictError(RuntimeError):
@@ -256,6 +274,9 @@ class ManagedServiceDeploymentStore:
         self.lock_path = self.runtime_dir / "service-control-state.lock"
         self.lifecycle_lock_path = self.runtime_dir / "service-control.lock"
         self.actions_dir = self.runtime_dir / "service-control-actions"
+        # §8.2 准入屏障：受理即建立、终态按服务粒度释放；同 data_dir 下
+        # 与 actions 目录并列，所有进程（web/feishu/调度/CLI）读同一路径。
+        self.barriers = AdmissionBarrierRegistry(self.data_dir)
 
     @contextmanager
     def lease(self) -> Iterator[None]:
@@ -371,6 +392,9 @@ class ManagedServiceDeploymentStore:
                     detail="stale waiting state reaped: detached worker presumed dead",
                 )
             )
+            # waiting 态未开始任何副作用：屏障随终态释放（§8.3）。
+            for service in _barrier_services_for_target(action.target):
+                self.barriers.release(service, operation_id=action.action_id)
 
     def update_action(
         self,
@@ -397,6 +421,11 @@ class ManagedServiceDeploymentStore:
                 detail=str(detail or "")[:2000],
             )
             self._write_action_unlocked(updated)
+            _release_barriers_for_transition(
+                self,
+                previous=action,
+                updated=updated,
+            )
             return updated
 
     def accept_restart(
@@ -433,6 +462,45 @@ class ManagedServiceDeploymentStore:
                 detail="",
             )
             self._write_action_unlocked(action)
+            # §8.2-4：受理与屏障建立原子化——屏障建立失败时受理一并失败，
+            # 把受理记录改写为 failed（可审计），不留"已受理但无屏障"的操作。
+            established: list[str] = []
+            try:
+                for service in _barrier_services_for_target(target):
+                    self.barriers.establish(
+                        service,
+                        operation_id=action.action_id,
+                        reason="restart",
+                    )
+                    established.append(service)
+            except BarrierConflictError as exc:
+                for service in established:
+                    self.barriers.release(service, operation_id=action.action_id)
+                self._write_action_unlocked(
+                    dataclasses.replace(
+                        action,
+                        status="failed",
+                        updated_at=_utc_now(),
+                        detail=f"admission barrier conflict, acceptance rejected: {exc}",
+                    )
+                )
+                raise DeploymentGenerationConflictError(
+                    f"admission barrier conflict, acceptance rejected: {exc}"
+                ) from exc
+            except OSError as exc:
+                for service in established:
+                    self.barriers.release(service, operation_id=action.action_id)
+                self._write_action_unlocked(
+                    dataclasses.replace(
+                        action,
+                        status="failed",
+                        updated_at=_utc_now(),
+                        detail=f"admission barrier establishment failed, acceptance rejected: {exc}",
+                    )
+                )
+                raise RuntimeError(
+                    f"admission barrier establishment failed, acceptance rejected: {exc}"
+                ) from exc
             return action
 
 
@@ -505,6 +573,12 @@ def latest_succeeded_actions(
         if current is None or action.updated_at > current.updated_at:
             latest[action.target] = action
     return latest
+
+
+def _barrier_view(store: ManagedServiceDeploymentStore, service: str) -> dict[str, str | bool] | None:
+    """单服务屏障视图（None=无屏障）；供 identity 视图按服务暴露."""
+    barrier = store.barriers.blocked(service)
+    return barrier.to_view() if barrier is not None else None
 
 
 def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
@@ -582,10 +656,14 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
             "stable": stable,
             "restart_required": bool(reasons),
             "reasons": reasons,
+            # §8.3: 准入屏障按服务可见——屏障仍活跃 = "受影响未恢复"，
+            # 恢复路径是操作员覆盖 CLI 或后续操作接管，不得静默消失。
+            "admission_barrier": _barrier_view(store, service),
         }
     return {
         "deployment": deployment.to_dict() if deployment else None,
         "services": services,
+        "admission_barriers": [b.to_view() for b in store.barriers.snapshot()],
     }
 
 
@@ -681,10 +759,12 @@ class ManagedServiceMutationGuard:
         if len(tokens) < 4:
             return False
         exe = Path(tokens[0]).name
+        # barrier-release 是操作员覆盖出口（§8.3 veto），模型不得经 shell
+        # 触碰自己操作的屏障——因此与 publish/worker 同入 operator 围栏。
         return (
             bool(re.fullmatch(r"python(?:3(?:\.\d+)?)?", exe))
             and tokens[1:3] == ["-m", "llm_loop.runtime.service_control"]
-            and tokens[3] in {"publish", "worker"}
+            and tokens[3] in {"publish", "worker", "barriers", "barrier-release"}
         )
 
     @staticmethod
@@ -924,8 +1004,10 @@ def _target_busy_reason(*, target: str, runtime_root: str) -> str:
     """Target-scoped busy probe mirroring the official restart gates.
 
     feishu/all additionally require an idle Feishu bridge heartbeat; web/all
-    require no mechanically-held foreground run locks. learning has no busy
-    gate, matching restart_mirror.sh.
+    require no mechanically-held foreground run locks; learning/all require
+    the learning consumer to hold no in-flight journal job（缺口②空闲门：
+    持锁 + admitted/started 在飞才 busy，进程死亡的 started 残留不阻塞，
+    由 post-crash reconcile 重跑）。
     """
     reasons: list[str] = []
     if target in {"feishu", "all"}:
@@ -946,6 +1028,12 @@ def _target_busy_reason(*, target: str, runtime_root: str) -> str:
         held = active_run_locks(sessions_dir)
         if held:
             reasons.append(f"active run locks: {len(held)}")
+    if target in {"learning", "all"}:
+        learning_reason = learning_busy_reason(
+            Path(runtime_root) / "data" / "sessions"
+        )
+        if learning_reason:
+            reasons.append(learning_reason)
     return "; ".join(reasons)
 
 
@@ -963,6 +1051,7 @@ def _mark_action(
     *,
     status: str,
     detail: str = "",
+    release_barriers: str | tuple[str, ...] | None = None,
 ) -> ServiceControlAction:
     with store.lease():
         updated = dataclasses.replace(
@@ -972,7 +1061,47 @@ def _mark_action(
             detail=str(detail or "")[:2000],
         )
         store._write_action_unlocked(updated)
+        _release_barriers_for_transition(
+            store,
+            previous=action,
+            updated=updated,
+            release_barriers=release_barriers,
+        )
         return updated
+
+
+def _release_barriers_for_transition(
+    store: ManagedServiceDeploymentStore,
+    *,
+    previous: ServiceControlAction,
+    updated: ServiceControlAction,
+    release_barriers: str | tuple[str, ...] | None = None,
+) -> None:
+    """§8.3 barrier lifecycle on state transitions (single policy point).
+
+    release_barriers:
+    - None: infer from the transition.  Terminal statuses release when the
+      transition proves no physical side effects started (accepted/waiting →
+      failed, anything → succeeded).  running → failed keeps barriers
+      fail-closed: stops may have happened and the affected services must
+      stay "affected and not recovered" until an operator or a follow-up
+      operation handles them.
+    - "keep": never release (physical restart already ran and failed).
+    - tuple[str, ...]: release exactly these services (per-service verify
+      verdicts) and keep the rest.
+    """
+    if updated.status not in {"succeeded", "failed"}:
+        return
+    if release_barriers == "keep":
+        return
+    if release_barriers is None:
+        if updated.status == "failed" and previous.status == "running":
+            return
+        services: tuple[str, ...] = _barrier_services_for_target(updated.target)
+    else:
+        services = tuple(release_barriers)
+    for service in services:
+        store.barriers.release(service, operation_id=updated.action_id)
 
 
 def _wait_for(
@@ -1037,14 +1166,16 @@ def _verify_restart_targets(
     deployment: Any,
     services: list[str],
     restarted_at: str,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, tuple[str, ...]]:
     """EVO-20260920-213965a1 案1: restart 后机械终态核验（有界等待）.
 
     判据与 compose_service_identity_view 同源：manifest 存在、pid 存活、
     git_head 等于 desired、started_at 不早于本次重启发起时刻（解析失败
     不作判据）。manifest 在首现窗口（_VERIFY_MANIFEST_WAIT_S）内从未
     出现的目标视为不受 manifest 管辖——跳过（no_manifest_skip）而非判
-    unhealthy。返回 (ok, summary)；summary 上限 400 字符写入 detail。
+    unhealthy。返回 (ok, summary, healthy)；healthy 为本次核验明确判
+    [ok] 的服务集，供 §8.3 的按服务粒度屏障释放使用（skip/unhealthy
+    不入 healthy：未确认即保留屏障）。
     """
     services = list(services)
     began = _parse_iso(restarted_at)
@@ -1060,6 +1191,7 @@ def _verify_restart_targets(
     while True:
         parts: list[str] = []
         ok = True
+        healthy: set[str] = set()
         now = time.monotonic()
         for service in services:
             if service in skipped:
@@ -1098,11 +1230,12 @@ def _verify_restart_targets(
                 parts.append(f"{service}[" + ",".join(problems) + "]")
             else:
                 parts.append(f"{service}[ok pid={pid} head={head[:12]}]")
+                healthy.add(service)
         if skipped:
             parts.extend(f"{service}[no_manifest_skip]" for service in sorted(skipped))
         summary = "verify=" + ("ok" if ok else "unhealthy") + " " + " ".join(parts)
         if ok or now >= deadline:
-            return ok, summary[:400]
+            return ok, summary[:400], tuple(sorted(healthy))
         time.sleep(_VERIFY_POLL_S)
 
 
@@ -1216,7 +1349,15 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             )
             rc = int(proc.returncode or 0)
             if rc != 0:
-                _mark_action(store, running, status="failed", detail=f"restart_mirror rc={rc}")
+                # 物理脚本已执行：停止可能已发生，屏障按 §8.3 fail-closed
+                # 保留，恢复路径是操作员覆盖 CLI 或后续操作接管。
+                _mark_action(
+                    store,
+                    running,
+                    status="failed",
+                    detail=f"restart_mirror rc={rc}",
+                    release_barriers="keep",
+                )
                 return rc, desired_now, restarted_at
             return rc, desired_now, restarted_at
 
@@ -1225,7 +1366,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
     # 的目标记 no_manifest_skip，见其 docstring）。
     verify_targets: list[str] = list(_MANAGED_SERVICES) if action.target == "all" else [action.target]
 
-    def _verify_once() -> tuple[bool, str]:
+    def _verify_once() -> tuple[bool, str, tuple[str, ...]]:
         return _verify_restart_targets(store, desired_now, verify_targets, restarted_at)
 
     rc, desired_now, restarted_at = _run_physical_restart_once()
@@ -1233,14 +1374,14 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
         return rc or 1
 
     # Phase 4 - self-verification, outside the lifecycle lease.
-    ok, summary = _verify_once()
+    ok, summary, healthy = _verify_once()
     attempts = 1
     while not ok and attempts < _VERIFY_MAX_ATTEMPTS:
         rc, desired_now, restarted_at = _run_physical_restart_once()
         attempts += 1
         if rc != 0 or desired_now is None:
             return rc or 1
-        ok, summary = _verify_once()
+        ok, summary, healthy = _verify_once()
 
     identity = (
         f"identity generation={desired_now.generation} git_head={desired_now.git_head}"
@@ -1267,6 +1408,10 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             f"restart_mirror rc=0 but verify failed after {attempts} attempt(s); "
             f"{identity}; {summary}（unhealthy，下一会话 pending 投影可见）"
         ),
+        # §8.3: 按服务粒度恢复准入——核验明确判 [ok] 的服务释放屏障；
+        # skip/unhealthy 的服务保留屏障（受影响未恢复），交给新操作或
+        # 操作员覆盖 CLI。
+        release_barriers=healthy,
     )
     return 5
 
@@ -1405,6 +1550,20 @@ def main(argv: list[str] | None = None) -> int:
     worker.add_argument("--data-dir", required=True)
     worker.add_argument("--action-id", required=True)
 
+    barriers = sub.add_parser("barriers")
+    barriers.add_argument("--data-dir", required=True)
+
+    barrier_release = sub.add_parser("barrier-release")
+    barrier_release.add_argument("--data-dir", required=True)
+    barrier_release.add_argument("--service", required=True)
+    barrier_release.add_argument("--operation-id", required=True)
+    barrier_release.add_argument(
+        "--force",
+        action="store_true",
+        help="remove a corrupt/unknown-owner barrier (operator cleanup, audited)",
+    )
+    barrier_release.add_argument("--reason", required=True)
+
     args = parser.parse_args(argv)
     if args.command == "publish":
         runtime = Path(args.runtime_root).expanduser().resolve()
@@ -1440,6 +1599,51 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "worker":
         return run_action_worker(ManagedServiceDeploymentStore(args.data_dir), args.action_id)
+    if args.command == "barriers":
+        registry = ManagedServiceDeploymentStore(args.data_dir).barriers
+        print(
+            json.dumps(
+                {"barriers": [b.to_view() for b in registry.snapshot()]},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "barrier-release":
+        registry = ManagedServiceDeploymentStore(args.data_dir).barriers
+        released = (
+            registry.force_release(args.service, reason=args.reason)
+            if args.force
+            else registry.release(args.service, operation_id=args.operation_id)
+        )
+        if not released:
+            print(
+                json.dumps(
+                    {
+                        "released": False,
+                        "service": args.service,
+                        "operation_id": args.operation_id,
+                        "hint": "owner mismatch or barrier absent; use `barriers` to list owners",
+                    },
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            return 6
+        logger.warning(
+            "service admission barrier released: service=%s operation=%s reason=%s",
+            args.service,
+            args.operation_id,
+            args.reason,
+        )
+        print(
+            json.dumps(
+                {"released": True, "service": args.service, "reason": args.reason},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return 0
     return 2
 
 

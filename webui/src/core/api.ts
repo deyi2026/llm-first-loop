@@ -722,3 +722,79 @@ export async function testProviderConnection(
     latencyMs: status === 200 ? Number(data.latency_ms ?? 0) : undefined,
   };
 }
+
+export interface LocalRuntimeModel {
+  name: string;
+  size_gb: number | null;
+  kind: "gguf" | "mlx" | string;
+  shards: string | null;
+  shards_ok: boolean | null;
+  mmproj: boolean | null;
+  active: boolean;
+}
+
+export interface LocalRuntimeJob {
+  id: string;
+  action: string;
+  label: string;
+  status: "running" | "done" | "failed" | string;
+  started_at: number;
+  duration_s: number;
+  rc: number | null;
+  output_tail: string[];
+  result: Record<string, unknown> | null;
+  error: string | null;
+}
+
+export interface LocalRuntimeStatus {
+  backend: string;
+  port: number;
+  alias: string | null;
+  ctx: number | null;
+  model_path: string | null;
+  state: {
+    launchd: string | null;
+    pid: number | null;
+    rss_gb: number | null;
+    port_listening: boolean | null;
+    health: boolean | null;
+  };
+  free_gb: number | null;
+  wire_model_ids: string[];
+  provider: { id: string; base_url: string } | null;
+  suggested_model_ref: string | null;
+  stashed_backends: string[];
+  models: LocalRuntimeModel[];
+  job: LocalRuntimeJob | null;
+}
+
+export async function fetchLocalRuntime(): Promise<LocalRuntimeStatus | null> {
+  const { status, data } = await api<LocalRuntimeStatus>("/api/v1/local-runtime", { cache: "no-store" });
+  return status === 200 && Array.isArray((data as { models?: unknown[] } | null)?.models) ? data : null;
+}
+
+export async function startLocalRuntimeJob(
+  action: "switch_model" | "switch_backend" | "restart" | "stop" | "start",
+  options: { model?: string; backend?: string; confirm?: boolean } = {}
+): Promise<{ ok: boolean; status: number; detail: string; job: LocalRuntimeJob | null }> {
+  const { status, data } = await api<Record<string, unknown>>("/api/v1/local-runtime/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...options }),
+  });
+  const body = data ?? {};
+  return {
+    ok: status === 202,
+    status,
+    detail: String(body.detail ?? body.error ?? ""),
+    job: status === 202 ? (body.job as LocalRuntimeJob) ?? null : null,
+  };
+}
+
+export async function fetchLocalRuntimeJob(jobId: string): Promise<LocalRuntimeJob | null> {
+  const { status, data } = await api<LocalRuntimeJob>(
+    `/api/v1/local-runtime/jobs/${encodeURIComponent(jobId)}`,
+    { cache: "no-store" }
+  );
+  return status === 200 ? data : null;
+}

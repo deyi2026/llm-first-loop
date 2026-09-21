@@ -41,6 +41,7 @@ class Goal:
     id: str
     objective: str
     status: str = "active"  # active|complete|blocked
+    generation: str = ""  # one lifecycle incarnation; immutable across checkpoints
     created_at: str = ""
     updated_at: str = ""
     session_id: str = ""
@@ -67,6 +68,7 @@ class GoalStore:
             id=f"GOAL-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
             objective=objective,
             status="active",
+            generation=f"gen-{uuid.uuid4().hex}",
             created_at=now,
             updated_at=now,
             session_id=session_id,
@@ -76,6 +78,25 @@ class GoalStore:
             lines.append(json.dumps(goal.to_dict(), ensure_ascii=False))
             self._atomic_rewrite(lines)
         return goal
+
+    @staticmethod
+    def generation_of(goal: dict) -> str:
+        """Stable lifecycle identity; legacy rows derive one without rewriting storage."""
+        explicit = str(goal.get("generation") or "").strip()
+        if explicit:
+            return explicit
+        seed = f"{goal.get('id', '')}|{goal.get('created_at', '')}"
+        return f"legacy-{uuid.uuid5(uuid.NAMESPACE_URL, seed).hex[:16]}"
+
+    def active_identity(self, session_id: str) -> tuple[str, str] | None:
+        """Strict-session active Goal identity for delegated lifecycle binding."""
+        goal = self.get(prefer_session_id=session_id, strict_session=True)
+        if not goal or str(goal.get("status") or "") != "active":
+            return None
+        goal_id = str(goal.get("id") or "").strip()
+        if not goal_id:
+            return None
+        return goal_id, self.generation_of(goal)
 
     def checkpoint(
         self,

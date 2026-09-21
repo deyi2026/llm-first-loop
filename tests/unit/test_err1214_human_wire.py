@@ -540,6 +540,58 @@ def test_delegated_followup_compaction_keeps_exact_active_run_ingress() -> None:
     assert validate_tool_call_pairing(projection.built) == []
 
 
+def test_live_interjection_is_preserved_byte_exact_under_extreme_soft_compaction() -> None:
+    """Accepted mid-run human steer is the new active ingress and must never be summarized."""
+    exact = "插话：只核当前 worktree；不要动 main。  \n保留  空格/符号: A->B #42"
+    current = Message(
+        role="user",
+        content=exact,
+        source=MessageSource.USER,
+        metadata={
+            "origin_layer": "user_instruction",
+            "program_origin": False,
+            "human_interjection": True,
+            "human_turn_queue_id": "q-exact-1",
+        },
+    )
+    base = [Message(role="assistant", content="old" * 120, source=MessageSource.USER), current]
+    for index in range(8):
+        base.extend(_tool_group(100 + index))
+
+    archived: list[Message] = []
+    projection = run_history_projection(
+        base=base,
+        system_prompt="SYS",
+        filtered_indices=list(range(len(base))),
+        sess_anchor=0,
+        prefix_len=0,
+        session_id="live-interjection-exact",
+        max_chars=1,
+        runtime_history_budget_value=1,
+        compact_ratio=0.5,
+        archive_sink=lambda _sid, message: archived.append(message),
+        settings=SimpleNamespace(exact_duplicate_tool_fold=False),
+        provider_id="glm",
+        resolved_label="glm/glm-5.3",
+        reasoning_tail=0,
+        r6_ingress_truth=None,
+        registry=SimpleNamespace(evidence_mode="off"),
+        cache_monitor=_CacheMonitor(),
+        effective_budget=1,
+        current_turn_ref=1,
+    )
+
+    matches = [
+        item
+        for item in projection.built
+        if item.get("role") == "user" and item.get("content") == exact
+    ]
+    assert len(matches) == 1
+    assert matches[0]["_active_run_ingress_ref"] == "1"
+    assert all(message is not current for message in archived)
+    assert validate_tool_call_pairing(projection.built) == []
+
+
 def test_bad_marker_and_advanced_anchor_cannot_hide_active_delegated_ingress() -> None:
     """Persisted bad compaction must reopen the exact delegated run ingress on retry."""
     current = Message(

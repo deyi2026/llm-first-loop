@@ -10,7 +10,7 @@ from llm_loop.core.message import ToolResultStatus
 from llm_loop.core.run_context import current_session_id
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
-from llm_loop.introspection.status import ArchitectureStatusProvider
+from llm_loop.introspection.status import ArchitectureStatusProvider, ToolHistoryItem
 
 
 def _bound_call(fn: Callable[..., Any], *args: Any, sid: str = "s1", **kwargs: Any) -> Any:
@@ -225,6 +225,93 @@ def test_architecture_status_tool_snapshot_json():
     assert r.status == ToolResultStatus.SUCCESS
     data = json.loads(r.content)
     assert "current_phase" in data
+
+
+def test_architecture_status_defaults_to_current_session_isolation():
+    """Model-facing self inspection must not silently mix peer-session runtime facts."""
+    p = ArchitectureStatusProvider()
+    ctx = CorrectionContext(session_id="stale-shared-context")
+    reg = CorrectionToolRegistry(ctx, status_provider=p)
+
+    def _record(sid: str, label: str) -> None:
+        token = current_session_id.set(sid)
+        try:
+            p.record_action("action.tool_loop", "tool_call", f"{label}-action")
+            p.record_tool_history(
+                ToolHistoryItem(
+                    name=f"{label}-tool",
+                    arguments={},
+                    status=ToolResultStatus.SUCCESS,
+                    summary=f"{label}-summary",
+                )
+            )
+            p.record_message("tool", "tool", len(label), note=f"{label}-message")
+            p.record_exception("tool_execute", RuntimeError(f"{label}-exception"))
+        finally:
+            current_session_id.reset(token)
+
+    _record("session-A", "A")
+    _record("session-B", "B")
+
+    token = current_session_id.set("session-A")
+    try:
+        result = reg.execute(
+            "architecture_status",
+            {"dimensions": ["action_trace", "tool_history", "message_flow", "exception_log"]},
+        )
+    finally:
+        current_session_id.reset(token)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    data = json.loads(result.content)
+    assert data["_observation_scope"] == {
+        "kind": "current_session",
+        "session_id": "session-A",
+        "cross_session": False,
+    }
+    assert [row["detail"] for row in data["action_trace"]] == ["A-action"]
+    assert [row["name"] for row in data["tool_history"]] == ["A-tool"]
+    assert [row["note"] for row in data["message_flow"]] == ["A-message"]
+    assert [row["error_message"] for row in data["exception_log"]] == ["A-exception"]
+
+
+def test_architecture_status_runtime_scope_is_explicit_and_cross_session():
+    """Operational global view remains available, but only via explicit scope=runtime."""
+    p = ArchitectureStatusProvider()
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx, status_provider=p)
+    for sid in ("session-A", "session-B"):
+        token = current_session_id.set(sid)
+        try:
+            p.record_action("action.tool_loop", "tool_call", f"{sid}-action")
+        finally:
+            current_session_id.reset(token)
+
+    token = current_session_id.set("session-A")
+    try:
+        result = reg.execute(
+            "architecture_status",
+            {"dimensions": ["action_trace"], "scope": "runtime"},
+        )
+    finally:
+        current_session_id.reset(token)
+
+    data = json.loads(result.content)
+    assert data["_observation_scope"] == {
+        "kind": "runtime",
+        "session_id": "session-A",
+        "cross_session": True,
+    }
+    assert {row["session_id"] for row in data["action_trace"]} == {"session-A", "session-B"}
+
+
+def test_architecture_status_schema_makes_cross_session_scope_explicit():
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx, status_provider=ArchitectureStatusProvider())
+    definition = next(row for row in reg.tool_defs() if row["name"] == "architecture_status")
+    scope = definition["parameters"]["properties"]["scope"]
+    assert scope["enum"] == ["current_session", "runtime"]
+    assert "默认 current_session" in scope["description"]
 
 
 def test_submit_evolution_uses_current_run_session_id(tmp_path):
@@ -562,7 +649,7 @@ def test_status_snapshot_truncation_note(tmp_path):
         def snapshot(self, dimensions=None):
             return {"big": "x" * 9000}
 
-    r = run_status(CorrectionContext(), _BigStatus(), {})
+    r = run_status(CorrectionContext(), _BigStatus(), {"scope": "runtime"})
     assert r.status.value == "success"
     assert "[快照截断] 超出 8000 字符" in r.content
     assert r.content.rfind("[快照截断]") > 8000  # 标注在截断段之后
@@ -586,7 +673,7 @@ def test_status_default_returns_lean_subset_with_hint(tmp_path):
                 return self._all
             return {d: self._all.get(d, {}) for d in dimensions}
 
-    r = run_status(CorrectionContext(), _RespectingStatus(), {})
+    r = run_status(CorrectionContext(), _RespectingStatus(), {"scope": "runtime"})
     assert r.status.value == "success"
     assert "[快照截断]" not in r.content  # 精简子集小，不触发截断
     data = json.loads(r.content)

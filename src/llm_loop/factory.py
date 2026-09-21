@@ -45,6 +45,7 @@ from llm_loop.feedback.validator import DeclarationValidator
 from llm_loop.fleet.coordinator import ProjectCoordinator  # fleet slice 4 (G1) 生产接线
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.docs_search import DocsSearcher
+from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.search import RecordSearcher
 from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.introspection.task_evidence import TaskEvidenceVerifier
@@ -74,6 +75,7 @@ from llm_loop.resources.local_runtime import LocalRuntimeConcurrencyAdapter
 from llm_loop.resources.provider_calls import ProviderCallCoordinator
 from llm_loop.resources.provider_settlement import ProviderCallSettlementJournal
 from llm_loop.resources.transport_observation import ShadowTransportRecorder
+from llm_loop.runtime.admission_barrier import task_admission_barrier
 from llm_loop.runtime.causal_diagnose import diagnose_event_store
 from llm_loop.runtime.causality import build_runtime_causal_snapshot
 from llm_loop.runtime.knowledge_health import inspect_knowledge_health
@@ -93,6 +95,7 @@ from llm_loop.tools.builtin.browser_semantic_operation import (
     BrowserSemanticOperationReceiptStore,
     BrowserSemanticOperationTool,
 )
+from llm_loop.tools.builtin.convergence_decide import ConvergenceDecideTool
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
 from llm_loop.tools.builtin.edit_file import EditFileTool
@@ -1054,6 +1057,9 @@ def build_engine(
     _register_basic("job_kill", JobKillTool())
     # DSH-PLUGINS-20260816 ③: 文件搜索（glob + 内容 grep，工具优先免碎调用）
     _register_basic("search_files", SearchFilesTool())
+    # P0-B: registered owner capability, but ordinary provider projection hides it.
+    # It appears only for one ephemeral convergence-boundary round.
+    _register_basic("convergence_decide", ConvergenceDecideTool())
     # DSH-PLUGINS-20260816 ②: 定时提醒（at/after/rate → interop notify 注入会话）
     # BUGFIX(2026-08-27 双Store分裂): 注册工具与 SchedulerThread 共享同一
     # ScheduleStore 实例——原 ScheduleTool() 惰性自建与下方 engine.scheduler
@@ -1063,7 +1069,18 @@ def build_engine(
     _schedule_store = ScheduleStore(
         Path(settings.data_dir).resolve() / "schedule.json"
     )
-    _register_basic("schedule", ScheduleTool(store=_schedule_store))
+
+    def _schedule_goal_binding(session_id: str) -> tuple[str, str] | None:
+        """Strict-session active Goal identity for delegated wake lifecycle fencing."""
+        return GoalStore(settings.audit_dir).active_identity(session_id)
+
+    _register_basic(
+        "schedule",
+        ScheduleTool(
+            store=_schedule_store,
+            goal_binding_resolver=_schedule_goal_binding,
+        ),
+    )
     _register_basic("schedule_cancel", ScheduleCancelTool(store=_schedule_store))
     _register_basic("web_fetch", WebFetchTool(timeout_s=_tool_timeout))
     # M48: 网络搜索（Bing/百度双后端降级）
@@ -1631,6 +1648,9 @@ def build_engine(
                 resource_target_resolver=_resolve_learning_resource_target,
                 provider_call_coordinator=provider_call_coordinator,
                 memory_extractor=extractor,
+                restart_admission_blocked=lambda: task_admission_barrier(
+                    Path(settings.data_dir).expanduser(), "learning_job"
+                ),
             )
             learning_plane.start()
             engine.learning_plane = learning_plane
@@ -1664,6 +1684,7 @@ def build_engine(
             ScheduleEntry,
             SchedulerThread,
             rearm_wake_grants,
+            wake_goal_binding_state,
         )
 
         def _deliver_schedule(entry: ScheduleEntry) -> object:
@@ -1713,6 +1734,20 @@ def build_engine(
                 )
                 return WAKE_DEFERRED
 
+            goal_binding_state = wake_goal_binding_state(entry, _schedule_goal_binding)
+            if goal_binding_state == "stale":
+                # Bound Goal became terminal or was replaced: consume as a true no-op.
+                # No model run and no user-facing reminder is emitted from stale task intent.
+                engine._record_action(
+                    "schedule.wake",
+                    "goal_stale_noop",
+                    f"sid={entry.sid};goal_id={entry.goal_id};prompt_chars=0",
+                )
+                return True
+            if goal_binding_state == "unknown":
+                # Lifecycle truth unreadable: never authorize an autonomous model run.
+                return _defer_or_degrade("goal_binding_unknown")
+
             grant = _schedule_store.wake_grant(entry.sid)
             session_id = str(getattr(entry, "session_id", "") or "")
             if grant is None or not session_id:
@@ -1730,6 +1765,19 @@ def build_engine(
                 if grant is None and session_id:
                     return _defer_or_degrade("grant_lost_owner_dead")
                 return _degrade("grant_unavailable")
+
+            # §8.2-2/T08: 服务重启 waiting 窗口内不发起续跑 run——定时/委派
+            # 任务不得连续抢占排空窗口。退避保留条目，屏障释放后自动重试；
+            # grant 不消费（one-shot 能力留给窗口后的下一次投递）。
+            try:
+                _data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
+                _restart_barrier = task_admission_barrier(
+                    Path(str(_data_dir)).expanduser(), "web_schedule_wake"
+                )
+            except Exception:  # noqa: BLE001 — 屏障读取失败不阻断已授权续跑
+                _restart_barrier = None
+            if _restart_barrier is not None:
+                return _defer_or_degrade("service_restart_barrier")
 
             # EVO-20260919-eee9d3b8（人工已审）: 唤醒 prompt 追加本会话后台任务机械现状，
             # 避免唤醒 run 在无终态回执可见时盲目重放/重复轮询；投影失败 fail-open。
@@ -1781,7 +1829,12 @@ def build_engine(
 
         def _rearm_wake_grants(session_id: str, ingress: object) -> None:
             """真人 run 启动钩子（lifecycle 在 run_stream 中调用）：重铸本会话丢失的 wake grant。"""
-            rearm_wake_grants(_schedule_store, session_id, ingress)
+            rearm_wake_grants(
+                _schedule_store,
+                session_id,
+                ingress,
+                goal_binding_resolver=_schedule_goal_binding,
+            )
 
         engine.rearm_wake_grants = _rearm_wake_grants
     except Exception:  # noqa: BLE001 — 调度装配失败不影响核心链路

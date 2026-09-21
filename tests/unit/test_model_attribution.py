@@ -105,6 +105,7 @@ def _make_engine(tmp_path, pool, settings):
     from llm_loop.introspection.status import ArchitectureStatusProvider
     from llm_loop.memory.archive import ArchiveStore
     from llm_loop.memory.store import MemoryStore
+    from llm_loop.tools.builtin.convergence_decide import ConvergenceDecideTool
     from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
     from llm_loop.tools.builtin.read_file import ReadFileTool
     from llm_loop.tools.registry import ToolRegistry
@@ -119,6 +120,7 @@ def _make_engine(tmp_path, pool, settings):
     )
     tool_registry.register(ReadFileTool())
     tool_registry.register(ExecuteCommandTool())
+    tool_registry.register(ConvergenceDecideTool())
     status = ArchitectureStatusProvider(
         audit_dir=settings.audit_dir,
         enabled=settings.self_inspection_enabled,
@@ -168,6 +170,11 @@ def test_default_path_label_with_pool(build_test_engine) -> None:
     result = engine.run(engine.session.create(), "你好")
     # fake_settings.llm_base_url = fake.local → L0 合成 provider id = "default"
     assert result.model_used == "default/fake-model"
+    usage = engine._run_state().last_request_usage  # noqa: SLF001
+    assert usage is not None
+    assert usage["effective_model_this_run"] == "default/fake-model"
+    assert usage["model_source"] == "default"
+    assert usage["model_authority"] == "runtime_default"
 
 
 def test_default_path_label_no_pool(build_test_engine) -> None:
@@ -206,6 +213,11 @@ def test_session_override_label(tmp_path, monkeypatch: pytest.MonkeyPatch) -> No
 
     result = engine.run(sid, "你好")
     assert result.model_used == "minimax/MiniMax-M3"
+    usage = engine._run_state().last_request_usage  # noqa: SLF001
+    assert usage is not None
+    assert usage["effective_model_this_run"] == "minimax/MiniMax-M3"
+    assert usage["model_source"] == "session_override"
+    assert usage["model_authority"] == "session_persisted"
 
 
 def test_per_call_override_label(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -217,8 +229,16 @@ def test_per_call_override_label(tmp_path, monkeypatch: pytest.MonkeyPatch) -> N
     pool = _make_pool(settings, default_fake, cached={"deepseek": pro_fake})
     engine = _make_engine(tmp_path, pool, settings)
 
-    result = engine.run(engine.session.create(), "你好", model="deepseek/deepseek-v4-pro")
+    sid = engine.session.create()
+    before = engine.session.load(sid).model_override
+    result = engine.run(sid, "你好", model="deepseek/deepseek-v4-pro")
     assert result.model_used == "deepseek/deepseek-v4-pro"
+    assert engine.session.load(sid).model_override == before
+    usage = engine._run_state().last_request_usage  # noqa: SLF001
+    assert usage is not None
+    assert usage["effective_model_this_run"] == "deepseek/deepseek-v4-pro"
+    assert usage["model_source"] == "per_call"
+    assert usage["model_authority"] == "request_ephemeral"
 
 
 # ── fallback 路径 ──
@@ -245,6 +265,11 @@ def test_fallback_success_label_is_fallback_model(
     result = engine.run(engine.session.create(), "你好")
     assert result.final_answer.startswith("降级回答")  # 尾部可能有缓存命中率展示行（方案B）
     assert result.model_used == "minimax/MiniMax-M3"
+    usage = engine._run_state().last_request_usage  # noqa: SLF001
+    assert usage is not None
+    assert usage["effective_model_this_run"] == "minimax/MiniMax-M3"
+    assert usage["model_source"] == "fallback"
+    assert usage["model_authority"] == "runtime_fallback_policy"
 
 
 # ── 飞书端 footer ──

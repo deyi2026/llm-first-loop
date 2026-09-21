@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.14 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.15 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
 
 大模型是核心，所有动作围绕大模型展开。架构核心 = **消息进 → 理解 → 行动 → 真诚回答 → 记住**。
 

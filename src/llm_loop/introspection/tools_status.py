@@ -10,6 +10,7 @@ R3（tasks §3）: search_records 工具归因闭环——limit 收口、typed �
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from pathlib import Path
@@ -192,14 +193,50 @@ def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
     default_view = dims is None
     if default_view:
         dims = _DEFAULT_DIMS
-    if "causality" in dims:
-        snap = status_provider.snapshot(
-            session_id=current_session_id(ctx), dimensions=dims
-        )
-    else:
-        # Preserve the established duck-typed status-provider contract for every
-        # ordinary dimension; causality is the only session-scoped extension.
+    requested_scope = str(args.get("scope") or "current_session").strip().lower()
+    scope = "runtime" if requested_scope == "runtime" else "current_session"
+    sid = current_session_id(ctx)
+    if scope == "runtime":
         snap = status_provider.snapshot(dimensions=dims)
+    else:
+        snapshot_fn = status_provider.snapshot
+        try:
+            params = inspect.signature(snapshot_fn).parameters.values()
+            supports_session_scope = any(
+                p.name == "session_id" or p.kind is inspect.Parameter.VAR_KEYWORD
+                for p in params
+            )
+        except (TypeError, ValueError):
+            supports_session_scope = False
+        if supports_session_scope:
+            # Fail closed on missing execution binding: a sentinel session id yields an
+            # empty session-scoped view instead of silently widening to process-global facts.
+            snap = snapshot_fn(
+                session_id=sid or "__unbound_current_session__", dimensions=dims
+            )
+        else:
+            # 会话敏感维度中只有 causality 语义上必须 session-scoped（跨会话因果链）；
+            # 不支持 session 范围的 provider 上拒绝 causality，避免静默降级为全局视图。
+            if "causality" in (dims or ()):
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=(
+                        "[架构状态隔离拒绝] 当前 status provider 不支持 session-scoped snapshot；"
+                        "causality 维度必须会话定界，拒绝降级为全局视图。"
+                    ),
+                    tool_call_id="",
+                    tool_name="architecture_status",
+                )
+            # 其余维度保持既有 duck-typed provider 契约（含敏感四维）：无归因能力的
+            # provider 本身就是全局聚合面，按原契约返回；拒绝会破坏 legacy/testing
+            # provider 的既定行为与 evidence enforce 的全量快照捕获路径。
+            snap = snapshot_fn(dimensions=dims)
+    if isinstance(snap, dict):
+        snap["_observation_scope"] = {
+            "kind": scope,
+            "session_id": sid,
+            "cross_session": scope == "runtime",
+        }
     if default_view:
         snap["_default_view_hint"] = (
             "[默认精简视图] 显示维度: " + ", ".join(_DEFAULT_DIMS)

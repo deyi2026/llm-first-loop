@@ -33,6 +33,10 @@ from llm_loop.feedback.honesty import (
     session_deleted_message,
     session_not_found_message,
 )
+from llm_loop.runtime.admission_barrier import (
+    ServiceAdmissionBarrier,
+    task_admission_barrier,
+)
 from llm_loop.workspace.store import (
     WorkspaceBusyError,
     WorkspaceChangedError,
@@ -43,6 +47,7 @@ from llm_loop.workspace.store import (
 from .attachments import AttachmentError, AttachmentStore
 from .attachments import workspace_scope as attachment_workspace_scope
 from .human_turn_queue import HumanTurnQueue
+from .local_runtime_admin import router as local_runtime_router
 from .provider_routes import router as provider_admin_router
 from .schemas import (
     ChatCancelRequest,
@@ -79,11 +84,80 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 router.include_router(provider_admin_router)
+router.include_router(local_runtime_router)
 
 
 def _attachment_store(engine: Any) -> AttachmentStore:
     data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
     return AttachmentStore(data_dir)
+
+
+_BARRIER_QUEUE_CAP = 20
+
+
+def _service_restart_barrier(
+    request: Request, task_kind: str
+) -> ServiceAdmissionBarrier | None:
+    """§8.2 消息准入屏障（只读）：本任务声明的依赖服务是否有重启屏障.
+
+    依赖范围来自 ``TASK_ADMISSION_DEPENDENCIES`` 闭表（缺口②统一注册表），
+    调用点不再各自指定服务名。读失败 fail-open（可用性优先，日志告警）：
+    屏障目录不存在是常态路径，物理性不可读属运行异常，由状态视图/CLI 兜
+    底，不在消息热路径炸服务。
+    """
+    engine = _engine_from(request)
+    data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
+    try:
+        return task_admission_barrier(Path(data_dir).expanduser(), task_kind)
+    except KeyError:
+        raise  # 编码错误：未登记的任务种类必须当场暴露
+    except Exception as exc:  # noqa: BLE001 — fail-open
+        logger.warning("service admission barrier check failed (fail-open): %s", exc)
+        return None
+
+
+def _barrier_queued_response(
+    request: Request,
+    session_id: str,
+    message: str,
+    barrier: ServiceAdmissionBarrier,
+    *,
+    status_code: int = 202,
+    extra: dict | None = None,
+) -> Response:
+    """屏障期排队回执（§8.2-2/§8.2-5）：durable 入队 + 带操作号的回执.
+
+    容量上限 _BARRIER_QUEUE_CAP：超限拒绝（显式 queue_full 回执），
+    不静默丢弃、不无界堆积。与 /chat/queue 同冻结事实字段。
+    """
+    hq = _human_turn_queue(request)
+    active = hq.list_active(session_id)
+    if sum(1 for it in active if it.get("status") == "queued") >= _BARRIER_QUEUE_CAP:
+        return UTF8JSONResponse(
+            status_code=503,
+            content={
+                "error": "queue_full",
+                "detail": (
+                    "服务重启窗口中且排队已达上限（"
+                    f"{_BARRIER_QUEUE_CAP} 条）；请稍后重试或重新发送。"
+                ),
+                "restart_barrier": barrier.to_view(),
+            },
+        )
+    item = hq.enqueue(session_id, message)
+    content = {
+        "queued": True,
+        "queue_id": item["queue_id"],
+        "item": item,
+        "restart_barrier": barrier.to_view(),
+        "detail": (
+            "服务重启窗口中（操作 "
+            f"{barrier.operation_id}）：消息已持久化排队，恢复后自动继续。"
+        ),
+    }
+    if extra:
+        content.update(extra)
+    return UTF8JSONResponse(status_code=status_code, content=content)
 
 
 def _human_turn_queue(request: Request) -> HumanTurnQueue:
@@ -300,7 +374,7 @@ router.include_router(file_router)
 from llm_loop.feishu.approval import approve, reject  # noqa: E402
 
 SERVICE_NAME = "llm-first-loop-web"
-SERVICE_VERSION = "0.6.14"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
+SERVICE_VERSION = "0.6.15"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -578,6 +652,12 @@ def chat(
             status_code=409,
             content={"error": "workspace_busy", "detail": str(exc)},
         )
+
+    # §8.2-2 消息准入屏障：重启 waiting 窗口内新消息只获持久化排队回执
+    # （带操作号），不得立即成为新活跃 run。
+    _barrier = _service_restart_barrier(request, "web_chat")
+    if _barrier is not None:
+        return _barrier_queued_response(request, session_id, payload.message, _barrier)
 
     # T5.1: 会话级并发锁（同会话串行，不同会话并行，spec.md 5.4.1）
     lock = _get_session_lock(request, session_id)
@@ -1019,6 +1099,37 @@ def chat_stream(
                 },
             )
 
+    # §8.2-2 消息准入屏障：waiting 窗口内不得发起正式 run。
+    # - 有 queue_id：服务端把 claim 回滚为 queued（保 FIFO），回执仍带
+    #   queue_id 与操作号；前端按 session_busy 家族语义刷新队列继续等待。
+    # - 无 queue_id（直接发送）：服务端 durable 入队后回执带 queue_id。
+    _barrier = _service_restart_barrier(request, "web_chat_stream")
+    if _barrier is not None:
+        if _queue_id and _queue_store is not None:
+            # 领取项回滚 queued（保持 FIFO 原位）——冻结事实已在队列中，
+            # 不再重复入队；回执确认 + 操作号。
+            _queue_store.release(session_id, _queue_id)
+            return UTF8JSONResponse(
+                status_code=503,
+                content={
+                    "error": "session_busy",
+                    "detail": (
+                        "服务重启窗口中（操作 "
+                        f"{_barrier.operation_id}）：排队项已回滚为 queued，恢复后自动继续。"
+                    ),
+                    "queue_id": _queue_id,
+                    "restart_barrier": _barrier.to_view(),
+                },
+            )
+        return _barrier_queued_response(
+            request,
+            session_id,
+            getattr(payload, "message", "") or "",
+            _barrier,
+            status_code=503,
+            extra={"error": "session_busy"},
+        )
+
     # resume identity preflight: never interpret "the current run for this session" as
     # the caller's run.  This closes the ordinary stale-tab case before StreamingResponse
     # is committed; BackgroundRunner repeats the check under its own lock for TOCTOU.
@@ -1433,6 +1544,17 @@ def queue_dispatch(payload: QueueDispatchRequest, request: Request) -> Response:
     /chat/stream 请求（带 queue_id）；无法发起（session_busy 等）时调 release 回滚。
     """
     hq = _human_turn_queue(request)
+    # §8.2-2: waiting 窗口内不派发 claim（领取→/chat/stream 只会再被
+    # 屏障拒绝）。claimed=None 让前端接力循环本轮停住，恢复后自动续。
+    _barrier = _service_restart_barrier(request, "web_queue_dispatch")
+    if _barrier is not None:
+        return UTF8JSONResponse(
+            content={
+                "claimed": None,
+                "reason": "service_restart_barrier",
+                "restart_barrier": _barrier.to_view(),
+            }
+        )
     claimed = hq.dispatch_claim(payload.session_id, claimed_by="web")
     return UTF8JSONResponse(content={"claimed": claimed})
 

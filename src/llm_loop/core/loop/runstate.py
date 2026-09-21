@@ -43,6 +43,9 @@ class _RunState:
     overflow_reinject_count: int = 0
     context_warning_injected: bool = False
     round_warning_injected: bool = False
+    # P0-B: ephemeral provider-surface boundary. Prompt-neutral and reset each run.
+    convergence_boundary_pending: bool = False
+    convergence_boundary_evidence: dict[str, Any] = field(default_factory=dict)
     exhaustion_decision_used: bool = False  # 轮次耗尽决策轮一次性标志（2026-08-15）
     last_breakdown: Any = None
     last_build_info: Any = None

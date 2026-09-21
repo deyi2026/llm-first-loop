@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import current_session_id
 from llm_loop.core.scheduler import ScheduleStore
@@ -70,8 +72,14 @@ class ScheduleTool:
         "required": ["message"],
     }
 
-    def __init__(self, store: ScheduleStore | None = None) -> None:
+    def __init__(
+        self,
+        store: ScheduleStore | None = None,
+        *,
+        goal_binding_resolver: Callable[[str], tuple[str, str] | None] | None = None,
+    ) -> None:
         self._store = store
+        self._goal_binding_resolver = goal_binding_resolver
 
     def _get_store(self) -> ScheduleStore:
         if self._store is None:
@@ -155,6 +163,8 @@ class ScheduleTool:
 
         wake_grant = None
         wake_session_id = ""
+        wake_goal_id = ""
+        wake_goal_generation = ""
         if wake:
             wake_session_id = current_session_id.get()
             ingress_session_id = current_ingress_session_id.get()
@@ -178,11 +188,27 @@ class ScheduleTool:
                     tool_call_id="",
                     tool_name=self.name,
                 )
+            if self._goal_binding_resolver is not None:
+                try:
+                    binding = self._goal_binding_resolver(wake_session_id)
+                except Exception as exc:  # noqa: BLE001 — lifecycle authority cannot be guessed
+                    return ToolResult(
+                        status=ToolResultStatus.ERROR,
+                        content=(
+                            "[schedule] 当前 Goal 生命周期身份不可核验，未创建自动续跑；"
+                            f"error={type(exc).__name__}"
+                        ),
+                        tool_call_id="",
+                        tool_name=self.name,
+                    )
+                if binding is not None:
+                    wake_goal_id, wake_goal_generation = binding
 
         sid = self._get_store().add(
             message, after=after, at=at_ts, repeat_interval=repeat_interval,
             max_count=max_count, wake=wake, session_id=wake_session_id,
-            wake_grant=wake_grant,
+            wake_grant=wake_grant, goal_id=wake_goal_id,
+            goal_generation=wake_goal_generation,
         )
         when = f"after {after}s" if after > 0 else (f"at {at}" if at else "immediate")
         if repeat_interval > 0:

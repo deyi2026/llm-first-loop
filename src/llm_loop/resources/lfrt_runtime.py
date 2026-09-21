@@ -157,7 +157,10 @@ class LFRTAdmissionRuntimeAdapter:
                 LocalRuntimeTargetState.MANAGED_BUT_UNKNOWN, key=key, reason=reason
             )
         runtime = _dict(payload.get("runtime"))
-        if runtime is None or runtime.get("type") != "mlx_lm.server":
+        runtime_type = str(runtime.get("type") or "").strip() if runtime else ""
+        # lfrt v1.2 (2026-09-20) 起 llama.cpp 后端以 type="llama-server" 上报，
+        # mlx 后端仍为 "mlx_lm.server"；两者同属 loopback 受管端点契约。
+        if runtime is None or runtime_type not in {"mlx_lm.server", "llama-server"}:
             return LocalRuntimeTargetObservation(
                 LocalRuntimeTargetState.MANAGED_BUT_UNKNOWN, key=key, reason="runtime_identity_unknown"
             )
@@ -165,6 +168,13 @@ class LFRTAdmissionRuntimeAdapter:
         runtime_port = _positive_int(runtime.get("port"))
         prompt = _positive_int(runtime.get("prompt_concurrency"))
         decode = _positive_int(runtime.get("decode_concurrency"))
+        # llama-server 契约只报 n_parallel（slot 数），无独立 prompt/decode 通道并发；
+        # 缺省时机械映射为同一上界，保持 min(prompt, decode) 容量语义。
+        if runtime_type == "llama-server":
+            n_parallel = _positive_int(runtime.get("n_parallel"))
+            if n_parallel is not None:
+                prompt = n_parallel if prompt is None else prompt
+                decode = n_parallel if decode is None else decode
         model = str(runtime.get("model") or "").strip()
         if (
             pid is None
