@@ -231,3 +231,37 @@ def test_routing_tool_reserve_uses_tokens_then_char_bridge_and_records_both_unit
     assert budget_info["effective_history_budget_tokens"] == 184_000 - reserve_tokens
     assert budget_info["token_projected_history_budget_chars"] == 527_118
     assert effective == 527_118
+
+
+def test_routing_tool_reserve_prefers_authoritative_schema_tokens_and_records_source():
+    budget_info = {
+        "allowed_input_tokens": 49_536,
+        "projection_chars_per_token": 0.9,
+        "model_window_budget": 44_582,
+    }
+    effective = RoutingService.reserve_tool_schema_from_history_budget(
+        44_582,
+        budget_info,
+        35_470,
+        tool_schema_tokens=11_324,
+    )
+    assert effective == 34_390
+    assert budget_info["tool_schema_reserve_tokens"] == 11_324
+    assert budget_info["tool_schema_reserve_source"] == "authoritative_tokenizer"
+
+
+def test_routing_tool_reserve_keeps_projection_fallback_when_exact_tokens_unknown():
+    budget_info = {
+        "allowed_input_tokens": 49_536,
+        "projection_chars_per_token": 0.9,
+        "model_window_budget": 44_582,
+    }
+    effective = RoutingService.reserve_tool_schema_from_history_budget(
+        44_582,
+        budget_info,
+        35_470,
+        tool_schema_tokens=None,
+    )
+    assert effective == 9_111
+    assert budget_info["tool_schema_reserve_tokens"] == 39_412
+    assert budget_info["tool_schema_reserve_source"] == "projection_fallback"

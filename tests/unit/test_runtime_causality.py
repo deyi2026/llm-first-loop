@@ -102,6 +102,7 @@ def test_causal_recording_is_provider_payload_neutral(tmp_path: Path) -> None:
     assert "requested_input_tokens" in meta.payload["input_budget"]
     assert "allowed_input_tokens" in meta.payload["input_budget"]
     assert "tool_schema_reserve_tokens" in meta.payload["input_budget"]
+    assert "tool_schema_reserve_source" in meta.payload["input_budget"]
     assert "effective_history_budget_tokens" in meta.payload["input_budget"]
     assert "projection_chars_per_token" in meta.payload["input_budget"]
     assert "projection_density_source" in meta.payload["input_budget"]

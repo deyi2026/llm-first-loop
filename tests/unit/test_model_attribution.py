@@ -177,6 +177,27 @@ def test_default_path_label_with_pool(build_test_engine) -> None:
     assert usage["model_authority"] == "runtime_default"
 
 
+def test_engine_uses_exact_schema_token_authority_from_same_routed_client(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    settings = _settings(tmp_path, llm_model="deepseek/deepseek-v4-flash")
+    fake = _FakeLLMClient("deepseek-v4-flash")
+    measured_surfaces: list[int] = []
+
+    def _count(tools: list[dict]) -> int:
+        measured_surfaces.append(len(tools))
+        return 123
+
+    fake.count_tool_schema_tokens = _count  # type: ignore[attr-defined]
+    pool = _make_pool(settings, fake, cached={"deepseek": fake})
+    engine = _make_engine(tmp_path, pool, settings)
+    result = engine.run(engine.session.create(), "budget authority probe")
+    assert result.final_answer == "默认回答"
+    assert measured_surfaces and measured_surfaces[0] > 0
+    info = engine._run_state().last_budget_info  # noqa: SLF001
+    assert info["tool_schema_reserve_tokens"] == 123
+    assert info["tool_schema_reserve_source"] == "authoritative_tokenizer"
+
+
 def test_default_path_label_no_pool(build_test_engine) -> None:
     """无 pool → 回退裸模型名（零回归）."""
     engine, fake = build_test_engine([{"content": "你好"}])
