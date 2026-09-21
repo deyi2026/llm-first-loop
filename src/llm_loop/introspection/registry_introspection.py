@@ -23,6 +23,11 @@ _ARCHITECTURE_STATUS_TOOL_DEF: dict[str, Any] = {
                 "type": "array",
                 "items": {"type": "string", "enum": list(_ALL_DIMS)},
                 "description": "按需裁剪的状态维度；合法值由执行侧 _ALL_DIMS 单一事实源机械导出。",
+            },
+            "scope": {
+                "type": "string",
+                "enum": ["current_session", "runtime"],
+                "description": "观测范围。默认 current_session，仅返回当前执行会话的任务自省事实；runtime 会显式混合进程内多个会话，仅用于跨会话运维审计。",
             }
         },
     },

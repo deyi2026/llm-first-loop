@@ -17,6 +17,10 @@ import logging
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
+from llm_loop.core.loop.engine_services.convergence_boundary import (
+    ConvergenceFacts,
+    evaluate_convergence_boundary,
+)
 from llm_loop.core.loop.engine_services.tool_reachability import (
     RoundReachabilityRecorder,
     tool_schema_names,
@@ -264,8 +268,17 @@ class ToolCycleService:
             _event_store = getattr(self._host, "_event_store", None)
             _wal_active = _event_store is not None and getattr(_event_store, "enabled", False)
             _assistant_decl_durable = (not _wal_active) or _assistant_event is not None
+        _boundary_pending = bool(self._host._run_state().convergence_boundary_pending)
+        _boundary_disallowed_ids = {
+            tc.id
+            for tc, _pair_id in _declared_calls
+            if tc.id and _boundary_pending and tc.name != "convergence_decide"
+        }
+        _wal_declared_calls = [
+            pair for pair in _declared_calls if pair[0].id not in _boundary_disallowed_ids
+        ]
         _execution_ids = (
-            self._declare_tool_execution_wal(sess, _declared_calls, rounds)
+            self._declare_tool_execution_wal(sess, _wal_declared_calls, rounds)
             if _assistant_decl_durable
             else {}
         )
@@ -353,11 +366,32 @@ class ToolCycleService:
                         sess, valid_calls, executed_ids=set(), round_index=rounds)
                     self._reachability_finalize("cancelled_tools")
                     return
-                # P2-A Rule-first: every valid declaration reaches the normal execution/WAL
-                # path. Repetition is observed after receipt; it is never a pre-execution gate.
-                results, _wal_messages, _wal_result_sha = self._execute_allowed_with_wal(
-                    sess, valid_calls, _execution_ids, rounds
+                # P0-B convergence boundary is an exact execution capability fence, not
+                # merely a provider schema hint. A hallucinated ordinary tool declaration
+                # remains paired in history but is not WAL-started and cannot mutate state.
+                allowed_calls = [tc for tc in valid_calls if tc.id not in _boundary_disallowed_ids]
+                blocked_results = {
+                    tc.id: ToolResult(
+                        status=ToolResultStatus.BLOCKED,
+                        content=(
+                            "executed=false; reason_code=convergence_boundary; "
+                            "allowed_tool=convergence_decide"
+                        ),
+                        tool_call_id=tc.id,
+                        tool_name=tc.name,
+                    )
+                    for tc in valid_calls
+                    if tc.id in _boundary_disallowed_ids
+                }
+                allowed_results, _wal_messages, _wal_result_sha = self._execute_allowed_with_wal(
+                    sess, allowed_calls, _execution_ids, rounds
                 )
+                allowed_by_id = {r.tool_call_id: r for r in allowed_results if r.tool_call_id}
+                results = [
+                    blocked_results.get(tc.id) or allowed_by_id.get(tc.id)
+                    for tc in valid_calls
+                ]
+                results = [r for r in results if r is not None]
                 # 对账不变量: 声明数 == 结果数（缺失 → 合成取消，防孤儿声明落盘）
                 if len(results) != len(valid_calls):
                     executed_ids = {r.tool_call_id for r in results if r.tool_call_id}
@@ -417,7 +451,7 @@ class ToolCycleService:
                                 "tool_call_id": r.tool_call_id,
                                 "name": r.tool_name,
                                 "status": getattr(getattr(r, "status", None), "value", ""),
-                                "blocked": False,
+                                "blocked": r.status is ToolResultStatus.BLOCKED,
                             }
                             for r in results
                         ]
@@ -618,8 +652,28 @@ class ToolCycleService:
         P2-A: telemetry only. It never blocks a call, writes a model message, persists
         a cross-run deny state, or terminates the run.
         """
-        fp = self._stagnation_fingerprint(tc)
         state = self._host._run_state().stagnation_state
+        if (
+            tc.name == "convergence_decide"
+            and result is not None
+            and result.status is ToolResultStatus.SUCCESS
+        ):
+            bucket = self._host._run_state()
+            bucket.convergence_boundary_pending = False
+            bucket.convergence_boundary_evidence = {}
+            bucket.stagnation_state = {
+                "fp": None,
+                "count": 0,
+                "reminded": False,
+                "empty_count": 0,
+                "empty_reminded": False,
+            }
+            self._host._record_action(
+                "convergence.boundary", "continue_declared", "prompt_chars=0"
+            )
+            return
+
+        fp = self._stagnation_fingerprint(tc)
         # ① 精确完整调用指纹连续计数；不同参数就是不同事实。
         if state["fp"] == fp:
             state["count"] += 1
@@ -650,6 +704,79 @@ class ToolCycleService:
                 "observed",
                 f"tool={tc.name}; consecutive_empty={state['empty_count']}; prompt_chars=0",
             )
+
+    def _goal_frontier_counts(self, session_id: str) -> tuple[int | None, int | None]:
+        """Return strict-session active-goal task totals, or unknown on any read failure."""
+        corrections = getattr(self._host, "corrections", None)
+        audit_dir = getattr(corrections, "audit_dir", None) if corrections is not None else None
+        if not audit_dir:
+            return None, None
+        try:
+            from llm_loop.introspection.goal import GoalStore
+            from llm_loop.introspection.task_store import TaskStore
+
+            goal = GoalStore(audit_dir).get(
+                prefer_session_id=session_id,
+                strict_session=True,
+            )
+            if not goal or str(goal.get("status") or "") != "active":
+                return None, None
+            goal_id = str(goal.get("id") or "")
+            if not goal_id:
+                return None, None
+            frontier = TaskStore(audit_dir).compute_frontier(goal_id)
+            return int(frontier.get("total", 0)), int(frontier.get("open_count", 0))
+        except Exception:  # noqa: BLE001 — optional observability must fail open
+            logger.debug("convergence goal-frontier probe failed", exc_info=True)
+            return None, None
+
+    def _maybe_arm_convergence_boundary(self, sess, rounds: int) -> None:
+        """Arm one ephemeral next-round decision boundary from mechanical facts only."""
+        bucket = self._host._run_state()
+        if bucket.convergence_boundary_pending:
+            return
+        try:
+            if "convergence_decide" not in self._host.registry.names():
+                return
+            obligations = self._host.registry.async_obligations(sess.session_id)
+        except Exception:  # noqa: BLE001 — unknown lifecycle state must not narrow tools
+            return
+        state = bucket.stagnation_state or {}
+        breakdown = bucket.last_breakdown or {}
+        ratio = breakdown.get("ratio") if isinstance(breakdown, dict) else None
+        try:
+            ratio_value = float(ratio) if ratio is not None else None
+        except (TypeError, ValueError):
+            ratio_value = None
+        total_tasks, open_tasks = self._goal_frontier_counts(sess.session_id)
+        facts = ConvergenceFacts(
+            rounds=int(rounds or 0),
+            repeated_exact_call_count=int(state.get("count", 0) or 0),
+            consecutive_empty_searches=int(state.get("empty_count", 0) or 0),
+            context_ratio=ratio_value,
+            goal_task_total=total_tasks,
+            goal_open_tasks=open_tasks,
+            outstanding_async_obligations=len(obligations or ()),
+        )
+        verdict = evaluate_convergence_boundary(facts)
+        if not verdict.arm:
+            return
+        bucket.convergence_boundary_pending = True
+        bucket.convergence_boundary_evidence = {
+            "round": facts.rounds,
+            "reasons": list(verdict.reasons),
+            "repeat_count": facts.repeated_exact_call_count,
+            "empty_search_count": facts.consecutive_empty_searches,
+            "context_ratio": facts.context_ratio,
+            "goal_task_total": facts.goal_task_total,
+            "goal_open_tasks": facts.goal_open_tasks,
+            "outstanding_async_obligations": facts.outstanding_async_obligations,
+        }
+        self._host._record_action(
+            "convergence.boundary",
+            "armed",
+            f"reasons={','.join(verdict.reasons)}; prompt_chars=0",
+        )
 
     def _schema_to_param(self, t: dict) -> dict:
         return {
@@ -719,6 +846,26 @@ class ToolCycleService:
         from llm_loop.tools.eligibility import runtime_tool_health
 
         registered = tool_schema_names(tool_schemas)
+        boundary_pending = bool(self._host._run_state().convergence_boundary_pending)
+        if boundary_pending:
+            boundary = [
+                schema
+                for schema in tool_schemas
+                if str(schema.get("name", "") or "") == "convergence_decide"
+            ]
+            if boundary:
+                tool_schemas = boundary
+            else:
+                # A missing decision tool must never dead-end the run.
+                self._host._run_state().convergence_boundary_pending = False
+                self._host._run_state().convergence_boundary_evidence = {}
+        else:
+            # Protocol-only tool: never part of the ordinary provider capability surface.
+            tool_schemas = [
+                schema
+                for schema in tool_schemas
+                if str(schema.get("name", "") or "") != "convergence_decide"
+            ]
         effective: list[dict] = []
         quarantined: list[str] = []
         for schema in tool_schemas:
@@ -747,7 +894,11 @@ class ToolCycleService:
             logger.debug("stable tool-surface observability failed (fail-open)", exc_info=True)
 
         self._last_tool_eligibility = {
-            "mode": "stable_runtime_health",
+            "mode": (
+                "convergence_boundary"
+                if bool(self._host._run_state().convergence_boundary_pending)
+                else "stable_runtime_health"
+            ),
             "applied": bool(quarantined),
             "original_count": len(tool_schemas),
             "visible_count": len(effective),

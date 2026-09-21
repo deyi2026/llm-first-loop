@@ -614,6 +614,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             "empty_count": 0,
             "empty_reminded": False,
         }
+        _bucket.convergence_boundary_pending = False
+        _bucket.convergence_boundary_evidence = {}
         _bucket.interruption_resume = (
             None  # rebuilt from durable interruption/checkpoint facts after ingress append
         )
@@ -792,6 +794,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             None  # B1/B2(EVO-20260902-41898b20): 本 run 中断半截产物缓存（新 run 重置防陈旧串台）
         )
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
+        _model_route_source = "unknown"
+        _model_route_authority = "none"
         tokens_in = 0  # M52: 本次 run 累计 prompt tokens
         tokens_out = 0
         tokens_cache_hit = 0  # M58: 本次 run 前缀缓存命中 token（省钱可观测）
@@ -851,6 +855,15 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
 
             # Resolve the requested provider/model before any prompt/history mutation.
             # A missing model/key is a routing fact, not a reason to compact or project history.
+            if model is not None:
+                _model_route_source = "per_call"
+                _model_route_authority = "request_ephemeral"
+            elif sess.model_override:
+                _model_route_source = "session_override"
+                _model_route_authority = "session_persisted"
+            else:
+                _model_route_source = "default"
+                _model_route_authority = "runtime_default"
             routing = self._route_model(
                 model,
                 sess,
@@ -1707,6 +1720,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         resp = fallback_resp
                         if fallback_ref:
                             model_used = fallback_ref  # M51: 如实标注为降级后的模型
+                        _model_route_source = "fallback"
+                        _model_route_authority = "runtime_fallback_policy"
                         _response_context_limit, _response_chars_per_token = (
                             self._merge_fallback_metadata(
                                 _fallback_metadata,
@@ -1838,6 +1853,13 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 _request_usage_payload = {
                     "round": rounds,
                     "model": model_used or getattr(self.settings, "llm_model", ""),
+                    # P1-B: prompt-neutral routing authority facts. Per-call selection is
+                    # deliberately labelled ephemeral and never implies session persistence.
+                    "effective_model_this_run": (
+                        model_used or getattr(self.settings, "llm_model", "")
+                    ),
+                    "model_source": _model_route_source,
+                    "model_authority": _model_route_authority,
                     "tokens_in": resp.prompt_tokens,
                     "tokens_out": resp.completion_tokens,
                     "reasoning_effective": bool(resp.reasoning_content),
@@ -2024,6 +2046,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             # ── 行动：执行工具（tool_calls）──
             # M53 拆分: 工具段 → _ToolExecMixin._execute_tools（yield from 保持 tool_round 外泄次序）
             yield from self._tool_cycle._execute_tools(resp, sess, rounds, tool_trace)
+
+            # P0-B: after durable tool receipts, evaluate only mechanical convergence
+            # facts. The boundary changes the *next provider tool surface*; it injects
+            # no system/user message and never decides that the user's task is complete.
+            self._tool_cycle._maybe_arm_convergence_boundary(sess, rounds)
 
             # ── R10 → R8.24-B B-2.1（B-D6）: 轮数预警注入路径删除（E18 分量）──
             # 模型可见面零预警（B-G8）；剩余轮数事实只落观测事件。"继续/调大/收尾"

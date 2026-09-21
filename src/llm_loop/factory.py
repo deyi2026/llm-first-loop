@@ -94,6 +94,7 @@ from llm_loop.tools.builtin.browser_semantic_operation import (
     BrowserSemanticOperationReceiptStore,
     BrowserSemanticOperationTool,
 )
+from llm_loop.tools.builtin.convergence_decide import ConvergenceDecideTool
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
 from llm_loop.tools.builtin.edit_file import EditFileTool
@@ -1055,6 +1056,9 @@ def build_engine(
     _register_basic("job_kill", JobKillTool())
     # DSH-PLUGINS-20260816 ③: 文件搜索（glob + 内容 grep，工具优先免碎调用）
     _register_basic("search_files", SearchFilesTool())
+    # P0-B: registered owner capability, but ordinary provider projection hides it.
+    # It appears only for one ephemeral convergence-boundary round.
+    _register_basic("convergence_decide", ConvergenceDecideTool())
     # DSH-PLUGINS-20260816 ②: 定时提醒（at/after/rate → interop notify 注入会话）
     # BUGFIX(2026-08-27 双Store分裂): 注册工具与 SchedulerThread 共享同一
     # ScheduleStore 实例——原 ScheduleTool() 惰性自建与下方 engine.scheduler
@@ -1064,7 +1068,20 @@ def build_engine(
     _schedule_store = ScheduleStore(
         Path(settings.data_dir).resolve() / "schedule.json"
     )
-    _register_basic("schedule", ScheduleTool(store=_schedule_store))
+
+    def _schedule_goal_binding(session_id: str) -> tuple[str, str] | None:
+        """Strict-session active Goal identity for delegated wake lifecycle fencing."""
+        from llm_loop.introspection.goal import GoalStore
+
+        return GoalStore(settings.audit_dir).active_identity(session_id)
+
+    _register_basic(
+        "schedule",
+        ScheduleTool(
+            store=_schedule_store,
+            goal_binding_resolver=_schedule_goal_binding,
+        ),
+    )
     _register_basic("schedule_cancel", ScheduleCancelTool(store=_schedule_store))
     _register_basic("web_fetch", WebFetchTool(timeout_s=_tool_timeout))
     # M48: 网络搜索（Bing/百度双后端降级）
@@ -1668,6 +1685,7 @@ def build_engine(
             ScheduleEntry,
             SchedulerThread,
             rearm_wake_grants,
+            wake_goal_binding_state,
         )
 
         def _deliver_schedule(entry: ScheduleEntry) -> object:
@@ -1716,6 +1734,20 @@ def build_engine(
                     f";next_delay_s={res.next_delay_s:.0f}",
                 )
                 return WAKE_DEFERRED
+
+            goal_binding_state = wake_goal_binding_state(entry, _schedule_goal_binding)
+            if goal_binding_state == "stale":
+                # Bound Goal became terminal or was replaced: consume as a true no-op.
+                # No model run and no user-facing reminder is emitted from stale task intent.
+                engine._record_action(
+                    "schedule.wake",
+                    "goal_stale_noop",
+                    f"sid={entry.sid};goal_id={entry.goal_id};prompt_chars=0",
+                )
+                return True
+            if goal_binding_state == "unknown":
+                # Lifecycle truth unreadable: never authorize an autonomous model run.
+                return _defer_or_degrade("goal_binding_unknown")
 
             grant = _schedule_store.wake_grant(entry.sid)
             session_id = str(getattr(entry, "session_id", "") or "")
@@ -1798,7 +1830,12 @@ def build_engine(
 
         def _rearm_wake_grants(session_id: str, ingress: object) -> None:
             """真人 run 启动钩子（lifecycle 在 run_stream 中调用）：重铸本会话丢失的 wake grant。"""
-            rearm_wake_grants(_schedule_store, session_id, ingress)
+            rearm_wake_grants(
+                _schedule_store,
+                session_id,
+                ingress,
+                goal_binding_resolver=_schedule_goal_binding,
+            )
 
         engine.rearm_wake_grants = _rearm_wake_grants
     except Exception:  # noqa: BLE001 — 调度装配失败不影响核心链路

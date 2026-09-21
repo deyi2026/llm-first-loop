@@ -116,6 +116,17 @@ class ToolHistoryItem:
     summary: str
     duration_ms: float = 0.0
     ts: str = ""
+    session_id: str = ""
+
+
+def _bound_session_id() -> str:
+    """Best-effort factual execution binding for observability records."""
+    try:
+        from llm_loop.core.run_context import current_session_id
+
+        return str(current_session_id.get() or "")
+    except Exception:  # noqa: BLE001 — observability attribution must stay fail-open
+        return ""
 
 
 class ArchitectureStatusProvider:
@@ -153,6 +164,7 @@ class ArchitectureStatusProvider:
         self._exception_log: list[ExceptionLogItem] = []
         self._last_exception_ts: float = 0.0
         self._llm_rounds = 0
+        self._llm_rounds_by_session: dict[str, int] = {}
         # R2/A6(2026-08-14): 程序故障计数（fail-open 事件聚合，AI 经 architecture_status 感知
         # "程序故障率"——程序故障本身对 AI 可见可应对，对齐 RULE-AI-04）
         self._program_faults: dict[str, int] = {}
@@ -186,6 +198,9 @@ class ArchitectureStatusProvider:
 
     def _phase_for(self, session_id: str = "") -> str:
         """快照取阶段：会话桶优先 → 全局桶 → 最近写入值（如实回退链）."""
+        if session_id:
+            with self._phases_guard:
+                return self._phases.get(session_id, "idle")
         try:
             from llm_loop.core.run_context import current_session_id
 
@@ -244,19 +259,38 @@ class ArchitectureStatusProvider:
 
     def record_tool_history(self, item: ToolHistoryItem) -> None:
         if self.enabled:
+            if not item.session_id:
+                item.session_id = _bound_session_id()
             self._tool_history.append(item)
             self._tool_history = self._tool_history[-200:]  # 防膨胀
 
-    def record_message(self, role: str, source: str, chars: int, note: str | None = None) -> None:
+    def record_message(
+        self,
+        role: str,
+        source: str,
+        chars: int,
+        note: str | None = None,
+        *,
+        session_id: str = "",
+    ) -> None:
         if self.enabled:
             self._message_flow.append(
-                {"role": role, "source": source, "chars": chars, "note": note}
+                {
+                    "role": role,
+                    "source": source,
+                    "chars": chars,
+                    "note": note,
+                    "session_id": session_id or _bound_session_id(),
+                }
             )
             self._message_flow = self._message_flow[-100:]
 
     def record_llm_round(self) -> None:
         if self.enabled:
             self._llm_rounds += 1
+            sid = _bound_session_id()
+            if sid:
+                self._llm_rounds_by_session[sid] = self._llm_rounds_by_session.get(sid, 0) + 1
 
     def record_program_fault(self, kind: str) -> None:
         """R2/A6: 程序故障计数（fail-open 事件聚合，kind 如 memory/session_persist/event_write/llm_call）.
@@ -273,6 +307,7 @@ class ArchitectureStatusProvider:
     def record_exception(self, phase: str, exc: Exception, *, session_id: str = "") -> None:
         if not self.enabled:
             return
+        session_id = session_id or _bound_session_id()
         item = ExceptionLogItem(
             ts=_now(),
             phase=phase,
@@ -579,9 +614,30 @@ class ArchitectureStatusProvider:
             if _local_runtime_requested
             else {"available": self._local_runtime_fn is not None, "on_demand": True}
         )
+        current_session_scope = bool(session_id)
+        action_trace = [
+            a
+            for a in self._action_trace
+            if not current_session_scope or a.session_id == session_id
+        ][-30:]
+        tool_history = [
+            t
+            for t in self._tool_history
+            if not current_session_scope or t.session_id == session_id
+        ][-20:]
+        message_flow = [
+            row
+            for row in self._message_flow
+            if not current_session_scope or str(row.get("session_id") or "") == session_id
+        ][-20:]
+        exception_log = [
+            e
+            for e in self._exception_log
+            if not current_session_scope or e.session_id == session_id
+        ][-10:]
         avail = {
             "current_phase": self._phase_for(session_id),
-            "action_trace": [a.to_dict() for a in self._action_trace[-30:]],
+            "action_trace": [a.to_dict() for a in action_trace],
             "tool_history": [
                 {
                     "name": t.name,
@@ -589,14 +645,19 @@ class ArchitectureStatusProvider:
                     "status": t.status.value,
                     "summary": t.summary[:120],
                     "duration_ms": round(t.duration_ms, 1),
+                    "session_id": t.session_id,
                 }
-                for t in self._tool_history[-20:]
+                for t in tool_history
             ],
-            "message_flow": self._message_flow[-20:],
+            "message_flow": message_flow,
             "memory_state": self._memory_stats(),
             "context_usage": {
-                "llm_rounds": self._llm_rounds,
-                "action_trace_count": len(self._action_trace),
+                "llm_rounds": (
+                    self._llm_rounds_by_session.get(session_id, 0)
+                    if current_session_scope
+                    else self._llm_rounds
+                ),
+                "action_trace_count": len(action_trace),
                 "archive": self._archive_stats_fn() if self._archive_stats_fn else None,
                 # M56 B5（ANALYSIS-20260811）: 当前模型窗口（AI 可查后自主决策压缩）
                 "model_window": model_window,
@@ -618,8 +679,13 @@ class ArchitectureStatusProvider:
                 "records_hint": "完整历史运行记录可用 search_records 检索（不限于内存窗口）",
             },
             "exception_log": [
-                {"phase": e.phase, "error_type": e.error_type, "error_message": e.error_message}
-                for e in self._exception_log[-10:]
+                {
+                    "phase": e.phase,
+                    "error_type": e.error_type,
+                    "error_message": e.error_message,
+                    "session_id": e.session_id,
+                }
+                for e in exception_log
             ],
             "architecture_config": self._config_status(),
             # 2026-08-20 P2 规则版本信号: 读 docs/ai_rules.lite.md 头部 version（AI 感知版本变化→重读）

@@ -10,6 +10,7 @@ R3（tasks §3）: search_records 工具归因闭环——limit 收口、typed �
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from pathlib import Path
@@ -192,14 +193,48 @@ def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
     default_view = dims is None
     if default_view:
         dims = _DEFAULT_DIMS
-    if "causality" in dims:
-        snap = status_provider.snapshot(
-            session_id=current_session_id(ctx), dimensions=dims
-        )
-    else:
-        # Preserve the established duck-typed status-provider contract for every
-        # ordinary dimension; causality is the only session-scoped extension.
+    requested_scope = str(args.get("scope") or "current_session").strip().lower()
+    scope = "runtime" if requested_scope == "runtime" else "current_session"
+    sid = current_session_id(ctx)
+    if scope == "runtime":
         snap = status_provider.snapshot(dimensions=dims)
+    else:
+        snapshot_fn = status_provider.snapshot
+        try:
+            params = inspect.signature(snapshot_fn).parameters.values()
+            supports_session_scope = any(
+                p.name == "session_id" or p.kind is inspect.Parameter.VAR_KEYWORD
+                for p in params
+            )
+        except (TypeError, ValueError):
+            supports_session_scope = False
+        if supports_session_scope:
+            # Fail closed on missing execution binding: a sentinel session id yields an
+            # empty session-scoped view instead of silently widening to process-global facts.
+            snap = snapshot_fn(
+                session_id=sid or "__unbound_current_session__", dimensions=dims
+            )
+        else:
+            sensitive = {"action_trace", "tool_history", "message_flow", "exception_log"}
+            if sensitive.intersection(dims or ()):
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=(
+                        "[架构状态隔离拒绝] 当前 status provider 不支持 session-scoped snapshot；"
+                        "为避免跨会话事实混入，拒绝返回会话敏感维度。"
+                    ),
+                    tool_call_id="",
+                    tool_name="architecture_status",
+                )
+            # Legacy/testing providers that expose only non-sensitive aggregate dimensions
+            # retain their established duck-typed contract.
+            snap = snapshot_fn(dimensions=dims)
+    if isinstance(snap, dict):
+        snap["_observation_scope"] = {
+            "kind": scope,
+            "session_id": sid,
+            "cross_session": scope == "runtime",
+        }
     if default_view:
         snap["_default_view_hint"] = (
             "[默认精简视图] 显示维度: " + ", ".join(_DEFAULT_DIMS)

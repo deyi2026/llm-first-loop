@@ -72,6 +72,8 @@ class ScheduleEntry:
         wake_started_at: float = 0.0,
         retry_count: int = 0,
         retry_deadline_at: float = 0.0,
+        goal_id: str = "",
+        goal_generation: str = "",
     ) -> None:
         self.sid = sid
         self.message = message
@@ -88,6 +90,8 @@ class ScheduleEntry:
         self.wake_started_at = float(wake_started_at or 0.0)
         self.retry_count = int(retry_count or 0)
         self.retry_deadline_at = float(retry_deadline_at or 0.0)
+        self.goal_id = str(goal_id or "")
+        self.goal_generation = str(goal_generation or "")
 
     def to_dict(self) -> dict:
         return {
@@ -106,6 +110,8 @@ class ScheduleEntry:
             "wake_started_at": self.wake_started_at,
             "retry_count": self.retry_count,
             "retry_deadline_at": self.retry_deadline_at,
+            "goal_id": self.goal_id,
+            "goal_generation": self.goal_generation,
         }
 
     @classmethod
@@ -126,6 +132,8 @@ class ScheduleEntry:
             wake_started_at=float(d.get("wake_started_at", 0.0) or 0.0),
             retry_count=int(d.get("retry_count", 0) or 0),
             retry_deadline_at=float(d.get("retry_deadline_at", 0.0) or 0.0),
+            goal_id=str(d.get("goal_id", "") or ""),
+            goal_generation=str(d.get("goal_generation", "") or ""),
         )
 
 
@@ -269,6 +277,7 @@ class ScheduleStore:
         self, message: str, *, after: float = 0, at: float | None = None,
         repeat_interval: float = 0, max_count: int = 1, wake: bool = False,
         session_id: str = "", wake_grant: Any = None,
+        goal_id: str = "", goal_generation: str = "",
     ) -> str:
         """新增提醒；返回 sid."""
         trigger = at if at is not None else time.time() + max(0.0, after)
@@ -278,6 +287,8 @@ class ScheduleStore:
             repeat_interval=repeat_interval, max_count=max(1, max_count),
             wake=wake, session_id=session_id,
             wake_owner_pid=(os.getpid() if wake and wake_grant is not None else 0),
+            goal_id=goal_id,
+            goal_generation=goal_generation,
         )
         # Capability must exist before the persisted entry becomes claimable. This removes
         # the after=0 window where a scheduler could see wake=True but no grant yet.
@@ -466,7 +477,39 @@ def _advance(entries: dict[str, ScheduleEntry], sid: str, now: float) -> None:
         entries.pop(sid, None)
 
 
-def rearm_wake_grants(store: ScheduleStore, session_id: str, ingress: Any) -> int:
+def wake_goal_binding_state(
+    entry: ScheduleEntry,
+    resolver: Callable[[str], tuple[str, str] | None] | None,
+) -> str:
+    """Return unbound/active/stale/unknown for a persisted wake Goal binding.
+
+    Only entries that carry a Goal identity are lifecycle-qualified. Legacy/unbound wake
+    entries preserve historical behavior. Resolver exceptions are unknown and must never
+    authorize an autonomous model run.
+    """
+    if not entry.goal_id:
+        return "unbound"
+    if resolver is None:
+        return "unknown"
+    try:
+        current = resolver(entry.session_id)
+    except Exception:  # noqa: BLE001 — unknown is fail-closed for autonomous wake
+        return "unknown"
+    if current is None:
+        return "stale"
+    goal_id, generation = current
+    if str(goal_id) != entry.goal_id or str(generation) != entry.goal_generation:
+        return "stale"
+    return "active"
+
+
+def rearm_wake_grants(
+    store: ScheduleStore,
+    session_id: str,
+    ingress: Any,
+    *,
+    goal_binding_resolver: Callable[[str], tuple[str, str] | None] | None = None,
+) -> int:
     """EVO-20260919-f119847d: 同会话下一次真人 run 重铸丢失的 wake grant。
 
     全部满足才重铸：
@@ -494,6 +537,17 @@ def rearm_wake_grants(store: ScheduleStore, session_id: str, ingress: Any) -> in
             continue
         sid = str(snapshot.get("sid", ""))
         if not sid or store.wake_grant(sid) is not None:
+            continue
+        binding_state = wake_goal_binding_state(
+            ScheduleEntry.from_dict(snapshot), goal_binding_resolver
+        )
+        if binding_state == "stale":
+            # Goal is terminal/replaced: stale delegated intent is consumed as no-op.
+            store.cancel(sid)
+            logger.info("stale wake 已取消（goal binding terminal/replaced）sid=%s", sid)
+            continue
+        if binding_state == "unknown":
+            # Read uncertainty cannot mint fresh autonomous authority.
             continue
         if float(snapshot.get("wake_started_at", 0.0) or 0.0) > 0.0:
             continue

@@ -14,6 +14,7 @@ from llm_loop.core.scheduler import (
     SchedulerThread,
     ScheduleStore,
     rearm_wake_grants,
+    wake_goal_binding_state,
 )
 from llm_loop.core.trace_leak.ingress_token import (
     current_ingress_session_id,
@@ -21,6 +22,7 @@ from llm_loop.core.trace_leak.ingress_token import (
     delegate_ingress,
     issue_test_ingress,
 )
+from llm_loop.introspection.goal import GoalStore
 from llm_loop.tools.builtin.schedule import ScheduleTool
 
 
@@ -373,3 +375,95 @@ def test_rearm_skips_already_started_wake(tmp_path):
     # run 已启动过的条目绝不 re-arm——不允许二次自治 run。
     assert rearm_wake_grants(store, "sess-r", ingress) == 0
     assert store.wake_grant(sid) is None
+
+
+def test_wake_binds_strict_session_goal_identity_and_terminal_becomes_stale(tmp_path):
+    audit_dir = tmp_path / "audit"
+    goals = GoalStore(audit_dir)
+    goal = goals.create("bounded work", session_id="sess-g")
+    store = ScheduleStore(tmp_path / "schedule.json")
+    tool = ScheduleTool(store=store, goal_binding_resolver=goals.active_identity)
+    ingress = issue_test_ingress()
+    sid_tok = current_session_id.set("sess-g")
+    ing_tok = current_ingress_token.set(ingress)
+    ing_sid_tok = current_ingress_session_id.set("sess-g")
+    try:
+        result = tool.execute(message="verify later", after=30, wake=True)
+    finally:
+        current_ingress_session_id.reset(ing_sid_tok)
+        current_ingress_token.reset(ing_tok)
+        current_session_id.reset(sid_tok)
+
+    assert result.status.value == "success"
+    raw = store.list()[0]
+    assert raw["goal_id"] == goal.id
+    assert raw["goal_generation"] == goal.generation
+    entry = ScheduleEntry.from_dict(raw)
+    assert wake_goal_binding_state(entry, goals.active_identity) == "active"
+
+    goals.update(goal.id, "complete")
+    assert wake_goal_binding_state(entry, goals.active_identity) == "stale"
+
+
+def test_goal_generation_mismatch_is_stale_even_when_goal_id_matches(tmp_path):
+    goals = GoalStore(tmp_path / "audit")
+    goal = goals.create("bounded work", session_id="sess-g")
+    entry = ScheduleEntry(
+        sid="sched-g",
+        message="later",
+        trigger_at=time.time() + 10,
+        wake=True,
+        session_id="sess-g",
+        goal_id=goal.id,
+        goal_generation="wrong-generation",
+    )
+    assert wake_goal_binding_state(entry, goals.active_identity) == "stale"
+
+
+def test_rearm_consumes_terminal_goal_wake_as_noop(tmp_path):
+    import llm_loop.core.scheduler as scheduler_mod
+
+    goals = GoalStore(tmp_path / "audit")
+    goal = goals.create("bounded work", session_id="sess-g")
+    store = ScheduleStore(tmp_path / "schedule.json")
+    tool = ScheduleTool(store=store, goal_binding_resolver=goals.active_identity)
+    ingress = issue_test_ingress()
+    sid_tok = current_session_id.set("sess-g")
+    ing_tok = current_ingress_token.set(ingress)
+    ing_sid_tok = current_ingress_session_id.set("sess-g")
+    try:
+        result = tool.execute(message="verify later", after=30, wake=True)
+    finally:
+        current_ingress_session_id.reset(ing_sid_tok)
+        current_ingress_token.reset(ing_tok)
+        current_session_id.reset(sid_tok)
+    assert result.status.value == "success"
+    sid = store.list()[0]["sid"]
+
+    # Simulate owner loss, then terminal Goal before a later human run tries re-arm.
+    def _kill(entries):
+        entries[sid].wake_owner_pid = 999_999_999
+
+    store._mutate(_kill)
+    with scheduler_mod._WAKE_GRANT_LOCK:
+        scheduler_mod._WAKE_GRANTS.clear()
+    goals.update(goal.id, "complete")
+
+    assert rearm_wake_grants(
+        store,
+        "sess-g",
+        ingress,
+        goal_binding_resolver=goals.active_identity,
+    ) == 0
+    assert store.list() == []
+
+
+def test_legacy_unbound_wake_remains_compatible(tmp_path):
+    entry = ScheduleEntry(
+        sid="sched-legacy",
+        message="legacy",
+        trigger_at=time.time() + 10,
+        wake=True,
+        session_id="sess-legacy",
+    )
+    assert wake_goal_binding_state(entry, lambda _sid: None) == "unbound"
