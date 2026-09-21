@@ -228,7 +228,7 @@ def test_architecture_status_tool_snapshot_json():
 
 
 def test_architecture_status_defaults_to_current_session_isolation():
-    """Model-facing self inspection must not silently mix peer-session runtime facts."""
+    """Model-facing self inspection must contain only exact current-session facts."""
     p = ArchitectureStatusProvider()
     ctx = CorrectionContext(session_id="stale-shared-context")
     reg = CorrectionToolRegistry(ctx, status_provider=p)
@@ -252,6 +252,18 @@ def test_architecture_status_defaults_to_current_session_isolation():
 
     _record("session-A", "A")
     _record("session-B", "B")
+    # Process-global/unbound records are operational facts, not current-task facts.
+    p.record_action("schedule.wake", "deferred_retry", "unbound-action")
+    p.record_tool_history(
+        ToolHistoryItem(
+            name="unbound-tool",
+            arguments={},
+            status=ToolResultStatus.SUCCESS,
+            summary="unbound-summary",
+        )
+    )
+    p.record_message("tool", "tool", 1, note="unbound-message")
+    p.record_exception("scheduler", RuntimeError("unbound-exception"))
 
     token = current_session_id.set("session-A")
     try:
@@ -286,6 +298,7 @@ def test_architecture_status_runtime_scope_is_explicit_and_cross_session():
             p.record_action("action.tool_loop", "tool_call", f"{sid}-action")
         finally:
             current_session_id.reset(token)
+    p.record_action("schedule.wake", "deferred_retry", "unbound-action")
 
     token = current_session_id.set("session-A")
     try:
@@ -302,7 +315,35 @@ def test_architecture_status_runtime_scope_is_explicit_and_cross_session():
         "session_id": "session-A",
         "cross_session": True,
     }
-    assert {row["session_id"] for row in data["action_trace"]} == {"session-A", "session-B"}
+    assert {row["session_id"] for row in data["action_trace"]} == {
+        "",
+        "session-A",
+        "session-B",
+    }
+
+
+def test_architecture_status_current_session_fails_closed_for_unscoped_sensitive_provider():
+    """A provider that cannot bind session identity must not masquerade as current-session."""
+    from llm_loop.introspection.tools_status import run_status
+
+    class _GlobalOnlyStatus:
+        def snapshot(self, dimensions=None):
+            return {"action_trace": [{"session_id": "", "detail": "global"}]}
+
+    result = run_status(
+        CorrectionContext(session_id="session-A"),
+        _GlobalOnlyStatus(),
+        {"dimensions": ["action_trace"]},
+    )
+    assert result.status == ToolResultStatus.FAILURE
+    assert "session-scoped snapshot" in result.content
+
+    runtime = run_status(
+        CorrectionContext(session_id="session-A"),
+        _GlobalOnlyStatus(),
+        {"dimensions": ["action_trace"], "scope": "runtime"},
+    )
+    assert runtime.status == ToolResultStatus.SUCCESS
 
 
 def test_architecture_status_schema_makes_cross_session_scope_explicit():
