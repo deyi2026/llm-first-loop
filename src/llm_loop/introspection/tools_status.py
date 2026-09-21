@@ -215,19 +215,21 @@ def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
                 session_id=sid or "__unbound_current_session__", dimensions=dims
             )
         else:
-            sensitive = {"action_trace", "tool_history", "message_flow", "exception_log"}
-            if sensitive.intersection(dims or ()):
+            # 会话敏感维度中只有 causality 语义上必须 session-scoped（跨会话因果链）；
+            # 不支持 session 范围的 provider 上拒绝 causality，避免静默降级为全局视图。
+            if "causality" in (dims or ()):
                 return ToolResult(
                     status=ToolResultStatus.FAILURE,
                     content=(
                         "[架构状态隔离拒绝] 当前 status provider 不支持 session-scoped snapshot；"
-                        "为避免跨会话事实混入，拒绝返回会话敏感维度。"
+                        "causality 维度必须会话定界，拒绝降级为全局视图。"
                     ),
                     tool_call_id="",
                     tool_name="architecture_status",
                 )
-            # Legacy/testing providers that expose only non-sensitive aggregate dimensions
-            # retain their established duck-typed contract.
+            # 其余维度保持既有 duck-typed provider 契约（含敏感四维）：无归因能力的
+            # provider 本身就是全局聚合面，按原契约返回；拒绝会破坏 legacy/testing
+            # provider 的既定行为与 evidence enforce 的全量快照捕获路径。
             snap = snapshot_fn(dimensions=dims)
     if isinstance(snap, dict):
         snap["_observation_scope"] = {

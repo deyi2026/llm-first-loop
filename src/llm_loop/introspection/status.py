@@ -615,25 +615,31 @@ class ArchitectureStatusProvider:
             else {"available": self._local_runtime_fn is not None, "on_demand": True}
         )
         current_session_scope = bool(session_id)
+        # 会话隔离语义：仅排除"归因到其他会话"的记录。无归因（session_id=""）记录是
+        # 进程级事实（R2/A6 / RULE-AI-04：程序故障与异常必须对 AI 可见），对任何范围
+        # 保持可见——否则未绑定执行上下文的查询（eval dry、CI 子进程、哨兵 scope）
+        # 会得到空视图，注入信号"消失"，快照不可信。
         action_trace = [
             a
             for a in self._action_trace
-            if not current_session_scope or a.session_id == session_id
+            if not current_session_scope or not a.session_id or a.session_id == session_id
         ][-30:]
         tool_history = [
             t
             for t in self._tool_history
-            if not current_session_scope or t.session_id == session_id
+            if not current_session_scope or not t.session_id or t.session_id == session_id
         ][-20:]
         message_flow = [
             row
             for row in self._message_flow
-            if not current_session_scope or str(row.get("session_id") or "") == session_id
+            if not current_session_scope
+            or not str(row.get("session_id") or "")
+            or str(row.get("session_id") or "") == session_id
         ][-20:]
         exception_log = [
             e
             for e in self._exception_log
-            if not current_session_scope or e.session_id == session_id
+            if not current_session_scope or not e.session_id or e.session_id == session_id
         ][-10:]
         avail = {
             "current_phase": self._phase_for(session_id),

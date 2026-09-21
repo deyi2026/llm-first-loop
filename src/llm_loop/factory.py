@@ -45,6 +45,7 @@ from llm_loop.feedback.validator import DeclarationValidator
 from llm_loop.fleet.coordinator import ProjectCoordinator  # fleet slice 4 (G1) 生产接线
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.docs_search import DocsSearcher
+from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.search import RecordSearcher
 from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.introspection.task_evidence import TaskEvidenceVerifier
@@ -1071,8 +1072,6 @@ def build_engine(
 
     def _schedule_goal_binding(session_id: str) -> tuple[str, str] | None:
         """Strict-session active Goal identity for delegated wake lifecycle fencing."""
-        from llm_loop.introspection.goal import GoalStore
-
         return GoalStore(settings.audit_dir).active_identity(session_id)
 
     _register_basic(
