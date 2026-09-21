@@ -156,9 +156,16 @@ def reserve_history_after_tools(
     allowed_input_tokens: int | None,
     pre_tool_history_budget_chars: int,
     tool_schema_chars: int,
+    tool_schema_tokens: int | None = None,
     projection_chars_per_token: float,
 ) -> ToolBudgetReservation:
-    """Reserve tool-schema capacity in tokens, then bridge remaining history to chars."""
+    """Reserve tool-schema capacity in tokens, then bridge remaining history to chars.
+
+    ``tool_schema_tokens`` is an optional provider/tokenizer authority.  When present it
+    owns the schema reserve directly; ``projection_chars_per_token`` remains only the
+    bridge for the history projector.  When absent, preserve the historical conservative
+    char-density fallback for providers without tokenizer authority.
+    """
     pre_tool_chars = max(1, int(pre_tool_history_budget_chars or 0))
     allowed = int(allowed_input_tokens or 0)
     cpt = float(projection_chars_per_token or 0)
@@ -169,7 +176,10 @@ def reserve_history_after_tools(
             projected_history_chars=pre_tool_chars,
             effective_history_budget_chars=pre_tool_chars,
         )
-    tool_tokens = max(0, math.ceil(max(0, int(tool_schema_chars or 0)) / cpt))
+    if isinstance(tool_schema_tokens, int) and tool_schema_tokens >= 0:
+        tool_tokens = tool_schema_tokens
+    else:
+        tool_tokens = max(0, math.ceil(max(0, int(tool_schema_chars or 0)) / cpt))
     history_tokens = max(0, allowed - tool_tokens)
     projected_chars = max(1, math.floor(history_tokens * cpt))
     return ToolBudgetReservation(

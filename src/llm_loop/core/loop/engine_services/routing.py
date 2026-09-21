@@ -579,7 +579,11 @@ class RoutingService:
 
     @staticmethod
     def reserve_tool_schema_from_history_budget(
-        history_budget: int, budget_info: dict, tool_schema_chars: int
+        history_budget: int,
+        budget_info: dict,
+        tool_schema_chars: int,
+        *,
+        tool_schema_tokens: int | None = None,
     ) -> int:
         """Reserve provider-visible tool schema inside the same total input budget.
 
@@ -601,10 +605,16 @@ class RoutingService:
                 allowed_input_tokens=allowed_input_tokens,
                 pre_tool_history_budget_chars=history_budget,
                 tool_schema_chars=tool_schema_chars,
+                tool_schema_tokens=tool_schema_tokens,
                 projection_chars_per_token=float(projection_cpt),
             )
             budget_info["tool_schema_reserve_tokens"] = (
                 reservation.tool_schema_reserve_tokens
+            )
+            budget_info["tool_schema_reserve_source"] = (
+                "authoritative_tokenizer"
+                if isinstance(tool_schema_tokens, int) and tool_schema_tokens >= 0
+                else "projection_fallback"
             )
             budget_info["effective_history_budget_tokens"] = (
                 reservation.history_token_budget

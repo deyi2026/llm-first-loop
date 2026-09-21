@@ -919,10 +919,25 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 logical_round=rounds,
             )
             _tool_schema_chars = len(_json_dumps_args({"tools": tools_param}))
+            _tool_schema_tokens: int | None = None
+            _schema_counter = getattr(llm_client, "count_tool_schema_tokens", None)
+            if callable(_schema_counter):
+                try:
+                    _measured_schema_tokens = _schema_counter(tools_param)
+                    if (
+                        isinstance(_measured_schema_tokens, int)
+                        and _measured_schema_tokens >= 0
+                    ):
+                        _tool_schema_tokens = _measured_schema_tokens
+                except Exception:  # noqa: BLE001 — optional tokenizer authority is fail-soft
+                    logger.debug("tool-schema token measurement failed; using fallback", exc_info=True)
             _budget_info = dict(self._run_state().last_budget_info or {})
             _pre_tool_budget = effective_budget
             effective_budget = self._routing.reserve_tool_schema_from_history_budget(
-                effective_budget, _budget_info, _tool_schema_chars
+                effective_budget,
+                _budget_info,
+                _tool_schema_chars,
+                tool_schema_tokens=_tool_schema_tokens,
             )
             _budget_info["pre_tool_history_budget"] = _pre_tool_budget
             _budget_info["tool_schema_reserve_chars"] = _tool_schema_chars
@@ -1283,6 +1298,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             "requested_input_tokens": _budget_info.get("input_token_budget"),
                             "allowed_input_tokens": _budget_info.get("allowed_input_tokens"),
                             "tool_schema_reserve_tokens": _budget_info.get("tool_schema_reserve_tokens"),
+                            "tool_schema_reserve_source": _budget_info.get("tool_schema_reserve_source"),
                             "effective_history_budget_tokens": _budget_info.get("effective_history_budget_tokens"),
                             "projection_chars_per_token": _budget_info.get("projection_chars_per_token"),
                             "projection_density_source": _budget_info.get("projection_density_source"),
