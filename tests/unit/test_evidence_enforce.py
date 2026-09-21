@@ -709,7 +709,9 @@ def test_enforce_architecture_status_captures_full_snapshot_before_8000_char_vie
         parameters = {"type": "object", "properties": {}}
 
         def execute(self, **kwargs):
-            return run_status(None, Provider(), kwargs)
+            # This fixture verifies full process-global snapshot capture, not task-session
+            # self-inspection. Keep the intended global authority explicit.
+            return run_status(None, Provider(), {**kwargs, "scope": "runtime"})
 
     blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
     registry = ToolRegistry()

@@ -204,7 +204,15 @@ def _dry_injection_selfcheck() -> None:
     )
 
     result = run_status(
-        ctx=None, status_provider=status, args={"dimensions": ["tool_history", "exception_log"]}
+        ctx=None,
+        status_provider=status,
+        args={
+            "dimensions": ["tool_history", "exception_log"],
+            # Dry selfcheck deliberately validates process-global injected fixtures rather
+            # than a human task session; make that authority explicit instead of widening
+            # model-facing current_session semantics.
+            "scope": "runtime",
+        },
     )
     if result.status != ToolResultStatus.SUCCESS:
         raise RuntimeError(
