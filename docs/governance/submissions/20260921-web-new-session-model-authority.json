@@ -1,0 +1,89 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260921-web-new-session-model-authority",
+  "summary": "Correct Web fresh-session model authority after a Gen62 live canary proved that session.created could transiently inherit another tab's shared-current model before the same request corrected it. A valid explicit model on new_session now owns creation authority immediately; M60 shared-current inheritance remains only when the request omits model, and an explicit unknown model remains unbound for the existing per-call unavailable-routing fact.",
+  "components": [
+    {
+      "component_id": "web-new-session-model-authority",
+      "paths": [
+        "src/llm_loop/web/routes.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Web session creation and model authority",
+      "disposition": "ADMIT corrective authority precedence: for new_session, an explicitly supplied valid model is canonicalized before Session creation and becomes the initial model_override. If an explicit model is unknown, the session is created without a persisted override; shared-current inheritance is used only when model is absent. Existing-session authority and routing behavior are unchanged.",
+      "evidence": [
+        "Gen62 live canary ef3315ca-cfdb-49a0-8ddc-5271b28140d9 recorded session.created as Qwen from another tab while the same explicit request ran/finalized as GLM",
+        "tests/unit/test_m60_web_new_session_inherit.py explicit GLM/Qwen/unknown/stream authority matrix PASS",
+        "adjacent model/session authority suite 68/68 PASS",
+        "full scripts/ci_gate.sh PASS"
+      ],
+      "verification_level": "deterministic concurrent-tab regression + full repository CI + post-deploy fresh-session canary",
+      "model_evidence_veto_recovery_exit": "This changes only mechanical precedence of human Web request facts at session creation. It does not let the program choose a model semantically. Explicit unknown models remain unpersisted and continue through the existing truthful unavailable-routing path; omitted model retains the existing M60 shared-current fallback.",
+      "rollback_route": "Revert this corrective commit; no data migration is required. If deployed, publish a new managed generation and restart affected services through service-control.",
+      "declaration_id": "decl-web-new-session-model-authority"
+    },
+    {
+      "component_id": "web-new-session-model-authority-regressions",
+      "paths": [
+        "tests/unit/test_m60_web_new_session_inherit.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Web session/model deterministic verification",
+      "disposition": "ADMIT regression matrix: preserve M60 no-model inheritance while proving explicit request authority wins at creation for sync/stream, reverse-tab model combinations, and invalid explicit model does not inherit unrelated shared authority.",
+      "evidence": [
+        "tests/unit/test_m60_web_new_session_inherit.py 8/8 PASS",
+        "Ruff and Pyright changed-file gates PASS"
+      ],
+      "verification_level": "focused deterministic tests + adjacent model/session regression suite",
+      "model_evidence_veto_recovery_exit": "Test-only coverage; no runtime authority.",
+      "rollback_route": "Revert with the production correction."
+    },
+    {
+      "component_id": "a5-web-new-session-model-authority",
+      "paths": [
+        "docs/governance/submissions/20260921-web-new-session-model-authority.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 submission manifest",
+      "disposition": "ADMIT mechanical architecture-review path coverage for the fresh-session model-authority correction.",
+      "evidence": [
+        "scripts/check_architecture_submission.py --staged PASS"
+      ],
+      "verification_level": "A.5 mechanical presence/coverage gate",
+      "model_evidence_veto_recovery_exit": "Manifest only; no runtime authority.",
+      "rollback_route": "Revert with the corrective submission."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-web-new-session-model-authority",
+      "g1": {
+        "necessity": "A live concurrent-tab canary proved session.created could record another tab's shared-current model before the explicit model on the same new-session request was applied, violating authoritative creation metadata and session-local model ownership."
+      },
+      "g2": {
+        "authority_owner": "The explicit model fact on the Web new_session request, canonicalized against the current model registry",
+        "relationship": "replace",
+        "non_duplication": "This replaces only the creation-time precedence that previously always consulted process-global shared_current. It reuses the existing canonical model resolver and existing M60 inheritance fallback rather than adding a parallel model authority store."
+      },
+      "g3": {
+        "model_evidence": [
+          "live ef3315ca session.created=Qwen followed by request.meta/transport/usage/final session=GLM on the same explicit GLM request",
+          "deterministic shared MiniMax + explicit GLM and shared GLM + explicit Qwen regressions",
+          "explicit unknown model regression proving no unrelated shared authority is persisted",
+          "no-model M60 inheritance regressions proving compatibility remains"
+        ],
+        "recovery_or_reason": "If an explicit model cannot be canonicalized, creation persists no override and the existing per-call route reports model availability truthfully. If no model is supplied, existing shared-current inheritance remains available."
+      },
+      "g4": {
+        "rollback": "Revert the corrective commit and, if deployed, publish/restart through the managed service-control generation. No persisted schema migration is required.",
+        "verification": [
+          "focused M60 authority matrix",
+          "adjacent model/session authority suite",
+          "full scripts/ci_gate.sh",
+          "staged and full-tree security scans",
+          "post-deploy canary requiring session.created, wire provider, request.usage and final session to agree on the same explicit model while peer sessions remain unchanged"
+        ]
+      }
+    }
+  ]
+}
