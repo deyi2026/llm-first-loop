@@ -47,7 +47,12 @@ ExtractTrigger = Literal["session_end", "interval", "manual"]
 _EXTRACT_PROMPT = """从以下会话历史中提取值得长期记忆的信息（关键事实/决策/约定），
 以结构化记忆块输出（与常规记忆块格式一致），每块一个条目，无值得记忆内容则输出空：
 
-[[memory]] {{"type": "fact", "content": "要记住的内容", "keywords": ["关键词"]}} [[/memory]]
+[[memory]] {{"type": "fact", "content": "要记住的内容", "keywords": ["关键词"], "citations": [{{"kind": "message", "ref": "msg:3", "note": "该内容的原始出处"}}]}} [[/memory]]
+
+citations 规则：
+- 每条记忆块必须包含 citations 字段，至少一条；
+- ref 格式为 "msg:N"，N 为该内容出处消息在会话历史中的编号（历史每行以 [N] 开头）；
+- ref 必须指向历史中真实存在的编号，不得编造；note 用一句话说明出处上下文。
 
 会话历史：
 {history}"""
@@ -316,7 +321,7 @@ class MemoryExtractor:
     # ── 辅助 ──
     def _build_history_text(self, messages: list[Any]) -> str:
         lines = []
-        for m in messages:
+        for idx, m in enumerate(messages):
             role = m.role
             content = m.content[:500]
             # P0-B3（2026-08-28 批准）: 程序反馈（错误/熔断/守卫/耗尽）不进长期记忆
@@ -331,7 +336,11 @@ class MemoryExtractor:
                 PROGRAM_FEEDBACK_PREFIXES
             ):
                 continue
-            lines.append(f"[{role}] {content}")
+            # EXP-20260922（实验分支）: 行首加真实 index 锚点 [idx][role]。被过滤消息
+            # 占号不占行，msg:N 与 session.messages[N] 一一映射。依据 .tmp-ci 实验：
+            # 仅改 prompt 且历史无锚点时，程序反馈过滤使行序≠消息序，模型按行序自
+            # 编号产出 5/5 系统性错位 refs；加真实 index 锚点后 5/5 精确命中。
+            lines.append(f"[{idx}][{role}] {content}")
         return "\n".join(lines)
 
     def _audit(
