@@ -28,6 +28,50 @@ def test_is_overflow_error_non_overflow():
     assert not is_overflow_error(LLMError("internal server error"))
 
 
+# ── EVO-20260921-51d12fa6: GLM 400 code 1261 分型回归（hev0 P3 t3 实测） ──
+
+_GLM_1261_BODY = '{"error":{"code":"1261","message":"Prompt exceeds max length"}}'
+
+
+def test_is_overflow_error_glm_1261_code_path():
+    """GLM 400 code=1261 识别为 overflow（文案路径 + 码路径）."""
+    # 实测签名: 文案命中模式（provider 归属无关，短语明确）
+    exc = LLMHTTPError(
+        "LLMHTTPError: HTTP 400: Bad Request | " + _GLM_1261_BODY,
+        status_code=400, body=_GLM_1261_BODY, provider="glm",
+    )
+    assert is_overflow_error(exc)
+    # 文案改写（本地化/措辞变化）时按 provider+status+码识别
+    body2 = '{"error":{"code":"1261","message":"输入长度超过上限"}}'
+    assert is_overflow_error(
+        LLMHTTPError("HTTP 400 | " + body2, status_code=400, body=body2, provider="glm")
+    )
+    # 字符串化 body（转义 JSON 一层）同命中——parse_provider_error_code 三层解包
+    body3 = '"' + _GLM_1261_BODY.replace('"', '\\"') + '"'
+    assert is_overflow_error(
+        LLMHTTPError("HTTP 400 | " + body3, status_code=400, body=body3, provider="glm-api")
+    )
+
+
+def test_is_overflow_error_1261_not_hijacked():
+    """码保护: 非 GLM 族同码不判 overflow；GLM 族其他 400 业务码不误判."""
+    # 非 GLM provider 的 1261 码（异义保护）
+    body = '{"error":{"code":"1261","message":"something else entirely"}}'
+    assert not is_overflow_error(
+        LLMHTTPError("HTTP 400 | " + body, status_code=400, body=body, provider="deepseek")
+    )
+    # GLM 族其他业务码（如 1210 参数校验）不误判
+    body2 = '{"error":{"code":"1210","message":"invalid request body"}}'
+    assert not is_overflow_error(
+        LLMHTTPError("HTTP 400 | " + body2, status_code=400, body=body2, provider="glm")
+    )
+    # GLM 族 1261 但非 400 状态不按码判定（文案用非英文短语，隔离码路径）
+    body4 = '{"error":{"code":"1261","message":"输入长度超过上限"}}'
+    assert not is_overflow_error(
+        LLMHTTPError("HTTP 500 | " + body4, status_code=500, body=body4, provider="glm")
+    )
+
+
 # ── R4 → R8.24-B B-D5: overflow 确定性 runtime 处理（零 prompt 注入）集成测试 ──
 
 
