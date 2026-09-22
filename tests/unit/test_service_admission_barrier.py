@@ -625,3 +625,57 @@ class TestR1ReceiptConsumption:
         final = store.read_action(action.action_id)
         assert "receipt=stale" in final.detail
         assert reg.blocked("web") is not None
+
+
+class TestAuditTrails:
+    """R3(P6/P7): force_release 与准入拒绝的 append-only 审计线."""
+
+    def test_force_release_writes_audit_jsonl(self, tmp_path: Path) -> None:
+        reg = AdmissionBarrierRegistry(tmp_path)
+        reg.establish("web", operation_id="svc-audit-1", reason="restart")
+        assert reg.force_release("web", reason="operator override after 07:49") is True
+        audit = tmp_path / "audit" / "service_barrier_forces.jsonl"
+        assert audit.is_file()
+        lines = audit.read_text(encoding="utf-8").strip().splitlines()
+        record = json.loads(lines[-1])
+        assert record["service"] == "web"
+        assert record["previous_owner"] == "svc-audit-1"
+        assert record["reason"] == "operator override after 07:49"
+        assert "released_by" in record and "ts" in record
+
+    def test_force_release_without_release_writes_nothing(self, tmp_path: Path) -> None:
+        reg = AdmissionBarrierRegistry(tmp_path)
+        assert reg.force_release("web", reason="no-op") is False
+        assert not (tmp_path / "audit" / "service_barrier_forces.jsonl").exists()
+
+    def test_log_admission_rejection_writes_jsonl(self, tmp_path: Path) -> None:
+        from llm_loop.runtime.admission_barrier import log_admission_rejection
+
+        reg = AdmissionBarrierRegistry(tmp_path)
+        barrier = reg.establish("web", operation_id="svc-audit-2", reason="restart")
+        assert log_admission_rejection(
+            tmp_path, "web_chat", barrier, source="web", detail="sess-x"
+        )
+        audit = tmp_path / "audit" / "service_admission_rejections.jsonl"
+        record = json.loads(
+            audit.read_text(encoding="utf-8").strip().splitlines()[-1]
+        )
+        assert record["task_kind"] == "web_chat"
+        assert record["source"] == "web"
+        assert record["detail"] == "sess-x"
+        assert record["barrier"]["operation_id"] == "svc-audit-2"
+
+    def test_log_admission_rejection_fail_open_on_bad_path(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_loop.runtime.admission_barrier import log_admission_rejection
+
+        # 审计失败必须 fail-open（返回 False，不抛）——消息路径优先
+        blocker = tmp_path / "file-not-dir"
+        blocker.write_text("not a dir", encoding="utf-8")
+        assert (
+            log_admission_rejection(
+                blocker / "child", "web_chat", None, source="web"
+            )
+            is False
+        )

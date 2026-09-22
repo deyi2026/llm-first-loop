@@ -216,6 +216,15 @@ def _scan_failed_service_actions(data_dir: str | Path) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     try:
         store = ManagedServiceDeploymentStore(data_dir)
+        # R5: 投影过滤（只读）——desired 代已前进时，旧代失败动作已被
+        # supersede，不再占活跃投影位（不 mutate action 文件本体）。
+        # desired 缺失时不过滤（宁多勿丢）。
+        desired_generation: int | None = None
+        try:
+            deployment = store.read()
+            desired_generation = deployment.generation if deployment else None
+        except Exception:  # noqa: BLE001 — 过滤信息缺失时不过滤
+            desired_generation = None
         cutoff = datetime.now(UTC).timestamp() - 24 * 3600
         for path in sorted(
             (p for p in store.actions_dir.glob("*.json") if p.is_file()),
@@ -227,6 +236,13 @@ def _scan_failed_service_actions(data_dir: str | Path) -> list[dict[str, Any]]:
             except (OSError, ValueError, json.JSONDecodeError):
                 continue
             if raw.get("action") != "restart" or raw.get("status") != "failed":
+                continue
+            raw_generation = raw.get("deployment_generation")
+            if (
+                desired_generation is not None
+                and isinstance(raw_generation, int)
+                and raw_generation < desired_generation
+            ):
                 continue
             try:
                 updated_ts = datetime.fromisoformat(str(raw.get("updated_at"))).timestamp()

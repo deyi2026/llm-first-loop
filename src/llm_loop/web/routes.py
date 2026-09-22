@@ -116,12 +116,31 @@ def _service_restart_barrier(
         return None
 
 
+def _log_barrier_rejection(request: Request, task_kind: str, barrier: ServiceAdmissionBarrier) -> None:
+    """R3(P7): 准入拒绝 append-only 留痕（fail-open，不阻断回执路径）.
+
+    07:49 用户撞屏障窗口期只收到排队回执、actions 目录零痕迹——审计
+    线完全缺失。只在实际拒绝/排队的边界调用，不在轮询探测处调用。
+    """
+    try:
+        from llm_loop.runtime.admission_barrier import log_admission_rejection
+
+        engine = _engine_from(request)
+        data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
+        log_admission_rejection(
+            Path(data_dir).expanduser(), task_kind, barrier, source="web"
+        )
+    except Exception:  # noqa: BLE001 — 审计失败不影响消息路径
+        logger.debug("barrier rejection audit failed", exc_info=True)
+
+
 def _barrier_queued_response(
     request: Request,
     session_id: str,
     message: str,
     barrier: ServiceAdmissionBarrier,
     *,
+    task_kind: str = "",
     status_code: int = 202,
     extra: dict | None = None,
 ) -> Response:
@@ -130,6 +149,8 @@ def _barrier_queued_response(
     容量上限 _BARRIER_QUEUE_CAP：超限拒绝（显式 queue_full 回执），
     不静默丢弃、不无界堆积。与 /chat/queue 同冻结事实字段。
     """
+    if task_kind:
+        _log_barrier_rejection(request, task_kind, barrier)
     hq = _human_turn_queue(request)
     active = hq.list_active(session_id)
     if sum(1 for it in active if it.get("status") == "queued") >= _BARRIER_QUEUE_CAP:
@@ -657,7 +678,9 @@ def chat(
     # （带操作号），不得立即成为新活跃 run。
     _barrier = _service_restart_barrier(request, "web_chat")
     if _barrier is not None:
-        return _barrier_queued_response(request, session_id, payload.message, _barrier)
+        return _barrier_queued_response(
+            request, session_id, payload.message, _barrier, task_kind="web_chat"
+        )
 
     # T5.1: 会话级并发锁（同会话串行，不同会话并行，spec.md 5.4.1）
     lock = _get_session_lock(request, session_id)
@@ -1105,6 +1128,7 @@ def chat_stream(
     # - 无 queue_id（直接发送）：服务端 durable 入队后回执带 queue_id。
     _barrier = _service_restart_barrier(request, "web_chat_stream")
     if _barrier is not None:
+        _log_barrier_rejection(request, "web_chat_stream", _barrier)
         if _queue_id and _queue_store is not None:
             # 领取项回滚 queued（保持 FIFO 原位）——冻结事实已在队列中，
             # 不再重复入队；回执确认 + 操作号。
@@ -1126,6 +1150,7 @@ def chat_stream(
             session_id,
             getattr(payload, "message", "") or "",
             _barrier,
+            task_kind="web_chat_stream",
             status_code=503,
             extra={"error": "session_busy"},
         )
@@ -1548,6 +1573,7 @@ def queue_dispatch(payload: QueueDispatchRequest, request: Request) -> Response:
     # 屏障拒绝）。claimed=None 让前端接力循环本轮停住，恢复后自动续。
     _barrier = _service_restart_barrier(request, "web_queue_dispatch")
     if _barrier is not None:
+        _log_barrier_rejection(request, "web_queue_dispatch", _barrier)
         return UTF8JSONResponse(
             content={
                 "claimed": None,
