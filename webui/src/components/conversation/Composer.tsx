@@ -3,8 +3,8 @@
 // / “/” 命令面板（匹配+选项+应用中）/ 模型选择下拉）
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { zh } from "../../i18n/zh";
-import { sendMessage, stopStreaming, useConversation, conversationStore, enqueueQueueTurn } from "../../core/conversation";
+import { zh, queueZh } from "../../i18n/zh";
+import { sendMessage, stopStreaming, useConversation, conversationStore, enqueueQueueTurn, steerAllQueued } from "../../core/conversation";
 import { MODEL_CATALOG_CHANGED_EVENT, fetchModels, uploadFileBase64, type ModelCatalog } from "../../core/chat";
 import { sessionStore } from "../../core/stores";
 import { useCapabilities } from "../../core/capabilities";
@@ -275,7 +275,18 @@ export function Composer() {
           return;
         }
         if (!trimmed && !hasSendable) {
-          flashHint("没有可排队的内容。");
+          // 空草稿 + 运行中 + 有排队项 → 全部插话（对齐 DSH steerQueue）；
+          // 无排队项才是“没有可排队的内容”。
+          const queued = conversationStore
+            .getState()
+            .queueItems.some((it) => it.status === "queued");
+          if (queued) {
+            void steerAllQueued().then((r) => {
+              flashHint(r.ok ? queueZh.queueSteerAllDone(r.steered) : (r.detail ?? "插话失败，请重试"));
+            });
+          } else {
+            flashHint(queueZh.queueSteerAllEmpty);
+          }
           return;
         }
         // 乐观清空（与 doSend 一致：让用户确认"已接受"）；失败再回填
@@ -560,7 +571,14 @@ export function Composer() {
         <textarea
           ref={taRef}
           className="v2-composer-input"
-          placeholder={zh.composerPlaceholder}
+          placeholder={
+            conv.streaming &&
+            text.trim() === "" &&
+            attachments.length === 0 &&
+            conv.queueItems.some((it) => it.status === "queued")
+              ? queueZh.queueSteerAllPlaceholder
+              : zh.composerPlaceholder
+          }
           value={text}
           onChange={(e) => onTextChange(e.target.value)}
           onKeyDown={handleKeyDown}

@@ -6,6 +6,9 @@ import { ChatQueue } from "./ChatQueue";
 import { Composer } from "./Composer";
 import { SessionStats } from "./SessionStats";
 import { ContinuityBanner } from "./ContinuityBanner";
+import { ScheduleCatalog } from "./ScheduleCatalog";
+import { JobsCatalog } from "./JobsCatalog";
+import { SubagentLineage } from "./SubagentLineage";
 import { useCurrentSessionId, useSessions } from "../../core/stores";
 import { fetchAllMessages } from "../../core/api";
 import { conversationStore, loadHistory, useConversation } from "../../core/conversation";
@@ -62,6 +65,9 @@ export function Conversation() {
           <span className="v2-conversation-title">{current.title || current.session_id}</span>
           {conv.lastError && <span className="v2-conv-error">{conv.lastError}</span>}
           {currentId && <SessionStats sessionId={currentId} />}
+          <SubagentLineage />
+          <ScheduleCatalog />
+          <JobsCatalog />
           <div style={{ flex: 1 }} />
           <button
             type="button"

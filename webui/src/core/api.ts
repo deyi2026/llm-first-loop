@@ -328,6 +328,8 @@ export interface JobFact {
   auto_reclaim?: boolean;
   output?: string[];
   command?: string;
+  started_at?: number | null;
+  finished_at?: number | null;
 }
 
 export async function fetchSessionJobs(sessionId: string): Promise<JobFact[]> {
@@ -343,6 +345,38 @@ export async function killSessionJob(
 ): Promise<{ ok: boolean; detail: string }> {
   const { status, data } = await api<{ detail?: string }>(
     `/api/v1/sessions/${encodeURIComponent(sessionId)}/jobs/${encodeURIComponent(jobId)}/kill`,
+    { method: "POST" }
+  );
+  return { ok: status === 200, detail: String(data.detail ?? "") };
+}
+
+export interface ScheduleItem {
+  sid: string;
+  session_id?: string;
+  message: string;
+  trigger_at: number;
+  kind: "once" | "every";
+  every_seconds?: number | null;
+  repeat_interval?: number;
+  max_count?: number;
+  count?: number;
+  wake?: boolean;
+  created_at?: number;
+}
+
+export async function fetchSessionSchedule(sessionId: string): Promise<ScheduleItem[]> {
+  if (!sessionId) return [];
+  const { status, data } = await api<{ schedule?: ScheduleItem[] }>(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/schedule`
+  );
+  return status === 200 && Array.isArray(data.schedule) ? data.schedule : [];
+}
+
+export async function cancelSessionScheduleItem(
+  sessionId: string, sid: string
+): Promise<{ ok: boolean; detail: string }> {
+  const { status, data } = await api<{ detail?: string }>(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/schedule/${encodeURIComponent(sid)}/cancel`,
     { method: "POST" }
   );
   return { ok: status === 200, detail: String(data.detail ?? "") };
@@ -463,6 +497,21 @@ export interface AgentTreeNode {
   is_subagent: boolean;
   model?: string;
   created_at?: string | null;
+  /** 机械拓扑事实（runner topology；未知时缺省，不伪造 inactive） */
+  activity?: "running" | "inactive";
+  outcome?: string;
+  settlement?: string;
+}
+
+/** 原始节点列表（谱系面板用）；端点缺失/失败返回 null（调用方隐藏，不重试）。 */
+export async function fetchAgentsTreeNodes(): Promise<AgentTreeNode[] | null> {
+  try {
+    const { status, data } = await api<{ nodes: AgentTreeNode[] }>("/api/v1/agents/tree");
+    if (status !== 200 || !Array.isArray(data.nodes)) return null;
+    return data.nodes;
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchAgentsTree(): Promise<Map<string, string | null>> {

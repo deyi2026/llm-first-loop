@@ -785,6 +785,47 @@ export async function withdrawQueueTurn(
   return { ok: result.ok, detail: result.detail };
 }
 
+/** 纯删除（对齐 DSH queue remove）：取消排队且不回填草稿。 */
+export async function removeQueueTurn(
+  queueId: string
+): Promise<{ ok: boolean; detail?: string }> {
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return { ok: false, detail: "当前没有可操作的会话" };
+  const result = await cancelQueueItem(sessionId, queueId);
+  await refreshQueue(sessionId);
+  return { ok: result.ok, detail: result.detail };
+}
+
+/**
+ * 全部插话（对齐 DSH steerQueue）：FIFO 逐条把 queued 项交给当前 live run。
+ * 任一条失败（如 run 已结束）即停止并回传后端 detail；剩余项保持 queued，
+ * 由既有 run 终态 relay 语义继续按序发送——不重复、不丢弃。
+ */
+export async function steerAllQueued(): Promise<{
+  ok: boolean;
+  steered: number;
+  detail?: string;
+}> {
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return { ok: false, steered: 0, detail: "当前没有可操作的会话" };
+  const queued = conversationStore
+    .getState()
+    .queueItems.filter((it) => it.status === "queued");
+  if (queued.length === 0) return { ok: false, steered: 0, detail: "没有可插话的排队消息。" };
+  let steered = 0;
+  for (const it of queued) {
+    const result = await interjectQueueTurn(it.queue_id);
+    if (!result.ok) {
+      await refreshQueue(sessionId);
+      // 部分成功不算整体 ok：detail 如实回传，已 steered 条数单独给出
+      return { ok: false, steered, detail: result.detail };
+    }
+    steered += 1;
+  }
+  await refreshQueue(sessionId);
+  return { ok: true, steered };
+}
+
 /** 真插话：交给当前 live run；pending/received 由后端状态回显。 */
 export async function interjectQueueTurn(
   queueId: string

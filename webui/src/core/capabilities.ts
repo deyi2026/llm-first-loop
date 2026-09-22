@@ -18,6 +18,7 @@ export type CapabilityKey =
   | "fork"
   | "feedback"
   | "jobs"
+  | "schedule"
   | "continuity"
   | "providerAdmin";
 
@@ -38,7 +39,7 @@ const GLOBAL_PROBES: ReadonlyArray<readonly [CapabilityKey, string]> = [
 
 // 会话级能力（jobs/continuity 的 handler 对不存在的 session 返回 404，
 // 会与"路由缺失"混淆），因此只在拿到真实会话 id 后再探测。
-const SESSION_PROBE_KEYS = ["jobs", "continuity"] as const;
+const SESSION_PROBE_KEYS = ["jobs", "schedule", "continuity"] as const;
 
 let state: Capabilities = {
   attachments: true,
@@ -49,6 +50,7 @@ let state: Capabilities = {
   fork: true,
   feedback: true,
   jobs: true,
+  schedule: true,
   continuity: true,
   providerAdmin: true,
 };
@@ -170,6 +172,7 @@ export function __resetCapabilitiesForTest(): void {
     fork: true,
     feedback: true,
     jobs: true,
+    schedule: true,
     continuity: true,
     providerAdmin: true,
   };

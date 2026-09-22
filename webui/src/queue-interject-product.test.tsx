@@ -60,16 +60,19 @@ afterEach(() => {
 });
 
 describe("queue withdraw and true interject product contract", () => {
-  it("队列默认展开并明确区分撤回编辑与立即插入", () => {
+  it("队列默认展开并提供编辑/删除/立即插入三个行操作", () => {
     installFetch(() => undefined);
     render(<ChatQueue />);
     expect(screen.getByTestId("chat-queue-list")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "撤回编辑" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "删除" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "立即插入" })).toBeInTheDocument();
     expect(screen.getByText(/当前任务结束后按序发送/)).toBeInTheDocument();
+    // 附件事实以文件 chip 呈现（对齐 DSH queue.file）
+    expect(screen.getByText(/queued.txt/)).toBeInTheDocument();
   });
 
-  it("撤回成功恢复正文与附件且保留已有草稿", async () => {
+  it("编辑成功恢复正文与附件且保留已有草稿", async () => {
     installFetch((url, init) => {
       if (url.endsWith("/api/v1/chat/queue") && init?.method === "DELETE") {
         return new Response(JSON.stringify({ ok: true, item: item() }), { status: 200 });
@@ -84,10 +87,35 @@ describe("queue withdraw and true interject product contract", () => {
     );
     const input = screen.getByTestId("composer-input") as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: "已有草稿" } });
-    fireEvent.click(screen.getByRole("button", { name: "撤回编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
     await waitFor(() => expect(input.value).toBe("已有草稿\n排队正文"));
     expect(screen.getByText("queued.txt")).toBeInTheDocument();
     expect(screen.getByTestId("chat-queue-feedback")).toHaveTextContent("已撤回到输入框");
+  });
+
+  it("删除只移除排队项，不回填草稿", async () => {
+    let deleted = 0;
+    installFetch((url, init) => {
+      if (url.endsWith("/api/v1/chat/queue") && init?.method === "DELETE") {
+        deleted += 1;
+        return new Response(JSON.stringify({ ok: true, item: item() }), { status: 200 });
+      }
+      return undefined;
+    });
+    render(
+      <>
+        <ChatQueue />
+        <Composer />
+      </>
+    );
+    const input = screen.getByTestId("composer-input") as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "草稿不动" } });
+    fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    await waitFor(() => expect(deleted).toBe(1));
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-queue-feedback")).toHaveTextContent("已删除该排队消息")
+    );
+    expect(input.value).toBe("草稿不动");
   });
 
   it("取消冲突把后端 detail 明确显示出来", async () => {
@@ -101,7 +129,7 @@ describe("queue withdraw and true interject product contract", () => {
       return undefined;
     });
     render(<ChatQueue />);
-    fireEvent.click(screen.getByRole("button", { name: "撤回编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
     await waitFor(() =>
       expect(screen.getByTestId("chat-queue-feedback")).toHaveTextContent("排队项已在发送中，无法撤回")
     );

@@ -66,15 +66,82 @@ export const zh = {
 // ══ Human Turn 排队 / live 插入 ══
 export const queueZh = {
   queueBarTitle: (n: number) => `已排队 ${n} 条消息，当前任务结束后按序发送`,
+  queueCount: (n: number) => `${n} 条排队消息`,
   queueItemSending: "发送中",
   queueWithdraw: "撤回编辑",
+  queueEdit: "编辑",
+  queueRemove: "删除",
   queueInterject: "立即插入",
+  queueInterjectUnavailable: "仅运行中可立即插入",
+  queueRemoved: "已删除该排队消息",
   queueInterjectPending: "待接收",
   queueInterjectReceived: "已接收",
   queueWithdrawn: "已撤回到输入框",
   queueAttachmentsOnly: "［附件消息］",
+  queueFile: (name: string) => `排队文件 ${name}`,
   queueEnqueued: "已加入排队（生成完成后自动发送）",
   queueEnqueueFailed: "排队失败，内容已恢复到输入框",
   queueEmptyHint: "没有可排队的内容。",
   queueAttachmentUnready: "有附件仍在处理或处理失败；请等待完成或移除后再排队。",
+  queueSteerAllPlaceholder: "Cmd/Ctrl+Enter 插话发送全部排队消息",
+  queueSteerAllDone: (n: number) => `已把 ${n} 条排队消息交给当前任务`,
+  queueSteerAllEmpty: "没有可插话的排队消息。",
 };
+
+// ══ 安排（定时提醒目录，对齐 DSH Schedule Catalog）══
+export const scheduleZh = {
+  trigger: (n: number) => `${n} 个提醒`,
+  listAria: "活动提醒",
+  statusScheduled: "等待中",
+  statusOverdue: "已逾期",
+  frequencyOnce: "单次",
+  frequencyEvery: (value: number, unit: string) => `每 ${value} ${unit}一次`,
+  unitDay: "天",
+  unitHour: "小时",
+  unitMinute: "分钟",
+  unitSecond: "秒",
+  relativeNow: "现在到期",
+  relativeFuture: (value: string) => `${value}后`,
+  relativeOverdue: (value: string) => `已逾期 ${value}`,
+  wakeBadge: "到点自动续跑",
+  cancel: "取消提醒",
+  cancelled: "已取消该提醒",
+  cancelFailed: "取消失败，请重试",
+};
+
+// ══ 后台任务（会话头部任务列表，对齐 DSH Job List）══
+export const jobsZh = {
+  countLive: (n: number) => `${n} 个后台任务运行中`,
+  countIdle: (n: number) => `${n} 个后台任务`,
+  listAria: "后台任务",
+  statusRunning: "运行中",
+  statusStopping: "正在停止",
+  statusCompleted: "已完成",
+  statusKilled: "已取消",
+  statusFailed: "已失败",
+  statusOrphaned: "已失联",
+  durationSeconds: (s: number) => `${s}秒`,
+  durationMinutes: (m: number, s: number) => `${m}分${s}秒`,
+  durationHours: (h: number, m: number) => `${h}时${m}分`,
+  durationTitleLive: (d: string) => `已运行 ${d}`,
+  durationTitleDone: (d: string) => `共耗时 ${d}`,
+};
+
+// ══ 子代理谱系（会话头部，对齐 DSH Subagent Header Lineage）══
+export const subagentZh = {
+  countTotal: (n: number) => `${n} 个子代理`,
+  countRunning: (n: number) => `${n} 个子代理运行中`,
+  listAria: "子代理会话",
+  activityRunning: "运行中",
+  activityInactive: "未运行",
+  activityUnknown: "状态未知",
+  outcomeCompleted: "已完成",
+  outcomeFailed: "失败",
+  outcomeCancelled: "已取消",
+  outcomeTruncated: "已截断",
+  outcomeRefused: "已拒绝",
+  settlementUncollected: "结果未回收",
+  openChild: (title: string) => `打开子代理会话：${title}`,
+  unnamedSession: "未命名子代理",
+};
+
