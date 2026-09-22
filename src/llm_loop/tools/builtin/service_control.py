@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import contextlib
 import json
+import subprocess
 from collections.abc import Callable
+from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import current_session_id
+from llm_loop.runtime.admission_barrier import BarrierConflictError
 from llm_loop.runtime.service_control import (
     DeploymentGenerationConflictError,
     ManagedServiceDeploymentStore,
+    build_deployment,
     compose_service_identity_view,
     spawn_service_control_worker,
 )
@@ -19,29 +23,39 @@ from llm_loop.runtime.service_control import (
 class ServiceControlTool:
     name = "service_control"
     description = (
-        "共享 Web/Feishu/Learning 生命周期控制面。status 只读返回 operator-published desired deployment/action；"
+        "共享 Web/Feishu/Learning 生命周期控制面。status 只读返回 desired deployment/action 回执；"
+        "publish 把干净 git 代码根发布为新 desired deployment（需刚观察到的 expected_generation 做 CAS，"
+        "程序校验 tracked 树干净 + webui dist 产物 hash 绑定）；"
         "restart 必须携带刚观察到的 expected_generation，程序先 durable accepted 再由 detached worker "
         "两阶段执行（等待 requester 会话结束/目标空闲时不占 lifecycle lease，物理重启阶段复核 generation）， "
         "按 desired-state exact code_root/runtime_root 调 official restart_mirror。"
-        "模型决定是否需要重启；PID/cwd/历史 manifest 都不能自行获得控制权。P0-A 仅支持 status/restart。"
+        "模型决定是否需要发布/重启；PID/cwd/历史 manifest 都不能自行获得控制权。"
+        "终态 failed 动作留下的屏障可被新 restart 接管（自恢复）；非终态 owner 冲突仍拒绝。"
     )
     parameters = {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["status", "restart"],
-                "description": "status=只读；restart=受控异步重启",
+                "enum": ["status", "publish", "restart"],
+                "description": "status=只读；publish=发布新 desired deployment；restart=受控异步重启",
             },
             "target": {
                 "type": "string",
                 "enum": ["web", "feishu", "learning", "all"],
-                "description": "restart 目标；status 时可省略",
+                "description": "restart 目标；status/publish 时可省略",
             },
             "expected_generation": {
                 "type": "integer",
-                "minimum": 1,
-                "description": "restart 必填：来自最近 status 的 exact deployment generation",
+                "minimum": 0,
+                "description": "publish/restart 必填：来自最近 status 的 exact deployment generation（CAS）",
+            },
+            "code_root": {
+                "type": "string",
+                "description": (
+                    "publish 必填：待发布的代码根（git worktree）。必须 tracked 干净、"
+                    "HEAD 即待发布提交、webui/dist 为该次构建产物；runtime_root 由 data_dir 契约推导"
+                ),
             },
             "action_id": {
                 "type": "string",
@@ -92,8 +106,59 @@ class ServiceControlTool:
                 tool_name=self.name,
             )
 
+        if action == "publish":
+            # S4c：模型侧 publish——与 CLI publish 同一套机械边界（干净 git 树
+            # + webui dist 产物 hash + generation CAS）；shell 围栏不动（CLI
+            # 仍 operator-only），模型走本工具。runtime_root 按 data_dir
+            # 契约推导（runtime_root/data = data_dir），不接受调用点自选。
+            code_root = str(kwargs.get("code_root", "") or "").strip()
+            if not code_root:
+                return self._failure("[参数错误] publish 必须提供 code_root（待发布的 git 代码根）")
+            raw_expected_generation = kwargs.get("expected_generation")
+            if raw_expected_generation is None:
+                return self._failure("[参数错误] publish 必须提供 expected_generation（最近 status 的当前代）")
+            try:
+                expected_generation = int(str(raw_expected_generation))
+            except ValueError:
+                return self._failure("[参数错误] publish 必须提供整数 expected_generation")
+            runtime_root = Path(self.store.data_dir).parent
+            try:
+                deployment = build_deployment(
+                    code_root=code_root,
+                    runtime_root=runtime_root,
+                    generation=expected_generation + 1,
+                )
+            except (ValueError, OSError, subprocess.SubprocessError) as exc:
+                return self._failure(
+                    f"[service_control publish rejected] binding: {type(exc).__name__}: {exc}"
+                )
+            try:
+                self.store.compare_and_swap(
+                    deployment, expected_generation=expected_generation
+                )
+            except (DeploymentGenerationConflictError, ValueError) as exc:
+                return self._failure(
+                    f"[service_control publish rejected] generation/desired-state: {exc}"
+                )
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content=json.dumps(
+                    {
+                        "published": deployment.to_dict(),
+                        "next": (
+                            "desired 已推进；接着 service_control(action=restart, target=..., "
+                            f"expected_generation={deployment.generation}) 完成重启"
+                        ),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+
         if action != "restart":
-            return self._failure("[参数错误] action 仅支持 status/restart")
+            return self._failure("[参数错误] action 仅支持 status/publish/restart")
         target = str(kwargs.get("target", "") or "").strip().lower()
         if target not in {"web", "feishu", "learning", "all"}:
             return self._failure("[参数错误] restart target 必须是 web/feishu/learning/all")
@@ -110,7 +175,13 @@ class ServiceControlTool:
                 expected_generation=expected_generation,
                 requester_session_id=self._session_id_getter(),
             )
-        except (DeploymentGenerationConflictError, OSError, ValueError, json.JSONDecodeError) as exc:
+        except (
+            DeploymentGenerationConflictError,
+            BarrierConflictError,
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
             return self._failure(f"[service_control restart rejected] generation/desired-state: {exc}")
 
         # Durable accepted receipt exists before the detached worker can affect Web/Feishu.

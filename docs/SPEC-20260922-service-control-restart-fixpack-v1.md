@@ -130,3 +130,17 @@
 - **S3（001dd82cb）restart 子命令**：`service_control restart --data-dir data [--target] [--requester]` 一条命令 = 受理（屏障原子建立）+ worker 内联（物理重启+核验+终态回执）；直连 restart_mirror.sh 退为应急通道。从根源消除 P4 的 stable-落后场景（直连常态使用消失），R6 的 stale 标记退化为应急通道使用时的兜底。
 - **实战验证（gen65）**：14:40 `svc-df9693`（operator-deploy-gen65）预检失败 `knowledge_preflight_failed` → R1/S1 消费白名单回执，屏障自动释放，无死窗；14:40:40 `svc-37ce12`（retry）succeeded gen65 rc=0 verify=ok 三服务。首次真实运行按设计工作。
 - gen65 live = simplify-restart 线（001dd82cb），线性包含本包 R1–R6 全部提交；本文件所在线顶端 bb8e81ac4（webui services 面板时区统一渲染，修复 live(+0800)/stable(+00:00) 同屏不可比导致的 14:53 误读）待 gen66 部署生效。
+
+### 8.2-S4 自主重启闭环（2026-09-22 下午二，dsh；叠加于 S1–S3 之上）
+
+**事故（gen66 首次重启失败，svc-8011bb79）**：15:11 操作员发布 gen66（79360a2d7，webui 15:08 build）；15:12 `service_control restart`（inline，requester=`operator-gen66-webui-clock`）失败——`restart_mirror rc=-13; receipt=rc=0!=-13`。根因：S3 的 inline CLI 把**调用方自身的 stdio 管道**交给 restart_mirror；调用会话（dsh bash）读端先死，bash 在写输出瞬间被 SIGPIPE 杀死（Python returncode=-13），发生在停止 web 之后、回执之前。盘上 14:41 的陈旧 rc=0 回执 scope 恰为 all，卡在 rc 比对（`rc=0!=-13`）；屏障按 §8.3 fail-closed keep，web 停后未起，且 `accept_restart` 屏障冲突拒绝新动作——**模型无自恢复路径**，15:18 操作员 force-release 三屏障 + 重启方恢复（svc-c5c2e924，verify=ok gen66 三服务）。回执/manifests/worker 日志（inline 路径不写 worker 日志）为证。
+
+| 项 | 内容 | 不变量 |
+|---|---|---|
+| **S4a** durable stdio | 物理重启子进程 `stdin=DEVNULL`，stdout/stderr 落 `data/service-control-restart-logs/<action_id>.log`（append，含 attempt 头），rc≠0 的 action detail 追加 `log=` 指向该文件 | 物理重启的 rc/输出不受调用方 stdio 生死影响；rc 恒为脚本自身退出状态 |
+| **S4b** 屏障接管 | `accept_restart` 屏障冲突时查 owner 动作：已终态（failed/succeeded）→ `AdmissionBarrierRegistry.adopt` 原子换 owner（tmp+rename，无准入窗口），append-only 审计 `data/audit/service_barrier_adoptions.jsonl`（含 previous_owner）；非终态/未知/corrupt owner → 维持 fail-closed 拒绝 | §8.3 docstring 承诺的 "follow-up operation handles them" 机制化；活操作仍互斥 |
+| **S4c** 模型侧 publish | `ServiceControlTool` 增加 `publish`（code_root + expected_generation CAS）；复用 CLI 全部机械边界（build_deployment：tracked-clean + webui dist 树 hash；compare_and_swap：CAS+租约）；runtime_root 按 data_dir 契约推导，不接受调用点自选。shell 围栏不动（CLI publish/worker/barriers* 仍 operator-only，模型走工具） | LFL 可自主走完 build→publish→restart→verify 闭环；程序仍只保事实与边界（identity/hash/CAS），不裁决语义 |
+
+- 治理对照（准入不对称）：S4b/S4c 均为模型 agency 放大（自恢复、自部署），无新增启发式裁决门；S4a 为纯机械耐久性修复。
+- 回归：`tests/unit/test_service_control_autonomous_restart.py`（8 例；S4a 用例在修复前确定性复现 `rc=-13; receipt=absent`）。
+- 残余边界（有意接受）：模型 publish 可指向任意干净 git 树（与操作员 CLI 同权）——desired-deployment 的语义选择权按治理北极星归模型/操作员，机械绑定核验（P0-A.1 lease 内字节级）不变。
