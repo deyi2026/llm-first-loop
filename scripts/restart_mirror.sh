@@ -628,7 +628,11 @@ _learning_stop() {
 # ── 回执落盘（修4, 2026-09-09）──
 # 实证教训：上轮"watchdog armed, pgid=18559"回执只活在 stdout——载体随宿主死亡，
 # 回执无处验证。落盘是唯一可独立核查的载体（设计本身正确，并入脚本）。
-RECEIPT_JSON="$MIRROR_DIR/data/restart-receipt.json"   # 最新一次（覆盖）
+# R1 (SPEC-20260922-service-control-restart-fixpack-v1 §6): 回执相对路径契约由
+# worker 单源注入（service_control.py:_RESTART_RECEIPT_REL），脚本消费同一值；
+# 下方回退默认值必须与 worker 常量字节一致，禁止任何一侧另行猜路径发现。
+RECEIPT_REL="${LFL_RESTART_RECEIPT_REL:-data/restart-receipt.json}"
+RECEIPT_JSON="$MIRROR_DIR/$RECEIPT_REL"               # 最新一次（覆盖）
 RECEIPT_LOG="$MIRROR_DIR/data/restart-receipt.log"     # 历史（追加）
 _write_receipt() {
   local action="$1" rc="$2" detail="${3:-}"
