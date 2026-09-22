@@ -536,7 +536,14 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
         abortSessionId = sid;
         if (newSessionPending) sessionStore.setNewSessionPending(false);
         if (!opts && modelChangeIntent) sessionStore.setModelChangePending(false);
-        if (sessionStore.getState().currentSessionId !== sid) sessionStore.setCurrentSession(sid);
+        // 2026-09-22（切换会话无变化事故）：会话绑定只服务"新会话首 run"——发送时
+        // 无会话（sessionId=null，new_session 语义），服务端刚分配真实 sid，视图必须
+        // 采用它。既有会话的 run（用户直发后切走、或队列接力）绝不能把用户已切走的
+        // 视图拉回：接力 run_started 晚于用户点击到达时，旧写法无条件
+        // setCurrentSession(sid) 会把视图拽回原会话，表现为"点击不同会话显示没变化"。
+        if (sessionStore.getState().currentSessionId !== sid && !sessionId) {
+          sessionStore.setCurrentSession(sid);
+        }
       },
       onAnswerDelta: (d) => {
         // 会话守卫（2026-08-23 多会话串扰修复）: 当前会话已切换 → 停止渲染（防 A 串写 B 视图）
@@ -615,7 +622,11 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     const data = outcome.data as ChatDoneData;
     if (data.session_id) {
       if (newSessionPending) sessionStore.setNewSessionPending(false);
-      sessionStore.setCurrentSession(data.session_id);
+      // 2026-09-22（切换会话无变化事故）：与 onRunStarted 同一绑定规则——仅"新会话
+      // 首 run"（发送时无会话）采用服务端 sid。既有会话 run 的 done.session_id 不得
+      // 改写视图：跨会话认领/接力时它可能不等于当前视图会话，旧写法无条件
+      // setCurrentSession 会把用户已切走的视图拉回。
+      if (!sessionId) sessionStore.setCurrentSession(data.session_id);
     }
     if (!opts && modelChangeIntent) sessionStore.setModelChangePending(false);
     // model_used is per-run telemetry (and may be a fallback), not session authority.

@@ -130,6 +130,35 @@ class TestBarrierWindowAdmission:
         assert [it["status"] for it in active] == ["queued"]
         assert active[0]["message"] == "直接发送"
 
+    def test_resume_subscription_refused_not_enqueued_during_barrier(self, build_test_engine):
+        """2026-09-22（切换会话无变化事故）：resume 是订阅协议请求（绑定精确
+        run_generation），不是 human turn。撞上重启屏障时曾被 durable 入队为
+        message="resume" 毒丸项，随后被队列接力当成真人消息执行。必须拒绝入队：
+        排队重放一个 generation 已过期的订阅毫无意义；前端 resume 失败路径
+        自然回退轮询，run 终态仍可见。"""
+        engine, _ = build_test_engine([{"content": "unused"}])
+        client = _make_client(engine)
+        sid = _setup_session(engine, client)
+        reg = _registry(engine)
+        reg.establish("web", operation_id="svc-t31e", reason="restart")
+
+        r = client.post(
+            "/api/v1/chat/stream",
+            json={
+                "session_id": sid,
+                "message": "resume",
+                "resume": True,
+                "run_generation": "g-incident",
+            },
+        )
+        assert r.status_code == 503
+        body = r.json()
+        assert body.get("error") == "session_busy"
+        assert body.get("queued") is not True  # 绝不产生排队回执
+        assert body["restart_barrier"]["operation_id"] == "svc-t31e"
+        # 队列必须保持为空：协议令牌不得成为 human turn
+        assert _queue(engine).list_active(sid) == []
+
 
 class TestBarrierReleaseRestoresAdmission:
     def test_admission_restored_after_release(self, build_test_engine):

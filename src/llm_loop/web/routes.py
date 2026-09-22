@@ -1145,6 +1145,24 @@ def chat_stream(
                     "restart_barrier": _barrier.to_view(),
                 },
             )
+        # 2026-09-22（切换会话无变化事故）：resume 是订阅协议请求（绑定精确
+        # run_generation），不是 human turn——绝不能 durable 入队。此前它走了下方
+        # 直接入队分支，把字面量 "resume" 排成毒丸队列项，之后被队列接力当成
+        # 真人消息执行。排队重放一个 generation 已过期的订阅毫无意义；拒绝即可：
+        # 前端 resume 失败路径自然回退轮询，run 终态仍可见。
+        if bool(getattr(payload, "resume", False)):
+            return UTF8JSONResponse(
+                status_code=503,
+                content={
+                    "error": "session_busy",
+                    "detail": (
+                        "服务重启窗口中（操作 "
+                        f"{_barrier.operation_id}）：resume 订阅被拒绝（协议请求不入队）；"
+                        "前端将回退轮询，run 终态不受影响。"
+                    ),
+                    "restart_barrier": _barrier.to_view(),
+                },
+            )
         return _barrier_queued_response(
             request,
             session_id,
