@@ -2,7 +2,7 @@
 // 用户右侧气泡（--dsw-specific-bubble）、助手全宽正文、思考块默认折叠、
 // 工具行折叠链、代码块 banner（语言+复制）+ 高亮 + 长块分块、笔记 footer）
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { AttachmentFact, ChatMessage, ToolActivity, ToolActivityStatus, ToolCallInfo } from "../../core/types";
 import { renderMarkdown } from "../../core/markdown";
 import { formatTokens } from "../../core/chat";
@@ -53,19 +53,54 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/** 流式 live 视图的解析窗口上限（字符）；终态渲染始终全量。
+ *  16KB 实测（vitest bench）：代码密集 ~50ms/次。 */
+const LIVE_PARSE_MAX_CHARS = 16 * 1024;
+
 function Markdown({
   text,
   clickablePaths,
   enableMath = true,
+  live = false,
 }: {
   text: string;
   clickablePaths?: Set<string>;
   enableMath?: boolean;
+  /** 流式中渲染（msg.streaming）：解析按自适应退避节流 + 尾部窗口上限。
+   *  高频 delta（真实 provider 可达 100+/s）逐条全量重解析会饱和主线程，
+   *  把点击/切换事件饿死（2026-09-22 "推理时切换不了会话" 事故实测 longtask
+   *  秒级）。终态由 streaming=false 的完整渲染兜底，内容零丢失。 */
+  live?: boolean;
 }) {
-  const html = useMemo(
-    () => renderMarkdown(text, clickablePaths, { enableMath }),
-    [text, clickablePaths, enableMath]
-  );
+  const gate = useRef<{ at: number; dur: number; text: string; html: string }>({
+    at: 0,
+    dur: 0,
+    text: "",
+    html: "",
+  });
+  const html = useMemo(() => {
+    if (live) {
+      const now = Date.now();
+      if (gate.current.text === text) return gate.current.html;
+      // 自适应退避：下次解析距上次至少 max(200ms, 2×上次解析耗时)，占空比 ≤1/3
+      if (gate.current.html && now - gate.current.at < Math.max(200, gate.current.dur * 2)) {
+        return gate.current.html;
+      }
+      // live 视图只解析尾部窗口；完整内容由终态渲染保证（不截断存储与终态）
+      let source = text;
+      if (text.length > LIVE_PARSE_MAX_CHARS) {
+        const cut = text.lastIndexOf("\n\n", text.length - LIVE_PARSE_MAX_CHARS);
+        source = text.slice(cut >= 0 ? cut + 2 : text.length - LIVE_PARSE_MAX_CHARS);
+      }
+      // live 禁 KaTeX：每公式产出 1-2KB span 汤并进 DOMPurify——公式密集内容
+      // 单次解析秒级；公式终态全量渲染，流式期间原文显示。
+      const t0 = performance.now();
+      const parsed = renderMarkdown(source, clickablePaths, { enableMath: false });
+      gate.current = { at: now, dur: performance.now() - t0, text, html: parsed };
+      return parsed;
+    }
+    return renderMarkdown(text, clickablePaths, { enableMath });
+  }, [text, clickablePaths, enableMath, live]);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   // 代码块复制按钮 + 出产物内联路径链接：dangerouslySetInnerHTML 内容无法绑
   // React 事件 → 事件委托
@@ -111,7 +146,7 @@ function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean 
         <div className="v2-think-body">
           {/* Reasoning often contains shell variables such as $d$p.  Treating those as
               inline-TeX corrupts the diagnostic surface with KaTeX MathML. */}
-          <Markdown text={text} enableMath={false} />
+          <Markdown text={text} enableMath={false} live={Boolean(streaming)} />
           {streaming && <span className="v2-think-cursor">▌</span>}
         </div>
       )}
@@ -465,7 +500,16 @@ function FeedbackButtons({ sessionId, index }: { sessionId: string; index: numbe
   );
 }
 
-export function MessageItem({
+export const MessageItem = memo(
+  MessageItemImpl,
+  // 2026-09-22（推理时切换不了会话事故）：流式 delta 每次只替换 streaming 消息
+  // 引用；未变消息（patchStreaming 保持原引用）跳过重渲染，每 delta O(N)→O(1)。
+  // producedPaths 不参与比较：内容只随流式消息工具轮增长，非流式消息渲染不变；
+  // 路径可点击性在 run 终态 loadHistory 全量重渲染时补齐（自愈，无数据丢失）。
+  (a, b) => a.msg === b.msg && a.index === b.index && a.sessionId === b.sessionId
+);
+
+function MessageItemImpl({
   msg,
   index,
   sessionId,
@@ -515,7 +559,7 @@ export function MessageItem({
           <UserAttachments attachments={msg.attachments} />
           {msg.content ? (
             <div className="v2-msg-text">
-              <Markdown text={msg.content} clickablePaths={producedPaths} />
+              <Markdown text={msg.content} clickablePaths={producedPaths} live={Boolean(msg.streaming)} />
             </div>
           ) : null}
           <MessageTime ts={msg.ts} />
@@ -593,7 +637,7 @@ export function MessageItem({
           <ProducedFiles calls={msg.toolCalls} />
         ) : null}
         {msg.content ? (
-          <Markdown text={msg.content} clickablePaths={producedPaths} />
+          <Markdown text={msg.content} clickablePaths={producedPaths} live={Boolean(msg.streaming)} />
         ) : null}
         {msg.streaming && !msg.content && (
           <StreamingHint startedAt={msg.streamStartedAt ?? null} />

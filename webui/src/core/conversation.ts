@@ -328,6 +328,9 @@ async function resumeBackgroundStream(
     }
     const acc = { answer: "", reasoning: "" };
     const sid = sessionId;
+    // delta 补丁合并（同 sendMessage）：resume 重放+实时流式同样高频
+    const patchAnswer = makeCoalescedPatch(() => patchStreaming({ content: acc.answer }));
+    const patchReasoning = makeCoalescedPatch(() => patchStreaming({ reasoningContent: acc.reasoning }));
     const outcome = await streamChatRequest(
       { message: "resume", session_id: sid, resume: true, run_generation: runGeneration },
       {
@@ -335,12 +338,12 @@ async function resumeBackgroundStream(
           // 会话守卫：当前会话已切换 → 停止渲染（防串写）
           if (sessionStore.getState().currentSessionId !== sid) return;
           acc.answer += d;
-          patchStreaming({ content: acc.answer });
+          patchAnswer();
         },
         onReasoningDelta: (d) => {
           if (sessionStore.getState().currentSessionId !== sid) return;
           acc.reasoning += d;
-          patchStreaming({ reasoningContent: acc.reasoning });
+          patchReasoning();
         },
         onToolRound: (event: ToolRoundEvent) => {
           if (sessionStore.getState().currentSessionId !== sid) return;
@@ -520,6 +523,9 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
   abortCtrl = controller;
   abortSessionId = ownerSessionId;
   const acc = { answer: "", reasoning: "" };
+  // delta 补丁合并（见 makeCoalescedPatch 注释）：高频 delta 不逐条触发渲染
+  const patchAnswer = makeCoalescedPatch(() => patchStreaming({ content: acc.answer }));
+  const patchReasoning = makeCoalescedPatch(() => patchStreaming({ reasoningContent: acc.reasoning }));
 
   const outcome = await streamChatRequest(
     body,
@@ -549,12 +555,12 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
         // 会话守卫（2026-08-23 多会话串扰修复）: 当前会话已切换 → 停止渲染（防 A 串写 B 视图）
         if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
         acc.answer += d;
-        patchStreaming({ content: acc.answer });
+        patchAnswer();
       },
       onReasoningDelta: (d) => {
         if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
         acc.reasoning += d;
-        patchStreaming({ reasoningContent: acc.reasoning });
+        patchReasoning();
       },
       onToolRound: (event: ToolRoundEvent) => {
         if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
@@ -726,6 +732,35 @@ function patchStreaming(partial: Partial<ChatMessage>): void {
   const idx = st.streamingIndex;
   const messages = st.messages.map((m, i) => (i === idx ? { ...m, ...partial } : m));
   conversationStore.setState({ messages });
+}
+
+// ── 流式补丁合并（2026-09-22 "推理时切换不了会话" 事故）──
+// 真实 provider delta 可达 100+/s；逐 delta patchStreaming → setState → 全列表
+// reconcile + 流式消息 markdown 重解析会饱和主线程，点击/切换事件饥饿秒级。
+// 合并为 ≤~8 次/s 的补丁（120ms 窗口 + trailing 兜底），内容零丢失（终态
+// finalize/done 覆盖全量），视觉延迟 ≤120ms。
+const PATCH_COALESCE_MS = 120;
+
+function makeCoalescedPatch(apply: () => void): () => void {
+  let lastAt = 0;
+  let pending = false;
+  let alive = true;
+  const force = () => {
+    if (!alive) return;
+    lastAt = Date.now();
+    pending = false;
+    apply();
+  };
+  return () => {
+    if (!alive) return;
+    if (Date.now() - lastAt >= PATCH_COALESCE_MS) {
+      force();
+      return;
+    }
+    if (pending) return;
+    pending = true;
+    window.setTimeout(force, PATCH_COALESCE_MS);
+  };
 }
 
 // ══ Human Turn 排队（生成中 cmd/ctrl+Enter；后端 durable 事实）══
