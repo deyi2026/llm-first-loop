@@ -146,3 +146,39 @@ def test_real_barrier_file_holds_then_releases(tmp_path: Path) -> None:
 
     assert plane._try_execute(job) is True
     assert extractor.calls == [("s1", "interval")]
+
+
+def test_episode_not_found_is_bounded_by_attempts(tmp_path: Path) -> None:
+    """毒任务修复契约（2026-09-22 运维事故）：episode_not_found 必须消耗 attempt.
+
+    修复前：admitted→failed 不经 started，attempt 恒 0 → due-scan
+    （failed && attempt < max）无限重投——5 个毒任务 0.3s/轮把 learning
+    打到 100% CPU、journal 滚到 34MB。修复后：每次失败 attempt+1，
+    max_attempts 耗尽后 due 条件为假，任务终态停摆。
+    """
+    journal = LearningJournal(tmp_path / "journal.jsonl", candidate_lookup=None)
+    job = journal.enqueue(
+        "ep-gone",
+        session_id="s1",
+        source_model="provider/model",
+        kind="reflection",
+    )
+    assert job is not None
+    extractor = _FakeExtractor()
+    plane = _mk_plane(tmp_path, journal, extractor, gate=lambda: None)
+
+    max_attempts = 3
+    for cycle in range(1, max_attempts + 1):
+        assert plane._try_execute(job) is True
+        current = journal.job(job.job_id)
+        assert current is not None
+        assert current.state == "failed"
+        assert current.attempt == cycle, (
+            f"episode_not_found 第 {cycle} 次失败必须消耗 attempt（当前 {current.attempt}）"
+        )
+
+    final = journal.job(job.job_id)
+    assert final is not None
+    assert final.state == "failed"
+    # due-scan 放行条件（learning_journal.py:266 同式）：耗尽后不再放行
+    assert not (final.runnable or (final.state == "failed" and final.attempt < max_attempts))

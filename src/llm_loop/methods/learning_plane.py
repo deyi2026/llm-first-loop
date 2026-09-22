@@ -281,6 +281,10 @@ class LearningPlane:
 
             entry = self._episode_store.get(job.session_id, job.source_episode_ref)
             if entry is None:
+                # 2026-09-22 毒任务修复：episode 查找失败也必须消耗 attempt
+                # （先 started 再 failed）——否则 attempt 恒 0，due-scan 对
+                # failed&&attempt<max 无限重投，毒任务打满 CPU + journal 滚胀。
+                self._journal.mark_started(job.job_id)
                 self._journal.mark_failed(job.job_id, "episode_not_found")
                 return True
             settings = getattr(self._engine, "settings", None)
