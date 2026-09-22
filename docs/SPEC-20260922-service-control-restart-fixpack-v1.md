@@ -110,8 +110,8 @@
 
 ## 8. 验收清单
 
-- [ ] R1：四标记矩阵 × 三分支单测通过（test_service_admission_barrier.py）
-- [ ] R2：gen64 部署后 cli 宿主 code_current=true；预检对缺失 store 键 fail
+- [x] R1：四标记矩阵 × 三分支单测通过（test_service_admission_barrier.py）——4b8bb9d41，38 passed（含 R2 增补后复跑）
+- [~] R2：代码/文档/测试已落地（R2.2 runbook §13 + R2.3 `--check-binding` 部署预检，含单测）；**余 R2.1 gen64 部署时显式重启 cli 宿主并验收 `code_current=true`**（部署序列最后一步，操作员执行）
 - [ ] R3：四类告警可触发；force_release 无 reason 被拒；准入拒绝在 append-only log 可查
 - [ ] R4：注入 ambient CODE_ROOT 时预检拒绝并告警
 - [ ] R5：gen60 svc-af12055 不再出现在活跃投影

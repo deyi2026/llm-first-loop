@@ -786,6 +786,22 @@ _knowledge_preflight() {
   return 1
 }
 
+# R2.3(SPEC-20260922-service-control-restart-fixpack-v1): dual-root 共享态部署
+# （linked worktree 且 DATA_DIR 在 code root 之外）必须在 .env 显式声明
+# EXPERIENCES_DIR/METHODS_DIR canonical 绑定——data_dir 推断正是 gen63 分叉触发器。
+# 只读校验（--check-binding 不写任何字节）；mutating 路径中先于 _knowledge_preflight
+# 执行，失败复用 knowledge_preflight_failed 标记（R1 白名单内：预检链零物理副作用）。
+_knowledge_binding_preflight() {
+  _log "Knowledge store binding preflight (R2)..."
+  if env -u DATA_DIR -u LFL_DATA_DIR -u EXPERIENCES_DIR -u METHODS_DIR -u METHOD_SEED_DIR -u SKILLS_DIR -u DOCS_DIR \
+    LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" "$VENV_PY" -m llm_loop.runtime.knowledge_health --check-binding; then
+    _log "✅ Knowledge store binding PASS"
+    return 0
+  fi
+  _log "✗ dual-root store 绑定缺失/不可写；修复见 MIRROR-RESTART-GUIDE.md §13：主根与 worktree 两份 .env 显式声明 EXPERIENCES_DIR/METHODS_DIR 指向 canonical store"
+  return 1
+}
+
 _status() {
   echo "=== 镜像服务状态 ==="
   local web_pid feishu_pid learning_pid
@@ -814,12 +830,15 @@ _status() {
 case "${1:-web}" in
   preflight) # T0-A3(2026-09-16): 只读 dry-run——根校验+来源判定+webui 产物；
              # 不触任何服务、不验 service_control 绑定（那是 mutating 路径的职责）。
+             # R2.3(2026-09-22): 追加 store 绑定校验——dual-root 缺声明在部署预检即 fail。
              _webui_artifact_preflight || exit 1
+             _knowledge_binding_preflight || exit 1
              _log "✅ PREFLIGHT_ONLY 通过（未触碰任何服务）"
              exit 0 ;;
   web)     _webui_artifact_preflight || { _write_receipt web "1" "webui_artifact_preflight_failed"; exit 1; }
            _service_control_preflight web || { _write_receipt web "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck web || { _write_receipt web "1" "active_run_precheck_failed"; exit 1; }
+           _knowledge_binding_preflight || { _write_receipt web "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt web "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _stop_web "$RESTART_PORT"; then
@@ -832,6 +851,7 @@ case "${1:-web}" in
            exit "$_rc" ;;
   feishu)  _service_control_preflight feishu || { _write_receipt feishu "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck feishu || { _write_receipt feishu "1" "active_run_precheck_failed"; exit 1; }
+           _knowledge_binding_preflight || { _write_receipt feishu "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt feishu "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _feishu_stop; then
@@ -843,6 +863,7 @@ case "${1:-web}" in
            _write_receipt feishu "$_rc" ""
            exit "$_rc" ;;
   learning) _service_control_preflight learning || { _write_receipt learning "1" "service_control_binding_failed"; exit 1; }
+           _knowledge_binding_preflight || { _write_receipt learning "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt learning "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _learning_stop; then
@@ -856,6 +877,7 @@ case "${1:-web}" in
   all)     _webui_artifact_preflight || { _write_receipt all "1" "webui_artifact_preflight_failed"; exit 1; }
            _service_control_preflight all || { _write_receipt all "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck all || { _write_receipt all "1" "active_run_precheck_failed"; exit 1; }
+           _knowledge_binding_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }
            # 修2(2026-09-09): 失败补偿——web 停/启失败不再 && 短路吞掉 feishu 恢复；
            # 各服务按自身停止成败独立决定是否重启（停失败强启=制造双进程，禁止）。
