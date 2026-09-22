@@ -140,6 +140,7 @@ class SessionMeta:
     channel: str = "web"   # 当前展示/跨端来源通道（旧字段，向后兼容）
     origin_channel: str = ""  # 第一条真实 human ingress 的机械来源；不从顶层 channel 猜
     model_override: str | None = None  # 会话级模型 authority；列表只读透传
+    parent_id: str | None = None  # 2026-09-22 CPU 契约：agents/tree 等列表消费方经 meta 透传，免全量 load（缺省向后兼容）
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -1773,6 +1774,7 @@ class SessionStore:
                     channel=data.get("channel", "web"),
                     origin_channel=first_human_ingress_channel(messages),
                     model_override=data.get("model_override"),
+                    parent_id=data.get("parent_id"),  # 2026-09-22 CPU 契约：agents/tree 经 meta 透传，不再全量 load
                 )
                 new_cache[p] = (fkey, meta)
             new_cache.move_to_end(p)

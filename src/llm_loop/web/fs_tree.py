@@ -191,21 +191,21 @@ def agents_tree(request: Request) -> JSONResponse:
     topology = getattr(engine, "subagent_runner", None)
     try:
         metas = engine.session.list_sessions()
-        sids = [m.session_id for m in metas]
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": "list_failed", "detail": f"会话列表失败: {exc}"})
+    # 2026-09-22 CPU 契约修复：节点字段全部来自 SessionMeta（同一解析缓存），
+    # 不再逐会话全量 load（460 会话/324MB 时每请求 2.2s CPU，1s 心跳 ×
+    # 多标签页即饱和事件循环）。topology 事实仍按 sid 附着，语义不变。
     nodes = []
-    for sid in sids:
+    for meta in metas:
+        sid = meta.session_id
         try:
-            if not engine.session.exists(sid):
-                continue
-            sess = engine.session.load(sid)
             node = {
                 "id": sid,
-                "parent_id": getattr(sess, "parent_id", None),
+                "parent_id": getattr(meta, "parent_id", None),
                 "is_subagent": str(sid).startswith("subagent_"),
-                "model": getattr(sess, "model_override", None) or "",
-                "created_at": getattr(sess, "created_at", None),
+                "model": getattr(meta, "model_override", None) or "",
+                "created_at": getattr(meta, "created_at", None),
             }
             if topology is not None:
                 # 以 topology 事实源为权威：非 runner 子会话（如 fork 分支）自然返回
@@ -216,6 +216,6 @@ def agents_tree(request: Request) -> JSONResponse:
                     node["outcome"] = str(facts.get("outcome") or "")
                     node["settlement"] = str(facts.get("settlement_state") or "")
             nodes.append(node)
-        except Exception:  # noqa: BLE001 — 单会话读取失败跳过
-            continue
+        except Exception:  # noqa: BLE001 — 单会话拓扑附着失败跳过（节点仍返回）
+            nodes.append({"id": sid, "parent_id": getattr(meta, "parent_id", None)})
     return JSONResponse(content={"nodes": nodes})

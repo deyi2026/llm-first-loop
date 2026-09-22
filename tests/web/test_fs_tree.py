@@ -221,3 +221,32 @@ def test_evolution_review_store_on_correction_ctx(client, tmp_path):
         assert st.list()[0]["status"] == "accepted"
     finally:
         engine.correction_ctx = None
+
+
+def test_agents_tree_uses_meta_only_no_full_load(client, monkeypatch):
+    """CPU 契约（2026-09-22 web 100% 事故）：agents/tree 只读 metas.
+
+    460 会话/324MB 下每请求逐会话全量 load = 2.2s CPU；目录面板 1s 心跳 ×
+    多标签页即饱和一核并阻塞事件循环。parent_id 等字段必须经 SessionMeta
+    透传到达，端点不得调用 session.load()。
+    """
+    cli, engine = client
+    sid = engine.session.create()
+    sub = engine.session.create()
+    sess = engine.session.load(sub)
+    sess.parent_id = sid
+    engine.session.save(sess)
+
+    calls = {"n": 0}
+    orig = engine.session.load
+
+    def counting_load(s):
+        calls["n"] += 1
+        return orig(s)
+
+    monkeypatch.setattr(engine.session, "load", counting_load)
+    r = cli.get("/api/v1/agents/tree")
+    assert r.status_code == 200
+    nodes = {n["id"]: n for n in r.json()["nodes"]}
+    assert nodes[sub]["parent_id"] == sid
+    assert calls["n"] == 0
