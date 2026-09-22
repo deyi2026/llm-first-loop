@@ -200,8 +200,15 @@ class HumanTurnQueue:
         reasoning_effort: str | None = None,
         reasoning_mode: str = "auto",
         attachment_facts: list[dict[str, Any]] | None = None,
+        origin: str = "",
+        origin_operation_id: str = "",
     ) -> dict[str, Any]:
-        """入队：冻结本条事实并落盘；返回完整条目（含 queue_id）."""
+        """入队：冻结本条事实并落盘；返回完整条目（含 queue_id）.
+
+        origin/origin_operation_id（SPEC-20260923-queue-recovery）：机械来源
+        标记（如 barrier_window + 屏障操作号），供恢复重排等下游按事实筛选；
+        缺省为空，旧语义不变。
+        """
         now = _now()
         with self._lock:
             self._seq += 1
@@ -219,6 +226,10 @@ class HumanTurnQueue:
                 "created_at": now,
                 "status": "queued",
             }
+            if origin:
+                item["origin"] = str(origin)
+            if origin_operation_id:
+                item["origin_operation_id"] = str(origin_operation_id)
             self._items.append(item)
             self._save()
             return self._public(item)
@@ -229,12 +240,23 @@ class HumanTurnQueue:
             self._reap_stale_claims_locked(_now())
             return [self._public(it) for it in self._active_items_locked(session_id)]
 
+    def snapshot_items(self) -> list[dict[str, Any]]:
+        """全量只读快照（公共视图，含终态；恢复扫描等下游用，不触发 reaper）."""
+        with self._lock:
+            return [self._public(it) for it in self._items]
+
     def cancel(self, session_id: str, queue_id: str) -> bool:
         """取消一条排队项（queued→cancelled；claimed 不可取消：已进入发送流程）."""
         return self.cancel_with_item(session_id, queue_id) is not None
 
-    def cancel_with_item(self, session_id: str, queue_id: str) -> dict[str, Any] | None:
-        """Atomically cancel one still-queued item and return its frozen facts."""
+    def cancel_with_item(
+        self, session_id: str, queue_id: str, *, cancelled_by: str = "system"
+    ) -> dict[str, Any] | None:
+        """Atomically cancel one still-queued item and return its frozen facts.
+
+        cancelled_by（SPEC-20260923-queue-recovery）：机械取消方标记——
+        用户主动取消（端点传 "user"）与系统路径取消可区分，恢复重排只认后者。
+        """
         with self._lock:
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
@@ -242,6 +264,7 @@ class HumanTurnQueue:
                         return None
                     it["status"] = "cancelled"
                     it["terminal_at"] = _now()
+                    it["cancelled_by"] = str(cancelled_by or "system")
                     self._save()
                     return self._public(it)
             return None

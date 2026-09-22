@@ -165,7 +165,14 @@ def _barrier_queued_response(
                 "restart_barrier": barrier.to_view(),
             },
         )
-    item = hq.enqueue(session_id, message)
+    # SPEC-20260923-queue-recovery：承诺"恢复后自动继续"的地方打上机械来源
+    # 标记（origin=barrier_window + 操作号）——恢复重排只认标记项，不解析文本。
+    item = hq.enqueue(
+        session_id,
+        message,
+        origin="barrier_window",
+        origin_operation_id=str(barrier.operation_id or ""),
+    )
     content = {
         "queued": True,
         "queue_id": item["queue_id"],
@@ -1494,7 +1501,7 @@ def queue_enqueue(payload: QueueEnqueueRequest, request: Request) -> Response:
 def queue_cancel(payload: QueueCancelRequest, request: Request) -> Response:
     """取消排队项（仅 queued 可取消；claimed 已进入发送流程不可取消）."""
     hq = _human_turn_queue(request)
-    item = hq.cancel_with_item(payload.session_id, payload.queue_id)
+    item = hq.cancel_with_item(payload.session_id, payload.queue_id, cancelled_by="user")
     if item is None:
         return UTF8JSONResponse(
             status_code=409,
