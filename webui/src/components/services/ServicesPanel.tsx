@@ -9,6 +9,22 @@ function shortHead(head: string | null | undefined): string {
   return head.slice(0, 7);
 }
 
+// live manifest 写 +0800、store 回执写 +00:00（ISO 原样来自两个进程）；
+// 面板统一渲染为浏览器本地时区，否则同屏两种时区肉眼不可比（2026-09-22 14:53 误读案例）。
+function fmtLocal(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 const cardStyle: React.CSSProperties = {
   border: "1px solid #ddd",
   borderRadius: 8,
@@ -77,7 +93,7 @@ export function ServicesPanel() {
                 live: pid {svc.live.pid ?? "—"}
                 {svc.live.pid_alive === false ? "（进程不存在）" : ""} ·{" "}
                 {shortHead(svc.live.git_head)}
-                {svc.live.started_at ? " · " + svc.live.started_at : ""}
+                {svc.live.started_at ? " · " + fmtLocal(svc.live.started_at) : ""}
               </div>
             ) : (
               <div>live: （无 startup manifest）</div>
@@ -91,7 +107,7 @@ export function ServicesPanel() {
                   {svc.stable.matches_desired_generation
                     ? " · " + shortHead(svc.stable.git_head)
                     : " · （早于当前 desired，不声明 git 身份）"}
-                  {" · " + svc.stable.succeeded_at}
+                  {" · " + fmtLocal(svc.stable.succeeded_at)}
                 </>
               ) : (
                 "（尚无成功重启回执）"
