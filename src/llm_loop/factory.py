@@ -2017,6 +2017,8 @@ def build_engine(
     )
     # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。
+    # Web 谱系面（/api/v1/agents/tree）经 engine.subagent_runner 读机械拓扑事实。
+    engine.subagent_runner = subagent_runner
     registry.add_session_cancel_hook(subagent_runner.cancel_parent)
     registry.add_async_obligation_hook(subagent_runner.pending_obligations)
     registry.register(SpawnSubAgentTool(subagent_runner))

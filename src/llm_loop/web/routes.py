@@ -2673,6 +2673,89 @@ def kill_session_job(session_id: str, job_id: str, request: Request) -> Response
     return UTF8JSONResponse(content={"status": "ok", "job_id": job_id, "detail": detail})
 
 
+def _schedule_store(request: Request):
+    """Per-app ScheduleStore（与 factory._schedule_store 同一路径派生，同文件即同事实源）.
+
+    ScheduleStore 读侧以磁盘为 SoT（list() 先 refresh）、写侧跨进程文件锁，
+    多实例指向同一 schedule.json 是 scheduler.py 明确支持的使用方式。
+    """
+    from llm_loop.core.scheduler import ScheduleStore
+
+    store = getattr(request.app.state, "schedule_store", None)
+    if store is not None:
+        return store
+    engine = _engine_from(request)
+    settings = getattr(engine, "settings", None)
+    data_dir = Path(getattr(settings, "data_dir", "./data"))
+    store = ScheduleStore((data_dir).resolve() / "schedule.json")
+    request.app.state.schedule_store = store
+    return store
+
+
+def _schedule_row(entry: dict) -> dict:
+    """会话级只读投影：保留展示所需的机械事实，剥宿主/租约/wake 授权内部字段."""
+    repeat_interval = float(entry.get("repeat_interval") or 0.0)
+    return {
+        "sid": entry.get("sid", ""),
+        "session_id": entry.get("session_id", ""),
+        "message": entry.get("message", ""),
+        "trigger_at": float(entry.get("trigger_at") or 0.0),
+        "kind": "every" if repeat_interval > 0 else "once",
+        "every_seconds": int(repeat_interval) if repeat_interval > 0 else None,
+        "repeat_interval": repeat_interval,
+        "max_count": int(entry.get("max_count") or 1),
+        "count": int(entry.get("count") or 0),
+        "wake": bool(entry.get("wake")),
+        "created_at": float(entry.get("created_at") or 0.0),
+    }
+
+
+@router.get("/api/v1/sessions/{session_id}/schedule")
+def list_session_schedule(session_id: str, request: Request) -> Response:
+    """List owner-scoped schedule reminder facts (no derived semantics, no host internals)."""
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    rows = [
+        _schedule_row(entry)
+        for entry in _schedule_store(request).list()
+        if str(entry.get("session_id") or "") == session_id
+    ]
+    rows.sort(key=lambda row: (row["trigger_at"], row["sid"]))
+    return UTF8JSONResponse(content={"schedule": rows, "count": len(rows)})
+
+
+@router.post("/api/v1/sessions/{session_id}/schedule/{sid}/cancel")
+def cancel_session_schedule(session_id: str, sid: str, request: Request) -> Response:
+    """Explicit authenticated-user cancellation of one owner-scoped reminder."""
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    store = _schedule_store(request)
+    target = next(
+        (
+            entry
+            for entry in store.list()
+            if entry.get("sid") == sid
+            and str(entry.get("session_id") or "") == session_id
+        ),
+        None,
+    )
+    if target is None:
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "schedule_not_found", "detail": "该提醒不存在或不属于当前会话"},
+        )
+    store.cancel(sid)
+    return UTF8JSONResponse(content={"status": "ok", "sid": sid})
+
+
 @router.get("/api/v1/sessions/{session_id}/continuity")
 def session_continuity_status(session_id: str, request: Request) -> Response:
     """Expose restart-continuity facts without model text/reasoning content."""
@@ -3534,6 +3617,10 @@ _CAPABILITY_ROUTES: dict[str, tuple[tuple[str, str], ...]] = {
     "jobs": (
         ("GET", "/api/v1/sessions/{session_id}/jobs"),
         ("POST", "/api/v1/sessions/{session_id}/jobs/{job_id}/kill"),
+    ),
+    "schedule": (
+        ("GET", "/api/v1/sessions/{session_id}/schedule"),
+        ("POST", "/api/v1/sessions/{session_id}/schedule/{sid}/cancel"),
     ),
     "continuity": (("GET", "/api/v1/sessions/{session_id}/continuity"),),
     "providerAdmin": (

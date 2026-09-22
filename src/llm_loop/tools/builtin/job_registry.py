@@ -15,6 +15,7 @@ import logging
 import os
 import signal
 import threading
+import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -55,6 +56,10 @@ class JobEntry:
     durable: bool = False
     cancel_durable: bool = False
     terminal_durable: bool = False
+    # 机械生命周期事实（何时注册/何时观察到退出），供 UI 计算运行时长；
+    # killed 仅表示终止已请求，finished_at 仍以 watcher 观察到退出为准。
+    started_at: float = 0.0
+    finished_at: float = 0.0
     journal: ExternalExecutionJournal | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -185,6 +190,7 @@ class JobRegistry:
                 workspace_root=canonical_workspace,
                 executor=str(executor or "external"),
                 durable=bool(launch and launch.durable),
+                started_at=time.time(),
                 journal=self._journal,
             )
             with self._lock:
@@ -279,6 +285,8 @@ class JobRegistry:
                 "auto_reclaim": False,
                 "output": output,
                 "command": entry.command,
+                "started_at": (entry.started_at or None),
+                "finished_at": (entry.finished_at or None),
             }
 
         if not session_id:
@@ -359,6 +367,8 @@ class JobRegistry:
             entry.done = True
             entry.exit_code = exit_code
             entry.terminal_durable = terminal_durable
+            if not entry.finished_at:
+                entry.finished_at = time.time()
         self._notify_completion(job_id)
         self._retain_terminal_handle(job_id)
 

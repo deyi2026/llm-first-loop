@@ -138,3 +138,41 @@ def _wait_for(cond, timeout: float = 10.0, interval: float = 0.05) -> None:
             return
         time.sleep(interval)
     raise AssertionError(f"条件在 {timeout}s 内未满足")
+
+
+# ── 会话头部任务列表（对齐 DSH Job List）：起止时间机械事实 ──
+def test_snapshot_exposes_started_and_finished_mechanical_facts(monkeypatch):
+    """started_at 在注册即落实；finished_at 只在 watcher 收敛终态时落实.
+
+    这是纯机械生命周期事实（何时注册/何时观察到退出），供 UI 计算运行时长；
+    不承载任何语义判断。wait() 阻塞到显式释放，保证 running 中间态可稳定断言。
+    """
+    import threading as _threading
+
+    class _BlockingProc(_FakeProc):
+        def __init__(self) -> None:
+            super().__init__(exit_code=0)
+            self._release = _threading.Event()
+
+        def wait(self) -> int:
+            self._release.wait(timeout=10)
+            return self.returncode
+
+    reg = _fresh_registry(monkeypatch)
+    before = time.time()
+    proc = _BlockingProc()
+    job_id = reg.create(proc, "cmd-timing", session_id="s1")
+    reg.start_readers(job_id)
+    snap = reg.snapshot(job_id, session_id="s1")
+    assert snap is not None
+    assert snap["state"] == "running"
+    assert isinstance(snap["started_at"], float)
+    assert snap["started_at"] >= before - 1.0
+    assert snap["finished_at"] is None
+
+    proc._release.set()
+    _wait_for(lambda: reg.snapshot(job_id, session_id="s1")["state"] != "running")
+    settled = reg.snapshot(job_id, session_id="s1")
+    assert settled["state"] == "completed"
+    assert isinstance(settled["finished_at"], float)
+    assert settled["finished_at"] >= settled["started_at"]

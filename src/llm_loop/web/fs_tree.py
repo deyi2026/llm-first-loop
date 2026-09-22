@@ -183,9 +183,12 @@ def agents_tree(request: Request) -> JSONResponse:
     """会话→子代理层级树（对齐 DSH agents 树）.
 
     数据源: Session.parent_id + subagent_ 前缀会话（runner 创建）。
-    返回: [{id, status, model, parent_id}]，前端按 parent_id 组树。
+    返回: [{id, status, model, parent_id, activity?, outcome?, settlement?}]，前端按 parent_id 组树。
+    activity/outcome/settlement 只来自 engine.subagent_runner.topology_snapshot 的机械
+    事实；runner 缺失或拓扑未知时字段缺省——不伪造 inactive。
     """
     engine = _engine_from(request)
+    topology = getattr(engine, "subagent_runner", None)
     try:
         metas = engine.session.list_sessions()
         sids = [m.session_id for m in metas]
@@ -197,13 +200,22 @@ def agents_tree(request: Request) -> JSONResponse:
             if not engine.session.exists(sid):
                 continue
             sess = engine.session.load(sid)
-            nodes.append({
+            node = {
                 "id": sid,
                 "parent_id": getattr(sess, "parent_id", None),
                 "is_subagent": str(sid).startswith("subagent_"),
                 "model": getattr(sess, "model_override", None) or "",
                 "created_at": getattr(sess, "created_at", None),
-            })
+            }
+            if topology is not None:
+                # 以 topology 事实源为权威：非 runner 子会话（如 fork 分支）自然返回
+                # None → 不附着 activity；不依赖 sid 前缀做二次推断。
+                facts = topology.topology_snapshot(sid)
+                if facts:
+                    node["activity"] = "running" if facts.get("local_active") else "inactive"
+                    node["outcome"] = str(facts.get("outcome") or "")
+                    node["settlement"] = str(facts.get("settlement_state") or "")
+            nodes.append(node)
         except Exception:  # noqa: BLE001 — 单会话读取失败跳过
             continue
     return JSONResponse(content={"nodes": nodes})
