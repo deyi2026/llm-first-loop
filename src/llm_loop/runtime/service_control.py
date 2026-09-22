@@ -1842,7 +1842,10 @@ def acknowledge_verify(
     action = store.read_action(action_id)
     if action is None:
         raise FileNotFoundError(action_id)
-    if action.status not in {"running", "restarted", "verify_evidence_ready", "failed"}:
+    # L6/N-4（adjudication-20260922 裁定 b）：succeeded 进入可申诉集——
+    # confirmed_ok 的程序判终态对模型不再不可翻转；accept 幂等、override 重开
+    # 为 failed（屏障按既有转换规则处置，succeeded 起点已释放则保持释放）。
+    if action.status not in {"running", "restarted", "verify_evidence_ready", "failed", "succeeded"}:
         return {
             "accepted": False,
             "reason": f"action is not awaiting verify (status={action.status})",

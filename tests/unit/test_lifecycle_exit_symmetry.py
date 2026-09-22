@@ -290,3 +290,57 @@ def test_exit_actions_write_append_only_audit(tmp_path: Path) -> None:
     assert audit.is_file()
     events = [json.loads(line) for line in audit.read_text(encoding="utf-8").splitlines()]
     assert {"override_accepted", "release"} <= {event["event"] for event in events}
+
+# ── L6/N-4（adjudication-20260922 裁定 b）：succeeded 可申诉 ──────────────
+
+
+def test_verify_acknowledge_accept_on_succeeded_is_idempotent(tmp_path: Path) -> None:
+    """N-4 对称性修复：confirmed_ok 程序判定的 succeeded 对模型可申诉。
+
+    accept 起点为 succeeded → 幂等成功（补记模型裁决与审计，不改变终态）。
+    """
+    store = _store(tmp_path)
+    action = _accepted_action(store)
+    store.update_action(action.action_id, status="succeeded", detail="restart_mirror rc=0")
+    result = sc.acknowledge_verify(
+        store,
+        action_id=action.action_id,
+        verdict="accept",
+        evidence="复核 manifest 三服务 head/pid 一致",
+        reason="认可程序成功判定，补记模型裁决",
+    )
+    assert result["status"] == "succeeded"
+    final = store.read_action(action.action_id)
+    assert final.status == "succeeded"
+    assert "model verify verdict=accept" in final.detail
+
+
+def test_verify_acknowledge_override_on_succeeded_reopens_failed(tmp_path: Path) -> None:
+    """模型不认可程序成功判定 → succeeded 可翻转为 failed（append-only 审计留痕）."""
+    store = _store(tmp_path)
+    action = _accepted_action(store)
+    store.update_action(action.action_id, status="succeeded", detail="restart_mirror rc=0")
+    result = sc.acknowledge_verify(
+        store,
+        action_id=action.action_id,
+        verdict="override",
+        evidence="manifest pid 已变但 head 仍为旧提交，版本未切换",
+        reason="程序判据通过但结论与事实不符",
+    )
+    assert result["status"] == "failed"
+    assert store.read_action(action.action_id).status == "failed"
+
+
+def test_verify_acknowledge_still_rejects_accepted_state(tmp_path: Path) -> None:
+    """可申诉集只扩到 succeeded；accepted（未执行）仍拒绝——出口不前移."""
+    store = _store(tmp_path)
+    action = _accepted_action(store)
+    result = sc.acknowledge_verify(
+        store,
+        action_id=action.action_id,
+        verdict="accept",
+        evidence="x",
+        reason="y",
+    )
+    assert result["accepted"] is False
+    assert "not awaiting verify" in result["reason"]
