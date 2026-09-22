@@ -97,3 +97,76 @@ def test_scan_failed_service_actions_recent_failed_only(tmp_path: Path) -> None:
 
 def test_scan_failed_service_actions_fail_open_missing_dir(tmp_path: Path) -> None:
     assert _scan_failed_service_actions(tmp_path) == []
+
+
+def _publish_desired(store: ManagedServiceDeploymentStore, generation: int) -> None:
+    from llm_loop.runtime.service_control import ManagedServiceDeployment
+
+    current = store.read()
+    cur = current.generation if current is not None else 0
+    for gen in range(cur + 1, generation + 1):  # CAS 要求逐代 +1
+        deployment = ManagedServiceDeployment(
+            schema="managed-service-deployment/v1",
+            deployment_id=f"deploy-{gen}",
+            generation=gen,
+            git_head="b" * 40,
+            code_root="/tmp/code",
+            runtime_root="/tmp/runtime",
+            webui_artifact_sha256="c" * 64,
+        )
+        store.compare_and_swap(deployment, expected_generation=gen - 1)
+
+
+def test_scan_failed_service_actions_filters_superseded_generation(
+    tmp_path: Path,
+) -> None:
+    """R5: desired 代已前进 → 旧代失败动作不再占活跃投影（只读过滤）."""
+    store = ManagedServiceDeploymentStore(tmp_path)
+    store.actions_dir.mkdir(parents=True, exist_ok=True)
+    _publish_desired(store, 55)
+    now = datetime.now(UTC)
+
+    def _action(action_id: str, status: str, generation: int) -> None:
+        (store.actions_dir / f"{action_id}.json").write_text(
+            json.dumps(
+                {
+                    "action_id": action_id,
+                    "action": "restart",
+                    "target": "feishu",
+                    "status": status,
+                    "deployment_generation": generation,
+                    "detail": "verify=unhealthy",
+                    "updated_at": now.isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    _action("svc-gen53-failed", "failed", 53)  # P8: 旧代失败 → 噪声，过滤
+    _action("svc-gen55-failed", "failed", 55)  # 当前代失败 → 真信号，保留
+    items = _scan_failed_service_actions(tmp_path)
+    assert [i["action_id"] for i in items] == ["svc-gen55-failed"]
+
+
+def test_scan_failed_service_actions_same_generation_visible(tmp_path: Path) -> None:
+    """R5 边界: 失败动作与 desired 同代 → 未被取代，仍进投影."""
+    store = ManagedServiceDeploymentStore(tmp_path)
+    store.actions_dir.mkdir(parents=True, exist_ok=True)
+    _publish_desired(store, 53)
+    now = datetime.now(UTC)
+    (store.actions_dir / "svc-53-failed.json").write_text(
+        json.dumps(
+            {
+                "action_id": "svc-53-failed",
+                "action": "restart",
+                "target": "web",
+                "status": "failed",
+                "deployment_generation": 53,
+                "detail": "verify=unhealthy",
+                "updated_at": now.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    items = _scan_failed_service_actions(tmp_path)
+    assert [i["action_id"] for i in items] == ["svc-53-failed"]

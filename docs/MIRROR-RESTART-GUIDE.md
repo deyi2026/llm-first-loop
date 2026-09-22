@@ -139,6 +139,13 @@ $ cat data/restart-receipt.json
    - 疑似会话残留（环境值≠脚本目录且未确认）→ 告警+审计
      `data/audit/restart_preflight.log`；**自动化通道（非 tty 或 FORCE=1）直接 abort**。
    事故案例：17:22 会话环境残留指向旧 worktree，`service_control` 缺失才暴露。
+1a. **RUNTIME_ROOT 同判**（R4，2026-09-22，`_runtime_root_source_check`）：
+   ambient `LFL_RESTART_RUNTIME_ROOT` 残留同样能污染预检根
+   （`_knowledge_binding_preflight` 读 `$RUNTIME_ROOT` 下 `.env`），07:33 gen64
+   预检 aborted 证明残留源仍在复现。三态同上，确认变量为
+   `LFL_RESTART_RUNTIME_ROOT_CONFIRMED=1`。受控路径
+   （`build_restart_plan`）显式带 CONFIRMED；直连 dual-root 操作须同时确认
+   两个根。审计行含 `var=` 触发变量名。
 2. **嵌套 worktree 禁令**（dual-root 校验内 + `--check-add` guard）：
    CODE_ROOT 内含嵌套 worktree 一律拒绝；创建前用
    `scripts/bootstrap_worktree_registry.py --check-add <path>` 预检（拒绝 rc=2，

@@ -226,3 +226,93 @@ def test_services_status_route(tmp_path: Path) -> None:
     body = resp.json()
     assert set(body["services"]) == {"web", "feishu", "learning"}
     assert body["services"]["web"]["restart_required"] is False
+
+
+def test_live_newer_than_receipt_marks_stale_not_required(tmp_path: Path) -> None:
+    """R6: 直连重启后 live 已达期望代、stable 回执落后 → stale 标记而非谎报."""
+    store = _green_store(tmp_path)
+    # 受控回执停在 gen1（HEAD_A 时代）
+    _write_receipt(
+        store, action_id="svc-old-1", target="all", generation=1,
+        updated_at="2026-09-22T07:00:00+00:00",
+    )
+    # desired 推进 gen2(HEAD_B)，live 由直连重启拉到 HEAD_B（无回执）
+    _publish(store, _deployment(tmp_path, 2, HEAD_B))
+    _write_manifest(store, "web", pid=os.getpid(), git_head=HEAD_B)
+    view = compose_service_identity_view(store)
+    web = view["services"]["web"]
+    # live 是真相源：健康且已达期望代 → 不需要重启
+    assert web["restart_required"] is False
+    assert web["live"]["matches_desired_generation"] is True
+    # stable 落后被显式标记，且只作完整性事实（不进 reasons）
+    assert web["stable"]["stale"] is True
+    assert web["stable"]["lag_generations"] == 1
+    assert "以 live 为准" in web["stable"]["note"]
+    assert not any("receipt" in r for r in web["reasons"])
+
+
+def test_receipt_lag_without_live_match_is_not_stale(tmp_path: Path) -> None:
+    """R6 边界: live 未达期望代时回执落后只是普通 lag，不算 stale（部署确实没到）."""
+    store = _green_store(tmp_path)
+    _write_receipt(
+        store, action_id="svc-old-2", target="all", generation=1,
+        updated_at="2026-09-22T07:00:00+00:00",
+    )
+    _publish(store, _deployment(tmp_path, 2, HEAD_B))
+    # web live 还在旧代 HEAD_A → git_head mismatch（真信号）
+    _write_manifest(store, "web", pid=os.getpid(), git_head=HEAD_A)
+    view = compose_service_identity_view(store)
+    web = view["services"]["web"]
+    assert web["restart_required"] is True
+    assert any(r.startswith("live_git_head_mismatch") for r in web["reasons"])
+    assert web["stable"].get("stale") is not True
+    assert web["stable"]["lag_generations"] == 1
+
+
+def test_terminal_action_barrier_flagged_in_identity_view(tmp_path: Path) -> None:
+    """R3②: 终态 action 仍持屏障 → 孤儿屏障硬信号（需操作员介入）."""
+    store = _green_store(tmp_path)
+    reg = store.barriers
+    reg.establish("web", operation_id="svc-orphan-1", reason="restart")
+    orphan = ServiceControlAction(
+        schema="service-control-action/v1",
+        action_id="svc-orphan-1",
+        action="restart",
+        target="web",
+        deployment_id="deploy-1",
+        deployment_generation=1,
+        requester_session_id="sess-x",
+        status="failed",
+        created_at="2026-09-22T07:00:00+00:00",
+        updated_at="2026-09-22T07:01:00+00:00",
+        detail="physical rc=2",
+    )
+    store._write_action_unlocked(orphan)
+    view = compose_service_identity_view(store)
+    web = view["services"]["web"]
+    assert web["admission_barrier"]["operation_id"] == "svc-orphan-1"
+    assert web["terminal_action_barrier"] == "terminal_action_holds_barrier status=failed"
+    # 其他服务无屏障 → 无孤儿信号
+    assert view["services"]["feishu"]["terminal_action_barrier"] is None
+
+
+def test_active_action_barrier_not_flagged(tmp_path: Path) -> None:
+    """R3② 边界: 活跃 action 持屏障是正常态，不触发孤儿信号."""
+    store = _green_store(tmp_path)
+    store.barriers.establish("web", operation_id="svc-live-1", reason="restart")
+    active = ServiceControlAction(
+        schema="service-control-action/v1",
+        action_id="svc-live-1",
+        action="restart",
+        target="web",
+        deployment_id="deploy-1",
+        deployment_generation=1,
+        requester_session_id="sess-x",
+        status="waiting_for_idle",
+        created_at="2026-09-22T07:00:00+00:00",
+        updated_at="2026-09-22T07:00:30+00:00",
+        detail="",
+    )
+    store._write_action_unlocked(active)
+    view = compose_service_identity_view(store)
+    assert view["services"]["web"]["terminal_action_barrier"] is None

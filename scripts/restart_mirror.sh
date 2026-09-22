@@ -69,41 +69,55 @@ MIRROR_DIR="$RUNTIME_ROOT"  # compatibility alias: every operational path stays 
 DUAL_ROOT=0
 [[ "$RUNTIME_ROOT" != "$CODE_ROOT" ]] && DUAL_ROOT=1
 
-# ── T0-A3（2026-09-16）: CODE_ROOT 来源判定（须在 _validate_restart_roots 之前执行）──
+# ── T0-A3（2026-09-16；R4 2026-09-22 扩展到 RUNTIME_ROOT）: 根来源判定 ──
+# （须在 _validate_restart_roots 之前执行）
 # 当日事故根因: 会话环境残留 LFL_RESTART_CODE_ROOT 指向旧 worktree，脚本静默
-# 加载旧代码（service_control 缺失才暴露）。三态来源:
+# 加载旧代码（service_control 缺失才暴露）。R4 扩展: ambient
+# LFL_RESTART_RUNTIME_ROOT 同样能污染预检根（_knowledge_binding_preflight 读
+# $RUNTIME_ROOT 下的 .env），07:33 aborted 证明残留源仍在复现。三态来源:
 #   ① 调用点显式（环境值==脚本目录，或 CONFIRMED=1）→ 通过
 #   ② 脚本目录默认（未设环境变量）→ 通过
 #   ③ 疑似环境残留（环境值≠脚本目录且未确认）→ 告警+审计；自动化通道（非 tty
 #      或 FORCE=1）直接 abort
-_code_root_source_check() {
-  [[ -n "${LFL_RESTART_CODE_ROOT:-}" && "$CODE_ROOT" != "$SCRIPT_ROOT" ]] || return 0
-  echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] CODE_ROOT 来自环境变量 LFL_RESTART_CODE_ROOT=${CODE_ROOT}（≠脚本目录 ${SCRIPT_ROOT}）——疑似会话残留（2026-09-16 事故根因）"
-  if [[ "${LFL_RESTART_CODE_ROOT_CONFIRMED:-0}" == "1" ]]; then
-    echo "[mirror] $(date '+%H:%M:%S')    LFL_RESTART_CODE_ROOT_CONFIRMED=1 显式确认, 继续"
+# 受控路径（service_control worker）显式 export LFL_RESTART_RUNTIME_ROOT 并带
+# LFL_RESTART_RUNTIME_ROOT_CONFIRMED=1（来源①）。
+_root_source_check() {  # $1=env_var $2=resolved_value $3=label $4=confirm_var
+  local env_var="$1" value="$2" label="$3" confirm_var="$4"
+  [[ -n "${!env_var:-}" && "$value" != "$SCRIPT_ROOT" ]] || return 0
+  echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] $label 来自环境变量 $env_var=${value}（≠脚本目录 ${SCRIPT_ROOT}）——疑似会话残留（2026-09-16 事故根因）"
+  if [[ "${!confirm_var:-0}" == "1" ]]; then
+    echo "[mirror] $(date '+%H:%M:%S')    ${confirm_var}=1 显式确认, 继续"
     return 0
   fi
   if [[ -t 0 && "${FORCE:-0}" != "1" ]]; then
-    printf '确认使用环境变量指定的 CODE_ROOT? (y/N) '
+    printf '确认使用环境变量指定的 %s? (y/N) ' "$label"
     read -r _confirm_ans
     if [[ "$_confirm_ans" =~ ^[yY]$ ]]; then
       echo "[mirror] $(date '+%H:%M:%S')    交互确认通过"
       return 0
     fi
-    echo "[mirror] $(date '+%H:%M:%S') 已取消（CODE_ROOT 来源未确认）"
+    echo "[mirror] $(date '+%H:%M:%S') 已取消（$label 来源未确认）"
     return 2
   fi
-  echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] 自动化通道检测到环境残留 CODE_ROOT 且未显式确认, 拒绝重启"
-  echo "[mirror] $(date '+%H:%M:%S')    修复: 调用点显式 export LFL_RESTART_CODE_ROOT=<目标> 并加 LFL_RESTART_CODE_ROOT_CONFIRMED=1"
+  echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] 自动化通道检测到环境残留 $label 且未显式确认, 拒绝重启"
+  echo "[mirror] $(date '+%H:%M:%S')    修复: 调用点显式 export ${env_var}=<目标> 并加 ${confirm_var}=1"
   return 2
 }
-_code_root_source_check || {
+_code_root_source_check() {
+  _root_source_check LFL_RESTART_CODE_ROOT "$CODE_ROOT" CODE_ROOT LFL_RESTART_CODE_ROOT_CONFIRMED
+}
+_runtime_root_source_check() {
+  _root_source_check LFL_RESTART_RUNTIME_ROOT "$RUNTIME_ROOT" RUNTIME_ROOT LFL_RESTART_RUNTIME_ROOT_CONFIRMED
+}
+_root_source_abort() {  # $1=triggering_var
   mkdir -p "$MIRROR_DIR/data/audit" 2>/dev/null || true
-  printf '%s code_root_source=env-residue code_root=%s script_root=%s outcome=aborted\n' \
-    "$(date '+%FT%T')" "$CODE_ROOT" "$SCRIPT_ROOT" \
+  printf '%s code_root_source=env-residue var=%s code_root=%s runtime_root=%s script_root=%s outcome=aborted\n' \
+    "$(date '+%FT%T')" "$1" "$CODE_ROOT" "$RUNTIME_ROOT" "$SCRIPT_ROOT" \
     >> "$MIRROR_DIR/data/audit/restart_preflight.log" 2>/dev/null || true
   exit 2
 }
+_code_root_source_check || _root_source_abort LFL_RESTART_CODE_ROOT
+_runtime_root_source_check || _root_source_abort LFL_RESTART_RUNTIME_ROOT
 
 _validate_restart_roots() {
   [[ "$DUAL_ROOT" -eq 1 ]] || return 0

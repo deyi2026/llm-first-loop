@@ -81,6 +81,53 @@ def _created_by() -> str:
     return f"pid={os.getpid()} host={socket.gethostname()}"
 
 
+def _append_audit_jsonl(
+    data_dir: str | os.PathLike[str], filename: str, payload: dict[str, object]
+) -> bool:
+    """Append-only audit line under <data_dir>/audit/ (fail-open, best effort).
+
+    R3(P6/P7): barrier force-releases and admission rejections must leave a
+    durable trail even when they do not create action files.  Audit failure
+    never blocks the caller (logging-only).
+    """
+    audit_dir = Path(data_dir).expanduser() / "audit"
+    try:
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        record = {"ts": _utc_now(), **payload}
+        with (audit_dir / filename).open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+        return True
+    except OSError as exc:
+        logger.warning("admission audit append failed (%s): %s", filename, exc)
+        return False
+
+
+def log_admission_rejection(
+    data_dir: str | os.PathLike[str],
+    task_kind: str,
+    barrier: ServiceAdmissionBarrier | None,
+    *,
+    source: str = "",
+    detail: str | None = None,
+) -> bool:
+    """R3(P7): append-only trail for admission rejections (no action file).
+
+    Called at the admission boundaries that actually defer/reject a message
+    (web chat/stream/queue dispatch, feishu worker), NOT from polling probes.
+    """
+    view = barrier.to_view() if barrier is not None else None
+    return _append_audit_jsonl(
+        data_dir,
+        "service_admission_rejections.jsonl",
+        {
+            "task_kind": task_kind,
+            "source": source,
+            "detail": detail,
+            "barrier": view,
+        },
+    )
+
+
 class AdmissionBarrierRegistry:
     """Per-service admission barriers; file-per-service, single owner each."""
 
@@ -209,16 +256,27 @@ class AdmissionBarrierRegistry:
 
         Only reachable from the explicit CLI (audited reason required); never
         from timeouts (§8.3: a barrier must not be cleared by any caller just
-        because time passed).
+        because time passed).  R3(P6): append-only audit trail included.
         """
         if not reason.strip():
             raise AdmissionBarrierError("force release requires a reason")
         path = self.barrier_path(service)
+        current = self._load(path, service)
         try:
             path.unlink()
         except FileNotFoundError:
             return False
         logger.warning("admission barrier for %s force-released: %s", service, reason)
+        _append_audit_jsonl(
+            self._data_dir,
+            "service_barrier_forces.jsonl",
+            {
+                "service": service,
+                "previous_owner": current.operation_id if current else None,
+                "reason": reason,
+                "released_by": _created_by(),
+            },
+        )
         return True
 
     def snapshot(self) -> list[ServiceAdmissionBarrier]:

@@ -112,7 +112,13 @@
 
 - [x] R1：四标记矩阵 × 三分支单测通过（test_service_admission_barrier.py）——4b8bb9d41，38 passed（含 R2 增补后复跑）
 - [~] R2：代码/文档/测试已落地（R2.2 runbook §13 + R2.3 `--check-binding` 部署预检，含单测）；**余 R2.1 gen64 部署时显式重启 cli 宿主并验收 `code_current=true`**（部署序列最后一步，操作员执行）
-- [ ] R3：四类告警可触发；force_release 无 reason 被拒；准入拒绝在 append-only log 可查
-- [ ] R4：注入 ambient CODE_ROOT 时预检拒绝并告警
-- [ ] R5：gen60 svc-af12055 不再出现在活跃投影
-- [ ] R6：identity 视图显示 live gen 且 stale 回执有标记
+- [x] R3（瘦身版，§6 决议）：② 终态 action 持屏障 → identity 视图 `terminal_action_barrier` 硬信号（含 missing/unreadable 分支）；force_release append-only 审计（`data/audit/service_barrier_forces.jsonl`，含 previous_owner）；准入拒绝 append-only（`data/audit/service_admission_rejections.jsonl`，fail-open，web chat/stream/queue + feishu 四入口接线）——28+ 用例
+- [x] R4：T0-A3 扩展为双根来源判定（CODE_ROOT+RUNTIME_ROOT，`_runtime_root_source_check`）；受控路径（`build_restart_plan`）显式注入两个 CONFIRMED；测试注入残留 RUNTIME_ROOT 验证 abort+audit（`var=` 字段）——7 用例。残留源 `.worktrees/compaction-merge-20260916`（deploy/20260916-anchor-integration）经查含未合并提交 `1cb76d0d9`（不在任何远程分支），**不可自动删除**，依赖预检防线拦截
+- [x] R5：投影只读过滤——`_scan_failed_service_actions` 在 desired 存在且 `action.gen < desired.gen` 时剔除旧代失败动作（不 mutate 文件）；desired 缺失/同代失败保持原行为——6 用例
+- [x] R6：identity 视图 live 侧 `matches_desired_generation`（git_head+pid_alive 探测）；stable 侧落后时 `lag_generations`/`stale`/`note`（live 已达期望代才标 stale；不进 restart_required）——4 用例
+
+### 8.1 实施记录（2026-09-22）
+
+- R3–R6/R4 在 R1/R2 之后同线落地（experiment/mem-citations-20260922）；worktree `.worktrees/service-control-fixpack-20260922` 提交，合并基线 9204b9473。
+- 裁剪：R3③ 降级为巡检动作（不在本包）；R3④ 砍（reaper 已覆盖）；R3① 并入 R6（代差从告警降为完整性事实）。
+- 并行协调：落地期间主仓工作区被 citations 任务切至 `fix/mem-citations-index-anchor`，本包改在独立 worktree 归位，主仓现场已清空还原。

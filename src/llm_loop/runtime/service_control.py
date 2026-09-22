@@ -598,6 +598,31 @@ def _barrier_view(store: ManagedServiceDeploymentStore, service: str) -> dict[st
     return barrier.to_view() if barrier is not None else None
 
 
+_TERMINAL_ACTION_STATUSES = frozenset({"succeeded", "failed"})
+
+
+def _terminal_action_barrier_reason(
+    store: ManagedServiceDeploymentStore, service: str
+) -> str | None:
+    """R3②: 终态 action 仍持屏障的孤儿信号（只读探测）.
+
+    R1 落地后 worker 在消费 receipt 时释放屏障，因此该窗口只出现在
+    worker 死亡/中断间隙；非 None 即"需要操作员介入"（覆盖 CLI）。
+    """
+    barrier = store.barriers.blocked(service)
+    if barrier is None or barrier.corrupt or not barrier.operation_id:
+        return None
+    try:
+        action = store.read_action(barrier.operation_id)
+    except Exception:  # noqa: BLE001 — 只读探测；视图不因单点坏数据失败
+        return "barrier_owner_action_unreadable"
+    if action is None:
+        return "barrier_owner_action_missing"
+    if action.status in _TERMINAL_ACTION_STATUSES:
+        return f"terminal_action_holds_barrier status={action.status}"
+    return None
+
+
 def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
     """Desired/live/stable identity view per managed service (read-only).
 
@@ -631,6 +656,13 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
                 )
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 live["manifest_error"] = True
+        if deployment is not None and not live.get("manifest_error"):
+            # R6: live 代探测——runtime manifest 不携带 generation，用
+            # git_head 与 desired 的相等性推断"live 是否已达到期望代"；
+            # 直连重启路径永远不写 durable 回执，stable 落后不能谎报。
+            live["matches_desired_generation"] = bool(live.get("pid_alive")) and (
+                str(live.get("git_head") or "") == deployment.git_head
+            )
         candidates = [
             action
             for target, action in succeeded.items()
@@ -651,6 +683,17 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
                 "git_head": deployment.git_head if matches and deployment else None,
                 "matches_desired_generation": matches,
             }
+            if deployment is not None and receipt.deployment_generation < deployment.generation:
+                # R3①降级/R6: live 健康而回执落后只作完整性事实展示（直连
+                # 重启是合法无回执路径），不进 restart_required。
+                stable["lag_generations"] = (
+                    deployment.generation - receipt.deployment_generation
+                )
+                stable["stale"] = bool(live.get("matches_desired_generation"))
+                if stable["stale"]:
+                    stable["note"] = (
+                        "live 进程已新于回执（直连重启未写 durable 回执）；以 live 为准"
+                    )
         reasons: list[str] = []
         if deployment is None:
             reasons.append("desired_deployment_missing")
@@ -676,6 +719,9 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
             # §8.3: 准入屏障按服务可见——屏障仍活跃 = "受影响未恢复"，
             # 恢复路径是操作员覆盖 CLI 或后续操作接管，不得静默消失。
             "admission_barrier": _barrier_view(store, service),
+            # R3②: 终态 action 仍持屏障（孤儿屏障）→ 需要操作员介入的
+            # 唯一硬信号；正常 receipt 消费路径会先把它清掉。
+            "terminal_action_barrier": _terminal_action_barrier_reason(store, service),
         }
     return {
         "deployment": deployment.to_dict() if deployment else None,
@@ -976,6 +1022,10 @@ def build_restart_plan(
             "LFL_RESTART_RUNTIME_ROOT": deployment.runtime_root,
             # R1 §6: 单源路径契约注入，脚本侧 RECEIPT_JSON 消费同一值
             "LFL_RESTART_RECEIPT_REL": _RESTART_RECEIPT_REL,
+            # R4: 受控路径的两个根都来自 deployment（显式值），预检的
+            # T0-A3 来源判定据此放行，不依赖 ambient 环境卫生。
+            "LFL_RESTART_CODE_ROOT_CONFIRMED": "1",
+            "LFL_RESTART_RUNTIME_ROOT_CONFIRMED": "1",
             "RESTART_WAIT_IDLE": "1",
         },
     )
