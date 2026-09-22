@@ -122,3 +122,11 @@
 - R3–R6/R4 在 R1/R2 之后同线落地（experiment/mem-citations-20260922）；worktree `.worktrees/service-control-fixpack-20260922` 提交，合并基线 9204b9473。
 - 裁剪：R3③ 降级为巡检动作（不在本包）；R3④ 砍（reaper 已覆盖）；R3① 并入 R6（代差从告警降为完整性事实）。
 - 并行协调：落地期间主仓工作区被 citations 任务切至 `fix/mem-citations-index-anchor`，本包改在独立 worktree 归位，主仓现场已清空还原。
+
+### 8.2 简化包 S1–S3（2026-09-22 下午，dsh；叠加于本修复包之上，线性含 R1–R6）
+
+- **S1（3d8a4d0d2）中止路径回执义务**：12:57/13:20 两次 aborted 实证本包 R4 的设计缺陷——A3 abort 发生在脚本头部（`_write_receipt` 定义之前），不写回执 → R1 按"无回执 fail-closed"keep 三道屏障 → 死窗复发。受控 dual-root 形态（code=worktree、runtime=主根）与残留同形态，旧控制器（无 CONFIRMED）× 新脚本（R4 必查）= 确定性砖死。修复：根检查移至预检链末端（case 之前全只读），中止路径统一落白名单标记 `root_source_aborted` / `dual_root_rejected`，R1 白名单 4→6。
+- **S2（96a0d3d65）同仓族降级为告警+verify 裁决**：四态来源——同 Git 仓族（linked worktree）→ 告警+审计 `outcome=deferred-to-verify` 放行，裁决移交部署绑定核验（P0-A 字节级，worker lifecycle lease 内复核）；异仓族/无 Git 身份 → 维持硬拒。**残余边界（有意接受）**：直连路径的同仓残留（07:33 compaction-merge 型）从入口拒降为放行+dual-root 校验+audit deferred 痕迹；S3 把直连降为应急通道后常态暴露面缩小。「部署后必须显式重启 cli 宿主」从硬前提降为行为收敛建议（R2.1 相应降级）。
+- **S3（001dd82cb）restart 子命令**：`service_control restart --data-dir data [--target] [--requester]` 一条命令 = 受理（屏障原子建立）+ worker 内联（物理重启+核验+终态回执）；直连 restart_mirror.sh 退为应急通道。从根源消除 P4 的 stable-落后场景（直连常态使用消失），R6 的 stale 标记退化为应急通道使用时的兜底。
+- **实战验证（gen65）**：14:40 `svc-df9693`（operator-deploy-gen65）预检失败 `knowledge_preflight_failed` → R1/S1 消费白名单回执，屏障自动释放，无死窗；14:40:40 `svc-37ce12`（retry）succeeded gen65 rc=0 verify=ok 三服务。首次真实运行按设计工作。
+- gen65 live = simplify-restart 线（001dd82cb），线性包含本包 R1–R6 全部提交；本文件所在线顶端 bb8e81ac4（webui services 面板时区统一渲染，修复 live(+0800)/stable(+00:00) 同屏不可比导致的 14:53 误读）待 gen66 部署生效。
