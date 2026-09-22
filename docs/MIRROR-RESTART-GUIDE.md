@@ -192,3 +192,25 @@ canonical 绑定，resolve 出的可写 store 与 git 快照必然分叉 →
   与 legacy 同路径，不可能分叉；
 - mutating 路径：绑定预检失败复用 `knowledge_preflight_failed` 回执标记
   （R1 白名单内：预检链零物理副作用 → 屏障自动释放，不残留假死屏障）。
+
+## 14. R2.1（2026-09-22）：gen64 部署时显式重启 cli 宿主
+
+`check_stale_services()` 的主动过期提示按设计排除 `service == "cli"`
+（cli 会话归操作员所有，运行中强杀等于打断自己）——代价是**部署新代后
+cli 宿主收不到任何主动提示，仍加载旧代码继续执行**。修复包（R1–R6）
+部署即 gen64 起生效，部署序列**最后一步**（spec §8 R2.1，操作员执行）：
+
+1. 受管服务（web/feishu/learning）照常经 `restart_mirror.sh` 重启到新代；
+2. **操作员显式重启 cli 宿主**——结束当前 CLI/代理会话并重新拉起
+   （新进程启动时自行写入 `proc_versions.jsonl` 最新记录）；
+3. 验收 `code_current=true`（cli 行的启动 HEAD == 当前 HEAD）：
+   - 代理侧：`architecture_status(dimensions=["process_versions"])`；
+   - 或 shell（镜像 PYTHONPATH 必须指向本区 src，见 §6 红线）：
+
+   ```bash
+   PYTHONPATH=src .venv/bin/python -c "from llm_loop.introspection.proc_version import get_process_versions as g; print([(s['pid'], s['git_head'], s['code_current']) for s in g()['services'] if s['service']=='cli'])"
+   ```
+
+   结果为空 = 新 cli 进程尚未写启动记录（等数秒重查）；仍为 `false` =
+   查询者自己还在旧进程里（旧进程查自己永远看到旧记录）——先确认会话
+   确已在新宿主中再判定验收失败。
