@@ -147,7 +147,41 @@ $ cat data/restart-receipt.json
    bootstrap 全量落表，默认唯一 protected=现役 code root（`runtime_manifest.json`
    的 workspace_root）+显式回滚候选，其余标 legacy；人工 retired 标记不被覆盖；
    缺失/损坏时消费方降级既有校验。GC（A4，9/19 再议）：只标记永不自动删除。
-4. `restart_mirror.sh preflight`：只读 dry-run（根校验+来源判定+webui 产物预检），
-   不触服务、不验 service_control 绑定；测试与运维共用。
+4. `restart_mirror.sh preflight`：只读 dry-run（根校验+来源判定+webui 产物预检
+   +store 绑定预检，2026-09-22 见 §13），不触服务、不验 service_control 绑定；
+   测试与运维共用。
 5. bash 陷阱记录：`$VAR` 后紧跟多字节字符（如全角括号）会被吞首字节成
    `VAR\xef: unbound variable`——一律 `${VAR}`。
+
+## 13. dual-root store 绑定（2026-09-22，gen63 事故制度化）
+
+背景：知识库随 87a971ade 进 git 后，干净 deploy worktree 自带 legacy store 快照
+（`experiences/`、`methods/` 位于 worktree 内、随代码检出）。共享 state 的
+dual-root 部署（linked worktree + `DATA_DIR` 推断到 common root）若不显式声明
+canonical 绑定，resolve 出的可写 store 与 git 快照必然分叉 →
+`knowledge_preflight_failed` 拒绝重启（守卫行为正确，缺的是部署侧声明）。
+事故时间线与修复包见 `docs/SPEC-20260922-service-control-restart-fixpack-v1.md`。
+
+### 13.1 绑定步骤（每次 dual-root 部署必做）
+
+1. 确认 canonical store 位置（主根，如 `<主根>/experiences`、`<主根>/methods`）；
+2. 在**主根 `.env`** 与 **deploy worktree `.env`** 两份文件中都显式声明：
+
+   ```
+   EXPERIENCES_DIR=<主根绝对路径>/experiences
+   METHODS_DIR=<主根绝对路径>/methods
+   ```
+
+   路径必须是绝对路径；只改其中一份 = 另一半部署仍走推断，分叉照旧；
+3. 重启前跑只读预检：`bash scripts/restart_mirror.sh preflight`
+   - 含 store 绑定校验（R2.3）：dual-root 缺声明 / 目录不可写 → 直接 fail；
+   - 通过标志：`✅ Knowledge store binding PASS`。
+
+### 13.2 判定语义（`knowledge_health --check-binding`）
+
+- dual-root 共享态 = linked worktree 且 `DATA_DIR` 解析在 code root 之外；
+  此形态**必须** `EXPERIENCES_DIR`/`METHODS_DIR` 显式声明且目录存在可写；
+- 单根部署、sidecar state（`DATA_DIR` 显式指向 worktree 内）豁免——推断绑定
+  与 legacy 同路径，不可能分叉；
+- mutating 路径：绑定预检失败复用 `knowledge_preflight_failed` 回执标记
+  （R1 白名单内：预检链零物理副作用 → 屏障自动释放，不残留假死屏障）。

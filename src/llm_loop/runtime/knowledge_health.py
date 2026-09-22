@@ -253,6 +253,49 @@ def run_preflight(
     return {"ok": health.get("status") == "healthy", "health": health}
 
 
+def check_store_binding(paths: RuntimePaths) -> dict[str, object]:
+    """Deployment-time store-binding policy check (read-only, never heals).
+
+    R2 (SPEC-20260922-service-control-restart-fixpack-v1): knowledge stores are
+    git-tracked, so a clean deploy worktree ships legacy store snapshots.  A
+    dual-root shared-state deployment (linked worktree whose persistent DATA_DIR
+    resolves outside the code root) MUST bind EXPERIENCES_DIR / METHODS_DIR
+    explicitly to the canonical stores; inference from DATA_DIR is exactly the
+    gen63 fork trigger.  Single-root and sidecar-state layouts are exempt
+    (inferred binding cannot diverge from legacy there).
+    """
+    linked = paths.git_common_root is not None and paths.git_common_root != paths.code_root
+    sidecar_state = False
+    try:
+        paths.data_dir.relative_to(paths.code_root)
+        sidecar_state = True
+    except ValueError:
+        sidecar_state = False
+    dual_root_shared_state = linked and not sidecar_state
+
+    reasons: list[str] = []
+    if dual_root_shared_state:
+        for label, source, store in (
+            ("experiences", paths.experiences_source, paths.experiences_dir),
+            ("methods", paths.methods_source, paths.methods_dir),
+        ):
+            if source != "explicit_env":
+                reasons.append(f"dual_root_store_binding_missing:{label}")
+                continue
+            if not store.is_dir():
+                reasons.append(f"store_dir_missing:{label}")
+            elif not os.access(store, os.W_OK):
+                reasons.append(f"store_dir_not_writable:{label}")
+
+    return {
+        "schema": "lfl.knowledge_binding_check.v1",
+        "ok": not reasons,
+        "dual_root_shared_state": dual_root_shared_state,
+        "reasons": reasons,
+        "binding": paths.binding_summary(),
+    }
+
+
 def _paths_from_process_env() -> RuntimePaths:
     from llm_loop.config import load_env_file
 
@@ -272,10 +315,15 @@ def _paths_from_process_env() -> RuntimePaths:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="LFL Knowledge Health preflight")
     parser.add_argument("--preflight", action="store_true")
+    parser.add_argument("--check-binding", action="store_true")
     parser.add_argument("--initialize-baseline", action="store_true")
     args = parser.parse_args(argv)
-    if not args.preflight:
-        parser.error("--preflight is required")
+    if bool(args.preflight) == bool(args.check_binding):
+        parser.error("exactly one of --preflight / --check-binding is required")
+    if args.check_binding:
+        result = check_store_binding(_paths_from_process_env())
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0 if result.get("ok") is True else 2
     result = run_preflight(
         _paths_from_process_env(), initialize_baseline=bool(args.initialize_baseline)
     )
