@@ -544,7 +544,12 @@ _prep_dsh_env() {
 # 两个不同的键！），且环境优先压过 .env——启动 shell 残留 DATA_DIR=<主区绝对路径>时
 # engine 直读主区 data → 镜像 web 显示主区会话（实证 pid 97159）。清空后由 .env 的
 # DATA_DIR=./data（cwd 锚定）接管。
-unset LFL_DATA_DIR PYTHONPATH FEISHU_APP_ID FEISHU_APP_SECRET DATA_DIR
+# 补 MCP_SERVERS 清理(2026-09-22 web 30s 假未就绪实证): DSH 会话环境向子 shell
+# 注入 MCP_SERVERS=[{"name":"dsh",…dsh_plugin_bridge.mjs}]，进程 env 优先级压过
+# .env——2026-09-17 的 .env 注释下线因此失效。服务启动即对已死桥做 15s initialize
+# 握手超时（fail-open 警告），并吃掉 web 30s 就绪窗口造成 rc=1 假失败
+# （restart-receipt 2026-09-22T21:32）。清空后由本区 .env（无 MCP_SERVERS）接管。
+unset LFL_DATA_DIR PYTHONPATH FEISHU_APP_ID FEISHU_APP_SECRET DATA_DIR MCP_SERVERS
 }
 
 # 按端口找监听进程（只识别目标端口；不会碰主区 8902）。

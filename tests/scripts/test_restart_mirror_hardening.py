@@ -115,6 +115,17 @@ def test_spawn_detached_replaces_bare_nohup():
     assert not re.search(r'nohup "\$VENV_PY" -m', src)  # 禁新的裸 nohup 启动行
 
 
+def test_prep_dsh_env_clears_ambient_mcp_servers():
+    # 2026-09-22 实证：DSH 会话环境注入 MCP_SERVERS（dsh 桥 15s initialize 超时），
+    # 进程 env 优先级压过 .env，2026-09-17 的 .env 注释下线失效；web 30s 就绪窗口
+    # 被握手吃掉 → restart-receipt rc=1 假失败。_prep_dsh_env 必须清空该锚点键。
+    src = _src()
+    body = src.split("_prep_dsh_env()", 1)[1].split("\n}", 1)[0]
+    assert re.search(r"unset[^\n]*\bMCP_SERVERS\b", body), (
+        "_prep_dsh_env 未清理环境注入的 MCP_SERVERS（dsh 桥启动握手超时事故）"
+    )
+
+
 def test_receipt_persisted_to_disk_on_every_branch():
     src = _src()
     assert "_write_receipt" in src
