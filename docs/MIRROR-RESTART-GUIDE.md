@@ -142,10 +142,17 @@ $ cat data/restart-receipt.json
 1a. **RUNTIME_ROOT 同判**（R4，2026-09-22，`_runtime_root_source_check`）：
    ambient `LFL_RESTART_RUNTIME_ROOT` 残留同样能污染预检根
    （`_knowledge_binding_preflight` 读 `$RUNTIME_ROOT` 下 `.env`），07:33 gen64
-   预检 aborted 证明残留源仍在复现。三态同上，确认变量为
+   预检 aborted 证明残留源仍在复现。确认变量为
    `LFL_RESTART_RUNTIME_ROOT_CONFIRMED=1`。受控路径
-   （`build_restart_plan`）显式带 CONFIRMED；直连 dual-root 操作须同时确认
-   两个根。审计行含 `var=` 触发变量名。
+   （`build_restart_plan`）显式带 CONFIRMED。审计行含 `var=` 触发变量名。
+ 1b. **同仓族降级**（S2，2026-09-22 简化包）：环境根与脚本目录同 Git 仓族
+   （`--git-common-dir` 相同，即本仓 linked worktree）时不再要求 CONFIRMED——
+   告警 + 审计 `outcome=deferred-to-verify` 后放行，由 service-control 部署
+   绑定核验（P0-A 字节级）裁决：残留指向未发布 worktree 时 verify 必拒。
+   异仓族（跨区/跨仓/无 Git 身份）维持自动化通道硬拒。动机：受控 dual-root
+   重启与会话残留共用「环境根≠脚本目录」形态，CONFIRMED 硬门曾把滚动升级
+   （旧控制器×新脚本，13:20 事故）砖死；降级后任意升级顺序自洽，直连
+   dual-root 操作（同仓族时）不再必须确认两个根。
 2. **嵌套 worktree 禁令**（dual-root 校验内 + `--check-add` guard）：
    CODE_ROOT 内含嵌套 worktree 一律拒绝；创建前用
    `scripts/bootstrap_worktree_registry.py --check-add <path>` 预检（拒绝 rc=2，

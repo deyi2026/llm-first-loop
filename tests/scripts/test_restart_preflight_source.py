@@ -148,5 +148,52 @@ def test_mutating_root_abort_writes_whitelisted_receipt(tmp_path: Path):
     assert rec["detail"] == "root_source_aborted"
 
 
+@pytest.mark.parametrize("env_var", ["LFL_RESTART_CODE_ROOT", "LFL_RESTART_RUNTIME_ROOT"])
+def test_same_repo_worktree_root_defers_to_verify(tmp_path: Path, env_var: str):
+    """S2: 同 Git 仓族的环境根只告警放行，裁决移交 service-control 绑定核验。
+
+    2026-09-22 13:20 事故根因：受控 dual-root 重启（代码 worktree + 镜像主根）
+    与会话残留共用「环境根 ≠ 脚本目录」这一形态，A3 无法区分，靠 CONFIRMED
+    硬门反而把滚动升级（旧控制器不带 CONFIRMED）砖死。降级后：同仓族
+    （--git-common-dir 相同）→ 告警 + 审计 outcome=deferred-to-verify，由
+    desired 部署绑定核验裁决；异仓族仍硬拒（见上一测试）。
+
+    断言走到 dual-root 校验（.venv 缺失 → dual_root_rejected 回执）即证明
+    来源判定已放行——旧语义在此处只会输出 root_source_aborted。
+    """
+    import json as _json
+    import subprocess as _sp
+
+    sibling = tmp_path / "sibling-worktree"
+    _sp.run(
+        ["git", "-C", str(_SCRIPT.parents[1]), "worktree", "add", "--detach", str(sibling), "HEAD"],
+        check=True,
+        capture_output=True,
+    )
+    try:
+        r = _run({env_var: str(sibling)}, target="web")
+        out = r.stdout + r.stderr
+        assert "拒绝重启" not in out, "同仓族环境根不得在来源判定处硬拒"
+        assert "同 Git 仓族" in out, "必须留下告警（非静默放行）"
+        # MIRROR_DIR=RUNTIME_ROOT：RUNTIME_ROOT 变体的审计/回执落在 sibling 根下
+        state_root = sibling if env_var == "LFL_RESTART_RUNTIME_ROOT" else _SCRIPT.parents[1]
+        audit = state_root / "data" / "audit" / "restart_preflight.log"
+        last = audit.read_text(encoding="utf-8").strip().splitlines()[-1]
+        assert f"var={env_var}" in last
+        assert "outcome=deferred-to-verify" in last
+        # 放行后死于 dual-root 校验（sibling 无 .venv），且按 S1 落白名单回执
+        assert r.returncode == 2
+        receipt = state_root / "data" / "restart-receipt.json"
+        rec = _json.loads(receipt.read_text(encoding="utf-8"))
+        assert rec["action"] == "web"
+        assert rec["detail"] == "dual_root_rejected"
+    finally:
+        _sp.run(
+            ["git", "-C", str(_SCRIPT.parents[1]), "worktree", "remove", "--force", str(sibling)],
+            check=False,
+            capture_output=True,
+        )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
