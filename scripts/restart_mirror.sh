@@ -68,6 +68,7 @@ CODE_ROOT="$(_resolve_root "${LFL_RESTART_CODE_ROOT:-$SCRIPT_ROOT}" CODE_ROOT)"
 MIRROR_DIR="$RUNTIME_ROOT"  # compatibility alias: every operational path stays canonical
 DUAL_ROOT=0
 [[ "$RUNTIME_ROOT" != "$CODE_ROOT" ]] && DUAL_ROOT=1
+RESTART_ARG1="${1:-web}"  # S1(2026-09-22): 函数内 $1 被遮蔽；根检查中止的回执需要脚本目标
 
 # ── T0-A3（2026-09-16；R4 2026-09-22 扩展到 RUNTIME_ROOT）: 根来源判定 ──
 # （须在 _validate_restart_roots 之前执行）
@@ -114,10 +115,16 @@ _root_source_abort() {  # $1=triggering_var
   printf '%s code_root_source=env-residue var=%s code_root=%s runtime_root=%s script_root=%s outcome=aborted\n' \
     "$(date '+%FT%T')" "$1" "$CODE_ROOT" "$RUNTIME_ROOT" "$SCRIPT_ROOT" \
     >> "$MIRROR_DIR/data/audit/restart_preflight.log" 2>/dev/null || true
+  # S1(2026-09-22): 变更目标的中止必须落 R1 白名单回执——worker 据此自动释放
+  # 屏障；不写回执则按"无回执 fail-closed"keep，零副作用中止被卡成死窗
+  # （2026-09-22 13:20 事故实证）。只读目标（preflight/status）保持零写入。
+  case "$RESTART_ARG1" in
+    web|feishu|learning|all) _write_receipt "$RESTART_ARG1" 2 "root_source_aborted" ;;
+  esac
   exit 2
 }
-_code_root_source_check || _root_source_abort LFL_RESTART_CODE_ROOT
-_runtime_root_source_check || _root_source_abort LFL_RESTART_RUNTIME_ROOT
+# 调用点在预检链末端（case 之前）——S1(2026-09-22) 从文件头部移入：
+# 原位置早于 _write_receipt 定义，中止路径无法履行回执义务。
 
 _validate_restart_roots() {
   [[ "$DUAL_ROOT" -eq 1 ]] || return 0
@@ -144,7 +151,7 @@ _validate_restart_roots() {
   nested_wt="$(git -C "$CODE_ROOT" worktree list --porcelain 2>/dev/null | awk -v root="$CODE_ROOT" '$1=="worktree"{p=substr($0,10); if (p!=root && index(p, root"/")==1) print p}')"
   [[ -z "$nested_wt" ]] || { echo "[mirror] ✗ dual-root 拒绝: CODE_ROOT 内含嵌套 worktree: $nested_wt" >&2; echo "[mirror]   先 git worktree remove 后重启" >&2; return 2; }
 }
-_validate_restart_roots
+# 调用点在预检链末端（S1 移入，与根来源判定同因：中止路径需 _write_receipt 已定义）。
 cd "$RUNTIME_ROOT"
 
 VENV_PY="$RUNTIME_ROOT/.venv/bin/python"
@@ -839,6 +846,22 @@ _status() {
     echo "learning: ❌ 未运行"
   fi
   echo "主区 web（:8902）: $(curl -sf --max-time 2 http://127.0.0.1:8902/health >/dev/null 2>&1 && echo '✅ 健康' || echo '⚠️ 未运行/不可达')"
+}
+
+# ── S1（简化包 2026-09-22）：根检查统一在预检链末端执行 ──
+# 位置从文件头部移到 case 之前：本行之前的代码全部只读（cd/resolver/函数定义），
+# 根来源中止与 dual-root 校验失败在此统一履行 R1 回执义务（白名单标记 →
+# worker 释放屏障），零物理副作用中止不再产生"无回执 keep"死窗。
+_code_root_source_check || _root_source_abort LFL_RESTART_CODE_ROOT
+_runtime_root_source_check || _root_source_abort LFL_RESTART_RUNTIME_ROOT
+_validate_restart_roots || {
+  case "$RESTART_ARG1" in
+    web|feishu|learning|all)
+      mkdir -p "$MIRROR_DIR/data" 2>/dev/null || true
+      _write_receipt "$RESTART_ARG1" 2 "dual_root_rejected"
+      ;;
+  esac
+  exit 2
 }
 
 case "${1:-web}" in

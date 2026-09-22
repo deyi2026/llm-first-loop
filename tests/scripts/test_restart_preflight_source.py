@@ -17,11 +17,11 @@ _SCRIPT_DIR = _SCRIPT.parent.resolve()
 RESIDUE_MARKER = "[A3-RESIDUE]"  # R4 参数化后的稳定残留标记（含两个根变量）
 
 
-def _run(extra_env: dict[str, str], timeout: int = 60) -> subprocess.CompletedProcess:
+def _run(extra_env: dict[str, str], timeout: int = 60, target: str = "preflight") -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if not k.startswith("LFL_RESTART")}
     env.update(extra_env)
     return subprocess.run(
-        ["bash", str(_SCRIPT), "preflight"],
+        ["bash", str(_SCRIPT), target],
         env=env,
         stdin=subprocess.DEVNULL,
         capture_output=True,
@@ -112,6 +112,40 @@ def test_runtime_root_confirmed_passes_source_check(tmp_path: Path):
     out = r.stdout + r.stderr
     assert "显式确认" in out
     assert "拒绝重启" not in out
+
+
+def test_mutating_root_abort_writes_whitelisted_receipt(tmp_path: Path):
+    """S1: 变更目标的根来源中止必须落 durable 回执（R1 白名单标记）。
+
+    2026-09-22 13:20 事故回归：A3 中止 exit 2 但不写回执 → worker 按无回执
+    fail-closed keep → 屏障卡死、消息排队无自动恢复。修复后预检链的回执
+    义务前移到根检查：先 _write_receipt("root_source_aborted") 再 exit 2。
+    只读目标（preflight/status）保持零写入。
+    """
+    import json as _json
+    import shutil as _shutil
+
+    runtime = tmp_path / "runtime-root"
+    venv_bin = runtime / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    # _write_receipt 只用 stdlib（datetime/json），系统 python3 即可承载
+    (venv_bin / "python").symlink_to(_shutil.which("python3"))
+    foreign = tmp_path / "foreign-code"  # 非 git、异仓族 → 来源判定硬拒
+    foreign.mkdir()
+    r = _run(
+        {
+            "LFL_RESTART_RUNTIME_ROOT": str(runtime),
+            "LFL_RESTART_CODE_ROOT": str(foreign),
+        },
+        target="web",
+    )
+    assert r.returncode == 2
+    receipt = runtime / "data" / "restart-receipt.json"
+    assert receipt.is_file(), "根来源中止必须落回执（R1 消费依赖）"
+    rec = _json.loads(receipt.read_text(encoding="utf-8"))
+    assert rec["action"] == "web"
+    assert rec["rc"] == 2
+    assert rec["detail"] == "root_source_aborted"
 
 
 if __name__ == "__main__":

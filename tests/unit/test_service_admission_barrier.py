@@ -427,16 +427,20 @@ class TestFeishuDefer:
 
 # ---------------------------------------------------------------------------
 # R1 (SPEC-20260922-service-control-restart-fixpack-v1): rc!=0 时 worker 消费
-# restart_mirror 落盘回执。矩阵：4 个预检链标记 → release（零物理副作用）；
+# restart_mirror 落盘回执。矩阵：预检链标记 → release（零物理副作用）；
 # mid-run 标记 / 无回执 / 解析失败 / scope、rc 不匹配 / 陈旧回执 → keep。
 # 脚本 fixture 经 $LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL 写回执，
 # 端到端覆盖 §6 单源路径契约注入。
+# S1（简化包 2026-09-22）：根来源中止（A3/R4）与 dual-root 校验失败同为
+# 零物理副作用中止（先回执后 exit，任何 _stop_* 都在其后）→ 入白名单。
 # ---------------------------------------------------------------------------
 _R1_PRECHECK_MARKERS = (
     "webui_artifact_preflight_failed",
     "service_control_binding_failed",
     "active_run_precheck_failed",
     "knowledge_preflight_failed",
+    "root_source_aborted",
+    "dual_root_rejected",
 )
 
 

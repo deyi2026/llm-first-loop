@@ -116,12 +116,16 @@ _MANAGED_SERVICE_NAMES = ("web", "feishu", "learning")
 # 失败标记白名单。脚本侧严格串行——预检失败先 _write_receipt 再 exit，任何
 # _stop_* 物理动作都在其后；命中即证明本次 rc!=0 零物理副作用，worker 可
 # 释放屏障。其余 detail / 无 receipt / receipt 存在但解析失败一律 fail-closed keep。
+# S1（简化包 2026-09-22）：根来源中止与 dual-root 校验失败移入同序——先回执
+# （root_source_aborted / dual_root_rejected）后 exit，任何 _stop_* 仍在其后。
 _RESTART_PRECHECK_FAILED_MARKERS: frozenset[str] = frozenset(
     {
         "webui_artifact_preflight_failed",
         "service_control_binding_failed",
         "active_run_precheck_failed",
         "knowledge_preflight_failed",
+        "root_source_aborted",
+        "dual_root_rejected",
     }
 )
 # §6 路径契约：回执相对路径单源常量，经 build_restart_plan 的
