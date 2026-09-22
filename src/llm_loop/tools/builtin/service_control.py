@@ -12,11 +12,14 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import current_session_id
 from llm_loop.runtime.admission_barrier import BarrierConflictError
 from llm_loop.runtime.service_control import (
+    NEXT_STEP_KIND_GENERATION_CONFLICT,
+    BindingProblemKind,
     DeploymentGenerationConflictError,
     ManagedServiceDeployment,
     ManagedServiceDeploymentStore,
     acknowledge_verify,
     adopt_admission_barrier,
+    binding_next_steps,
     build_deployment,
     compose_service_identity_view,
     record_model_override,
@@ -45,6 +48,22 @@ def _missing_artifacts(code_root: str) -> list[str]:
     if not dist.is_dir():
         return [str(dist)]
     return []
+
+
+def _next_step_text(kinds: list[str]) -> str:
+    """svc_deploy I7: 工具面失败文案同源追加一步（复用 I2 映射，禁止另写文案）."""
+    steps = binding_next_steps(kinds)
+    if not steps:
+        return ""
+    rendered = []
+    for step in steps:
+        if step.exit_action:
+            rendered.append(
+                f"{step.problem_kind}: 下一步 service_control(action={step.exit_action})；{step.note}"
+            )
+        else:
+            rendered.append(f"{step.problem_kind}: {step.note}")
+    return "next_step: " + "; ".join(rendered)
 
 
 class ServiceControlTool:
@@ -265,6 +284,7 @@ class ServiceControlTool:
                 target=target,
                 expected_generation=expected_generation,
                 requester_session_id=self._session_id_getter(),
+                origin="restart",
             )
         except (
             DeploymentGenerationConflictError,
@@ -331,9 +351,20 @@ class ServiceControlTool:
                 return None, (
                     "[service_control publish rejected] artifact_missing("
                     + ", ".join(missing)
-                    + f"): {exc}"
+                    + f"): {exc}; "
+                    + _next_step_text([BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE])
                 )
-            return None, f"[service_control publish rejected] binding: {type(exc).__name__}: {exc}"
+            # svc_deploy I7：同源追加可执行下一步（复用 I2 映射，禁止另写文案）。
+            if isinstance(exc, ValueError) and "clean" in str(exc):
+                binding_kind = BindingProblemKind.TRACKED_WORKTREE_DIRTY
+            elif isinstance(exc, ValueError):
+                binding_kind = BindingProblemKind.GIT_STATUS_UNAVAILABLE
+            else:
+                binding_kind = "publish_error"
+            return None, (
+                f"[service_control publish rejected] binding: {type(exc).__name__}: {exc}; "
+                + _next_step_text([binding_kind])
+            )
         try:
             self.store.compare_and_swap(
                 deployment, expected_generation=expected_generation
@@ -343,7 +374,8 @@ class ServiceControlTool:
             current_generation = current.generation if current is not None else 0
             return None, (
                 f"[service_control publish rejected] generation_conflict(current={current_generation}): "
-                f"{exc}; 可直接以 current 值重试"
+                f"{exc}; 可直接以 current 值重试; "
+                + _next_step_text([NEXT_STEP_KIND_GENERATION_CONFLICT])
             )
         except ValueError as exc:
             return None, f"[service_control publish rejected] generation/desired-state: {exc}"
@@ -378,6 +410,7 @@ class ServiceControlTool:
                 target=restart_target,
                 expected_generation=deployment.generation,
                 requester_session_id=self._session_id_getter(),
+                origin="update",
             )
         except (
             DeploymentGenerationConflictError,
@@ -391,7 +424,8 @@ class ServiceControlTool:
                 "[service_control update partial] desired 已发布到 "
                 f"generation={deployment.generation}（git_head={deployment.git_head}），"
                 f"但 restart 受理失败：{exc}; 可用 service_control(action=restart, "
-                f"target={restart_target}, expected_generation={deployment.generation}) 继续"
+                f"target={restart_target}, expected_generation={deployment.generation}) 继续; "
+                + _next_step_text([NEXT_STEP_KIND_GENERATION_CONFLICT])
             )
         try:
             self._worker_spawner(receipt.action_id)

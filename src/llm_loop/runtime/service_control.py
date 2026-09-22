@@ -34,7 +34,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -89,6 +89,9 @@ _ACTION_OPTIONAL_FIELDS = frozenset(
         "verify_evidence",
         "verify_verdict",
         "origin",
+        # svc_deploy N2: 被拒动作的可执行下一步（JSON 数组文本），与既有 6 项
+        # 同族同层；旧记录缺失即空值，不递增 schema 版本。
+        "next_step",
     }
 )
 _MANAGED_SERVICES = ("web", "feishu", "learning")
@@ -470,6 +473,9 @@ class ServiceControlAction:
     verify_verdict: str = ""
     # 触发来源：restart / update（update 是 publish+restart 的单语义封装）
     origin: str = ""
+    # svc_deploy N2：被拒动作的可执行下一步（JSON 数组文本；空 = 未产生）。
+    # 结构化、有界、不参与 detail 的 2000/400 截断；模型经 status 自动透出。
+    next_step: str = ""
 
     def __post_init__(self) -> None:
         if self.schema != _ACTION_SCHEMA:
@@ -515,6 +521,7 @@ class ServiceControlAction:
             verify_evidence=str(raw.get("verify_evidence") or ""),
             verify_verdict=str(raw.get("verify_verdict") or ""),
             origin=str(raw.get("origin") or ""),
+            next_step=str(raw.get("next_step") or ""),
         )
 
 
@@ -589,6 +596,195 @@ def _durable_detail(store: ManagedServiceDeploymentStore, detail: str) -> tuple[
     if not full:
         return "", ""
     return full[:2000], store.evidence.write_full(full)
+
+
+# --------------------------------------------------------------------------
+# svc_deploy N2：问题类 → 可执行下一步（单点映射，纯函数零 IO）
+#
+# 目的：把"被拒之后怎么走"写进模型/操作者实际拿到的回执。映射输入是**结构化
+# 类别**（BindingProblemKind），**禁止**解析 detail 文本/正则/相似度猜测（对齐
+# DEVELOPMENT_REPAIR_SAFETY Q5）。新增问题类 = 枚举加一项 + 本表加一行，不必
+# 扩启发式白名单。
+# --------------------------------------------------------------------------
+
+
+class BindingProblemKind:
+    """封闭枚举：binding 核验的 8 类问题（字面值即持久化/断言口径）。"""
+
+    CODE_ROOT_MISMATCH = "code_root_mismatch"
+    RUNTIME_ROOT_MISMATCH = "runtime_root_mismatch"
+    GIT_HEAD_UNAVAILABLE = "git_head_unavailable"
+    GIT_HEAD_MISMATCH = "git_head_mismatch"
+    TRACKED_WORKTREE_DIRTY = "tracked_worktree_dirty"
+    GIT_STATUS_UNAVAILABLE = "git_status_unavailable"
+    WEBUI_ARTIFACT_UNAVAILABLE = "webui_artifact_unavailable"
+    WEBUI_ARTIFACT_MISMATCH = "webui_artifact_mismatch"
+
+    ALL = frozenset(
+        {
+            CODE_ROOT_MISMATCH,
+            RUNTIME_ROOT_MISMATCH,
+            GIT_HEAD_UNAVAILABLE,
+            GIT_HEAD_MISMATCH,
+            TRACKED_WORKTREE_DIRTY,
+            GIT_STATUS_UNAVAILABLE,
+            WEBUI_ARTIFACT_UNAVAILABLE,
+            WEBUI_ARTIFACT_MISMATCH,
+        }
+    )
+
+
+# CAS 类冲突（非 binding 核验）复用同一映射表。
+NEXT_STEP_KIND_GENERATION_CONFLICT = "generation_conflict"
+
+
+@dataclass(frozen=True)
+class BindingProblem:
+    """一条 binding 问题：结构化类别 + 既有原文（逐字）+ 取值。
+
+    ``text`` 与既有 ``verify_deployment_binding`` 的 problem 原文逐字一致，
+    因此改由结构化事实源派生后，``verify_deployment_binding`` 的返回值不变。
+    """
+
+    kind: str
+    text: str
+    desired: str = ""
+    actual: str = ""
+
+
+@dataclass(frozen=True)
+class NextStep:
+    """一条指向既有可调用入口的下一步（事实型，不含完成裁决）。"""
+
+    problem_kind: str
+    exit_action: str
+    argv_hint: str
+    note: str
+
+
+# argv_hint 只含参数名与占位符，不落真实绝对路径（INV-7）。
+_NEXT_STEP_PUBLISH_ARGV_HINT = (
+    "--code-root <code_root> --runtime-root <runtime_root> --data-dir <data_dir>"
+)
+_NEXT_STEP_KEYS = ("problem_kind", "exit_action", "argv_hint", "note")
+
+# 单点映射表（顺序 = 输出顺序的声明优先级；deterministic、零 IO）。
+_NEXT_STEP_BY_KIND: Mapping[str, NextStep] = {
+    BindingProblemKind.GIT_HEAD_MISMATCH: NextStep(
+        problem_kind=BindingProblemKind.GIT_HEAD_MISMATCH,
+        exit_action="publish",
+        argv_hint=_NEXT_STEP_PUBLISH_ARGV_HINT,
+        note="desired 记录需推进到 code_root 当前 HEAD 后再 restart（走 publish/update）",
+    ),
+    BindingProblemKind.CODE_ROOT_MISMATCH: NextStep(
+        problem_kind=BindingProblemKind.CODE_ROOT_MISMATCH,
+        exit_action="publish",
+        argv_hint=_NEXT_STEP_PUBLISH_ARGV_HINT,
+        note="以 desired 记录的 code_root 规范路径重新 publish，再 restart",
+    ),
+    BindingProblemKind.RUNTIME_ROOT_MISMATCH: NextStep(
+        problem_kind=BindingProblemKind.RUNTIME_ROOT_MISMATCH,
+        exit_action="publish",
+        argv_hint=_NEXT_STEP_PUBLISH_ARGV_HINT,
+        note="以 desired 记录的 runtime_root 规范路径重新 publish，再 restart",
+    ),
+    BindingProblemKind.WEBUI_ARTIFACT_MISMATCH: NextStep(
+        problem_kind=BindingProblemKind.WEBUI_ARTIFACT_MISMATCH,
+        exit_action="publish",
+        argv_hint=_NEXT_STEP_PUBLISH_ARGV_HINT,
+        note="需先重建 webui/dist 产物后再 publish（程序不自动构建）",
+    ),
+    BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE: NextStep(
+        problem_kind=BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE,
+        exit_action="publish",
+        argv_hint=_NEXT_STEP_PUBLISH_ARGV_HINT,
+        note="webui/dist 缺失，需先构建产物后再 publish（程序不自动构建）",
+    ),
+    BindingProblemKind.TRACKED_WORKTREE_DIRTY: NextStep(
+        problem_kind=BindingProblemKind.TRACKED_WORKTREE_DIRTY,
+        exit_action="",
+        argv_hint="",
+        note="需先由操作者提交或还原 tracked 改动；程序不 stash/commit/checkout",
+    ),
+    BindingProblemKind.GIT_HEAD_UNAVAILABLE: NextStep(
+        problem_kind=BindingProblemKind.GIT_HEAD_UNAVAILABLE,
+        exit_action="",
+        argv_hint="",
+        note="git 不可用或非 worktree，非 service_control 可修复，无预设下一步",
+    ),
+    BindingProblemKind.GIT_STATUS_UNAVAILABLE: NextStep(
+        problem_kind=BindingProblemKind.GIT_STATUS_UNAVAILABLE,
+        exit_action="",
+        argv_hint="",
+        note="git status 不可用，非 service_control 可修复，无预设下一步",
+    ),
+    NEXT_STEP_KIND_GENERATION_CONFLICT: NextStep(
+        problem_kind=NEXT_STEP_KIND_GENERATION_CONFLICT,
+        exit_action="publish",
+        argv_hint=_NEXT_STEP_PUBLISH_ARGV_HINT,
+        note="以回执给出的 current 代重试（不自动重试）",
+    ),
+}
+
+_NEXT_STEP_UNREGISTERED_NOTE = "no_preset_next_step"
+
+
+def binding_next_steps(
+    problems: Sequence[BindingProblem] | Sequence[str],
+) -> tuple[NextStep, ...]:
+    """问题类集合 → 下一步元组（按声明顺序去重，同输入同输出）。
+
+    ``problems`` 既可传 ``BindingProblem`` 序列，也可传类别字面值序列。
+    未登记类别输出显式 ``no_preset_next_step``（不猜、不丢原文）。
+    """
+    kinds: list[str] = []
+    for problem in problems:
+        kind = problem.kind if isinstance(problem, BindingProblem) else str(problem)
+        if kind and kind not in kinds:
+            kinds.append(kind)
+    steps = [_NEXT_STEP_BY_KIND[kind] for kind in _NEXT_STEP_BY_KIND if kind in kinds]
+    for kind in kinds:
+        if kind not in _NEXT_STEP_BY_KIND:
+            steps.append(
+                NextStep(
+                    problem_kind=kind,
+                    exit_action="",
+                    argv_hint="",
+                    note=_NEXT_STEP_UNREGISTERED_NOTE,
+                )
+            )
+    return tuple(steps)
+
+
+def encode_next_steps(steps: Sequence[NextStep]) -> str:
+    """NextStep 序列 → JSON 数组文本（空输入 → ``""``，确定性排序）。"""
+    items = [dataclasses.asdict(step) for step in steps]
+    if not items:
+        return ""
+    return json.dumps(items, ensure_ascii=False, sort_keys=True)
+
+
+def decode_next_steps(raw: str) -> list[dict[str, str]]:
+    """JSON 数组文本 → 展示数组；损坏/非数组/元素非 dict → ``[]``（诚实降级）。"""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            return []
+        out.append({key: str(item.get(key) or "") for key in _NEXT_STEP_KEYS})
+    return out
+
+
+def _next_steps_view(kinds: Sequence[str]) -> list[dict[str, str]]:
+    """类别集合 → 展示用 next_step 数组（单点映射 + 编解码，纯函数零 IO）。"""
+    return decode_next_steps(encode_next_steps(binding_next_steps(kinds)))
 
 
 class ManagedServiceDeploymentStore:
@@ -749,6 +945,7 @@ class ManagedServiceDeploymentStore:
         verify_verdict: str | None = None,
         model_override: str | None = None,
         origin: str | None = None,
+        next_step: str | None = None,
     ) -> ServiceControlAction:
         with self.lease():
             action = self.read_action(action_id)
@@ -772,6 +969,7 @@ class ManagedServiceDeploymentStore:
                     action.model_override if model_override is None else model_override
                 ),
                 origin=action.origin if origin is None else origin,
+                next_step=action.next_step if next_step is None else next_step,
             )
             self._write_action_unlocked(updated)
             _release_barriers_for_transition(
@@ -787,6 +985,7 @@ class ManagedServiceDeploymentStore:
         target: str,
         expected_generation: int,
         requester_session_id: str,
+        origin: str = "",
     ) -> ServiceControlAction:
         if target not in _ACTION_TARGETS:
             raise ValueError(f"unsupported restart target: {target}")
@@ -813,6 +1012,8 @@ class ManagedServiceDeploymentStore:
                 created_at=now,
                 updated_at=now,
                 detail="",
+                # svc_deploy 5.3：审计可区分动作来源（update = publish+restart 单语义）。
+                origin=origin,
             )
             self._write_action_unlocked(action)
             # §8.2-4：受理与屏障建立原子化——屏障建立失败时受理一并失败，
@@ -2176,6 +2377,7 @@ def _mark_action(
     verify_evidence: str | None = None,
     verify_verdict: str | None = None,
     model_override: str | None = None,
+    next_step: str | None = None,
 ) -> ServiceControlAction:
     with store.lease():
         detail_text, reason_ref = _durable_detail(store, detail)
@@ -2195,6 +2397,7 @@ def _mark_action(
             model_override=(
                 action.model_override if model_override is None else model_override
             ),
+            next_step=action.next_step if next_step is None else next_step,
         )
         store._write_action_unlocked(updated)
         _release_barriers_for_transition(
@@ -2554,18 +2757,22 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             # without executing the (possibly pre-P0-A) restart script.
             # Feishu-only restarts do not consume WebUI artifacts, so the dist
             # tree hash is not a hard gate for them.
-            binding_problems = verify_deployment_binding(
+            binding_facts = _binding_problems_structured(
                 desired_now,
                 code_root=desired_now.code_root,
                 runtime_root=desired_now.runtime_root,
                 verify_webui=(latest.target != "feishu"),
             )
-            if binding_problems:
+            if binding_facts:
+                binding_problems = [problem.text for problem in binding_facts]
+                # svc_deploy N2：拒绝事实（detail）逐字不变；可执行下一步作为
+                # 独立结构化字段与 detail 在同一次原子写内落盘（无中间态）。
                 _mark_action(
                     store,
                     latest,
                     status="failed",
                     detail="deployment binding failed: " + "; ".join(binding_problems),
+                    next_step=encode_next_steps(binding_next_steps(binding_facts)),
                 )
                 return 4, None, ""
             running = _mark_action(store, latest, status="running")
@@ -2717,21 +2924,41 @@ def _tree_sha256(root: Path) -> str:
     return h.hexdigest()
 
 
-def verify_deployment_binding(
+def _binding_problems_structured(
     deployment: ManagedServiceDeployment,
     *,
     code_root: str | Path,
     runtime_root: str | Path,
     verify_webui: bool = True,
-) -> list[str]:
-    """Return exact desired-vs-physical binding mismatches; empty means qualified."""
+) -> list[BindingProblem]:
+    """svc_deploy I1: 8 类 binding 判定的结构化事实源。
+
+    判定顺序、条件与 git 子进程调用（次数与超时）与既有
+    ``verify_deployment_binding`` **完全一致**，只是把"文本 append"提升为
+    "（类别 + 原文 + 取值）append"，使下一步提示由结构化类别派生，而不是读
+    文本猜语义（对齐 Q5）。
+    """
     code = Path(code_root).expanduser().resolve()
     runtime = Path(runtime_root).expanduser().resolve()
-    problems: list[str] = []
+    problems: list[BindingProblem] = []
     if str(code) != deployment.code_root:
-        problems.append(f"code_root mismatch desired={deployment.code_root} actual={code}")
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.CODE_ROOT_MISMATCH,
+                text=f"code_root mismatch desired={deployment.code_root} actual={code}",
+                desired=deployment.code_root,
+                actual=str(code),
+            )
+        )
     if str(runtime) != deployment.runtime_root:
-        problems.append(f"runtime_root mismatch desired={deployment.runtime_root} actual={runtime}")
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.RUNTIME_ROOT_MISMATCH,
+                text=f"runtime_root mismatch desired={deployment.runtime_root} actual={runtime}",
+                desired=deployment.runtime_root,
+                actual=str(runtime),
+            )
+        )
     try:
         head = subprocess.run(
             ["git", "-C", str(code), "rev-parse", "HEAD"],
@@ -2741,10 +2968,22 @@ def verify_deployment_binding(
             timeout=5,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
-        problems.append(f"git_head unavailable: {type(exc).__name__}")
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.GIT_HEAD_UNAVAILABLE,
+                text=f"git_head unavailable: {type(exc).__name__}",
+            )
+        )
         head = ""
     if head and head != deployment.git_head:
-        problems.append(f"git_head mismatch desired={deployment.git_head} actual={head}")
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.GIT_HEAD_MISMATCH,
+                text=f"git_head mismatch desired={deployment.git_head} actual={head}",
+                desired=deployment.git_head,
+                actual=head,
+            )
+        )
     try:
         dirty = subprocess.run(
             ["git", "-C", str(code), "status", "--porcelain", "--untracked-files=no"],
@@ -2754,21 +2993,66 @@ def verify_deployment_binding(
             timeout=5,
         ).stdout.strip()
         if dirty:
-            problems.append("code_root tracked worktree is dirty")
+            problems.append(
+                BindingProblem(
+                    kind=BindingProblemKind.TRACKED_WORKTREE_DIRTY,
+                    text="code_root tracked worktree is dirty",
+                )
+            )
     except (OSError, subprocess.SubprocessError) as exc:
-        problems.append(f"git_status unavailable: {type(exc).__name__}")
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.GIT_STATUS_UNAVAILABLE,
+                text=f"git_status unavailable: {type(exc).__name__}",
+            )
+        )
     if verify_webui:
         try:
             artifact = _tree_sha256(code / "webui" / "dist")
         except (OSError, ValueError) as exc:
-            problems.append(f"webui artifact unavailable: {exc}")
+            problems.append(
+                BindingProblem(
+                    kind=BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE,
+                    text=f"webui artifact unavailable: {exc}",
+                )
+            )
         else:
             if artifact != deployment.webui_artifact_sha256:
                 problems.append(
-                    "webui artifact mismatch "
-                    f"desired={deployment.webui_artifact_sha256} actual={artifact}"
+                    BindingProblem(
+                        kind=BindingProblemKind.WEBUI_ARTIFACT_MISMATCH,
+                        text=(
+                            "webui artifact mismatch "
+                            f"desired={deployment.webui_artifact_sha256} actual={artifact}"
+                        ),
+                        desired=deployment.webui_artifact_sha256,
+                        actual=artifact,
+                    )
                 )
     return problems
+
+
+def verify_deployment_binding(
+    deployment: ManagedServiceDeployment,
+    *,
+    code_root: str | Path,
+    runtime_root: str | Path,
+    verify_webui: bool = True,
+) -> list[str]:
+    """Return exact desired-vs-physical binding mismatches; empty means qualified.
+
+    签名与返回值（problem 原文列表，逐字）保持不变；事实源改为
+    ``_binding_problems_structured`` 的文本投影，既有断言零改动。
+    """
+    return [
+        problem.text
+        for problem in _binding_problems_structured(
+            deployment,
+            code_root=code_root,
+            runtime_root=runtime_root,
+            verify_webui=verify_webui,
+        )
+    ]
 
 
 def build_deployment(
@@ -2813,6 +3097,29 @@ def _default_data_dir(runtime_root: Path) -> Path:
     return runtime_root / "data"
 
 
+def _derive_restart_target_from_code_root(code_root: str) -> str:
+    """svc_deploy I5: CLI update 缺省目标——按 code_root 路径名推导，否则 all.
+
+    与工具面 ``_derive_restart_target`` 同规则（单 worktree 多为 all；按服务
+    拆分 worktree 时只重启该服务）；缺省可被显式 ``--target`` 覆盖。
+    """
+    name = Path(code_root).expanduser().name.lower()
+    for service in ("web", "feishu", "learning"):
+        if service in name:
+            return service
+    return "all"
+
+
+def _missing_webui_artifacts(code_root: str | Path) -> list[str]:
+    """svc_deploy I5: 列出会让 build_deployment 产物绑定失败的缺失路径."""
+    dist = Path(code_root).expanduser() / "webui" / "dist"
+    if not dist.is_dir():
+        return [str(dist)]
+    if not any(path.is_file() for path in dist.rglob("*")):
+        return [str(dist)]
+    return []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="llm_loop.runtime.service_control")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2850,6 +3157,30 @@ def main(argv: list[str] | None = None) -> int:
         help="requester identity recorded on the durable action (audit)",
     )
 
+    # svc_deploy I5：CLI 一键部署入口（与工具面 action=update 同名同语义），
+    # 附显式别名 deploy。内部只复用既有机械边界，不另起判据。
+    update_cmd = sub.add_parser("update", aliases=["deploy"])
+    update_cmd.add_argument("--code-root", required=True)
+    update_cmd.add_argument("--runtime-root", required=True)
+    update_cmd.add_argument("--target", choices=_ACTION_TARGETS, default=None)
+    update_cmd.add_argument(
+        "--requester",
+        default="cli-update",
+        help="requester identity recorded on the durable action (audit)",
+    )
+    update_cmd.add_argument(
+        "--reason",
+        default="cli-update",
+        help="本次更新意图（进审计）；可选、缺省 cli-update（不新增必填门槛）",
+    )
+    update_cmd.add_argument(
+        "--expected-generation",
+        type=int,
+        default=None,
+        help="期望的当前 desired 代（CAS）；缺省自动取当前代",
+    )
+    update_cmd.add_argument("--data-dir")
+
     barriers = sub.add_parser("barriers")
     barriers.add_argument("--data-dir", required=True)
 
@@ -2876,11 +3207,57 @@ def main(argv: list[str] | None = None) -> int:
             expected_generation = current.generation if current is not None else 0
         else:
             expected_generation = args.expected_generation
-        deployment = build_deployment(
-            code_root=args.code_root,
-            runtime_root=runtime,
-            generation=expected_generation + 1,
-        )
+        # svc_deploy I6：publish 失败面自带可执行下一步（脏树/产物缺失结构化，
+        # 不再冒泡裸 traceback）；不自动 stash/commit/checkout。
+        try:
+            deployment = build_deployment(
+                code_root=args.code_root,
+                runtime_root=runtime,
+                generation=expected_generation + 1,
+            )
+        except ValueError as exc:
+            message = str(exc)
+            missing = _missing_webui_artifacts(args.code_root)
+            if missing or "artifact" in message.lower():
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "artifact_missing",
+                            "missing": missing,
+                            "next_step": _next_steps_view(
+                                [BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE]
+                            ),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
+                return 10
+            binding_kind = (
+                BindingProblemKind.TRACKED_WORKTREE_DIRTY
+                if "clean" in message
+                else BindingProblemKind.GIT_STATUS_UNAVAILABLE
+            )
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": (
+                            "dirty_worktree"
+                            if binding_kind == BindingProblemKind.TRACKED_WORKTREE_DIRTY
+                            else "publish_rejected"
+                        ),
+                        "detail": message,
+                        "next_step": _next_steps_view([binding_kind]),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return 10
         try:
             store.compare_and_swap(deployment, expected_generation=expected_generation)
         except DeploymentGenerationConflictError as exc:
@@ -2892,6 +3269,7 @@ def main(argv: list[str] | None = None) -> int:
                         "error": "generation_conflict",
                         "current": current.generation if current is not None else 0,
                         "detail": str(exc),
+                        "next_step": _next_steps_view([NEXT_STEP_KIND_GENERATION_CONFLICT]),
                     },
                     ensure_ascii=False,
                     sort_keys=True,
@@ -2910,14 +3288,25 @@ def main(argv: list[str] | None = None) -> int:
         if deployment is None:
             print("managed service deployment is not published", file=sys.stderr)
             return 4
-        problems = verify_deployment_binding(
+        binding_facts = _binding_problems_structured(
             deployment,
             code_root=args.code_root,
             runtime_root=args.runtime_root,
             verify_webui=not bool(args.skip_webui),
         )
-        if problems:
-            print(json.dumps({"ok": False, "problems": problems}, ensure_ascii=False), file=sys.stderr)
+        if binding_facts:
+            problems = [problem.text for problem in binding_facts]
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "problems": problems,
+                        "next_step": _next_steps_view([problem.kind for problem in binding_facts]),
+                    },
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
             return 5
         print(json.dumps({"ok": True, "generation": deployment.generation}, ensure_ascii=False))
         return 0
@@ -2944,10 +3333,18 @@ def main(argv: list[str] | None = None) -> int:
                 target=args.target,
                 expected_generation=deployment.generation,
                 requester_session_id=args.requester,
+                origin="restart",
             )
         except (DeploymentGenerationConflictError, BarrierConflictError) as exc:
             print(
-                json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False),
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": str(exc),
+                        "next_step": _next_steps_view([NEXT_STEP_KIND_GENERATION_CONFLICT]),
+                    },
+                    ensure_ascii=False,
+                ),
                 file=sys.stderr,
             )
             return 8
@@ -2965,6 +3362,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         rc = run_action_worker(store, action.action_id)
         final = store.read_action(action.action_id)
+        # svc_deploy I6：末行 JSON 只增键（next_step）、不增行；detail 的既有
+        # [:400] 行为与 rc 语义不变。
         print(
             json.dumps(
                 {
@@ -2974,6 +3373,158 @@ def main(argv: list[str] | None = None) -> int:
                     # L19: 展示片段 + 稳定 ref，完整原因经 reason_ref 可回读。
                     "detail": (final.detail if final else "")[:400],
                     "reason_ref": final.reason_ref if final else "",
+                    "next_step": decode_next_steps(final.next_step if final else ""),
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        return rc
+    if args.command in {"update", "deploy"}:
+        # svc_deploy I5：单语义「固化期望部署 + 物理生效」。内部依次复用既有
+        # build_deployment → compare_and_swap → accept_restart → run_action_worker，
+        # 不新增判据、不绕过 CAS/绑定核验/屏障/两阶段等待；执行形态与既有 CLI
+        # restart 一致（同步内联 worker）。
+        runtime = Path(args.runtime_root).expanduser().resolve()
+        data_dir = (
+            Path(args.data_dir).expanduser().resolve()
+            if args.data_dir
+            else _default_data_dir(runtime)
+        )
+        store = ManagedServiceDeploymentStore(data_dir)
+        restart_target = args.target or _derive_restart_target_from_code_root(args.code_root)
+        if args.expected_generation is None:
+            current = store.read()
+            expected_generation = current.generation if current is not None else 0
+        else:
+            expected_generation = args.expected_generation
+        try:
+            deployment = build_deployment(
+                code_root=args.code_root,
+                runtime_root=runtime,
+                generation=expected_generation + 1,
+            )
+        except ValueError as exc:
+            message = str(exc)
+            missing = _missing_webui_artifacts(args.code_root)
+            if missing or "artifact" in message.lower():
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "artifact_missing",
+                            "missing": missing,
+                            "next_step": _next_steps_view(
+                                [BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE]
+                            ),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
+                return 10
+            binding_kind = (
+                BindingProblemKind.TRACKED_WORKTREE_DIRTY
+                if "clean" in message
+                else BindingProblemKind.GIT_STATUS_UNAVAILABLE
+            )
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": (
+                            "dirty_worktree"
+                            if binding_kind == BindingProblemKind.TRACKED_WORKTREE_DIRTY
+                            else "publish_rejected"
+                        ),
+                        "detail": message,
+                        "next_step": _next_steps_view([binding_kind]),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return 10
+        try:
+            store.compare_and_swap(deployment, expected_generation=expected_generation)
+        except DeploymentGenerationConflictError as exc:
+            current = store.read()
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "generation_conflict",
+                        "current": current.generation if current is not None else 0,
+                        "detail": str(exc),
+                        "next_step": _next_steps_view([NEXT_STEP_KIND_GENERATION_CONFLICT]),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return 9
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {"ok": False, "error": "publish_rejected", "detail": str(exc)},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return 10
+        try:
+            action = store.accept_restart(
+                target=restart_target,
+                expected_generation=deployment.generation,
+                requester_session_id=args.requester,
+                origin="update",
+            )
+        except (DeploymentGenerationConflictError, BarrierConflictError) as exc:
+            # desired 已推进但物理未受理：如实回报已生效的一半（partial）。
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": str(exc),
+                        "generation": deployment.generation,
+                        "git_head": deployment.git_head,
+                        "next_step": _next_steps_view([NEXT_STEP_KIND_GENERATION_CONFLICT]),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return 8
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "action_id": action.action_id,
+                    "target": restart_target,
+                    "generation": deployment.generation,
+                    "git_head": deployment.git_head,
+                    "origin": "update",
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        rc = run_action_worker(store, action.action_id)
+        final = store.read_action(action.action_id)
+        print(
+            json.dumps(
+                {
+                    "ok": bool(final is not None and final.status == "succeeded"),
+                    "action_id": action.action_id,
+                    "status": final.status if final else "missing",
+                    "detail": (final.detail if final else "")[:400],
+                    "reason_ref": final.reason_ref if final else "",
+                    "next_step": decode_next_steps(final.next_step if final else ""),
                 },
                 ensure_ascii=False,
             ),

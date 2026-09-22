@@ -215,6 +215,13 @@ def test_worker_success_detail_records_identity(
         "llm_loop.runtime.service_control.verify_deployment_binding",
         lambda *_a, **_k: [],
     )
+    # svc_deploy: worker 的 binding 复检改由结构化事实源
+    # `_binding_problems_structured` 承担（verify_deployment_binding 是其文本
+    # 投影）。隔离缝随实现路径同步，断言不变。
+    monkeypatch.setattr(
+        "llm_loop.runtime.service_control._binding_problems_structured",
+        lambda *_a, **_k: [],
+    )
     # EVO-20260920-213965a1 案1: Phase-4 post-restart self-verify has its own
     # coverage in test_service_control_two_phase_restart.py; stub it here so
     # this test still isolates success-detail identity recording.

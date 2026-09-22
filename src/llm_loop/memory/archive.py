@@ -149,6 +149,9 @@ class ArchiveStore:
         # Serialize physical archive mutations without judging whether either fact is
         # semantically current; both remain valid historical truth.
         self._mutation_lock = threading.RLock()
+        # EVO-20260922 增量统计缓存: sid → {seg_path: ((mtime_ns, size), count, chars)}
+        # （读路径并发依赖 CPython dict 原子操作；最坏情形=并发重复扫描一次，不损正确性）
+        self._stats_cache: dict[str, dict[str, tuple[tuple[int, int], int, int]]] = {}
 
     def _path(self, session_id: str) -> Path:
         session_id = _validate_session_id(session_id)
@@ -688,26 +691,61 @@ class ArchiveStore:
         return None
 
     def stats(self, session_id: str) -> dict:
-        """压缩档案统计（供 architecture_status 展示，跨段累加）."""
-        count = 0
-        chars = 0
+        """压缩档案统计（供 architecture_status 展示，跨段累加）.
+
+        EVO-20260922 增量缓存（P1）: 按 (mtime_ns, size) 记忆每段统计，段未变
+        直接复用，仅新增/变更段重读——21GB 全库每次全扫 ~3s 的根因在此，
+        调用方 _sum_archive_stats / identity_history_exists 共用本口径同享收益。
+        失效键含 mtime_ns+size：append 改 size、update_summary 改 mtime，
+        正常写路径不会漏失效；删除段自动清键。段在 stat 时已消失 → 按 0 计
+        （不中断余段；旧实现此处 OSError 会让外部汇总 fail-open 截断，语义
+        收窄为更合理的部分统计）。T3b 跨段累加、单行损坏 fail-open 跳过均不变。
+        """
         try:
             segs = self._segment_paths(session_id)
         except ValueError:
             return {"archived_count": 0, "archived_chars": 0}
+        cache = self._stats_cache.setdefault(session_id, {})
+        seen: set[str] = set()
+        count = 0
+        chars = 0
         for p in segs:  # T3b: 跨段累加
-            with p.open("r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    count += 1
-                    try:
-                        entry = json.loads(line)
-                        chars += int(entry.get("chars", 0))
-                    except (json.JSONDecodeError, ValueError) as exc:  # fail-open：单行损坏跳过
-                        logging.getLogger(__name__).debug("档案统计单行损坏跳过（fail-open）: %s", exc)
+            try:
+                st = p.stat()
+            except OSError:
+                continue  # stat 期已消失的段按 0 计（fail-open，不中断余段）
+            key = str(p)
+            seen.add(key)
+            stamp = (st.st_mtime_ns, st.st_size)
+            hit = cache.get(key)
+            if hit is not None and hit[0] == stamp:
+                seg_count, seg_chars = hit[1], hit[2]
+            else:
+                seg_count, seg_chars = self._scan_segment_stats(p)
+                cache[key] = (stamp, seg_count, seg_chars)
+            count += seg_count
+            chars += seg_chars
+        for stale in cache.keys() - seen:
+            del cache[stale]  # 段被 GC/重组删除 → 缓存同步丢弃
         return {"archived_count": count, "archived_chars": chars}
+
+    @staticmethod
+    def _scan_segment_stats(p: Path) -> tuple[int, int]:
+        """单段全量扫描统计（行数 + chars 字段累加；单行损坏 fail-open 跳过）."""
+        seg_count = 0
+        seg_chars = 0
+        with p.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                seg_count += 1
+                try:
+                    entry = json.loads(line)
+                    seg_chars += int(entry.get("chars", 0))
+                except (json.JSONDecodeError, ValueError) as exc:  # fail-open：单行损坏跳过
+                    logging.getLogger(__name__).debug("档案统计单行损坏跳过（fail-open）: %s", exc)
+        return seg_count, seg_chars
 
     def update_summary(self, entry_id: str, summary: str, summary_source: str) -> bool:
         """按 id 回填摘要到档案条目（T28）.

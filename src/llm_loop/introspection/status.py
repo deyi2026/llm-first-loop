@@ -558,60 +558,60 @@ class ArchitectureStatusProvider:
         """构造八维状态快照（紧凑 JSON，维度可按需裁剪）.
 
         部分维度不可用时如实标注（不伪造状态）。
+        EVO-20260922 filter-first（P0）: dimensions 归一化提前到构建之前，
+        仅构建被请求的维度——旧实现全量构建 avail 后才过滤，带 dimensions 的
+        查询也照付昂贵维度（archive 全库统计/knowledge_health/pending_actions/
+        recovery 等）的全额成本。归一化契约不变（见 _normalize_dimensions）。
         """
+        # EVO-20260818/2026-08-20 防御归一化: dimensions 可能被模型传成字符串/残缺 JSON
+        # （JSON 字符串优先解析 → 逗号/空白拆分 → 过滤到已知维度集 → 全部非法回落全量）。
+        requested = _normalize_dimensions(dimensions, _SNAPSHOT_DIMENSIONS)
+
+        def _wants(name: str) -> bool:
+            # None = 全量回落；否则仅构建被请求维度
+            return requested is None or name in requested
+
         model_window = None
-        fn = getattr(self, "_model_context_fn", None)
-        if fn is not None:
-            try:
-                model_window = fn()
-            except Exception:  # noqa: BLE001 — 窗口查询失败如实标注 None（fail-open）
-                model_window = None
         runtime_params = None
-        fn2 = getattr(self, "_runtime_params_fn", None)
-        if fn2 is not None:
-            try:
-                runtime_params = fn2()
-            except Exception:  # noqa: BLE001 — 参数快照失败如实标注 None（fail-open）
-                runtime_params = None
         breakdown = None
-        breakdown_fn = getattr(self, "_context_breakdown_fn", None)
-        if breakdown_fn is not None:
-            try:
-                breakdown = breakdown_fn()
-            except Exception:  # noqa: BLE001 — missing fact stays unknown
-                breakdown = None
         budget = None
-        budget_fn = getattr(self, "_budget_fn", None)
-        if budget_fn is not None:
-            try:
-                budget = budget_fn()
-            except Exception:  # noqa: BLE001 — missing fact stays unknown
-                budget = None
-        model_fact_integrity = _model_fact_integrity(model_window, breakdown, budget)
-        request_usage_fn = self._request_usage_fn
-        _causality_requested = (
-            isinstance(dimensions, list) and "causality" in dimensions
-        ) or (
-            isinstance(dimensions, str)
-            and "causality" in {
-                item for item in re.split(r"[,，\s]+", dimensions) if item
-            }
-        )
+        model_fact_integrity = None
+        if _wants("context_usage"):
+            fn = getattr(self, "_model_context_fn", None)
+            if fn is not None:
+                try:
+                    model_window = fn()
+                except Exception:  # noqa: BLE001 — 窗口查询失败如实标注 None（fail-open）
+                    model_window = None
+            fn2 = getattr(self, "_runtime_params_fn", None)
+            if fn2 is not None:
+                try:
+                    runtime_params = fn2()
+                except Exception:  # noqa: BLE001 — 参数快照失败如实标注 None（fail-open）
+                    runtime_params = None
+            breakdown_fn = getattr(self, "_context_breakdown_fn", None)
+            if breakdown_fn is not None:
+                try:
+                    breakdown = breakdown_fn()
+                except Exception:  # noqa: BLE001 — missing fact stays unknown
+                    breakdown = None
+            budget_fn = getattr(self, "_budget_fn", None)
+            if budget_fn is not None:
+                try:
+                    budget = budget_fn()
+                except Exception:  # noqa: BLE001 — missing fact stays unknown
+                    budget = None
+            model_fact_integrity = _model_fact_integrity(model_window, breakdown, budget)
+        # causality/local_runtime 维持 on-demand 门控；归一化提前后按 requested 判断
+        # （与旧 raw-string 判断语义等价：None=全量=占位，显式请求才实算）
         _causality = (
             self._causality_snapshot(session_id)
-            if _causality_requested
+            if (requested is not None and "causality" in requested)
             else {"available": self._causality_fn is not None, "on_demand": True}
-        )
-        _local_runtime_requested = (
-            isinstance(dimensions, list) and "local_runtime" in dimensions
-        ) or (
-            isinstance(dimensions, str)
-            and "local_runtime"
-            in {item for item in re.split(r"[,，\s]+", dimensions) if item}
         )
         _local_runtime = (
             self._local_runtime_snapshot()
-            if _local_runtime_requested
+            if (requested is not None and "local_runtime" in requested)
             else {"available": self._local_runtime_fn is not None, "on_demand": True}
         )
         current_session_scope = bool(session_id)
@@ -638,10 +638,13 @@ class ArchitectureStatusProvider:
             for e in self._exception_log
             if not current_session_scope or e.session_id == session_id
         ][-10:]
-        avail = {
-            "current_phase": self._phase_for(session_id),
-            "action_trace": [a.to_dict() for a in action_trace],
-            "tool_history": [
+        avail: dict = {}
+        if _wants("current_phase"):
+            avail["current_phase"] = self._phase_for(session_id)
+        if _wants("action_trace"):
+            avail["action_trace"] = [a.to_dict() for a in action_trace]
+        if _wants("tool_history"):
+            avail["tool_history"] = [
                 {
                     "name": t.name,
                     "arguments": t.arguments,
@@ -651,10 +654,13 @@ class ArchitectureStatusProvider:
                     "session_id": t.session_id,
                 }
                 for t in tool_history
-            ],
-            "message_flow": message_flow,
-            "memory_state": self._memory_stats(),
-            "context_usage": {
+            ]
+        if _wants("message_flow"):
+            avail["message_flow"] = message_flow
+        if _wants("memory_state"):
+            avail["memory_state"] = self._memory_stats()
+        if _wants("context_usage"):
+            avail["context_usage"] = {
                 "llm_rounds": (
                     self._llm_rounds_by_session.get(session_id, 0)
                     if current_session_scope
@@ -673,15 +679,18 @@ class ArchitectureStatusProvider:
                 # 1M/300K/200K 三口径误读——AI 直接见 effective + limited_by）
                 "budget": budget,
                 "last_request": (
-                    request_usage_fn() if request_usage_fn is not None else None
+                    self._request_usage_fn()
+                    if self._request_usage_fn is not None
+                    else None
                 ),
                 # EVO-20260818（spec §5.4.1-2）: 缓存健康/cache_guard 快照（fail-open——
                 # 回调异常字段置 None 不抛穿 architecture_status）
                 "cache_health": self._cache_health_snapshot(),
                 "cache_guard": self._cache_guard_snapshot(session_id),
                 "records_hint": "完整历史运行记录可用 search_records 检索（不限于内存窗口）",
-            },
-            "exception_log": [
+            }
+        if _wants("exception_log"):
+            avail["exception_log"] = [
                 {
                     "phase": e.phase,
                     "error_type": e.error_type,
@@ -689,45 +698,52 @@ class ArchitectureStatusProvider:
                     "session_id": e.session_id,
                 }
                 for e in exception_log
-            ],
-            "architecture_config": self._config_status(),
-            # 2026-08-20 P2 规则版本信号: 读 docs/ai_rules.lite.md 头部 version（AI 感知版本变化→重读）
-            "rules_version": _rules_version(),
-            # P1-12(2026-08-16): 工作区变更检测（guard 检测 .env/providers.json/src/skills 变化
-            # 后写 flag → AI 经 architecture_status 自查可见; None = 无变更/未配置）
-            "workspace_changed": (
+            ]
+        if _wants("architecture_config"):
+            avail["architecture_config"] = self._config_status()
+        # 2026-08-20 P2 规则版本信号: 读 docs/ai_rules.lite.md 头部 version（AI 感知版本变化→重读）
+        if _wants("rules_version"):
+            avail["rules_version"] = _rules_version()
+        # P1-12(2026-08-16): 工作区变更检测（guard 检测 .env/providers.json/src/skills 变化
+        # 后写 flag → AI 经 architecture_status 自查可见; None = 无变更/未配置）
+        if _wants("workspace_changed"):
+            avail["workspace_changed"] = (
                 self._workspace_changed_fn() if self._workspace_changed_fn else None
-            ),
-            "process_versions": self._process_versions(),  # EVO-20260811-f94e5306
-            # M49（design §5.4）: 当前降级状态（有则显示，含 from/to/reason/ts; 无则全 None）
-            "model_fallback": self._fallback_status(),
-            # T4（spec.md 5.3.1）: 待办聚合（纯聚合无判断，AI 一站式感知系统待办）
-            "pending_actions": self._pending_actions(),
-            # P2-2: 备份状态（AI 经 architecture_status.recovery 感知待恢复备份）
-            "recovery": self._recovery_status(),
-            "knowledge_health": self._knowledge_health_snapshot(),
-            # R2/A6: 程序故障计数（fail-open 聚合，AI 可感知"程序故障率"）
-            "causality": _causality,
-            "local_runtime": _local_runtime,
-            "program_faults": dict(self._program_faults),
-        }
-        # EVO-20260818/2026-08-20 防御归一化: dimensions 可能被模型传成字符串/残缺 JSON
-        # （实测: `"["architecture_config", ..."` 截断字符串被拆成垃圾维度名 →
-        # 全部 unavailable 假错误）。增强: JSON 字符串优先解析 → 逗号/空白拆分 →
-        # 过滤到已知维度集 → 全部非法回落全量（模型拿到可用快照而非假错误）。
-        dimensions = _normalize_dimensions(dimensions, set(avail.keys()))
-        if dimensions:
-            out: dict = {}
-            for d in dimensions:
-                out[d] = avail.get(
-                    d,
-                    {
-                        "unavailable": f"维度 '{d}' 暂不可用",
-                        "available_dimensions": sorted(avail.keys()),
-                    },
-                )
-            return out
-        return avail
+            )
+        if _wants("process_versions"):
+            avail["process_versions"] = self._process_versions()  # EVO-20260811-f94e5306
+        # M49（design §5.4）: 当前降级状态（有则显示，含 from/to/reason/ts; 无则全 None）
+        if _wants("model_fallback"):
+            avail["model_fallback"] = self._fallback_status()
+        # T4（spec.md 5.3.1）: 待办聚合（纯聚合无判断，AI 一站式感知系统待办）
+        if _wants("pending_actions"):
+            avail["pending_actions"] = self._pending_actions()
+        # P2-2: 备份状态（AI 经 architecture_status.recovery 感知待恢复备份）
+        if _wants("recovery"):
+            avail["recovery"] = self._recovery_status()
+        if _wants("knowledge_health"):
+            avail["knowledge_health"] = self._knowledge_health_snapshot()
+        if _wants("causality"):
+            avail["causality"] = _causality
+        if _wants("local_runtime"):
+            avail["local_runtime"] = _local_runtime
+        # R2/A6: 程序故障计数（fail-open 聚合，AI 可感知"程序故障率"）
+        if _wants("program_faults"):
+            avail["program_faults"] = dict(self._program_faults)
+        # 全部非法/缺失（requested=None）→ 回落全量（模型拿到可用快照而非假错误）；
+        # 部分合法 → 只返回所请求维度，未知项保持 unavailable 标记（信息性保留）。
+        if requested is None:
+            return avail
+        out: dict = {}
+        for d in requested:
+            out[d] = avail.get(
+                d,
+                {
+                    "unavailable": f"维度 '{d}' 暂不可用",
+                    "available_dimensions": sorted(_SNAPSHOT_DIMENSIONS),
+                },
+            )
+        return out
 
     def _causality_snapshot(self, session_id: str) -> dict | None:
         fn = self._causality_fn
@@ -858,6 +874,17 @@ def _rules_version() -> str:
     except Exception:  # noqa: BLE001 — fail-open
         pass
     return ""
+
+
+# EVO-20260922 filter-first: snapshot 维度全集（与 snapshot() 内 avail 键一一对应，
+# 新增维度须两处同步；tests/unit/test_status_filter_first.py 有键集一致性守卫）
+_SNAPSHOT_DIMENSIONS: frozenset[str] = frozenset({
+    "current_phase", "action_trace", "tool_history", "message_flow",
+    "memory_state", "context_usage", "exception_log", "architecture_config",
+    "rules_version", "workspace_changed", "process_versions", "model_fallback",
+    "pending_actions", "recovery", "knowledge_health", "causality",
+    "local_runtime", "program_faults",
+})
 
 
 # 2026-08-20: 维度参数鲁棒归一化（EVO-20260820-6857bf41 修复）
