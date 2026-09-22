@@ -53,6 +53,24 @@ def _write_live_manifest(data_dir: Path, service: str, pid: int) -> None:
     )
 
 
+def _manifest_snippet(services: str) -> str:
+    """Shell fragment: 写与 desired 一致的 runtime manifest，使核验判 confirmed_ok.
+
+    这些用例覆盖 worker 的绑定/锁语义（核验语义另有专测）。lifecycle_agency
+    L6/L7 后，不产 manifest 的脚本会落到 verify_evidence_ready（判据缺失≠失败），
+    而非 succeeded。
+    """
+    return (
+        'mkdir -p "$LFL_RESTART_RUNTIME_ROOT/data/runtime"\n'
+        'head=$(git -C "$LFL_RESTART_CODE_ROOT" rev-parse HEAD)\n'
+        'started=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)\n'
+        "for svc in " + services + "; do\n"
+        '  printf \'{"pid": 1, "git_head": "%s", "started_at": "%s"}\\n\' "$head" "$started" '
+        '> "$LFL_RESTART_RUNTIME_ROOT/data/runtime/runtime_manifest.$svc.json"\n'
+        "done\n"
+    )
+
+
 def test_deployment_contract_is_closed_schema(tmp_path: Path) -> None:
     dep = _deployment(tmp_path)
     raw = dep.to_dict()
@@ -301,7 +319,8 @@ def test_action_worker_records_success_from_desired_state_script(tmp_path: Path)
     script.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        'printf "%s|%s|%s|%s\\n" "$1" "$LFL_RESTART_CODE_ROOT" "$LFL_RESTART_RUNTIME_ROOT" "${P0A_SHOULD_NOT_LEAK-unset}" > worker-marker.txt\n',
+        'printf "%s|%s|%s|%s\\n" "$1" "$LFL_RESTART_CODE_ROOT" "$LFL_RESTART_RUNTIME_ROOT" "${P0A_SHOULD_NOT_LEAK-unset}" > worker-marker.txt\n'
+        + _manifest_snippet("web"),
         encoding="utf-8",
     )
     subprocess.run(["git", "-C", str(code), "add", "scripts/restart_mirror.sh"], check=True)
@@ -491,7 +510,8 @@ def test_lifecycle_lock_serializes_publish_against_physical_restart(tmp_path: Pa
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
         'touch "$LFL_RESTART_RUNTIME_ROOT/lifecycle-started"\n'
-        "sleep 0.8\n",
+        + _manifest_snippet("web feishu learning")
+        + "sleep 0.8\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "-C", str(code), "add", "scripts/restart_mirror.sh"], check=True)
@@ -629,11 +649,11 @@ def test_detached_worker_uses_current_control_code_for_pre_p0a_target(
     script.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        'printf "%s\\n" "$1" > old-target-ran.txt\n',
+        'printf "%s\\n" "$1" > old-target-ran.txt\n'
+        + _manifest_snippet("web feishu learning"),
         encoding="utf-8",
     )
     import subprocess
-
     subprocess.run(["git", "-C", str(code), "add", "scripts/restart_mirror.sh"], check=True)
     subprocess.run(["git", "-C", str(code), "commit", "-qm", "old target script"], check=True)
     assert not (code / "src" / "llm_loop" / "runtime" / "service_control.py").exists()

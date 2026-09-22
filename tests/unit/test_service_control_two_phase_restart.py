@@ -202,7 +202,7 @@ def test_web_restart_waits_for_requester_without_lifecycle_lease(
     assert final is not None
     assert final.status == "succeeded"
     # EVO-20260920-213965a1 案1: 终态记录含控制面自核验结论。
-    assert "verify=ok" in (final.detail or "")
+    assert "verify=confirmed_ok" in (final.detail or "")
     assert (tmp_path / "marker.txt").read_text(encoding="utf-8").strip() == "target=web"
 
 
@@ -305,7 +305,7 @@ def test_feishu_restart_skips_requester_gate(
     final = store.read_action(action.action_id)
     assert final is not None
     assert final.status == "succeeded"
-    assert "verify=ok" in (final.detail or "")
+    assert "verify=confirmed_ok" in (final.detail or "")
     assert (tmp_path / "marker.txt").read_text(encoding="utf-8").strip() == "target=feishu"
 
 
@@ -329,7 +329,8 @@ def test_learning_target_records_targeted_action(tmp_path: Path) -> None:
     recorded = store.read_action(spawned[0])
     assert recorded is not None
     assert recorded.target == "learning"
-    assert "结束本轮" in result.content
+    # accepted 回执提供终态查询路径，不强制发起方立即结束本轮
+    assert "查询终态" in result.content
 
 
 def test_stale_waiting_action_reaped_on_next_accept(
@@ -361,17 +362,24 @@ def test_stale_waiting_action_reaped_on_next_accept(
     assert fresh.status == "accepted"
 
 
-def test_verify_failure_retries_then_fails_action(
+def test_verify_failure_records_evidence_without_rerun(
     tmp_path: Path, fast_waits: None
 ) -> None:
-    """EVO-20260920-213965a1 案1: 脚本 rc=0 但核验不过 → 有界重试 → failed(rc=5).
+    """lifecycle_agency L6/L7: 脚本 rc=0 但核验证据明确失败 → failed(rc=5)。
 
     manifest git_head 持续 mismatch，模拟"新进程没起来/起的还是旧版本"。
-    终态 detail 必须含控制面判定（verify=unhealthy + git_head_mismatch +
-    尝试次数），供下一会话 pending 投影消费。
+    程序只如实落三态证据（confirmed_fail + git_head_mismatch），不再自动
+    重跑物理脚本、不再自动替模型判终态。
     """
     store = ManagedServiceDeploymentStore(tmp_path / "data")
     _record_target_script(tmp_path)
+    script = tmp_path / "scripts" / "restart_mirror.sh"
+    script.write_text(
+        script.read_text(encoding="utf-8")
+        + 'echo run >> "$LFL_RESTART_RUNTIME_ROOT/runs.txt"\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
     deployment = _git_deployment(tmp_path)
     (tmp_path / "verify_head.txt").write_text("f" * 40, encoding="utf-8")
     store.compare_and_swap(deployment, expected_generation=0)
@@ -387,8 +395,8 @@ def test_verify_failure_retries_then_fails_action(
     final = store.read_action(action.action_id)
     assert final is not None
     assert final.status == "failed"
-    assert "verify failed after 2 attempt(s)" in (final.detail or "")
-    assert "verify=unhealthy" in (final.detail or "")
+    assert final.verify_verdict == "confirmed_fail"
+    assert "verify=confirmed_fail" in (final.detail or "")
     assert "git_head_mismatch" in (final.detail or "")
-    # 有界重试确实重跑了物理脚本（marker 仍写入），且不是无界循环。
-    assert (tmp_path / "marker.txt").read_text(encoding="utf-8").strip() == "target=feishu"
+    # L6: 程序不再据核验结论自动重跑——物理脚本只执行一次。
+    assert (tmp_path / "runs.txt").read_text(encoding="utf-8").splitlines() == ["run"]

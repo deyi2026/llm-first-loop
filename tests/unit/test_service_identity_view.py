@@ -112,6 +112,23 @@ def test_identity_view_green_when_live_matches_desired(tmp_path: Path) -> None:
         assert stable["git_head"] == HEAD_A
 
 
+def test_live_generation_match_marked_inferred_with_evidence(tmp_path: Path) -> None:
+    """L8: live 代次匹配是 git_head 相等性推断，须标注 inferred 并列原始证据."""
+    store = _green_store(tmp_path)
+    view = compose_service_identity_view(store)
+    web = view["services"]["web"]
+    live = web["live"]
+    assert live["matches_desired_generation"] is True
+    assert live["matches_desired_generation_inferred"] is True
+    evidence = live["matches_desired_generation_evidence"]
+    assert evidence["pid_alive"] is True
+    assert evidence["git_head"] == HEAD_A
+    assert evidence["desired_git_head"] == HEAD_A
+    # 只暴露文件名，不落绝对私有路径（spec 4.3-3）
+    assert evidence["manifest"] == "runtime_manifest.web.json"
+    assert evidence["manifest_present"] is True
+
+
 def test_identity_view_flags_drift_and_missing_manifest(tmp_path: Path) -> None:
     store = _green_store(tmp_path)
     # web: live code advanced beyond desired
@@ -201,9 +218,10 @@ def test_worker_success_detail_records_identity(
     # EVO-20260920-213965a1 案1: Phase-4 post-restart self-verify has its own
     # coverage in test_service_control_two_phase_restart.py; stub it here so
     # this test still isolates success-detail identity recording.
+    # lifecycle_agency L6/L7: 三态纯证据签名 (verdict, summary, healthy)。
     monkeypatch.setattr(
         "llm_loop.runtime.service_control._verify_restart_targets",
-        lambda *_a, **_k: (True, "verify=ok(stub)", ()),
+        lambda *_a, **_k: ("confirmed_ok", "verify=confirmed_ok(stub)", ()),
     )
     assert run_action_worker(store, action.action_id) == 0
     receipt = store.read_action(action.action_id)
@@ -326,3 +344,114 @@ def test_identity_view_exposes_server_tz_offset(tmp_path: Path) -> None:
     off = view["server_tz_offset_minutes"]
     assert isinstance(off, int)
     assert off == round(_dt.now().astimezone().utcoffset().total_seconds() // 60)
+
+def test_status_evidence_fields_present_and_well_formed(tmp_path: Path) -> None:
+    """L19/L20/L22/L24/tasks 9.1: status 只读证据面字段齐全且取值合法."""
+    store = _green_store(tmp_path)
+    view = compose_service_identity_view(store)
+    for key in (
+        "available_exits",
+        "gate_classification",
+        "compat_retirement",
+        "idle_state",
+        "stage_facts",
+        "evidence_refs",
+        "audit_signals",
+    ):
+        assert key in view, key
+    # live 代次是推断事实（L8）
+    assert view["services"]["web"]["live"]["inferred"] is True
+    # 分级表覆盖门禁（只读证据）
+    assert {row["gate"] for row in view["gate_classification"]} >= {"barrier", "verify"}
+    # 空闲三态（L22）
+    for entry in view["idle_state"].values():
+        assert entry["state"] in {"confirmed_busy", "confirmed_idle", "unconfirmable"}
+    # 四条审计信号（L24）
+    assert set(view["audit_signals"]) == {
+        "generation_lag",
+        "orphan_barrier",
+        "barrier_dir_changed",
+        "waiting_timeout",
+    }
+
+
+def test_status_evidence_view_is_read_only(tmp_path: Path) -> None:
+    """读取路径零副作用：不建目录、不落锁（spec 6.3）."""
+    data_dir = tmp_path / "data"
+    store = ManagedServiceDeploymentStore(data_dir)
+    before = sorted(p.name for p in data_dir.iterdir()) if data_dir.exists() else []
+    compose_service_identity_view(store)
+    after = sorted(p.name for p in data_dir.iterdir()) if data_dir.exists() else []
+    assert before == after
+    assert not (data_dir / "audit").exists()
+
+
+def test_available_exits_reflect_barrier_state(tmp_path: Path) -> None:
+    """L20: 屏障出现/消失时可用出口列表随之变化."""
+    store = _green_store(tmp_path)
+    assert not any(
+        row["gate"] == "barrier" for row in compose_service_identity_view(store)["available_exits"]
+    )
+    store.barriers.establish("web", operation_id="svc-exit-1", reason="restart")
+    rows = [
+        row
+        for row in compose_service_identity_view(store)["available_exits"]
+        if row["gate"] == "barrier"
+    ]
+    assert len(rows) == 1
+    assert rows[0]["service"] == "web"
+    assert set(rows[0]["exits"]) == {"release", "adopt", "override"}
+    # 屏障视图并列 owner 动作状态与可用出口
+    barrier = compose_service_identity_view(store)["services"]["web"]["admission_barrier"]
+    assert "owner_action_status" in barrier
+    assert barrier["available_exits"] == ["release", "adopt", "override"]
+
+
+def test_audit_signals_surface_stale_waiting_without_new_blocking(tmp_path: Path) -> None:
+    """L24: 等待超时/孤儿屏障作为只读信号呈现，不新增阻断行为."""
+    store = _green_store(tmp_path)
+    stale = ServiceControlAction(
+        schema="service-control-action/v1",
+        action_id="svc-stale-1",
+        action="restart",
+        target="web",
+        deployment_id="deploy-1",
+        deployment_generation=1,
+        requester_session_id="sess-x",
+        status="waiting_for_idle",
+        created_at="2020-01-01T00:00:00+00:00",
+        updated_at="2020-01-01T00:00:00+00:00",
+        detail="",
+    )
+    store._write_action_unlocked(stale)
+    store.barriers.establish("web", operation_id=stale.action_id, reason="restart")
+    view = compose_service_identity_view(store)
+    signals = view["audit_signals"]
+    assert any(row["action_id"] == "svc-stale-1" for row in signals["waiting_timeout"])
+    # 活跃 owner 的屏障不是孤儿；信号只呈现事实
+    assert signals["orphan_barrier"] == []
+    assert view["stage_facts"]["web"]["action_id"] == "svc-stale-1"
+
+def test_audit_signals_never_create_restart_required(tmp_path: Path) -> None:
+    """AC-19/L24: 审计信号只作只读证据，不进入 restart_required（不新增门禁）."""
+    store = _green_store(tmp_path)
+    stale = ServiceControlAction(
+        schema="service-control-action/v1",
+        action_id="svc-stale-2",
+        action="restart",
+        target="web",
+        deployment_id="deploy-1",
+        deployment_generation=1,
+        requester_session_id="sess-x",
+        status="waiting_for_idle",
+        created_at="2020-01-01T00:00:00+00:00",
+        updated_at="2020-01-01T00:00:00+00:00",
+        detail="",
+    )
+    store._write_action_unlocked(stale)
+    store.barriers.establish("web", operation_id=stale.action_id, reason="restart")
+    web = compose_service_identity_view(store)["services"]["web"]
+    assert web["restart_required"] is False
+    assert web["reasons"] == []
+
+

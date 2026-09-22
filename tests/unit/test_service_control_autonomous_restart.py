@@ -287,3 +287,53 @@ def test_tool_publish_rejects_dirty_worktree(tmp_path: Path) -> None:
     assert result.status == "failure", result.content
     assert "clean" in result.content
     assert store.read() is None
+
+def test_tool_publish_omits_expected_generation_defaults_to_current(tmp_path: Path) -> None:
+    """expected_generation 可省略：缺省自动取当前 desired 代做 CAS，无需先 status。
+
+    模型只需说『publish 这个 code_root』；工具内部读当前代（无记录则 0）。
+    """
+    _git_fixture(tmp_path)
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    tool = _tool(store)
+
+    result = tool.execute(action="publish", code_root=str(tmp_path))
+    assert result.status == "success", result.content
+    deployment = store.read()
+    assert deployment is not None
+    assert deployment.generation == 1
+
+    # 二次 publish（省略 expected_generation）→ 自动以 1 为 expected 推进到 2
+    result = tool.execute(action="publish", code_root=str(tmp_path))
+    assert result.status == "success", result.content
+    deployment = store.read()
+    assert deployment is not None
+    assert deployment.generation == 2
+    # 显式传入（新参数仍是 CAS 基线，语义不变）
+    assert tool.execute(
+        action="publish", code_root=str(tmp_path), expected_generation=2
+    ).status == "success"
+    assert store.read() is not None and store.read().generation == 3
+
+
+def test_tool_restart_omits_expected_generation_defaults_to_current(tmp_path: Path) -> None:
+    """restart 的 expected_generation 可省略：缺省取当前 desired 代，成功受理。"""
+    _git_fixture(tmp_path)
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    tool = _tool(store)
+    store.compare_and_swap(
+        sc.build_deployment(
+            code_root=str(tmp_path), runtime_root=str(tmp_path), generation=1
+        ),
+        expected_generation=0,
+    )
+
+    result = tool.execute(action="restart", target="web")
+    assert result.status == "success", result.content
+    assert "svc-" in (result.content or "")
+
+    # 显式传错代仍然拒绝（CAS 语义不因缺省而失效）
+    tool2 = _tool(store)
+    bad = tool2.execute(action="restart", target="web", expected_generation=99)
+    assert bad.status == "failure", bad.content
+    assert "generation" in bad.content

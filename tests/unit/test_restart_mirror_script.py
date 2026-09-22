@@ -36,6 +36,20 @@ def test_mirror_restart_waits_for_process_exit_not_only_port_release() -> None:
     assert "kill -KILL" in stop_block
 
 
+def test_mirror_direct_path_is_marked_non_authoritative() -> None:
+    """L16/tasks 8.1: 直连脚本回执显式非权威且指向 service_control 权威入口."""
+    root = Path(__file__).resolve().parents[2]
+    script = (root / "scripts/restart_mirror.sh").read_text(encoding="utf-8")
+    assert "direct-non-authoritative" in script
+    assert 'RESTART_AUTHORITY="service_control"' in script
+    assert "LFL_RESTART_ACTION_ID" in script
+    assert "service_control(action=restart|update)" in script
+    # 只标注、不新增拦截门禁：authority 分支内不得出现硬拒 exit。
+    assert len(script.split('if [[ "$RESTART_AUTHORITY" != "service_control" ]]', 1)) == 2
+    branch = script.split('if [[ "$RESTART_AUTHORITY" != "service_control" ]]', 1)[1]
+    assert "exit" not in branch.split("esac", 1)[0]
+
+
 def test_mirror_dsh_env_is_independent_of_caller_home_and_path() -> None:
     """Operator sandboxes must not become the long-lived LFL service identity."""
     root = Path(__file__).resolve().parents[2]

@@ -36,6 +36,11 @@
 #   # 自动化/AI 代执行（等长任务跑完 + 免交互确认，双开关缺一不可）:
 #   RESTART_WAIT_IDLE=1 FORCE=1 bash scripts/restart_mirror.sh all
 #
+# 权威入口（L16）：生命周期变更的唯一权威路径是 service_control
+#   （工具 action=restart|update，或 `python -m llm_loop.runtime.service_control
+#   restart`）；其 worker 注入 LFL_RESTART_ACTION_ID。直连本脚本无该变量，属
+#   非权威应急通道——回执标注 authority=direct-non-authoritative 并指向权威入口。
+#
 # 2026-09-09 加固（修1-修5，详见 tests/scripts/test_restart_mirror_hardening.py）:
 #   修1 重启前长任务保护: web/feishu/all 分支统一 _restart_precheck——poll 飞书
 #       心跳（processing_msg_id/queue_depth）至空闲；RESTART_WAIT_IDLE 超时回退
@@ -69,6 +74,32 @@ MIRROR_DIR="$RUNTIME_ROOT"  # compatibility alias: every operational path stays 
 DUAL_ROOT=0
 [[ "$RUNTIME_ROOT" != "$CODE_ROOT" ]] && DUAL_ROOT=1
 RESTART_ARG1="${1:-web}"  # S1(2026-09-22): 函数内 $1 被遮蔽；根检查中止的回执需要脚本目标
+
+# ── lifecycle_agency：结构化阶段事实 + 模型举证推进（tasks 3.1 / 2.3 / 5.x）──
+# STAGE_FACT: 结构化阶段事实（L4 取代 marker 白名单推断副作用）。worker 只读该
+#   字段判断"本次失败是否零物理副作用"，不再猜测 detail 文本。
+#   not_started → web_stopped/feishu_stopped/learning_stopped → started
+# OVERRIDE_GATES: worker 注入的、经模型结构化出口举证推进的一致性门禁（逗号
+#   分隔）。仅 consistency 类门禁可被列出；physical_impossible/identity_conflict
+#   永不出现在此（worker 侧已在 record_model_override 拒穿透）。
+LFL_RESTART_STAGE_FACT="${LFL_RESTART_STAGE_FACT:-not_started}"
+export LFL_RESTART_STAGE_FACT
+_override_enabled() {  # $1=gate
+  [[ ",${LFL_RESTART_OVERRIDE_GATES:-}," == *",$1,"* ]]
+}
+
+# ── 单一权威生命周期入口（tasks 8.1 / L16）──
+# 唯一权威路径是 service_control 工具/CLI：其 worker 注入 LFL_RESTART_ACTION_ID。
+# 直连本脚本（无 action_id）是合法操作员应急通道，但**非权威**——回执显式标注
+# 并指向权威入口，模型/自动化路径不得以直连为前置条件（spec 4.3-4）。此处只做
+# 事实标注，不新增拦截门禁（Admission asymmetry：不得增设控制机械）。
+LFL_RESTART_ACTION_ID="${LFL_RESTART_ACTION_ID:-}"
+if [[ -n "$LFL_RESTART_ACTION_ID" ]]; then
+  RESTART_AUTHORITY="service_control"
+else
+  RESTART_AUTHORITY="direct-non-authoritative"
+fi
+export LFL_RESTART_AUTHORITY="$RESTART_AUTHORITY"
 
 # ── T0-A3（2026-09-16；R4 2026-09-22 扩展到 RUNTIME_ROOT；S2 2026-09-22 降级同仓族）──
 # 当日事故根因: 会话环境残留 LFL_RESTART_CODE_ROOT 指向旧 worktree，脚本静默
@@ -125,8 +156,15 @@ _root_source_check() {  # $1=env_var $2=resolved_value $3=label $4=confirm_var
     echo "[mirror] $(date '+%H:%M:%S') 已取消（$label 来源未确认）"
     return 2
   fi
+  # lifecycle_agency L11/5.3: 根来源残留属 consistency——模型经结构化出口
+  # override(gate=precheck:root_source) 举证推进后仅作告警证据，不再硬拒。
+  if _override_enabled precheck:root_source; then
+    echo "[mirror] $(date '+%H:%M:%S') [A3-OVERRIDE] $label 残留已由模型举证推进（precheck:root_source），告警放行、裁决移交 verify"
+    _root_source_defer_audit "$env_var"
+    return 0
+  fi
   echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] 自动化通道检测到异仓族环境根 $label 且未显式确认, 拒绝重启"
-  echo "[mirror] $(date '+%H:%M:%S')    修复: 调用点显式 export ${env_var}=<目标> 并加 ${confirm_var}=1"
+  echo "[mirror] $(date '+%H:%M:%S')    修复: 调用点显式 export ${env_var}=<目标> 并加 ${confirm_var}=1，或经 service_control(action=override, gate=precheck:root_source, ...) 举证推进"
   return 2
 }
 _code_root_source_check() {
@@ -153,28 +191,46 @@ _root_source_abort() {  # $1=triggering_var
 
 _validate_restart_roots() {
   [[ "$DUAL_ROOT" -eq 1 ]] || return 0
-  [[ -x "$RUNTIME_ROOT/.venv/bin/python" ]] || { echo "[mirror] ✗ dual-root 拒绝: runtime .venv 缺失" >&2; return 2; }
-  [[ -f "$RUNTIME_ROOT/.env" ]] || { echo "[mirror] ✗ dual-root 拒绝: runtime .env 缺失" >&2; return 2; }
-  [[ -d "$CODE_ROOT/src/llm_loop" ]] || { echo "[mirror] ✗ dual-root 拒绝: code src/llm_loop 缺失" >&2; return 2; }
+  # 根结构完整性/身份类 = identity_conflict：不可 override 穿透（design 2.1.3.2）。
+  [[ -x "$RUNTIME_ROOT/.venv/bin/python" ]] || { echo "[mirror] ✗ dual-root 拒绝(identity): runtime .venv 缺失" >&2; return 2; }
+  [[ -f "$RUNTIME_ROOT/.env" ]] || { echo "[mirror] ✗ dual-root 拒绝(identity): runtime .env 缺失" >&2; return 2; }
+  [[ -d "$CODE_ROOT/src/llm_loop" ]] || { echo "[mirror] ✗ dual-root 拒绝(identity): code src/llm_loop 缺失" >&2; return 2; }
 
   local runtime_common code_common dirty
   runtime_common="$(git -C "$RUNTIME_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   code_common="$(git -C "$CODE_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-  [[ -n "$runtime_common" && -n "$code_common" ]] || { echo "[mirror] ✗ dual-root 拒绝: root 必须都是 Git worktree" >&2; return 2; }
+  [[ -n "$runtime_common" && -n "$code_common" ]] || { echo "[mirror] ✗ dual-root 拒绝(identity): root 必须都是 Git worktree" >&2; return 2; }
   runtime_common="$(cd "$runtime_common" 2>/dev/null && pwd -P)" || return 2
   code_common="$(cd "$code_common" 2>/dev/null && pwd -P)" || return 2
-  [[ "$runtime_common" == "$code_common" ]] || { echo "[mirror] ✗ dual-root 拒绝: git-common-dir 不一致" >&2; return 2; }
+  [[ "$runtime_common" == "$code_common" ]] || { echo "[mirror] ✗ dual-root 拒绝(identity): git-common-dir 不一致" >&2; return 2; }
+  git -C "$CODE_ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || { echo "[mirror] ✗ dual-root 拒绝(identity): CODE_ROOT HEAD 不可解析" >&2; return 2; }
 
+  # 以下为 consistency 类（L10/5.1）：不再是唯一出路，模型可经结构化出口
+  # override(gate=precheck:dual_root) 附证据推进；未推进时才硬拒。
   dirty="$(git -C "$CODE_ROOT" status --porcelain --untracked-files=normal 2>/dev/null || echo __git_status_failed__)"
-  [[ -z "$dirty" ]] || { echo "[mirror] ✗ dual-root 拒绝: CODE_ROOT 必须 clean" >&2; return 2; }
-  git -C "$CODE_ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || { echo "[mirror] ✗ dual-root 拒绝: CODE_ROOT HEAD 不可解析" >&2; return 2; }
+  if [[ -n "$dirty" ]]; then
+    if _override_enabled precheck:dual_root; then
+      echo "[mirror] [OVERRIDE] CODE_ROOT 树脏已由模型举证推进（precheck:dual_root），告警放行" >&2
+    else
+      echo "[mirror] ✗ dual-root 拒绝(consistency): CODE_ROOT 必须 clean" >&2
+      return 2
+    fi
+  fi
 
-  # T0-A2(2026-09-16): CODE_ROOT 内含嵌套 worktree 直接拒绝——嵌套目录会弄脏
-  # dual-root clean 校验并阻断部署（当日事故形态: 判基线 worktree 误建于现役
-  # code root 内部）。预防: scripts/bootstrap_worktree_registry.py --check-add。
+  # T0-A2(2026-09-16): CODE_ROOT 内含嵌套 worktree——嵌套目录会弄脏 dual-root
+  # clean 校验并阻断部署（当日事故形态: 判基线 worktree 误建于现役 code root
+  # 内部）。预防: scripts/bootstrap_worktree_registry.py --check-add。
   local nested_wt
   nested_wt="$(git -C "$CODE_ROOT" worktree list --porcelain 2>/dev/null | awk -v root="$CODE_ROOT" '$1=="worktree"{p=substr($0,10); if (p!=root && index(p, root"/")==1) print p}')"
-  [[ -z "$nested_wt" ]] || { echo "[mirror] ✗ dual-root 拒绝: CODE_ROOT 内含嵌套 worktree: $nested_wt" >&2; echo "[mirror]   先 git worktree remove 后重启" >&2; return 2; }
+  if [[ -n "$nested_wt" ]]; then
+    if _override_enabled precheck:dual_root; then
+      echo "[mirror] [OVERRIDE] CODE_ROOT 嵌套 worktree 已由模型举证推进（precheck:dual_root）: $nested_wt" >&2
+    else
+      echo "[mirror] ✗ dual-root 拒绝(consistency): CODE_ROOT 内含嵌套 worktree: $nested_wt" >&2
+      echo "[mirror]   先 git worktree remove 后重启，或 override(precheck:dual_root)" >&2
+      return 2
+    fi
+  fi
 }
 # 调用点在预检链末端（S1 移入，与根来源判定同因：中止路径需 _write_receipt 已定义）。
 cd "$RUNTIME_ROOT"
@@ -233,8 +289,12 @@ _webui_artifact_preflight() {
   local dist="${UI_V2_DIR:-$CODE_ROOT/webui/dist}"
   local index="$dist/index.html"
   if [[ ! -f "$index" ]]; then
+    if _override_enabled precheck:artifact; then
+      _log "⚠️ [OVERRIDE] Web V2 产物缺失已由模型举证推进（precheck:artifact）: $index 不存在，告警放行"
+      return 0
+    fi
     _log "✗ Web V2 artifact preflight failed: $index 不存在"
-    _log "  请先构建目标版本: cd '$CODE_ROOT/webui' && npm run build"
+    _log "  缺失清单: index.html 缺失；下一步: cd '$CODE_ROOT/webui' && npm run build（或 service_control action=update）"
     return 1
   fi
 
@@ -273,8 +333,12 @@ if missing:
     raise SystemExit(1)
 PYASSET
   then
-    _log "✗ Web V2 artifact preflight failed: index 引用的静态资源缺失"
-    _log "  请重新构建目标版本: cd '$CODE_ROOT/webui' && npm run build"
+    if _override_enabled precheck:artifact; then
+      _log "⚠️ [OVERRIDE] Web V2 引用资源缺失已由模型举证推进（precheck:artifact），告警放行"
+      return 0
+    fi
+    _log "✗ Web V2 artifact preflight failed: index 引用的静态资源缺失（缺失清单见上方 'missing Web V2 asset:' 行）"
+    _log "  下一步: cd '$CODE_ROOT/webui' && npm run build（或 service_control action=update）"
     return 1
   fi
   _log "✅ Web V2 artifact preflight PASS: $dist"
@@ -398,7 +462,13 @@ _restart_precheck() {
   fi
   _log "⚠️ 检测到活跃任务（${busy}）——重启会中断正在运行的流/任务。"
   if [[ -n "$run_busy" && "${RESTART_FORCE_ACTIVE_RUNS:-0}" != "1" ]]; then
-    _log "✗ Web active run fail-closed：即使 FORCE=1 也拒绝硬切。仅紧急人工裁决可额外设置 RESTART_FORCE_ACTIVE_RUNS=1。"
+    # L9/5.1: active_run_precheck 属 consistency——模型经结构化出口
+    # override(gate=precheck:active_run) 举证后可推进；未举证才 fail-closed。
+    if _override_enabled precheck:active_run; then
+      _log "⚠️ [OVERRIDE] Web active run 已由模型举证推进（precheck:active_run），继续重启"
+      return 0
+    fi
+    _log "✗ Web active run fail-closed：即使 FORCE=1 也拒绝硬切。仅紧急人工裁决可额外设置 RESTART_FORCE_ACTIVE_RUNS=1，或经 service_control(action=override, gate=precheck:active_run, ...) 举证推进。"
     return 1
   fi
   if [[ -n "$run_busy" && "${RESTART_FORCE_ACTIVE_RUNS:-0}" == "1" ]]; then
@@ -411,6 +481,10 @@ _restart_precheck() {
   fi
   if [[ "${FORCE:-0}" == "1" ]]; then
     _log "FORCE=1：跳过交互确认，强制继续（无 Web active run，或已显式 RESTART_FORCE_ACTIVE_RUNS=1）"
+    return 0
+  fi
+  if _override_enabled precheck:active_run; then
+    _log "⚠️ [OVERRIDE] 活跃任务已由模型举证推进（precheck:active_run），跳过交互确认"
     return 0
   fi
   echo -n "确认继续重启? (y/N) "
@@ -698,7 +772,7 @@ _write_receipt() {
   feishu_pid="$(_feishu_pids 2>/dev/null | head -1 || true)"
   learning_pid="$(_learning_pids 2>/dev/null | head -1 || true)"
   "$receipt_py" - "$RECEIPT_JSON" "$RECEIPT_LOG" "$action" "$rc" "$head" "$head_full" "$detail" "$web_pid" "$feishu_pid" "$learning_pid" <<'PY' 2>/dev/null || { _log "⚠️ 回执落盘失败（不影响服务状态）"; return 0; }
-import datetime, json, sys
+import datetime, json, os, sys
 jpath, lpath, action, rc, head, head_full, detail, web_pid, feishu_pid, learning_pid = sys.argv[1:11]
 rec = {
     "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -710,7 +784,19 @@ rec = {
     "feishu_pid": int(feishu_pid) if feishu_pid.strip().isdigit() else None,
     "learning_pid": int(learning_pid) if learning_pid.strip().isdigit() else None,
     "detail": detail,
+    # lifecycle_agency：回执身份绑定（L5）+ 结构化阶段事实（L4）。
+    "action_id": os.environ.get("LFL_RESTART_ACTION_ID", ""),
+    "stage_fact": os.environ.get("LFL_RESTART_STAGE_FACT", "not_started"),
+    # L16/tasks 8.1：单一权威入口——worker 注入 action_id 即权威；直连为非权威
+    # 应急通道，显式标注并给出权威入口指引，不产生第二套回执语义。
+    "authority": os.environ.get("LFL_RESTART_AUTHORITY", "direct-non-authoritative"),
+    "authoritative": os.environ.get("LFL_RESTART_AUTHORITY") == "service_control",
 }
+if not rec["authoritative"]:
+    rec["authority_hint"] = (
+        "直连 restart_mirror.sh 为非权威应急通道；模型/自动化请走 "
+        "service_control(action=restart|update)"
+    )
 line = json.dumps(rec, ensure_ascii=False)
 with open(jpath, "w") as f:
     f.write(line + "\n")
@@ -837,6 +923,11 @@ _knowledge_preflight() {
     _log "✅ Knowledge health preflight PASS"
     return 0
   fi
+  # L23/5.2: 保留守卫判定内核；新增模型显式声明出口（不取消守卫本身）。
+  if _override_enabled precheck:knowledge_store; then
+    _log "⚠️ [OVERRIDE] Knowledge health 已由模型显式声明推进（precheck:knowledge_store），告警放行并留痕"
+    return 0
+  fi
   _log "✗ Knowledge health preflight FAILED；拒绝停止现有服务，避免在错误/分叉 store 上重启"
   return 1
 }
@@ -853,7 +944,12 @@ _knowledge_binding_preflight() {
     _log "✅ Knowledge store binding PASS"
     return 0
   fi
-  _log "✗ dual-root store 绑定缺失/不可写；修复见 MIRROR-RESTART-GUIDE.md §13：主根与 worktree 两份 .env 显式声明 EXPERIENCES_DIR/METHODS_DIR 指向 canonical store"
+  # L23/5.2: 保留"分叉 store 拒绝静默选赢家"内核；新增模型显式声明出口。
+  if _override_enabled precheck:knowledge_binding; then
+    _log "⚠️ [OVERRIDE] dual-root store 绑定已由模型显式声明推进（precheck:knowledge_binding），告警放行并留痕"
+    return 0
+  fi
+  _log "✗ dual-root store 绑定缺失/不可写；修复见 MIRROR-RESTART-GUIDE.md §13：主根与 worktree 两份 .env 显式声明 EXPERIENCES_DIR/METHODS_DIR 指向 canonical store，或 override(precheck:knowledge_binding)"
   return 1
 }
 
@@ -898,6 +994,14 @@ _validate_restart_roots || {
   exit 2
 }
 
+if [[ "$RESTART_AUTHORITY" != "service_control" ]]; then
+  case "$RESTART_ARG1" in
+    web|feishu|learning|all)
+      _log "⚠️ [NON-AUTHORITATIVE] 直连重启为非权威应急通道；模型/自动化请走 service_control(action=restart|update)"
+      ;;
+  esac
+fi
+
 case "${1:-web}" in
   preflight) # T0-A3(2026-09-16): 只读 dry-run——根校验+来源判定+webui 产物；
              # 不触任何服务、不验 service_control 绑定（那是 mutating 路径的职责）。
@@ -916,7 +1020,12 @@ case "${1:-web}" in
              _rc=1
              _log "web 停止失败，跳过启动（防双进程）"
            else
-             _start_web || _rc=1
+             export LFL_RESTART_STAGE_FACT=web_stopped
+             if _start_web; then
+               export LFL_RESTART_STAGE_FACT=started
+             else
+               _rc=1
+             fi
            fi
            _write_receipt web "$_rc" "port=$RESTART_PORT"
            exit "$_rc" ;;
@@ -929,7 +1038,12 @@ case "${1:-web}" in
              _rc=1
              _log "feishu 停止失败，跳过启动"
            else
-             _start_feishu || _rc=1
+             export LFL_RESTART_STAGE_FACT=feishu_stopped
+             if _start_feishu; then
+               export LFL_RESTART_STAGE_FACT=started
+             else
+               _rc=1
+             fi
            fi
            _write_receipt feishu "$_rc" ""
            exit "$_rc" ;;
@@ -941,7 +1055,12 @@ case "${1:-web}" in
              _rc=1
              _log "Learning worker 停止失败，跳过启动"
            else
-             _start_learning || _rc=1
+             export LFL_RESTART_STAGE_FACT=learning_stopped
+             if _start_learning; then
+               export LFL_RESTART_STAGE_FACT=started
+             else
+               _rc=1
+             fi
            fi
            _write_receipt learning "$_rc" ""
            exit "$_rc" ;;
@@ -952,11 +1071,19 @@ case "${1:-web}" in
            _knowledge_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }
            # 修2(2026-09-09): 失败补偿——web 停/启失败不再 && 短路吞掉 feishu 恢复；
            # 各服务按自身停止成败独立决定是否重启（停失败强启=制造双进程，禁止）。
-           _rc=0; _web_stopped=0; _feishu_stopped=0; _learning_stopped=0
-           _stop_web "$RESTART_PORT" && _web_stopped=1 || _rc=1
-           _feishu_stop && _feishu_stopped=1 || _rc=1
-           _learning_stop && _learning_stopped=1 || _rc=1
-           if [[ "$_web_stopped" -eq 1 ]]; then
+            _rc=0; _web_stopped=0; _feishu_stopped=0; _learning_stopped=0
+            _stop_web "$RESTART_PORT" && _web_stopped=1 || _rc=1
+            _feishu_stop && _feishu_stopped=1 || _rc=1
+            _learning_stop && _learning_stopped=1 || _rc=1
+            # stage_fact 取"已执行到的最远阶段"（L4：worker 据此判断零副作用）
+            if [[ "$_learning_stopped" -eq 1 ]]; then
+              export LFL_RESTART_STAGE_FACT=learning_stopped
+            elif [[ "$_feishu_stopped" -eq 1 ]]; then
+              export LFL_RESTART_STAGE_FACT=feishu_stopped
+            elif [[ "$_web_stopped" -eq 1 ]]; then
+              export LFL_RESTART_STAGE_FACT=web_stopped
+            fi
+            if [[ "$_web_stopped" -eq 1 ]]; then
              _start_web || _rc=1
            else
              _log "web 停止失败，跳过其启动（防双进程）"
@@ -971,7 +1098,10 @@ case "${1:-web}" in
            else
              _log "Learning worker 停止失败，跳过其启动"
            fi
-           _write_receipt all "$_rc" "web_stopped=$_web_stopped feishu_stopped=$_feishu_stopped learning_stopped=$_learning_stopped"
+            if [[ "$_rc" -eq 0 ]]; then
+              export LFL_RESTART_STAGE_FACT=started
+            fi
+            _write_receipt all "$_rc" "web_stopped=$_web_stopped feishu_stopped=$_feishu_stopped learning_stopped=$_learning_stopped"
            exit "$_rc" ;;
   status)  _status ;;
   *)       echo "用法: $0 {web|feishu|learning|all|status}"; exit 1 ;;

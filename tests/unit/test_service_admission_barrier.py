@@ -272,7 +272,9 @@ class TestWorkerPaths:
         store = _store(tmp_path)
         reg = AdmissionBarrierRegistry(tmp_path / "data")
         action = store.accept_restart(target="web", expected_generation=1, requester_session_id="s1")
-        monkeypatch.setattr(sc, "_target_busy_reason", lambda *a, **k: "web: learning run active")
+        monkeypatch.setattr(
+            sc, "_target_idle_probe", lambda *a, **k: "confirmed_busy: web: learning run active"
+        )
         monkeypatch.setattr(sc, "_REQUESTER_EXIT_POLL_S", 0.02)
         monkeypatch.setattr(sc, "_REQUESTER_EXIT_TIMEOUT_S", 0.1)
         monkeypatch.setattr(sc, "_IDLE_POLL_S", 0.02)
@@ -426,15 +428,19 @@ class TestFeishuDefer:
 
 
 # ---------------------------------------------------------------------------
-# R1 (SPEC-20260922-service-control-restart-fixpack-v1): rc!=0 时 worker 消费
-# restart_mirror 落盘回执。矩阵：预检链标记 → release（零物理副作用）；
-# mid-run 标记 / 无回执 / 解析失败 / scope、rc 不匹配 / 陈旧回执 → keep。
-# 脚本 fixture 经 $LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL 写回执，
-# 端到端覆盖 §6 单源路径契约注入。
-# S1（简化包 2026-09-22）：根来源中止（A3/R4）与 dual-root 校验失败同为
-# 零物理副作用中止（先回执后 exit，任何 _stop_* 都在其后）→ 入白名单。
+# R1 (SPEC-20260922-service-control-restart-fixpack-v1) + lifecycle_agency L4/L5:
+# rc!=0 时 worker 消费 restart_mirror 落盘回执决定屏障命运。矩阵：
+#   stage_fact=not_started（预检/根来源中止，尚未进入 _stop_*）→ release；
+#   stage_fact 缺失或已进入停止阶段、无回执、解析失败、scope/rc/action_id
+#   不匹配 → fail-closed keep。
+# 归属判定改由 action_id 身份绑定（L5，时间不再是判据）；零副作用判定改由
+# 结构化 stage_fact（L4，detail 文本不再是判据）。脚本 fixture 经
+# $LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL 写回执，端到端覆盖 §6
+# 单源路径契约注入。
 # ---------------------------------------------------------------------------
 _R1_PRECHECK_MARKERS = (
+    # 真实脚本在这些预检/根来源中止点均声明 stage_fact=not_started；以下文本
+    # 仅作回执 detail 展示，已不参与任何判定。
     "webui_artifact_preflight_failed",
     "service_control_binding_failed",
     "active_run_precheck_failed",
@@ -478,32 +484,37 @@ class TestR1ReceiptConsumption:
         action: str = "web",
         rc: int = 1,
         detail: str = "",
-        stale_ts: str | None = None,
+        stage_fact: str | None = "not_started",
         write_receipt: bool = True,
         raw_receipt: str | None = None,
         exit_code: int | None = None,
+        action_id: str = "$LFL_RESTART_ACTION_ID",
     ) -> str:
         import shlex
 
         if raw_receipt is not None:
-            payload_line = f"printf '%s\\n' {shlex.quote(raw_receipt)} > \"$LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL\"\n"
-        elif write_receipt:
-            fixed = json.dumps(
-                {"action": action, "rc": rc, "detail": detail, "git_head": "fixture"},
-                ensure_ascii=False,
+            payload_line = (
+                f"printf '%s\\n' {shlex.quote(raw_receipt)} "
+                '> "$LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL"\n'
             )
-            # ts 于脚本运行时生成（与真实 _write_receipt 同为秒分辨率本地时区），
-            # 保证 ≥ worker 的 restarted_at；格式串只含一个 %s，参数在 bash 侧
-            # 拼接——printf 会复用格式串，多参数会产生第二行非法 JSON。
-            if stale_ts:
-                line = fixed[:-1] + f',"ts":"{stale_ts}"}}'
-                payload_line = f"printf '%s\\n' {shlex.quote(line)} > \"$LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL\"\n"
-            else:
-                prefix = fixed[:-1] + ',"ts":"'
-                payload_line = (
-                    'ts="$(date +%Y-%m-%dT%H:%M:%S%z)"\n'
-                    f"printf '%s\\n' {shlex.quote(prefix)}\"$ts\"'\"}}' > \"$LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL\"\n"
-                )
+        elif write_receipt:
+            # L5: 归属由 action_id 身份绑定判定——回执运行时取
+            # $LFL_RESTART_ACTION_ID（build_restart_plan 注入），时间不再是判据。
+            json_fmt = '{"action": "%s", "rc": %s, "detail": "%s"'
+            fmt_args: list[str] = [action, str(rc), detail]
+            if stage_fact is not None:
+                json_fmt += ', "stage_fact": "%s"'
+                fmt_args.append(stage_fact)
+            json_fmt += ', "action_id": "%s"}\\n'
+            fmt_args.append(action_id)
+            rendered = " ".join(
+                f'"{arg}"' if arg.startswith("$") else shlex.quote(arg)
+                for arg in fmt_args
+            )
+            payload_line = (
+                f"printf {shlex.quote(json_fmt)} {rendered} "
+                '> "$LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL"\n'
+            )
         else:
             payload_line = ""
         return (
@@ -524,7 +535,9 @@ class TestR1ReceiptConsumption:
         assert rc == 1
         final = store.read_action(action.action_id)
         assert final.status == "failed"
-        assert f"receipt={marker}" in final.detail
+        # L4: 屏障命运由结构化 stage_fact 决定；detail 文本（原 marker 白名单）
+        # 不再是判据，仅作回执展示。
+        assert "receipt=stage_fact=not_started" in final.detail
         assert reg.blocked("web") is None  # 预检失败零副作用 → 自动释放
 
     def test_precheck_marker_all_target_releases_three_services(
@@ -541,21 +554,46 @@ class TestR1ReceiptConsumption:
         for service in ("web", "feishu", "learning"):
             assert reg.blocked(service) is None, service
 
-    def test_midrun_marker_keeps_barriers(
+    def test_midrun_stage_fact_keeps_barriers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         store, reg, action = self._fixture(
             tmp_path,
             monkeypatch,
-            self._script(action="web", rc=1, detail="port=8317 web_stopped=true"),
+            self._script(
+                action="web",
+                rc=1,
+                detail="port=8317 web_stopped=true",
+                stage_fact="web_stopped",
+            ),
         )
         rc = sc.run_action_worker(store, action.action_id)
         assert rc == 1
         final = store.read_action(action.action_id)
         assert final.status == "failed"
-        assert "marker=" in final.detail  # 非 OK-reason 标记 → keep
+        assert "receipt=stage_fact=web_stopped" in final.detail  # 已进入停止阶段 → keep
         blocked = reg.blocked("web")
         assert blocked is not None and blocked.operation_id == action.action_id
+
+    def test_stage_fact_absent_keeps_barriers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """L4: 旧回执无结构化事实 → fail-closed keep（不再靠 detail 文本猜）."""
+        store, reg, action = self._fixture(
+            tmp_path,
+            monkeypatch,
+            self._script(
+                action="web",
+                rc=1,
+                detail="knowledge_preflight_failed",
+                stage_fact=None,
+            ),
+        )
+        rc = sc.run_action_worker(store, action.action_id)
+        assert rc == 1
+        final = store.read_action(action.action_id)
+        assert "receipt=stage_fact_absent" in final.detail
+        assert reg.blocked("web") is not None
 
     def test_absent_receipt_keeps_barriers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -611,9 +649,14 @@ class TestR1ReceiptConsumption:
         assert "rc=0!=1" in final.detail
         assert reg.blocked("web") is not None
 
-    def test_stale_receipt_keeps_barriers(
+    def test_action_id_mismatch_keeps_barriers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """L5: 归属改由 action_id 身份绑定判定；时间接近不再是判据.
+
+        回执 stage_fact=not_started 本可释放，但 action_id 与本次动作不符 →
+        fail-closed keep（历史回执不得改变本次屏障命运）。
+        """
         store, reg, action = self._fixture(
             tmp_path,
             monkeypatch,
@@ -621,13 +664,14 @@ class TestR1ReceiptConsumption:
                 action="web",
                 rc=1,
                 detail="knowledge_preflight_failed",
-                stale_ts="2020-01-01T00:00:00+08:00",
+                stage_fact="not_started",
+                action_id="svc-other-action",
             ),
         )
         rc = sc.run_action_worker(store, action.action_id)
         assert rc == 1
         final = store.read_action(action.action_id)
-        assert "receipt=stale" in final.detail
+        assert "receipt=action_id_mismatch" in final.detail
         assert reg.blocked("web") is not None
 
 
@@ -735,13 +779,13 @@ class TestRestartCLI:
         assert accepted["ok"] is True and accepted["generation"] == 1
         action_id = accepted["action_id"]
         assert final["ok"] is False and final["status"] == "failed"
-        assert "receipt=knowledge_preflight_failed" in final["detail"]
+        assert "receipt=stage_fact=not_started" in final["detail"]
         record = json.loads(
             (data / "runtime" / "service-control-actions" / f"{action_id}.json").read_text(encoding="utf-8")
         )
         assert record["requester_session_id"] == "cli-test"
         assert record["status"] == "failed"
-        assert reg.blocked("web") is None  # 白名单回执 → 屏障自动释放
+        assert reg.blocked("web") is None  # stage_fact=not_started → 屏障自动释放
 
     def test_restart_cli_requires_published_deployment(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         data = tmp_path / "data"
