@@ -221,3 +221,24 @@ cli 宿主收不到任何主动提示，仍加载旧代码继续执行**。修�
    结果为空 = 新 cli 进程尚未写启动记录（等数秒重查）；仍为 `false` =
    查询者自己还在旧进程里（旧进程查自己永远看到旧记录）——先确认会话
    确已在新宿主中再判定验收失败。
+
+## 15. 一条命令的受控重启（S3，2026-09-22 简化包）
+
+直连脚本与动作链两条路径并存是事故放大器：直连不写 durable 回执（stable 落后、
+R6 只能标 stale），操作员/模型要在两套语义里选，恢复期容易选错门。此后**受控
+重启只有一扇门**：
+
+```bash
+PYTHONPATH=src .venv/bin/python -m llm_loop.runtime.service_control restart \
+  --data-dir data [--target web|feishu|learning|all] [--requester <身份>]
+```
+
+语义：受理（屏障随受理原子建立，重启窗口内消息持久化排队）→ worker 内联执行
+物理重启 + 核验 → 终态回执（succeeded/failed）落 `service-control-actions/`，
+stable 凭证只在 succeeded 时前进；预检类失败按 R1/S1 白名单回执自动释放屏障，
+消息立即恢复流动。stdout 两行 JSON：受理行（action_id/generation）+ 终态行
+（ok/status/detail）；rc 透传 worker。
+
+直连 `restart_mirror.sh` 退为应急通道（如控制面自身不可用时）；其结果不写
+动作回执，stable 依 R6 如实滞后。升级到含本节的版本后，建议尽快走一次 CLI
+restart 让 stable 凭证收敛。

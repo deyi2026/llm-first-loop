@@ -1692,6 +1692,15 @@ def main(argv: list[str] | None = None) -> int:
     worker.add_argument("--data-dir", required=True)
     worker.add_argument("--action-id", required=True)
 
+    restart_cmd = sub.add_parser("restart")
+    restart_cmd.add_argument("--data-dir", required=True)
+    restart_cmd.add_argument("--target", choices=_ACTION_TARGETS, default="all")
+    restart_cmd.add_argument(
+        "--requester",
+        default="cli-restart",
+        help="requester identity recorded on the durable action (audit)",
+    )
+
     barriers = sub.add_parser("barriers")
     barriers.add_argument("--data-dir", required=True)
 
@@ -1741,6 +1750,61 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "worker":
         return run_action_worker(ManagedServiceDeploymentStore(args.data_dir), args.action_id)
+    if args.command == "restart":
+        # S3（简化包 2026-09-22）：一条命令的受控重启——受理 + worker 内联。
+        # 直连脚本与动作链并存是事故放大器（直连不写回执 → stable 落后、操作员
+        # 需懂两套语义）；此后操作员/模型只走这一扇门，回执必写、屏障全托管，
+        # 直连 restart_mirror.sh 退为应急通道。rc 透传 worker（脚本/核验结论）。
+        store = ManagedServiceDeploymentStore(args.data_dir)
+        deployment = store.read()
+        if deployment is None:
+            print(
+                json.dumps(
+                    {"ok": False, "error": "desired deployment not published"},
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            return 7
+        try:
+            action = store.accept_restart(
+                target=args.target,
+                expected_generation=deployment.generation,
+                requester_session_id=args.requester,
+            )
+        except (DeploymentGenerationConflictError, BarrierConflictError) as exc:
+            print(
+                json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False),
+                file=sys.stderr,
+            )
+            return 8
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "action_id": action.action_id,
+                    "target": args.target,
+                    "generation": deployment.generation,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        rc = run_action_worker(store, action.action_id)
+        final = store.read_action(action.action_id)
+        print(
+            json.dumps(
+                {
+                    "ok": bool(final is not None and final.status == "succeeded"),
+                    "action_id": action.action_id,
+                    "status": final.status if final else "missing",
+                    "detail": (final.detail if final else "")[:400],
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        return rc
     if args.command == "barriers":
         registry = ManagedServiceDeploymentStore(args.data_dir).barriers
         print(
