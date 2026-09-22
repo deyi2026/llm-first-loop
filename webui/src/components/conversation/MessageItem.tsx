@@ -284,10 +284,22 @@ function FilePreviewModal({ path, onClose }: { path: string; onClose: () => void
   );
 }
 
-/** 出产物路径提取（edit_file/write_file 的 path 参数，去重）——chips 与正文链接共用 */
+/** 出产物路径提取（edit_file/write_file 参数路径 + present_files 显式声明，去重）——chips 与正文链接共用 */
 export function extractProducedPaths(calls: ToolCallInfo[] | null | undefined): string[] {
   const out: string[] = [];
   for (const t of calls ?? []) {
+    if (t.name === "present_files") {
+      // DSH present 语义对齐：模型显式声明的交付物（execute_command 等方式
+      // 创建的产物只有这里有路径事实）。全有或全无由工具侧裁决，展示层只提取。
+      const files = (t.arguments as Record<string, unknown>)?.files;
+      if (Array.isArray(files)) {
+        for (const f of files) {
+          const p = (f as Record<string, unknown> | null)?.path;
+          if (typeof p === "string" && p.trim() && !out.includes(p.trim())) out.push(p.trim());
+        }
+      }
+      continue;
+    }
     if (t.name !== "edit_file" && t.name !== "write_file") continue;
     const p = (t.arguments as Record<string, unknown>)?.path;
     if (typeof p === "string" && p.trim() && !out.includes(p)) out.push(p.trim());
@@ -295,10 +307,30 @@ export function extractProducedPaths(calls: ToolCallInfo[] | null | undefined): 
   return out;
 }
 
-/** 出产物文件列表（从 edit_file/write_file 工具调用提取路径，点击打开预览） */
+/** present_files 声明携带的 description（path → 说明，供 chip tooltip） */
+export function extractProducedDescriptions(
+  calls: ToolCallInfo[] | null | undefined
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const t of calls ?? []) {
+    if (t.name !== "present_files") continue;
+    const files = (t.arguments as Record<string, unknown>)?.files;
+    if (!Array.isArray(files)) continue;
+    for (const f of files) {
+      const item = f as Record<string, unknown> | null;
+      const p = typeof item?.path === "string" ? item.path.trim() : "";
+      const desc = typeof item?.description === "string" ? item.description.trim() : "";
+      if (p && desc && !out.has(p)) out.set(p, desc);
+    }
+  }
+  return out;
+}
+
+/** 出产物文件列表（edit_file/write_file 参数路径 + present_files 声明，点击打开预览） */
 function ProducedFiles({ calls }: { calls: ToolCallInfo[] }) {
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const paths = useMemo(() => extractProducedPaths(calls), [calls]);
+  const descriptions = useMemo(() => extractProducedDescriptions(calls), [calls]);
   if (paths.length === 0) return null;
   return (
     <div className="v2-produced" data-testid="produced-files">
@@ -308,7 +340,7 @@ function ProducedFiles({ calls }: { calls: ToolCallInfo[] }) {
           key={p}
           type="button"
           className="v2-produced-chip"
-          title={`打开 ${p}`}
+          title={descriptions.get(p) || `打开 ${p}`}
           onClick={() => setPreviewPath(p)}
         >
           {p}

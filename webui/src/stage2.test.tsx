@@ -299,6 +299,36 @@ describe("MessageItem", () => {
     expect(screen.queryByText("README.md")).not.toBeInTheDocument();
   });
 
+  it("出产物：present_files 声明（execute_command 等产物）→ chips 可见，description 进 tooltip", () => {
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "p1",
+              name: "present_files",
+              arguments: {
+                files: [
+                  { path: "docs/SPEC-20260922-x.md", description: "优化方案" },
+                  { path: "out/result.json" },
+                ],
+              },
+            },
+            { id: "p2", name: "edit_file", arguments: { path: "src/a.py" } }, // 与声明并存
+          ],
+        }}
+      />
+    );
+    expect(screen.getByTestId("produced-files")).toBeInTheDocument();
+    expect(screen.getByText("docs/SPEC-20260922-x.md")).toBeInTheDocument();
+    expect(screen.getByText("out/result.json")).toBeInTheDocument();
+    expect(screen.getByText("src/a.py")).toBeInTheDocument();
+    expect(screen.getByTitle("优化方案")).toBeInTheDocument();
+    expect(screen.getByTitle("打开 out/result.json")).toBeInTheDocument();
+  });
+
   it("出产物：点击 chip → 打开文件预览（fetch 内容 + 模态显示）", async () => {
     vi.stubGlobal(
       "fetch",

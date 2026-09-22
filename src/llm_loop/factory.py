@@ -104,6 +104,7 @@ from llm_loop.tools.builtin.inspect_code import InspectCodeTool
 from llm_loop.tools.builtin.job_kill import JobKillTool
 from llm_loop.tools.builtin.job_output import JobOutputTool
 from llm_loop.tools.builtin.job_registry import JobRegistry
+from llm_loop.tools.builtin.present_files import PresentFilesTool
 from llm_loop.tools.builtin.read_attachment import ReadAttachmentTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.builtin.read_image import ReadImageTool
@@ -1041,6 +1042,7 @@ def build_engine(
             )
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
     _register_basic("inspect_code", InspectCodeTool())
+    _register_basic("present_files", PresentFilesTool())
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
     _register_basic(
         "edit_file",
