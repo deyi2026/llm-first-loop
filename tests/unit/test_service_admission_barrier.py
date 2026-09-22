@@ -423,3 +423,259 @@ class TestFeishuDefer:
         payload = {"event": {"message": {"message_id": "om_3", "message_type": "text"}}}
         conn._safe_handle_message(payload)
         assert [c["kind"] for c in calls] == ["processed"]
+
+
+# ---------------------------------------------------------------------------
+# R1 (SPEC-20260922-service-control-restart-fixpack-v1): rc!=0 时 worker 消费
+# restart_mirror 落盘回执。矩阵：4 个预检链标记 → release（零物理副作用）；
+# mid-run 标记 / 无回执 / 解析失败 / scope、rc 不匹配 / 陈旧回执 → keep。
+# 脚本 fixture 经 $LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL 写回执，
+# 端到端覆盖 §6 单源路径契约注入。
+# ---------------------------------------------------------------------------
+_R1_PRECHECK_MARKERS = (
+    "webui_artifact_preflight_failed",
+    "service_control_binding_failed",
+    "active_run_precheck_failed",
+    "knowledge_preflight_failed",
+)
+
+
+class TestR1ReceiptConsumption:
+    def _fixture(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script_body: str, *, target: str = "web"):
+        import subprocess as sp
+
+        monkeypatch.setattr(sc, "_REQUESTER_EXIT_POLL_S", 0.02)
+        monkeypatch.setattr(sc, "_REQUESTER_EXIT_TIMEOUT_S", 0.5)
+        monkeypatch.setattr(sc, "_IDLE_POLL_S", 0.02)
+        monkeypatch.setattr(sc, "_IDLE_TIMEOUT_S", 0.5)
+        dist = tmp_path / "webui" / "dist"
+        dist.mkdir(parents=True, exist_ok=True)
+        (dist / "index.html").write_text("<html>fixture</html>\n", encoding="utf-8")
+        script = tmp_path / "scripts" / "restart_mirror.sh"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(script_body, encoding="utf-8")
+        script.chmod(0o755)
+        sp.run(["git", "init", "-q", str(tmp_path)], check=True)
+        sp.run(["git", "-C", str(tmp_path), "add", "-A", "."], check=True)
+        sp.run(
+            ["git", "-C", str(tmp_path), "-c", "user.name=fixture", "-c", "user.email=fixture@test.invalid", "commit", "-qm", "fixture"],
+            check=True,
+        )
+        store = sc.ManagedServiceDeploymentStore(tmp_path / "data")
+        deployment = sc.build_deployment(code_root=str(tmp_path), runtime_root=str(tmp_path), generation=1)
+        store.compare_and_swap(deployment, expected_generation=0)
+        reg = AdmissionBarrierRegistry(tmp_path / "data")
+        action = store.accept_restart(target=target, expected_generation=1, requester_session_id="s1")
+        return store, reg, action
+
+    def _script(
+        self,
+        *,
+        action: str = "web",
+        rc: int = 1,
+        detail: str = "",
+        stale_ts: str | None = None,
+        write_receipt: bool = True,
+        raw_receipt: str | None = None,
+        exit_code: int | None = None,
+    ) -> str:
+        import shlex
+
+        if raw_receipt is not None:
+            payload_line = f"printf '%s\\n' {shlex.quote(raw_receipt)} > \"$LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL\"\n"
+        elif write_receipt:
+            fixed = json.dumps(
+                {"action": action, "rc": rc, "detail": detail, "git_head": "fixture"},
+                ensure_ascii=False,
+            )
+            # ts 于脚本运行时生成（与真实 _write_receipt 同为秒分辨率本地时区），
+            # 保证 ≥ worker 的 restarted_at；格式串只含一个 %s，参数在 bash 侧
+            # 拼接——printf 会复用格式串，多参数会产生第二行非法 JSON。
+            if stale_ts:
+                line = fixed[:-1] + f',"ts":"{stale_ts}"}}'
+                payload_line = f"printf '%s\\n' {shlex.quote(line)} > \"$LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL\"\n"
+            else:
+                prefix = fixed[:-1] + ',"ts":"'
+                payload_line = (
+                    'ts="$(date +%Y-%m-%dT%H:%M:%S%z)"\n'
+                    f"printf '%s\\n' {shlex.quote(prefix)}\"$ts\"'\"}}' > \"$LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL\"\n"
+                )
+        else:
+            payload_line = ""
+        return (
+            "#!/usr/bin/env bash\n"
+            'mkdir -p "$LFL_RESTART_RUNTIME_ROOT/data"\n'
+            f"{payload_line}"
+            f"exit {exit_code if exit_code is not None else rc}\n"
+        )
+
+    @pytest.mark.parametrize("marker", _R1_PRECHECK_MARKERS)
+    def test_precheck_marker_releases_barriers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: str
+    ) -> None:
+        store, reg, action = self._fixture(
+            tmp_path, monkeypatch, self._script(action="web", rc=1, detail=marker)
+        )
+        rc = sc.run_action_worker(store, action.action_id)
+        assert rc == 1
+        final = store.read_action(action.action_id)
+        assert final.status == "failed"
+        assert f"receipt={marker}" in final.detail
+        assert reg.blocked("web") is None  # 预检失败零副作用 → 自动释放
+
+    def test_precheck_marker_all_target_releases_three_services(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store, reg, action = self._fixture(
+            tmp_path,
+            monkeypatch,
+            self._script(action="all", rc=1, detail="active_run_precheck_failed"),
+            target="all",
+        )
+        rc = sc.run_action_worker(store, action.action_id)
+        assert rc == 1
+        for service in ("web", "feishu", "learning"):
+            assert reg.blocked(service) is None, service
+
+    def test_midrun_marker_keeps_barriers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store, reg, action = self._fixture(
+            tmp_path,
+            monkeypatch,
+            self._script(action="web", rc=1, detail="port=8317 web_stopped=true"),
+        )
+        rc = sc.run_action_worker(store, action.action_id)
+        assert rc == 1
+        final = store.read_action(action.action_id)
+        assert final.status == "failed"
+        assert "marker=" in final.detail  # 非 OK-reason 标记 → keep
+        blocked = reg.blocked("web")
+        assert blocked is not None and blocked.operation_id == action.action_id
+
+    def test_absent_receipt_keeps_barriers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store, reg, action = self._fixture(
+            tmp_path, monkeypatch, self._script(rc=1, write_receipt=False)
+        )
+        rc = sc.run_action_worker(store, action.action_id)
+        assert rc == 1
+        final = store.read_action(action.action_id)
+        assert "receipt=absent" in final.detail
+        assert reg.blocked("web") is not None
+
+    def test_unparseable_receipt_keeps_barriers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store, reg, action = self._fixture(
+            tmp_path, monkeypatch, self._script(rc=1, raw_receipt='{"oops')
+        )
+        rc = sc.run_action_worker(store, action.action_id)
+        assert rc == 1
+        final = store.read_action(action.action_id)
+        assert "receipt=unparseable" in final.detail
+        assert reg.blocked("web") is not None
+
+    def test_scope_mismatch_keeps_barriers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store, reg, action = self._fixture(
+            tmp_path,
+            monkeypatch,
+            self._script(action="feishu", rc=1, detail="knowledge_preflight_failed"),
+        )
+        rc = sc.run_action_worker(store, action.action_id)  # target=web
+        assert rc == 1
+        final = store.read_action(action.action_id)
+        assert "scope=" in final.detail
+        assert reg.blocked("web") is not None
+
+    def test_rc_mismatch_keeps_barriers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store, reg, action = self._fixture(
+            tmp_path,
+            monkeypatch,
+            self._script(
+                action="web", rc=0, detail="knowledge_preflight_failed", exit_code=1
+            ),
+        )
+        rc = sc.run_action_worker(store, action.action_id)  # 回执 rc=0，脚本 exit 1
+        assert rc == 1
+        final = store.read_action(action.action_id)
+        assert "rc=0!=1" in final.detail
+        assert reg.blocked("web") is not None
+
+    def test_stale_receipt_keeps_barriers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store, reg, action = self._fixture(
+            tmp_path,
+            monkeypatch,
+            self._script(
+                action="web",
+                rc=1,
+                detail="knowledge_preflight_failed",
+                stale_ts="2020-01-01T00:00:00+08:00",
+            ),
+        )
+        rc = sc.run_action_worker(store, action.action_id)
+        assert rc == 1
+        final = store.read_action(action.action_id)
+        assert "receipt=stale" in final.detail
+        assert reg.blocked("web") is not None
+
+
+class TestAuditTrails:
+    """R3(P6/P7): force_release 与准入拒绝的 append-only 审计线."""
+
+    def test_force_release_writes_audit_jsonl(self, tmp_path: Path) -> None:
+        reg = AdmissionBarrierRegistry(tmp_path)
+        reg.establish("web", operation_id="svc-audit-1", reason="restart")
+        assert reg.force_release("web", reason="operator override after 07:49") is True
+        audit = tmp_path / "audit" / "service_barrier_forces.jsonl"
+        assert audit.is_file()
+        lines = audit.read_text(encoding="utf-8").strip().splitlines()
+        record = json.loads(lines[-1])
+        assert record["service"] == "web"
+        assert record["previous_owner"] == "svc-audit-1"
+        assert record["reason"] == "operator override after 07:49"
+        assert "released_by" in record and "ts" in record
+
+    def test_force_release_without_release_writes_nothing(self, tmp_path: Path) -> None:
+        reg = AdmissionBarrierRegistry(tmp_path)
+        assert reg.force_release("web", reason="no-op") is False
+        assert not (tmp_path / "audit" / "service_barrier_forces.jsonl").exists()
+
+    def test_log_admission_rejection_writes_jsonl(self, tmp_path: Path) -> None:
+        from llm_loop.runtime.admission_barrier import log_admission_rejection
+
+        reg = AdmissionBarrierRegistry(tmp_path)
+        barrier = reg.establish("web", operation_id="svc-audit-2", reason="restart")
+        assert log_admission_rejection(
+            tmp_path, "web_chat", barrier, source="web", detail="sess-x"
+        )
+        audit = tmp_path / "audit" / "service_admission_rejections.jsonl"
+        record = json.loads(
+            audit.read_text(encoding="utf-8").strip().splitlines()[-1]
+        )
+        assert record["task_kind"] == "web_chat"
+        assert record["source"] == "web"
+        assert record["detail"] == "sess-x"
+        assert record["barrier"]["operation_id"] == "svc-audit-2"
+
+    def test_log_admission_rejection_fail_open_on_bad_path(
+        self, tmp_path: Path
+    ) -> None:
+        from llm_loop.runtime.admission_barrier import log_admission_rejection
+
+        # 审计失败必须 fail-open（返回 False，不抛）——消息路径优先
+        blocker = tmp_path / "file-not-dir"
+        blocker.write_text("not a dir", encoding="utf-8")
+        assert (
+            log_admission_rejection(
+                blocker / "child", "web_chat", None, source="web"
+            )
+            is False
+        )

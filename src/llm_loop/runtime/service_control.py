@@ -112,6 +112,23 @@ _VERIFY_MAX_ATTEMPTS = 2
 # §8.2: 准入屏障覆盖目标服务的全部入口——target=all 覆盖三个受管服务。
 _MANAGED_SERVICE_NAMES = ("web", "feishu", "learning")
 
+# R1 (SPEC-20260922-service-control-restart-fixpack-v1): restart_mirror 预检链
+# 失败标记白名单。脚本侧严格串行——预检失败先 _write_receipt 再 exit，任何
+# _stop_* 物理动作都在其后；命中即证明本次 rc!=0 零物理副作用，worker 可
+# 释放屏障。其余 detail / 无 receipt / receipt 存在但解析失败一律 fail-closed keep。
+_RESTART_PRECHECK_FAILED_MARKERS: frozenset[str] = frozenset(
+    {
+        "webui_artifact_preflight_failed",
+        "service_control_binding_failed",
+        "active_run_precheck_failed",
+        "knowledge_preflight_failed",
+    }
+)
+# §6 路径契约：回执相对路径单源常量，经 build_restart_plan 的
+# LFL_RESTART_RECEIPT_REL 注入脚本；脚本侧回退默认值必须与此字节一致，
+# 禁止任何一侧另行猜路径发现。
+_RESTART_RECEIPT_REL = "data/restart-receipt.json"
+
 
 def _barrier_services_for_target(target: str) -> tuple[str, ...]:
     """Services whose NEW-run admission a restart target must gate (§8.2)."""
@@ -581,6 +598,31 @@ def _barrier_view(store: ManagedServiceDeploymentStore, service: str) -> dict[st
     return barrier.to_view() if barrier is not None else None
 
 
+_TERMINAL_ACTION_STATUSES = frozenset({"succeeded", "failed"})
+
+
+def _terminal_action_barrier_reason(
+    store: ManagedServiceDeploymentStore, service: str
+) -> str | None:
+    """R3②: 终态 action 仍持屏障的孤儿信号（只读探测）.
+
+    R1 落地后 worker 在消费 receipt 时释放屏障，因此该窗口只出现在
+    worker 死亡/中断间隙；非 None 即"需要操作员介入"（覆盖 CLI）。
+    """
+    barrier = store.barriers.blocked(service)
+    if barrier is None or barrier.corrupt or not barrier.operation_id:
+        return None
+    try:
+        action = store.read_action(barrier.operation_id)
+    except Exception:  # noqa: BLE001 — 只读探测；视图不因单点坏数据失败
+        return "barrier_owner_action_unreadable"
+    if action is None:
+        return "barrier_owner_action_missing"
+    if action.status in _TERMINAL_ACTION_STATUSES:
+        return f"terminal_action_holds_barrier status={action.status}"
+    return None
+
+
 def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
     """Desired/live/stable identity view per managed service (read-only).
 
@@ -614,6 +656,13 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
                 )
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 live["manifest_error"] = True
+        if deployment is not None and not live.get("manifest_error"):
+            # R6: live 代探测——runtime manifest 不携带 generation，用
+            # git_head 与 desired 的相等性推断"live 是否已达到期望代"；
+            # 直连重启路径永远不写 durable 回执，stable 落后不能谎报。
+            live["matches_desired_generation"] = bool(live.get("pid_alive")) and (
+                str(live.get("git_head") or "") == deployment.git_head
+            )
         candidates = [
             action
             for target, action in succeeded.items()
@@ -634,6 +683,17 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
                 "git_head": deployment.git_head if matches and deployment else None,
                 "matches_desired_generation": matches,
             }
+            if deployment is not None and receipt.deployment_generation < deployment.generation:
+                # R3①降级/R6: live 健康而回执落后只作完整性事实展示（直连
+                # 重启是合法无回执路径），不进 restart_required。
+                stable["lag_generations"] = (
+                    deployment.generation - receipt.deployment_generation
+                )
+                stable["stale"] = bool(live.get("matches_desired_generation"))
+                if stable["stale"]:
+                    stable["note"] = (
+                        "live 进程已新于回执（直连重启未写 durable 回执）；以 live 为准"
+                    )
         reasons: list[str] = []
         if deployment is None:
             reasons.append("desired_deployment_missing")
@@ -659,6 +719,9 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
             # §8.3: 准入屏障按服务可见——屏障仍活跃 = "受影响未恢复"，
             # 恢复路径是操作员覆盖 CLI 或后续操作接管，不得静默消失。
             "admission_barrier": _barrier_view(store, service),
+            # R3②: 终态 action 仍持屏障（孤儿屏障）→ 需要操作员介入的
+            # 唯一硬信号；正常 receipt 消费路径会先把它清掉。
+            "terminal_action_barrier": _terminal_action_barrier_reason(store, service),
         }
     return {
         "deployment": deployment.to_dict() if deployment else None,
@@ -957,6 +1020,12 @@ def build_restart_plan(
         env={
             "LFL_RESTART_CODE_ROOT": deployment.code_root,
             "LFL_RESTART_RUNTIME_ROOT": deployment.runtime_root,
+            # R1 §6: 单源路径契约注入，脚本侧 RECEIPT_JSON 消费同一值
+            "LFL_RESTART_RECEIPT_REL": _RESTART_RECEIPT_REL,
+            # R4: 受控路径的两个根都来自 deployment（显式值），预检的
+            # T0-A3 来源判定据此放行，不依赖 ambient 环境卫生。
+            "LFL_RESTART_CODE_ROOT_CONFIRMED": "1",
+            "LFL_RESTART_RUNTIME_ROOT_CONFIRMED": "1",
             "RESTART_WAIT_IDLE": "1",
         },
     )
@@ -1102,6 +1171,62 @@ def _release_barriers_for_transition(
         services = tuple(release_barriers)
     for service in services:
         store.barriers.release(service, operation_id=updated.action_id)
+
+
+def _consume_restart_failure_receipt(
+    runtime_root: str | Path,
+    *,
+    target: str,
+    rc: int,
+    not_before: str,
+) -> tuple[bool, str]:
+    """R1 (SPEC-20260922-service-control-restart-fixpack-v1): rc!=0 后消费
+    restart_mirror 落盘的 durable 回执，判定屏障命运。
+
+    仅当回执命中预检链标记（_RESTART_PRECHECK_FAILED_MARKERS，脚本严格串行
+    保证零物理副作用）才返回 (True, marker)。其余一律 (False, note) fail-closed：
+    无回执、JSON 解析失败、schema 不符、action/rc 不匹配、回执时间早于本次
+    worker 自身的重启尝试（陈旧回执冒充）或 mid-run 标记（port=/web_stopped=
+    等可能有副作用）。note 会进 durable action 记录供运营审计。
+    """
+    path = Path(runtime_root).joinpath(*_RESTART_RECEIPT_REL.split("/"))
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return False, "absent"
+    try:
+        rec = json.loads(raw)
+    except ValueError:
+        return False, "unparseable"
+    if not isinstance(rec, dict):
+        return False, "schema"
+    if not isinstance(rec.get("action"), str) or rec["action"] != target:
+        return False, f"scope={rec.get('action')!r}"
+    try:
+        rec_rc = int(rec["rc"])
+    except (KeyError, TypeError, ValueError):
+        return False, "schema(rc)"
+    if rec_rc != rc:
+        return False, f"rc={rec_rc}!={rc}"
+    detail = rec.get("detail")
+    if not isinstance(detail, str):
+        return False, "schema(detail)"
+    ts = rec.get("ts")
+    try:
+        rec_ts = datetime.fromisoformat(str(ts))
+    except (TypeError, ValueError):
+        return False, "schema(ts)"
+    if rec_ts.tzinfo is None:
+        return False, "schema(ts.tz)"
+    # 脚本 ts 以秒分辨率本地时区写入（astimezone().isoformat(timespec=
+    # "seconds")），截断误差 <1s；放宽 1s 判陈旧只可能把"真回执"误判为 keep
+    # （安全方向），反向需陈旧回执与本次 rc/action/标记全同且落在 1s 窗口内。
+    floor = datetime.fromisoformat(not_before).replace(microsecond=0) - timedelta(seconds=1)
+    if rec_ts < floor:
+        return False, f"stale(ts={ts})"
+    if detail not in _RESTART_PRECHECK_FAILED_MARKERS:
+        return False, f"marker={detail[:80]!r}"
+    return True, detail
 
 
 def _wait_for(
@@ -1349,14 +1474,27 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             )
             rc = int(proc.returncode or 0)
             if rc != 0:
-                # 物理脚本已执行：停止可能已发生，屏障按 §8.3 fail-closed
-                # 保留，恢复路径是操作员覆盖 CLI 或后续操作接管。
+                # R1 (SPEC-20260922-service-control-restart-fixpack-v1): 先消费
+                # durable 回执再定屏障命运——预检链标记证明零物理副作用（脚本严格
+                # 串行，_stop_* 均在其后），释放本目标全部屏障；其余（无回执/解析
+                # 失败/mid-run 标记/scope、rc 不匹配/陈旧回执）维持 §8.3
+                # fail-closed keep，恢复路径仍是操作员覆盖 CLI 或后续操作接管。
+                released, receipt_note = _consume_restart_failure_receipt(
+                    plan.env["LFL_RESTART_RUNTIME_ROOT"],
+                    target=latest.target,
+                    rc=rc,
+                    not_before=restarted_at,
+                )
                 _mark_action(
                     store,
                     running,
                     status="failed",
-                    detail=f"restart_mirror rc={rc}",
-                    release_barriers="keep",
+                    detail=f"restart_mirror rc={rc}; receipt={receipt_note}",
+                    release_barriers=(
+                        _barrier_services_for_target(latest.target)
+                        if released
+                        else "keep"
+                    ),
                 )
                 return rc, desired_now, restarted_at
             return rc, desired_now, restarted_at

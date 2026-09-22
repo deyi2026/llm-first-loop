@@ -139,6 +139,13 @@ $ cat data/restart-receipt.json
    - 疑似会话残留（环境值≠脚本目录且未确认）→ 告警+审计
      `data/audit/restart_preflight.log`；**自动化通道（非 tty 或 FORCE=1）直接 abort**。
    事故案例：17:22 会话环境残留指向旧 worktree，`service_control` 缺失才暴露。
+1a. **RUNTIME_ROOT 同判**（R4，2026-09-22，`_runtime_root_source_check`）：
+   ambient `LFL_RESTART_RUNTIME_ROOT` 残留同样能污染预检根
+   （`_knowledge_binding_preflight` 读 `$RUNTIME_ROOT` 下 `.env`），07:33 gen64
+   预检 aborted 证明残留源仍在复现。三态同上，确认变量为
+   `LFL_RESTART_RUNTIME_ROOT_CONFIRMED=1`。受控路径
+   （`build_restart_plan`）显式带 CONFIRMED；直连 dual-root 操作须同时确认
+   两个根。审计行含 `var=` 触发变量名。
 2. **嵌套 worktree 禁令**（dual-root 校验内 + `--check-add` guard）：
    CODE_ROOT 内含嵌套 worktree 一律拒绝；创建前用
    `scripts/bootstrap_worktree_registry.py --check-add <path>` 预检（拒绝 rc=2，
@@ -147,7 +154,63 @@ $ cat data/restart-receipt.json
    bootstrap 全量落表，默认唯一 protected=现役 code root（`runtime_manifest.json`
    的 workspace_root）+显式回滚候选，其余标 legacy；人工 retired 标记不被覆盖；
    缺失/损坏时消费方降级既有校验。GC（A4，9/19 再议）：只标记永不自动删除。
-4. `restart_mirror.sh preflight`：只读 dry-run（根校验+来源判定+webui 产物预检），
-   不触服务、不验 service_control 绑定；测试与运维共用。
+4. `restart_mirror.sh preflight`：只读 dry-run（根校验+来源判定+webui 产物预检
+   +store 绑定预检，2026-09-22 见 §13），不触服务、不验 service_control 绑定；
+   测试与运维共用。
 5. bash 陷阱记录：`$VAR` 后紧跟多字节字符（如全角括号）会被吞首字节成
    `VAR\xef: unbound variable`——一律 `${VAR}`。
+
+## 13. dual-root store 绑定（2026-09-22，gen63 事故制度化）
+
+背景：知识库随 87a971ade 进 git 后，干净 deploy worktree 自带 legacy store 快照
+（`experiences/`、`methods/` 位于 worktree 内、随代码检出）。共享 state 的
+dual-root 部署（linked worktree + `DATA_DIR` 推断到 common root）若不显式声明
+canonical 绑定，resolve 出的可写 store 与 git 快照必然分叉 →
+`knowledge_preflight_failed` 拒绝重启（守卫行为正确，缺的是部署侧声明）。
+事故时间线与修复包见 `docs/SPEC-20260922-service-control-restart-fixpack-v1.md`。
+
+### 13.1 绑定步骤（每次 dual-root 部署必做）
+
+1. 确认 canonical store 位置（主根，如 `<主根>/experiences`、`<主根>/methods`）；
+2. 在**主根 `.env`** 与 **deploy worktree `.env`** 两份文件中都显式声明：
+
+   ```
+   EXPERIENCES_DIR=<主根绝对路径>/experiences
+   METHODS_DIR=<主根绝对路径>/methods
+   ```
+
+   路径必须是绝对路径；只改其中一份 = 另一半部署仍走推断，分叉照旧；
+3. 重启前跑只读预检：`bash scripts/restart_mirror.sh preflight`
+   - 含 store 绑定校验（R2.3）：dual-root 缺声明 / 目录不可写 → 直接 fail；
+   - 通过标志：`✅ Knowledge store binding PASS`。
+
+### 13.2 判定语义（`knowledge_health --check-binding`）
+
+- dual-root 共享态 = linked worktree 且 `DATA_DIR` 解析在 code root 之外；
+  此形态**必须** `EXPERIENCES_DIR`/`METHODS_DIR` 显式声明且目录存在可写；
+- 单根部署、sidecar state（`DATA_DIR` 显式指向 worktree 内）豁免——推断绑定
+  与 legacy 同路径，不可能分叉；
+- mutating 路径：绑定预检失败复用 `knowledge_preflight_failed` 回执标记
+  （R1 白名单内：预检链零物理副作用 → 屏障自动释放，不残留假死屏障）。
+
+## 14. R2.1（2026-09-22）：gen64 部署时显式重启 cli 宿主
+
+`check_stale_services()` 的主动过期提示按设计排除 `service == "cli"`
+（cli 会话归操作员所有，运行中强杀等于打断自己）——代价是**部署新代后
+cli 宿主收不到任何主动提示，仍加载旧代码继续执行**。修复包（R1–R6）
+部署即 gen64 起生效，部署序列**最后一步**（spec §8 R2.1，操作员执行）：
+
+1. 受管服务（web/feishu/learning）照常经 `restart_mirror.sh` 重启到新代；
+2. **操作员显式重启 cli 宿主**——结束当前 CLI/代理会话并重新拉起
+   （新进程启动时自行写入 `proc_versions.jsonl` 最新记录）；
+3. 验收 `code_current=true`（cli 行的启动 HEAD == 当前 HEAD）：
+   - 代理侧：`architecture_status(dimensions=["process_versions"])`；
+   - 或 shell（镜像 PYTHONPATH 必须指向本区 src，见 §6 红线）：
+
+   ```bash
+   PYTHONPATH=src .venv/bin/python -c "from llm_loop.introspection.proc_version import get_process_versions as g; print([(s['pid'], s['git_head'], s['code_current']) for s in g()['services'] if s['service']=='cli'])"
+   ```
+
+   结果为空 = 新 cli 进程尚未写启动记录（等数秒重查）；仍为 `false` =
+   查询者自己还在旧进程里（旧进程查自己永远看到旧记录）——先确认会话
+   确已在新宿主中再判定验收失败。

@@ -627,6 +627,21 @@ class _WsConnector:
                 barrier.operation_id,
                 str((payload.get("event") or {}).get("message", {}).get("message_id", "") or ""),
             )
+            try:
+                from llm_loop.runtime.admission_barrier import log_admission_rejection
+
+                log_admission_rejection(
+                    Path(_HEARTBEAT_PATH).parent,
+                    "feishu_message",
+                    barrier,
+                    source="feishu",
+                    detail=str(
+                        (payload.get("event") or {}).get("message", {}).get("message_id", "")
+                        or ""
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — R3(P7) 审计 fail-open
+                logger.debug("feishu barrier rejection audit failed", exc_info=True)
             time.sleep(_BARRIER_DEFER_POLL_S)
             try:
                 self._msg_queue.put(payload, timeout=_BARRIER_DEFER_WAIT_S)

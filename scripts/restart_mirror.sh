@@ -69,41 +69,55 @@ MIRROR_DIR="$RUNTIME_ROOT"  # compatibility alias: every operational path stays 
 DUAL_ROOT=0
 [[ "$RUNTIME_ROOT" != "$CODE_ROOT" ]] && DUAL_ROOT=1
 
-# ── T0-A3（2026-09-16）: CODE_ROOT 来源判定（须在 _validate_restart_roots 之前执行）──
+# ── T0-A3（2026-09-16；R4 2026-09-22 扩展到 RUNTIME_ROOT）: 根来源判定 ──
+# （须在 _validate_restart_roots 之前执行）
 # 当日事故根因: 会话环境残留 LFL_RESTART_CODE_ROOT 指向旧 worktree，脚本静默
-# 加载旧代码（service_control 缺失才暴露）。三态来源:
+# 加载旧代码（service_control 缺失才暴露）。R4 扩展: ambient
+# LFL_RESTART_RUNTIME_ROOT 同样能污染预检根（_knowledge_binding_preflight 读
+# $RUNTIME_ROOT 下的 .env），07:33 aborted 证明残留源仍在复现。三态来源:
 #   ① 调用点显式（环境值==脚本目录，或 CONFIRMED=1）→ 通过
 #   ② 脚本目录默认（未设环境变量）→ 通过
 #   ③ 疑似环境残留（环境值≠脚本目录且未确认）→ 告警+审计；自动化通道（非 tty
 #      或 FORCE=1）直接 abort
-_code_root_source_check() {
-  [[ -n "${LFL_RESTART_CODE_ROOT:-}" && "$CODE_ROOT" != "$SCRIPT_ROOT" ]] || return 0
-  echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] CODE_ROOT 来自环境变量 LFL_RESTART_CODE_ROOT=${CODE_ROOT}（≠脚本目录 ${SCRIPT_ROOT}）——疑似会话残留（2026-09-16 事故根因）"
-  if [[ "${LFL_RESTART_CODE_ROOT_CONFIRMED:-0}" == "1" ]]; then
-    echo "[mirror] $(date '+%H:%M:%S')    LFL_RESTART_CODE_ROOT_CONFIRMED=1 显式确认, 继续"
+# 受控路径（service_control worker）显式 export LFL_RESTART_RUNTIME_ROOT 并带
+# LFL_RESTART_RUNTIME_ROOT_CONFIRMED=1（来源①）。
+_root_source_check() {  # $1=env_var $2=resolved_value $3=label $4=confirm_var
+  local env_var="$1" value="$2" label="$3" confirm_var="$4"
+  [[ -n "${!env_var:-}" && "$value" != "$SCRIPT_ROOT" ]] || return 0
+  echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] $label 来自环境变量 $env_var=${value}（≠脚本目录 ${SCRIPT_ROOT}）——疑似会话残留（2026-09-16 事故根因）"
+  if [[ "${!confirm_var:-0}" == "1" ]]; then
+    echo "[mirror] $(date '+%H:%M:%S')    ${confirm_var}=1 显式确认, 继续"
     return 0
   fi
   if [[ -t 0 && "${FORCE:-0}" != "1" ]]; then
-    printf '确认使用环境变量指定的 CODE_ROOT? (y/N) '
+    printf '确认使用环境变量指定的 %s? (y/N) ' "$label"
     read -r _confirm_ans
     if [[ "$_confirm_ans" =~ ^[yY]$ ]]; then
       echo "[mirror] $(date '+%H:%M:%S')    交互确认通过"
       return 0
     fi
-    echo "[mirror] $(date '+%H:%M:%S') 已取消（CODE_ROOT 来源未确认）"
+    echo "[mirror] $(date '+%H:%M:%S') 已取消（$label 来源未确认）"
     return 2
   fi
-  echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] 自动化通道检测到环境残留 CODE_ROOT 且未显式确认, 拒绝重启"
-  echo "[mirror] $(date '+%H:%M:%S')    修复: 调用点显式 export LFL_RESTART_CODE_ROOT=<目标> 并加 LFL_RESTART_CODE_ROOT_CONFIRMED=1"
+  echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] 自动化通道检测到环境残留 $label 且未显式确认, 拒绝重启"
+  echo "[mirror] $(date '+%H:%M:%S')    修复: 调用点显式 export ${env_var}=<目标> 并加 ${confirm_var}=1"
   return 2
 }
-_code_root_source_check || {
+_code_root_source_check() {
+  _root_source_check LFL_RESTART_CODE_ROOT "$CODE_ROOT" CODE_ROOT LFL_RESTART_CODE_ROOT_CONFIRMED
+}
+_runtime_root_source_check() {
+  _root_source_check LFL_RESTART_RUNTIME_ROOT "$RUNTIME_ROOT" RUNTIME_ROOT LFL_RESTART_RUNTIME_ROOT_CONFIRMED
+}
+_root_source_abort() {  # $1=triggering_var
   mkdir -p "$MIRROR_DIR/data/audit" 2>/dev/null || true
-  printf '%s code_root_source=env-residue code_root=%s script_root=%s outcome=aborted\n' \
-    "$(date '+%FT%T')" "$CODE_ROOT" "$SCRIPT_ROOT" \
+  printf '%s code_root_source=env-residue var=%s code_root=%s runtime_root=%s script_root=%s outcome=aborted\n' \
+    "$(date '+%FT%T')" "$1" "$CODE_ROOT" "$RUNTIME_ROOT" "$SCRIPT_ROOT" \
     >> "$MIRROR_DIR/data/audit/restart_preflight.log" 2>/dev/null || true
   exit 2
 }
+_code_root_source_check || _root_source_abort LFL_RESTART_CODE_ROOT
+_runtime_root_source_check || _root_source_abort LFL_RESTART_RUNTIME_ROOT
 
 _validate_restart_roots() {
   [[ "$DUAL_ROOT" -eq 1 ]] || return 0
@@ -628,7 +642,11 @@ _learning_stop() {
 # ── 回执落盘（修4, 2026-09-09）──
 # 实证教训：上轮"watchdog armed, pgid=18559"回执只活在 stdout——载体随宿主死亡，
 # 回执无处验证。落盘是唯一可独立核查的载体（设计本身正确，并入脚本）。
-RECEIPT_JSON="$MIRROR_DIR/data/restart-receipt.json"   # 最新一次（覆盖）
+# R1 (SPEC-20260922-service-control-restart-fixpack-v1 §6): 回执相对路径契约由
+# worker 单源注入（service_control.py:_RESTART_RECEIPT_REL），脚本消费同一值；
+# 下方回退默认值必须与 worker 常量字节一致，禁止任何一侧另行猜路径发现。
+RECEIPT_REL="${LFL_RESTART_RECEIPT_REL:-data/restart-receipt.json}"
+RECEIPT_JSON="$MIRROR_DIR/$RECEIPT_REL"               # 最新一次（覆盖）
 RECEIPT_LOG="$MIRROR_DIR/data/restart-receipt.log"     # 历史（追加）
 _write_receipt() {
   local action="$1" rc="$2" detail="${3:-}"
@@ -782,6 +800,22 @@ _knowledge_preflight() {
   return 1
 }
 
+# R2.3(SPEC-20260922-service-control-restart-fixpack-v1): dual-root 共享态部署
+# （linked worktree 且 DATA_DIR 在 code root 之外）必须在 .env 显式声明
+# EXPERIENCES_DIR/METHODS_DIR canonical 绑定——data_dir 推断正是 gen63 分叉触发器。
+# 只读校验（--check-binding 不写任何字节）；mutating 路径中先于 _knowledge_preflight
+# 执行，失败复用 knowledge_preflight_failed 标记（R1 白名单内：预检链零物理副作用）。
+_knowledge_binding_preflight() {
+  _log "Knowledge store binding preflight (R2)..."
+  if env -u DATA_DIR -u LFL_DATA_DIR -u EXPERIENCES_DIR -u METHODS_DIR -u METHOD_SEED_DIR -u SKILLS_DIR -u DOCS_DIR \
+    LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" "$VENV_PY" -m llm_loop.runtime.knowledge_health --check-binding; then
+    _log "✅ Knowledge store binding PASS"
+    return 0
+  fi
+  _log "✗ dual-root store 绑定缺失/不可写；修复见 MIRROR-RESTART-GUIDE.md §13：主根与 worktree 两份 .env 显式声明 EXPERIENCES_DIR/METHODS_DIR 指向 canonical store"
+  return 1
+}
+
 _status() {
   echo "=== 镜像服务状态 ==="
   local web_pid feishu_pid learning_pid
@@ -810,12 +844,15 @@ _status() {
 case "${1:-web}" in
   preflight) # T0-A3(2026-09-16): 只读 dry-run——根校验+来源判定+webui 产物；
              # 不触任何服务、不验 service_control 绑定（那是 mutating 路径的职责）。
+             # R2.3(2026-09-22): 追加 store 绑定校验——dual-root 缺声明在部署预检即 fail。
              _webui_artifact_preflight || exit 1
+             _knowledge_binding_preflight || exit 1
              _log "✅ PREFLIGHT_ONLY 通过（未触碰任何服务）"
              exit 0 ;;
   web)     _webui_artifact_preflight || { _write_receipt web "1" "webui_artifact_preflight_failed"; exit 1; }
            _service_control_preflight web || { _write_receipt web "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck web || { _write_receipt web "1" "active_run_precheck_failed"; exit 1; }
+           _knowledge_binding_preflight || { _write_receipt web "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt web "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _stop_web "$RESTART_PORT"; then
@@ -828,6 +865,7 @@ case "${1:-web}" in
            exit "$_rc" ;;
   feishu)  _service_control_preflight feishu || { _write_receipt feishu "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck feishu || { _write_receipt feishu "1" "active_run_precheck_failed"; exit 1; }
+           _knowledge_binding_preflight || { _write_receipt feishu "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt feishu "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _feishu_stop; then
@@ -839,6 +877,7 @@ case "${1:-web}" in
            _write_receipt feishu "$_rc" ""
            exit "$_rc" ;;
   learning) _service_control_preflight learning || { _write_receipt learning "1" "service_control_binding_failed"; exit 1; }
+           _knowledge_binding_preflight || { _write_receipt learning "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt learning "1" "knowledge_preflight_failed"; exit 1; }
            _rc=0
            if ! _learning_stop; then
@@ -852,6 +891,7 @@ case "${1:-web}" in
   all)     _webui_artifact_preflight || { _write_receipt all "1" "webui_artifact_preflight_failed"; exit 1; }
            _service_control_preflight all || { _write_receipt all "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck all || { _write_receipt all "1" "active_run_precheck_failed"; exit 1; }
+           _knowledge_binding_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }
            # 修2(2026-09-09): 失败补偿——web 停/启失败不再 && 短路吞掉 feishu 恢复；
            # 各服务按自身停止成败独立决定是否重启（停失败强启=制造双进程，禁止）。
