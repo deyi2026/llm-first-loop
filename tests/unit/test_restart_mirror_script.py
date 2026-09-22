@@ -70,3 +70,32 @@ def test_mirror_dsh_env_is_independent_of_caller_home_and_path() -> None:
     for line in block.splitlines():
         if line.strip().startswith("unset "):
             assert "DSH_HOME" not in line
+
+
+def test_stop_failure_paths_export_non_not_started_stage_fact() -> None:
+    """N-1 修复（lifecycle_agency_review OQ-11 裁定·需改造）.
+
+    停止尝试已发生（TERM/KILL 已发出）⇒ 物理副作用已产生 ⇒ stage_fact 不得
+    残留默认 not_started——否则 worker 按"零副作用"自动释放屏障（fail-open）。
+    单服务三分支的 stop 失败 then-分支、all 分支 elif 链的 else 兜底，共 4 处。
+    """
+    root = Path(__file__).resolve().parents[2]
+    script = (root / "scripts" / "restart_mirror.sh").read_text(encoding="utf-8")
+
+    # 单服务分支：stop 失败分支体（marker → else 之间）必须 export stop_failed
+    for marker in (
+        'if ! _stop_web "$RESTART_PORT"; then',
+        "if ! _feishu_stop; then",
+        "if ! _learning_stop; then",
+    ):
+        assert marker in script, marker
+        failure_branch = script.split(marker, 1)[1].split("\n            else", 1)[0]
+        assert "export LFL_RESTART_STAGE_FACT=stop_failed" in failure_branch, marker
+
+    # all 分支：elif 链必须带 else（三停全败 ⇒ stop_failed，不得残留 not_started）
+    all_branch = script.split("\n  all)", 1)[1].split("\n  status)", 1)[0]
+    chain = all_branch.split('if [[ "$_learning_stopped" -eq 1 ]]; then', 1)[1]
+    assert 'export LFL_RESTART_STAGE_FACT=web_stopped' in chain
+    else_tail = chain.split('export LFL_RESTART_STAGE_FACT=web_stopped', 1)[1]
+    assert "else" in else_tail.split("fi", 1)[0]
+    assert "export LFL_RESTART_STAGE_FACT=stop_failed" in else_tail.split("fi", 1)[0]

@@ -1023,6 +1023,7 @@ case "${1:-web}" in
            _rc=0
            if ! _stop_web "$RESTART_PORT"; then
              _rc=1
+             export LFL_RESTART_STAGE_FACT=stop_failed
              _log "web 停止失败，跳过启动（防双进程）"
            else
              export LFL_RESTART_STAGE_FACT=web_stopped
@@ -1041,6 +1042,7 @@ case "${1:-web}" in
            _rc=0
            if ! _feishu_stop; then
              _rc=1
+             export LFL_RESTART_STAGE_FACT=stop_failed
              _log "feishu 停止失败，跳过启动"
            else
              export LFL_RESTART_STAGE_FACT=feishu_stopped
@@ -1058,6 +1060,7 @@ case "${1:-web}" in
            _rc=0
            if ! _learning_stop; then
              _rc=1
+             export LFL_RESTART_STAGE_FACT=stop_failed
              _log "Learning worker 停止失败，跳过启动"
            else
              export LFL_RESTART_STAGE_FACT=learning_stopped
@@ -1087,6 +1090,9 @@ case "${1:-web}" in
               export LFL_RESTART_STAGE_FACT=feishu_stopped
             elif [[ "$_web_stopped" -eq 1 ]]; then
               export LFL_RESTART_STAGE_FACT=web_stopped
+            else
+              # N-1/OQ-11：停止尝试已发生且全部失败 ⇒ 副作用已产生，不得残留 not_started
+              export LFL_RESTART_STAGE_FACT=stop_failed
             fi
             if [[ "$_web_stopped" -eq 1 ]]; then
              _start_web || _rc=1
