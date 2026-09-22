@@ -240,8 +240,10 @@ LFL_WORKSPACE_ROOT="$LFL_OP_CODE" LFL_RUNTIME_ROOT="$LFL_OP_RUNTIME" PYTHONPATH=
 
 - publish 是 compare-and-swap：自动落 `generation+1`，从 code root 取 `git_head` 与 WebUI artifact SHA；`expected_generation` 与当前记录不符（他人已推进）会失败——重新 `show` 后重试，不要猜值、不要循环硬撞。
 - 发布前提即 §4.1/§4.2 的 qualified worktree：`verify`（脚本 fence 同款检查）绑定 code/runtime 根、SHA、tracked-clean 与 WebUI artifact tree（web/all）；发布后可先 `verify` 自检再重启。
+- **模型侧等价路径（S4c）**：会话内工具 `service_control(action=publish, code_root=<干净 git 树>, expected_generation=<最近 status 读到的代>)` 与 CLI publish 同一套机械边界（tracked-clean + WebUI artifact hash + CAS；runtime_root 由 data_dir 契约推导）——LFL 可自主走完 build→publish→restart→verify，无需操作员中转。CLI `publish` 仍被 shell 围栏划为 operator-only。
 - **不要手改 `managed_service_deployment.json` 推进代次。** 手改可产出等值 JSON，但绕开 CAS 的单调 +1 校验与租约纪律（2026-09-17 gen4 曾以手改达成，属既有实践，不是规范路径）。
 - 发布与重启是两步：publish 后仍按本节执行 restart、走 §6 验收；action 回执在 `data/runtime/service-control-actions/svc-*.json`（`status`/`deployment_generation`/`detail`）。
+- **失败后的自恢复（S4a/S4b，2026-09-22 gen66 事故后）**：物理重启输出落 `data/service-control-restart-logs/<action_id>.log`（rc≠0 的 detail 带 `log=` 路径）；终态 failed 动作留下的屏障**可被新的 restart 受理接管**（原子换 owner，`data/audit/service_barrier_adoptions.jsonl` 留痕）——模型/操作员直接再发一次 restart 即恢复，不必先 barrier-release。owner 非终态或未知时仍拒绝，走操作员覆盖 CLI。
 
 ### 人工终端
 

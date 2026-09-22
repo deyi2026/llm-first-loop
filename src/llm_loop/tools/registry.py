@@ -74,7 +74,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
     "execute_command": "在本地 shell 执行命令并返回 stdout/stderr；每次为独立进程，灾难性命令由硬安全边界阻断。",
-    "service_control": "共享Web/Feishu生命周期控制：status只读；restart需exact deployment generation并异步走desired-state绑定的official restart。",
+    "service_control": "共享Web/Feishu/Learning生命周期控制：status只读；publish发布新desired deployment（CAS+干净git树+webui产物hash绑定）；restart需exact deployment generation并异步走desired-state绑定的official restart；终态failed动作留下的屏障可被新restart接管（自恢复）。",
     "job_output": "查询 execute_command 后台任务的状态与已收集输出。",
     "job_kill": "终止仍在运行的 execute_command 后台任务。",
     "search_files": "按文件名/glob 或内容搜索当前工作区；默认排除 .tmp-ci/.backup/.worktrees 等旁路副本，需审这些副本时显式 root 到对应目录。pattern+content 表示先限定文件再搜内容。root 只接受搜索根目录，不能填文件路径；查单个已知文件内容用 root=<父目录> + pattern=<文件名> + content=<关键词>，或直接 read_file。path 只做精确存在/stat，不执行内容搜索。",

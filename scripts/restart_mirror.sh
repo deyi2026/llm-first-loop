@@ -68,27 +68,53 @@ CODE_ROOT="$(_resolve_root "${LFL_RESTART_CODE_ROOT:-$SCRIPT_ROOT}" CODE_ROOT)"
 MIRROR_DIR="$RUNTIME_ROOT"  # compatibility alias: every operational path stays canonical
 DUAL_ROOT=0
 [[ "$RUNTIME_ROOT" != "$CODE_ROOT" ]] && DUAL_ROOT=1
+RESTART_ARG1="${1:-web}"  # S1(2026-09-22): 函数内 $1 被遮蔽；根检查中止的回执需要脚本目标
 
-# ── T0-A3（2026-09-16；R4 2026-09-22 扩展到 RUNTIME_ROOT）: 根来源判定 ──
-# （须在 _validate_restart_roots 之前执行）
+# ── T0-A3（2026-09-16；R4 2026-09-22 扩展到 RUNTIME_ROOT；S2 2026-09-22 降级同仓族）──
 # 当日事故根因: 会话环境残留 LFL_RESTART_CODE_ROOT 指向旧 worktree，脚本静默
 # 加载旧代码（service_control 缺失才暴露）。R4 扩展: ambient
-# LFL_RESTART_RUNTIME_ROOT 同样能污染预检根（_knowledge_binding_preflight 读
-# $RUNTIME_ROOT 下的 .env），07:33 aborted 证明残留源仍在复现。三态来源:
+# LFL_RESTART_RUNTIME_ROOT 同样能污染预检根。四态来源:
 #   ① 调用点显式（环境值==脚本目录，或 CONFIRMED=1）→ 通过
 #   ② 脚本目录默认（未设环境变量）→ 通过
-#   ③ 疑似环境残留（环境值≠脚本目录且未确认）→ 告警+审计；自动化通道（非 tty
-#      或 FORCE=1）直接 abort
-# 受控路径（service_control worker）显式 export LFL_RESTART_RUNTIME_ROOT 并带
-# LFL_RESTART_RUNTIME_ROOT_CONFIRMED=1（来源①）。
+#   ③ 同仓族覆盖（环境值≠脚本目录，但 --git-common-dir 与脚本同仓）→ 告警+
+#      审计 outcome=deferred-to-verify，放行，裁决移交 service-control 部署
+#      绑定核验（P0-A 字节级；残留指向未发布 worktree 时 verify 必拒）
+#   ④ 异仓族/无 Git 身份（跨区、跨仓、临时目录）→ 结构上不可能被本仓部署
+#      存储授权 → 告警+审计；自动化通道（非 tty 或 FORCE=1）直接 abort
+# S2 裁决依据（2026-09-22 13:20 事故）：受控 dual-root 重启与残留共用「环境根
+# ≠脚本目录」形态，CONFIRMED 硬门把滚动升级（旧控制器不带 CONFIRMED × 新
+# 脚本）砖死；同仓族放行 + verify 裁决后，任意升级顺序都自洽。受控路径
+# （service_control worker）注入的 CONFIRMED 对继续生效（来源①），兼容不回撤。
+_same_git_family() {  # $1=candidate root：与 SCRIPT_ROOT 同 git 仓族（linked worktree）
+  local cand_common script_common
+  cand_common="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  [[ -n "$cand_common" ]] || return 1
+  cand_common="$(cd "$cand_common" 2>/dev/null && pwd -P)" || return 1
+  script_common="$(git -C "$SCRIPT_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  [[ -n "$script_common" ]] || return 1
+  script_common="$(cd "$script_common" 2>/dev/null && pwd -P)" || return 1
+  [[ "$cand_common" == "$script_common" ]]
+}
+_root_source_defer_audit() {  # $1=env_var
+  mkdir -p "$MIRROR_DIR/data/audit" 2>/dev/null || true
+  printf '%s code_root_source=same-repo-defer var=%s code_root=%s runtime_root=%s script_root=%s outcome=deferred-to-verify\n' \
+    "$(date '+%FT%T')" "$1" "$CODE_ROOT" "$RUNTIME_ROOT" "$SCRIPT_ROOT" \
+    >> "$MIRROR_DIR/data/audit/restart_preflight.log" 2>/dev/null || true
+}
 _root_source_check() {  # $1=env_var $2=resolved_value $3=label $4=confirm_var
   local env_var="$1" value="$2" label="$3" confirm_var="$4"
   [[ -n "${!env_var:-}" && "$value" != "$SCRIPT_ROOT" ]] || return 0
-  echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] $label 来自环境变量 $env_var=${value}（≠脚本目录 ${SCRIPT_ROOT}）——疑似会话残留（2026-09-16 事故根因）"
   if [[ "${!confirm_var:-0}" == "1" ]]; then
     echo "[mirror] $(date '+%H:%M:%S')    ${confirm_var}=1 显式确认, 继续"
     return 0
   fi
+  # S2: 同仓族覆盖 → 告警放行，verify 裁决（见上方四态来源 ③）
+  if _same_git_family "$value"; then
+    echo "[mirror] $(date '+%H:%M:%S') [A3-INFO] $label 来自环境变量 $env_var=${value}（≠脚本目录 ${SCRIPT_ROOT}，但同 Git 仓族）——告警放行，裁决移交 service-control 部署绑定核验"
+    _root_source_defer_audit "$env_var"
+    return 0
+  fi
+  echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] $label 来自环境变量 $env_var=${value}（≠脚本目录 ${SCRIPT_ROOT}，且异仓族/无 Git 身份）——疑似跨区/跨仓污染"
   if [[ -t 0 && "${FORCE:-0}" != "1" ]]; then
     printf '确认使用环境变量指定的 %s? (y/N) ' "$label"
     read -r _confirm_ans
@@ -99,7 +125,7 @@ _root_source_check() {  # $1=env_var $2=resolved_value $3=label $4=confirm_var
     echo "[mirror] $(date '+%H:%M:%S') 已取消（$label 来源未确认）"
     return 2
   fi
-  echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] 自动化通道检测到环境残留 $label 且未显式确认, 拒绝重启"
+  echo "[mirror] $(date '+%H:%M:%S') [A3-RESIDUE] 自动化通道检测到异仓族环境根 $label 且未显式确认, 拒绝重启"
   echo "[mirror] $(date '+%H:%M:%S')    修复: 调用点显式 export ${env_var}=<目标> 并加 ${confirm_var}=1"
   return 2
 }
@@ -114,10 +140,16 @@ _root_source_abort() {  # $1=triggering_var
   printf '%s code_root_source=env-residue var=%s code_root=%s runtime_root=%s script_root=%s outcome=aborted\n' \
     "$(date '+%FT%T')" "$1" "$CODE_ROOT" "$RUNTIME_ROOT" "$SCRIPT_ROOT" \
     >> "$MIRROR_DIR/data/audit/restart_preflight.log" 2>/dev/null || true
+  # S1(2026-09-22): 变更目标的中止必须落 R1 白名单回执——worker 据此自动释放
+  # 屏障；不写回执则按"无回执 fail-closed"keep，零副作用中止被卡成死窗
+  # （2026-09-22 13:20 事故实证）。只读目标（preflight/status）保持零写入。
+  case "$RESTART_ARG1" in
+    web|feishu|learning|all) _write_receipt "$RESTART_ARG1" 2 "root_source_aborted" ;;
+  esac
   exit 2
 }
-_code_root_source_check || _root_source_abort LFL_RESTART_CODE_ROOT
-_runtime_root_source_check || _root_source_abort LFL_RESTART_RUNTIME_ROOT
+# 调用点在预检链末端（case 之前）——S1(2026-09-22) 从文件头部移入：
+# 原位置早于 _write_receipt 定义，中止路径无法履行回执义务。
 
 _validate_restart_roots() {
   [[ "$DUAL_ROOT" -eq 1 ]] || return 0
@@ -144,7 +176,7 @@ _validate_restart_roots() {
   nested_wt="$(git -C "$CODE_ROOT" worktree list --porcelain 2>/dev/null | awk -v root="$CODE_ROOT" '$1=="worktree"{p=substr($0,10); if (p!=root && index(p, root"/")==1) print p}')"
   [[ -z "$nested_wt" ]] || { echo "[mirror] ✗ dual-root 拒绝: CODE_ROOT 内含嵌套 worktree: $nested_wt" >&2; echo "[mirror]   先 git worktree remove 后重启" >&2; return 2; }
 }
-_validate_restart_roots
+# 调用点在预检链末端（S1 移入，与根来源判定同因：中止路径需 _write_receipt 已定义）。
 cd "$RUNTIME_ROOT"
 
 VENV_PY="$RUNTIME_ROOT/.venv/bin/python"
@@ -650,13 +682,22 @@ RECEIPT_JSON="$MIRROR_DIR/$RECEIPT_REL"               # 最新一次（覆盖）
 RECEIPT_LOG="$MIRROR_DIR/data/restart-receipt.log"     # 历史（追加）
 _write_receipt() {
   local action="$1" rc="$2" detail="${3:-}"
-  local head head_full web_pid feishu_pid learning_pid
+  local head head_full web_pid feishu_pid learning_pid receipt_py
+  # S2(2026-09-22): dual-root 校验可能正因 .venv 缺失而中止——此时 VENV_PY
+  # 不存在，回执写入兜底到系统 python（写入只用 stdlib），保证白名单标记
+  # 总能落盘供 worker 消费。
+  receipt_py="$VENV_PY"
+  [[ -x "$receipt_py" ]] || receipt_py="$(command -v python3 || command -v python || true)"
+  if [[ -z "$receipt_py" ]]; then
+    _log "⚠️ 回执落盘失败（无可用 python）"
+    return 0
+  fi
   head="$(git -C "$CODE_ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
   head_full="$(git -C "$CODE_ROOT" rev-parse HEAD 2>/dev/null || echo '?')"
   web_pid="$(_port_pid "$RESTART_PORT" || true)"
   feishu_pid="$(_feishu_pids 2>/dev/null | head -1 || true)"
   learning_pid="$(_learning_pids 2>/dev/null | head -1 || true)"
-  "$VENV_PY" - "$RECEIPT_JSON" "$RECEIPT_LOG" "$action" "$rc" "$head" "$head_full" "$detail" "$web_pid" "$feishu_pid" "$learning_pid" <<'PY' 2>/dev/null || { _log "⚠️ 回执落盘失败（不影响服务状态）"; return 0; }
+  "$receipt_py" - "$RECEIPT_JSON" "$RECEIPT_LOG" "$action" "$rc" "$head" "$head_full" "$detail" "$web_pid" "$feishu_pid" "$learning_pid" <<'PY' 2>/dev/null || { _log "⚠️ 回执落盘失败（不影响服务状态）"; return 0; }
 import datetime, json, sys
 jpath, lpath, action, rc, head, head_full, detail, web_pid, feishu_pid, learning_pid = sys.argv[1:11]
 rec = {
@@ -839,6 +880,22 @@ _status() {
     echo "learning: ❌ 未运行"
   fi
   echo "主区 web（:8902）: $(curl -sf --max-time 2 http://127.0.0.1:8902/health >/dev/null 2>&1 && echo '✅ 健康' || echo '⚠️ 未运行/不可达')"
+}
+
+# ── S1（简化包 2026-09-22）：根检查统一在预检链末端执行 ──
+# 位置从文件头部移到 case 之前：本行之前的代码全部只读（cd/resolver/函数定义），
+# 根来源中止与 dual-root 校验失败在此统一履行 R1 回执义务（白名单标记 →
+# worker 释放屏障），零物理副作用中止不再产生"无回执 keep"死窗。
+_code_root_source_check || _root_source_abort LFL_RESTART_CODE_ROOT
+_runtime_root_source_check || _root_source_abort LFL_RESTART_RUNTIME_ROOT
+_validate_restart_roots || {
+  case "$RESTART_ARG1" in
+    web|feishu|learning|all)
+      mkdir -p "$MIRROR_DIR/data" 2>/dev/null || true
+      _write_receipt "$RESTART_ARG1" 2 "dual_root_rejected"
+      ;;
+  esac
+  exit 2
 }
 
 case "${1:-web}" in

@@ -142,10 +142,17 @@ $ cat data/restart-receipt.json
 1a. **RUNTIME_ROOT 同判**（R4，2026-09-22，`_runtime_root_source_check`）：
    ambient `LFL_RESTART_RUNTIME_ROOT` 残留同样能污染预检根
    （`_knowledge_binding_preflight` 读 `$RUNTIME_ROOT` 下 `.env`），07:33 gen64
-   预检 aborted 证明残留源仍在复现。三态同上，确认变量为
+   预检 aborted 证明残留源仍在复现。确认变量为
    `LFL_RESTART_RUNTIME_ROOT_CONFIRMED=1`。受控路径
-   （`build_restart_plan`）显式带 CONFIRMED；直连 dual-root 操作须同时确认
-   两个根。审计行含 `var=` 触发变量名。
+   （`build_restart_plan`）显式带 CONFIRMED。审计行含 `var=` 触发变量名。
+ 1b. **同仓族降级**（S2，2026-09-22 简化包）：环境根与脚本目录同 Git 仓族
+   （`--git-common-dir` 相同，即本仓 linked worktree）时不再要求 CONFIRMED——
+   告警 + 审计 `outcome=deferred-to-verify` 后放行，由 service-control 部署
+   绑定核验（P0-A 字节级）裁决：残留指向未发布 worktree 时 verify 必拒。
+   异仓族（跨区/跨仓/无 Git 身份）维持自动化通道硬拒。动机：受控 dual-root
+   重启与会话残留共用「环境根≠脚本目录」形态，CONFIRMED 硬门曾把滚动升级
+   （旧控制器×新脚本，13:20 事故）砖死；降级后任意升级顺序自洽，直连
+   dual-root 操作（同仓族时）不再必须确认两个根。
 2. **嵌套 worktree 禁令**（dual-root 校验内 + `--check-add` guard）：
    CODE_ROOT 内含嵌套 worktree 一律拒绝；创建前用
    `scripts/bootstrap_worktree_registry.py --check-add <path>` 预检（拒绝 rc=2，
@@ -214,3 +221,24 @@ cli 宿主收不到任何主动提示，仍加载旧代码继续执行**。修�
    结果为空 = 新 cli 进程尚未写启动记录（等数秒重查）；仍为 `false` =
    查询者自己还在旧进程里（旧进程查自己永远看到旧记录）——先确认会话
    确已在新宿主中再判定验收失败。
+
+## 15. 一条命令的受控重启（S3，2026-09-22 简化包）
+
+直连脚本与动作链两条路径并存是事故放大器：直连不写 durable 回执（stable 落后、
+R6 只能标 stale），操作员/模型要在两套语义里选，恢复期容易选错门。此后**受控
+重启只有一扇门**：
+
+```bash
+PYTHONPATH=src .venv/bin/python -m llm_loop.runtime.service_control restart \
+  --data-dir data [--target web|feishu|learning|all] [--requester <身份>]
+```
+
+语义：受理（屏障随受理原子建立，重启窗口内消息持久化排队）→ worker 内联执行
+物理重启 + 核验 → 终态回执（succeeded/failed）落 `service-control-actions/`，
+stable 凭证只在 succeeded 时前进；预检类失败按 R1/S1 白名单回执自动释放屏障，
+消息立即恢复流动。stdout 两行 JSON：受理行（action_id/generation）+ 终态行
+（ok/status/detail）；rc 透传 worker。
+
+直连 `restart_mirror.sh` 退为应急通道（如控制面自身不可用时）；其结果不写
+动作回执，stable 依 R6 如实滞后。升级到含本节的版本后，建议尽快走一次 CLI
+restart 让 stable 凭证收敛。

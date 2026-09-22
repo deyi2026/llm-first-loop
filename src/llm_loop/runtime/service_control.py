@@ -116,12 +116,16 @@ _MANAGED_SERVICE_NAMES = ("web", "feishu", "learning")
 # 失败标记白名单。脚本侧严格串行——预检失败先 _write_receipt 再 exit，任何
 # _stop_* 物理动作都在其后；命中即证明本次 rc!=0 零物理副作用，worker 可
 # 释放屏障。其余 detail / 无 receipt / receipt 存在但解析失败一律 fail-closed keep。
+# S1（简化包 2026-09-22）：根来源中止与 dual-root 校验失败移入同序——先回执
+# （root_source_aborted / dual_root_rejected）后 exit，任何 _stop_* 仍在其后。
 _RESTART_PRECHECK_FAILED_MARKERS: frozenset[str] = frozenset(
     {
         "webui_artifact_preflight_failed",
         "service_control_binding_failed",
         "active_run_precheck_failed",
         "knowledge_preflight_failed",
+        "root_source_aborted",
+        "dual_root_rejected",
     }
 )
 # §6 路径契约：回执相对路径单源常量，经 build_restart_plan 的
@@ -482,31 +486,55 @@ class ManagedServiceDeploymentStore:
             # §8.2-4：受理与屏障建立原子化——屏障建立失败时受理一并失败，
             # 把受理记录改写为 failed（可审计），不留"已受理但无屏障"的操作。
             established: list[str] = []
+            adopted: list[str] = []
+            conflict: BarrierConflictError | None = None
+
+            def _rollback_claimed() -> None:
+                for service in established + adopted:
+                    self.barriers.release(service, operation_id=action.action_id)
+
             try:
                 for service in _barrier_services_for_target(target):
-                    self.barriers.establish(
-                        service,
-                        operation_id=action.action_id,
-                        reason="restart",
-                    )
-                    established.append(service)
-            except BarrierConflictError as exc:
-                for service in established:
-                    self.barriers.release(service, operation_id=action.action_id)
-                self._write_action_unlocked(
-                    dataclasses.replace(
-                        action,
-                        status="failed",
-                        updated_at=_utc_now(),
-                        detail=f"admission barrier conflict, acceptance rejected: {exc}",
-                    )
-                )
-                raise DeploymentGenerationConflictError(
-                    f"admission barrier conflict, acceptance rejected: {exc}"
-                ) from exc
+                    try:
+                        self.barriers.establish(
+                            service,
+                            operation_id=action.action_id,
+                            reason="restart",
+                        )
+                        established.append(service)
+                        continue
+                    except BarrierConflictError as exc:
+                        # S4b（§8.3 承诺的"后续操作接管"机制化）：owner 动作
+                        # 已终态（failed/succeeded）→ 新动作接管屏障（无准入
+                        # 窗口、留审计）；owner 非终态/未知/corrupt → 维持
+                        # fail-closed，恢复路径仍是操作员覆盖 CLI。
+                        current = self.barriers.blocked(service)
+                        owner_id = (
+                            current.operation_id
+                            if current is not None and not current.corrupt
+                            else ""
+                        )
+                        owner_action: ServiceControlAction | None = None
+                        if owner_id:
+                            try:
+                                owner_action = self.read_action(owner_id)
+                            except (OSError, ValueError):
+                                owner_action = None
+                        if (
+                            owner_action is not None
+                            and owner_action.status in {"failed", "succeeded"}
+                            and self.barriers.adopt(
+                                service,
+                                operation_id=action.action_id,
+                                previous_owner=owner_id,
+                            )
+                        ):
+                            adopted.append(service)
+                            continue
+                        conflict = exc
+                        break
             except OSError as exc:
-                for service in established:
-                    self.barriers.release(service, operation_id=action.action_id)
+                _rollback_claimed()
                 self._write_action_unlocked(
                     dataclasses.replace(
                         action,
@@ -518,6 +546,19 @@ class ManagedServiceDeploymentStore:
                 raise RuntimeError(
                     f"admission barrier establishment failed, acceptance rejected: {exc}"
                 ) from exc
+            if conflict is not None:
+                _rollback_claimed()
+                self._write_action_unlocked(
+                    dataclasses.replace(
+                        action,
+                        status="failed",
+                        updated_at=_utc_now(),
+                        detail=f"admission barrier conflict, acceptance rejected: {conflict}",
+                    )
+                )
+                raise DeploymentGenerationConflictError(
+                    f"admission barrier conflict, acceptance rejected: {conflict}"
+                ) from conflict
             return action
 
 
@@ -727,6 +768,11 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
         "deployment": deployment.to_dict() if deployment else None,
         "services": services,
         "admission_barriers": [b.to_view() for b in store.barriers.snapshot()],
+        # 显示事实：服务器本地时区 UTC 偏移（分钟，含夏令时实时值）。前端据此
+        # 把 ISO 时间渲染为"服务器挂钟"，与访问设备的浏览器时区无关。
+        "server_tz_offset_minutes": round(
+            datetime.now().astimezone().utcoffset().total_seconds() // 60
+        ),
     }
 
 
@@ -1466,12 +1512,32 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                 extra=plan.env,
             )
             restarted_at = _utc_now()
-            proc = subprocess.run(  # noqa: S603 - desired-state-bound fixed argv, no shell
-                list(plan.argv),
-                cwd=plan.cwd,
-                env=env,
-                check=False,
+            # S4a（2026-09-22 15:12 gen66 事故 svc-8011bb79）：物理重启绝不能
+            # 继承调用方 stdio 的生命周期。S3 的 inline CLI 把自身管道交给
+            # restart_mirror，读端先死时 bash 在写输出瞬间被 SIGPIPE 杀死
+            # （rc=-13），回执未写、web 停后未起。输出改为落 per-action
+            # durable 日志，rc 恒为脚本自身退出状态。
+            restart_log = (
+                Path(plan.env["LFL_RESTART_RUNTIME_ROOT"])
+                / "data"
+                / "service-control-restart-logs"
+                / f"{action_id}.log"
             )
+            restart_log.parent.mkdir(parents=True, exist_ok=True)
+            with restart_log.open("a", encoding="utf-8") as restart_out:
+                restart_out.write(
+                    f"\n[{restarted_at}] target={latest.target} argv={shlex.join(plan.argv)}\n"
+                )
+                restart_out.flush()
+                proc = subprocess.run(  # noqa: S603 - desired-state-bound fixed argv, no shell
+                    list(plan.argv),
+                    cwd=plan.cwd,
+                    env=env,
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                    stdout=restart_out,
+                    stderr=subprocess.STDOUT,
+                )
             rc = int(proc.returncode or 0)
             if rc != 0:
                 # R1 (SPEC-20260922-service-control-restart-fixpack-v1): 先消费
@@ -1489,7 +1555,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                     store,
                     running,
                     status="failed",
-                    detail=f"restart_mirror rc={rc}; receipt={receipt_note}",
+                    detail=f"restart_mirror rc={rc}; receipt={receipt_note}; log={restart_log}",
                     release_barriers=(
                         _barrier_services_for_target(latest.target)
                         if released
@@ -1688,6 +1754,15 @@ def main(argv: list[str] | None = None) -> int:
     worker.add_argument("--data-dir", required=True)
     worker.add_argument("--action-id", required=True)
 
+    restart_cmd = sub.add_parser("restart")
+    restart_cmd.add_argument("--data-dir", required=True)
+    restart_cmd.add_argument("--target", choices=_ACTION_TARGETS, default="all")
+    restart_cmd.add_argument(
+        "--requester",
+        default="cli-restart",
+        help="requester identity recorded on the durable action (audit)",
+    )
+
     barriers = sub.add_parser("barriers")
     barriers.add_argument("--data-dir", required=True)
 
@@ -1737,6 +1812,61 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "worker":
         return run_action_worker(ManagedServiceDeploymentStore(args.data_dir), args.action_id)
+    if args.command == "restart":
+        # S3（简化包 2026-09-22）：一条命令的受控重启——受理 + worker 内联。
+        # 直连脚本与动作链并存是事故放大器（直连不写回执 → stable 落后、操作员
+        # 需懂两套语义）；此后操作员/模型只走这一扇门，回执必写、屏障全托管，
+        # 直连 restart_mirror.sh 退为应急通道。rc 透传 worker（脚本/核验结论）。
+        store = ManagedServiceDeploymentStore(args.data_dir)
+        deployment = store.read()
+        if deployment is None:
+            print(
+                json.dumps(
+                    {"ok": False, "error": "desired deployment not published"},
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            return 7
+        try:
+            action = store.accept_restart(
+                target=args.target,
+                expected_generation=deployment.generation,
+                requester_session_id=args.requester,
+            )
+        except (DeploymentGenerationConflictError, BarrierConflictError) as exc:
+            print(
+                json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False),
+                file=sys.stderr,
+            )
+            return 8
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "action_id": action.action_id,
+                    "target": args.target,
+                    "generation": deployment.generation,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        rc = run_action_worker(store, action.action_id)
+        final = store.read_action(action.action_id)
+        print(
+            json.dumps(
+                {
+                    "ok": bool(final is not None and final.status == "succeeded"),
+                    "action_id": action.action_id,
+                    "status": final.status if final else "missing",
+                    "detail": (final.detail if final else "")[:400],
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        return rc
     if args.command == "barriers":
         registry = ManagedServiceDeploymentStore(args.data_dir).barriers
         print(

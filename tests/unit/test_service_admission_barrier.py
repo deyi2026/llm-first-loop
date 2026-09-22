@@ -427,16 +427,20 @@ class TestFeishuDefer:
 
 # ---------------------------------------------------------------------------
 # R1 (SPEC-20260922-service-control-restart-fixpack-v1): rc!=0 时 worker 消费
-# restart_mirror 落盘回执。矩阵：4 个预检链标记 → release（零物理副作用）；
+# restart_mirror 落盘回执。矩阵：预检链标记 → release（零物理副作用）；
 # mid-run 标记 / 无回执 / 解析失败 / scope、rc 不匹配 / 陈旧回执 → keep。
 # 脚本 fixture 经 $LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL 写回执，
 # 端到端覆盖 §6 单源路径契约注入。
+# S1（简化包 2026-09-22）：根来源中止（A3/R4）与 dual-root 校验失败同为
+# 零物理副作用中止（先回执后 exit，任何 _stop_* 都在其后）→ 入白名单。
 # ---------------------------------------------------------------------------
 _R1_PRECHECK_MARKERS = (
     "webui_artifact_preflight_failed",
     "service_control_binding_failed",
     "active_run_precheck_failed",
     "knowledge_preflight_failed",
+    "root_source_aborted",
+    "dual_root_rejected",
 )
 
 
@@ -679,3 +683,69 @@ class TestAuditTrails:
             )
             is False
         )
+
+
+class TestRestartCLI:
+    """S3（简化包 2026-09-22）：一条命令的受控重启。
+
+    背景：直连脚本与动作链两条路径并存是事故放大器（直连不写回执 → stable
+    落后；操作员要在两套语义里选）。CLI `restart` = 受理 + worker 内联：回执
+    必写、屏障全托管，操作员/模型只有一扇门；直连脚本退为应急通道。
+    """
+
+    def _prepared(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script_body: str
+    ) -> Path:
+        import subprocess as sp
+
+        monkeypatch.setattr(sc, "_REQUESTER_EXIT_POLL_S", 0.02)
+        monkeypatch.setattr(sc, "_REQUESTER_EXIT_TIMEOUT_S", 0.5)
+        monkeypatch.setattr(sc, "_IDLE_POLL_S", 0.02)
+        monkeypatch.setattr(sc, "_IDLE_TIMEOUT_S", 0.5)
+        dist = tmp_path / "webui" / "dist"
+        dist.mkdir(parents=True, exist_ok=True)
+        (dist / "index.html").write_text("<html>fixture</html>\n", encoding="utf-8")
+        script = tmp_path / "scripts" / "restart_mirror.sh"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(script_body, encoding="utf-8")
+        script.chmod(0o755)
+        sp.run(["git", "init", "-q", str(tmp_path)], check=True)
+        sp.run(["git", "-C", str(tmp_path), "add", "-A", "."], check=True)
+        sp.run(
+            ["git", "-C", str(tmp_path), "-c", "user.name=fixture", "-c", "user.email=fixture@test.invalid", "commit", "-qm", "fixture"],
+            check=True,
+        )
+        store = sc.ManagedServiceDeploymentStore(tmp_path / "data")
+        deployment = sc.build_deployment(code_root=str(tmp_path), runtime_root=str(tmp_path), generation=1)
+        store.compare_and_swap(deployment, expected_generation=0)
+        return tmp_path / "data"
+
+    def test_restart_cli_end_to_end(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        data = self._prepared(
+            tmp_path,
+            monkeypatch,
+            TestR1ReceiptConsumption()._script(action="web", rc=1, detail="knowledge_preflight_failed"),
+        )
+        reg = AdmissionBarrierRegistry(data)
+        rc = sc.main(["restart", "--data-dir", str(data), "--target", "web", "--requester", "cli-test"])
+        assert rc == 1  # worker rc 透传（脚本失败）
+        lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("{")]
+        accepted = json.loads(lines[0])
+        final = json.loads(lines[-1])
+        assert accepted["ok"] is True and accepted["generation"] == 1
+        action_id = accepted["action_id"]
+        assert final["ok"] is False and final["status"] == "failed"
+        assert "receipt=knowledge_preflight_failed" in final["detail"]
+        record = json.loads(
+            (data / "runtime" / "service-control-actions" / f"{action_id}.json").read_text(encoding="utf-8")
+        )
+        assert record["requester_session_id"] == "cli-test"
+        assert record["status"] == "failed"
+        assert reg.blocked("web") is None  # 白名单回执 → 屏障自动释放
+
+    def test_restart_cli_requires_published_deployment(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        data = tmp_path / "data"
+        data.mkdir(exist_ok=True)
+        rc = sc.main(["restart", "--data-dir", str(data), "--target", "all"])
+        assert rc == 7
+        assert "not published" in capsys.readouterr().err

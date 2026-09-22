@@ -251,6 +251,63 @@ class AdmissionBarrierRegistry:
             return False
         return True
 
+    def adopt(
+        self,
+        service: str,
+        *,
+        operation_id: str,
+        previous_owner: str,
+        reason: str = "restart",
+    ) -> bool:
+        """Follow-up operation takes over a terminal owner's barrier (§8.3).
+
+        The §8.3 fail-closed keep exists so an affected service stays blocked
+        "until an operator or a follow-up operation handles them"; this makes
+        the follow-up path mechanical. The caller must have verified the
+        previous owner's action is terminal (failed/succeeded) — adoption of
+        a live operation's barrier is still a conflict. Barrier continuity is
+        preserved (no admission window opens): the file is atomically
+        replaced, never removed. Returns False when the current owner is not
+        exactly ``previous_owner`` (caller should treat that as a conflict).
+        """
+        if not operation_id.strip() or not previous_owner.strip():
+            raise AdmissionBarrierError("adopt requires operation_id and previous_owner")
+        path = self.barrier_path(service)
+        current = self._load(path, service)
+        if current is None or current.corrupt or current.operation_id != previous_owner:
+            return False
+        payload = json.dumps(
+            {
+                "schema": _BARRIER_SCHEMA,
+                "service": service,
+                "operation_id": operation_id,
+                "reason": reason,
+                "created_at": current.created_at or _utc_now(),
+                "created_by": _created_by(),
+                "adopted_from": previous_owner,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+        tmp = self.root / f".{service}.{operation_id}.adopt.tmp"
+        tmp.write_bytes(payload)
+        try:
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+        _append_audit_jsonl(
+            self._data_dir,
+            "service_barrier_adoptions.jsonl",
+            {
+                "service": service,
+                "previous_owner": previous_owner,
+                "operation_id": operation_id,
+                "reason": reason,
+                "adopted_by": _created_by(),
+            },
+        )
+        return True
+
     def force_release(self, service: str, *, reason: str) -> bool:
         """Operator override: remove a barrier regardless of owner.
 

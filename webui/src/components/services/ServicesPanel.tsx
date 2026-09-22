@@ -9,6 +9,33 @@ function shortHead(head: string | null | undefined): string {
   return head.slice(0, 7);
 }
 
+// live manifest 写 +0800、store 回执写 +00:00（ISO 原样来自两个进程）；
+// 面板必须统一渲染，否则同屏两种时区肉眼不可比（2026-09-22 14:53 误读案例）。
+// 渲染目标：**服务器挂钟**（server_tz_offset_minutes，后端实时给出含夏令时的偏移），
+// 与访问设备的浏览器时区无关；后端未提供该字段时回退浏览器本地时区。
+function fmtServerClock(
+  iso: string | null | undefined,
+  serverOffsetMin: number | undefined
+): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const opts: Intl.DateTimeFormatOptions = {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  };
+  if (serverOffsetMin === undefined) return d.toLocaleString(undefined, opts);
+  // 平移到服务器挂钟后以 UTC 格式化（toLocaleString 不再二次偏移）
+  const shifted = new Date(
+    d.getTime() + (serverOffsetMin + d.getTimezoneOffset()) * 60000
+  );
+  return shifted.toLocaleString(undefined, { ...opts, timeZone: "UTC" });
+}
+
 const cardStyle: React.CSSProperties = {
   border: "1px solid #ddd",
   borderRadius: 8,
@@ -40,6 +67,7 @@ export function ServicesPanel() {
   }, []);
 
   const deployment = info?.deployment ?? null;
+  const serverOffset = info?.server_tz_offset_minutes;
 
   return (
     <div className="v2-learning-panel" data-testid="services-panel">
@@ -77,7 +105,7 @@ export function ServicesPanel() {
                 live: pid {svc.live.pid ?? "—"}
                 {svc.live.pid_alive === false ? "（进程不存在）" : ""} ·{" "}
                 {shortHead(svc.live.git_head)}
-                {svc.live.started_at ? " · " + svc.live.started_at : ""}
+                {svc.live.started_at ? " · " + fmtServerClock(svc.live.started_at, serverOffset) : ""}
               </div>
             ) : (
               <div>live: （无 startup manifest）</div>
@@ -91,7 +119,7 @@ export function ServicesPanel() {
                   {svc.stable.matches_desired_generation
                     ? " · " + shortHead(svc.stable.git_head)
                     : " · （早于当前 desired，不声明 git 身份）"}
-                  {" · " + svc.stable.succeeded_at}
+                  {" · " + fmtServerClock(svc.stable.succeeded_at, serverOffset)}
                 </>
               ) : (
                 "（尚无成功重启回执）"
