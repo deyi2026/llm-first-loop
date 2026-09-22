@@ -316,3 +316,13 @@ def test_active_action_barrier_not_flagged(tmp_path: Path) -> None:
     store._write_action_unlocked(active)
     view = compose_service_identity_view(store)
     assert view["services"]["web"]["terminal_action_barrier"] is None
+
+
+def test_identity_view_exposes_server_tz_offset(tmp_path: Path) -> None:
+    """前端渲染"服务器挂钟"所需的时区事实字段（含夏令时实时值）."""
+    from datetime import datetime as _dt
+
+    view = compose_service_identity_view(_green_store(tmp_path))
+    off = view["server_tz_offset_minutes"]
+    assert isinstance(off, int)
+    assert off == round(_dt.now().astimezone().utcoffset().total_seconds() // 60)

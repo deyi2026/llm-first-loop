@@ -137,6 +137,8 @@ export interface DesiredDeploymentInfo {
 export interface ServicesStatusInfo {
   deployment: DesiredDeploymentInfo | null;
   services: Record<string, ServiceIdentityInfo>;
+  /** 服务器本地时区 UTC 偏移（分钟）；前端据此渲染"服务器挂钟"时间 */
+  server_tz_offset_minutes?: number;
 }
 
 export async function fetchServicesStatus(): Promise<ServicesStatusInfo | null> {

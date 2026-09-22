@@ -731,6 +731,11 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
         "deployment": deployment.to_dict() if deployment else None,
         "services": services,
         "admission_barriers": [b.to_view() for b in store.barriers.snapshot()],
+        # 显示事实：服务器本地时区 UTC 偏移（分钟，含夏令时实时值）。前端据此
+        # 把 ISO 时间渲染为"服务器挂钟"，与访问设备的浏览器时区无关。
+        "server_tz_offset_minutes": round(
+            datetime.now().astimezone().utcoffset().total_seconds() // 60
+        ),
     }
 
 
