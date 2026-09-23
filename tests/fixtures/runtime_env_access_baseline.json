@@ -979,6 +979,7 @@
     "src/llm_loop/config.py|load_env_file|write|<dynamic>": 1,
     "src/llm_loop/config.py|load_settings|bulk:raw|<all>": 1,
     "src/llm_loop/core/history.py|_persist_semantic_state|read|COG_RUNTIME_MODE": 1,
+    "src/llm_loop/core/loop/engine_services/convergence_receipt.py|mirror_budget_chars|read|LFL_CONVERGENCE_MIRROR_BUDGET_CHARS": 1,
     "src/llm_loop/core/loop/engine_services/recovery_controller.py|RecoveryController/_try_err1210_recovery|read|ERR1210_RECOVERY": 1,
     "src/llm_loop/core/loop/engine_services/tool_reachability.py|_log_path|read|<dynamic>": 1,
     "src/llm_loop/core/loop/err1210.py|snapshot_offending_payload|read|ERR1210_SNAPSHOT": 1,
