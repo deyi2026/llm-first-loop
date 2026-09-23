@@ -209,6 +209,7 @@ def _consume_live_interjections(engine: Any, session_id: str, sess: Any) -> list
         engine._append_message_event(sess, msg)
         engine.session.save(sess)
         engine._run_state().current_turn_ref = len(sess.messages) - 1
+        engine._run_state().active_run_ingress_message = msg
         accepted_texts.append(text)
         ack = getattr(runner, "acknowledge_interjection", None)
         if callable(ack):
@@ -780,6 +781,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         _turn_ref = len(sess.messages) - 1  # user_msg seq（turn 身份）
         # T5: per-session RunState 分桶（串台修复）；tip 判断改 SoT 派生（tool_exec）
         self._run_state().current_turn_ref = _turn_ref
+        # antidrift R3: run 入口冻结 ingress 消息对象（压缩豁免退化路径第二候选身份源）
+        self._run_state().active_run_ingress_message = sess.messages[_turn_ref]
         # Agency-first: memory/history is retrieved explicitly by the model when needed.
         # Ordinary user turns do not trigger automatic retrieval or persisted snapshots.
         _turn_memory_msgs: list[Message] = []

@@ -39,6 +39,46 @@ def _map_compacted_source_indices(
     return out
 
 
+def _resolve_active_ingress_candidate(
+    base: list[Any],
+    filtered_indices: list[int],
+    prefix_len: int,
+    current_turn_ref: int | None,
+    frozen_run_ingress: Any,
+) -> Message | None:
+    """Resolve the exact active-run ingress exemption candidate (main + degenerate).
+
+    第一候选=主链路 current_turn_ref 经 filtered_indices 精确映射（语义原样，
+    antidrift 批4 仅提取不动逻辑）；第二候选（R3 退化补齐）=engine run 入口冻结的
+    ingress 身份，纯 id 匹配（history.py :889-893 同款），零语义挑选；解析失败
+    回落 legacy preserve_last_human_exact 分支（fail-open）。
+    """
+
+    if current_turn_ref is not None:
+        try:
+            _current_filtered_pos = filtered_indices.index(current_turn_ref)
+        except ValueError:
+            _current_filtered_pos = -1
+        _current_local_pos = prefix_len + _current_filtered_pos
+        if (
+            _current_filtered_pos >= 0
+            and 0 <= _current_local_pos < len(base)
+            and is_active_run_ingress_message(base[_current_local_pos])
+        ):
+            return base[_current_local_pos]
+    if frozen_run_ingress is not None:
+        try:
+            for _message in base:
+                if (
+                    _message is frozen_run_ingress
+                    and is_active_run_ingress_message(_message)
+                ):
+                    return _message
+        except Exception:  # noqa: BLE001 — 退化候选解析失败回落 legacy（fail-open）
+            return None
+    return None
+
+
 @dataclass(slots=True)
 class HistoryProjection:
     """历史投影产出（built 视图 + box 系遥测/状态）."""
@@ -77,6 +117,7 @@ def run_history_projection(
     cache_protected_prefix_messages: int = 0,
     cache_protected_prefix_chars: int = 0,
     current_turn_ref: int | None = None,
+    frozen_run_ingress: Any = None,
 ) -> HistoryProjection:
     """锚点换算 + build_history_messages 调用（参数语义逐字节原样）."""
     # P1-10 + R8.5: persisted anchor uses original sess.messages indices,
@@ -126,19 +167,9 @@ def run_history_projection(
         getattr(_policy, "compress_target_ratio", 0.6)
     )
 
-    _current_ingress_message: Message | None = None
-    if current_turn_ref is not None:
-        try:
-            _current_filtered_pos = filtered_indices.index(current_turn_ref)
-        except ValueError:
-            _current_filtered_pos = -1
-        _current_local_pos = prefix_len + _current_filtered_pos
-        if (
-            _current_filtered_pos >= 0
-            and 0 <= _current_local_pos < len(base)
-            and is_active_run_ingress_message(base[_current_local_pos])
-        ):
-            _current_ingress_message = base[_current_local_pos]
+    _current_ingress_message: Message | None = _resolve_active_ingress_candidate(
+        base, filtered_indices, prefix_len, current_turn_ref, frozen_run_ingress
+    )
 
     built = build_history_messages(
         base,

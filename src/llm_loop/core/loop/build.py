@@ -548,6 +548,7 @@ class _BuildMixin:
             cache_protected_prefix_messages=_cache_protected_messages,
             cache_protected_prefix_chars=_cache_protected_chars,
             current_turn_ref=_state.current_turn_ref,
+            frozen_run_ingress=getattr(_state, "active_run_ingress_message", None),
             event_append=self._event_append,
             compact_event_seq=self._run_state().compact_event_seq,
             compact_event_was_compacted=self._run_state().compact_event_was_compacted,

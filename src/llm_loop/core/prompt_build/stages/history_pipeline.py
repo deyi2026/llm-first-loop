@@ -101,6 +101,7 @@ def run_history_pipeline(
     cache_protected_prefix_messages: int = 0,
     cache_protected_prefix_chars: int = 0,
     current_turn_ref: int | None = None,
+    frozen_run_ingress: Any = None,
     event_append: Any,
     compact_event_seq: int = 0,
     compact_event_was_compacted: bool = False,
@@ -171,6 +172,7 @@ def run_history_pipeline(
         cache_protected_prefix_messages=cache_protected_prefix_messages,
         cache_protected_prefix_chars=cache_protected_prefix_chars,
         current_turn_ref=current_turn_ref,
+        frozen_run_ingress=frozen_run_ingress,
     )
     built = _proj.built
     anchor_box = _proj.anchor_box

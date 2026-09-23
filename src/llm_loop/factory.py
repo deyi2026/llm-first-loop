@@ -392,8 +392,7 @@ def _render_subject_refs_facts(entry: Any, data_dir: str | Path) -> str:
         label = f"{rtype}={rid}" if rtype and rid else "ref"
         try:
             if rtype == "job_id":
-                from llm_loop.tools.builtin.job_registry import JobRegistry
-
+                # 模块级已导入 JobRegistry/ManagedServiceDeploymentStore（函数内 import 只减不增）
                 snap = JobRegistry.instance().snapshot(rid)
                 if snap is None:
                     lines.append(f"{label} 现状不可解析（对象不存在）")
@@ -405,16 +404,12 @@ def _render_subject_refs_facts(entry: Any, data_dir: str | Path) -> str:
                     when = datetime.fromtimestamp(float(finished_at)).isoformat(timespec="seconds")
                 lines.append(f"{label} 终态={state}({when})")
             elif rtype == "expected_generation":
-                from llm_loop.runtime.service_control import ManagedServiceDeploymentStore
-
                 deployment = ManagedServiceDeploymentStore(data_dir).read()
                 if deployment is None:
                     lines.append(f"{label} 现状不可解析（部署状态不存在）")
                     continue
                 lines.append(f"desired_generation {rid}→{deployment.generation}")
             elif rtype == "action_id":
-                from llm_loop.runtime.service_control import ManagedServiceDeploymentStore
-
                 action = ManagedServiceDeploymentStore(data_dir).read_action(rid)
                 if action is None:
                     lines.append(f"{label} 现状不可解析（对象不存在）")
