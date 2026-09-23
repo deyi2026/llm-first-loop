@@ -1038,6 +1038,21 @@
   border-radius: var(--dsw-radius-sm);
 }
 
+/* 列锚点：目标字符位高亮（比整行 flash 更短促醒目） */
+.v2-preview-anchor-col {
+  border-radius: 3px;
+  background: var(--dsw-alias-interactive-bg-active, rgb(0 0 0 / 8%));
+}
+
+.v2-preview-anchor-col.anchor-flash {
+  animation: v2-preview-anchor-col-flash 2s ease-out;
+}
+
+@keyframes v2-preview-anchor-col-flash {
+  0% { background: var(--dsw-alias-state-warn-primary); }
+  100% { background: var(--dsw-alias-interactive-bg-active, rgb(0 0 0 / 8%)); }
+}
+
 .v2-preview-line-pending {
   padding: 4px 12px;
   font-size: 12px;

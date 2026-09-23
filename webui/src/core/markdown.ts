@@ -140,23 +140,31 @@ export function renderMarkdown(
     // ① 命中出产物集合（edit_file 产出，相对/绝对 forms endsWith 互通）必可点；
     // ② 路径样式的 inline code 也可点——点击时后端校验存在性（404 如实提示，
     //    防误开不静默）。URL/命令/普通词排除。
-    // ③ 行号锚点（对齐 DSH openResource line 参数）：`path:123` 形式的 inline
-    //    code 拆出 data-line，预览打开后翻页跳转到该 1-based 行。
+    // ③ 行/列锚点（对齐 DSH openResource line 参数 + 代码导航按列定位）：
+    //    `path:42` / `path:42:7`（1-based 行/列）拆出 data-line/data-col，
+    //    预览打开后翻页定位到该行列并高亮。
     const paths = clickablePaths ? [...clickablePaths] : [];
     clean = clean.replace(/<code>([^<]*)<\/code>/g, (_m, codeRaw: string) => {
       const code = codeRaw.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
       let pathText = code;
       let lineAttr = "";
-      const lineRef = /^([^\s:]+):(\d{1,6})$/.exec(code);
-      if (lineRef && /\.(py|ts|tsx|js|jsx|md|json|sh|css|yaml|yml|toml|html|txt|sql|go|rs|java|vue|c|h|cpp|ini|cfg)$/i.test(lineRef[1])) {
+      let lineNum = 0;
+      let colNum = 0;
+      const lineRef = /^([^\s:]+):(\d{1,6})(?::(\d{1,4}))?$/.exec(code);
+      if (lineRef && PATH_EXT.test(lineRef[1])) {
         pathText = lineRef[1];
-        lineAttr = ` data-line="${Number(lineRef[2])}"`;
+        lineNum = Number(lineRef[2]);
+        colNum = lineRef[3] ? Number(lineRef[3]) : 0;
+        lineAttr = ` data-line="${lineNum}"` + (colNum ? ` data-col="${colNum}"` : "");
       }
       const producedHit = paths.some((p) => p === pathText || pathText.endsWith(p) || p.endsWith(pathText));
       if (!producedHit && !looksLikePath(pathText)) return _m;
       const htmlEsc = pathText.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      const title = lineAttr ? `打开并跳转到行 ${Number(lineRef![2])}` : `打开 ${htmlEsc}`;
-      return `<span class="v2-file-link" data-path="${htmlEsc}"${lineAttr} title="${title}">${htmlEsc}${lineAttr ? `:${Number(lineRef![2])}` : ""}</span>`;
+      const suffix = lineNum ? `:${lineNum}${colNum ? `:${colNum}` : ""}` : "";
+      const title = lineNum
+        ? `打开并跳转到 ${colNum ? `行 ${lineNum} 列 ${colNum}` : `行 ${lineNum}`}`
+        : `打开 ${htmlEsc}`;
+      return `<span class="v2-file-link" data-path="${htmlEsc}"${lineAttr} title="${title}">${htmlEsc}${suffix}</span>`;
     });
     return clean;
   } catch {

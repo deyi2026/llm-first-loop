@@ -232,11 +232,15 @@ export function useRightPanel(): { open: boolean; tab: RightPanelTab } {
 
 // ── 预览 tab store（对齐 DSH 右侧栏 tab 语义）：
 // 完整路径 = tab 身份（同名不同目录是两个 tab）；重复打开聚焦既有 tab 并更新
-// 行号目标（新 revision）；关闭即卸载（Blob/分页状态随组件释放）。
+// 行号/列号目标（新 revision）；关闭即卸载（Blob/分页状态随组件释放）。
+// 布局按会话持久化（对齐 DSH Session 布局绑定）：tabs+active+行/列目标写
+// localStorage 分会话桶；内容（分页文本/字节）永不入存储，重开重取。
 export interface PreviewTabState {
   path: string;
   /** 1-based 行号锚点（null = 无跳转请求）；对 markdown 渲染态挂起直至切纯文本 */
   line: number | null;
+  /** 1-based 列号（null = 无列目标；仅行级定位） */
+  col: number | null;
   /** 行号请求修订号：每次 open() 递增——同值行号再请求也重新触发跳转 */
   seq: number;
 }
@@ -248,40 +252,117 @@ const previewTabsStoreRaw = createStore<{ tabs: PreviewTabState[]; active: strin
 
 let previewTabSeq = 0;
 
+// ── 布局持久化（机械事实存储；损坏即弃，不冒充恢复） ──
+const PREVIEW_LAYOUT_KEY = "lfl-preview-layout-v1";
+const PREVIEW_LAYOUT_MAX_TABS = 16;
+
+interface PreviewLayoutBucket {
+  tabs: PreviewTabState[];
+  active: string;
+}
+
+function readLayoutMap(): Record<string, PreviewLayoutBucket> {
+  try {
+    const raw = localStorage.getItem(PREVIEW_LAYOUT_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, PreviewLayoutBucket>;
+    }
+  } catch {
+    // 存储损坏：视为无布局，不阻断会话
+  }
+  return {};
+}
+
+function normalizeBucket(bucket: unknown): PreviewLayoutBucket {
+  if (!bucket || typeof bucket !== "object") return { tabs: [], active: "" };
+  const b = bucket as Partial<PreviewLayoutBucket>;
+  const rawTabs: unknown[] = Array.isArray(b.tabs) ? b.tabs : [];
+  // 兼容旧格式（无 col/seq 字段）：缺省补 null/0，形状不合法的条目丢弃
+  const tabs: PreviewTabState[] = rawTabs
+    .filter(
+      (t): t is Partial<PreviewTabState> =>
+        !!t && typeof (t as Partial<PreviewTabState>).path === "string"
+    )
+    .map((t) => ({
+      path: t.path as string,
+      line: typeof t.line === "number" ? t.line : null,
+      col: typeof t.col === "number" ? t.col : null,
+      seq: typeof t.seq === "number" ? t.seq : 0,
+    }));
+  const active =
+    typeof b.active === "string" && tabs.some((t) => t.path === b.active)
+      ? b.active
+      : (tabs[tabs.length - 1]?.path ?? "");
+  return { tabs, active };
+}
+
+function persistLayout(sessionId: string, state: { tabs: PreviewTabState[]; active: string }): void {
+  const map = readLayoutMap();
+  const capped = state.tabs.slice(-PREVIEW_LAYOUT_MAX_TABS);
+  const active = capped.some((t) => t.path === state.active)
+    ? state.active
+    : (capped[capped.length - 1]?.path ?? "");
+  map[sessionId] = { tabs: capped, active };
+  try {
+    localStorage.setItem(PREVIEW_LAYOUT_KEY, JSON.stringify(map));
+  } catch {
+    // 配额满/私有模式：布局不持久化，不阻断会话
+  }
+}
+
+/** 当前布局绑定的会话桶（null = 尚未绑定，首绑不回写） */
+let previewBoundSession: string | null = null;
+
 export const previewTabsStore = {
   getState: previewTabsStoreRaw.getState,
   subscribe: previewTabsStoreRaw.subscribe,
-  /** 打开（或聚焦）一个预览 tab；同 path 再开 = 更新行号目标（新 revision）并置为活动 tab */
-  open(path: string, line: number | null = null): void {
+  /** 绑定会话桶：切换时旧桶落盘、新桶恢复（tabs+行/列+active；内容不入存储） */
+  bindSession(sessionId: string): void {
+    if (sessionId === previewBoundSession) return;
+    if (previewBoundSession !== null) {
+      persistLayout(previewBoundSession, previewTabsStoreRaw.getState());
+    }
+    previewBoundSession = sessionId;
+    const restored = normalizeBucket(readLayoutMap()[sessionId]);
+    previewTabsStoreRaw.setState({ tabs: restored.tabs, active: restored.active });
+  },
+  /** 打开（或聚焦）一个预览 tab；同 path 再开 = 更新行/列目标（新 revision）并置为活动 tab */
+  open(path: string, line: number | null = null, col: number | null = null): void {
     previewTabSeq += 1;
     const { tabs } = previewTabsStoreRaw.getState();
     const existing = tabs.find((t) => t.path === path);
-    if (existing) {
-      previewTabsStoreRaw.setState({
-        tabs: tabs.map((t) => (t.path === path ? { ...t, line, seq: previewTabSeq } : t)),
-        active: path,
-      });
-    } else {
-      previewTabsStoreRaw.setState({ tabs: [...tabs, { path, line, seq: previewTabSeq }], active: path });
-    }
+    const nextTabs = existing
+      ? tabs.map((t) => (t.path === path ? { ...t, line, col, seq: previewTabSeq } : t))
+      : [...tabs, { path, line, col, seq: previewTabSeq }];
+    const next = { tabs: nextTabs, active: path };
+    previewTabsStoreRaw.setState(next);
+    if (previewBoundSession !== null) persistLayout(previewBoundSession, next);
     rightPanelStore.reveal("preview");
   },
   close(path: string): void {
     const { tabs, active } = previewTabsStoreRaw.getState();
     const idx = tabs.findIndex((t) => t.path === path);
     if (idx < 0) return;
-    const next = tabs.filter((t) => t.path !== path);
+    const nextTabs = tabs.filter((t) => t.path !== path);
     let nextActive = active;
     if (active === path) {
-      nextActive = next[Math.min(idx, next.length - 1)]?.path ?? "";
+      nextActive = nextTabs[Math.min(idx, nextTabs.length - 1)]?.path ?? "";
     }
-    previewTabsStoreRaw.setState({ tabs: next, active: nextActive });
+    const next = { tabs: nextTabs, active: nextActive };
+    previewTabsStoreRaw.setState(next);
+    if (previewBoundSession !== null) persistLayout(previewBoundSession, next);
   },
   setActive(path: string): void {
-    previewTabsStoreRaw.setState({ active: path });
+    const next = { ...previewTabsStoreRaw.getState(), active: path };
+    previewTabsStoreRaw.setState(next);
+    if (previewBoundSession !== null) persistLayout(previewBoundSession, next);
   },
   closeAll(): void {
-    previewTabsStoreRaw.setState({ tabs: [], active: "" });
+    const next = { tabs: [] as PreviewTabState[], active: "" };
+    previewTabsStoreRaw.setState(next);
+    if (previewBoundSession !== null) persistLayout(previewBoundSession, next);
   },
 };
 

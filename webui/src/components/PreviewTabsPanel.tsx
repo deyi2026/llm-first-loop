@@ -37,7 +37,12 @@ export function PreviewTabsPanel() {
               onClick={() => previewTabsStore.setActive(t.path)}
             >
               {basename(t.path)}
-              {t.line !== null ? <span className="v2-preview-tab-line">:{t.line}</span> : null}
+              {t.line !== null ? (
+                <span className="v2-preview-tab-line">
+                  :{t.line}
+                  {t.col !== null ? `:${t.col}` : ""}
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -57,7 +62,7 @@ export function PreviewTabsPanel() {
             className={`v2-preview-tabbody ${t.path === active ? "active" : ""}`}
             hidden={t.path !== active}
           >
-            <FilePreviewView path={t.path} line={t.line} lineSeq={t.seq} />
+            <FilePreviewView path={t.path} line={t.line} col={t.col} lineSeq={t.seq} />
           </div>
         ))}
       </div>

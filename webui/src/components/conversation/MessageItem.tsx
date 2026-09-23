@@ -104,7 +104,7 @@ function Markdown({
   }, [text, clickablePaths, enableMath, live]);
   // 代码块复制按钮 + 出产物内联路径链接：dangerouslySetInnerHTML 内容无法绑
   // React 事件 → 事件委托。链接点击 → 右侧栏预览 tab（对齐 DSH openResource，
-  // `path:42` 形式携带 1-based 行号锚点）。
+  // `path:42`/`path:42:7` 形式携带 1-based 行/列锚点）。
   const onBodyClick = async (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     const link = target.closest?.(".v2-file-link") as HTMLElement | null;
@@ -112,8 +112,14 @@ function Markdown({
       const p = link.getAttribute("data-path");
       if (p) {
         const lineRaw = link.getAttribute("data-line");
+        const colRaw = link.getAttribute("data-col");
         const line = lineRaw ? Number.parseInt(lineRaw, 10) : NaN;
-        previewTabsStore.open(p, Number.isFinite(line) ? line : null);
+        const col = colRaw ? Number.parseInt(colRaw, 10) : NaN;
+        previewTabsStore.open(
+          p,
+          Number.isFinite(line) ? line : null,
+          Number.isFinite(col) ? col : null
+        );
       }
       return;
     }

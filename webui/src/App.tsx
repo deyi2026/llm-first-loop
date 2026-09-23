@@ -11,6 +11,7 @@ import { initEventStream } from "./core/events";
 import { probeSessionCapabilities } from "./core/capabilities";
 import { InteropNotice } from "./components/InteropNotice";
 import {
+  previewTabsStore,
   rightPanelStore,
   sidebarViewStore,
   useCurrentSessionId,
@@ -40,6 +41,12 @@ export function App() {
   useEffect(() => {
     rightPanelStore.setOpen(!isMobile); // 初始：桌面常开、移动收起（与原行为一致）
   }, []); // eslint-disable-line react-hooks/exhaustive-deps — 仅首载定初值
+
+  // 预览 tab 布局绑定当前会话桶：切换会话时旧桶落盘、新桶恢复（对齐 DSH
+  // Session 布局绑定；内容不入存储，tab 重开重取）。
+  useEffect(() => {
+    previewTabsStore.bindSession(currentSessionId ?? "");
+  }, [currentSessionId]);
 
   useEffect(() => {
     initEventStream(); // SSE 命名事件 + 失联自愈看门狗（对齐 v0.5.6 加固）

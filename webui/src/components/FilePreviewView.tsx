@@ -156,11 +156,14 @@ export async function packHtmlDependencies(basePath: string, html: string): Prom
 export function FilePreviewView({
   path: tabPath,
   line,
+  col,
   lineSeq = 0,
 }: {
   path: string;
   /** 1-based 行号锚点（null = 无跳转请求） */
   line: number | null;
+  /** 1-based 列号（null = 行级定位；给定列且在行内 → 列字符高亮 + 水平滚动） */
+  col?: number | null;
   /** 行号请求修订号：同值再请求也会重新触发跳转（对齐 DSH 新 revision） */
   lineSeq?: number;
 }) {
@@ -184,7 +187,11 @@ export function FilePreviewView({
   const [plainMode, setPlainMode] = useState(false);
   const [wrap, setWrap] = useState(true);
   const [reloadTick, setReloadTick] = useState(0);
-  const [pendingLine, setPendingLine] = useState<number | null>(line ?? null);
+  // 行/列锚点：pending = 待执行请求；activeAnchor = 已定位目标（渲染列字符高亮）
+  const [pending, setPending] = useState<{ line: number; col: number | null } | null>(
+    line != null ? { line, col: col ?? null } : null
+  );
+  const [activeAnchor, setActiveAnchor] = useState<{ line: number; col: number | null } | null>(null);
   // html 打包产物（null = 未完成/不适用）
   const [packedHtml, setPackedHtml] = useState<string | null>(null);
   const reqIdRef = useRef(0);
@@ -250,10 +257,10 @@ export function FilePreviewView({
     });
   }, [path, reloadTick, applyFirst]);
 
-  // 行号锚点请求 revision：prop 变化（含同值新 seq）→ 重新挂起执行
+  // 行/列锚点请求 revision：prop 变化（含同值新 seq）→ 重新挂起执行
   useEffect(() => {
-    setPendingLine(line ?? null);
-  }, [line, lineSeq]);
+    setPending(line != null ? { line, col: col ?? null } : null);
+  }, [line, col, lineSeq]);
 
   const loadMore = useCallback(async () => {
     if (phase.kind !== "text" || phase.eof || phase.loadingMore) return;
@@ -352,36 +359,54 @@ export function FilePreviewView({
     );
   }, [phase]);
 
-  // 行号锚点执行（对齐 DSH openResource line 语义）：
-  // - 纯文本/代码视图有锚点：翻页至目标行 → 滚动 + 高亮，一次性应答；
+  // 行/列锚点执行（对齐 DSH openResource line 参数 + 代码导航按列定位）：
+  // - 纯文本/代码视图有锚点：翻页至目标行 → 记录 activeAnchor（渲染列字符），
+  //   由滚动 effect 一次性应答；
   // - Markdown 渲染态无锚点：挂起，切纯文本时执行；
   // - 字节/目录/不支持视图不消费行号（对齐 DSH byte-mode）；
   // - 目标行超 EOF：机械事实，静默丢弃。
   useEffect(() => {
-    if (pendingLine === null) return;
+    if (pending === null) return;
     if (phase.kind !== "text") {
-      if (phase.kind !== "loading") setPendingLine(null);
+      if (phase.kind !== "loading") setPending(null);
       return;
     }
     const isMd = MD_EXT.test(path);
     if (isMd && !plainMode) return; // 挂起
     const last = phase.pages[phase.pages.length - 1];
     const lastLine = last.offset + last.lines.length - 1;
-    if (pendingLine <= lastLine) {
-      const el = rootRef.current?.querySelector(`[data-line="${pendingLine}"]`);
-      if (el) {
-        el.scrollIntoView?.({ block: "center" });
-        el.classList.add("anchor-flash");
-        if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
-        flashTimerRef.current = window.setTimeout(() => el.classList.remove("anchor-flash"), 2000);
-        setPendingLine(null); // answered once
-      }
+    if (pending.line <= lastLine) {
+      setActiveAnchor({ line: pending.line, col: pending.col });
+      setPending(null); // answered once（滚动/高亮由下方 effect 执行）
     } else if (!phase.eof && !phase.loadingMore && !phase.moreFailed) {
       void loadMore();
     } else if (phase.eof || phase.moreFailed) {
-      setPendingLine(null);
+      setPending(null);
     }
-  }, [pendingLine, phase, plainMode, path, loadMore]);
+  }, [pending, phase, plainMode, path, loadMore]);
+
+  // 滚动 + 高亮：activeAnchor 落定后，行级 scrollIntoView + flash；列字符
+  // （若在行内）flash + inline nearest 水平滚动（nowrap 代码视口直达列）。
+  useEffect(() => {
+    if (activeAnchor === null) return;
+    if (phase.kind !== "text") return;
+    const lineEl = rootRef.current?.querySelector(`[data-line="${activeAnchor.line}"]`);
+    if (!lineEl) return;
+    lineEl.scrollIntoView?.({ block: "center" });
+    lineEl.classList.add("anchor-flash");
+    if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = window.setTimeout(
+      () => lineEl.classList.remove("anchor-flash"),
+      2000
+    );
+    const colEl =
+      activeAnchor.col !== null ? lineEl.querySelector("[data-anchor-col]") : null;
+    if (colEl) {
+      colEl.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+      colEl.classList.add("anchor-flash");
+      window.setTimeout(() => colEl.classList.remove("anchor-flash"), 2000);
+    }
+  }, [activeAnchor, phase]);
 
   const navigate = (next: string) => {
     if (next === path) return;
@@ -468,17 +493,40 @@ export function FilePreviewView({
       case "text": {
         const isMd = MD_EXT.test(path);
         const showPlain = !isMd || plainMode;
+        // 列锚点字符（仅当目标行已定位、列在行内；1-based）
+        const anchorLine = activeAnchor?.line ?? null;
+        const anchorCol = activeAnchor?.col ?? null;
         return (
           <div className="v2-preview-text">
             {showPlain ? (
               <div className={`v2-preview-lines ${wrap ? "wrap" : "nowrap"}`}>
                 {phase.pages.flatMap((p) =>
-                  p.lines.map((lineText, i) => (
-                    <div className="v2-preview-line" key={`${p.offset}-${i}`} data-line={p.offset + i}>
-                      <span className="v2-preview-lineno">{p.offset + i}</span>
-                      <span className="v2-preview-line-text">{lineText || " "}</span>
-                    </div>
-                  ))
+                  p.lines.map((lineText, i) => {
+                    const lineNo = p.offset + i;
+                    const showColSpan =
+                      anchorLine === lineNo &&
+                      anchorCol !== null &&
+                      anchorCol >= 1 &&
+                      anchorCol <= lineText.length;
+                    return (
+                      <div className="v2-preview-line" key={`${p.offset}-${i}`} data-line={lineNo}>
+                        <span className="v2-preview-lineno">{lineNo}</span>
+                        <span className="v2-preview-line-text">
+                          {showColSpan ? (
+                            <>
+                              {lineText.slice(0, anchorCol! - 1)}
+                              <span className="v2-preview-anchor-col" data-anchor-col>
+                                {lineText[anchorCol! - 1]}
+                              </span>
+                              {lineText.slice(anchorCol!)}
+                            </>
+                          ) : (
+                            lineText || " "
+                          )}
+                        </span>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             ) : (
@@ -553,9 +601,9 @@ export function FilePreviewView({
           </button>
         </span>
       </div>
-      {isText && isMd && !plainMode && pendingLine !== null ? (
+      {isText && isMd && !plainMode && pending !== null ? (
         <div className="v2-preview-line-pending" role="status">
-          {zh.previewLinePending.replace("{n}", String(pendingLine))}
+          {zh.previewLinePending.replace("{n}", String(pending.line))}
         </div>
       ) : null}
       <div className="v2-preview-body">{renderBody()}</div>

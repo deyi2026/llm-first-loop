@@ -16,8 +16,10 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   previewTabsStore.closeAll();
+  previewTabsStore.bindSession("");
   rightPanelStore.setOpen(false);
   rightPanelStore.setTab("settings");
+  localStorage.clear();
 });
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -314,5 +316,133 @@ describe("入口联动（chips / 文件树 → 右侧栏预览 tab）", () => {
     fireEvent.click(screen.getByText("a.txt"));
     expect(previewTabsStore.getState().tabs.map((t) => t.path)).toEqual(["/ws/a.txt"]);
     expect(screen.queryByTestId("file-preview")).toBeNull(); // 模态不复存在
+  });
+});
+
+describe("预览 tab 布局按会话持久化（对齐 DSH Session 布局绑定）", () => {
+  it("bindSession 切换：旧会话布局落盘、新会话取自己的桶、切回恢复 tabs+line+col+active", () => {
+    previewTabsStore.bindSession("sA");
+    previewTabsStore.open("a1.py");
+    previewTabsStore.open("a2.py", 42, 7);
+    previewTabsStore.setActive("a1.py");
+
+    previewTabsStore.bindSession("sB"); // 切走 → sA 落盘，sB 从空桶开始
+    expect(previewTabsStore.getState().tabs).toEqual([]);
+    previewTabsStore.open("b1.md");
+
+    previewTabsStore.bindSession("sA"); // 切回 → 恢复
+    const { tabs, active } = previewTabsStore.getState();
+    expect(tabs.map((t) => t.path)).toEqual(["a1.py", "a2.py"]);
+    expect(tabs[1].line).toBe(42);
+    expect(tabs[1].col).toBe(7);
+    expect(active).toBe("a1.py");
+
+    previewTabsStore.bindSession("sB");
+    expect(previewTabsStore.getState().tabs.map((t) => t.path)).toEqual(["b1.md"]);
+  });
+
+  it("持久化落在 localStorage：模块重载（模拟刷新）后 bindSession 恢复", async () => {
+    previewTabsStore.bindSession("sX");
+    previewTabsStore.open("deep/note.md", 3);
+    vi.resetModules();
+    const fresh = await import("./core/stores");
+    fresh.previewTabsStore.bindSession("sX");
+    const { tabs, active } = fresh.previewTabsStore.getState();
+    expect(tabs.map((t) => t.path)).toEqual(["deep/note.md"]);
+    expect(tabs[0].line).toBe(3);
+    expect(active).toBe("deep/note.md");
+  });
+
+  it("存储桶内 tab 数量有上限（保留最近的）", () => {
+    previewTabsStore.bindSession("sCap");
+    for (let i = 0; i < 20; i += 1) previewTabsStore.open(`f${i}.txt`);
+    const raw = JSON.parse(localStorage.getItem("lfl-preview-layout-v1") ?? "{}") as {
+      sCap?: { tabs: Array<{ path: string }>; active: string };
+    };
+    expect((raw.sCap?.tabs ?? []).length).toBeLessThanOrEqual(16);
+    expect(raw.sCap?.active).toBe("f19.txt");
+  });
+
+  it("布局持久化不含内容（字节/分页不入存储，重开重取）", () => {
+    previewTabsStore.bindSession("sC");
+    previewTabsStore.open("a.py", 9, 3);
+    const raw = localStorage.getItem("lfl-preview-layout-v1") ?? "";
+    expect(raw).not.toContain("content");
+    expect(raw).not.toContain("content_base64");
+    expect(raw).not.toContain("pages");
+  });
+});
+
+describe("行号锚点按列定位（line:col）", () => {
+  it("链接化：`path:42:7` → data-line=42 data-col=7；`path:42` → 无 data-col", () => {
+    const withCol = renderMarkdown("见 `src/a.py:42:7`", new Set(["src/a.py"]));
+    expect(withCol).toContain('data-path="src/a.py"');
+    expect(withCol).toContain('data-line="42"');
+    expect(withCol).toContain('data-col="7"');
+
+    const noCol = renderMarkdown("见 `src/a.py:42`", new Set(["src/a.py"]));
+    expect(noCol).toContain('data-line="42"');
+    expect(noCol).not.toContain("data-col");
+  });
+
+  it("MessageItem 链接点击透传列号到 tab 状态", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ sessions: [], count: 0 })));
+    render(
+      <MessageItem
+        msg={{ role: "assistant", content: "见 `src/a.py:42:7`", toolCalls: [] }}
+      />
+    );
+    fireEvent.click(document.querySelector(".v2-file-link") as HTMLElement);
+    const tab = previewTabsStore.getState().tabs[0];
+    expect(tab.path).toBe("src/a.py");
+    expect(tab.line).toBe(42);
+    expect(tab.col).toBe(7);
+  });
+
+  it("视图：目标行+列 → 该行内列字符高亮锚点（data-anchor-col）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      previewRouter([
+        {
+          match: (u) => u.includes("/api/v1/files/preview"),
+          body: () => textPage("a.py", 1, "alpha\nbeta", true),
+        },
+      ])
+    );
+    render(<FilePreviewView path="a.py" line={2} col={3} lineSeq={1} />);
+    await waitFor(() => {
+      const colEl = document.querySelector("[data-anchor-col]");
+      expect(colEl).not.toBeNull();
+      expect(colEl?.classList.contains("anchor-flash")).toBe(true);
+    });
+    // 行 2 = "beta"，col 3（1-based）= 't'
+    expect(document.querySelector("[data-anchor-col]")?.textContent).toBe("t");
+    expect(document.querySelector('[data-line="2"]')?.classList.contains("anchor-flash")).toBe(true);
+  });
+
+  it("列号超出行长：仅行锚点，不出列字符也不报错", async () => {
+    vi.stubGlobal(
+      "fetch",
+      previewRouter([
+        {
+          match: (u) => u.includes("/api/v1/files/preview"),
+          body: () => textPage("a.py", 1, "ab", true),
+        },
+      ])
+    );
+    render(<FilePreviewView path="a.py" line={1} col={99} lineSeq={1} />);
+    await waitFor(() => {
+      expect(document.querySelector('[data-line="1"]')?.classList.contains("anchor-flash")).toBe(true);
+    });
+    expect(document.querySelector("[data-anchor-col]")).toBeNull();
+  });
+
+  it("tab 徽标带列：`:42:7`", async () => {
+    vi.stubGlobal("fetch", previewRouter([
+      { match: (u) => u.includes("/api/v1/files/preview"), body: () => textPage("mod.py", 1, "l", true) },
+    ]));
+    render(<PreviewTabsPanel />);
+    previewTabsStore.open("mod.py", 42, 7);
+    await waitFor(() => expect(screen.getByText(":42:7")).toBeInTheDocument());
   });
 });
