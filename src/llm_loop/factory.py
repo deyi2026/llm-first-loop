@@ -285,6 +285,37 @@ def _read_workspace_changed_flag(data_dir: str) -> dict | None:
         return None
 
 
+def _activate_default_workspace(engine: Any, settings: Any) -> None:
+    """工作区管理（对齐 DSH Workspace）：注册表 + 旧会话迁移 + 引擎挂载当前工作区.
+
+    2026-09-23 学习风暴根因修复：learning 分支提前 return 曾跳过本步——
+    learning 引擎的 session 根停留在平铺 data/sessions（owner key "."），
+    读取 web 分桶会话全部 SessionIdConflictError（9.3h 240 次
+    worker_exception）。两分支共用本函数，杜绝再次分叉。
+    默认工作区 = 启动 cwd（当前行为一致：工具/会话根=项目根，零回归）。
+    """
+    from llm_loop.workspace.store import WorkspaceMigrationConflictError, WorkspaceStore
+
+    workspace_store = WorkspaceStore(settings.data_dir)
+    default_ws = workspace_store.register(os.getcwd())  # 幂等注册
+    try:
+        workspace_store.migrate_legacy_sessions(settings.data_dir, default_ws)
+    except WorkspaceMigrationConflictError:
+        logger.error(
+            "工作区旧会话迁移存在数据冲突，拒绝自动选择任一副本；请人工核对后再启动",
+            exc_info=True,
+        )
+        raise
+    except Exception:  # noqa: BLE001 — 非数据冲突的迁移异常仍保留启动兼容
+        logger.warning("工作区旧会话迁移失败（fail-open）；未完成文件保留在旧根", exc_info=True)
+    # 首次装配（注册表无 current）→ 默认工作区设为 current 并持久化
+    if workspace_store.get_current() is None:
+        workspace_store.switch(default_ws.id)
+    current_ws = workspace_store.get_current() or default_ws
+    engine.workspace_store = workspace_store  # 先挂注册表，set_workspace 可精确按path/id分区
+    engine.set_workspace(current_ws.path, current_ws.id)
+
+
 def build_engine(
     settings: Settings,
     *,
@@ -1669,6 +1700,10 @@ def build_engine(
                 restart_admission_blocked=lambda: task_admission_barrier(
                     Path(settings.data_dir).expanduser(), "learning_job"
                 ),
+                # 2026-09-23 学习通道模型隔离（LFL_LEARNING_MODEL → Settings.
+                # learning_model）：学习提取/反思走独立模型（如 flash），
+                # 缺省回落会话 source_model（行为不变）。
+                model_override=str(getattr(settings, "learning_model", "") or "").strip(),
             )
             learning_plane.start()
             engine.learning_plane = learning_plane
@@ -1682,6 +1717,9 @@ def build_engine(
     # plane's BackgroundRunner / Scheduler / Inbox watcher. Everything Reflection needs
     # has already been assembled above, so stop assembly at the plane boundary.
     if runtime_role == "learning":
+        # 2026-09-23：提前 return 前激活工作区（与 task 公共路径同函数）——
+        # learning 需要读 task/web 分桶会话做提取/反思，owner key 必须一致。
+        _activate_default_workspace(engine, settings)
         return engine
 
     # EVO 后台 run 改造（对齐 DSH 后台任务）：装配后台 run 执行器——SSE 端点改订阅，
@@ -1897,28 +1935,9 @@ def build_engine(
         logger.exception("协调 inbox 监视装配失败（fail-open）")
         engine.inbox_watcher = None
 
-    # 工作区管理（对齐 DSH Workspace）：注册表 + 旧会话迁移 + 引擎挂载当前工作区。
-    # 默认工作区 = 启动 cwd（当前行为一致：工具/会话根=项目根，零回归）。
-    from llm_loop.workspace.store import WorkspaceMigrationConflictError, WorkspaceStore
-
-    workspace_store = WorkspaceStore(settings.data_dir)
-    default_ws = workspace_store.register(os.getcwd())  # 幂等注册
-    try:
-        workspace_store.migrate_legacy_sessions(settings.data_dir, default_ws)
-    except WorkspaceMigrationConflictError:
-        logger.error(
-            "工作区旧会话迁移存在数据冲突，拒绝自动选择任一副本；请人工核对后再启动",
-            exc_info=True,
-        )
-        raise
-    except Exception:  # noqa: BLE001 — 非数据冲突的迁移异常仍保留启动兼容
-        logger.warning("工作区旧会话迁移失败（fail-open）；未完成文件保留在旧根", exc_info=True)
-    # 首次装配（注册表无 current）→ 默认工作区设为 current 并持久化
-    if workspace_store.get_current() is None:
-        workspace_store.switch(default_ws.id)
-    current_ws = workspace_store.get_current() or default_ws
-    engine.workspace_store = workspace_store  # 先挂注册表，set_workspace 可精确按path/id分区
-    engine.set_workspace(current_ws.path, current_ws.id)
+    # 工作区管理（对齐 DSH Workspace）：与 learning 分支共用同一激活函数
+    # （2026-09-23 提取；原内联块语义不变）。
+    _activate_default_workspace(engine, settings)
 
     # R1: 上下文占用分解注入 architecture_status（AI 每轮可见，自主决策压缩/切换）
     status_provider.set_context_breakdown_fn(lambda: engine._run_state().last_breakdown)

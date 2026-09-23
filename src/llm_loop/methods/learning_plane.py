@@ -75,6 +75,7 @@ class LearningPlane:
         quiet_period_s: float = 15.0,
         preempt_poll_s: float = 0.25,
         restart_admission_blocked: Callable[[], Any] | None = None,
+        model_override: str = "",
     ) -> None:
         self._journal = journal
         self._episode_store = episode_store
@@ -86,6 +87,9 @@ class LearningPlane:
         self._provider_call_coordinator = provider_call_coordinator
         self._memory_extractor = memory_extractor  # P0-C: kind=memory_extract 执行体
         self._poll_interval_s = max(1.0, float(poll_interval_s))
+        # 2026-09-23 学习通道模型隔离（LFL_LEARNING_MODEL）：覆盖 source_model，
+        # 缺省空 = 行为不变。资源目标与客户端解析统一走 _effective_model。
+        self._model_override = str(model_override or "").strip()
         self._quiet_period_s = max(0.0, float(quiet_period_s))
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -166,13 +170,15 @@ class LearningPlane:
         resource. If no such fact exists (cloud, unknown local runtime, probe
         failure), the RG-1 process-local Learning lane remains the exact fallback.
         """
-        provider_id, model_id = self._resource_target_resolver(job.source_model)
+        provider_id, model_id = self._resource_target_resolver(
+                self._effective_model(job.source_model)
+            )
         request_id = f"learning:{job.job_id}:attempt:{job.attempt + 1}"
         owner_ref = f"learning:{job.job_id}"
         coordinator = self._provider_call_coordinator
         if coordinator is not None:
             try:
-                client = self._model_resolver(job.source_model)
+                client = self._resolve_model(job.source_model)
                 shared = coordinator.build_request_for_client(
                     client,
                     execution_class=ExecutionClass.BACKGROUND_LEARNING,
@@ -243,6 +249,13 @@ class LearningPlane:
             if not progressed:
                 self._stop.wait(self._poll_interval_s)
 
+    def _effective_model(self, source_model: str) -> str:
+        """学习通道实际使用的模型引用（override 优先，缺省回落 source_model）."""
+        return self._model_override or str(source_model or "")
+
+    def _resolve_model(self, source_model: str):
+        return self._model_resolver(self._effective_model(source_model))
+
     def _try_execute(self, job: LearningJob) -> bool:
         if self._straggler_busy():
             return False  # an abandoned reflection still drains; never stack transports
@@ -289,7 +302,7 @@ class LearningPlane:
                 return True
             settings = getattr(self._engine, "settings", None)
             timeout_s = float(getattr(settings, "method_reflection_timeout_s", 120.0) or 120.0)
-            client = self._model_resolver(job.source_model)
+            client = self._resolve_model(job.source_model)
             final_answer = ""
             for row in reversed(entry.get("messages") or []):
                 if str(row.get("role")) == "assistant":
@@ -475,7 +488,7 @@ class LearningPlane:
                 else None
             )
             try:
-                client = self._model_resolver(job.source_model)
+                client = self._resolve_model(job.source_model)
                 coordinator.revalidate_request_for_client(
                     client, request, expected_generation=expected_generation
                 )

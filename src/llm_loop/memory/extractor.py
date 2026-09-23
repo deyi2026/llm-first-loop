@@ -116,6 +116,7 @@ class MemoryExtractor:
         audit_dir: str | Path | None = None,
         provider_call_coordinator: ProviderCallCoordinator | None = None,
         learning_journal: Any | None = None,
+        failure_backoff_s: float = 1800.0,
     ) -> None:
         self.llm = llm_client
         self.memory = memory
@@ -130,6 +131,7 @@ class MemoryExtractor:
         # P0-C: LearningJournal（Learning Plane durable 队列）。interval 触发的唯一
         # 调度路径；未装配时 maybe_trigger 不排程（见模块 docstring）。
         self.learning_journal = learning_journal
+        self.failure_backoff_s = max(0.0, float(failure_backoff_s))
         self.model_ref: str = ""  # factory 注入，用于 job.source_model（学习车道资源请求）
         self._last_trigger_ts: OrderedDict[str, float] = OrderedDict()
         self._lock = threading.Lock()
@@ -173,6 +175,15 @@ class MemoryExtractor:
             logger.debug(
                 "memory extractor: journal 未装配（Learning Plane 未启用），跳过 interval 排程 sid=%s",
                 session_id,
+            )
+            return False
+        # 2026-09-23 学习风暴止血：会话近期有终态失败任务 → interval 触发退避
+        # （机械窗口；失败根因修复前不再生成同会话新任务反复冲击 provider）。
+        if getattr(journal, "recent_failure", None) is not None and journal.recent_failure(
+            session_id, within_s=self.failure_backoff_s
+        ):
+            logger.debug(
+                "memory extractor: 会话近期存在失败学习任务，interval 退避 sid=%s", session_id
             )
             return False
         episode_ref = f"memory-extract:{session_id}:{meta.message_count}"

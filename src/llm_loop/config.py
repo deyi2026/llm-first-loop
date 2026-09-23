@@ -434,6 +434,9 @@ class Settings:
     # 默认开启（2026-09-17 用户裁决：学习闭环为运行时一等能力）。
     # 空 journal = 空闲守护线程零模型调用；LEARNING_PLANE_ENABLED=0 显式关闭（置空同 0）。
     learning_plane_enabled: bool = True
+    # 2026-09-23 学习通道模型隔离（LFL_LEARNING_MODEL）：学习提取/反思的独立
+    # 模型引用；空 = 回落会话 source_model（行为不变）。
+    learning_model: str = ""
     skills_dir: str = (
         "./skills"  # B3(2026-08-14): 插件化 Skill 目录（skills/<name>/SKILL.md；空/不存在=零行为）
     )
@@ -877,6 +880,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         methods_dir=str(_resolved_paths.methods_dir),
         method_seed_dir=str(_resolved_paths.method_seed_dir),
         learning_plane_enabled=env_values.get("LEARNING_PLANE_ENABLED", "1").strip() in {"1", "true", "yes", "on"},
+        learning_model=env_values.get("LEARNING_MODEL", "").strip(),
         skills_dir=str(_resolved_paths.skills_dir),  # B3: tracked Skill follows CODE_ROOT
         docs_dir=str(_resolved_paths.docs_dir),
         archive_max_entries=env_int("ARCHIVE_MAX_ENTRIES", 0),

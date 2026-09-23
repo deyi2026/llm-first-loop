@@ -247,6 +247,26 @@ class LearningJournal:
             trigger_facts=trigger_facts,
         )
 
+    def recent_failure(self, session_id: str, *, within_s: float) -> bool:
+        """会话近期是否存在终态失败任务（机械时间窗；触发退避用，非语义判断）.
+
+        2026-09-23 学习风暴止血：失败的 (session, trigger) 由间隔触发器无退避地
+        反复重排（message_count 递增生成新任务）——本查询给触发侧提供"近期
+        已失败"的机械事实，由调用方决定退避窗口。
+        """
+        if within_s <= 0:
+            return False
+        with self._lock:
+            jobs = self._fold()
+        now = time.time()
+        for job in jobs.values():
+            if job.session_id != session_id or job.state != "failed":
+                continue
+            finished = float(job.finished_at or 0)
+            if finished and now - finished <= within_s:
+                return True
+        return False
+
     def job(self, job_id: str) -> LearningJob | None:
         return self._snapshot().get(job_id)
 
