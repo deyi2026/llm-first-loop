@@ -783,6 +783,24 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         self._run_state().current_turn_ref = _turn_ref
         # antidrift R3: run 入口冻结 ingress 消息对象（压缩豁免退化路径第二候选身份源）
         self._run_state().active_run_ingress_message = sess.messages[_turn_ref]
+        # EVO-20260923-618f7fd1 ③: 会话开场注入 active 方法卡清单（每会话一次；
+        # 引用层附录、名称+触发线索、全文留在 search_records 水合之后；fail-open）
+        try:
+            from llm_loop.core.loop.engine_services.method_injection import (
+                build_active_cards_message,
+                has_active_cards_injection,
+            )
+
+            if not has_active_cards_injection(sess):
+                _method_cards_msg = build_active_cards_message(
+                    getattr(self.settings, "methods_dir", None)
+                )
+                if _method_cards_msg is not None:
+                    sess.messages.append(_method_cards_msg)
+                    with contextlib.suppress(Exception):
+                        self._append_message_event(sess, _method_cards_msg)
+        except Exception:  # noqa: BLE001 — fail-open：附录失败不影响 run
+            logger.debug("method active cards appendix skipped (fail-open)", exc_info=True)
         # Agency-first: memory/history is retrieved explicitly by the model when needed.
         # Ordinary user turns do not trigger automatic retrieval or persisted snapshots.
         _turn_memory_msgs: list[Message] = []
@@ -839,6 +857,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # model.  One in-process retry is allowed without persisting the echo; a second
         # exact echo is a truthful output fault, never a completed answer.
         _program_final_echo_retries = 0
+        # EVO-20260923-618f7fd1 ①: 收尾 use 回记提醒，每 run 至多触发一次（不阻塞）
+        _method_use_reminder_fired = False
 
         while True:
             # 后台 Stop：轮次边界兜底；LLM 流内另有细粒度检查（原因捕获，2.3）。
@@ -2010,6 +2030,32 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     final_answer = ""
                     resp = None
                     continue
+                # EVO-20260923-618f7fd1 ①: 收尾 use 回记提醒（fail-open、每 run 一次、
+                # 不阻塞——模型再次无工具调用即放行最终答复）
+                if not _method_use_reminder_fired:
+                    try:
+                        from llm_loop.core.loop.engine_services.method_injection import (
+                            build_use_reminder_message,
+                            scan_method_use_ledger,
+                        )
+
+                        _unrecorded = scan_method_use_ledger(tool_trace).unrecorded()
+                        if _unrecorded:
+                            _method_use_reminder_fired = True
+                            sess.messages.append(build_use_reminder_message(_unrecorded))
+                            with contextlib.suppress(Exception):
+                                self._record_action(
+                                    "method.use_reminder",
+                                    "continued_before_final",
+                                    f"round={rounds}; refs={','.join(_unrecorded[:6])}",
+                                )
+                            final_answer = ""
+                            resp = None
+                            continue
+                    except Exception:  # noqa: BLE001 — fail-open：提醒失败不阻塞收尾
+                        logger.debug(
+                            "method use reminder skipped (fail-open)", exc_info=True
+                        )
                 final_answer = resp.content or ""
                 # Internal protocol tokens are not model answers.  Historical builds
                 # leaked ``[program-final]`` into provider-visible assistant content;

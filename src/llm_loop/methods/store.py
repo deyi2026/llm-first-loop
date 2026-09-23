@@ -397,12 +397,15 @@ class MethodStore:
         note: str = "",
         model: str = "",
         evidence_refs: list[str] | None = None,
+        session_id: str = "",
     ) -> dict[str, Any]:
         """Append one model-authored Method applicability/use declaration.
 
         This is observability, not qualification: it never changes lifecycle status and
         never proves task benefit. Seed Methods are not copied into the runtime overlay
         merely because the model declared how it treated them.
+        session_id (EVO-20260923-618f7fd1 ②) is optional provenance used by the
+        goal-level method_use_gate; legacy entries without it simply never match.
         """
         self._require_write_safe()
         record = self.get(method_ref)
@@ -429,6 +432,9 @@ class MethodStore:
             "task_benefit": "not_evaluated",
             "promotion": "not_evaluated",
         }
+        clean_session = session_id.strip()[:128]
+        if clean_session:
+            entry["session_id"] = clean_session
         self._dir.mkdir(parents=True, exist_ok=True)
         path = self._dir / "usage.jsonl"
         with path.open("a", encoding="utf-8") as f:

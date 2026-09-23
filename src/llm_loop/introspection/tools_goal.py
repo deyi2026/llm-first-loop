@@ -29,6 +29,15 @@ CREATE_GOAL_TOOL_DEF: dict = {
         "properties": {
             "objective": {"type": "string", "description": "任务目标（完整目标描述）"},
             "session_id": {"type": "string", "description": "当前会话 id（可选，自动补）"},
+            "method_use_gate": {
+                "type": "boolean",
+                "description": (
+                    "goal 级方法 use 硬门（EVO-20260923-618f7fd1 ②，默认 false）。开启后: "
+                    "本 goal 下 evidence_required 任务 →done 前，需本会话至少一条 "
+                    "method_manage(action=record_use) 或 task_update(method_no_contact=true) "
+                    "显式声明。何时用: 用户明确要求强化方法回记纪律的长任务。"
+                ),
+            },
         },
         "required": ["objective"],
     },
@@ -123,10 +132,19 @@ def run_create_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
                 "",
                 "create_goal",
             )
-    g = store.create(objective, session_id=sid)
+    g = store.create(
+        objective,
+        session_id=sid,
+        method_use_gate=bool(args.get("method_use_gate", False)),
+    )
+    gate_note = (
+        " method_use_gate=on（evidence_required 任务 →done 需 record_use 或显式声明）"
+        if g.method_use_gate
+        else ""
+    )
     return ToolResult(
         ToolResultStatus.SUCCESS,
-        f"[目标已创建] id={g.id} status=active\n目标: {g.objective[:200]}\n有界推进: 里程碑 checkpoint 收敛，禁止无界循环；遇边界暂停等人工确认。",
+        f"[目标已创建] id={g.id} status=active\n目标: {g.objective[:200]}\n有界推进: 里程碑 checkpoint 收敛，禁止无界循环；遇边界暂停等人工确认。{gate_note}",
         "", "create_goal",
     )
 

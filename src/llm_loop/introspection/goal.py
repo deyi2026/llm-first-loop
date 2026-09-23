@@ -48,6 +48,9 @@ class Goal:
     checkpoints: list[dict] = field(default_factory=list)  # [{ts, what, evidence, path, next}]
     completed_at: str = ""
     blocked_reason: str = ""
+    # EVO-20260923-618f7fd1 ②: goal 级方法 use 硬门开关（默认关）；
+    # 开启后 evidence_required 任务 →done 需本会话至少一条 record_use 或显式声明
+    method_use_gate: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -61,7 +64,7 @@ class GoalStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._dir / "goals.jsonl"
 
-    def create(self, objective: str, session_id: str = "") -> Goal:
+    def create(self, objective: str, session_id: str = "", *, method_use_gate: bool = False) -> Goal:
         """创建任务目标（active 初始态；与checkpoint/update共享同一写锁）."""
         now = datetime.now(UTC).isoformat()
         goal = Goal(
@@ -72,6 +75,7 @@ class GoalStore:
             created_at=now,
             updated_at=now,
             session_id=session_id,
+            method_use_gate=method_use_gate,
         )
         with self._file_lock():
             lines = self._read_lines()

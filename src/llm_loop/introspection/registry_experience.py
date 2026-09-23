@@ -235,6 +235,7 @@ def _run_record_method_use(args: dict, host: RegistryHost, *, tool_name: str = "
             note=str(args.get("note", "")),
             model=current_model_label.get(),
             evidence_refs=[str(v) for v in (args.get("evidence_refs") or [])],
+            session_id=str(host.current_session_id() or ""),
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         return _method_failure(tool_name, f"[Method use 写入失败] {type(exc).__name__}: {exc}")
