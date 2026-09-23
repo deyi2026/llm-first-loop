@@ -1065,6 +1065,25 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
+/* 版本变更 stale 横幅（内容不自动替换，显式重载入口） */
+.v2-preview-stale {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--dsw-alias-state-warn-label, var(--dsw-alias-label-secondary));
+  background: var(--dsw-alias-state-warn-bg, rgb(255 200 0 / 8%));
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  flex-shrink: 0;
+}
+
+.v2-preview-stale .v2-btn {
+  margin-left: auto;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
 /* ── 附件状态（降级/失败有色标注） ── */
 .v2-attachment.degraded {
   border: 1px solid var(--dsw-alias-state-warn-primary);

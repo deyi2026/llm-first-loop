@@ -294,15 +294,126 @@ def test_related_missing_404(build_test_engine, tmp_path):
 
 
 def test_related_rejects_non_packable_extension(build_test_engine, tmp_path):
-    """只允许直接声明的经典 .js/.css（对齐 DSH 打包范围；机械扩展名门）."""
+    """只允许打包面内扩展名（.js/.css/图片/字体；机械扩展名门）."""
     root, client = _ws_client(build_test_engine, tmp_path)
     (root / "index.html").write_text("<p>x</p>", encoding="utf-8")
-    (root / "evil.png").write_bytes(b"PNG")
+    (root / "evil.exe").write_bytes(b"MZ")
     resp = client.get(
-        "/api/v1/files/related", params={"base": "index.html", "path": "evil.png"}
+        "/api/v1/files/related", params={"base": "index.html", "path": "evil.exe"}
     )
     assert resp.status_code == 400
     assert resp.json()["error"] == "unsupported_related_type"
+
+
+# ── 版本变更监听（对齐 DSH changes 流的事实面）：stat 版本指纹 + 响应携带 mtime ──
+
+
+def test_preview_text_response_carries_mtime(build_test_engine, tmp_path):
+    """文本页携带 mtime_ns（读前 stat 版本指纹，消费方可辨新旧页）."""
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "t.txt").write_text("x\n", encoding="utf-8")
+    resp = client.get("/api/v1/files/preview", params={"path": "t.txt"})
+    body = resp.json()
+    assert isinstance(body["mtime_ns"], int)
+    assert body["mtime_ns"] > 0
+
+
+def test_preview_bytes_response_carries_mtime(build_test_engine, tmp_path):
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "p.png").write_bytes(b"PNG")
+    resp = client.get("/api/v1/files/preview", params={"path": "p.png"})
+    assert isinstance(resp.json()["mtime_ns"], int)
+
+
+def test_stat_returns_version_facts(build_test_engine, tmp_path):
+    """stat 端点返回 size+mtime_ns（前端观察器比较版本指纹用）."""
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "t.txt").write_text("hello", encoding="utf-8")
+    resp = client.get("/api/v1/files/stat", params={"path": "t.txt"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["size"] == 5
+    assert isinstance(body["mtime_ns"], int) and body["mtime_ns"] > 0
+
+    # 变更后指纹变化（机械事实，不判断语义）
+    import os
+    import time
+
+    (root / "t.txt").write_text("hello world", encoding="utf-8")
+    os.utime(root / "t.txt", ns=(time.time_ns() + 10**9, time.time_ns() + 10**9))
+    body2 = client.get("/api/v1/files/stat", params={"path": "t.txt"}).json()
+    assert body2["size"] == 11
+    assert body2["mtime_ns"] != body["mtime_ns"]
+
+
+def test_stat_missing_404(build_test_engine, tmp_path):
+    root, client = _ws_client(build_test_engine, tmp_path)
+    resp = client.get("/api/v1/files/stat", params={"path": "gone.txt"})
+    assert resp.status_code == 404
+
+
+def test_stat_rejects_out_of_bounds(build_test_engine, tmp_path):
+    root, client = _ws_client(build_test_engine, tmp_path)
+    resp = client.get("/api/v1/files/stat", params={"path": "/etc/passwd"})
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "out_of_bounds"
+
+
+def test_stat_dir_not_regular_file(build_test_engine, tmp_path):
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "d").mkdir()
+    resp = client.get("/api/v1/files/stat", params={"path": "d"})
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "not_regular_file"
+
+
+# ── CSS url() 资产打包：readRelated 放开图片/字体（二进制，不做 UTF-8 校验） ──
+
+
+def test_related_allows_binary_image_without_utf8_check(build_test_engine, tmp_path):
+    """png 字节（含非 UTF-8 序列）原样 base64 返回，mime image/png."""
+    import base64
+
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "index.html").write_text("<p>x</p>", encoding="utf-8")
+    blob = b"\x89PNG\r\n\x1a\n\xff\xfe binary"
+    (root / "bg.png").write_bytes(blob)
+    resp = client.get(
+        "/api/v1/files/related", params={"base": "index.html", "path": "bg.png"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mime"] == "image/png"
+    assert base64.b64decode(body["content_base64"]) == blob
+
+
+def test_related_font_mime(build_test_engine, tmp_path):
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "index.html").write_text("<p>x</p>", encoding="utf-8")
+    (root / "f.woff2").write_bytes(b"wOF2")
+    resp = client.get(
+        "/api/v1/files/related", params={"base": "index.html", "path": "f.woff2"}
+    )
+    body = resp.json()
+    assert body["mime"] == "font/woff2"
+
+
+def test_related_css_resolves_against_css_file_dir(build_test_engine, tmp_path):
+    """css 内 url() 的 base 应为该 css 文件（前端递归打包依赖此契约）."""
+    import base64
+
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "index.html").write_text("<p>x</p>", encoding="utf-8")
+    (root / "css").mkdir()
+    (root / "css" / "main.css").write_text("body{}", encoding="utf-8")
+    (root / "css" / "img").mkdir()
+    (root / "css" / "img" / "bg.png").write_bytes(b"PNG")
+    resp = client.get(
+        "/api/v1/files/related",
+        params={"base": "css/main.css", "path": "img/bg.png"},
+    )
+    assert resp.status_code == 200
+    assert base64.b64decode(resp.json()["content_base64"]) == b"PNG"
 
 
 def test_related_per_asset_cap_413(build_test_engine, tmp_path, monkeypatch):

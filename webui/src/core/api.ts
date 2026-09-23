@@ -281,6 +281,8 @@ export interface FilePreviewText {
   type: "text";
   path: string;
   size: number;
+  /** 读前 stat 的版本指纹成分（与 size 共同构成消费方可比较的版本） */
+  mtime_ns: number;
   offset: number;
   lines: number;
   content: string;
@@ -291,6 +293,7 @@ export interface FilePreviewBytes {
   type: "image" | "pdf" | "html";
   path: string;
   size: number;
+  mtime_ns: number;
   mime: string;
   content_base64: string;
 }

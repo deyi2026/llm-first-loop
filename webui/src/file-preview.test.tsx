@@ -10,6 +10,7 @@ import { PreviewTabsPanel } from "./components/PreviewTabsPanel";
 import { FileTree } from "./components/sidebar/FileTree";
 import { MessageItem } from "./components/conversation/MessageItem";
 import { previewTabsStore, rightPanelStore } from "./core/stores";
+import { previewWatcher } from "./core/previewWatch";
 import { renderMarkdown } from "./core/markdown";
 
 afterEach(() => {
@@ -38,11 +39,12 @@ function previewRouter(routes: Route[]) {
   });
 }
 
-function textPage(path: string, offset: number, lines: string, eof: boolean) {
+function textPage(path: string, offset: number, lines: string, eof: boolean, mtimeNs = 100) {
   return {
     type: "text" as const,
     path,
     size: 100,
+    mtime_ns: mtimeNs,
     offset,
     lines: lines.split("\n").length,
     content: lines,
@@ -51,9 +53,13 @@ function textPage(path: string, offset: number, lines: string, eof: boolean) {
   };
 }
 
+const createdBlobs: Blob[] = [];
+
 function stubBlobUrl() {
+  createdBlobs.length = 0;
   class FakeURL extends URL {
     static createObjectURL(b: Blob): string {
+      createdBlobs.push(b);
       return `blob:${b.type}`;
     }
     static revokeObjectURL(): void {}
@@ -61,13 +67,14 @@ function stubBlobUrl() {
   vi.stubGlobal("URL", FakeURL);
 }
 
-function relatedBody(text: string) {
+function relatedBody(content: string, opts: { path?: string; mime?: string; raw?: boolean } = {}) {
+  const raw = opts.raw ?? false;
   return {
     type: "related" as const,
-    path: "/abs",
-    size: text.length,
-    mime: "text/javascript",
-    content_base64: btoa(text),
+    path: opts.path ?? "/abs",
+    size: content.length,
+    mime: opts.mime ?? "text/javascript",
+    content_base64: raw ? content : btoa(content),
   };
 }
 
@@ -196,6 +203,14 @@ describe("HTML 依赖打包（readRelated 对齐）", () => {
         {
           match: (u) => u.includes("/api/v1/files/preview"),
           body: () => htmlBody(`<html><body>${refs}</body></html>`),
+        },
+        {
+          match: (u) => u.includes("/api/v1/files/related"),
+          // absPath 按 ref 唯一（countedPaths 以解析后绝对路径去重）
+          body: (u) => {
+            const ref = new URL(u, "http://x").searchParams.get("path") ?? "x.js";
+            return relatedBody("console.log(1)", { path: `/ws/${ref}` });
+          },
         },
       ])
     );
@@ -446,3 +461,192 @@ describe("行号锚点按列定位（line:col）", () => {
     await waitFor(() => expect(screen.getByText(":42:7")).toBeInTheDocument());
   });
 });
+
+describe("版本变更监听（对齐 DSH changes 流 + stale 页提示）", () => {
+  it("观察到的版本较新 → stale 横幅出现、内容不自动替换；重载后清横幅", async () => {
+    let previewCalls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/files/stat")) {
+        // 磁盘现状恒为 mtime 200（打开后已被外部改写）
+        return jsonResponse({ path: "a.txt", size: 100, mtime_ns: 200 });
+      }
+      if (url.includes("/api/v1/files/preview")) {
+        previewCalls += 1;
+        // 首载拿到旧版本（100）；重载后拿到磁盘现状（200）
+        return jsonResponse(textPage("a.txt", 1, previewCalls > 1 ? "new-content" : "old-content", true, previewCalls > 1 ? 200 : 100));
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<FilePreviewView path="a.txt" line={null} />);
+    await waitFor(() => expect(screen.getByText("old-content")).toBeInTheDocument());
+    expect(screen.queryByTestId("preview-stale")).toBeNull();
+
+    await previewWatcher.pollNow(); // 观察到 mtime 200 ≠ 读取基线 100
+    await waitFor(() => expect(screen.getByTestId("preview-stale")).toBeInTheDocument());
+    expect(screen.getByText(/已变更/)).toBeInTheDocument();
+    expect(screen.getByText("old-content")).toBeInTheDocument(); // 不自动替换
+
+    fireEvent.click(screen.getByRole("button", { name: /重新加载/ }));
+    await waitFor(() => expect(screen.queryByTestId("preview-stale")).toBeNull()); // 已观察版本不再报变更
+    expect(previewCalls).toBe(2);
+    expect(screen.getByText("new-content")).toBeInTheDocument();
+  });
+
+  it("文件消失（stat 404）→ absent 提示，内容保留", async () => {
+    vi.stubGlobal(
+      "fetch",
+      previewRouter([
+        { match: (u) => u.includes("/api/v1/files/preview"), body: () => textPage("g.txt", 1, "kept", true) },
+        { match: (u) => u.includes("/api/v1/files/stat"), status: 404, body: () => ({ error: "file_not_found" }) },
+      ])
+    );
+    render(<FilePreviewView path="g.txt" line={null} />);
+    await waitFor(() => expect(screen.getByText("kept")).toBeInTheDocument());
+    await previewWatcher.pollNow();
+    await waitFor(() => expect(screen.getByTestId("preview-stale")).toBeInTheDocument());
+    expect(screen.getByText(/不在磁盘上/)).toBeInTheDocument();
+    expect(screen.getByText("kept")).toBeInTheDocument();
+  });
+
+  it("观察失败（stat 500）不冒充 stale", async () => {
+    vi.stubGlobal(
+      "fetch",
+      previewRouter([
+        { match: (u) => u.includes("/api/v1/files/preview"), body: () => textPage("s.txt", 1, "v", true) },
+        { match: (u) => u.includes("/api/v1/files/stat"), status: 500, body: () => ({ error: "read_failed" }) },
+      ])
+    );
+    render(<FilePreviewView path="s.txt" line={null} />);
+    await waitFor(() => expect(screen.getByText("v")).toBeInTheDocument());
+    await previewWatcher.pollNow();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByTestId("preview-stale")).toBeNull();
+  });
+
+  it("分页续读版本漂移 → 不混版本，从头重读新版本", async () => {
+    // 首载（offset=1）返回旧版本 eof=false；加载更多 offset=3 返回 mtime 200
+    // （≠基线 100）→ 触发 offset=1 重读（同一 URL，按调用顺序区分）新版本。
+    const previewCalls: string[] = [];
+    const mock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/files/stat")) return jsonResponse({ size: 1, mtime_ns: 100 });
+      if (url.includes("/api/v1/files/preview")) {
+        if (url.includes("offset=3")) {
+          previewCalls.push("3");
+          return jsonResponse(textPage("d.txt", 3, "p2", false, 200));
+        }
+        previewCalls.push("1");
+        const first = previewCalls.filter((c) => c === "1").length === 1;
+        return jsonResponse(
+          first
+            ? textPage("d.txt", 1, "old-v1-l1\nold-v1-l2", false, 100)
+            : textPage("d.txt", 1, "new-v2-l1\nnew-v2-l2", false, 200)
+        );
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", mock);
+    render(<FilePreviewView path="d.txt" line={null} />);
+    await waitFor(() => expect(screen.getByText("old-v1-l2")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("preview-load-more"));
+    await waitFor(() => expect(screen.getByText("new-v2-l2")).toBeInTheDocument());
+    expect(screen.queryByText("old-v1-l1")).toBeNull(); // 不混版本
+    expect(previewCalls).toEqual(["1", "3", "1"]); // 首载 → 漂移续读 → 从头重读
+  });
+});
+
+describe("HTML 预览 CSS 资源打包（url() / @import）", () => {
+  function htmlBody(content: string) {
+    return {
+      type: "html" as const,
+      path: "page.html",
+      size: 10,
+      mtime_ns: 1,
+      mime: "text/html",
+      content_base64: btoa(content),
+    };
+  }
+
+  it("css 内相对 url(图片) → data URI；https/data 引用不打包", async () => {
+    stubBlobUrl();
+    const cssText = "body{background:url(bg.png)} .a{src:url('https://cdn/x.png')} .b{list-style:url(data:image/png;base64,AAAA)}";
+    const fetchMock = previewRouter([
+      {
+        match: (u) => u.includes("/api/v1/files/preview"),
+        body: () => htmlBody('<html><head><link rel="stylesheet" href="css/main.css"></head><body></body></html>'),
+      },
+      {
+        match: (u) => u.includes("/api/v1/files/related") && u.includes("main.css"),
+        body: () => relatedBody(cssText, { path: "/ws/css/main.css", mime: "text/css" }),
+      },
+      {
+        match: (u) => u.includes("/api/v1/files/related") && u.includes("bg.png"),
+        body: () => relatedBody(epsBase64("PNGDATA"), { path: "/ws/css/bg.png", mime: "image/png", raw: true }),
+      },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<FilePreviewView path="page.html" line={null} />);
+    await screen.findByTestId("preview-html");
+    // bg.png 以 css 文件为 base 解析
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        (c) => String(c[0]).includes("/api/v1/files/related") && String(c[0]).includes("bg.png")
+      );
+      expect(call).toBeTruthy();
+      expect(String(call![0])).toContain(encodeURIComponent("/ws/css/main.css"));
+    });
+    const html = (await Promise.all(createdBlobs.map(readBlobText))).join("\n");
+    expect(html).toContain("url(data:image/png;base64,");
+    expect(html).not.toContain("url(bg.png)");
+    expect(html).toContain("https://cdn/x.png"); // 非 relative 原样保留
+    expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("/api/v1/files/related")).length).toBe(2);
+  });
+
+  it("@import 相对 css 递归内联（以被导入 css 为 base）", async () => {
+    stubBlobUrl();
+    const fetchMock = previewRouter([
+      {
+        match: (u) => u.includes("/api/v1/files/preview"),
+        body: () => htmlBody('<html><head><link rel="stylesheet" href="a.css"></head><body></body></html>'),
+      },
+      {
+        match: (u) => u.includes("/api/v1/files/related") && u.includes("a.css") && !u.includes("sub.css"),
+        body: () => relatedBody('@import "sub.css"; body{color:red}', { path: "/ws/a.css", mime: "text/css" }),
+      },
+      {
+        match: (u) => u.includes("/api/v1/files/related") && u.includes("sub.css"),
+        body: () => relatedBody(".x{margin:0}", { path: "/ws/sub.css", mime: "text/css" }),
+      },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<FilePreviewView path="page.html" line={null} />);
+    await screen.findByTestId("preview-html");
+    await waitFor(() => {
+      const subCall = fetchMock.mock.calls.find(
+        (c) => String(c[0]).includes("/api/v1/files/related") && String(c[0]).includes("sub.css")
+      );
+      expect(subCall).toBeTruthy();
+      expect(String(subCall![0])).toContain(encodeURIComponent("/ws/a.css"));
+    });
+    const html = (await Promise.all(createdBlobs.map(readBlobText))).join("\n");
+    expect(html).toContain(".x{margin:0}");
+    expect(html).not.toContain("@import");
+  });
+});
+
+/** 把原始字节串按每字节转成 latin1 字符后 btoa（构造二进制 base64，与 TextDecoder 无关） */
+function epsBase64(s: string): string {
+  return btoa(s);
+}
+
+/** jsdom Blob 无 .text()：FileReader 兜底读取断言内容 */
+function readBlobText(b: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result));
+    fr.onerror = () => reject(fr.error);
+    fr.readAsText(b);
+  });
+}
