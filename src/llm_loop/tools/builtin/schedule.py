@@ -274,9 +274,16 @@ class ScheduleTool:
         if repeat_interval > 0:
             when += f"（每 {repeat_interval}s，最多 {max_count} 次）"
         delivery = "到点自动续跑当前会话" if wake else "到点仅发送通知"
+        content = f"[schedule] 已注册提醒 {sid}: '{message}'（{when}；{delivery}）。"
+        # antidrift R5: 同会话 wake 排程的分叉选项披露（非门禁，排程已照常生效）
+        if wake and wake_session_id == current_session_id.get():
+            content += (
+                "\n[提示] 独立验证/巡检类子任务建议排程至分叉会话"
+                "（协议见 docs/wake-fork-protocol.md）；本提示为选项披露，排程已照常生效"
+            )
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
-            content=f"[schedule] 已注册提醒 {sid}: '{message}'（{when}；{delivery}）。",
+            content=content,
             tool_call_id="",
             tool_name=self.name,
         )

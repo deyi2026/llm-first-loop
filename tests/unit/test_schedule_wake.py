@@ -494,3 +494,51 @@ def test_schedule_subject_refs_valid_passthrough(tmp_path):
     r = tool.execute(message="带 refs", after=30, subject_refs=refs)
     assert r.status.value == "success"
     assert store.list()[0]["subject_refs"] == refs
+
+# ── antidrift R5: wake 子任务会话分叉协议 ────────────────────────────────────
+
+
+def test_wake_fork_protocol_doc_has_three_elements():
+    """T5-1 (antidrift R5): 协议文档存在且三要素标题/关键词齐备."""
+    from pathlib import Path
+
+    doc = Path(__file__).resolve().parents[2] / "docs" / "wake-fork-protocol.md"
+    assert doc.exists(), "docs/wake-fork-protocol.md 不存在"
+    text = doc.read_text(encoding="utf-8")
+    assert "适用任务类型" in text, "缺要素一：适用任务类型"
+    assert "独立验证" in text and "巡检" in text, "适用任务类型须点名独立验证/巡检类"
+    assert "分叉操作指引" in text, "缺要素二：分叉操作指引"
+    assert "父会话回摘" in text, "缺要素三：父会话回摘要求"
+
+
+def test_wake_same_session_receipt_discloses_fork_option(tmp_path):
+    """T5-2 (antidrift R5): wake=true 同会话成功回执含分叉选项披露行，排程照常生效."""
+    store = ScheduleStore(tmp_path / "schedule.json")
+    tool = ScheduleTool(store=store)
+    ingress = issue_test_ingress()
+    sid_tok = current_session_id.set("sess-fork")
+    ing_tok = current_ingress_token.set(ingress)
+    ing_sid_tok = current_ingress_session_id.set("sess-fork")
+    try:
+        result = tool.execute(message="独立巡检复核", after=30, wake=True)
+    finally:
+        current_ingress_session_id.reset(ing_sid_tok)
+        current_ingress_token.reset(ing_tok)
+        current_session_id.reset(sid_tok)
+    assert result.status.value == "success"
+    assert "建议排程至分叉会话" in result.content
+    assert "docs/wake-fork-protocol.md" in result.content
+    assert "排程已照常生效" in result.content
+    entry = store.list()[0]
+    assert entry["wake"] is True
+    assert entry["session_id"] == "sess-fork"
+
+
+def test_notify_only_schedule_receipt_has_no_fork_hint(tmp_path):
+    """T5-2 负测 (antidrift R5): wake=false（或分叉目标）回执无分叉提示行."""
+    store = ScheduleStore(tmp_path / "schedule.json")
+    tool = ScheduleTool(store=store)
+    r = tool.execute(message="普通提醒", after=30)
+    assert r.status.value == "success"
+    assert "分叉会话" not in r.content
+    assert store.list()[0]["wake"] is False
