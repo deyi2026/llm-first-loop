@@ -458,6 +458,17 @@ class HumanFileObserveRequest(BaseModel):
     limit: int | None = Field(default=None, ge=1, le=5000)
 
 
+class EscalationReviewRequest(BaseModel):
+    """web 提权审批（POST /api/v1/escalation/review，EVO-20260923-c58a0bb1 提权闭环）."""
+
+    id: str = Field(min_length=6, description="提权申请 ID（ESC-xxx）")
+    decision: str = Field(pattern="^(approved|denied)$", description="approved / denied")
+    note: str = Field(default="", max_length=500, description="审批备注（拒绝理由等，AI 侧可见）")
+    ttl_minutes: int = Field(
+        default=10, ge=1, le=60, description="批准令牌有效期（分钟，默认 10）"
+    )
+
+
 class HumanFileEditRequest(BaseModel):
     """Version-protected authenticated-human full-text save."""
 

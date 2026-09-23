@@ -5,9 +5,11 @@
 
 如实标注（P0-1, 2026-08-15，审计发现 #3 修复）：本机制是**已知灾难模式的
 硬阻断 + 全量阻断审计**，不是完备沙箱——它拦截常见的不可逆破坏形态
-（rm -rf 根/主目录、mkfs、dd 写块设备、fork bomb、curl 管道执行、写系统
-关键区、find 批量删除、shell/python 载荷中的上述行为），不能证明任意命令
-无副作用。需要更强隔离时请叠加 EXEC_MODE 分级与系统级沙箱（纵深防御）。
+（rm -rf 根/主目录本体、mkfs、dd 写块设备、fork bomb、curl 管道执行、写系统
+关键区、find 删除载荷（按起点目标语义判定）、shell/python 载荷中的上述行为），
+不能证明任意命令无副作用。需要更强隔离时请叠加 EXEC_MODE 分级与系统级沙箱
+（纵深防御）。确属必要的被阻断操作走提权闭环（escalation_request → web 人工
+审批 → 一次性令牌重发；见 tools/escalation.py）。
 """
 
 from __future__ import annotations
@@ -65,10 +67,19 @@ _CATASTROPHIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 # rm -rf 的灾难性目标（变量展开 + ~ 展开后判定，审计发现 #3：$HOME/${HOME}/~ 绕过修复）
 _SYSTEM_DIRS = ("/etc", "/boot", "/usr", "/bin", "/sbin", "/lib", "/var", "/home")
 
-# python -c 载荷中的不可逆破坏调用（审计发现 #3：python -c 载荷绕过修复）
-_PY_DANGER = re.compile(
-    r"(shutil\.rmtree|os\.(remove|unlink|rmdir|removedirs)|pathlib[^(]*\([^)]*\)\.(unlink|rmdir)"
-    r"|rm\s+-[a-z]*r[a-z]*f|mkfs\b|dd\b.*of=/dev/)",
+# python -c 载荷的不可逆破坏分级（审计发现 #3 补洞 + EVO-20260923-c58a0bb1 修正 3）:
+# - 递归级（rmtree/removedirs/内嵌 rm -rf/mkfs/dd→块设备）: 无条件硬拦——
+#   灾难规模与 shell 层同构，不因拼写形式（python vs rm）改变判定。
+# - 单文件级（os.remove/os.unlink/os.rmdir/Path(...).unlink/rmdir）: 仅当
+#   **字面目标**命中灾难目录时拦；与 shell 层 `rm /tmp/x` 放行对齐——
+#   单文件删除非灾难规模，拦截不应取决于载荷语言。
+_PY_RECURSIVE_DANGER = re.compile(
+    r"(shutil\.rmtree|os\.removedirs|rm\s+-[a-z]*r[a-z]*f|mkfs\b|dd\b.*of=/dev/)",
+    re.IGNORECASE,
+)
+# 单文件删除调用 + 提取首个字符串字面量实参（动态目标不判——单文件规模）
+_PY_SINGLE_FILE_CALL = re.compile(
+    r"(?:os\.(?:remove|unlink|rmdir)|\.(?:unlink|rmdir))\s*\(\s*(['\"])(.*?)\1",
     re.IGNORECASE,
 )
 
@@ -153,18 +164,39 @@ def _rm_targets(tokens: list[str]) -> list[str]:
 
 
 def _is_dangerous_rm_target(target: str) -> bool:
-    """根 / 主目录（含子路径）/ 系统关键目录（含子路径）.
+    """根 / 主目录本体 / 系统关键目录（含子路径）.
 
+    EVO-20260923-c58a0bb1（accepted）修正 1: 主目录**子路径**不再按
+    拼写前缀一票否决——同一目标写成 `./dir` 放行、写成绝对路径就拦，
+    拦截结果取决于拼写而非目标语义，对诚实工作流只制造中断，对
+    恶意主体无防护增益。主目录**本体**与系统关键目录（含子路径）
+    保持不可逆全量定位拦。
     工作区相对路径（./build 等）与 /tmp 不在此列——边界极小纪律，
     会话内正常清理由 AI 自主裁决，程序只拦不可逆系统级破坏。
     """
     t = target.rstrip("/")
     if t in ("", "/"):
         return True
-    home = os.path.expanduser("~")
-    if t == home or t.startswith(home + os.sep):
+    if t == os.path.expanduser("~"):
         return True
     return any(t == d or t.startswith(d + "/") for d in _SYSTEM_DIRS)
+
+
+def _find_start_points(tokens: list[str]) -> list[str]:
+    """find 的起点路径（EVO-20260923-c58a0bb1 修正 2）.
+
+    POSIX 语义: 起点是 find 后、表达式区前的非选项参数；-H/-L/-P/-O/-D
+    为可前置的全局选项。遇到第一个非全局选项的 '-' token 即进入表达式区，
+    其后的 -newer/-name 等参数不再误判为起点。无显式起点 = 隐含 '.'。
+    """
+    starts: list[str] = []
+    for t in tokens[1:]:
+        if t in ("-H", "-L", "-P") or re.fullmatch(r"-O\d?", t) or t.startswith("-D"):
+            continue
+        if t.startswith("-"):
+            break
+        starts.append(_expand(t))
+    return starts or ["."]
 
 
 def _shell_payload(tokens: list[str]) -> str | None:
@@ -247,15 +279,23 @@ class CatastrophicGuard:
                 if _is_dangerous_rm_target(target):
                     return self._block("rm -rf 指向根/主目录/系统关键目录", sub, f"rm 目标: {target}")
 
-        # 2) find 删除载荷（审计发现 #3：find -delete/-exec rm 绕过修复）
+        # 2) find 删除载荷（审计发现 #3 补洞 + EVO-20260923-c58a0bb1 修正 2:
+        #    -delete / -exec rm 不再无条件拦——改按 find **起点**的目标语义
+        #    判定。工作区/临时区等安全起点放行（正常清理不再误拦），
+        #    灾难级起点（根/主目录本体/系统目录子树）仍硬拦。）
         if toks[0] == "find":
-            if "-delete" in toks:
-                return self._block("find -delete 批量删除", sub, "find ... -delete")
-            if "-exec" in toks:
-                idx = toks.index("-exec")
-                payload = toks[idx + 1 :]
-                if payload and payload[0] in ("rm", "shred", "srm"):
-                    return self._block("find -exec 调用删除命令", sub, f"find -exec {payload[0]} ...")
+            has_delete_payload = "-delete" in toks or any(
+                t == "-exec" and i + 1 < len(toks) and toks[i + 1] in ("rm", "shred", "srm")
+                for i, t in enumerate(toks)
+            )
+            if has_delete_payload:
+                for start in _find_start_points(toks):
+                    if _is_dangerous_rm_target(start):
+                        return self._block(
+                            "find 删除载荷指向灾难级起点",
+                            sub,
+                            f"find 起点: {start}",
+                        )
 
         # 3) shell 载荷递归（sh -c "..." 内仍是命令，深度限 2 防无限递归）
         if depth < 2:
@@ -269,12 +309,20 @@ class CatastrophicGuard:
                         evidence=f"shell 载荷: {payload[:120]} ← {d.evidence}",
                     )
 
-        # 4) python -c 载荷检查（rmtree/remove/unlink/内嵌 rm -rf 等）
+        # 4) python -c 载荷检查（递归级无条件拦；单文件级字面目标判定）
         py_payload = _python_payload(toks)
         if py_payload:
-            m = _PY_DANGER.search(py_payload)
+            m = _PY_RECURSIVE_DANGER.search(py_payload)
             if m:
-                return self._block("python -c 载荷含不可逆破坏调用", sub, f"载荷命中: {m.group(0)[:80]}")
+                return self._block("python -c 载荷含递归级不可逆破坏调用", sub, f"载荷命中: {m.group(0)[:80]}")
+            for lm in _PY_SINGLE_FILE_CALL.finditer(py_payload):
+                target = lm.group(2)
+                if _is_dangerous_rm_target(_expand(target)):
+                    return self._block(
+                        "python -c 载荷单文件删除指向灾难目录",
+                        sub,
+                        f"字面目标: {target[:80]}",
+                    )
             # 引号/逗号归一后 token 扫描（subprocess.run(['rm','-rf','/']) 等列表形态）
             inner_toks = re.sub(r"['\",()\[\];]", " ", py_payload).split()
             for i, t in enumerate(inner_toks):

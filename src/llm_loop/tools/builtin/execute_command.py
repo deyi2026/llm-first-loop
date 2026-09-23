@@ -186,6 +186,15 @@ class ExecuteCommandTool:
                 "type": "boolean",
                 "description": "后台运行（可选，默认 false）。true 时立即返回 job_id，不阻塞等待；用 job_output 查询输出。终止能力仅在真实用户明确要求取消时提供。适合长任务（测试/安装/编译）。",
             },
+            "escalation_token": {
+                "type": "string",
+                "description": (
+                    "提权令牌（可选）。仅当命令被灾难性安全硬阻断、且已通过 "
+                    "escalation_request 提交申请并经 web 面板人工批准（escalation_wait "
+                    "返回）时使用。令牌绑定批准时的精确命令文本（改动一字即废）、"
+                    "单次有效、默认 10 分钟过期。"
+                ),
+            },
         },
         "required": ["command"],
     }

@@ -306,13 +306,16 @@ class ToolRegistry:
         exec_allowlist: str = "",
         # T5a(2026-08-14): 人工审批回调（None = 拦截即拒绝 fail-closed，零回归）
         # 回调签名: (tool_name, args_summary) -> bool（True=人工批准放行 / False=拒绝）
-        # 仅 EXEC_MODE 拦截路径触发；灾难性安全硬阻断不可审批（C 类硬边界不移交）。
+        # 仅 EXEC_MODE 拦截路径触发。灾难性硬阻断走提权闭环（escalation_store，
+        # EVO-20260923 用户批准: escalation_request → web 人工审批 → 一次性令牌定向放行）。
         approval_callback: Callable[[str, str], bool] | None = None,
         # T5a: 审批审计落盘路径（None = 不落盘；含时间/工具/参数摘要/决策，不含密钥）
         approval_audit_path: str | Path | None = None,
         # P0-1(2026-08-15): 阻断审计目录（默认守卫落盘 safety_blocks.jsonl；
         # 仅 safety_guard 未显式注入时生效；None = 不落盘，零回归）
         safety_audit_dir: str | Path | None = None,
+        # 提权闭环存储（None = 未装配，灾难硬阻断保持纯 fail-closed，零回归）
+        escalation_store: Any | None = None,
         # task_quality 路径 A（2026-08-17）: 参数预检层（None = 关闭，零回归；
         # 注入后 execute 步骤 1 后、安全检查前执行预检，失败返回字段级引导反馈）
         precheck_layer: Any | None = None,
@@ -357,6 +360,7 @@ class ToolRegistry:
         self.precheck_layer = precheck_layer  # task_quality 路径 A（None=关闭零回归）
         self._managed_service_guard = managed_service_guard
         self._archive_store = archive_store  # ArchiveStore（T22 超长结果另存）
+        self._escalation_store = escalation_store  # EscalationStore（提权闭环，None=零回归）
         # EVO-20260813-9ced1f4c: 工具执行瀑布（默认 None = 零回归；set_pipeline 显式装配）
         self._pipeline: Any = None
         # T5a: 人工审批通道（None = 拦截即拒；set_approval_callback 运行时注入）
@@ -974,12 +978,45 @@ class ToolRegistry:
             call = ToolCall(id=call.id, name=call.name, arguments=materialized)
 
         # 2. 灾难性安全校验（FR-SAFE-01；仅可破坏工具）
+        #    EVO-20260923 提权闭环: 人工批准的一次性令牌可定向放行本层
+        #    （令牌绑定工具名+命令 SHA256，单次有效；EXEC_MODE 与共享服务
+        #    边界独立于令牌，仍按各自规则裁决）。
         if self._is_destructive_tool(call.name):
             blocked = self.safety.guard(call.name, call.arguments)
             if blocked:
+                token = str(call.arguments.get("escalation_token", "") or "")
+                if token and self._escalation_store is not None:
+                    command = str(call.arguments.get("command", "") or "")
+                    rec, reject_reason = self._escalation_store.consume(token, call.name, command)
+                    if rec is not None:
+                        logger.info(
+                            "[提权放行] %s 请求 %s 人工批准令牌已消耗（单次）",
+                            call.name,
+                            rec.get("id", ""),
+                        )
+                        blocked = None
+                    else:
+                        return ToolResult(
+                            status=ToolResultStatus.BLOCKED,
+                            content=(
+                                f"[提权令牌无效] {reject_reason}。请勿重试旧令牌；"
+                                f"如仍必要请重新 escalation_request 提交申请。"
+                            ),
+                            tool_call_id=call.id,
+                            tool_name=call.name,
+                            error_detail=f"escalation token rejected: {reject_reason}",
+                            duration_ms=0.0,
+                        )
+            if blocked:
+                escalate_hint = (
+                    " 如确属必要: escalation_request 提交提权申请（web 弹窗人工审批），"
+                    "批准后凭一次性令牌重发同一命令。"
+                    if self._escalation_store is not None
+                    else ""
+                )
                 return ToolResult(
                     status=ToolResultStatus.BLOCKED,
-                    content=f"[安全硬阻断] 已阻止可能造成不可逆破坏的行动。{blocked.reason}",
+                    content=f"[安全硬阻断] 已阻止可能造成不可逆破坏的行动。{blocked.reason}{escalate_hint}",
                     tool_call_id=call.id,
                     tool_name=call.name,
                     error_detail=f"判定依据: {blocked.evidence}",

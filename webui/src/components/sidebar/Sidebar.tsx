@@ -19,6 +19,7 @@ import { loadHistory } from "../../core/conversation";
 import { WorkspaceGroups, formatRelative } from "./WorkspaceGroups";
 import { FileTree } from "./FileTree";
 import { EvolutionPanel } from "./EvolutionPanel";
+import { EscalationPanel, EscalationWatcher } from "./EscalationCenter";
 import { zh } from "../../i18n/zh";
 
 export function Sidebar({ collapsed }: { collapsed: boolean }) {
@@ -222,6 +223,14 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         </button>
         <button
           type="button"
+          className={`v2-tab ${view === "esc" ? "active" : ""}`}
+          onClick={() => sidebarViewStore.setView("esc")}
+          data-testid="tab-esc"
+        >
+          🔓 {zh.escalationShort}
+        </button>
+        <button
+          type="button"
           className={`v2-tab ${view === "archived" ? "active" : ""}`}
           onClick={() => sidebarViewStore.setView("archived")}
           data-testid="tab-archived"
@@ -238,6 +247,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         <FileTree sessionId={currentId ?? ""} />
       ) : view === "evo" ? (
         <EvolutionPanel />
+      ) : view === "esc" ? (
+        <EscalationPanel />
       ) : view === "archived" ? (
         <div className="v2-archived-list" data-testid="archived-list">
           {archived.length === 0 ? (
@@ -445,6 +456,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       <div className="v2-sidebar-footer">
         <span>{zh.sessionCount.replace("{n}", String(sessions.length))}</span>
       </div>
+      <EscalationWatcher />
     </aside>
   );
 }

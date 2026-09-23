@@ -2772,3 +2772,89 @@ select.v2-control-pill {
   background: var(--dsw-alias-state-warn-tertiary);
   color: var(--dsw-alias-state-warn-label);
 }
+
+/* ══ 提权闭环（EVO-20260923-c58a0bb1）: 弹窗 + 侧栏面板 ══ */
+.v2-esc-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.v2-esc-modal {
+  max-width: 560px;
+  width: 100%;
+  max-height: 80vh;
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid var(--dsw-alias-border-secondary);
+  background: var(--dsw-alias-layer-panel);
+  padding: 14px 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.v2-esc-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+.v2-esc-modal-foot {
+  font-size: 11px;
+  opacity: 0.65;
+  margin-top: 10px;
+  line-height: 1.5;
+}
+.v2-esc-cmd code {
+  display: block;
+  font-family: var(--dsw-alias-font-mono, monospace);
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--dsw-alias-interactive-bg-selected, rgba(127, 127, 127, 0.12));
+  word-break: break-all;
+  white-space: pre-wrap;
+  user-select: text;
+}
+.v2-esc-cmd {
+  margin: 6px 0;
+}
+.v2-esc-just {
+  font-size: 12px;
+  opacity: 0.85;
+  margin: 4px 0;
+  line-height: 1.5;
+}
+.v2-esc-note {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-secondary);
+  background: var(--dsw-alias-layer-input, transparent);
+  color: inherit;
+  resize: vertical;
+}
+.v2-esc-sec {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+  margin: 10px 0 4px;
+}
+.v2-esc-watcher-chip {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2900;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-secondary);
+  background: var(--dsw-alias-layer-panel);
+  opacity: 0.92;
+}

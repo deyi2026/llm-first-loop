@@ -1870,6 +1870,77 @@ def architecture_status_web(request: Request, session_id: str = "") -> Response:
         )
 
 
+@router.get("/api/v1/escalation/list")
+def escalation_list(request: Request, limit: int = 50, status: str = "") -> Response:
+    """提权申请列表（只读；EVO-20260923-c58a0bb1 提权闭环 web 端）.
+
+    status 可选过滤（pending/approved/denied/consumed/expired）；响应**永不
+    含令牌**（令牌只由 AI 侧 escalation_wait 从存储读取，不经 web 通道）。
+    前端轮询此端点驱动弹窗。本地 web（127.0.0.1）默认可信；WEB_AUTH_REQUIRE=1
+    时受统一 Bearer 保护（与 evolution 审批一致）。
+    """
+    from pathlib import Path
+
+    from llm_loop.tools.escalation import EscalationStore
+
+    base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
+    store = EscalationStore(base / "audit" / "escalation_requests.json")
+    try:
+        items = store.list(status=status or "", limit=limit)
+        pending = store.pending_count()
+    except OSError:
+        items, pending = [], 0
+    return JSONResponse(content={"requests": items, "pending_count": pending})
+
+
+@router.post("/api/v1/escalation/review")
+async def escalation_review(request: Request) -> Response:
+    """web 提权审批（人工决定端点；批准 = 铸造一次性令牌，拒绝 = 记录理由）.
+
+    请求体见 schemas.EscalationReviewRequest；幂等约束: 仅 pending 可决，
+    重复审批返回 409 语义（fail-closed 到首个决定）。
+    """
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from llm_loop.tools.escalation import EscalationStore
+    from llm_loop.web.schemas import EscalationReviewRequest
+
+    try:
+        payload = EscalationReviewRequest.model_validate_json(await request.body())
+    except Exception as exc:  # noqa: BLE001 — 参数校验失败统一 400
+        return JSONResponse(content={"error": f"参数校验失败: {exc}"}, status_code=400)
+
+    base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
+    audit_file = base / "audit" / "escalation_review_log.jsonl"
+    try:
+        audit_file.parent.mkdir(parents=True, exist_ok=True)
+        audit_line = {
+            "ts": datetime.now(UTC).isoformat(),
+            "action": "ESCALATION_REVIEW_WEB",
+            "id": payload.id,
+            "decision": payload.decision,
+            "note": payload.note,
+        }
+        with audit_file.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(audit_line, ensure_ascii=False) + "\n")
+    except OSError:
+        pass  # 审计写失败不阻断审批主流程（store 侧另有 escalation_log.jsonl 双写）
+
+    store = EscalationStore(base / "audit" / "escalation_requests.json")
+    rec, reason = store.decide(
+        payload.id,
+        payload.decision,
+        decided_by="web_panel",
+        note=payload.note,
+        ttl_minutes=payload.ttl_minutes,
+    )
+    if rec is None:
+        code = 404 if "不存在" in reason else 409
+        return JSONResponse(content={"error": reason}, status_code=code)
+    return JSONResponse(content={"ok": True, "request": rec})
+
+
 @router.get("/api/v1/evolution/list")
 def evolution_list(request: Request, limit: int = 30, status: str = "") -> Response:
     """演进建议列表（只读——web 审批状态展示数据源；Approval UX v2 批 1）.

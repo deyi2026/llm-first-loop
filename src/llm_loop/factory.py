@@ -99,6 +99,7 @@ from llm_loop.tools.builtin.convergence_decide import ConvergenceDecideTool
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
 from llm_loop.tools.builtin.edit_file import EditFileTool
+from llm_loop.tools.builtin.escalation import EscalationRequestTool, EscalationWaitTool
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.builtin.inspect_code import InspectCodeTool
 from llm_loop.tools.builtin.job_kill import JobKillTool
@@ -120,6 +121,7 @@ from llm_loop.tools.builtin.subagent_topology import SubagentTopologyTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
 from llm_loop.tools.builtin.web_search import WebSearchTool
 from llm_loop.tools.builtin.workflow import WorkflowRunTool
+from llm_loop.tools.escalation import EscalationStore
 from llm_loop.tools.registry import ToolRegistry
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 from llm_loop.workspace.file_effect_query import FileEffectQueryService
@@ -285,6 +287,39 @@ def _read_workspace_changed_flag(data_dir: str) -> dict | None:
         return None
 
 
+def _cwd_in_system_temp(cwd: Path) -> bool:
+    """cwd 是否位于系统临时区（/tmp、TMPDIR、pytest tmp_path、mkdtemp 等）.
+
+    EVO-20260923 根治注册表污染：历史 95 条 retired 垃圾（/tmp/lfl-*、
+    /var/folders 下的 pytest/hev0/probe 目录）均由"临时 cwd 被自动注册进
+    生产注册表"产生。逃逸阀 LFL_ALLOW_TEMP_WORKSPACE=1（显式要求注册）。
+    """
+    import tempfile
+
+    flag = os.environ.get("LFL_ALLOW_TEMP_WORKSPACE", "").strip().lower()
+    if flag in ("1", "true", "yes", "on"):
+        return False
+    roots: list[Path] = []
+    for cand in (tempfile.gettempdir(), "/tmp", "/var/tmp", os.environ.get("TMPDIR", "")):
+        if not cand:
+            continue
+        try:
+            roots.append(Path(cand).resolve())
+        except OSError:
+            continue
+    return any(cwd == root or root in cwd.parents for root in roots)
+
+
+def _registry_is_production_default(settings: Any) -> bool:
+    """settings.data_dir 是否为代码根默认生产目录（未被 DATA_DIR 显式改写）."""
+    from llm_loop.config import _DEFAULT_DATA_DIR
+
+    try:
+        return Path(settings.data_dir).resolve() == Path(_DEFAULT_DATA_DIR).resolve()
+    except OSError:
+        return False
+
+
 def _activate_default_workspace(engine: Any, settings: Any) -> None:
     """工作区管理（对齐 DSH Workspace）：注册表 + 旧会话迁移 + 引擎挂载当前工作区.
 
@@ -292,11 +327,25 @@ def _activate_default_workspace(engine: Any, settings: Any) -> None:
     learning 引擎的 session 根停留在平铺 data/sessions（owner key "."），
     读取 web 分桶会话全部 SessionIdConflictError（9.3h 240 次
     worker_exception）。两分支共用本函数，杜绝再次分叉。
-    默认工作区 = 启动 cwd（当前行为一致：工具/会话根=项目根，零回归）。
+    默认工作区 = 启动 cwd（当前行为一致：工具/会话根=项目根，零回归）；
+    例外（EVO-20260923 根治）：cwd 位于系统临时目录且注册表为生产默认
+    data 目录时不自动注册（评测/子代理/一次性调试目录不再进注册表）。
     """
     from llm_loop.workspace.store import WorkspaceMigrationConflictError, WorkspaceStore
 
     workspace_store = WorkspaceStore(settings.data_dir)
+    cwd = Path.cwd()
+    if _cwd_in_system_temp(cwd) and _registry_is_production_default(settings):
+        # 根治点：临时 cwd 不写入生产注册表。隔离运行（DATA_DIR 显式指向
+        # 临时/评测目录）不受影响——那类注册表本身就是一次性的，照常注册。
+        logger.info(
+            "[workspace] cwd 位于系统临时目录，跳过默认工作区自动注册: %s", cwd
+        )
+        engine.workspace_store = workspace_store
+        current_ws = workspace_store.get_current()
+        if current_ws is not None:
+            engine.set_workspace(current_ws.path, current_ws.id)
+        return
     default_ws = workspace_store.register(os.getcwd())  # 幂等注册
     try:
         workspace_store.migrate_legacy_sessions(settings.data_dir, default_ws)
@@ -583,6 +632,11 @@ def build_engine(
 
         configure(Path(settings.data_dir) / "audit")
 
+    # 提权闭环（EVO-20260923-c58a0bb1 accepted + 用户批准 2026-09-23）:
+    # 灾难硬阻断 → escalation_request → web 弹窗人工审批 → 一次性令牌定向放行。
+    # 存储与 web 面板共用同一 data/audit 文件（flock 跨进程安全）。
+    _escalation_store = EscalationStore(settings.audit_dir / "escalation_requests.json")
+
     # 工具注册表（3 基础工具 + 自省/修正/检索工具）
     registry = ToolRegistry(
         tool_timeout_s=settings.tool_timeout_s,
@@ -596,6 +650,7 @@ def build_engine(
         approval_audit_path=settings.audit_dir / "approval_audit.jsonl",  # T5a: 审批审计落盘
         safety_audit_dir=settings.audit_dir,  # P0-1: 灾难性阻断审计 safety_blocks.jsonl
         managed_service_guard=ManagedServiceMutationGuard(settings.data_dir),
+        escalation_store=_escalation_store,  # 提权闭环（None=纯 fail-closed 零回归）
     )
     # EW2-A: background external executions keep process-local handles, while the
     # shared EventStore owns durable launch/terminal/cancel facts.  Session cancellation
@@ -1131,6 +1186,10 @@ def build_engine(
         ),
     )
     _register_basic("schedule_cancel", ScheduleCancelTool(store=_schedule_store))
+    # 提权闭环（EVO-20260923-c58a0bb1 accepted）: 申请/等待人工决定（配套
+    # execute_command.escalation_token + registry 灾难层令牌校验 + web 弹窗审批）
+    _register_basic("escalation_request", EscalationRequestTool(store=_escalation_store))
+    _register_basic("escalation_wait", EscalationWaitTool(store=_escalation_store))
     _register_basic("web_fetch", WebFetchTool(timeout_s=_tool_timeout))
     # M48: 网络搜索（Bing/百度双后端降级）
     _register_basic("web_search", WebSearchTool(timeout_s=_tool_timeout))
