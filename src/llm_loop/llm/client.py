@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -865,6 +866,18 @@ class LLMClient:
     # （ModelClientPool）退休该 provider/model 缓存实例，使下次调用按当前配置重建。
     # 仅传递机械异常事实，不改变重试次数/降级/严格模式语义。
     on_transport_failure: Any | None = field(default=None, repr=False, compare=False)
+    # P0-A schema-token authority: only local OpenAI-compatible runtimes with an exact
+    # tokenizer/template endpoint participate. Cache is per client/model and keyed by the
+    # provider-visible tool surface; it is never shared across provider/model clients.
+    _tool_schema_token_cache: OrderedDict[str, int] = field(
+        default_factory=OrderedDict, init=False, repr=False, compare=False
+    )
+    _tool_schema_token_lock: Any = field(
+        default_factory=threading.Lock, init=False, repr=False, compare=False
+    )
+    _tool_schema_tokenizer_unavailable: bool = field(
+        default=False, init=False, repr=False, compare=False
+    )
     # 模型切换检测（拷问②）: 记录上次模型——切换时重置 guard 窗口（防旧模型低命中误拦）
     guard_last_model: str = ""
     def __post_init__(self) -> None:
@@ -890,6 +903,152 @@ class LLMClient:
             headers = {"Connection": "close"}
         trust_env = bool(self.trust_env) if self.trust_env is not None else not _is_local_base
         self._client = httpx.Client(timeout=self.timeout_s, headers=headers, trust_env=trust_env)
+
+    def count_tool_schema_tokens(self, tools: list[dict]) -> int | None:
+        """Return exact provider-template token cost for ``tools`` when mechanically known.
+
+        This capability is intentionally narrow: llama.cpp-style local OpenAI-compatible
+        runtimes expose ``/apply-template`` and ``/tokenize`` against the already-loaded
+        tokenizer.  Remote/other protocols are not probed; they return ``None`` so the
+        caller can use its explicit conservative fallback.  No generation request occurs.
+
+        The result is the token delta between the same minimal user message rendered with
+        and without the tool surface, so chat-template wrapper cost is included.  Positive
+        results are cached by exact canonical tool surface for the life of this model client.
+        Any missing capability or transport/shape error is fail-soft and never affects chat.
+        """
+        if not tools:
+            return 0
+        if not self._is_local_base or str(self.wire_protocol or "").lower() != "openai":
+            return None
+        if self._tool_schema_tokenizer_unavailable:
+            return None
+
+        try:
+            template_kwargs = self._openai_chat_template_kwargs()
+            canonical = json.dumps(
+                {"tools": tools, "chat_template_kwargs": template_kwargs},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            cache_key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        except (TypeError, ValueError):
+            return None
+
+        with self._tool_schema_token_lock:
+            cached = self._tool_schema_token_cache.get(cache_key)
+            if cached is not None:
+                self._tool_schema_token_cache.move_to_end(cache_key)
+                return cached
+
+            base = self.base_url.rstrip("/")
+            if base.endswith("/v1"):
+                base = base[:-3]
+            template_url = f"{base}/apply-template"
+            tokenize_url = f"{base}/tokenize"
+            messages = [{"role": "user", "content": "x"}]
+            probe_timeout = min(5.0, max(0.1, float(self.timeout_s or 5.0)))
+
+            def _render(payload: dict[str, Any]) -> str | None:
+                response = self._client.post(template_url, json=payload, timeout=probe_timeout)
+                status = int(getattr(response, "status_code", 0) or 0)
+                if status in {404, 405}:
+                    self._tool_schema_tokenizer_unavailable = True
+                    return None
+                if status >= 400:
+                    return None
+                body = response.json()
+                prompt = body.get("prompt") if isinstance(body, dict) else None
+                return prompt if isinstance(prompt, str) else None
+
+            def _count(prompt: str) -> int | None:
+                response = self._client.post(
+                    tokenize_url,
+                    json={"content": prompt, "add_special": False, "parse_special": True},
+                    timeout=probe_timeout,
+                )
+                status = int(getattr(response, "status_code", 0) or 0)
+                if status in {404, 405}:
+                    self._tool_schema_tokenizer_unavailable = True
+                    return None
+                if status >= 400:
+                    return None
+                body = response.json()
+                tokens = body.get("tokens") if isinstance(body, dict) else None
+                return len(tokens) if isinstance(tokens, list) else None
+
+            try:
+                base_payload: dict[str, Any] = {"messages": messages}
+                tool_payload: dict[str, Any] = {"messages": messages, "tools": tools}
+                if template_kwargs is not None:
+                    base_payload["chat_template_kwargs"] = template_kwargs
+                    tool_payload["chat_template_kwargs"] = template_kwargs
+                base_prompt = _render(base_payload)
+                if base_prompt is None:
+                    return None
+                base_tokens = _count(base_prompt)
+                if base_tokens is None:
+                    return None
+                tool_prompt = _render(tool_payload)
+                if tool_prompt is None:
+                    return None
+                tool_prompt_tokens = _count(tool_prompt)
+                if tool_prompt_tokens is None:
+                    return None
+                exact = int(tool_prompt_tokens) - int(base_tokens)
+            except (httpx.HTTPError, OSError, ValueError, TypeError, KeyError):
+                logger.debug("local tool-schema tokenizer probe failed (fail-soft)", exc_info=True)
+                return None
+
+            if exact <= 0:
+                return None
+            self._tool_schema_token_cache[cache_key] = exact
+            self._tool_schema_token_cache.move_to_end(cache_key)
+            while len(self._tool_schema_token_cache) > 64:
+                self._tool_schema_token_cache.popitem(last=False)
+            return exact
+
+    def _effective_reasoning_effort(self) -> str | None:
+        """Resolve the exact request-local reasoning effort used by wire controls."""
+        requested = (current_reasoning_effort.get() or "").strip().lower()
+        supported = tuple(self.reasoning_efforts or ())
+        if requested and (not supported or requested in supported):
+            return requested
+        model_default = (self.reasoning_default_effort or "").strip().lower()
+        if model_default and (not supported or model_default in supported):
+            return model_default
+        legacy_default = (self.reasoning_effort or "").strip().lower()
+        if not supported or legacy_default in supported:
+            return legacy_default or None
+        return None
+
+    def _openai_chat_template_kwargs(self) -> dict[str, Any] | None:
+        """Return the exact local OpenAI chat-template kwargs for the current request."""
+        (
+            reasoning_mode,
+            _reasoning_capable,
+            reasoning_control,
+            reasoning_supported,
+            reasoning_requested,
+        ) = self.reasoning_contract_state()
+        if reasoning_control != "chat_template":
+            return None
+        # reasoning_contract_state already owns the operator/env compatibility path.
+        # Do not create a second direct env authority here; consume its resolved fact.
+        if reasoning_requested is None or not reasoning_supported:
+            return None
+        kwargs: dict[str, Any] = {"enable_thinking": reasoning_requested}
+        if reasoning_requested and self.reasoning_effort_map:
+            requested_effort = self._effective_reasoning_effort()
+            mapped_effort = (
+                self.reasoning_effort_map.get(requested_effort)
+                if requested_effort
+                else None
+            )
+            if mapped_effort:
+                kwargs["reasoning_effort"] = mapped_effort
+        return kwargs
 
     def _notify_transport_failure(self, exc: BaseException) -> None:
         """Report a transport-level connection failure to the owner (ModelClientPool).
@@ -1610,47 +1769,16 @@ class LLMClient:
             _reasoning_supported,
             _reasoning_requested,
         ) = self.reasoning_contract_state()
-        _request_effort = current_reasoning_effort.get()
-        _supported_efforts = tuple(self.reasoning_efforts or ())
-
-        def _effective_reasoning_effort() -> str | None:
-            requested = (_request_effort or "").strip().lower()
-            if requested and (not _supported_efforts or requested in _supported_efforts):
-                return requested
-            model_default = (self.reasoning_default_effort or "").strip().lower()
-            if model_default and (not _supported_efforts or model_default in _supported_efforts):
-                return model_default
-            legacy_default = (self.reasoning_effort or "").strip().lower()
-            if not _supported_efforts or legacy_default in _supported_efforts:
-                return legacy_default or None
-            return None
-
         if _reasoning_control == "chat_template":
-            _legacy_local_override = (
-                _reasoning_mode == "auto" and "LOCAL_ENABLE_THINKING" in os.environ
-            )
-            if _reasoning_requested is not None and (
-                _reasoning_supported or _legacy_local_override
-            ):
-                _template_kwargs: dict[str, Any] = {
-                    "enable_thinking": _reasoning_requested
-                }
-                if _reasoning_requested and self.reasoning_effort_map:
-                    _requested_effort = _effective_reasoning_effort()
-                    _mapped_effort = (
-                        self.reasoning_effort_map.get(_requested_effort)
-                        if _requested_effort
-                        else None
-                    )
-                    if _mapped_effort:
-                        _template_kwargs["reasoning_effort"] = _mapped_effort
+            _template_kwargs = self._openai_chat_template_kwargs()
+            if _template_kwargs is not None:
                 payload["chat_template_kwargs"] = _template_kwargs
         elif _reasoning_control == "thinking_type" and _reasoning_supported and _reasoning_requested is not None:
             payload["thinking"] = {
                 "type": "enabled" if _reasoning_requested else "disabled"
             }
             if _reasoning_requested:
-                _effective_effort = _effective_reasoning_effort()
+                _effective_effort = self._effective_reasoning_effort()
                 if _effective_effort:
                     payload["reasoning_effort"] = _effective_effort
         elif _reasoning_control == "always_on_effort" and _reasoning_supported:
@@ -1659,7 +1787,7 @@ class LLMClient:
             # intent. Keep requested=False in telemetry; do not lie that reasoning
             # was actually disabled. In auto, leave thinking ownership with the
             # provider but still honor the independent operator/request effort.
-            _effective_effort = _effective_reasoning_effort()
+            _effective_effort = self._effective_reasoning_effort()
             if _reasoning_requested is None:
                 if _effective_effort:
                     payload["reasoning_effort"] = _effective_effort

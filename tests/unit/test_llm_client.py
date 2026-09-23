@@ -44,6 +44,19 @@ class _FakeStreamCtx:
         return self._body
 
 
+class _FakeJSONResponse:
+    def __init__(self, payload: dict, status_code: int = 200) -> None:
+        self._payload = payload
+        self.status_code = status_code
+        self.reason_phrase = "OK" if status_code < 400 else "Not Found"
+
+    def json(self):
+        return self._payload
+
+    def read(self) -> bytes:
+        return json.dumps(self._payload).encode()
+
+
 def test_chat_content_only():
     """流式仅 content → 最终回答."""
     lines = [
@@ -58,6 +71,94 @@ def test_chat_content_only():
     assert resp.content == "你好世界"
     assert resp.tool_calls == []
     assert resp.finish_reason == "stop"
+
+
+def test_local_openai_client_counts_tool_schema_tokens_from_runtime_and_caches():
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "read",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        transport = client_cls.return_value
+        transport.post.side_effect = [
+            _FakeJSONResponse({"prompt": "BASE"}),
+            _FakeJSONResponse({"tokens": [1, 2]}),
+            _FakeJSONResponse({"prompt": "BASE TOOLS"}),
+            _FakeJSONResponse({"tokens": [1, 2, 3, 4, 5]}),
+        ]
+        client = _client(base_url="http://127.0.0.1:8901/v1", wire_protocol="openai")
+        assert client.count_tool_schema_tokens(tools) == 3
+        assert client.count_tool_schema_tokens(tools) == 3
+
+    assert transport.post.call_count == 4
+    urls = [call.args[0] for call in transport.post.call_args_list]
+    assert urls == [
+        "http://127.0.0.1:8901/apply-template",
+        "http://127.0.0.1:8901/tokenize",
+        "http://127.0.0.1:8901/apply-template",
+        "http://127.0.0.1:8901/tokenize",
+    ]
+
+
+def test_tool_schema_token_counter_never_probes_remote_provider():
+    with mock.patch("httpx.Client") as client_cls:
+        transport = client_cls.return_value
+        client = _client(base_url="remote-provider", wire_protocol="openai")
+        assert client.count_tool_schema_tokens([{"type": "function"}]) is None
+    transport.post.assert_not_called()
+
+
+def test_local_tool_schema_token_counter_fails_soft_when_runtime_has_no_capability():
+    with mock.patch("httpx.Client") as client_cls:
+        transport = client_cls.return_value
+        transport.post.return_value = _FakeJSONResponse({"error": "missing"}, status_code=404)
+        client = _client(base_url="http://127.0.0.1:8901/v1", wire_protocol="openai")
+        assert client.count_tool_schema_tokens([{"type": "function"}]) is None
+        assert client.count_tool_schema_tokens([{"type": "function"}]) is None
+    assert transport.post.call_count == 1
+
+
+def test_local_tool_counter_uses_same_request_chat_template_kwargs():
+    from llm_loop.core.run_context import current_reasoning_effort, current_reasoning_mode
+
+    tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
+    with mock.patch("httpx.Client") as client_cls:
+        transport = client_cls.return_value
+        transport.post.side_effect = [
+            _FakeJSONResponse({"prompt": "BASE"}),
+            _FakeJSONResponse({"tokens": [1]}),
+            _FakeJSONResponse({"prompt": "BASE TOOLS"}),
+            _FakeJSONResponse({"tokens": [1, 2, 3]}),
+        ]
+        client = _client(
+            base_url="http://127.0.0.1:8901/v1",
+            wire_protocol="openai",
+            reasoning_control="chat_template",
+            thinking_supported=True,
+            reasoning_efforts=("low", "medium", "high"),
+            reasoning_effort_map={"medium": "medium"},
+        )
+        mode_token = current_reasoning_mode.set("on")
+        effort_token = current_reasoning_effort.set("medium")
+        try:
+            assert client.count_tool_schema_tokens(tools) == 2
+        finally:
+            current_reasoning_effort.reset(effort_token)
+            current_reasoning_mode.reset(mode_token)
+
+    apply_calls = [call for call in transport.post.call_args_list if call.args[0].endswith("/apply-template")]
+    assert len(apply_calls) == 2
+    for call in apply_calls:
+        assert call.kwargs["json"]["chat_template_kwargs"] == {
+            "enable_thinking": True,
+            "reasoning_effort": "medium",
+        }
 
 
 def test_chat_length_finish_reason_is_preserved_as_transport_fact():

@@ -1,0 +1,100 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260922-schema-token-accounting-p0a",
+  "summary": "Correct tool-schema budget accounting after the frozen d8f3 replay proved that history projection density was incorrectly reused as a schema tokenizer estimate. Accept an authoritative provider/runtime schema token count when mechanically available, keep the previous conservative projection fallback otherwise, and preserve provider hard context guards, model semantic authority, convergence, Evidence semantics, and search behavior.",
+  "components": [
+    {
+      "component_id": "tool-schema-token-authority",
+      "paths": [
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/loop/engine_services/routing.py",
+        "src/llm_loop/core/loop/engine_services/token_budget.py",
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/runtime/causal_diagnose.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "provider input-budget accounting and local tokenizer authority",
+      "disposition": "ADMIT narrow P0-A correction: the already-routed LLM client may provide an exact provider-template tool-schema token delta. Budget calculation consumes that token count directly and records its authority source; providers without a proven tokenizer capability retain the historical conservative char-density fallback. Only local OpenAI-compatible runtimes are probed, using bounded read-only template/tokenizer endpoints with per-surface caching and fail-soft fallback.",
+      "evidence": [
+        "frozen d8f3 replay audit commit 00d7d72a9c221ab644d535754fcfde6b7e33838d proved incident reserve 39,412 tokens versus exact Qwen tool-wire delta 11,324",
+        "deterministic d8f3 budget contract: exact 11,324 reserve yields 34,390 history chars instead of 9,111",
+        "synthetic exact-pressure regression preserves 15,796-char first-compaction shape and proves 9,111 compacts while 34,390 does not",
+        "same loaded local runtime probe returns 11,324 on first measurement and cached 11,324 on repeat without a generation call",
+        "adjacent routing/client/budget/convergence/provider-wire regression suite PASS"
+      ],
+      "verification_level": "deterministic RED->GREEN + exact local tokenizer probe + adjacent regression + full repository CI",
+      "model_evidence_veto_recovery_exit": "Program authority is limited to mechanical token counting and hard budget projection. It does not decide whether evidence is sufficient, whether a search should repeat, or whether the model should stop. Unknown/unavailable tokenizer authority falls back rather than fabricating an exact count; final provider context guards remain authoritative for physical limits.",
+      "rollback_route": "Revert the P0-A commit; no persisted data migration exists. The historical projection fallback remains available within the same code path.",
+      "declaration_id": "decl-tool-schema-token-authority"
+    },
+    {
+      "component_id": "schema-token-accounting-regressions",
+      "paths": [
+        "tests/unit/test_llm_client.py",
+        "tests/unit/test_model_attribution.py",
+        "tests/unit/test_runtime_causality.py",
+        "tests/unit/test_token_native_budget.py",
+        "tests/unit/test_window_aware_budget.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic verification",
+      "disposition": "ADMIT tests only: lock authoritative-token preference, legacy fallback, same-routed-client wiring, local-only/fail-soft tokenizer capability, template-kwargs parity, capability/result caching, causal source telemetry, and d8f3 compaction-pressure regression.",
+      "evidence": [
+        "focused P0-A contract tests PASS",
+        "adjacent regression suite 173/173 PASS",
+        "Ruff PASS and Pyright 0 errors / 0 warnings"
+      ],
+      "verification_level": "unit + integration-adjacent deterministic tests",
+      "model_evidence_veto_recovery_exit": "Tests add no runtime authority.",
+      "rollback_route": "Revert together with the production correction."
+    },
+    {
+      "component_id": "a5-schema-token-accounting-p0a",
+      "paths": [
+        "docs/governance/submissions/20260922-schema-token-accounting-p0a.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 submission manifest",
+      "disposition": "ADMIT mechanical A.5 changed-path coverage and G1-G4 declaration for P0-A.",
+      "evidence": [
+        "scripts/check_architecture_submission.py staged/committed-state verification"
+      ],
+      "verification_level": "A.5 mechanical presence/coverage gate",
+      "model_evidence_veto_recovery_exit": "Manifest only; no runtime authority.",
+      "rollback_route": "Revert with the P0-A submission."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-tool-schema-token-authority",
+      "g1": {
+        "necessity": "The frozen d8f3 replay demonstrated a deterministic accounting defect: a 35,470-char 71-tool surface was reserved as 39,412 tokens by reusing 0.9 history chars/token, while the exact provider template/tokenizer delta was 11,324 tokens. That reduced history budget to 9,111 chars and directly triggered the 15,796->390 compaction that hid freshly fetched evidence."
+      },
+      "g2": {
+        "authority_owner": "the already-routed provider/model LLMClient for exact local tokenizer capability, consumed by the existing RoutingService/token-budget path",
+        "relationship": "reuse",
+        "non_duplication": "No second model-routing or context-limit authority is introduced. Exact schema tokens refine one input to the existing budget calculation; the existing projection fallback and final provider context guards remain in place."
+      },
+      "g3": {
+        "model_evidence": [
+          "d8f3 deterministic replay budget/compaction counterfactual",
+          "exact same-runtime apply-template/tokenize measurement",
+          "request.meta tool_schema_reserve_source telemetry",
+          "local capability/fallback/cache/template-parity regressions"
+        ],
+        "recovery_or_reason": "If exact tokenizer capability is missing, remote, unsupported, malformed, or transiently unavailable, the correction fails soft to the pre-existing conservative projection path. No search/evidence/convergence semantic decision is added."
+      },
+      "g4": {
+        "rollback": "Revert this commit; no state migration is required. If later deployed, runtime rollback uses the normal managed service generation path.",
+        "verification": [
+          "focused deterministic RED->GREEN",
+          "adjacent routing/client/provider-wire/convergence regression suite",
+          "Ruff and Pyright",
+          "full scripts/ci_gate.sh",
+          "A.5 changed-path coverage",
+          "staged and full-tree security scan"
+        ]
+      }
+    }
+  ]
+}

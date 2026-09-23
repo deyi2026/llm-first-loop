@@ -4,10 +4,12 @@ import json
 import math
 from pathlib import Path
 
+from llm_loop.core.history import _wire_size, build_history_messages
 from llm_loop.core.loop.engine_services.token_budget import (
     ProjectionDensityTracker,
     reserve_history_after_tools,
 )
+from llm_loop.core.message import Message, MessageSource, ToolCall, ToolResultStatus
 
 
 def test_cold_start_density_is_configured_fallback_and_token_authority_is_external():
@@ -29,6 +31,95 @@ def test_tool_schema_is_reserved_in_tokens_exactly_once_before_char_projection()
     assert result.history_token_budget == 184_000 - result.tool_schema_reserve_tokens
     assert result.projected_history_chars == math.floor(result.history_token_budget * 3.0)
     assert result.effective_history_budget_chars == result.projected_history_chars
+
+
+def test_authoritative_tool_schema_tokens_override_history_density_projection():
+    """d8f3 RED: exact tool-wire tokens must not reuse history chars/token density."""
+
+    result = reserve_history_after_tools(
+        allowed_input_tokens=49_536,
+        pre_tool_history_budget_chars=44_582,
+        tool_schema_chars=35_470,
+        tool_schema_tokens=11_324,
+        projection_chars_per_token=0.9,
+    )
+    assert result.tool_schema_reserve_tokens == 11_324
+    assert result.history_token_budget == 38_212
+    assert result.projected_history_chars == 34_390
+    assert result.effective_history_budget_chars == 34_390
+
+
+def test_d8f3_first_compaction_shape_is_avoided_by_exact_schema_budget():
+    """Same 15,796-char atomic shape compacts at 9,111 but not at 34,390."""
+
+    user = Message(role="user", content="u" * 10, source=MessageSource.USER)
+    search_calls = [
+        ToolCall(id="s1", name="web_search", arguments={"query": "q1"}),
+        ToolCall(id="s2", name="web_search", arguments={"query": "q2"}),
+    ]
+    fetch_calls = [
+        ToolCall(id="f1", name="web_fetch", arguments={"url": "u1"}),
+        ToolCall(id="f2", name="web_fetch", arguments={"url": "u2"}),
+    ]
+    search_assistant = Message(
+        role="assistant", content="", source=MessageSource.SYSTEM, tool_calls=search_calls
+    )
+    fetch_assistant = Message(
+        role="assistant", content="", source=MessageSource.SYSTEM, tool_calls=fetch_calls
+    )
+    messages = [
+        user,
+        search_assistant,
+        Message(role="tool", content="s" * 1_938, source=MessageSource.TOOL, tool_call_id="s1", tool_name="web_search", status=ToolResultStatus.SUCCESS),
+        Message(role="tool", content="s" * 1_959, source=MessageSource.TOOL, tool_call_id="s2", tool_name="web_search", status=ToolResultStatus.SUCCESS),
+        fetch_assistant,
+        Message(role="tool", content="f" * 5_141, source=MessageSource.TOOL, tool_call_id="f1", tool_name="web_fetch", status=ToolResultStatus.SUCCESS),
+        Message(role="tool", content="f" * 5_141, source=MessageSource.TOOL, tool_call_id="f2", tool_name="web_fetch", status=ToolResultStatus.SUCCESS),
+    ]
+    # Preserve the incident's exact pre-history pressure while keeping fixture content synthetic.
+    current = sum(_wire_size(m, 0) for m in messages)
+    fetch_assistant.reasoning_content = "r" * (15_416 - current)
+    assert sum(_wire_size(m, 0) for m in messages) == 15_416
+
+    def _arm(max_chars: int) -> tuple[bool, list[Message], dict]:
+        archived: list[Message] = []
+        compacted: list[bool] = []
+        stats: list[dict] = []
+        build_history_messages(
+            messages,
+            "S" * 380,
+            max_chars=max_chars,
+            compact_ratio=1.0,
+            compress_target_ratio=0.6,
+            session_id="d8f3-fixture",
+            archive_sink=lambda _sid, msg: archived.append(msg),
+            reasoning_tail=0,
+            skip_injected_system=True,
+            history_anchor=0,
+            compacted_out=compacted,
+            head_keep_chars=int(max_chars * 0.15),
+            head_keep_target_ratio=0.5,
+            freeze_compression=False,
+            cache_archive_provider="cognilocal",
+            cache_archive_model="cognilocal/qwen3.8-flash-next",
+            cache_archive_budget=max_chars,
+            compact_view_stats=stats,
+            require_archive_success=False,
+            preserve_last_human_exact=True,
+            preserve_active_ingress_message=user,
+            current_turn_ref=0,
+        )
+        return bool(compacted and compacted[0]), archived, stats[0] if stats else {}
+
+    incident_compacted, incident_archived, incident_stats = _arm(9_111)
+    assert incident_compacted is True
+    assert len(incident_archived) == 6
+    assert incident_stats["pre_chars"] == 15_796
+
+    exact_compacted, exact_archived, exact_stats = _arm(34_390)
+    assert exact_compacted is False
+    assert exact_archived == []
+    assert exact_stats == {}
 
 
 def test_explicit_history_char_cap_can_only_reduce_token_projected_char_cap():

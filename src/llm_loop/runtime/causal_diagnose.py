@@ -143,6 +143,7 @@ def _normalized_input_budget(payload: dict[str, Any]) -> dict[str, Any]:
         "requested_input_tokens": value.get("requested_input_tokens"),
         "allowed_input_tokens": value.get("allowed_input_tokens"),
         "tool_schema_reserve_tokens": value.get("tool_schema_reserve_tokens"),
+        "tool_schema_reserve_source": str(value.get("tool_schema_reserve_source") or ""),
         "effective_history_budget_tokens": value.get("effective_history_budget_tokens"),
         "projection_chars_per_token": value.get("projection_chars_per_token"),
         "projection_density_source": str(value.get("projection_density_source") or ""),
