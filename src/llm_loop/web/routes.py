@@ -2587,13 +2587,29 @@ def _sse_event(name: str, payload: dict) -> str:
 
 
 def _sessions_fingerprint(sessions_dir: str | Path) -> str:
-    """会话目录轻量指纹：文件数 + 最新文件 mtime + 文件名（任一变化即事件）."""
+    """会话目录轻量指纹：文件数 + 最新文件 mtime + 文件名（任一变化即事件）.
+
+    2026-09-23 CPU 诊断（SIGUSR1 栈抓现行）：原实现对每文件 stat 两次
+    （max key + newest 复查）× 每条 SSE 连接 × 每 1.5s——460 会话 × 多连接
+    在事件循环主线程上形成 stat 风暴。改为每文件单次 stat（结果复用），
+    轮询节拍同步放缓至 3s（见 gen()）。
+    """
     try:
-        files = [p for p in Path(sessions_dir).glob("*.json")]
-        if not files:
+        newest_mtime = 0
+        newest_name = ""
+        count = 0
+        for p in Path(sessions_dir).glob("*.json"):
+            try:
+                mtime = p.stat().st_mtime_ns
+            except OSError:
+                continue
+            count += 1
+            if mtime > newest_mtime:
+                newest_mtime = mtime
+                newest_name = p.name
+        if not count:
             return "0"
-        newest = max(files, key=lambda p: p.stat().st_mtime)
-        return f"{len(files)}:{newest.stat().st_mtime_ns}:{newest.name}"
+        return f"{count}:{newest_mtime}:{newest_name}"
     except OSError:
         return "err"
 
@@ -2639,7 +2655,7 @@ async def stream_session_events(request: Request) -> StreamingResponse:
                     break
             except Exception:  # noqa: BLE001 — 断开检测异常按断开处理
                 break
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(3.0)  # 2026-09-23: 1.5→3s，指纹扫描成本减半再减半
             now = loop.time()
             # keepalive：20s 无事件也保活（注释行，浏览器忽略内容仅感知存活）
             if now - last_beat >= 20.0:
