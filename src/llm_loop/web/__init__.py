@@ -130,9 +130,6 @@ def build_app(settings=None, engine=None) -> FastAPI:
         if settings is None:
             settings = load_settings()
         engine = build_engine(settings)
-        _own_engine = True
-    else:
-        _own_engine = False  # 测试注入引擎：不启动恢复巡检线程
 
     app = FastAPI(
         title="llm-first-loop-web", version="0.6.6", default_response_class=UTF8JSONResponse
@@ -140,27 +137,6 @@ def build_app(settings=None, engine=None) -> FastAPI:
     app.state.engine = engine
     app.state.web_sessions = WebSessionStore()
     app.state.login_rate_limiter = LoginRateLimiter()
-    if _own_engine:
-        # SPEC-20260923-queue-recovery：排队恢复服务端化（A 兜底派发 + B 恢复
-        # 重排）。队列单例预置 app.state.human_turn_queues（与请求侧
-        # _human_turn_queue 同 key 构造，天然复用同一实例）。
-        from pathlib import Path as _Path
-
-        from llm_loop.web.human_turn_queue import HumanTurnQueue
-        from llm_loop.web.queue_recovery import QueueServerFallback
-        from llm_loop.web.routes import _queue_claim_state
-
-        _data_dir = str(
-            _Path(str(getattr(settings, "data_dir", "./data"))).expanduser().resolve()
-        )
-        _hq = HumanTurnQueue(
-            _data_dir,
-            claim_state_probe=lambda sid, qid, _e=engine: _queue_claim_state(_e, sid, qid),
-        )
-        app.state.human_turn_queues = {_data_dir: _hq}
-        _fallback = QueueServerFallback(engine, _hq)
-        _fallback.start()
-        app.state.queue_server_fallback = _fallback
     # Login/logout/status are deliberately public; all engine/data APIs stay behind
     # the protected router below when public exposure is enabled.
     app.include_router(auth_router)
@@ -297,6 +273,23 @@ def main() -> None:
 
     engine = build_engine(settings)
     app = build_app(settings=settings, engine=engine)
+    # SPEC-20260923-queue-recovery：生产入口启动排队恢复巡检——"恢复后自动
+    # 继续"的承诺不再依赖浏览器派发循环存活。队列单例预置进 app.state
+    # （与请求侧 _human_turn_queue 同 key 构造，复用同一实例）；测试注入
+    # 引擎的 build_app 路径不经过这里。
+    from llm_loop.web.human_turn_queue import HumanTurnQueue
+    from llm_loop.web.queue_recovery import QueueServerFallback
+    from llm_loop.web.routes import _queue_claim_state
+
+    _data_dir = str(Path(str(getattr(settings, "data_dir", "./data"))).expanduser().resolve())
+    _hq = HumanTurnQueue(
+        _data_dir,
+        claim_state_probe=lambda sid, qid: _queue_claim_state(engine, sid, qid),
+    )
+    app.state.human_turn_queues = {_data_dir: _hq}
+    _fallback = QueueServerFallback(engine, _hq)
+    _fallback.start()
+    app.state.queue_server_fallback = _fallback
 
     import uvicorn
 
