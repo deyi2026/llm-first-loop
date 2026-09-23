@@ -250,3 +250,57 @@ def test_agents_tree_uses_meta_only_no_full_load(client, monkeypatch):
     nodes = {n["id"]: n for n in r.json()["nodes"]}
     assert nodes[sub]["parent_id"] == sid
     assert calls["n"] == 0
+
+
+def test_delta_relay_coalesces_same_channel_burst():
+    """CPU 契约（2026-09-23 #1）：同通道 delta 突发合并为一帧 SSE.
+
+    长 reasoning 流逐 chunk json.dumps+write 是 run 期间主线程残余负载的大头；
+    合并窗口内连续 text delta 应合并为单帧（拼接顺序保序）。
+    """
+    import queue as _q
+    from types import SimpleNamespace
+
+    from llm_loop.web import routes as _routes
+
+    q: _q.Queue = _q.Queue()
+    for piece in ("阿尔法", "贝塔", "伽马"):
+        q.put({"type": "delta", "delta": SimpleNamespace(text=piece, reasoning=None)})
+    q.put(
+        {
+            "type": "done",
+            "result": SimpleNamespace(
+                session_id="s", final_answer="ok", rounds=1, tool_calls=0,
+                truncated=False, history_compacted=False,
+                provider_output_truncated=False, run_incomplete=False,
+                projection_validator_failed=False, projection_rebuilt=False,
+                projection_cannot_fit=False, model_used="m",
+                tokens_in=1, tokens_out=1, tokens_cache_hit=0,
+                reasoning_content="", reasoning_mode="auto",
+                reasoning_capable=False, reasoning_control="unknown",
+                reasoning_supported=False, reasoning_effective=False,
+                reasoning_tokens=None,
+            ),
+        }
+    )
+
+    class _Runner:
+        enabled = True
+
+        def start(self, sid, message, **kw):
+            return SimpleNamespace(run_generation="g1"), q
+
+        def unsubscribe(self, sid, qq):
+            pass
+
+    frames = []
+    for chunk in _routes._stream_background(_Runner(), "s", "hi", None):
+        if chunk.startswith("data:"):
+            import json as _json
+
+            frames.append(_json.loads(chunk[5:].strip()))
+
+    deltas = [f for f in frames if f["type"] == "answer_delta"]
+    assert len(deltas) == 1, f"3 个同通道突发 delta 应合并为 1 帧，实际 {len(deltas)}"
+    assert deltas[0]["data"]["data"] == "阿尔法贝塔伽马"
+    assert frames[-1]["type"] == "done"

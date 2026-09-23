@@ -10,6 +10,7 @@ import logging
 import os
 import queue
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -974,22 +975,60 @@ def _stream_background(
         # await is_disconnected，断连靠 ASGI 在 yield 挂起点注入 GeneratorExit；
         # 短超时让循环更快回到 yield 挂起点（断连后订阅残留从 ~15s 降到 ~2s，
         # 期间不再长时间向无人消费的队列 put 事件）。
+        pending_event: dict | None = None
         while True:
-            try:
-                ev = q.get(timeout=2.0)
-            except queue.Empty:
-                # 防御超时（正常 run 必有终态）；后台长时间无 delta（如工具执行）时
-                # 保持连接等待。断连由 ASGI 在 yield 挂起点注入 GeneratorExit。
-                continue
+            if pending_event is not None:
+                ev, pending_event = pending_event, None
+            else:
+                try:
+                    ev = q.get(timeout=2.0)
+                except queue.Empty:
+                    # 防御超时（正常 run 必有终态）；后台长时间无 delta（如工具执行）时
+                    # 保持连接等待。断连由 ASGI 在 yield 挂起点注入 GeneratorExit。
+                    continue
             etype = ev["type"]
             if etype == "delta":
-                delta = ev["delta"]
-                if getattr(delta, "text", None):
-                    yield _sse("answer_delta", {"data": delta.text})
-                if getattr(delta, "reasoning", None):
-                    yield _sse("reasoning_delta", {"data": delta.reasoning})
-                tr = getattr(delta, "tool_round", None)
-                if tr is not None:
+                # 2026-09-23 CPU #1：合并窗口内连续 delta 同通道拼接为一帧；
+                # 非.delta 事件经 pending 保序穿透（终态/工具事件零延迟）。
+                text_parts: list[str] = []
+                reason_parts: list[str] = []
+                tool_rounds: list[Any] = []
+                tool_results: list[Any] = []
+                cur = ev["delta"]
+                while True:
+                    t = getattr(cur, "text", None)
+                    if t:
+                        text_parts.append(t)
+                    r = getattr(cur, "reasoning", None)
+                    if r:
+                        reason_parts.append(r)
+                    tr = getattr(cur, "tool_round", None)
+                    if tr is not None:
+                        tool_rounds.append(tr)
+                    tres = getattr(cur, "tool_result", None)
+                    if tres is not None:
+                        tool_results.append(tres)
+                    deadline = time.monotonic() + _DELTA_COALESCE_S
+                    nxt = None
+                    while True:
+                        remain = deadline - time.monotonic()
+                        if remain <= 0:
+                            break
+                        try:
+                            nxt = q.get(timeout=remain)
+                            break
+                        except queue.Empty:
+                            nxt = None
+                            break
+                    if nxt is None or nxt["type"] != "delta":
+                        pending_event = nxt
+                        break
+                    cur = nxt["delta"]
+                if text_parts:
+                    yield _sse("answer_delta", {"data": "".join(text_parts)})
+                if reason_parts:
+                    yield _sse("reasoning_delta", {"data": "".join(reason_parts)})
+                for tr in tool_rounds:
                     yield _sse(
                         "tool_round",
                         {
@@ -999,8 +1038,7 @@ def _stream_background(
                             "tool_call_id": getattr(tr, "tool_call_id", ""),
                         },
                     )
-                tool_result = getattr(delta, "tool_result", None)
-                if tool_result is not None:
+                for tool_result in tool_results:
                     yield _sse(
                         "tool_result",
                         {
@@ -2575,6 +2613,12 @@ def submit_message_feedback(
 
 
 # ── M56：SSE 会话更新事件（Web 端实时刷新，轮询共享会话目录零新依赖）──
+
+
+# 2026-09-23 CPU #1：delta 中继合并窗口——窗口内同通道 delta 合并为一帧 SSE，
+# 逐 chunk 的 json.dumps+socket write 按合并比下降（长 reasoning 流的主线程残余负载大头）。
+# 40ms 兼顾流畅度（人眼无感）与合并率；终态/工具事件经 pending 保序立即穿透。
+_DELTA_COALESCE_S = 0.04
 
 
 def _sse_event(name: str, payload: dict) -> str:

@@ -6,6 +6,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchAgentsTreeNodes, type AgentTreeNode } from "../../core/api";
+import { useConversation } from "../../core/conversation";
+import { runAwareIntervalMs } from "../../core/runAwarePoll";
 import { sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
 import { subagentZh as zh } from "../../i18n/zh";
 
@@ -27,6 +29,8 @@ export function subagentOutcomeLabel(outcome: string | undefined): string {
 }
 
 export function SubagentLineage() {
+  const _conv = useConversation();
+  const runBusy = Boolean(_conv.streaming || _conv.backgroundRunning);
   const currentId = useCurrentSessionId();
   const sessions = useSessions();
   const [nodes, setNodes] = useState<AgentTreeNode[] | null>(null);
@@ -51,7 +55,7 @@ export function SubagentLineage() {
     void load();
     const timer = window.setInterval(() => {
       if (!document.hidden) void load();
-    }, 5000);
+    }, runAwareIntervalMs(5000, runBusy));
     const onVisible = () => {
       if (!document.hidden) void load();
     };

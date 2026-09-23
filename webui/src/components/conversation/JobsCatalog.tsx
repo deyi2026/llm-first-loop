@@ -8,6 +8,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchSessionJobs, type JobFact } from "../../core/api";
 import { useCapabilities } from "../../core/capabilities";
+import { useConversation } from "../../core/conversation";
+import { runAwareIntervalMs } from "../../core/runAwarePoll";
 import { useCurrentSessionId } from "../../core/stores";
 import { jobsZh as zh } from "../../i18n/zh";
 
@@ -89,6 +91,8 @@ export function orderJobs(jobs: JobFact[]): JobFact[] {
 
 export function JobsCatalog() {
   const caps = useCapabilities();
+  const _conv = useConversation();
+  const runBusy = Boolean(_conv.streaming || _conv.backgroundRunning);
   const sessionId = useCurrentSessionId();
   const [jobs, setJobs] = useState<JobFact[]>([]);
   const [open, setOpen] = useState(false);
@@ -113,7 +117,7 @@ export function JobsCatalog() {
     void load();
     const timer = window.setInterval(() => {
       if (!document.hidden) void load();
-    }, 5000);
+    }, runAwareIntervalMs(5000, runBusy));
     const onVisible = () => {
       if (!document.hidden) void load();
     };
