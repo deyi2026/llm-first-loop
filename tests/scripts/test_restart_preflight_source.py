@@ -170,13 +170,28 @@ def test_same_repo_worktree_root_defers_to_verify(tmp_path: Path, env_var: str):
         check=True,
         capture_output=True,
     )
+    # 环境隔离（CT-6）：CODE_ROOT 变体在含 .venv 的仓内运行时，RUNTIME_ROOT 默认
+    # =脚本所在仓 → dual-root 校验通过后会死于 webui artifact preflight（sibling
+    # 无 dist 构建产物）而非预期的 dual_root_rejected。隔离 RUNTIME_ROOT 到空目录
+    # 并加 CONFIRMED=1（service_control worker 受控注入的真实形态，脚本来源①
+    # 显式通道，不写审计行——审计最后一行断言语义不变），死亡点重新锚定
+    # dual-root（isolated 无 .venv）。RUNTIME_ROOT 变体代码路径零改动。
+    isolated = tmp_path / "isolated-runtime"
+    isolated.mkdir()
+    extra_env = {env_var: str(sibling)}
+    if env_var == "LFL_RESTART_CODE_ROOT":
+        extra_env.update(
+            LFL_RESTART_RUNTIME_ROOT=str(isolated),
+            LFL_RESTART_RUNTIME_ROOT_CONFIRMED="1",
+        )
     try:
-        r = _run({env_var: str(sibling)}, target="web")
+        r = _run(extra_env, target="web")
         out = r.stdout + r.stderr
         assert "拒绝重启" not in out, "同仓族环境根不得在来源判定处硬拒"
         assert "同 Git 仓族" in out, "必须留下告警（非静默放行）"
-        # MIRROR_DIR=RUNTIME_ROOT：RUNTIME_ROOT 变体的审计/回执落在 sibling 根下
-        state_root = sibling if env_var == "LFL_RESTART_RUNTIME_ROOT" else _SCRIPT.parents[1]
+        # MIRROR_DIR=RUNTIME_ROOT：CODE_ROOT 变体隔离后审计/回执落 isolated 根下；
+        # RUNTIME_ROOT 变体（=sibling）的审计/回执落在 sibling 根下
+        state_root = isolated if env_var == "LFL_RESTART_CODE_ROOT" else sibling
         audit = state_root / "data" / "audit" / "restart_preflight.log"
         last = audit.read_text(encoding="utf-8").strip().splitlines()[-1]
         assert f"var={env_var}" in last
