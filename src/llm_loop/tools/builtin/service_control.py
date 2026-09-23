@@ -14,6 +14,7 @@ from llm_loop.runtime.admission_barrier import BarrierConflictError
 from llm_loop.runtime.service_control import (
     NEXT_STEP_KIND_GENERATION_CONFLICT,
     BindingProblemKind,
+    DeploymentBindingError,
     DeploymentGenerationConflictError,
     ManagedServiceDeployment,
     ManagedServiceDeploymentStore,
@@ -355,12 +356,16 @@ class ServiceControlTool:
                     + _next_step_text([BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE])
                 )
             # svc_deploy I7：同源追加可执行下一步（复用 I2 映射，禁止另写文案）。
-            if isinstance(exc, ValueError) and "clean" in str(exc):
-                binding_kind = BindingProblemKind.TRACKED_WORKTREE_DIRTY
+            # 三层决策（CT-2/3，消除文本猜测与裸串）：结构化 kind 直读 →
+            # ValueError 类型兜底 → 环境类映射（git 二进制缺失/子进程失败 →
+            # GIT_HEAD_UNAVAILABLE，既有 note"git 不可用或非 worktree，非
+            # service_control 可修复"精准命中）。
+            if isinstance(exc, DeploymentBindingError):
+                binding_kind = exc.kind
             elif isinstance(exc, ValueError):
                 binding_kind = BindingProblemKind.GIT_STATUS_UNAVAILABLE
             else:
-                binding_kind = "publish_error"
+                binding_kind = BindingProblemKind.GIT_HEAD_UNAVAILABLE
             return None, (
                 f"[service_control publish rejected] binding: {type(exc).__name__}: {exc}; "
                 + _next_step_text([binding_kind])

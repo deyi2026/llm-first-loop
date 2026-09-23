@@ -771,7 +771,11 @@ def test_tool_publish_non_repo_root_maps_to_error_fact_step(tmp_path: Path) -> N
     result = tool.execute(action="publish", code_root=str(code))
     assert result.status.value == "failure"
     assert "next_step:" in result.content
-    assert "publish_error: no_preset_next_step" in result.content
+    # CT-2/3：环境类失败映射 GIT_HEAD_UNAVAILABLE（封闭 kind），替代原裸串
+    # publish_error 兜底——断言从"兜底裸串存在"升为"分类=特定 kind 且映射
+    # note 完整呈现"，判定强度不降反升。
+    note = sc._NEXT_STEP_BY_KIND[BindingProblemKind.GIT_HEAD_UNAVAILABLE].note
+    assert note in result.content
 
 
 def test_next_step_text_is_empty_for_empty_kind_list() -> None:

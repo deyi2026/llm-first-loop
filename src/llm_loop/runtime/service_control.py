@@ -634,6 +634,18 @@ class BindingProblemKind:
     )
 
 
+class DeploymentBindingError(ValueError):
+    """binding 核验失败的结构化异常（svc_deploy CT-2/3：消除消费方文本猜测）。
+
+    消息文本与既有 ``ValueError`` 逐字一致；``kind`` 由产出方在抛出点一次性
+    声明（取值 ∈ ``BindingProblemKind.ALL`` 字面值），消费方直读。
+    """
+
+    def __init__(self, message: str, *, kind: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
 # CAS 类冲突（非 binding 核验）复用同一映射表。
 NEXT_STEP_KIND_GENERATION_CONFLICT = "generation_conflict"
 
@@ -3083,7 +3095,10 @@ def build_deployment(
         timeout=5,
     ).stdout.strip()
     if dirty:
-        raise ValueError("code_root tracked worktree must be clean before publish")
+        raise DeploymentBindingError(
+            "code_root tracked worktree must be clean before publish",
+            kind=BindingProblemKind.TRACKED_WORKTREE_DIRTY,
+        )
     artifact = _tree_sha256(code / "webui" / "dist")
     return ManagedServiceDeployment(
         schema=_DEPLOYMENT_SCHEMA,
