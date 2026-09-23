@@ -783,24 +783,14 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         self._run_state().current_turn_ref = _turn_ref
         # antidrift R3: run 入口冻结 ingress 消息对象（压缩豁免退化路径第二候选身份源）
         self._run_state().active_run_ingress_message = sess.messages[_turn_ref]
-        # EVO-20260923-618f7fd1 ③: 会话开场注入 active 方法卡清单（每会话一次；
-        # 引用层附录、名称+触发线索、全文留在 search_records 水合之后；fail-open）
-        try:
-            from llm_loop.core.loop.engine_services.method_injection import (
-                build_active_cards_message,
-                has_active_cards_injection,
-            )
-
-            if not has_active_cards_injection(sess):
-                _method_cards_msg = build_active_cards_message(
-                    getattr(self.settings, "methods_dir", None)
-                )
-                if _method_cards_msg is not None:
-                    sess.messages.append(_method_cards_msg)
-                    with contextlib.suppress(Exception):
-                        self._append_message_event(sess, _method_cards_msg)
-        except Exception:  # noqa: BLE001 — fail-open：附录失败不影响 run
-            logger.debug("method active cards appendix skipped (fail-open)", exc_info=True)
+        # EVO-20260923-618f7fd1 ③（2026-09-24 退役）: 会话开场 active 方法卡清单注入。
+        # 实测干扰（弱本地模型对照实验，同模型 cognilocal/qwen3.8-flash-next 同一
+        # 身份问答）：无附录会话按证据路径调 model_catalog 正确自报路由；有附录会话
+        # （6aec21cb）被带偏为"身份问题凭原生知识直答、不调工具"，凭空自称
+        # DeepSeek-V4；对照组（f66027f9）行为正确。无条件正文投喂同时违背 L2-2
+        # （retrievable != injectable）。方法可见性保留在 search_records(kind=method)
+        # 的 schema 入口；方法 use 回记提醒（状态层，仅在本 run 已精确水合时触发）
+        # 不受影响，见 method_injection.py。
         # Agency-first: memory/history is retrieved explicitly by the model when needed.
         # Ordinary user turns do not trigger automatic retrieval or persisted snapshots.
         _turn_memory_msgs: list[Message] = []

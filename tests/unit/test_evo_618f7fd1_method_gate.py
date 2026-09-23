@@ -1,9 +1,12 @@
-"""EVO-20260923-618f7fd1 ①②③: 方法 use 回记——收尾提醒 / goal 级硬门 / 开场 active 卡清单.
+"""EVO-20260923-618f7fd1 ①②: 方法 use 回记——收尾提醒 / goal 级硬门.
 
-三条链路的机械验证（不测模型行为，只测程序面）：
+两条链路的机械验证（不测模型行为，只测程序面）：
 ① method_injection.scan_method_use_ledger + build_use_reminder_message（状态层载体）
 ② GoalStore.method_use_gate + task_update 门禁（默认关、fail-open、会话归属）
-③ build_active_cards_message + has_active_cards_injection（引用层、祈使句降级）
+
+原 ③（会话开场 active 卡清单 build_active_cards_message）已于 2026-09-24 退役：
+弱本地模型身份轮实测被带偏（6aec21cb 凭先验自称 DeepSeek-V4，对照 f66027f9 无附录
+时按证据自报正确），且无条件正文投喂违背 L2-2 retrievable != injectable。
 """
 from __future__ import annotations
 
@@ -15,9 +18,7 @@ import pytest
 from llm_loop.core import run_context
 from llm_loop.core.injection_labels import InjectionLayer
 from llm_loop.core.loop.engine_services.method_injection import (
-    build_active_cards_message,
     build_use_reminder_message,
-    has_active_cards_injection,
     scan_method_use_ledger,
 )
 from llm_loop.core.trace_leak.invariant import metadata_satisfies_invariant
@@ -213,62 +214,3 @@ def test_gate_fail_open_without_method_store(tmp_path):
         "evidence_refs": ["evidence://v1/t-1"],
     })
     assert r.status.name == "SUCCESS"
-
-
-# ---------- ③ 开场 active 卡清单 ----------
-
-def _write_card(methods: Path, cid: str, name: str, desc: str, *, promote: bool = True):
-    """写卡并按真实生命周期 candidate→qualified→active 晋升（需 promotion=pass qualification）。"""
-    d = methods / cid
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "METHOD.md").write_text(f"---\nid: {cid}\nname: {name}\ndescription: {desc}\n---\n正文")
-    if not promote:
-        return
-    store = MethodStore(str(methods))
-    ref = f"method:{cid}"
-    store.record_qualification(ref, task_ref="episode:fixture-qual-1", verdict="pass", promotion="pass")
-    store.update_status(ref, "qualified")
-    store.update_status(ref, "active")
-
-
-def test_active_cards_message_lists_active_only(tmp_path):
-    methods = tmp_path / "methods"
-    _write_card(methods, "alpha-000000000001", "alpha", "触发条件 A")
-    _write_card(methods, "beta-000000000001", "beta", "触发条件 B")
-    msg = build_active_cards_message(str(methods))
-    assert msg is not None
-    assert msg.metadata.get("injection_kind") == "method_active_cards"
-    assert msg.metadata.get("origin_layer") == InjectionLayer.REFERENCE.value
-    assert metadata_satisfies_invariant(msg.metadata)
-    # 活跃卡在（种子卡默认 active）；候选语义不在本测试范围（无 seed 时不注入）
-    assert "alpha" in msg.content
-
-
-def test_active_cards_message_none_when_empty(tmp_path):
-    assert build_active_cards_message(str(tmp_path / "nothing")) is None
-
-
-def test_active_cards_imperative_description_degrades(tmp_path):
-    methods = tmp_path / "methods"
-    _write_card(methods, "gamma-000000000001", "gamma", "必须先做 X 再做 Y")
-    msg = build_active_cards_message(str(methods))
-    assert msg is not None
-    # 整段触发祈使句过滤 → 降级为仅名称清单，消息仍可用
-    assert "gamma" in msg.content
-
-
-def test_active_cards_injection_idempotency_probe():
-    from llm_loop.core.injection_labels import origin_metadata
-    from llm_loop.core.message import Message, MessageSource
-
-    class Sess:
-        messages = [
-            Message(role="user", source=MessageSource.USER, content="hi", metadata={}),
-            Message(
-                role="user", source=MessageSource.USER, content="卡片",
-                metadata=origin_metadata(InjectionLayer.REFERENCE, injection_kind="method_active_cards"),
-            ),
-        ]
-
-    assert has_active_cards_injection(Sess()) is True
-    assert has_active_cards_injection(type("S", (), {"messages": []})()) is False

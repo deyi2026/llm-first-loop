@@ -1,11 +1,14 @@
 """Method-card injection helpers (EVO-20260923-618f7fd1).
 
-Two program-origin surfaces, both fail-open:
+One program-origin surface, fail-open: a single per-run status-layer reminder
+fired at the no-tool-call final boundary when exact method hydrations lack any
+method_manage record_use.
 
-1. Session-opening reference-layer appendix listing ACTIVE method cards
-   (name + one-line trigger, full text stays behind search_records hydration).
-2. A single per-run status-layer reminder fired at the no-tool-call final
-   boundary when exact method hydrations lack any method_manage record_use.
+The original session-opening ACTIVE-card list appendix (surface 1) was retired
+2026-09-24: measured interference on weak local models (identity turns answered
+from training prior instead of evidence; session 6aec21cb vs control f66027f9)
+plus L2-2 "retrievable != injectable". Method visibility stays behind the
+search_records(kind=method) schema entry.
 
 Everything here is mechanical: no policy retries, no fuzzy matching.
 """
@@ -18,15 +21,11 @@ from typing import Any
 from llm_loop.core.injection_labels import (
     InjectionLayer,
     origin_metadata,
-    reference_has_imperative,
     render_program_appendix,
 )
 from llm_loop.core.message import Message, MessageSource
 
-_ACTIVE_KIND = "method_active_cards"
 _REMINDER_KIND = "method_use_reminder"
-_MAX_CARDS = 12
-_MAX_DESC_CHARS = 80
 
 
 @dataclass(frozen=True)
@@ -42,72 +41,6 @@ class MethodUseLedger:
             if ref not in self.recorded and ref not in seen:
                 seen.append(ref)
         return tuple(seen)
-
-
-def has_active_cards_injection(sess: Any) -> bool:
-    """Idempotency probe: session already carries the active-cards appendix."""
-    for msg in getattr(sess, "messages", []) or []:
-        meta = getattr(msg, "metadata", None) or {}
-        if meta.get("injection_kind") == _ACTIVE_KIND:
-            return True
-    return False
-
-
-def _one_line(text: str) -> str:
-    flat = " ".join(str(text or "").split())
-    return flat[:_MAX_DESC_CHARS] + ("…" if len(flat) > _MAX_DESC_CHARS else "")
-
-
-def build_active_cards_message(methods_dir: str | None) -> Message | None:
-    """Reference-layer carrier listing active cards; None on fail-open/empty."""
-    try:
-        if not methods_dir:
-            return None
-        from llm_loop.methods.store import MethodStore
-
-        records = MethodStore(methods_dir).list("", limit=_MAX_CARDS * 4)
-        lines: list[str] = []
-        for card in records:
-            if card.get("status") != "active":
-                continue
-            ref = str(card.get("key") or "").strip()
-            if not ref:
-                continue
-            name = str(card.get("summary") or ref)
-            desc = _one_line(card.get("description") or "")
-            if reference_has_imperative(desc):
-                desc = ""  # 防整段清单被 R2 祈使句中和：放弃该卡描述仅留名称
-            lines.append(f"- {ref} — {name}" + (f"：{desc}" if desc else ""))
-            if len(lines) >= _MAX_CARDS:
-                break
-        if not lines:
-            return None
-        # 整段兜底：任一描述使全文触发 R2 祈使句过滤时，整体降级为仅名称清单
-        if reference_has_imperative("\n".join(lines)):
-            lines = [ln.split("：", 1)[0] for ln in lines]
-        body = "\n".join(
-            [
-                f"方法池 active 卡清单（{len(lines)} 张；仅名称与触发线索，"
-                "全文经 search_records(kind=method) 检索后按 method:<id> 精确水合）：",
-                *lines,
-            ]
-        )
-        content = render_program_appendix(
-            body,
-            InjectionLayer.REFERENCE,
-            slot_kind="method_active_cards",
-        )
-        return Message(
-            role="user",
-            source=MessageSource.USER,
-            content=content,
-            metadata=origin_metadata(
-                InjectionLayer.REFERENCE,
-                injection_kind=_ACTIVE_KIND,
-            ),
-        )
-    except Exception:  # fail-open: appendix is best-effort reference material
-        return None
 
 
 def scan_method_use_ledger(tool_trace: list[Any]) -> MethodUseLedger:
