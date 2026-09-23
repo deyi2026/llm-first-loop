@@ -229,6 +229,24 @@ def _install_exit_signal_log() -> None:
         signal.signal(signal.SIGHUP, _on_signal)  # 终端关闭保护
 
 
+def _register_stack_dump_signal() -> None:
+    """SIGUSR1 → faulthandler 全线程栈转储到 stderr（进 web.log）.
+
+    2026-09-23 CPU 失控诊断：活动 run 期间 web 持续 ~100% CPU 但外部采样
+    （sample/top）无法归属——SIGUSR1 按需转储 Python 栈，零常驻开销。
+    操作员：kill -USR1 <web_pid>。
+    """
+    import signal
+
+    try:
+        import faulthandler
+
+        faulthandler.register(signal.SIGUSR1, file=sys.stderr, all_threads=True)
+        logger.info("stack dump signal registered: SIGUSR1 -> stderr")
+    except (ImportError, OSError, ValueError):  # pragma: no cover - 非 POSIX/受限环境
+        logger.warning("faulthandler SIGUSR1 注册失败（诊断不可用，不影响服务）")
+
+
 def main() -> None:
     """服务启动入口（python -m llm_loop.web）."""
     # R1（RUNTIME-SOT-WIRE）: workspace 身份守卫——错配时 shadow 仅告警/enforce 拒绝启动。
@@ -249,6 +267,7 @@ def main() -> None:
     from llm_loop.introspection.proc_version import record_process_start
 
     record_process_start("web")
+    _register_stack_dump_signal()
     # R3（RUNTIME-SOT-WIRE）: 进程身份+配置指纹落盘（fail-open 不阻断启动）；
     # /health 读回暴露——跨区污染秒级诊断。
     from llm_loop.runtime.manifest import write_runtime_manifest
