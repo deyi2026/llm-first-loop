@@ -2,12 +2,12 @@
 method_id: resume-continuation-via-named-provenance-and-git-delta-948a229d7f50
 name: resume-continuation-via-named-provenance-and-git-delta
 description: 极简续跑指令（如 'X 继续'）且无活动 goal 时，不要对同一 evidence 库反复换措辞搜索。首次 search miss 的回执通常已显式列出项目最新权威文档参考；schedule/wakeup evidence 常已点名续跑备忘；而版本库 unmerged commits 是『还剩什么』的真值账。沿这三条已点名的 provenance edge（最新停点文档、被点名备忘、git cherry/diff 量化 delta）重建状态，把『继续』转成『N 条未吸收 commits + 冲突面』的量化事实后再执行，可省去重复查询，并让分批移植有客观依据。
-status: candidate
+status: active
 source_model: glm/glm-5.3
 source_episode_refs: episode:32d694c9-dbcd-4dc8-a941-0885c617868c:934:f2ef065cb2f23088db80
 evidence_refs: learning:learn:5a3bd9a37e30
 created_at: 2026-09-20T00:54:28.515431+00:00
-updated_at: 2026-09-20T00:54:28.515431+00:00
+updated_at: 2026-09-23T13:31:16.044106+00:00
 ---
 ## Trigger
 用户发出极简续跑指令（项目代号 + '继续'），当前无活动 goal，需要先重建项目状态才能行动。
