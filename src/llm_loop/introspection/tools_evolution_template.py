@@ -14,7 +14,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 
 EVOLUTION_TEMPLATE_TOOL_DEF: dict = {
     "name": "generate_evolution_template",
-    "description": "自动生成演进建议模板（基于代码 diff/工具注册/经验沉淀）。何时用: 已有具体改进证据但不想从头写背景/实施/影响段，需要快速生成结构化模板。何时不用: 演进内容已完整，无需额外模板。失败对策: 源码不可访问时（如无 git）返回手动模板骨架。",
+    "description": "自动生成演进建议模板（基于代码 diff/工具注册/经验沉淀）。何时用: 已有具体改进证据但不想从头写背景/实施/影响段，需要快速生成结构化模板。何时不用: 演进内容已完整，无需额外模板。失败对策: 源码不可访问时（如无 git）返回手动模板骨架。注意: 模板含『Provider Prompt 影响检查』硬性段——凡新增/修改进入 provider prompt 的程序性内容，须附 L2-2/L2-6 准入理由与弱模型行为对照。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -37,6 +37,11 @@ _SKELETON = """# 【{prefix}】{title}
 
 ## 影响范围
 {impact}
+
+## Provider Prompt 影响检查（硬性，EVO-20260923-6fe23c9b）
+本变更是否新增或修改任何进入 provider prompt 的程序性内容（开场附录/常驻提醒/工具 schema 策略文字）？
+{prompt_surface_check}
+若"是"：(a) 必须对照 L2-2/L2-6 eligibility 契约说明准入理由；(b) 必须在弱模型档（cognilocal/qwen3.8-flash-next）跑身份轮+任务轮行为对照，无劣化才可上线。
 
 ## 优先级
 {priority}
@@ -151,6 +156,7 @@ def run_generate_evolution_template(ctx: Any, audit: Any, args: dict) -> ToolRes
         background=background,
         implementation=implementation,
         impact=impact,
+        prompt_surface_check="（必答：是/否。填『是』时必须完成 (a)(b) 两项后才可提交上线）",
         priority=_PRIORITY_DESC[priority],
         verification=verification,
         existing=existing,

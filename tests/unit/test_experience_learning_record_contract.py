@@ -70,11 +70,25 @@ def test_new_positive_experience_requires_verified_evidence(tmp_path: Path) -> N
         record_kind="experience",
         verification_state="verified",
     )
+    # EVO-20260923-6fe23c9b F2(a): verified 卡须含可执行当前性验证动作，否则拒绝写入
+    no_action = run_save_experience(
+        store,
+        title="verified but no freshness action",
+        scenario="scenario",
+        solution="working solution",
+        record_kind="experience",
+        verification_state="verified",
+        evidence="fixture:verified-run",
+    )
     verified = run_save_experience(
         store,
         title="proven solution",
         scenario="scenario",
-        solution="working solution",
+        solution=(
+            "working solution\n"
+            "当前性验证：先 grep -n freshness_action_ok "
+            "src/llm_loop/introspection/tools_experience.py 确认行号仍存在"
+        ),
         record_kind="experience",
         verification_state="verified",
         evidence="fixture:verified-run",
@@ -84,6 +98,8 @@ def test_new_positive_experience_requires_verified_evidence(tmp_path: Path) -> N
     assert "record_kind=lesson" in unverified
     assert no_evidence.startswith("[参数错误]")
     assert "evidence" in no_evidence
+    assert no_action.startswith("[参数错误]")
+    assert "当前性验证动作" in no_action
     assert verified.startswith("[save_experience]")
     assert "record_kind=experience verification_state=verified" in verified
 

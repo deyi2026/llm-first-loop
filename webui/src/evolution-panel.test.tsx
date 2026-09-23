@@ -123,6 +123,7 @@ describe("EvolutionPanel approval feedback", () => {
     await screen.findByText(baseItem.id);
     fireEvent.click(screen.getByText(baseItem.id));
     fireEvent.click(await screen.findByTestId("evo-approve"));
+    fireEvent.click(screen.getByTestId("evo-prompt-surface-check"));
     fireEvent.click(screen.getByTestId("evo-confirm-ok"));
 
     expect(await screen.findByTestId("evo-confirm-message")).toHaveTextContent(
@@ -141,8 +142,10 @@ describe("EvolutionPanel approval feedback", () => {
 
     const okButton = screen.getByTestId("evo-confirm-ok");
     expect(okButton).toBeDisabled();
-    expect(screen.getByText("请先勾选安全边界确认，再执行批准。")).toBeInTheDocument();
+    expect(screen.getByText("请先勾选 Provider Prompt 影响核对，再执行批准。")).toBeInTheDocument();
 
+    fireEvent.click(screen.getByTestId("evo-prompt-surface-check"));
+    expect(screen.getByText("请先勾选安全边界确认，再执行批准。")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("evo-extra-confirm"));
     expect(okButton).not.toBeDisabled();
     fireEvent.click(okButton);
@@ -164,6 +167,7 @@ describe("EvolutionPanel approval feedback", () => {
     await screen.findByText(baseItem.id);
     fireEvent.click(screen.getByText(baseItem.id));
     fireEvent.click(await screen.findByTestId("evo-approve"));
+    fireEvent.click(screen.getByTestId("evo-prompt-surface-check"));
     fireEvent.click(screen.getByTestId("evo-confirm-ok"));
 
     const receipt = await screen.findByTestId("evo-review-receipt");

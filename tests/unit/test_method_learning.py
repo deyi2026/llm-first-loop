@@ -399,7 +399,7 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     try:
         saved = execute_experience_tool(
             "method_manage",
-            {"action": "save_candidate", "name": "trace source", "description": "follow provenance", "body": "counterexample included"},
+            {"action": "save_candidate", "name": "trace source", "description": "follow provenance（当前性验证：先 grep -n provenance src/ 确认）", "body": "counterexample included"},
             cast(Any, host),
         )
     finally:
@@ -454,7 +454,7 @@ def test_model_facing_method_writes_require_runtime_episode_provenance(tmp_path:
 
     saved = execute_experience_tool(
         "method_manage",
-        {"action": "save_candidate", "name": "no source", "description": "must reject", "body": "body"},
+        {"action": "save_candidate", "name": "no source", "description": "must reject（当前性验证：先 grep 确认）", "body": "body"},
         cast(Any, host),
     )
     assert saved is not None and saved.status.value == "failure"

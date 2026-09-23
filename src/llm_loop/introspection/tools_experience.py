@@ -6,11 +6,35 @@ save_experience/refine_experience：参数校验 → 调 ExperienceStore → 如
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from llm_loop.experiences.document import ExperienceDocument
 from llm_loop.experiences.store import ExperienceStore
 from llm_loop.tools.arg_coerce import coerce_obj, coerce_str_list
+
+# EVO-20260923-6fe23c9b F2(a): 保存时强制"可执行的当前性验证动作"（防裸结论卡 stale 后误导弱模型）
+_FRESHNESS_ACTION_RE = re.compile(
+    r"grep|\bsed\b|\bcat\b|\bls\b|\bstat\b|\bfind\b|\bgit\b|read_file|execute_command|"
+    r"search_files|inspect_code|web_fetch|playwright|\bdsh\b|pytest|\bcurl\b|"
+    r"当前性验证|验证动作|验证步骤|复现|实测|"
+    r"先[^\n。；;]{0,40}(确认|验证|核对|检查|跑|查)",
+    re.IGNORECASE,
+)
+
+
+def freshness_action_ok(*texts: str) -> bool:
+    """检查合并文本是否含可执行验证动作信号（命令/工具/复现/当前性验证/先…确认等）。"""
+    merged = "\n".join(str(t or "") for t in texts)
+    return bool(_FRESHNESS_ACTION_RE.search(merged))
+
+
+FRESHNESS_ACTION_ERR = (
+    "[参数错误] 卡内未检出『可执行的当前性验证动作』（EVO-20260923-6fe23c9b）: "
+    "浓缩结论在环境变更后会变成错误答案来源。请在 solution/body 补一行可执行验证动作，"
+    "例如『当前性验证：先 grep -n <关键字> <路径> 确认行号仍存在』或『复现：跑 <命令> 应得 <结果>』"
+    "（未写入）"
+)
 
 
 def _normalize_experience_id(experience_id: str) -> str:
@@ -59,6 +83,9 @@ def run_save_experience(
         return (
             f"[参数错误] verification_state={verification} 必须提供 evidence（未写入）"
         )
+    # EVO-20260923-6fe23c9b F2(a): 强制可执行当前性验证动作
+    if not freshness_action_ok(solution, body, root_cause, scenario):
+        return FRESHNESS_ACTION_ERR
     now = datetime.now().astimezone().isoformat()
     doc = ExperienceDocument(
         title=title,

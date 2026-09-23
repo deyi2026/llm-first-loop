@@ -6,13 +6,23 @@ accepted 后的落地执行由 AI 经修正工具自主完成（RULE-AI-06 子�
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
+# EVO-20260923-6fe23c9b F1: provider prompt 面信号（命中→提交回执加严提示）
+_PROMPT_SURFACE_RE = re.compile(
+    r"开场|附录|常驻提醒|提醒注入|程序附录|prompt[ ]?(注入|面)|"
+    r"program[ _]prompt|provider[ _]prompt|system[ _]prompt|"
+    r"工具[ ]?schema|schema[ ]?(策略|文案|描述)|identity[ ]?摘要|"
+    r"opening|appendix|context[ ]?injection",
+    re.IGNORECASE,
+)
+
 SUBMIT_EVOLUTION_TOOL_DEF: dict = {
     "name": "submit_evolution",
-    "description": "提交架构演进建议（结构化落盘供人工审阅）。何时用: 已有架构状态、检索或自评证据支持明确改进机会时（如冗余工具/重复模式/效率建议）。注意: 涉安全边界/协议硬约束的建议仅提交等待人工决策，AI 不得自行执行。evidence 可引用评估 ID（格式 'eval:SE-...'，EVAL-05 双向溯源）。何时不用: 无具体证据/影响范围的空泛建议不应提交。失败对策: 提交失败（必填 content 缺失）会如实返回，请补齐后重试。",
+    "description": "提交架构演进建议（结构化落盘供人工审阅）。何时用: 已有架构状态、检索或自评证据支持明确改进机会时（如冗余工具/重复模式/效率建议）。注意: 涉安全边界/协议硬约束的建议仅提交等待人工决策，AI 不得自行执行。evidence 可引用评估 ID（格式 'eval:SE-...'，EVAL-05 双向溯源）。硬性要求（EVO-20260923-6fe23c9b）: 凡新增/修改进入 provider prompt 的程序性内容（开场附录/常驻提醒/工具 schema 策略文字），必须对照 L2-2/L2-6 eligibility 契约说明准入理由，并在弱模型档跑身份轮+任务轮行为对照，无劣化才可上线。何时不用: 无具体证据/影响范围的空泛建议不应提交。失败对策: 提交失败（必填 content 缺失）会如实返回，请补齐后重试。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -121,6 +131,17 @@ def run_submit_evolution(
     else:
         note = "权限分级: 全面执行（EVOLVE_LOCAL_EXEC=2），人工采纳后自动执行（涉边界仍仅人工）。"
     audit("submit_evolution", {"id": suggestion.id}, "success")
+    # EVO-20260923-6fe23c9b F1: Provider Prompt 影响硬检查（回执必附；命中信号加严）
+    prompt_check = (
+        "\n[Provider Prompt 影响检查·硬性] 本变更是否新增/修改进入 provider prompt 的程序性内容"
+        "（开场附录/常驻提醒/工具 schema 策略文字）？若是: (a) 对照 L2-2/L2-6 eligibility 契约说明"
+        "准入理由；(b) 弱模型档（cognilocal/qwen3.8-flash-next）身份轮+任务轮行为对照，无劣化才可上线。"
+    )
+    if _PROMPT_SURFACE_RE.search(f"{content}\n{str(args.get('impact_scope', ''))}"):
+        prompt_check += (
+            "\n[加严提示] 命中 provider prompt 面相关信号——若落地后新增此类内容，"
+            "上线前必须完成 并留证，否则不得进入 executing。"
+        )
     next_step = (
         "下一步: 本会话级建议已在 executing，执行完成后 `evolution_complete` 登记闭环。"
         if suggestion.scope == "session"
@@ -132,6 +153,7 @@ def run_submit_evolution(
         content=(
             f"[演进建议已提交] id={suggestion.id} 状态={suggestion.status} scope={suggestion.scope}。\n"
             f"{note}\n建议: {suggestion.content[:200]}\n"
+            f"{prompt_check}\n"
             f"{next_step}"
             f"{eval_hint}"
         ),

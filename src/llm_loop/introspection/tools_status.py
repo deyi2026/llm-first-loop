@@ -590,15 +590,27 @@ def _render_experience_record(record: dict, fallback_kind: str) -> str:
         if record.get(name)
     ]
     lifecycle_suffix = (" | " + " | ".join(lifecycle)) if lifecycle else ""
+    # EVO-20260923-6fe23c9b F2(b): 检索降权卡龄提示
+    age = record.get("card_age_days")
+    age_part = (
+        f" | 卡龄={age}d{'（超龄降权）' if record.get('card_age_downweighted') else ''}"
+        if isinstance(age, int)
+        else ""
+    )
     if not record.get("hydrated"):
         scenario = _single_line(record.get("scenario"))
         return (
             f"[{ts}] {record.get('kind', fallback_kind)}: {title} | "
             f"experience_ref={ref} | status={status} | "
             f"record_kind={record_kind} | verification_state={verification} | "
-            f"task_applicability={applicability} | scenario={scenario} | source={source}"
+            f"task_applicability={applicability}{age_part} | scenario={scenario} | source={source}"
             f"{lifecycle_suffix}"
         )
+    age_fields = (
+        [f"卡龄={age}d（超龄降权）"]
+        if isinstance(age, int) and record.get("card_age_downweighted")
+        else ([f"卡龄={age}d"] if isinstance(age, int) else [])
+    )
     fields = [
         f"[{ts}] {record.get('kind', fallback_kind)}: {title}",
         f"experience_ref={ref}",
@@ -610,6 +622,7 @@ def _render_experience_record(record: dict, fallback_kind: str) -> str:
         f"projection_complete={str(bool(record.get('projection_complete'))).lower()}",
         f"created_at={record.get('created_at', '')}",
         f"updated_at={record.get('updated_at', '')}",
+        *age_fields,
         f"source={source}",
         *lifecycle,
         f"tags={record.get('tags', [])}",
@@ -762,7 +775,14 @@ def _finalize_search_records(
             freshness: dict[str, Any] = freshness_value if isinstance(freshness_value, dict) else {}
             freshness_state = str(freshness.get("state") or "")
             freshness_part = f", freshness={freshness_state}" if freshness_state else ""
-            card = f"{summary} ({method_ref}, status={status}{freshness_part}) — {description}".strip()
+            # EVO-20260923-6fe23c9b F2(b): 检索降权卡龄提示（弱模型权衡 stale 风险）
+            age = r.get("card_age_days")
+            age_part = (
+                f", 卡龄={age}d{'（超龄降权）' if r.get('card_age_downweighted') else ''}"
+                if isinstance(age, int)
+                else ""
+            )
+            card = f"{summary} ({method_ref}, status={status}{freshness_part}{age_part}) — {description}".strip()
             if r.get("projection_complete"):
                 body = str(r.get("body", ""))
                 quals = r.get("qualification_entries") or []

@@ -193,6 +193,11 @@ def _run_save_method_candidate(args: dict, host: RegistryHost, *, tool_name: str
     body = str(args.get("body", "")).strip()
     if not name or not description or not body:
         return _method_failure(tool_name, "[参数错误] name/description/body 均为必填")
+    # EVO-20260923-6fe23c9b F2(a): 强制可执行当前性验证动作
+    from llm_loop.introspection.tools_experience import FRESHNESS_ACTION_ERR, freshness_action_ok
+
+    if not freshness_action_ok(description, body):
+        return _method_failure(tool_name, FRESHNESS_ACTION_ERR)
     try:
         from llm_loop.core.run_context import current_model_label
 

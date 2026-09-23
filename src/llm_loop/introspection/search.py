@@ -15,10 +15,40 @@ LLM 可见的工具分派/呈现层在 introspection/corrections.py（消费本�
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from llm_loop.introspection.rule_index import RuleIndex
+
+# EVO-20260923-6fe23c9b F2(b): 行为卡（method/experience/lesson）卡龄降权阈值（天，按 updated_at/ts）
+CARD_AGE_DOWNWEIGHT_DAYS = 14
+
+
+def annotate_card_age(rows: list[dict]) -> list[dict]:
+    """检索行为卡附 card_age_days；超龄（>14d 未更新）稳定降权排后（组内保持原相关序）。
+
+    exact hydration 路径不经过本函数（precise ref 不参与排序权衡）。
+    """
+    now = datetime.now(timezone.utc)
+    annotated: list[dict] = []
+    for row in rows:
+        ts = str(row.get("updated_at") or row.get("ts") or "")
+        age_days: int | None = None
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                age_days = max((now - dt).days, 0)
+            except ValueError:
+                age_days = None
+        if age_days is not None:
+            row = {**row, "card_age_days": age_days}
+            if age_days > CARD_AGE_DOWNWEIGHT_DAYS:
+                row["card_age_downweighted"] = True
+        annotated.append(row)
+    return sorted(annotated, key=lambda r: 1 if r.get("card_age_downweighted") else 0)
 
 _VALID_KINDS = {
     "action_trace",
@@ -704,7 +734,7 @@ class RecordSearcher:
         keyword_limit = max(limit * 4, 20)
         keyword = self._method_store.list(raw, keyword_limit)
         if self._semantic is None or not self._semantic.semantic_available() or not raw:
-            return keyword[:limit]
+            return annotate_card_age(keyword[:limit])  # EVO-20260923-6fe23c9b F2(b)
         result = self._semantic.search(
             raw,
             top_k=limit,
@@ -722,7 +752,7 @@ class RecordSearcher:
             if record.freshness_refs:
                 card["freshness"] = self._method_store.freshness(record.method_ref)
             rows.append(card)
-        return rows[:limit]
+        return annotate_card_age(rows[:limit])  # EVO-20260923-6fe23c9b F2(b)
 
     def _search_experience(
         self,
@@ -762,7 +792,7 @@ class RecordSearcher:
             "skipped": outcome.skipped_count,
             "scan_error": outcome.scan_error,
         }
-        return outcome.records
+        return annotate_card_age(outcome.records)  # EVO-20260923-6fe23c9b F2(b)
 
     @staticmethod
     def _memory_visible_in_session(entry: Any, session_id: str) -> bool:

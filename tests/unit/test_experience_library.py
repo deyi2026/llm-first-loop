@@ -460,7 +460,7 @@ def test_run_save_experience_success(tmp_path):
         store,
         title="成功沉淀经验",
         scenario="场景",
-        solution="解法",
+        solution="解法（当前性验证：先 grep -n 解法关键字 scripts/ 确认仍适用）",
         record_kind="experience",
         verification_state="verified",
         root_cause="根因",
