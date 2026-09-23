@@ -650,3 +650,40 @@ function readBlobText(b: Blob): Promise<string> {
     fr.readAsText(b);
   });
 }
+
+describe("Markdown 渲染默认视图（回归：tab 化重构后补回直测）", () => {
+  it(".md 默认渲染 Markdown（非纯文本行号视图）；切纯文本出 data-line", async () => {
+    vi.stubGlobal(
+      "fetch",
+      previewRouter([
+        {
+          match: (u) => u.includes("/api/v1/files/preview"),
+          body: () => textPage("readme.md", 1, "# 标题A\n\n正文B", true),
+        },
+      ])
+    );
+    render(<FilePreviewView path="readme.md" line={null} />);
+    await waitFor(() => expect(screen.getByTestId("preview-markdown")).toBeInTheDocument());
+    const md = screen.getByTestId("preview-markdown");
+    expect(md.querySelector("h1")?.textContent).toContain("标题A");
+    expect(md.textContent).toContain("正文B");
+    expect(document.querySelector(".v2-preview-line")).toBeNull(); // 非行号纯文本视图
+    fireEvent.click(screen.getByTitle("以纯文本查看"));
+    await waitFor(() => expect(document.querySelector(".v2-preview-line")).not.toBeNull());
+  });
+
+  it(".py 代码默认行号视图（DSH 同规：代码=文本+行号，无渲染形态）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      previewRouter([
+        {
+          match: (u) => u.includes("/api/v1/files/preview"),
+          body: () => textPage("app.py", 1, "print(1)", true),
+        },
+      ])
+    );
+    render(<FilePreviewView path="app.py" line={null} />);
+    await waitFor(() => expect(document.querySelector('.v2-preview-line[data-line="1"]')).not.toBeNull());
+    expect(screen.queryByTestId("preview-markdown")).toBeNull();
+  });
+});
