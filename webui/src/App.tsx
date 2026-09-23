@@ -1,6 +1,6 @@
 // Web V2：应用根（三栏壳：侧栏 | 会话主区 | 右侧面板；对齐 DSH ui-layout）
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { TopBar } from "./components/layout/TopBar";
 import { RightPanel } from "./components/layout/RightPanel";
@@ -20,6 +20,22 @@ import {
   useRightPanel,
 } from "./core/stores";
 import { syncSessionIdInLocation } from "./core/sessionUrl";
+
+// ── 右面板宽度（对齐 DSH 可调右侧栏）：拖拽把手调宽，localStorage 持久化 ──
+export const PANEL_WIDTH_KEY = "lfl-panel-width-v1";
+export const PANEL_WIDTH_MIN = 288;
+export const PANEL_WIDTH_MAX = 720;
+export const PANEL_WIDTH_DEFAULT = 400;
+
+export function clampPanelWidth(px: number): number {
+  if (!Number.isFinite(px)) return PANEL_WIDTH_DEFAULT;
+  return Math.min(PANEL_WIDTH_MAX, Math.max(PANEL_WIDTH_MIN, Math.round(px)));
+}
+
+function readPanelWidth(): number {
+  const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY));
+  return clampPanelWidth(saved);
+}
 
 export function App() {
   // 2026-09-04 修复: sidebarCollapsed 曾同时承担"桌面收起"与"移动抽屉打开"两种相反语义，
@@ -95,6 +111,47 @@ export function App() {
     .filter(Boolean)
     .join(" ");
 
+  // 右面板宽度（桌面）：拖拽调宽 + 持久化；移动端抽屉不受影响（inline 不设）
+  const [panelWidth, setPanelWidth] = useState(() =>
+    typeof window === "undefined" || window.matchMedia?.("(max-width: 900px)").matches
+      ? PANEL_WIDTH_DEFAULT
+      : readPanelWidth()
+  );
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const onHandleDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      dragRef.current = { startX: e.clientX, startW: panelWidth };
+      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    },
+    [panelWidth]
+  );
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      // 向左拖（clientX 减小）= 增宽面板
+      setPanelWidth(clampPanelWidth(d.startW + (d.startX - e.clientX)));
+    };
+    const onUp = () => {
+      if (!dragRef.current) return;
+      dragRef.current = null;
+      setPanelWidth((w) => {
+        try {
+          localStorage.setItem(PANEL_WIDTH_KEY, String(w));
+        } catch {
+          // 私有模式/配额满：宽度不持久化，不影响当次会话
+        }
+        return w;
+      });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
+
   return (
     <div className={shellClass} data-testid="app-shell">
       <Sidebar collapsed={!isMobile && sidebarCollapsed} />
@@ -122,7 +179,17 @@ export function App() {
       >
         {panelOpen ? "▸" : "◂"}
       </button>
-      <RightPanel open={panelOpen} />
+      {panelOpen && !isMobile ? (
+        <div
+          className="v2-panel-resize-handle"
+          data-testid="panel-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          title="拖拽调整面板宽度"
+          onPointerDown={onHandleDown}
+        />
+      ) : null}
+      <RightPanel open={panelOpen} width={panelOpen && !isMobile ? panelWidth : undefined} />
     </div>
   );
 }

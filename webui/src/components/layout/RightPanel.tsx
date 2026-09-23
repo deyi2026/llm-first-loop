@@ -21,7 +21,7 @@ import { useCapabilities } from "../../core/capabilities";
 import { ProviderManager } from "./ProviderManager";
 import { PreviewTabsPanel } from "../PreviewTabsPanel";
 
-export function RightPanel({ open }: { open: boolean }) {
+export function RightPanel({ open, width }: { open: boolean; width?: number }) {
   const caps = useCapabilities();
   // 页签状态归 rightPanelStore：预览入口（chips/链接/文件树）经 store.reveal
   // 全局联动切换，App 壳与面板共享同一事实源。
@@ -91,7 +91,11 @@ export function RightPanel({ open }: { open: boolean }) {
   };
 
   return (
-    <aside className="v2-panel" data-testid="right-panel">
+    <aside
+      className="v2-panel"
+      data-testid="right-panel"
+      style={width !== undefined ? { width, flex: "none" } : undefined}
+    >
       <div className="v2-panel-tabs">
         <button
           type="button"
@@ -116,6 +120,16 @@ export function RightPanel({ open }: { open: boolean }) {
           data-testid="panel-tab-preview"
         >
           {zh.panelPreview}
+        </button>
+        <button
+          type="button"
+          className="v2-panel-tab v2-panel-collapse"
+          data-testid="panel-collapse-btn"
+          title={zh.panelCollapse}
+          aria-label={zh.panelCollapse}
+          onClick={() => rightPanelStore.setOpen(false)}
+        >
+          »
         </button>
       </div>
       <div className="v2-panel-body" data-testid="panel-body">

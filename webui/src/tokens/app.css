@@ -42,6 +42,34 @@
   border-left: 1px solid var(--dsw-alias-border-l1);
 }
 
+/* 面板宽度拖拽把手（对齐 DSH 可调右侧栏）：桌面渲染，移动端抽屉不渲染 */
+.v2-panel-resize-handle {
+  flex: none;
+  width: 6px;
+  margin-left: -3px;
+  z-index: 5;
+  cursor: col-resize;
+  align-self: stretch;
+  background: transparent;
+  transition: background var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+.v2-panel-resize-handle:hover,
+.v2-panel-resize-handle:active {
+  background: var(--dsw-alias-interactive-bg-active, rgb(0 0 0 / 12%));
+}
+
+/* 面板内嵌收起按钮：靠右弱化呈现 */
+.v2-panel-tab.v2-panel-collapse {
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.v2-panel-tab.v2-panel-collapse:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
 .v2-topbar {
   flex: none;
   height: 48px;

@@ -13,7 +13,7 @@ import {
   type FileRelated,
 } from "../core/api";
 import { previewWatcher, type PreviewStatFacts } from "../core/previewWatch";
-import { renderMarkdown } from "../core/markdown";
+import { renderMarkdown, highlightCode } from "../core/markdown";
 import { zh } from "../i18n/zh";
 
 const MD_EXT = /\.(md|markdown)$/i;
@@ -646,6 +646,7 @@ export function FilePreviewView({
                         <span className="v2-preview-lineno">{lineNo}</span>
                         <span className="v2-preview-line-text">
                           {showColSpan ? (
+                            // 列锚点行保持字符级切片（锚定优先；高亮暂让位）
                             <>
                               {lineText.slice(0, anchorCol! - 1)}
                               <span className="v2-preview-anchor-col" data-anchor-col>
@@ -653,8 +654,16 @@ export function FilePreviewView({
                               </span>
                               {lineText.slice(anchorCol!)}
                             </>
+                          ) : lineText ? (
+                            // 语法高亮（对齐聊天代码块 shiki-token 体系；
+                            // highlightCode 自带 HTML 转义，输入为单行源码）
+                            <span
+                              dangerouslySetInnerHTML={{
+                                __html: highlightCode(lineText),
+                              }}
+                            />
                           ) : (
-                            lineText || " "
+                            " "
                           )}
                         </span>
                       </div>

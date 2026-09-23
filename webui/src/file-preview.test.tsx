@@ -8,6 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { FilePreviewView, packHtmlDependencies } from "./components/FilePreviewView";
 import { PreviewTabsPanel } from "./components/PreviewTabsPanel";
 import { FileTree } from "./components/sidebar/FileTree";
+import { RightPanel } from "./components/layout/RightPanel";
 import { MessageItem } from "./components/conversation/MessageItem";
 import { previewTabsStore, rightPanelStore } from "./core/stores";
 import { previewWatcher } from "./core/previewWatch";
@@ -491,7 +492,8 @@ describe("版本变更监听（对齐 DSH changes 流 + stale 页提示）", () 
     fireEvent.click(screen.getByRole("button", { name: /重新加载/ }));
     await waitFor(() => expect(screen.queryByTestId("preview-stale")).toBeNull()); // 已观察版本不再报变更
     expect(previewCalls).toBe(2);
-    expect(screen.getByText("new-content")).toBeInTheDocument();
+    // 行文本经语法高亮 span 拆分，断言用行级 textContent
+    expect(document.querySelector(".v2-preview-lines")?.textContent).toContain("new-content");
   });
 
   it("文件消失（stat 404）→ absent 提示，内容保留", async () => {
@@ -551,8 +553,10 @@ describe("版本变更监听（对齐 DSH changes 流 + stale 页提示）", () 
     render(<FilePreviewView path="d.txt" line={null} />);
     await waitFor(() => expect(screen.getByText("old-v1-l2")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId("preview-load-more"));
-    await waitFor(() => expect(screen.getByText("new-v2-l2")).toBeInTheDocument());
-    expect(screen.queryByText("old-v1-l1")).toBeNull(); // 不混版本
+    await waitFor(() =>
+      expect(document.querySelector(".v2-preview-lines")?.textContent).toContain("new-v2-l2")
+    );
+    expect(document.querySelector(".v2-preview-lines")?.textContent).not.toContain("old-v1-l1"); // 不混版本
     expect(previewCalls).toEqual(["1", "3", "1"]); // 首载 → 漂移续读 → 从头重读
   });
 });
@@ -685,5 +689,63 @@ describe("Markdown 渲染默认视图（回归：tab 化重构后补回直测）
     render(<FilePreviewView path="app.py" line={null} />);
     await waitFor(() => expect(document.querySelector('.v2-preview-line[data-line="1"]')).not.toBeNull());
     expect(screen.queryByTestId("preview-markdown")).toBeNull();
+  });
+});
+
+describe("预览可用性：代码高亮 / 面板宽度与收起", () => {
+  it("代码行带语法高亮（shiki-token span，对齐聊天代码块）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      previewRouter([
+        {
+          match: (u) => u.includes("/api/v1/files/preview"),
+          body: () => textPage("app.py", 1, "def main():\n    return 1  # done", true),
+        },
+      ])
+    );
+    render(<FilePreviewView path="app.py" line={null} />);
+    await waitFor(() => expect(document.querySelector('.v2-preview-line[data-line="1"]')).not.toBeNull());
+    const line1 = document.querySelector('.v2-preview-line[data-line="1"]');
+    expect(line1?.querySelector(".shiki-keyword")?.textContent).toBe("def");
+    const line2 = document.querySelector('.v2-preview-line[data-line="2"]');
+    expect(line2?.querySelector(".shiki-number")?.textContent).toBe("1");
+    expect(line2?.querySelector(".shiki-comment")?.textContent).toContain("done");
+  });
+
+  it("面板宽度：拖拽把手调宽并持久化；clamp 到边界", async () => {
+    const { clampPanelWidth, PANEL_WIDTH_KEY } = await import("./App");
+    expect(clampPanelWidth(200)).toBe(288); // 下限
+    expect(clampPanelWidth(500)).toBe(500);
+    expect(clampPanelWidth(2000)).toBeLessThanOrEqual(720); // 上限
+    localStorage.setItem(PANEL_WIDTH_KEY, "");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ sessions: [], count: 0 }))
+    );
+    const { App } = await import("./App");
+    const { container } = render(<App />);
+    await waitFor(() => expect(container.querySelector(".v2-panel")).not.toBeNull());
+    const handle = container.querySelector('[data-testid="panel-resize-handle"]') as HTMLElement;
+    expect(handle).not.toBeNull();
+    fireEvent.pointerDown(handle, { clientX: 700, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    await waitFor(() => {
+      const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY));
+      expect(saved).toBeGreaterThan(288);
+    });
+  });
+
+  it("面板头部内嵌收起按钮 → rightPanelStore.open=false", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ sessions: [], count: 0 }))
+    );
+    rightPanelStore.setOpen(true);
+    render(<RightPanel open />);
+    const btn = screen.getByTestId("panel-collapse-btn");
+    expect(btn).toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(rightPanelStore.getState().open).toBe(false);
   });
 });

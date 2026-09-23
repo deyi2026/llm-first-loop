@@ -70,6 +70,7 @@ export const zh = {
   previewFailed: "预览失败",
   previewNetworkError: "网络失败或服务不可用",
   panelPreview: "预览",
+  panelCollapse: "收起右侧面板",
   previewTabsEmpty: "点击会话中的出产物文件、正文路径链接，或文件树中的文件，在右侧栏打开预览。",
   previewCloseTab: "关闭预览页签",
   previewPacking: "正在打包本地依赖（.js/.css）…",
