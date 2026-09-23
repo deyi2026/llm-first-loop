@@ -333,9 +333,13 @@ describe("MessageItem", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        new Response(JSON.stringify({ path: "src/a.py", size: 8, truncated: false, content: "print(1)" }), {
-          status: 200,
-        })
+        new Response(
+          JSON.stringify({
+            type: "text", path: "src/a.py", size: 8, offset: 1, lines: 1,
+            content: "print(1)", eof: true, truncated: false,
+          }),
+          { status: 200 }
+        )
       )
     );
     render(

@@ -412,6 +412,15 @@ class UTF8JSONResponse(JSONResponse):
     media_type = "application/json; charset=utf-8"
 
 
+# 出产物文件预览路由（对齐 DSH workspace-files/documentpreview）：独立模块，
+# 在 UTF8JSONResponse 定义之后导入（preview_routes 顶部 from routes import 它）
+from llm_loop.web.preview_routes import (  # noqa: E402 — 延迟导入防循环（与 fs_router 同模式）
+    preview_router,
+)
+
+router.include_router(preview_router)
+
+
 def _engine_from(request: Request) -> Any:
     """从 app.state 取单引擎实例（装配一次复用全部请求，不每请求重建）."""
     return request.app.state.engine
@@ -3378,163 +3387,6 @@ def import_workspace_attachment(
         return UTF8JSONResponse(
             status_code=409, content={"error": "workspace_busy", "detail": str(exc)}
         )
-
-
-# ── 出产物文件预览（Web V2 对齐 DSH deliverables：编辑的文件可点击打开） ──
-_PREVIEW_ROOT = Path(__file__).resolve().parents[3]  # 项目根（与 _ui_v2_dir 同模式）
-_PREVIEW_MAX_CHARS = 200_000  # 预览上限（超限截断提示，不整读）
-_PREVIEW_IMAGE_MAX_BYTES = 5 * 1024 * 1024  # 图片预览上限（超限拒绝，如实提示）
-_PREVIEW_IMAGE_MIME = {
-    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
-    ".ico": "image/x-icon",
-}
-
-
-@router.get("/api/v1/files/preview")
-def preview_file(request: Request, path: str) -> Response:
-    """只读文件预览（出产物点击打开）.
-
-    安全边界：拒绝绝对路径与越界路径（resolve 后必须仍在项目根内）；
-    仅限普通文件；大小上限截断（返回 truncated 标记如实提示）。
-    """
-    if not path:
-        return UTF8JSONResponse(
-            status_code=400,
-            content={"error": "invalid_path", "detail": "缺少 path。"},
-        )
-    # 工作区跟随: 预览根 = 当前工作区根（无工作区 → 仓库根兜底）
-    engine = _engine_from(request)
-    root = Path(getattr(engine, "workspace_root", "") or _PREVIEW_ROOT)
-    root_resolved = root.resolve()
-    # 相对路径基于工作区根；绝对路径亦接受（resolve 后必须仍在根内，越界拒绝）
-    raw = Path(path)
-    target = raw.resolve() if raw.is_absolute() else (root_resolved / raw).resolve()
-    if not target.is_relative_to(root_resolved):
-        return UTF8JSONResponse(
-            status_code=400,
-            content={"error": "out_of_bounds", "detail": "路径越出项目根，已拒绝。"},
-        )
-    # 裸文件名兜底（正文常引用 `development_methodology.md` 这类无目录前缀的文件名）：
-    # 根下直接解析失败时，在工作区常见目录内按 basename 唯一匹配（多命中 → 409 歧义
-    # 提示，宁可不猜不错开；防误开原则）。
-    if not target.is_file() and not raw.is_absolute() and "/" not in path and "\\" not in path:
-        candidates: list[Path] = []
-        unsafe_matches = 0
-        try:
-            for base in ("docs", "src", "tests", "scripts", "skills", "webui"):
-                for candidate in (root_resolved / base).rglob(path):
-                    if not candidate.is_file():
-                        continue
-                    resolved = candidate.resolve()
-                    if resolved.is_relative_to(root_resolved):
-                        candidates.append(resolved)
-                    else:
-                        unsafe_matches += 1
-        except OSError:
-            candidates = []
-            unsafe_matches = 0
-        if len(candidates) == 1:
-            target = candidates[0]
-        elif len(candidates) > 1:
-            return UTF8JSONResponse(
-                status_code=409,
-                content={
-                    "error": "ambiguous_path",
-                    "detail": f"文件名 {path} 在工作区内有 {len(candidates)} 处，请用完整路径。",
-                },
-            )
-        elif unsafe_matches:
-            return UTF8JSONResponse(
-                status_code=400,
-                content={"error": "out_of_bounds", "detail": "文件名匹配到项目根外链接，已拒绝。"},
-            )
-    # 纵深防御：任何 fallback/未来分支最终都必须再次通过解析后根边界。
-    if not target.is_relative_to(root_resolved):
-        return UTF8JSONResponse(
-            status_code=400,
-            content={"error": "out_of_bounds", "detail": "路径越出项目根，已拒绝。"},
-        )
-    # 目录 → 单层列表预览（对齐 fs/tree 语义：文档/文件夹/文件皆可点开浏览）
-    if target.is_dir():
-        try:
-            dirs, files = [], []
-            for p in sorted(target.iterdir(), key=lambda q: q.name.lower()):
-                if p.name.startswith(".") or p.name == "__pycache__":
-                    continue
-                if p.is_dir():
-                    dirs.append(p.name)
-                elif p.is_file():
-                    files.append({"name": p.name, "size": p.stat().st_size})
-        except OSError as exc:
-            logger.exception("file preview dir list failed: path=%s", path)
-            return UTF8JSONResponse(
-                status_code=403,
-                content={"error": "dir_unreadable", "detail": f"目录不可读（{type(exc).__name__}）。"},
-            )
-        # parent 相对根返回（根自身/根外 → "."；前端据此隐藏"返回上级"）
-        try:
-            rel_parent = str(target.parent.relative_to(root_resolved)) or "."
-        except ValueError:
-            rel_parent = "."
-        return UTF8JSONResponse(
-            content={
-                "type": "dir",
-                "path": path,
-                "parent": rel_parent,
-                "dirs": dirs[:500],
-                "files": files[:500],
-            }
-        )
-    # 图片 → base64 内联预览（≤5MB；前端 data:image/ URI 渲染，img 上下文不执行脚本）
-    mime = _PREVIEW_IMAGE_MIME.get(target.suffix.lower())
-    if mime:
-        import base64
-        try:
-            blob = target.read_bytes()
-        except OSError as exc:
-            logger.exception("file preview image read failed: path=%s", path)
-            return UTF8JSONResponse(
-                status_code=500,
-                content={"error": "read_failed", "detail": f"[程序异常] 读取失败（{type(exc).__name__}）。"},
-            )
-        if len(blob) > _PREVIEW_IMAGE_MAX_BYTES:
-            return UTF8JSONResponse(
-                status_code=413,
-                content={"error": "image_too_large", "detail": f"图片 {len(blob)} 字节超预览上限 5MB。"},
-            )
-        return UTF8JSONResponse(
-            content={
-                "type": "image",
-                "path": path,
-                "size": len(blob),
-                "mime": mime,
-                "content_base64": base64.b64encode(blob).decode("ascii"),
-            }
-        )
-    if not target.is_file():
-        return UTF8JSONResponse(
-            status_code=404,
-            content={"error": "file_not_found", "detail": f"文件不存在: {path}"},
-        )
-    try:
-        raw = target.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
-        logger.exception("file preview read failed: path=%s", path)
-        return UTF8JSONResponse(
-            status_code=500,
-            content={"error": "read_failed", "detail": f"[程序异常] 读取失败（{type(exc).__name__}）。"},
-        )
-    truncated = len(raw) > _PREVIEW_MAX_CHARS
-    return UTF8JSONResponse(
-        content={
-            "type": "text",
-            "path": path,
-            "size": len(raw),
-            "truncated": truncated,
-            "content": raw[:_PREVIEW_MAX_CHARS] if truncated else raw,
-        }
-    )
 
 
 # ── 工作区管理（对齐 DSH Workspace：注册/切换/注销；会话按工作区分区） ──

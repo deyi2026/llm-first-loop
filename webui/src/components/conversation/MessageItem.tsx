@@ -6,11 +6,12 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { AttachmentFact, ChatMessage, ToolActivity, ToolActivityStatus, ToolCallInfo } from "../../core/types";
 import { renderMarkdown } from "../../core/markdown";
 import { formatTokens } from "../../core/chat";
-import { fetchFilePreview, forkSession, submitFeedback } from "../../core/api";
+import { forkSession, submitFeedback } from "../../core/api";
 import { useCapabilities } from "../../core/capabilities";
 import { loadHistory, prefillComposer } from "../../core/conversation";
 import { sessionStore } from "../../core/stores";
 import { normalizeToolStatus, parseToolReceiptStatus } from "../../core/toolActivity";
+import { FilePreviewModal } from "../FilePreviewModal";
 import { zh } from "../../i18n/zh";
 
 /** 写剪贴板（navigator.clipboard 不可用/失败 → false，静默） */
@@ -278,46 +279,8 @@ function ToolActivityPanel({ activities, streaming }: { activities: ToolActivity
   );
 }
 
-/** 出产物文件预览模态（对齐 DSH deliverables 点击打开；只读） */
-function FilePreviewModal({ path, onClose }: { path: string; onClose: () => void }) {
-  const [state, setState] = useState<{ loading: boolean; error?: string; data?: { content: string; truncated: boolean; size: number } }>({ loading: true });
-  useEffect(() => {
-    let alive = true;
-    setState({ loading: true });
-    void fetchFilePreview(path).then((pv) => {
-      if (!alive) return;
-      if (!pv) setState({ loading: false, error: "预览失败（文件不存在或越界）" });
-      else setState({ loading: false, data: { content: pv.content, truncated: pv.truncated, size: pv.size } });
-    });
-    return () => {
-      alive = false;
-    };
-  }, [path]);
-  return (
-    <div className="v2-preview-mask" data-testid="file-preview" onClick={onClose}>
-      <div className="v2-preview-card" onClick={(e) => e.stopPropagation()}>
-        <div className="v2-preview-head">
-          <span className="v2-preview-path" title={path}>{path}</span>
-          <button type="button" className="v2-preview-close" onClick={onClose} aria-label="关闭">✕</button>
-        </div>
-        <div className="v2-preview-body">
-          {state.loading ? (
-            <div className="v2-preview-hint">加载中…</div>
-          ) : state.error ? (
-            <div className="v2-preview-hint err">{state.error}</div>
-          ) : (
-            <>
-              <pre className="v2-preview-content"><code>{state.data!.content}</code></pre>
-              {state.data!.truncated ? (
-                <div className="v2-preview-truncated">（预览超过 20 万字符已截断，共 {state.data!.size} 字符）</div>
-              ) : null}
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
+/** 出产物文件预览模态：已抽取为共享组件 components/FilePreviewModal.tsx
+ *  （会话 chips/正文链接与文件树共用；能力面对齐 DSH documentpreview）。 */
 
 /** 出产物路径提取（edit_file/write_file 参数路径 + present_files 显式声明，去重）——chips 与正文链接共用 */
 export function extractProducedPaths(calls: ToolCallInfo[] | null | undefined): string[] {

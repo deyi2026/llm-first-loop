@@ -1,7 +1,8 @@
 // Web V2（对齐 DSH 左侧栏树）：文件/目录树
 // 数据源：/api/v1/fs/tree（目录+文件，单层可展；工作区根内安全边界后端把关）
-// 交互：目录展开/折叠（▶▼）、文件行（📄+大小）、hover 操作（复制路径/新建目录/
-// 重命名/删除两步确认——DELETE confirm=true）
+// 交互：目录展开/折叠（▶▼）、文件行（📄+大小）；点击文件=预览（对齐 DSH
+// Files tab 点击打开预览），✍ 进入带版本保护的协作编辑；hover 操作
+// （复制路径/新建目录/重命名/删除两步确认——DELETE confirm=true）
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -14,6 +15,7 @@ import {
   type FsTree,
   type HumanFileObservation,
 } from "../../core/api";
+import { FilePreviewModal } from "../FilePreviewModal";
 import { zh } from "../../i18n/zh";
 
 interface TreeNode {
@@ -52,6 +54,8 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorStatus, setEditorStatus] = useState("");
   const [pendingSave, setPendingSave] = useState<{ key: string; requestId: string } | null>(null);
+  // 点击文件 → 预览模态（对齐 DSH：Files tab 点击即打开 documentpreview）
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
 
   useEffect(() => {
     setEditor(null);
@@ -297,12 +301,16 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
         )}
         <span
           className={`v2-tree-icon ${node.kind}`}
-          onClick={() => (showArrow ? void toggle(node) : void openEditor(node))}
+          onClick={() => (showArrow ? void toggle(node) : setPreviewPath(node.path))}
           title={node.path}
         >
           {node.kind === "dir" ? "📂" : "📄"}
         </span>
-        <span className="v2-tree-name" title={node.path} onClick={() => (showArrow ? void toggle(node) : void openEditor(node))}>
+        <span
+          className="v2-tree-name"
+          title={node.path}
+          onClick={() => (showArrow ? void toggle(node) : setPreviewPath(node.path))}
+        >
           {node.name}
           {node.kind === "file" && node.size !== undefined && (
             <span className="v2-tree-size">{fmtSize(node.size)}</span>
@@ -312,6 +320,18 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
           )}
         </span>
         <span className="v2-tree-actions">
+          {node.kind === "file" && (
+            <button
+              type="button"
+              className="v2-icon-btn"
+              title={zh.collabEdit}
+              disabled={busy}
+              onClick={() => void openEditor(node)}
+              data-testid="collab-edit-btn"
+            >
+              ✍
+            </button>
+          )}
           {node.kind === "dir" && (
             <button
               type="button"
@@ -471,7 +491,10 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
         </div>
       )}
       {!editor && editorStatus && <div className="v2-tree-loading">{editorStatus}</div>}
-      <div className="v2-tree-hint">{zh.treeHint} · 点击文件可进行带版本保护的人工编辑</div>
+      <div className="v2-tree-hint">{zh.treeHint}</div>
+      {previewPath ? (
+        <FilePreviewModal path={previewPath} onClose={() => setPreviewPath(null)} />
+      ) : null}
     </div>
   );
 }

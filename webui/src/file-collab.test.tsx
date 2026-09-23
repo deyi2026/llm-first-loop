@@ -47,7 +47,7 @@ describe("Human-AI file collaboration", () => {
 
     render(<FileTree sessionId="s1" />);
     await waitFor(() => expect(screen.getByText("a.txt")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("a.txt"));
+    fireEvent.click(screen.getByTestId("collab-edit-btn"));
     const editor = await screen.findByRole("textbox");
     expect(editor).toHaveValue("base\n");
     fireEvent.change(editor, { target: { value: "my draft\n" } });
@@ -89,7 +89,7 @@ describe("Human-AI file collaboration request identity", () => {
 
     render(<FileTree sessionId="s1" />);
     await waitFor(() => expect(screen.getByText("a.txt")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("a.txt"));
+    fireEvent.click(screen.getByTestId("collab-edit-btn"));
     await screen.findByRole("textbox");
     fireEvent.click(screen.getByText("保存当前版本"));
     await waitFor(() => expect(screen.getByText(/保存结果暂时未知/)).toBeInTheDocument());
@@ -159,7 +159,7 @@ describe("Human-AI file collaboration prepared-only recovery", () => {
 
     render(<FileTree sessionId="s1" />);
     await waitFor(() => expect(screen.getByText("a.txt")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("a.txt"));
+    fireEvent.click(screen.getByTestId("collab-edit-btn"));
     const editor = await screen.findByRole("textbox");
     fireEvent.change(editor, { target: { value: "my draft\n" } });
     fireEvent.click(screen.getByText("保存当前版本"));

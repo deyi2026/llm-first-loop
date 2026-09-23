@@ -766,6 +766,160 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* ── 预览模态多形态（对齐 DSH documentpreview 能力面） ── */
+.v2-preview-size {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.v2-preview-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* 图片：居中自适应，等比缩放 */
+.v2-preview-media {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+}
+
+.v2-preview-img {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: var(--dsw-radius-md);
+}
+
+/* pdf/html：内嵌帧占满卡体（沙箱属性由组件控制） */
+.v2-preview-frame {
+  display: block;
+  width: 100%;
+  height: 70vh;
+  border: none;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* 代码/纯文本：行号槽 + 可切换换行 */
+.v2-preview-lines {
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.v2-preview-lines.nowrap .v2-preview-line-text {
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.v2-preview-lines.wrap .v2-preview-line-text {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.v2-preview-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.v2-preview-lineno {
+  flex-shrink: 0;
+  min-width: 40px;
+  text-align: right;
+  color: var(--dsw-alias-label-tertiary);
+  user-select: none;
+}
+
+.v2-preview-line-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.v2-preview-md {
+  max-width: none;
+}
+
+.v2-preview-loadmore {
+  display: block;
+  margin: 12px auto 0;
+}
+
+/* 目录浏览 */
+.v2-preview-dir {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.v2-preview-dir-up {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--dsw-radius-sm);
+}
+
+.v2-preview-dir-up:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.v2-preview-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--dsw-radius-sm);
+  text-align: left;
+}
+
+.v2-preview-dir-row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.v2-preview-dir-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v2-preview-dir-size {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 已知二进制空态 */
+.v2-preview-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 48px 24px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+}
+
+.v2-preview-empty-icon {
+  font-size: 28px;
+}
+
 /* ── 附件状态（降级/失败有色标注） ── */
 .v2-attachment.degraded {
   border: 1px solid var(--dsw-alias-state-warn-primary);

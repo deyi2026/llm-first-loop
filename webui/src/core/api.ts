@@ -274,19 +274,50 @@ export function channelLabel(channel: string | undefined): string {
   return channel;
 }
 
-/** 出产物文件预览（对齐 DSH deliverables 点击打开；只读、项目根内） */
-export interface FilePreview {
+/** 出产物文件预览（对齐 DSH workspace-files read/documentpreview；只读、工作区根内）。
+ *  后端按扩展名机械分流：text=分页文本（offset 1-based 行），image/pdf/html=
+ *  完整字节 base64，dir=单层目录，unsupported_binary=已知无渲染器二进制（不读内容）。 */
+export interface FilePreviewText {
+  type: "text";
   path: string;
   size: number;
-  truncated: boolean;
+  offset: number;
+  lines: number;
   content: string;
+  eof: boolean;
+  truncated: boolean;
 }
+export interface FilePreviewBytes {
+  type: "image" | "pdf" | "html";
+  path: string;
+  size: number;
+  mime: string;
+  content_base64: string;
+}
+export interface FilePreviewDir {
+  type: "dir";
+  path: string;
+  parent: string;
+  dirs: string[];
+  files: Array<{ name: string; size: number }>;
+}
+export interface FilePreviewUnsupported {
+  type: "unsupported_binary";
+  path: string;
+  ext: string;
+}
+export type FilePreview = FilePreviewText | FilePreviewBytes | FilePreviewDir | FilePreviewUnsupported;
+export type FilePreviewFailure = { error: string; detail?: string };
 
-export async function fetchFilePreview(path: string): Promise<FilePreview | null> {
-  const { status, data } = await api<FilePreview>(
-    `/api/v1/files/preview?path=${encodeURIComponent(path)}`
+export async function fetchFilePreview(
+  path: string,
+  offset = 1,
+  limit = 2000
+): Promise<{ status: number; data: FilePreview | FilePreviewFailure }> {
+  const query = new URLSearchParams({ path, offset: String(offset), limit: String(limit) });
+  return api<FilePreview | FilePreviewFailure>(
+    `/api/v1/files/preview?${query.toString()}`
   );
-  return status === 200 && typeof data.content === "string" ? data : null;
 }
 
 
