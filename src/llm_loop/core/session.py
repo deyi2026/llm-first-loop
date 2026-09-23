@@ -19,6 +19,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
+from dataclasses import replace as dataclasses_replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -324,6 +325,12 @@ class SessionStore:
         self._identity_root.mkdir(parents=True, exist_ok=True)
         self._identity_root_fs = os.path.abspath(os.fspath(self._identity_root))
         self._identity_dir_fs = os.path.join(self._identity_root_fs, ".identity")
+        # 2026-09-23 切换会话慢事故：会话级 JSON 读缓存（web 轮询/切换高频
+        # load，大会话 1-5MB 重复 parse 0.1-0.8s/次）。键控 (mtime_ns, size)，
+        # save/外部变更即失效；FIFO 有界（活跃会话工作集）；命中返回壳副本
+        # （messages 列表独立），调用方结构变更互不可见。
+        self._session_json_cache: OrderedDict[str, tuple[tuple[int, int], Session]] = OrderedDict()
+        self._session_json_cache_lock = threading.Lock()
         self._identity_verified: OrderedDict[str, None] = OrderedDict()
         self._identity_cache_max = 512
         self._identity_cache_guard = threading.Lock()
@@ -1319,6 +1326,9 @@ class SessionStore:
 
     def _save_locked(self, session: Session) -> None:
         """save 的持锁内层（调用方必须已持有 _session_lock，否则并发保护不成立）."""
+        # 读缓存失效：写后即便 mtime_ns 粒度极端同值也不喂陈旧对象。
+        with self._session_json_cache_lock:
+            self._session_json_cache.pop(session.session_id, None)
         checkpoint = session.working_state_checkpoint
         if isinstance(checkpoint, dict):
             boundary = checkpoint.get("boundary_message_count")
@@ -1441,16 +1451,33 @@ class SessionStore:
             logger.warning("event_log replay 重建异常（fail-open）: %s: %s", session_id, exc)
             return None
 
+    _SESSION_JSON_CACHE_LIMIT = 8  # 活跃会话工作集上限（FIFO 淘汰；大对象防膨胀）
+
+    def _copy_session_shell(self, session: Session) -> Session:
+        """缓存命中的返回形态：新 Session 壳 + 新 messages 列表（引用共享）.
+
+        结构变更（追加/替换消息）互不可见；Message 对象按不可变约定共享
+        （本库消息以替换而非原地修改为约定——与既有 engine 流一致）。
+        """
+        return dataclasses_replace(session, messages=list(session.messages))
+
     def _load_from_json(self, session_id: str) -> Session:
-        """从 session JSON 加载会话（既有 load 逻辑，零回归）."""
+        """从 session JSON 加载会话（2026-09-23 起 (mtime,size) 键控读缓存）."""
         p = self._path(session_id)
-        if not os.path.exists(p):
+        try:
+            st = os.stat(p)
+        except OSError:
             return Session(session_id=session_id)
+        fkey = (st.st_mtime_ns, st.st_size)
+        with self._session_json_cache_lock:
+            cached = self._session_json_cache.get(session_id)
+        if cached is not None and cached[0] == fkey:
+            return self._copy_session_shell(cached[1])
         try:
             with open(p, encoding="utf-8") as f:
                 data = json.load(f)
             messages = [_message_from_dict(m) for m in data.get("messages", [])]
-            return Session(
+            parsed = Session(
                 session_id=data.get("session_id", session_id),
                 messages=messages,
                 created_at=data.get("created_at", _now()),
@@ -1481,16 +1508,32 @@ class SessionStore:
                 ),
             )
         except (json.JSONDecodeError, KeyError, ValueError):
-            # 如实降级：文件损坏时备份原始文件（不覆盖丢数据），返回新会话（不伪造恢复）
-            try:
-                backup = os.path.splitext(p)[0] + ".corrupt.json"
-                with open(p, encoding="utf-8") as src, open(
-                    backup, "w", encoding="utf-8"
-                ) as dst:
-                    dst.write(src.read())
-            except OSError:
-                pass  # 备份失败尽力而为
-            return Session(session_id=session_id)
+            return self._degrade_corrupt_session(p, session_id)
+        except Exception:
+            return self._degrade_corrupt_session(p, session_id)
+        with self._session_json_cache_lock:
+            self._session_json_cache[session_id] = (fkey, parsed)
+            self._session_json_cache.move_to_end(session_id)
+            while len(self._session_json_cache) > self._SESSION_JSON_CACHE_LIMIT:
+                self._session_json_cache.popitem(last=False)
+        # 缓存持有私有母本；所有调用方（含首次解析路径）一律拿壳副本——
+        # 否则首个调用方的结构变更会污染缓存对象（save 失败后脏对象仍被命中，
+        # test_spawn_failure_to_persist_delegated_task 实证）。
+        return self._copy_session_shell(parsed)
+
+    def _degrade_corrupt_session(self, p, session_id: str) -> Session:
+        """如实降级：文件损坏时备份原始文件（不覆盖丢数据），返回新会话（不伪造恢复）."""
+        with self._session_json_cache_lock:
+            self._session_json_cache.pop(session_id, None)
+        try:
+            backup = os.path.splitext(p)[0] + ".corrupt.json"
+            with open(p, encoding="utf-8") as src, open(
+                backup, "w", encoding="utf-8"
+            ) as dst:
+                dst.write(src.read())
+        except OSError:
+            pass  # 备份失败尽力而为
+        return Session(session_id=session_id)
 
     def append(self, session_id: str, message: Message, *, ingress: object | None = None) -> None:
         """追加消息；run 外 append 与 whole-run 互斥，避免长 run 覆盖追加内容。
