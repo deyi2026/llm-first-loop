@@ -14,12 +14,20 @@ module 级辅助 _json_dumps_args 等留驻 tool_exec.py（REQ-REF-06 re-export 
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from llm_loop.core.loop.engine_services.convergence_boundary import (
     ConvergenceFacts,
     evaluate_convergence_boundary,
+)
+from llm_loop.core.loop.engine_services.convergence_receipt import (
+    MirrorFacts,
+    QueuePressureFacts,
+    VitalsFacts,
+    mirror_budget_chars,
+    render_convergence_receipt_addendum,
 )
 from llm_loop.core.loop.engine_services.tool_reachability import (
     RoundReachabilityRecorder,
@@ -174,6 +182,13 @@ class ToolCycleService:
             execution_id = execution_ids.get(call.id, "")
             if not execution_id:
                 return
+            # R2（antidrift_impl 批1，执行期修正 EX-2）: 回执消息唯一常态构造点在
+            # persist_finished 预构造（journal 与 EventStore 解耦，execution_id 总是
+            # 分配——_record_single_receipt 的 prebuilt 分支因此是常态而非仅 WAL
+            # 重放）。三件套附加必须在此、tool_msg 构造前落在 result.content 上，
+            # 保证 journal/WAL 持久化的即最终形态。None 分支的调用保留为防御路径
+            # （两路互斥：execution_id 存在 ⇔ prebuilt 存在）。
+            self._attach_convergence_receipt_facts(sess, call, result)
             tool_msg = tool_result_to_message(
                 result,
                 failure_guidance_enabled=self._host.registry.failure_guidance_enabled,
@@ -527,6 +542,64 @@ class ToolCycleService:
         except Exception:  # noqa: BLE001 — boundary facts must never block tool receipt
             logger.debug("capability boundary metadata attach failed (fail-open)", exc_info=True)
 
+    def _attach_convergence_receipt_facts(self, sess, tc, result) -> None:
+        """R2（antidrift_impl 批1）: convergence_decide SUCCESS 回执附加三件套事实段.
+
+        回执侧附加，与放行/拦截语义正交（_track_tool_observation 只认 name+status，
+        不解析 content）；镜像累积=continue 且 unresolved 非空时在附加之后 append
+        （第 N+1 次回执镜像恰含前 N 次）。组装器抛错 fail-open 回退现状回执
+        （对齐 capability metadata fail-open 先例）。WAL 恢复重放（prebuilt_tool_msg）
+        分支不经此处。
+        """
+        try:
+            if tc.name != "convergence_decide":
+                return
+            if result.status is not ToolResultStatus.SUCCESS:
+                return
+            bucket = self._host._run_state()
+            started = float(getattr(bucket, "vitals_started_monotonic", 0.0) or 0.0)
+            vitals = VitalsFacts(
+                rounds=int(getattr(bucket, "vitals_rounds", 0) or 0),
+                wall_clock_s=(time.monotonic() - started) if started > 0 else 0.0,
+                tokens_in=int(getattr(bucket, "vitals_tokens_in", 0) or 0),
+                tokens_out=int(getattr(bucket, "vitals_tokens_out", 0) or 0),
+                usage_available=started > 0,
+                unavailable_reason="run_vitals_unavailable",
+            )
+            probe = getattr(self._host, "interjection_pressure_probe", None)
+            if probe is None:
+                queue_pressure = QueuePressureFacts(unavailable_reason="no_queue_binding")
+            else:
+                try:
+                    snapshot = probe(sess.session_id)
+                except Exception:  # noqa: BLE001 — probe 读失败如实标注，不冒充
+                    snapshot = None
+                if not isinstance(snapshot, dict):
+                    queue_pressure = QueuePressureFacts(
+                        unavailable_reason="queue_read_failed"
+                    )
+                else:
+                    queue_pressure = QueuePressureFacts(
+                        count=int(snapshot.get("count", 0) or 0),
+                        oldest_enqueued_at=snapshot.get("oldest_enqueued_at"),
+                    )
+            addendum = render_convergence_receipt_addendum(
+                vitals,
+                MirrorFacts(entries=list(bucket.convergence_history)),
+                queue_pressure,
+                budget_chars=mirror_budget_chars(),
+            )
+            result.content = f"{result.content}\n\n{addendum}"
+            arguments = tc.arguments if isinstance(tc.arguments, dict) else {}
+            unresolved = str(arguments.get("unresolved") or "").strip()
+            decision = str(arguments.get("decision") or "").strip().lower()
+            if decision == "continue" and unresolved:
+                bucket.convergence_history.append(unresolved)
+        except Exception:  # noqa: BLE001 — R2 三件套附加必须不阻断回执（fail-open）
+            logger.debug(
+                "convergence receipt addendum attach failed (fail-open)", exc_info=True
+            )
+
     def _record_single_receipt(
         self,
         sess,
@@ -560,6 +633,9 @@ class ToolCycleService:
         )
         tool_msg = prebuilt_tool_msg
         if tool_msg is None:
+            # R2（antidrift_impl 批1）: 非重放路径回执附加三件套（fail-open；
+            # prebuilt_tool_msg=WAL 恢复已提交回执重放，不附加）
+            self._attach_convergence_receipt_facts(sess, tc, result)
             tool_msg = tool_result_to_message(
                 result,
                 failure_guidance_enabled=self._host.registry.failure_guidance_enabled,

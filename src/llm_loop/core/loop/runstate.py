@@ -98,6 +98,16 @@ class _RunState:
     routing_default_registry_snapshot: Any = None
     routing_registry_fp: str = ""
     routing_transition: str = ""
+    # R2（antidrift_impl 批1，执行期修正 EX-1）: 收敛回执三件套的桶侧事实面。
+    # 真相源=engine 主循环局部计数（rounds/tokens_in/tokens_out/_run_started_at），
+    # 本组字段为其机械镜像（每轮 resp 消费点同步；run 入口重置——OQ3 复活即重置，
+    # 与 stagnation_state「run 开始重置」同款纪律）。设计原案写在未实例化的
+    # RunState(:104) 上，因该对象 B5-W1 冻结未接管，真相容器改落本桶并在此登记。
+    convergence_history: list[str] = field(default_factory=list)
+    vitals_rounds: int = 0
+    vitals_tokens_in: int = 0
+    vitals_tokens_out: int = 0
+    vitals_started_monotonic: float = 0.0
 
 
 @dataclass

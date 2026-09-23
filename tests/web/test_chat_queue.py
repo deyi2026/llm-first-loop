@@ -652,3 +652,80 @@ class TestDispatchHandoff:
         ) as resp:
             list(resp.iter_lines())
         assert client.get(f"/api/v1/chat/queue?session_id={sid}").json()["count"] == 0
+
+
+# --------------------------- R2③ interject_pressure 只读统计（antidrift_impl 批1，T1-12）
+
+def test_interject_pressure_counts_waiting_set_with_oldest_created_at(tmp_path):
+    hq = HumanTurnQueue(tmp_path)
+    first = hq.enqueue("s1", "第一条等待")
+    second = hq.enqueue("s1", "第二条等待")
+    third = hq.enqueue("s1", "已认领待投递")
+    assert hq.claim_interject("s1", third["queue_id"]) is not None
+
+    snap = hq.interject_pressure("s1")
+    # DC-1 映射集 {queued, interject_pending} 全计数（2×queued + 1×interject_pending）
+    assert snap["count"] == 3
+    assert snap["oldest_enqueued_at"] == first["created_at"]
+
+    # 终态条目（interject_received=投递完成）不构成等待压力
+    assert hq.mark_interject_received("s1", third["queue_id"]) is True
+    snap_after = hq.interject_pressure("s1")
+    assert snap_after["count"] == 2
+    assert snap_after["oldest_enqueued_at"] == first["created_at"]
+
+    # 排队中第一条取消后，最早时间前移到第二条
+    assert hq.cancel_with_item("s1", first["queue_id"]) is not None
+    snap_cancelled = hq.interject_pressure("s1")
+    assert snap_cancelled["count"] == 1
+    assert snap_cancelled["oldest_enqueued_at"] == second["created_at"]
+
+
+def test_interject_pressure_empty_session_returns_zero_and_none(tmp_path):
+    hq = HumanTurnQueue(tmp_path)
+    hq.enqueue("s-other", "他会话条目不串台")
+    assert hq.interject_pressure("s-empty") == {
+        "count": 0,
+        "oldest_enqueued_at": None,
+    }
+
+
+# ------------------- R4 claim_interject_fifo 批量 FIFO 认领（antidrift_impl 批2，T2-5）
+
+def test_claim_interject_fifo_orders_by_enqueue_and_single_winner(tmp_path):
+    hq = HumanTurnQueue(tmp_path)
+    first = hq.enqueue("s1", "第一条")
+    second = hq.enqueue("s1", "第二条")
+    third = hq.enqueue("s1", "第三条")
+
+    claimed = hq.claim_interject_fifo("s1")
+    assert [c["queue_id"] for c in claimed] == [
+        first["queue_id"],
+        second["queue_id"],
+        third["queue_id"],
+    ]
+    assert all(c["status"] == "interject_pending" for c in claimed)
+    # 状态机如实：全部进入 interject_pending（等待投递集）
+    active = hq.list_active("s1")
+    assert [a["status"] for a in active] == ["interject_pending"] * 3
+
+    # 与单条 claim 竞争单赢家：已被 FIFO 认领后再单条 claim 同 id → None
+    assert hq.claim_interject("s1", first["queue_id"]) is None
+    # 无 queued → 返回空
+    assert hq.claim_interject_fifo("s1") == []
+    # 其他会话不串台
+    other = hq.enqueue("s2", "他会话")
+    assert hq.claim_interject_fifo("s1") == []
+    assert hq.claim_interject_fifo("s2")[0]["queue_id"] == other["queue_id"]
+
+
+def test_claim_interject_fifo_skips_non_queued_statuses(tmp_path):
+    hq = HumanTurnQueue(tmp_path)
+    queued = hq.enqueue("s1", "仍排队")
+    cancelled = hq.enqueue("s1", "已取消")
+    assert hq.cancel_with_item("s1", cancelled["queue_id"]) is not None
+    pending = hq.enqueue("s1", "已被浏览器认领")
+    assert hq.claim_interject("s1", pending["queue_id"]) is not None
+
+    claimed = hq.claim_interject_fifo("s1")
+    assert [c["queue_id"] for c in claimed] == [queued["queue_id"]]
