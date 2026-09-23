@@ -86,3 +86,13 @@ class RuntimeParamsService:
         if self._host.runtime is not None and self._host.runtime.is_overridden("timeout_s"):
             return self._host.runtime.llm_timeout_s
         return None
+    def _runtime_reasoning_effort(self) -> str | None:
+        """主循环推理档位（EVO-20260923-5342bf75: 动态优先、静态兜底）.
+
+        仅当 reasoning_effort 被显式调整（adjust_strategy）时返回动态档位；
+        未调整返回 None → 循环不改写 current_reasoning_effort，client 沿用
+        run 启动时 latch 的档位（会话/启动默认），与 _runtime_timeout 同构。
+        """
+        if self._host.runtime is not None:
+            return self._host.runtime.reasoning_effort
+        return None

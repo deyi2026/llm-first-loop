@@ -14,7 +14,7 @@ from llm_loop.introspection.registry_host import RegistryHost
 
 _ADJUST_STRATEGY_TOOL_DEF: dict[str, Any] = {
     "name": "adjust_strategy",
-    "description": "调整后续循环策略参数（白名单: max_iterations/timeout_s/history_budget）。何时用: 发现循环参数不合理时（异常率偏高/停滞/预算占用逼近上限，可先经 architecture_status 自查）。何时不用: 需要重试失败工具用 retry_tool；需重载配置用 refresh_config。失败对策: 参数非法/超出全局硬上限（500）会如实返回失败原因，请按引导更正参数。不可修改安全边界配置。",
+    "description": "调整后续循环策略参数（白名单: max_iterations/timeout_s/history_budget/memory_top_k/extract_interval_msgs/retrieve_semantic_top_k/precheck_enabled/fix_loop_enabled/reasoning_effort）。reasoning_effort 为主循环推理档位（字符串枚举 low/medium/high/max，EVO-20260923-5342bf75）：机械阶段可自降档、复杂任务可升档；未调整时沿用 run 启动档。何时用: 发现循环参数不合理时（异常率偏高/停滞/预算占用逼近上限，可先经 architecture_status 自查）；任务复杂度变化需匹配推理开销时调 reasoning_effort。何时不用: 需要重试失败工具用 retry_tool；需重载配置用 refresh_config；切换模型/会话模型用 switch_model。失败对策: 参数非法/超出全局硬上限（500）会如实返回失败原因，请按引导更正参数。不可修改安全边界配置。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -91,6 +91,17 @@ def _run_adjust_strategy(args: dict, host: RegistryHost) -> ToolResult:
                 tool_call_id="",
                 tool_name="adjust_strategy",
             )
+        if spec["type"] == "string":
+            # EVO-20260923-5342bf75: 字符串枚举档位（如 reasoning_effort），跳过数值范围检查
+            enum_vals = spec.get("enum") or []
+            if not (isinstance(val, str) and val in enum_vals):
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=f"[参数错误] '{key}' 需为枚举值 {'/'.join(enum_vals)}，收到 {val!r}",
+                    tool_call_id="",
+                    tool_name="adjust_strategy",
+                )
+            continue
         if not (spec["min"] <= val <= spec["max"]):
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
@@ -140,6 +151,10 @@ def _effective_chain_lines(proposed: dict, whitelist: dict) -> str:
     lines: list[str] = []
     for key, val in proposed.items():
         spec = whitelist.get(key) or {}
+        if spec.get("type") == "string":
+            # EVO-20260923-5342bf75: 枚举档位无数值上限概念，申请值即生效（绿）
+            lines.append(f"- {key}: {val}（绿｜申请档位生效，枚举 {'/'.join(spec.get('enum') or [])}）")
+            continue
         max_cap = spec.get("max")
         if max_cap is not None and val >= max_cap:
             tier, note = "红", f"被白名单硬上限压制（上限 {max_cap}，已打满）"

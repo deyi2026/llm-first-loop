@@ -163,3 +163,31 @@ def test_semantic_retriever_dynamic_top_k_provider():
     assert r._semantic_top_k() == 20
     r.set_top_k_provider(lambda: (_ for _ in ()).throw(RuntimeError("boom")))  # 异常回退
     assert r._semantic_top_k() == 20
+
+
+# ── EVO-20260923-5342bf75: reasoning_effort 主循环推理档位白名单 ──
+
+
+def test_adjust_strategy_reasoning_effort_whitelist():
+    """adjust_strategy 白名单含 reasoning_effort：枚举档位可调 + 非法值拒绝."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    # 合法档位（字符串枚举）
+    for tier in ("low", "medium", "high", "max"):
+        r = reg.execute("adjust_strategy", {"strategy": {"reasoning_effort": tier}})
+        assert r.status == ToolResultStatus.SUCCESS, tier
+        assert ctx.strategy["reasoning_effort"] == tier
+    # 非法枚举 / 错误类型 → 拒绝
+    for bad in ("ultra", "", 3):
+        r2 = reg.execute("adjust_strategy", {"strategy": {"reasoning_effort": bad}})
+        assert r2.status == ToolResultStatus.FAILURE, bad
+
+
+def test_adjust_strategy_reasoning_effort_receipt_green_chain():
+    """字符串枚举档位生效链为绿（无数值上限概念，申请档位即生效）."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    r = reg.execute("adjust_strategy", {"strategy": {"reasoning_effort": "medium"}})
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "生效链" in r.content
+    assert "reasoning_effort: medium（绿｜申请档位生效" in r.content

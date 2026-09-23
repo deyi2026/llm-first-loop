@@ -1,4 +1,4 @@
-# docs/ai_rules.lite.md — Agent/维护 playbook（version=18；epistemic honesty + factual failure receipts + tool-contract truth + development/repair safety + current-first + agency-first；2026-09-11）
+# docs/ai_rules.lite.md — Agent/维护 playbook（version=19；epistemic honesty + factual failure receipts + tool-contract truth + development/repair safety + current-first + agency-first；2026-09-23）
 
 > **角色声明（R8.24-A A-D2）**：本文件已从"通用模型执行规则（模型执行视图）"重分类为
 > **Agent/维护 playbook**——维护 run、operator 场景按需读取；普通用户 run 零引用、
@@ -6,7 +6,7 @@
 > 详细 SoT: docs/ai_rules.md（超集，人工/演进参考；v8 迁移条目去向指针见其尾部「R8.24-A 迁移去向指针」节）。
 > v7→v8 逐条去向对照：.codeartsdoer/specs/r824_ab/lite-v7-v8-diff.md。
 
-## 关键约束（v18 保留集）
+## 关键约束（v19 保留集）
 1诚实：当前代码/文件/路径/版本/配置/运行态/provider/tool/外部系统等可核事实，先取当前证据再作确定结论；训练先验、参数内知识、历史经验/记录只作背景或假设，不能冒充当前已核事实。无法核对时明示未核验/不确定；同时对照本轮回执如实声明完成，不虚构。
 2参数自主：机器 Schema 的结构/必填/枚举是调用真值；compact/lazy description 不承诺含全部参数语义或失败对策。陌生工具、参数不清或参数/协议失败时先精确读取当前完整 Schema/code/docs，再基于新事实修正；同参数同状态不盲重跑。程序失败回执只提供状态/原因/当前能力与硬契约事实，不替模型指定安装、换工具/模型或重试策略。
 3停滞调整：重复/无进展即调整或回答；成功回执不重复验证；复用已验路径、已知重复故障或当前证据不足时才按需查 Rule/Experience/Method，发现卡片后精确水合并自行判断当前适用性；等外部事件单条状态后停。
@@ -15,6 +15,7 @@
 12身份声明：模型身份以 model_catalog/architecture_status 为准，不凭先验自报。
 23当前任务/授权：当前真实用户指令是任务授权真值；“继续/好/可以/按这个”等短回复只绑定最近相关交互，不跨窗口激活旧任务。若最近交互要求明确选择/补参数/提升权限，泛化短回复不得代填分支、参数或扩大权限；只有对最近单一待确认动作含义唯一时才可视为确认。历史 assistant 提议/计划与旧任务状态/记录仅作背景，未经当前用户明确授权不得升级为当前任务；最近“只分析/不改/不提交”等边界持续有效，直至用户明确改变。
 24开发/修复防退化：改动前先核完整事实源与稳定回读 ref、模型真实可见输入、当前 runtime 实证、程序/模型权责边界，以及最终 staged/isolated candidate 的真实 gate；真实事故必须留 regression。详见 RULE-AI-24 与 docs/DEVELOPMENT_REPAIR_SAFETY.md。
+25回传/规模纪律：编排者（本会话/父代理）接收子任务与编排步回传时，中间产物正文不进入编排者上下文；回传默认只带结论+stable evidence_ref/artifact ref+短摘要（≤200 字符），正文消费走引用分页（read_evidence/source_synopsis），跨阶段传 ref 不粘贴，超长产出先告知上下文预算。并行子任务默认 ≤3，超出写理由；用户明示“深度/全面”可直接进重档。详见 RULE-AI-25。
 
 **merge 吸收处置**（2026-09-09）: 将并行线（如 lfl/main）合入整合线前，若 `git rev-list HEAD..<对端分支>` 非空，须对第二父系每个新提交登记 disposition（吸收到哪个提交/拒绝+理由），禁止 `-s ours` 静默跳过；merge 后复核该 rev-list 为空。
 

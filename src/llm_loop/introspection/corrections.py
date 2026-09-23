@@ -68,6 +68,8 @@ class CorrectionContext:
             # task_quality 六路径开关（D3 定案：动态参数，布尔 0/1）
             "precheck_enabled": {"type": "integer", "min": 0, "max": 1},
             "fix_loop_enabled": {"type": "integer", "min": 0, "max": 1},
+            # EVO-20260923-5342bf75: 主循环推理档位（字符串枚举；None/未调整=run 启动档）
+            "reasoning_effort": {"type": "string", "enum": ["low", "medium", "high", "max"]},
         }
     )
     strategy: dict = field(default_factory=dict)  # 运行时策略（adjust_strategy 修改，循环消费）

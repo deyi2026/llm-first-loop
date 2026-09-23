@@ -143,3 +143,53 @@ def test_task_quality_switches():
     shared["fix_loop_enabled"] = True
     assert rp.precheck_enabled is True
     assert rp.fix_loop_enabled is True
+
+
+# ── EVO-20260923-5342bf75: 主循环推理档位（reasoning_effort）──
+
+
+def test_reasoning_effort_untouched_returns_none():
+    """未调整 → None（循环不覆盖，client 沿用 run 启动 latch 档）."""
+    rp = RuntimeParams(_settings())
+    assert rp.reasoning_effort is None
+    assert rp.current()["reasoning_effort"] is None
+    assert rp.is_overridden("reasoning_effort") is False
+
+
+def test_reasoning_effort_enum_dynamic_priority():
+    """显式调整 → 动态档位生效（共享 dict 实时反映，模拟 adjust_strategy）."""
+    shared: dict = {}
+    rp = RuntimeParams(_settings(), strategy=shared)
+    shared["reasoning_effort"] = "low"
+    assert rp.reasoning_effort == "low"
+    assert rp.current()["reasoning_effort"] == "low"
+    assert rp.is_overridden("reasoning_effort") is True
+    # 档位可再调整（机械阶段降档后复杂任务升档）
+    shared["reasoning_effort"] = "max"
+    assert rp.reasoning_effort == "max"
+
+
+def test_reasoning_effort_invalid_values_ignored():
+    """非法值（越界枚举/错误类型）拒绝生效 → 回退 None（防失控）."""
+    for bad in ("ultra", "MAX", "", None, 3, True):
+        rp = RuntimeParams(_settings(), strategy={"reasoning_effort": bad})
+        assert rp.reasoning_effort is None, bad
+
+
+def test_reasoning_effort_reset_restores_none():
+    """reset 清除动态档 → 回到未覆盖态（engine 据此恢复启动档基线）."""
+    shared: dict = {}
+    rp = RuntimeParams(_settings(), strategy=shared)
+    shared["reasoning_effort"] = "medium"
+    assert rp.reasoning_effort == "medium"
+    rp.reset("reasoning_effort")
+    assert rp.reasoning_effort is None
+
+
+def test_strategy_whitelist_carries_reasoning_effort():
+    """adjust_strategy 白名单与 RuntimeParams 校验保持一致（枚举四档）."""
+    from llm_loop.introspection.corrections import CorrectionContext
+
+    spec = CorrectionContext().strategy_whitelist.get("reasoning_effort")
+    assert spec is not None and spec.get("type") == "string"
+    assert set(spec.get("enum") or []) == {"low", "medium", "high", "max"}

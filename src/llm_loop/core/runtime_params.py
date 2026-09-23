@@ -158,8 +158,24 @@ class RuntimeParams:
         default = bool(getattr(self._settings, "fix_loop_enabled", False))
         return bool(self.get("fix_loop_enabled", default))
 
+    @property
+    def reasoning_effort(self) -> str | None:
+        """主循环推理档位（EVO-20260923-5342bf75：模型经 adjust_strategy 可调，动态优先）.
+
+        返回 None 表示未显式调整——循环不下发覆盖，client 读取 run 启动时
+        latch 的 current_reasoning_effort（会话/启动默认档）。
+        与 llm_timeout_s 同构：is_overridden 为真才构成 per-run 覆盖。
+        """
+        if not self.is_overridden("reasoning_effort"):
+            return None
+        val = self.get("reasoning_effort")
+        return val if isinstance(val, str) else None
+
     # ── 白名单范围校验（与 strategy_whitelist 一致）──
     def _valid(self, key: str, val: Any) -> bool:
+        # EVO-20260923-5342bf75: 字符串枚举档位（reasoning_effort: low/medium/high/max）
+        if key == "reasoning_effort":
+            return val in ("low", "medium", "high", "max")
         ranges = {
             "max_iterations": (5, HARD_CAP_MAX_ITERATIONS),
             "timeout_s": (5, 600),
@@ -232,6 +248,7 @@ class RuntimeParams:
             "memory_top_k": self.memory_top_k,
             "extract_interval_msgs": self.extract_interval_msgs,
             "retrieve_semantic_top_k": self.retrieve_semantic_top_k,
+            "reasoning_effort": self.reasoning_effort,
         }
 
     def reset(self, key: str | None = None) -> dict:

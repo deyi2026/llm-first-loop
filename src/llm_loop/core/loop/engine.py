@@ -453,6 +453,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
     def _runtime_timeout(self) -> float | None:
         return self._runtime_params._runtime_timeout()
 
+    def _runtime_reasoning_effort(self) -> str | None:
+        return self._runtime_params._runtime_reasoning_effort()
+
     # ---- 模型路由委托壳（W4-02b：_RoutingMixin → RoutingService；签名面为运行时参数形（类型标注见 RoutingService 真身），kwonly 默认值保留且按名转发实值——公开面调用兼容零变化）----
     def _pool_registry_snapshot(self):
         return self._routing._pool_registry_snapshot()
@@ -556,6 +559,15 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
 
     def _archive_sink(self, session_id, msg):
         return self._archive._archive_sink(session_id, msg)
+
+    # R2（antidrift_impl 批1）: 收敛回执队列压力 probe——装配期可选注入（web 生产
+    # 装配注册；缺省 None=CLI/feishu 装配，回执段如实 unavailable(no_queue_binding)）。
+    # tool_cycle 经 getattr duck-typing 读取，无注入即零行为差异。
+    interjection_pressure_probe: Callable[[str], dict | None] | None = None
+    # R4（antidrift_impl 批2）: 插话轮边界拉取 hook——装配期可选注入（web 生产装配
+    # 注册：FIFO 认领 queued 项搬入 RunHandle mailbox）；缺省 None=零行为差异。
+    # 轮循环头部每轮恰一次调用（fail-open 全吞），投递走既有消费路径零新文本。
+    interjection_pull_hook: Callable[[str], None] | None = None
 
     # ---- 协调通道委托壳（W4-02e：_InteropMixin → InteropService；签名面保真——build.py 以绑定方法传递 _inject_interop_messages、tests 直调 _interop_inbox_messages；公开面调用兼容零变化）----
     def _interop_svc(self) -> InteropService:
@@ -790,6 +802,14 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             ""  # 取消原因标记位（user_stop/runner_stop；""=未取消，收口贯穿 LoopResult）
         )
         _run_started_at = time.monotonic()
+        # R2（antidrift_impl 批1）: 收敛回执事实面 run 级重置（OQ3 复活即重置；
+        # stagnation_state「run 开始重置」同款纪律）
+        _vitals_bucket = self._run_state()
+        _vitals_bucket.convergence_history = []
+        _vitals_bucket.vitals_rounds = 0
+        _vitals_bucket.vitals_tokens_in = 0
+        _vitals_bucket.vitals_tokens_out = 0
+        _vitals_bucket.vitals_started_monotonic = _run_started_at
         self._termination._reset_overflow_state()  # R4: 每次 run 重置 overflow 注入计数
         self._recovery._err1210_run_begin()  # 修复A: per-run 降级机会（attempted 键 = run seq）
         self._last_interrupted = (
@@ -798,6 +818,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         _model_route_source = "unknown"
         _model_route_authority = "none"
+        _run_effort_baseline = None  # EVO-20260923-5342bf75: 首轮捕获的启动档（reset 回滚用）
         tokens_in = 0  # M52: 本次 run 累计 prompt tokens
         tokens_out = 0
         tokens_cache_hit = 0  # M58: 本次 run 前缀缓存命中 token（省钱可观测）
@@ -823,6 +844,14 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 _run_end_reason = "cancelled"
                 final_answer = _CANCELLED_ANSWER
                 break
+            # R4（antidrift_impl 批2）: 轮边界拉取 queued 插话→mailbox（每轮工具
+            # 循环边界恰一次；hook 缺省 None=零行为；搬运后由下方既有消费路径投递）
+            _pull = getattr(self, "interjection_pull_hook", None)
+            if callable(_pull):
+                try:
+                    _pull(session_id)
+                except Exception:  # noqa: BLE001 — pull hook fail-open，不阻断轮循环
+                    logger.debug("interjection pull hook failed (fail-open)", exc_info=True)
             _interjected = _consume_live_interjections(self, session_id, sess)
             if _interjected:
                 # user_text is used by model-visible tool projection/routing in addition to
@@ -842,6 +871,17 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             _background_note_active(self, session_id, rounds)
             if self.runtime is not None:
                 self.runtime.reset_round()
+            # EVO-20260923-5342bf75: 显式调整过的推理档位每轮应用——client 每请求读
+            # current_reasoning_effort，engine 在轮首把动态值压入 contextvar；动态档被
+            # reset 清除时恢复首轮捕获的启动档（防上轮 set 值滞留）；run 结束由
+            # lifecycle 的 effort token 再兜底恢复（不跨 run 泄漏）。
+            if rounds == 1 and _run_effort_baseline is None:
+                _run_effort_baseline = _current_reasoning_effort.get()
+            _runtime_effort = self._runtime_reasoning_effort()
+            if _runtime_effort is not None:
+                _current_reasoning_effort.set(_runtime_effort)
+            elif _run_effort_baseline is not None:
+                _current_reasoning_effort.set(_run_effort_baseline)
             # H-UI: 每轮思考开始（实时状态条）
             self._notify_action("thinking", round=rounds)
             self._phase("comprehension")
@@ -1812,6 +1852,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             # M52: 聚合本轮 token 用量（含 fallback 成功响应；0 = provider 未提供）
             tokens_in += resp.prompt_tokens
             tokens_out += resp.completion_tokens
+            # R2（antidrift_impl 批1）: vitals 桶侧机械镜像（真相源=上方局部累加；
+            # 回执组装点只读桶，不经局部变量——B5-W1 接管前局部即真相源）
+            _vitals_bucket.vitals_rounds = rounds
+            _vitals_bucket.vitals_tokens_in = tokens_in
+            _vitals_bucket.vitals_tokens_out = tokens_out
             tokens_cache_hit += resp.prompt_cache_hit_tokens
             if resp.reasoning_content:
                 reasoning_effective = True
