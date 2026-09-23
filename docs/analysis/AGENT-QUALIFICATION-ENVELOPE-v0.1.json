@@ -43,11 +43,11 @@
       "classification": "DIAGNOSTIC",
       "field": "mechanical.goal.completion_precheck_observed",
       "owner": "update_goal.wrapper_observation",
-      "rule": "No persisted precheck-observed fact exists; fail-open exception path remains unknown.",
+      "rule": "No persisted precheck-observed fact exists; ledger-unavailable path is fail-closed since EVO-20260923-6bcc4880 and remains unobserved.",
       "source_refs": [
         {
-          "anchor": "except Exception:  # noqa: BLE001 — fail-open",
-          "line_hint": "223-240",
+          "anchor": "except Exception as exc:  # noqa: BLE001 — EVO-20260923: 账本不可读 → 不写终局（fail-closed）",
+          "line_hint": "328-338",
           "path": "src/llm_loop/introspection/tools_goal.py"
         }
       ],

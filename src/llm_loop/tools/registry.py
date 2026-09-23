@@ -99,7 +99,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "generate_evolution_template": "根据现有改进证据生成结构化演进建议模板。",
     "create_goal": "创建可跨会话持续追踪的 durable Goal；适合长任务。",
     "checkpoint_goal": "记录 Goal 的里程碑变化、证据、影响路径与确切下一步。",
-    "update_goal": "更新 Goal 状态；complete/blocked 必须有当前事实依据。",
+    "update_goal": "更新 Goal 状态；complete 需过终局证据门（任务图收口 + evidence verified；空任务图需自报 evidence_refs 过校验，EVO-20260923-6bcc4880）；blocked 必须有当前事实依据。",
     "self_evaluate": "基于运行证据生成成功率、效率、诚实性、停滞与异常等自评并持久化。",
     "send_feishu_message": "向飞书发送文本/卡片；仅在用户明确要求且 outbound、白名单与限速允许时执行。",
     "create_feishu_doc": "创建飞书文档并返回 doc_id/URL；受飞书 outbound 配置与权限约束。",

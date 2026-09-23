@@ -83,9 +83,12 @@ GET_GOAL_TOOL_DEF: dict = {
 UPDATE_GOAL_TOOL_DEF: dict = {
     "name": "update_goal",
     "description": (
-        "更新任务目标状态（EVO-20260824-3cd4d74b）。status=complete 仅当全部需求已用当前"
-        "证据验证（对照工具回执如实声明）；status=blocked 仅当严格阻塞条件实际满足"
-        "（外部阻塞/安全边界/等人工）。何时不用: 目标仍 active 推进中。"
+        "更新任务目标状态（EVO-20260824-3cd4d74b；终局证据门 EVO-20260923-6bcc4880）。"
+        "status=complete 仅当全部需求已用当前证据验证: 程序级强制——任务图 open 任务须清零、"
+        "evidence_required 任务须 evidence verified；无 done 任务依托（空任务图）时须自报"
+        " evidence_refs 并通过真实性校验，否则 BLOCKED 拒绝书写。status=blocked 仅当严格"
+        "阻塞条件实际满足（外部阻塞/安全边界/等人工），blocked 不走证据门。"
+        "何时不用: 目标仍 active 推进中。"
     ),
     "parameters": {
         "type": "object",
@@ -93,6 +96,12 @@ UPDATE_GOAL_TOOL_DEF: dict = {
             "goal_id": {"type": "string", "description": "目标 id"},
             "status": {"type": "string", "enum": ["complete", "blocked"], "description": "新状态"},
             "reason": {"type": "string", "description": "blocked 理由 / complete 验证摘要（可选）"},
+            "evidence_refs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "终局证据引用（可选；空任务图 complete 时必填，evidence:// 引用，"
+                "须过 TaskEvidenceVerifier 真实性校验）",
+            },
         },
         "required": ["goal_id", "status"],
     },
@@ -238,13 +247,30 @@ def run_update_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     status = str(args.get("status", "")).strip()
     if not gid or status not in ("complete", "blocked"):
         return ToolResult(ToolResultStatus.FAILURE, "[参数错误] goal_id + status ∈ {complete, blocked}", "", "update_goal")
+    # EVO-20260923-6bcc4880: 证据门前置可读性探针——goal 记录损坏/不存在优先如实报告，
+    # 不被证据门 BLOCKED 掩盖诊断（与 store.update 既有错误分支同文案）。
+    try:
+        _probe = store.get(gid)
+    except GoalStoreCorruptionError as exc:
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            f"[goal 存储损坏] {exc}",
+            "",
+            "update_goal",
+        )
+    if _probe is None:
+        return ToolResult(ToolResultStatus.FAILURE, f"[更新失败] 目标 {gid} 不存在", "", "update_goal")
     # DESIGN-20260828 Task Frontier §2.1: complete 前置校验——任务图存在 open 任务时
     # 拒绝收口（pending/in_progress 需推进终态；blocked/failed 需取消或人工 waive）。
+    # EVO-20260923-6bcc4880 §步骤2: 终局证据硬门——complete 是终局裁决书写，
+    # 无程序可验证据即 BLOCKED 拒绝书写（拒绝的是书写，不是记录：ToolResult 进历史/事件流）；
+    # blocked 是异常出口，不走此门。账本不可读时 fail-closed（不写终局，非照写）。
     if status == "complete" and host.audit_dir:
         try:
             from llm_loop.introspection.task_store import TaskStore
 
-            _ok, _detail = TaskStore(str(host.audit_dir)).goal_completion_ready(gid)
+            _ts = TaskStore(str(host.audit_dir))
+            _ok, _detail = _ts.goal_completion_ready(gid)
             if not _ok:
                 return ToolResult(
                     ToolResultStatus.FAILURE,
@@ -254,8 +280,64 @@ def run_update_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
                     "",
                     "update_goal",
                 )
-        except Exception:  # noqa: BLE001 — fail-open: 任务账本不可用不阻断 goal 流转
-            pass
+            _tasks = _ts.list_for_goal(gid)
+            _unverified = [
+                t.task_id
+                for t in _tasks
+                if t.evidence_required and t.evidence_verification_status != "verified"
+            ]
+            if _unverified:
+                return ToolResult(
+                    ToolResultStatus.BLOCKED,
+                    "[终局证据门] reason_code=evidence_unverified\n"
+                    f"goal {gid} 存在 evidence_required 任务未过真实性校验: "
+                    f"{', '.join(_unverified[:5])}\n"
+                    "出口: 补齐 evidence_refs 重新验证，或请人工确认 waive；"
+                    "证据 verified 前 complete 拒绝书写。",
+                    "",
+                    "update_goal",
+                )
+            if not any(t.status == "done" for t in _tasks):
+                # 零依托终局（空任务图/全非 done）: 自报 evidence_refs 过 verifier 才可书写
+                _refs = [str(r) for r in args["evidence_refs"]] if args.get("evidence_refs") else []
+                if not _refs:
+                    return ToolResult(
+                        ToolResultStatus.BLOCKED,
+                        "[终局证据门] reason_code=no_finality_evidence\n"
+                        f"goal {gid} 无 done 任务依托，complete 需自报 evidence_refs"
+                        "（evidence:// 引用）并通过真实性校验。\n"
+                        "出口: 带已核验证据 refs 重试、建任务图推进后收口，或请人工确认 waive。",
+                        "",
+                        "update_goal",
+                    )
+                _verifier = getattr(getattr(host, "ctx", None), "task_evidence_verifier", None)
+                if _verifier is None:
+                    return ToolResult(
+                        ToolResultStatus.BLOCKED,
+                        "[终局证据门] reason_code=probe_unavailable\n"
+                        "task_evidence_verifier 未装配，无法校验自报 evidence_refs；"
+                        "complete 拒绝书写（fail-closed）。\n出口: 修复装配后重试，或请人工确认 waive。",
+                        "",
+                        "update_goal",
+                    )
+                _report = _verifier.verify(_refs)
+                if getattr(_report, "status", "") != "verified":
+                    return ToolResult(
+                        ToolResultStatus.BLOCKED,
+                        "[终局证据门] reason_code=evidence_below_threshold\n"
+                        f"自报 evidence_refs 校验未通过（status={getattr(_report, 'status', '')}）。\n"
+                        "出口: 修正引用后重试，或请人工确认 waive。",
+                        "",
+                        "update_goal",
+                    )
+        except Exception as exc:  # noqa: BLE001 — EVO-20260923: 账本不可读 → 不写终局（fail-closed）
+            return ToolResult(
+                ToolResultStatus.BLOCKED,
+                f"[终局证据门] reason_code=probe_unavailable\n任务账本不可读（{exc}）；"
+                "complete 拒绝书写（fail-closed）。\n出口: 修复账本可读性后重试，或请人工确认 waive。",
+                "",
+                "update_goal",
+            )
     try:
         g = store.update(gid, status, reason=str(args.get("reason", "")).strip())
     except GoalStoreCorruptionError as exc:

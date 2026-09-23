@@ -2,6 +2,10 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.16 — update_goal 终局证据硬门（EVO-20260923-6bcc4880）（2026-09-24）
+
+- **终局证据门**：`update_goal(status=complete)` 从"自由文本 reason 即可收口"升级为程序级强制：① 任务图存在 open 任务拒绝（既有语义保留）；② `evidence_required` 任务 `evidence_verification_status != verified` → BLOCKED `evidence_unverified`（防账本存量/篡改数据无凭收口；任务写入轴的 verifier 强制使该路径成为纵深防御）；③ 无 done 任务依托（空任务图/全非 done）→ 需自报 `evidence_refs` 并过 `TaskEvidenceVerifier` 真实性校验，否则 BLOCKED `no_finality_evidence` / `evidence_below_threshold`；④ 任务账本不可读 → BLOCKED `probe_unavailable` fail-closed（不写终局而非照写——终局书写路径上的 fail-open 语义修正，普通路径 fail-open 不变）。`blocked` 是异常出口不走门；schema 新增可选 `evidence_refs` 参数；goal 记录损坏/不存在仍优先如实报告（证据门不掩盖存储诊断）。拒绝形态对齐拒收纪律：BLOCKED + `reason_code` + 出口指路（补证据/建任务图/人工 waive），拒绝的是书写不是记录（ToolResult 照常入历史与事件流）。等级→书写权的 E1/E2/E3 分档映射仍留人工定档，本版只立门（与 evolution 建议原文一致）。
+
 ## v0.6.15 — Restart admission gap ②: learning idle gate and dependency-scoped task registry（2026-09-20）
 
 - **learning 空闲门**：`service_control` restart 对 `learning`/`all` 目标新增 busy 探测（此前 `learning has no busy gate`，与 `restart_mirror.sh` 一致地无门）。探测为 durable 事实组合（新模块 `runtime/learning_idle.py`）：`data/sessions/learning/consumer.lock`（flock）判定专属 learning 进程是否存活 + journal fold 的 `admitted`/`started` 判定是否有任务在飞。busy 仅当"持锁且有在飞"；进程死亡时残留 `started` 是崩溃现场而非在飞（post-crash reconcile 重跑），不构成 busy——否则重启 learning 一次之后的第二次重启将永远等不到 idle。锁路径常量单源化：`learning_runtime` 与探测共用 `consumer_lock_path()`。
