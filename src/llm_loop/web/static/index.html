@@ -14,6 +14,12 @@
         <h1>LLM-First Loop</h1>
         <span id="status-badge" class="status-badge">检测中</span>
       </div>
+      <!-- EVO-20260923 工作区管理条：显式切换/打开/注销（注册表不再被动积累临时目录） -->
+      <div id="workspace-bar" aria-label="工作区管理">
+        <select id="workspace-select" title="切换工作区（会话列表与工具根跟随）" aria-label="当前工作区"></select>
+        <button id="workspace-add-btn" class="btn-secondary" title="打开目录：注册为新工作区并切换">＋</button>
+        <button id="workspace-del-btn" class="btn-secondary" title="注销选中工作区（当前工作区不可注销；会话数据保留，可随时重新打开）">🗑</button>
+      </div>
       <button id="new-session-btn" class="btn-primary">+ 新会话</button>
       <input id="search-input" type="text" placeholder="搜索会话..." aria-label="搜索会话">
       <ul id="session-list" aria-label="会话列表"></ul>
@@ -52,6 +58,7 @@
   <script src="/static/modules/app-core.js"></script>
   <script src="/static/modules/responsive.js"></script>
   <script src="/static/modules/session-list.js"></script>
+  <script src="/static/modules/workspace-bar.js"></script>
   <script src="/static/modules/command-upload-model.js"></script>
   <script src="/static/app.js"></script>
 </body>

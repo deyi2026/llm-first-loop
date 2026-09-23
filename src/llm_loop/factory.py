@@ -14,6 +14,7 @@ import logging
 import os
 import shutil
 import sys
+import tempfile
 import uuid
 from collections.abc import Callable, Sequence
 from contextlib import suppress
@@ -25,6 +26,7 @@ from llm_loop.browser.action import BrowserActionAdapter, BrowserActionReceiptSt
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
+from llm_loop import config as _config
 from llm_loop.config import Settings
 from llm_loop.core.history import converge_history_budget
 from llm_loop.core.loop import LoopEngine
@@ -294,13 +296,18 @@ def _cwd_in_system_temp(cwd: Path) -> bool:
     /var/folders 下的 pytest/hev0/probe 目录）均由"临时 cwd 被自动注册进
     生产注册表"产生。逃逸阀 LFL_ALLOW_TEMP_WORKSPACE=1（显式要求注册）。
     """
-    import tempfile
-
     flag = os.environ.get("LFL_ALLOW_TEMP_WORKSPACE", "").strip().lower()
     if flag in ("1", "true", "yes", "on"):
         return False
     roots: list[Path] = []
-    for cand in (tempfile.gettempdir(), "/tmp", "/var/tmp", os.environ.get("TMPDIR", "")):
+    # macOS 每用户临时区（/var/folders）必须显式覆盖：TMPDIR 被外部改写时
+    # gettempdir() 不再指向它，pytest/mkdtemp 目录仍落在该树下（历史 95 条
+    # 垃圾中多数即来自 /var/folders 下的 pytest-of-* 目录）。
+    for cand in (
+        tempfile.gettempdir(),
+        "/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp",
+        "/var/folders", "/private/var/folders",
+    ):
         if not cand:
             continue
         try:
@@ -312,10 +319,10 @@ def _cwd_in_system_temp(cwd: Path) -> bool:
 
 def _registry_is_production_default(settings: Any) -> bool:
     """settings.data_dir 是否为代码根默认生产目录（未被 DATA_DIR 显式改写）."""
-    from llm_loop.config import _DEFAULT_DATA_DIR
-
     try:
-        return Path(settings.data_dir).resolve() == Path(_DEFAULT_DATA_DIR).resolve()
+        # 经 config 模块动态取 _DEFAULT_DATA_DIR（monkeypatch 接缝；按值 from-import
+        # 会固化导入时的常量，测试无法重定向生产默认目录）。
+        return Path(settings.data_dir).resolve() == Path(_config._DEFAULT_DATA_DIR).resolve()
     except OSError:
         return False
 

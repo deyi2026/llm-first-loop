@@ -38,12 +38,13 @@ def test_rm_rf_tilde_blocked():
     assert _blocked("rm -rf ~")
 
 
-def test_rm_rf_tilde_subdir_blocked():
-    assert _blocked("rm -rf ~/data")
+# ── EVO-20260923-c58a0bb1 修正后语义：主目录子路径按目标语义放行（本体仍拦）──
+def test_rm_rf_tilde_subdir_allowed():
+    assert not _blocked("rm -rf ~/data")
 
 
-def test_rm_rf_home_var_subdir_blocked():
-    assert _blocked("rm -rf $HOME/projects")
+def test_rm_rf_home_var_subdir_allowed():
+    assert not _blocked("rm -rf $HOME/projects")
 
 
 # ── 复合命令切分绕过 ──
@@ -93,9 +94,10 @@ def test_python_c_harmless_allowed():
     assert not _blocked('python -c "print(1+1)"')
 
 
-# ── find 删除载荷 ──
-def test_find_delete_blocked():
-    assert _blocked("find /tmp -name '*.log' -delete")
+# ── find 删除载荷（EVO-20260923-c58a0bb1：按 find 起点语义判定——/tmp 等安全起点放行，
+#    /、/etc 等灾难级起点仍拦，见 test_safety.py EVO 回归组）──
+def test_find_delete_safe_startpoint_allowed():
+    assert not _blocked("find /tmp -name '*.log' -delete")
 
 
 def test_find_exec_rm_blocked():

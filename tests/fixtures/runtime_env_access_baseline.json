@@ -7,7 +7,7 @@
     "dynamic_secret": 8,
     "secret": 6
   },
-  "access_count": 134,
+  "access_count": 137,
   "baseline_context": {
     "alias_recovered_direct_access_count": 8,
     "corrected_direct_access_count": 134,
@@ -43,7 +43,7 @@
     "dynamic_secret": 1,
     "secret": 4
   },
-  "direct_access_count": 134,
+  "direct_access_count": 137,
   "dynamic_helper_access_count": 3,
   "dynamic_secret_signatures": [
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>",
@@ -990,6 +990,7 @@
     "src/llm_loop/core/trace_leak/leak_events.py|current_quarantine_mode|read|<dynamic>": 1,
     "src/llm_loop/core/trace_leak/trace_signature.py|current_signature_mode|read|<dynamic>": 1,
     "src/llm_loop/core/trace_leak/user_ingress_guard.py|current_guard_mode|read|<dynamic>": 1,
+    "src/llm_loop/factory.py|_cwd_in_system_temp|read|LFL_ALLOW_TEMP_WORKSPACE": 1,
     "src/llm_loop/feishu/__init__.py|_env_float|read|<dynamic>": 1,
     "src/llm_loop/feishu/__init__.py|main|read|DATA_DIR": 1,
     "src/llm_loop/feishu/approval.py|_allowed_open_ids|read|DATA_DIR": 1,
@@ -1081,6 +1082,8 @@
     "src/llm_loop/web/provider_admin.py|_ensure_mutable|read|MODEL_PROVIDERS": 1,
     "src/llm_loop/web/provider_admin.py|_set_dotenv_value|write|<dynamic>": 1,
     "src/llm_loop/web/provider_admin.py|env_file_path|read|LFL_ENV_FILE": 1,
+    "src/llm_loop/web/routes.py|escalation_list|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/web/routes.py|escalation_review|read|LFL_DATA_DIR": 1,
     "src/llm_loop/web/routes.py|evolution_detail|read|LFL_DATA_DIR": 1,
     "src/llm_loop/web/routes.py|evolution_diff|read|LFL_DATA_DIR": 1,
     "src/llm_loop/web/routes.py|evolution_list|read|LFL_DATA_DIR": 1,

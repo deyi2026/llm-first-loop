@@ -7,6 +7,7 @@ async function init() {
   }
   await loadModels(); // M47 模型切换候选
   await loadSessions();
+  await loadWorkspaces(); // EVO-20260923 工作区管理条
   initEventStream(); // M56 实时刷新（飞书/Web 会话同步）
   // 优先加载跨端共享当前会话（Web/飞书同一上下文），否则取最近会话
   let target = null;

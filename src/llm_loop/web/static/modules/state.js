@@ -36,6 +36,10 @@ const els = {
   chatArea: document.getElementById("chat-area"),
   modelSelect: document.getElementById("model-select"),
   cmdSuggest: document.getElementById("cmd-suggest"),
+  // EVO-20260923 工作区管理条
+  workspaceSelect: document.getElementById("workspace-select"),
+  workspaceAddBtn: document.getElementById("workspace-add-btn"),
+  workspaceDelBtn: document.getElementById("workspace-del-btn"),
   // P4-2: 移动端响应式引用
   app: document.getElementById("app"),
   sidebarToggle: document.getElementById("sidebar-toggle"),

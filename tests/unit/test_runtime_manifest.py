@@ -264,6 +264,15 @@ def test_manifest_and_health_identity_expose_knowledge_health(tmp_path, monkeypa
     (tmp_path / "skills" / "probe" / "SKILL.md").write_text("x", encoding="utf-8")
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "ai_rules.md").write_text("## RULE-AI-00\nprobe\n", encoding="utf-8")
+    # 环境隔离：本测试假定"干净 env + tmp 工作区"。在 LFL 服务运行时内跑套件时，
+    # 进程 env 会带重启契约（EXPERIENCES_DIR/LFL_DATA_DIR/LFL_RUNTIME_ROOT 等
+    # 指向真实工作区），_knowledge_runtime_paths 从 os.environ 捡走覆盖键，
+    # 会把 knowledge_health 统计到真实工作区而非 tmp（曾实测 297 vs 1）。
+    for _k in (
+        "DATA_DIR", "LFL_DATA_DIR", "EXPERIENCES_DIR", "METHODS_DIR",
+        "METHOD_SEED_DIR", "SKILLS_DIR", "DOCS_DIR", "LFL_RUNTIME_ROOT",
+    ):
+        monkeypatch.delenv(_k, raising=False)
     monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
     report = compute_identity()
     ec = resolve_effective("web", workspace_root=tmp_path)

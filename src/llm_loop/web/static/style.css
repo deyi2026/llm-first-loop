@@ -1225,3 +1225,34 @@ html, body {
 .reasoning-body .katex {
   font-size: 1em;
 }
+
+/* EVO-20260923 工作区管理条（暗色侧栏内嵌，与搜索框同风格） */
+#workspace-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+#workspace-bar select {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: #cfd6e4;
+  background: #2a3344;
+  border: 1px solid #303a50;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#workspace-bar .btn-secondary {
+  flex: none;
+  padding: 6px 10px;
+  line-height: 1.2;
+}
+
+#workspace-bar select:disabled,
+#workspace-bar .btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
