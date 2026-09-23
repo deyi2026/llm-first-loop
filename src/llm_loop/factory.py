@@ -1684,6 +1684,12 @@ def build_engine(
             extractor.learning_journal = learning_journal
             extractor.model_ref = settings.llm_model or ""
         if runtime_role == "learning":
+            # 2026-09-23：工作区激活必须在 plane 消费线程 start() 之前——
+            # 积压任务会在毫秒级被受理，若此时 session 根仍平铺（owner ".")，
+            # 冲突失败还会把坏 pin 焊进进程内存（本次实战实证：首版激活放在
+            # return 前仍冲突）。与 task 公共路径同一函数。
+            _activate_default_workspace(engine, settings)
+
             def _resolve_learning_resource_target(model_ref: str) -> tuple[str, str]:
                 return model_pool.registry.resolve(model_ref or settings.llm_model)
 
@@ -1717,9 +1723,6 @@ def build_engine(
     # plane's BackgroundRunner / Scheduler / Inbox watcher. Everything Reflection needs
     # has already been assembled above, so stop assembly at the plane boundary.
     if runtime_role == "learning":
-        # 2026-09-23：提前 return 前激活工作区（与 task 公共路径同函数）——
-        # learning 需要读 task/web 分桶会话做提取/反思，owner key 必须一致。
-        _activate_default_workspace(engine, settings)
         return engine
 
     # EVO 后台 run 改造（对齐 DSH 后台任务）：装配后台 run 执行器——SSE 端点改订阅，
