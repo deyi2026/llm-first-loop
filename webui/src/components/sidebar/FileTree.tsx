@@ -15,7 +15,7 @@ import {
   type FsTree,
   type HumanFileObservation,
 } from "../../core/api";
-import { FilePreviewModal } from "../FilePreviewModal";
+import { previewTabsStore } from "../../core/stores";
 import { zh } from "../../i18n/zh";
 
 interface TreeNode {
@@ -54,8 +54,6 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorStatus, setEditorStatus] = useState("");
   const [pendingSave, setPendingSave] = useState<{ key: string; requestId: string } | null>(null);
-  // 点击文件 → 预览模态（对齐 DSH：Files tab 点击即打开 documentpreview）
-  const [previewPath, setPreviewPath] = useState<string | null>(null);
 
   useEffect(() => {
     setEditor(null);
@@ -301,7 +299,7 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
         )}
         <span
           className={`v2-tree-icon ${node.kind}`}
-          onClick={() => (showArrow ? void toggle(node) : setPreviewPath(node.path))}
+          onClick={() => (showArrow ? void toggle(node) : previewTabsStore.open(node.path))}
           title={node.path}
         >
           {node.kind === "dir" ? "📂" : "📄"}
@@ -309,7 +307,7 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
         <span
           className="v2-tree-name"
           title={node.path}
-          onClick={() => (showArrow ? void toggle(node) : setPreviewPath(node.path))}
+          onClick={() => (showArrow ? void toggle(node) : previewTabsStore.open(node.path))}
         >
           {node.name}
           {node.kind === "file" && node.size !== undefined && (
@@ -492,9 +490,6 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
       )}
       {!editor && editorStatus && <div className="v2-tree-loading">{editorStatus}</div>}
       <div className="v2-tree-hint">{zh.treeHint}</div>
-      {previewPath ? (
-        <FilePreviewModal path={previewPath} onClose={() => setPreviewPath(null)} />
-      ) : null}
     </div>
   );
 }

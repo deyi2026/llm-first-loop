@@ -6,6 +6,7 @@ import { renderMarkdown, highlightCode } from "./core/markdown";
 import { MessageItem } from "./components/conversation/MessageItem";
 import { Composer } from "./components/conversation/Composer";
 import { projectToolActivityMessages } from "./core/toolActivity";
+import { previewTabsStore, rightPanelStore } from "./core/stores";
 
 describe("renderMarkdown", () => {
   it("GFM 基础渲染", () => {
@@ -329,17 +330,11 @@ describe("MessageItem", () => {
     expect(screen.getByTitle("打开 out/result.json")).toBeInTheDocument();
   });
 
-  it("出产物：点击 chip → 打开文件预览（fetch 内容 + 模态显示）", async () => {
+  it("出产物：点击 chip → 右侧栏预览 tab 打开（store 联动；模态已退役）", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            type: "text", path: "src/a.py", size: 8, offset: 1, lines: 1,
-            content: "print(1)", eof: true, truncated: false,
-          }),
-          { status: 200 }
-        )
+        new Response(JSON.stringify({ sessions: [], count: 0 }), { status: 200 })
       )
     );
     render(
@@ -352,9 +347,14 @@ describe("MessageItem", () => {
       />
     );
     fireEvent.click(screen.getByText("src/a.py"));
-    await waitFor(() => expect(screen.getByTestId("file-preview")).toBeInTheDocument());
-    expect(screen.getByText("print(1)")).toBeInTheDocument();
-    vi.unstubAllGlobals();
+    const { tabs, active } = previewTabsStore.getState();
+    expect(tabs.map((t) => t.path)).toEqual(["src/a.py"]);
+    expect(active).toBe("src/a.py");
+    expect(rightPanelStore.getState().tab).toBe("preview");
+    expect(rightPanelStore.getState().open).toBe(true);
+    previewTabsStore.closeAll();
+    rightPanelStore.setOpen(false);
+    rightPanelStore.setTab("settings");
   });
 });
 

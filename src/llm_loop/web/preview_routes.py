@@ -41,6 +41,10 @@ _PREVIEW_IMAGE_MIME = {
     ".ico": "image/x-icon", ".bmp": "image/bmp",
 }
 _PREVIEW_BYTES_MIME = {".pdf": "application/pdf", ".html": "text/html", ".htm": "text/html"}
+# readRelated 可打包范围（对齐 DSH：仅直接声明的经典 .js 与 .css；模块导入、
+# CSS url()/@import、动态 fetch 不走 Host 文件读取）。机械扩展名门，无内容判断。
+_RELATED_MIME = {".js": "text/javascript", ".css": "text/css"}
+_RELATED_MAX_BYTES = 4 * 1024 * 1024  # 单资产上限（对齐 DSH 4 MiB per asset）
 # 已知二进制容器（无渲染器）：程序不做内容判断，仅按扩展名机械分类
 _PREVIEW_UNSUPPORTED_BINARY_EXT = {
     ".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".opus",
@@ -296,5 +300,109 @@ def preview_file(
             "content": page["content"],
             "eof": page["eof"],
             "truncated": not page["eof"],  # 兼容旧字段：还有未读内容
+        }
+    )
+
+
+def _resolve_in_root(raw: str, engine: Any) -> Path | None:
+    """按 preview 同规则解析路径：相对基于工作区根，绝对 resolve 后须在根内."""
+    root = Path(getattr(engine, "workspace_root", "") or _PREVIEW_ROOT)
+    root_resolved = root.resolve()
+    try:
+        p = Path(raw).expanduser()
+        target = p.resolve() if p.is_absolute() else (root_resolved / p).resolve()
+    except OSError:
+        return None
+    if not target.is_relative_to(root_resolved):
+        return None
+    return target
+
+
+@preview_router.get("/api/v1/files/related")
+def related_file(request: Request, base: str, path: str) -> Response:
+    """readRelated：解析 base 文件目录下的相对依赖（HTML 预览打包 .js/.css）.
+
+    对齐 DSH workspace-files.readRelated 的安全面：target 由 Host 从 base 的
+    目录解析（含 ../），resolve 后必须仍在根内；仅 .js/.css；单资产 4MiB
+    上限拒绝不截断；内容须为合法 UTF-8（内联前置校验，失败即失败不部分发布）。
+    """
+    import base64
+
+    if not base or not path:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_path", "detail": "缺少 base/path。"},
+        )
+    engine = _engine_from(request)
+    base_target = _resolve_in_root(base, engine)
+    if base_target is None:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "out_of_bounds", "detail": "base 路径越出项目根，已拒绝。"},
+        )
+    if not base_target.is_file():
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "file_not_found", "detail": f"base 文件不存在: {base}"},
+        )
+    try:
+        target = (base_target.parent / path).resolve()
+    except OSError:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "out_of_bounds", "detail": "依赖路径非法。"},
+        )
+    root = Path(getattr(engine, "workspace_root", "") or _PREVIEW_ROOT)
+    root_resolved = root.resolve()
+    if not target.is_relative_to(root_resolved):
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "out_of_bounds", "detail": "依赖路径越出项目根，已拒绝。"},
+        )
+    ext = target.suffix.lower()
+    mime = _RELATED_MIME.get(ext)
+    if mime is None:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={
+                "error": "unsupported_related_type",
+                "detail": "依赖打包仅支持直接声明的 .js/.css。",
+            },
+        )
+    if not target.is_file():
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "file_not_found", "detail": f"依赖文件不存在: {path}"},
+        )
+    try:
+        blob = target.read_bytes()
+    except OSError as exc:
+        logger.exception("file related read failed: base=%s path=%s", base, path)
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "read_failed", "detail": f"[程序异常] 读取失败（{type(exc).__name__}）。"},
+        )
+    if len(blob) > _RELATED_MAX_BYTES:
+        return UTF8JSONResponse(
+            status_code=413,
+            content={
+                "error": "related_too_large",
+                "detail": f"依赖 {len(blob)} 字节超单资产上限 {_RELATED_MAX_BYTES} 字节，已拒绝（不截断）。",
+            },
+        )
+    try:
+        blob.decode("utf-8")
+    except UnicodeDecodeError:
+        return UTF8JSONResponse(
+            status_code=415,
+            content={"error": "not_text", "detail": "依赖不是合法 UTF-8 文本。"},
+        )
+    return UTF8JSONResponse(
+        content={
+            "type": "related",
+            "path": str(target),
+            "size": len(blob),
+            "mime": mime,
+            "content_base64": base64.b64encode(blob).decode("ascii"),
         }
     )

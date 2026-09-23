@@ -236,3 +236,107 @@ def test_preview_dir_listing(build_test_engine, tmp_path):
     assert body["type"] == "dir"
     assert body["files"] == [{"name": "inner.txt", "size": 1}]
     assert body["parent"] == "."
+
+
+# ── readRelated（对齐 DSH workspace-files.readRelated：HTML 相对依赖打包） ──
+
+
+def test_related_resolves_against_base_dir(build_test_engine, tmp_path):
+    """相对路径基于 base 文件所在目录解析（含 ../ 上跳）."""
+    import base64
+
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "docs").mkdir()
+    (root / "js").mkdir()
+    (root / "docs" / "page.html").write_text("<p>x</p>", encoding="utf-8")
+    (root / "js" / "app.js").write_text("console.log(1)", encoding="utf-8")
+    resp = client.get(
+        "/api/v1/files/related",
+        params={"base": "docs/page.html", "path": "../js/app.js"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["type"] == "related"
+    assert body["mime"] == "text/javascript"
+    assert base64.b64decode(body["content_base64"]) == b"console.log(1)"
+
+
+def test_related_css_mime(build_test_engine, tmp_path):
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "index.html").write_text("<p>x</p>", encoding="utf-8")
+    (root / "style.css").write_text("body{color:red}", encoding="utf-8")
+    resp = client.get(
+        "/api/v1/files/related", params={"base": "index.html", "path": "style.css"}
+    )
+    body = resp.json()
+    assert body["mime"] == "text/css"
+
+
+def test_related_rejects_escape_outside_root(build_test_engine, tmp_path):
+    """../ 越出工作区根 → 400 out_of_bounds（与 preview 同安全边界）."""
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "index.html").write_text("<p>x</p>", encoding="utf-8")
+    resp = client.get(
+        "/api/v1/files/related", params={"base": "index.html", "path": "../../etc/passwd"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "out_of_bounds"
+
+
+def test_related_missing_404(build_test_engine, tmp_path):
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "index.html").write_text("<p>x</p>", encoding="utf-8")
+    resp = client.get(
+        "/api/v1/files/related", params={"base": "index.html", "path": "nope.js"}
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"] == "file_not_found"
+
+
+def test_related_rejects_non_packable_extension(build_test_engine, tmp_path):
+    """只允许直接声明的经典 .js/.css（对齐 DSH 打包范围；机械扩展名门）."""
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "index.html").write_text("<p>x</p>", encoding="utf-8")
+    (root / "evil.png").write_bytes(b"PNG")
+    resp = client.get(
+        "/api/v1/files/related", params={"base": "index.html", "path": "evil.png"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "unsupported_related_type"
+
+
+def test_related_per_asset_cap_413(build_test_engine, tmp_path, monkeypatch):
+    """单资产超 4MiB 上限 → 413 拒绝（不截断冒充完整）."""
+    from llm_loop.web import preview_routes
+
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "big.js").write_bytes(b"//" + b"x" * 64)
+    (root / "index.html").write_text("<p>x</p>", encoding="utf-8")
+    monkeypatch.setattr(preview_routes, "_RELATED_MAX_BYTES", 8)
+    resp = client.get(
+        "/api/v1/files/related", params={"base": "index.html", "path": "big.js"}
+    )
+    assert resp.status_code == 413
+    assert resp.json()["error"] == "related_too_large"
+    assert "content_base64" not in resp.json()
+
+
+def test_related_rejects_non_utf8(build_test_engine, tmp_path):
+    """依赖资产须为合法 UTF-8（内联进 iframe 前置校验，对齐 DSH fail-not-partial）."""
+    root, client = _ws_client(build_test_engine, tmp_path)
+    (root / "index.html").write_text("<p>x</p>", encoding="utf-8")
+    (root / "bin.js").write_bytes(b"\xff\xfe invalid")
+    resp = client.get(
+        "/api/v1/files/related", params={"base": "index.html", "path": "bin.js"}
+    )
+    assert resp.status_code == 415
+    assert resp.json()["error"] == "not_text"
+
+
+def test_related_rejects_missing_base(build_test_engine, tmp_path):
+    """base 不存在/越界 → 拒绝（不猜目录）."""
+    root, client = _ws_client(build_test_engine, tmp_path)
+    resp = client.get(
+        "/api/v1/files/related", params={"base": "ghost.html", "path": "a.js"}
+    )
+    assert resp.status_code == 404

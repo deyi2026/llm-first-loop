@@ -1,23 +1,32 @@
-// 出产物文件预览模态（对齐 DSH documentpreview 能力面）行为测试：
-// 文本分页（不重叠、eof 收敛）、Markdown 渲染、图片 data URI、pdf/html Blob
-// iframe（html 沙箱 allow-scripts 且无 allow-same-origin）、目录浏览、已知
-// 二进制空态、错误态、重载；文件树点击=预览、✍=协作编辑。
+// 右侧栏预览（对齐 DSH documentpreview + sidebar tab 语义）行为测试：
+// tab 化（身份/聚焦/关闭/常驻）、HTML 相对 .js/.css 依赖打包（readRelated，
+// 上限与 fail-not-partial）、行号锚点跳转（翻页/挂起/一次性应答）、
+// `path:42` 链接化、chips/文件树 → 右侧栏打开。
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { FilePreviewModal } from "./components/FilePreviewModal";
+import { FilePreviewView, packHtmlDependencies } from "./components/FilePreviewView";
+import { PreviewTabsPanel } from "./components/PreviewTabsPanel";
 import { FileTree } from "./components/sidebar/FileTree";
+import { MessageItem } from "./components/conversation/MessageItem";
+import { previewTabsStore, rightPanelStore } from "./core/stores";
+import { renderMarkdown } from "./core/markdown";
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  previewTabsStore.closeAll();
+  rightPanelStore.setOpen(false);
+  rightPanelStore.setTab("settings");
 });
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
-function previewRouter(routes: Array<{ match: (url: string) => boolean; body: (url: string) => unknown; status?: number }>) {
+type Route = { match: (url: string) => boolean; body: (url: string) => unknown; status?: number };
+
+function previewRouter(routes: Route[]) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     for (const r of routes) {
@@ -25,6 +34,19 @@ function previewRouter(routes: Array<{ match: (url: string) => boolean; body: (u
     }
     return jsonResponse({}, 404);
   });
+}
+
+function textPage(path: string, offset: number, lines: string, eof: boolean) {
+  return {
+    type: "text" as const,
+    path,
+    size: 100,
+    offset,
+    lines: lines.split("\n").length,
+    content: lines,
+    eof,
+    truncated: !eof,
+  };
 }
 
 function stubBlobUrl() {
@@ -37,225 +59,260 @@ function stubBlobUrl() {
   vi.stubGlobal("URL", FakeURL);
 }
 
-describe("FilePreviewModal 多格式预览", () => {
-  it("text: 分页加载到 eof，页间不重叠", async () => {
+function relatedBody(text: string) {
+  return {
+    type: "related" as const,
+    path: "/abs",
+    size: text.length,
+    mime: "text/javascript",
+    content_base64: btoa(text),
+  };
+}
+
+describe("PreviewTabsPanel：右侧栏 tab 化", () => {
+  it("open() 建 tab 并渲染视图；同 path 再开聚焦既有 tab", async () => {
     const fetchMock = previewRouter([
-      {
-        match: (u) => u.includes("/api/v1/files/preview") && !u.includes("offset=4"),
-        body: () => ({
-          type: "text", path: "big.txt", size: 40, offset: 1, lines: 3,
-          content: "l1\nl2\nl3", eof: false, truncated: true,
-        }),
-      },
-      {
-        match: (u) => u.includes("offset=4"),
-        body: () => ({
-          type: "text", path: "big.txt", size: 40, offset: 4, lines: 1,
-          content: "l4", eof: true, truncated: false,
-        }),
-      },
+      { match: (u) => u.includes("/api/v1/files/preview"), body: () => textPage("a.txt", 1, "hello", true) },
     ]);
     vi.stubGlobal("fetch", fetchMock);
+    render(<PreviewTabsPanel />);
 
-    render(<FilePreviewModal path="big.txt" onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByText("l1")).toBeInTheDocument());
-    expect(screen.getByText("l3")).toBeInTheDocument();
-    // 未到 eof：行号从 1 开始 + 加载更多可见
-    expect(screen.getByText("1").textContent).toBe("1");
-    fireEvent.click(screen.getByTestId("preview-load-more"));
-    await waitFor(() => expect(screen.getByText("l4")).toBeInTheDocument());
-    expect(screen.queryByTestId("preview-load-more")).toBeNull();
-    // 第二页 offset = 1 + 3 = 4（单调前进，不重复第一页）
-    const second = fetchMock.mock.calls.find((c) => String(c[0]).includes("offset=4"));
-    expect(second).toBeTruthy();
+    previewTabsStore.open("a.txt");
+    await waitFor(() => expect(screen.getByTestId("file-preview")).toBeInTheDocument());
+    expect(screen.getByText("hello")).toBeInTheDocument();
+
+    previewTabsStore.open("b.txt");
+    previewTabsStore.open("a.txt"); // 再开同路径：聚焦既有
+    const { tabs, active } = previewTabsStore.getState();
+    expect(tabs.map((t) => t.path)).toEqual(["a.txt", "b.txt"]);
+    expect(active).toBe("a.txt");
   });
 
-  it("md: 默认 Markdown 渲染，可切换纯文本", async () => {
+  it("关闭活动 tab 后相邻 tab 接管；全部关闭显示空态", async () => {
     vi.stubGlobal("fetch", previewRouter([
-      {
-        match: (u) => u.includes("/api/v1/files/preview"),
-        body: () => ({
-          type: "text", path: "readme.md", size: 20, offset: 1, lines: 1,
-          content: "# 标题", eof: true, truncated: false,
-        }),
-      },
+      { match: (u) => u.includes("/api/v1/files/preview"), body: () => textPage("x", 1, "c", true) },
     ]));
-    render(<FilePreviewModal path="readme.md" onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId("preview-markdown")).toBeInTheDocument());
-    expect(document.querySelector(".v2-preview-markdown, .v2-preview-md h1") || screen.getByTestId("preview-markdown")).toBeTruthy();
-    // 切换纯文本：出现行号视图
-    fireEvent.click(screen.getByTitle("以纯文本查看"));
-    await waitFor(() => expect(screen.getByText("# 标题")).toBeInTheDocument());
+    render(<PreviewTabsPanel />);
+    previewTabsStore.open("one.txt");
+    previewTabsStore.open("two.txt");
+    await waitFor(() => expect(screen.getAllByTestId("file-preview").length).toBe(2));
+    previewTabsStore.close("two.txt");
+    expect(previewTabsStore.getState().active).toBe("one.txt");
+    previewTabsStore.close("one.txt");
+    await waitFor(() => expect(screen.getByTestId("preview-tabs-empty")).toBeInTheDocument());
   });
 
-  it("image: data URI 渲染 <img>", async () => {
+  it("tab 标题 = basename；行号目标体现在 :N 徽标", async () => {
     vi.stubGlobal("fetch", previewRouter([
-      {
-        match: (u) => u.includes("/api/v1/files/preview"),
-        body: () => ({
-          type: "image", path: "pic.png", size: 8, mime: "image/png",
-          content_base64: btoa("fakepng"),
-        }),
-      },
+      { match: (u) => u.includes("/api/v1/files/preview"), body: () => textPage("src/deep/mod.py", 1, "l", true) },
     ]));
-    render(<FilePreviewModal path="pic.png" onClose={() => {}} />);
-    const img = await screen.findByTestId("preview-image");
-    await waitFor(() => expect(img.getAttribute("src")).toMatch(/^data:image\/png;base64,/));
-  });
-
-  it("html: 沙箱 iframe（allow-scripts 且无 allow-same-origin）", async () => {
-    stubBlobUrl();
-    vi.stubGlobal("fetch", previewRouter([
-      {
-        match: (u) => u.includes("/api/v1/files/preview"),
-        body: () => ({
-          type: "html", path: "page.html", size: 20, mime: "text/html",
-          content_base64: btoa("<h1>x</h1>"),
-        }),
-      },
-    ]));
-    render(<FilePreviewModal path="page.html" onClose={() => {}} />);
-    const frame = await screen.findByTestId("preview-html");
-    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
-    expect(frame.getAttribute("src")).toContain("blob:text/html");
-  });
-
-  it("pdf: Blob iframe 渲染", async () => {
-    stubBlobUrl();
-    vi.stubGlobal("fetch", previewRouter([
-      {
-        match: (u) => u.includes("/api/v1/files/preview"),
-        body: () => ({
-          type: "pdf", path: "doc.pdf", size: 9, mime: "application/pdf",
-          content_base64: btoa("%PDF-fake"),
-        }),
-      },
-    ]));
-    render(<FilePreviewModal path="doc.pdf" onClose={() => {}} />);
-    const frame = await screen.findByTestId("preview-pdf");
-    expect(frame.getAttribute("src")).toContain("blob:application/pdf");
-  });
-
-  it("unsupported_binary: 空态且不发内容读取", async () => {
-    const fetchMock = previewRouter([
-      {
-        match: (u) => u.includes("/api/v1/files/preview"),
-        body: () => ({ type: "unsupported_binary", path: "arc.zip", ext: ".zip" }),
-      },
-    ]);
-    vi.stubGlobal("fetch", fetchMock);
-    render(<FilePreviewModal path="arc.zip" onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId("preview-unsupported")).toBeInTheDocument());
-    expect(screen.getByText(/二进制容器/)).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("not_text 错误态如实展示", async () => {
-    vi.stubGlobal("fetch", previewRouter([
-      {
-        match: (u) => u.includes("/api/v1/files/preview"),
-        status: 415,
-        body: () => ({ error: "not_text", detail: "" }),
-      },
-    ]));
-    render(<FilePreviewModal path="blob.dat" onClose={() => {}} />);
-    await waitFor(() =>
-      expect(screen.getByText(/不是可预览的 UTF-8 文本/)).toBeInTheDocument()
-    );
-  });
-
-  it("dir: 单层浏览并可进入子项", async () => {
-    const fetchMock = previewRouter([
-      {
-        match: (u) => u.includes("path=sub&") || u.includes("path=sub?"),
-        body: () => ({
-          type: "dir", path: "sub", parent: ".",
-          dirs: ["nested"], files: [{ name: "a.txt", size: 3 }],
-        }),
-      },
-      {
-        match: (u) => u.includes("path=sub%2Fnested") || u.includes("path=sub/nested"),
-        body: () => ({
-          type: "dir", path: "sub/nested", parent: "sub", dirs: [], files: [],
-        }),
-      },
-    ]);
-    vi.stubGlobal("fetch", fetchMock);
-    render(<FilePreviewModal path="sub" onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByTestId("preview-dir")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("nested"));
-    await waitFor(() =>
-      expect(screen.getByText(/空目录/)).toBeInTheDocument()
-    );
-    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("path=sub%2Fnested"))).toBe(true);
-  });
-
-  it("reload: 重新拉取当前文件", async () => {
-    const fetchMock = previewRouter([
-      {
-        match: (u) => u.includes("/api/v1/files/preview"),
-        body: () => ({
-          type: "text", path: "x.txt", size: 2, offset: 1, lines: 1,
-          content: "v1", eof: true, truncated: false,
-        }),
-      },
-    ]);
-    vi.stubGlobal("fetch", fetchMock);
-    render(<FilePreviewModal path="x.txt" onClose={() => {}} />);
-    await waitFor(() => expect(screen.getByText("v1")).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId("preview-reload"));
-    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(2));
+    render(<PreviewTabsPanel />);
+    previewTabsStore.open("src/deep/mod.py", 42);
+    await waitFor(() => expect(screen.getByText("mod.py")).toBeInTheDocument());
+    expect(screen.getByText(":42")).toBeInTheDocument();
   });
 });
 
-describe("FileTree 点击对齐（点击=预览，✍=协作编辑）", () => {
-  function treeResponse(): Response {
-    return jsonResponse({
-      path: "/ws",
-      parent: null,
-      dirs: [],
-      files: [{ name: "a.txt", size: 5 }],
-    });
+describe("HTML 依赖打包（readRelated 对齐）", () => {
+  function htmlBody(scripts: string, mime = "text/html") {
+    return {
+      type: "html" as const,
+      path: "page.html",
+      size: 10,
+      mime,
+      content_base64: btoa(scripts),
+    };
   }
 
-  it("点击文件行打开预览模态", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/api/v1/fs/tree")) return treeResponse();
-      if (url.includes("/api/v1/files/preview")) {
-        return jsonResponse({
-          type: "text", path: "a.txt", size: 5, offset: 1, lines: 1,
-          content: "hello", eof: true, truncated: false,
-        });
-      }
-      return jsonResponse({}, 404);
-    });
+  it("相对经典 script 与 stylesheet 内联（去重），iframe 出现", async () => {
+    stubBlobUrl();
+    const fetchMock = previewRouter([
+      {
+        match: (u) => u.includes("/api/v1/files/preview"),
+        body: () =>
+          htmlBody(
+            '<html><head><link rel="stylesheet" href="a.css"></head><body>' +
+              '<script src="app.js"></script><script src="app.js"></script>' +
+              '<script type="module" src="m.js"></script>' +
+              '<script src="https://cdn.example/x.js"></script>' +
+              '<script src="/abs.js"></script></body></html>'
+          ),
+      },
+      { match: (u) => u.includes("/api/v1/files/related") && u.includes("app.js"), body: () => relatedBody("console.log(1)") },
+      { match: (u) => u.includes("/api/v1/files/related") && u.includes("a.css"), body: () => relatedBody("body{}") },
+    ]);
     vi.stubGlobal("fetch", fetchMock);
+    render(<FilePreviewView path="page.html" line={null} />);
+    await screen.findByTestId("preview-html");
+    const relatedCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes("/api/v1/files/related"));
+    const urls = relatedCalls.map((c) => String(c[0]));
+    // 仅相对 .js/.css；module/https/绝对路径不打包；重复引用只读一次
+    expect(urls.some((u) => u.includes("app.js"))).toBe(true);
+    expect(urls.some((u) => u.includes("a.css"))).toBe(true);
+    expect(urls.filter((u) => u.includes("app.js")).length).toBe(1);
+    expect(urls.some((u) => u.includes("m.js"))).toBe(false);
+    expect(urls.some((u) => u.includes("cdn.example"))).toBe(false);
+    expect(urls.some((u) => u.includes("abs.js"))).toBe(false);
+  });
+
+  it("<base href> 存在时不打包（浏览器解析）", async () => {
+    stubBlobUrl();
+    const fetchMock = previewRouter([
+      {
+        match: (u) => u.includes("/api/v1/files/preview"),
+        body: () => htmlBody('<html><head><base href="https://x/"></head><body><script src="app.js"></script></body></html>'),
+      },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<FilePreviewView path="page.html" line={null} />);
+    await screen.findByTestId("preview-html");
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/api/v1/files/related"))).toBe(false);
+  });
+
+  it("任一依赖失败 → 整体错误态（不部分发布）", async () => {
+    stubBlobUrl();
+    vi.stubGlobal(
+      "fetch",
+      previewRouter([
+        {
+          match: (u) => u.includes("/api/v1/files/preview"),
+          body: () => htmlBody("<html><body><script src=\"app.js\"></script></body></html>"),
+        },
+        { match: (u) => u.includes("/api/v1/files/related"), status: 404, body: () => ({ error: "file_not_found" }) },
+      ])
+    );
+    render(<FilePreviewView path="page.html" line={null} />);
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(screen.getByRole("alert").textContent).toContain("app.js");
+  });
+
+  it("超过 64 个不同资产 → 打包失败", async () => {
+    const refs = Array.from({ length: 65 }, (_, i) => `<script src="f${i}.js"></script>`).join("");
+    vi.stubGlobal(
+      "fetch",
+      previewRouter([
+        {
+          match: (u) => u.includes("/api/v1/files/preview"),
+          body: () => htmlBody(`<html><body>${refs}</body></html>`),
+        },
+      ])
+    );
+    await expect(packHtmlDependencies("page.html", `<body>${refs}</body>`)).rejects.toThrow(/64/);
+  });
+});
+
+describe("行号锚点跳转", () => {
+  it("目标行在后续页：自动翻页直至包含并高亮，一次性应答", async () => {
+    const fetchMock = previewRouter([
+      { match: (u) => u.includes("offset=1&"), body: () => textPage("big.py", 1, "l1\nl2", false) },
+      { match: (u) => u.includes("offset=3&"), body: () => textPage("big.py", 3, "l3\nl4", true) },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<FilePreviewView path="big.py" line={4} lineSeq={1} />);
+    // 自动翻页到 offset=3（不重叠）
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("offset=3&"))).toBe(true)
+    );
+    await waitFor(() => {
+      const el = document.querySelector('[data-line="4"]');
+      expect(el?.classList.contains("anchor-flash")).toBe(true);
+    });
+    expect(screen.getByText("l4")).toBeInTheDocument();
+    expect(screen.queryByTestId("preview-load-more")).toBeNull(); // eof
+  });
+
+  it("Markdown 渲染态挂起；切纯文本后执行跳转", async () => {
+    vi.stubGlobal(
+      "fetch",
+      previewRouter([
+        {
+          match: (u) => u.includes("/api/v1/files/preview"),
+          body: () => textPage("note.md", 1, "# T\n\nbody", true),
+        },
+      ])
+    );
+    render(<FilePreviewView path="note.md" line={3} lineSeq={1} />);
+    await waitFor(() => expect(screen.getByTestId("preview-markdown")).toBeInTheDocument());
+    // 挂起提示可见
+    expect(screen.getByText(/第 3 行/)).toBeInTheDocument();
+    expect(document.querySelector('[data-line="3"]')).toBeNull();
+    // 切纯文本 → 执行
+    fireEvent.click(screen.getByTitle("以纯文本查看"));
+    await waitFor(() => {
+      const el = document.querySelector('[data-line="3"]');
+      expect(el?.classList.contains("anchor-flash")).toBe(true);
+    });
+  });
+
+  it("同值行号再请求（新 seq）重新触发跳转", async () => {
+    vi.stubGlobal(
+      "fetch",
+      previewRouter([
+        { match: (u) => u.includes("/api/v1/files/preview"), body: () => textPage("a.py", 1, "one", true) },
+      ])
+    );
+    const { rerender } = render(<FilePreviewView path="a.py" line={1} lineSeq={1} />);
+    await waitFor(() => expect(screen.getByText("one")).toBeInTheDocument());
+    await waitFor(() => {
+      expect(document.querySelector('[data-line="1"]')?.classList.contains("anchor-flash")).toBe(true);
+    });
+    // 同值行号新 seq：重新挂起并再次锚定（对齐 DSH 新 revision 应答）
+    rerender(<FilePreviewView path="a.py" line={1} lineSeq={2} />);
+    await waitFor(() => {
+      expect(document.querySelector('[data-line="1"]')).not.toBeNull();
+    });
+  });
+});
+
+describe("`path:42` 行号链接化", () => {
+  it("inline code 携带行号 → data-path 剥离 :42、data-line=42", () => {
+    const html = renderMarkdown("看 `src/a.py:42` 的实现", new Set(["src/a.py"]));
+    expect(html).toContain('data-path="src/a.py"');
+    expect(html).toContain('data-line="42"');
+    expect(html).not.toContain('data-path="src/a.py:42"');
+  });
+
+  it("无行号路径链接保持原样", () => {
+    const html = renderMarkdown("看 `src/a.py` 的实现", new Set(["src/a.py"]));
+    expect(html).toContain('data-path="src/a.py"');
+    expect(html).not.toContain("data-line");
+  });
+});
+
+describe("入口联动（chips / 文件树 → 右侧栏预览 tab）", () => {
+  it("MessageItem 出产物 chip 点击 → previewTabsStore 打开 + 面板 reveal", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ sessions: [], count: 0 })));
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "c1", name: "edit_file", arguments: { path: "src/a.py" } }],
+        }}
+      />
+    );
+    fireEvent.click(screen.getByText("src/a.py"));
+    const { tabs, active } = previewTabsStore.getState();
+    expect(tabs.map((t) => t.path)).toEqual(["src/a.py"]);
+    expect(active).toBe("src/a.py");
+    expect(rightPanelStore.getState().open).toBe(true);
+    expect(rightPanelStore.getState().tab).toBe("preview");
+  });
+
+  it("FileTree 点击文件 → 打开预览 tab（不再本地挂模态）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      previewRouter([
+        {
+          match: (u) => u.includes("/api/v1/fs/tree"),
+          body: () => ({ path: "/ws", parent: null, dirs: [], files: [{ name: "a.txt", size: 5 }] }),
+        },
+      ])
+    );
     render(<FileTree sessionId="s1" />);
     await waitFor(() => expect(screen.getByText("a.txt")).toBeInTheDocument());
     fireEvent.click(screen.getByText("a.txt"));
-    await waitFor(() => expect(screen.getByTestId("file-preview")).toBeInTheDocument());
-    expect(screen.getByText("hello")).toBeInTheDocument();
-  });
-
-  it("✍ 按钮进入协作编辑（观察请求）", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/api/v1/fs/tree")) return treeResponse();
-      if (url.includes("/files/observe")) {
-        return jsonResponse({
-          path: "a.txt", snapshot_ref: "ref-1", sha256: "abcdef1234567890",
-          size_bytes: 5, observed_at: 1, content_range: { start: 0, end_exclusive: 5 },
-          content: "hello", total_lines: 1, workspace_path_state: "in_sync",
-          file_contract_version: 1,
-        });
-      }
-      return jsonResponse({}, 404);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(<FileTree sessionId="s1" />);
-    await waitFor(() => expect(screen.getByText("a.txt")).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId("collab-edit-btn"));
-    await waitFor(() => expect(screen.getByTestId("human-file-editor")).toBeInTheDocument());
+    expect(previewTabsStore.getState().tabs.map((t) => t.path)).toEqual(["/ws/a.txt"]);
+    expect(screen.queryByTestId("file-preview")).toBeNull(); // 模态不复存在
   });
 });

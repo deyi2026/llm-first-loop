@@ -11,10 +11,12 @@ import { initEventStream } from "./core/events";
 import { probeSessionCapabilities } from "./core/capabilities";
 import { InteropNotice } from "./components/InteropNotice";
 import {
+  rightPanelStore,
   sidebarViewStore,
   useCurrentSessionId,
   useMainView,
   useNewSessionPending,
+  useRightPanel,
 } from "./core/stores";
 import { syncSessionIdInLocation } from "./core/sessionUrl";
 
@@ -28,10 +30,16 @@ export function App() {
     typeof matchMedia !== "undefined" && matchMedia("(max-width: 900px)").matches
   );
   // 2026-09-09 修复: 移动端面板抽屉按需打开（初始收起），桌面保持默认常驻，避免首屏被全高抽屉盖住。
-  const [panelOpen, setPanelOpen] = useState(!isMobile);
+  // 面板开合归 rightPanelStore：预览入口（chips/正文链接/文件树）可全局联动开面板。
+  const panel = useRightPanel();
+  const panelOpen = panel.open;
   const currentSessionId = useCurrentSessionId();
   const newSessionPending = useNewSessionPending();
   const mainView = useMainView();
+
+  useEffect(() => {
+    rightPanelStore.setOpen(!isMobile); // 初始：桌面常开、移动收起（与原行为一致）
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps — 仅首载定初值
 
   useEffect(() => {
     initEventStream(); // SSE 命名事件 + 失联自愈看门狗（对齐 v0.5.6 加固）
@@ -101,7 +109,7 @@ export function App() {
         type="button"
         className="v2-icon-btn"
         style={{ alignSelf: "center" }}
-        onClick={() => setPanelOpen((v) => !v)}
+        onClick={() => rightPanelStore.setOpen(!panelOpen)}
         title="右侧面板"
         aria-label="右侧面板"
       >

@@ -8,19 +8,25 @@ import {
   type JobFact,
 } from "../../core/api";
 import {
+  rightPanelStore,
   themeStore,
   useConnection,
   useCurrentSessionId,
+  useRightPanel,
   useTheme,
   type ThemePreference,
 } from "../../core/stores";
 import { fetchModels, type ModelCatalog } from "../../core/chat";
 import { useCapabilities } from "../../core/capabilities";
 import { ProviderManager } from "./ProviderManager";
+import { PreviewTabsPanel } from "../PreviewTabsPanel";
 
 export function RightPanel({ open }: { open: boolean }) {
   const caps = useCapabilities();
-  const [tab, setTab] = useState<"settings" | "jobs">("settings");
+  // 页签状态归 rightPanelStore：预览入口（chips/链接/文件树）经 store.reveal
+  // 全局联动切换，App 壳与面板共享同一事实源。
+  const { tab } = useRightPanel();
+  const setTab = rightPanelStore.setTab;
   const conn = useConnection();
   const theme = useTheme();
   const currentSessionId = useCurrentSessionId();
@@ -103,9 +109,19 @@ export function RightPanel({ open }: { open: boolean }) {
             {zh.panelJobs}
           </button>
         ) : null}
+        <button
+          type="button"
+          className={`v2-panel-tab ${tab === "preview" ? "active" : ""}`}
+          onClick={() => setTab("preview")}
+          data-testid="panel-tab-preview"
+        >
+          {zh.panelPreview}
+        </button>
       </div>
       <div className="v2-panel-body" data-testid="panel-body">
-        {tab === "settings" || !caps.jobs ? (
+        {tab === "preview" ? (
+          <PreviewTabsPanel />
+        ) : tab === "settings" || !caps.jobs ? (
           <SettingsView
             conn={conn}
             theme={theme}

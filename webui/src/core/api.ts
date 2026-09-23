@@ -320,6 +320,26 @@ export async function fetchFilePreview(
   );
 }
 
+/** readRelated（对齐 DSH workspace-files.readRelated）：解析 base 文件目录下
+ *  的相对依赖，仅 .js/.css，单资产 4MiB 上限，内容须合法 UTF-8。 */
+export interface FileRelated {
+  type: "related";
+  path: string;
+  size: number;
+  mime: string;
+  content_base64: string;
+}
+
+export async function fetchFileRelated(
+  base: string,
+  path: string
+): Promise<{ status: number; data: FileRelated | FilePreviewFailure }> {
+  const query = new URLSearchParams({ base, path });
+  return api<FileRelated | FilePreviewFailure>(
+    `/api/v1/files/related?${query.toString()}`
+  );
+}
+
 
 export interface AttachmentLibraryItem {
   ref: string;

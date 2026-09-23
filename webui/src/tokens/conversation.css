@@ -920,6 +920,136 @@
   font-size: 28px;
 }
 
+/* ── 右侧栏预览 tab 化（对齐 DSH sidebar tab 语义） ── */
+.v2-preview-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.v2-preview-view .v2-preview-head {
+  flex-shrink: 0;
+}
+
+.v2-preview-view .v2-preview-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.v2-preview-tabs {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.v2-preview-tabstrip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  flex-shrink: 0;
+}
+
+.v2-preview-tab {
+  display: flex;
+  align-items: center;
+  max-width: 180px;
+  border-radius: var(--dsw-radius-sm) var(--dsw-radius-sm) 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
+}
+
+.v2-preview-tab.active {
+  background: var(--dsw-alias-bg-layer-1);
+  border-color: var(--dsw-alias-border-l1);
+}
+
+.v2-preview-tab-btn {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 6px 4px 6px 10px;
+}
+
+.v2-preview-tab.active .v2-preview-tab-btn {
+  color: var(--dsw-alias-label-primary);
+}
+
+.v2-preview-tab-btn:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.v2-preview-tab-line {
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+}
+
+.v2-preview-tab-close {
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 6px 8px 6px 2px;
+  border-radius: var(--dsw-radius-sm);
+}
+
+.v2-preview-tab-close:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.v2-preview-tabbodies {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.v2-preview-tabbody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.v2-preview-tabbody[hidden] {
+  display: none;
+}
+
+/* 行号锚点：跳转后短暂高亮 */
+@keyframes v2-preview-anchor-flash {
+  0% { background: var(--dsw-alias-state-warn-primary); }
+  100% { background: transparent; }
+}
+
+.v2-preview-line.anchor-flash {
+  animation: v2-preview-anchor-flash 2s ease-out;
+  border-radius: var(--dsw-radius-sm);
+}
+
+.v2-preview-line-pending {
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  flex-shrink: 0;
+}
+
+.v2-preview-truncated.err {
+  color: var(--dsw-alias-state-error-primary);
+}
+
 /* ── 附件状态（降级/失败有色标注） ── */
 .v2-attachment.degraded {
   border: 1px solid var(--dsw-alias-state-warn-primary);

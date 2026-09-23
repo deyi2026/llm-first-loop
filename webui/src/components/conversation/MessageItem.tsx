@@ -11,7 +11,7 @@ import { useCapabilities } from "../../core/capabilities";
 import { loadHistory, prefillComposer } from "../../core/conversation";
 import { sessionStore } from "../../core/stores";
 import { normalizeToolStatus, parseToolReceiptStatus } from "../../core/toolActivity";
-import { FilePreviewModal } from "../FilePreviewModal";
+import { previewTabsStore } from "../../core/stores";
 import { zh } from "../../i18n/zh";
 
 /** 写剪贴板（navigator.clipboard 不可用/失败 → false，静默） */
@@ -102,15 +102,19 @@ function Markdown({
     }
     return renderMarkdown(text, clickablePaths, { enableMath });
   }, [text, clickablePaths, enableMath, live]);
-  const [previewPath, setPreviewPath] = useState<string | null>(null);
   // 代码块复制按钮 + 出产物内联路径链接：dangerouslySetInnerHTML 内容无法绑
-  // React 事件 → 事件委托
+  // React 事件 → 事件委托。链接点击 → 右侧栏预览 tab（对齐 DSH openResource，
+  // `path:42` 形式携带 1-based 行号锚点）。
   const onBodyClick = async (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     const link = target.closest?.(".v2-file-link") as HTMLElement | null;
     if (link) {
       const p = link.getAttribute("data-path");
-      if (p) setPreviewPath(p);
+      if (p) {
+        const lineRaw = link.getAttribute("data-line");
+        const line = lineRaw ? Number.parseInt(lineRaw, 10) : NaN;
+        previewTabsStore.open(p, Number.isFinite(line) ? line : null);
+      }
       return;
     }
     const btn = target.closest?.(".v2-code-copy") as HTMLButtonElement | null;
@@ -126,10 +130,7 @@ function Markdown({
     }
   };
   return (
-    <>
-      <div className="v2-md" onClick={onBodyClick} dangerouslySetInnerHTML={{ __html: html }} />
-      {previewPath ? <FilePreviewModal path={previewPath} onClose={() => setPreviewPath(null)} /> : null}
-    </>
+    <div className="v2-md" onClick={onBodyClick} dangerouslySetInnerHTML={{ __html: html }} />
   );
 }
 
@@ -279,8 +280,8 @@ function ToolActivityPanel({ activities, streaming }: { activities: ToolActivity
   );
 }
 
-/** 出产物文件预览模态：已抽取为共享组件 components/FilePreviewModal.tsx
- *  （会话 chips/正文链接与文件树共用；能力面对齐 DSH documentpreview）。 */
+/** 出产物文件预览：chips/正文链接统一走 previewTabsStore.open → 右侧栏
+ *  预览 tab（components/PreviewTabsPanel.tsx + FilePreviewView.tsx）。 */
 
 /** 出产物路径提取（edit_file/write_file 参数路径 + present_files 显式声明，去重）——chips 与正文链接共用 */
 export function extractProducedPaths(calls: ToolCallInfo[] | null | undefined): string[] {
@@ -326,7 +327,6 @@ export function extractProducedDescriptions(
 
 /** 出产物文件列表（edit_file/write_file 参数路径 + present_files 声明，点击打开预览） */
 function ProducedFiles({ calls }: { calls: ToolCallInfo[] }) {
-  const [previewPath, setPreviewPath] = useState<string | null>(null);
   const paths = useMemo(() => extractProducedPaths(calls), [calls]);
   const descriptions = useMemo(() => extractProducedDescriptions(calls), [calls]);
   if (paths.length === 0) return null;
@@ -339,12 +339,11 @@ function ProducedFiles({ calls }: { calls: ToolCallInfo[] }) {
           type="button"
           className="v2-produced-chip"
           title={descriptions.get(p) || `打开 ${p}`}
-          onClick={() => setPreviewPath(p)}
+          onClick={() => previewTabsStore.open(p)}
         >
           {p}
         </button>
       ))}
-      {previewPath ? <FilePreviewModal path={previewPath} onClose={() => setPreviewPath(null)} /> : null}
     </div>
   );
 }

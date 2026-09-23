@@ -209,6 +209,86 @@ export function useMainView(): MainView {
   return useSyncExternalStore(mainViewStore.subscribe, () => mainViewStore.getState().view);
 }
 
+// ── 右侧面板 store：面板开合 + 活动页签（预览 tab 打开时全局联动 App 壳） ──
+export type RightPanelTab = "settings" | "jobs" | "preview";
+
+const rightPanelStoreRaw = createStore<{ open: boolean; tab: RightPanelTab }>({
+  open: false,
+  tab: "settings",
+});
+
+export const rightPanelStore = {
+  getState: rightPanelStoreRaw.getState,
+  subscribe: rightPanelStoreRaw.subscribe,
+  setOpen: (open: boolean) => rightPanelStoreRaw.setState({ open }),
+  setTab: (tab: RightPanelTab) => rightPanelStoreRaw.setState({ tab }),
+  /** 打开面板并切到指定页签（预览入口共用） */
+  reveal: (tab: RightPanelTab) => rightPanelStoreRaw.setState({ open: true, tab }),
+};
+
+export function useRightPanel(): { open: boolean; tab: RightPanelTab } {
+  return useSyncExternalStore(rightPanelStore.subscribe, rightPanelStore.getState);
+}
+
+// ── 预览 tab store（对齐 DSH 右侧栏 tab 语义）：
+// 完整路径 = tab 身份（同名不同目录是两个 tab）；重复打开聚焦既有 tab 并更新
+// 行号目标（新 revision）；关闭即卸载（Blob/分页状态随组件释放）。
+export interface PreviewTabState {
+  path: string;
+  /** 1-based 行号锚点（null = 无跳转请求）；对 markdown 渲染态挂起直至切纯文本 */
+  line: number | null;
+  /** 行号请求修订号：每次 open() 递增——同值行号再请求也重新触发跳转 */
+  seq: number;
+}
+
+const previewTabsStoreRaw = createStore<{ tabs: PreviewTabState[]; active: string }>({
+  tabs: [],
+  active: "",
+});
+
+let previewTabSeq = 0;
+
+export const previewTabsStore = {
+  getState: previewTabsStoreRaw.getState,
+  subscribe: previewTabsStoreRaw.subscribe,
+  /** 打开（或聚焦）一个预览 tab；同 path 再开 = 更新行号目标（新 revision）并置为活动 tab */
+  open(path: string, line: number | null = null): void {
+    previewTabSeq += 1;
+    const { tabs } = previewTabsStoreRaw.getState();
+    const existing = tabs.find((t) => t.path === path);
+    if (existing) {
+      previewTabsStoreRaw.setState({
+        tabs: tabs.map((t) => (t.path === path ? { ...t, line, seq: previewTabSeq } : t)),
+        active: path,
+      });
+    } else {
+      previewTabsStoreRaw.setState({ tabs: [...tabs, { path, line, seq: previewTabSeq }], active: path });
+    }
+    rightPanelStore.reveal("preview");
+  },
+  close(path: string): void {
+    const { tabs, active } = previewTabsStoreRaw.getState();
+    const idx = tabs.findIndex((t) => t.path === path);
+    if (idx < 0) return;
+    const next = tabs.filter((t) => t.path !== path);
+    let nextActive = active;
+    if (active === path) {
+      nextActive = next[Math.min(idx, next.length - 1)]?.path ?? "";
+    }
+    previewTabsStoreRaw.setState({ tabs: next, active: nextActive });
+  },
+  setActive(path: string): void {
+    previewTabsStoreRaw.setState({ active: path });
+  },
+  closeAll(): void {
+    previewTabsStoreRaw.setState({ tabs: [], active: "" });
+  },
+};
+
+export function usePreviewTabs(): { tabs: PreviewTabState[]; active: string } {
+  return useSyncExternalStore(previewTabsStore.subscribe, previewTabsStore.getState);
+}
+
 // ── 主题 store（偏好持久化 localStorage + 跟随系统；body[data-ds-dark-theme] 属性生效） ──
 const THEME_KEY = "dsw-theme-preference";
 
