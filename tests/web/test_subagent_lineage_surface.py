@@ -39,6 +39,7 @@ def test_tree_enriches_subagent_activity_from_runner(build_test_engine) -> None:
     engine, _ = build_test_engine([])
     parent = engine.session.create()
     child = engine.session.create()
+    _set_parent(engine, child, parent)
 
     engine.subagent_runner = _StubRunner(
         {
@@ -63,6 +64,7 @@ def test_tree_marks_terminal_child_with_outcome(build_test_engine) -> None:
     engine, _ = build_test_engine([])
     parent = engine.session.create()
     child = engine.session.create()
+    _set_parent(engine, child, parent)
 
     engine.subagent_runner = _StubRunner(
         {
@@ -83,9 +85,16 @@ def test_tree_marks_terminal_child_with_outcome(build_test_engine) -> None:
     assert node["settlement"] == "collected"
 
 
+def _set_parent(engine, child: str, parent: str) -> None:
+    """生产契约（runner.py:707）：runner 子会话的 session JSON 带 parent_id."""
+    sess = engine.session.load(child)
+    sess.parent_id = parent
+    engine.session.save(sess)
+
+
 def test_tree_never_fabricates_activity(build_test_engine) -> None:
     engine, _ = build_test_engine([])
-    parent = engine.session.create()
+    _plain_root = engine.session.create()
     plain = engine.session.create()
 
     # runner 存在但对未知 child 返回 None → 不伪造 activity
@@ -99,3 +108,28 @@ def test_tree_never_fabricates_activity(build_test_engine) -> None:
     engine.subagent_runner = None
     node = _nodes(engine, plain)[plain]
     assert "activity" not in node
+
+
+def test_tree_skips_topology_for_root_sessions(build_test_engine) -> None:
+    """CPU 契约（2026-09-23 run 期间 100% 终诊）：根会话不做 topology 恢复.
+
+    topology_snapshot → _durable_state → 事件日志恢复，对 460 个根会话逐个
+    执行 = 每请求 0.25-5.7s 且随事件日志增长；根会话（无 parent、非
+    subagent_ 前缀）的 facts 本来就是 None——跳过调用，输出零变化。
+    """
+    engine, _ = build_test_engine([])
+    _root = engine.session.create()
+    plain = engine.session.create()  # 无 parent 的普通根会话
+
+    calls: list[str] = []
+
+    class _CountingRunner(_StubRunner):
+        def topology_snapshot(self, child_session_id: str) -> dict[str, object] | None:
+            calls.append(child_session_id)
+            return None
+
+    engine.subagent_runner = _CountingRunner({})
+    _nodes(engine, plain)  # 触发一次 tree
+
+    assert plain not in calls  # 根会话零 topology 调用
+    assert calls == [] or all(c != plain for c in calls)

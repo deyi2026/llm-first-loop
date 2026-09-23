@@ -200,14 +200,20 @@ def agents_tree(request: Request) -> JSONResponse:
     for meta in metas:
         sid = meta.session_id
         try:
+            parent_id = getattr(meta, "parent_id", None)
+            is_subagent = str(sid).startswith("subagent_")
             node = {
                 "id": sid,
-                "parent_id": getattr(meta, "parent_id", None),
-                "is_subagent": str(sid).startswith("subagent_"),
+                "parent_id": parent_id,
+                "is_subagent": is_subagent,
                 "model": getattr(meta, "model_override", None) or "",
                 "created_at": getattr(meta, "created_at", None),
             }
-            if topology is not None:
+            # 2026-09-23 run 期间 100% CPU 终诊：topology_snapshot → 事件日志
+            # 恢复，对全部会话执行 = 0.25-5.7s/请求（随日志增长）。根会话
+            # （无 parent 且非 subagent_ 前缀）的 facts 本来就是 None——只对
+            # 子代理候选调用，输出零变化。
+            if topology is not None and (is_subagent or parent_id):
                 # 以 topology 事实源为权威：非 runner 子会话（如 fork 分支）自然返回
                 # None → 不附着 activity；不依赖 sid 前缀做二次推断。
                 facts = topology.topology_snapshot(sid)
