@@ -372,6 +372,63 @@ def _activate_default_workspace(engine: Any, settings: Any) -> None:
     engine.set_workspace(current_ws.path, current_ws.id)
 
 
+def _render_subject_refs_facts(entry: Any, data_dir: str | Path) -> str:
+    """antidrift R1: 排程条目自报 subject_refs 的唤醒时差量事实段.
+
+    仅机械差量（对象终态/generation 前移/动作状态），零结论性措辞；对象不存在/
+    解析失败逐条如实标注"现状不可解析"；refs 非法或空 → 空串（不追加段）。
+    解析绝不阻塞唤醒投递（调用点 jobs_facts 同款 fail-open）。
+    """
+
+    refs = getattr(entry, "subject_refs", None)
+    if not isinstance(refs, list) or not refs:
+        return ""
+    lines: list[str] = []
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        rtype = str(ref.get("type", "") or "")
+        rid = str(ref.get("id", "") or "")
+        label = f"{rtype}={rid}" if rtype and rid else "ref"
+        try:
+            if rtype == "job_id":
+                from llm_loop.tools.builtin.job_registry import JobRegistry
+
+                snap = JobRegistry.instance().snapshot(rid)
+                if snap is None:
+                    lines.append(f"{label} 现状不可解析（对象不存在）")
+                    continue
+                state = str(snap.get("state", "") or "")
+                finished_at = snap.get("finished_at")
+                when = "-"
+                if isinstance(finished_at, (int, float)) and finished_at:
+                    when = datetime.fromtimestamp(float(finished_at)).isoformat(timespec="seconds")
+                lines.append(f"{label} 终态={state}({when})")
+            elif rtype == "expected_generation":
+                from llm_loop.runtime.service_control import ManagedServiceDeploymentStore
+
+                deployment = ManagedServiceDeploymentStore(data_dir).read()
+                if deployment is None:
+                    lines.append(f"{label} 现状不可解析（部署状态不存在）")
+                    continue
+                lines.append(f"desired_generation {rid}→{deployment.generation}")
+            elif rtype == "action_id":
+                from llm_loop.runtime.service_control import ManagedServiceDeploymentStore
+
+                action = ManagedServiceDeploymentStore(data_dir).read_action(rid)
+                if action is None:
+                    lines.append(f"{label} 现状不可解析（对象不存在）")
+                    continue
+                lines.append(f"{label} 状态={action.status}({action.updated_at})")
+            else:
+                lines.append(f"{label} 现状不可解析（未知引用类型）")
+        except Exception as exc:  # noqa: BLE001 — 逐条解析 fail-open，如实标注
+            lines.append(f"{label} 现状不可解析（{type(exc).__name__}）")
+    if not lines:
+        return ""
+    return "[程序投影·排程对象现状（机械事实·非建议）]\n" + "\n".join(lines)
+
+
 def build_engine(
     settings: Settings,
     *,
@@ -1915,6 +1972,15 @@ def build_engine(
                 jobs_facts = ""
             if jobs_facts:
                 wake_prompt = f"{wake_prompt}\n{jobs_facts}"
+
+            # antidrift R1: 自报 refs 差量事实段，追加于 jobs_facts 之后（fail-open，零结论）
+            refs_facts = ""
+            try:
+                refs_facts = _render_subject_refs_facts(entry, _data_dir)
+            except Exception:  # noqa: BLE001 — 投影失败不阻断已授权续跑
+                refs_facts = ""
+            if refs_facts:
+                wake_prompt = f"{wake_prompt}\n{refs_facts}"
 
             # EVO-20260919-f119847d: 先落 started 标记再启动。极端情况下（启动
             # 后 ack 落盘失败的 stale 条目）宁可退化为一次通知，也不能让

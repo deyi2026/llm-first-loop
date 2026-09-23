@@ -20,6 +20,7 @@ import logging
 import os
 import uuid
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +92,51 @@ def _recovery_message_identity(msg: Message) -> tuple[Any, ...]:
         msg.reasoning_content,
         metadata,
     )
+
+
+def render_restart_interrupt_fact(
+    data_dir: str | Path, *, window_start_ts: float, window_end_ts: float
+) -> str | None:
+    """antidrift R6: 死亡窗口 (window_start_ts, window_end_ts] 内最近一次共享服务 restart 动作的单行事实.
+
+    只读扫描 service-control actions 目录（单条损坏记录如实跳过，不伪造）；
+    无命中/目录不存在/不可读 → None（fail-open 不附，不下"无 restart"结论）。
+    调用方仅在已存在的恢复 state 上附加，不改变复活/不复活策略本身。
+    """
+
+    try:
+        from llm_loop.runtime.service_control import (
+            ManagedServiceDeploymentStore,
+            ServiceControlAction,
+        )
+
+        latest_ts: float | None = None
+        latest_iso = ""
+        for path in sorted(ManagedServiceDeploymentStore(data_dir).actions_dir.glob("*.json")):
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(raw, dict):
+                    continue
+                action = ServiceControlAction.from_dict(raw)
+            except Exception:  # noqa: BLE001 — 损坏记录如实跳过
+                continue
+            if action.action != "restart":
+                continue
+            try:
+                updated = datetime.fromisoformat(str(action.updated_at))
+                if updated.tzinfo is None:
+                    updated = updated.astimezone()
+                ts = updated.timestamp()
+            except ValueError:
+                continue
+            if window_start_ts < ts <= window_end_ts and (latest_ts is None or ts > latest_ts):
+                latest_ts = ts
+                latest_iso = str(action.updated_at)
+        if latest_ts is None:
+            return None
+        return f"run 因共享服务重启中断于 {latest_iso}"
+    except Exception:  # noqa: BLE001 — 复活中断事实 fail-open
+        return None
 
 
 class _EventsMixin:
@@ -591,6 +637,29 @@ class _EventsMixin:
                 "reasoning_tail": "",
             }
             state["mechanical_execution"] = mechanical
+        if state is not None:
+            # antidrift R6: 死亡窗口（最后 run.end ts → 本次组装时刻）内最近 restart 动作
+            # 附加单行事实；无命中/失败 → 不附键（fail-open），复活策略零改动。
+            try:
+                import time as _time
+
+                _anchor_ts = (
+                    str(getattr(events[last_run_end], "ts", "") or "")
+                    if last_run_end >= 0
+                    else ""
+                )
+                _window_start = (
+                    datetime.fromisoformat(_anchor_ts).timestamp() if _anchor_ts else 0.0
+                )
+                _fact = render_restart_interrupt_fact(
+                    self.settings.data_dir,
+                    window_start_ts=_window_start,
+                    window_end_ts=_time.time(),
+                )
+                if _fact:
+                    state["restart_interrupt_fact"] = _fact
+            except Exception:  # noqa: BLE001 — 复活中断事实 fail-open
+                logger.debug("restart 中断事实准备失败（fail-open）", exc_info=True)
         return state
 
     def _prepare_interruption_resume(self, session_id: str, sess) -> None:

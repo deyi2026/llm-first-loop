@@ -19,6 +19,9 @@ from llm_loop.core.trace_leak.ingress_token import (
 
 _MAX_SCHEDULE_MESSAGE_CHARS = 4000
 
+# antidrift R1: subject_refs 引用类型封闭集（OQ4 裁定；扩展须显式登记，不加白名单）
+_SUBJECT_REF_TYPES = ("job_id", "expected_generation", "action_id")
+
 
 class ScheduleTool:
     name = "schedule"
@@ -68,6 +71,28 @@ class ScheduleTool:
                     "默认 false 只通知。"
                 ),
             },
+            "subject_refs": {
+                "type": "array",
+                "description": (
+                    "可选自报对象引用：唤醒时程序会把这些对象的现状差量（终态/generation 前移/"
+                    "动作状态，仅事实无结论）附于唤醒消息。type 为封闭枚举"
+                    "（job_id/expected_generation/action_id），未知类型按参数错误拒绝。"
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["job_id", "expected_generation", "action_id"],
+                        },
+                        "id": {
+                            "type": "string",
+                            "description": "引用对象标识（job id / 排程时观察到的 generation 值 / action id）",
+                        },
+                    },
+                    "required": ["type", "id"],
+                },
+            },
         },
         "required": ["message"],
     }
@@ -94,6 +119,7 @@ class ScheduleTool:
             repeat_interval = float(kwargs.get("repeat_interval", 0) or 0)
             max_count = int(kwargs.get("max_count", 1) or 1)
             wake = bool(kwargs.get("wake", False))
+            subject_refs_raw = kwargs.get("subject_refs") or []
         except (TypeError, ValueError) as exc:
             # 审查低危修复: 参数类型转换异常如实返回 FAILURE（原实现直接外抛）
             return ToolResult(
@@ -124,6 +150,39 @@ class ScheduleTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+
+        # antidrift R1: subject_refs 封闭枚举校验（参数校验，非行为门禁；BindingProblemKind 同款封闭集纪律）
+        if not isinstance(subject_refs_raw, list):
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[参数错误] subject_refs 必须为 {type,id} 对象数组",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        subject_refs: list[dict] = []
+        for item in subject_refs_raw:
+            if (
+                not isinstance(item, dict)
+                or not str(item.get("type", "") or "")
+                or not str(item.get("id", "") or "")
+            ):
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[参数错误] subject_refs 每条须含非空 type 与 id",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            if str(item.get("type")) not in _SUBJECT_REF_TYPES:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=(
+                        "[参数错误] subject_refs.type 未知类型: "
+                        f"{item.get('type')}（封闭集: {'/'.join(_SUBJECT_REF_TYPES)}）"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            subject_refs.append({"type": str(item["type"]), "id": str(item["id"])})
 
         if wake and repeat_interval > 0:
             return ToolResult(
@@ -209,6 +268,7 @@ class ScheduleTool:
             max_count=max_count, wake=wake, session_id=wake_session_id,
             wake_grant=wake_grant, goal_id=wake_goal_id,
             goal_generation=wake_goal_generation,
+            subject_refs=subject_refs,
         )
         when = f"after {after}s" if after > 0 else (f"at {at}" if at else "immediate")
         if repeat_interval > 0:

@@ -467,3 +467,30 @@ def test_legacy_unbound_wake_remains_compatible(tmp_path):
         session_id="sess-legacy",
     )
     assert wake_goal_binding_state(entry, lambda _sid: None) == "unbound"
+
+def test_schedule_subject_refs_closed_enum_rejects_unknown(tmp_path):
+    """T3-2 (antidrift R1): 未知 refs 类型 → 参数级 FAILURE，不落条目（封闭集纪律）."""
+    store = ScheduleStore(tmp_path / "schedule.json")
+    tool = ScheduleTool(store=store)
+    r = tool.execute(
+        message="带坏 refs",
+        after=30,
+        subject_refs=[{"type": "bogus", "id": "x"}],
+    )
+    assert r.status.value == "failure"
+    assert "subject_refs" in r.content and "未知类型" in r.content
+    assert store.list() == []
+
+
+def test_schedule_subject_refs_valid_passthrough(tmp_path):
+    """T3-2 附属: 合法 refs → 条目持久化含规范化 refs；不带 refs 行为不变（既有测试覆盖）."""
+    store = ScheduleStore(tmp_path / "schedule.json")
+    tool = ScheduleTool(store=store)
+    refs = [
+        {"type": "job_id", "id": "job-9"},
+        {"type": "expected_generation", "id": "66"},
+        {"type": "action_id", "id": "act-9"},
+    ]
+    r = tool.execute(message="带 refs", after=30, subject_refs=refs)
+    assert r.status.value == "success"
+    assert store.list()[0]["subject_refs"] == refs

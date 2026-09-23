@@ -276,3 +276,47 @@ def test_notify_via_interop_carries_wake_degraded_reason(tmp_path):
     assert payload["ref"] == "sched-xyz"
     assert payload["wake_degraded_reason"] == "grant_lost_owner_dead"
     assert payload["body"] == "[定时提醒] 核对重启"
+
+def test_schedule_entry_subject_refs_roundtrip(tmp_path):
+    """T3-1 (antidrift R1): 排程带 subject_refs → 条目持久化含 refs（往返一致）；不带 → 条目形态与现状一致（无新键）."""
+    p1 = tmp_path / "s_refs.json"
+    refs = [
+        {"type": "job_id", "id": "job-1"},
+        {"type": "expected_generation", "id": "66"},
+        {"type": "action_id", "id": "act-1"},
+    ]
+    ScheduleStore(path=p1).add("带 refs", after=60, subject_refs=refs)
+    reloaded = ScheduleStore(path=p1).list()
+    assert len(reloaded) == 1
+    assert reloaded[0]["subject_refs"] == refs
+
+    p2 = tmp_path / "s_plain.json"
+    ScheduleStore(path=p2).add("不带 refs", after=60)
+    entry = ScheduleStore(path=p2).list()[0]
+    assert "subject_refs" not in entry
+
+
+def test_schedule_entry_subject_refs_legacy_entry_default_empty():
+    """T3-1 附属: 旧条目（磁盘 dict 无 refs 字段）from_dict → 缺省空，向后兼容."""
+    legacy = {
+        "sid": "sched-legacy",
+        "message": "m",
+        "trigger_at": 1.0,
+        "repeat_interval": 0.0,
+        "max_count": 1,
+        "created_at": 1.0,
+        "count": 0,
+        "wake": False,
+        "session_id": "",
+        "lease_owner": "",
+        "lease_until": 0.0,
+        "wake_owner_pid": 0,
+        "wake_started_at": 0.0,
+        "retry_count": 0,
+        "retry_deadline_at": 0.0,
+        "goal_id": "",
+        "goal_generation": "",
+    }
+    entry = ScheduleEntry.from_dict(legacy)
+    assert entry.subject_refs == []
+    assert "subject_refs" not in entry.to_dict()

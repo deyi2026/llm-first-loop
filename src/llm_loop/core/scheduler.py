@@ -74,6 +74,7 @@ class ScheduleEntry:
         retry_deadline_at: float = 0.0,
         goal_id: str = "",
         goal_generation: str = "",
+        subject_refs: list | None = None,
     ) -> None:
         self.sid = sid
         self.message = message
@@ -92,9 +93,13 @@ class ScheduleEntry:
         self.retry_deadline_at = float(retry_deadline_at or 0.0)
         self.goal_id = str(goal_id or "")
         self.goal_generation = str(goal_generation or "")
+        # antidrift R1: 排程时模型自报的结构化对象引用（封闭枚举三类）；缺省空=行为与现状一致
+        self.subject_refs: list[dict] = [
+            dict(r) for r in (subject_refs or []) if isinstance(r, dict)
+        ]
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "sid": self.sid,
             "message": self.message,
             "trigger_at": self.trigger_at,
@@ -113,6 +118,10 @@ class ScheduleEntry:
             "goal_id": self.goal_id,
             "goal_generation": self.goal_generation,
         }
+        # 仅非空时含键：不带 refs 的条目形态与现状逐字一致（回归项）
+        if self.subject_refs:
+            d["subject_refs"] = [dict(r) for r in self.subject_refs]
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> ScheduleEntry:
@@ -134,6 +143,9 @@ class ScheduleEntry:
             retry_deadline_at=float(d.get("retry_deadline_at", 0.0) or 0.0),
             goal_id=str(d.get("goal_id", "") or ""),
             goal_generation=str(d.get("goal_generation", "") or ""),
+            subject_refs=[
+                dict(r) for r in (d.get("subject_refs") or []) if isinstance(r, dict)
+            ],
         )
 
 
@@ -278,6 +290,7 @@ class ScheduleStore:
         repeat_interval: float = 0, max_count: int = 1, wake: bool = False,
         session_id: str = "", wake_grant: Any = None,
         goal_id: str = "", goal_generation: str = "",
+        subject_refs: list | None = None,
     ) -> str:
         """新增提醒；返回 sid."""
         trigger = at if at is not None else time.time() + max(0.0, after)
@@ -289,6 +302,7 @@ class ScheduleStore:
             wake_owner_pid=(os.getpid() if wake and wake_grant is not None else 0),
             goal_id=goal_id,
             goal_generation=goal_generation,
+            subject_refs=subject_refs,
         )
         # Capability must exist before the persisted entry becomes claimable. This removes
         # the after=0 window where a scheduler could see wake=True but no grant yet.
