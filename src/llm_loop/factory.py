@@ -125,6 +125,9 @@ from llm_loop.tools.builtin.web_search import WebSearchTool
 from llm_loop.tools.builtin.workflow import WorkflowRunTool
 from llm_loop.tools.escalation import EscalationStore
 from llm_loop.tools.registry import ToolRegistry
+# EVO-20260924-8266b693 B: 顶层导入（runtime/service_control 顶层纯标准库，
+# 无循环依赖）——函数内 import 会撞 local_imports 棘轮（factory 63 基线）。
+from llm_loop.runtime.service_control import scan_unacknowledged_failed_actions
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 from llm_loop.workspace.file_effect_query import FileEffectQueryService
 from llm_loop.workspace.file_service import FileService
@@ -218,10 +221,8 @@ def _scan_failed_service_actions(data_dir: str | Path) -> list[dict[str, Any]]:
     "待确认"语义（8266b693 B）：failed 且 acknowledged_at 为空；desired 代已前进
     （被新动作接管）不再从投影抹除——标注 superseded=True 保留痕迹，直到
     verify_acknowledge(verdict=accept) 确认。扫描本体在 runtime/service_control
-    单源导出（与引擎开场状态提醒共用）；此处薄委托。
+    单源导出（与引擎开场状态提醒共用）；此处薄委托（顶层导入，见文件头）。
     """
-    from llm_loop.runtime.service_control import scan_unacknowledged_failed_actions
-
     return scan_unacknowledged_failed_actions(data_dir)
 
 
