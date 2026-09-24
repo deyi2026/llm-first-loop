@@ -1,6 +1,6 @@
 ---
 name: web-self-restart-triage
-description: 镜像 web 服务自愈重启失败排障技能——guard 守护反复 pull_up_fail、restart_system 报"端口 8903 已被占用"、web 挂死后拉不起来、或面板/status 误报 web 死亡（live_pid_not_running 但服务实际在响应）时使用。核心：识别探针口径矛盾（pgrep argv 失明 vs 端口 lsof vs HTTP /health vs manifest 观察面失真），按单一权威探针修复守护的停止/启动幂等链。含两条重启通道（service_control vs restart_system）的边界纪律、受理≠完成的终态核对、已知上游诱因（流式滴流挂死、启动超时误报、短命进程覆盖 manifest）。常用工具: execute_command/read_file/search_files。
+description: 镜像 web 服务自愈重启失败排障技能——guard 守护反复 pull_up_fail、restart_system 报"端口 8903 已被占用"、web 挂死后拉不起来、或面板/status 误报 web 死亡（live_pid_not_running 但服务实际在响应）时使用。核心：识别探针口径矛盾（pgrep argv 失明 vs 端口 lsof vs HTTP /health vs manifest 观察面失真），按单一权威探针修复守护的停止/启动幂等链。含两条重启通道（service_control vs restart_system）的边界纪律、三服务（web/feishu/learning）受理差异与就绪探针、受理≠完成的终态核对、已知上游诱因（流式滴流挂死、启动超时误报、短命进程覆盖 manifest）。常用工具: execute_command/read_file/search_files。
 ---
 
 # 镜像 web 自愈重启排障（web-self-restart-triage）
@@ -75,14 +75,26 @@ grep -A16 "Current thread" data/web.log | tail -20
 | 门禁 | 部署绑定（clean tree、git_head=published、dist hash） | 无绑定门（按设计） |
 | 适用 | 代码变更后的计划重启、版本推进 | 进程死亡/挂起的自愈拉起 |
 | 产物 | restart-receipt.json（authoritative=true） | guard.log 记录 |
+| target 范围 | web / feishu / learning / all（同名） | 同左（restart_mirror.sh 亦接受 learning） |
 
 计划性重启走权威通道（先 commit → 需要时 build dist → `publish` → restart）；**自愈只求"把服务拉起来"**，不做部署裁决。守护若也去查 clean tree，agent 每次写代码都可能让自愈瘫痪——这是职责倒置。
+
+**三服务差异（受理时按此排序与验证）**：
+
+| target | 就绪探针 | 受理/门禁差异 |
+|---|---|---|
+| web | 端口 `lsof -tiTCP:8903` + `/health`（401 也是响应） | 断宿主会话（两阶段：会话结束后才执行） |
+| feishu | 心跳 `data/feishu_heartbeat.json`（state=connected + pid；WS 波动 15~55s 正常） | 等目标空闲；不影响会话 |
+| learning | manifest `runtime_manifest.learning.json`（service=learning + pid；无端口/心跳） | **空闲门**（在飞任务排空才执行，busy=持锁且有 in-flight）；fail-open 退避不影响 web |
+
+多服务换代受理顺序（2026-09-24 实践）：**feishu → learning → web**（web 最后，减小宿主会话被先断导致的观察盲区）；或逐单受理 web 置末。守护（v0.6.20）对 feishu/learning 以**进程存活为底线**，半僵/部署一致性归权威通道面，guard 不越权。
 
 **权威通道受理纪律（EVO-20260924-8266b693，2026-09-24 实证）**：
 - 受理回执 ≠ 完成——restart 是异步两阶段（先等 requester 会话结束、再等目标空闲），终态发生在发起会话之外；
 - 终态核对三入口：`service_control(action=status, action_id=...)`（回执摘要）、`event_stream(query=service_action_terminal)`（统一事件流）、`data/restart-receipt.log`（rc=1 带 detail）；
 - failed 终态保留待确认：`service_control(action=verify_acknowledge, verdict=accept)` 显式销账；不确认则每次新会话开场自动提醒（不静默消失）；
-- 发布前 CAS 缺口：desired 与实际 git_head 不一致时 restart 直接 `deployment binding failed`——先 `publish` 推进 desired 再 restart，不硬重试。
+- 发布前 CAS 缺口：desired 与实际 git_head 不一致时 restart 直接 `deployment binding failed`——先 `publish` 推进 desired 再 restart，不硬重试；
+- **版本三件套**：CHANGELOG + pyproject bump + git tag 同次提交——缺任一项，重启后横幅显示 `-dev` 后缀（2026-09-24 实证：只写 CHANGELOG 不 bump/tag，横幅停在 v0.6.15-dev.253）。
 
 ### Step 5 — 回归验证（修完必须做）
 
