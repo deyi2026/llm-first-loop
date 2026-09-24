@@ -269,8 +269,15 @@ class HumanTurnQueue:
                     return self._public(it)
             return None
 
-    def claim_interject(self, session_id: str, queue_id: str) -> dict[str, Any] | None:
-        """queued→interject_pending for an exact live-run handoff."""
+    def claim_interject(
+        self, session_id: str, queue_id: str, *, run_generation: str = ""
+    ) -> dict[str, Any] | None:
+        """queued→interject_pending for an exact live-run handoff.
+
+        run_generation 记录认领时的 live 代次，供 reap_orphan_interjects
+        判孤儿（与 queue-interject 端点 CAS 判据同构）；缺省不记录（旧调用
+        语义不变）。
+        """
         with self._lock:
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
@@ -278,11 +285,19 @@ class HumanTurnQueue:
                         return None
                     it["status"] = "interject_pending"
                     it["interject_requested_at"] = _now()
+                    if run_generation:
+                        it["interject_run_generation"] = str(run_generation)
                     self._save()
                     return self._public(it)
             return None
 
-    def release_interject(self, session_id: str, queue_id: str) -> bool:
+    def release_interject(
+        self,
+        session_id: str,
+        queue_id: str,
+        *,
+        reason: str = "interject_handoff_rejected",
+    ) -> bool:
         """Rollback a mailbox handoff that never reached a live run."""
         with self._lock:
             for it in self._items:
@@ -291,10 +306,35 @@ class HumanTurnQueue:
                         return False
                     it["status"] = "queued"
                     it["requeued_at"] = _now()
-                    it["requeued_from"] = "interject_handoff_rejected"
+                    it["requeued_from"] = reason
                     self._save()
                     return True
             return False
+
+    def reap_orphan_interjects(
+        self, runs_alive: Callable[[str], str | None]
+    ) -> list[str]:
+        """Requeue interject_pending items whose live run no longer exists.
+
+        enqueue_interjection 返回 True 后 run 若在轮边界消费 mailbox 前终止，
+        该项将停在 interject_pending；此前只有进程重启的 _load() 会恢复。本
+        回收以 runs_alive 探测的代次事实为准：无 live run，或代次已换 →
+        回滚 queued（audit 标记 interject_run_ended）。与 _load() 同一取舍：
+        宁可承受 ack 失败窗口下的重复投递，也不让用户消息静默滞留（消息必达
+        优先，queue_recovery 机械边界同构）。
+        """
+        requeued: list[str] = []
+        for it in self.snapshot_items():
+            if it.get("status") != "interject_pending":
+                continue
+            sid = str(it.get("session_id") or "")
+            claimed_gen = str(it.get("interject_run_generation") or "")
+            alive = runs_alive(sid)
+            if alive is not None and (claimed_gen == "" or alive == claimed_gen):
+                continue  # run 仍在且代次吻合：交给轮边界消费
+            if self.release_interject(sid, str(it.get("queue_id") or ""), reason="interject_run_ended"):
+                requeued.append(str(it.get("queue_id") or ""))
+        return requeued
 
     def mark_interject_received(self, session_id: str, queue_id: str) -> bool:
         """Mark the exact point where the engine worker consumed the human steer."""

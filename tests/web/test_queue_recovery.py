@@ -98,11 +98,22 @@ def test_recovery_requeue_never_revives_user_cancel_or_unmarked(tmp_path: Path) 
 
 
 class _FakeRunner:
-    def __init__(self, *, busy: set[str] | None = None, start_ok: bool = True):
+    def __init__(
+        self,
+        *,
+        busy: set[str] | None = None,
+        start_ok: bool = True,
+        handles: dict[str, str] | None = None,
+    ):
         self.enabled = True
         self._busy = set(busy or ())
         self._start_ok = start_ok
+        self._handles = dict(handles or {})
         self.starts: list[tuple[str, str]] = []
+
+    def get_handle(self, sid):
+        gen = self._handles.get(sid)
+        return {"run_generation": gen} if gen is not None else None
 
     def is_running(self, sid: str) -> bool:
         return sid in self._busy
@@ -206,3 +217,74 @@ def test_fallback_skips_young_items(tmp_path: Path) -> None:
     fb.tick_once()
 
     assert runner.starts == []  # 项龄未到阈值，避让浏览器正常领取窗口
+
+
+# ---------------------------------------------------------------------------
+# interject_pending 孤儿回收：run 终止/换代后不再静默滞留到进程重启
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_reaps_orphan_interject_when_run_ended(tmp_path: Path) -> None:
+    hq = _hq(tmp_path)
+    item = hq.enqueue(SID, "立即插入这条")
+    hq.claim_interject(SID, item["queue_id"], run_generation="gen-1")
+    # run 已终止：registry 注销 handle → get_handle 为 None；项龄阈值调高，
+    # 本测试只看回收语义（接力派发见下一测试）
+    runner = _FakeRunner(handles={})
+    fb = QueueServerFallback(
+        _engine(tmp_path, runner), hq, tick_s=3600.0, min_age_s=3600.0
+    )
+
+    fb.tick_once()
+
+    after = hq.snapshot_items()[0]
+    assert after["status"] == "queued"
+    assert after["requeued_from"] == "interject_run_ended"
+    assert runner.starts == []
+
+
+def test_fallback_requeued_orphan_rejoins_fifo_dispatch(tmp_path: Path) -> None:
+    hq = _hq(tmp_path)
+    item = hq.enqueue(SID, "立即插入这条")
+    hq.claim_interject(SID, item["queue_id"], run_generation="gen-1")
+    runner = _FakeRunner(handles={})
+    fb = _fallback(_engine(tmp_path, runner), hq)  # min_age_s=0：同 tick 接力
+
+    fb.tick_once()
+
+    # 回队 → 到期 queued → 服务端认领无头执行（消息必达闭环）
+    assert runner.starts == [(SID, "立即插入这条")]
+    final = hq.snapshot_items()[0]
+    assert final["status"] == "completed"  # _FakeRunner terminal_callback 回写
+    assert final.get("requeued_from") == "interject_run_ended"  # 审计标记保留
+
+
+def test_fallback_reaps_interject_on_generation_change(tmp_path: Path) -> None:
+    hq = _hq(tmp_path)
+    item = hq.enqueue(SID, "插话")
+    hq.claim_interject(SID, item["queue_id"], run_generation="gen-1")
+    # 同会话已有新代 run：旧代 mailbox 不会再被消费
+    runner = _FakeRunner(handles={SID: "gen-2"}, busy={SID})
+    fb = _fallback(_engine(tmp_path, runner), hq)
+
+    fb.tick_once()
+
+    after = hq.snapshot_items()[0]
+    assert after["status"] == "queued"  # 回队，不被误标 received
+    assert after["requeued_from"] == "interject_run_ended"
+    assert runner.starts == []  # 新代 run busy：不抢跑
+
+
+def test_fallback_keeps_interject_while_run_alive_same_generation(tmp_path: Path) -> None:
+    hq = _hq(tmp_path)
+    item = hq.enqueue(SID, "插话")
+    hq.claim_interject(SID, item["queue_id"], run_generation="gen-1")
+    runner = _FakeRunner(handles={SID: "gen-1"}, busy={SID})
+    fb = _fallback(_engine(tmp_path, runner), hq)
+
+    fb.tick_once()
+
+    after = hq.snapshot_items()[0]
+    # run 活着且代次吻合：不回收，等待轮边界消费（语义归引擎）
+    assert after["status"] == "interject_pending"
+    assert "requeued_from" not in after

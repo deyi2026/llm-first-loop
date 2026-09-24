@@ -1651,7 +1651,10 @@ def queue_interject(payload: QueueInterjectRequest, request: Request) -> Respons
         )
 
     hq = _human_turn_queue(request)
-    item = hq.claim_interject(payload.session_id, payload.queue_id)
+    # run_generation 记入认领事实，供 QueueServerFallback 巡检判孤儿回收
+    item = hq.claim_interject(
+        payload.session_id, payload.queue_id, run_generation=actual_run_generation
+    )
     if item is None:
         return UTF8JSONResponse(
             status_code=409,

@@ -137,10 +137,11 @@ class QueueServerFallback:
     # ------------------------------------------------------------------ 巡检
 
     def tick_once(self) -> int:
-        """单次巡检：认领并执行到期 queued 项；返回本轮启动的 run 数."""
+        """单次巡检：回收孤儿插话项、认领并执行到期 queued 项；返回本轮启动的 run 数."""
         runner = getattr(self._engine, "runner", None)
         if runner is None or not getattr(runner, "enabled", True):
             return 0
+        self._reap_orphan_interjects(runner)
         settings = getattr(self._engine, "settings", None)
         data_dir = str(getattr(settings, "data_dir", "./data"))
         # §8.2-2 零变化：屏障期不派发（领取只会再被屏障拒绝）
@@ -157,6 +158,33 @@ class QueueServerFallback:
                 continue  # 浏览器/另一领取方赢了（正常收敛）
             started += self._execute_claimed(runner, sid, claimed)
         return started
+
+    def _reap_orphan_interjects(self, runner: Any) -> None:
+        """interject_pending 孤儿回收：live run 已消失/换代的项回滚 queued.
+
+        enqueue_interjection 接受后 run 若在轮边界消费 mailbox 前终止，该项
+        会停在 interject_pending（此前仅进程重启 _load() 恢复）。判据与
+        queue-interject 端点 CAS 同构：get_handle 为空或代次已换。runner 无
+        get_handle 能力时保守跳过（退化为重启恢复现状）。
+        """
+        get_handle = getattr(runner, "get_handle", None)
+        if not callable(get_handle):
+            return
+
+        def _alive(sid: str) -> str | None:
+            try:
+                handle = get_handle(sid)
+            except Exception:  # noqa: BLE001 - 探测失败视同无 live run
+                return None
+            if not handle:
+                return None
+            return str(handle.get("run_generation") or "")
+
+        requeued = self._hq.reap_orphan_interjects(_alive)
+        if requeued:
+            logger.info(
+                "queue recovery reaped orphan interject(s): %d item(s)", len(requeued)
+            )
 
     def _due_sessions(self, now: float) -> list[tuple[str, dict[str, Any]]]:
         """每会话最老的 queued 项已达龄 → (sid, oldest) 列表（去重保序）."""
