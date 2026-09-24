@@ -2,6 +2,12 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.22（补发点）— release 动作补齐：pyproject bump + v0.6.22 tag（2026-09-24）
+
+- **背景（web 横幅版本恒显示 v0.6.15-dev.N 根因）**：CHANGELOG 自 v0.6.16（09-24）起连续 7 个版本只写条目不发布——`pyproject.toml` 版本停在 0.6.15、git release tag 停在 v0.6.14（距 HEAD 253 提交）。`build_identity.display` 语义为 `{pyproject 版本}-dev.{距最近 v* tag 提交数}+g{短hash}`，机制正常工作，缺的是发布动作本身。
+- **补发**：pyproject `0.6.15 → 0.6.22` + 打 tag `v0.6.22`（HEAD 5d90e8590，含 v0.6.16~v0.6.22 全部条目；历史版本不追溯补 tag——tag 语义是发布点，v0.6.22 为首个补发点）。发布后 `display = v0.6.22`（release_exact：HEAD 带 v0.6.22 tag 且树干净）。
+- **今后纪律**：CHANGELOG 新增版本条目时同步三件套——CHANGELOG 条目 + pyproject bump + `git tag v<version>`；缺任一项视为未发布（display 将继续显示 -dev 后缀，属如实暴露而非 bug）。
+
 ## v0.6.22 — 后台动作失败终态的轮级注入（EVO-20260924-62221fd4，2026-09-24）
 
 - **背景（异步拒绝可见性缺口）**：受理时拒绝（admission barrier）同步返回调用会话，模型即时可见；执行时拒绝/终止（fail-fast、绑定失效）发生在调用会话结束之后——v0.6.19 保证 failed 单不丢失（保留待 verify_acknowledge），v0.6.20 保证人侧可见（guard 推送），但模型侧只有"下次碰巧查 status"。gap 与 E13（web 换端口无人知）同构，对象从人换成模型。
