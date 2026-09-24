@@ -124,10 +124,16 @@ def test_message_item_contract_allows_planned_fields(build_test_engine):
     for m in resp.json()["messages"]:
         # M51/M52/M53: 模型+token+工具声明字段（2026-08-16 页脚/出产物扩展，属计划内契约变更）
         # ts: 消息时间戳；attachments: 结构化附件卡恢复（均为计划内契约扩展）
+        # 2026-09-24 web-product-audit: reasoning_*/fallback_receipt —— UI-only
+        # durable runtime receipt，由 metadata 白名单投影（_history_runtime_receipt_fields），
+        # 与 schemas.MessageItem 平行定义；provider 侧不可见（test_message.py 已覆盖）。
         assert set(m.keys()) <= {
             "role", "content", "tool_call_id", "reasoning_content",
             "model_used", "tokens_in", "tokens_out", "tokens_cache_hit", "tool_calls",
             "ts", "attachments", "status", "tool_name", "duration_ms",
+            "reasoning_effective", "reasoning_requested", "reasoning_mode",
+            "reasoning_fallback", "reasoning_budget_tokens", "reasoning_summary",
+            "fallback_receipt",
         }
 
 
