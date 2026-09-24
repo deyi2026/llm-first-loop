@@ -22,6 +22,7 @@ from llm_loop.runtime.service_control import (
     adopt_admission_barrier,
     binding_next_steps,
     build_deployment,
+    compose_convergence_view,
     compose_service_identity_view,
     record_model_override,
     release_admission_barrier,
@@ -240,19 +241,22 @@ class ServiceControlTool:
             if error is not None:
                 return self._failure(error)
             assert deployment is not None
+            # EVO-20260924-dc3c7c78：成功回执附只读收敛快照（同眼可见
+            # lagging）；读取失败缺省该键，可见性增强不反噬成功回执。
+            publish_body: dict[str, object] = {
+                "published": deployment.to_dict(),
+                "next": (
+                    "desired 已推进；对 convergence.lagging 中仍落后的服务逐个 "
+                    "service_control(action=restart, target=..., "
+                    f"expected_generation={deployment.generation}) 完成重启"
+                ),
+            }
+            convergence = self._convergence_block()
+            if convergence is not None:
+                publish_body["convergence"] = convergence
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
-                content=json.dumps(
-                    {
-                        "published": deployment.to_dict(),
-                        "next": (
-                            "desired 已推进；接着 service_control(action=restart, target=..., "
-                            f"expected_generation={deployment.generation}) 完成重启"
-                        ),
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
+                content=json.dumps(publish_body, ensure_ascii=False, sort_keys=True),
                 tool_call_id="",
                 tool_name=self.name,
             )
@@ -466,12 +470,28 @@ class ServiceControlTool:
         }
         if live_hint:
             body["live_identity_hint"] = live_hint
+        # EVO-20260924-dc3c7c78：成功回执附只读收敛快照——受理≠完成，剩余
+        # lagging 服务在回执里直接可见；读取失败缺省该键。
+        convergence = self._convergence_block()
+        if convergence is not None:
+            body["convergence"] = convergence
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=json.dumps(body, ensure_ascii=False, sort_keys=True),
             tool_call_id="",
             tool_name=self.name,
         )
+
+    def _convergence_block(self) -> dict[str, object] | None:
+        """EVO-20260924-dc3c7c78：publish/update 成功回执的只读收敛快照。
+
+        复用 compose_convergence_view（identity view 派生，无新判据）；读取
+        失败时返回 None（调用方缺省该键），可见性增强不反噬成功回执本身。
+        """
+        try:
+            return compose_convergence_view(self.store)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
 
     def _live_identity_hint(
         self, deployment: ManagedServiceDeployment, restart_target: str

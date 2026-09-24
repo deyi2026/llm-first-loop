@@ -1572,6 +1572,47 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
     }
 
 
+def compose_convergence_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
+    """Read-only per-service convergence snapshot (EVO-20260924-dc3c7c78).
+
+    纯派生自 :func:`compose_service_identity_view`：``lagging`` = 最新
+    succeeded 受控重启回执尚未覆盖当前 desired generation 的服务（含从未有
+    succeeded 回执的服务）。只读证据面——不新增门禁/锁/restart action；
+    用途是让 publish/update 成功回执在"同一眼"暴露代差，替代事后告警发现。
+    """
+    view = compose_service_identity_view(store)
+    deployment = view.get("deployment") or {}
+    desired_generation = deployment.get("generation")
+    services: dict[str, Any] = {}
+    lagging: list[str] = []
+    for service, svc in sorted((view.get("services") or {}).items()):
+        stable = (svc or {}).get("stable") or {}
+        stable_generation = stable.get("generation")
+        converged = (
+            desired_generation is not None
+            and stable_generation is not None
+            and stable_generation == desired_generation
+        )
+        services[service] = {
+            "stable_generation": stable_generation,
+            "lag_generations": stable.get("lag_generations"),
+            "converged": converged,
+        }
+        if not converged:
+            lagging.append(service)
+    return {
+        "desired_generation": desired_generation,
+        "services": services,
+        "lagging": lagging,
+        "read_only": True,
+        "note": (
+            "lagging=尚无覆盖当前 desired generation 的 succeeded restart "
+            "receipt（含从未有 succeeded 回执的服务）；收敛是异步事实，"
+            "本块只读、不派发 restart"
+        ),
+    }
+
+
 def _append_exit_audit(store: ManagedServiceDeploymentStore, record: Mapping[str, Any]) -> None:
     """append-only 出口审计（L2/任务 7.4）：否决/接管/释放/拒绝各留一行。
 
@@ -3461,7 +3502,14 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 9
-        print(json.dumps(deployment.to_dict(), ensure_ascii=False, sort_keys=True))
+        # EVO-20260924-dc3c7c78：成功回执附只读收敛快照——发布成功那一眼
+        # 就能看到 lagging 服务，替代事后告警发现；读取失败只缺省该键。
+        publish_out = deployment.to_dict()
+        try:
+            publish_out["convergence"] = compose_convergence_view(store)
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        print(json.dumps(publish_out, ensure_ascii=False, sort_keys=True))
         return 0
     if args.command == "show":
         deployment = ManagedServiceDeploymentStore(args.data_dir).read()
@@ -3700,20 +3748,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         rc = run_action_worker(store, action.action_id)
         final = store.read_action(action.action_id)
-        print(
-            json.dumps(
-                {
-                    "ok": bool(final is not None and final.status == "succeeded"),
-                    "action_id": action.action_id,
-                    "status": final.status if final else "missing",
-                    "detail": (final.detail if final else "")[:400],
-                    "reason_ref": final.reason_ref if final else "",
-                    "next_step": decode_next_steps(final.next_step if final else ""),
-                },
-                ensure_ascii=False,
-            ),
-            flush=True,
-        )
+        # EVO-20260924-dc3c7c78：终局回执附只读收敛快照——重启完成后同一眼
+        # 看到仍 lagging 的服务；读取失败只缺省该键。
+        update_out: dict[str, Any] = {
+            "ok": bool(final is not None and final.status == "succeeded"),
+            "action_id": action.action_id,
+            "status": final.status if final else "missing",
+            "detail": (final.detail if final else "")[:400],
+            "reason_ref": final.reason_ref if final else "",
+            "next_step": decode_next_steps(final.next_step if final else ""),
+        }
+        try:
+            update_out["convergence"] = compose_convergence_view(store)
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        print(json.dumps(update_out, ensure_ascii=False), flush=True)
         return rc
     if args.command == "barriers":
         registry = ManagedServiceDeploymentStore(args.data_dir).barriers

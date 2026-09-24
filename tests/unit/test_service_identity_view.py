@@ -15,6 +15,7 @@ from llm_loop.runtime.service_control import (
     ManagedServiceDeployment,
     ManagedServiceDeploymentStore,
     ServiceControlAction,
+    compose_convergence_view,
     compose_service_identity_view,
     run_action_worker,
 )
@@ -508,3 +509,58 @@ def test_web_dead_manifest_pid_no_port_keeps_honest(tmp_path, monkeypatch) -> No
     assert web["live"].get("pid_source") is None
     assert web["restart_required"] is True
     assert "live_pid_not_running" in web["reasons"]
+
+
+# ---------------------------------------------------------------------------
+# EVO-20260924-dc3c7c78: publish/update 成功回执的只读 convergence 快照
+# ---------------------------------------------------------------------------
+
+
+def test_convergence_view_empty_when_all_covered(tmp_path: Path) -> None:
+    """全服务 succeeded 回执覆盖 desired generation → lagging 为空、只读。"""
+    store = _green_store(tmp_path)
+    _write_receipt(
+        store, action_id="svc-all-1", target="all", generation=1,
+        updated_at="2026-09-18T10:00:00+00:00",
+    )
+    view = compose_convergence_view(store)
+    assert view["desired_generation"] == 1
+    assert view["lagging"] == []
+    assert view["read_only"] is True
+    assert set(view["services"]) == {"web", "feishu", "learning"}
+    assert all(svc["converged"] for svc in view["services"].values())
+
+
+def test_convergence_view_flags_only_uncovered_services(tmp_path: Path) -> None:
+    """2026-09-24 feishu 告警场景复刻：全员收敛 gen1 → desired 推到 gen2 →
+    只有 web 有人重启。convergence 必须在发布瞬间暴露 feishu/learning。"""
+    store = _green_store(tmp_path)
+    _write_receipt(
+        store, action_id="svc-all-1", target="all", generation=1,
+        updated_at="2026-09-24T04:35:00+00:00",
+    )
+    _publish(store, _deployment(tmp_path, 2, HEAD_B))
+    _write_receipt(
+        store, action_id="svc-web-2", target="web", generation=2,
+        updated_at="2026-09-24T05:20:00+00:00",
+    )
+    view = compose_convergence_view(store)
+    assert view["desired_generation"] == 2
+    assert view["lagging"] == ["feishu", "learning"]
+    assert view["services"]["web"] == {
+        "stable_generation": 2,
+        "lag_generations": 0,
+        "converged": True,
+    }
+    assert view["services"]["feishu"]["converged"] is False
+    assert view["services"]["feishu"]["lag_generations"] == 1
+    assert view["services"]["learning"]["converged"] is False
+
+
+def test_convergence_view_no_receipt_marks_all_lagging(tmp_path: Path) -> None:
+    """从未有 succeeded 回执 → 发布后全员 lagging（含 stable_generation=None）。"""
+    store = _green_store(tmp_path)
+    view = compose_convergence_view(store)
+    assert view["desired_generation"] == 1
+    assert view["lagging"] == ["feishu", "learning", "web"]
+    assert all(svc["stable_generation"] is None for svc in view["services"].values())

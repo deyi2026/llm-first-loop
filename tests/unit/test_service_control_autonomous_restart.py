@@ -257,6 +257,13 @@ def test_tool_publish_advances_desired_generation(tmp_path: Path) -> None:
     assert deployment.generation == 1
     assert deployment.code_root == str(tmp_path.resolve())
     assert body["published"]["generation"] == 1
+    # EVO-20260924-dc3c7c78：成功回执必须同眼暴露收敛快照——gen1 发布后
+    # 三服务尚无覆盖该代的 succeeded 回执，lagging 应列出全部。
+    convergence = body["convergence"]
+    assert convergence["desired_generation"] == 1
+    assert sorted(convergence["lagging"]) == ["feishu", "learning", "web"]
+    assert convergence["services"]["web"]["stable_generation"] is None
+    assert convergence["read_only"] is True
     head = subprocess.run(
         ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
         check=True, capture_output=True, text=True,
