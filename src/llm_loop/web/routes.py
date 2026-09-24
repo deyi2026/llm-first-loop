@@ -2785,15 +2785,23 @@ def _sessions_fingerprint(sessions_dir: str | Path) -> str:
         newest_mtime = 0
         newest_name = ""
         count = 0
-        for p in Path(sessions_dir).glob("*.json"):
-            try:
-                mtime = p.stat().st_mtime_ns
-            except OSError:
-                continue
-            count += 1
-            if mtime > newest_mtime:
-                newest_mtime = mtime
-                newest_name = p.name
+        # Avoid pathlib.glob's wildcard selector here.  This path is polled by
+        # every open SSE client and may sit on a directory with thousands of
+        # session files; scandir gives us the name + stat handle in one pass.
+        with os.scandir(sessions_dir) as entries:
+            for entry in entries:
+                if not entry.name.endswith(".json"):
+                    continue
+                try:
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    mtime = entry.stat(follow_symlinks=False).st_mtime_ns
+                except OSError:
+                    continue
+                count += 1
+                if mtime > newest_mtime:
+                    newest_mtime = mtime
+                    newest_name = entry.name
         if not count:
             return "0"
         return f"{count}:{newest_mtime}:{newest_name}"
@@ -2814,6 +2822,17 @@ def _session_events_fingerprint(engine: Any) -> str:
     return f"{root}:{_sessions_fingerprint(root)}"
 
 
+async def _session_events_fingerprint_async(engine: Any) -> str:
+    """Read the session-directory fingerprint without blocking the event loop.
+
+    Fingerprinting is intentionally filesystem-backed.  Even a normally cheap
+    directory scan can become slow under large session sets, GC pressure, or
+    storage contention; running it on the asyncio thread would stall unrelated
+    requests such as /login and /auth/status.
+    """
+    return await asyncio.to_thread(_session_events_fingerprint, engine)
+
+
 @router.get("/api/v1/events")
 async def stream_session_events(request: Request) -> StreamingResponse:
     """SSE 会话更新事件流（M56：Web 端实时刷新）.
@@ -2829,7 +2848,7 @@ async def stream_session_events(request: Request) -> StreamingResponse:
     keepalive 注释行防中间层/浏览器超时掐断长连接。
     """
     engine = _engine_from(request)
-    initial = _session_events_fingerprint(engine)
+    initial = await _session_events_fingerprint_async(engine)
 
     async def gen():
         nonlocal initial
@@ -2849,7 +2868,7 @@ async def stream_session_events(request: Request) -> StreamingResponse:
                 last_beat = now
                 yield ": keepalive\n\n"
                 continue
-            current = _session_events_fingerprint(engine)
+            current = await _session_events_fingerprint_async(engine)
             if current != initial and current != "err":
                 initial = current
                 last_beat = now

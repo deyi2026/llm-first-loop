@@ -411,6 +411,40 @@ def test_sse_named_event_frame_format():
     assert conn.startswith("event: connected\n")
 
 
+def test_sse_fingerprint_scan_does_not_block_event_loop(monkeypatch):
+    """Slow filesystem fingerprinting must not stall unrelated async requests."""
+    import asyncio
+    import threading
+
+    import llm_loop.web.routes as routes
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_fingerprint(_engine):
+        started.set()
+        assert release.wait(timeout=1.0)
+        return "fingerprint"
+
+    monkeypatch.setattr(routes, "_session_events_fingerprint", slow_fingerprint)
+
+    async def scenario():
+        task = asyncio.create_task(routes._session_events_fingerprint_async(object()))
+        for _ in range(100):
+            if started.is_set():
+                break
+            await asyncio.sleep(0.001)
+        assert started.is_set()
+
+        # If the slow scan ran on the event-loop thread, execution could not
+        # reach this yield/release point until the blocking wait had finished.
+        await asyncio.sleep(0)
+        release.set()
+        assert await asyncio.wait_for(task, timeout=1.0) == "fingerprint"
+
+    asyncio.run(scenario())
+
+
 def test_sse_route_uses_named_event_helper():
     """端点使用 _sse_event 生成帧（防回退 data 内嵌 type 格式的回归守护）."""
     from pathlib import Path
