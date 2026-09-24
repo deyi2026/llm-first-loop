@@ -56,7 +56,10 @@ reportMissingImports = "none"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --import-mode=importlib -m \"not real_llm\""
+# 修复（2026-09-24）: 移除内嵌 `-q`——与调用方显式 `-q` 叠加成 `-qq` 会隐藏最终汇总行
+# （"N passed" 不可见，验证只能靠退出码，A-③ 事故根因）。所有脚本调用方（ci_gate.sh/
+# run_real_smoke.sh 等）均显式携带 `-q`，quiet 化由调用方声明，配置层不再叠加。
+addopts = "--import-mode=importlib -m \"not real_llm\""
 # 修复（2026-08-29）: .venv 的 __editable__.pth 指向主区 src，pytest 无 PYTHONPATH
 # 时实际测主区代码（6 collection errors + 3 假 FAIL 根源）。pythonpath 相对
 # rootdir 解析——镜像测镜像、主区测主区，双侧一致。

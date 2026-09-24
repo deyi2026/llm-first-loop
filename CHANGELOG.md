@@ -2,6 +2,14 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.18 — 故障台账边界外延五项（EVO-20260924-40755734）（2026-09-24）
+
+- **前置拦截入账（A-①）**：registry 执行前拒绝路径全部接入故障台账——新增 `_preblock` 包裹（call_id 缺失/工具隔离/预检路由/提权令牌无效/安全硬阻断/共享服务拦截/EXEC_MODE 权限拦截 8 处）+ `_result` 收口挂 notify（工具不存在/参数校验/预检失败/物化失败/单调守卫 5 处）。今晨 `service_control` 参数名连错两次即此类（此前观察者收口点之前 return 绕过台账）；新增测试含"真实安全硬阻断 BLOCKED 全链路入账"。
+- **python 指纹词级形态（A-②）**：已随 v0.6.17 落地（`_PY_WORD_RE` 词级匹配覆盖 `cd X && python3 …`），本版补录建议项归属，无代码变化。
+- **pytest 汇总行修复（A-③）**：根因确证为 `addopts` 内嵌 `-q` 与调用方显式 `-q` 叠加成 `-qq`（隐藏最终 `N passed` 汇总行，验证只能靠退出码）；非 pytest 9.1 bug、非 conftest 插件（隔离目录对照 + 不传 -q 对照 + 注释 audit print 对照三重实验定位）。修复：addopts 移除内嵌 `-q`（所有脚本调用方均显式携带 -q，零行为破坏），修复后单层 -q 汇总行恢复可见。
+- **同形态故障自动提醒（A-④）**：`record_tool_fault` 增签名计数，同 (phase, error_type) 达阈值 3 时记 `tool_fault_repeat` 台账条目（含计数与样本）+ `report_event` 走既有冷却事件通道（每签名一次）；不新增 prompt 注入路径。
+- **`faults` 聚合入口（A-⑤）**：CLI 新子命令 `llm_loop faults [--limit N] [--data-dir DIR]`——只读 exception_log.jsonl，按签名聚合 top + 最近明细；实测 5 条样例（含 repeat 条目）输出正确。
+
 ## v0.6.17 — 工具故障可追溯最小闭环（2026-09-24）
 
 - **工具回执故障台账**：所有工具真实执行收口点（正常/ BLOCKED post-hook / 异常三处）统一通知 `post_result_observer`（registry 新 API `add_post_result_observer`，与 pre-hook 对称，观察者 fail-open）；factory 装配观察者将非 SUCCESS 回执（failure/timeout/error/blocked/unauthorized）与 execute_command "成功但零输出"哨兵写入 `exception_log.jsonl`（status 新增 `record_tool_fault`，与 record_exception 同构，`search_records(kind=exception_log)` 既有检索路径零改动可查）。解决"出错无记录、模型不知道错在哪"：今早实测 5 类事故（done+0 行输出、pytest 汇总行被吞、python3 漂移 homebrew 3.14、参数协议错、重启计划中断）此前全部无台账。

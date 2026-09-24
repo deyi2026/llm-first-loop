@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from collections import Counter
 from datetime import UTC
 from pathlib import Path
 
@@ -277,6 +279,51 @@ def _cmd_search(engine, query: str) -> int:
     return 0
 
 
+def _cmd_faults(args: list[str]) -> int:
+    """faults: 工具回执故障台账聚合查询（A-⑤，EVO-20260924-40755734）.
+
+    用法: llm_loop faults [--limit N] [--data-dir DIR]
+    只读 exception_log.jsonl：按 (phase, error_type) 签名聚合 + 最近明细。
+    """
+    parser = argparse.ArgumentParser(prog="llm_loop faults")
+    parser.add_argument("--limit", type=int, default=15, help="最近明细条数（默认 15）")
+    parser.add_argument("--data-dir", help="数据目录（默认取项目配置 audit_dir）")
+    ns = parser.parse_args(args)
+
+    if ns.data_dir:
+        ledger = Path(ns.data_dir) / "exception_log.jsonl"
+    else:
+        ledger = load_settings().audit_dir / "exception_log.jsonl"
+    if not ledger.exists():
+        print(f"[faults] {ledger} 不存在——尚无工具故障记录（如实返回）")
+        return 0
+    rows = []
+    for line in ledger.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
+    if not rows:
+        print("[faults] 台账为空——尚无工具故障记录")
+        return 0
+    sigs = Counter((str(r.get("phase", "?")), str(r.get("error_type", "?"))) for r in rows)
+    print(f"[faults] 共 {len(rows)} 条（{ledger}）")
+    print("按形态聚合 top:")
+    for (phase, etype), n in sigs.most_common(10):
+        print(f"  {n:>5}  {phase} · {etype}")
+    print(f"最近 {min(ns.limit, len(rows))} 条:")
+    for r in rows[-ns.limit :]:
+        ts = str(r.get("ts", ""))
+        print(
+            f"  [{ts[11:19]}] {r.get('phase', '?')} {r.get('error_type', '?')}: "
+            f"{str(r.get('error_message', ''))[:120]}"
+        )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv) if argv is not None else list(sys.argv[1:])
     # M63 配置加载统一: CLI 先加载项目 .env（环境变量优先），与 web/feishu 进程配置一致
@@ -312,6 +359,7 @@ def main(argv: list[str] | None = None) -> int:
         "event-retire-rollback",  # D1后续批次2: 退役回滚
         "event-rotate-status",  # D1后续批次3:, 事件日志滚动段清单
         "event-hooks",  # D1后续批次4: pre-step 过滤钩子管理
+        "faults",  # A-⑤（EVO-20260924-40755734）: 工具故障台账聚合查询（只读，不装配 engine）
     }
     if argv and argv[0] in _cmds:
         return _dispatch_command(argv)
@@ -387,6 +435,8 @@ def _dispatch_command(argv: list[str]) -> int:
         return _cmd_event_rotate_status(argv[1:])
     if cmd == "event-hooks":
         return _cmd_event_hooks(argv[1:])
+    if cmd == "faults":
+        return _cmd_faults(argv[1:])
     try:
         settings = load_settings()
     except ValueError as exc:

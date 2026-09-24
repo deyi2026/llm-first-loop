@@ -1441,12 +1441,12 @@ def build_engine(
     # registry.execute() 三个真实执行收口点（正常/BLOCKED post-hook/异常）统一通知；
     # 非 SUCCESS（failure/timeout/error/blocked/unauthorized）与 execute_command
     # "成功但零输出" 哨兵写入 exception_log.jsonl。观察者自身 fail-open。
+    # （ToolResultStatus 常量在函数体内以字面量 "success" 比较，避免函数内 import
+    #  触碰 local_imports 棘轮——status.value 恰为小写枚举名。）
     def _tool_fault_observer(tool_name: str, result) -> None:
-        from llm_loop.core.message import ToolResultStatus
-
         status = getattr(result, "status", None)
         content = str(getattr(result, "content", "") or "")
-        if status == ToolResultStatus.SUCCESS:
+        if getattr(status, "value", status) == "success":
             if tool_name == "execute_command" and content.rstrip().endswith(
                 "（命令执行成功，无输出）"
             ):

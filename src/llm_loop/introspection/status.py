@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_loop.core.message import ToolResultStatus
-from llm_loop.introspection.events import ArchitectureEvent, EventReporter
+from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType, EventReporter
 
 
 def _now() -> str:
@@ -132,6 +132,9 @@ def _bound_session_id() -> str:
 class ArchitectureStatusProvider:
     """架构状态采集/查询/上报（AI-serving，design.md §2.1.4）."""
 
+    # A-④（EVO-20260924-40755734）: 同 (phase, error_type) 签名达阈值记 repeat 台账+事件（每签名一次）
+    TOOL_FAULT_REPEAT_THRESHOLD = 3
+
     def __init__(
         self,
         *,
@@ -162,6 +165,9 @@ class ArchitectureStatusProvider:
         self._tool_history: list[ToolHistoryItem] = []
         self._message_flow: list[dict] = []
         self._exception_log: list[ExceptionLogItem] = []
+        # A-④（EVO-20260924-40755734）: 同形态故障签名计数与已提醒集
+        self._tool_fault_counts: dict[tuple[str, str], int] = {}
+        self._tool_fault_alerted: set[tuple[str, str]] = set()
         self._last_exception_ts: float = 0.0
         self._llm_rounds = 0
         self._llm_rounds_by_session: dict[str, int] = {}
@@ -358,6 +364,31 @@ class ArchitectureStatusProvider:
                     "error_message": item.error_message,
                 },
             )
+            # A-④（EVO-20260924-40755734）: 同形态故障 ≥N 次自动提醒（L4）——
+            # 每 (phase, error_type) 签名首个达到阈值的时刻记一条 repeat 台账 +
+            # report_event 走既有冷却通道；不新增 prompt 注入路径（可检索/有事件）。
+            sig = (item.phase, item.error_type)
+            count = self._tool_fault_counts.get(sig, 0) + 1
+            self._tool_fault_counts[sig] = count
+            if count >= self.TOOL_FAULT_REPEAT_THRESHOLD and sig not in self._tool_fault_alerted:
+                self._tool_fault_alerted.add(sig)
+                self._write_audit(
+                    "exception_log.jsonl",
+                    {
+                        "ts": _now(),
+                        "phase": item.phase,
+                        "error_type": "tool_fault_repeat",
+                        "error_message": f"同形态故障达 {count} 次（阈值 {self.TOOL_FAULT_REPEAT_THRESHOLD}）: {item.error_message[:300]}",
+                    },
+                )
+                self.report_event(
+                    ArchitectureEvent(
+                        event_type=ArchitectureEventType.EXCEPTION,
+                        fact=f"{item.phase} 同形态故障 {count} 次（{item.error_type}）",
+                        reason="工具回执故障重复形态达到提醒阈值",
+                        suggestion="search_records(kind=exception_log) 查该签名完整记录并定位根因",
+                    )
+                )
         except Exception:  # noqa: BLE001 — 台账 fail-open
             pass
 

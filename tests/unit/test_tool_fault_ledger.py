@@ -123,3 +123,87 @@ def test_job_output_terminal_zero_output_hint(monkeypatch):
     fake_snapshot["output"] = []
     result2 = JobOutputTool().execute(job_id="j-zero")
     assert "[空输出提示]" not in result2.content
+
+
+# ── A-①（EVO-20260924-40755734）: 前置拦截同样入故障台账 ──
+
+
+def test_preblock_unknown_tool_and_bad_args_enter_ledger():
+    """执行前拒绝（工具不存在 / 参数非 dict）不再绕过观察者."""
+    registry = ToolRegistry(tool_timeout_s=10.0)
+    registry.register(ExecuteCommandTool(timeout_s=5.0))
+    seen: list[tuple[str, str]] = []
+    registry.add_post_result_observer(lambda name, result: seen.append((name, str(result.status))))
+    r1 = registry.execute(ToolCall(id="c1", name="no_such_tool", arguments={}))
+    assert r1.status == ToolResultStatus.FAILURE
+    assert "[工具不存在]" in r1.content
+    r2 = registry.execute(ToolCall(id="c2", name="execute_command", arguments=["not", "dict"]))
+    assert r2.status == ToolResultStatus.FAILURE
+    assert "[参数错误]" in r2.content
+    assert seen.count(("no_such_tool", "failure")) == 1
+    assert seen.count(("execute_command", "failure")) == 1
+
+
+def test_preblock_missing_tool_call_id_enters_ledger():
+    """tool_call_id 兜底拒绝也入账（_preblock 直接路径）."""
+    registry = ToolRegistry(tool_timeout_s=10.0)
+    seen: list[str] = []
+    registry.add_post_result_observer(lambda name, result: seen.append(name))
+    registry.execute(ToolCall(id="", name="execute_command", arguments={}))
+    assert seen == ["execute_command"]
+
+
+def test_preblock_safety_hard_block_enters_ledger(tmp_path: Path):
+    """灾难性安全硬阻断（BLOCKED）同样入账——真实安全层 + 前置拦截全链路."""
+    registry = ToolRegistry(tool_timeout_s=10.0)
+    registry.register(ExecuteCommandTool(timeout_s=5.0))
+    provider = ArchitectureStatusProvider(audit_dir=tmp_path, enabled=True)
+
+    def _fault_observer(tool_name: str, result) -> None:
+        st = getattr(result, "status", None)
+        if st == ToolResultStatus.SUCCESS:
+            return
+        provider.record_tool_fault(
+            tool_name, str(getattr(st, "value", st)), str(getattr(result, "content", "") or "")[:200]
+        )
+
+    registry.add_post_result_observer(_fault_observer)
+    blocked_seen: list[str] = []
+    registry.add_post_result_observer(
+        lambda name, result: blocked_seen.append(str(result.status))
+    )
+    r = registry.execute(
+        ToolCall(id="c1", name="execute_command", arguments={"command": "rm -rf /"})
+    )
+    assert r.status == ToolResultStatus.BLOCKED
+    assert "[安全硬阻断]" in r.content
+    assert "blocked" in blocked_seen
+    ledger = tmp_path / "exception_log.jsonl"
+    assert ledger.exists(), "安全硬阻断应已写入 exception_log"
+    rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    assert rows[-1]["phase"] == "tool.execute_command"
+    assert rows[-1]["error_type"] == "tool_blocked"
+
+
+# ── A-④（EVO-20260924-40755734）: 同形态故障 ≥N 次自动提醒 ──
+
+
+def test_tool_fault_repeat_alert_at_threshold(tmp_path: Path):
+    """同签名第 3 次记 tool_fault_repeat 台账；之后不再重复提醒."""
+    provider = ArchitectureStatusProvider(audit_dir=tmp_path, enabled=True)
+    for _ in range(3):
+        provider.record_tool_fault("tool.web_fetch", "failure", "403 blocked")
+    ledger = tmp_path / "exception_log.jsonl"
+    rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    repeats = [r for r in rows if r["error_type"] == "tool_fault_repeat"]
+    assert len(repeats) == 1
+    assert "同形态故障达 3 次" in repeats[0]["error_message"]
+    # 第 4、5 次不再追加 repeat 记录（每签名一次）
+    provider.record_tool_fault("tool.web_fetch", "failure", "403 blocked")
+    provider.record_tool_fault("tool.web_fetch", "failure", "403 blocked")
+    rows2 = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    assert len([r for r in rows2 if r["error_type"] == "tool_fault_repeat"]) == 1
+    # 不同签名独立计数（未达阈值无 repeat）
+    provider.record_tool_fault("tool.read_file", "failure", "miss")
+    rows3 = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    assert all(r["phase"] != "tool.read_file" or r["error_type"] != "tool_fault_repeat" for r in rows3)

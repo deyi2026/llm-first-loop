@@ -887,6 +887,15 @@ class ToolRegistry:
         return out
 
     # ── 执行包裹 ──
+    def _preblock(self, call: ToolCall, result: ToolResult) -> ToolResult:
+        """前置拦截入账（EVO-20260924-40755734 A-①）.
+
+        安全硬阻断/提权令牌无效/参数校验/工具隔离等执行前拒绝同样进工具回执
+        故障台账——观察者收口点之前 return 的失败不再绕过 exception_log。
+        """
+        self._notify_result_observers(call.name, result)
+        return result
+
     def execute(self, call: ToolCall) -> ToolResult:
         """统一执行包裹: 校验 → 安全 → 执行 → 五态如实构造.
 
@@ -897,12 +906,15 @@ class ToolRegistry:
 
         # 0. tool_call_id 有效性（约束 C1，由循环保证；此处兜底）
         if not call.id:
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content="[参数错误] 工具调用缺少 tool_call_id，无法绑定执行。请重新声明（程序不会伪造执行）。",
-                tool_call_id="",
-                tool_name=call.name,
-                duration_ms=0.0,
+            return self._preblock(
+                call,
+                ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[参数错误] 工具调用缺少 tool_call_id，无法绑定执行。请重新声明（程序不会伪造执行）。",
+                    tool_call_id="",
+                    tool_name=call.name,
+                    duration_ms=0.0,
+                ),
             )
 
         try:
@@ -934,28 +946,34 @@ class ToolRegistry:
             advice = health_quarantine_advice(
                 call.name, health.reason_code, health.preferred_next
             )
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=(
-                    f"[工具隔离] {call.name} 当前运行前置不满足 "
-                    f"({health.reason_code})，本次未执行。"
+            return self._preblock(
+                call,
+                ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=(
+                        f"[工具隔离] {call.name} 当前运行前置不满足 "
+                        f"({health.reason_code})，本次未执行。"
+                    ),
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    duration_ms=(time.perf_counter() - start) * 1000,
+                    recovery_advice=advice,
                 ),
-                tool_call_id=call.id,
-                tool_name=call.name,
-                duration_ms=(time.perf_counter() - start) * 1000,
-                recovery_advice=advice,
             )
 
         if call.name == "web_fetch":
             advice = web_fetch_preflight(str(call.arguments.get("url", "") or ""))
             if advice is not None:
-                return ToolResult(
-                    status=ToolResultStatus.FAILURE,
-                    content="[预检路由] 已识别为专用抓取路径，本次未执行通用 web_fetch 网络请求。",
-                    tool_call_id=call.id,
-                    tool_name=call.name,
-                    duration_ms=(time.perf_counter() - start) * 1000,
-                    recovery_advice=advice,
+                return self._preblock(
+                    call,
+                    ToolResult(
+                        status=ToolResultStatus.FAILURE,
+                        content="[预检路由] 已识别为专用抓取路径，本次未执行通用 web_fetch 网络请求。",
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        duration_ms=(time.perf_counter() - start) * 1000,
+                        recovery_advice=advice,
+                    ),
                 )
 
         # 1.5 task_quality 路径 A（2026-08-17）: 参数预检（安全检查前，失败拦截不执行）
@@ -1015,16 +1033,19 @@ class ToolRegistry:
                         )
                         blocked = None
                     else:
-                        return ToolResult(
-                            status=ToolResultStatus.BLOCKED,
-                            content=(
-                                f"[提权令牌无效] {reject_reason}。请勿重试旧令牌；"
-                                f"如仍必要请重新 escalation_request 提交申请。"
+                        return self._preblock(
+                            call,
+                            ToolResult(
+                                status=ToolResultStatus.BLOCKED,
+                                content=(
+                                    f"[提权令牌无效] {reject_reason}。请勿重试旧令牌；"
+                                    f"如仍必要请重新 escalation_request 提交申请。"
+                                ),
+                                tool_call_id=call.id,
+                                tool_name=call.name,
+                                error_detail=f"escalation token rejected: {reject_reason}",
+                                duration_ms=0.0,
                             ),
-                            tool_call_id=call.id,
-                            tool_name=call.name,
-                            error_detail=f"escalation token rejected: {reject_reason}",
-                            duration_ms=0.0,
                         )
             if blocked:
                 escalate_hint = (
@@ -1033,13 +1054,16 @@ class ToolRegistry:
                     if self._escalation_store is not None
                     else ""
                 )
-                return ToolResult(
-                    status=ToolResultStatus.BLOCKED,
-                    content=f"[安全硬阻断] 已阻止可能造成不可逆破坏的行动。{blocked.reason}{escalate_hint}",
-                    tool_call_id=call.id,
-                    tool_name=call.name,
-                    error_detail=f"判定依据: {blocked.evidence}",
-                    duration_ms=0.0,
+                return self._preblock(
+                    call,
+                    ToolResult(
+                        status=ToolResultStatus.BLOCKED,
+                        content=f"[安全硬阻断] 已阻止可能造成不可逆破坏的行动。{blocked.reason}{escalate_hint}",
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        error_detail=f"判定依据: {blocked.evidence}",
+                        duration_ms=0.0,
+                    ),
                 )
 
         # P0-A shared-service lifecycle ownership fence. It is intentionally
@@ -1049,17 +1073,20 @@ class ToolRegistry:
             command = str(call.arguments.get("command", "") or "")
             decision = self._managed_service_guard.guard(command)
             if decision is not None and decision.blocked:
-                return ToolResult(
-                    status=ToolResultStatus.BLOCKED,
-                    content=f"[共享服务控制权拦截] {decision.reason}",
-                    tool_call_id=call.id,
-                    tool_name=call.name,
-                    error_detail=(
-                        "managed_services=" + ",".join(decision.services)
-                        if decision.services
-                        else "managed_service_lifecycle"
+                return self._preblock(
+                    call,
+                    ToolResult(
+                        status=ToolResultStatus.BLOCKED,
+                        content=f"[共享服务控制权拦截] {decision.reason}",
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        error_detail=(
+                            "managed_services=" + ",".join(decision.services)
+                            if decision.services
+                            else "managed_service_lifecycle"
+                        ),
+                        duration_ms=0.0,
                     ),
-                    duration_ms=0.0,
                 )
 
         # 2.5 EXEC_MODE 命令分级校验（EVO-20260810-2549e9b6 + 20260814 fail-closed 覆盖所有破坏性工具）
@@ -1078,25 +1105,31 @@ class ToolRegistry:
                     if approved:
                         logger.info("人工审批通过: %s", call.name)
                     else:
-                        return ToolResult(
-                            status=ToolResultStatus.BLOCKED,
-                            content=f"[权限拦截] {blocked}（人工审批未通过）",
-                            tool_call_id=call.id,
-                            tool_name=call.name,
-                            error_detail="EXEC_MODE 限制，人工审批拒绝该操作",
-                            duration_ms=0.0,
+                        return self._preblock(
+                            call,
+                            ToolResult(
+                                status=ToolResultStatus.BLOCKED,
+                                content=f"[权限拦截] {blocked}（人工审批未通过）",
+                                tool_call_id=call.id,
+                                tool_name=call.name,
+                                error_detail="EXEC_MODE 限制，人工审批拒绝该操作",
+                                duration_ms=0.0,
+                            ),
                         )
                 else:
                     self._approval_log(
                         "no_callback", call.name, json.dumps(call.arguments, ensure_ascii=False)
                     )
-                    return ToolResult(
-                        status=ToolResultStatus.BLOCKED,
-                        content=f"[权限拦截] {blocked}",
-                        tool_call_id=call.id,
-                        tool_name=call.name,
-                        error_detail="EXEC_MODE 限制，该操作需人工执行",
-                        duration_ms=0.0,
+                    return self._preblock(
+                        call,
+                        ToolResult(
+                            status=ToolResultStatus.BLOCKED,
+                            content=f"[权限拦截] {blocked}",
+                            tool_call_id=call.id,
+                            tool_name=call.name,
+                            error_detail="EXEC_MODE 限制，该操作需人工执行",
+                            duration_ms=0.0,
+                        ),
                     )
 
         # EVO-20260813-9ced1f4c: 单调守卫（瀑布，默认关闭零回归）
@@ -1288,7 +1321,11 @@ class ToolRegistry:
             and status in (ToolResultStatus.FAILURE, ToolResultStatus.ERROR, ToolResultStatus.TIMEOUT)
         ):
             result.guidance_extra = self._inject_experience_guidance(result)
-        return self._attach_typed_recovery(result)
+        result = self._attach_typed_recovery(result)
+        # EVO-20260924-40755734 A-①: _result 承载的前置拦截（工具不存在/参数校验/
+        # 预检失败/物化失败/单调守卫）同样入故障台账（观察者收口点之前的失败不再绕过）。
+        self._notify_result_observers(call.name, result)
+        return result
 
     def _inject_experience_guidance(self, result: ToolResult) -> str:
         """按错误关键词检索经验库，命中 procedure 条目则提取【已验解法】段.
