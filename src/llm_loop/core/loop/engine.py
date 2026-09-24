@@ -2250,6 +2250,22 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             with contextlib.suppress(Exception):
                 self.registry.cancel_session(session_id)
 
+        _fallback_receipt = self._run_state().fallback_receipt
+        _runtime_receipt = {
+            # UI/history observability only. RunFinalizer stores this under Message.metadata,
+            # which Message.to_llm_dict() never projects onto the provider wire.
+            "fallback_receipt": (
+                {str(k): str(v) for k, v in _fallback_receipt.items()}
+                if isinstance(_fallback_receipt, dict)
+                else None
+            ),
+            "reasoning_mode": str(reasoning_mode_used or "auto"),
+            "reasoning_capable": bool(reasoning_capable),
+            "reasoning_control": str(reasoning_control or "unknown"),
+            "reasoning_supported": bool(reasoning_supported),
+            "reasoning_effective": bool(reasoning_effective),
+            "reasoning_tokens": int(reasoning_tokens) if reasoning_tokens is not None else None,
+        }
         final_answer, _run_end_reason = self._run_finalizer.persist_and_settle(
             sess=sess,
             session_id=session_id,
@@ -2272,6 +2288,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             projection_cannot_fit=projection_cannot_fit_noted,
             verification_note=verification_note,
             _run_started_at=_run_started_at,
+            runtime_receipt=_runtime_receipt,
         )
         # Method Learning v1：post-run 钩子（fail-open：usage 遥测 + auto 模式 friction 触发的 self-distill reflection）。
         # 位置与 feature 原点等价：run.end/长回答落盘已并入 _run_finalizer.persist_and_settle，故在其返回后、LoopResult 前调用。
@@ -2304,7 +2321,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             reasoning_effective=reasoning_effective,
             reasoning_tokens=reasoning_tokens,
             cancel_reason=_cancel_reason,
-            fallback_receipt=self._run_state().fallback_receipt,
+            fallback_receipt=_fallback_receipt,
         )
 
     def _project_request_tools(

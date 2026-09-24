@@ -77,6 +77,10 @@ def test_fallback_500_triggers_chain_success(build_test_engine, fake_settings, m
     # ② R8.9: fallback call 已经完成后不再把 notice 写进未来 prompt history。
     sess = engine.session.load(sid)
     assert not any("[模型降级:" in (m.content or "") for m in sess.messages)
+    assistant = next(m for m in reversed(sess.messages) if m.role == "assistant")
+    receipt = assistant.metadata.get("runtime_receipt")
+    assert isinstance(receipt, dict)
+    assert receipt.get("fallback_receipt") == result.fallback_receipt
     assert not (Path(new_settings.data_dir) / "state" / "fallback_notice_stamps.json").exists()
     # ③ architecture_status 快照降级态仍可见
     snap = engine.status.snapshot(session_id=sid)

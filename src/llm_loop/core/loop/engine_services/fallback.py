@@ -365,8 +365,9 @@ class FallbackService:
                     reason=reason,
                     result_status="success",
                 )
-            # Current-user delivery fact only. It never becomes a Message or future
-            # provider prompt. LoopResult/API/UI render this structured receipt.
+            # User-facing runtime fact only. It never becomes Message.content or a future
+            # provider prompt. LoopResult/API/UI render it; RunFinalizer may retain an
+            # exact provider-invisible copy in Message.metadata for history refresh.
             # LoopEngine exposes RunState, but FallbackService also has a small
             # historical duck-host test/integration surface. Receipt delivery is
             # optional there; fallback success itself must not depend on this UI fact.

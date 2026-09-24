@@ -1,7 +1,7 @@
 // 阶段 4：消息反馈 / 会话导出 / 子代理标签 / 移动端抽屉
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { MessageItem } from "./components/conversation/MessageItem";
 import { Conversation } from "./components/conversation/Conversation";
 import { Sidebar } from "./components/sidebar/Sidebar";
@@ -97,6 +97,20 @@ describe("会话导出", () => {
       expect(clickSpy).toHaveBeenCalled();
     });
     expect(downloads[0]).toContain("markdown");
+  });
+
+  it("会话错误作为独立可换行 alert，不挤在固定高度 header 内", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })));
+    render(<Conversation />);
+    await waitFor(() => expect(screen.getByTestId("export-btn")).toBeInTheDocument());
+    act(() => {
+      conversationStore.setState({
+        lastError: "[程序异常] 当前任务返回了较长的结构化错误说明；手机端也必须完整可见。",
+      });
+    });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("当前任务返回了较长的结构化错误说明");
+    expect(alert.closest(".v2-conversation-header")).toBeNull();
   });
 });
 

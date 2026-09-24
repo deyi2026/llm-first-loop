@@ -497,34 +497,57 @@ export function Composer() {
     <div className="v2-composer" data-testid="composer">
       {attachments.length > 0 && (
         <div className="v2-attachments">
-          {attachments.map((a) => (
-            <div key={a.id} className={`v2-attachment ${a.status}`}>
-              {a.preview ? <img src={a.preview} alt={a.filename} /> : <span>📄</span>}
-              <span className="v2-attachment-name" title={a.detail ?? ""}>
-                {a.filename}
-                {a.status === "pending" ? "（处理中…）" : ""}
-                {a.status === "degraded" || a.status === "error" ? "（降级/失败）" : ""}
-              </span>
-              {a.restorable_text ? (
+          {attachments.map((a) => {
+            const statusLabel =
+              a.status === "pending"
+                ? "处理中…"
+                : a.status === "degraded"
+                  ? "降级"
+                  : a.status === "error"
+                    ? "失败"
+                    : "";
+            const showDetail = Boolean(
+              a.detail && (a.status === "degraded" || a.status === "error")
+            );
+            return (
+              <div
+                key={a.id}
+                className={`v2-attachment ${a.status}${showDetail ? " has-detail" : ""}`}
+              >
+                {a.preview ? <img src={a.preview} alt={a.filename} /> : <span>📄</span>}
+                <span className="v2-attachment-copy">
+                  <span className="v2-attachment-name" title={a.detail ?? ""}>
+                    {a.filename}
+                    {statusLabel ? `（${statusLabel}）` : ""}
+                  </span>
+                  {showDetail ? (
+                    <span className="v2-attachment-detail" role="status">
+                      {a.detail}
+                    </span>
+                  ) : null}
+                </span>
+                {a.restorable_text ? (
+                  <button
+                    type="button"
+                    className="v2-attachment-restore"
+                    onClick={() => restoreAttachmentText(a)}
+                    title="把这段原文恢复到输入框"
+                  >
+                    恢复到输入框
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  className="v2-attachment-restore"
-                  onClick={() => restoreAttachmentText(a)}
-                  title="把这段原文恢复到输入框"
+                  className="v2-icon-btn"
+                  onClick={() => setAttachments((prev) => prev.filter((item) => item.id !== a.id))}
+                  title="移除"
+                  aria-label={`移除附件 ${a.filename}`}
                 >
-                  恢复到输入框
+                  ✕
                 </button>
-              ) : null}
-              <button
-                type="button"
-                className="v2-icon-btn"
-                onClick={() => setAttachments((prev) => prev.filter((item) => item.id !== a.id))}
-                title="移除"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
       )}
       {cmdOpen && (

@@ -134,6 +134,14 @@ def test_web_distinguishes_reasoning_capability_from_control(build_test_engine):
     assert body["reasoning_control"] == "unknown"
     assert body["reasoning_supported"] is False  # explicit control support
     assert body["reasoning_effective"] is True
+    sid = body["session_id"]
+    history = client.get(f"/api/v1/sessions/{sid}/messages").json()["messages"]
+    assistant = next(m for m in reversed(history) if m["role"] == "assistant")
+    assert assistant["reasoning_mode"] == "auto"
+    assert assistant["reasoning_capable"] is True
+    assert assistant["reasoning_control"] == "unknown"
+    assert assistant["reasoning_supported"] is False
+    assert assistant["reasoning_effective"] is True
 
 
 def test_reasoning_mode_web_rejects_unknown_value(build_test_engine):

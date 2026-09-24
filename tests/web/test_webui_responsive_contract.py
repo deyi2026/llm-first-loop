@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 WEBUI = ROOT / "webui"
 
@@ -33,3 +32,15 @@ def test_mobile_touch_and_narrow_layout_contracts() -> None:
     assert ".v2-composer-tools {\n    flex-wrap: wrap;" in conversation_css
     assert ".v2-chat-queue-item {\n    flex-wrap: wrap;" in conversation_css
     assert "min-height: var(--v2-mobile-touch-target)" in conversation_css
+    assert ".v2-conversation-header {\n    overflow-x: auto;" in conversation_css
+    assert ".v2-catalog-trigger,\n  .v2-conversation-header > .v2-btn" in conversation_css
+    assert ".v2-tool-activity-toggle,\n  .v2-tool-activity-row-toggle" in conversation_css
+
+
+def test_long_tool_detail_uses_bounded_scroll_region() -> None:
+    conversation_css = _read("src/tokens/conversation.css")
+
+    assert ".v2-tool-activity-detail {" in conversation_css
+    assert "max-height: min(50vh, 360px);" in conversation_css
+    assert "overflow: auto;" in conversation_css
+    assert "overscroll-behavior: contain;" in conversation_css

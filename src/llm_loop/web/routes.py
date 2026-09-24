@@ -392,6 +392,33 @@ def _result_fallback_receipt(result: Any) -> dict[str, str] | None:
         return None
     return {str(k): str(v) for k, v in value.items()}
 
+
+def _history_runtime_receipt_fields(message: Any) -> dict[str, Any]:
+    """Project only the whitelisted UI receipt from provider-invisible message metadata."""
+    metadata = getattr(message, "metadata", {})
+    if not isinstance(metadata, dict):
+        return {}
+    raw = metadata.get("runtime_receipt")
+    if not isinstance(raw, dict):
+        return {}
+
+    fields: dict[str, Any] = {}
+    fallback = raw.get("fallback_receipt")
+    if isinstance(fallback, dict):
+        fields["fallback_receipt"] = {str(k): str(v) for k, v in fallback.items()}
+    for key in ("reasoning_mode", "reasoning_control"):
+        value = raw.get(key)
+        if isinstance(value, str):
+            fields[key] = value
+    for key in ("reasoning_capable", "reasoning_supported", "reasoning_effective"):
+        value = raw.get(key)
+        if isinstance(value, bool):
+            fields[key] = value
+    reasoning_tokens = raw.get("reasoning_tokens")
+    if isinstance(reasoning_tokens, int) and not isinstance(reasoning_tokens, bool):
+        fields["reasoning_tokens"] = reasoning_tokens
+    return fields
+
 # EVO-20260818: 文件树/会话树 API（独立模块 fs_tree.py，安全边界+审计）
 from llm_loop.web.file_routes import file_router  # noqa: E402
 from llm_loop.web.fs_tree import fs_router  # noqa: E402 — 延迟导入防循环（与下方 approve 同模式）
@@ -3071,6 +3098,7 @@ def get_session_messages(
             tokens_in=getattr(m, "tokens_in", 0),  # M52: 历史 token 消耗透传
             tokens_out=getattr(m, "tokens_out", 0),  # M52
             tokens_cache_hit=getattr(m, "tokens_cache_hit", 0),  # M58: 历史命中透传（页脚 ⚡——漏了显示 0）
+            **_history_runtime_receipt_fields(m),
             ts=getattr(m, "ts", 0.0),  # 时间戳透传（web 端消息时间显示）
             tool_calls=getattr(m, "tool_calls", None),  # 工具声明透传（历史出产物/正文链接）
             attachments=list((getattr(m, "metadata", {}) or {}).get("attachments", []))

@@ -115,6 +115,7 @@ class RunFinalizer:
         projection_cannot_fit: bool,
         verification_note: str | None,
         _run_started_at: float,
+        runtime_receipt: dict[str, Any],
     ) -> tuple[str, str]:
         final_answer, _run_end_reason = self._persist_turn(
             sess=sess,
@@ -129,6 +130,7 @@ class RunFinalizer:
             tokens_cache_hit=tokens_cache_hit,
             llm_ms_total=llm_ms_total,
             ttft_first_ms=ttft_first_ms,
+            runtime_receipt=runtime_receipt,
         )
         final_answer = self._settle_run_end(
             sess=sess,
@@ -165,6 +167,7 @@ class RunFinalizer:
         tokens_cache_hit: int,
         llm_ms_total: float,
         ttft_first_ms: float | None,
+        runtime_receipt: dict[str, Any],
     ) -> tuple[str, str]:
 
         # ── 记住：沉淀记忆（不阻塞回答输出，FR-LOOP-03）──
@@ -206,6 +209,17 @@ class RunFinalizer:
             # Provider-truncated/empty/program answers never become automatically
             # retireable, and legacy messages lacking the bit remain fail-open.
             "episode_resolution_candidate": _episode_resolution_candidate,
+            # Durable user-facing runtime facts, deliberately provider-invisible:
+            # Message.to_llm_dict() does not project arbitrary metadata. This keeps
+            # fallback/reasoning receipts visible after refresh without prompt authority.
+            "runtime_receipt": {
+                **runtime_receipt,
+                "fallback_receipt": (
+                    dict(runtime_receipt["fallback_receipt"])
+                    if isinstance(runtime_receipt.get("fallback_receipt"), dict)
+                    else None
+                ),
+            },
         }
         # A provider token-limit stop is a real model partial, not a completed answer.
         # Preserve the exact model bytes in the normal assistant row, but mark the row

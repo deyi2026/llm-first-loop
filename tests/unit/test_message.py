@@ -103,6 +103,25 @@ def test_assistant_reasoning_content_roundtrip():
     assert "reasoning_content" not in m2.to_llm_dict()
 
 
+def test_assistant_runtime_receipt_metadata_is_provider_invisible():
+    """UI-only runtime receipt may persist, but must never become provider prompt authority."""
+    m = Message(
+        role="assistant",
+        content="答",
+        source=MessageSource.USER,
+        metadata={
+            "runtime_receipt": {
+                "fallback_receipt": {"from": "p/a", "to": "p/b", "reason": "rate_limit"},
+                "reasoning_mode": "on",
+                "reasoning_effective": True,
+            }
+        },
+    )
+    wire = m.to_llm_dict()
+    assert wire == {"role": "assistant", "content": "答"}
+    assert "runtime_receipt" not in wire
+
+
 def test_message_ts_default_and_roundtrip():
     """消息时间戳: 构造默认当前时间；asdict 序列化含 ts；旧 JSON 无 ts 兼容为 0."""
     import time as _time

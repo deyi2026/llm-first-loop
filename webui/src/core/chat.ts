@@ -437,11 +437,19 @@ export function toChatMessage(m: HistoryMessage): ChatMessage {
     toolName: m.tool_name ?? null,
     toolStatus: m.status ?? null,
     toolDurationMs: typeof m.duration_ms === "number" ? m.duration_ms : null,
-    note: null,
+    note: buildAssistantNote({
+      fallback_receipt: m.fallback_receipt ?? null,
+      reasoning_mode: m.reasoning_mode ?? undefined,
+      reasoning_capable: m.reasoning_capable ?? undefined,
+      reasoning_control: m.reasoning_control ?? undefined,
+      reasoning_supported: m.reasoning_supported ?? undefined,
+      reasoning_effective: m.reasoning_effective ?? undefined,
+      reasoning_tokens: m.reasoning_tokens ?? null,
+    }),
     model_used: m.model_used ?? "",
     tokens_in: m.tokens_in ?? 0,
     tokens_out: m.tokens_out ?? 0,
-    tokens_cache_hit: (m as { tokens_cache_hit?: number }).tokens_cache_hit ?? 0,
+    tokens_cache_hit: m.tokens_cache_hit ?? 0,
     ts: typeof m.ts === "number" ? m.ts : 0,
   };
 }

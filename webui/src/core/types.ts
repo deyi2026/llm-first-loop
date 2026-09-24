@@ -133,6 +133,14 @@ export interface HistoryMessage {
   model_used?: string;
   tokens_in?: number;
   tokens_out?: number;
+  tokens_cache_hit?: number;
+  fallback_receipt?: Record<string, string> | null;
+  reasoning_mode?: string | null;
+  reasoning_capable?: boolean | null;
+  reasoning_control?: string | null;
+  reasoning_supported?: boolean | null;
+  reasoning_effective?: boolean | null;
+  reasoning_tokens?: number | null;
   ts?: number;
   [key: string]: unknown;
 }

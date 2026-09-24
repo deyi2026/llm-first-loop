@@ -13,6 +13,28 @@ interface SessionStats {
   tok_s: number;
 }
 
+function finiteNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/** HTTP JSON 是运行时输入：旧端点/部分响应不得把 NaN/undefined 泄漏到 UI。 */
+function normalizeSessionStats(value: unknown): SessionStats | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  return {
+    turns: finiteNumber(raw.turns),
+    steps: finiteNumber(raw.steps),
+    tokens_in: finiteNumber(raw.tokens_in),
+    tokens_out: finiteNumber(raw.tokens_out),
+    cache_hit: finiteNumber(raw.cache_hit),
+    cache_hit_rate: finiteNumber(raw.cache_hit_rate),
+    llm_ms: finiteNumber(raw.llm_ms),
+    tool_ms: finiteNumber(raw.tool_ms),
+    ttft_avg_ms: finiteNumber(raw.ttft_avg_ms),
+    tok_s: finiteNumber(raw.tok_s),
+  };
+}
+
 /** 时间格式化（ms → 可读：3.6s / 5m12s / 11h05m） */
 function fmtMs(ms: number): string {
   if (ms <= 0) return "0s";
@@ -39,7 +61,9 @@ export function SessionStats({ sessionId }: { sessionId: string }) {
     const load = async () => {
       try {
         const resp = await fetch(`/api/v1/sessions/${sessionId}/stats`);
-        if (resp.ok && alive) setStats((await resp.json()) as SessionStats);
+        if (!resp.ok) return;
+        const next = normalizeSessionStats(await resp.json());
+        if (alive) setStats(next);
       } catch {
         /* 端点不可用 → 静默隐藏 */
       }

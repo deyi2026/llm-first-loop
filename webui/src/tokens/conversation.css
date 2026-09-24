@@ -32,8 +32,50 @@
 }
 
 .v2-conv-error {
+  flex: none;
+  padding: 6px var(--dsw-space-5);
+  border-bottom: 1px solid var(--dsw-alias-state-error-secondary);
   font-size: 12px;
+  line-height: 18px;
   color: var(--dsw-alias-state-error-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .v2-conversation-header {
+    overflow-x: auto;
+    min-height: var(--v2-mobile-touch-target);
+    height: var(--v2-mobile-touch-target);
+    padding-right: max(6px, env(safe-area-inset-right));
+    padding-left: max(6px, env(safe-area-inset-left));
+    gap: 4px;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+  }
+
+  .v2-conversation-header::-webkit-scrollbar {
+    display: none;
+  }
+
+  .v2-conversation-title {
+    flex: 0 0 auto;
+    max-width: 120px;
+  }
+
+  .v2-session-stats {
+    flex: 0 0 auto;
+  }
+
+  .v2-catalog-trigger,
+  .v2-conversation-header > .v2-btn {
+    min-height: var(--v2-mobile-touch-target);
+  }
+
+  .v2-conv-error {
+    padding-right: max(8px, env(safe-area-inset-right));
+    padding-left: max(8px, env(safe-area-inset-left));
+  }
 }
 
 /* ── 消息 ── */
@@ -543,6 +585,7 @@
 .v2-tool-activity-detail {
   margin: 0 8px 8px 26px;
   padding: 8px 10px;
+  max-height: min(50vh, 360px);
   border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-markdown-code-block);
   color: var(--dsw-alias-label-primary);
@@ -551,12 +594,26 @@
   line-height: 17px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .v2-tool-activity-detail code {
   font: inherit;
   background: none;
   padding: 0;
+}
+
+@media (max-width: 640px) {
+  .v2-tool-activity-toggle,
+  .v2-tool-activity-row-toggle {
+    min-height: var(--v2-mobile-touch-target);
+  }
+
+  .v2-tool-activity-detail {
+    margin-left: 18px;
+    max-height: min(45dvh, 320px);
+  }
 }
 
 /* ── 工具回执（彩色状态，非灰） ── */
@@ -1252,6 +1309,43 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+.v2-attachment-copy {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.v2-attachments .v2-attachment.has-detail {
+  height: auto;
+  min-height: 44px;
+  max-width: min(100%, 520px);
+  align-items: flex-start;
+  padding-block: 6px;
+}
+
+.v2-attachments .v2-attachment.has-detail .v2-attachment-copy {
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.v2-attachment-detail {
+  max-width: 360px;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.v2-attachment.degraded .v2-attachment-detail {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.v2-attachment.error .v2-attachment-detail {
+  color: var(--dsw-alias-state-error-primary);
+}
+
 .v2-attachment img {
   width: 24px;
   height: 24px;
@@ -1278,6 +1372,29 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .v2-attachments .v2-attachment {
+    max-width: 100%;
+    min-height: var(--v2-mobile-touch-target);
+  }
+
+  .v2-attachments .v2-attachment.has-detail {
+    width: 100%;
+  }
+
+  .v2-attachments .v2-attachment-copy,
+  .v2-attachments .v2-attachment-name,
+  .v2-attachments .v2-attachment-detail {
+    max-width: none;
+  }
+
+  .v2-attachments .v2-icon-btn {
+    flex: none;
+    min-width: var(--v2-mobile-touch-target);
+    min-height: var(--v2-mobile-touch-target);
+  }
 }
 
 /* ── 命令面板 ── */

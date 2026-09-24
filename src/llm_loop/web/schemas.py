@@ -78,7 +78,7 @@ class ChatResponse(BaseModel):
     projection_rebuilt: bool = False
     projection_cannot_fit: bool = False
     model_used: str = ""  # M51: 实际生成回复的模型标签（provider/model）
-    fallback_receipt: dict[str, str] | None = None  # current-user runtime fact; never prompt history
+    fallback_receipt: dict[str, str] | None = None  # user runtime fact; never prompt-visible history
     tokens_in: int = 0  # M52: 本轮 prompt tokens（0 = provider 未提供）
     tokens_out: int = 0  # M52: 本轮 completion tokens
     tokens_cache_hit: int = 0  # M58: 本轮前缀缓存命中 token（0=未提供/未命中）
@@ -202,6 +202,15 @@ class MessageItem(BaseModel):
     tokens_in: int = 0  # M52: assistant 消息 prompt tokens 透传
     tokens_out: int = 0  # M52: assistant 消息 completion tokens 透传
     tokens_cache_hit: int = 0  # M58: 前缀缓存命中 token
+    # UI-only durable runtime receipt. These fields are projected from provider-invisible
+    # Message.metadata and never become conversational/prompt content.
+    fallback_receipt: dict[str, str] | None = None
+    reasoning_mode: str | None = None
+    reasoning_capable: bool | None = None
+    reasoning_control: str | None = None
+    reasoning_supported: bool | None = None
+    reasoning_effective: bool | None = None
+    reasoning_tokens: int | None = None
     ts: float = 0.0  # 消息时间戳（epoch 秒；web 端时间显示，旧消息缺省 0）
     tool_calls: list[dict] | None = None  # assistant 工具声明透传（历史恢复出产物/正文链接）
     attachments: list[AttachmentFactItem] = Field(default_factory=list)

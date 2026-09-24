@@ -222,8 +222,9 @@ describe("product composer", () => {
     fireEvent.change(screen.getByTestId("file-input"), {
       target: { files: [new File(["x"], "offline.txt", { type: "text/plain" })] },
     });
-    await waitFor(() => expect(screen.getByText(/offline.txt.*降级\/失败/)).toBeInTheDocument());
-    expect(screen.getByText(/offline.txt.*降级\/失败/).getAttribute("title")).toContain("网络连接失败");
+    await waitFor(() => expect(screen.getByText(/offline.txt.*失败/)).toBeInTheDocument());
+    // 失败原因必须正文可见：手机/触屏没有 hover，不能只藏在 title tooltip。
+    expect(screen.getByText("网络连接失败，附件未上传。")).toBeInTheDocument();
   });
 
   it("最近附件从资料入口显式加入，不重新上传", async () => {
@@ -384,8 +385,8 @@ describe("product composer", () => {
     fireEvent.click(screen.getByTestId("insert-button"));
     const oversized = new File([new Uint8Array(10 * 1024 * 1024 + 1)], "huge.txt", { type: "text/plain" });
     fireEvent.change(screen.getByTestId("file-input"), { target: { files: [oversized] } });
-    await waitFor(() => expect(screen.getByText(/huge.txt.*降级\/失败/)).toBeInTheDocument());
-    expect(screen.getByText(/huge.txt.*降级\/失败/).getAttribute("title")).toContain("超过 10MB");
+    await waitFor(() => expect(screen.getByText(/huge.txt.*失败/)).toBeInTheDocument());
+    expect(screen.getByText(/文件超过 10MB 上限/)).toBeInTheDocument();
     expect(uploadCalls).toBe(0);
   });
 

@@ -90,7 +90,37 @@ class TestHistoryPagination:
                 "role", "content", "tool_call_id", "reasoning_content",
                 "model_used", "tokens_in", "tokens_out", "tokens_cache_hit", "tool_calls",
                 "ts", "attachments", "status", "tool_name", "duration_ms",
+                "fallback_receipt", "reasoning_mode", "reasoning_capable", "reasoning_control",
+                "reasoning_supported", "reasoning_effective", "reasoning_tokens",
             }
+
+    def test_runtime_receipt_history_projection_is_whitelisted(self, build_test_engine):
+        """UI receipt survives refresh, while arbitrary assistant metadata stays private."""
+        engine, sid, _ = _build_session(build_test_engine, 1)
+        sess = engine.session.load(sid)
+        assistant = next(m for m in reversed(sess.messages) if m.role == "assistant")
+        metadata = dict(assistant.metadata or {})
+        runtime_receipt = dict(metadata.get("runtime_receipt") or {})
+        runtime_receipt["fallback_receipt"] = {
+            "from": "p/a",
+            "to": "p/b",
+            "reason": "rate_limit",
+        }
+        metadata["runtime_receipt"] = runtime_receipt
+        metadata["private_internal_fact"] = "must-not-leak"
+        assistant.metadata = metadata
+        engine.session.save(sess)
+
+        client = _make_client(engine)
+        rows = client.get(f"/api/v1/sessions/{sid}/messages").json()["messages"]
+        restored = next(m for m in reversed(rows) if m["role"] == "assistant")
+        assert restored["fallback_receipt"] == {
+            "from": "p/a",
+            "to": "p/b",
+            "reason": "rate_limit",
+        }
+        assert "runtime_receipt" not in restored
+        assert "private_internal_fact" not in restored
 
     def test_limit_projects_only_requested_page(self, build_test_engine, monkeypatch):
         """limit bounds MessageItem projection work instead of slicing after projection."""

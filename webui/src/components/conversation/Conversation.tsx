@@ -61,25 +61,31 @@ export function Conversation() {
       )}
       {currentId ? <ContinuityBanner sessionId={currentId} /> : null}
       {current && (
-        <div className="v2-conversation-header">
-          <span className="v2-conversation-title">{current.title || current.session_id}</span>
-          {conv.lastError && <span className="v2-conv-error">{conv.lastError}</span>}
-          {currentId && <SessionStats sessionId={currentId} />}
-          <SubagentLineage />
-          <ScheduleCatalog />
-          <JobsCatalog />
-          <div style={{ flex: 1 }} />
-          <button
-            type="button"
-            className="v2-btn ghost"
-            disabled={exporting}
-            title={zh.exportSession}
-            onClick={() => void doExport(current.session_id)}
-            data-testid="export-btn"
-          >
-            {exporting ? zh.exporting : "⭳ 导出"}
-          </button>
-        </div>
+        <>
+          <div className="v2-conversation-header">
+            <span className="v2-conversation-title">{current.title || current.session_id}</span>
+            {currentId && <SessionStats sessionId={currentId} />}
+            <SubagentLineage />
+            <ScheduleCatalog />
+            <JobsCatalog />
+            <div style={{ flex: 1 }} />
+            <button
+              type="button"
+              className="v2-btn ghost"
+              disabled={exporting}
+              title={zh.exportSession}
+              onClick={() => void doExport(current.session_id)}
+              data-testid="export-btn"
+            >
+              {exporting ? zh.exporting : "⭳ 导出"}
+            </button>
+          </div>
+          {conv.lastError ? (
+            <div className="v2-conv-error" role="alert">
+              {conv.lastError}
+            </div>
+          ) : null}
+        </>
       )}
       <MessageList />
       <ChatQueue />
