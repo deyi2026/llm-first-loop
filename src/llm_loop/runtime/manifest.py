@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,8 @@ from typing import Any
 from .build_identity import compute_build_identity
 from .identity import IdentityReport
 from .resolver import EffectiveConfig
+
+logger = logging.getLogger(__name__)
 
 
 def _sha256_text(text: str) -> str:
@@ -244,6 +248,48 @@ def build_manifest(service: str, ec: EffectiveConfig,
     }
 
 
+def _existing_live_service_manifest(
+    rt_dir: Path, service: str, new_pid: int
+) -> bool:
+    """同名服务 manifest 已由一个仍存活的进程持有 → 当前（通常是短命的）写入者不得覆盖。
+
+    2026-09-24 实证（面板误报 live_pid_not_running）：restart 探测路径上的
+    短命进程（存活约 5s）在真实 web（已监听端口）之后执行了 web 启动路径并
+    覆盖 runtime_manifest.web.json 的 pid，导致 status/面板按已死 pid 误报
+    restart_required。守卫语义：service-specific 身份只允许被"旧持有者已死"
+    或"就是自己"的写入刷新。
+
+    判定 fail-open：ps 不可用/异常 → 返回 False（保持历史 last-writer 语义，
+    不阻塞真实重启写入）。pid 复用给另一 llm_loop 进程的极端场景误跳过一次
+    写入，恢复出口为删除 specific 文件后重启，属可人工处置的低频边界。
+    """
+    specific = rt_dir / f"runtime_manifest.{service}.json"
+    try:
+        old = json.loads(specific.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — 无既有/损坏 → 不构成活身份
+        return False
+    old_pid = old.get("pid")
+    if not isinstance(old_pid, int) or old_pid <= 0 or old_pid == new_pid:
+        return False
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(old_pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except Exception:  # noqa: BLE001 — 判定不可得 → fail-open 放行写入
+        return False
+    command = result.stdout.strip()
+    if not command:
+        return False  # 旧持有者已死 → 允许覆盖
+    # 标记放宽为"llm_loop 进程族"：探测/启动路径的子进程 argv 不稳定含
+    # 服务模块名（pytest 会话即反例），跨数据面同族保守保护优先于精确匹配；
+    # pid 复用给非 llm_loop 进程时必然放行（下方 return 分支）。
+    return "llm_loop" in command
+
+
 def write_manifest(manifest: dict, data_dir: str | Path) -> Path:
     """原子写 <data_dir>/runtime/runtime_manifest.json（tmp + rename）。"""
     rt_dir = Path(data_dir) / "runtime"
@@ -259,6 +305,16 @@ def write_manifest(manifest: dict, data_dir: str | Path) -> Path:
     service = str(manifest.get("service") or "").strip()
     if service in {"web", "feishu", "learning"}:
         specific = rt_dir / f"runtime_manifest.{service}.json"
+        if _existing_live_service_manifest(
+            rt_dir, service, int(manifest.get("pid") or 0)
+        ):
+            logger.info(
+                "manifest 守卫: runtime_manifest.%s.json 由存活进程持有，"
+                "本次写入者(pid=%s)不覆盖 service-specific 身份",
+                service,
+                manifest.get("pid"),
+            )
+            return out
         specific_tmp = specific.with_suffix(specific.suffix + ".tmp")
         specific_tmp.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"

@@ -2,6 +2,12 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.21 — runtime_manifest service-specific 身份活进程守卫（面板误报修复，2026-09-24）
+
+- **背景（面板误报 live_pid_not_running 实证）**：gen93 三单 restart 均 succeeded 后，面板/status 报 web `restart_required: live_pid_not_running`（pid 90928 不存在），而真实 web（pid 90846）正监听 8903 并正常服务。根因：restart 探测路径上的一个短命进程（11:32:19 写入，约 5s 后退出）在真实 web 之后执行了 web 启动路径并**覆盖** `runtime_manifest.web.json` 的 pid——specific 身份文件是单写者无锁 last-writer 语义，短命进程天然胜出。
+- **守卫语义**：`write_manifest` 写 service-specific 文件前检查既有持有者——旧 pid 存活且 argv 属 llm_loop 进程族 → 本次（通常是短命的）写入者不覆盖，仅写 merged 兼容文件并 log。旧持有者已死/无法核实（ps 异常 fail-open）→ 保持历史 last-writer 语义正常覆盖，真实重启路径不受影响。标记放宽为进程族匹配（探测/启动路径子进程 argv 不稳定含服务模块名，pytest 会话即反例）；pid 复用给非 llm_loop 进程时必然放行；误跳过的恢复出口为删除 specific 文件后重启（人工可处置低频边界）。
+- **测试**：`test_runtime_manifest_live_guard.py` 4 例（活持有者不覆盖 / 死持有者放行 / 非 llm_loop 复用放行 / ps 异常 fail-open）；全量 unit 5943 passed, 107 skipped。生效需服务重启载入（守卫在 manifest 写入路径上）。
+
 ## v0.6.20 — guard 常驻守护恢复：健康判定对齐新部署面 + 主动告知（2026-09-24）
 
 - **背景（web 死亡/换端口无人知复盘）**：guard launchd 守护自 2026-08-27 起处于 disabled 状态且已失效——①plist 仍指向迁移前旧目录（`llm-first-loop`，127 command not found）；②`restart_system.sh`/`restart_mirror.sh` 丢失执行权限（pull_up 恒 Permission denied）；③健康判定只见旧面（web.pid + `llm_loop.web` 进程 + 固定 8902），对 service_control desired-state 起的 `llm_loop.runtime.launch web` 新面进程永远误报不健康（实例：pid 14036@8903 正常服务中仍被 detect_fail）。
