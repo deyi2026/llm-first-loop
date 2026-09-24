@@ -98,6 +98,33 @@ describe("product right panel", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "停止任务" })).toBeNull());
   });
 
+  it("后台任务瞬时读取失败保留最后已知任务并显示读取错误", async () => {
+    let fail = false;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/sessions/s1/jobs")) {
+        return fail
+          ? new Response(JSON.stringify({ detail: "temporary failure" }), { status: 503 })
+          : new Response(JSON.stringify({ jobs: [{
+              job_id: "job-known",
+              executor: "execute_command",
+              state: "running",
+              local_handle: true,
+            }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+
+    render(<RightPanel open={true} />);
+    fireEvent.click(screen.getByRole("button", { name: "后台任务" }));
+    await waitFor(() => expect(screen.getByText("job-known")).toBeInTheDocument());
+
+    fail = true;
+    fireEvent.click(screen.getByRole("button", { name: /刷新/ }));
+    await waitFor(() => expect(screen.getByText(/后台任务读取失败/)).toBeInTheDocument());
+    expect(screen.getByText("job-known")).toBeInTheDocument();
+  });
+
   it("jobs 轮询单飞：慢请求期间不按 2s 周期叠加", async () => {
     vi.useFakeTimers();
     let jobCalls = 0;

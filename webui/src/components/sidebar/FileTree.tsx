@@ -72,17 +72,39 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
     })),
   ];
 
-  const loadDir = async (path: string): Promise<TreeNode[]> => {
-    if (loadingRef.current.has(path)) return [];
+  const loadDir = async (path: string): Promise<TreeNode[] | null> => {
+    if (loadingRef.current.has(path)) return null;
     loadingRef.current.add(path);
     try {
       const data = await fetchFsTree(path);
-      return data ? toNodes(data) : [];
+      return data ? toNodes(data) : null;
     } catch {
-      return [];
+      return null;
     } finally {
       loadingRef.current.delete(path);
     }
+  };
+
+  const storeListing = (path: string, items: TreeNode[]): void => {
+    if (path === root) {
+      setRootItems(items);
+      return;
+    }
+    setChildren((prev) => {
+      const m = new Map(prev);
+      m.set(path, items);
+      return m;
+    });
+  };
+
+  const refreshAfterMutation = async (path: string): Promise<boolean> => {
+    const items = await loadDir(path);
+    if (items === null) {
+      setActionError("操作已完成，但目录刷新失败；已保留当前列表，请重试。");
+      return false;
+    }
+    storeListing(path, items);
+    return true;
   };
 
   // 根 = 工作区根（tree API ""）
@@ -106,22 +128,24 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
   }, []);
 
   const toggle = async (node: TreeNode) => {
-    const next = new Set(expanded);
-    if (next.has(node.path)) {
-      next.delete(node.path);
-      setExpanded(next);
+    if (expanded.has(node.path)) {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        next.delete(node.path);
+        return next;
+      });
       return;
     }
-    next.add(node.path);
-    setExpanded(next);
     if (!children.has(node.path)) {
       const items = await loadDir(node.path);
-      setChildren((prev) => {
-        const m = new Map(prev);
-        m.set(node.path, items);
-        return m;
-      });
+      if (items === null) {
+        setActionError("目录读取失败；未把未知状态当成空目录，请重试。");
+        return;
+      }
+      setActionError("");
+      storeListing(node.path, items);
     }
+    setExpanded((prev) => new Set(prev).add(node.path));
   };
 
   const copyPath = (path: string) => {
@@ -145,12 +169,7 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
       setNewDirParent(null);
       setNewDirValue("");
       // 刷新父目录
-      const items = await loadDir(newDirParent);
-      setChildren((prev) => {
-        const m = new Map(prev);
-        m.set(newDirParent, items);
-        return m;
-      });
+      await refreshAfterMutation(newDirParent);
       setExpanded((prev) => new Set(prev).add(newDirParent));
     }
   };
@@ -169,12 +188,7 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
       setActionError("");
       const parent = renameTarget.path.split("/").slice(0, -1).join("/");
       setRenameTarget(null);
-      const items = await loadDir(parent || "");
-      setChildren((prev) => {
-        const m = new Map(prev);
-        m.set(parent || "", items);
-        return m;
-      });
+      await refreshAfterMutation(parent || root);
     }
   };
 
@@ -192,12 +206,7 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
       setActionError("");
       const parent = confirmDelete.path.split("/").slice(0, -1).join("/");
       setConfirmDelete(null);
-      const items = await loadDir(parent || "");
-      setChildren((prev) => {
-        const m = new Map(prev);
-        m.set(parent || "", items);
-        return m;
-      });
+      await refreshAfterMutation(parent || root);
     }
   };
 

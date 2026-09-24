@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   cancelSessionScheduleItem,
-  fetchSessionSchedule,
+  fetchSessionScheduleResult,
   type ScheduleItem,
 } from "../../core/api";
 import { useCapabilities } from "../../core/capabilities";
@@ -99,10 +99,17 @@ export function ScheduleCatalog() {
     const sid = activeSession.current;
     if (!sid) {
       setItems([]);
+      setError("");
       return;
     }
-    const next = await fetchSessionSchedule(sid);
-    if (activeSession.current === sid) setItems(next);
+    const result = await fetchSessionScheduleResult(sid);
+    if (activeSession.current !== sid) return;
+    if (!result.ok) {
+      setError("提醒状态读取失败；当前显示上次已知结果。");
+      return;
+    }
+    setError("");
+    setItems(result.items);
   }, []);
 
   // 发现轮询：能力可用即拉（trigger 空则隐藏，仍需发现新增提醒）

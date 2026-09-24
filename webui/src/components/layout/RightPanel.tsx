@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
 import {
   fetchAuthStatus,
-  fetchSessionJobs,
+  fetchSessionJobsResult,
   killSessionJob,
   type AuthStatus,
   type JobFact,
@@ -34,6 +34,7 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [jobs, setJobs] = useState<JobFact[]>([]);
   const [jobError, setJobError] = useState("");
+  const [jobReadError, setJobReadError] = useState("");
   const [jobBusy, setJobBusy] = useState<string | null>(null);
   const jobsInFlightSession = useRef<string | null>(null);
   const activeSession = useRef(currentSessionId);
@@ -48,13 +49,20 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
   const loadJobs = useCallback(async () => {
     if (!currentSessionId) {
       setJobs([]);
+      setJobReadError("");
       return;
     }
     if (jobsInFlightSession.current === currentSessionId) return;
     jobsInFlightSession.current = currentSessionId;
     try {
-      const next = await fetchSessionJobs(currentSessionId);
-      if (activeSession.current === currentSessionId) setJobs(next);
+      const result = await fetchSessionJobsResult(currentSessionId);
+      if (activeSession.current !== currentSessionId) return;
+      if (!result.ok) {
+        setJobReadError("后台任务读取失败；当前显示上次已知结果。");
+        return;
+      }
+      setJobReadError("");
+      setJobs(result.items);
     } finally {
       if (jobsInFlightSession.current === currentSessionId) jobsInFlightSession.current = null;
     }
@@ -148,7 +156,7 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
           <JobsView
             sessionId={currentSessionId}
             jobs={jobs}
-            error={jobError}
+            error={jobError || jobReadError}
             busyId={jobBusy}
             onRefresh={loadJobs}
             onCancel={cancelJob}

@@ -6,7 +6,7 @@
 // 排序：live 在前按开始时间升序，settled 按结束时间降序（最新完成靠前）。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchSessionJobs, type JobFact } from "../../core/api";
+import { fetchSessionJobsResult, type JobFact } from "../../core/api";
 import { useCapabilities } from "../../core/capabilities";
 import { useConversation } from "../../core/conversation";
 import { runAwareIntervalMs } from "../../core/runAwarePoll";
@@ -95,6 +95,7 @@ export function JobsCatalog() {
   const runBusy = Boolean(_conv.streaming || _conv.backgroundRunning);
   const sessionId = useCurrentSessionId();
   const [jobs, setJobs] = useState<JobFact[]>([]);
+  const [readStale, setReadStale] = useState(false);
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -105,10 +106,17 @@ export function JobsCatalog() {
     const sid = activeSession.current;
     if (!sid) {
       setJobs([]);
+      setReadStale(false);
       return;
     }
-    const next = await fetchSessionJobs(sid);
-    if (activeSession.current === sid) setJobs(next);
+    const result = await fetchSessionJobsResult(sid);
+    if (activeSession.current !== sid) return;
+    if (!result.ok) {
+      setReadStale(true);
+      return;
+    }
+    setReadStale(false);
+    setJobs(result.items);
   }, []);
 
   // 发现轮询：空则隐藏 trigger，仍需发现新任务
@@ -181,6 +189,7 @@ export function JobsCatalog() {
           setOpen((v) => !v);
         }}
         data-testid="jobs-catalog-trigger"
+        title={readStale ? "后台任务状态读取失败；当前显示上次已知结果" : undefined}
       >
         {liveCount > 0 ? <span className="v2-catalog-livedot ongoing" aria-hidden="true" /> : null}
         <span>{countLabel}</span>

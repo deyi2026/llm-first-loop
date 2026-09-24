@@ -406,12 +406,20 @@ export interface JobFact {
   finished_at?: number | null;
 }
 
-export async function fetchSessionJobs(sessionId: string): Promise<JobFact[]> {
-  if (!sessionId) return [];
+export interface ReadListResult<T> {
+  ok: boolean;
+  items: T[];
+  status: number;
+}
+
+export async function fetchSessionJobsResult(sessionId: string): Promise<ReadListResult<JobFact>> {
+  if (!sessionId) return { ok: true, items: [], status: 200 };
   const { status, data } = await api<{ jobs?: JobFact[] }>(
     `/api/v1/sessions/${encodeURIComponent(sessionId)}/jobs`
   );
-  return status === 200 && Array.isArray(data.jobs) ? data.jobs : [];
+  const items = Array.isArray(data.jobs) ? data.jobs : [];
+  const ok = status === 200 && Array.isArray(data.jobs);
+  return { ok, items: ok ? items : [], status };
 }
 
 export async function killSessionJob(
@@ -438,12 +446,16 @@ export interface ScheduleItem {
   created_at?: number;
 }
 
-export async function fetchSessionSchedule(sessionId: string): Promise<ScheduleItem[]> {
-  if (!sessionId) return [];
+export async function fetchSessionScheduleResult(
+  sessionId: string
+): Promise<ReadListResult<ScheduleItem>> {
+  if (!sessionId) return { ok: true, items: [], status: 200 };
   const { status, data } = await api<{ schedule?: ScheduleItem[] }>(
     `/api/v1/sessions/${encodeURIComponent(sessionId)}/schedule`
   );
-  return status === 200 && Array.isArray(data.schedule) ? data.schedule : [];
+  const items = Array.isArray(data.schedule) ? data.schedule : [];
+  const ok = status === 200 && Array.isArray(data.schedule);
+  return { ok, items: ok ? items : [], status };
 }
 
 export async function cancelSessionScheduleItem(

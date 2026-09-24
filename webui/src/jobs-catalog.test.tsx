@@ -81,6 +81,26 @@ afterEach(() => {
 });
 
 describe("jobs catalog (DSH JobListAction parity)", () => {
+  it("transient read failure preserves last known jobs instead of fabricating an empty catalog", async () => {
+    let fail = false;
+    installFetch((url) => {
+      if (url.includes("/api/v1/sessions/s1/jobs")) {
+        return fail
+          ? new Response(JSON.stringify({ detail: "temporary failure" }), { status: 503 })
+          : new Response(JSON.stringify({ jobs: jobs(), count: 5 }), { status: 200 });
+      }
+      return undefined;
+    });
+    render(<JobsCatalog />);
+    const trigger = await screen.findByTestId("jobs-catalog-trigger");
+    expect(trigger).toHaveTextContent("2 个后台任务运行中");
+
+    fail = true;
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(screen.getByTestId("jobs-catalog-trigger")).toBeInTheDocument());
+    expect(screen.getByTestId("jobs-catalog-trigger")).toHaveTextContent("2 个后台任务运行中");
+  });
+
   it("空态不渲染；有任务时显示 live 计数 trigger", async () => {
     let empty = false;
     installFetch((url) => {

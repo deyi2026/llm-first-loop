@@ -63,6 +63,25 @@ afterEach(() => {
 });
 
 describe("schedule catalog (DSH ScheduleCatalogAction parity)", () => {
+  it("transient read failure preserves last known reminders instead of fabricating empty", async () => {
+    let fail = false;
+    installFetch((url) => {
+      if (url.includes("/api/v1/sessions/s1/schedule")) {
+        return fail
+          ? new Response(JSON.stringify({ detail: "temporary failure" }), { status: 503 })
+          : new Response(JSON.stringify({ schedule: items(), count: 2 }), { status: 200 });
+      }
+      return undefined;
+    });
+    render(<ScheduleCatalog />);
+    await waitFor(() => expect(screen.getByTestId("schedule-catalog-trigger")).toHaveTextContent("2 个提醒"));
+
+    fail = true;
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(screen.getByTestId("schedule-catalog-trigger")).toBeInTheDocument());
+    expect(screen.getByTestId("schedule-catalog-trigger")).toHaveTextContent("2 个提醒");
+  });
+
   it("空态完全不渲染；有提醒时显示计数 trigger", async () => {
     let empty = false;
     installFetch((url) => {
