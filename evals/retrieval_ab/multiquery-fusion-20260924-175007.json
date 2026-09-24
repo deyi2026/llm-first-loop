@@ -1,0 +1,573 @@
+{
+  "rewrites_source": "evals/retrieval_ab/auto-rewrites-goldset25-20260924.json",
+  "summary": {
+    "n": 25,
+    "rrf_k": 60,
+    "top_k": 20,
+    "corpus": 1761,
+    "elapsed_s": 6.12,
+    "baseline_single_query": {
+      "h@1": 5,
+      "h@3": 10,
+      "h@5": 14,
+      "h@10": 17,
+      "mrr": 0.3361,
+      "miss": 8
+    },
+    "multiquery_fused": {
+      "h@1": 9,
+      "h@3": 15,
+      "h@5": 16,
+      "h@10": 19,
+      "mrr": 0.5046,
+      "miss": 4
+    },
+    "any_variant_best_diagnostic": {
+      "h@1": 13,
+      "h@3": 14,
+      "h@5": 19,
+      "h@10": 20,
+      "mrr": 0.5983,
+      "miss": 4
+    },
+    "verdicts": {
+      "SAVED": 1,
+      "OK-KEEP": 13,
+      "REGRESSION": 1,
+      "IMPROVED": 2,
+      "NO-GAIN": 1,
+      "STILL-MISS": 7
+    },
+    "reference": {
+      "baseline_paraphrase_fused_h5_reg": 14,
+      "oracle_ceiling_h5": 21
+    }
+  },
+  "detail": [
+    {
+      "id": "Q01",
+      "query": "飞书桥的密钥从哪里加载，优先级是什么",
+      "gold": "MEM-20260810-3d377ff0",
+      "orig_rank": 1,
+      "fused_rank": 1,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "飞书 桥 feishu bridge 密钥 加载 优先级 环境 变量 配置",
+          "rank": 1,
+          "mode": "mixed"
+        },
+        {
+          "text": "feishu_bridge app_id app_secret 密钥 加载 顺序 配置 优先级 loader",
+          "rank": 3,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    },
+    {
+      "id": "Q02",
+      "query": "飞书消息收发用哪个应用凭证",
+      "gold": "MEM-20260811-8fe63120",
+      "orig_rank": 4,
+      "fused_rank": 9,
+      "best_single_rank": 4,
+      "variants": [
+        {
+          "text": "飞书 消息 收发 发送 应用 凭证 app credential tenant token",
+          "rank": 8,
+          "mode": "mixed"
+        },
+        {
+          "text": "feishu app_id app_secret tenant_access_token 凭证 消息 发送",
+          "rank": 14,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "REGRESSION"
+    },
+    {
+      "id": "Q03",
+      "query": "改了环境变量配置为什么不生效",
+      "gold": "MEM-20260814-9e98292f",
+      "orig_rank": null,
+      "fused_rank": 2,
+      "best_single_rank": 6,
+      "variants": [
+        {
+          "text": "环境 变量 配置 修改 不生效 未 加载 重启 生效",
+          "rank": 6,
+          "mode": "mixed"
+        },
+        {
+          "text": "env 环境变量 .env 修改 不生效 配置 加载 热更新 restart",
+          "rank": 9,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "SAVED"
+    },
+    {
+      "id": "Q04",
+      "query": "模型调用出错时最终回答里那个前缀标记是谁生成的",
+      "gold": "MEM-20260811-381d1e8a",
+      "orig_rank": null,
+      "fused_rank": 11,
+      "best_single_rank": 4,
+      "variants": [
+        {
+          "text": "模型 调用 出错 失败 最终 回答 前缀 标记 生成者 来源",
+          "rank": 4,
+          "mode": "mixed"
+        },
+        {
+          "text": "模型 报错 回答 前缀 prefix error marker 生成 final answer fallback",
+          "rank": 17,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "STILL-MISS"
+    },
+    {
+      "id": "Q05",
+      "query": "系统变慢和反复压缩有什么关系",
+      "gold": "MEM-20260822-efd8b59a",
+      "orig_rank": 1,
+      "fused_rank": 2,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "系统 变慢 性能 下降 反复 压缩 上下文 历史 关系",
+          "rank": 6,
+          "mode": "mixed"
+        },
+        {
+          "text": "压缩 compress 上下文 context 历史 反复 压缩 性能 变慢 原因",
+          "rank": 9,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    },
+    {
+      "id": "Q06",
+      "query": "工具调用性能优化主要优化什么指标",
+      "gold": "MEM-20260822-631105bc",
+      "orig_rank": 3,
+      "fused_rank": 1,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "工具 调用 性能 优化 指标 延迟 耗时 响应 时间",
+          "rank": 1,
+          "mode": "mixed"
+        },
+        {
+          "text": "tool call latency 耗时 指标 P95 延迟 性能 优化 目标",
+          "rank": 1,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    },
+    {
+      "id": "Q07",
+      "query": "旧工具结果按什么规则裁剪",
+      "gold": "MEM-20260818-52cd07c0",
+      "orig_rank": null,
+      "fused_rank": null,
+      "best_single_rank": null,
+      "variants": [
+        {
+          "text": "旧 工具 结果 裁剪 规则 历史 observation 截断 保留 策略",
+          "rank": null,
+          "mode": "mixed"
+        },
+        {
+          "text": "工具 结果 裁剪 truncate observation 历史 滚动 规则 保留",
+          "rank": null,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "STILL-MISS"
+    },
+    {
+      "id": "Q08",
+      "query": "自我评估哪些维度历史上一直不达标",
+      "gold": "MEM-20260813-3e159470",
+      "orig_rank": 7,
+      "fused_rank": 1,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "自我 评估 维度 历史 一直 不达标 低分 指标",
+          "rank": 1,
+          "mode": "mixed"
+        },
+        {
+          "text": "self_evaluate 维度 成功率 诚实性 停滞 异常 历史 低分 不达标",
+          "rank": 3,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "IMPROVED"
+    },
+    {
+      "id": "Q09",
+      "query": "这台机器的硬件配置是什么",
+      "gold": "MEM-20260907-1825fa9e",
+      "orig_rank": 3,
+      "fused_rank": 1,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "机器 硬件 配置 CPU 内存 磁盘 规格 型号 信息",
+          "rank": 1,
+          "mode": "mixed"
+        },
+        {
+          "text": "hardware cpu cores memory disk 机器 配置 规格 容量",
+          "rank": 1,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    },
+    {
+      "id": "Q10",
+      "query": "用户审代码的习惯风格",
+      "gold": "MEM-20260910-fbb9a634",
+      "orig_rank": null,
+      "fused_rank": null,
+      "best_single_rank": null,
+      "variants": [
+        {
+          "text": "用户 审 代码 习惯 风格 code review 偏好 要求",
+          "rank": null,
+          "mode": "mixed"
+        },
+        {
+          "text": "code review 用户 偏好 风格 审查 习惯 注释 简洁",
+          "rank": null,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "STILL-MISS"
+    },
+    {
+      "id": "Q11",
+      "query": "证据可恢复性验证过没有，结果如何",
+      "gold": "MEM-20260829-db3ed00a",
+      "orig_rank": null,
+      "fused_rank": null,
+      "best_single_rank": null,
+      "variants": [
+        {
+          "text": "证据 可恢复性 验证 是否 测试 结果 备份 恢复",
+          "rank": null,
+          "mode": "mixed"
+        },
+        {
+          "text": "evidence recovery 可恢复 验证 backup 恢复 测试 结果",
+          "rank": null,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "STILL-MISS"
+    },
+    {
+      "id": "Q12",
+      "query": "算成本时缓存命中数据以哪个来源为准",
+      "gold": "MEM-20260823-3a8e4d12",
+      "orig_rank": 2,
+      "fused_rank": 2,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "成本 计算 缓存 命中 数据 来源 以 哪个 为准 cache hit",
+          "rank": 1,
+          "mode": "mixed"
+        },
+        {
+          "text": "cost 缓存命中 cache hit token 用量 计费 数据 来源",
+          "rank": 2,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    },
+    {
+      "id": "Q13",
+      "query": "往公开仓库提交代码时作者信息怎么填",
+      "gold": "MEM-20260908-92569756",
+      "orig_rank": 1,
+      "fused_rank": 1,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "公开 仓库 提交 代码 作者 信息 填写 git commit author",
+          "rank": 1,
+          "mode": "mixed"
+        },
+        {
+          "text": "git author email 用户名 提交 公开 仓库 邮箱 填写",
+          "rank": 1,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    },
+    {
+      "id": "Q14",
+      "query": "现在允许执行 shell 命令吗，有没有什么历史限制",
+      "gold": "MEM-20260810-f4e98600",
+      "orig_rank": 3,
+      "fused_rank": 2,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "现在 允许 执行 shell 命令 吗 历史 限制 安全 白名单",
+          "rank": 8,
+          "mode": "mixed"
+        },
+        {
+          "text": "execute_command shell 命令 白名单 限制 危险 禁止 授权",
+          "rank": 1,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    },
+    {
+      "id": "Q15",
+      "query": "声称完成任务但没实际执行会怎样",
+      "gold": "MEM-20260818-d4fe7e7e",
+      "orig_rank": null,
+      "fused_rank": 22,
+      "best_single_rank": 11,
+      "variants": [
+        {
+          "text": "声称 完成 任务 未 实际 执行 虚假 声明 后果 处理",
+          "rank": 11,
+          "mode": "mixed"
+        },
+        {
+          "text": "虚假 完成 声明 未执行 declaration 检查 惩罚 谎报 任务",
+          "rank": null,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "STILL-MISS"
+    },
+    {
+      "id": "Q16",
+      "query": "旧 web 会话归档到哪个目录了",
+      "gold": "MEM-20260825-2f39f239",
+      "orig_rank": 5,
+      "fused_rank": 2,
+      "best_single_rank": 2,
+      "variants": [
+        {
+          "text": "旧 web 会话 归档 到 哪个 目录 位置 archive",
+          "rank": 3,
+          "mode": "mixed"
+        },
+        {
+          "text": "web 会话 归档 目录 archive sessions 路径 存放 位置",
+          "rank": 2,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    },
+    {
+      "id": "Q17",
+      "query": "同步远端主线用 merge 还是 rebase",
+      "gold": "MEM-20260909-e0c9a56f",
+      "orig_rank": 7,
+      "fused_rank": 6,
+      "best_single_rank": 4,
+      "variants": [
+        {
+          "text": "同步 远端 主线 merge rebase 选择 策略 git 拉取",
+          "rank": 6,
+          "mode": "mixed"
+        },
+        {
+          "text": "git pull merge rebase 主线 同步 远端 冲突 策略",
+          "rank": 4,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "NO-GAIN"
+    },
+    {
+      "id": "Q18",
+      "query": "错误恢复里消息剥离重发最多几次",
+      "gold": "MEM-20260827-589020d5",
+      "orig_rank": 1,
+      "fused_rank": 1,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "错误 恢复 消息 剥离 重发 最多 几次 限制 次数",
+          "rank": 1,
+          "mode": "mixed"
+        },
+        {
+          "text": "错误恢复 消息 剥离 重发 retry 次数 上限 拆分 重试",
+          "rank": 1,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    },
+    {
+      "id": "Q19",
+      "query": "为什么会话前缀缓存一直不命中",
+      "gold": "MEM-20260827-a6f1fb7d",
+      "orig_rank": 4,
+      "fused_rank": 5,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "会话 前缀 缓存 一直 不命中 miss 原因 prompt cache",
+          "rank": 1,
+          "mode": "mixed"
+        },
+        {
+          "text": "prefix cache 不命中 前缀 变化 prompt 缓存 命中率 原因",
+          "rank": 13,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    },
+    {
+      "id": "Q20",
+      "query": "父子代理互发消息实测过吗",
+      "gold": "MEM-20260818-685c91b0",
+      "orig_rank": 1,
+      "fused_rank": 1,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "父 子 代理 互发 消息 实测 验证 测试 结果",
+          "rank": 1,
+          "mode": "mixed"
+        },
+        {
+          "text": "agent_message parent child 父 子 代理 消息 实测 验证",
+          "rank": 1,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    },
+    {
+      "id": "Q21",
+      "query": "模型接口报 500 可能是什么原因",
+      "gold": "MEM-20260830-72ff5609",
+      "orig_rank": null,
+      "fused_rank": 6,
+      "best_single_rank": 5,
+      "variants": [
+        {
+          "text": "模型 接口 报 500 可能 原因 服务端 错误 排查",
+          "rank": 10,
+          "mode": "mixed"
+        },
+        {
+          "text": "500 internal server error 模型 api 接口 报错 原因",
+          "rank": 5,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "STILL-MISS"
+    },
+    {
+      "id": "Q22",
+      "query": "已知的测试失败项记录在哪个文件",
+      "gold": "MEM-20260909-1d2d768b",
+      "orig_rank": null,
+      "fused_rank": null,
+      "best_single_rank": null,
+      "variants": [
+        {
+          "text": "已知 测试 失败 项 记录 在 哪个 文件 清单 known failures",
+          "rank": null,
+          "mode": "mixed"
+        },
+        {
+          "text": "known_failures 测试 失败 记录 文件 flaky tests 清单 路径",
+          "rank": null,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "STILL-MISS"
+    },
+    {
+      "id": "Q23",
+      "query": "查架构状态的工具有个参数不能传是哪个",
+      "gold": "MEM-20260820-9a8d8d45",
+      "orig_rank": 6,
+      "fused_rank": 1,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "查询 架构 状态 工具 有 个 参数 不能 传 禁止",
+          "rank": 1,
+          "mode": "mixed"
+        },
+        {
+          "text": "architecture_status 参数 禁止 不能 传 dimensions scope 工具 限制",
+          "rank": 1,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "IMPROVED"
+    },
+    {
+      "id": "Q24",
+      "query": "编辑文件工具有什么已知缺陷",
+      "gold": "MEM-20260813-6b931628",
+      "orig_rank": 2,
+      "fused_rank": 1,
+      "best_single_rank": 1,
+      "variants": [
+        {
+          "text": "编辑 文件 工具 已知 缺陷 问题 bug 限制",
+          "rank": 1,
+          "mode": "mixed"
+        },
+        {
+          "text": "edit_file 缺陷 bug 已知 问题 替换 失败 限制",
+          "rank": 1,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    },
+    {
+      "id": "Q25",
+      "query": "分享按钮实际做了什么",
+      "gold": "MEM-20260909-f7774536",
+      "orig_rank": 4,
+      "fused_rank": 3,
+      "best_single_rank": 4,
+      "variants": [
+        {
+          "text": "分享 按钮 实际 做了 什么 功能 行为 实现 作用",
+          "rank": 4,
+          "mode": "mixed"
+        },
+        {
+          "text": "share button 分享 按钮 实现 点击 行为 webui 功能",
+          "rank": 4,
+          "mode": "mixed"
+        }
+      ],
+      "verdict": "OK-KEEP"
+    }
+  ]
+}
