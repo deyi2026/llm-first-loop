@@ -2,6 +2,16 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.25 — restart 三件套修复链 + 端口口径清扫 + convergence 快照 + 版本面对齐（2026-09-24）
+
+- **restart 互斥锁路径修复**：v0.6.24 引入的互斥锁引用 `$DATA_DIR`，该键在 restart_system.sh 中是被 unset 的危险键——set -u 下 unbound → 脚本秒退（rc=1）→ 早退路径不写回执 → 陈旧回执误报 action_id_mismatch（13:4x 两连 restart 失败实证）。锁路径改锚 `MIRROR_DIR/data/runtime`，与 _write_receipt 同一事实源。
+- **restart 三件套（gen105 实战验证通过）**：① 陈旧回执误判——回执 ts 早于本次 action 创建 → stale_receipt + 脚本输出尾部透传（陈旧≠零副作用证明，仍 fail-closed keep）；② _stop_service argv 双面探针（runtime.launch 新面 + 旧面，PROJECT_DIR 锚定）+ web 端口权威兜底（PID 校验含 PROJECT_DIR 防误杀），等待/强杀按 PID+端口释放，弃 pkill -f；③ _start_service 撞端口幂等——本项目占用者优雅停后重启，非本项目占用者如实拒绝。
+- **端口口径清扫（8902 残留归零）**：guard 健康判定端口清单从镜像 .env 读权威 WEB_PORT（默认 8903）起扫；restart_system WEB_PORT 默认链 env > .env > 8903；web/__init__.py 默认端口 8902→8903、service_control 判活回退区间 8902-8905→8903-8905。78 处注释同步改为"旧主区"口径。
+- **service_control convergence 快照**：publish/update 成功回执附只读 lagging 列表（compose_convergence_view 纯派生 identity view），调用方可见其它服务代差（此前 feishu 滞后 gen98→103 无人重启直到告警）；不新增门禁/锁/restart action。
+- **knowledge-health advisory**：method store untracked 积压超阈值（>50 文件）时 warnings 置 `method_store_untracked_backlog`——只告警，不隔离、不封写。
+- **知识/资产入库**：docs 10 篇（hev0-p3 三臂运行时设计与结论、retrieval-AB 与 miss 归因修正报告、authority-map 拒收审计等）；method store 154 条与 experiences 25 条积压入库；evals/retrieval_ab 评测脚本与结果基线；tunnel-watchdog 与 fuyao 数据客户端。
+- **版本面对齐修复**：v0.6.24 发布漏更 `routes.SERVICE_VERSION`（停在 0.6.23）与 README.en.md（停在 0.6.23），`test_public_version_surfaces_match_project_version` 红——本次全表面对齐 0.6.25，一致性测试恢复绿。
+
 ## v0.6.24 — restart 双通道互斥锁 + web 判活端口兜底（2026-09-24）
 
 - **背景（13:08 双通道并发实证）**：权威通道（service_control→restart_mirror.sh）停旧进程的端口空窗恰被 guard 巡检命中 detect_fail → restart_system.sh 并发拉起 → 双 web 抢 8903 一活（29418）一死（29502），死进程退出前写的 runtime_manifest.web.json 留下死 pid → 面板/status 误报 live_pid_not_running（"重启没生效"假象）；guard 随后 pull_up_ok 探测到的其实是活通道的进程。
