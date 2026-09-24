@@ -22,11 +22,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from llm_loop import config as _config
 from llm_loop.browser.action import BrowserActionAdapter, BrowserActionReceiptStore
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
-from llm_loop import config as _config
 from llm_loop.config import Settings
 from llm_loop.core.history import converge_history_budget
 from llm_loop.core.loop import LoopEngine
@@ -57,6 +57,7 @@ from llm_loop.memory.attachments import AttachmentStore
 from llm_loop.memory.embedder import HashEmbedder
 from llm_loop.memory.episode import EpisodeStore
 from llm_loop.memory.evidence import EvidenceError
+from llm_loop.memory.multiquery_shadow import MultiqueryShadowProbe, make_llm_rewriter
 from llm_loop.memory.store import MemoryStore
 from llm_loop.memory.synopsis import (
     MAX_SOURCE_SNAPSHOT_CHARS,
@@ -83,9 +84,13 @@ from llm_loop.runtime.causality import build_runtime_causal_snapshot
 from llm_loop.runtime.knowledge_health import inspect_knowledge_health
 from llm_loop.runtime.paths import RuntimePaths, resolve_runtime_paths
 from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
+
+# EVO-20260924-8266b693 B: 顶层导入（runtime/service_control 顶层纯标准库，
+# 无循环依赖）——函数内 import 会撞 local_imports 棘轮（factory 63 基线）。
 from llm_loop.runtime.service_control import (
     ManagedServiceDeploymentStore,
     ManagedServiceMutationGuard,
+    scan_unacknowledged_failed_actions,
 )
 from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
@@ -125,9 +130,6 @@ from llm_loop.tools.builtin.web_search import WebSearchTool
 from llm_loop.tools.builtin.workflow import WorkflowRunTool
 from llm_loop.tools.escalation import EscalationStore
 from llm_loop.tools.registry import ToolRegistry
-# EVO-20260924-8266b693 B: 顶层导入（runtime/service_control 顶层纯标准库，
-# 无循环依赖）——函数内 import 会撞 local_imports 棘轮（factory 63 基线）。
-from llm_loop.runtime.service_control import scan_unacknowledged_failed_actions
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 from llm_loop.workspace.file_effect_query import FileEffectQueryService
 from llm_loop.workspace.file_service import FileService
@@ -1516,11 +1518,6 @@ def build_engine(
     # REPORT-20260924 多查询融合影子模式：mode=shadow 时旁路测量（延迟/排序差异 JSONL），主路径零行为
     multiquery_probe = None
     if settings.retrieval_multiquery_mode == "shadow" and semantic_retriever is not None:
-        from llm_loop.memory.multiquery_shadow import (
-            MultiqueryShadowProbe,
-            make_llm_rewriter,
-        )
-
         multiquery_probe = MultiqueryShadowProbe(
             rewriter=make_llm_rewriter(llm),
             out_path=Path(settings.data_dir) / "retrieval_shadow.jsonl",

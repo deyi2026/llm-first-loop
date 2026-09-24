@@ -12,13 +12,12 @@ import re
 import sys
 from pathlib import Path
 
-from llm_loop.core.message import ToolResultStatus
+from llm_loop.core.message import ToolCall, ToolResultStatus
 from llm_loop.core.prompt import _BASE_PROMPT, build_system_prompt
 from llm_loop.introspection.registry_introspection import _SEARCH_RECORDS_TOOL_DEF
 from llm_loop.llm.client import LLMResponse
 from llm_loop.tools.builtin.convergence_decide import ConvergenceDecideTool
 from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS
-from llm_loop.core.message import ToolCall
 from tests.unit.test_err1210_recovery import _mk
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +28,8 @@ _SLIM_PREFIX_HASH_12 = "8934d96c3f25"
 
 _TOOL = ConvergenceDecideTool()
 _PARAMS = _TOOL.parameters
+
+_RULE_HEADING_RE = re.compile(r"^## .*?(RULE-AI-\d{2})", re.MULTILINE)
 
 
 def _load_audit():
@@ -41,6 +42,11 @@ def _load_audit():
     assert spec and spec.loader
     spec.loader.exec_module(module)
     return module
+
+
+def _sot_rule_refs(sot: str) -> list[str]:
+    """只枚举 SoT 正式规则标题；正文引用/编号空缺说明不属于规则定义。"""
+    return sorted(set(_RULE_HEADING_RE.findall(sot)), key=lambda r: int(r.split("-")[-1]))
 
 
 def _tool_names(call: dict) -> list[str]:
@@ -274,8 +280,22 @@ def test_audit_marks_undeterminable() -> None:
 
 def test_ledger_covers_all_sot_rules() -> None:
     sot = (_ROOT / "docs" / "ai_rules.md").read_text(encoding="utf-8")
-    refs = sorted(set(re.findall(r"RULE-AI-\d{2}", sot)), key=lambda r: int(r.split("-")[-1]))
+    refs = _sot_rule_refs(sot)
     assert refs
     ledger = _LEDGER_MD.read_text(encoding="utf-8")
     missing = [ref for ref in refs if ref not in ledger]
     assert missing == []
+
+
+def test_sot_rule_refs_ignore_body_mentions_and_gap_notes() -> None:
+    refs = _sot_rule_refs(
+        "\n".join(
+            [
+                "## 规则二十：正式规则（RULE-AI-20，示例）",
+                "正文引用 RULE-AI-19 不应新增规则。",
+                "**编号空缺说明（RULE-AI-21）**：该号未进入 SoT。",
+                "## 规则二十二：正式规则（RULE-AI-22，示例）",
+            ]
+        )
+    )
+    assert refs == ["RULE-AI-20", "RULE-AI-22"]

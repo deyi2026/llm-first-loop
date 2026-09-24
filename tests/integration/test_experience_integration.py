@@ -11,6 +11,10 @@ from llm_loop.introspection.corrections import CorrectionContext, CorrectionTool
 from llm_loop.introspection.search import RecordSearcher
 from llm_loop.introspection.status import ArchitectureStatusProvider
 
+_FRESHNESS_ACTION = (
+    "当前性验证：先跑 pytest -q tests/integration/test_experience_integration.py 确认相关用例通过"
+)
+
 
 def _wire_components(audit_dir: Path, exp_dir: Path, *, exp_exists: bool = True):
     """装配 RecordSearcher + CorrectionToolRegistry + ExperienceStore（对齐 factory.py）。"""
@@ -42,7 +46,7 @@ def test_save_then_search_experience_end_to_end(tmp_path):
             "title": "stream-render-fix",
             "scenario": "Web前端思考过程不显示",
             "root_cause": "SSE事件未透传reasoning_delta",
-            "solution": "在event_stream增加reasoning_delta事件",
+            "solution": f"在event_stream增加reasoning_delta事件。{_FRESHNESS_ACTION}",
             "record_kind": "experience",
             "verification_state": "verified",
             "evidence": "tests/web/test_reasoning_render.py",
@@ -81,18 +85,19 @@ def test_save_then_search_with_source_tracing(tmp_path):
     exp_dir = tmp_path / "experiences"
     searcher, corrections, _ = _wire_components(audit_dir, exp_dir)
 
-    corrections.execute(
+    save_result = corrections.execute(
         "save_experience",
         {
             "title": "source-trace-test",
             "scenario": "场景",
-            "solution": "解法",
+            "solution": f"解法。{_FRESHNESS_ACTION}",
             "record_kind": "experience",
             "verification_state": "verified",
             "evidence": "fixture:source-trace",
             "source": {"origin": "ai-analysis", "round": "3"},
         },
     )
+    assert save_result.status == ToolResultStatus.SUCCESS
     results = searcher.search(kind="experience", query="source")
     assert len(results) == 1
     assert results[0]["source"] == {"origin": "ai-analysis", "round": "3"}
@@ -156,7 +161,7 @@ def test_exp_dir_not_exist_save_still_works(tmp_path):
         {
             "title": "auto-create-test",
             "scenario": "场景",
-            "solution": "解法",
+            "solution": f"解法。{_FRESHNESS_ACTION}",
             "record_kind": "experience",
             "verification_state": "verified",
             "evidence": "fixture:auto-create",
