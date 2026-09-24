@@ -16,12 +16,14 @@ import { zh } from "../../i18n/zh";
 
 export function Conversation() {
   const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const currentId = useCurrentSessionId();
   const sessions = useSessions();
   const conv = useConversation();
   const current = sessions.find((s) => s.session_id === currentId);
 
   useEffect(() => {
+    setExportError("");
     if (currentId) {
       void loadHistory(currentId);
     } else {
@@ -31,6 +33,7 @@ export function Conversation() {
 
   const doExport = async (sid: string) => {
     setExporting(true);
+    setExportError("");
     try {
       const msgs = await fetchAllMessages(sid);
       const lines: string[] = [`# 会话导出：${current?.title ?? sid}`, ""];
@@ -45,8 +48,9 @@ export function Conversation() {
       a.download = `session-${sid.slice(0, 8)}.md`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      /* 导出失败静默（fail-open，不影响会话） */
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setExportError(`导出失败：${detail || "请重试"}`);
     } finally {
       setExporting(false);
     }
@@ -80,9 +84,9 @@ export function Conversation() {
               {exporting ? zh.exporting : "⭳ 导出"}
             </button>
           </div>
-          {conv.lastError ? (
+          {exportError || conv.lastError ? (
             <div className="v2-conv-error" role="alert">
-              {conv.lastError}
+              {exportError || conv.lastError}
             </div>
           ) : null}
         </>

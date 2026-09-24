@@ -148,6 +148,9 @@ export interface HistoryMessage {
 export interface HistoryResponse {
   messages: HistoryMessage[];
   has_more: boolean;
+  /** Explicit read outcome: false means the caller must preserve known state. */
+  ok?: boolean;
+  error?: string;
 }
 
 export interface ModelEntry {

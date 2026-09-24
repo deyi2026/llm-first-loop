@@ -43,6 +43,17 @@ describe("core fetch fail-open", () => {
     vi.stubGlobal("fetch", vi.fn(async () =>
       new Response(JSON.stringify({ sessions: [{ session_id: "wrong-shape" }] }), { status: 200 })
     ));
-    await expect(fetchHistory("s1", 100, 0)).resolves.toEqual({ messages: [], has_more: false });
+    await expect(fetchHistory("s1", 100, 0)).resolves.toMatchObject({
+      ok: false,
+      messages: [],
+      has_more: false,
+    });
+  });
+
+  it("fetchHistory distinguishes network failure from a real empty history", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
+    const out = await fetchHistory("s1", 100, 0);
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("历史");
   });
 });

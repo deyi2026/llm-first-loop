@@ -26,6 +26,7 @@ vi.mock("./core/chat", async (importOriginal) => {
 import {
   conversationStore,
   checkBackgroundRun,
+  loadEarlierHistory,
   loadHistory,
   sendMessage,
   stopStreaming,
@@ -93,6 +94,8 @@ describe("conversation stream ownership", () => {
     expect(h.pending).toHaveLength(1);
     const pending = h.pending[0];
     expect(pending.body).toMatchObject({ new_session: true });
+    const optimisticCount = conversationStore.getState().messages.length;
+    expect(optimisticCount).toBeGreaterThan(0);
     expect(sessionStore.getState().currentSessionId).toBe("");
     expect(sessionStore.getState().newSessionPending).toBe(true);
     expect(pending.signal?.aborted).toBe(false);
@@ -102,6 +105,7 @@ describe("conversation stream ownership", () => {
     expect(sessionStore.getState().newSessionPending).toBe(false);
     expect(pending.signal?.aborted).toBe(false);
     expect(conversationStore.getState().activeRunGeneration).toBe("g-new");
+    expect(conversationStore.getState().messages).toHaveLength(optimisticCount);
 
     pending.resolve({
       ok: true,
@@ -205,6 +209,71 @@ describe("conversation stream ownership", () => {
 
     h.pending[0].resolve(stopped);
     await run;
+  });
+
+  it("用户切会话时立即清掉旧消息/队列/错误，不能在新 header 下短暂展示旧会话事实", () => {
+    conversationStore.setState({
+      messages: [{ role: "assistant", content: "s1 私有内容" }],
+      queueItems: [{
+        queue_id: "q-s1",
+        session_id: "s1",
+        message: "旧排队",
+        attachments: [],
+        attachment_facts: [],
+        model: null,
+        reasoning_effort: null,
+        reasoning_mode: "auto",
+        status: "queued",
+        created_at: 1,
+      }],
+      loadedHistoryCount: 1,
+      hasMoreHistory: true,
+      lastError: "s1 error",
+    });
+    sessionStore.setCurrentSession("s2");
+    const next = conversationStore.getState();
+    expect(next.messages).toEqual([]);
+    expect(next.queueItems).toEqual([]);
+    expect(next.loadedHistoryCount).toBe(0);
+    expect(next.hasMoreHistory).toBe(false);
+    expect(next.lastError).toBeNull();
+  });
+
+  it("history 读取失败保留当前已知消息并显示错误，不伪装成空会话", async () => {
+    conversationStore.setState({
+      messages: [{ role: "assistant", content: "已知回答" }],
+      loadedHistoryCount: 1,
+      lastError: null,
+    });
+    h.fetchHistory.mockResolvedValueOnce({
+      ok: false,
+      error: "会话历史读取失败（HTTP 503）",
+      messages: [],
+      has_more: false,
+    });
+    await loadHistory("s1");
+    expect(conversationStore.getState().messages).toEqual([{ role: "assistant", content: "已知回答" }]);
+    expect(conversationStore.getState().lastError).toContain("HTTP 503");
+  });
+
+  it("加载更早的旧会话迟到响应不得污染已经切换的新会话", async () => {
+    let resolveHistory!: (value: { messages: Array<{ role: string; content: string }>; has_more: boolean }) => void;
+    h.fetchHistory.mockImplementationOnce(() => new Promise((resolve) => { resolveHistory = resolve; }));
+    conversationStore.setState({
+      messages: [{ role: "assistant", content: "s1 当前" }],
+      loadedHistoryCount: 1,
+      hasMoreHistory: true,
+    });
+    const pending = loadEarlierHistory("s1");
+    sessionStore.setCurrentSession("s2");
+    conversationStore.setState({
+      messages: [{ role: "assistant", content: "s2 当前" }],
+      loadedHistoryCount: 1,
+      hasMoreHistory: false,
+    });
+    resolveHistory({ messages: [{ role: "user", content: "s1 更早" }], has_more: false });
+    await pending;
+    expect(conversationStore.getState().messages).toEqual([{ role: "assistant", content: "s2 当前" }]);
   });
 
   it("用户 Stop 会 abort 当前 owner 并取消同一 session", async () => {

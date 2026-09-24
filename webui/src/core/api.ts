@@ -56,6 +56,12 @@ export interface SessionListResponse {
   count: number;
 }
 
+export interface SessionListFetchResult {
+  ok: boolean;
+  sessions: SessionMeta[];
+  status: number;
+}
+
 export interface LearningJobInfo {
   job_id: string;
   source_episode_ref: string;
@@ -167,11 +173,16 @@ export async function logoutBrowserSession(): Promise<boolean> {
   return status === 200;
 }
 
-export async function fetchSessions(includeArchived = false): Promise<SessionMeta[]> {
+export async function fetchSessionsResult(includeArchived = false): Promise<SessionListFetchResult> {
   const { status, data } = await api<SessionListResponse>(
     `/api/v1/sessions${includeArchived ? "?include_archived=true" : ""}`
   );
-  return status === 200 && Array.isArray(data.sessions) ? data.sessions : [];
+  const ok = status === 200 && Array.isArray(data.sessions);
+  return { ok, sessions: ok ? data.sessions : [], status };
+}
+
+export async function fetchSessions(includeArchived = false): Promise<SessionMeta[]> {
+  return (await fetchSessionsResult(includeArchived)).sessions;
 }
 
 export async function archiveSession(sessionId: string, archived: boolean): Promise<boolean> {
@@ -236,14 +247,21 @@ export async function fetchAllMessages(sessionId: string): Promise<Array<{ role:
     const resp = await fetch(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${page}&offset=${offset}`
     );
-    if (!resp.ok) break;
-    const data = (await resp.json()) as { messages?: Array<{ role: string; content: string }>; has_more?: boolean };
-    const msgs = data.messages ?? [];
+    if (!resp.ok) throw new Error(`会话导出读取失败（HTTP ${resp.status}）`);
+    let data: { messages?: Array<{ role: string; content: string }>; has_more?: boolean };
+    try {
+      data = (await resp.json()) as { messages?: Array<{ role: string; content: string }>; has_more?: boolean };
+    } catch {
+      throw new Error("会话导出响应无效");
+    }
+    if (!Array.isArray(data.messages)) throw new Error("会话导出响应无效");
+    const msgs = data.messages;
     out.push(...msgs);
     offset += msgs.length;
-    if (!data.has_more || msgs.length === 0) break;
+    if (!data.has_more) return out;
+    if (msgs.length === 0) throw new Error("会话导出分页响应无进展");
   }
-  return out;
+  throw new Error("会话导出分页超过安全上限");
 }
 
 export async function forkSession(

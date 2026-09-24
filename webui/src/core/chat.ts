@@ -129,19 +129,39 @@ export async function fetchHistory(
   limit: number,
   offset: number
 ): Promise<HistoryResponse> {
-  const empty: HistoryResponse = { messages: [], has_more: false };
   try {
     const resp = await fetch(
       `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}`
     );
-    if (!resp.ok) return empty;
-    const data = (await resp.json().catch(() => ({}))) as Partial<HistoryResponse>;
+    if (!resp.ok) {
+      return {
+        ok: false,
+        error: `会话历史读取失败（HTTP ${resp.status}）`,
+        messages: [],
+        has_more: false,
+      };
+    }
+    let data: Partial<HistoryResponse>;
+    try {
+      data = (await resp.json()) as Partial<HistoryResponse>;
+    } catch {
+      return { ok: false, error: "会话历史响应无效", messages: [], has_more: false };
+    }
+    if (!Array.isArray(data.messages)) {
+      return { ok: false, error: "会话历史响应无效", messages: [], has_more: false };
+    }
     return {
-      messages: Array.isArray(data.messages) ? data.messages : [],
+      ok: true,
+      messages: data.messages,
       has_more: data.has_more === true,
     };
   } catch {
-    return empty;
+    return {
+      ok: false,
+      error: "会话历史读取失败：网络连接失败",
+      messages: [],
+      has_more: false,
+    };
   }
 }
 

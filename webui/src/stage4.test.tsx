@@ -99,6 +99,30 @@ describe("会话导出", () => {
     expect(downloads[0]).toContain("markdown");
   });
 
+  it("导出分页中途失败不得生成部分文件，且用户可见失败反馈", async () => {
+    let page = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/sessions/s1/messages")) {
+        page += 1;
+        if (page === 1) {
+          return new Response(JSON.stringify({
+            messages: Array.from({ length: 100 }, (_, i) => ({ role: "user", content: `m${i}` })),
+            has_more: true,
+          }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ detail: "temporary failure" }), { status: 503 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    render(<Conversation />);
+    await waitFor(() => expect(screen.getByTestId("export-btn")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("export-btn"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("导出失败"));
+    expect(clickSpy).not.toHaveBeenCalled();
+  });
+
   it("会话错误作为独立可换行 alert，不挤在固定高度 header 内", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })));
     render(<Conversation />);

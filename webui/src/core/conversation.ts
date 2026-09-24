@@ -156,6 +156,24 @@ sessionStore.subscribe(() => {
   const foregroundFollows = abortCtrl !== null && abortSessionId === nextSessionId;
   const resumeFollows = resumeAbort !== null && resumeSessionId === nextSessionId;
   const st = conversationStore.getState();
+  // A real user/navigation session switch must never leave the previous session's
+  // messages/queue/error visible under the new session header. Fresh-session run_started
+  // binds abort ownership before publishing the new sid, so that mechanical bind is
+  // explicitly exempt and keeps its optimistic user/assistant turn intact.
+  if (!foregroundFollows && !resumeFollows) {
+    conversationStore.setState({
+      messages: [],
+      hasMoreHistory: false,
+      loadedHistoryCount: 0,
+      queueItems: [],
+      lastError: null,
+      activeRunGeneration: null,
+      streaming: false,
+      streamingIndex: -1,
+      streamStartedAt: null,
+      backgroundRunning: false,
+    });
+  }
   if (!foregroundFollows && !resumeFollows && st.activeRunGeneration !== null) {
     conversationStore.setState({ activeRunGeneration: null });
   }
@@ -183,6 +201,7 @@ async function idlePollTick(sessionId: string): Promise<void> {
   if (st.streaming || st.backgroundRunning || st.loadedHistoryCount === 0) return;
   const resp = await fetchHistory(sessionId, 1, 0);
   if (sessionStore.getState().currentSessionId !== sessionId) return;
+  if (resp.ok === false) return; // background probe is observational; never fabricate empty history
   const fp = fingerprintLatest(resp.messages[0] as ChatMessage | undefined);
   if (fp === null) return; // 会话被清空等异常形态：不触发重载（下次探针再判）
   if (idleProbeFp === null) {
@@ -232,6 +251,10 @@ export async function loadHistory(sessionId: string): Promise<void> {
   detachSubscriptionsForSession(sessionId);
   const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, 0);
   if (sessionStore.getState().currentSessionId !== sessionId) return;
+  if (resp.ok === false) {
+    conversationStore.setState({ lastError: resp.error ?? "会话历史读取失败，请重试。" });
+    return;
+  }
   const messages = resp.messages.map(toChatMessage);
   conversationStore.setState({
     messages,
@@ -418,12 +441,22 @@ async function resumeBackgroundStream(
 
 export async function loadEarlierHistory(sessionId: string): Promise<void> {
   const cur = conversationStore.getState();
-  const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, cur.loadedHistoryCount);
+  const offset = cur.loadedHistoryCount;
+  const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, offset);
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
+  if (resp.ok === false) {
+    conversationStore.setState({ lastError: resp.error ?? "更早历史读取失败，请重试。" });
+    return;
+  }
+  const now = conversationStore.getState();
+  // A concurrent reload/second pagination request changed the window while this page was
+  // in flight. Its offset is stale, so applying it could duplicate or cross-contaminate rows.
+  if (now.loadedHistoryCount !== offset) return;
   const earlier = resp.messages.map(toChatMessage);
   conversationStore.setState({
-    messages: [...earlier, ...cur.messages],
+    messages: [...earlier, ...now.messages],
     hasMoreHistory: resp.has_more,
-    loadedHistoryCount: cur.loadedHistoryCount + earlier.length,
+    loadedHistoryCount: offset + earlier.length,
   });
 }
 

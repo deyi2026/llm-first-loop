@@ -1,7 +1,7 @@
 // Web V2 核心：SSE 会话事件订阅（复用后端 /api/v1/events 命名事件；
 // 对齐 v0.5.6 前端加固：失联自愈看门狗 + 标签页聚焦即刷）
 
-import { fetchSessions, fetchSharedCurrent } from "./api";
+import { fetchSessionsResult, fetchSharedCurrent } from "./api";
 import { refreshCurrentSessionMessages } from "./conversation";
 import { sessionStore } from "./stores";
 import { readSessionIdFromLocation } from "./sessionUrl";
@@ -19,7 +19,11 @@ function refreshFromSync(): void {
 }
 
 export async function refreshSessionsAndCurrent(): Promise<void> {
-  const sessions = await fetchSessions();
+  const result = await fetchSessionsResult();
+  // Session discovery is authoritative only on a valid response. A transient 5xx/offline
+  // result must not mechanically rewrite a known non-empty sidebar into "zero sessions".
+  if (!result.ok) return;
+  const sessions = result.sessions;
   sessionStore.setSessions(sessions);
   // 2026-08-19 修复跳回旧会话: 用户主动"新建/清除上下文"（newSessionPending=true）时，
   // 空 currentSessionId 是新会话语义——SSE 同步（sessions_updated/看门狗/聚焦）不得

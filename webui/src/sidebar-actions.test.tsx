@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { conversationStore } from "./core/conversation";
-import { sessionStore } from "./core/stores";
+import { sessionStore, sidebarViewStore } from "./core/stores";
 
 const SESSION = {
   session_id: "s1",
@@ -36,6 +36,7 @@ function baseResponse(url: string): Response {
 }
 
 beforeEach(() => {
+  sidebarViewStore.setView("sessions");
   sessionStore.setCurrentSession("s1");
   conversationStore.setState({ messages: [], streaming: false, streamingIndex: -1, lastError: null });
 });
@@ -101,6 +102,33 @@ describe("sidebar mutation controls", () => {
     fireEvent.click(screen.getByText("确认?"));
     await waitFor(() => expect(screen.getByTestId("sidebar-action-error")).toHaveTextContent("删除失败"));
     expect(sessionStore.getState().currentSessionId).toBe("s1");
+  });
+
+  it("archived list read failure preserves the last known rows instead of pretending the folder is empty", async () => {
+    const archived = { ...SESSION, session_id: "a1", title: "旧归档", status: "archived" };
+    let archivedLoads = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/sessions?include_archived=true")) {
+        archivedLoads += 1;
+        if (archivedLoads === 1) {
+          return new Response(JSON.stringify({ sessions: [SESSION, archived], count: 2 }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ detail: "temporary failure" }), { status: 503 });
+      }
+      return baseResponse(url);
+    }));
+
+    render(<Sidebar collapsed={false} />);
+    fireEvent.click(screen.getByTestId("tab-archived"));
+    await waitFor(() => expect(screen.getByText(/旧归档/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("tab-sessions"));
+    fireEvent.click(screen.getByTestId("tab-archived"));
+    await waitFor(() =>
+      expect(screen.getByTestId("archived-load-error")).toHaveTextContent("已保留上次结果")
+    );
+    expect(screen.getByText(/旧归档/)).toBeInTheDocument();
   });
 });
 

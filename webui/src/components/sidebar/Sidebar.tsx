@@ -2,7 +2,7 @@
 // 阶段 3：管理交互（pin/delete 两步确认/fork）——删除与分支后自动刷新并切换。
 
 import { useEffect, useState } from "react";
-import { channelLabel, archiveSession, deleteSession, fetchAgentsTree, fetchSessions, forkSession, setSessionPin, type SessionMeta } from "../../core/api";
+import { channelLabel, archiveSession, deleteSession, fetchAgentsTree, fetchSessionsResult, forkSession, setSessionPin, type SessionMeta } from "../../core/api";
 import { refreshSessionsAndCurrent } from "../../core/events";
 import { useCapabilities } from "../../core/capabilities";
 import {
@@ -35,12 +35,22 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const view = useSidebarView();
   // 2026-08-21: 归档文件夹——旧会话收拢防误操作（fetchSessions(true) 含归档）
   const [archived, setArchived] = useState<SessionMeta[]>([]);
+  const [archivedError, setArchivedError] = useState("");
   useEffect(() => {
-    if (view === "archived") {
-      void fetchSessions(true).then((list) =>
-        setArchived(list.filter((s) => s.status === "archived"))
-      );
-    }
+    if (view !== "archived") return;
+    let active = true;
+    setArchivedError("");
+    void fetchSessionsResult(true).then((result) => {
+      if (!active) return;
+      if (!result.ok) {
+        setArchivedError("归档列表加载失败；已保留上次结果，请重试。");
+        return;
+      }
+      setArchived(result.sessions.filter((s) => s.status === "archived"));
+    });
+    return () => {
+      active = false;
+    };
   }, [view]);
   // 对齐 DSH 会话树：parent_id 映射（fetchAgentsTree 合并——会话树状层级）
   const [parentMap, setParentMap] = useState<Map<string, string | null>>(new Map());
@@ -251,6 +261,11 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         <EscalationPanel />
       ) : view === "archived" ? (
         <div className="v2-archived-list" data-testid="archived-list">
+          {archivedError ? (
+            <div className="v2-sidebar-error" role="alert" data-testid="archived-load-error">
+              {archivedError}
+            </div>
+          ) : null}
           {archived.length === 0 ? (
             <div style={{ padding: 12, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>
               （归档文件夹为空）

@@ -73,6 +73,19 @@ describe("live parity session links", () => {
     expect(sessionStore.getState().currentSessionId).toBe("s-test");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("transient session-list failure preserves the last known sidebar/current state", async () => {
+    sessionStore.setSessions([session]);
+    sessionStore.setCurrentSession("s-test");
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify({ detail: "down" }), { status: 503 })
+    ));
+
+    await refreshSessionsAndCurrent();
+
+    expect(sessionStore.getState().sessions).toEqual([session]);
+    expect(sessionStore.getState().currentSessionId).toBe("s-test");
+  });
 });
 
 describe("live parity header actions", () => {

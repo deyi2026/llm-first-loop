@@ -98,11 +98,14 @@ describe("immutable user edit via fork", () => {
       }
       return new Response(JSON.stringify({}), { status: 200 });
     }));
+    // Select the owner first: production session switches intentionally clear the previous
+    // conversation projection before history is loaded, so test fixtures must populate the
+    // selected session rather than inject old-session rows and then switch owners.
+    sessionStore.setCurrentSession("s1");
     conversationStore.setState({
       messages: [{ role: "assistant", sourceIndex: 42, content: "answer" }],
       loadedHistoryCount: 1,
     });
-    sessionStore.setCurrentSession("s1");
     render(<MessageList />);
     fireEvent.click(screen.getByTitle("回答有帮助"));
     await waitFor(() => expect(feedbackBody).not.toBe(""));
