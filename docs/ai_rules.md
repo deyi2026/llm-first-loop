@@ -330,6 +330,8 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 ---
 
+**编号空缺说明（RULE-AI-21，2026-09-24 补记）**：本 SoT 无规则二十一——2026-08-24 漂移防御设计曾以 RULE-AI-21 为提案号（见 `docs/analysis/2026-08-24-drift-defense-design.md`、`docs/ai_model_capability_and_drift_strategy.md`、`docs/PROPOSAL-cache-hit-and-model-capability-20260826.md`），该提案未进入本 SoT（EVO-20260824 通道实际产出为 RULE-AI-20），编号自此跳过、不再复用；历史文档中的 RULE-AI-21 引用一律回到上述设计文档解读，勿与文末 lite v7 迁移表中"规则 21 程序反馈语义"（lite 文件编号体系，已 RETIRED）混淆。
+
 ## 规则二十二：检索时序纪律——锚定当下、聚焦优先、历史命中双闸（RULE-AI-22，2026-09-06 current-first 收正）
 
 **适用范围**：任何在本工作区执行或被编排的 AI 主体——云端/远端模型、本地模型、子代理——无差别遵守；这是判断纪律，不是固定工具调用脚本。
