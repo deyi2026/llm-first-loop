@@ -69,8 +69,11 @@ export function App() {
     if (typeof matchMedia === "undefined") return;
     const mq = matchMedia("(max-width: 900px)");
     const onChange = () => {
-      setIsMobile(mq.matches);
-      if (!mq.matches) setMobileSidebarOpen(false); // 切回桌面自动收抽屉
+      const nextMobile = mq.matches;
+      setIsMobile(nextMobile);
+      // 跨断点属于布局模式切换；不要把桌面常驻面板直接变成覆盖内容的移动抽屉。
+      setMobileSidebarOpen(false);
+      if (nextMobile) rightPanelStore.setOpen(false);
     };
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
@@ -88,9 +91,17 @@ export function App() {
   }, [currentSessionId]);
 
   const toggleSidebar = () => {
-    if (isMobile) setMobileSidebarOpen((v) => !v);
+    if (isMobile) {
+      if (!mobileSidebarOpen) rightPanelStore.setOpen(false);
+      setMobileSidebarOpen((v) => !v);
+    }
     else setSidebarCollapsed((v) => !v);
   };
+
+  // 预览等外部入口也可能直接 reveal 右面板；移动端只允许一个抽屉占据前景。
+  useEffect(() => {
+    if (isMobile && panelOpen) setMobileSidebarOpen(false);
+  }, [isMobile, panelOpen]);
 
   const showConversationFiles = () => {
     sidebarViewStore.setView("files");
@@ -158,6 +169,13 @@ export function App() {
       {isMobile && mobileSidebarOpen && (
         <div className="v2-scrim" data-testid="sidebar-scrim" onClick={() => setMobileSidebarOpen(false)} />
       )}
+      {isMobile && panelOpen && (
+        <div
+          className="v2-scrim"
+          data-testid="panel-scrim"
+          onClick={() => rightPanelStore.setOpen(false)}
+        />
+      )}
       <div className="v2-main">
         <TopBar onToggleSidebar={toggleSidebar} onShowFiles={showConversationFiles} />
         {mainView === "chat" ? <InteropNotice /> : null}
@@ -173,7 +191,11 @@ export function App() {
         type="button"
         className="v2-icon-btn"
         style={{ alignSelf: "center" }}
-        onClick={() => rightPanelStore.setOpen(!panelOpen)}
+        onClick={() => {
+          const nextOpen = !panelOpen;
+          if (isMobile && nextOpen) setMobileSidebarOpen(false);
+          rightPanelStore.setOpen(nextOpen);
+        }}
         title="右侧面板"
         aria-label="右侧面板"
       >

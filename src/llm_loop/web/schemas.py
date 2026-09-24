@@ -133,6 +133,10 @@ class QueueInterjectRequest(BaseModel):
 
     session_id: str = Field(description="目标会话 ID")
     queue_id: str = Field(description="要交给当前 live run 的排队项 ID")
+    run_generation: str = Field(
+        min_length=1,
+        description="用户点击立即插入时看到的 exact live-run generation",
+    )
 
 
 class QueueDispatchRequest(BaseModel):

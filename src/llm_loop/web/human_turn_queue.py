@@ -282,35 +282,6 @@ class HumanTurnQueue:
                     return self._public(it)
             return None
 
-    def claim_interject_fifo(
-        self, session_id: str, *, claimed_by: str = "engine-round-boundary"
-    ) -> list[dict[str, Any]]:
-        """R4（antidrift_impl 批2）批量 FIFO 认领：queued → interject_pending.
-
-        与浏览器"立即插入"（claim_interject）共用同一原子领取语义，竞争单赢家；
-        按 (created_at, _seq) 升序=入队顺序（dispatch_claim 排序键先例）。
-        不改变任何既有转移规则；不认领非 queued 条目。
-        """
-        claimed: list[dict[str, Any]] = []
-        with self._lock:
-            pending = sorted(
-                (
-                    it
-                    for it in self._items
-                    if it.get("session_id") == session_id
-                    and it.get("status") == "queued"
-                ),
-                key=lambda x: (x.get("created_at", 0), int(x.get("_seq", 0))),
-            )
-            for it in pending:
-                it["status"] = "interject_pending"
-                it["interject_requested_at"] = _now()
-                it["interject_claimed_by"] = str(claimed_by or "engine-round-boundary")
-                claimed.append(self._public(it))
-            if pending:
-                self._save()
-        return claimed
-
     def release_interject(self, session_id: str, queue_id: str) -> bool:
         """Rollback a mailbox handoff that never reached a live run."""
         with self._lock:

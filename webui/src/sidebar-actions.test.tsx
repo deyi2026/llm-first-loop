@@ -110,7 +110,10 @@ describe("workspace switch controls", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/v1/workspaces/switch") && init?.method === "POST") {
-        return new Response(JSON.stringify({ error: "busy" }), { status: 409 });
+        return new Response(JSON.stringify({
+          error: "workspace_busy",
+          detail: "当前有后台任务运行，不能切换工作区",
+        }), { status: 409 });
       }
       if (url.includes("/api/v1/workspaces/ws-other/sessions")) {
         return new Response(JSON.stringify({ sessions: [other], count: 1 }), { status: 200 });
@@ -127,7 +130,9 @@ describe("workspace switch controls", () => {
     render(<Sidebar collapsed={false} />);
     await waitFor(() => expect(screen.getByText("其他会话")).toBeInTheDocument());
     fireEvent.click(screen.getByText("其他会话"));
-    await waitFor(() => expect(screen.getByText(/工作区切换失败/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/当前有后台任务运行，不能切换工作区/)).toBeInTheDocument()
+    );
     expect(sessionStore.getState().currentSessionId).toBe("s1");
   });
 });

@@ -60,6 +60,73 @@ def test_queue_id_metadata_is_provider_invisible():
     }
 
 
+def test_ordinary_queue_has_no_engine_round_auto_interject_wiring():
+    """普通“排队”只能在当前 run 终态后派发，不能被轮边界自动转成插话。"""
+    root = Path(__file__).resolve().parents[2]
+    web_main = (root / "src/llm_loop/web/__init__.py").read_text(encoding="utf-8")
+    engine = (root / "src/llm_loop/core/loop/engine.py").read_text(encoding="utf-8")
+    queue = (root / "src/llm_loop/web/human_turn_queue.py").read_text(encoding="utf-8")
+
+    assert "claim_interject_fifo" not in web_main
+    assert "interjection_pull_hook" not in engine
+    assert "claim_interject_fifo" not in queue
+
+
+def test_interject_rejects_stale_click_generation_before_claim(build_test_engine):
+    """Run A 点击产生的请求晚到 Run B 时必须 fail-closed，且队列项仍为 queued。"""
+    engine, _ = build_test_engine([{"content": "unused"}])
+    client = _make_client(engine)
+    sid = engine.session.create()
+    qid = client.post(
+        "/api/v1/chat/queue", json={"session_id": sid, "message": "steer exact run"}
+    ).json()["queue_id"]
+
+    class _Runner:
+        enabled = True
+
+        def __init__(self):
+            self.generation = "gen-B"
+            self.enqueued = []
+
+        def get_handle(self, session_id):
+            assert session_id == sid
+            return {"run_generation": self.generation}
+
+        def enqueue_interjection(self, session_id, payload, *, expected_run_generation=None):
+            self.enqueued.append((session_id, payload, expected_run_generation))
+            return expected_run_generation == self.generation
+
+    runner = _Runner()
+    engine.runner = runner
+
+    stale = client.post(
+        "/api/v1/chat/queue/interject",
+        json={
+            "session_id": sid,
+            "queue_id": qid,
+            "run_generation": "gen-A",
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"] == "interject_run_changed"
+    assert runner.enqueued == []
+    active = client.get(f"/api/v1/chat/queue?session_id={sid}").json()["items"]
+    assert active[0]["queue_id"] == qid
+    assert active[0]["status"] == "queued"
+
+    exact = client.post(
+        "/api/v1/chat/queue/interject",
+        json={
+            "session_id": sid,
+            "queue_id": qid,
+            "run_generation": "gen-B",
+        },
+    )
+    assert exact.status_code == 202
+    assert exact.json()["state"] == "interject_pending"
+    assert runner.enqueued[0][2] == "gen-B"
+
+
 class TestHumanTurnQueueUnit:
     def test_interject_pending_is_durable_and_restart_falls_back_to_queue(self, tmp_path):
         hq = HumanTurnQueue(tmp_path)
@@ -688,44 +755,3 @@ def test_interject_pressure_empty_session_returns_zero_and_none(tmp_path):
         "count": 0,
         "oldest_enqueued_at": None,
     }
-
-
-# ------------------- R4 claim_interject_fifo 批量 FIFO 认领（antidrift_impl 批2，T2-5）
-
-def test_claim_interject_fifo_orders_by_enqueue_and_single_winner(tmp_path):
-    hq = HumanTurnQueue(tmp_path)
-    first = hq.enqueue("s1", "第一条")
-    second = hq.enqueue("s1", "第二条")
-    third = hq.enqueue("s1", "第三条")
-
-    claimed = hq.claim_interject_fifo("s1")
-    assert [c["queue_id"] for c in claimed] == [
-        first["queue_id"],
-        second["queue_id"],
-        third["queue_id"],
-    ]
-    assert all(c["status"] == "interject_pending" for c in claimed)
-    # 状态机如实：全部进入 interject_pending（等待投递集）
-    active = hq.list_active("s1")
-    assert [a["status"] for a in active] == ["interject_pending"] * 3
-
-    # 与单条 claim 竞争单赢家：已被 FIFO 认领后再单条 claim 同 id → None
-    assert hq.claim_interject("s1", first["queue_id"]) is None
-    # 无 queued → 返回空
-    assert hq.claim_interject_fifo("s1") == []
-    # 其他会话不串台
-    other = hq.enqueue("s2", "他会话")
-    assert hq.claim_interject_fifo("s1") == []
-    assert hq.claim_interject_fifo("s2")[0]["queue_id"] == other["queue_id"]
-
-
-def test_claim_interject_fifo_skips_non_queued_statuses(tmp_path):
-    hq = HumanTurnQueue(tmp_path)
-    queued = hq.enqueue("s1", "仍排队")
-    cancelled = hq.enqueue("s1", "已取消")
-    assert hq.cancel_with_item("s1", cancelled["queue_id"]) is not None
-    pending = hq.enqueue("s1", "已被浏览器认领")
-    assert hq.claim_interject("s1", pending["queue_id"]) is not None
-
-    claimed = hq.claim_interject_fifo("s1")
-    assert [c["queue_id"] for c in claimed] == [queued["queue_id"]]

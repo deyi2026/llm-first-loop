@@ -4,13 +4,20 @@
 // 与按 session_id 区分内容的 mock 后端，断言点击后会话标题与消息都切换。
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, cleanup, act } from "@testing-library/react";
 import { App } from "./App";
 import { sessionStore } from "./core/stores";
 import { conversationStore as conv } from "./core/conversation";
 
 const SESS_A = "sess-alpha";
 const SESS_B = "sess-beta";
+
+async function renderAppSettled(): Promise<void> {
+  await act(async () => {
+    render(<App />);
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  });
+}
 
 const sessionMeta = (id: string, title: string) => ({
   session_id: id,
@@ -80,7 +87,7 @@ describe("侧栏会话切换", () => {
   });
 
   it("点击另一会话后，主区标题与消息切换为新会话内容", async () => {
-    render(<App />);
+    await renderAppSettled();
 
     // 初始：shared current -> 会话甲加载
     await waitFor(() => {
@@ -190,7 +197,7 @@ describe("侧栏会话切换", () => {
 
     sessionStore.setSessions([sessionMeta(SESS_A, "会话甲"), sessionMeta(SESS_B, "会话乙")]);
     sessionStore.setCurrentSession(SESS_A);
-    render(<App />);
+    await renderAppSettled();
     await waitFor(() => {
       expect(screen.getByText(`${SESS_A} 的用户消息`)).toBeInTheDocument();
     });
@@ -205,8 +212,10 @@ describe("侧栏会话切换", () => {
     expect(sessionStore.getState().currentSessionId).toBe(SESS_B);
 
     // 接力 run 的 run_started 现在到达 —— 视图必须留在会话乙（不得拉回甲）
-    release.fn?.();
-    await new Promise((r) => setTimeout(r, 120));
+    await act(async () => {
+      release.fn?.();
+      await new Promise((r) => setTimeout(r, 120));
+    });
     expect(sessionStore.getState().currentSessionId).toBe(SESS_B);
     expect(screen.getByText(`${SESS_B} 的用户消息`)).toBeInTheDocument();
   });
@@ -255,7 +264,7 @@ describe("侧栏会话切换", () => {
     sessionStore.setSessions([sessionMeta(NEW_SID, "新会话")]);
     sessionStore.setCurrentSession("");
     sessionStore.setNewSessionPending(true);
-    render(<App />);
+    await renderAppSettled();
     const ta = screen.getByTestId("composer-input");
     fireEvent.change(ta, { target: { value: "第一条" } });
     fireEvent.click(screen.getByText("发送"));

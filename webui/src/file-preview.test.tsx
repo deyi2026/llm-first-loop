@@ -4,7 +4,7 @@
 // `path:42` 链接化、chips/文件树 → 右侧栏打开。
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { FilePreviewView, packHtmlDependencies } from "./components/FilePreviewView";
 import { PreviewTabsPanel } from "./components/PreviewTabsPanel";
 import { FileTree } from "./components/sidebar/FileTree";
@@ -87,12 +87,14 @@ describe("PreviewTabsPanel：右侧栏 tab 化", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<PreviewTabsPanel />);
 
-    previewTabsStore.open("a.txt");
+    act(() => previewTabsStore.open("a.txt"));
     await waitFor(() => expect(screen.getByTestId("file-preview")).toBeInTheDocument());
     expect(screen.getByText("hello")).toBeInTheDocument();
 
-    previewTabsStore.open("b.txt");
-    previewTabsStore.open("a.txt"); // 再开同路径：聚焦既有
+    act(() => {
+      previewTabsStore.open("b.txt");
+      previewTabsStore.open("a.txt"); // 再开同路径：聚焦既有
+    });
     const { tabs, active } = previewTabsStore.getState();
     expect(tabs.map((t) => t.path)).toEqual(["a.txt", "b.txt"]);
     expect(active).toBe("a.txt");
@@ -103,12 +105,14 @@ describe("PreviewTabsPanel：右侧栏 tab 化", () => {
       { match: (u) => u.includes("/api/v1/files/preview"), body: () => textPage("x", 1, "c", true) },
     ]));
     render(<PreviewTabsPanel />);
-    previewTabsStore.open("one.txt");
-    previewTabsStore.open("two.txt");
+    act(() => {
+      previewTabsStore.open("one.txt");
+      previewTabsStore.open("two.txt");
+    });
     await waitFor(() => expect(screen.getAllByTestId("file-preview").length).toBe(2));
-    previewTabsStore.close("two.txt");
+    act(() => previewTabsStore.close("two.txt"));
     expect(previewTabsStore.getState().active).toBe("one.txt");
-    previewTabsStore.close("one.txt");
+    act(() => previewTabsStore.close("one.txt"));
     await waitFor(() => expect(screen.getByTestId("preview-tabs-empty")).toBeInTheDocument());
   });
 
@@ -117,7 +121,7 @@ describe("PreviewTabsPanel：右侧栏 tab 化", () => {
       { match: (u) => u.includes("/api/v1/files/preview"), body: () => textPage("src/deep/mod.py", 1, "l", true) },
     ]));
     render(<PreviewTabsPanel />);
-    previewTabsStore.open("src/deep/mod.py", 42);
+    act(() => previewTabsStore.open("src/deep/mod.py", 42));
     await waitFor(() => expect(screen.getByText("mod.py")).toBeInTheDocument());
     expect(screen.getByText(":42")).toBeInTheDocument();
   });
@@ -458,7 +462,7 @@ describe("行号锚点按列定位（line:col）", () => {
       { match: (u) => u.includes("/api/v1/files/preview"), body: () => textPage("mod.py", 1, "l", true) },
     ]));
     render(<PreviewTabsPanel />);
-    previewTabsStore.open("mod.py", 42, 7);
+    act(() => previewTabsStore.open("mod.py", 42, 7));
     await waitFor(() => expect(screen.getByText(":42:7")).toBeInTheDocument());
   });
 });
@@ -484,7 +488,9 @@ describe("版本变更监听（对齐 DSH changes 流 + stale 页提示）", () 
     await waitFor(() => expect(screen.getByText("old-content")).toBeInTheDocument());
     expect(screen.queryByTestId("preview-stale")).toBeNull();
 
-    await previewWatcher.pollNow(); // 观察到 mtime 200 ≠ 读取基线 100
+    await act(async () => {
+      await previewWatcher.pollNow(); // 观察到 mtime 200 ≠ 读取基线 100
+    });
     await waitFor(() => expect(screen.getByTestId("preview-stale")).toBeInTheDocument());
     expect(screen.getByText(/已变更/)).toBeInTheDocument();
     expect(screen.getByText("old-content")).toBeInTheDocument(); // 不自动替换
@@ -506,7 +512,9 @@ describe("版本变更监听（对齐 DSH changes 流 + stale 页提示）", () 
     );
     render(<FilePreviewView path="g.txt" line={null} />);
     await waitFor(() => expect(screen.getByText("kept")).toBeInTheDocument());
-    await previewWatcher.pollNow();
+    await act(async () => {
+      await previewWatcher.pollNow();
+    });
     await waitFor(() => expect(screen.getByTestId("preview-stale")).toBeInTheDocument());
     expect(screen.getByText(/不在磁盘上/)).toBeInTheDocument();
     expect(screen.getByText("kept")).toBeInTheDocument();
@@ -522,8 +530,10 @@ describe("版本变更监听（对齐 DSH changes 流 + stale 页提示）", () 
     );
     render(<FilePreviewView path="s.txt" line={null} />);
     await waitFor(() => expect(screen.getByText("v")).toBeInTheDocument());
-    await previewWatcher.pollNow();
-    await new Promise((r) => setTimeout(r, 30));
+    await act(async () => {
+      await previewWatcher.pollNow();
+      await new Promise((r) => setTimeout(r, 30));
+    });
     expect(screen.queryByTestId("preview-stale")).toBeNull();
   });
 
@@ -723,7 +733,11 @@ describe("预览可用性：代码高亮 / 面板宽度与收起", () => {
       vi.fn(async () => jsonResponse({ sessions: [], count: 0 }))
     );
     const { App } = await import("./App");
-    const { container } = render(<App />);
+    let container!: HTMLElement;
+    await act(async () => {
+      container = render(<App />).container;
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
     await waitFor(() => expect(container.querySelector(".v2-panel")).not.toBeNull());
     const handle = container.querySelector('[data-testid="panel-resize-handle"]') as HTMLElement;
     expect(handle).not.toBeNull();

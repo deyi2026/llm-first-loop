@@ -21,6 +21,12 @@ export function ChatQueue() {
   const [feedback, setFeedback] = useState("");
   const items = conv.queueItems;
   const streaming = Boolean(conv.streaming || conv.backgroundRunning);
+  const canInterject = streaming && Boolean(conv.activeRunGeneration);
+  const interjectTitle = canInterject
+    ? zh.queueInterject
+    : streaming
+      ? zh.queueInterjectIdentityPending
+      : zh.queueInterjectUnavailable;
 
   // 活跃项存在时轮询镜像（claimed→发送中、queued→待发；终态项不返回所以列表自动缩短）
   useEffect(() => {
@@ -116,8 +122,8 @@ export function ChatQueue() {
                   <button
                     type="button"
                     className="v2-btn ghost"
-                    disabled={locked || !streaming}
-                    title={streaming ? zh.queueInterject : zh.queueInterjectUnavailable}
+                    disabled={locked || !canInterject}
+                    title={interjectTitle}
                     onClick={() => void act(interjectQueueTurn, it.queue_id)}
                     data-testid="chat-queue-interject"
                   >

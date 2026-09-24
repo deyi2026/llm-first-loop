@@ -83,9 +83,13 @@ export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession,
     if (busy) return;
     setBusy(true);
     setError("");
-    const ok = await switchWorkspace(wsId);
-    if (!ok) {
-      setError("工作区切换失败；当前工作区和会话均未改变。");
+    const result = await switchWorkspace(wsId);
+    if (!result.ok) {
+      setError(
+        result.detail
+          ? `工作区切换失败：${result.detail}`
+          : "工作区切换失败；当前工作区和会话均未改变。"
+      );
       setBusy(false);
       return;
     }
@@ -100,9 +104,13 @@ export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession,
     if (wsId === currentWsId || busy) return;
     setBusy(true);
     setError("");
-    const ok = await switchWorkspace(wsId);
-    if (!ok) {
-      setError("工作区切换失败；当前工作区保持不变。");
+    const result = await switchWorkspace(wsId);
+    if (!result.ok) {
+      setError(
+        result.detail
+          ? `工作区切换失败：${result.detail}`
+          : "工作区切换失败；当前工作区保持不变。"
+      );
       setBusy(false);
       return;
     }

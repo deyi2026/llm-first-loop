@@ -44,25 +44,56 @@ const ALLOWED_TAGS = [
 
 const ALLOWED_ATTR = ["href", "src", "alt", "title", "class", "checked", "type", "aria-label"];
 
-/** 行内/块级数学 → KaTeX HTML（失败 fail-open 原样返回） */
-function renderMath(src: string): string {
-  // 块级 $$...$$
-  let out = src.replace(/\$\$([\s\S]+?)\$\$/g, (_m, expr: string) => {
+// Must contain no Markdown punctuation because placeholders pass through `marked.parse`.
+const MATH_PLACEHOLDER_RE = /\uE100LFLMATH(\d+)X\uE101/g;
+
+/**
+ * Convert math to opaque placeholders, not HTML.
+ *
+ * KaTeX needs a handful of inline style/ARIA/MathML attributes for correct layout and
+ * accessibility.  Sending its HTML through the generic user-Markdown sanitizer strips
+ * those attributes; globally allowing `style` would in turn let raw user HTML escape the
+ * intended presentation boundary.  We therefore sanitize Markdown first and restore only
+ * HTML produced by our local KaTeX instance afterwards. `trust:false` keeps KaTeX's own
+ * URL/HTML escape hatches disabled.
+ */
+function extractTrustedMath(src: string): {
+  source: string;
+  restore: (sanitizedHtml: string) => string;
+} {
+  const rendered: string[] = [];
+  const stashMath = (expr: string, displayMode: boolean, original: string): string => {
     try {
-      return katex.renderToString(expr.trim(), { displayMode: true, throwOnError: false });
+      const html = katex.renderToString(expr.trim(), {
+        displayMode,
+        throwOnError: true,
+        trust: false,
+      });
+      const index = rendered.push(html) - 1;
+      return `\uE100LFLMATH${index}X\uE101`;
     } catch {
-      return _m;
+      // Malformed or unsupported TeX stays literal rather than becoming a red error span.
+      return original;
     }
+  };
+
+  let source = src.replace(/\$\$([\s\S]+?)\$\$/g, (match, expr: string) =>
+    stashMath(expr, true, match)
+  );
+  source = source.replace(/(^|[^$])\$([^$\n]+?)\$(?![$])/g, (match, pre: string, expr: string) => {
+    const originalMath = match.slice(pre.length);
+    const placeholder = stashMath(expr, false, originalMath);
+    return `${pre}${placeholder}`;
   });
-  // 行内 $...$
-  out = out.replace(/(^|[^$])\$([^$\n]+?)\$(?![$])/g, (_m, pre: string, expr: string) => {
-    try {
-      return `${pre}${katex.renderToString(expr.trim(), { displayMode: false, throwOnError: false })}`;
-    } catch {
-      return _m;
-    }
-  });
-  return out;
+
+  return {
+    source,
+    restore: (sanitizedHtml: string) =>
+      sanitizedHtml.replace(MATH_PLACEHOLDER_RE, (match: string, rawIndex: string) => {
+        const html = rendered[Number(rawIndex)];
+        return html === undefined ? match : html;
+      }),
+  };
 }
 
 /**
@@ -75,24 +106,34 @@ function renderMath(src: string): string {
  * 这里只做机械字面量隔离：先暂存 fenced/inline code，数学处理结束后逐字恢复，随后仍
  * 交给 marked 正常解析。不会判断代码语义，也不会改变真正的数学文本。
  */
-function protectCodeFromMath(src: string): { masked: string; restore: (value: string) => string } {
+function protectMarkdownLiteralsFromMath(src: string): { masked: string; restore: (value: string) => string } {
   const segments: string[] = [];
   const stash = (value: string): string => {
     const index = segments.push(value) - 1;
     return `\uE000LFL_CODE_${index}\uE001`;
   };
 
-  // Use the same Markdown grammar as the renderer: this includes unfinished
-  // fences during streaming, indented blocks and multiline code spans.
+  // Use the same Markdown grammar as the renderer. Besides code, protect link/image/raw
+  // HTML tokens because `$...$` inside href/src/attributes is Markdown syntax, not prose
+  // math. Protecting the complete token is intentionally conservative: link-label math is
+  // less important than never mutating a destination before `marked.parse`.
   const literals: string[] = [];
   marked.walkTokens(marked.lexer(src), (token) => {
-    if (token.type === "code" || token.type === "codespan") literals.push(token.raw);
+    if (["code", "codespan", "link", "image", "html"].includes(token.type)) {
+      const raw = (token as { raw?: string }).raw;
+      if (raw) literals.push(raw);
+    }
   });
   let masked = src;
   // Outer code blocks must be protected before any shorter inline literal.
   for (const literal of literals.sort((a, b) => b.length - a.length)) {
     if (literal && masked.includes(literal)) masked = masked.split(literal).join(stash(literal));
   }
+
+  // CommonMark backslash-escaped dollars are explicit literals. Hide each escaped pair
+  // from the math scanner and restore it before Markdown parsing so marked can remove the
+  // escape in the normal way (`\$5` -> `$5`).
+  masked = masked.replace(/\\\$/g, (literal) => stash(literal));
 
   const restore = (value: string): string =>
     value.replace(/\uE000LFL_CODE_(\d+)\uE001/g, (match: string, rawIndex: string) => {
@@ -125,12 +166,15 @@ export function renderMarkdown(
 ): string {
   if (!src) return "";
   try {
-    let math = src;
+    let markdown = src;
+    let restoreMath = (value: string) => value;
     if (options.enableMath !== false) {
-      const protectedCode = protectCodeFromMath(src);
-      math = protectedCode.restore(renderMath(protectedCode.masked));
+      const protectedLiterals = protectMarkdownLiteralsFromMath(src);
+      const math = extractTrustedMath(protectedLiterals.masked);
+      markdown = protectedLiterals.restore(math.source);
+      restoreMath = math.restore;
     }
-    const raw = marked.parse(math) as string;
+    const raw = marked.parse(markdown) as string;
     let clean = DOMPurify.sanitize(raw, {
       ALLOWED_TAGS,
       ALLOWED_ATTR,
@@ -166,7 +210,7 @@ export function renderMarkdown(
         : `打开 ${htmlEsc}`;
       return `<span class="v2-file-link" data-path="${htmlEsc}"${lineAttr} title="${title}">${htmlEsc}${suffix}</span>`;
     });
-    return clean;
+    return restoreMath(clean);
   } catch {
     return DOMPurify.sanitize(src, { ALLOWED_TAGS, ALLOWED_ATTR });
   }

@@ -565,11 +565,6 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
     # 装配注册；缺省 None=CLI/feishu 装配，回执段如实 unavailable(no_queue_binding)）。
     # tool_cycle 经 getattr duck-typing 读取，无注入即零行为差异。
     interjection_pressure_probe: Callable[[str], dict | None] | None = None
-    # R4（antidrift_impl 批2）: 插话轮边界拉取 hook——装配期可选注入（web 生产装配
-    # 注册：FIFO 认领 queued 项搬入 RunHandle mailbox）；缺省 None=零行为差异。
-    # 轮循环头部每轮恰一次调用（fail-open 全吞），投递走既有消费路径零新文本。
-    interjection_pull_hook: Callable[[str], None] | None = None
-
     # ---- 协调通道委托壳（W4-02e：_InteropMixin → InteropService；签名面保真——build.py 以绑定方法传递 _inject_interop_messages、tests 直调 _interop_inbox_messages；公开面调用兼容零变化）----
     def _interop_svc(self) -> InteropService:
         """服务惰性兜底：tests 以 __new__ 裸构造绕过 __init__ 挂载时补建（fail-open 契约沿 mixin 时代）."""
@@ -904,14 +899,6 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 _run_end_reason = "cancelled"
                 final_answer = _CANCELLED_ANSWER
                 break
-            # R4（antidrift_impl 批2）: 轮边界拉取 queued 插话→mailbox（每轮工具
-            # 循环边界恰一次；hook 缺省 None=零行为；搬运后由下方既有消费路径投递）
-            _pull = getattr(self, "interjection_pull_hook", None)
-            if callable(_pull):
-                try:
-                    _pull(session_id)
-                except Exception:  # noqa: BLE001 — pull hook fail-open，不阻断轮循环
-                    logger.debug("interjection pull hook failed (fail-open)", exc_info=True)
             _interjected = _consume_live_interjections(self, session_id, sess)
             if _interjected:
                 # user_text is used by model-visible tool projection/routing in addition to

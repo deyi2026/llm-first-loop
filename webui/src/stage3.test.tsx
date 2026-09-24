@@ -1,7 +1,7 @@
 // 阶段 3：侧栏管理（置顶/删除两步确认/分支/新会话）+ 右侧面板模型目录
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { RightPanel } from "./components/layout/RightPanel";
 import { sessionStore } from "./core/stores";
@@ -106,6 +106,11 @@ describe("Sidebar 会话管理", () => {
 
   it("新会话 → 清空当前会话（下条消息创建）", async () => {
     render(<Sidebar collapsed={false} />);
+    // Sidebar 同时挂载 EscalationWatcher；让首轮 fetch/json state 更新在 act 内结算，
+    // 避免与本测试真正关心的“新会话”动作竞态。
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
     fireEvent.click(screen.getByTestId("new-session"));
     expect(sessionStore.getState().currentSessionId).toBe("");
     expect(conversationStore.getState().messages).toEqual([]);

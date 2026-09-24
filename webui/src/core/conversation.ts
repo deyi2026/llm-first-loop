@@ -44,6 +44,8 @@ interface ConversationState {
   streaming: boolean;
   /** 后台 run 进行中（EVO 后台 run：刷新/切换后可见性） */
   backgroundRunning: boolean;
+  /** 当前视图 live run 的 exact generation；“立即插入”必须绑定此机械事实。 */
+  activeRunGeneration: string | null;
   /** 当前进行中的助手消息索引（-1=无） */
   streamingIndex: number;
   lastError: string | null;
@@ -61,6 +63,7 @@ let state: ConversationState = {
   loadedHistoryCount: 0,
   streaming: false,
   backgroundRunning: false,
+  activeRunGeneration: null,
   streamingIndex: -1,
   lastError: null,
   streamStartedAt: null,
@@ -153,6 +156,9 @@ sessionStore.subscribe(() => {
   const foregroundFollows = abortCtrl !== null && abortSessionId === nextSessionId;
   const resumeFollows = resumeAbort !== null && resumeSessionId === nextSessionId;
   const st = conversationStore.getState();
+  if (!foregroundFollows && !resumeFollows && st.activeRunGeneration !== null) {
+    conversationStore.setState({ activeRunGeneration: null });
+  }
   if (st.streaming && !foregroundFollows && !resumeFollows) {
     conversationStore.setState({
       streaming: false,
@@ -236,6 +242,7 @@ export async function loadHistory(sessionId: string): Promise<void> {
     lastError: null,
     streamStartedAt: null,
     backgroundRunning: false,
+    activeRunGeneration: null,
   });
   // EVO 后台 run：加载后查后台生成状态——running 则轮询直到完成（刷新/切换后可见进行中任务）
   // 空闲增量轮询：飞书桥等外部写入 → Web 20s 内自动刷新；基线指纹直接取自本次加载，省一次探针
@@ -258,7 +265,7 @@ export async function checkBackgroundRun(sessionId: string): Promise<void> {
   const status = await fetchStreamStatus(sessionId);
   if (sessionStore.getState().currentSessionId !== sessionId) return;
   if (!status || !status.running) return;
-  conversationStore.setState({ backgroundRunning: true });
+  conversationStore.setState({ backgroundRunning: true, activeRunGeneration: null });
   // FC2-C run identity: resume must bind the exact generation returned by status.
   // Missing generation fails closed to polling; never subscribe to "whatever run is current".
   const runGeneration = typeof status.run_generation === "string" ? status.run_generation.trim() : "";
@@ -299,7 +306,12 @@ async function resumeBackgroundStream(
     const cur = conversationStore.getState();
     if (reuseCurrentStreamingMessage) {
       if (cur.streamingIndex < 0) return false;
-      conversationStore.setState({ streaming: true, backgroundRunning: true, lastError: null });
+      conversationStore.setState({
+        streaming: true,
+        backgroundRunning: true,
+        activeRunGeneration: runGeneration,
+        lastError: null,
+      });
       patchStreaming({
         content: "",
         reasoningContent: "",
@@ -323,6 +335,7 @@ async function resumeBackgroundStream(
         messages: [...cur.messages, placeholder],
         streaming: true,
         streamingIndex: cur.messages.length,
+        activeRunGeneration: runGeneration,
         lastError: null,
       });
     }
@@ -370,19 +383,24 @@ async function resumeBackgroundStream(
     }
     if (sessionStore.getState().currentSessionId !== sessionId) return true;
     if (outcome.ok && outcome.data) {
-      conversationStore.setState({ streaming: false, backgroundRunning: false });
+      conversationStore.setState({
+        streaming: false,
+        backgroundRunning: false,
+        activeRunGeneration: null,
+      });
       void loadHistory(sessionId); // 终态 → 重载完整结果（含工具调用）
       return true;
     }
     // 失败（run 已结束/网络）：刷新路径移除自己的占位；同消息续联则把控制权
     // 交回原 sendMessage，由它用断流前累积内容收敛为 interrupted。
     if (reuseCurrentStreamingMessage) {
-      conversationStore.setState({ backgroundRunning: false });
+      conversationStore.setState({ backgroundRunning: false, activeRunGeneration: null });
     } else {
       conversationStore.setState({
         messages: conversationStore.getState().messages.slice(0, -1),
         streaming: false,
         backgroundRunning: false,
+        activeRunGeneration: null,
       });
     }
     return false;
@@ -393,6 +411,7 @@ async function resumeBackgroundStream(
     }
     // 会话已切换时这是主动 detach，不得为旧会话启动回退轮询。
     if (sessionStore.getState().currentSessionId !== sessionId) return true;
+    conversationStore.setState({ activeRunGeneration: null });
     return false;
   }
 }
@@ -416,6 +435,8 @@ export function stopStreaming(): void {
   else sid = sessionStore.getState().currentSessionId;
   abortForegroundSubscription();
   abortResumeSubscription();
+  // 一旦用户请求停止，本地不再允许把后续“立即插入”绑定到刚才那一代 run。
+  conversationStore.setState({ activeRunGeneration: null });
   // fail-open: 取消失败不影响前端状态（后端 run 终会自然结束落盘）。
   if (sid) {
     void fetch("/api/v1/chat/cancel", {
@@ -494,6 +515,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     messages: [...cur.messages, userMsg, placeholder],
     streaming: true,
     streamingIndex: cur.messages.length + 1,
+    activeRunGeneration: null,
     lastError: null,
     streamStartedAt: Date.now(),
   });
@@ -537,6 +559,9 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
         if (ownerSessionId && sid !== ownerSessionId) return;
         ownerSessionId = sid;
         runGeneration = generation;
+        if (sessionStore.getState().currentSessionId === sid || !sessionId) {
+          conversationStore.setState({ activeRunGeneration: generation });
+        }
         // Update abort ownership before publishing the new session id; the session-store
         // subscriber must not mistake this mechanical bind for a user session switch.
         abortSessionId = sid;
@@ -621,6 +646,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
       streaming: false,
       streamingIndex: -1,
       streamStartedAt: null,
+      activeRunGeneration: null,
     });
   };
 
@@ -858,9 +884,15 @@ export async function steerAllQueued(): Promise<{
     .getState()
     .queueItems.filter((it) => it.status === "queued");
   if (queued.length === 0) return { ok: false, steered: 0, detail: "没有可插话的排队消息。" };
+  // “全部插话”是一次显式人类动作：整批必须绑定点击瞬间同一个 exact run。
+  // 若处理中 run 已换代，后端会对剩余项 fail-closed，绝不漂到新 run。
+  const runGeneration = conversationStore.getState().activeRunGeneration;
+  if (!runGeneration) {
+    return { ok: false, steered: 0, detail: "当前任务身份尚未就绪；消息仍保留在普通排队中。" };
+  }
   let steered = 0;
   for (const it of queued) {
-    const result = await interjectQueueTurn(it.queue_id);
+    const result = await interjectQueueTurn(it.queue_id, runGeneration);
     if (!result.ok) {
       await refreshQueue(sessionId);
       // 部分成功不算整体 ok：detail 如实回传，已 steered 条数单独给出
@@ -874,11 +906,18 @@ export async function steerAllQueued(): Promise<{
 
 /** 真插话：交给当前 live run；pending/received 由后端状态回显。 */
 export async function interjectQueueTurn(
-  queueId: string
+  queueId: string,
+  expectedRunGeneration?: string
 ): Promise<{ ok: boolean; detail?: string }> {
   const sessionId = sessionStore.getState().currentSessionId;
   if (!sessionId) return { ok: false, detail: "当前没有可操作的会话" };
-  const result = await interjectQueueItem(sessionId, queueId);
+  // Read once at action start. A delayed HTTP request remains bound to the run the
+  // human actually clicked, never “whatever run is current” when the server receives it.
+  const runGeneration = expectedRunGeneration ?? conversationStore.getState().activeRunGeneration;
+  if (!runGeneration) {
+    return { ok: false, detail: "当前任务身份尚未就绪；消息仍保留在普通排队中。" };
+  }
+  const result = await interjectQueueItem(sessionId, queueId, runGeneration);
   await refreshQueue(sessionId);
   return { ok: result.ok, detail: result.detail };
 }

@@ -90,6 +90,21 @@ describe("live parity header actions", () => {
     vi.unstubAllGlobals();
   });
 
+  it("more menu supports outside-dismiss and Escape without losing trigger semantics", () => {
+    render(<SessionHeaderActions />);
+    const trigger = screen.getByRole("button", { name: "更多" });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+
+    fireEvent.click(trigger);
+    expect(screen.getByTestId("session-more-menu")).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByTestId("session-more-menu")).toBeNull();
+
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("session-more-menu")).toBeNull();
+  });
+
   it("copies a deployment-local deep link and opens the real files view action", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {

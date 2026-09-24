@@ -673,10 +673,10 @@ def chat(
                 )
             if getattr(payload, "new_session", False):
                 # schema 契约：new_session 与 session_id 同传时强制新建优先。
-                # M60（Web 对齐 M52）: 继承旧共享会话 model_override，不回落装配默认——
-                # 否则 Web 新建会话经 owner 跨端共享把飞书侧也拉回本地默认模型。
+                # 显式模型选择属于本次 human turn，必须在 session.created 时就成为
+                # 新会话 authority；只有本请求未显式选模型时才继承 shared_current。
                 session_id = engine.session.create(
-                    model_override=_inherit_shared_model_override(engine)
+                    model_override=_new_session_model_override(engine, payload.model)
                 )
                 engine.session.set_shared_current(session_id)
             elif payload.session_id is not None:
@@ -889,6 +889,19 @@ def _inherit_shared_model_override(engine: Any) -> str | None:
     with suppress(Exception):
         return engine.session.load(old_sid).model_override
     return None
+
+
+def _new_session_model_override(engine: Any, requested_model: str | None) -> str | None:
+    """Resolve the model authority a new Web session is born with.
+
+    A non-empty model in this human request takes precedence over process-global
+    ``shared_current``.  If that explicit value is unknown, return ``None`` rather
+    than borrowing an unrelated tab/session's model.  M60 inheritance remains the
+    fallback only when this request did not explicitly choose a model.
+    """
+    if requested_model:
+        return _canonical_persist_model(engine, requested_model)
+    return _inherit_shared_model_override(engine)
 
 
 def _stream_background(
@@ -1140,9 +1153,10 @@ def chat_stream(
                     content={"error": "invalid_attachment", "detail": str(exc)},
                 )
             if getattr(payload, "new_session", False):
-                # M60（Web 对齐 M52）: 继承旧共享会话 model_override（fail-open → None）
+                # 与同步入口相同：本请求显式模型优先于进程级 shared_current；
+                # 未显式选模型时才走 M60 继承（fail-open → None）。
                 session_id = engine.session.create(
-                    model_override=_inherit_shared_model_override(engine)
+                    model_override=_new_session_model_override(engine, payload.model)
                 )
                 engine.session.set_shared_current(session_id)
             elif payload.session_id is not None:
@@ -1598,6 +1612,17 @@ def queue_interject(payload: QueueInterjectRequest, request: Request) -> Respons
             },
         )
 
+    actual_run_generation = str(handle.get("run_generation") or "")
+    if payload.run_generation != actual_run_generation:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": "interject_run_changed",
+                "detail": "当前任务已变化；消息仍保留在普通排队中",
+            },
+        )
+
     hq = _human_turn_queue(request)
     item = hq.claim_interject(payload.session_id, payload.queue_id)
     if item is None:
@@ -1623,7 +1648,7 @@ def queue_interject(payload: QueueInterjectRequest, request: Request) -> Respons
                 payload.session_id, payload.queue_id
             ),
         },
-        expected_run_generation=str(handle.get("run_generation") or ""),
+        expected_run_generation=payload.run_generation,
     )
     if not accepted:
         hq.release_interject(payload.session_id, payload.queue_id)

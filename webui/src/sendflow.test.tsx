@@ -177,7 +177,7 @@ describe("发送链路", () => {
     expect((ta as HTMLTextAreaElement).value).toBe("");
   });
 
-  it("降级附件：失败事实留在 UI，不改写 user 载荷", async () => {
+  it("降级附件：失败事实不会被注入 human 载荷", async () => {
     mockBackend();
     // 捕获发送到后端的 body
     let sentBody = "";
@@ -191,10 +191,8 @@ describe("发送链路", () => {
       }
       return new Response(JSON.stringify({}), { status: 200 });
     });
-    render(<Composer />);
-    const ta = screen.getByTestId("composer-input");
-    fireEvent.change(ta, { target: { value: "识别" } });
-    // 注入降级附件（模拟图片识别失败）
+    // 直接验证发送边界；Composer 的附件卡/错误展示由产品级组件测试负责。
+    // 此处不挂载 UI，避免把不相关的 Composer store 订阅混进载荷合同测试。
     const { conversationStore: convSt } = await import("./core/conversation");
     const { sendMessage } = await import("./core/conversation");
     await sendMessage("识别", [

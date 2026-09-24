@@ -5,6 +5,7 @@ import { conversationStore } from "../../core/conversation";
 import { refreshSessionsAndCurrent } from "../../core/events";
 import { sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
 import { buildSessionShareUrl, syncSessionIdInLocation } from "../../core/sessionUrl";
+import { useDismissibleLayer } from "../../core/useDismissibleLayer";
 
 async function writeClipboard(text: string): Promise<boolean> {
   try {
@@ -99,7 +100,7 @@ function SessionShareButton({
       aria-label="复制会话链接"
       title="复制此 LFL 部署的会话链接（受部署自身鉴权保护，非公开分享）"
     >
-      ⇧ 复制链接
+      ⇧ <span className="v2-share-label">复制链接</span>
     </button>
   );
 }
@@ -112,6 +113,10 @@ export function SessionHeaderActions({ onShowFiles }: { onShowFiles?: () => void
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [notice, flash] = useTransientNotice();
+  const menuRef = useDismissibleLayer<HTMLDivElement>(menuOpen, () => {
+    setMenuOpen(false);
+    setConfirmDelete(false);
+  });
 
   useEffect(() => {
     setMenuOpen(false);
@@ -173,7 +178,7 @@ export function SessionHeaderActions({ onShowFiles }: { onShowFiles?: () => void
     <div className="v2-header-actions" data-testid="session-header-actions">
       {notice ? <span className="v2-header-notice" role="status">{notice}</span> : null}
       <SessionShareButton enabled={Boolean(currentId)} onShare={() => void share()} />
-      <div className="v2-header-more-wrap">
+      <div className="v2-header-more-wrap" ref={menuRef}>
         <button
           type="button"
           className="v2-icon-btn"
@@ -184,6 +189,7 @@ export function SessionHeaderActions({ onShowFiles }: { onShowFiles?: () => void
           }}
           aria-label="更多"
           aria-expanded={menuOpen}
+          aria-haspopup="menu"
         >
           ⋯
         </button>

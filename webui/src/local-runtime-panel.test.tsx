@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { LocalRuntimePanel } from "./components/layout/LocalRuntimePanel";
 import type { LocalRuntimeStatus } from "./core/api";
 
@@ -32,6 +32,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   vi.unstubAllGlobals();
 });
@@ -75,13 +76,19 @@ describe("local runtime panel", () => {
     }));
     render(<LocalRuntimePanel onSynced={() => { synced += 1; }} />);
     await waitFor(() => expect(screen.getByText(/Qwen3.8-27B-MLX-8bit/)).toBeInTheDocument());
-    fireEvent.click(screen.getAllByRole("button", { name: "切换" })[1]);
-    await vi.waitFor(() => expect(posts).toEqual([{ action: "switch_model", model: "lmstudio-community/Qwen3.8-27B-MLX-8bit" }]));
-    // 轮询到 done 后：同步消息 + onSynced 回调（fake timers 推进 2.5s 轮询周期）
+    // 在点击前切换 fake clock：running job 的 interval effect 必须在 fake clock 下创建。
     vi.useFakeTimers();
-    await vi.advanceTimersByTimeAsync(2600);
-    await vi.waitFor(() => expect(screen.getByText(/已同步到注册表：cognilocal\/qwen3.8-27b/)).toBeInTheDocument());
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "切换" })[1]);
+      await Promise.resolve();
+    });
+    expect(posts).toEqual([{ action: "switch_model", model: "lmstudio-community/Qwen3.8-27B-MLX-8bit" }]);
+    // 轮询到 done 后：同步消息 + onSynced 回调（推进 2.5s 轮询周期）
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2600);
+    });
     vi.useRealTimers();
+    await waitFor(() => expect(screen.getByText(/已同步到注册表：cognilocal\/qwen3.8-27b/)).toBeInTheDocument());
     expect(synced).toBe(1);
     expect(screen.getByText(/warmup ok/)).toBeInTheDocument();
   });
@@ -102,9 +109,9 @@ describe("local runtime panel", () => {
     render(<LocalRuntimePanel />);
     await waitFor(() => expect(screen.getByText("停止")).toBeInTheDocument());
     fireEvent.click(screen.getByText("停止"));
-    await vi.waitFor(() => expect(posts).toEqual([{ action: "stop", confirm: true }]));
+    await waitFor(() => expect(posts).toEqual([{ action: "stop", confirm: true }]));
     expect(confirmCalled).toBe(true);
-    await vi.waitFor(() => expect(screen.getByText("完成（2s）")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("完成（2s）")).toBeInTheDocument());
   });
 
   it("拒绝确认时不发起 stop", async () => {

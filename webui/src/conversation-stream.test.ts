@@ -46,6 +46,7 @@ function resetConversation(): void {
     loadedHistoryCount: 0,
     streaming: false,
     backgroundRunning: false,
+    activeRunGeneration: null,
     streamingIndex: -1,
     lastError: null,
     streamStartedAt: null,
@@ -100,6 +101,7 @@ describe("conversation stream ownership", () => {
     expect(sessionStore.getState().currentSessionId).toBe("s-new");
     expect(sessionStore.getState().newSessionPending).toBe(false);
     expect(pending.signal?.aborted).toBe(false);
+    expect(conversationStore.getState().activeRunGeneration).toBe("g-new");
 
     pending.resolve({
       ok: true,
@@ -108,6 +110,7 @@ describe("conversation stream ownership", () => {
       data: { session_id: "s-new", final_answer: "ok" },
     } satisfies StreamOutcome);
     await run;
+    expect(conversationStore.getState().activeRunGeneration).toBeNull();
   });
 
   it("fresh run 网络断流后只用 run_started 的 exact generation 续联，不猜 latest", async () => {
@@ -188,10 +191,13 @@ describe("conversation stream ownership", () => {
     await nextTurn();
     expect(h.pending).toHaveLength(1);
     expect(h.pending[0].signal?.aborted).toBe(false);
+    h.pending[0].handlers.onRunStarted?.({ session_id: "s1", run_generation: "gen-s1-live" });
+    expect(conversationStore.getState().activeRunGeneration).toBe("gen-s1-live");
 
     sessionStore.setCurrentSession("s2");
     await loadHistory("s2");
     expect(h.pending[0].signal?.aborted).toBe(true);
+    expect(conversationStore.getState().activeRunGeneration).toBeNull();
     expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(
       "/api/v1/chat/cancel",
       expect.anything()
@@ -205,9 +211,12 @@ describe("conversation stream ownership", () => {
     const run = sendMessage("A", []);
     await nextTurn();
     expect(h.pending).toHaveLength(1);
+    h.pending[0].handlers.onRunStarted?.({ session_id: "s1", run_generation: "gen-stop-1" });
+    expect(conversationStore.getState().activeRunGeneration).toBe("gen-stop-1");
 
     stopStreaming();
     expect(h.pending[0].signal?.aborted).toBe(true);
+    expect(conversationStore.getState().activeRunGeneration).toBeNull();
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
       "/api/v1/chat/cancel",
       expect.objectContaining({

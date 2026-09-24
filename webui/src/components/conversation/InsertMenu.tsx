@@ -6,6 +6,7 @@ import {
   type AttachmentLibraryItem,
   type FsTree,
 } from "../../core/api";
+import { useDismissibleLayer } from "../../core/useDismissibleLayer";
 import type { ComposerAttachment } from "./composerTypes";
 
 interface InsertMenuProps {
@@ -27,6 +28,7 @@ export function InsertMenu({ disabled, onFiles, onAddAttachment }: InsertMenuPro
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const rootRef = useDismissibleLayer<HTMLDivElement>(open, () => setOpen(false));
 
   const resetError = () => setError("");
 
@@ -88,13 +90,15 @@ export function InsertMenu({ disabled, onFiles, onAddAttachment }: InsertMenuPro
   };
 
   return (
-    <div className="v2-insert-wrap">
+    <div className="v2-insert-wrap" ref={rootRef}>
       <button
         type="button"
         className="v2-round-btn"
         aria-label="添加内容"
         title="添加文件、工作区文件或最近附件"
         disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={() => {
           setOpen((value) => !value);
           setView("main");
@@ -119,7 +123,7 @@ export function InsertMenu({ disabled, onFiles, onAddAttachment }: InsertMenuPro
         data-testid="file-input"
       />
       {open ? (
-        <div className="v2-insert-popover" data-testid="insert-popover">
+        <div className="v2-insert-popover" data-testid="insert-popover" role="menu">
           {view !== "main" ? (
             <button type="button" className="v2-popover-back" onClick={() => setView("main")}>← 返回</button>
           ) : null}

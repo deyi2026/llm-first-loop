@@ -109,6 +109,7 @@ export const queueZh = {
   queueRemove: "删除",
   queueInterject: "立即插入",
   queueInterjectUnavailable: "仅运行中可立即插入",
+  queueInterjectIdentityPending: "任务身份同步中，暂不可立即插入",
   queueRemoved: "已删除该排队消息",
   queueInterjectPending: "待接收",
   queueInterjectReceived: "已接收",

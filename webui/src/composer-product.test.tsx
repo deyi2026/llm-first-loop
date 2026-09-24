@@ -77,6 +77,39 @@ afterEach(() => {
 
 describe("product composer", () => {
 
+  it("附件插入菜单支持点击外侧和 Escape 关闭，避免移动端浮层滞留", () => {
+    vi.stubGlobal("fetch", baseFetch());
+    render(<Composer />);
+
+    const trigger = screen.getByTestId("insert-button");
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    fireEvent.click(trigger);
+    expect(screen.getByTestId("insert-popover")).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByTestId("insert-popover")).toBeNull();
+
+    fireEvent.click(trigger);
+    expect(screen.getByTestId("insert-popover")).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("insert-popover")).toBeNull();
+  });
+
+  it("推理菜单支持点击外侧和 Escape 关闭并声明 popup 语义", async () => {
+    vi.stubGlobal("fetch", baseFetch());
+    render(<Composer />);
+    const trigger = await screen.findByTestId("reasoning-button");
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+
+    fireEvent.click(trigger);
+    expect(screen.getByTestId("reasoning-popover")).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByTestId("reasoning-popover")).toBeNull();
+
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("reasoning-popover")).toBeNull();
+  });
+
   it("provider catalog 变更事件会刷新下拉且不覆盖 stale session 选择", async () => {
     let catalog = modelResponse();
     vi.stubGlobal("fetch", baseFetch((url) => {

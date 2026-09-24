@@ -2,7 +2,7 @@
 // 文本域自动增高 / Enter 发送 Shift+Enter 换行 / 发送·停止切换 / 附件图片预览
 // / “/” 命令面板（匹配+选项+应用中）/ 模型选择下拉）
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { zh, queueZh } from "../../i18n/zh";
 import { sendMessage, stopStreaming, useConversation, conversationStore, enqueueQueueTurn, steerAllQueued } from "../../core/conversation";
 import { MODEL_CATALOG_CHANGED_EVENT, fetchModels, uploadFileBase64, type ModelCatalog } from "../../core/chat";
@@ -16,13 +16,14 @@ import { DictationButton } from "./DictationButton";
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const LONG_PASTE_ATTACHMENT_CHARS = 20_000;
 const COMPOSER_MAX_HEIGHT_PX = 420;
-const COMPOSER_MIN_DYNAMIC_HEIGHT_PX = 180;
+const COMPOSER_MIN_DYNAMIC_HEIGHT_PX = 120;
 
 function composerMaxHeight(): number {
   if (typeof window === "undefined") return COMPOSER_MAX_HEIGHT_PX;
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
   return Math.min(
     COMPOSER_MAX_HEIGHT_PX,
-    Math.max(COMPOSER_MIN_DYNAMIC_HEIGHT_PX, Math.floor(window.innerHeight * 0.4))
+    Math.max(COMPOSER_MIN_DYNAMIC_HEIGHT_PX, Math.floor(viewportHeight * 0.4))
   );
 }
 
@@ -215,7 +216,7 @@ export function Composer() {
     window.setTimeout(() => taRef.current?.focus(), 0);
   }, [conv.composerPrefill]);
 
-  const autoGrow = () => {
+  const autoGrow = useCallback(() => {
     const el = taRef.current;
     if (!el) return;
     if (!el.value) {
@@ -225,13 +226,25 @@ export function Composer() {
     }
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, composerMaxHeight()) + "px";
-  };
+  }, []);
 
   // text 变化（含发送/命令清空）后按渲染结果复位高度——
   // 发送后 setText("") 是异步渲染，若在 doSend 内同步调 autoGrow 会读到旧 scrollHeight
   useEffect(() => {
     autoGrow();
-  }, [text]);
+  }, [text, autoGrow]);
+
+  // 移动软键盘主要改变 visual viewport；若只在文本变化时重算，键盘弹出后
+  // textarea 会保留布局视口高度并挤占可见区。窗口/visualViewport 变化都重算。
+  useEffect(() => {
+    const onViewportResize = () => autoGrow();
+    window.addEventListener("resize", onViewportResize);
+    window.visualViewport?.addEventListener("resize", onViewportResize);
+    return () => {
+      window.removeEventListener("resize", onViewportResize);
+      window.visualViewport?.removeEventListener("resize", onViewportResize);
+    };
+  }, [autoGrow]);
 
   // 输入法兼容（用户 2026-08-17 需求）：中文输入法组合/候选选择期间回车不发送——
   // 第一次回车=选候选字母，第二次回车（组合结束）才发送。

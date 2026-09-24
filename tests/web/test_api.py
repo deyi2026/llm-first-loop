@@ -533,6 +533,38 @@ def test_chat_new_session_forces_create(build_test_engine, fake_settings):
     assert engine.session.get_shared_current() == new_sid
 
 
+def test_chat_new_session_is_born_with_explicit_model_not_foreign_shared_model(
+    build_test_engine, fake_settings, monkeypatch
+):
+    """显式 Web 模型必须在 session.created 时就拥有 authority，不能先继承别的 tab。"""
+    from llm_loop.llm.client import LLMResponse
+
+    engine, fake = build_test_engine([])
+    fake._responses = [LLMResponse(content="fresh", tool_calls=[], provider="fake")]
+    old_sid = engine.session.create(model_override="foreign/tab-model")
+    engine.session.set_shared_current(old_sid)
+    pid, mid = engine.llm_pool.registry.resolve("fake-model")
+    expected = f"{pid}/{mid}"
+
+    created_overrides: list[str | None] = []
+    original_create = engine.session.create
+
+    def capture_create(*args, **kwargs):
+        created_overrides.append(kwargs.get("model_override"))
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(engine.session, "create", capture_create)
+    cli = _make_client(engine)
+    response = cli.post(
+        "/api/v1/chat",
+        json={"message": "hi", "new_session": True, "model": "fake-model"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert created_overrides == [expected]
+    assert engine.session.load(response.json()["session_id"]).model_override == expected
+
+
 def test_chat_without_new_session_reuses_shared(build_test_engine, fake_settings):
     """不带 new_session → 复用共享当前（原逻辑零回归）."""
     engine, fake = build_test_engine([])

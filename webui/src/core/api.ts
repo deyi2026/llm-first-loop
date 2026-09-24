@@ -487,13 +487,25 @@ export async function registerWorkspace(path: string): Promise<WorkspaceInfo | n
   return status === 200 ? data : null;
 }
 
-export async function switchWorkspace(id: string): Promise<boolean> {
-  const { status } = await api("/api/v1/workspaces/switch", {
+export interface WorkspaceSwitchResult {
+  ok: boolean;
+  status: number;
+  error?: string;
+  detail?: string;
+}
+
+export async function switchWorkspace(id: string): Promise<WorkspaceSwitchResult> {
+  const { status, data } = await api<{ error?: string; detail?: string }>("/api/v1/workspaces/switch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id }),
   });
-  return status === 200;
+  return {
+    ok: status === 200,
+    status,
+    error: data.error,
+    detail: data.detail,
+  };
 }
 
 /** 按工作区列会话（侧栏工作区分组展示；不改当前工作区） */

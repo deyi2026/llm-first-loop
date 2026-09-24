@@ -566,6 +566,38 @@ def test_chat_stream_new_session_wins_over_session_id(build_test_engine):
     assert engine.session.get_shared_current() == done["session_id"]
 
 
+def test_chat_stream_new_session_is_born_with_explicit_model_not_foreign_shared_model(
+    build_test_engine, monkeypatch
+):
+    """流式入口也必须在 create 时使用本请求显式模型，不能记录其他 tab 的 authority。"""
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("fresh")
+    for pid in list(engine.llm_pool._provider_cache):
+        engine.llm_pool._provider_cache[pid] = engine.llm_pool.default_client
+    old_sid = engine.session.create(model_override="foreign/tab-model")
+    engine.session.set_shared_current(old_sid)
+    pid, mid = engine.llm_pool.registry.resolve("fake-model")
+    expected = f"{pid}/{mid}"
+
+    created_overrides: list[str | None] = []
+    original_create = engine.session.create
+
+    def capture_create(*args, **kwargs):
+        created_overrides.append(kwargs.get("model_override"))
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(engine.session, "create", capture_create)
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "hi", "new_session": True, "model": "fake-model"},
+    )
+    done = _parse_sse(resp.text)[-1]["data"]
+
+    assert created_overrides == [expected]
+    assert engine.session.load(done["session_id"]).model_override == expected
+
+
 def test_chat_stream_cross_process_busy_has_no_model_side_effect(build_test_engine):
     from llm_loop.core.loop.runner import BackgroundRunner
     from llm_loop.core.session import SessionStore

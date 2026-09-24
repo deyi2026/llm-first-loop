@@ -26,13 +26,16 @@ function queued(id: string, text: string, seq: number): QueueItem {
 }
 
 function installFetch(
-  interject: (queueId: string) => Response
+  interject: (queueId: string, runGeneration: string) => Response
 ) {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/api/v1/chat/queue/interject") && init?.method === "POST") {
-      const body = JSON.parse(String(init.body ?? "{}")) as { queue_id: string };
-      return interject(body.queue_id);
+      const body = JSON.parse(String(init.body ?? "{}")) as {
+        queue_id: string;
+        run_generation: string;
+      };
+      return interject(body.queue_id, body.run_generation);
     }
     if (url.includes("/api/v1/models")) {
       return new Response(JSON.stringify({ models: [], current: null, catalog: [] }), { status: 200 });
@@ -52,6 +55,7 @@ beforeEach(() => {
     composerPrefill: null,
     streaming: true,
     backgroundRunning: true,
+    activeRunGeneration: "gen-steer-all-1",
     streamingIndex: -1,
     queueItems: [queued("q1", "第一条", 1), queued("q2", "第二条", 2)],
     lastError: null,
@@ -71,8 +75,8 @@ function pressCtrlEnter() {
 describe("Cmd/Ctrl+Enter 全部插话", () => {
   it("空草稿 + 运行中 → FIFO 逐条 interject 并提示条数", async () => {
     const calls: string[] = [];
-    installFetch((queueId) => {
-      calls.push(queueId);
+    installFetch((queueId, runGeneration) => {
+      calls.push(`${queueId}:${runGeneration}`);
       return new Response(
         JSON.stringify({ ok: true, queue_id: queueId, state: "interject_pending" }),
         { status: 202 }
@@ -84,7 +88,10 @@ describe("Cmd/Ctrl+Enter 全部插话", () => {
       "Cmd/Ctrl+Enter 插话发送全部排队消息"
     );
     pressCtrlEnter();
-    await waitFor(() => expect(calls).toEqual(["q1", "q2"]));
+    await waitFor(() => expect(calls).toEqual([
+      "q1:gen-steer-all-1",
+      "q2:gen-steer-all-1",
+    ]));
     await waitFor(() =>
       expect(screen.getByText("已把 2 条排队消息交给当前任务")).toBeInTheDocument()
     );
@@ -92,8 +99,8 @@ describe("Cmd/Ctrl+Enter 全部插话", () => {
 
   it("中途 409 即停：只发已确认条数并显示后端 detail", async () => {
     const calls: string[] = [];
-    installFetch((queueId) => {
-      calls.push(queueId);
+    installFetch((queueId, runGeneration) => {
+      calls.push(`${queueId}:${runGeneration}`);
       if (queueId === "q1") {
         return new Response(
           JSON.stringify({ ok: true, queue_id: queueId, state: "interject_pending" }),
@@ -111,7 +118,10 @@ describe("Cmd/Ctrl+Enter 全部插话", () => {
     });
     render(<Composer />);
     pressCtrlEnter();
-    await waitFor(() => expect(calls).toEqual(["q1", "q2"]));
+    await waitFor(() => expect(calls).toEqual([
+      "q1:gen-steer-all-1",
+      "q2:gen-steer-all-1",
+    ]));
     await waitFor(() =>
       expect(
         screen.getByText("当前会话没有可接收插话的运行任务；消息仍保留在排队中")

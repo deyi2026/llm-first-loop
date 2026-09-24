@@ -4,11 +4,22 @@
   box-sizing: border-box;
 }
 
+:root {
+  --v2-mobile-touch-target: 44px;
+}
+
 /* ── 三栏布局壳 ── */
 .v2-shell {
   display: flex;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  .v2-shell {
+    height: 100dvh;
+  }
 }
 
 .v2-sidebar {
@@ -863,9 +874,19 @@
   line-height: 18px;
   color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-2);
+  max-width: 180px;
+  overflow: hidden;
+}
+
+.v2-status-badge > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .v2-status-dot {
+  flex: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -1032,6 +1053,8 @@
     transform: translateX(-100%);
     transition: transform var(--ds-transition-duration) var(--ds-ease-in-out);
     box-shadow: var(--dsw-shadow-lv3);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .v2-shell.mobile-sidebar-open .v2-sidebar {
@@ -1056,6 +1079,8 @@
     transform: translateX(100%);
     transition: transform var(--ds-transition-duration) var(--ds-ease-in-out);
     box-shadow: var(--dsw-shadow-lv3);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .v2-shell.mobile-panel-open .v2-panel {
@@ -1073,7 +1098,10 @@
   }
 
   .v2-composer {
-    padding: var(--dsw-space-2) var(--dsw-space-3) var(--dsw-space-3);
+    padding-top: var(--dsw-space-2);
+    padding-right: max(var(--dsw-space-3), env(safe-area-inset-right));
+    padding-bottom: max(var(--dsw-space-3), env(safe-area-inset-bottom));
+    padding-left: max(var(--dsw-space-3), env(safe-area-inset-left));
   }
 
   .v2-msg-bubble {
@@ -1082,6 +1110,49 @@
 
   .v2-model-select {
     max-width: 110px;
+  }
+
+  /* 触屏没有可靠 hover：会话管理动作必须可见且可点。 */
+  .v2-session-actions {
+    display: inline-flex;
+  }
+}
+
+@media (max-width: 640px) {
+  .v2-topbar {
+    height: calc(48px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+    padding-right: max(6px, env(safe-area-inset-right));
+    padding-left: max(6px, env(safe-area-inset-left));
+    gap: 4px;
+  }
+
+  .v2-topbar > .v2-icon-btn,
+  .v2-header-actions .v2-icon-btn,
+  .v2-header-actions .v2-btn {
+    min-width: var(--v2-mobile-touch-target);
+    width: var(--v2-mobile-touch-target);
+    height: var(--v2-mobile-touch-target);
+    padding-inline: 0;
+  }
+
+  .v2-share-label {
+    display: none;
+  }
+
+  .v2-status-badge {
+    flex: 0 1 88px;
+    max-width: 88px;
+  }
+
+  .v2-header-notice {
+    right: 0;
+    max-width: calc(100vw - 24px);
+    white-space: normal;
+  }
+
+  .v2-header-menu {
+    width: min(240px, calc(100vw - 24px));
   }
 }
 

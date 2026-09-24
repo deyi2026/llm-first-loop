@@ -325,13 +325,18 @@ export async function cancelQueueItem(
 /** 将一条 queued 消息交给当前 run，在下一个安全模型决策边界接收。 */
 export async function interjectQueueItem(
   sessionId: string,
-  queueId: string
+  queueId: string,
+  runGeneration: string
 ): Promise<QueueActionResponse> {
   try {
     const resp = await fetch("/api/v1/chat/queue/interject", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, queue_id: queueId }),
+      body: JSON.stringify({
+        session_id: sessionId,
+        queue_id: queueId,
+        run_generation: runGeneration,
+      }),
     });
     const data = (await resp.json().catch(() => ({}))) as Partial<QueueActionResponse>;
     return { ok: resp.ok, status: resp.status, ...data };

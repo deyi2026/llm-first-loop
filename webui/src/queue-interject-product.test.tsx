@@ -48,6 +48,7 @@ beforeEach(() => {
     composerPrefill: null,
     streaming: true,
     backgroundRunning: true,
+    activeRunGeneration: "gen-click-1",
     streamingIndex: -1,
     queueItems: [item()],
     lastError: null,
@@ -151,7 +152,20 @@ describe("queue withdraw and true interject product contract", () => {
     });
     render(<ChatQueue />);
     fireEvent.click(screen.getByRole("button", { name: "立即插入" }));
-    await waitFor(() => expect(body).toEqual({ session_id: "s1", queue_id: "q1" }));
+    await waitFor(() => expect(body).toEqual({
+      session_id: "s1",
+      queue_id: "q1",
+      run_generation: "gen-click-1",
+    }));
     await waitFor(() => expect(screen.getByTestId("chat-queue-status")).toHaveTextContent("待接收"));
+  });
+
+  it("尚未取得 exact run_generation 时即使 UI 正在流式也禁用立即插入", () => {
+    installFetch(() => undefined);
+    conversationStore.setState({ activeRunGeneration: null });
+    render(<ChatQueue />);
+    const button = screen.getByRole("button", { name: "立即插入" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("title", "任务身份同步中，暂不可立即插入");
   });
 });

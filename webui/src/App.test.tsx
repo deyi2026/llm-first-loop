@@ -1,9 +1,18 @@
 // Web V2 冒烟测试（阶段 1 验收：布局壳渲染 / 主题切换 / 状态链路）
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import { App } from "./App";
 import { mainViewStore } from "./core/stores";
+
+async function renderAppSettled(): Promise<void> {
+  await act(async () => {
+    render(<App />);
+    // App mounts several independent async effect trees. Keep their first immediate
+    // fetch/store settlements inside React's test boundary instead of racing assertions.
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  });
+}
 
 describe("App 布局壳", () => {
   beforeEach(() => {
@@ -24,7 +33,7 @@ describe("App 布局壳", () => {
   });
 
   it("渲染三栏壳与核心元素", async () => {
-    render(<App />);
+    await renderAppSettled();
     expect(screen.getByTestId("app-shell")).toBeInTheDocument();
     expect(screen.getByTestId("sidebar")).toBeInTheDocument();
     expect(screen.getByTestId("topbar")).toBeInTheDocument();
@@ -65,7 +74,7 @@ describe("App 布局壳", () => {
       });
     }));
 
-    render(<App />);
+    await renderAppSettled();
     expect(screen.getByTestId("learning-entry")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("learning-entry"));
     expect(await screen.findByTestId("learning-panel")).toBeInTheDocument();
@@ -74,8 +83,8 @@ describe("App 布局壳", () => {
     expect(screen.queryByTestId("conversation")).toBeNull();
   });
 
-  it("主题切换：暗色 → body 属性生效，偏好持久化", () => {
-    render(<App />);
+  it("主题切换：暗色 → body 属性生效，偏好持久化", async () => {
+    await renderAppSettled();
     expect(document.body.hasAttribute("data-ds-dark-theme")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "暗色" }));
     expect(document.body.hasAttribute("data-ds-dark-theme")).toBe(true);
@@ -85,8 +94,8 @@ describe("App 布局壳", () => {
     expect(localStorage.getItem("dsw-theme-preference")).toBe("light");
   });
 
-  it("侧栏折叠/展开与右侧面板开关", () => {
-    render(<App />);
+  it("侧栏折叠/展开与右侧面板开关", async () => {
+    await renderAppSettled();
     const sidebar = screen.getByTestId("sidebar");
     expect(sidebar).not.toHaveClass("collapsed");
     fireEvent.click(screen.getByTitle("收起侧边栏"));
@@ -95,7 +104,7 @@ describe("App 布局壳", () => {
     expect(screen.queryByTestId("right-panel")).not.toBeInTheDocument();
   });
 
-  it("移动端侧栏使用完整抽屉而不是 collapsed 空壳", () => {
+  it("移动端侧栏使用完整抽屉而不是 collapsed 空壳", async () => {
     vi.stubGlobal(
       "matchMedia",
       vi.fn(() => ({
@@ -110,7 +119,7 @@ describe("App 布局壳", () => {
       }))
     );
 
-    render(<App />);
+    await renderAppSettled();
     const shell = screen.getByTestId("app-shell");
     const sidebar = screen.getByTestId("sidebar");
     expect(sidebar).not.toHaveClass("collapsed");
@@ -126,7 +135,7 @@ describe("App 布局壳", () => {
     expect(screen.queryByTestId("sidebar-scrim")).toBeNull();
   });
 
-  it("移动端右侧面板：class 与 DOM 挂载同步开合，不出现挂载但移出屏幕的状态", () => {
+  it("移动端右侧面板：class 与 DOM 挂载同步开合，不出现挂载但移出屏幕的状态", async () => {
     vi.stubGlobal(
       "matchMedia",
       vi.fn(() => ({
@@ -141,7 +150,7 @@ describe("App 布局壳", () => {
       }))
     );
 
-    render(<App />);
+    await renderAppSettled();
     const shell = screen.getByTestId("app-shell");
 
     // 初始：移动端抽屉收起 → 无 class、RightPanel 未挂载（确实隐藏）
@@ -152,15 +161,46 @@ describe("App 布局壳", () => {
     fireEvent.click(screen.getByTitle("右侧面板"));
     expect(shell).toHaveClass("mobile-panel-open");
     expect(screen.getByTestId("right-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("panel-scrim")).toBeInTheDocument();
     // 机械一致不变量：RightPanel 挂载 ⇔ mobile-panel-open 存在
     // （否则 CSS translateX(100%) 会把已挂载面板永久移出屏幕）
     expect(shell.classList.contains("mobile-panel-open")).toBe(
       screen.queryByTestId("right-panel") !== null
     );
 
-    // 再次点击：同时关闭
-    fireEvent.click(screen.getByTitle("右侧面板"));
+    // 点击抽屉外遮罩：同时关闭，移动端不留背景可误触
+    fireEvent.click(screen.getByTestId("panel-scrim"));
     expect(shell).not.toHaveClass("mobile-panel-open");
+    expect(screen.queryByTestId("right-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("panel-scrim")).not.toBeInTheDocument();
+  });
+
+  it("桌面缩到移动断点时自动收起已打开右侧面板，不让抽屉突然覆盖内容", async () => {
+    let mobile = false;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        get matches() { return mobile; },
+        media: "(max-width: 900px)",
+        onchange: null,
+        addEventListener: (_type: string, cb: () => void) => listeners.add(cb),
+        removeEventListener: (_type: string, cb: () => void) => listeners.delete(cb),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }))
+    );
+
+    await renderAppSettled();
+    expect(screen.getByTestId("right-panel")).toBeInTheDocument();
+
+    act(() => {
+      mobile = true;
+      listeners.forEach((cb) => cb());
+    });
+
+    expect(screen.getByTestId("app-shell")).not.toHaveClass("mobile-panel-open");
     expect(screen.queryByTestId("right-panel")).not.toBeInTheDocument();
   });
 
@@ -188,7 +228,7 @@ describe("App 布局壳", () => {
       return new Response(JSON.stringify({ status: "ok", version: "9.9.9" }), { status: 200 });
     });
 
-    render(<App />);
+    await renderAppSettled();
     await vi.waitFor(() => {
       expect(screen.getAllByText("测试会话").length).toBeGreaterThan(0);
     });

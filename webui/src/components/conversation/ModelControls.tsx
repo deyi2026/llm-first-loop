@@ -7,6 +7,7 @@ import {
   useThinkingMode,
   type ThinkingMode,
 } from "../../core/stores";
+import { useDismissibleLayer } from "../../core/useDismissibleLayer";
 
 function shortModelName(value: string): string {
   const parts = value.split("/");
@@ -23,6 +24,7 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
   const effort = useReasoningEffort();
   const mode = useThinkingMode();
   const [reasoningOpen, setReasoningOpen] = useState(false);
+  const rootRef = useDismissibleLayer<HTMLDivElement>(reasoningOpen, () => setReasoningOpen(false));
   const capability = useMemo(
     () => capabilityFor(catalog, currentModel),
     [catalog, currentModel]
@@ -68,7 +70,7 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
   };
 
   return (
-    <div className="v2-model-controls" data-testid="model-controls">
+    <div className="v2-model-controls" data-testid="model-controls" ref={rootRef}>
       <select
         className="v2-control-pill v2-model-pill"
         value={selected}
@@ -95,12 +97,13 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
           className="v2-control-pill"
           onClick={() => setReasoningOpen((value) => !value)}
           aria-expanded={reasoningOpen}
+          aria-haspopup="menu"
           data-testid="reasoning-button"
         >
           {reasoningLabel} ▾
         </button>
         {reasoningOpen ? (
-          <div className="v2-mini-popover" data-testid="reasoning-popover">
+          <div className="v2-mini-popover" data-testid="reasoning-popover" role="menu">
             <div className="v2-mini-title">
               {capability?.reasoning_capable ? "推理控制" : "未证实可控推理"}
             </div>

@@ -318,42 +318,6 @@ def main() -> None:
 
     engine.interjection_pressure_probe = _interjection_pressure_probe
 
-    # R4（antidrift_impl 批2）: 插话轮边界拉取 hook——run 进行中轮边界自动把 queued
-    # 项搬入 RunHandle mailbox（复用"立即插入"机械：claim+enqueue+失败回滚 release，
-    # routes.py queue_interject 同款纪律）；纯搬运，投递/身份/guard 走既有消费路径。
-    def _interjection_pull_hook(session_id: str) -> None:
-        try:
-            from llm_loop.core.trace_leak.ingress_token import issue_ingress
-
-            _runner = getattr(engine, "runner", None)
-            if _runner is None or not getattr(_runner, "enabled", False):
-                return
-            if not _runner.is_running(session_id):
-                return
-            _handle = _runner.get_handle(session_id)
-            if not _handle:
-                return
-            for item in _hq.claim_interject_fifo(session_id):
-                _qid = str(item.get("queue_id") or "")
-                accepted = _runner.enqueue_interjection(
-                    session_id,
-                    {
-                        "queue_id": _qid,
-                        "message": item.get("message", ""),
-                        "attachment_facts": list(item.get("attachment_facts") or []),
-                        "_ingress": issue_ingress("web"),
-                        "_on_received": lambda qid=_qid: _hq.mark_interject_received(
-                            session_id, qid
-                        ),
-                    },
-                    expected_run_generation=str(_handle.get("run_generation") or ""),
-                )
-                if not accepted:
-                    _hq.release_interject(session_id, _qid)
-        except Exception:
-            return
-
-    engine.interjection_pull_hook = _interjection_pull_hook
     _fallback = QueueServerFallback(engine, _hq)
     _fallback.start()
     app.state.queue_server_fallback = _fallback

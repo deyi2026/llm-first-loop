@@ -440,6 +440,35 @@ describe("Composer", () => {
     Object.defineProperty(window, "innerHeight", { value: originalInnerHeight, configurable: true });
   });
 
+  it("移动键盘出现时输入框按 visualViewport 重算高度，不继续占用布局视口 40%", () => {
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", { value: 1000, configurable: true });
+    let viewportHeight = 400;
+    let resizeListener: EventListener | null = null;
+    vi.stubGlobal("visualViewport", {
+      get height() { return viewportHeight; },
+      addEventListener: (type: string, listener: EventListener) => {
+        if (type === "resize") resizeListener = listener;
+      },
+      removeEventListener: (type: string, listener: EventListener) => {
+        if (type === "resize" && resizeListener === listener) resizeListener = null;
+      },
+    });
+
+    render(<Composer />);
+    const ta = screen.getByTestId("composer-input") as HTMLTextAreaElement;
+    Object.defineProperty(ta, "scrollHeight", { value: 800, configurable: true });
+    fireEvent.change(ta, { target: { value: "移动端长输入\n".repeat(20) } });
+    expect(ta.style.height).toBe("160px");
+
+    act(() => {
+      viewportHeight = 300;
+      resizeListener?.(new Event("resize"));
+    });
+    expect(ta.style.height).toBe("120px");
+    Object.defineProperty(window, "innerHeight", { value: originalInnerHeight, configurable: true });
+  });
+
   it("/ 唤起命令面板", () => {
     render(<Composer />);
     const ta = screen.getByTestId("composer-input");
