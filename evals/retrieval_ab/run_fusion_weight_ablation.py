@@ -8,13 +8,13 @@
 
 策略（全部离线计算，共享同一次检索收集，零重复嵌入）：
 - equal    : w=[1,1,1] 等权 RRF（对照，应≈上次 16）
-- ow{1.5,2,3,5}: 加权 RRF score=Σ w_i/(k+rank_i)，orig 列表权重 >1
+- ow{1.5,2,3,5}: 加权 RRF score=Sum w_i/(k+rank_i)，orig 列表权重 >1
 - vote     : equal RRF 分 × 出现列表数（共识投票乘法重排）
 - ow2vote  : ow2 加权分 × 出现列表数
 
 预先声明的决策规则（防事后挑选）：
 - dev 上按 (h@5, h@1, MRR) 字典序选最优策略；
-- 该策略在 held-out 上相对 equal 的 Δ 做方向性验证（n=8，只看方向不谈显著）。
+- 该策略在 held-out 上相对 equal 的 Delta 做方向性验证（n=8，只看方向不谈显著）。
 
 用法：python3 evals/retrieval_ab/run_fusion_weight_ablation.py [--rrf-k 60] [--top-k 20]
 """
@@ -87,8 +87,8 @@ def collect(mem, sem, rows, rewrites, top_k: int) -> list[dict]:
             lists.append(ids)
             per.append({"text": t, "rank": rank_of(ids, q["gold"]), "mode": mode})
         out.append({"id": q["id"], "query": q["query"], "gold": q["gold"], "lists": lists, "per": per})
-        print(f"  {q['id']} orig={str(per[0]['rank']):>4s} "
-              f"best={str(min((p['rank'] for p in per if p['rank']), default=None)):>4s} | {q['query'][:30]}")
+        best = min((p["rank"] for p in per if p["rank"]), default=None)
+        print(f"  {q['id']} orig={str(per[0]['rank']):>4s} best={str(best):>4s} | {q['query'][:30]}")
     return out
 
 
@@ -117,9 +117,9 @@ def main() -> None:
     dev_rows = [q for q in json.loads(GOLDSET.read_text(encoding="utf-8"))["queries"]
                 if q["kind"] == "paraphrase"]
     dev_rw = json.loads(DEV_REWRITES.read_text(encoding="utf-8"))
-    ho_rows_full = json.loads(HELDOUT.read_text(encoding="utf-8"))["rows"]
-    ho_rows = [{"id": r["id"], "query": r["query"], "gold": r["gold"]} for r in ho_rows_full]
-    ho_rw = {r["id"]: [v["variant"] for v in r["variants"]] for r in ho_rows_full}
+    ho_raw = json.loads(HELDOUT.read_text(encoding="utf-8"))["rows"]
+    ho_rows = [{"id": r["id"], "query": r["query"], "gold": r["gold"]} for r in ho_raw]
+    ho_rw = {r["id"]: [v["variant"] for v in r["variants"]] for r in ho_raw}
 
     workdir = Path("/tmp/rt_mq_weight")
     if workdir.exists():
@@ -129,9 +129,9 @@ def main() -> None:
     if not sem.semantic_available():
         print("语义不可用，评测中止（如实失败，不降级出数）")
         return
-    t_prewarm = time.perf_counter()
+    t0 = time.perf_counter()
     warmed = prewarm(mem, sem)
-    print(f"prewarm: 补嵌 {warmed} 条（{time.perf_counter() - t_prewarm:.1f}s），corpus={len(mem.all())}")
+    print(f"prewarm: 补嵌 {warmed} 条（{time.perf_counter() - t0:.1f}s），corpus={len(mem.all())}")
 
     print("\n=== collect: dev (goldset25 paraphrase) ===")
     dev = collect(mem, sem, dev_rows, dev_rw, args.top_k)
@@ -155,14 +155,14 @@ def main() -> None:
     d_h1 = ho_table[best]["h@1"] - ho_table["equal"]["h@1"]
     d_h5 = ho_table[best]["h@5"] - ho_table["equal"]["h@5"]
     d_mrr = round(ho_table[best]["mrr"] - ho_table["equal"]["mrr"], 3)
-    print(f"\n决策：dev 最优 = {best}；held-out 相对 equal Δh@1={d_h1:+d} Δh@5={d_h5:+d} ΔMRR={d_mrr:+.3f}"
+    print(f"\n决策：dev 最优 = {best}；held-out 相对 equal Dh@1={d_h1:+d} Dh@5={d_h5:+d} DMRR={d_mrr:+.3f}"
           f"（n=8，方向性验证）")
 
     out = ROOT / f"evals/retrieval_ab/fusion-weight-ablation-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps({
         "config": {"rrf_k": args.rrf_k, "top_k": args.top_k, "corpus": len(mem.all()),
                    "strategies": STRATEGIES,
-                   "decision_rule": "dev (h@5,h@1,mrr) 字典序最优 → held-out 方向性验证"},
+                   "decision_rule": "dev (h@5,h@1,mrr) 字典序最优 -> held-out 方向性验证"},
         "dev": {"table": dev_table, "ranks": dev_ranks,
                 "collected": [{k: v for k, v in r.items() if k != "lists"} for r in dev]},
         "heldout": {"table": ho_table, "ranks": ho_ranks,
