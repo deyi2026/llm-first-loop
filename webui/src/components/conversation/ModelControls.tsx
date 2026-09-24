@@ -48,9 +48,15 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
   }, [capability, effort, mode]);
 
   const selected = currentModel || catalog.current || "";
+  const selectedMissing = Boolean(selected && !catalog.models.includes(selected));
   const staleSelected = Boolean(
-    selected && catalog.currentAvailable === false && selected === catalog.current
+    selectedMissing && catalog.currentAvailable === false && selected === catalog.current
   );
+  const selectedMissingLabel = staleSelected
+    ? `${shortModelName(selected)} · 当前不可用`
+    : catalog.models.length === 0
+      ? `${shortModelName(selected)} · 当前选择 · 目录暂不可用`
+      : `${shortModelName(selected)} · 当前选择 · 目录中未列出`;
   const reasoningLabel = (() => {
     if (!capability?.reasoning_capable) return "推理:模型自管";
     if (!capability.reasoning_control_supported) return "推理:模型自管";
@@ -79,12 +85,12 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
         title={selected || "默认模型"}
         data-testid="model-select"
       >
-        {staleSelected ? (
+        {selectedMissing ? (
           <option value={selected} disabled>
-            {shortModelName(selected)} · 当前不可用
+            {selectedMissingLabel}
           </option>
         ) : null}
-        {catalog.models.length === 0 && !staleSelected ? <option value="">默认模型</option> : null}
+        {catalog.models.length === 0 && !selectedMissing ? <option value="">默认模型</option> : null}
         {catalog.models.map((model) => (
           <option key={model} value={model}>
             {shortModelName(model)}

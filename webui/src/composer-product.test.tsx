@@ -139,6 +139,30 @@ describe("product composer", () => {
     });
     expect(sessionStore.getState().model).toBe("glm/glm-5.3");
   });
+
+  it("模型目录瞬时读取失败仍显示当前会话模型，不把UI伪装成默认模型", async () => {
+    let fail = false;
+    vi.stubGlobal("fetch", baseFetch((url) => {
+      if (url.includes("/api/v1/models")) {
+        return fail
+          ? new Response(JSON.stringify({ detail: "temporary failure" }), { status: 503 })
+          : new Response(JSON.stringify(modelResponse()), { status: 200 });
+      }
+      return undefined;
+    }));
+    render(<Composer />);
+    const select = await screen.findByTestId("model-select") as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("glm/glm-5.3"));
+
+    fail = true;
+    window.dispatchEvent(new Event(MODEL_CATALOG_CHANGED_EVENT));
+
+    await waitFor(() => {
+      expect(sessionStore.getState().model).toBe("glm/glm-5.3");
+      expect(select.value).toBe("glm/glm-5.3");
+      expect(within(select).getByRole("option", { name: /当前选择.*目录暂不可用/ })).toBeInTheDocument();
+    });
+  });
   for (const modifier of ["metaKey", "ctrlKey"] as const) {
     it(`${modifier} + Enter 在生成中把 Human Turn 入队而不是再次直发`, async () => {
       let queueBody: Record<string, unknown> | null = null;
