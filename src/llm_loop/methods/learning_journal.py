@@ -294,6 +294,21 @@ class LearningJournal:
         jobs.sort(key=lambda job: (job.updated_at or job.created_at, job.created_at), reverse=True)
         return jobs[: max(1, min(int(limit), 200))]
 
+    def count_states(self) -> dict[str, int]:
+        """All-history state counts over the full fold (not the recent-jobs window).
+
+        Terminal states (saved/none/failed/cancelled) are monotone cumulative;
+        in-flight states (queued/admitted/started/requeued) reflect the current
+        jobs. Replaces windowed panel counts whose `saved` regressed whenever
+        old saved jobs scrolled out of the recent-jobs limit (2026-09-24 panel
+        confusion: "已生成" counting down while nothing was deleted).
+        """
+        counts: dict[str, int] = {}
+        for job in self._snapshot().values():
+            state = str(job.state or "unknown")
+            counts[state] = counts.get(state, 0) + 1
+        return counts
+
     # ---------- transitions (append-only) ----------
 
     def _mark(self, job_id: str, payload: dict[str, Any]) -> None:

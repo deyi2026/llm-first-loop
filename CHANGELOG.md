@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.23 — Learning 面板全历史口径 + reflection 防重复门（2026-09-24）
+
+- **counts 全历史口径（面板"已生成"不再倒数）**：`/learning/status` 的 counts 原在 `recent_jobs(limit)` 窗口内按 state 统计——saved job 滚出窗口（新任务持续进来）时"已生成"回退，用户误以为方法卡被删（方法卡实际持久保存于 `data/methods/`）。现改为 `LearningJournal.count_states()`：terminal 态（saved/none/failed/cancelled）全折单调累计，in-flight 态即当前在飞；`count_states` 异常 fail-open 回退窗口口径（observability 永不阻断服务）。
+- **reflection 防重复门（语义重复短路，止 token 浪费）**：反思 payload 新增 `existing_methods`——方法池 active/qualified 卡一行摘要（id + description 截断 110 字符，上限 30 条，约 1-2k token）；system 指令增加 dup 短路：拟蒸馏方法与任一清单条目语义重复（同触发/同机制，措辞改写）时 `decision=none, reason=dup:<method_id>`，不再铸造仅哈希不同、语义冗余的新卡。此前字节级幂等只挡住完全同 body 的重复，近义改写会绕过（重复触发反思 LLM 调用 + 产出重复卡，双份 token 浪费）。清单构造 fail-open：store 异常时空清单，反思照常。
+- **版本一致性修复**：`routes.SERVICE_VERSION` 停在 0.6.15（自 T7 后未随发布同步），`test_public_version_surfaces_match_project_version` 因此红——本次随三件套对齐至 0.6.23（CHANGELOG + pyproject + tag 同次提交）。
+- **测试**：`test_learning_counts_and_dedup.py` 5 例（saved 出窗口仍计入 / queued+none 同折 / status 全历史口径 / existing_methods 仅 active+qualified / store 异常 fail-open）；全量 unit 5953 passed, 107 skipped。
+
 ## v0.6.22（补发点）— release 动作补齐：pyproject bump + v0.6.22 tag（2026-09-24）
 
 - **背景（web 横幅版本恒显示 v0.6.15-dev.N 根因）**：CHANGELOG 自 v0.6.16（09-24）起连续 7 个版本只写条目不发布——`pyproject.toml` 版本停在 0.6.15、git release tag 停在 v0.6.14（距 HEAD 253 提交）。`build_identity.display` 语义为 `{pyproject 版本}-dev.{距最近 v* tag 提交数}+g{短hash}`，机制正常工作，缺的是发布动作本身。

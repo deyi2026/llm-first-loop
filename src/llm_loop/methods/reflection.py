@@ -305,6 +305,35 @@ def render_candidate_body(value: dict[str, Any]) -> str:
     )
 
 
+_MAX_EXISTING_BRIEFS = 30
+_BRIEF_DESC_CHARS = 110
+_DEDUP_STATUSES = frozenset({"active", "qualified"})
+
+
+def _existing_method_briefs(store: MethodStore) -> list[str]:
+    """One-line briefs of active/qualified methods as a reflection dedup gate.
+
+    Injected into the reflection payload so the model can short-circuit
+    semantic duplicates to decision=none. Byte-level idempotence in
+    MethodStore only blocks identical bodies; near-identical rewrites mint
+    new ids (different content hash) and both waste reflection tokens and
+    grow the pool with redundant cards (2026-09-24). Fail-open: an empty list
+    degrades to pre-existing behaviour, never blocks reflection.
+    """
+    briefs: list[str] = []
+    try:
+        for card in store.list(query="", limit=200):
+            if str(card.get("status") or "") not in _DEDUP_STATUSES:
+                continue
+            desc = str(card.get("description") or "").strip().replace("\n", " ")
+            briefs.append(f"{card.get('id')} — {desc[:_BRIEF_DESC_CHARS]}")
+            if len(briefs) >= _MAX_EXISTING_BRIEFS:
+                break
+    except Exception:  # noqa: BLE001 — 清单不可得时反思照常进行
+        return []
+    return briefs
+
+
 def reflect_on_episode(
     *,
     llm_client: Any,
@@ -336,6 +365,8 @@ def reflect_on_episode(
         "episode_material": material,
         "tool_trace": tool_trace[-40:],
         "final_outcome": {"reason": run_end_reason, "answer_preview": final_answer[:800]},
+        # 防重复门（2026-09-24）：方法池 active/qualified 卡一行摘要；语义重复 → none
+        "existing_methods": _existing_method_briefs(store),
         "output_contract": {
             "decision": "candidate|none",
             "candidate_fields": {
@@ -357,7 +388,11 @@ def reflect_on_episode(
         "single episode supplied by the caller. Return exactly one JSON object following the output_contract. "
         'If there is no reusable method, return {"decision":"none","reason":"..."}. If there is one, return '
         "decision=candidate with ALL required fields (name, description, trigger, discriminator, short_path, "
-        "stop_conditions, verification, counterexamples). Do not copy task-private literals unless necessary.\n\n"
+        "stop_conditions, verification, counterexamples). Do not copy task-private literals unless necessary.\n"
+        "existing_methods lists the current pool's active/qualified cards. If the method you would distil "
+        "is a semantic duplicate of any listed entry (same trigger and mechanism, cosmetic rewording), "
+        'return {"decision":"none","reason":"dup:<that method id>"} instead of minting a redundant card; '
+        "candidate is for genuinely new discriminators only.\n\n"
         + core.body
     )
     try:

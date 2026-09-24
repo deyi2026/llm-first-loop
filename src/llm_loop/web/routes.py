@@ -403,7 +403,7 @@ router.include_router(file_router)
 from llm_loop.feishu.approval import approve, reject  # noqa: E402
 
 SERVICE_NAME = "llm-first-loop-web"
-SERVICE_VERSION = "0.6.15"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
+SERVICE_VERSION = "0.6.23"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -456,10 +456,18 @@ def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=20
         except Exception:  # noqa: BLE001 - observability must never break chat serving
             logger.warning("learning status journal read failed", exc_info=True)
 
+    # 全历史口径（EVO 2026-09-24）：terminal 态单调累计（saved 不再随窗口滚动回退），
+    # in-flight 态即当前在飞；count_states 不可得时 fail-open 回退窗口口径。
     counts: dict[str, int] = {}
-    for row in jobs:
-        state = str(row.get("state") or "unknown")
-        counts[state] = counts.get(state, 0) + 1
+    if journal is not None:
+        try:
+            counts = dict(journal.count_states())
+        except Exception:  # noqa: BLE001 - observability must never break chat serving
+            logger.warning("learning status count_states failed", exc_info=True)
+    if not counts:
+        for row in jobs:
+            state = str(row.get("state") or "unknown")
+            counts[state] = counts.get(state, 0) + 1
 
     settings = getattr(engine, "settings", None)
     data_dir = Path(getattr(settings, "data_dir", "./data")).expanduser()
