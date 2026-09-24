@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -130,6 +131,29 @@ def _workspace_python_env(
         [src_s, *(p for p in pythonpath_parts if p != src_s)]
     )
     return pinned
+
+
+# B 最小闭环（工具故障可追溯）：词级匹配 python/python3（覆盖 `cd X && python3 …`
+# 等非裸形态——_workspace_python_env 只 pin 以 python 开头的裸命令）。
+_PY_WORD_RE = re.compile(r"(?:^|[\s;&|`(])python3?(?=[\s;&|)`]|$)")
+
+
+def _python_interpreter_fact(command: str, env: dict[str, str]) -> str:
+    """命令词级含 python/python3 时附解释器指纹（环境漂移当轮可见）.
+
+    探测用与真实执行一致的 PATH（清洗后 env）；which 失败如实标 absent。
+    仅观测事实，不改写/不重试命令。
+    """
+    if not _PY_WORD_RE.search(command):
+        return ""
+    facts: list[str] = []
+    for name in ("python3", "python"):
+        try:
+            resolved = shutil.which(name, path=env.get("PATH"))
+        except Exception:  # noqa: BLE001 — 观测 fail-open
+            resolved = None
+        facts.append(f"{name}={resolved or 'absent'}")
+    return "[py] " + " | ".join(facts)
 
 
 def _python_runtime_fact(
@@ -451,6 +475,11 @@ class ExecuteCommandTool:
         runtime_fact = _python_runtime_fact(command, proc.returncode, stderr, env)
         if runtime_fact:
             parts.append(runtime_fact)
+        interpreter_fact = _python_interpreter_fact(command, env)
+        # 仅故障/异常形态附指纹（非零退出码或 runtime_fact）——保住"成功回执首内容
+        # 即纯 stdout"既有契约（test_execute_command_scrubs_env 断言纯 stdout）。
+        if interpreter_fact and (proc.returncode != 0 or runtime_fact):
+            parts.append(interpreter_fact)
         content = "\n".join(parts) if parts else "（命令执行成功，无输出）"
 
         status = ToolResultStatus.SUCCESS if proc.returncode == 0 else ToolResultStatus.FAILURE

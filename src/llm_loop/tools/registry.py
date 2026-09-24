@@ -341,6 +341,9 @@ class ToolRegistry:
         self.exec_mode = exec_mode  # readonly/allowlist/blocked（空 = 不启用分级）
         self.exec_allowlist = [s.strip() for s in (exec_allowlist or "").split(",") if s.strip()]
         self._pre_execute_hooks: list[PreExecuteHook] = []
+        # 工具回执后观察者（B 最小闭环：故障台账）。与 pre-hook 对称的零侵入挂点，
+        # 在 execute() 真实执行收口处对最终 ToolResult 通知；观察者自身 fail-open。
+        self._post_result_observers: list[Callable[[str, ToolResult], None]] = []
         # 会话级长期资源取消钩子。与 _active_exec 不同，这类资源可能在创建它的
         # 工具已经返回后仍继续存在（例如 nonblocking subagent handle）。Stop 必须
         # 仍能按 parent session 精确触达，不能依赖“创建工具当前仍 active”。
@@ -834,6 +837,22 @@ class ToolRegistry:
         """注册执行前钩子（如架构自省动作轨迹采集，零侵入）."""
         self._pre_execute_hooks.append(hook)
 
+    def add_post_result_observer(self, observer: Callable[[str, ToolResult], None]) -> None:
+        """注册回执后观察者（如工具故障台账）。
+
+        observer(tool_name, result)；仅在 execute() 真实执行的两个收口点调用
+        （正常结果 / 执行异常结果），前置拦截（安全阻断/参数校验）不经过。
+        观察者异常 fail-open（warning），绝不改变工具回执本身。
+        """
+        self._post_result_observers.append(observer)
+
+    def _notify_result_observers(self, name: str, result: ToolResult) -> None:
+        for _obs in self._post_result_observers:
+            try:
+                _obs(name, result)
+            except Exception:  # noqa: BLE001 — 观察者 fail-open
+                logger.warning("post_result observer 异常（fail-open）", exc_info=True)
+
     def add_session_cancel_hook(self, hook: SessionCancelHook) -> None:
         """注册会话级长期资源取消钩子（如 parent→background child 级联）."""
         if hook not in self._session_cancel_hooks:
@@ -1125,17 +1144,20 @@ class ToolRegistry:
                 # EVO-20260814-39a10097: post hook waterfall（block/replace）
                 snapshot = pipeline.run_post_hooks(snapshot)
                 if snapshot.status == ToolResultStatus.BLOCKED.value:
-                    return ToolResult(
+                    _blocked = ToolResult(
                         status=ToolResultStatus.BLOCKED,
                         content=snapshot.content,
                         tool_call_id=call.id,
                         tool_name=call.name,
                         duration_ms=duration_ms,
                     )
+                    self._notify_result_observers(call.name, _blocked)
+                    return _blocked
                 if snapshot.content != getattr(result, "content", ""):
                     result.content = snapshot.content  # replace 回写
                     with contextlib.suppress(ValueError):
                         result.status = ToolResultStatus(snapshot.status)  # 未知 status 保持原样
+            self._notify_result_observers(call.name, result)
             return self._attach_typed_recovery(result)
         except Exception as exc:  # noqa: BLE001 — 如实构造异常结果
             result = ToolResult(
@@ -1147,6 +1169,7 @@ class ToolRegistry:
                 error_detail=traceback.format_exc(limit=5),
                 duration_ms=(time.perf_counter() - start) * 1000,
             )
+            self._notify_result_observers(call.name, result)
             return self._attach_typed_recovery(result)
 
     # EVO-20260810-750e985a: 工具并发控制

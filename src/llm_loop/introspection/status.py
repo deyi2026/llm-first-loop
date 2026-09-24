@@ -327,6 +327,40 @@ class ArchitectureStatusProvider:
             },
         )
 
+    def record_tool_fault(
+        self, tool: str, outcome: str, detail: str, *, session_id: str = ""
+    ) -> None:
+        """工具回执故障台账（B 最小闭环，EVO 工具故障可追溯）.
+
+        非 SUCCESS 回执与 "done 但空输出" 由 registry post_result observer 统一送入；
+        与 record_exception 同构落盘（ts/phase/error_type/error_message），
+        phase=tool.<name>、error_type=tool_<outcome>，search_records(kind=exception_log)
+        既有检索路径零改动可查。自身 fail-open：台账失败绝不影响工具主流程。
+        """
+        try:
+            if not self.enabled:
+                return
+            item = ExceptionLogItem(
+                ts=_now(),
+                phase=f"tool.{tool}",
+                error_type=f"tool_{outcome}",
+                error_message=str(detail)[:500],
+                session_id=session_id or _bound_session_id(),
+            )
+            self._exception_log.append(item)
+            self._exception_log = self._exception_log[-100:]
+            self._write_audit(
+                "exception_log.jsonl",
+                {
+                    "ts": item.ts,
+                    "phase": item.phase,
+                    "error_type": item.error_type,
+                    "error_message": item.error_message,
+                },
+            )
+        except Exception:  # noqa: BLE001 — 台账 fail-open
+            pass
+
     # ── 上报（推送通道，design.md §2.1.4.3）──
     def report_event(self, event: ArchitectureEvent) -> bool:
         """尝试上报事件；通过冷却则返回 True（调用方决定注入消息）."""

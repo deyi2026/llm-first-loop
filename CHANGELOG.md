@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.17 — 工具故障可追溯最小闭环（2026-09-24）
+
+- **工具回执故障台账**：所有工具真实执行收口点（正常/ BLOCKED post-hook / 异常三处）统一通知 `post_result_observer`（registry 新 API `add_post_result_observer`，与 pre-hook 对称，观察者 fail-open）；factory 装配观察者将非 SUCCESS 回执（failure/timeout/error/blocked/unauthorized）与 execute_command "成功但零输出"哨兵写入 `exception_log.jsonl`（status 新增 `record_tool_fault`，与 record_exception 同构，`search_records(kind=exception_log)` 既有检索路径零改动可查）。解决"出错无记录、模型不知道错在哪"：今早实测 5 类事故（done+0 行输出、pytest 汇总行被吞、python3 漂移 homebrew 3.14、参数协议错、重启计划中断）此前全部无台账。
+- **python 解释器指纹**：词级含 python/python3 的故障命令（非零退出码或 runtime_fact 存在时）回执附 `[py] python3=<path> | python=<path>`，覆盖 `cd X && python3 …` 非裸形态（`_workspace_python_env` 只 pin 裸命令，今早 pypdf 16 收集错误即此漏网形态）；纯成功回执不附（保住"成功=纯 stdout"契约，scrubs_env 既有断言零改动通过）。
+- **job_output 终态零输出提示**：后台任务 completed/failed 但本进程 0 行输出时附 `[空输出提示]`（管道 tail/swallow 形态如实标注，提示以落盘文件交叉验证，不判定产出）。
+- **边界**：前置拦截（安全阻断/参数校验/工具不存在）不经过 observer（本期范围外）；台账只记故障形态，正常流不记。单测 `test_tool_fault_ledger.py` 6 项（落盘/fail-open/通知语义/指纹词级匹配与纯成功不附/终态零输出提示），关联面 47 passed、全量 unit 回归绿。
+
 ## v0.6.16 — update_goal 终局证据硬门（EVO-20260923-6bcc4880）（2026-09-24）
 
 - **终局证据门**：`update_goal(status=complete)` 从"自由文本 reason 即可收口"升级为程序级强制：① 任务图存在 open 任务拒绝（既有语义保留）；② `evidence_required` 任务 `evidence_verification_status != verified` → BLOCKED `evidence_unverified`（防账本存量/篡改数据无凭收口；任务写入轴的 verifier 强制使该路径成为纵深防御）；③ 无 done 任务依托（空任务图/全非 done）→ 需自报 `evidence_refs` 并过 `TaskEvidenceVerifier` 真实性校验，否则 BLOCKED `no_finality_evidence` / `evidence_below_threshold`；④ 任务账本不可读 → BLOCKED `probe_unavailable` fail-closed（不写终局而非照写——终局书写路径上的 fail-open 语义修正，普通路径 fail-open 不变）。`blocked` 是异常出口不走门；schema 新增可选 `evidence_refs` 参数；goal 记录损坏/不存在仍优先如实报告（证据门不掩盖存储诊断）。拒绝形态对齐拒收纪律：BLOCKED + `reason_code` + 出口指路（补证据/建任务图/人工 waive），拒绝的是书写不是记录（ToolResult 照常入历史与事件流）。等级→书写权的 E1/E2/E3 分档映射仍留人工定档，本版只立门（与 evolution 建议原文一致）。

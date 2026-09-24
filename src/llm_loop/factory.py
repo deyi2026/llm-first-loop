@@ -1437,6 +1437,32 @@ def build_engine(
         enabled=settings.tool_runtime.tool_octet,
     )
 
+    # B 最小闭环（工具故障可追溯，2026-09-24）：回执后观察者 → status 故障台账。
+    # registry.execute() 三个真实执行收口点（正常/BLOCKED post-hook/异常）统一通知；
+    # 非 SUCCESS（failure/timeout/error/blocked/unauthorized）与 execute_command
+    # "成功但零输出" 哨兵写入 exception_log.jsonl。观察者自身 fail-open。
+    def _tool_fault_observer(tool_name: str, result) -> None:
+        from llm_loop.core.message import ToolResultStatus
+
+        status = getattr(result, "status", None)
+        content = str(getattr(result, "content", "") or "")
+        if status == ToolResultStatus.SUCCESS:
+            if tool_name == "execute_command" and content.rstrip().endswith(
+                "（命令执行成功，无输出）"
+            ):
+                status_provider.record_tool_fault(
+                    tool_name, "empty_output", "exit=0 且 stdout/stderr 均空（哨兵回执形态）"
+                )
+            return
+        first_line = content.splitlines()[0][:200] if content else "(no content)"
+        dur = getattr(result, "duration_ms", None)
+        detail = f"{first_line} | dur={dur:.0f}ms" if isinstance(dur, (int, float)) else first_line
+        status_provider.record_tool_fault(
+            tool_name, str(getattr(status, "value", status)), detail
+        )
+
+    registry.add_post_result_observer(_tool_fault_observer)
+
     # Current-run model-window facts use the same run-latched registry as routing.
     # Outside a run, report the startup default registry explicitly as startup scope.
     def _model_window_snapshot() -> dict:

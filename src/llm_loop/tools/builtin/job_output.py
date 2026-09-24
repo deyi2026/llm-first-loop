@@ -60,6 +60,14 @@ class JobOutputTool:
             f"cancel_requested={str(cancel_requested).lower()} auto_reclaim=false"
             f"{command_line}\n--- 输出（{len(output)} 行）---\n{body}"
         )
+        # B 最小闭环（工具故障可追溯）：终态但本进程 0 行输出——管道 tail/swallow
+        # 形态之一（实测案例 2026-09-24：done+exit=0+0 行）。如实标注形态，不判定任务产出，
+        # 提示以落盘文件交叉验证。
+        if state in {"completed", "failed"} and not output:
+            content += (
+                "\n[空输出提示] 终态但本进程 0 行输出（管道 tail/swallow 形态之一）；"
+                "产出判定请以落盘文件或重定向交叉验证，勿仅凭本回执。"
+            )
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=content,
