@@ -92,6 +92,9 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("local_runtime", "admission_authority"): TomlField(("LFL_LOCAL_RUNTIME_ADMISSION_AUTHORITY",), "str"),
         ("local_runtime", "cli"): TomlField(("LFL_LFRT_CLI",), "str"),
         ("summary", "mode"): TomlField(("SUMMARY_MODE",), "str"),
+        # retrieval multiquery fusion rollout (v0.6.27 影子模式): off/shadow,
+        # 非法值由 config._env_multiquery_mode fail-safe 回 off
+        ("retrieval", "multiquery_mode"): TomlField(("RETRIEVAL_MULTIQUERY_MODE",), "str"),
         ("tools", "schema_lazy"): TomlField(("TOOL_SCHEMA_LAZY",), "bool"),
         ("dsh", "home"): TomlField(("DSH_HOME",), "str"),
         ("dsh", "sessions_root"): TomlField(("DSH_SESSIONS_ROOT",), "str"),
