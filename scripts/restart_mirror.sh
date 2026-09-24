@@ -962,9 +962,13 @@ _knowledge_binding_preflight() {
 # ── restart 互斥锁（2026-09-24 13:08 双通道并发实证）──
 # guard 巡检在权威通道停旧进程的端口空窗 detect_fail → 并发拉起 → 双 web 抢端口
 # 一活一死。restart 执行段持有锁，guard 见新鲜锁跳过本轮 pull_up（见 guard_system.sh）。
-_RESTART_LOCK="$DATA_DIR/runtime/restart-in-progress.lock"
+# 路径锚定 MIRROR_DIR/data（脚本既定事实源）：DATA_DIR 在本脚本是被 unset 的
+# 危险键（见上方 543-552 注释），引用它在 set -u 下 unbound 秒退且早于回执
+# 写入 → worker 校验读陈旧回执误报 action_id_mismatch，全部 restart 瘫痪
+# （2026-09-24 13:4x 实证两连失败）。
+_RESTART_LOCK="$MIRROR_DIR/data/runtime/restart-in-progress.lock"
 _acquire_restart_lock() {
-  mkdir -p "$DATA_DIR/runtime"
+  mkdir -p "$MIRROR_DIR/data/runtime"
   printf '%s pid=%s argv=%s\n' "$(date -Iseconds)" "$$" "$*" > "$_RESTART_LOCK"
   trap 'rm -f "$_RESTART_LOCK" 2>/dev/null || true' EXIT
 }
