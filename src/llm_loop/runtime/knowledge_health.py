@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import time
 import uuid
 from collections.abc import Iterable
@@ -29,6 +30,29 @@ def _count_glob(root: Path, pattern: str) -> int:
         return sum(1 for p in root.glob(pattern) if p.is_file())
     except OSError:
         return 0
+
+
+# Advisory only: an untracked backlog in the runtime method store is a commit-hygiene
+# fact for humans/models to batch-decide on.  It is NOT a store-integrity fault and
+# must never quarantine the store or disable writes (``reasons`` stays untouched).
+_METHOD_UNTRACKED_WARN_THRESHOLD = 50
+
+
+def _git_untracked_count(directory: Path) -> int | None:
+    """Count git-untracked files under ``directory``; None when git/repo is unavailable."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(directory), "status", "--porcelain=v1", "-uall", "--", "."],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return sum(1 for line in proc.stdout.splitlines() if line.startswith("?? "))
 
 
 def _rule_count(docs_dir: Path) -> int:
@@ -156,6 +180,13 @@ def inspect_knowledge_health(paths: RuntimePaths) -> dict[str, object]:
     seed_method_records = _count_glob(paths.method_seed_dir, "*/METHOD.md")
     skill_records = _count_glob(paths.skills_dir, "*/SKILL.md")
     rule_records = _rule_count(paths.docs_dir)
+    method_untracked = _git_untracked_count(paths.methods_dir)
+    # Advisory commit-hygiene signal only: a large untracked backlog in the runtime
+    # method store is a batch-commit decision for humans/models, never a quarantine
+    # reason, so it lives in "warnings" and must not touch writes_enabled.
+    warnings: list[str] = []
+    if method_untracked is not None and method_untracked > _METHOD_UNTRACKED_WARN_THRESHOLD:
+        warnings.append("method_store_untracked_backlog")
 
     reasons: list[str] = []
     if paths.explicit_sidecar_state:
@@ -210,11 +241,15 @@ def inspect_knowledge_health(paths: RuntimePaths) -> dict[str, object]:
     status = "quarantined" if quarantined else "healthy"
     writes_enabled = not quarantined
 
+    runtime_method_facts = _dir_facts(paths.methods_dir, records=runtime_method_records)
+    runtime_method_facts["untracked_files"] = method_untracked
+
     return {
         "schema": "lfl.knowledge_health.v1",
         "status": status,
         "writes_enabled": writes_enabled,
         "reasons": reasons,
+        "warnings": warnings,
         "binding": paths.binding_summary(),
         "baseline": {
             "path": str(_baseline_path(paths)),
@@ -225,7 +260,7 @@ def inspect_knowledge_health(paths: RuntimePaths) -> dict[str, object]:
         },
         "stores": {
             "experience": _dir_facts(paths.experiences_dir, records=exp_records),
-            "runtime_method": _dir_facts(paths.methods_dir, records=runtime_method_records),
+            "runtime_method": runtime_method_facts,
             "seed_method": _dir_facts(paths.method_seed_dir, records=seed_method_records),
             "skill": _dir_facts(paths.skills_dir, records=skill_records),
             "rule": {
