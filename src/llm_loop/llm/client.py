@@ -52,6 +52,27 @@ from llm_loop.runtime.causality import effective_generation_contract
 
 logger = logging.getLogger(__name__)
 
+# 2026-09-24（流式总时长兜底）: httpx 的 read-timeout 是「相邻两次读的间隔」上限，
+# 不是总时长——流式响应只要每个 delta 间隔 < timeout_s 就永不触发（当日事故：
+# glm-5.3 深推理持续滴流，run 挂十分钟+无中断无产出，用户侧表现为"发消息没反
+# 应"）。此系数给流式调用加独立总预算 = effective_timeout × factor，机械边界，
+# 不判断 provider 语义；>1 保证深推理的正常长流不被误伤。
+_STREAM_TOTAL_BUDGET_FACTOR = 5.0
+
+
+def _stream_total_deadline(effective_timeout: float) -> float:
+    return time.monotonic() + effective_timeout * _STREAM_TOTAL_BUDGET_FACTOR
+
+
+def _check_stream_deadline(deadline: float, effective_timeout: float) -> None:
+    if time.monotonic() > deadline:
+        budget = effective_timeout * _STREAM_TOTAL_BUDGET_FACTOR
+        raise LLMTimeoutError(
+            f"LLM 流式总时长超限（>{budget:.0f}s = timeout {effective_timeout:.0f} × "
+            f"{_STREAM_TOTAL_BUDGET_FACTOR:.1f}；各 read 间隔均未超时——provider 持续滴流不收敛，已机械截断）"
+        )
+
+
 # 2026-09-18（gen20 自愈）: 连接被拒绝时的单次重试前退避秒数。毫秒级原地重试对瞬断/
 # 陈旧连接无效（实测两次尝试相隔 2.8ms 同因 ECONNREFUSED）；仅作用于 ConnectError。
 _TRANSPORT_RETRY_BACKOFF_S = 0.5
@@ -1839,7 +1860,9 @@ class LLMClient:
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
+                _deadline = _stream_total_deadline(effective_timeout)
                 for line in resp.iter_lines():
+                    _check_stream_deadline(_deadline, effective_timeout)
                     if not line or not line.startswith("data: "):
                         continue
                     data = line[6:].strip()
@@ -2074,7 +2097,9 @@ class LLMClient:
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
+                _deadline = _stream_total_deadline(effective_timeout)
                 for line in resp.iter_lines():
+                    _check_stream_deadline(_deadline, effective_timeout)
                     if not line.startswith("data: "):
                         continue
                     data = line[6:].strip()
@@ -2185,7 +2210,9 @@ class LLMClient:
             ) as resp:
                 self._raise_for_status(resp, model_id=model_id)
                 self._observe_transport_response(resp, model_id=model_id)
+                _deadline = _stream_total_deadline(effective_timeout)
                 for line in resp.iter_lines():
+                    _check_stream_deadline(_deadline, effective_timeout)
                     if not line.startswith("data: "):
                         continue
                     data = line[6:].strip()
@@ -2282,7 +2309,9 @@ class LLMClient:
                 if resp.status_code >= 400:
                     self._raise_for_status(resp, model_id=model_id)
                 self._observe_transport_response(resp, model_id=model_id)
+                _deadline = _stream_total_deadline(effective_timeout)
                 for line in resp.iter_lines():
+                    _check_stream_deadline(_deadline, effective_timeout)
                     if not line or not line.startswith("data: "):
                         continue
                     try:

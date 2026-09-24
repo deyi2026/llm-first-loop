@@ -1695,3 +1695,45 @@ def test_chat_template_reasoning_effort_uses_explicit_model_mapping() -> None:
         "reasoning_effort": "xhigh",
     }
     assert payloads[2]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_stream_total_budget_guard_openai(monkeypatch):
+    """流式总时长超限必须中断：read 间隔均未超时但持续滴流（2026-09-24 事故：
+    glm 深推理每 delta 间隔 < read-timeout，httpx 永不触发，run 无限拖）.
+    程序只保机械边界（总预算），不判断 provider 语义。"""
+    import pytest
+
+    import llm_loop.llm.client as client_mod
+
+    calls = {"n": 0}
+    real_monotonic = client_mod.time.monotonic
+
+    def fake_monotonic():
+        calls["n"] += 1
+        # 每次调用推进一个完整预算周期 → 首行后必超限
+        return real_monotonic() + calls["n"] * (
+            120.0 * client_mod._STREAM_TOTAL_BUDGET_FACTOR + 1
+        )
+
+    monkeypatch.setattr(client_mod.time, "monotonic", fake_monotonic)
+
+    def fake_stream(self, method, url, **kwargs):
+        return _FakeStreamCtx([
+            'data: {"choices": [{"delta": {"content": "a"}, "finish_reason": null}]}',
+            'data: {"choices": [{"delta": {"content": "b"}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ])
+
+    with mock.patch("httpx.Client.stream", fake_stream):
+        c = _client(api_key="k", base_url="https://x.example/v1")
+        with pytest.raises(client_mod.LLMTimeoutError) as ei:
+            for _ in c.chat_stream([{"role": "user", "content": "hi"}], tools=[]):
+                pass
+        assert "总时长" in str(ei.value)
+
+
+def test_stream_total_budget_guard_factor_positive():
+    """预算系数必须 >1（总预算严格大于 read-timeout，否则深推理误伤）。"""
+    import llm_loop.llm.client as client_mod
+
+    assert client_mod._STREAM_TOTAL_BUDGET_FACTOR > 1.0
