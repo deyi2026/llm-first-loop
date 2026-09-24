@@ -274,7 +274,9 @@ def main() -> None:
 
     write_runtime_manifest("web")
     host = os.environ.get("WEB_HOST", "127.0.0.1").strip()
-    port = int(os.environ.get("WEB_PORT", "8902").strip())
+    # 2026-09-24 修正: 默认端口 8903（镜像权威，.env WEB_PORT=8903 固化）——
+    # 旧默认 8902 属主区残留，环境未带 WEB_PORT 直启时会错绑。
+    port = int(os.environ.get("WEB_PORT", "8903").strip())
 
     try:
         validate_binding(host)

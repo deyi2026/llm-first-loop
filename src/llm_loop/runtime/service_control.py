@@ -1384,7 +1384,9 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
     }
 
 
-_WEB_PORT_FALLBACK_RANGE = ("8902", "8905")  # guard v0.6.20 同款 web 端口口径
+# 2026-09-24 修正: 8903 起（镜像权威端口）——8902 属主区残留口径，
+# 判活扫描含 8902 时会把主区/无关监听误当 web（与 plist 错指同类）。
+_WEB_PORT_FALLBACK_RANGE = ("8903", "8905")
 
 
 def _web_port_listener_pid() -> int | None:
