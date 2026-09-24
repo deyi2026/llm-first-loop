@@ -1383,6 +1383,42 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
     }
 
 
+_WEB_PORT_FALLBACK_RANGE = ("8902", "8905")  # guard v0.6.20 同款 web 端口口径
+
+
+def _web_port_listener_pid() -> int | None:
+    """web 端口监听者 pid（单一权威探针=端口，fail-open）.
+
+    2026-09-24 13:08 实证：guard 与权威通道并发重启（端口空窗 detect_fail），
+    双 web 抢端口一活一死，死的（29502）写的 manifest 留下死 pid → 面板
+    live_pid_not_running 误报而真实服务（29418）正监听。manifest 是
+    last-writer 观察面，可被短命写者污染；端口不会被污染——有监听者即有服务。
+    """
+    try:
+        out = subprocess.run(
+            ["lsof", "-nP", f"-tiTCP:{_WEB_PORT_FALLBACK_RANGE[0]}-{_WEB_PORT_FALLBACK_RANGE[1]}",
+             "-sTCP:LISTEN"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+    except Exception:  # noqa: BLE001 — 探测不可得 → None（不兜底）
+        return None
+    for token in out.split():
+        try:
+            pid = int(token)
+        except ValueError:
+            continue
+        try:
+            cmd = subprocess.run(
+                ["ps", "-o", "command=", "-p", str(pid)],
+                capture_output=True, text=True, timeout=5, check=True,
+            ).stdout.strip()
+        except Exception:  # noqa: BLE001
+            return None
+        if cmd and "llm_loop" in cmd:
+            return pid
+    return None
+
+
 def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
     """Desired/live/stable identity view per managed service (read-only).
 
@@ -1416,6 +1452,24 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
                 )
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 live["manifest_error"] = True
+        # 2026-09-24 13:08 端口兜底：manifest pid 死但端口有 llm_loop 监听者 →
+        # 以端口监听者为准（pid_source=port_listener），manifest 原值降级为
+        # manifest_pid 保留展示。只修 web（feishu/learning 无统一端口口径），
+        # 只在"manifest 声称的 pid 已死"时触发——活 pid 仍以 manifest 为准，
+        # 不引入常态双探针抖动。
+        if (
+            service == "web"
+            and live.get("pid")
+            and not live.get("pid_alive")
+            and not live.get("manifest_error")
+        ):
+            port_pid = _web_port_listener_pid()
+            if port_pid is not None:
+                live["manifest_pid"] = live.get("pid")
+                live["manifest_pid_alive"] = False
+                live["pid"] = port_pid
+                live["pid_alive"] = True
+                live["pid_source"] = "port_listener"
         if deployment is not None and not live.get("manifest_error"):
             # L8: live 代探测——runtime manifest 不携带 generation，只能用
             # git_head 与 desired 的相等性**推断**"live 是否已达到期望代"。

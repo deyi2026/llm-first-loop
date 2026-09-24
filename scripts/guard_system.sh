@@ -186,9 +186,25 @@ _service_healthy() {
 }
 
 # ── 拉起服务（不健康时强制 restart：stop + start 幂等，避免"已在运行"短路误判）──
+# 2026-09-24 13:08 实证：权威通道（service_control→restart_mirror.sh）停旧进程的
+# 端口空窗恰被 guard 巡检命中 → detect_fail → 双通道并发重启 → 双 web 抢端口
+# 一活一死，死进程写的 manifest 污染观察面（面板误报 live_pid_not_running）。
+# 互斥锁：restart 脚本执行段持有 data/runtime/restart-in-progress.lock；
+# 锁新鲜（<120s）时 guard 跳过本轮 pull_up（下轮巡检自然复核），不与权威通道抢。
+_RESTART_LOCK="$PROJECT_DIR/data/runtime/restart-in-progress.lock"
+_restart_lock_fresh() {
+  [[ -f "$_RESTART_LOCK" ]] || return 1
+  local age
+  age=$(( $(date +%s) - $(stat -f %m "$_RESTART_LOCK" 2>/dev/null || echo 0) ))
+  (( age < 120 ))
+}
 _ensure_service() {
   local svc="$1"
   if _service_healthy "$svc"; then
+    return 0
+  fi
+  if _restart_lock_fresh; then
+    _log_guard "skip_pull_up" "$svc" "restart 互斥锁新鲜（权威通道执行中），本轮跳过"
     return 0
   fi
   _log_guard "pull_up_start" "$svc" "检测到不健康，调用 restart_system.sh restart（stop+start 幂等）"

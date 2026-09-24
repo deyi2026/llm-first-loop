@@ -958,6 +958,17 @@ _knowledge_binding_preflight() {
   return 1
 }
 
+
+# ── restart 互斥锁（2026-09-24 13:08 双通道并发实证）──
+# guard 巡检在权威通道停旧进程的端口空窗 detect_fail → 并发拉起 → 双 web 抢端口
+# 一活一死。restart 执行段持有锁，guard 见新鲜锁跳过本轮 pull_up（见 guard_system.sh）。
+_RESTART_LOCK="$DATA_DIR/runtime/restart-in-progress.lock"
+_acquire_restart_lock() {
+  mkdir -p "$DATA_DIR/runtime"
+  printf '%s pid=%s argv=%s\n' "$(date -Iseconds)" "$$" "$*" > "$_RESTART_LOCK"
+  trap 'rm -f "$_RESTART_LOCK" 2>/dev/null || true' EXIT
+}
+
 _status() {
   echo "=== 镜像服务状态 ==="
   local web_pid feishu_pid learning_pid
@@ -1016,6 +1027,7 @@ case "${1:-web}" in
              _log "✅ PREFLIGHT_ONLY 通过（未触碰任何服务）"
              exit 0 ;;
   web)     _webui_artifact_preflight || { _write_receipt web "1" "webui_artifact_preflight_failed"; exit 1; }
+           _acquire_restart_lock web
            _service_control_preflight web || { _write_receipt web "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck web || { _write_receipt web "1" "active_run_precheck_failed"; exit 1; }
            _knowledge_binding_preflight || { _write_receipt web "1" "knowledge_preflight_failed"; exit 1; }
@@ -1036,6 +1048,7 @@ case "${1:-web}" in
            _write_receipt web "$_rc" "port=$RESTART_PORT"
            exit "$_rc" ;;
   feishu)  _service_control_preflight feishu || { _write_receipt feishu "1" "service_control_binding_failed"; exit 1; }
+           _acquire_restart_lock feishu
            _restart_precheck feishu || { _write_receipt feishu "1" "active_run_precheck_failed"; exit 1; }
            _knowledge_binding_preflight || { _write_receipt feishu "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt feishu "1" "knowledge_preflight_failed"; exit 1; }
@@ -1073,6 +1086,7 @@ case "${1:-web}" in
            _write_receipt learning "$_rc" ""
            exit "$_rc" ;;
   all)     _webui_artifact_preflight || { _write_receipt all "1" "webui_artifact_preflight_failed"; exit 1; }
+           _acquire_restart_lock all
            _service_control_preflight all || { _write_receipt all "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck all || { _write_receipt all "1" "active_run_precheck_failed"; exit 1; }
            _knowledge_binding_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }

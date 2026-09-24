@@ -462,3 +462,49 @@ def test_audit_signals_never_create_restart_required(tmp_path: Path) -> None:
     assert web["reasons"] == []
 
 
+
+
+def test_web_dead_manifest_pid_port_fallback(
+    tmp_path, monkeypatch
+) -> None:
+    """2026-09-24 13:08 实证：manifest 被短命写者污染（死 pid）而真实 web 正
+    监听端口 → live 以端口监听者为准，restart_required 误报消除。"""
+    import llm_loop.runtime.service_control as sc
+
+    store = ManagedServiceDeploymentStore(tmp_path)
+    _publish(store, _deployment(tmp_path, 1, HEAD_A))
+    _write_manifest(store, "web", pid=4194303, git_head=HEAD_A)  # 死 pid（污染）
+    _write_receipt(
+        store, action_id="svc-x1", target="web", generation=1,
+        updated_at="2026-09-24T05:08:44+00:00",
+    )
+    monkeypatch.setattr(sc, "_web_port_listener_pid", lambda: 29418)
+    view = compose_service_identity_view(store)
+    web = view["services"]["web"]
+    live = web["live"]
+    assert live["pid"] == 29418
+    assert live["pid_source"] == "port_listener"
+    assert live["manifest_pid"] == 4194303
+    assert live["pid_alive"] is True
+    assert live["matches_desired_generation"] is True
+    assert web["restart_required"] is False
+
+
+def test_web_dead_manifest_pid_no_port_keeps_honest(tmp_path, monkeypatch) -> None:
+    """无端口监听者（服务真死）→ 维持 live_pid_not_running 如实误报不掩盖。"""
+    import llm_loop.runtime.service_control as sc
+
+    store = ManagedServiceDeploymentStore(tmp_path)
+    _publish(store, _deployment(tmp_path, 1, HEAD_A))
+    _write_manifest(store, "web", pid=4194303, git_head=HEAD_A)
+    _write_receipt(
+        store, action_id="svc-x2", target="web", generation=1,
+        updated_at="2026-09-24T05:08:44+00:00",
+    )
+    monkeypatch.setattr(sc, "_web_port_listener_pid", lambda: None)
+    view = compose_service_identity_view(store)
+    web = view["services"]["web"]
+    assert web["live"]["pid"] == 4194303
+    assert web["live"].get("pid_source") is None
+    assert web["restart_required"] is True
+    assert "live_pid_not_running" in web["reasons"]

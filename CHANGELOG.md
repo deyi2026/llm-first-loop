@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.24 — restart 双通道互斥锁 + web 判活端口兜底（2026-09-24）
+
+- **背景（13:08 双通道并发实证）**：权威通道（service_control→restart_mirror.sh）停旧进程的端口空窗恰被 guard 巡检命中 detect_fail → restart_system.sh 并发拉起 → 双 web 抢 8903 一活（29418）一死（29502），死进程退出前写的 runtime_manifest.web.json 留下死 pid → 面板/status 误报 live_pid_not_running（"重启没生效"假象）；guard 随后 pull_up_ok 探测到的其实是活通道的进程。
+- **互斥锁（源头）**：restart_mirror.sh（web/feishu/all 分支 preflight 后）与 restart_system.sh（两处 restart 分支）执行段持有 `data/runtime/restart-in-progress.lock`（写 ts+pid+argv，trap EXIT 清理）；guard_system.sh `_ensure_service` 在 pull_up 前检查锁新鲜（<120s，BSD stat -f %m）→ 跳过本轮（skip_pull_up 日志），下轮巡检自然复核。锁语义防并发不防重入——guard 自己经 restart_system.sh restart 持锁不受影响。
+- **端口兜底（观察面）**：`compose_service_identity_view` web 判活升级——manifest pid 死且端口（8902-8905，guard v0.6.20 同口径）有 llm_loop 监听者时，以端口监听者为准（`pid_source=port_listener`，manifest 原值降级 `manifest_pid` 保留展示），对齐"单一权威探针=端口"原则；无监听者（真死）维持如实误报不掩盖。manifest last-writer 可被短命写者污染，端口不会被污染。
+- **测试**：端口兜底 2 例（死 pid+活端口→替换且 restart_required 消除 / 无端口→维持 live_pid_not_running）；三脚本 bash -n 通过；关联面 106 passed。
+
 ## v0.6.23 — Learning 面板全历史口径 + reflection 防重复门（2026-09-24）
 
 - **counts 全历史口径（面板"已生成"不再倒数）**：`/learning/status` 的 counts 原在 `recent_jobs(limit)` 窗口内按 state 统计——saved job 滚出窗口（新任务持续进来）时"已生成"回退，用户误以为方法卡被删（方法卡实际持久保存于 `data/methods/`）。现改为 `LearningJournal.count_states()`：terminal 态（saved/none/failed/cancelled）全折单调累计，in-flight 态即当前在飞；`count_states` 异常 fail-open 回退窗口口径（observability 永不阻断服务）。

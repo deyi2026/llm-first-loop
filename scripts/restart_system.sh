@@ -464,6 +464,14 @@ _status_all() {
   done
 }
 
+# ── restart 互斥锁（2026-09-24 13:08 双通道并发实证，与 guard_system.sh 配对）──
+_RESTART_LOCK="$DATA_DIR/runtime/restart-in-progress.lock"
+_acquire_restart_lock() {
+  mkdir -p "$DATA_DIR/runtime"
+  printf '%s pid=%s argv=%s\n' "$(date -Iseconds)" "$$" "$*" > "$_RESTART_LOCK"
+  trap 'rm -f "$_RESTART_LOCK" 2>/dev/null || true' EXIT
+}
+
 # ── 主入口：支持 [service] action 与全局 action ──
 ACTION="${2:-}"
 case "${1:-}" in
@@ -473,6 +481,7 @@ case "${1:-}" in
       start)   _start_service "$1" ;;
       stop)    _stop_service "$1" ;;
       restart) if [[ "$1" == "feishu" ]]; then _restart_precheck; fi   # 批1: 单服务 restart 补长任务保护（原仅全局 restart 有）
+               _acquire_restart_lock "$1"
                _BASELINE_HEAD_BEFORE="$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')"
                touch "$MAINTENANCE_LOCK"; _MAINTENANCE_LOCK_ACTIVE=1; _stop_service "$1"; _start_service "$1"
                rm -f "$MAINTENANCE_LOCK"; _MAINTENANCE_LOCK_ACTIVE=0
@@ -484,6 +493,7 @@ case "${1:-}" in
   start)   _start_all ;;
   stop)    _stop_all; _MAINTENANCE_LOCK_ACTIVE=0 ;;  # stop 故意保留 lock 防 guard 拉起
   restart) _restart_precheck
+           _acquire_restart_lock all
            _BASELINE_HEAD_BEFORE="$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')"
            _stop_all; _start_all ;;  # precheck: 长任务等待/确认（批1+批2；_print_code_baseline 在 _start_all 末尾）
   status)  _status_all ;;
