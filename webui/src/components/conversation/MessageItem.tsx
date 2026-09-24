@@ -4,7 +4,12 @@
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { AttachmentFact, ChatMessage, ToolActivity, ToolActivityStatus, ToolCallInfo } from "../../core/types";
-import { renderMarkdown } from "../../core/markdown";
+import {
+  ensureMathRenderer,
+  hasMathCandidate,
+  isMathRendererReady,
+  renderMarkdown,
+} from "../../core/markdown";
 import { formatTokens } from "../../core/chat";
 import { forkSession, submitFeedback } from "../../core/api";
 import { useCapabilities } from "../../core/capabilities";
@@ -73,12 +78,27 @@ function Markdown({
    *  秒级）。终态由 streaming=false 的完整渲染兜底，内容零丢失。 */
   live?: boolean;
 }) {
+  const [mathRevision, setMathRevision] = useState(0);
   const gate = useRef<{ at: number; dur: number; text: string; html: string }>({
     at: 0,
     dur: 0,
     text: "",
     html: "",
   });
+  useEffect(() => {
+    if (live || !enableMath || isMathRendererReady() || !hasMathCandidate(text)) return;
+    let active = true;
+    void ensureMathRenderer()
+      .then(() => {
+        if (active) setMathRevision((value) => value + 1);
+      })
+      .catch(() => {
+        // Chunk/network failure is non-fatal: the literal Markdown remains readable.
+      });
+    return () => {
+      active = false;
+    };
+  }, [text, enableMath, live]);
   const html = useMemo(() => {
     if (live) {
       const now = Date.now();
@@ -101,7 +121,7 @@ function Markdown({
       return parsed;
     }
     return renderMarkdown(text, clickablePaths, { enableMath });
-  }, [text, clickablePaths, enableMath, live]);
+  }, [text, clickablePaths, enableMath, live, mathRevision]);
   // 代码块复制按钮 + 出产物内联路径链接：dangerouslySetInnerHTML 内容无法绑
   // React 事件 → 事件委托。链接点击 → 右侧栏预览 tab（对齐 DSH openResource，
   // `path:42`/`path:42:7` 形式携带 1-based 行/列锚点）。

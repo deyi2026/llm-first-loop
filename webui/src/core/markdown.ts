@@ -3,13 +3,37 @@
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import katex from "katex";
-import "katex/dist/katex.min.css";
 
 marked.setOptions({
   gfm: true,
   breaks: true,
 });
+
+type MathRenderToString = (expr: string, displayMode: boolean) => string;
+
+let mathRenderToString: MathRenderToString | null = null;
+let mathRendererLoad: Promise<void> | null = null;
+
+export function isMathRendererReady(): boolean {
+  return mathRenderToString !== null;
+}
+
+/** Load KaTeX only when a rendered, non-live surface actually contains math. */
+export async function ensureMathRenderer(): Promise<void> {
+  if (mathRenderToString) return;
+  if (!mathRendererLoad) {
+    mathRendererLoad = import("./mathRenderer")
+      .then(({ renderTrustedMath }) => {
+        mathRenderToString = renderTrustedMath;
+      })
+      .catch((error) => {
+        // A transient chunk failure must be retryable; callers keep literal Markdown visible.
+        mathRendererLoad = null;
+        throw error;
+      });
+  }
+  await mathRendererLoad;
+}
 
 // 代码块渲染：banner（语言 + 字符数 + 复制按钮）+ 轻量高亮（对齐 DSH 代码块结构）。
 // 复制按钮点击由 Markdown 组件事件委托处理（dangerouslySetInnerHTML 无法绑 React 事件）。
@@ -61,14 +85,12 @@ function extractTrustedMath(src: string): {
   source: string;
   restore: (sanitizedHtml: string) => string;
 } {
+  const renderMath = mathRenderToString;
+  if (!renderMath) return { source: src, restore: (value) => value };
   const rendered: string[] = [];
   const stashMath = (expr: string, displayMode: boolean, original: string): string => {
     try {
-      const html = katex.renderToString(expr.trim(), {
-        displayMode,
-        throwOnError: true,
-        trust: false,
-      });
+      const html = renderMath(expr, displayMode);
       const index = rendered.push(html) - 1;
       return `\uE100LFLMATH${index}X\uE101`;
     } catch {
@@ -144,6 +166,21 @@ function protectMarkdownLiteralsFromMath(src: string): { masked: string; restore
   return { masked, restore };
 }
 
+/** Mechanical candidate check used only to decide whether the optional KaTeX chunk is needed. */
+export function hasMathCandidate(src: string): boolean {
+  if (!src || !src.includes("$")) return false;
+  try {
+    const { masked } = protectMarkdownLiteralsFromMath(src);
+    return (
+      /\$\$[\s\S]+?\$\$/.test(masked) ||
+      /(^|[^$])\$([^$\n]+?)\$(?![$])/.test(masked)
+    );
+  } catch {
+    // Candidate detection is a performance hint only; fail closed to literal Markdown.
+    return false;
+  }
+}
+
 /** 已知文件扩展名（路径样式判定用） */
 const PATH_EXT = /\.(py|ts|tsx|js|jsx|md|json|sh|css|yaml|yml|toml|html|txt|sql|go|rs|java|vue|svg|c|h|cpp|lock|ini|cfg)$/i;
 
@@ -168,7 +205,7 @@ export function renderMarkdown(
   try {
     let markdown = src;
     let restoreMath = (value: string) => value;
-    if (options.enableMath !== false) {
+    if (options.enableMath !== false && mathRenderToString) {
       const protectedLiterals = protectMarkdownLiteralsFromMath(src);
       const math = extractTrustedMath(protectedLiterals.masked);
       markdown = protectedLiterals.restore(math.source);

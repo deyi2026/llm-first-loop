@@ -1,12 +1,16 @@
 // 阶段 2：markdown/高亮/消息/输入区 单元与冒烟测试
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { act, render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
-import { renderMarkdown, highlightCode } from "./core/markdown";
+import { ensureMathRenderer, renderMarkdown, highlightCode } from "./core/markdown";
 import { MessageItem } from "./components/conversation/MessageItem";
 import { Composer } from "./components/conversation/Composer";
 import { projectToolActivityMessages } from "./core/toolActivity";
 import { previewTabsStore, rightPanelStore } from "./core/stores";
+
+beforeAll(async () => {
+  await ensureMathRenderer();
+});
 
 describe("renderMarkdown", () => {
   it("GFM 基础渲染", () => {

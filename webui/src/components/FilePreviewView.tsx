@@ -13,7 +13,13 @@ import {
   type FileRelated,
 } from "../core/api";
 import { previewWatcher, type PreviewStatFacts } from "../core/previewWatch";
-import { renderMarkdown, highlightCode } from "../core/markdown";
+import {
+  ensureMathRenderer,
+  hasMathCandidate,
+  highlightCode,
+  isMathRendererReady,
+  renderMarkdown,
+} from "../core/markdown";
 import { zh } from "../i18n/zh";
 
 const MD_EXT = /\.(md|markdown)$/i;
@@ -266,6 +272,7 @@ export function FilePreviewView({
   >({ kind: "loading" });
   // md 默认渲染视图；wrap 仅作用于纯文本/代码视图。
   const [plainMode, setPlainMode] = useState(false);
+  const [mathRevision, setMathRevision] = useState(0);
   const [wrap, setWrap] = useState(true);
   const [reloadTick, setReloadTick] = useState(0);
   // 行/列锚点：pending = 待执行请求；activeAnchor = 已定位目标（渲染列字符高亮）
@@ -483,14 +490,36 @@ export function FilePreviewView({
     };
   }, [phase, packedHtml]);
 
-  const mdHtml = useMemo(() => {
-    if (phase.kind !== "text") return "";
-    return renderMarkdown(
-      phase.pages.map((p) => p.lines.join("\n")).join("\n"),
-      undefined,
-      { enableMath: true }
-    );
-  }, [phase]);
+  const markdownSource = useMemo(
+    () => (phase.kind === "text" ? phase.pages.map((p) => p.lines.join("\n")).join("\n") : ""),
+    [phase]
+  );
+  useEffect(() => {
+    if (
+      plainMode ||
+      !MD_EXT.test(path) ||
+      isMathRendererReady() ||
+      !hasMathCandidate(markdownSource)
+    ) {
+      return;
+    }
+    let active = true;
+    void ensureMathRenderer()
+      .then(() => {
+        if (active) setMathRevision((value) => value + 1);
+      })
+      .catch(() => {
+        // Preview remains usable as literal Markdown if the optional chunk cannot load.
+      });
+    return () => {
+      active = false;
+    };
+  }, [markdownSource, path, plainMode]);
+
+  const mdHtml = useMemo(
+    () => renderMarkdown(markdownSource, undefined, { enableMath: true }),
+    [markdownSource, mathRevision]
+  );
 
   // 行/列锚点执行（对齐 DSH openResource line 参数 + 代码导航按列定位）：
   // - 纯文本/代码视图有锚点：翻页至目标行 → 记录 activeAnchor（渲染列字符），

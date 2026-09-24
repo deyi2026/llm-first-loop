@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { renderMarkdown } from "./core/markdown";
+import { beforeAll, describe, expect, it } from "vitest";
+import { ensureMathRenderer, renderMarkdown } from "./core/markdown";
+
+beforeAll(async () => {
+  await ensureMathRenderer();
+});
 describe("code math isolation", () => {
   const command = 'echo "$PWD" "$HOME"';
   it.each([
