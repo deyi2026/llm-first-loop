@@ -81,15 +81,21 @@ def run_channels(mem, sem, goldset) -> dict:
 
 def check_regression(base: dict, cur: dict) -> list[str]:
     bad = []
-    for scope in ("overall", "by_kind"):
-        for grp, channels in cur[scope].items():
-            for chan, m in channels.items():
-                b = base[scope][grp][chan]
-                for k in ("h@1", "h@3", "h@5", "h@10"):
-                    if m[k] < b[k]:
-                        bad.append(f"{scope}/{grp}/{chan}: {k} {b[k]}->{m[k]}")
-                if m["mrr"] < b["mrr"] - 1e-9:
-                    bad.append(f"{scope}/{grp}/{chan}: mrr {b['mrr']}->{m['mrr']}")
+
+    def _cmp(path: str, b: dict, m: dict) -> None:
+        for k in ("h@1", "h@3", "h@5", "h@10"):
+            if m[k] < b[k]:
+                bad.append(f"{path}: {k} {b[k]}->{m[k]}")
+        if m["mrr"] < b["mrr"] - 1e-9:
+            bad.append(f"{path}: mrr {b['mrr']}->{m['mrr']}")
+
+    # overall 是 channel→metrics，by_kind 是 kind→channel→metrics——结构不同，
+    # 此前同一循环对 overall 下标 int 必崩（TypeError），比较路径实际从未生效。
+    for chan, m in cur["overall"].items():
+        _cmp(f"overall/{chan}", base["overall"][chan], m)
+    for kind, channels in cur["by_kind"].items():
+        for chan, m in channels.items():
+            _cmp(f"by_kind/{kind}/{chan}", base["by_kind"][kind][chan], m)
     return bad
 
 

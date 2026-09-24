@@ -25,6 +25,14 @@ class Embedder(Protocol):
         """文本 → 语义向量；None = 语义不可用（调用方回退关键词并如实标注）."""
         ...
 
+    def embed_batch(self, texts: list[str]) -> list[list[float] | None]:
+        """批量文本 → 向量列表（按位对齐；None = 该条不可用）.
+
+        EVO-20260924-d9c5ad20（冷启动批量预热）: 实现方可选；调用方以 getattr 探测，
+        旧第三方实现无此方法时回退逐条 embed，语义不变。
+        """
+        ...
+
 
 class NullEmbedder:
     """空嵌入器: 恒返回 None → 一律关键词检索（P0 回归安全）."""
@@ -33,6 +41,9 @@ class NullEmbedder:
 
     def embed(self, text: str) -> list[float] | None:
         return None
+
+    def embed_batch(self, texts: list[str]) -> list[list[float] | None]:
+        return [None] * len(texts)
 
 
 class HashEmbedder:
@@ -66,6 +77,10 @@ class HashEmbedder:
         if norm == 0:
             return None
         return [v / norm for v in vec]
+
+    def embed_batch(self, texts: list[str]) -> list[list[float] | None]:
+        """本地零网络，逐条即可（成本可忽略）。"""
+        return [self.embed(t) for t in texts]
 
 
 class APIEmbedder:
@@ -111,6 +126,39 @@ class APIEmbedder:
             return data["data"][0]["embedding"]
         except Exception:  # noqa: BLE001 — 嵌入失败如实返回 None，不抛穿
             return None
+
+    _BATCH_CHUNK = 64  # 与 evals/retrieval_ab/regression_gate.py bge 端点实测分片对齐
+
+    def embed_batch(self, texts: list[str]) -> list[list[float] | None]:
+        """批量嵌入（EVO-20260924-d9c5ad20 冷启动预热）。
+
+        一次 HTTP 携带整批（64/片），替代 N 次单条往返——语料增长后首批检索的
+        冷启动窗口从 N×(单条延迟) 收敛到 ceil(N/64)×批延迟；空文本位置直接 None；
+        响应条数不齐/异常 → 整批回退逐条 embed（保序、语义与单条一致）。
+        """
+        out: list[list[float] | None] = [None] * len(texts)
+        idx_map = [i for i, t in enumerate(texts) if t]
+        for s in range(0, len(idx_map), self._BATCH_CHUNK):
+            chunk = idx_map[s : s + self._BATCH_CHUNK]
+            try:
+                resp = self._client.post(
+                    f"{self.base_url}/embeddings",
+                    headers=(
+                        {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+                        if self.api_key else {"Content-Type": "application/json"}
+                    ),
+                    json={"model": self.model, "input": [texts[i] for i in chunk]},
+                )
+                if resp.status_code >= 400:
+                    return [self.embed(t) for t in texts]
+                rows = (resp.json().get("data") or [])
+                if len(rows) != len(chunk) or any("embedding" not in r for r in rows):
+                    return [self.embed(t) for t in texts]
+                for i, row in zip(chunk, rows, strict=True):
+                    out[i] = row["embedding"]
+            except Exception:  # noqa: BLE001 — 批量失败如实回退逐条
+                return [self.embed(t) for t in texts]
+        return out
 
     def close(self) -> None:
         self._client.close()
