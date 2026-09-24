@@ -29,7 +29,7 @@ def merge_persisted_tail_injections(
     语义原样迁自 r9 e5ea806 权威线（tail_assembly 随迁版）; storage 不动。
 
     背景: EVO-20260827-f42496bc 将 memory 注入改为持久化（engine wrap+append 进
-    sess.messages）后，历史投影尾部出现"用户消息+持久化注入"连续 user 对（主区
+    sess.messages）后，历史投影尾部出现"用户消息+持久化注入"连续 user 对（旧主区
     883b4725 实测 510/511 形态，1210 结构触发根因形态）；_inject_parts 聚合只
     覆盖动态消费槽，不含已持久化消息。
 

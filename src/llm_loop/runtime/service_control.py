@@ -302,7 +302,7 @@ _GATE_CLASSIFICATION_ENTRIES: tuple[GateClassification, ...] = (
         category=GATE_CLASS_PHYSICAL_IMPOSSIBLE,
         exit_action="",
         script_gate="mirror_isolation",
-        reason="主区/镜像端口隔离是红线",
+        reason="旧主区/镜像端口隔离是红线",
     ),
 )
 
@@ -1384,8 +1384,8 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
     }
 
 
-# 2026-09-24 修正: 8903 起（镜像权威端口）——8902 属主区残留口径，
-# 判活扫描含 8902 时会把主区/无关监听误当 web（与 plist 错指同类）。
+# 2026-09-24 修正: 8903 起（镜像权威端口）——8902 属旧主区残留口径，
+# 判活扫描含 8902 时会把旧主区/无关监听误当 web（与 plist 错指同类）。
 _WEB_PORT_FALLBACK_RANGE = ("8903", "8905")
 
 

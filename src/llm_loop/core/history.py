@@ -539,7 +539,7 @@ def _persist_semantic_state(session_id: str = "", *, data_dir: str | None = None
     压缩时把决策指针持久化（rebuild+save），build 每轮从状态文件投影为决策包 HOT 首行
     （尾部聚合条内），代码演进不并存（spec 5.1.1-3b）。
     fail-open: GoalStore 不可用/无活跃 goal/损坏 → False（不阻断压缩主流程）。
-    audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（主区默认）。
+    audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（旧主区默认）。
     CR-R1（tasks 2.2）: COG_RUNTIME_MODE=off 时短路——连 store 写也不做（纯旧行为）。
     """
     import os as _os_mod
@@ -619,7 +619,7 @@ def _decision_line_frame(session_id: str = "", *, data_dir: str | None = None) -
     「指针式」（AI 不必 search 重建上下文，直接知道当前在做什么/下一步）。
     内容 ≤400 字符（spec 5.2-2）；只带 goal_id 指针不带 evidence 全文（5.2-4）。
     全路径 fail-open: GoalStore 不可用/无活跃 goal → 空串省略（禁阻塞压缩主流程）。
-    audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（主区默认）。
+    audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（旧主区默认）。
     """
     if not session_id:
         return ""
@@ -1803,7 +1803,7 @@ def _pairing_gap(messages: list[dict], i: int) -> tuple[list[str], list[str], in
 
 
 def _pairing_direction_b_orphans(messages: list[dict]) -> set[int]:
-    """方向 B（2026-08-24 主区故障: "Messages with role 'tool' must be a
+    """方向 B（2026-08-24 旧主区故障: "Messages with role 'tool' must be a
     response to a preceding message with 'tool_calls'"）: 孤立/多余 tool 回执下标集合.
 
     - 孤立: tool 消息前向最近的声明不是 assistant(tool_calls)（含首条即 tool /
@@ -1887,7 +1887,7 @@ def validate_tool_call_pairing(messages: list[dict]) -> list[str]:
                     f"第 {i} 轮 assistant(tool_calls) 声明 {len(declared)} 个工具调用，"
                     f"其后仅 {len(declared) - len(missing)} 条 tool 回执，缺 {len(missing)} 条"
                 )
-        # 方向 B（2026-08-24 主区故障: "Messages with role 'tool' must be a
+        # 方向 B（2026-08-24 旧主区故障: "Messages with role 'tool' must be a
         # response to a preceding message with 'tool_calls'"）: 孤立/多余 tool 回执
         # ——统一判定见 _pairing_direction_b_orphans（id 精确 + 段首回溯），报违规供 repair。
         for idx in sorted(_pairing_direction_b_orphans(messages)):
@@ -1923,7 +1923,7 @@ def _repair_tool_call_pairing(messages: list[dict]) -> list[dict]:
         "tool_calls↔tool 配对自检发现违规，已补齐占位（协议配对自检）: %s",
         "; ".join(violations),
     )
-    # 方向 B（2026-08-24 主区故障）: 孤立/多余 tool 回执统一判定（id 精确 + 段首回溯）
+    # 方向 B（2026-08-24 旧主区故障）: 孤立/多余 tool 回执统一判定（id 精确 + 段首回溯）
     orphans = _pairing_direction_b_orphans(messages)
     out: list[dict] = []
     n = len(messages)

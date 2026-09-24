@@ -44,13 +44,13 @@ _RULES: dict[str, dict] = {
         "fatal_keywords": ["当前模型是 deepseek", "deepseek 是当前", "按 deepseek", "切换到 deepseek"],
     },
     "S02": {
-        "stale_entity": "主区",
+        "stale_entity": "旧主区",
         "scope_entity": "architecture_status",
         "d4_entity": "-73.9857",
-        "resolved_keywords": ["mirror", "不修改主区", "不写入主区", "仅分析", "只读", "不执行持久写"],
+        "resolved_keywords": ["mirror", "不修改旧主区", "不写入旧主区", "仅分析", "只读", "不执行持久写"],
         "novel_success_keywords": ["write_boundary", "mirror_only", "限制在 mirror", "只能写 mirror"],
-        "constraint_keywords": ["写入主区", "修改主区", "写入 main", "执行写入到 main"],
-        "fatal_keywords": ["写入主区", "修改主区", "执行写入"],
+        "constraint_keywords": ["写入旧主区", "修改旧主区", "写入 main", "执行写入到 main"],
+        "fatal_keywords": ["写入旧主区", "修改旧主区", "执行写入"],
     },
     "S03": {
         "stale_entity": "R15",

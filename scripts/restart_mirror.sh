@@ -6,14 +6,14 @@
 #   feishu 飞书桥（python -m llm_loop.feishu，WS 长连接 msg-frontier.feishu.cn）
 #
 # ⚠️⚠️ 最重要注意事项 ⚠️⚠️
-#   1. 切勿用 `pkill -f "llm_loop.web"` —— 会把主区 web（:8902）一起杀掉！
-#      （主区/镜像进程命令行相同，pkill 全匹配无法区分。实证 2026-08-22 误杀主区）
+#   1. 切勿用 `pkill -f "llm_loop.web"` —— 会把旧主区 web（:8902）一起杀掉！
+#      （旧主区/镜像进程命令行相同，pkill 全匹配无法区分。实证 2026-08-22 误杀旧主区）
 #      正确做法: 按端口杀（lsof -tiTCP:$PORT），本脚本已内置。
 #   2. 必须先 `source .env` 再启动 —— 进程 env 才能读到配置
 #      （不 source 则 TOOL_ROUND_ZERO_HISTORY 等配置缺失/旧值。实证 2026-08-22）
-#   3. PYTHONPATH 必须指向镜像 src —— 否则 editable install 会加载主区代码
-#      （镜像跑主区代码 = 验证失真。实证 2026-08-22 镜像慢/行为不一致）
-#   4. WEB_PORT=8903 必须显式设置 —— 否则默认 8902 与主区冲突
+#   3. PYTHONPATH 必须指向镜像 src —— 否则 editable install 会加载旧主区代码
+#      （镜像跑旧主区代码 = 验证失真。实证 2026-08-22 镜像慢/行为不一致）
+#   4. WEB_PORT=8903 必须显式设置 —— 否则默认 8902 与旧主区冲突
 #   5. 飞书桥凭证必须真实 —— 镜像 .env 的 FEISHU_APP_ID/FEISHU_APP_SECRET
 #      不能是占位符（cli_xxx），否则预检失败启动不了。真凭证在 .feishu.env。
 #   6. 自重启勿用 launchctl submit —— launchd 会把 submit 作业无限重拉
@@ -238,8 +238,8 @@ cd "$RUNTIME_ROOT"
 VENV_PY="$RUNTIME_ROOT/.venv/bin/python"
 # R2（RUNTIME-SOT-WIRE）: 业务配置经 runtime resolver 查询（.env 权威 + 跨区污染
 # 防御——外部 shell 残留 WEB_PORT=8902 不压过镜像 .env 的 8903）。
-# 修复(2026-08-29): ①查询必须带 PYTHONPATH=镜像 src——shell 环境常残留主区 PYTHONPATH
-# （DSH harness 注入），不带则跑主区 resolver 对镜像语义输出空、exit 0；
+# 修复(2026-08-29): ①查询必须带 PYTHONPATH=镜像 src——shell 环境常残留旧主区 PYTHONPATH
+# （DSH harness 注入），不带则跑旧主区 resolver 对镜像语义输出空、exit 0；
 # ②成功但输出为空也要兜底——$(cmd || echo x) 只兜命令失败兜不了空串成功
 # （实证: WEB_PORT="" → "port 无监听进程"假停机 + 新进程绑 8903 撞旧进程 Errno 48）。
 WEB_PORT="$(LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" "$VENV_PY" -m llm_loop.runtime.resolver WEB_PORT 2>/dev/null || true)"
@@ -507,8 +507,8 @@ _restart_precheck() {
 #   2. dsh 二进制安装在真实账户 home 的 ~/.local/dsh/bin；服务启动不得依赖调用 shell 的
 #      HOME/PATH。用 passwd 数据库解析真实账户 home，只把已存在的 dsh bin 目录加到 PATH；
 #      服务 HOME 也明确恢复为该账户 home，不把其它用户目录注入 PATH。
-#   3. 清理主区 DSH 会话环境残留（DSH_SESSION_JSONL/DSH_SESSION_ID/DSH_SHELL/DSH_WEB_URL）
-#      —— 镜像进程若从主区 DSH 会话环境启动会携带这些变量，路径解析错指主区。
+#   3. 清理旧主区 DSH 会话环境残留（DSH_SESSION_JSONL/DSH_SESSION_ID/DSH_SHELL/DSH_WEB_URL）
+#      —— 镜像进程若从旧主区 DSH 会话环境启动会携带这些变量，路径解析错指旧主区。
 _prep_dsh_env() {
   local account_home="" account_tmp="" dsh_bin_dir=""
   account_home="$("$VENV_PY" -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)' 2>/dev/null || true)"
@@ -532,17 +532,17 @@ _prep_dsh_env() {
   mkdir -p "$DSH_HOME"
   unset DSH_SESSION_JSONL DSH_SESSION_ID DSH_SHELL DSH_WEB_URL 2>/dev/null || true
 
-# P1(2026-08-28) 跨区数据锚点污染防御（主区实证事故对称防护）: 清空继承锚点键,
+# P1(2026-08-28) 跨区数据锚点污染防御（旧主区实证事故对称防护）: 清空继承锚点键,
 # 由本区 .env/默认相对路径接管
-# R2(2026-08-29) 补 PYTHONPATH: 主区调用侧残留 PYTHONPATH=<主区>/src 优先级高于
-# venv .pth，会让镜像进程加载主区代码（跨区代码污染）；必须清空，模块解析归 venv。
-# 补凭证对清理: shell 残留 FEISHU_APP_ID（主区 app）无配套 SECRET 时，进程会拼出
-# "主区 app_id + 镜像 secret"错配对 → 预检 10014 app secret invalid（2026-08-29 实证:
+# R2(2026-08-29) 补 PYTHONPATH: 旧主区调用侧残留 PYTHONPATH=<旧主区>/src 优先级高于
+# venv .pth，会让镜像进程加载旧主区代码（跨区代码污染）；必须清空，模块解析归 venv。
+# 补凭证对清理: shell 残留 FEISHU_APP_ID（旧主区 app）无配套 SECRET 时，进程会拼出
+# "旧主区 app_id + 镜像 secret"错配对 → 预检 10014 app secret invalid（2026-08-29 实证:
 # 旧脚本 source .env 会覆盖残留而掩盖此问题，R2 不 source 后暴露）。清空后由
 # python 配置链从 .env/.feishu.env 读配套凭证对。
 # 补 DATA_DIR 清理(2026-08-29 第四雷): Settings 消费的是 DATA_DIR 键（≠LFL_DATA_DIR，
-# 两个不同的键！），且环境优先压过 .env——启动 shell 残留 DATA_DIR=<主区绝对路径>时
-# engine 直读主区 data → 镜像 web 显示主区会话（实证 pid 97159）。清空后由 .env 的
+# 两个不同的键！），且环境优先压过 .env——启动 shell 残留 DATA_DIR=<旧主区绝对路径>时
+# engine 直读旧主区 data → 镜像 web 显示旧主区会话（实证 pid 97159）。清空后由 .env 的
 # DATA_DIR=./data（cwd 锚定）接管。
 # 补 MCP_SERVERS 清理(2026-09-22 web 30s 假未就绪实证): DSH 会话环境向子 shell
 # 注入 MCP_SERVERS=[{"name":"dsh",…dsh_plugin_bridge.mjs}]，进程 env 优先级压过
@@ -552,7 +552,7 @@ _prep_dsh_env() {
 unset LFL_DATA_DIR PYTHONPATH FEISHU_APP_ID FEISHU_APP_SECRET DATA_DIR MCP_SERVERS
 }
 
-# 按端口找监听进程（只识别目标端口；不会碰主区 8902）。
+# 按端口找监听进程（只识别目标端口；不会碰旧主区 8902）。
 _port_pid() {
   lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $2}'
 }
@@ -560,7 +560,7 @@ _port_pid() {
 # 镜像 Web 还可能在收到 SIGTERM 后先释放监听端口、但进程本身继续存活并持有
 # <session>.run.lock。只等端口释放会错误地启动第二个 Web，之后所有新请求都被旧
 # run owner 判成“另一进程执行”。用镜像 venv 的绝对 argv 精确识别本区 Web，既能
-# 找到已经不监听的 stale owner，也不会误杀主区不同 venv 的 :8902。
+# 找到已经不监听的 stale owner，也不会误杀旧主区不同 venv 的 :8902。
 _mirror_web_pids() {
   {
     # Rollout-safe: first C0-B restart must still find the legacy direct-entry process;
@@ -824,10 +824,10 @@ _start_web() {
   # 检查仍用启动前捕获的局部变量（unset 后 $WEB_* 不再绑定，-u 会报错）。
   local check_host="$WEB_HOST" check_port="$WEB_PORT"
   unset WEB_PORT WEB_HOST LFL_DATA_DIR DATA_DIR
-  # 协议 §3 恢复(2026-08-29): 共享 venv 属主区（editable .pth 指主区 src），
+  # 协议 §3 恢复(2026-08-29): 共享 venv 属旧主区（editable .pth 指旧主区 src），
   # 镜像服务必须自带 PYTHONPATH=镜像 src 自卫——不依赖 .pth 指向（.pth 被外力
-  # 翻向镜像会反向破坏主区；被翻向主区则镜像加载错代码。显式注入两边都免疫，
-  # 且覆盖 shell 残留的主区 PYTHONPATH）。
+  # 翻向镜像会反向破坏旧主区；被翻向旧主区则镜像加载错代码。显式注入两边都免疫，
+  # 且覆盖 shell 残留的旧主区 PYTHONPATH）。
   # 修3(2026-09-09): 启动改走 _spawn_detached（可移植 setsid+execvp）——nohup+&
   # 不换进程组，宿主 shell 超时 killpg 会被整树波及（execute_command.py:108-109 实证）。
   LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/web.log "$VENV_PY" -m llm_loop.runtime.launch web
@@ -995,7 +995,7 @@ _status() {
   else
     echo "learning: ❌ 未运行"
   fi
-  echo "主区 web（:8902）: $(curl -sf --max-time 2 http://127.0.0.1:8902/health >/dev/null 2>&1 && echo '✅ 健康' || echo '⚠️ 未运行/不可达')"
+  echo "旧主区 web（:8902）: $(curl -sf --max-time 2 http://127.0.0.1:8902/health >/dev/null 2>&1 && echo '✅ 健康' || echo '⚠️ 未运行/不可达')"
 }
 
 # ── S1（简化包 2026-09-22）：根检查统一在预检链末端执行 ──

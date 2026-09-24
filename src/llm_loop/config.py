@@ -16,8 +16,8 @@ from typing import Any
 from llm_loop.codearts.config import CodeArtsSettings
 
 # EVO-20260830（split-brain 修复）: data_dir 默认值从相对 "./data" 改为基于包位置的绝对路径。
-# 根因: 相对路径随进程 cwd 漂移——主区服务进程 cwd=镜像目录时，EvolutionStore/会话/审计
-# 落盘镜像区（实例: EVO-20260829-6a78d4bb/06c96021 落镜像 data/audit/，主区 web 审阅页看不到）。
+# 根因: 相对路径随进程 cwd 漂移——旧主区服务进程 cwd=镜像目录时，EvolutionStore/会话/审计
+# 落盘镜像区（实例: EVO-20260829-6a78d4bb/06c96021 落镜像 data/audit/，旧主区 web 审阅页看不到）。
 # 绝对化后: 代码所在区=数据所在区，两区天然隔离，不随 cwd 漂移。显式 DATA_DIR env/传参不受影响。
 _CODE_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_DATA_DIR = str(_CODE_ROOT / "data")

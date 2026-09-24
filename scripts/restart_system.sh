@@ -37,7 +37,7 @@ unset PYTHONPATH
 # 启动前清空全部 COG_RUNTIME_*, 统一由本区 .env 定源（进程内 dotenv 注入）。
 unset COG_RUNTIME_MODE COG_RUNTIME_TELEMETRY COG_RUNTIME_ANCHOR_MODE COG_RUNTIME_STATE_VERSION COG_RUNTIME_TIER_ENABLED COG_RUNTIME_DUAL_SOURCE_GUARD
 
-# P1(2026-08-28) 跨区数据锚点污染防御（实证事故: 主区 web/feishu 带 LFL_DATA_DIR=
+# P1(2026-08-28) 跨区数据锚点污染防御（实证事故: 旧主区 web/feishu 带 LFL_DATA_DIR=
 # 镜像路径启动, 本区 audit/trace/exception 全部写入镜像区 data/——两区观测互相污染）。
 # 启动前强制清空跨区锚点键, 由本区 .env/默认相对路径接管; 如确需覆盖应写入 .env。
 unset LFL_DATA_DIR DSH_HOME
@@ -68,8 +68,8 @@ STARTUP_WAIT_S="${SYSTEM_STARTUP_WAIT_S:-20}"    # 启动健康检查等待秒�
 STARTUP_POLL_S="${SYSTEM_STARTUP_POLL_S:-2}"     # 健康检查轮询间隔
 WEB_HOST="${WEB_HOST:-127.0.0.1}"                # web 绑定地址
 # 2026-09-24 修正：默认从镜像 .env 读权威 WEB_PORT（镜像 2026-08-26 起固化
-# 8903 避开主区），无 .env 兜底 8903——旧默认 8902 是主区端口，守护调用不带
-# 环境时全部端口操作（停止兜底/启动/健康）都指向主区（跨区误指）。
+# 8903 避开旧主区），无 .env 兜底 8903——旧默认 8902 是旧主区端口，守护调用不带
+# 环境时全部端口操作（停止兜底/启动/健康）都指向旧主区（跨区误指）。
 WEB_PORT="${WEB_PORT:-$(grep -E '^WEB_PORT=' "$PROJECT_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '"' || true)}"
 WEB_PORT="${WEB_PORT:-8903}"                       # web 端口（env > .env > 8903 镜像默认）
 
@@ -151,8 +151,8 @@ _service_pid() {
       return 0
     fi
   fi
-  # 2026-08-22 镜像修复：pgrep 加工作区路径精确匹配，防误匹配主区进程
-  # （主/镜像 .venv 同源符号链接，命令行相同；不加前缀会 stop/restart 误杀主区桥）
+  # 2026-08-22 镜像修复：pgrep 加工作区路径精确匹配，防误匹配旧主区进程
+  # （主/镜像 .venv 同源符号链接，命令行相同；不加前缀会 stop/restart 误杀旧主区桥）
   # 2026-09-24 双面探针：正式服务经 runtime.launch <svc> 启动（C0-B 新面），
   # 旧面 llm_loop.<svc> 兼容保留——只匹配旧面时对 runtime.launch 进程失明，
   # 停止判"未运行"跳过、启动撞端口 _die，unhealthy-but-alive 必死锁
@@ -165,14 +165,14 @@ _service_pid() {
 # ── 优雅停止单个服务（停所有匹配进程，防多进程残留）──
 _stop_service() {
   local svc="$1"
-  # MIRROR 隔离：仅匹配当前 PROJECT_DIR 启动的进程，禁止泛匹配同名模块误停主区。
+  # MIRROR 隔离：仅匹配当前 PROJECT_DIR 启动的进程，禁止泛匹配同名模块误停旧主区。
   # 与 _service_pid 的项目限定口径保持一致（双面：runtime.launch 新面 + 旧面）。
   local pattern_new="$PROJECT_DIR/.venv/bin/python -m llm_loop\\.runtime\\.launch ${svc}$"
   local pattern_old="$PROJECT_DIR/.venv/bin/python -m llm_loop\\.${svc}$"
   local pids
   pids="$( { pgrep -f "$pattern_new" || true; pgrep -f "$pattern_old" || true; } | sort -u | tr '\n' ' ')"
   # web 附加端口权威兜底：argv 探针都失明时按端口取 PID（校验命令行锚定
-  # PROJECT_DIR，防误杀主区/无关占用者），杜绝"跳过停止→端口被占用"死锁。
+  # PROJECT_DIR，防误杀旧主区/无关占用者），杜绝"跳过停止→端口被占用"死锁。
   if [[ "$svc" == "web" ]]; then
     local port_pid
     for port_pid in $(lsof -tiTCP:"${WEB_PORT}" -sTCP:LISTEN 2>/dev/null || true); do
@@ -286,8 +286,8 @@ _start_service() {
   fi
   _load_credentials
   _load_llm
-  # MIRROR 协议 §3（2026-08-22）：共享 venv 的 editable 安装指向主区 src，
-  # 不带 PYTHONPATH 会加载主区代码 → 镜像 src 优先（隔离要求，主区零接触）
+  # MIRROR 协议 §3（2026-08-22）：共享 venv 的 editable 安装指向旧主区 src，
+  # 不带 PYTHONPATH 会加载旧主区代码 → 镜像 src 优先（隔离要求，旧主区零接触）
   export PYTHONPATH="${PROJECT_DIR}/src${PYTHONPATH:+:$PYTHONPATH}"
 
   # DSH 编排（2026-08-16）：DSH_HOME 重定向到项目内 data/dsh-home（服务进程对 data/ 有写
@@ -302,7 +302,7 @@ _start_service() {
       # 端口冲突幂等处置（2026-09-24）：占用者若是本项目进程（命令行锚定
       # PROJECT_DIR）→ 优雅停后继续启动（守护拉起路径的 stop+start 幂等；
       # 旧逻辑 _die 使 unhealthy-but-alive 永远拉不起）；非本项目占用者
-      # （主区 8902/无关进程）仍如实拒绝——安全边界不放松。
+      # （旧主区 8902/无关进程）仍如实拒绝——安全边界不放松。
       if lsof -iTCP:"${WEB_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
         local foreign=""
         for _ppid in $(lsof -tiTCP:"${WEB_PORT}" -sTCP:LISTEN 2>/dev/null || true); do
@@ -496,7 +496,7 @@ _verify_single_instance() {
   local svc pids count port_pids
   for svc in $SERVICES; do
     # 2026-08-26 批1修复: 与 _service_pid/_stop_service 同口径加 PROJECT_DIR 前缀——
-    # 原裸匹配会把主区同服务进程误报为"残留"，且建议的 pkill 命令会误杀主区桥
+    # 原裸匹配会把旧主区同服务进程误报为"残留"，且建议的 pkill 命令会误杀旧主区桥
     pids="$(pgrep -f "$PROJECT_DIR/.venv/bin/python -m llm_loop\\.${svc}" || true)"
     count="$(printf '%s\n' "$pids" | grep -c . || true)"
     if [[ -n "$pids" ]] && (( count > 1 )); then

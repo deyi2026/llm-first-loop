@@ -256,8 +256,8 @@ def main() -> None:
     enforce_identity(Path.cwd())
     # 补齐手动启动缺口：shell 未注入 .env 时也能可靠读配置（MCP_SERVERS 等）。
     # 锚定 CWD（与 data_dir="./data" 同约定，重启脚本均 cd 到各自项目根）；
-    # 不可用默认 __file__ 锚定——共享代码（venv .pth 指向镜像 src）会让主区进程
-    # 误读镜像 .env 的 WEB_PORT=8903/LFL_DATA_DIR，主区 web 绑镜像端口直接起不来。
+    # 不可用默认 __file__ 锚定——共享代码（venv .pth 指向镜像 src）会让旧主区进程
+    # 误读镜像 .env 的 WEB_PORT=8903/LFL_DATA_DIR，旧主区 web 绑镜像端口直接起不来。
     _env_file = (Path.cwd() / ".env").resolve()
     os.environ.setdefault("LFL_ENV_FILE", str(_env_file))
     load_env_file(_env_file)
@@ -275,7 +275,7 @@ def main() -> None:
     write_runtime_manifest("web")
     host = os.environ.get("WEB_HOST", "127.0.0.1").strip()
     # 2026-09-24 修正: 默认端口 8903（镜像权威，.env WEB_PORT=8903 固化）——
-    # 旧默认 8902 属主区残留，环境未带 WEB_PORT 直启时会错绑。
+    # 旧默认 8902 属旧主区残留，环境未带 WEB_PORT 直启时会错绑。
     port = int(os.environ.get("WEB_PORT", "8903").strip())
 
     try:

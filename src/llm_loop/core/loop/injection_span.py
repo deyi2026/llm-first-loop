@@ -572,7 +572,7 @@ class _Err1210Mixin:
             if not is_err1210(exc):
                 return result
             # 修复A: 门禁移除——任意 1210 均尝试降级（原"compact 首请求"边界外的
-            # 场景: 注入叠加尾部连续 user 的非 compact 轮，主区 883b4725 实证）。
+            # 场景: 注入叠加尾部连续 user 的非 compact 轮，旧主区 883b4725 实证）。
             # compact_first 降级为快照标记信号（真实判定），不再作触发门禁。
             seq = getattr(self, "_err1210_run_seq", 0)
             attempted = getattr(self, "_err1210_attempted", None) or {}
@@ -766,7 +766,7 @@ class _Err1210Mixin:
         """engine 每 run 入口调用（对齐 _reset_overflow_state 先例）: run seq 递增.
 
         attempted 键语义从"compact 事件 seq"迁移为"run seq"——非 compact 轮的
-        1210（注入叠加尾部连续 user 形态，主区 883b4725 实证）同样获得一次
+        1210（注入叠加尾部连续 user 形态，旧主区 883b4725 实证）同样获得一次
         降级机会；每 run 至多一次，防循环语义不劣化。
         """
         self._err1210_run_seq = getattr(self, "_err1210_run_seq", 0) + 1
@@ -818,7 +818,7 @@ class _Err1210Mixin:
         """骤降兜底判定数据源（tasks 4.2 + 修复B 2026-08-29）: 成功与失败轮均更新.
 
         原语义"仅成功轮更新"存在死锁式失效：连续失败轮越多，prev 越陈旧，
-        骤降判定越不可能触发（主区 883b4725 三连败实证）。失败轮也更新后
+        骤降判定越不可能触发（旧主区 883b4725 三连败实证）。失败轮也更新后
         prev 恒为最近一次请求，骤降语义即"相邻两次请求"如实反映。
         """
         self._last_request_msg_count_by_session[session_id] = msg_count

@@ -117,7 +117,7 @@ kill -CONT <pid> 2>/dev/null || true   # 清理残留（若守护已按新逻辑
 
 ## 红线（不要做）
 
-- ❌ `pkill -f llm_loop.web`——会误杀主区（:8902），历史事故，必须带 PROJECT_DIR 限定或按端口
+- ❌ `pkill -f llm_loop.web`——会误杀旧主区（:8902），历史事故，必须带 PROJECT_DIR 限定或按端口
 - ❌ 守护里加 `git status` 检查/`publish`——自愈与部署裁决混层
 - ❌ 撞端口就换 `WEB_PORT=xxxx` 启动——制造双进程/端口漂移，掩盖根因
 - ❌ 不看 guard.log 直接手甩 restart——先分类（Step 1），三类根因处置完全不同

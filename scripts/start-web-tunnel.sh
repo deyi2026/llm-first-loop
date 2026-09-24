@@ -10,7 +10,7 @@
 #   ./scripts/start-web-tunnel.sh named          # 固定域名（读 cloudflared/config.yaml）
 #
 # 环境变量：
-#   WEB_PORT   后端端口（默认 8903，镜像区；主区为 8902）
+#   WEB_PORT   后端端口（默认 8903，镜像区；旧主区为 8902）
 #   WEB_HOST   后端地址（默认 127.0.0.1）
 #
 set -euo pipefail

@@ -10,7 +10,7 @@
 #
 # 提交队列（B3-PREP-06）：多代理/多会话并行提交的唯一串行化点——锁住机检/门禁/
 # 提交全段（write-tree 预检与 git commit 之间的 TOCTOU、ci_gate 读树与提交推进
-# 错位经队列消除）。锁 = <git-common-dir>/r9-commit.lock（主区与各 worktree 共享
+# 错位经队列消除）。锁 = <git-common-dir>/r9-commit.lock（旧主区与各 worktree 共享
 # 一把，跨 checkout 互斥）；排队语义 = 拿锁后若 HEAD 已被前移，新队头基线重跑
 # 机检/门禁，暂存触碰面与前驱重叠即中止（stale 暂存基线防线）。锁超时
 # R9_COMMIT_LOCK_TIMEOUT（默认 900s）+ trap 释放防死锁。

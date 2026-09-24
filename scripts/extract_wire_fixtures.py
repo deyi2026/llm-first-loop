@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R0 Freeze Evidence: 1210 offending payload → 脱敏 wire fixture.
 
-来源: data/audit/offending_payloads/（主区/镜像区均可，见 SOURCE_DIR）
+来源: data/audit/offending_payloads/（旧主区/镜像区均可，见 SOURCE_DIR）
 输出: tests/fixtures/wire/<category>.json
 
 脱敏规则（design.md §5.1）:

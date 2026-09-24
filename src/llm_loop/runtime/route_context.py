@@ -7,7 +7,7 @@
 - instance: LFL_INSTANCE 显式优先，缺省 f"{hostname}-{pid}"（进程内稳定）
 - zone:     LFL_ZONE 显式优先，缺省由 compute_identity().workspace_root 路径
             含 "mirror" 段推导（复用 runtime/identity.py 事实，不耦合
-            RUNTIME_IDENTITY_MODE）；取值域 {主区, 镜像, unknown}
+            RUNTIME_IDENTITY_MODE）；取值域 {旧主区, 镜像, unknown}
 - route:    LFL_ROUTE 显式优先，缺省 unknown；取值域
             {feishu, web, cli, scheduler, unknown}
 
@@ -27,7 +27,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_VALID_ZONES = {"主区", "镜像", "unknown"}
+_VALID_ZONES = {"旧主区", "镜像", "unknown"}
 _VALID_ROUTES = {"feishu", "web", "cli", "scheduler", "unknown"}
 
 _route_context: RouteContext | None = None
@@ -72,7 +72,7 @@ def _derive_zone() -> str:
     # 复用 identity 既有事实（runtime/identity.py）：workspace_root 是唯一工作区事实。
     # MIRROR 协议的真实目录名为 llm-first-loop-mirror；旧实现用
     # ``"mirror" in Path(root).parts`` 只匹配“整个路径段恰好等于 mirror”，
-    # 因而把真实镜像稳定误判为主区。这里按路径段中的分隔 token 判定，
+    # 因而把真实镜像稳定误判为旧主区。这里按路径段中的分隔 token 判定，
     # 不依赖 8902/8903 端口、DATA_DIR 或模型配置。
     import re
 
@@ -83,7 +83,7 @@ def _derive_zone() -> str:
         "mirror" in {token for token in re.split(r"[-_.]+", part.casefold()) if token}
         for part in Path(root).parts
     )
-    return "镜像" if is_mirror else "主区"
+    return "镜像" if is_mirror else "旧主区"
 
 
 def _resolve() -> RouteContext:

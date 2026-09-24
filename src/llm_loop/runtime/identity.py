@@ -7,7 +7,7 @@
 否则 FATAL_RUNTIME_IDENTITY_MISMATCH，拒绝启动（enforce 模式）。
 
 背景（2026-08-29 实测事故）：
-  - 主区 .venv 在 shell 残留 PYTHONPATH=mirror/src 时加载 mirror 代码
+  - 旧主区 .venv 在 shell 残留 PYTHONPATH=mirror/src 时加载 mirror 代码
     （PYTHONPATH 优先级高于 editable .pth，venv 隔离可被静默劫持）；
   - 生产 feishu 进程实际运行于 mirror/.venv 而无任何记录。
 本守卫把"我以为跑的是哪份代码"变成可机械核验的事实。

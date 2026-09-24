@@ -166,7 +166,7 @@ _service_healthy() {
       # web 进程在还需有端口在听（防"活着但没监听"卡死形态）；
       # /health 需鉴权，以 401 响应（服务应答）即视为端口健康。
       # 2026-09-24 修正：端口清单从镜像 .env 权威 WEB_PORT 起扫（默认 8903），
-      # 绝不含 8902——那是主区端口；旧清单含 8902 时主区活着即可让镜像
+      # 绝不含 8902——那是旧主区端口；旧清单含 8902 时旧主区活着即可让镜像
       # web 死透仍判"健康"（跨区误判，与 plist WorkingDirectory 错指同类）。
       local port rc _wp
       _wp="$(grep -E '^WEB_PORT=' "$PROJECT_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '"' || true)"
