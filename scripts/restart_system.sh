@@ -17,7 +17,8 @@
 #   2. 健康检查: web 用 HTTP GET /health；feishu 用看门狗心跳文件新鲜度（M47，替代易误报的 TCP 检查）；
 #      cli 用进程存活（无健康端点，交互式）。
 #   3. 凭证不硬编码: 环境变量优先 → 回退 本地既有实现/.env（脱敏提示不落盘）。
-#   4. 端口冲突检测: web 默认 8902（被占用时经 WEB_PORT 覆盖），启动前探测。
+#   4. 端口冲突检测: web 端口权威取 .env WEB_PORT（默认 8903 镜像），启动前探测；
+#      本项目进程占用幂等停后重启，非本项目占用者如实拒绝。
 #   5. 幂等安全: PID 文件 + pgrep 双校验；按依赖序启动（web 先、feishu 后）。
 
 set -euo pipefail
@@ -66,7 +67,11 @@ GRACE_S="${SYSTEM_GRACE_S:-15}"                  # 优雅停机等待秒数
 STARTUP_WAIT_S="${SYSTEM_STARTUP_WAIT_S:-20}"    # 启动健康检查等待秒数
 STARTUP_POLL_S="${SYSTEM_STARTUP_POLL_S:-2}"     # 健康检查轮询间隔
 WEB_HOST="${WEB_HOST:-127.0.0.1}"                # web 绑定地址
-WEB_PORT="${WEB_PORT:-8902}"                     # web 端口（与 本地既有实现 冲突时覆盖）
+# 2026-09-24 修正：默认从镜像 .env 读权威 WEB_PORT（镜像 2026-08-26 起固化
+# 8903 避开主区），无 .env 兜底 8903——旧默认 8902 是主区端口，守护调用不带
+# 环境时全部端口操作（停止兜底/启动/健康）都指向主区（跨区误指）。
+WEB_PORT="${WEB_PORT:-$(grep -E '^WEB_PORT=' "$PROJECT_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '"' || true)}"
+WEB_PORT="${WEB_PORT:-8903}"                       # web 端口（env > .env > 8903 镜像默认）
 
 _log() { printf '[restart_system] %s\n' "$*"; }
 _die() { printf '[restart_system] ERROR: %s\n' "$*" >&2; exit 1; }
