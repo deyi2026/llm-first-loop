@@ -2,6 +2,17 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.26 — 语义缓存冷启动批量预热 + 持久化去抖（2026-09-24）
+
+- **冷启动静默降质修复（EVO-20260924-d9c5ad20）**：语料增长后首批查询在 `timeout_s=1.0` 下超时 → 静默回退 keyword（评测实测 h@5 14 抖到 9~12，生产同样存在该窗口）。根因：`_embed_cached` 逐条惰性嵌入且每条 persist 整个缓存 JSON（N 条新文档 = N 次 ~2MB 重写）。
+- **embed_batch 协议（可选方法）**：APIEmbedder 单请求 64/片，响应不齐/异常整批回退逐条；Hash/Null 逐条语义；旧实现 getattr 探测兼容。
+- **search 内预算预热**：语义召回前增量预热未缓存候选，每片前查 deadline、超时停片，不挂预算外时间。
+- **持久化去抖**：每缓存每查询 persist ≤1 次（try/finally 含超时降级路径，已嵌向量不丢）。
+- **顺手修复**：_cache_route 消重 kind 路由；method 缓存 setdefault 真缓存（原临时 dict 丢失）；regression_gate check_regression 结构 bug（overall/by_kind 层级混用下标必崩、比较路径从未生效），基线按语料 1761 快照刷新。
+- **GLM overflow 识别补充**（6a1de842c）：is_overflow_error 新增 GLM 400 code 1261 码路径（限 glm/glm-api/zhipu provider），文案本地化识别保留。
+- **验收**：冷启动端到端（仅 index 无向量缓存，corpus 1761）单查询最大 1.27s、4 条查询窗口后恢复 mixed/semantic、缓存全建；旧代码同场景对照 + regression_gate PASS。
+- **资产入库**：retrieval 多查询融合原型与融合权重消融（等权 RRF 保留结论）、3 条 method 卡、1 条 held-out 阴性结果 lesson。
+
 ## v0.6.25 — restart 三件套修复链 + 端口口径清扫 + convergence 快照 + 版本面对齐（2026-09-24）
 
 - **restart 互斥锁路径修复**：v0.6.24 引入的互斥锁引用 `$DATA_DIR`，该键在 restart_system.sh 中是被 unset 的危险键——set -u 下 unbound → 脚本秒退（rc=1）→ 早退路径不写回执 → 陈旧回执误报 action_id_mismatch（13:4x 两连 restart 失败实证）。锁路径改锚 `MIRROR_DIR/data/runtime`，与 _write_receipt 同一事实源。
