@@ -10,7 +10,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOG="$ROOT/data/tunnel-watchdog.log"
 LABEL="gui/$(id -u)/com.llmfirstloop.cloudflared"
 
-ha=$(curl -s --max-time 5 "$METRICS" 2>/dev/null | awk '/cloudflared_tunnel_ha_connections/{print $2}')
+# Prometheus exposition also contains HELP/TYPE metadata lines with the metric
+# name. Match the sample row exactly; otherwise `ha` becomes a multi-line value
+# such as "HELP\nTYPE\n4", which makes the numeric test fail and can trigger a
+# restart loop even while the tunnel is healthy.
+ha=$(curl -s --max-time 5 "$METRICS" 2>/dev/null | awk '$1 == "cloudflared_tunnel_ha_connections" { print int($2); exit }')
 if [ "${ha:-0}" -ge 1 ]; then
   [ -f "$STATE" ] && rm -f "$STATE"
   exit 0
