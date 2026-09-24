@@ -313,8 +313,12 @@ class ServiceControlTool:
                 "[service_control accepted] "
                 f"action_id={receipt.action_id} target={target} "
                 f"generation={receipt.deployment_generation}; "
-                "两阶段等待（web/all 先等 requester 会话结束，再等目标空闲）期间不占 publish 锁；"
-                "可用 service_control(action=status, action_id=...) 查询终态，无需同步阻塞"
+                "两阶段等待（web/all 先等 requester 会话结束，再等目标空闲）期间不占 publish 锁。"
+                "受理≠完成：后台动作的终态是异步事实——未查询到 status=succeeded/failed"
+                " 不得当作已完成/已失败宣布；终态核对入口："
+                "service_control(action=status, action_id=...)（或 status 含 action 摘要），"
+                "event_stream(query=service_action_terminal) 亦可检索（EVO-20260924-8266b693 A）；"
+                "failed 终态会保留待确认（verify_acknowledge）直到显式闭合"
             ),
             tool_call_id="",
             tool_name=self.name,

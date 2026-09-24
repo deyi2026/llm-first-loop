@@ -752,6 +752,30 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 user_msg.metadata = correct_mislabeled_metadata(user_msg.metadata)
         except Exception:  # noqa: BLE001 — fail-open（spec 4.2-1）
             logger.warning("user 消息落盘恒等式校验异常（fail-open 放行）", exc_info=True)
+        # EVO-20260924-8266b693 B：会话开场（首个 genuine human turn）注入
+        # "failed 服务控制动作待确认"状态提醒一次。每 session 只此一次、
+        # fail-open、STATUS 层非祈使；提醒位于用户原文之前（L2 尾位不变量：
+        # 程序生成 user-role 内容不追加在本轮真实用户原文之后）。
+        # 被新代接管（superseded）的 failed 不抹除，直到 verify_acknowledge(accept) 确认。
+        # 背景：2026-09-24 restart failed 只落私有台账，下一会话（含发起模型自身）
+        # 无可见反馈通道。判定必须发生在 user_msg 落库之前——否则首 turn
+        # 恒不触发（user_instruction 已存在）。
+        try:
+            if not any(
+                (m.metadata or {}).get("origin_layer") == "user_instruction"
+                for m in sess.messages
+                if m.role == "user"
+            ):
+                from llm_loop.core.loop.engine_services.service_action_notice import (
+                    build_failed_action_notice_message,
+                )
+
+                _svc_notice = build_failed_action_notice_message(self.settings.data_dir)
+                if _svc_notice is not None:
+                    sess.messages.append(_svc_notice)
+                    self._append_message_event(sess, _svc_notice)
+        except Exception:  # noqa: BLE001 — 开场提醒 fail-open
+            logger.warning("service_action_notice 开场注入失败（fail-open 跳过）", exc_info=True)
         sess.messages.append(user_msg)
         # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
         self._ensure_session_created(sess)
@@ -794,6 +818,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # Agency-first: memory/history is retrieved explicitly by the model when needed.
         # Ordinary user turns do not trigger automatic retrieval or persisted snapshots.
         _turn_memory_msgs: list[Message] = []
+        # （EVO-20260924-8266b693 B 开场注入已上移至 user_msg 落库之前——
+        # 见上方注入块；此处保留占位注释防回插到错误位置。）
         self._phase("ingress")
 
         final_answer = ""

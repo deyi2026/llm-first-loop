@@ -120,7 +120,11 @@ def _publish_desired(store: ManagedServiceDeploymentStore, generation: int) -> N
 def test_scan_failed_service_actions_filters_superseded_generation(
     tmp_path: Path,
 ) -> None:
-    """R5: desired 代已前进 → 旧代失败动作不再占活跃投影（只读过滤）."""
+    """EVO-20260924-8266b693 B: desired 代已前进 → 旧代失败不再抹除，标注 superseded 待确认.
+
+    （2026-09-24 起 R5 "接管即抹痕"语义退役：superseded 失败保留在投影，
+    直到 acknowledged_at 非空或 verify_acknowledge(accept) 确认。）
+    """
     store = ManagedServiceDeploymentStore(tmp_path)
     store.actions_dir.mkdir(parents=True, exist_ok=True)
     _publish_desired(store, 55)
@@ -142,10 +146,36 @@ def test_scan_failed_service_actions_filters_superseded_generation(
             encoding="utf-8",
         )
 
-    _action("svc-gen53-failed", "failed", 53)  # P8: 旧代失败 → 噪声，过滤
+    _action("svc-gen53-failed", "failed", 53)  # 旧代失败 → superseded 标注，仍可见
     _action("svc-gen55-failed", "failed", 55)  # 当前代失败 → 真信号，保留
     items = _scan_failed_service_actions(tmp_path)
-    assert [i["action_id"] for i in items] == ["svc-gen55-failed"]
+    by_id = {i["action_id"]: i for i in items}
+    assert set(by_id) == {"svc-gen53-failed", "svc-gen55-failed"}
+    assert by_id["svc-gen53-failed"]["superseded"] is True
+    assert by_id["svc-gen55-failed"]["superseded"] is False
+
+
+def test_scan_failed_service_actions_acknowledged_hidden(tmp_path: Path) -> None:
+    """EVO-20260924-8266b693 B: acknowledged_at 非空 → 不再占投影/开场提醒."""
+    store = ManagedServiceDeploymentStore(tmp_path)
+    store.actions_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC)
+    (store.actions_dir / "svc-acked.json").write_text(
+        json.dumps(
+            {
+                "action_id": "svc-acked",
+                "action": "restart",
+                "target": "web",
+                "status": "failed",
+                "deployment_generation": 53,
+                "detail": "verify=unhealthy",
+                "updated_at": now.isoformat(),
+                "acknowledged_at": now.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _scan_failed_service_actions(tmp_path) == []
 
 
 def test_scan_failed_service_actions_same_generation_visible(tmp_path: Path) -> None:

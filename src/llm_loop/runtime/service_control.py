@@ -92,6 +92,8 @@ _ACTION_OPTIONAL_FIELDS = frozenset(
         # svc_deploy N2: 被拒动作的可执行下一步（JSON 数组文本），与既有 6 项
         # 同族同层；旧记录缺失即空值，不递增 schema 版本。
         "next_step",
+        # EVO-20260924-8266b693 B: failed 动作"待确认"闭合戳；旧记录缺失即未确认。
+        "acknowledged_at",
     }
 )
 _MANAGED_SERVICES = ("web", "feishu", "learning")
@@ -476,6 +478,11 @@ class ServiceControlAction:
     # svc_deploy N2：被拒动作的可执行下一步（JSON 数组文本；空 = 未产生）。
     # 结构化、有界、不参与 detail 的 2000/400 截断；模型经 status 自动透出。
     next_step: str = ""
+    # EVO-20260924-8266b693 B：failed 动作的"待确认"闭合戳（ISO 时间；空 = 未确认）。
+    # v1 兼容：旧 action 文件无此键 → 默认空（未确认）。确认入口
+    # verify_acknowledge(verdict=accept) on failed；确认前 failed 动作持续占用
+    # pending_actions 投影与开场状态提醒（即使 desired 代已前进/被新动作接管）。
+    acknowledged_at: str = ""
 
     def __post_init__(self) -> None:
         if self.schema != _ACTION_SCHEMA:
@@ -522,6 +529,7 @@ class ServiceControlAction:
             verify_verdict=str(raw.get("verify_verdict") or ""),
             origin=str(raw.get("origin") or ""),
             next_step=str(raw.get("next_step") or ""),
+            acknowledged_at=str(raw.get("acknowledged_at") or ""),
         )
 
 
@@ -958,6 +966,7 @@ class ManagedServiceDeploymentStore:
         model_override: str | None = None,
         origin: str | None = None,
         next_step: str | None = None,
+        acknowledged_at: str | None = None,
     ) -> ServiceControlAction:
         with self.lease():
             action = self.read_action(action_id)
@@ -982,6 +991,9 @@ class ManagedServiceDeploymentStore:
                 ),
                 origin=action.origin if origin is None else origin,
                 next_step=action.next_step if next_step is None else next_step,
+                acknowledged_at=(
+                    action.acknowledged_at if acknowledged_at is None else acknowledged_at
+                ),
             )
             self._write_action_unlocked(updated)
             _release_barriers_for_transition(
@@ -989,6 +1001,7 @@ class ManagedServiceDeploymentStore:
                 previous=action,
                 updated=updated,
             )
+            _emit_terminal_event(self, updated)
             return updated
 
     def accept_restart(
@@ -1518,6 +1531,42 @@ def _append_exit_audit(store: ManagedServiceDeploymentStore, record: Mapping[str
         logger.warning("service-control exit audit append failed: %s", exc)
 
 
+def _emit_terminal_event(store: ManagedServiceDeploymentStore, action: ServiceControlAction) -> None:
+    """EVO-20260924-8266b693 A：终态（succeeded/failed）写统一事件流。
+
+    失败只落私有 service-control 台账时无主动反馈通道——受理回执之外，
+    succeeded/failed 终态事件进 requester 会话的事件流（event_stream 可检索，
+    scope=workspace 亦可见）。fail-open：事件写入失败不阻断状态转移
+    （audit 台账仍由调用方负责）。
+    """
+    if action.status not in {"succeeded", "failed"}:
+        return
+    sid = str(action.requester_session_id or "").strip()
+    if not sid:
+        return
+    try:
+        from llm_loop.event_log.store import EventStore
+
+        event_store = EventStore(store.data_dir / "event_logs", enabled=True)
+        event_store.append(
+            sid,
+            "service_action_terminal",
+            {
+                "action_id": action.action_id,
+                "action": action.action,
+                "target": action.target,
+                "status": action.status,
+                "generation": action.deployment_generation,
+                "updated_at": action.updated_at,
+                "detail": str(action.detail or "")[:200],
+                "reason_ref": action.reason_ref,
+                "acknowledged_at": action.acknowledged_at,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 — 事件流不可用时 fail-open
+        logger.warning("service-control terminal event append failed: %s", exc)
+
+
 def _load_overrides(raw: str) -> list[dict[str, Any]]:
     """解析 action.model_override：JSON list（兼容单条 dict 旧格式）。"""
     if not raw:
@@ -1890,6 +1939,33 @@ def acknowledge_verify(
             "evidence_verdict": observed,
             "evidence": summary,
             "healthy": list(healthy),
+        }
+
+    # EVO-20260924-8266b693 B：failed 动作的 accept 是"确认已知"，不是改判成功——
+    # 物理上该动作仍失败过；置 acknowledged_at 闭合"待确认"投影，状态保持 failed。
+    if action.status == "failed" and verdict == "accept" and not action.acknowledged_at:
+        updated = _mark_action(
+            store,
+            action,
+            status="failed",
+            detail=f"failed acknowledged by model: {reason}",
+            verify_evidence=evidence,
+            verify_verdict=verdict,
+            release_barriers=_barrier_services_for_target(action.target),
+            acknowledged_at=_utc_now(),
+        )
+        _append_exit_audit(
+            store,
+            {"event": "verify_acknowledge", "action_id": action_id, "verdict": verdict,
+             "operator": operator, "reason": reason, "evidence": evidence,
+             "action_status": updated.status, "acknowledged_at": updated.acknowledged_at},
+        )
+        return {
+            "accepted": True,
+            "action_id": action_id,
+            "verdict": verdict,
+            "status": updated.status,
+            "acknowledged_at": updated.acknowledged_at,
         }
 
     status = "succeeded" if verdict == "accept" else "failed"
@@ -2393,6 +2469,7 @@ def _mark_action(
     verify_verdict: str | None = None,
     model_override: str | None = None,
     next_step: str | None = None,
+    acknowledged_at: str | None = None,
 ) -> ServiceControlAction:
     with store.lease():
         detail_text, reason_ref = _durable_detail(store, detail)
@@ -2413,6 +2490,9 @@ def _mark_action(
                 action.model_override if model_override is None else model_override
             ),
             next_step=action.next_step if next_step is None else next_step,
+            acknowledged_at=(
+                action.acknowledged_at if acknowledged_at is None else acknowledged_at
+            ),
         )
         store._write_action_unlocked(updated)
         _release_barriers_for_transition(
@@ -2421,6 +2501,7 @@ def _mark_action(
             updated=updated,
             release_barriers=release_barriers,
         )
+        _emit_terminal_event(store, updated)
         return updated
 
 
@@ -3595,6 +3676,68 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     return 2
+
+
+def scan_unacknowledged_failed_actions(data_dir: str | Path) -> list[dict[str, Any]]:
+    """EVO-20260924-8266b693 B：扫最近 24h failed 且未确认的 restart 动作（≤10 条）.
+
+    "待确认"语义：failed 且 acknowledged_at 为空。desired 代已前进（被新动作
+    接管/supersede）**不再抹除**——痕迹保留（superseded=True 标注）直到
+    verify_acknowledge(verdict=accept) 确认，堵"接管即抹痕"。
+    供 factory pending_actions 投影与会话开场状态提醒共用；fail-open。
+    """
+    results: list[dict[str, Any]] = []
+    try:
+        from datetime import UTC, datetime
+
+        store = ManagedServiceDeploymentStore(data_dir)
+        desired_generation: int | None = None
+        try:
+            deployment = store.read()
+            desired_generation = deployment.generation if deployment else None
+        except Exception:  # noqa: BLE001 — 过滤信息缺失时按未 supersede 处理
+            desired_generation = None
+        cutoff = datetime.now(UTC).timestamp() - 24 * 3600
+        for path in sorted(
+            (p for p in store.actions_dir.glob("*.json") if p.is_file()),
+            key=lambda p: p.name,
+            reverse=True,
+        )[:40]:
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            if raw.get("action") != "restart" or raw.get("status") != "failed":
+                continue
+            if str(raw.get("acknowledged_at") or "").strip():
+                continue  # 已确认 → 不占投影/提醒
+            raw_generation = raw.get("deployment_generation")
+            superseded = bool(
+                desired_generation is not None
+                and isinstance(raw_generation, int)
+                and raw_generation < desired_generation
+            )
+            try:
+                updated_ts = datetime.fromisoformat(str(raw.get("updated_at"))).timestamp()
+            except ValueError:
+                updated_ts = 0.0
+            if updated_ts < cutoff:
+                continue
+            results.append(
+                {
+                    "action_id": raw.get("action_id"),
+                    "target": raw.get("target"),
+                    "generation": raw_generation,
+                    "updated_at": raw.get("updated_at"),
+                    "detail": str(raw.get("detail") or "")[:160],
+                    "superseded": superseded,
+                }
+            )
+            if len(results) >= 10:
+                break
+    except Exception:  # noqa: BLE001 — 扫描 fail-open
+        return []
+    return results
 
 
 if __name__ == "__main__":

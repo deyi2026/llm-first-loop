@@ -330,7 +330,10 @@ def test_learning_target_records_targeted_action(tmp_path: Path) -> None:
     assert recorded is not None
     assert recorded.target == "learning"
     # accepted 回执提供终态查询路径，不强制发起方立即结束本轮
-    assert "查询终态" in result.content
+    # （EVO-20260924-8266b693 C：受理≠完成 + 终态核对入口）
+    assert "受理≠完成" in result.content
+    assert "终态核对入口" in result.content
+    assert "service_action_terminal" in result.content
 
 
 def test_stale_waiting_action_reaped_on_next_accept(

@@ -213,62 +213,16 @@ def _scan_degraded_wake_notify(data_dir: str | Path) -> list[dict[str, Any]]:
 
 
 def _scan_failed_service_actions(data_dir: str | Path) -> list[dict[str, Any]]:
-    """EVO-20260920-213965a1 案1: 扫最近 24h 失败的 restart 动作（≤10 条）.
+    """EVO-20260920-213965a1 案1 + EVO-20260924-8266b693 B: 扫最近 24h failed 待确认的 restart 动作.
 
-    终态由控制面自核验写入 durable 记录后，此处让下一会话 pending 投影
-    直接看到 unhealthy 动作（action_id/target/generation/detail）。
+    "待确认"语义（8266b693 B）：failed 且 acknowledged_at 为空；desired 代已前进
+    （被新动作接管）不再从投影抹除——标注 superseded=True 保留痕迹，直到
+    verify_acknowledge(verdict=accept) 确认。扫描本体在 runtime/service_control
+    单源导出（与引擎开场状态提醒共用）；此处薄委托。
     """
-    results: list[dict[str, Any]] = []
-    try:
-        store = ManagedServiceDeploymentStore(data_dir)
-        # R5: 投影过滤（只读）——desired 代已前进时，旧代失败动作已被
-        # supersede，不再占活跃投影位（不 mutate action 文件本体）。
-        # desired 缺失时不过滤（宁多勿丢）。
-        desired_generation: int | None = None
-        try:
-            deployment = store.read()
-            desired_generation = deployment.generation if deployment else None
-        except Exception:  # noqa: BLE001 — 过滤信息缺失时不过滤
-            desired_generation = None
-        cutoff = datetime.now(UTC).timestamp() - 24 * 3600
-        for path in sorted(
-            (p for p in store.actions_dir.glob("*.json") if p.is_file()),
-            key=lambda p: p.name,
-            reverse=True,
-        )[:40]:
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, json.JSONDecodeError):
-                continue
-            if raw.get("action") != "restart" or raw.get("status") != "failed":
-                continue
-            raw_generation = raw.get("deployment_generation")
-            if (
-                desired_generation is not None
-                and isinstance(raw_generation, int)
-                and raw_generation < desired_generation
-            ):
-                continue
-            try:
-                updated_ts = datetime.fromisoformat(str(raw.get("updated_at"))).timestamp()
-            except ValueError:
-                updated_ts = 0.0
-            if updated_ts < cutoff:
-                continue
-            results.append(
-                {
-                    "action_id": raw.get("action_id"),
-                    "target": raw.get("target"),
-                    "generation": raw.get("deployment_generation"),
-                    "updated_at": raw.get("updated_at"),
-                    "detail": str(raw.get("detail") or "")[:160],
-                }
-            )
-            if len(results) >= 10:
-                break
-    except Exception:  # noqa: BLE001 — 投影扫描 fail-open
-        return []
-    return results
+    from llm_loop.runtime.service_control import scan_unacknowledged_failed_actions
+
+    return scan_unacknowledged_failed_actions(data_dir)
 
 
 def _read_workspace_changed_flag(data_dir: str) -> dict | None:
@@ -2600,7 +2554,8 @@ def _build_pending_actions_fn(settings) -> Any:
             )
         if failed_service_actions:
             hint_parts.append(
-                f"{len(failed_service_actions)} 个服务控制重启动作失败待处理"
+                f"{len(failed_service_actions)} 个服务控制重启动作 failed 待确认"
+                "（verify_acknowledge accept 确认；superseded=已被新代接管）"
             )
         return {
             "executing_evolutions": executing,

@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.19 — service_control 终态反馈闭环三断点（EVO-20260924-8266b693）（2026-09-24）
+
+- **终态事件入统一事件流（A）**：`runtime/service_control` 新增 `_emit_terminal_event`——restart/publish 动作落终态（succeeded/failed）时同步写 `service_action_terminal` 事件（action_id/target/generation/status/detail/verify_verdict），event_stream 查 action_id 不再只见模型自身 action_trace。2026-09-24 09:46 restart failed（git_head mismatch，只落私有台账）即此类断点实例。
+- **开场状态提醒 + 待确认语义（B）**：pending_actions 投影与引擎共享单源扫描 `scan_unacknowledged_failed_actions`（runtime/service_control 导出）：failed 且 `acknowledged_at` 为空持续占用投影；desired 代已前进（被接管）不再从投影抹除——标注 `superseded=True` 保留痕迹，"接管即抹除"失效，唯一清除出口是 `verify_acknowledge(verdict=accept)`（写 `acknowledged_at`，物理状态保持 failed 不篡改）。会话开场（首个 genuine human turn）注入一次 STATUS 层非祈使提醒（`engine_services/service_action_notice.py`：≤10 条单行、无正文投喂、位于用户原文之前满足尾位不变量、fail-open、每 session 一次）；注入点必须在用户消息落库**之前**——首版误置于落库后导致首 turn 恒不触发，已修正并回归。
+- **受理回执收口（C）**：`service_control` 工具受理回执明确"受理≠完成"语义 + 终态核对入口（`status` / event_stream `service_action_terminal` / `verify_acknowledge`），收窄"受理回执被误读为已完成"的空间（今晨 08:26 '还没有重启'断点）。
+- **验证**：定向 21 passed（新测试 `test_evo_8266b693_service_action_feedback.py` 覆盖 A/B/C 三面 + 引擎开场注入顺序/一次性/尾位）；全量 unit 回归 5939 passed, 107 skipped（venv，退出码 0）。
+
 ## v0.6.18 — 故障台账边界外延五项（EVO-20260924-40755734）（2026-09-24）
 
 - **前置拦截入账（A-①）**：registry 执行前拒绝路径全部接入故障台账——新增 `_preblock` 包裹（call_id 缺失/工具隔离/预检路由/提权令牌无效/安全硬阻断/共享服务拦截/EXEC_MODE 权限拦截 8 处）+ `_result` 收口挂 notify（工具不存在/参数校验/预检失败/物化失败/单调守卫 5 处）。今晨 `service_control` 参数名连错两次即此类（此前观察者收口点之前 return 绕过台账）；新增测试含"真实安全硬阻断 BLOCKED 全链路入账"。
