@@ -31,6 +31,8 @@ RETRIEVAL_MULTIQUERY_MODE=shadow   # off（默认）| shadow；非法值 fail-sa
 3. 变体检索经 `_skip_shadow=True` 内部复用 `_search_memory`，防递归。
 4. `mode=off`（默认）时探针不构造，`_search_memory` 行为与改动前一致。
 
+**代价边界（明示）**：探针在 `_search_memory` 返回前**同步**执行，shadow 模式下每次 memory 语义检索的墙钟时间增加 ≈ rewrite_s + 2×search_s（返回值不变）。这既是实测目的（enforce 的真实成本近似），也是 shadow 自身的代价——若此代价不可接受，enforce 同样不可接受，结论直接从影子数据得出。建议先在低频/staging 环境启用；异步线程化方案（不阻塞主路径）因共享嵌入缓存并发写风险，本轮明确不做。
+
 ## enforce 决策门（影子数据收齐后）
 
 | 维度 | 通过标准（占位，影子数据回来后修正） |
