@@ -108,6 +108,19 @@ _ack_workspace() {
   _log_guard "workspace_ack" "" "变更已确认处理, flag 清除 + 基线刷新"
 }
 
+# ── 守护自身状态（2026-09-24 提前定义: 原位于脚本尾部，主入口 case 分发时
+# 符号未定义 → `guard_system.sh status` 恒 command not found）──
+_guard_status() {
+  echo "[guard_system] 守护自身 PID: $$"
+  echo "[guard_system] 锁目录: ${_LOCK_DIR:-（未创建——status 无锁设计）}"
+  if [[ -f "$GUARD_LOG" ]]; then
+    echo "[guard_system] guard.log 尾部:"
+    tail -5 "$GUARD_LOG"
+  else
+    echo "[guard_system] guard.log 尚未生成"
+  fi
+}
+
 # ── 主入口 ──
 # 无需锁的子命令（不与守护循环冲突）先行处理：status / workspace-check / ack-workspace
 case "${1:-loop}" in
@@ -131,8 +144,39 @@ trap 'rmdir "$_LOCK_DIR" 2>/dev/null || true' EXIT
 # ── 服务健康检测（复用 restart_system.sh status 输出判健康）──
 # 输出格式: "运行中: PID x（健康）" = 健康；"运行中: PID x（健康检查未通过）" = 不健康。
 # 仅匹配"（健康）"精确后缀，避免"健康检查未通过"误判为健康。
+#
+# 2026-09-24（web 死亡无人知复盘）: 对齐 service_control 新部署面。旧面只见
+# web.pid + `llm_loop.web` 进程模式 + 固定 8902；新面 desired-state 起的是
+# `llm_loop.runtime.launch <svc>` 进程，web 端口可能被占挤到 8903+——旧判定
+# 对新面进程永远误报不健康（实例: pid 14036@8903 服务正常仍被判 detect_fail）。
+# guard 职责收敛: 只兜进程级死亡 + 端口级失听 + 拉起兜底；半僵/部署一致性
+# 归 service_control 面（verify_acknowledge），不在此越权判定。
+_runtime_process_alive() {
+  local svc="$1"
+  # ps+grep 精确锚定（BSD pgrep -f 的 $ 锚实测不可靠: 宽匹配命中、带锚全不命中）
+  # 新面: runtime.launch 模式；旧面: llm_loop.<svc> 模式。均锚定行尾防前缀误匹配。
+  ps -eo command= 2>/dev/null | grep -E -- "-m llm_loop[.]runtime[.]launch ${svc}$" | grep -qv grep && return 0
+  ps -eo command= 2>/dev/null | grep -E -- "-m llm_loop[.]${svc}$" | grep -qv grep && return 0
+  return 1
+}
 _service_healthy() {
   local svc="$1"
+  if _runtime_process_alive "$svc"; then
+    if [[ "$svc" == "web" ]]; then
+      # web 进程在还需有端口在听（防"活着但没监听"卡死形态）；
+      # /health 需鉴权，以 401 响应（服务应答）即视为端口健康。
+      local port rc
+      for port in 8902 8903 8904 8905; do
+        rc="$(curl -s -o /dev/null -w '%{http_code}' -m 2 "http://127.0.0.1:${port}/health" 2>/dev/null || true)"
+        if [[ "$rc" == "200" || "$rc" == "401" ]]; then
+          return 0
+        fi
+      done
+      return 1
+    fi
+    # feishu/learning: 进程存活即健康底线（心跳半僵归 service_control 面）
+    return 0
+  fi
   local out
   out="$("$RESTART_SCRIPT" "$svc" status 2>&1 || true)"
   case "$out" in
@@ -173,6 +217,16 @@ _backoff_sleep() {
   fi
 }
 
+# ── 主动告知（2026-09-24 web 死亡无人知复盘）──
+# 异常不能只写 guard.log 等人来查——detect_fail/pull_up_fail 即推 macOS 本地
+# 通知（用户不在终端/面板前也即时可见）。GUARD_NOTIFY=0 可关。
+GUARD_NOTIFY="${GUARD_NOTIFY:-1}"
+_notify_guard() {
+  # _notify_guard <title> <body>
+  [[ "$GUARD_NOTIFY" == "1" ]] || return 0
+  osascript -e "display notification \"$2\" with title \"$1\"" >/dev/null 2>&1 || true
+}
+
 # ── 单次检测 + 拉起 ──
 _guard_once() {
   # P0: 维护标记（restart_system.sh 重启期间）→ 跳过本轮，避免与重启竞态抢跑
@@ -186,11 +240,14 @@ _guard_once() {
   for svc in web feishu; do
     if ! _service_healthy "$svc"; then
       _log_guard "detect_fail" "$svc" "服务不健康"
+      _notify_guard "LFL guard: $svc 不健康" "检测到 $svc 异常，guard 自动拉起中（data/guard.log）"
       if _ensure_service "$svc"; then
         _log_guard "recovered" "$svc" "服务已恢复"
+        _notify_guard "LFL guard: $svc 已恢复" "$svc 拉起成功（guard 自动处理）"
         fail_count=0
       else
         fail_count=$(( fail_count + 1 ))
+        _notify_guard "LFL guard: $svc 拉起失败" "$svc restart 失败需人工介入（guard.log / service_control status）"
       fi
     fi
   done
@@ -210,18 +267,6 @@ _guard_loop() {
     fi
     sleep "$GUARD_POLL_S"
   done
-}
-
-# ── 守护自身状态 ──
-_guard_status() {
-  echo "[guard_system] 守护自身 PID: $$"
-  echo "[guard_system] 锁目录: $_LOCK_DIR"
-  if [[ -f "$GUARD_LOG" ]]; then
-    echo "[guard_system] guard.log 尾部:"
-    tail -5 "$GUARD_LOG"
-  else
-    echo "[guard_system] guard.log 尚未生成"
-  fi
 }
 
 # ── 主入口（需锁的分支：once/loop；status/workspace-check/ack-workspace 在上方先行处理）──

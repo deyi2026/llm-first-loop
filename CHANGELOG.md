@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.20 — guard 常驻守护恢复：健康判定对齐新部署面 + 主动告知（2026-09-24）
+
+- **背景（web 死亡/换端口无人知复盘）**：guard launchd 守护自 2026-08-27 起处于 disabled 状态且已失效——①plist 仍指向迁移前旧目录（`llm-first-loop`，127 command not found）；②`restart_system.sh`/`restart_mirror.sh` 丢失执行权限（pull_up 恒 Permission denied）；③健康判定只见旧面（web.pid + `llm_loop.web` 进程 + 固定 8902），对 service_control desired-state 起的 `llm_loop.runtime.launch web` 新面进程永远误报不健康（实例：pid 14036@8903 正常服务中仍被 detect_fail）。
+- **健康判定对齐（guard 职责收敛）**：`_service_healthy` 先按新面进程存活（ps+grep 行尾锚定；BSD pgrep -f 的 `$` 锚实测不可靠弃用）+ web 端口探测（8902-8905 任一 `/health` 应答 200/401 即听）判定；进程级死亡/端口级失听才拉起兜底；feishu/learning 以进程存活为底线——半僵/部署一致性归 service_control 面（verify_acknowledge），guard 不越权判定。
+- **主动告知通道**：detect_fail/拉起失败/恢复 即推 macOS 本地通知（`_notify_guard`，`GUARD_NOTIFY=0` 可关）——异常不再只写 guard.log 等人来查。
+- **恢复部署**：plist 路径改 mirror 目录、执行权限修复（mode change）、launchd bootstrap 重载（KeepAlive 常驻，守护死亡自动拉起）；实测 once 与常驻循环对活服务零误报。
+
 ## v0.6.19 — service_control 终态反馈闭环三断点（EVO-20260924-8266b693）（2026-09-24）
 
 - **终态事件入统一事件流（A）**：`runtime/service_control` 新增 `_emit_terminal_event`——restart/publish 动作落终态（succeeded/failed）时同步写 `service_action_terminal` 事件（action_id/target/generation/status/detail/verify_verdict），event_stream 查 action_id 不再只见模型自身 action_trace。2026-09-24 09:46 restart failed（git_head mismatch，只落私有台账）即此类断点实例。
