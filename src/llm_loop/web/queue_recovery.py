@@ -141,6 +141,8 @@ class QueueServerFallback:
         runner = getattr(self._engine, "runner", None)
         if runner is None or not getattr(runner, "enabled", True):
             return 0
+        # 孤儿回收在屏障检查之前：回滚≠派发（不启动 run），与 _load() 重启
+        # 恢复同构；屏障只约束 dispatch 领取（§8.2-2）。
         self._reap_orphan_interjects(runner)
         settings = getattr(self._engine, "settings", None)
         data_dir = str(getattr(settings, "data_dir", "./data"))
