@@ -1,0 +1,86 @@
+{
+  "miss_ids": [
+    "Q03",
+    "Q04",
+    "Q07",
+    "Q10",
+    "Q11",
+    "Q15",
+    "Q21",
+    "Q22"
+  ],
+  "results": [
+    {
+      "id": "Q03",
+      "orig": "改了环境变量配置为什么不生效",
+      "oracle": "配置非法值回退默认 fail-safe Method Learning",
+      "fused_rank": 1,
+      "kw_rank": 2,
+      "mode": "mixed",
+      "saved": true
+    },
+    {
+      "id": "Q04",
+      "orig": "模型调用出错时最终回答里那个前缀标记是谁生成的",
+      "oracle": "LLM调用异常 回答前缀 honesty.py 三件套",
+      "fused_rank": 1,
+      "kw_rank": 1,
+      "mode": "mixed",
+      "saved": true
+    },
+    {
+      "id": "Q07",
+      "orig": "旧工具结果按什么规则裁剪",
+      "oracle": "tool_trim 上下文占用率 裁剪规则",
+      "fused_rank": 1,
+      "kw_rank": 1,
+      "mode": "mixed",
+      "saved": true
+    },
+    {
+      "id": "Q10",
+      "orig": "用户审代码的习惯风格",
+      "oracle": "用户工作模式 源码深读 交叉验证",
+      "fused_rank": null,
+      "kw_rank": null,
+      "mode": "mixed",
+      "saved": false
+    },
+    {
+      "id": "Q11",
+      "orig": "证据可恢复性验证过没有，结果如何",
+      "oracle": "Evidence Recoverability R7-V2 验证结果",
+      "fused_rank": 1,
+      "kw_rank": 1,
+      "mode": "mixed",
+      "saved": true
+    },
+    {
+      "id": "Q15",
+      "orig": "声称完成任务但没实际执行会怎样",
+      "oracle": "完成声明 工具回执 校验 如实声明",
+      "fused_rank": null,
+      "kw_rank": 13,
+      "mode": "mixed",
+      "saved": false
+    },
+    {
+      "id": "Q21",
+      "orig": "模型接口报 500 可能是什么原因",
+      "oracle": "LLMHTTPError HTTP 500 reasoning effort 参数错误",
+      "fused_rank": 2,
+      "kw_rank": 2,
+      "mode": "mixed",
+      "saved": true
+    },
+    {
+      "id": "Q22",
+      "orig": "已知的测试失败项记录在哪个文件",
+      "oracle": "已知红清单 known-reds 测试失败 基线",
+      "fused_rank": 5,
+      "kw_rank": 3,
+      "mode": "mixed",
+      "saved": true
+    }
+  ]
+}
