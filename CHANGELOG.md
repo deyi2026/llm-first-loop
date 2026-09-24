@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.22 — 后台动作失败终态的轮级注入（EVO-20260924-62221fd4，2026-09-24）
+
+- **背景（异步拒绝可见性缺口）**：受理时拒绝（admission barrier）同步返回调用会话，模型即时可见；执行时拒绝/终止（fail-fast、绑定失效）发生在调用会话结束之后——v0.6.19 保证 failed 单不丢失（保留待 verify_acknowledge），v0.6.20 保证人侧可见（guard 推送），但模型侧只有"下次碰巧查 status"。gap 与 E13（web 换端口无人知）同构，对象从人换成模型。
+- **轮级注入**：engine 每个 human turn 在用户原文之前检查未确认 failed 动作的**增量**（`build_failed_action_turn_notice`）：复用"程序附录·非用户输入"STATUS 通道，每卡 ≤3 条、每条一行（detail 截 120 字）；幂等——同一 action_id 本会话只注入一次（开场卡与轮卡共用 `metadata.service_action_ids` 去重登记）；闭合即停（acknowledge 后扫描不再返回，无需撤销）；提示非指令——被注入不等于必须 verify_acknowledge，语义保持"待确认待消费"；fail-open。
+- **验证门槛（弱模型档行为对照）**：qwen3.8-flash-next（cognilocal 8901，temperature=0）A/B 臂各测身份轮（"你是什么大模型"）+任务轮（水果补全）：A/B 回答逐字一致（身份正确自称 Qwen、无 DeepSeek 误称；任务均正确完成）——轮卡注入零行为劣化（对照 2026-09-24 早前方法池卡注入把弱模型身份带偏自称 DeepSeek-V4 的事故，STATUS 层短卡干净通过）。
+- **测试**：`test_evo_62221fd4_turn_notice.py` 5 例（过滤+上限/STATUS 层渲染/轮级接线与用户原文尾位/幂等/闭合即停）；全量 unit 5948 passed, 107 skipped。
+
 ## v0.6.21 — runtime_manifest service-specific 身份活进程守卫（面板误报修复，2026-09-24）
 
 - **背景（面板误报 live_pid_not_running 实证）**：gen93 三单 restart 均 succeeded 后，面板/status 报 web `restart_required: live_pid_not_running`（pid 90928 不存在），而真实 web（pid 90846）正监听 8903 并正常服务。根因：restart 探测路径上的一个短命进程（11:32:19 写入，约 5s 后退出）在真实 web 之后执行了 web 启动路径并**覆盖** `runtime_manifest.web.json` 的 pid——specific 身份文件是单写者无锁 last-writer 语义，短命进程天然胜出。

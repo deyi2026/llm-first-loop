@@ -776,6 +776,27 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     self._append_message_event(sess, _svc_notice)
         except Exception:  # noqa: BLE001 — 开场提醒 fail-open
             logger.warning("service_action_notice 开场注入失败（fail-open 跳过）", exc_info=True)
+        # EVO-20260924-62221fd4：轮级注入——每个 human turn 检查**新出现**的未确认
+        # failed 服务控制动作（开场注入之后的增量）。异步拒绝/终止从"下次碰巧
+        # 查到"变成"下一轮必然看到"。幂等：同一 action_id 本会话只注入一次
+        # （开场卡与轮卡共用 metadata.service_action_ids 去重）；闭合即停
+        # （verify_acknowledge 后扫描不再返回）；提示非指令——被注入不等于
+        # 必须 verify_acknowledge，语义保持"待确认待消费"；fail-open。
+        try:
+            from llm_loop.core.loop.engine_services.service_action_notice import (
+                build_failed_action_turn_notice,
+                injected_turn_action_ids,
+            )
+
+            _turn_notice = build_failed_action_turn_notice(
+                self.settings.data_dir,
+                injected_turn_action_ids(sess.messages),
+            )
+            if _turn_notice is not None:
+                sess.messages.append(_turn_notice)
+                self._append_message_event(sess, _turn_notice)
+        except Exception:  # noqa: BLE001 — 轮级提醒 fail-open
+            logger.warning("service_action_turn_notice 注入失败（fail-open 跳过）", exc_info=True)
         sess.messages.append(user_msg)
         # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
         self._ensure_session_created(sess)
