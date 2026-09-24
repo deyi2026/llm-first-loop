@@ -333,19 +333,31 @@ class SemanticRetriever:
         # 语义召回（预算内）
         semantic_hits: list[dict] = []
         candidates = self._candidates(scope, session_id, memory, archive, method)
-        for c in candidates:
-            if time.monotonic() - start > self.timeout_s:
-                return RetrievalResult(
-                    entries=keyword_results or [],
-                    mode="keyword",
-                    note="语义检索超时，已降级为关键词检索",
-                )
-            vec = self._embed_cached(c, engine)
-            if vec is None:
-                continue
-            score = cosine_similarity(q_vec, vec)
-            if score >= engine["threshold"]:
-                semantic_hits.append({**c, "_semantic_score": round(score, 3)})
+        # EVO-20260924-d9c5ad20: 冷启动批量预热 + 持久化去抖——语料增长后 N 条未缓存
+        # 候选若逐条 embed（N 次 HTTP）且每条全量重写缓存 JSON（~2MB/次），在
+        # timeout_s=1.0 下必然超时→静默 keyword 降级（evals/retrieval_ab 2026-09-24
+        # 实测冷启动单查询 h@5 14→9~12，预热后恢复）。
+        # 预热同样受本查询预算约束（超时停片、剩余候选由循环路径快速降级），
+        # 后续查询增量吃掉剩余——冷启动窗口从 N×单条吞吐收敛到 ceil(N/批)/查询吞吐。
+        pre_sizes = self._prewarm_batch(candidates, engine, deadline=start + self.timeout_s)
+        try:
+            for c in candidates:
+                if time.monotonic() - start > self.timeout_s:
+                    return RetrievalResult(
+                        entries=keyword_results or [],
+                        mode="keyword",
+                        note="语义检索超时，已降级为关键词检索",
+                    )
+                vec = self._embed_cached(c, engine)
+                if vec is None:
+                    continue
+                score = cosine_similarity(q_vec, vec)
+                if score >= engine["threshold"]:
+                    semantic_hits.append({**c, "_semantic_score": round(score, 3)})
+        finally:
+            # 去抖落盘：本轮新增过条目的缓存各 persist ≤1 次（含超时降级路径，
+            # 已嵌入向量不因提前返回而丢失）
+            self._flush_dirty_caches(engine, pre_sizes)
         semantic_hits.sort(key=lambda x: x["_semantic_score"], reverse=True)
         semantic_hits = semantic_hits[: self._semantic_top_k()]
 
@@ -415,24 +427,80 @@ class SemanticRetriever:
         # 修复: 按候选自身 kind 路由缓存（scope="all" 时此前误走 archive 缓存，
         # 导致 memory 候选逐条重嵌入+缓存文件交叉污染；候选 dict 已带 kind 字段）
         # T0-B: 缓存/嵌入/落盘路径全部取自当前 engine（主或 fallback，空间自洽）
-        kind = cand.get("kind", "memory")
-        if kind == "method":
-            cache = engine.get("method_cache", {})
-            path = engine.get("method_path")
-        elif kind == "archive":
-            cache = engine["arch_cache"]
-            path = engine["arch_path"]
-        else:
-            cache = engine["mem_cache"]
-            path = engine["mem_path"]
+        cache, _path = self._cache_route(cand, engine)
         key = cand["key"]
         if key not in cache:
             vec = engine["embedder"].embed(cand["content"])
             if vec is None:
                 return None
             cache[key] = vec
-            self._persist_emb_cache(path, cache, engine["embedder"])
+            # EVO-20260924-d9c5ad20: 移除逐条全量 persist（N 条新文档 = N 次 ~2MB
+            # JSON 重写，是冷启动在 timeout_s 内超时→静默 keyword 降级的主因）；
+            # 落盘改为 search() 批处理结束 _flush_dirty_caches 去抖（每缓存 ≤1 次）。
         return cache.get(key)
+
+    def _cache_route(self, cand: dict, engine: dict) -> tuple[dict, Path | None]:
+        """候选 → (所属缓存 dict, 落盘路径)。按 kind 路由（与 _embed_cached 消重）."""
+        kind = cand.get("kind", "memory")
+        if kind == "method":
+            return engine.setdefault("method_cache", {}), engine.get("method_path")
+        if kind == "archive":
+            return engine["arch_cache"], engine["arch_path"]
+        return engine["mem_cache"], engine["mem_path"]
+
+    def _prewarm_batch(
+        self, candidates: list[dict], engine: dict, deadline: float | None = None
+    ) -> dict[int, int]:
+        """冷启动批量预热（EVO-20260924-d9c5ad20）：未缓存候选分片 embed_batch 填缓存。
+
+        返回 {id(cache): 预热前条数} 供 _flush_dirty_caches 判断去抖落盘。
+        - 预算约束：每片前检查 deadline，超时停片——剩余候选由循环路径兜底
+          （快速降级返回，不挂预算外时间），后续查询增量吃掉剩余
+        - embedder 无 embed_batch / 批量结果不齐 / 批量异常 → 静默跳过
+          （循环内逐条路径兜底，行为与旧版一致）
+        - 批量失败条目（None）不写缓存，保持"失败可在单条路径重试"语义
+        """
+        caches = [
+            engine["mem_cache"],
+            engine["arch_cache"],
+            engine.setdefault("method_cache", {}),
+        ]
+        pre = {id(c): len(c) for c in caches}
+        embed_batch = getattr(engine["embedder"], "embed_batch", None)
+        if embed_batch is None or len(candidates) < 2:
+            return pre
+        grouped: list[tuple[dict, str, str]] = []
+        for c in candidates:
+            cache, _ = self._cache_route(c, engine)
+            if c["key"] not in cache:
+                grouped.append((cache, c["key"], c["content"]))
+        if len(grouped) < 2:
+            return pre
+        chunk = int(getattr(engine["embedder"], "_BATCH_CHUNK", 64) or 64)
+        try:
+            for s in range(0, len(grouped), chunk):
+                if deadline is not None and time.monotonic() > deadline:
+                    break
+                piece = grouped[s : s + chunk]
+                vecs = embed_batch([t for _, _, t in piece])
+                if not isinstance(vecs, list) or len(vecs) != len(piece):
+                    return pre  # 结果不齐：本片作废并停止预热（循环内逐条兜底）
+                for (cache, key, _), vec in zip(piece, vecs, strict=True):
+                    if vec:
+                        cache[key] = vec
+        except Exception:  # noqa: BLE001 — 预热失败回退逐条（与单条 embed 异常语义一致）
+            return pre
+        return pre
+
+    def _flush_dirty_caches(self, engine: dict, pre_sizes: dict[int, int]) -> None:
+        """持久化去抖（EVO-20260924-d9c5ad20）：本轮新增过条目的缓存各落盘至多一次."""
+        for cache, path in (
+            (engine["mem_cache"], engine["mem_path"]),
+            (engine["arch_cache"], engine["arch_path"]),
+            (engine.setdefault("method_cache", {}), engine.get("method_path")),
+        ):
+            if path is not None and len(cache) > pre_sizes.get(id(cache), len(cache)):
+                self._persist_emb_cache(path, cache, engine["embedder"])
 
     def _rrf_fuse(
         self,

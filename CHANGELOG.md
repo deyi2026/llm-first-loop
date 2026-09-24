@@ -2,6 +2,33 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.27 — 多查询融合影子模式（2026-09-24）
+
+- **影子探针（默认 off，零行为变化）**：`RETRIEVAL_MULTIQUERY_MODE=shadow` 启用后，生产 memory 语义检索旁路执行"原查询 + LLM 盲改写 2 变体"的等权 RRF 融合，只记录不生效；返回值与 off 逐字节一致（单测锁定）。目的：接入评审前实测改写延迟、检索成本与 top1 置换率。
+- **观测契约**：`<data_dir>/retrieval_shadow.jsonl` 每查询一条（latency 分解/primary vs fused top10/overlap@5/primary top1 保位标志）；探针全异常捕获，LLM 失败/落盘失败只记 error 行，绝不影响主路径。
+- **防递归**：变体检索经 `_skip_shadow` 复用 `_search_memory`；enforce 路径明确不做，待影子数据过决策门（docs/DESIGN-20260924-multiquery-fusion-shadow.md）。
+
+## v0.6.26 — 语义缓存冷启动批量预热 + 持久化去抖（2026-09-24）
+
+- **冷启动静默降质修复（EVO-20260924-d9c5ad20）**：语料增长后首批查询在 `timeout_s=1.0` 下超时 → 静默回退 keyword（评测实测 h@5 14 抖到 9~12，生产同样存在该窗口）。根因：`_embed_cached` 逐条惰性嵌入且每条 persist 整个缓存 JSON（N 条新文档 = N 次 ~2MB 重写）。
+- **embed_batch 协议（可选方法）**：APIEmbedder 单请求 64/片，响应不齐/异常整批回退逐条；Hash/Null 逐条语义；旧实现 getattr 探测兼容。
+- **search 内预算预热**：语义召回前增量预热未缓存候选，每片前查 deadline、超时停片，不挂预算外时间。
+- **持久化去抖**：每缓存每查询 persist ≤1 次（try/finally 含超时降级路径，已嵌向量不丢）。
+- **顺手修复**：_cache_route 消重 kind 路由；method 缓存 setdefault 真缓存（原临时 dict 丢失）；regression_gate check_regression 结构 bug（overall/by_kind 层级混用下标必崩、比较路径从未生效），基线按语料 1761 快照刷新。
+- **GLM overflow 识别补充**（6a1de842c）：is_overflow_error 新增 GLM 400 code 1261 码路径（限 glm/glm-api/zhipu provider），文案本地化识别保留。
+- **验收**：冷启动端到端（仅 index 无向量缓存，corpus 1761）单查询最大 1.27s、4 条查询窗口后恢复 mixed/semantic、缓存全建；旧代码同场景对照 + regression_gate PASS。
+- **资产入库**：retrieval 多查询融合原型与融合权重消融（等权 RRF 保留结论）、3 条 method 卡、1 条 held-out 阴性结果 lesson。
+
+## v0.6.25 — restart 三件套修复链 + 端口口径清扫 + convergence 快照 + 版本面对齐（2026-09-24）
+
+- **restart 互斥锁路径修复**：v0.6.24 引入的互斥锁引用 `$DATA_DIR`，该键在 restart_system.sh 中是被 unset 的危险键——set -u 下 unbound → 脚本秒退（rc=1）→ 早退路径不写回执 → 陈旧回执误报 action_id_mismatch（13:4x 两连 restart 失败实证）。锁路径改锚 `MIRROR_DIR/data/runtime`，与 _write_receipt 同一事实源。
+- **restart 三件套（gen105 实战验证通过）**：① 陈旧回执误判——回执 ts 早于本次 action 创建 → stale_receipt + 脚本输出尾部透传（陈旧≠零副作用证明，仍 fail-closed keep）；② _stop_service argv 双面探针（runtime.launch 新面 + 旧面，PROJECT_DIR 锚定）+ web 端口权威兜底（PID 校验含 PROJECT_DIR 防误杀），等待/强杀按 PID+端口释放，弃 pkill -f；③ _start_service 撞端口幂等——本项目占用者优雅停后重启，非本项目占用者如实拒绝。
+- **端口口径清扫（8902 残留归零）**：guard 健康判定端口清单从镜像 .env 读权威 WEB_PORT（默认 8903）起扫；restart_system WEB_PORT 默认链 env > .env > 8903；web/__init__.py 默认端口 8902→8903、service_control 判活回退区间 8902-8905→8903-8905。78 处注释同步改为"旧主区"口径。
+- **service_control convergence 快照**：publish/update 成功回执附只读 lagging 列表（compose_convergence_view 纯派生 identity view），调用方可见其它服务代差（此前 feishu 滞后 gen98→103 无人重启直到告警）；不新增门禁/锁/restart action。
+- **knowledge-health advisory**：method store untracked 积压超阈值（>50 文件）时 warnings 置 `method_store_untracked_backlog`——只告警，不隔离、不封写。
+- **知识/资产入库**：docs 10 篇（hev0-p3 三臂运行时设计与结论、retrieval-AB 与 miss 归因修正报告、authority-map 拒收审计等）；method store 154 条与 experiences 25 条积压入库；evals/retrieval_ab 评测脚本与结果基线；tunnel-watchdog 与 fuyao 数据客户端。
+- **版本面对齐修复**：v0.6.24 发布漏更 `routes.SERVICE_VERSION`（停在 0.6.23）与 README.en.md（停在 0.6.23），`test_public_version_surfaces_match_project_version` 红——本次全表面对齐 0.6.25，一致性测试恢复绿。
+
 ## v0.6.24 — restart 双通道互斥锁 + web 判活端口兜底（2026-09-24）
 
 - **背景（13:08 双通道并发实证）**：权威通道（service_control→restart_mirror.sh）停旧进程的端口空窗恰被 guard 巡检命中 detect_fail → restart_system.sh 并发拉起 → 双 web 抢 8903 一活（29418）一死（29502），死进程退出前写的 runtime_manifest.web.json 留下死 pid → 面板/status 误报 live_pid_not_running（"重启没生效"假象）；guard 随后 pull_up_ok 探测到的其实是活通道的进程。

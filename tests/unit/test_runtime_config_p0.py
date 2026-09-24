@@ -185,6 +185,67 @@ nonconvergence_fuse_min_delta = 7
     assert tr.nonconvergence_fuse_jaccard == 0.75
     assert tr.nonconvergence_fuse_min_delta == 7
 
+
+def test_retrieval_multiquery_mode_runtime_toml_beats_stale_shell_and_reaches_settings(
+    tmp_path: Path,
+) -> None:
+    _runtime_toml(
+        tmp_path,
+        """
+[llm]
+model = "glm/file"
+base_url = "https://example.invalid/v1"
+[retrieval]
+multiquery_mode = "shadow"
+""",
+    )
+    ec = resolve_effective(
+        "web",
+        env={"RETRIEVAL_MULTIQUERY_MODE": "off"},
+        workspace_root=tmp_path,
+    )
+    snapshot = legacy_settings_snapshot(
+        ec,
+        base_env={
+            "LLM_API_KEY": "local-eval",
+            "DATA_DIR": str(tmp_path / "isolated-data"),
+        },
+    )
+    settings = load_settings(snapshot)
+
+    assert ec.sources["RETRIEVAL_MULTIQUERY_MODE"] == "runtime_toml"
+    assert ec.ignored_shell_env["RETRIEVAL_MULTIQUERY_MODE"] == "off"
+    assert settings.retrieval_multiquery_mode == "shadow"
+
+
+def test_retrieval_multiquery_mode_invalid_toml_value_fails_safe_to_off(
+    tmp_path: Path,
+) -> None:
+    _runtime_toml(
+        tmp_path,
+        """
+[llm]
+model = "glm/file"
+base_url = "https://example.invalid/v1"
+[retrieval]
+multiquery_mode = "bogus"
+""",
+    )
+    ec = resolve_effective("web", env={}, workspace_root=tmp_path)
+    snapshot = legacy_settings_snapshot(
+        ec,
+        base_env={
+            "LLM_API_KEY": "local-eval",
+            "DATA_DIR": str(tmp_path / "isolated-data"),
+        },
+    )
+    settings = load_settings(snapshot)
+
+    # toml 值原样通过 resolver（str 类型合法），非法枚举由 config fail-safe 回 off
+    assert ec.values["RETRIEVAL_MULTIQUERY_MODE"] == "bogus"
+    assert settings.retrieval_multiquery_mode == "off"
+
+
 def test_runtime_override_requires_explicit_opt_in(tmp_path: Path) -> None:
     _runtime_toml(tmp_path, '[llm]\nmodel = "glm/file"')
     ec = resolve_effective(

@@ -11,7 +11,7 @@ record_kind: experience
 verification_state: legacy_unclassified
 created_at: "2026-09-03T08:10:15.934114+08:00"
 updated_at: "2026-09-11T19:33:32.133104+08:00"
-superseded_by: "runtime:stable-tool-surface-p1b"
+superseded_by: "docs/DESIGN-20260903-llm-agency-first-repair-optimization.md §0.0 P1-B (stable-tool-surface)"
 last_verified_at: "2026-09-11T19:33:32.133104+08:00"
 ---
 

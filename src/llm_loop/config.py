@@ -256,6 +256,21 @@ def _env_evidence_mode(name: str, env: Mapping[str, str] | None = None) -> str:
     return "off"
 
 
+def _env_multiquery_mode(name: str, env: Mapping[str, str] | None = None) -> str:
+    """Retrieval multiquery fusion rollout: off/shadow; invalid fail safe to off.
+
+    ``shadow`` 旁路测量（改写延迟/融合排序差异，返回值与 off 一致）；
+    ``enforce``（融合结果生效）须待影子数据 + 接入评审后另行开放。
+    """
+    raw = _raw_env(name, env).strip().lower()
+    if not raw:
+        return "off"
+    if raw in {"off", "shadow"}:
+        return raw
+    _note_invalid_fallback(name, "off", "非 off/shadow 字符串")
+    return "off"
+
+
 def _env_method_reflection_mode(name: str, env: Mapping[str, str] | None = None) -> str:
     """Method post-run reflection: off/auto. Unset -> default auto; invalid fail safe to off."""
     raw = _raw_env(name, env).strip().lower()
@@ -465,6 +480,9 @@ class Settings:
     retrieve_semantic_top_k: int = (
         20  # auto-adaptive: env 未显式设置时按检索分数自适应（<0.3→10/>0.7→30，硬上限 50）
     )
+    # 多查询融合影子模式（REPORT-20260924：off=零行为；shadow=旁路测量改写延迟/融合排序差异，
+    # 返回值与 off 逐字节一致；enforce 待影子数据 + 接入评审后再议）
+    retrieval_multiquery_mode: str = "off"
 
     # ── P1 独立提取（FR-P1-EXT, §3.6）──
     extract_enabled: bool = True
@@ -902,6 +920,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         embedding_dim=env_int("EMBEDDING_DIM", 128),
         retrieve_timeout_s=float(env_int("RETRIEVE_TIMEOUT_S", 1)),
         retrieve_semantic_top_k=env_int("RETRIEVE_SEMANTIC_TOP_K", 20),
+        retrieval_multiquery_mode=env_one(_env_multiquery_mode, "RETRIEVAL_MULTIQUERY_MODE"),
         extract_enabled=env_bool("EXTRACT_ENABLED", True),
         extract_interval_msgs=env_int("EXTRACT_INTERVAL_MSGS", 20),
         precheck_enabled=env_bool("PRECHECK_ENABLED", False),  # EVO-20260822-8b7a41c0 env 化持久化

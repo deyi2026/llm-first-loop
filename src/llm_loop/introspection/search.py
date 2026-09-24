@@ -206,10 +206,12 @@ class RecordSearcher:
         workspace_scope_resolver: Any | None = None,
         synopsis_store: Any | None = None,
         synopsis_source_resolver: Any | None = None,
+        multiquery_shadow: Any | None = None,
     ) -> None:
         self._audit_dir = Path(audit_dir)
         self._memory = memory_store
         self._archive = archive_store
+        self._multiquery_shadow = multiquery_shadow  # REPORT-20260924 影子探针（None/off=零行为）
         self._episode_store = episode_store
         self._experience_store = experience_store  # P1-2: 经验库（None 时 _search_experience 返回空）
         self._method_store = method_store
@@ -812,9 +814,16 @@ class RecordSearcher:
         }
 
     def _search_memory(
-        self, query: str, limit: int, session_id: str = ""
+        self,
+        query: str,
+        limit: int,
+        session_id: str = "",
+        _skip_shadow: bool = False,
     ) -> list[dict]:
-        """R3: keyword search plus exact ``memory:<id>`` hydration with scope isolation."""
+        """R3: keyword search plus exact ``memory:<id>`` hydration with scope isolation.
+
+        ``_skip_shadow``: 影子探针的变体检索内部复用本方法时置 True，防递归旁路。
+        """
         if self._memory is None:
             return []
         raw = str(query or "").strip()
@@ -845,7 +854,7 @@ class RecordSearcher:
                 keyword_results=keyword_dicts,
             )
             merged = self._merge_semantic(result, keyword_dicts, "memory")
-            return [
+            final = [
                 h
                 for h in merged
                 if not str(h.get("id", ""))
@@ -854,6 +863,22 @@ class RecordSearcher:
                     or self._memory_visible_in_session(entry, session_id)
                 )
             ][:limit]
+            # REPORT-20260924 多查询融合影子模式：旁路测量，返回值不受任何影响
+            probe = getattr(self, "_multiquery_shadow", None)
+            if probe is not None and getattr(probe, "enabled", False) and not _skip_shadow:
+                probe.run(
+                    raw,
+                    limit,
+                    session_id,
+                    search_fn=lambda t: [
+                        str(h.get("id") or "")
+                        for h in self._search_memory(
+                            t, limit, session_id=session_id, _skip_shadow=True
+                        )
+                    ],
+                    primary_ids=[str(h.get("id") or "") for h in final],
+                )
+            return final
         return keyword_dicts
 
     def _search_archive(self, query: str, limit: int, session_id: str) -> list[dict]:

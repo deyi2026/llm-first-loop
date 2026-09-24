@@ -177,3 +177,84 @@ def test_corrupt_baseline_fails_closed_for_mutation(tmp_path):
     assert health["status"] == "quarantined"
     assert health["writes_enabled"] is False
     assert "baseline_unreadable" in health["reasons"]
+
+
+# ---------------------------------------------------------------------------
+# Advisory git-untracked backlog signal (2026-09-24): warnings must never
+# quarantine or disable writes; git unavailability degrades to None, not an error.
+# ---------------------------------------------------------------------------
+
+
+def _git_repo_fixture(tmp_path: Path, method_count: int) -> Path:
+    """Normal repo whose data/methods holds ``method_count`` untracked METHOD.md files."""
+    import subprocess
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+    (root / "README.md").write_text("init\n", encoding="utf-8")
+    _touch(root / "methods" / "seed-one" / "METHOD.md")
+    _touch(root / "skills" / "probe" / "SKILL.md")
+    _touch(root / "docs" / "ai_rules.md", "## RULE-AI-00\nprobe\n")
+    subprocess.run(["git", "-C", str(root), "add", "README.md"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.email=ops@test.local",
+            "-c",
+            "user.name=ops",
+            "commit",
+            "-qm",
+            "init",
+        ],
+        check=True,
+    )
+    for i in range(method_count):
+        _touch(root / "data" / "methods" / f"m{i:03d}" / "METHOD.md")
+    return root
+
+
+def test_method_store_untracked_backlog_warns_without_quarantine(tmp_path):
+    from llm_loop.runtime.knowledge_health import _METHOD_UNTRACKED_WARN_THRESHOLD
+
+    root = _git_repo_fixture(tmp_path, _METHOD_UNTRACKED_WARN_THRESHOLD + 1)
+    paths = resolve_runtime_paths(data_dir=root / "data", code_root=root, env={})
+
+    health = inspect_knowledge_health(paths)
+
+    assert health["status"] == "healthy"
+    assert health["writes_enabled"] is True
+    assert health["warnings"] == ["method_store_untracked_backlog"]
+    assert health["stores"]["runtime_method"]["untracked_files"] == _METHOD_UNTRACKED_WARN_THRESHOLD + 1
+
+
+def test_method_store_small_untracked_backlog_stays_quiet(tmp_path):
+    root = _git_repo_fixture(tmp_path, 3)
+    paths = resolve_runtime_paths(data_dir=root / "data", code_root=root, env={})
+
+    health = inspect_knowledge_health(paths)
+
+    assert health["status"] == "healthy"
+    assert health["warnings"] == []
+    assert health["stores"]["runtime_method"]["untracked_files"] == 3
+
+
+def test_method_store_untracked_count_degrades_to_none_outside_git(tmp_path):
+    canonical = tmp_path / "canonical"
+    code_root = tmp_path / "sidecar"
+    data_dir = canonical / "data"
+    data_dir.mkdir(parents=True)
+    code_root.mkdir()
+    _seed_code_assets(code_root)
+    _touch(canonical / "experiences" / "EXPERIENCE-20260913-ok.md")
+    _touch(data_dir / "methods" / "m" / "METHOD.md")
+    paths = resolve_runtime_paths(data_dir=data_dir, code_root=code_root, env={})
+
+    health = inspect_knowledge_health(paths)
+
+    assert health["status"] == "healthy"
+    assert health["stores"]["runtime_method"]["untracked_files"] is None
+    assert health["warnings"] == []

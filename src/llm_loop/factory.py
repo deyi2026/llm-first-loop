@@ -1513,6 +1513,18 @@ def build_engine(
         seed_dir=_runtime_paths.method_seed_dir,
         write_guard=_knowledge_write_guard,
     )
+    # REPORT-20260924 多查询融合影子模式：mode=shadow 时旁路测量（延迟/排序差异 JSONL），主路径零行为
+    multiquery_probe = None
+    if settings.retrieval_multiquery_mode == "shadow" and semantic_retriever is not None:
+        from llm_loop.memory.multiquery_shadow import (
+            MultiqueryShadowProbe,
+            make_llm_rewriter,
+        )
+
+        multiquery_probe = MultiqueryShadowProbe(
+            rewriter=make_llm_rewriter(llm),
+            out_path=Path(settings.data_dir) / "retrieval_shadow.jsonl",
+        )
     searcher = RecordSearcher(
         audit_dir=settings.audit_dir,
         memory_store=memory,
@@ -1524,6 +1536,7 @@ def build_engine(
         file_effect_query=_file_effect_query,
         synopsis_store=_synopsis_store,
         synopsis_source_resolver=_resolve_synopsis_source,
+        multiquery_shadow=multiquery_probe,
     )
 
     # EVO-20260814: 适配器同时支持 search_records（可调用）与 event_stream（对象方法）

@@ -89,13 +89,30 @@ _OVERFLOW_PATTERNS = (
     "context window exceeded",
     "prompt is too long",
     "input too long",
+    # EVO-20260921-51d12fa6: GLM 400 code 1261 实测文案（hev0 P3 t3 裸注入
+    # 2.7M+ chars 确定性拒绝: {"error":{"code":"1261","message":"Prompt exceeds max length"}}）
+    "prompt exceeds max length",
 )
+
+# EVO-20260921-51d12fa6: GLM 族 provider（注册表 glm/glm-api；bigmodel/zhipu 同族推断）。
+# 码 1261 仅在 GLM 族按码判定，避免劫持其他 provider 同码异义错误。
+_GLM_OVERFLOW_PROVIDERS = ("glm", "glm-api", "zhipu")
 
 
 def is_overflow_error(exc: LLMError) -> bool:
     """识别 provider 返回的上下文溢出错误（R4: 如实反馈让 AI 决策）."""
     msg = str(exc).lower()
-    return any(p in msg for p in _OVERFLOW_PATTERNS)
+    if any(p in msg for p in _OVERFLOW_PATTERNS):
+        return True
+    # EVO-20260921-51d12fa6: GLM 上下文超限错误码 1261 —— 文案可能本地化/变更，
+    # 按 provider+status+码精确识别（码提取复用 err1210 的 parse_provider_error_code）。
+    if (
+        isinstance(exc, LLMHTTPError)
+        and exc.status_code == 400
+        and getattr(exc, "provider", "") in _GLM_OVERFLOW_PROVIDERS
+    ):
+        return parse_provider_error_code(exc.body or "") == "1261"
+    return False
 
 
 # EVO-20260812-fb50ab78: provider 配额耗尽错误模式（billing 周期用尽，本周期内不可恢复）
