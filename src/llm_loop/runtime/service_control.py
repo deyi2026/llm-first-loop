@@ -22,6 +22,7 @@ physical authority boundary and exact generation/root binding.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -2599,6 +2600,8 @@ def _consume_restart_failure_receipt(
     target: str,
     rc: int,
     action_id: str,
+    action_created_at: str = "",
+    script_output_tail: str = "",
 ) -> tuple[bool, str]:
     """L4/L5: rc!=0 后按回执的结构化身份 + stage_fact 判定屏障命运。
 
@@ -2608,6 +2611,12 @@ def _consume_restart_failure_receipt(
     任何 ``_stop_*`` 之前，可释放屏障；其余（已进入停止阶段、无回执、解析失败、
     身份不符、旧回执无结构化事实）一律 fail-closed keep。note 进 durable
     action 记录供审计。
+
+    陈旧性判定（2026-09-24 13:4x 实证）：脚本在写回执前崩溃（如 set -u
+    unbound 秒退）时磁盘残留的是**上一次动作**的回执——action_id 必然不符，
+    但报"身份不符"会把真因（脚本 stderr）吞掉。回执 ts 早于本次 action
+    创建时间 → 报 stale_receipt 并附脚本输出尾部；陈旧回执不能证明本次
+    零副作用，仍 fail-closed keep。
     """
     path = Path(runtime_root).joinpath(*_RESTART_RECEIPT_REL.split("/"))
     try:
@@ -2622,6 +2631,19 @@ def _consume_restart_failure_receipt(
         return False, "schema"
     if not isinstance(rec.get("action"), str) or rec["action"] != target:
         return False, f"scope={rec.get('action')!r}"
+    if action_created_at:
+        try:
+            rec_ts = datetime.fromisoformat(str(rec.get("ts") or ""))
+            action_ts = datetime.fromisoformat(action_created_at)
+        except ValueError:
+            rec_ts = action_ts = None  # ts 缺失/不可解析 → 走 action_id 身份判定
+        if rec_ts is not None and rec_ts.timestamp() < action_ts.timestamp():
+            stripped = script_output_tail.strip()
+            tail = stripped.splitlines()[-1][:160] if stripped else ""
+            return False, (
+                f"stale_receipt ts={rec.get('ts')}（早于本次动作 {action_created_at}；"
+                f"非本次所写，脚本可能早崩）{'; 脚本尾部: ' + tail if tail else ''}"
+            )
     rec_action_id = str(rec.get("action_id") or "")
     if action_id and rec_action_id != action_id:
         return False, f"action_id_mismatch rec={rec_action_id!r}"
@@ -2967,6 +2989,11 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                 )
             rc = int(proc.returncode or 0)
             if rc != 0:
+                # 脚本输出尾部（真因透传：脚本早崩不写回执时，stderr 尾行
+                # 是唯一线索——2026-09-24 unbound DATA_DIR 被陈旧回执掩埋实证）
+                script_tail = ""
+                with contextlib.suppress(OSError):
+                    script_tail = restart_log.read_text(encoding="utf-8", errors="replace")[-400:]
                 # R1 (SPEC-20260922-service-control-restart-fixpack-v1): 先消费
                 # durable 回执再定屏障命运——预检链标记证明零物理副作用（脚本严格
                 # 串行，_stop_* 均在其后），释放本目标全部屏障；其余（无回执/解析
@@ -2977,6 +3004,8 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                     target=latest.target,
                     rc=rc,
                     action_id=action_id,
+                    action_created_at=running.created_at,
+                    script_output_tail=script_tail,
                 )
                 _mark_action(
                     store,

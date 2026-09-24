@@ -674,6 +674,38 @@ class TestR1ReceiptConsumption:
         assert "receipt=action_id_mismatch" in final.detail
         assert reg.blocked("web") is not None
 
+    def test_stale_receipt_reports_stale_and_script_tail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """脚本在写回执前崩溃（set -u unbound 秒退）→ 磁盘残留旧动作回执.
+
+        必须报 stale_receipt（回执 ts 早于本次 action 创建时间）而非
+        action_id_mismatch——2026-09-24 13:4x 实证：unbound DATA_DIR 崩溃
+        被陈旧回执误报成身份不符，真因被吞两轮。且失败详情须附脚本输出
+        尾部（真因直接可见）。陈旧回执不能证明零副作用 → 仍 fail-closed。
+        """
+        import shlex
+
+        stale = (
+            '{"action": "web", "rc": 0, "detail": "port=8903", '
+            '"action_id": "svc-82ce3bc5e", "ts": "2026-09-24T13:08:44+08:00"}'
+        )
+        script = (
+            "#!/usr/bin/env bash\n"
+            'mkdir -p "$LFL_RESTART_RUNTIME_ROOT/data"\n'
+            f"printf '%s\\n' {shlex.quote(stale)} "
+            '> "$LFL_RESTART_RUNTIME_ROOT/$LFL_RESTART_RECEIPT_REL"\n'
+            'echo "scripts/restart_mirror.sh: line 965: DATA_DIR: unbound variable"\n'
+            "exit 1\n"
+        )
+        store, reg, action = self._fixture(tmp_path, monkeypatch, script)
+        rc = sc.run_action_worker(store, action.action_id)
+        assert rc == 1
+        final = store.read_action(action.action_id)
+        assert "stale_receipt" in final.detail
+        assert "unbound variable" in final.detail  # 脚本尾部透传，真因可见
+        assert reg.blocked("web") is not None  # 陈旧回执 ≠ 零副作用证明
+
 
 class TestAuditTrails:
     """R3(P6/P7): force_release 与准入拒绝的 append-only 审计线."""

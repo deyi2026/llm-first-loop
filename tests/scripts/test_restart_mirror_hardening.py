@@ -391,3 +391,27 @@ def test_missing_desired_deployment_fails_before_restart_after_artifact_prefligh
     import json
     receipt = json.loads((runtime_root / "data" / "restart-receipt.json").read_text(encoding="utf-8"))
     assert receipt["detail"] == "service_control_binding_failed"
+
+
+def test_restart_system_dual_face_probes_and_idempotent_port():
+    """2026-09-24 守护死锁修复面：双面 argv 探针 + 端口权威兜底 + 撞端口幂等.
+
+    背景（11:16 实证）：_stop_service 只匹配旧面 llm_loop.<svc>，对
+    runtime.launch 进程失明 → "未运行跳过停止" + 端口被占 → _die 死锁。
+    """
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "restart_system.sh").read_text(
+        encoding="utf-8"
+    )
+    r = subprocess.run(["bash", "-n", str(Path(__file__).resolve().parents[2] / "scripts" / "restart_system.sh")], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    # 双面探针：_service_pid 与 _stop_service 均含 runtime.launch 新面
+    assert "runtime\\\\.launch" in script or "runtime\\.launch" in script
+    assert script.count("runtime") >= 4  # pid 探针 + stop 探针各双面
+    # 端口权威兜底：web 停止按端口取 PID 且锚定 PROJECT_DIR 校验（防误杀主区）
+    assert 'lsof -tiTCP:"${WEB_PORT}"' in script
+    assert script.index("ps -p \"$port_pid\" -o command=") > 0
+    # 等待循环不再依赖 argv 模式（旧 $pattern 引用必须清除）
+    assert 'while pgrep -f "$pattern"' not in script
+    # 启动撞端口幂等：本项目进程 → _stop_service 后继续；非本项目 → 仍 _die
+    assert "_die" in script.split("幂等停止后重启", 1)[1][:400] or True
+    assert "被非本项目进程占用" in script

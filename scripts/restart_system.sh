@@ -148,7 +148,12 @@ _service_pid() {
   fi
   # 2026-08-22 镜像修复：pgrep 加工作区路径精确匹配，防误匹配主区进程
   # （主/镜像 .venv 同源符号链接，命令行相同；不加前缀会 stop/restart 误杀主区桥）
-  pid="$(pgrep -f "$PROJECT_DIR/.venv/bin/python -m llm_loop\\.${svc}" | head -1 || true)"
+  # 2026-09-24 双面探针：正式服务经 runtime.launch <svc> 启动（C0-B 新面），
+  # 旧面 llm_loop.<svc> 兼容保留——只匹配旧面时对 runtime.launch 进程失明，
+  # 停止判"未运行"跳过、启动撞端口 _die，unhealthy-but-alive 必死锁
+  # （11:16 实证：detect_fail→未运行跳过停止→端口被占用→pull_up_fail 循环）。
+  pid="$(pgrep -f "$PROJECT_DIR/.venv/bin/python -m llm_loop\\.runtime\\.launch ${svc}$" | head -1 || true)"
+  [[ -n "$pid" ]] || pid="$(pgrep -f "$PROJECT_DIR/.venv/bin/python -m llm_loop\\.${svc}$" | head -1 || true)"
   printf '%s' "$pid"
 }
 
@@ -156,10 +161,23 @@ _service_pid() {
 _stop_service() {
   local svc="$1"
   # MIRROR 隔离：仅匹配当前 PROJECT_DIR 启动的进程，禁止泛匹配同名模块误停主区。
-  # 与 _service_pid 的项目限定口径保持一致。
-  local pattern="$PROJECT_DIR/.venv/bin/python -m llm_loop\\.${svc}"
+  # 与 _service_pid 的项目限定口径保持一致（双面：runtime.launch 新面 + 旧面）。
+  local pattern_new="$PROJECT_DIR/.venv/bin/python -m llm_loop\\.runtime\\.launch ${svc}$"
+  local pattern_old="$PROJECT_DIR/.venv/bin/python -m llm_loop\\.${svc}$"
   local pids
-  pids="$(pgrep -f "$pattern" || true)"
+  pids="$( { pgrep -f "$pattern_new" || true; pgrep -f "$pattern_old" || true; } | sort -u | tr '\n' ' ')"
+  # web 附加端口权威兜底：argv 探针都失明时按端口取 PID（校验命令行锚定
+  # PROJECT_DIR，防误杀主区/无关占用者），杜绝"跳过停止→端口被占用"死锁。
+  if [[ "$svc" == "web" ]]; then
+    local port_pid
+    for port_pid in $(lsof -tiTCP:"${WEB_PORT}" -sTCP:LISTEN 2>/dev/null || true); do
+      if ps -p "$port_pid" -o command= 2>/dev/null | grep -q "$PROJECT_DIR" \
+         && ! grep -qw "$port_pid" <<<"$pids" 2>/dev/null; then
+        pids="${pids:+$pids }$port_pid"
+      fi
+    done
+  fi
+  pids="$(echo "$pids" | xargs)"
   if [[ -z "$pids" ]]; then
     _log "[${svc}] 未运行，跳过停止"
     rm -f "$DATA_DIR/${svc}.pid"
@@ -170,14 +188,38 @@ _stop_service() {
   for pid in $pids; do
     kill "$pid" 2>/dev/null || true
   done
-  local waited=0
-  while pgrep -f "$pattern" >/dev/null 2>&1 && (( waited < GRACE_S )); do
+  # 等待按 PID 存活 ∪ web 端口释放（不依赖 argv 模式——双面探针已证明
+  # 模式会失明；PID 与端口是机械事实）
+  _pids_alive() {
+    local p alive=""
+    for p in $1; do
+      kill -0 "$p" 2>/dev/null && alive="$alive $p"
+    done
+    printf '%s' "$alive"
+  }
+  local waited=0 survivors
+  while (( waited < GRACE_S )); do
+    survivors="$(_pids_alive "$pids")"
+    if [[ -z "$survivors" ]]; then
+      if [[ "$svc" != "web" ]] || ! lsof -iTCP:"${WEB_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+        break
+      fi
+    fi
     sleep 1
     (( waited += 1 ))
   done
-  if pgrep -f "$pattern" >/dev/null 2>&1; then
-    _log "[${svc}] 超时未退出，SIGKILL 强杀"
-    pkill -9 -f "$pattern" 2>/dev/null || true
+  survivors="$(_pids_alive "$pids")"
+  if [[ -n "$survivors" ]] || { [[ "$svc" == "web" ]] && lsof -iTCP:"${WEB_PORT}" -sTCP:LISTEN >/dev/null 2>&1; }; then
+    _log "[${svc}] 超时未退出，SIGKILL 强杀: ${survivors:-端口仍占}"
+    for p in $survivors; do
+      kill -9 "$p" 2>/dev/null || true
+    done
+    local port_pid
+    if [[ "$svc" == "web" ]]; then
+      for port_pid in $(lsof -tiTCP:"${WEB_PORT}" -sTCP:LISTEN 2>/dev/null || true); do
+        ps -p "$port_pid" -o command= 2>/dev/null | grep -q "$PROJECT_DIR" && kill -9 "$port_pid" 2>/dev/null || true
+      done
+    fi
     sleep 1
   else
     _log "[${svc}] 已优雅退出（${waited}s）"
@@ -252,9 +294,22 @@ _start_service() {
 
   case "$svc" in
     web)
-      # 端口冲突检测（被占用 → 如实提示用 WEB_PORT 覆盖，不静默抢端口）
+      # 端口冲突幂等处置（2026-09-24）：占用者若是本项目进程（命令行锚定
+      # PROJECT_DIR）→ 优雅停后继续启动（守护拉起路径的 stop+start 幂等；
+      # 旧逻辑 _die 使 unhealthy-but-alive 永远拉不起）；非本项目占用者
+      # （主区 8902/无关进程）仍如实拒绝——安全边界不放松。
       if lsof -iTCP:"${WEB_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-        _die "[web] 端口 ${WEB_PORT} 已被占用（可用 WEB_PORT=xxxx 覆盖）"
+        local foreign=""
+        for _ppid in $(lsof -tiTCP:"${WEB_PORT}" -sTCP:LISTEN 2>/dev/null || true); do
+          if ! ps -p "$_ppid" -o command= 2>/dev/null | grep -q "$PROJECT_DIR"; then
+            foreign="$foreign $_ppid"
+          fi
+        done
+        if [[ -n "$foreign" ]]; then
+          _die "[web] 端口 ${WEB_PORT} 被非本项目进程占用: ${foreign}（可用 WEB_PORT=xxxx 覆盖）"
+        fi
+        _log "[web] 端口 ${WEB_PORT} 被本项目进程占用，幂等停止后重启..."
+        _stop_service web
       fi
       _rotate_log "$DATA_DIR/web.log"
       _log "[web] 启动 FastAPI（${WEB_HOST}:${WEB_PORT}，日志: ${DATA_DIR}/web.log）..."
