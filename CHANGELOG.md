@@ -2,6 +2,12 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.27 — 多查询融合影子模式（2026-09-24）
+
+- **影子探针（默认 off，零行为变化）**：`RETRIEVAL_MULTIQUERY_MODE=shadow` 启用后，生产 memory 语义检索旁路执行"原查询 + LLM 盲改写 2 变体"的等权 RRF 融合，只记录不生效；返回值与 off 逐字节一致（单测锁定）。目的：接入评审前实测改写延迟、检索成本与 top1 置换率。
+- **观测契约**：`<data_dir>/retrieval_shadow.jsonl` 每查询一条（latency 分解/primary vs fused top10/overlap@5/primary top1 保位标志）；探针全异常捕获，LLM 失败/落盘失败只记 error 行，绝不影响主路径。
+- **防递归**：变体检索经 `_skip_shadow` 复用 `_search_memory`；enforce 路径明确不做，待影子数据过决策门（docs/DESIGN-20260924-multiquery-fusion-shadow.md）。
+
 ## v0.6.26 — 语义缓存冷启动批量预热 + 持久化去抖（2026-09-24）
 
 - **冷启动静默降质修复（EVO-20260924-d9c5ad20）**：语料增长后首批查询在 `timeout_s=1.0` 下超时 → 静默回退 keyword（评测实测 h@5 14 抖到 9~12，生产同样存在该窗口）。根因：`_embed_cached` 逐条惰性嵌入且每条 persist 整个缓存 JSON（N 条新文档 = N 次 ~2MB 重写）。
