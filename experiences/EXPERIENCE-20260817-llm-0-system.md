@@ -11,7 +11,7 @@ record_kind: experience
 verification_state: legacy_unclassified
 created_at: "2026-08-17T22:57:52.727574+08:00"
 updated_at: "2026-09-11T19:33:32.133104+08:00"
-superseded_by: "runtime:prompt-authority-p1c"
+superseded_by: "docs/DESIGN-20260903-llm-agency-first-repair-optimization.md §0.1 P1-C (prompt-authority)"
 last_verified_at: "2026-09-11T19:33:32.133104+08:00"
 ---
 
