@@ -8,7 +8,9 @@ from ``SubAgentTopologyJournal``.
 
 from __future__ import annotations
 
+import threading
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -71,6 +73,14 @@ class SubAgentDeliveryJournal:
 
     def __init__(self, event_store: Any | None) -> None:
         self.event_store = event_store
+        # agents/tree asks settlement once per terminal child.  Parent event logs can
+        # be tens of MB, so keep only the tiny derived settlement binding set, keyed
+        # by the durable parent tail seq.  The cache contains no message content.
+        self._settlement_cache: OrderedDict[
+            str, tuple[int, int, frozenset[tuple[str, str, str, str]]]
+        ] = OrderedDict()
+        self._settlement_cache_lock = threading.Lock()
+        self._settlement_cache_max_parents = 128
 
     @property
     def enabled(self) -> bool:
@@ -189,36 +199,95 @@ class SubAgentDeliveryJournal:
         store = self.event_store
         if not self.enabled or store is None or not store.exists(parent_id):
             return False
-        message_seq_by_call: dict[str, int] = {}
+        wanted = (child_id, parent_id, generation, result_id)
+        last_seq_fn = getattr(store, "last_seq", None)
+        read_cached_fn = getattr(store, "read_cached", None)
+        if not callable(last_seq_fn) or not callable(read_cached_fn):
+            return self._settlement_committed_uncached(
+                store.read(parent_id) or [],
+                wanted=wanted,
+            )
+
+        durable_last = int(last_seq_fn(parent_id) or 0)
+        store_id = id(store)
+        # Serialize cold derived-index builds.  This intentionally prevents several
+        # overlapping browser polls from parsing/scanning the same large parent log
+        # concurrently; steady-state hits hold the lock only for a dict lookup.
+        with self._settlement_cache_lock:
+            cached = self._settlement_cache.get(parent_id)
+            if cached is not None and cached[0] == store_id and cached[1] == durable_last:
+                self._settlement_cache.move_to_end(parent_id)
+                return wanted in cached[2]
+
+            events = list(read_cached_fn(parent_id) or [])
+            settled = self._settled_bindings_from_events(events)
+            snapshot_last = int(getattr(events[-1], "seq", 0) or 0) if events else 0
+            self._settlement_cache[parent_id] = (store_id, snapshot_last, settled)
+            self._settlement_cache.move_to_end(parent_id)
+            while len(self._settlement_cache) > self._settlement_cache_max_parents:
+                self._settlement_cache.popitem(last=False)
+            return wanted in settled
+
+    @staticmethod
+    def _settled_bindings_from_events(
+        events: list[Any],
+    ) -> frozenset[tuple[str, str, str, str]]:
+        message_seq_by_binding_call: dict[
+            tuple[str, str, str, str, str], int
+        ] = {}
         commit_seq_by_call: dict[str, int] = {}
-        for event in store.read(parent_id) or []:
+        for event in events:
             event_type = str(getattr(event, "type", "") or "")
             payload = dict(getattr(event, "payload", None) or {})
             tool_call_id = str(payload.get("tool_call_id") or "")
             if not tool_call_id:
                 continue
             seq = int(getattr(event, "seq", 0) or 0)
-            if event_type == "message.appended" and str(payload.get("tool_name") or "") == "subagent_result":
+            if (
+                event_type == "message.appended"
+                and str(payload.get("tool_name") or "") == "subagent_result"
+            ):
                 metadata = payload.get("metadata")
-                binding = metadata.get("subagent_settlement") if isinstance(metadata, dict) else None
+                binding = (
+                    metadata.get("subagent_settlement")
+                    if isinstance(metadata, dict)
+                    else None
+                )
                 if not isinstance(binding, dict):
                     continue
-                if (
-                    str(binding.get("child_id") or "") == child_id
-                    and str(binding.get("parent_id") or "") == parent_id
-                    and str(binding.get("generation") or "") == generation
-                    and str(binding.get("result_id") or "") == result_id
-                ):
-                    message_seq_by_call[tool_call_id] = seq
+                key = (
+                    tool_call_id,
+                    str(binding.get("child_id") or ""),
+                    str(binding.get("parent_id") or ""),
+                    str(binding.get("generation") or ""),
+                    str(binding.get("result_id") or ""),
+                )
+                message_seq_by_binding_call[key] = seq
             elif (
                 event_type == "tool.execution.receipt_committed"
                 and str(payload.get("tool_name") or "") == "subagent_result"
             ):
                 commit_seq_by_call[tool_call_id] = seq
-        return any(
-            commit_seq_by_call.get(call_id, 0) > message_seq
-            for call_id, message_seq in message_seq_by_call.items()
+        return frozenset(
+            (child, parent, generation, result)
+            for (
+                tool_call_id,
+                child,
+                parent,
+                generation,
+                result,
+            ), message_seq in message_seq_by_binding_call.items()
+            if commit_seq_by_call.get(tool_call_id, 0) > message_seq
         )
+
+    @classmethod
+    def _settlement_committed_uncached(
+        cls,
+        events: list[Any],
+        *,
+        wanted: tuple[str, str, str, str],
+    ) -> bool:
+        return wanted in cls._settled_bindings_from_events(events)
 
     def queue_mailbox(
         self,

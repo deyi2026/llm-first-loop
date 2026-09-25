@@ -204,7 +204,9 @@ def test_wal_recovery_runs_same_hook_only_after_recovered_commit(tmp_path) -> No
     assert committed_events[-1].payload["recovered"] is True
 
 
-def test_committed_binding_settles_local_handle_and_is_restart_derived(tmp_path) -> None:
+def test_committed_binding_settles_local_handle_and_is_restart_derived(
+    tmp_path, monkeypatch
+) -> None:
     events = EventStore(tmp_path / "events", enabled=True)
     store = SessionStore(tmp_path / "sessions", event_store=events)
     runner = SubAgentRunner(llm=_NoopLLM(), registry=ToolRegistry(), session_store=store)  # type: ignore[arg-type]
@@ -261,8 +263,30 @@ def test_committed_binding_settles_local_handle_and_is_restart_derived(tmp_path)
     assert runner.settle_committed_receipt(parent, message) is True
     assert runner.topology_snapshot(child)["settlement_state"] == "collected"
 
+    # CPU contract: repeated topology/status reads reuse the tiny derived settlement
+    # index and do not even rescan the EventStore parsed snapshot while tail seq holds.
+    original_read_cached = events.read_cached
+    parent_cache_reads = 0
+
+    def _counted_read_cached(session_id: str):
+        nonlocal parent_cache_reads
+        if session_id == parent:
+            parent_cache_reads += 1
+        return original_read_cached(session_id)
+
+    monkeypatch.setattr(events, "read_cached", _counted_read_cached)
+    assert runner.topology_snapshot(child)["settlement_state"] == "collected"
+    assert parent_cache_reads == 0
+
+    # Any durable parent append changes last_seq and invalidates the derived index
+    # mechanically.  Rebuild may reuse EventStore's parsed snapshot, preserving truth.
+    events.append(parent, "request.meta", {"reason": "invalidate-settlement-index"})
+    assert runner.topology_snapshot(child)["settlement_state"] == "collected"
+    assert parent_cache_reads == 1
+
     recovered = SubAgentRunner(llm=_NoopLLM(), registry=ToolRegistry(), session_store=store)  # type: ignore[arg-type]
     assert recovered.topology_snapshot(child)["settlement_state"] == "collected"
+    assert parent_cache_reads == 2
 
 
 def test_stale_generation_or_wrong_parent_binding_never_settles(tmp_path) -> None:
