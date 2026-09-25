@@ -23,6 +23,11 @@ def test_config_p1_defaults_and_env(monkeypatch):
     # 默认值
     assert s.summary_mode == "off"
     assert s.embedding_provider == "none"
+    assert s.semantic_memory_enabled is False
+    assert s.semantic_archive_enabled is False
+    assert s.semantic_method_enabled is False
+    assert s.semantic_docs_enabled is False
+    assert s.semantic_experience_enabled is False
     assert s.extract_enabled is True
     assert s.validate_semantic is False
     # env 覆盖
@@ -30,16 +35,23 @@ def test_config_p1_defaults_and_env(monkeypatch):
     monkeypatch.setenv("EMBEDDING_PROVIDER", "hash")
     monkeypatch.setenv("VALIDATE_SEMANTIC", "1")
     monkeypatch.setenv("EXTRACT_ENABLED", "0")
+    monkeypatch.setenv("SEMANTIC_MEMORY_ENABLED", "1")
+    monkeypatch.setenv("SEMANTIC_METHOD_ENABLED", "1")
     s2 = load_settings()
     assert s2.summary_mode == "async"
     assert s2.embedding_provider == "hash"
     assert s2.validate_semantic is True
     assert s2.extract_enabled is False
+    assert s2.semantic_memory_enabled is True
+    assert s2.semantic_method_enabled is True
+    assert s2.semantic_archive_enabled is False
     # 状态摘要不含密钥
     st = s2.to_status_dict()
     assert "embedding_api_key" not in st
     assert "llm_api_key" not in st
     assert st["embedding_provider"] == "hash"
+    assert st["semantic_memory_enabled"] is True
+    assert st["semantic_method_enabled"] is True
 
 
 def test_search_records_all_kinds(tmp_path):

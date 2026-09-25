@@ -115,7 +115,10 @@ def run_search_docs(
             f"\n[仅显示前 6 条] 共 {len(result)} 条命中（limit={limit}）。"
             "可缩小 query 或提高 limit 精确检索。"
         )
-    notes = [str(r["note"]) for r in result[:6] if r.get("note")]
+    modes = sorted({str(r.get("mode") or "") for r in result[:6] if r.get("mode")})
+    if modes:
+        content += "\n[检索模式] " + ", ".join(modes)
+    notes = list(dict.fromkeys(str(r["note"]) for r in result[:6] if r.get("note")))
     if notes:
         content += "\n[降级标注] " + "; ".join(notes)
     return ToolResult(

@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 import uuid
+from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
@@ -101,11 +104,115 @@ class MemoryStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._dir / "index.json"
         self._entries: list[MemoryEntry] = []
+        self._post_save_hooks: list[Callable[[MemoryEntry], None]] = []
         # 2026-09-15 事故根治: 索引 schema 高于本 reader 时置为诊断消息并禁写（fail-closed）
         self._schema_locked: str | None = None
         # 2026-08-20（d8a76517, 镜像）: 跨进程/线程并发写防护——写前合并磁盘最新态
         self._lock = threading.RLock()
         self._load()
+        self._index_stamp = self._index_file_stamp()
+
+    def _index_file_stamp(self) -> tuple[int, int, int] | None:
+        try:
+            st = self._index_path.stat()
+            return st.st_ino, st.st_mtime_ns, st.st_size
+        except OSError:
+            return None
+
+    @contextmanager
+    def _mutation_file_lock(self):
+        """Serialize cross-process index mutations on POSIX; fail-open elsewhere."""
+        lock_path = self._dir / "index.lock"
+        fh = lock_path.open("a+b")
+        try:
+            try:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            except (ImportError, OSError):
+                pass
+            yield
+        finally:
+            try:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except (ImportError, OSError):
+                pass
+            fh.close()
+
+    @staticmethod
+    def _preserve_runtime_counters(remote: MemoryEntry, local: MemoryEntry) -> MemoryEntry:
+        """Keep newer local read/use counters while accepting remote durable content."""
+        remote.access_count = max(int(remote.access_count), int(local.access_count))
+        remote.inject_count = max(int(remote.inject_count), int(local.inject_count))
+        if str(local.last_access_at or "") > str(remote.last_access_at or ""):
+            remote.last_access_at = local.last_access_at
+        if str(local.last_inject_at or "") > str(remote.last_inject_at or ""):
+            remote.last_inject_at = local.last_inject_at
+        remote.guidance_risk = max(int(remote.guidance_risk), int(local.guidance_risk))
+        if str(local.guidance_used_at or "") > str(remote.guidance_used_at or ""):
+            remote.guidance_used_at = local.guidance_used_at
+        return remote
+
+    def _refresh_from_disk_if_changed(self) -> bool:
+        """Refresh long-lived readers when another process replaces index.json."""
+        with self._lock:
+            stamp = self._index_file_stamp()
+            if stamp == self._index_stamp or stamp is None:
+                return False
+            try:
+                raw = json.loads(self._index_path.read_text(encoding="utf-8"))
+                disk_entries = [MemoryEntry(**row) for row in raw]
+            except (json.JSONDecodeError, ValueError, TypeError, OSError):
+                return False
+            local_by_id = {entry.id: entry for entry in self._entries if entry.id}
+            refreshed: list[MemoryEntry] = []
+            for remote in disk_entries:
+                local = local_by_id.get(remote.id)
+                if local is None:
+                    refreshed.append(remote)
+                    continue
+                remote_is_newer = (
+                    int(remote.version) > int(local.version)
+                    or str(remote.updated_at or remote.created_at)
+                    > str(local.updated_at or local.created_at)
+                    or (
+                        remote.content_fingerprint
+                        and remote.content_fingerprint != local.content_fingerprint
+                    )
+                )
+                refreshed.append(
+                    self._preserve_runtime_counters(remote, local)
+                    if remote_is_newer
+                    else local
+                )
+            self._entries = refreshed
+            self._index_stamp = stamp
+            return True
+
+    def add_post_save_hook(self, hook: Callable[[MemoryEntry], None]) -> None:
+        """Register a fail-open callback invoked after a current memory value is saved.
+
+        Hooks run after the store lock is released so derived work (for example semantic
+        vectorization) can never extend the durable memory write critical section.
+        """
+        with self._lock:
+            self._post_save_hooks.append(hook)
+
+    def _notify_post_save(self, entry: MemoryEntry) -> None:
+        with self._lock:
+            hooks = list(self._post_save_hooks)
+        if not hooks:
+            return
+        import logging
+
+        logger = logging.getLogger(__name__)
+        for hook in hooks:
+            try:
+                hook(entry)
+            except Exception:  # noqa: BLE001 - derived caches never block memory durability
+                logger.debug("memory post-save hook failed", exc_info=True)
 
     def _load(self) -> None:
         if self._index_path.exists():
@@ -156,23 +263,27 @@ class MemoryStore:
         with self._lock:
             if self._schema_locked is not None:
                 raise MemorySchemaMismatchError(self._schema_locked)
-            if merge:
-                self._merge_remote_changes()
-                if self._schema_locked is not None:
-                    # 运行期磁盘被更高 schema 进程升级: 本进程同样禁写，防止
-                    # 旧 reader 用"过滤后的内存态"覆盖磁盘新 schema 数据。
-                    raise MemorySchemaMismatchError(self._schema_locked)
-            # 原子写（tmp+rename）：Web/飞书跨进程共享记忆时防半写损坏/交错覆盖
-            payload = json.dumps(
-                [e.to_dict() for e in self._entries], ensure_ascii=False, indent=2
-            )
-            try:
-                tmp = self._index_path.with_suffix(".tmp")
-                tmp.write_text(payload, encoding="utf-8")
-                tmp.replace(self._index_path)
-            except OSError:
-                # 原子写失败回退直写（fail-open，尽力而为）
-                self._index_path.write_text(payload, encoding="utf-8")
+            with self._mutation_file_lock():
+                if merge:
+                    self._merge_remote_changes()
+                    if self._schema_locked is not None:
+                        # 运行期磁盘被更高 schema 进程升级: 本进程同样禁写，防止
+                        # 旧 reader 用"过滤后的内存态"覆盖磁盘新 schema 数据。
+                        raise MemorySchemaMismatchError(self._schema_locked)
+                # 原子写（unique tmp+rename）：多进程共享记忆时防半写/临时文件互踩。
+                payload = json.dumps(
+                    [e.to_dict() for e in self._entries], ensure_ascii=False, indent=2
+                )
+                try:
+                    tmp = self._index_path.with_name(
+                        f"{self._index_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+                    )
+                    tmp.write_text(payload, encoding="utf-8")
+                    tmp.replace(self._index_path)
+                except OSError:
+                    # 原子写失败回退直写（fail-open，尽力而为）
+                    self._index_path.write_text(payload, encoding="utf-8")
+                self._index_stamp = self._index_file_stamp()
 
     # 2026-08-20（d8a76517, 镜像）: 写前合并磁盘最新态——磁盘独有条目并入内存,
     # 同 id 以内存为准（本进程最新改动优先）; 损坏磁盘不合并（避免覆盖）。
@@ -195,8 +306,19 @@ class MemoryStore:
             )
             logging.getLogger(__name__).error(self._schema_locked)
             return
-        mem_ids = {e.id for e in self._entries}
-        remote_only = [de for de in disk_entries if de.id not in mem_ids]
+        local_by_id = {e.id: e for e in self._entries if e.id}
+        remote_only: list[MemoryEntry] = []
+        remote_newer: dict[str, MemoryEntry] = {}
+        for de in disk_entries:
+            local = local_by_id.get(de.id)
+            if local is None:
+                remote_only.append(de)
+            elif int(de.version) > int(local.version):
+                remote_newer[de.id] = self._preserve_runtime_counters(de, local)
+        if remote_newer:
+            self._entries = [
+                remote_newer.get(entry.id, entry) for entry in self._entries
+            ]
         if remote_only:
             # 磁盘顺序在前, 本进程新增在后（保持时间序稳定）
             self._entries = remote_only + self._entries
@@ -282,6 +404,8 @@ class MemoryStore:
         producer's snapshot; the candidate is retained in observation_history but is not
         promoted to current.
         """
+        result: MemoryEntry
+        promoted = False
         with self._lock:
             self._merge_remote_changes()
             self._prepare_entry(entry)
@@ -304,16 +428,24 @@ class MemoryStore:
                         }
                     )
                     self._save()
-                    return existing, False
-                updated = self._update_existing(existing, entry)
+                    result = existing
+                    promoted = False
+                else:
+                    result = self._update_existing(existing, entry)
+                    self._save()
+                    promoted = True
+            else:
+                entry.updated_at = entry.updated_at or entry.created_at
+                self._entries.append(entry)
                 self._save()
-                return updated, True
-            entry.updated_at = entry.updated_at or entry.created_at
-            self._entries.append(entry)
-            self._save()
-            return entry, True
+                result = entry
+                promoted = True
+        if promoted:
+            self._notify_post_save(result)
+        return result, promoted
 
     def save_entry(self, entry: MemoryEntry) -> MemoryEntry:
+        result: MemoryEntry
         with self._lock:
             # Refresh before matching, not only before the final file write.  Otherwise a
             # concurrent writer can create the same fact after this process loaded its
@@ -322,13 +454,15 @@ class MemoryStore:
             self._prepare_entry(entry)
             existing = self._find_same_fact(entry)
             if existing is not None:
-                updated = self._update_existing(existing, entry)
+                result = self._update_existing(existing, entry)
                 self._save()
-                return updated
-            entry.updated_at = entry.updated_at or entry.created_at
-            self._entries.append(entry)
-            self._save()
-            return entry
+            else:
+                entry.updated_at = entry.updated_at or entry.created_at
+                self._entries.append(entry)
+                self._save()
+                result = entry
+        self._notify_post_save(result)
+        return result
 
     def search(self, keywords: list[str], top_k: int = 5, session_id: str = "") -> list[MemoryEntry]:
         """关键词检索 + 衰减排序（Phase 2）: 检索命中更新访问统计（内存），不即时全量落盘.
@@ -337,6 +471,7 @@ class MemoryStore:
         条目仅当传入 session_id 且等于条目 source_session_id 时召回（防跨会话污染）；
         scope=global 条目不受限。默认 session_id="" → 仅召回 global。
         """
+        self._refresh_from_disk_if_changed()
         if not keywords:
             return []
         scored: list[tuple[float, MemoryEntry]] = []
@@ -433,14 +568,17 @@ class MemoryStore:
         return {"pruned": excess}
 
     def all(self) -> list[MemoryEntry]:
+        self._refresh_from_disk_if_changed()
         return list(self._entries)
 
     def _by_id(self, entry_id: str) -> MemoryEntry | None:
         """按 id 取条目（语义检索融合用）."""
+        self._refresh_from_disk_if_changed()
         for e in self._entries:
             if e.id == entry_id:
                 return e
         return None
 
     def count(self) -> int:
+        self._refresh_from_disk_if_changed()
         return len(self._entries)

@@ -119,12 +119,25 @@ class MethodStore:
         self._dir = Path(methods_dir)
         self._seed_dir = Path(seed_dir) if seed_dir is not None else None
         self._write_guard = write_guard
+        self._post_save_hooks: list[Callable[[MethodRecord], None]] = []
         if workspace_root is not None:
             self._workspace_root = Path(workspace_root).resolve()
         elif self._seed_dir is not None:
             self._workspace_root = self._seed_dir.resolve().parent
         else:
             self._workspace_root = None
+
+    def add_post_save_hook(self, hook: Callable[[MethodRecord], None]) -> None:
+        """Register a fail-open observer for newly persisted semantic Method content."""
+        if hook not in self._post_save_hooks:
+            self._post_save_hooks.append(hook)
+
+    def _notify_post_save(self, record: MethodRecord) -> None:
+        for hook in list(self._post_save_hooks):
+            try:
+                hook(record)
+            except Exception:  # noqa: BLE001 - Method durability outranks derived vectors
+                continue
 
     def _require_write_safe(self) -> None:
         if self._write_guard is None:
@@ -341,6 +354,17 @@ class MethodStore:
             result.append(card)
         return result
 
+    @staticmethod
+    def semantic_candidate(record: MethodRecord) -> dict[str, Any]:
+        return {
+            "kind": "method",
+            "id": record.method_id,
+            "key": record.method_ref,
+            "content": (
+                f"{record.method_id} {record.name} {record.description} {record.body}"
+            ),
+        }
+
     def semantic_candidates(self) -> list[dict[str, Any]]:
         """Project Method records for mechanical semantic recall.
 
@@ -352,12 +376,7 @@ class MethodStore:
             record = self._load_path(path)
             if record is None or record.status == "retired":
                 continue
-            result.append({
-                "kind": "method",
-                "id": record.method_id,
-                "key": record.method_ref,
-                "content": f"{record.method_id} {record.name} {record.description} {record.body}",
-            })
+            result.append(self.semantic_candidate(record))
         return result
 
     def _ensure_runtime_copy(self, record: MethodRecord) -> MethodRecord:
@@ -642,6 +661,7 @@ class MethodStore:
         record = self._load_path(path)
         if record is None:
             raise RuntimeError("candidate write did not round-trip")
+        self._notify_post_save(record)
         return record
 
     def find_by_evidence(self, evidence_ref: str) -> str | None:

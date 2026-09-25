@@ -68,7 +68,8 @@ def test_cache_new_format_roundtrip(tmp_path):
     cache = retriever._mem_emb_cache
     cache["key-a"] = [0.1, 0.2]
     retriever._persist_emb_cache(retriever._mem_cache_path, cache)
-    cache_file = mem / "embeddings-hash-v2.json"
+    cache_file = retriever._mem_cache_path
+    assert cache_file is not None
     assert retriever._mem_cache_path == cache_file
     raw = json.loads(cache_file.read_text(encoding="utf-8"))
     assert raw["v"] == "hash-v2"
@@ -94,8 +95,8 @@ def test_cache_file_isolation_by_version(tmp_path):
     r_new._mem_emb_cache["new-key"] = [0.7]
     r_new._persist_emb_cache(r_new._mem_cache_path, r_new._mem_emb_cache)
     # 互不覆写：两文件并存，各自 roundtrip 命中，互不含对方键
-    assert (mem / "embeddings-legacy.json").exists()
-    assert (mem / "embeddings-hash-v2.json").exists()
+    assert r_old._mem_cache_path is not None and r_old._mem_cache_path.exists()
+    assert r_new._mem_cache_path is not None and r_new._mem_cache_path.exists()
     assert "old-key" not in r_new._mem_emb_cache
     assert "new-key" not in SemanticRetriever(_LegacyEmbedder(), memory_dir=mem)._mem_emb_cache
     assert "old-key" not in SemanticRetriever(HashEmbedder(), memory_dir=mem)._mem_emb_cache

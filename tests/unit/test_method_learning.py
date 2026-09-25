@@ -183,6 +183,60 @@ def test_method_discovery_v2_semantic_channel_recovers_nonlexical_match(tmp_path
     assert rows[0]["task_applicability"] == "not_evaluated"
 
 
+def test_semantic_method_receipt_budget_keeps_top_two_model_visible() -> None:
+    rows = [
+        {
+            "kind": "method",
+            "summary": f"method-{idx}",
+            "key": f"method:m-{idx}",
+            "status": "candidate",
+            "description": f"description-{idx}-" + ("x" * 600),
+            "task_applicability": "not_evaluated",
+            "_method_semantic_discovery": True,
+        }
+        for idx in range(5)
+    ]
+    rendered = run_search_records(
+        _Ctx(),
+        lambda **kwargs: rows[: kwargs["limit"]],
+        {"kind": "method", "query": "abstract task", "limit": 5},
+        lambda: "",
+    )
+
+    assert "method:m-0" in rendered.content
+    assert "method:m-1" in rendered.content
+    assert "method:m-2" not in rendered.content
+    assert "内部保留 5 条召回" in rendered.content
+    assert "top1 compact card + rank2 alternate ref" in rendered.content
+    assert "task_applicability=not_evaluated" in rendered.content
+    assert "x" * 250 not in rendered.content
+    assert "description-1" not in rendered.content
+    assert len(rendered.content) < 900
+
+
+def test_lexical_method_receipt_is_not_subject_to_semantic_budget() -> None:
+    rows = [
+        {
+            "kind": "method",
+            "summary": f"method-{idx}",
+            "key": f"method:m-{idx}",
+            "status": "candidate",
+            "description": f"description-{idx}",
+            "task_applicability": "not_evaluated",
+        }
+        for idx in range(5)
+    ]
+    rendered = run_search_records(
+        _Ctx(),
+        lambda **kwargs: rows[: kwargs["limit"]],
+        {"kind": "method", "query": "literal keyword", "limit": 5},
+        lambda: "",
+    )
+
+    assert "method:m-4" in rendered.content
+    assert "Method semantic 候选预算" not in rendered.content
+
+
 def test_candidate_is_immutable_and_cannot_jump_directly_active(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
     first = store.save_candidate(name="hydrate trace", description="trace producer", body="counterexample: SSR page")

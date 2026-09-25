@@ -6,6 +6,7 @@ hash-v2 空间，绝不把 hash 向量写进 api 版本缓存文件（防向量�
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,6 +24,11 @@ class StubAPIEmbedder:
         if self.fail:
             return None
         return [1.0, 0.0]
+
+    def embed_batch(self, texts: list[str]):
+        if self.fail:
+            return [None] * len(texts)
+        return [[1.0, 0.0] for _ in texts]
 
 
 class StubHashEmbedder:
@@ -62,6 +68,15 @@ def _retriever(tmp_path: Path, primary, fallback=None, **kw):
     )
 
 
+def _wait_prewarm(r: SemanticRetriever, timeout_s: float = 1.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if not r._background_diag_snapshot()["background_prewarm_inflight"]:
+            return
+        time.sleep(0.005)
+    raise AssertionError("background prewarm did not finish")
+
+
 def test_primary_down_falls_back_hash_engine(tmp_path: Path):
     # hash 查询向量与候选夹角余弦 ≈0.3：过 hash 阈值 0.22，不过 api 阈值 0.50
     class HashVec(StubHashEmbedder):
@@ -88,8 +103,12 @@ def test_primary_up_uses_api_engine_no_fallback(tmp_path: Path):
     primary = StubAPIEmbedder()  # embed 恒 [1,0] → cos=1.0
     r = _retriever(tmp_path, primary, fallback=StubHashEmbedder())
     memory = MemStore([MemEntry(id="m1", content="候选甲", keywords=["甲"])])
-    result = r.search("query", top_k=5, memory=memory)
+    cold = r.search("query", top_k=5, memory=memory)
     assert r.fallback_engaged == 0
+    assert cold.entries == []
+    assert cold.diagnostics["prewarm_scheduled"] is True
+    _wait_prewarm(r)
+    result = r.search("query", top_k=5, memory=memory)
     assert result.entries
     cache_files = list((tmp_path / "memory").glob("embeddings-*.json"))
     payload = json.loads(cache_files[0].read_text())
@@ -122,7 +141,10 @@ def test_two_cache_files_coexist_without_crossover(tmp_path: Path):
     primary = StubAPIEmbedder()
     r = _retriever(tmp_path, primary, fallback=StubHashEmbedder())
     memory = MemStore([MemEntry(id="m1", content="甲", keywords=["甲"])])
-    r.search("query", top_k=5, memory=memory)
+    cold = r.search("query", top_k=5, memory=memory)
+    assert cold.diagnostics["prewarm_scheduled"] is True
+    _wait_prewarm(r)
+    assert r.search("query", top_k=5, memory=memory).entries
     primary.fail = True
     result = r.search("query", top_k=5, memory=memory)
     assert r.fallback_engaged == 1 and result.entries

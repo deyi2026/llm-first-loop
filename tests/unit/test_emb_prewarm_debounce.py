@@ -59,7 +59,8 @@ def test_persist_debounce_single_write(tmp_path, monkeypatch):
                         lambda self, path, cache, emb=None: calls.append(path) or orig(self, path, cache, emb))
     r.search("事实条目", top_k=3, scope="memory", session_id="", memory=mem, archive=None)
     assert len(calls) == 1, f"去抖后应恰好 1 次落盘，实际 {len(calls)}"
-    raw = json.loads((tmp_path / "memory" / "embeddings-hash-v2.json").read_text(encoding="utf-8"))
+    assert r._mem_cache_path is not None
+    raw = json.loads(r._mem_cache_path.read_text(encoding="utf-8"))
     assert sum(1 for k in raw["data"] if k.startswith("memory:")) == 5
 
 
@@ -129,13 +130,19 @@ def test_timeout_path_flushes_cache(tmp_path, monkeypatch):
     mem = _store(5, tmp_path)
     emb = _BatchCountingHash()
     r = _retriever(emb, tmp_path, timeout_s=10.0)
-    clock = iter([0.0,          # search start
-                  1.0])         # prewarm 首片前 deadline 检查（1 < 10，放行）
+    clock = iter([
+        0.0,  # search start
+        0.0,  # query deadline remaining
+        0.0,  # query embed start
+        0.0,  # query embed elapsed
+        1.0,  # prewarm 首片前 deadline 检查（1 < 10，放行）
+    ])
     monkeypatch.setattr(rt.time, "monotonic", lambda: next(clock, 999.0))
     res = r.search("条目", top_k=3, scope="memory", session_id="", memory=mem, archive=None)
     assert res.mode == "keyword", "循环首候选时钟=999 应超时降级"
     assert emb.n_batch == 1 and len(r._mem_emb_cache) == 5
-    raw = json.loads((tmp_path / "memory" / "embeddings-hash-v2.json").read_text(encoding="utf-8"))
+    assert r._mem_cache_path is not None
+    raw = json.loads(r._mem_cache_path.read_text(encoding="utf-8"))
     assert sum(1 for k in raw["data"] if k.startswith("memory:")) == 5, "超时路径应保留批量预热成果"
 
 
@@ -150,8 +157,11 @@ def test_api_embed_batch_roundtrip(monkeypatch):
         def json(self):
             return {"data": [{"embedding": [0.1, 0.2]}, {"embedding": [0.3, 0.4]}]}
 
-    def fake_post(url, headers=None, json=None):
+    def fake_post(url, headers=None, json=None, timeout=None):
         calls.append(json["input"])
+        assert headers["X-LFL-Embedding-Class"] == "background"
+        assert headers["X-LFL-Embedding-Deadline-Ms"] == "250"
+        assert timeout == 1.5
         return _Resp()
 
     monkeypatch.setattr(api._client, "post", fake_post)
@@ -161,7 +171,7 @@ def test_api_embed_batch_roundtrip(monkeypatch):
 
 
 def test_api_embed_batch_mismatch_falls_back(monkeypatch):
-    """API 响应条数不齐 → 整批回退逐条（保序）。"""
+    """API 响应条数不齐 → 当前后台 chunk 留空，后续预热轮次再重试。"""
     api = APIEmbedder(api_key="", base_url="http://127.0.0.1:9/v1", model="bge")
 
     class _Resp:
@@ -171,6 +181,37 @@ def test_api_embed_batch_mismatch_falls_back(monkeypatch):
             return {"data": [{"embedding": [0.1]}]}  # 请求 2 条只回 1 条
 
     monkeypatch.setattr(api._client, "post", lambda *a, **k: _Resp())
-    monkeypatch.setattr(api, "embed", lambda t: [len(t), 0.0])
     out = api.embed_batch(["甲", "乙"])
-    assert out == [[1, 0.0], [1, 0.0]], "回退逐条且保序"
+    assert out == [None, None], "后台批次失败不应串行逐条放大"
+
+
+def test_api_embed_batch_yields_between_background_chunks(monkeypatch):
+    """后台预热多片之间主动 yield，最后一片后不额外 sleep."""
+    api = APIEmbedder(api_key="", base_url="http://127.0.0.1:9/v1", model="bge")
+    api._BATCH_CHUNK = 2
+    api._BATCH_YIELD_S = 0.02
+    sleeps = []
+    calls = []
+
+    class _Resp:
+        status_code = 200
+
+        def __init__(self, n):
+            self._n = n
+
+        def json(self):
+            return {"data": [{"embedding": [0.1, 0.2]} for _ in range(self._n)]}
+
+    def fake_post(_url, **kwargs):
+        batch = kwargs["json"]["input"]
+        calls.append(list(batch))
+        return _Resp(len(batch))
+
+    monkeypatch.setattr(api._client, "post", fake_post)
+    monkeypatch.setattr("llm_loop.memory.embedder.time.sleep", lambda s: sleeps.append(s))
+
+    out = api.embed_batch(["a", "b", "c", "d", "e"])
+
+    assert all(v == [0.1, 0.2] for v in out)
+    assert calls == [["a", "b"], ["c", "d"], ["e"]]
+    assert sleeps == [0.02, 0.02]

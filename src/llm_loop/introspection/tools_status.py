@@ -674,6 +674,28 @@ def _render_rule_record(record: dict, fallback_kind: str) -> str:
     return head + f" | synopsis={synopsis}"
 
 
+def _render_archive_record(record: dict, fallback_kind: str) -> str:
+    """Render the searchable archive projection, including indexed key facts.
+
+    Archive retrieval is intentionally a compact projection rather than full-content
+    replay. Key facts are part of the archive retrieval index and may contain the
+    decisive fact even when a long deterministic summary omits it, so they must remain
+    model-visible after canonical hydration.
+    """
+    ref = str(record.get("id") or "")
+    summary = _single_line(str(record.get("summary") or ""), 300)
+    facts = [
+        _single_line(str(item), 160)
+        for item in list(record.get("key_facts") or [])[:5]
+        if str(item or "").strip()
+    ]
+    fact_part = f" | key_facts={json.dumps(facts, ensure_ascii=False)}" if facts else ""
+    return (
+        f"[{record.get('ts', '')}] {record.get('kind', fallback_kind)}: "
+        f"archive_ref={ref} | summary={summary}{fact_part}"
+    )
+
+
 def _finalize_search_records(
     search_fn: Any, kind: str, query: str, limit: int, result: list[dict]
 ) -> ToolResult:
@@ -730,7 +752,17 @@ def _finalize_search_records(
 
     lines: list[str] = []
     raw_lines: list[str] = []
-    for r in result[:limit]:
+    method_semantic_discovery = (
+        kind == "method"
+        and bool(result)
+        and all(bool(r.get("_method_semantic_discovery")) for r in result)
+    )
+    visible_result = (
+        result[: min(limit, 2)]
+        if method_semantic_discovery
+        else result[:limit]
+    )
+    for visible_idx, r in enumerate(visible_result):
         record_kind = str(r.get("kind", kind))
         if record_kind in {"experience", "lesson"}:
             rendered = _render_experience_record(r, kind)
@@ -739,6 +771,11 @@ def _finalize_search_records(
             continue
         if record_kind == "rule":
             rendered = _render_rule_record(r, kind)
+            lines.append(rendered)
+            raw_lines.append(rendered)
+            continue
+        if record_kind == "archive":
+            rendered = _render_archive_record(r, kind)
             lines.append(rendered)
             raw_lines.append(rendered)
             continue
@@ -775,6 +812,9 @@ def _finalize_search_records(
             freshness: dict[str, Any] = freshness_value if isinstance(freshness_value, dict) else {}
             freshness_state = str(freshness.get("state") or "")
             freshness_part = f", freshness={freshness_state}" if freshness_state else ""
+            applicability = str(
+                r.get("task_applicability") or "not_evaluated"
+            )
             # EVO-20260923-6fe23c9b F2(b): 检索降权卡龄提示（弱模型权衡 stale 风险）
             age = r.get("card_age_days")
             age_part = (
@@ -782,7 +822,23 @@ def _finalize_search_records(
                 if isinstance(age, int)
                 else ""
             )
-            card = f"{summary} ({method_ref}, status={status}{freshness_part}{age_part}) — {description}".strip()
+            if r.get("_method_semantic_discovery") and visible_idx == 1:
+                card = (
+                    f"alternate_method: {summary} ({method_ref}, "
+                    "task_applicability=not_evaluated, details=not_hydrated). "
+                    "如需采用该候选，先用 exact method ref 水合后再判断适用性。"
+                )
+            elif r.get("_method_semantic_discovery"):
+                compact_description = _single_line(description, 180)
+                card = (
+                    f"{summary} ({method_ref}, status={status}{freshness_part}, "
+                    f"task_applicability={applicability}) — {compact_description}"
+                ).strip()
+            else:
+                card = (
+                    f"{summary} ({method_ref}, status={status}{freshness_part}{age_part}, "
+                    f"task_applicability={applicability}) — {description}"
+                ).strip()
             if r.get("projection_complete"):
                 body = str(r.get("body", ""))
                 quals = r.get("qualification_entries") or []
@@ -800,8 +856,15 @@ def _finalize_search_records(
         lines.append(prefix + summary[:200])
         raw_lines.append(prefix + summary)
     content = "[search_records] 命中 " + str(len(result)) + " 条:\n" + "\n".join(lines[:6])
+    if method_semantic_discovery and len(result) > len(visible_result):
+        content += (
+            f"\n[Method semantic 候选预算] 内部保留 {len(result)} 条召回，"
+            "模型显示 top1 compact card + rank2 alternate ref。"
+            "这些只是检索候选，task_applicability=not_evaluated；"
+            "不得因被召回就推断适用于当前任务。"
+        )
     # M19 FIX-02: 命中 > 展示数时如实标注（真实命中数 len(result)，非截断后计数）
-    if len(result) > 6:
+    if not method_semantic_discovery and len(result) > 6:
         content += (
             f"\n[仅显示前 6 条] 共 {len(result)} 条命中（limit={limit}）。"
             "可缩小 query 或提高 limit 精确检索。"

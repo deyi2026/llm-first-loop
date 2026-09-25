@@ -145,6 +145,7 @@ class ArchiveStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._segment_bytes = segment_bytes  # T3b: 单文件分片阈值（0=不分片，兼容旧行为）
         self._known_session_id_fn = known_session_id_fn
+        self._post_save_hooks: list[Callable[[ArchiveEntry], None]] = []
         # P3: async historical backfill and newer-run appends may target the same segment.
         # Serialize physical archive mutations without judging whether either fact is
         # semantically current; both remain valid historical truth.
@@ -152,6 +153,20 @@ class ArchiveStore:
         # EVO-20260922 增量统计缓存: sid → {seg_path: ((mtime_ns, size), count, chars)}
         # （读路径并发依赖 CPython dict 原子操作；最坏情形=并发重复扫描一次，不损正确性）
         self._stats_cache: dict[str, dict[str, tuple[tuple[int, int], int, int]]] = {}
+
+    def add_post_save_hook(self, hook: Callable[[ArchiveEntry], None]) -> None:
+        """Register a fail-open observer invoked after a durable archive append."""
+        if hook not in self._post_save_hooks:
+            self._post_save_hooks.append(hook)
+
+    def _notify_post_save(self, entry: ArchiveEntry) -> None:
+        for hook in list(self._post_save_hooks):
+            try:
+                hook(entry)
+            except Exception:  # noqa: BLE001 - derived cache must not break archive writes
+                logging.getLogger(__name__).debug(
+                    "archive post-save hook failed (fail-open)", exc_info=True
+                )
 
     def _path(self, session_id: str) -> Path:
         session_id = _validate_session_id(session_id)
@@ -363,6 +378,7 @@ class ArchiveStore:
                 offset = f.tell()
                 f.write(line_bytes)
             self._index_append(p, offset, entry)
+        self._notify_post_save(entry)
         return entry
 
     # ── T3c sidecar 索引：写入/读取 ──
@@ -688,6 +704,37 @@ class ArchiveStore:
                         continue
                     if entry.get("tool_call_id") == tool_call_id:
                         return entry
+        return None
+
+    def get_by_id(self, session_id: str, entry_id: str) -> dict | None:
+        """按稳定 archive entry id 精确水合当前会话的 canonical hit.
+
+        Semantic retrieval may rank a compact vectorization projection, but that
+        projection is never authoritative display data. This method re-reads the
+        owned archive entry and returns the same hit shape as keyword search.
+        """
+        entry_id = str(entry_id or "").strip()
+        if not entry_id:
+            return None
+        try:
+            segs = self._segment_paths(session_id)
+        except ValueError:
+            return None
+        for p in reversed(segs):
+            try:
+                with p.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if str(entry.get("id") or "") == entry_id:
+                            return self._hit_dict(entry, p)
+            except OSError:
+                continue
         return None
 
     def stats(self, session_id: str) -> dict:

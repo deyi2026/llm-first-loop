@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""批量预热 embedding 缓存（阶段 1 配套: API 模式冷启动超时降级的解法）.
+"""批量预热 versioned embedding 缓存.
 
 - 语料: MemoryStore 全量条目（与 SemanticRetriever._candidates 同格式: content + keywords）
-- 批量走本地服务 /v1/embeddings（list input），写 data/memory/embeddings.json
-- 版本键 = APIEmbedder.vector_version（同实例取值，保证与运行时一致）
+- 使用运行时同一个 APIEmbedder/版本化 cache path，避免 warm legacy embeddings.json
+  但运行时继续命中旧 embeddings-<version>.json 的 split-brain；
+- 批量走 APIEmbedder.embed_batch，继承 background class / chunk / yield 资源约束；
 - 幂等: 只嵌入缓存缺失的条目；写前备份旧文件
 
 用法: .venv/bin/python scripts/embedding_warmup.py [--service http://127.0.0.1:8765/v1] [--model bge]
@@ -20,12 +21,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-import httpx
-
 from llm_loop.memory.embedder import APIEmbedder
+from llm_loop.memory.retriever import SemanticRetriever
 from llm_loop.memory.store import MemoryStore
-
-BATCH = 256
 
 
 def main() -> int:
@@ -36,53 +34,56 @@ def main() -> int:
     args = ap.parse_args()
 
     emb = APIEmbedder(api_key="", base_url=args.service, model=args.model, timeout_s=30)
+    retriever = SemanticRetriever(emb, timeout_s=30.0, memory_dir=args.memory_dir)
     version = emb.vector_version
-    cache_path = Path(args.memory_dir) / "embeddings.json"
-
-    existing: dict[str, list] = {}
-    if cache_path.exists():
-        import json
-
-        raw = json.loads(cache_path.read_text(encoding="utf-8"))
-        if isinstance(raw, dict) and raw.get("v") == version:
-            existing = raw.get("data", {})
-        else:
-            bak = cache_path.with_suffix(f".json.bak-{time.strftime('%Y%m%dT%H%M%S')}")
-            shutil.copy2(cache_path, bak)
-            print(f"[warmup] 版本变更({raw.get('v', '?')}→{version})，旧缓存备份 -> {bak.name}")
+    cache_path = retriever._mem_cache_path
+    assert cache_path is not None
+    # ck2 binds vectors to candidate content, so warmup must use the exact same
+    # candidate/cache-key authority as runtime search.  Ignore any malformed/old
+    # stable-id rows accidentally written into the ck2 file by an older warmup script.
+    existing: dict[str, list] = {
+        key: value
+        for key, value in retriever._mem_emb_cache.items()
+        if "#sha256:" in key
+    }
 
     ms = MemoryStore(args.memory_dir)
-    entries = ms.all()
+    candidates = retriever._memory_cache_candidates(ms)
     todo = [
-        (f"memory:{e.id}", f"{e.content} {' '.join(e.keywords)}")
-        for e in entries
-        if f"memory:{e.id}" not in existing
+        (retriever._vector_cache_key(cand), cand["content"])
+        for cand in candidates
+        if retriever._vector_cache_key(cand) not in existing
     ]
-    print(f"[warmup] corpus={len(entries)} cached={len(existing)} todo={len(todo)} version={version}")
+    print(
+        f"[warmup] corpus={len(candidates)} cached={len(existing)} "
+        f"todo={len(todo)} version={version}"
+    )
     if not todo:
         print("[warmup] 已是最新，无需预热")
         return 0
 
+    if cache_path.exists():
+        bak = cache_path.with_suffix(
+            f"{cache_path.suffix}.bak-{time.strftime('%Y%m%dT%H%M%S')}"
+        )
+        shutil.copy2(cache_path, bak)
+        print(f"[warmup] 备份当前版本化缓存 -> {bak.name}")
+        # Rebuild the active ck2 file from authoritative content-bound keys. This is
+        # safe during rolling deployment because ck1 processes use a different file.
+        cache_path.unlink()
+
     t0 = time.time()
-    vecs: list[list[float]] = []
-    with httpx.Client(timeout=120) as client:
-        for i in range(0, len(todo), BATCH):
-            chunk = todo[i : i + BATCH]
-            r = client.post(
-                f"{args.service}/embeddings",
-                json={"model": args.model, "input": [c[1] for c in chunk]},
-            )
-            r.raise_for_status()
-            vecs.extend(d["embedding"] for d in r.json()["data"])
+    vecs = emb.embed_batch([text for _key, text in todo])
     dt = time.time() - t0
     assert len(vecs) == len(todo)
 
     for (key, _), v in zip(todo, vecs, strict=True):
+        if v is None:
+            raise RuntimeError(f"embedding warmup failed for {key}")
         existing[key] = v
-    payload = {"v": version, "data": existing}
-    cache_path.write_text(
-        __import__("json").dumps(payload, ensure_ascii=False), encoding="utf-8"
-    )
+    retriever._mem_emb_cache = existing
+    retriever._persist_emb_cache(cache_path, existing, emb)
+    emb.close()
     print(f"[warmup] 完成: +{len(todo)} 条, 耗时 {dt:.1f}s, 缓存 -> {cache_path}")
     return 0
 

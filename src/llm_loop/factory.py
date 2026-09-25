@@ -1304,6 +1304,19 @@ def build_engine(
         # RuntimePaths is the authority for mutable Method cache placement; do not let
         # cwd decide where semantic Method vectors are persisted.
         semantic_retriever.configure_method_dir(_runtime_paths.methods_dir)
+        if settings.semantic_memory_enabled:
+            # Semantic enablement is explicit, so make existing memory hot before this
+            # engine can serve its first request. This startup gate is outside the
+            # foreground search path; ongoing writes are vectorized asynchronously.
+            _memory_warm = semantic_retriever.warm_memory_store(memory)
+            logger.info("semantic memory startup warmup: %s", _memory_warm)
+            if int(_memory_warm.get("remaining_missing", 0) or 0) > 0:
+                logger.warning(
+                    "semantic memory startup warmup incomplete: %s", _memory_warm
+                )
+            memory.add_post_save_hook(semantic_retriever.schedule_memory_entry)
+        if settings.semantic_archive_enabled and archive is not None:
+            archive.add_post_save_hook(semantic_retriever.schedule_archive_entry)
 
     def _knowledge_health_snapshot() -> dict[str, Any]:
         return inspect_knowledge_health(_runtime_paths)
@@ -1508,16 +1521,34 @@ def build_engine(
         return bool(_knowledge_health_snapshot().get("writes_enabled"))
 
     experience_store = ExperienceStore(
-        _runtime_paths.experiences_dir, embedder=embedder, write_guard=_knowledge_write_guard
-    )  # T5: 注入 embedder 供语义检索
+        _runtime_paths.experiences_dir,
+        embedder=embedder if settings.semantic_experience_enabled else None,
+        write_guard=_knowledge_write_guard,
+    )  # semantic experience is independently qualified
     method_store = MethodStore(
         _runtime_paths.methods_dir,
         seed_dir=_runtime_paths.method_seed_dir,
         write_guard=_knowledge_write_guard,
     )
+    if semantic_retriever is not None and settings.semantic_method_enabled:
+        _method_warm = semantic_retriever.warm_method_store(method_store)
+        logger.info("semantic method startup warmup: %s", _method_warm)
+        if int(_method_warm.get("remaining_missing", 0) or 0) > 0:
+            logger.warning(
+                "semantic method startup warmup incomplete: %s", _method_warm
+            )
+        method_store.add_post_save_hook(
+            lambda record: semantic_retriever.schedule_method_candidate(
+                method_store.semantic_candidate(record)
+            )
+        )
     # REPORT-20260924 多查询融合影子模式：mode=shadow 时旁路测量（延迟/排序差异 JSONL），主路径零行为
     multiquery_probe = None
-    if settings.retrieval_multiquery_mode == "shadow" and semantic_retriever is not None:
+    if (
+        settings.semantic_memory_enabled
+        and settings.retrieval_multiquery_mode == "shadow"
+        and semantic_retriever is not None
+    ):
         multiquery_probe = MultiqueryShadowProbe(
             rewriter=make_llm_rewriter(llm),
             out_path=Path(settings.data_dir) / "retrieval_shadow.jsonl",
@@ -1530,6 +1561,9 @@ def build_engine(
         experience_store=experience_store,  # P1-2: 经验库检索接入
         method_store=method_store,
         semantic_retriever=semantic_retriever,  # T31: 语义召回
+        semantic_memory_enabled=settings.semantic_memory_enabled,
+        semantic_archive_enabled=settings.semantic_archive_enabled,
+        semantic_method_enabled=settings.semantic_method_enabled,
         file_effect_query=_file_effect_query,
         synopsis_store=_synopsis_store,
         synopsis_source_resolver=_resolve_synopsis_source,
@@ -1558,6 +1592,12 @@ def build_engine(
 
             return getattr(self._searcher, "last_diagnostics", None)
 
+        @property
+        def semantic_diagnostics(self) -> Any:
+            """最近一次 semantic 检索的机械诊断，供运行态观测/评测读取."""
+
+            return getattr(self._searcher, "semantic_diagnostics", None)
+
     corrections._search_records_fn = _RecordSearcherAdapter(searcher)  # noqa: SLF001
     corrections._experience_store = experience_store  # noqa: SLF001 — P1-2: 工具分派注入
     corrections._method_store = method_store  # noqa: SLF001 — Method lifecycle/tool actions
@@ -1566,7 +1606,9 @@ def build_engine(
     try:
         docs_searcher = DocsSearcher(
             docs_dir=str(_runtime_paths.docs_dir),
-            semantic_retriever=semantic_retriever,
+            semantic_retriever=(
+                semantic_retriever if settings.semantic_docs_enabled else None
+            ),
         )
 
         class _DocsSearcherAdapter:

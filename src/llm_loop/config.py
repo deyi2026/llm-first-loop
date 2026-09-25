@@ -476,6 +476,13 @@ class Settings:
     embedding_model: str = ""
     embedding_api_key: str = ""  # 仅 env 读取，脱敏
     embedding_dim: int = 128
+    # Semantic consumers are independently qualified.  EMBEDDING_PROVIDER only means
+    # the embedding capability exists; it does not grant every retrieval scope use.
+    semantic_memory_enabled: bool = False
+    semantic_archive_enabled: bool = False
+    semantic_method_enabled: bool = False
+    semantic_docs_enabled: bool = False
+    semantic_experience_enabled: bool = False
     retrieve_timeout_s: float = 1.0
     retrieve_semantic_top_k: int = (
         20  # auto-adaptive: env 未显式设置时按检索分数自适应（<0.3→10/>0.7→30，硬上限 50）
@@ -632,6 +639,11 @@ class Settings:
             "summary_mode": self.summary_mode,
             "embedding_provider": self.embedding_provider,
             "embedding_model": self.embedding_model,
+            "semantic_memory_enabled": self.semantic_memory_enabled,
+            "semantic_archive_enabled": self.semantic_archive_enabled,
+            "semantic_method_enabled": self.semantic_method_enabled,
+            "semantic_docs_enabled": self.semantic_docs_enabled,
+            "semantic_experience_enabled": self.semantic_experience_enabled,
             "extract_enabled": self.extract_enabled,
             "extract_interval_msgs": self.extract_interval_msgs,
             "validate_semantic": self.validate_semantic,
@@ -918,6 +930,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         embedding_model=env_values.get("EMBEDDING_MODEL", "").strip(),
         embedding_api_key=env_values.get("EMBEDDING_API_KEY", "").strip(),
         embedding_dim=env_int("EMBEDDING_DIM", 128),
+        semantic_memory_enabled=env_bool("SEMANTIC_MEMORY_ENABLED", False),
+        semantic_archive_enabled=env_bool("SEMANTIC_ARCHIVE_ENABLED", False),
+        semantic_method_enabled=env_bool("SEMANTIC_METHOD_ENABLED", False),
+        semantic_docs_enabled=env_bool("SEMANTIC_DOCS_ENABLED", False),
+        semantic_experience_enabled=env_bool("SEMANTIC_EXPERIENCE_ENABLED", False),
         retrieve_timeout_s=float(env_int("RETRIEVE_TIMEOUT_S", 1)),
         retrieve_semantic_top_k=env_int("RETRIEVE_SEMANTIC_TOP_K", 20),
         retrieval_multiquery_mode=env_one(_env_multiquery_mode, "RETRIEVAL_MULTIQUERY_MODE"),

@@ -15,7 +15,7 @@ LLM 可见的工具分派/呈现层在 introspection/corrections.py（消费本�
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +30,7 @@ def annotate_card_age(rows: list[dict]) -> list[dict]:
 
     exact hydration 路径不经过本函数（precise ref 不参与排序权衡）。
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     annotated: list[dict] = []
     for row in rows:
         ts = str(row.get("updated_at") or row.get("ts") or "")
@@ -39,7 +39,7 @@ def annotate_card_age(rows: list[dict]) -> list[dict]:
             try:
                 dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                    dt = dt.replace(tzinfo=UTC)
                 age_days = max((now - dt).days, 0)
             except ValueError:
                 age_days = None
@@ -201,6 +201,9 @@ class RecordSearcher:
         experience_store: Any | None = None,
         method_store: Any | None = None,
         semantic_retriever: Any | None = None,
+        semantic_memory_enabled: bool = True,
+        semantic_archive_enabled: bool = True,
+        semantic_method_enabled: bool = True,
         rule_path: str | Path | None = None,
         file_effect_query: Any | None = None,
         workspace_scope_resolver: Any | None = None,
@@ -216,6 +219,9 @@ class RecordSearcher:
         self._experience_store = experience_store  # P1-2: 经验库（None 时 _search_experience 返回空）
         self._method_store = method_store
         self._semantic = semantic_retriever  # T31: 语义检索器（可 None 走关键词）
+        self._semantic_memory_enabled = bool(semantic_memory_enabled)
+        self._semantic_archive_enabled = bool(semantic_archive_enabled)
+        self._semantic_method_enabled = bool(semantic_method_enabled)
         default_rule_path = Path(__file__).resolve().parents[3] / "docs" / "ai_rules.md"
         self._rule_index = RuleIndex(rule_path or default_rule_path)
         self._file_effect_query = file_effect_query
@@ -224,6 +230,7 @@ class RecordSearcher:
         self._synopsis_source_resolver = synopsis_source_resolver
         # R3(P0-3/D11): experience 检索诊断透传——search() 入口重置，experience/all 路径回填
         self._last_diagnostics: dict[str, Any] | None = None
+        self._last_semantic_diagnostics: dict[str, Any] | None = None
 
     @property
     def last_diagnostics(self) -> dict[str, Any] | None:
@@ -233,6 +240,11 @@ class RecordSearcher:
         不携带陈旧诊断；工具层经 duck-typing 读取（属性缺失优雅降级为无诊断段）。
         """
         return self._last_diagnostics
+
+    @property
+    def semantic_diagnostics(self) -> dict[str, Any] | None:
+        """最近一次 semantic 检索的机械诊断，不包含查询正文或记录内容."""
+        return self._last_semantic_diagnostics
 
     def search(
         self,
@@ -254,6 +266,7 @@ class RecordSearcher:
         """
         # R3(P0-3): 每次检索重置诊断，防上一次 experience/all 检索的陈旧诊断跨 kind 泄漏
         self._last_diagnostics = None
+        self._last_semantic_diagnostics = None
         if kind not in _VALID_KINDS:
             raise InvalidSearchKindError(f"kind '{kind}' 不在可选范围: {', '.join(sorted(_VALID_KINDS))}")
         special = self._search_special(kind, query, limit, session_id)
@@ -735,7 +748,12 @@ class RecordSearcher:
             return self._method_store.list(raw, limit)
         keyword_limit = max(limit * 4, 20)
         keyword = self._method_store.list(raw, keyword_limit)
-        if self._semantic is None or not self._semantic.semantic_available() or not raw:
+        if (
+            not self._semantic_method_enabled
+            or self._semantic is None
+            or not self._semantic.semantic_available()
+            or not raw
+        ):
             return annotate_card_age(keyword[:limit])  # EVO-20260923-6fe23c9b F2(b)
         result = self._semantic.search(
             raw,
@@ -745,16 +763,26 @@ class RecordSearcher:
             keyword_results=keyword,
         )
         rows: list[dict] = []
+        failures = 0
         for hit in result.entries:
             ref = str(hit.get("key") or "")
             record = self._method_store.get(ref)
             if record is None:
+                failures += 1
                 continue
             card = record.card()
+            card["_method_semantic_discovery"] = True
             if record.freshness_refs:
                 card["freshness"] = self._method_store.freshness(record.method_ref)
             rows.append(card)
-        return annotate_card_age(rows[:limit])  # EVO-20260923-6fe23c9b F2(b)
+        rows = annotate_card_age(rows[:limit])  # EVO-20260923-6fe23c9b F2(b)
+        self._store_semantic_diagnostics(
+            result,
+            scope="method",
+            canonical_hydration_failures=failures,
+            rows=rows,
+        )
+        return rows
 
     def _search_experience(
         self,
@@ -844,7 +872,11 @@ class RecordSearcher:
         )
         keyword_dicts = [self._memory_record(e) for e in keyword_hits]
         # T31: semantic recall keeps the same session-scoped keyword seed.
-        if self._semantic is not None and self._semantic.semantic_available():
+        if (
+            self._semantic_memory_enabled
+            and self._semantic is not None
+            and self._semantic.semantic_available()
+        ):
             result = self._semantic.search(
                 raw,
                 top_k=limit,
@@ -853,16 +885,12 @@ class RecordSearcher:
                 memory=self._memory,
                 keyword_results=keyword_dicts,
             )
-            merged = self._merge_semantic(result, keyword_dicts, "memory")
-            final = [
-                h
-                for h in merged
-                if not str(h.get("id", ""))
-                or (
-                    (entry := self._memory._by_id(str(h.get("id", "")))) is None
-                    or self._memory_visible_in_session(entry, session_id)
-                )
-            ][:limit]
+            final = self._canonical_memory_rows(
+                result,
+                keyword_dicts,
+                limit=limit,
+                session_id=session_id,
+            )
             # REPORT-20260924 多查询融合影子模式：旁路测量，返回值不受任何影响
             probe = getattr(self, "_multiquery_shadow", None)
             if probe is not None and getattr(probe, "enabled", False) and not _skip_shadow:
@@ -896,7 +924,11 @@ class RecordSearcher:
                     break
             keyword_hits = self._tag_kind(keyword_hits)
         # T31: 语义召回
-        if self._semantic is not None and self._semantic.semantic_available():
+        if (
+            self._semantic_archive_enabled
+            and self._semantic is not None
+            and self._semantic.semantic_available()
+        ):
             result = self._semantic.search(
                 query,
                 top_k=limit,
@@ -905,8 +937,149 @@ class RecordSearcher:
                 archive=self._archive,
                 keyword_results=keyword_hits,
             )
-            return self._merge_semantic(result, keyword_hits, "archive")
+            return self._canonical_archive_rows(
+                result,
+                keyword_hits,
+                limit=limit,
+                session_id=session_id,
+            )
         return keyword_hits
+
+    @staticmethod
+    def _copy_semantic_metadata(source: dict, target: dict, mode: str) -> dict:
+        for key in ("_rrf_score", "_semantic_score", "_entity_score"):
+            if key in source:
+                target[key] = source[key]
+        if mode != "keyword":
+            target["note"] = f"语义检索生效（mode={mode}）"
+        return target
+
+    def _store_semantic_diagnostics(
+        self,
+        result: Any,
+        *,
+        scope: str,
+        canonical_hydration_failures: int,
+        rows: list[dict],
+    ) -> None:
+        diag = dict(getattr(result, "diagnostics", {}) or {})
+        diag["scope"] = scope
+        diag["canonical_hydration_failures"] = canonical_hydration_failures
+        diag["empty_render_count"] = sum(
+            1 for row in rows if not str(row.get("summary") or "").strip()
+        )
+        self._last_semantic_diagnostics = diag
+
+    def _canonical_memory_rows(
+        self,
+        result: Any,
+        keyword_hits: list[dict],
+        *,
+        limit: int,
+        session_id: str,
+    ) -> list[dict]:
+        """将 semantic 排名结果按 stable memory id 回源为 canonical record."""
+        rows: list[dict] = []
+        seen: set[str] = set()
+        failures = 0
+        for hit in list(result.entries):
+            entry_id = str(hit.get("id") or "")
+            if not entry_id:
+                failures += 1
+                continue
+            if entry_id in seen:
+                continue
+            entry = self._memory._by_id(entry_id) if self._memory is not None else None
+            if entry is None or not self._memory_visible_in_session(entry, session_id):
+                failures += 1
+                continue
+            row = self._copy_semantic_metadata(
+                hit, self._memory_record(entry), str(result.mode)
+            )
+            rows.append(row)
+            seen.add(entry_id)
+            if len(rows) >= limit:
+                break
+        # fail-open: semantic projection 不得抹掉原本可见的 lexical hit.
+        for hit in keyword_hits:
+            if len(rows) >= limit:
+                break
+            entry_id = str(hit.get("id") or "")
+            if entry_id and entry_id in seen:
+                continue
+            rows.append(dict(hit))
+            if entry_id:
+                seen.add(entry_id)
+        rows = rows[:limit]
+        self._store_semantic_diagnostics(
+            result,
+            scope="memory",
+            canonical_hydration_failures=failures,
+            rows=rows,
+        )
+        return rows
+
+    def _canonical_archive_rows(
+        self,
+        result: Any,
+        keyword_hits: list[dict],
+        *,
+        limit: int,
+        session_id: str,
+    ) -> list[dict]:
+        """将 semantic 排名结果按 stable archive id 回源为 canonical record."""
+        rows: list[dict] = []
+        seen: set[str] = set()
+        failures = 0
+        lexical_by_id = {
+            str(hit.get("id") or ""): hit
+            for hit in keyword_hits
+            if str(hit.get("id") or "")
+        }
+        for hit in list(result.entries):
+            entry_id = str(hit.get("id") or "")
+            if not entry_id:
+                failures += 1
+                continue
+            if entry_id in seen:
+                continue
+            canonical = lexical_by_id.get(entry_id)
+            if canonical is None and session_id and self._archive is not None:
+                getter = getattr(self._archive, "get_by_id", None)
+                if callable(getter):
+                    canonical = getter(session_id, entry_id)
+            if canonical is None:
+                failures += 1
+                continue
+            row = dict(canonical)
+            row.setdefault("kind", "archive")
+            if not str(row.get("summary") or "").strip():
+                row["summary"] = str(row.get("content_preview") or "")[:500]
+            row = self._copy_semantic_metadata(hit, row, str(result.mode))
+            rows.append(row)
+            seen.add(entry_id)
+            if len(rows) >= limit:
+                break
+        for hit in keyword_hits:
+            if len(rows) >= limit:
+                break
+            entry_id = str(hit.get("id") or "")
+            if entry_id and entry_id in seen:
+                continue
+            row = dict(hit)
+            if not str(row.get("summary") or "").strip():
+                row["summary"] = str(row.get("content_preview") or "")[:500]
+            rows.append(row)
+            if entry_id:
+                seen.add(entry_id)
+        rows = rows[:limit]
+        self._store_semantic_diagnostics(
+            result,
+            scope="archive",
+            canonical_hydration_failures=failures,
+            rows=rows,
+        )
+        return rows
 
     def _merge_semantic(self, result, keyword_hits: list[dict], kind: str) -> list[dict]:
         """语义结果与关键词结果融合（mode/note 如实标注）."""

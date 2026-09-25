@@ -9,8 +9,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import math
+import threading
+import time
 from typing import Protocol
 
 import httpx
@@ -106,35 +109,203 @@ class APIEmbedder:
         # （retriever._emb_version() 经 getattr 读取；experiences/store.py 同样消费）
         self.vector_version = f"api-v1:{base_url.rstrip('/')}:{model}"
         self._client = httpx.Client(timeout=timeout_s)
+        self._diag_lock = threading.Lock()
+        self.last_diagnostics: dict[str, float | int | str] = {}
+
+    def _set_diagnostics(self, diag: dict[str, float | int | str]) -> None:
+        with self._diag_lock:
+            self.last_diagnostics = dict(diag)
 
     def embed(self, text: str) -> list[float] | None:
+        return self.embed_with_timeout(text, timeout_s=self.timeout_s)
+
+    def embed_with_timeout(
+        self, text: str, *, timeout_s: float, request_class: str = "foreground"
+    ) -> list[float] | None:
+        """Embed one text with a caller-owned deadline.
+
+        Semantic retrieval has a tighter foreground budget than the generic embedding
+        client timeout.  Per-call timeout prevents the generic 5s HTTP timeout from
+        leaking through a 1s retrieval budget.
+        """
         if not text:
             return None
+        started = time.monotonic()
         try:
+            headers = {
+                **(
+                    {"Authorization": f"Bearer {self.api_key}"}
+                    if self.api_key
+                    else {}
+                ),
+                "Content-Type": "application/json",
+                "X-LFL-Embedding-Class": (
+                    "background" if request_class == "background" else "foreground"
+                ),
+                "X-LFL-Embedding-Deadline-Ms": str(
+                    max(10, int(float(timeout_s) * 1000.0 * 0.35))
+                ),
+            }
             resp = self._client.post(
                 f"{self.base_url}/embeddings",
                 # 本地 embedding 端点无需认证（api_key 为空时不发 Authorization 头）。
-                headers=(
-                    {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-                    if self.api_key else {"Content-Type": "application/json"}
-                ),
+                headers=headers,
                 json={"model": self.model, "input": text},
+                timeout=max(0.01, float(timeout_s)),
             )
             if resp.status_code >= 400:
+                diag: dict[str, float | int | str] = {
+                    "request_class": request_class,
+                    "http_ms": round((time.monotonic() - started) * 1000.0, 3),
+                    "timeout_s": float(timeout_s),
+                    "error": f"http_{resp.status_code}",
+                }
+                with contextlib.suppress(Exception):
+                    payload = resp.json()
+                    meta = payload.get("x_lfl") if isinstance(payload, dict) else None
+                    if isinstance(meta, dict):
+                        for key in ("queue_wait_ms", "encode_ms", "batch_size"):
+                            value = meta.get(key)
+                            if isinstance(value, (int, float)):
+                                diag[key] = value
+                        error_payload = payload.get("error")
+                        if isinstance(error_payload, dict) and error_payload.get("type"):
+                            diag["error"] = str(error_payload["type"])
+                self._set_diagnostics(diag)
                 return None
             data = resp.json()
+            meta = data.get("x_lfl") if isinstance(data, dict) else None
+            diag: dict[str, float | int | str] = {
+                "request_class": request_class,
+                "http_ms": round((time.monotonic() - started) * 1000.0, 3),
+                "timeout_s": float(timeout_s),
+                "error": "",
+            }
+            if isinstance(meta, dict):
+                for key in ("queue_wait_ms", "encode_ms", "batch_size"):
+                    value = meta.get(key)
+                    if isinstance(value, (int, float)):
+                        diag[key] = value
+            self._set_diagnostics(diag)
             return data["data"][0]["embedding"]
-        except Exception:  # noqa: BLE001 — 嵌入失败如实返回 None，不抛穿
+        except Exception as exc:  # noqa: BLE001 — 嵌入失败如实返回 None，不抛穿
+            self._set_diagnostics(
+                {
+                    "request_class": request_class,
+                    "http_ms": round((time.monotonic() - started) * 1000.0, 3),
+                    "timeout_s": float(timeout_s),
+                    "error": type(exc).__name__,
+                }
+            )
             return None
 
-    _BATCH_CHUNK = 64  # 与 evals/retrieval_ab/regression_gate.py bge 端点实测分片对齐
+    def embed_batch_with_timeout(
+        self,
+        texts: list[str],
+        *,
+        timeout_s: float,
+        request_class: str = "foreground",
+        chunk_size: int = 16,
+    ) -> list[list[float] | None]:
+        """Batch embed under one caller-owned wall-clock budget.
+
+        Docs semantic ranking is a foreground operation over an already-admitted
+        candidate set.  It must not inherit the generic 5s client timeout or let one
+        large encode monopolize the shared local embedding lane.  Small chunks bound
+        each non-preemptible server encode; every subsequent chunk consumes only the
+        remaining caller budget.
+        """
+        out: list[list[float] | None] = [None] * len(texts)
+        idx_map = [i for i, text in enumerate(texts) if text]
+        if not idx_map:
+            return out
+        deadline = time.monotonic() + max(0.01, float(timeout_s))
+        chunk_size = max(1, min(int(chunk_size), self._BATCH_CHUNK))
+        started = time.monotonic()
+        total_queue_ms = 0.0
+        total_encode_ms = 0.0
+        completed = 0
+        error = ""
+
+        for start in range(0, len(idx_map), chunk_size):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.01:
+                error = "batch_deadline_exhausted"
+                break
+            chunk = idx_map[start : start + chunk_size]
+            try:
+                resp = self._client.post(
+                    f"{self.base_url}/embeddings",
+                    headers={
+                        **(
+                            {"Authorization": f"Bearer {self.api_key}"}
+                            if self.api_key
+                            else {}
+                        ),
+                        "Content-Type": "application/json",
+                        "X-LFL-Embedding-Class": (
+                            "background"
+                            if request_class == "background"
+                            else "foreground"
+                        ),
+                        "X-LFL-Embedding-Deadline-Ms": str(
+                            max(10, int(remaining * 1000.0 * 0.35))
+                        ),
+                    },
+                    json={"model": self.model, "input": [texts[i] for i in chunk]},
+                    timeout=max(0.01, remaining),
+                )
+                payload = resp.json()
+                meta = payload.get("x_lfl") if isinstance(payload, dict) else None
+                if isinstance(meta, dict):
+                    total_queue_ms += float(meta.get("queue_wait_ms") or 0.0)
+                    total_encode_ms += float(meta.get("encode_ms") or 0.0)
+                if resp.status_code >= 400:
+                    payload_error = payload.get("error") if isinstance(payload, dict) else None
+                    if isinstance(payload_error, dict) and payload_error.get("type"):
+                        error = str(payload_error["type"])
+                    else:
+                        error = f"http_{resp.status_code}"
+                    break
+                rows = payload.get("data") if isinstance(payload, dict) else None
+                if not isinstance(rows, list) or len(rows) != len(chunk):
+                    error = "invalid_batch_response"
+                    break
+                if any(not isinstance(row, dict) or "embedding" not in row for row in rows):
+                    error = "invalid_batch_response"
+                    break
+                for index, row in zip(chunk, rows, strict=True):
+                    out[index] = row["embedding"]
+                completed += len(chunk)
+            except Exception as exc:  # noqa: BLE001 — caller fails open to lexical
+                error = type(exc).__name__
+                break
+
+        self._set_diagnostics(
+            {
+                "request_class": request_class,
+                "http_ms": round((time.monotonic() - started) * 1000.0, 3),
+                "timeout_s": float(timeout_s),
+                "queue_wait_ms": round(total_queue_ms, 3),
+                "encode_ms": round(total_encode_ms, 3),
+                "batch_size": completed,
+                "error": error,
+            }
+        )
+        return out
+
+    _BATCH_CHUNK = 16  # background prewarm: short lock holds let foreground queries interleave
+    _BATCH_YIELD_S = 0.02  # lower background duty cycle on hosts shared with local LLM inference
+    _BACKGROUND_QUEUE_DEADLINE_MS = 250
+    _BACKGROUND_HTTP_TIMEOUT_S = 1.5
 
     def embed_batch(self, texts: list[str]) -> list[list[float] | None]:
         """批量嵌入（EVO-20260924-d9c5ad20 冷启动预热）。
 
-        一次 HTTP 携带整批（64/片），替代 N 次单条往返——语料增长后首批检索的
-        冷启动窗口从 N×(单条延迟) 收敛到 ceil(N/64)×批延迟；空文本位置直接 None；
-        响应条数不齐/异常 → 整批回退逐条 embed（保序、语义与单条一致）。
+        小片 HTTP 批量替代 N 次单条往返；片间主动让出 CPU/统一内存带宽，避免
+        后台预热持续压低同机本地 LLM 的前台生成吞吐；空文本位置直接 None；
+        响应条数不齐/异常 → 当前 chunk 保留 None，交给后续后台轮次重试。
+        不在一次后台预热中串行逐条补偿，避免单个超时放大成 N×timeout 长尾。
         """
         out: list[list[float] | None] = [None] * len(texts)
         idx_map = [i for i, t in enumerate(texts) if t]
@@ -143,21 +314,32 @@ class APIEmbedder:
             try:
                 resp = self._client.post(
                     f"{self.base_url}/embeddings",
-                    headers=(
-                        {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-                        if self.api_key else {"Content-Type": "application/json"}
-                    ),
+                    headers={
+                        **(
+                            {"Authorization": f"Bearer {self.api_key}"}
+                            if self.api_key
+                            else {}
+                        ),
+                        "Content-Type": "application/json",
+                        "X-LFL-Embedding-Class": "background",
+                        "X-LFL-Embedding-Deadline-Ms": str(
+                            self._BACKGROUND_QUEUE_DEADLINE_MS
+                        ),
+                    },
                     json={"model": self.model, "input": [texts[i] for i in chunk]},
+                    timeout=min(self.timeout_s, self._BACKGROUND_HTTP_TIMEOUT_S),
                 )
                 if resp.status_code >= 400:
-                    return [self.embed(t) for t in texts]
+                    continue
                 rows = (resp.json().get("data") or [])
                 if len(rows) != len(chunk) or any("embedding" not in r for r in rows):
-                    return [self.embed(t) for t in texts]
+                    continue
                 for i, row in zip(chunk, rows, strict=True):
                     out[i] = row["embedding"]
-            except Exception:  # noqa: BLE001 — 批量失败如实回退逐条
-                return [self.embed(t) for t in texts]
+                if s + self._BATCH_CHUNK < len(idx_map):
+                    time.sleep(self._BATCH_YIELD_S)
+            except Exception:  # noqa: BLE001 — 后台失败留待后续预热轮次重试
+                continue
         return out
 
     def close(self) -> None:

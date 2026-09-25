@@ -8,7 +8,11 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import threading
+import time
 
 from llm_loop.memory.store import MemoryEntry, MemoryStore
 
@@ -75,3 +79,35 @@ def test_thread_safety_concurrent_saves(tmp_path):
         t.join()
     assert not errors, f"并发写异常: {errors}"
     assert len(store.all()) == 20  # 4 线程 × 5 条全部保留
+
+
+def test_real_cross_process_concurrent_saves_are_lossless(tmp_path):
+    """Two OS processes writing from stale snapshots must preserve every unique row."""
+    script = r"""
+import sys, time
+from llm_loop.memory.store import MemoryEntry, MemoryStore
+root, prefix, start_at = sys.argv[1], sys.argv[2], float(sys.argv[3])
+store = MemoryStore(root)
+while time.time() < start_at:
+    time.sleep(0.001)
+for i in range(8):
+    content = f"{prefix}-{i}"
+    store.save_entry(MemoryEntry(id="", type="fact", content=content, keywords=[content]))
+"""
+    start_at = time.time() + 0.4
+    env = dict(os.environ)
+    procs = [
+        subprocess.Popen(
+            [sys.executable, "-c", script, str(tmp_path), prefix, str(start_at)],
+            env=env,
+        )
+        for prefix in ("proc-a", "proc-b")
+    ]
+    for proc in procs:
+        assert proc.wait(timeout=15) == 0
+
+    final = MemoryStore(tmp_path)
+    contents = {entry.content for entry in final.all()}
+    assert {f"proc-a-{i}" for i in range(8)} <= contents
+    assert {f"proc-b-{i}" for i in range(8)} <= contents
+    assert len(contents) == 16

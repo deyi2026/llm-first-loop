@@ -185,7 +185,7 @@ class TestSemanticDegradation:
         s = DocsSearcher(docs_dir=docs, semantic_retriever=FakeSemantic())
         results = s.search("关键词")
         assert len(results) == 1
-        assert "note" not in results[0]
+        assert "已降级为关键词检索" in results[0]["note"]
 
     def test_semantic_exception_degrades(self, tmp_path: Path) -> None:
         docs = tmp_path / "docs"
@@ -202,7 +202,73 @@ class TestSemanticDegradation:
         s = DocsSearcher(docs_dir=docs, semantic_retriever=FakeSemantic())
         results = s.search("关键词")
         assert len(results) == 1
-        assert "note" not in results[0]
+        assert "已降级为关键词检索" in results[0]["note"]
+
+    def test_supported_semantic_rank_api_reorders_keyword_candidates(self, tmp_path: Path) -> None:
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        (docs / "DESIGN-a.md").write_text("# A\n\n共同关键词 alpha", encoding="utf-8")
+        (docs / "DESIGN-b.md").write_text("# B\n\n共同关键词 beta", encoding="utf-8")
+
+        class FakeSemantic:
+            def semantic_available(self) -> bool:
+                return True
+
+            def rank_texts(self, query: str, candidates: list[str], *, top_k: int):
+                assert query == "共同关键词"
+                assert len(candidates) == 2
+                return [(1, 0.9), (0, 0.3)][:top_k]
+
+        s = DocsSearcher(docs_dir=docs, semantic_retriever=FakeSemantic())
+        results = s.search("共同关键词")
+        assert [r["title"] for r in results] == ["B", "A"]
+        assert all(r.get("mode") == "semantic" for r in results)
+        assert all("note" not in r for r in results)
+
+    def test_semantic_ranking_skips_unbounded_candidate_set(self, tmp_path: Path) -> None:
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        for idx in range(65):
+            (docs / f"REPORT-{idx:02d}.md").write_text(
+                f"# Report {idx}\n\n共同宽查询 candidate {idx}",
+                encoding="utf-8",
+            )
+
+        class FakeSemantic:
+            def semantic_available(self) -> bool:
+                return True
+
+            def rank_texts(self, *args: object, **kwargs: object):
+                raise AssertionError("candidate budget must skip semantic ranking")
+
+        s = DocsSearcher(docs_dir=docs, semantic_retriever=FakeSemantic())
+        results = s.search("共同宽查询", limit=10)
+        assert len(results) == 10
+        assert all(r.get("mode") == "lexical_candidate_budget" for r in results)
+        assert all("note" not in r for r in results)
+
+    def test_semantic_ranking_accepts_candidate_set_at_budget(self, tmp_path: Path) -> None:
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        for idx in range(64):
+            (docs / f"REPORT-{idx:02d}.md").write_text(
+                f"# Report {idx}\n\n共同边界查询 candidate {idx}",
+                encoding="utf-8",
+            )
+
+        class FakeSemantic:
+            def semantic_available(self) -> bool:
+                return True
+
+            def rank_texts(self, query: str, candidates: list[str], *, top_k: int):
+                assert query == "共同边界查询"
+                assert len(candidates) == 64
+                return [(idx, float(64 - idx)) for idx in range(top_k)]
+
+        s = DocsSearcher(docs_dir=docs, semantic_retriever=FakeSemantic())
+        results = s.search("共同边界查询", limit=10)
+        assert len(results) == 10
+        assert all(r.get("mode") == "semantic" for r in results)
 
 
 # ── §6.2 run_search_docs 工具层单元测试 ──
@@ -295,6 +361,27 @@ class TestRunSearchDocs:
         r = run_search_docs(fn, {"query": "测试"})
         assert r.status == ToolResultStatus.SUCCESS
         assert "降级标注" in r.content
+        assert r.content.count("语义检索不可用，已降级为关键词检索") == 1
+
+    def test_semantic_mode_is_not_rendered_as_degradation(self) -> None:
+        def fn(**kw: object) -> list[dict]:
+            return [
+                {
+                    "kind": "docs",
+                    "file": "/docs/test.md",
+                    "title": "测试",
+                    "summary": "摘要",
+                    "relevance": 0.8,
+                    "doc_type": "design",
+                    "ts": "2026-08-13",
+                    "mode": "semantic",
+                }
+            ]
+
+        r = run_search_docs(fn, {"query": "测试"})
+        assert r.status == ToolResultStatus.SUCCESS
+        assert "[检索模式] semantic" in r.content
+        assert "[降级标注]" not in r.content
 
     def test_oserror_returns_failure(self) -> None:
         def fn(**kw: object) -> list[dict]:

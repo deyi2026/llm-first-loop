@@ -15,6 +15,7 @@ from typing import Any
 
 _SUMMARY_MAX_CHARS = 300
 _DISPLAY_LIMIT = 6
+_SEMANTIC_CANDIDATE_CAP = 64
 
 _DOC_TYPE_PREFIXES: list[tuple[str, str]] = [
     ("ASSESSMENT-", "assessment"),
@@ -162,8 +163,27 @@ class DocsSearcher:
         if not candidates:
             return []
 
-        results = self._semantic_recall(query, candidates) if self._should_use_semantic() else None
+        semantic_requested = self._semantic is not None
+        semantic_available = self._should_use_semantic()
+        semantic_budget_ok = len(candidates) <= _SEMANTIC_CANDIDATE_CAP
+        results = (
+            self._semantic_recall(query, candidates)
+            if semantic_available and semantic_budget_ok
+            else None
+        )
         if results is None:
+            degradation_note = ""
+            fallback_mode = ""
+            if semantic_requested and not semantic_budget_ok:
+                fallback_mode = "lexical_candidate_budget"
+            elif semantic_requested:
+                diag = dict(
+                    getattr(self._semantic, "last_rank_texts_diagnostics", {}) or {}
+                )
+                reason = str(diag.get("semantic_fallback_reason") or "")
+                degradation_note = "语义检索不可用，已降级为关键词检索"
+                if reason:
+                    degradation_note += f" ({reason})"
             results = [
                 {
                     "kind": "docs",
@@ -173,6 +193,8 @@ class DocsSearcher:
                     "relevance": 1.0,
                     "doc_type": m.doc_type,
                     "ts": m.ts,
+                    **({"mode": fallback_mode} if fallback_mode else {}),
+                    **({"note": degradation_note} if degradation_note else {}),
                 }
                 for m in candidates
             ]
@@ -227,7 +249,20 @@ class DocsSearcher:
             return None
         try:
             docs_text = [f"{m.title} {m.summary}" for m in candidates]
-            scores = self._semantic.search(query, candidates=docs_text, top_k=len(candidates))
+            rank_texts = getattr(self._semantic, "rank_texts", None)
+            if not callable(rank_texts):
+                return None
+            scores = rank_texts(query, docs_text, top_k=len(candidates))
+            if not scores:
+                return None
+            diag = dict(
+                getattr(self._semantic, "last_rank_texts_diagnostics", {}) or {}
+            )
+            mode = (
+                "semantic_fallback"
+                if str(diag.get("engine") or "") == "fallback"
+                else "semantic"
+            )
             return [
                 {
                     "kind": "docs",
@@ -237,7 +272,7 @@ class DocsSearcher:
                     "relevance": float(score),
                     "doc_type": candidates[i].doc_type,
                     "ts": candidates[i].ts,
-                    "note": "mode=semantic",
+                    "mode": mode,
                 }
                 for i, score in scores
             ]
