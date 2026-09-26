@@ -70,6 +70,77 @@ def test_exact_repeat_observed_once_at_threshold():
     assert sess.messages == []
 
 
+def test_reordered_flat_argument_keys_share_exact_fingerprint_and_repeat_count():
+    eng, sess = _StubEngine(), _Sess()
+    calls = [
+        _tc(path="/a.py", offset=0, limit=1),
+        _tc(limit=1, path="/a.py", offset=0),
+        _tc(offset=0, limit=1, path="/a.py"),
+    ]
+
+    assert len({eng._stagnation_fingerprint(tc) for tc in calls}) == 1
+    for tc in calls:
+        eng._track_tool_observation(tc, sess, [])
+
+    assert eng._run_state().stagnation_state["count"] == _STAGNATION_REMIND_AT
+    assert [a for a in eng.actions if a[0] == "tool.repeat_observed"] == [
+        (
+            "tool.repeat_observed",
+            "observed",
+            f"tool=read_file; exact_call_count={_STAGNATION_REMIND_AT}; prompt_chars=0",
+        )
+    ]
+
+
+def test_reordered_nested_object_keys_share_exact_fingerprint():
+    eng = _StubEngine()
+    a = SimpleNamespace(
+        name="example",
+        arguments={
+            "path": "/a.py",
+            "options": {"mode": "strict", "limits": {"soft": 1, "hard": 2}},
+        },
+    )
+    b = SimpleNamespace(
+        name="example",
+        arguments={
+            "options": {"limits": {"hard": 2, "soft": 1}, "mode": "strict"},
+            "path": "/a.py",
+        },
+    )
+
+    assert eng._stagnation_fingerprint(a) == eng._stagnation_fingerprint(b)
+
+
+def test_exact_fingerprint_preserves_material_argument_differences():
+    eng = _StubEngine()
+    base = SimpleNamespace(
+        name="example",
+        arguments={"path": "/a.py", "items": [1, 2], "options": {"limit": 1}},
+    )
+    materially_different = [
+        SimpleNamespace(
+            name="example",
+            arguments={"path": "/a.py", "items": [2, 1], "options": {"limit": 1}},
+        ),
+        SimpleNamespace(
+            name="example",
+            arguments={"path": "/a.py", "items": [1, 2], "options": {"limit": 2}},
+        ),
+        SimpleNamespace(
+            name="example",
+            arguments={"path": "/a.py", "items": [1, 2], "options": {"limit": "1"}},
+        ),
+        SimpleNamespace(
+            name="other",
+            arguments={"path": "/a.py", "items": [1, 2], "options": {"limit": 1}},
+        ),
+    ]
+
+    base_fp = eng._stagnation_fingerprint(base)
+    assert all(eng._stagnation_fingerprint(tc) != base_fp for tc in materially_different)
+
+
 def test_argument_change_resets_repeat_count():
     eng, sess = _StubEngine(), _Sess()
     for _ in range(2):

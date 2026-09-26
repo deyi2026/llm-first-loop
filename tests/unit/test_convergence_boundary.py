@@ -119,6 +119,64 @@ def test_repeat_observation_keeps_real_tools_visible_and_executes_direct_call(
     assert "direct_tool_continued" in trace
 
 
+def test_reordered_equivalent_args_arm_convergence_then_direct_tool_continues(
+    tmp_path, monkeypatch
+):
+    target = "/nonexistent/convergence-target"
+
+    def _resp(call_id: str, arguments: dict) -> LLMResponse:
+        return LLMResponse(
+            content="",
+            tool_calls=[ToolCall(id=call_id, name="read_file", arguments=arguments)],
+            provider="fake",
+        )
+
+    engine, fake = _mk(
+        tmp_path,
+        monkeypatch,
+        responses=[
+            _resp("c1", {"path": target, "offset": 0, "limit": 1}),
+            _resp("c2", {"limit": 1, "path": target, "offset": 0}),
+            _resp("c3", {"offset": 0, "limit": 1, "path": target}),
+            _resp("c4", {"path": target, "limit": 1, "offset": 0}),
+            LLMResponse(content="done", tool_calls=[], provider="fake"),
+        ],
+    )
+    _capture_tools(fake)
+    sid = engine.session.create()
+
+    result = engine.run(sid, "真实任务")
+
+    assert result.final_answer == "done"
+    trace = str(engine.status.snapshot().get("action_trace", []))
+    assert "exact_call_count=3" in trace
+    assert "convergence.observation" in trace
+    assert "direct_tool_continued" in trace
+    assert "read_file" in _tool_names(fake.calls[3])
+    assert "convergence_decide" not in _tool_names(fake.calls[3])
+
+
+def test_materially_different_args_do_not_arm_repeat_convergence(tmp_path, monkeypatch):
+    engine, _fake = _mk(
+        tmp_path,
+        monkeypatch,
+        responses=[
+            _read_resp("c1", "/nonexistent/a"),
+            _read_resp("c2", "/nonexistent/b"),
+            _read_resp("c3", "/nonexistent/c"),
+            LLMResponse(content="done", tool_calls=[], provider="fake"),
+        ],
+    )
+    sid = engine.session.create()
+
+    result = engine.run(sid, "真实任务")
+
+    assert result.final_answer == "done"
+    trace = str(engine.status.snapshot().get("action_trace", []))
+    assert "tool.repeat_observed" not in trace
+    assert "reasons=repeated_exact_call" not in trace
+
+
 def test_outstanding_async_obligation_does_not_change_direct_tool_surface(tmp_path, monkeypatch):
     engine, fake = _mk(
         tmp_path,

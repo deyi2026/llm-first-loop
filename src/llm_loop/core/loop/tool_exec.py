@@ -79,6 +79,19 @@ def _json_dumps_args(arguments: dict) -> str:
         return "{}"
 
 
+def _canonical_json_dumps_args(arguments: dict) -> str:
+    """Canonical JSON for exact-call identity; object key order is not semantic."""
+    import json as _json
+
+    try:
+        return _json.dumps(arguments, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        # Tool arguments are JSON objects by contract. Keep the historical fail-open
+        # fallback for malformed/non-JSON compatibility objects without changing
+        # the normal raw-argument serializer used by audit/size accounting.
+        return _json_dumps_args(arguments)
+
+
 def _tool_args_summary(arguments: Any) -> str:
     """工具参数摘要（P2-1，design §2.5.1 B4）：JSON 序列化 + 超 200 字符截断附 "…"。"""
     import json as _json

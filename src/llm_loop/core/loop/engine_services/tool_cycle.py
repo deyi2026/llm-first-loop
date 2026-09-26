@@ -38,6 +38,7 @@ from llm_loop.core.loop.tool_exec import (
     _STAGNATION_REMIND_AT,
     _is_empty_search_result,
     _is_search_like_call,
+    _canonical_json_dumps_args,
     _json_dumps_args,
     _tool_args_summary,
     fingerprint_summary,
@@ -693,10 +694,12 @@ class ToolCycleService:
     def _stagnation_fingerprint(self, tc) -> str:
         """Exact call fingerprint for factual telemetry only.
 
-        P2-A: all declared arguments participate. Program code must not collapse
-        different roots/depths/options into one semantic "same target" identity.
+        P2-A: all declared arguments participate. JSON object key order is canonicalized
+        recursively because it is not semantic; list order, values, types, and tool name
+        remain identity-bearing. Program code must not collapse different roots/depths/options
+        into one semantic "same target" identity.
         """
-        return f"{tc.name}|{_json_dumps_args(tc.arguments)}"
+        return f"{tc.name}|{_canonical_json_dumps_args(tc.arguments)}"
 
     def _track_tool_observation(self, tc, sess, tool_trace: list[dict], result=None) -> None:
         """Record exact repeated calls and consecutive empty search receipts.
