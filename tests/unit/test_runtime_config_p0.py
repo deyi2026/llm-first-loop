@@ -80,6 +80,99 @@ def test_runtime_toml_beats_legacy_dotenv_and_stale_shell_by_default(tmp_path: P
     assert ec.ignored_shell_env["LLM_MODEL"] == "glm/stale"
 
 
+def test_service_scoped_semantic_runtime_toml_overrides_global_and_dotenv(
+    tmp_path: Path,
+) -> None:
+    _runtime_toml(
+        tmp_path,
+        """
+[semantic]
+memory = true
+archive = false
+method = false
+docs = false
+experience = false
+
+[semantic.web]
+experience = true
+
+[semantic.feishu]
+docs = true
+""",
+    )
+    (tmp_path / ".env").write_text(
+        "SEMANTIC_MEMORY_ENABLED=0\n"
+        "SEMANTIC_DOCS_ENABLED=0\n"
+        "SEMANTIC_EXPERIENCE_ENABLED=0\n",
+        encoding="utf-8",
+    )
+
+    web = resolve_effective("web", env={}, workspace_root=tmp_path)
+    feishu = resolve_effective("feishu", env={}, workspace_root=tmp_path)
+    learning = resolve_effective("learning", env={}, workspace_root=tmp_path)
+
+    assert web.values["SEMANTIC_MEMORY_ENABLED"] == "1"
+    assert web.values["SEMANTIC_EXPERIENCE_ENABLED"] == "1"
+    assert web.values["SEMANTIC_DOCS_ENABLED"] == "0"
+    assert web.sources["SEMANTIC_MEMORY_ENABLED"] == "runtime_toml"
+    assert web.sources["SEMANTIC_EXPERIENCE_ENABLED"] == "runtime_toml_service:web"
+
+    assert feishu.values["SEMANTIC_MEMORY_ENABLED"] == "1"
+    assert feishu.values["SEMANTIC_DOCS_ENABLED"] == "1"
+    assert feishu.values["SEMANTIC_EXPERIENCE_ENABLED"] == "0"
+    assert feishu.sources["SEMANTIC_DOCS_ENABLED"] == "runtime_toml_service:feishu"
+
+    assert learning.values["SEMANTIC_MEMORY_ENABLED"] == "1"
+    assert learning.values["SEMANTIC_DOCS_ENABLED"] == "0"
+    assert learning.values["SEMANTIC_EXPERIENCE_ENABLED"] == "0"
+    assert learning.sources["SEMANTIC_DOCS_ENABLED"] == "runtime_toml"
+
+
+def test_service_scoped_semantic_keeps_cli_and_explicit_shell_override_priority(
+    tmp_path: Path,
+) -> None:
+    _runtime_toml(
+        tmp_path,
+        """
+[semantic]
+docs = false
+[semantic.feishu]
+docs = true
+""",
+    )
+
+    shell = resolve_effective(
+        "feishu",
+        env={"LFL_ALLOW_RUNTIME_OVERRIDE": "1", "SEMANTIC_DOCS_ENABLED": "0"},
+        workspace_root=tmp_path,
+    )
+    cli = resolve_effective(
+        "feishu",
+        cli_overrides={"SEMANTIC_DOCS_ENABLED": "0"},
+        env={"LFL_ALLOW_RUNTIME_OVERRIDE": "1", "SEMANTIC_DOCS_ENABLED": "1"},
+        workspace_root=tmp_path,
+    )
+
+    assert shell.values["SEMANTIC_DOCS_ENABLED"] == "0"
+    assert shell.sources["SEMANTIC_DOCS_ENABLED"] == "shell_override"
+    assert cli.values["SEMANTIC_DOCS_ENABLED"] == "0"
+    assert cli.sources["SEMANTIC_DOCS_ENABLED"] == "cli"
+
+
+def test_service_scoped_semantic_schema_rejects_unknown_service_and_field(
+    tmp_path: Path,
+) -> None:
+    bad_service = tmp_path / "bad-service.toml"
+    bad_service.write_text("[semantic.cli]\ndocs = true\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="未知服务级 semantic scope"):
+        parse_runtime_toml(bad_service, service="web")
+
+    bad_field = tmp_path / "bad-field.toml"
+    bad_field.write_text("[semantic.web]\nmagic = true\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="未知字段"):
+        parse_runtime_toml(bad_field, service="web")
+
+
 
 def test_history_policy_runtime_toml_beats_stale_shell_and_reaches_settings(
     tmp_path: Path,

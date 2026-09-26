@@ -28,6 +28,14 @@ from .resolver import EffectiveConfig
 
 logger = logging.getLogger(__name__)
 
+_SEMANTIC_SCOPE_KEYS = {
+    "memory": "SEMANTIC_MEMORY_ENABLED",
+    "archive": "SEMANTIC_ARCHIVE_ENABLED",
+    "method": "SEMANTIC_METHOD_ENABLED",
+    "docs": "SEMANTIC_DOCS_ENABLED",
+    "experience": "SEMANTIC_EXPERIENCE_ENABLED",
+}
+
 
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -214,6 +222,14 @@ def build_manifest(service: str, ec: EffectiveConfig,
 
     _knowledge_paths = _knowledge_runtime_paths(ec, report)
     _knowledge_health = inspect_knowledge_health(_knowledge_paths)
+    semantic_scopes = {
+        name: str(v.get(env_key, "0")).strip().lower() in {"1", "true", "yes", "on"}
+        for name, env_key in _SEMANTIC_SCOPE_KEYS.items()
+    }
+    semantic_scope_sources = {
+        name: str(ec.sources.get(env_key, "settings_default"))
+        for name, env_key in _SEMANTIC_SCOPE_KEYS.items()
+    }
     return {
         # —— 服务与进程 ——
         "service": service,
@@ -241,6 +257,8 @@ def build_manifest(service: str, ec: EffectiveConfig,
         "config_file": ec.config_file,
         "config_sources": ec.sources,
         "config_hash": config_hash(ec),
+        "semantic_scopes": semantic_scopes,
+        "semantic_scope_sources": semantic_scope_sources,
         "ignored_shell_env": sorted(ec.ignored_shell_env),
         "knowledge_health": _knowledge_health,
         # —— providers 漂移治理（P0.6）——

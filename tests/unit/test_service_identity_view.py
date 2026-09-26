@@ -130,6 +130,39 @@ def test_live_generation_match_marked_inferred_with_evidence(tmp_path: Path) -> 
     assert evidence["manifest_present"] is True
 
 
+def test_identity_view_surfaces_semantic_scope_matrix_and_provenance(tmp_path: Path) -> None:
+    store = _green_store(tmp_path)
+    path = store.runtime_dir / "runtime_manifest.feishu.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw.update(
+        {
+            "config_hash": "d" * 64,
+            "semantic_scopes": {
+                "memory": True,
+                "archive": False,
+                "method": False,
+                "docs": True,
+                "experience": False,
+            },
+            "semantic_scope_sources": {
+                "memory": "runtime_toml",
+                "archive": "runtime_toml",
+                "method": "runtime_toml",
+                "docs": "runtime_toml_service:feishu",
+                "experience": "runtime_toml",
+            },
+        }
+    )
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    live = compose_service_identity_view(store)["services"]["feishu"]["live"]
+
+    assert live["config_hash"] == "d" * 64
+    assert live["semantic_scopes"]["docs"] is True
+    assert live["semantic_scopes"]["experience"] is False
+    assert live["semantic_scope_sources"]["docs"] == "runtime_toml_service:feishu"
+
+
 def test_identity_view_flags_drift_and_missing_manifest(tmp_path: Path) -> None:
     store = _green_store(tmp_path)
     # web: live code advanced beyond desired

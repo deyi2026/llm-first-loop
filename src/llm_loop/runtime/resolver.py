@@ -92,6 +92,11 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("local_runtime", "admission_authority"): TomlField(("LFL_LOCAL_RUNTIME_ADMISSION_AUTHORITY",), "str"),
         ("local_runtime", "cli"): TomlField(("LFL_LFRT_CLI",), "str"),
         ("summary", "mode"): TomlField(("SUMMARY_MODE",), "str"),
+        ("semantic", "memory"): TomlField(("SEMANTIC_MEMORY_ENABLED",), "bool"),
+        ("semantic", "archive"): TomlField(("SEMANTIC_ARCHIVE_ENABLED",), "bool"),
+        ("semantic", "method"): TomlField(("SEMANTIC_METHOD_ENABLED",), "bool"),
+        ("semantic", "docs"): TomlField(("SEMANTIC_DOCS_ENABLED",), "bool"),
+        ("semantic", "experience"): TomlField(("SEMANTIC_EXPERIENCE_ENABLED",), "bool"),
         # retrieval multiquery fusion rollout (v0.6.27 影子模式): off/shadow,
         # 非法值由 config._env_multiquery_mode fail-safe 回 off
         ("retrieval", "multiquery_mode"): TomlField(("RETRIEVAL_MULTIQUERY_MODE",), "str"),
@@ -142,6 +147,8 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("feishu", "audit_dir"): TomlField(("FEISHU_AUDIT_DIR",), "str"),
     }
 )
+
+_SERVICE_SCOPED_SEMANTIC_SERVICES = frozenset({"web", "feishu", "learning"})
 
 _TOML_ENV_KEYS = tuple(
     dict.fromkeys(key for spec in TOML_SCHEMA.values() for key in spec.env_keys)
@@ -267,16 +274,20 @@ def _toml_value_to_legacy(path: tuple[str, str], value: Any, kind: ValueKind) ->
     raise AssertionError(f"unsupported runtime.toml kind: {kind}")
 
 
-def parse_runtime_toml(path: str | Path) -> dict[str, str]:
-    """Parse the closed runtime.toml schema into the legacy-key projection.
+def _parse_runtime_toml_layers(
+    path: str | Path,
+    *,
+    service: str | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Parse global and service-scoped runtime.toml projections.
 
-    The parser is strict when the file exists: unknown fields, wrong types and any
-    secret-looking field fail closed.  Missing default runtime.toml is allowed so a
-    workspace can migrate from .env incrementally.
+    Only semantic scope fields may currently be service-scoped, using the strict
+    ``[semantic.<service>]`` form.  This intentionally prevents unrelated model or
+    runtime settings from silently forking by service.
     """
     p = Path(path)
     if not p.is_file():
-        return {}
+        return {}, {}
     try:
         data = tomllib.loads(p.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
@@ -284,8 +295,29 @@ def parse_runtime_toml(path: str | Path) -> dict[str, str]:
     if not isinstance(data, dict):
         raise ValueError(f"runtime.toml 顶层必须是 table: {p}")
 
-    out: dict[str, str] = {}
+    global_out: dict[str, str] = {}
+    service_out: dict[str, str] = {}
+    requested_service = str(service or "").strip().lower()
     for raw_path, value in _flatten_toml(data):
+        if len(raw_path) == 3 and raw_path[0] == "semantic":
+            semantic_service = raw_path[1]
+            field_name = raw_path[2]
+            where = ".".join(raw_path)
+            if semantic_service not in _SERVICE_SCOPED_SEMANTIC_SERVICES:
+                if any(_SECRET_NAME_RE.search(part) for part in raw_path):
+                    raise ValueError(f"runtime.toml 禁止存放凭证/密钥字段: {where}")
+                raise ValueError(f"runtime.toml 未知服务级 semantic scope: {where}")
+            spec = TOML_SCHEMA.get(("semantic", field_name))
+            if spec is None:
+                if any(_SECRET_NAME_RE.search(part) for part in raw_path):
+                    raise ValueError(f"runtime.toml 禁止存放凭证/密钥字段: {where}")
+                raise ValueError(f"runtime.toml 未知字段: {where}")
+            legacy = _toml_value_to_legacy(("semantic", field_name), value, spec.kind)
+            if requested_service == semantic_service:
+                for env_key in spec.env_keys:
+                    service_out[env_key] = legacy
+            continue
+
         if len(raw_path) != 2:
             where = ".".join(raw_path)
             if any(_SECRET_NAME_RE.search(part) for part in raw_path):
@@ -300,7 +332,21 @@ def parse_runtime_toml(path: str | Path) -> dict[str, str]:
             raise ValueError(f"runtime.toml 未知字段: {where}")
         legacy = _toml_value_to_legacy(field_path, value, spec.kind)
         for env_key in spec.env_keys:
-            out[env_key] = legacy
+            global_out[env_key] = legacy
+    return global_out, service_out
+
+
+def parse_runtime_toml(path: str | Path, *, service: str | None = None) -> dict[str, str]:
+    """Parse the closed runtime.toml schema into the legacy-key projection.
+
+    The parser is strict when the file exists: unknown fields, wrong types and any
+    secret-looking field fail closed.  Missing default runtime.toml is allowed so a
+    workspace can migrate from .env incrementally.  When ``service`` is supplied,
+    matching ``[semantic.<service>]`` values override global ``[semantic]`` values.
+    """
+    global_values, service_values = _parse_runtime_toml_layers(path, service=service)
+    out = dict(global_values)
+    out.update(service_values)
     return out
 
 
@@ -412,7 +458,9 @@ def resolve_effective(
     if config_file is not None and not toml_file.is_file():
         raise ValueError(f"显式 runtime config 不存在: {toml_file}")
 
-    toml_values = parse_runtime_toml(toml_file)
+    toml_values, service_toml_values = _parse_runtime_toml_layers(
+        toml_file, service=service
+    )
     dotenv = parse_env_file(env_file)
     allow_override = env_values.get("LFL_ALLOW_RUNTIME_OVERRIDE", "") == "1"
 
@@ -427,6 +475,11 @@ def resolve_effective(
         elif allow_override and env_values.get(key):
             values[key] = env_values[key]
             sources[key] = "shell_override"
+        elif key in service_toml_values:
+            values[key] = service_toml_values[key]
+            sources[key] = f"runtime_toml_service:{str(service).strip().lower()}"
+            if env_values.get(key) and env_values[key] != service_toml_values[key]:
+                ignored[key] = env_values[key]
         elif key in toml_values:
             values[key] = toml_values[key]
             sources[key] = "runtime_toml"

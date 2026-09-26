@@ -24,7 +24,7 @@ P05_FIELDS = [
     "workspace_root", "git_head", "python_executable", "llm_loop_module", "build_identity",
     "service", "pid", "model_ref", "provider_id", "provider_endpoint_host",
     "history_budget_chars", "max_input_tokens", "max_tokens",
-    "data_dir", "config_sources", "config_hash",
+    "data_dir", "config_sources", "config_hash", "semantic_scopes", "semantic_scope_sources",
     "providers_base_hash", "providers_local_hash", "providers_override_hash",
     "providers_env_hash", "providers_effective_hash",
 ]
@@ -76,6 +76,39 @@ def test_config_hash_changes_on_cli_override(tmp_path, monkeypatch):
         "web", cli_overrides={"LLM_MODEL": "deepseek/deepseek-v4-flash"},
         workspace_root=tmp_path)
     assert config_hash(ec1) != config_hash(ec2)
+
+
+def test_manifest_exposes_service_scoped_semantic_values_and_sources(tmp_path, monkeypatch):
+    _mk(tmp_path, ["LLM_MODEL=glm/glm-5.3", "SEMANTIC_DOCS_ENABLED=0"])
+    (tmp_path / "runtime.toml").write_text(
+        """
+[llm]
+model = "glm/glm-5.3"
+[semantic]
+memory = true
+docs = false
+experience = false
+[semantic.feishu]
+docs = true
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
+    report = compute_identity()
+    ec = resolve_effective("feishu", env={}, workspace_root=tmp_path)
+    manifest = build_manifest("feishu", ec, report)
+
+    assert manifest["semantic_scopes"] == {
+        "memory": True,
+        "archive": False,
+        "method": False,
+        "docs": True,
+        "experience": False,
+    }
+    assert manifest["semantic_scope_sources"]["memory"] == "runtime_toml"
+    assert manifest["semantic_scope_sources"]["docs"] == "runtime_toml_service:feishu"
+    assert manifest["semantic_scope_sources"]["experience"] == "runtime_toml"
 
 
 def test_providers_hashes_legacy_override_is_diagnostic_not_effective(tmp_path, monkeypatch):

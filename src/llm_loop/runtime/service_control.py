@@ -1451,6 +1451,9 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
                         "build": raw.get("build_identity") or {},
                         "model_ref": raw.get("model_ref"),
                         "provider_id": raw.get("provider_id"),
+                        "config_hash": raw.get("config_hash"),
+                        "semantic_scopes": raw.get("semantic_scopes") or {},
+                        "semantic_scope_sources": raw.get("semantic_scope_sources") or {},
                     }
                 )
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
