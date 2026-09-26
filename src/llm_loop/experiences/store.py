@@ -69,12 +69,15 @@ class ExperienceStore:
         experiences_dir: str | Path,
         *,
         embedder: Any | None = None,
+        semantic_ranker: Callable[..., list[tuple[int, float]]] | None = None,
         write_guard: Callable[[], bool] | None = None,
         near_dup_threshold: float = 0.80,
     ) -> None:
         self._dir = Path(experiences_dir)
         self._write_guard = write_guard
         self._embedder = embedder  # T5: 可选 embedder 注入（None 时走关键词匹配，零回归）
+        self._semantic_ranker = semantic_ranker
+        self._post_save_hooks: list[Callable[[dict[str, Any]], Any]] = []
         # T0-C1: 写时近重复链接阈值（保守未校准默认；仅高相似改写触发无损链接）
         self._near_dup_threshold = near_dup_threshold
         # 文档向量只缓存机械可验证的输入→输出；query 向量每次现算。
@@ -86,6 +89,7 @@ class ExperienceStore:
             "skipped": 0,
             "scan_error": None,
         }
+        self._last_semantic_diagnostics: dict[str, Any] = {}
 
 
     def _require_write_safe(self) -> None:
@@ -107,9 +111,19 @@ class ExperienceStore:
         """
         return self._last_diagnostics
 
+    @property
+    def last_semantic_diagnostics(self) -> dict[str, Any]:
+        """Latest semantic-ranking diagnostics, separate from scan/parse diagnostics."""
+        return dict(self._last_semantic_diagnostics)
+
     def _reset_diagnostics(self) -> None:
         """公开方法入口显式重置诊断（并发防护，见 last_experience_diagnostics docstring）."""
         self._last_diagnostics = {"scanned": 0, "degraded": 0, "skipped": 0, "scan_error": None}
+        self._last_semantic_diagnostics = {}
+
+    def add_post_save_hook(self, fn: Callable[[dict[str, Any]], Any]) -> None:
+        """Register best-effort derived work after the durable document write."""
+        self._post_save_hooks.append(fn)
 
     @staticmethod
     def sanitize_slug(slug: str) -> str:
@@ -139,6 +153,12 @@ class ExperienceStore:
         except Exception:  # noqa: BLE001 — 链接探测失败不影响写入本身
             logger.warning("[经验库] 近重复探测异常，本次跳过链接（fail-open）", exc_info=True)
         path.write_text(doc.to_md(), encoding="utf-8")
+        candidate = self._semantic_candidate(filename, doc)
+        for hook in tuple(self._post_save_hooks):
+            try:
+                hook(dict(candidate))
+            except Exception:  # noqa: BLE001 — derived vector work never rolls back durable write
+                logger.debug("experience post-save hook failed", exc_info=True)
         return filename
 
     def list_active(
@@ -204,22 +224,7 @@ class ExperienceStore:
                 continue
             active.append((path.name, doc))
 
-        # T0-C1: supersede-aware 去重——被 active 新条目 supersedes 的旧条目不再返回
-        # （截断前过滤，limit 内只留链上最新 canonical；链数据无损保留在文件里）。
-        if any(doc.supersedes for _fname, doc in active):
-            superseded_ids: set[str] = set()
-            for _fname, doc in active:
-                superseded_ids.update(doc.supersedes or [])
-            if superseded_ids:
-                before = len(active)
-                active = [
-                    (fname, doc)
-                    for fname, doc in active
-                    if fname.removesuffix(".md") not in superseded_ids
-                ]
-                logger.info(
-                    "[经验库] supersede 去重: %d → %d（隐藏被链接旧条目）", before, len(active)
-                )
+        active = self._filter_superseded(active)
 
         records = self._search(active, query, limit)
 
@@ -256,6 +261,23 @@ class ExperienceStore:
         lexical = [
             (self._lexical_score(doc, query), filename, doc) for filename, doc in active
         ]
+        if self._semantic_ranker is not None:
+            candidates = [self._semantic_candidate(filename, doc) for filename, doc in active]
+            try:
+                ranked = self._semantic_ranker(query, candidates, top_k=len(candidates))
+            except Exception:  # noqa: BLE001 — semantic path is optional enhancement
+                ranked = []
+            owner = getattr(self._semantic_ranker, "__self__", None)
+            self._last_semantic_diagnostics = dict(
+                getattr(owner, "last_cached_rank_diagnostics", {}) or {}
+            )
+            if not ranked:
+                degraded = bool(
+                    self._last_semantic_diagnostics.get("semantic_requested")
+                    and self._last_semantic_diagnostics.get("semantic_fallback_reason")
+                )
+                return self._rank_lexical(lexical, limit, degraded=degraded)
+            return self._hybrid_ranked_search(lexical, ranked, limit)
         if self._embedder is None:
             return self._rank_lexical(lexical, limit, degraded=False)
 
@@ -267,6 +289,88 @@ class ExperienceStore:
             # embed 失败 → fail-open 到 lexical ranking，并如实标注。
             return self._rank_lexical(lexical, limit, degraded=True)
         return self._hybrid_search(lexical, query_vec, limit)
+
+    @staticmethod
+    def _filter_superseded(
+        active: list[tuple[str, ExperienceDocument]],
+    ) -> list[tuple[str, ExperienceDocument]]:
+        """Hide active records superseded by a newer active canonical record."""
+        if not any(doc.supersedes for _fname, doc in active):
+            return active
+        superseded_ids: set[str] = set()
+        for _fname, doc in active:
+            superseded_ids.update(doc.supersedes or [])
+        if not superseded_ids:
+            return active
+        before = len(active)
+        filtered = [
+            (fname, doc)
+            for fname, doc in active
+            if fname.removesuffix(".md") not in superseded_ids
+        ]
+        logger.info("[经验库] supersede 去重: %d → %d（隐藏被链接旧条目）", before, len(filtered))
+        return filtered
+
+    @staticmethod
+    def _semantic_candidate(filename: str, doc: ExperienceDocument) -> dict[str, Any]:
+        return {
+            "kind": doc.record_kind,
+            "id": filename.removesuffix(".md"),
+            "key": f"experience:{filename.removesuffix('.md')}",
+            "content": " ".join([doc.title, doc.scenario, doc.root_cause, doc.solution]).strip(),
+        }
+
+    def semantic_candidates(self, *, record_kind: str | None = None) -> list[dict[str, Any]]:
+        """Return active canonical candidates for derived-vector warmup; no ranking authority."""
+        if not self._dir.exists():
+            return []
+        try:
+            paths = sorted(self._dir.glob("EXPERIENCE-*.md"))
+        except OSError:
+            return []
+        active: list[tuple[str, ExperienceDocument]] = []
+        for path in paths:
+            try:
+                doc = ExperienceDocument.from_md(path.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001 — warmup skips malformed rows exactly like discovery
+                continue
+            if doc.status != "active":
+                continue
+            if record_kind is not None and doc.record_kind != record_kind:
+                continue
+            active.append((path.name, doc))
+        active = self._filter_superseded(active)
+        return [self._semantic_candidate(filename, doc) for filename, doc in active]
+
+    def _hybrid_ranked_search(
+        self,
+        lexical: list[tuple[float, str, ExperienceDocument]],
+        ranked: list[tuple[int, float]],
+        limit: int,
+    ) -> list[dict]:
+        """Fuse qualified semantic hits with lexical-primary weighting.
+
+        Rows with neither lexical evidence nor a semantic score above the retriever's
+        calibrated threshold are excluded, so semantic ON cannot pad a noise query with
+        unrelated zero-signal cards.
+        """
+        semantic_by_index = {index: score for index, score in ranked}
+        max_lexical = max((score for score, _, _ in lexical), default=0.0)
+        scored: list[tuple[float, str, ExperienceDocument]] = []
+        for index, (lexical_score, filename, doc) in enumerate(lexical):
+            if lexical_score <= 0 and index not in semantic_by_index:
+                continue
+            semantic_score = min(1.0, max(0.0, float(semantic_by_index.get(index, 0.0))))
+            lexical_norm = lexical_score / max_lexical if max_lexical > 0 else 0.0
+            score = 0.65 * lexical_norm + 0.35 * semantic_score
+            scored.append((score, filename, doc))
+        scored.sort(key=lambda row: (-row[0], row[1]))
+        results: list[dict] = []
+        for score, filename, doc in scored[:limit]:
+            rec = self._to_record(filename, doc)
+            rec["score"] = round(score, 4)
+            results.append(rec)
+        return results
 
     def _hybrid_search(
         self,
@@ -328,6 +432,23 @@ class ExperienceStore:
         事务走人工批准。fail-open: 无 embedder / 嵌入失败 / 扫描异常 → 返回空。
         阈值 0.80 为保守默认（未校准，仅拦截高相似改写）。
         """
+        if self._semantic_ranker is not None:
+            candidates = self.semantic_candidates()
+            if not candidates:
+                return []
+            query_text = self._semantic_candidate(filename, doc)["content"]
+            try:
+                ranked = self._semantic_ranker(query_text, candidates, top_k=len(candidates))
+            except Exception:  # noqa: BLE001 — near-dup hint is fail-open
+                return []
+            hits = [
+                (float(score), str(candidates[index].get("id") or ""))
+                for index, score in ranked
+                if 0 <= index < len(candidates)
+                and float(score) >= self._near_dup_threshold
+                and str(candidates[index].get("id") or "")
+            ]
+            return [fid for _score, fid in hits[:cap]]
         if self._embedder is None:
             return []
         # 探测文本与文档指纹文本同构，直接复用文档向量缓存（写时嵌入一次，

@@ -1304,6 +1304,9 @@ def build_engine(
         # RuntimePaths is the authority for mutable Method cache placement; do not let
         # cwd decide where semantic Method vectors are persisted.
         semantic_retriever.configure_method_dir(_runtime_paths.methods_dir)
+        semantic_retriever.configure_experience_cache_dir(
+            _runtime_paths.data_dir / "experience-embeddings"
+        )
         if settings.semantic_memory_enabled:
             # Semantic enablement is explicit, so make existing memory hot before this
             # engine can serve its first request. This startup gate is outside the
@@ -1522,9 +1525,23 @@ def build_engine(
 
     experience_store = ExperienceStore(
         _runtime_paths.experiences_dir,
-        embedder=embedder if settings.semantic_experience_enabled else None,
+        semantic_ranker=(
+            semantic_retriever.rank_cached_candidates
+            if semantic_retriever is not None and settings.semantic_experience_enabled
+            else None
+        ),
         write_guard=_knowledge_write_guard,
     )  # semantic experience is independently qualified
+    if semantic_retriever is not None and settings.semantic_experience_enabled:
+        _experience_warm = semantic_retriever.warm_experience_store(experience_store)
+        logger.info("semantic experience startup warmup: %s", _experience_warm)
+        if int(_experience_warm.get("remaining_missing", 0) or 0) > 0:
+            logger.warning(
+                "semantic experience startup warmup incomplete: %s", _experience_warm
+            )
+        experience_store.add_post_save_hook(
+            semantic_retriever.schedule_experience_candidate
+        )
     method_store = MethodStore(
         _runtime_paths.methods_dir,
         seed_dir=_runtime_paths.method_seed_dir,

@@ -807,6 +807,7 @@ class RecordSearcher:
                 # R3(P0-3): hydrate 路径不走扫描，诊断置健康零值（区分"不存在/不可解析"
                 # 依赖 get 留痕日志归因，design §1.2.3 口径注明）
                 self._last_diagnostics = {"scanned": 0, "degraded": 0, "skipped": 0, "scan_error": None}
+                self._last_semantic_diagnostics = None
                 stem = exact.removesuffix(".md")
                 return [self._experience_store.to_hydrated_record(stem, doc)][:limit]
         # R3(P0-3): 三态扫描 Outcome——诊断独立于 results[:limit] 截断照常回填
@@ -822,6 +823,8 @@ class RecordSearcher:
             "skipped": outcome.skipped_count,
             "scan_error": outcome.scan_error,
         }
+        semantic_diag = getattr(self._experience_store, "last_semantic_diagnostics", None)
+        self._last_semantic_diagnostics = dict(semantic_diag or {}) or None
         return annotate_card_age(outcome.records)  # EVO-20260923-6fe23c9b F2(b)
 
     @staticmethod

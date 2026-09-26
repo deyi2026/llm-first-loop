@@ -135,6 +135,7 @@ class SemanticRetriever:
         self._mem_emb_cache: dict[str, list[float]] = {}
         self._arch_emb_cache: dict[str, list[float]] = {}
         self._method_emb_cache: dict[str, list[float]] = {}
+        self._experience_emb_cache: dict[str, list[float]] = {}
         self._cache_state_lock = threading.RLock()
         self._cache_file_stamps: dict[str, tuple[int, int, int] | None] = {}
         self._prewarm_state_lock = threading.Lock()
@@ -159,6 +160,8 @@ class SemanticRetriever:
         self._mem_cache_path = self._cache_path(Path(memory_dir)) if memory_dir else None
         self._arch_cache_path = self._cache_path(Path(archive_dir)) if archive_dir else None
         self._method_cache_path: Path | None = None
+        self._experience_cache_path: Path | None = None
+        self.last_cached_rank_diagnostics: dict[str, Any] = {}
 
     def _primary_engine(self) -> dict[str, Any]:
         return {
@@ -170,7 +173,67 @@ class SemanticRetriever:
             "arch_path": self._arch_cache_path,
             "method_cache": self._method_emb_cache,
             "method_path": self._method_cache_path,
+            "experience_cache": self._experience_emb_cache,
+            "experience_path": self._experience_cache_path,
         }
+
+    def configure_experience_cache_dir(self, cache_dir: str | Path) -> None:
+        """Bind persistent Experience semantic cache to canonical shared runtime state."""
+        directory = Path(cache_dir)
+        self._experience_emb_cache = self._load_emb_cache_versioned(directory)
+        self._experience_cache_path = self._cache_path(directory)
+
+    def warm_experience_store(self, experience: Any, *, max_passes: int = 3) -> dict[str, Any]:
+        """Warm active Experience/Lesson candidate vectors before semantic enablement."""
+        if (
+            experience is None
+            or self.embedder is None
+            or getattr(self.embedder, "provider", "") != "api"
+        ):
+            return {"requested": False, "initial_missing": 0, "remaining_missing": 0}
+        candidates_by_key: dict[str, dict[str, Any]] = {}
+        for record_kind in ("experience", "lesson"):
+            for candidate in experience.semantic_candidates(record_kind=record_kind):
+                key = str(candidate.get("key") or "")
+                if key:
+                    candidates_by_key[key] = dict(candidate)
+        candidates = list(candidates_by_key.values())
+        engine = self._primary_engine()
+        initial_missing = self._missing_candidate_count(candidates, engine)
+        started = time.monotonic()
+        passes = 0
+        previous_missing = initial_missing
+        while previous_missing and passes < max(1, int(max_passes)):
+            passes += 1
+            pre_sizes = self._prewarm_batch(candidates, engine, deadline=None)
+            self._flush_dirty_caches(engine, pre_sizes)
+            remaining = self._missing_candidate_count(candidates, engine)
+            if remaining >= previous_missing:
+                previous_missing = remaining
+                break
+            previous_missing = remaining
+        return {
+            "requested": True,
+            "candidate_count": len(candidates),
+            "initial_missing": initial_missing,
+            "remaining_missing": previous_missing,
+            "passes": passes,
+            "elapsed_ms": round((time.monotonic() - started) * 1000.0, 3),
+        }
+
+    def schedule_experience_candidate(self, candidate: dict[str, Any]) -> bool:
+        """Schedule one newly persisted Experience/Lesson vector outside the write path."""
+        if (
+            not candidate
+            or self.embedder is None
+            or getattr(self.embedder, "provider", "") != "api"
+            or str(candidate.get("kind") or "") not in {"experience", "lesson"}
+            or not str(candidate.get("key") or "")
+        ):
+            return False
+        return self._schedule_background_prewarm(
+            [dict(candidate)], self._primary_engine()
+        )
 
     def warm_memory_store(self, memory: Any, *, max_passes: int = 3) -> dict[str, Any]:
         """Synchronously warm existing memory before a semantic-enabled runtime is ready.
@@ -508,6 +571,7 @@ class SemanticRetriever:
             (engine["mem_cache"], engine["mem_path"]),
             (engine["arch_cache"], engine["arch_path"]),
             (engine.setdefault("method_cache", {}), engine.get("method_path")),
+            (engine.setdefault("experience_cache", {}), engine.get("experience_path")),
         ):
             if self._refresh_cache_if_changed(path, cache, engine["embedder"]):
                 refreshed += 1
@@ -703,6 +767,152 @@ class SemanticRetriever:
             }
         )
         return scored[:cap]
+
+    def rank_cached_candidates(
+        self,
+        query: str,
+        candidates: list[dict[str, Any]],
+        *,
+        top_k: int | None = None,
+    ) -> list[tuple[int, float]]:
+        """Rank stable keyed candidates using the shared persistent vector-cache contract.
+
+        This path is for semantic consumers such as Experience discovery that need
+        semantic recall across the full canonical candidate set rather than lexical-only
+        membership.  Remote/API foreground requests are strictly cache-read-only: if any
+        candidate vector is missing, the whole semantic channel fails open for this query
+        and schedules background repair instead of partially ranking a biased subset.
+        """
+        self.last_cached_rank_diagnostics = {
+            "semantic_requested": bool(query and candidates),
+            "semantic_effective": False,
+            "semantic_fallback_reason": "",
+            "candidate_count": len(candidates),
+            "candidate_missing_count": 0,
+            "cache_files_refreshed": 0,
+            "prewarm_scheduled": False,
+            "engine": "",
+            "latency_ms": 0.0,
+        }
+        if not query or not candidates or not self.semantic_available() or self.embedder is None:
+            self.last_cached_rank_diagnostics["semantic_fallback_reason"] = "unavailable"
+            return []
+
+        started = time.monotonic()
+        deadline = started + self.timeout_s
+        engine = self._primary_engine()
+        refreshed = self._refresh_engine_caches(engine)
+        missing = self._missing_candidate_count(candidates, engine)
+        is_remote_api = getattr(engine["embedder"], "provider", "") == "api"
+        prewarm_scheduled = False
+        if is_remote_api and missing:
+            prewarm_scheduled = self._schedule_background_prewarm(candidates, engine)
+            self.last_cached_rank_diagnostics.update(
+                {
+                    "semantic_fallback_reason": "candidate_cache_cold",
+                    "candidate_missing_count": missing,
+                    "cache_files_refreshed": refreshed,
+                    "prewarm_scheduled": prewarm_scheduled,
+                    **self._background_diag_snapshot(),
+                    "engine": "primary",
+                    "latency_ms": round((time.monotonic() - started) * 1000.0, 3),
+                }
+            )
+            return []
+
+        pre_sizes: dict[int, int] = {}
+        if not is_remote_api and missing:
+            pre_sizes = self._prewarm_batch(candidates, engine, deadline=deadline)
+            missing = self._missing_candidate_count(candidates, engine)
+            if missing:
+                self._flush_dirty_caches(engine, pre_sizes)
+                self.last_cached_rank_diagnostics.update(
+                    {
+                        "semantic_fallback_reason": "candidate_embedding_unavailable",
+                        "candidate_missing_count": missing,
+                        "cache_files_refreshed": refreshed,
+                        "engine": "primary",
+                        "latency_ms": round((time.monotonic() - started) * 1000.0, 3),
+                    }
+                )
+                return []
+
+        query_vec, query_ms, primary_error = self._embed_query_with_deadline(
+            engine["embedder"], query, deadline
+        )
+        transport_diag = dict(getattr(engine["embedder"], "last_diagnostics", {}) or {})
+        if query_vec is None:
+            self.last_cached_rank_diagnostics.update(
+                {
+                    "semantic_fallback_reason": primary_error or "embedding_unavailable",
+                    "candidate_missing_count": missing,
+                    "cache_files_refreshed": refreshed,
+                    "engine": "primary",
+                    "query_embedding_ms": round(query_ms, 3),
+                    "embedding_queue_wait_ms": transport_diag.get("queue_wait_ms"),
+                    "embedding_encode_ms": transport_diag.get("encode_ms"),
+                    "embedding_http_ms": transport_diag.get("http_ms"),
+                    "embedding_transport_error": transport_diag.get("error", ""),
+                    "latency_ms": round((time.monotonic() - started) * 1000.0, 3),
+                }
+            )
+            return []
+
+        scored: list[tuple[int, float]] = []
+        try:
+            for index, cand in enumerate(candidates):
+                if time.monotonic() > deadline:
+                    self.last_cached_rank_diagnostics.update(
+                        {
+                            "semantic_fallback_reason": "deadline_exhausted",
+                            "candidate_missing_count": missing,
+                            "cache_files_refreshed": refreshed,
+                            "engine": "primary",
+                            "query_embedding_ms": round(query_ms, 3),
+                            "latency_ms": round((time.monotonic() - started) * 1000.0, 3),
+                        }
+                    )
+                    return []
+                vec = self._cached_vector(cand, engine) if is_remote_api else self._embed_cached(cand, engine)
+                if vec is None:
+                    self.last_cached_rank_diagnostics.update(
+                        {
+                            "semantic_fallback_reason": "candidate_embedding_unavailable",
+                            "candidate_missing_count": max(1, missing),
+                            "cache_files_refreshed": refreshed,
+                            "engine": "primary",
+                            "query_embedding_ms": round(query_ms, 3),
+                            "latency_ms": round((time.monotonic() - started) * 1000.0, 3),
+                        }
+                    )
+                    return []
+                scored.append((index, float(cosine_similarity(query_vec, vec))))
+        finally:
+            if not is_remote_api:
+                self._flush_dirty_caches(engine, pre_sizes)
+
+        scored.sort(key=lambda item: item[1], reverse=True)
+        qualified = [item for item in scored if item[1] >= float(engine["threshold"])]
+        cap = len(qualified) if top_k is None else max(0, int(top_k))
+        self.last_cached_rank_diagnostics.update(
+            {
+                "semantic_effective": bool(qualified),
+                "candidate_missing_count": 0,
+                "cache_files_refreshed": refreshed,
+                "prewarm_scheduled": prewarm_scheduled,
+                **self._background_diag_snapshot(),
+                "engine": "primary",
+                "threshold": float(engine["threshold"]),
+                "semantic_hit_count": len(qualified),
+                "query_embedding_ms": round(query_ms, 3),
+                "embedding_queue_wait_ms": transport_diag.get("queue_wait_ms"),
+                "embedding_encode_ms": transport_diag.get("encode_ms"),
+                "embedding_http_ms": transport_diag.get("http_ms"),
+                "embedding_transport_error": transport_diag.get("error", ""),
+                "latency_ms": round((time.monotonic() - started) * 1000.0, 3),
+            }
+        )
+        return qualified[:cap]
 
     # ── M59: 运行时动态语义召回上限 ──
     def set_top_k_provider(self, fn: Callable[[], int]) -> None:
@@ -1132,6 +1342,8 @@ class SemanticRetriever:
         kind = cand.get("kind", "memory")
         if kind == "method":
             return engine.setdefault("method_cache", {}), engine.get("method_path")
+        if kind in {"experience", "lesson"}:
+            return engine.setdefault("experience_cache", {}), engine.get("experience_path")
         if kind == "archive":
             return engine["arch_cache"], engine["arch_path"]
         return engine["mem_cache"], engine["mem_path"]
@@ -1152,6 +1364,7 @@ class SemanticRetriever:
             engine["mem_cache"],
             engine["arch_cache"],
             engine.setdefault("method_cache", {}),
+            engine.setdefault("experience_cache", {}),
         ]
         pre = {id(c): len(c) for c in caches}
         embed_batch = getattr(engine["embedder"], "embed_batch", None)
@@ -1187,6 +1400,7 @@ class SemanticRetriever:
             (engine["mem_cache"], engine["mem_path"]),
             (engine["arch_cache"], engine["arch_path"]),
             (engine.setdefault("method_cache", {}), engine.get("method_path")),
+            (engine.setdefault("experience_cache", {}), engine.get("experience_path")),
         ):
             if path is not None and len(cache) > pre_sizes.get(id(cache), len(cache)):
                 self._persist_emb_cache(path, cache, engine["embedder"])
