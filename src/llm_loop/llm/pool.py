@@ -58,6 +58,9 @@ class ModelClientPool:
     model_fallbacks_raw: str = ""
     transport_observer: Any | None = None
     guard_audit_file: str | Path | None = None
+    # Non-HTTP built-in model transports are injected as exact provider/model
+    # factories. They stay lazy and share the ordinary per-model cache.
+    external_client_factories: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # default_client 不参与 provider 热重载；其能力/窗口元数据也必须绑定启动快照。
@@ -96,6 +99,12 @@ class ModelClientPool:
             legacy_cached = self._provider_cache.get(provider_id)
             if legacy_cached is not None:
                 return legacy_cached
+        external_factory = self.external_client_factories.get(cache_key)
+        if external_factory is not None:
+            client = external_factory()
+            if use_cache:
+                self._provider_cache[cache_key] = client
+            return client
         params = registry.client_params(provider_id, model_id)
         thinking_supported = registry.supports_thinking(provider_id, model_id)
         reasoning_contract_fn = getattr(registry, "reasoning_contract", None)

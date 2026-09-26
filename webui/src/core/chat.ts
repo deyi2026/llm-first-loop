@@ -169,6 +169,7 @@ export interface ModelCapability {
   id: string;
   provider: string;
   model: string;
+  display_name?: string | null;
   context: number;
   max_input_tokens?: number | null;
   max_output_tokens?: number | null;

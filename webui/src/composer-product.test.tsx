@@ -77,6 +77,37 @@ afterEach(() => {
 
 describe("product composer", () => {
 
+  it("模型下拉使用后端 display_name 展示网页版 GPT，同时保持规范 model id", async () => {
+    vi.stubGlobal("fetch", baseFetch((url) => {
+      if (!url.includes("/api/v1/models")) return undefined;
+      return new Response(JSON.stringify({
+        models: ["glm/glm-5.3", "chatgpt-web/web-gpt"],
+        current: "glm/glm-5.3",
+        catalog: [
+          ...modelResponse().catalog.slice(0, 1),
+          {
+            id: "chatgpt-web/web-gpt",
+            provider: "chatgpt-web",
+            model: "web-gpt",
+            display_name: "网页版 GPT",
+            context: 131_072,
+            reasoning_capable: true,
+            reasoning_control: "provider_owned",
+            reasoning_control_supported: false,
+            reasoning_can_disable: false,
+            reasoning_efforts: [],
+          },
+        ],
+      }), { status: 200 });
+    }));
+    render(<Composer />);
+
+    const select = (await screen.findByTestId("model-select")) as HTMLSelectElement;
+    expect(within(select).getByRole("option", { name: "网页版 GPT" })).toHaveValue("chatgpt-web/web-gpt");
+    fireEvent.change(select, { target: { value: "chatgpt-web/web-gpt" } });
+    expect(sessionStore.getState().model).toBe("chatgpt-web/web-gpt");
+  });
+
   it("附件插入菜单支持点击外侧和 Escape 关闭，避免移动端浮层滞留", () => {
     vi.stubGlobal("fetch", baseFetch());
     render(<Composer />);

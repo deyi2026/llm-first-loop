@@ -1874,6 +1874,9 @@ def list_models(request: Request) -> dict:
                     "id": model_ref,
                     "provider": pid,
                     "model": mid,
+                    "display_name": (
+                        "网页版 GPT" if model_ref == "chatgpt-web/web-gpt" else None
+                    ),
                     "context": int(getattr(mspec, "context", 0) or 0),
                     "max_input_tokens": getattr(mspec, "max_input_tokens", None)
                     or getattr(spec, "max_input_tokens", None),

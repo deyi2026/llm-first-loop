@@ -180,6 +180,7 @@ async function loadModels() {
   if (status !== 200) return;
   els.modelSelect.innerHTML = "";
   state.availableModels = [];
+  const labels = new Map((data.catalog || []).map((item) => [item.id, item.display_name]));
   // 2026-08-17: 按 provider 分组展示（optgroup），长模型名精简为可读名称（值不变）
   const groups = new Map(); // provider -> [model...]
   for (const m of data.models) {
@@ -197,7 +198,8 @@ async function loadModels() {
       // local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp → 精简展示
       const slash = m.indexOf("/");
       const short = slash > 0 ? m.slice(slash + 1) : m;
-      opt.textContent = short.length > 42 ? short.slice(0, 39) + "…" : short;
+      const display = labels.get(m) || short;
+      opt.textContent = display.length > 42 ? display.slice(0, 39) + "…" : display;
       og.appendChild(opt);
       state.availableModels.push(m);
     }

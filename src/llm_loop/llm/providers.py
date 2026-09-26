@@ -965,6 +965,54 @@ def load_registry(settings: Settings) -> ProviderRegistry:
     """
     raw_env = settings.model_providers_raw.strip()
 
+    def finalize(registry: ProviderRegistry) -> ProviderRegistry:
+        if not bool(getattr(settings, "chatgpt_web_enabled", False)):
+            return registry
+        required = (
+            str(getattr(settings, "chatgpt_web_cdp_endpoint", "") or "").strip(),
+            str(getattr(settings, "chatgpt_web_project_url", "") or "").strip(),
+            str(getattr(settings, "chatgpt_web_project_ref", "") or "").strip(),
+            str(getattr(settings, "chatgpt_web_project_name", "") or "").strip(),
+        )
+        if not all(required):
+            logger.warning(
+                "CHATGPT_WEB_ENABLED=1 但浏览器模型配置不完整；chatgpt-web 不加入模型目录"
+            )
+            return registry
+
+        from llm_loop.llm.chatgpt_web import CHATGPT_WEB_MODEL_ID, CHATGPT_WEB_PROVIDER_ID
+
+        if CHATGPT_WEB_PROVIDER_ID in registry.providers:
+            logger.warning(
+                "provider id '%s' 已被现有配置占用；内置 ChatGPT Web provider 未注册",
+                CHATGPT_WEB_PROVIDER_ID,
+            )
+            return registry
+        providers = dict(registry.providers)
+        providers[CHATGPT_WEB_PROVIDER_ID] = ProviderSpec(
+            id=CHATGPT_WEB_PROVIDER_ID,
+            base_url="browser://chatgpt-web",
+            api_key_env="",
+            models={
+                CHATGPT_WEB_MODEL_ID: ModelSpec(
+                    context=_DEFAULT_CONTEXT,
+                    reasoning_capable=True,
+                    reasoning_control="provider_owned",
+                    cost_tier="subscription",
+                    runtime_identity="chatgpt-web-browser-surface",
+                )
+            },
+            default_model=CHATGPT_WEB_MODEL_ID,
+            timeout_s=float(
+                getattr(settings, "chatgpt_web_turn_timeout_s", 120.0) or 120.0
+            ),
+        )
+        return ProviderRegistry(
+            providers=providers,
+            degraded=registry.degraded,
+            degraded_reason=registry.degraded_reason,
+        )
+
     # 优先级 1: MODEL_PROVIDERS env JSON
     if raw_env:
         try:
@@ -973,14 +1021,14 @@ def load_registry(settings: Settings) -> ProviderRegistry:
                 raise ValueError("MODEL_PROVIDERS must be a JSON object at top level")
             providers = _parse_providers_dict(data)
             # 即便为空 dict 也返回（用户显式提供空配置 = 显式意图）
-            return ProviderRegistry(providers=providers)
+            return finalize(ProviderRegistry(providers=providers))
         except (json.JSONDecodeError, ValueError, TypeError) as exc:
             providers = _synthesize_single_provider(settings)
-            return ProviderRegistry(
+            return finalize(ProviderRegistry(
                 providers=providers,
                 degraded=True,
                 degraded_reason=f"MODEL_PROVIDERS env JSON malformed: {exc}",
-            )
+            ))
 
     # 优先级 2: Web/本机管理的 ignored full local snapshot。它允许私有 endpoint/模型配置
     # 留在本机，不污染公开仓库 tracked seed。
@@ -991,14 +1039,14 @@ def load_registry(settings: Settings) -> ProviderRegistry:
             if not isinstance(data, dict):
                 raise ValueError("providers.local.json must be a JSON object at top level")
             providers = _parse_providers_dict(data)
-            return ProviderRegistry(providers=providers)
+            return finalize(ProviderRegistry(providers=providers))
         except (json.JSONDecodeError, ValueError, OSError) as exc:
             providers = _synthesize_single_provider(settings)
-            return ProviderRegistry(
+            return finalize(ProviderRegistry(
                 providers=providers,
                 degraded=True,
                 degraded_reason=f"providers.local.json malformed: {exc}",
-            )
+            ))
 
     # 优先级 3: {data_dir}/providers.json tracked seed
     file_path = Path(settings.data_dir) / "providers.json"
@@ -1008,14 +1056,14 @@ def load_registry(settings: Settings) -> ProviderRegistry:
             if not isinstance(data, dict):
                 raise ValueError("providers.json must be a JSON object at top level")
             providers = _parse_providers_dict(data)
-            return ProviderRegistry(providers=providers)
+            return finalize(ProviderRegistry(providers=providers))
         except (json.JSONDecodeError, ValueError, OSError) as exc:
             providers = _synthesize_single_provider(settings)
-            return ProviderRegistry(
+            return finalize(ProviderRegistry(
                 providers=providers,
                 degraded=True,
                 degraded_reason=f"providers.json malformed: {exc}",
-            )
+            ))
 
     # 优先级 4: L0 合成单 provider (零回归路径)
-    return ProviderRegistry(providers=_synthesize_single_provider(settings))
+    return finalize(ProviderRegistry(providers=_synthesize_single_provider(settings)))

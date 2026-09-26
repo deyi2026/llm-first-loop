@@ -506,6 +506,23 @@ def build_engine(
     # M49（design §5.4）: 注入 MODEL_FALLBACKS 原始字符串，池在 fallback_candidates() 中按需解析
     from llm_loop.llm.pool import ModelClientPool
 
+    external_client_factories: dict[str, Any] = {}
+    if settings.chatgpt_web_enabled:
+        from llm_loop.llm.chatgpt_web import (
+            CHATGPT_WEB_MODEL_REF,
+            build_chatgpt_web_model_client,
+        )
+
+        effective_refs = {
+            f"{pid}/{mid}"
+            for pid, provider_spec in registry.providers.items()
+            for mid in provider_spec.models
+        }
+        if CHATGPT_WEB_MODEL_REF in effective_refs:
+            external_client_factories[CHATGPT_WEB_MODEL_REF] = (
+                lambda: build_chatgpt_web_model_client(settings)
+            )
+
     model_pool = ModelClientPool(
         registry=registry,
         default_client=llm,
@@ -514,6 +531,7 @@ def build_engine(
         base_max_tokens=settings.llm_max_tokens,
         transport_observer=transport_observer,
         guard_audit_file=Path(settings.data_dir).resolve() / "audit" / "guarded_requests.jsonl",
+        external_client_factories=external_client_factories,
     )
 
     # 存储（记忆 + 压缩档案 + 会话 + fail-open恢复备份）

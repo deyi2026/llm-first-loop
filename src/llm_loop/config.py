@@ -553,6 +553,17 @@ class Settings:
     # 走严格模式失败直接如实反馈，不自动降级（design §5.4 行为规则表核心）。
     model_fallbacks_raw: str = ""
 
+    # ── ChatGPT Web 浏览器模型（显式配置才注册；默认完全关闭）──
+    # 该 provider 不使用 OpenAI API key，而是复用已登录的专用 Chromium/ChatGPT
+    # Project 页面作为模型 I/O surface。LFL LoopEngine 仍是唯一 Agent/工具执行层。
+    chatgpt_web_enabled: bool = False
+    chatgpt_web_cdp_endpoint: str = "http://127.0.0.1:9229"
+    chatgpt_web_project_url: str = ""
+    chatgpt_web_project_ref: str = ""
+    chatgpt_web_project_name: str = ""
+    chatgpt_web_profile_label: str = "lfl-web-gpt"
+    chatgpt_web_turn_timeout_s: float = 120.0
+
     # ── CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）──
     # CODEARTS_ENABLED=false 或凭证缺失时本组件不注册调度工具，对现有运行时零影响。
     # 凭证类字段（ak/sk/iam_token/webhook_secret）仅从 os.environ 读取，不落盘不日志。
@@ -669,6 +680,14 @@ class Settings:
             "model_providers_configured": bool(self.model_providers_raw),
             # M49: Fallback 链配置状态（仅计数, 不暴露降级链明细, 密钥安全 DFX-SEC-02）
             "model_fallbacks_count": _count_fallbacks(self.model_fallbacks_raw),
+            "chatgpt_web_enabled": self.chatgpt_web_enabled,
+            "chatgpt_web_configured": bool(
+                self.chatgpt_web_enabled
+                and self.chatgpt_web_cdp_endpoint
+                and self.chatgpt_web_project_url
+                and self.chatgpt_web_project_ref
+                and self.chatgpt_web_project_name
+            ),
             # CodeArts 集成配置状态（AI 可自查，不暴露凭证细节）
             "codearts_enabled": self.codearts.enabled,
             "codearts_endpoint": self.codearts.endpoint,
@@ -1004,6 +1023,18 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         model_providers_raw=env_values.get("MODEL_PROVIDERS", "").strip(),
         # M49（design §5.4）: MODEL_FALLBACKS 降级链原始值, 解析由 llm.pool 完成
         model_fallbacks_raw=env_values.get("MODEL_FALLBACKS", "").strip(),
+        chatgpt_web_enabled=env_bool("CHATGPT_WEB_ENABLED", False),
+        chatgpt_web_cdp_endpoint=(
+            env_values.get("CHATGPT_WEB_CDP_ENDPOINT", "http://127.0.0.1:9229").strip()
+            or "http://127.0.0.1:9229"
+        ),
+        chatgpt_web_project_url=env_values.get("CHATGPT_WEB_PROJECT_URL", "").strip(),
+        chatgpt_web_project_ref=env_values.get("CHATGPT_WEB_PROJECT_REF", "").strip(),
+        chatgpt_web_project_name=env_values.get("CHATGPT_WEB_PROJECT_NAME", "").strip(),
+        chatgpt_web_profile_label=(
+            env_values.get("CHATGPT_WEB_PROFILE_LABEL", "lfl-web-gpt").strip() or "lfl-web-gpt"
+        ),
+        chatgpt_web_turn_timeout_s=float(env_int("CHATGPT_WEB_TURN_TIMEOUT_S", 120)),
         # CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）
         # 凭证类字段仅从注入的 secret/env mapping 读取，不落盘不日志（DFX-SEC-02）
         codearts=CodeArtsSettings(

@@ -14,6 +14,10 @@ function shortModelName(value: string): string {
   return parts[parts.length - 1] || value;
 }
 
+function modelDisplayName(catalog: ModelCatalog, value: string): string {
+  return catalog.catalog.find((item) => item.id === value)?.display_name || shortModelName(value);
+}
+
 function capabilityFor(catalog: ModelCatalog, model: string | null): ModelCapability | undefined {
   const selected = model || catalog.current;
   return catalog.catalog.find((item) => item.id === selected);
@@ -53,10 +57,10 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
     selectedMissing && catalog.currentAvailable === false && selected === catalog.current
   );
   const selectedMissingLabel = staleSelected
-    ? `${shortModelName(selected)} · 当前不可用`
+    ? `${modelDisplayName(catalog, selected)} · 当前不可用`
     : catalog.models.length === 0
-      ? `${shortModelName(selected)} · 当前选择 · 目录暂不可用`
-      : `${shortModelName(selected)} · 当前选择 · 目录中未列出`;
+      ? `${modelDisplayName(catalog, selected)} · 当前选择 · 目录暂不可用`
+      : `${modelDisplayName(catalog, selected)} · 当前选择 · 目录中未列出`;
   const reasoningLabel = (() => {
     if (!capability?.reasoning_capable) return "推理:模型自管";
     if (!capability.reasoning_control_supported) return "推理:模型自管";
@@ -93,7 +97,7 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
         {catalog.models.length === 0 && !selectedMissing ? <option value="">默认模型</option> : null}
         {catalog.models.map((model) => (
           <option key={model} value={model}>
-            {shortModelName(model)}
+            {modelDisplayName(catalog, model)}
           </option>
         ))}
       </select>
