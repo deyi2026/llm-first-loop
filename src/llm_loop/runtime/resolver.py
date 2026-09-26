@@ -88,6 +88,13 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("tools", "nonconvergence_fuse_min_delta"): TomlField(("LFL_NONCONV_FUSE_MIN_DELTA",), "int"),
         ("web", "host"): TomlField(("WEB_HOST",), "str"),
         ("web", "port"): TomlField(("WEB_PORT",), "int"),
+        ("chatgpt_web", "enabled"): TomlField(("CHATGPT_WEB_ENABLED",), "bool"),
+        ("chatgpt_web", "cdp_endpoint"): TomlField(("CHATGPT_WEB_CDP_ENDPOINT",), "str"),
+        ("chatgpt_web", "project_url"): TomlField(("CHATGPT_WEB_PROJECT_URL",), "str"),
+        ("chatgpt_web", "project_ref"): TomlField(("CHATGPT_WEB_PROJECT_REF",), "str"),
+        ("chatgpt_web", "project_name"): TomlField(("CHATGPT_WEB_PROJECT_NAME",), "str"),
+        ("chatgpt_web", "profile_label"): TomlField(("CHATGPT_WEB_PROFILE_LABEL",), "str"),
+        ("chatgpt_web", "turn_timeout_s"): TomlField(("CHATGPT_WEB_TURN_TIMEOUT_S",), "int"),
         ("local_runtime", "observer"): TomlField(("LFL_LOCAL_RUNTIME_OBSERVER",), "str"),
         ("local_runtime", "admission_authority"): TomlField(("LFL_LOCAL_RUNTIME_ADMISSION_AUTHORITY",), "str"),
         ("local_runtime", "cli"): TomlField(("LFL_LFRT_CLI",), "str"),
@@ -148,7 +155,15 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
     }
 )
 
-_SERVICE_SCOPED_SEMANTIC_SERVICES = frozenset({"web", "feishu", "learning"})
+_SERVICE_SCOPED_SECTIONS: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "semantic": frozenset({"web", "feishu", "learning"}),
+        # ChatGPT browser I/O is intentionally a Web-only surface.  Keeping the
+        # runtime switch service-scoped prevents Feishu/Learning from acquiring
+        # the browser-backed provider on future independent restarts.
+        "chatgpt_web": frozenset({"web"}),
+    }
+)
 
 _TOML_ENV_KEYS = tuple(
     dict.fromkeys(key for spec in TOML_SCHEMA.values() for key in spec.env_keys)
@@ -281,9 +296,9 @@ def _parse_runtime_toml_layers(
 ) -> tuple[dict[str, str], dict[str, str]]:
     """Parse global and service-scoped runtime.toml projections.
 
-    Only semantic scope fields may currently be service-scoped, using the strict
-    ``[semantic.<service>]`` form.  This intentionally prevents unrelated model or
-    runtime settings from silently forking by service.
+    Only explicitly registered sections may be service-scoped.  This keeps the
+    general model/runtime surface single-source while allowing deliberately local
+    capabilities such as Web-only browser model I/O.
     """
     p = Path(path)
     if not p.is_file():
@@ -299,21 +314,22 @@ def _parse_runtime_toml_layers(
     service_out: dict[str, str] = {}
     requested_service = str(service or "").strip().lower()
     for raw_path, value in _flatten_toml(data):
-        if len(raw_path) == 3 and raw_path[0] == "semantic":
-            semantic_service = raw_path[1]
+        if len(raw_path) == 3 and raw_path[0] in _SERVICE_SCOPED_SECTIONS:
+            section = raw_path[0]
+            scoped_service = raw_path[1]
             field_name = raw_path[2]
             where = ".".join(raw_path)
-            if semantic_service not in _SERVICE_SCOPED_SEMANTIC_SERVICES:
+            if scoped_service not in _SERVICE_SCOPED_SECTIONS[section]:
                 if any(_SECRET_NAME_RE.search(part) for part in raw_path):
                     raise ValueError(f"runtime.toml 禁止存放凭证/密钥字段: {where}")
-                raise ValueError(f"runtime.toml 未知服务级 semantic scope: {where}")
-            spec = TOML_SCHEMA.get(("semantic", field_name))
+                raise ValueError(f"runtime.toml 未知服务级 {section} scope: {where}")
+            spec = TOML_SCHEMA.get((section, field_name))
             if spec is None:
                 if any(_SECRET_NAME_RE.search(part) for part in raw_path):
                     raise ValueError(f"runtime.toml 禁止存放凭证/密钥字段: {where}")
                 raise ValueError(f"runtime.toml 未知字段: {where}")
-            legacy = _toml_value_to_legacy(("semantic", field_name), value, spec.kind)
-            if requested_service == semantic_service:
+            legacy = _toml_value_to_legacy((section, field_name), value, spec.kind)
+            if requested_service == scoped_service:
                 for env_key in spec.env_keys:
                     service_out[env_key] = legacy
             continue
@@ -342,7 +358,8 @@ def parse_runtime_toml(path: str | Path, *, service: str | None = None) -> dict[
     The parser is strict when the file exists: unknown fields, wrong types and any
     secret-looking field fail closed.  Missing default runtime.toml is allowed so a
     workspace can migrate from .env incrementally.  When ``service`` is supplied,
-    matching ``[semantic.<service>]`` values override global ``[semantic]`` values.
+    matching service-scoped values (for example ``[semantic.web]`` and
+    ``[chatgpt_web.web]``) override the corresponding global section values.
     """
     global_values, service_values = _parse_runtime_toml_layers(path, service=service)
     out = dict(global_values)

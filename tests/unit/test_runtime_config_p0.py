@@ -128,6 +128,45 @@ docs = true
     assert learning.sources["SEMANTIC_DOCS_ENABLED"] == "runtime_toml"
 
 
+def test_service_scoped_chatgpt_web_is_visible_only_to_web(tmp_path: Path) -> None:
+    _runtime_toml(
+        tmp_path,
+        """
+[chatgpt_web.web]
+enabled = true
+cdp_endpoint = "http://127.0.0.1:9229"
+project_url = "https://chatgpt.com/g/g-project/project"
+project_ref = "g-project"
+project_name = "LFL Web Project"
+profile_label = "lfl-web-gpt-production"
+turn_timeout_s = 120
+""",
+    )
+
+    web = resolve_effective("web", env={}, workspace_root=tmp_path)
+    feishu = resolve_effective("feishu", env={}, workspace_root=tmp_path)
+    learning = resolve_effective("learning", env={}, workspace_root=tmp_path)
+
+    assert web.values["CHATGPT_WEB_ENABLED"] == "1"
+    assert web.values["CHATGPT_WEB_CDP_ENDPOINT"] == "http://127.0.0.1:9229"
+    assert web.values["CHATGPT_WEB_PROJECT_REF"] == "g-project"
+    assert web.values["CHATGPT_WEB_PROFILE_LABEL"] == "lfl-web-gpt-production"
+    assert web.values["CHATGPT_WEB_TURN_TIMEOUT_S"] == "120"
+    assert web.sources["CHATGPT_WEB_ENABLED"] == "runtime_toml_service:web"
+
+    assert "CHATGPT_WEB_ENABLED" not in feishu.values
+    assert "CHATGPT_WEB_PROJECT_REF" not in feishu.values
+    assert "CHATGPT_WEB_ENABLED" not in learning.values
+    assert "CHATGPT_WEB_PROJECT_REF" not in learning.values
+
+
+def test_service_scoped_chatgpt_web_rejects_non_web_service(tmp_path: Path) -> None:
+    bad = tmp_path / "bad-chatgpt-service.toml"
+    bad.write_text("[chatgpt_web.feishu]\nenabled = true\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="未知服务级 chatgpt_web scope"):
+        parse_runtime_toml(bad, service="web")
+
+
 def test_service_scoped_semantic_keeps_cli_and_explicit_shell_override_priority(
     tmp_path: Path,
 ) -> None:
