@@ -760,10 +760,46 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     from llm_loop.runtime.paths import resolve_runtime_paths
 
     _data_dir_raw = str(env_values.get("DATA_DIR", "") or "").strip()
+    _path_env: Mapping[str, str] = env_values
+    if env is None:
+        # Service bootstrap compatibility: runtime.launch resolves business
+        # configuration from runtime-root .env/runtime.toml, but Knowledge path
+        # bindings are intentionally not business keys.  The runtime manifest
+        # already hydrates these path keys from the canonical runtime-root .env;
+        # load_settings must use the same binding or a linked-worktree engine can
+        # quarantine its Method/Experience stores while the manifest reports
+        # healthy.  Explicit mapping callers remain hermetic and never inherit
+        # host dotenv state.
+        from llm_loop.runtime.resolver import parse_env_file
+
+        _path_env_mut = dict(env_values)
+        _runtime_root_hint = str(
+            env_values.get("LFL_RUNTIME_ROOT", "")
+            or env_values.get("LFL_WORKSPACE_ROOT", "")
+            or _CODE_ROOT
+        ).strip()
+        try:
+            _path_dotenv = parse_env_file(
+                Path(_runtime_root_hint).expanduser().resolve() / ".env"
+            )
+        except Exception:  # noqa: BLE001 - path fallback is compatibility-only
+            _path_dotenv = {}
+        for _key in (
+            "EXPERIENCES_DIR",
+            "METHODS_DIR",
+            "METHOD_SEED_DIR",
+            "SKILLS_DIR",
+            "DOCS_DIR",
+        ):
+            if not str(_path_env_mut.get(_key, "") or "").strip():
+                _raw = str(_path_dotenv.get(_key, "") or "").strip()
+                if _raw:
+                    _path_env_mut[_key] = _raw
+        _path_env = _path_env_mut
     _resolved_paths = resolve_runtime_paths(
         data_dir=_data_dir_raw or None,
         code_root=_CODE_ROOT,
-        env=env_values,
+        env=_path_env,
         data_dir_explicit=bool(_data_dir_raw),
     )
     _ws_soft = max(1, min(env_int("LFL_TOOL_WORKING_SET_SOFT_RESULT_CAP", 12), 1024))

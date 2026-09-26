@@ -37,6 +37,80 @@ def test_load_settings_full(monkeypatch):
     assert s.self_inspection_enabled is True
 
 
+def test_load_settings_process_bootstrap_uses_runtime_dotenv_knowledge_paths(
+    tmp_path, monkeypatch
+):
+    """Service bootstrap must give engine and manifest the same Knowledge binding."""
+    from llm_loop.config import load_settings
+    from llm_loop.runtime.knowledge_health import inspect_knowledge_health
+
+    runtime_root = tmp_path / "runtime-root"
+    data_dir = runtime_root / "data"
+    experiences = runtime_root / "canonical-experiences"
+    methods = runtime_root / "canonical-methods"
+    data_dir.mkdir(parents=True)
+    experiences.mkdir()
+    methods.mkdir()
+    (runtime_root / ".env").write_text(
+        f"EXPERIENCES_DIR={experiences}\nMETHODS_DIR={methods}\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("LLM_BASE_URL", "https://x/v1")
+    monkeypatch.setenv("LLM_MODEL", "m")
+    monkeypatch.setenv("LFL_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    for key in (
+        "EXPERIENCES_DIR",
+        "METHODS_DIR",
+        "METHOD_SEED_DIR",
+        "SKILLS_DIR",
+        "DOCS_DIR",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    settings = load_settings()
+    paths = settings._extra["runtime_paths"]
+    health = inspect_knowledge_health(paths)
+
+    assert paths.experiences_dir == experiences.resolve()
+    assert paths.methods_dir == methods.resolve()
+    assert paths.experiences_source == "explicit_env"
+    assert paths.methods_source == "explicit_env"
+    assert health["status"] == "healthy"
+    assert health["writes_enabled"] is True
+
+
+def test_load_settings_explicit_mapping_does_not_implicitly_read_runtime_dotenv(
+    tmp_path,
+):
+    """Explicit qualification mappings stay hermetic and do not inherit host dotenv."""
+    from llm_loop.config import load_settings
+
+    runtime_root = tmp_path / "runtime-root"
+    data_dir = runtime_root / "data"
+    data_dir.mkdir(parents=True)
+    (runtime_root / ".env").write_text(
+        f"EXPERIENCES_DIR={tmp_path / 'foreign-experiences'}\n"
+        f"METHODS_DIR={tmp_path / 'foreign-methods'}\n",
+        encoding="utf-8",
+    )
+    settings = load_settings(
+        {
+            "LLM_API_KEY": "k",
+            "LLM_BASE_URL": "https://x/v1",
+            "LLM_MODEL": "m",
+            "LFL_RUNTIME_ROOT": str(runtime_root),
+            "DATA_DIR": str(data_dir),
+        }
+    )
+    paths = settings._extra["runtime_paths"]
+
+    assert paths.experiences_source == "data_dir_inferred"
+    assert paths.methods_source == "data_dir_inferred"
+
+
 def test_load_settings_self_inspection_off(monkeypatch):
     """SELF_INSPECTION_ENABLED=0 → 关闭自省."""
     from llm_loop.config import load_settings
