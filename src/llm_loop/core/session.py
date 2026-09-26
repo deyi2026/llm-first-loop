@@ -654,6 +654,117 @@ class SessionStore:
         session_id = _validate_session_id(session_id)
         return os.path.join(self._identity_dir_fs, f"{session_id}.json")
 
+    def _identity_owner_for_background_read(self, session_id: str) -> str:
+        """Resolve the durable workspace owner without adopting it as current.
+
+        This is intentionally narrower than the ordinary load path. Ordinary
+        callers keep workspace isolation and therefore compare the durable
+        owner with the current root. The dedicated global Learning consumer,
+        however, drains one journal spanning all workspaces and must be able
+        to read the source session from its already-established owner partition.
+
+        The resolver never reassigns an existing id. Legacy single-owner
+        sessions receive the same durable owner tombstone that ordinary
+        identity verification would create; ambiguous/deleted/history-only
+        identities still fail closed.
+        """
+        session_id = _validate_session_id(session_id)
+        with self._identity_lock(session_id):
+            owner_path = self._identity_path(session_id)
+            if os.path.exists(owner_path):
+                try:
+                    with open(owner_path, encoding="utf-8") as f:
+                        record = json.load(f)
+                    owner = str(record["owner"])
+                except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                    raise SessionIdConflictError(
+                        f"session_id {session_id} 的全局归属记录损坏，拒绝后台读取"
+                    ) from exc
+                if record.get("deleted_at"):
+                    raise SessionDeletedError(
+                        f"session_id {session_id} 已删除且不可后台读取"
+                    )
+                return owner
+
+            owners = self._legacy_identity_owners(session_id)
+            if len(owners) > 1:
+                raise SessionIdConflictError(
+                    f"session_id {session_id} 已存在于多个历史工作区，拒绝后台读取"
+                )
+            if not owners:
+                if self._identity_history_in_use(session_id):
+                    raise SessionIdConflictError(
+                        f"session_id {session_id} 存在历史Event/Archive但workspace归属不可确定"
+                    )
+                raise SessionIdConflictError(
+                    f"session_id {session_id} 无可验证的workspace归属，拒绝后台读取"
+                )
+            owner = owners[0]
+            self._durable_replace_text(
+                owner_path,
+                json.dumps({"owner": owner, "claimed_at": _now()}, ensure_ascii=False),
+            )
+            return owner
+
+    def _identity_owner_root(self, owner: str) -> Path:
+        """Map one durable owner key to a contained sessions partition."""
+        base = os.path.realpath(self._identity_root_fs)
+        if owner == ".":
+            target = base
+        else:
+            if not owner or os.path.isabs(owner):
+                raise SessionIdConflictError(
+                    f"非法workspace owner key，拒绝后台读取: {owner!r}"
+                )
+            target = os.path.realpath(os.path.join(base, owner.replace("/", os.sep)))
+        try:
+            if os.path.commonpath((base, target)) != base:
+                raise ValueError("owner root outside identity root")
+        except ValueError as exc:
+            raise SessionIdConflictError(
+                f"workspace owner越出identity_root，拒绝后台读取: {owner!r}"
+            ) from exc
+        root = Path(target)
+        if not root.is_dir():
+            raise SessionIdConflictError(
+                f"workspace owner分区不存在，拒绝后台读取: {owner!r}"
+            )
+        return root
+
+    def load_from_identity_owner(self, session_id: str) -> Session:
+        """Privileged read for the global background Learning consumer.
+
+        The current SessionStore root is never switched. Instead a short-lived
+        reader is bound to the durable identity owner and reuses the same
+        global identity/event contracts. This keeps normal cross-workspace
+        load fail-closed while allowing an already-authorized durable Learning
+        job to read the session that originally produced it.
+        """
+        session_id = _validate_session_id(session_id)
+        owner = self._identity_owner_for_background_read(session_id)
+        owner_root = self._identity_owner_root(owner)
+        json_exists = (owner_root / f"{session_id}.json").is_file()
+        event_exists = bool(
+            self._event_store is not None
+            and getattr(self._event_store, "enabled", False)
+            and self._event_store.exists(session_id)
+        )
+        if not json_exists and not (
+            self._read_path_source == "event_log" and event_exists
+        ):
+            raise SessionIdConflictError(
+                f"session_id {session_id} 的owner分区无可读取源会话"
+            )
+        owner_store = SessionStore(
+            owner_root,
+            event_store=self._event_store,
+            read_path_source=self._read_path_source,
+            identity_root=self._identity_root,
+            identity_history_exists_fn=self._identity_history_exists_fn,
+            leak_data_dir=self._leak_data_dir,
+        )
+        return owner_store.load(session_id)
+
     def _identity_history_in_use(self, session_id: str) -> bool:
         """无session JSON时检查全局Event/Archive历史是否已占用该sid；探针异常fail-closed。"""
         try:

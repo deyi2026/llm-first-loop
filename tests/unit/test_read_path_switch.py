@@ -130,6 +130,106 @@ def test_global_session_id_claim_prevents_cross_workspace_event_collision(tmp_pa
     assert all(e.payload.get("content") != "workspace-B" for e in events)
 
 
+def test_background_owner_load_reads_true_workspace_without_switching_root(tmp_path):
+    """Global Learning may read the durable owner, but ordinary workspace load stays isolated."""
+    import pytest
+
+    from llm_loop.core.session import SessionIdConflictError
+
+    sessions_base = tmp_path / "sessions"
+    root_a = sessions_base / "workspace-a"
+    root_b = sessions_base / "workspace-b"
+    store_a = SessionStore(root_a, identity_root=sessions_base)
+    store_b = SessionStore(root_b, identity_root=sessions_base)
+    sid = store_a.create()
+    store_a.append(
+        sid,
+        Message(role="user", content="owned-by-a", source=MessageSource.USER),
+    )
+
+    identity_path = sessions_base / ".identity" / f"{sid}.json"
+    identity_before = identity_path.read_bytes()
+    with pytest.raises(SessionIdConflictError, match="其他工作区|占用"):
+        store_b.load(sid)
+
+    loaded = store_b.load_from_identity_owner(sid)
+    assert loaded.messages[0].content == "owned-by-a"
+    assert store_b.root == root_b
+    assert identity_path.read_bytes() == identity_before
+    assert not (root_b / f"{sid}.json").exists()
+
+
+def test_background_owner_load_respects_deleted_tombstone(tmp_path):
+    """Privileged Learning read must not bypass durable deletion."""
+    import pytest
+
+    from llm_loop.core.session import SessionDeletedError
+
+    sessions_base = tmp_path / "sessions"
+    root_a = sessions_base / "workspace-a"
+    root_b = sessions_base / "workspace-b"
+    store_a = SessionStore(root_a, identity_root=sessions_base)
+    store_b = SessionStore(root_b, identity_root=sessions_base)
+    sid = store_a.create()
+    assert store_a.delete(sid) is True
+
+    with pytest.raises(SessionDeletedError, match="删除"):
+        store_b.load_from_identity_owner(sid)
+
+
+def test_background_owner_load_keeps_event_log_read_path(tmp_path):
+    """Owner-directed reads preserve the configured event-log projection."""
+    event_store = EventStore(tmp_path / "event_logs", enabled=True)
+    sessions_base = tmp_path / "sessions"
+    root_a = sessions_base / "workspace-a"
+    root_b = sessions_base / "workspace-b"
+    store_a = SessionStore(
+        root_a,
+        event_store=event_store,
+        read_path_source="session_json",
+        identity_root=sessions_base,
+    )
+    sid = store_a.create()
+    store_a.append(
+        sid,
+        Message(role="user", content="event-owned", source=MessageSource.USER),
+    )
+    store_b = SessionStore(
+        root_b,
+        event_store=event_store,
+        read_path_source="event_log",
+        identity_root=sessions_base,
+    )
+
+    loaded = store_b.load_from_identity_owner(sid)
+    assert loaded.messages[0].content == "event-owned"
+    assert store_b.root == root_b
+
+
+def test_background_owner_load_rejects_owner_path_escape(tmp_path):
+    """A corrupted owner tombstone cannot turn privileged background read into path traversal."""
+    import json
+
+    import pytest
+
+    from llm_loop.core.session import SessionIdConflictError
+
+    sessions_base = tmp_path / "sessions"
+    current = sessions_base / "workspace-b"
+    current.mkdir(parents=True)
+    sid = "escaped-owner-session"
+    identity_dir = sessions_base / ".identity"
+    identity_dir.mkdir(parents=True)
+    (identity_dir / f"{sid}.json").write_text(
+        json.dumps({"owner": "../outside", "claimed_at": 1.0}),
+        encoding="utf-8",
+    )
+    store = SessionStore(current, identity_root=sessions_base)
+
+    with pytest.raises(SessionIdConflictError, match="越出|非法"):
+        store.load_from_identity_owner(sid)
+
+
 def test_loading_missing_session_does_not_claim_global_id_for_workspace(tmp_path):
     """只读不存在sid不得产生全局owner副作用；真正首次save的workspace才拥有该ID。"""
     from llm_loop.core.session import Session

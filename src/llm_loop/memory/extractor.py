@@ -136,6 +136,19 @@ class MemoryExtractor:
         self._last_trigger_ts: OrderedDict[str, float] = OrderedDict()
         self._lock = threading.Lock()
 
+    def _load_session_for_trigger(
+        self, session_id: str, trigger: ExtractTrigger
+    ) -> Any:
+        """Select the lawful session read path for this extraction trigger."""
+        store = self.session_store
+        if store is None:
+            raise RuntimeError("session_store unavailable")
+        if trigger == "interval":
+            owner_loader = getattr(store, "load_from_identity_owner", None)
+            if callable(owner_loader):
+                return owner_loader(session_id)
+        return store.load(session_id)
+
     # ── 触发判定 ──
     def maybe_trigger(self, session_id: str) -> bool:
         """定期触发判定（消息数 ≥ 阈值 且 过冷却 → 向 Learning Plane 投递 durable 任务）.
@@ -209,7 +222,7 @@ class MemoryExtractor:
             self._audit(session_id, trigger, "不可用", 0, ["组件未装配"], note="提取不可用")
             return ExtractResult(records=[], entries=[], skipped_duplicates=0)
 
-        session = self.session_store.load(session_id)
+        session = self._load_session_for_trigger(session_id, trigger)
         # 预算: 输入超限截断最旧 + 标注
         history_text = self._build_history_text(session.messages)
         note = ""

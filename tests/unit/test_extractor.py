@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.session import SessionStore
@@ -31,6 +32,34 @@ def _mk_session(store, n_msgs: int, sid: str | None = None) -> str:
             sid, Message(role="user", content=f"消息 {i} 关于蓝色", source=MessageSource.USER)
         )
     return sid
+
+
+def test_interval_extract_uses_identity_owner_read_but_manual_keeps_current_root(tmp_path):
+    """Only durable background interval jobs may follow the global session owner."""
+    calls: list[str] = []
+    session = SimpleNamespace(
+        messages=[Message(role="user", content="owner scoped fact", source=MessageSource.USER)]
+    )
+
+    class _Store:
+        def load(self, _sid: str):
+            calls.append("current")
+            return session
+
+        def load_from_identity_owner(self, _sid: str):
+            calls.append("owner")
+            return session
+
+    extractor = MemoryExtractor(
+        llm_client=_FakeLLMExtract(),
+        memory=MemoryStore(tmp_path / "memory"),
+        session_store=_Store(),
+        audit_dir=tmp_path / "audit",
+    )
+    extractor.extract_session("sid-a", trigger="interval")
+    extractor.extract_session("sid-a", trigger="manual")
+
+    assert calls == ["owner", "current"]
 
 
 def test_trigger_below_threshold_no_action(tmp_path):

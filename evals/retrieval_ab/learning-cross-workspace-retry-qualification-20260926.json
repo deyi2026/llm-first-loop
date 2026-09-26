@@ -1,0 +1,68 @@
+{
+  "schema": "learning-cross-workspace-retry-qualification/v1",
+  "result": "PASS_ISOLATED",
+  "base_head": "bfd82cba7944de436a2a2d52e95131e7f8a60d7c",
+  "root_cause": {
+    "memory_job": "global LearningJournal spans workspaces, but interval MemoryExtractor used current-workspace SessionStore.load; durable source owner differed from dedicated Learning current workspace, causing SessionIdConflict.",
+    "reflection_job": "historical candidate_save_failed came from pre-gen116 MethodStore quarantine; gen116 is writes-enabled but current foreground run still defers natural retry."
+  },
+  "design": {
+    "ordinary_cross_workspace_load_remains_fail_closed": true,
+    "privileged_path": "SessionStore.load_from_identity_owner",
+    "privileged_scope": "MemoryExtractor trigger=interval only",
+    "manual_and_session_end_keep_current_workspace_semantics": true,
+    "owner_source": "durable session identity tombstone / unambiguous legacy owner",
+    "owner_path_containment_required": true,
+    "deleted_or_ambiguous_owner_fail_closed": true,
+    "current_session_root_not_switched": true
+  },
+  "real_source_probe": {
+    "schema": "learning-cross-workspace-extract-probe/v1",
+    "session_id": "852f577d-611a-4433-bd5a-e818387f9e1a",
+    "ordinary_load_conflict": true,
+    "model_ref": "glm/glm-5.3",
+    "elapsed_s": 81.48,
+    "result_entries": 11,
+    "skipped_duplicates": 0,
+    "record_failures": [
+      []
+    ],
+    "temp_memory_entries": 11,
+    "production_hashes_unchanged": false,
+    "before": {
+      "prod_mem": "92175fb88b3b235291d6cf3a6e01842a7d04d3044da74e01737b95e6ae765405",
+      "identity": "69c93b3e0f7da14c9746dbba1fad859de961e076a2e93eb31a19890576a9485a",
+      "source": "19f6d40773ab7ad821935cb1eb358aa316d8151ea7bf707180f796ca6c7c97aa"
+    },
+    "after": {
+      "prod_mem": "92175fb88b3b235291d6cf3a6e01842a7d04d3044da74e01737b95e6ae765405",
+      "identity": "69c93b3e0f7da14c9746dbba1fad859de961e076a2e93eb31a19890576a9485a",
+      "source": "4ed33b6a7e42711f97d77ef194f4593e6db909ce09c171b6096f02ca2541bab8"
+    }
+  },
+  "tests": {
+    "session_extractor_focused_passed": 29,
+    "adjacent_suite_a_passed": 98,
+    "adjacent_suite_b_passed": 95,
+    "learning_journal_passed": 23,
+    "ruff": "PASS",
+    "compileall": "PASS",
+    "git_diff_check": "PASS",
+    "pyright_errors": 0,
+    "security_tree_files": 3261,
+    "security_tree": "PASS"
+  },
+  "repair_contract": {
+    "memory_job_current": "failed attempt=3; automatic retry exhausted",
+    "repair_action": "after qualified code is deployed, append exactly one mark_requeued event through LearningJournal API; do not edit JSONL",
+    "attempt4_failure": "returns to failed and is not automatically runnable, preventing toxic retry loop",
+    "reflection_job_current": "queued attempt=3; allow natural P3 retry after foreground clears before considering any further fix"
+  },
+  "artifacts": [
+    {
+      "path": "evals/retrieval_ab/learning-cross-workspace-extract-probe-20260926.json",
+      "sha256": "2de96b8b30997d861bb8078c04408fdf886833e16042cac73b815220d585895c"
+    }
+  ],
+  "production_changed": false
+}

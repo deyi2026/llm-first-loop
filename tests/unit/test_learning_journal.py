@@ -79,6 +79,31 @@ def test_failed_below_max_can_retry_then_blocks(tmp_path):
     assert journal.enqueue("episode:s1:3:xyz", session_id="s1") is None
 
 
+def test_explicit_requeue_can_grant_one_repair_attempt_after_max_failure(tmp_path):
+    """Operator repair is append-only and does not reopen automatic toxic retries."""
+    journal = _mk(tmp_path, max_attempts=3)
+    job = journal.enqueue("memory-extract:s1:37", session_id="s1", kind="memory_extract")
+    assert job is not None
+    for _ in range(3):
+        journal.mark_started(job.job_id)
+        journal.mark_failed(job.job_id, "worker_exception")
+
+    exhausted = journal.job(job.job_id)
+    assert exhausted is not None and exhausted.attempt == 3 and exhausted.state == "failed"
+    assert journal.runnable_jobs() == []
+
+    journal.mark_requeued(job.job_id, "operator_repair_verified")
+    reopened = journal.job(job.job_id)
+    assert reopened is not None and reopened.state == "queued" and reopened.attempt == 3
+    assert [x.job_id for x in journal.runnable_jobs()] == [job.job_id]
+
+    journal.mark_started(job.job_id)
+    journal.mark_failed(job.job_id, "worker_exception")
+    final = journal.job(job.job_id)
+    assert final is not None and final.attempt == 4 and final.state == "failed"
+    assert journal.runnable_jobs() == []
+
+
 def test_attempt_counter_folds_across_reload(tmp_path):
     journal = _mk(tmp_path)
     job = journal.enqueue("episode:s1:3:xyz", session_id="s1")
