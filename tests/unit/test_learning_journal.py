@@ -201,6 +201,7 @@ def test_factory_separates_learning_journal_producer_from_dedicated_consumer(tmp
     plane = engine_learning.learning_plane
     try:
         assert plane is not None and plane._thread.is_alive()
+        assert plane._method_discovery is None  # semantic Method OFF = no hidden retrieval
         assert engine_learning.resource_governor is plane._resource_governor
         assert plane._provider_call_coordinator is engine_learning.provider_call_coordinator
         assert engine_learning.provider_call_coordinator.governor is engine_learning.resource_governor
@@ -208,6 +209,85 @@ def test_factory_separates_learning_journal_producer_from_dedicated_consumer(tmp
     finally:
         engine_learning.close()
     assert plane._thread is None or not plane._thread.is_alive()
+
+    method_on = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x.invalid/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data-method-on"),
+        extract_enabled=False,
+        learning_plane_enabled=True,
+        embedding_provider="hash",
+        semantic_method_enabled=True,
+    )
+    engine_learning_method = build_engine(method_on, runtime_role="learning")
+    method_plane = engine_learning_method.learning_plane
+    try:
+        assert method_plane is not None
+        assert callable(method_plane._method_discovery)
+    finally:
+        engine_learning_method.close()
+
+
+def test_learning_method_semantic_filters_unqualified_candidates(tmp_path) -> None:
+    """Learning reuse recall admits only qualified/active Methods, not candidate noise."""
+    from llm_loop.config import Settings
+    from llm_loop.factory import build_engine
+    from llm_loop.methods.store import MethodStore
+
+    runtime_methods = tmp_path / "filtered-methods"
+    seed_methods = tmp_path / "empty-seed"
+    seed_methods.mkdir()
+    store = MethodStore(runtime_methods, seed_dir=seed_methods)
+    for i in range(35):
+        store.save_candidate(
+            name=f"candidate-noise-{i:02d}",
+            description="service restart runtime provenance pid manifest import path",
+            body="candidate noise",
+            source_model="test",
+        )
+    target = store.save_candidate(
+        name="verified restart provenance",
+        description="verify pid manifest git head and imported module path after restart",
+        body="verify replacement process code identity",
+        source_model="test",
+    )
+    store.record_qualification(
+        target.method_ref,
+        task_ref="episode:qualification:1:independent",
+        verdict="pass",
+        mechanism="pass",
+        task_benefit="pass",
+        promotion="pass",
+        evaluator="test",
+    )
+    store.update_status(target.method_ref, "qualified")
+
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x.invalid/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "filtered-data"),
+        methods_dir=str(runtime_methods),
+        method_seed_dir=str(seed_methods),
+        extract_enabled=False,
+        learning_plane_enabled=True,
+        embedding_provider="hash",
+        semantic_method_enabled=True,
+    )
+    engine = build_engine(settings, runtime_role="learning")
+    plane = engine.learning_plane
+    try:
+        assert plane is not None and callable(plane._method_discovery)
+        rows, diag = plane._method_discovery(
+            "service restart verify pid manifest imported module provenance", 6
+        )
+        assert [row["key"] for row in rows] == [target.method_ref]
+        assert all(row["status"] in {"active", "qualified"} for row in rows)
+        assert diag is not None and diag["eligible_method_count"] == 1
+        assert diag["semantic_effective"] is True
+    finally:
+        engine.close()
 
 
 def _resource_target(model_ref: str) -> tuple[str, str]:
@@ -370,6 +450,50 @@ def test_learning_plane_releases_resource_lease_when_reflection_raises(
         plane._try_execute(job)
     assert plane._resource_governor.active_leases() == ()
     assert all(plane._resource_governor.in_flight(key) == 0 for key in plane._resource_request(job).resource_keys)
+
+
+def test_learning_plane_passes_method_discovery_to_reflection(tmp_path, monkeypatch):
+    """Dedicated consumer must pass the exact configured discovery callback to Reflection."""
+    from llm_loop.methods.reflection import ReflectionOutcome
+
+    journal = _mk(tmp_path)
+    job = journal.enqueue("episode:s1:4:method", session_id="s1", source_model="provider/model")
+    assert job is not None
+    engine = SimpleNamespace(
+        registry=object(),
+        runner=SimpleNamespace(has_running=lambda: False),
+        _sync_guard=threading.Lock(),
+        _sync_active=set(),
+        settings=SimpleNamespace(method_reflection_timeout_s=120.0),
+    )
+    plane = _plane_for_admission(tmp_path, engine, journal)
+    plane._episode_store = SimpleNamespace(
+        get=lambda *_args: {"messages": [{"role": "assistant", "content": "done"}]}
+    )
+    plane._model_resolver = lambda _model: object()
+    def sentinel(query, limit):
+        return [], {"semantic_requested": True}
+
+    plane._method_discovery = sentinel
+    captured: dict[str, object] = {}
+
+    def fake_reflect(**kwargs):
+        captured.update(kwargs)
+        return ReflectionOutcome(
+            attempted=True,
+            triggered=True,
+            reason="no_new_method",
+            method_discovery_diagnostics={
+                "semantic_requested": True,
+                "semantic_effective": False,
+            },
+        )
+
+    monkeypatch.setattr("llm_loop.methods.learning_plane.reflect_on_episode", fake_reflect)
+    assert plane._try_execute(job) is True
+    assert captured["method_discovery"] is sentinel
+    after = journal.job(job.job_id)
+    assert after is not None and after.state == "none"
 
 
 def test_learning_plane_unresolved_resource_target_yields_without_attempt(tmp_path):

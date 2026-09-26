@@ -7,6 +7,7 @@ and persists only a structured candidate. Failure is always fail-open.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -21,6 +22,7 @@ class ReflectionOutcome:
     used_teacher_fallback: bool = False
     reason: str = ""
     candidate_payload: dict[str, Any] | None = None
+    method_discovery_diagnostics: dict[str, Any] | None = None
 
 
 def friction_facts(*, rounds: int, tool_trace: list[dict[str, Any]], run_end_reason: str) -> dict[str, Any]:
@@ -308,6 +310,15 @@ def render_candidate_body(value: dict[str, Any]) -> str:
 _MAX_EXISTING_BRIEFS = 30
 _BRIEF_DESC_CHARS = 110
 _DEDUP_STATUSES = frozenset({"active", "qualified"})
+_METHOD_DISCOVERY_LIMIT = 6
+_METHOD_DISCOVERY_QUERY_CHARS = 1200
+_METHOD_QUERY_USER_CHARS = 760
+_METHOD_QUERY_ASSISTANT_CHARS = 280
+_METHOD_QUERY_TRIGGER_CHARS = 320
+
+MethodDiscovery = Callable[
+    [str, int], tuple[list[dict[str, Any]], dict[str, Any] | None]
+]
 
 
 def _existing_method_briefs(store: MethodStore) -> list[str]:
@@ -334,6 +345,124 @@ def _existing_method_briefs(store: MethodStore) -> list[str]:
     return briefs
 
 
+def _method_discovery_query(
+    material: list[dict[str, str]],
+    trigger_facts: dict[str, Any],
+    final_answer: str,
+) -> str:
+    """Build a bounded semantic query from durable, model-visible facts only.
+
+    ``material`` is already projected by :func:`build_episode_material`, which excludes
+    hidden reasoning.  Keep the query task-shaped rather than dumping the whole episode:
+    user intent dominates, trigger facts provide failure/context discriminators, and a
+    small final-outcome preview helps distinguish otherwise similar tasks.
+    """
+    user_text = "\n".join(
+        str(row.get("content") or "").strip()
+        for row in material
+        if str(row.get("role") or "") == "user"
+    )[:_METHOD_QUERY_USER_CHARS]
+    assistant_text = str(final_answer or "").strip()
+    if not assistant_text:
+        for row in reversed(material):
+            if str(row.get("role") or "") == "assistant":
+                assistant_text = str(row.get("content") or "").strip()
+                break
+    assistant_text = assistant_text[:_METHOD_QUERY_ASSISTANT_CHARS]
+    trigger_text = json.dumps(
+        trigger_facts or {}, ensure_ascii=False, sort_keys=True, default=str
+    )[:_METHOD_QUERY_TRIGGER_CHARS]
+    parts = [
+        f"task: {user_text}" if user_text else "",
+        f"friction: {trigger_text}" if trigger_text and trigger_text != "{}" else "",
+        f"outcome: {assistant_text}" if assistant_text else "",
+    ]
+    return "\n".join(part for part in parts if part)[:_METHOD_DISCOVERY_QUERY_CHARS]
+
+
+def _related_method_projection(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Project discovery cards into a compact advisory model-visible shape.
+
+    Only active/qualified Methods may influence the duplicate/reuse context.  Discovery
+    never asserts applicability; that remains an explicit model judgment grounded in the
+    current episode.
+    """
+    result: list[dict[str, str]] = []
+    for row in rows:
+        status = str(row.get("status") or "")
+        if status not in _DEDUP_STATUSES:
+            continue
+        ref = str(row.get("key") or row.get("ref") or "")
+        if not ref:
+            method_id = str(row.get("id") or "")
+            ref = f"method:{method_id}" if method_id else ""
+        if not ref:
+            continue
+        result.append(
+            {
+                "ref": ref,
+                "status": status,
+                "name": str(row.get("summary") or row.get("name") or "")[:120],
+                "description": str(row.get("description") or "")[:360],
+                "task_applicability": str(
+                    row.get("task_applicability") or "not_evaluated"
+                ),
+            }
+        )
+        if len(result) >= _METHOD_DISCOVERY_LIMIT:
+            break
+    return result
+
+
+def _discover_related_methods(
+    method_discovery: MethodDiscovery | None,
+    *,
+    material: list[dict[str, str]],
+    trigger_facts: dict[str, Any],
+    final_answer: str,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    if method_discovery is None:
+        return [], {"semantic_requested": False, "semantic_effective": False}
+    query = _method_discovery_query(material, trigger_facts, final_answer)
+    if not query:
+        return [], {
+            "semantic_requested": False,
+            "semantic_effective": False,
+            "semantic_fallback_reason": "empty_observable_query",
+        }
+    try:
+        rows, raw_diag = method_discovery(query, _METHOD_DISCOVERY_LIMIT)
+    except Exception as exc:  # noqa: BLE001 - background learning discovery is fail-open
+        return [], {
+            "semantic_requested": True,
+            "semantic_effective": False,
+            "semantic_fallback_reason": f"discovery_error:{type(exc).__name__}",
+        }
+    diag = dict(raw_diag or {})
+    safe_diag: dict[str, Any] = {
+        "semantic_requested": bool(diag.get("semantic_requested", True)),
+        "semantic_effective": bool(diag.get("semantic_effective", False)),
+    }
+    for key in (
+        "scope",
+        "semantic_fallback_reason",
+        "semantic_latency_ms",
+        "query_embedding_ms",
+        "semantic_hit_count",
+        "keyword_hit_count",
+        "fused_hit_count",
+        "candidate_missing_count",
+        "canonical_hydration_failures",
+        "empty_render_count",
+        "prewarm_scheduled",
+    ):
+        if key in diag:
+            safe_diag[key] = diag[key]
+    related = _related_method_projection(list(rows or []))
+    safe_diag["related_method_count"] = len(related)
+    return related, safe_diag
+
+
 def reflect_on_episode(
     *,
     llm_client: Any,
@@ -345,6 +474,7 @@ def reflect_on_episode(
     final_answer: str,
     timeout_s: float = 120.0,
     max_material_chars: int = 18000,
+    method_discovery: MethodDiscovery | None = None,
 ) -> ReflectionOutcome:
     """Run reflection over exactly one durable episode; do NOT persist anything.
 
@@ -360,6 +490,12 @@ def reflect_on_episode(
     material = build_episode_material(episode_entry, max_total_chars=max_material_chars)
     if not material:
         return ReflectionOutcome(attempted=False, triggered=True, reason="episode_material_empty")
+    related_methods, method_diag = _discover_related_methods(
+        method_discovery,
+        material=material,
+        trigger_facts=trigger_facts,
+        final_answer=final_answer,
+    )
     payload = {
         "observable_friction": trigger_facts,
         "episode_material": material,
@@ -367,6 +503,10 @@ def reflect_on_episode(
         "final_outcome": {"reason": run_end_reason, "answer_preview": final_answer[:800]},
         # 防重复门（2026-09-24）：方法池 active/qualified 卡一行摘要；语义重复 → none
         "existing_methods": _existing_method_briefs(store),
+        # Learning semantic Method discovery is advisory context only. Applicability is
+        # deliberately not evaluated by retrieval; the model must compare it to this episode.
+        "related_methods": related_methods,
+        "method_discovery": method_diag,
         "output_contract": {
             "decision": "candidate|none",
             "candidate_fields": {
@@ -392,21 +532,48 @@ def reflect_on_episode(
         "existing_methods lists the current pool's active/qualified cards. If the method you would distil "
         "is a semantic duplicate of any listed entry (same trigger and mechanism, cosmetic rewording), "
         'return {"decision":"none","reason":"dup:<that method id>"} instead of minting a redundant card; '
-        "candidate is for genuinely new discriminators only.\n\n"
+        "candidate is for genuinely new discriminators only.\n"
+        "related_methods is a bounded retrieval hint for this episode. Its task_applicability is explicitly "
+        "not_evaluated: compare the trigger/discriminator against the observable episode yourself; do not "
+        "treat retrieval rank as authority. If one is the same reusable mechanism, return dup:<ref>.\n\n"
         + core.body
     )
     try:
         value = _call(llm_client, system=system, facts_payload=payload, timeout_s=timeout_s)
     except Exception:  # noqa: BLE001 - Learning Plane failures never reach the user session
-        return ReflectionOutcome(attempted=True, triggered=True, reason="reflection_call_failed")
+        return ReflectionOutcome(
+            attempted=True,
+            triggered=True,
+            reason="reflection_call_failed",
+            method_discovery_diagnostics=method_diag,
+        )
     if value is None:
-        return ReflectionOutcome(attempted=True, triggered=True, reason="reflection_model_not_json")
+        return ReflectionOutcome(
+            attempted=True,
+            triggered=True,
+            reason="reflection_model_not_json",
+            method_discovery_diagnostics=method_diag,
+        )
     if value.get("decision") != "candidate":
-        return ReflectionOutcome(attempted=True, triggered=True, reason=str(value.get("reason", "none"))[:200])
+        return ReflectionOutcome(
+            attempted=True,
+            triggered=True,
+            reason=str(value.get("reason", "none"))[:200],
+            method_discovery_diagnostics=method_diag,
+        )
     ok, errors = validate_candidate(value)
     if not ok:
         return ReflectionOutcome(
-            attempted=True, triggered=True, reason="candidate_schema_invalid: " + "; ".join(errors[:6])
+            attempted=True,
+            triggered=True,
+            reason="candidate_schema_invalid: " + "; ".join(errors[:6]),
+            method_discovery_diagnostics=method_diag,
         )
     value["body"] = render_candidate_body(value)
-    return ReflectionOutcome(attempted=True, triggered=True, reason="schema_ok", candidate_payload=value)
+    return ReflectionOutcome(
+        attempted=True,
+        triggered=True,
+        reason="schema_ok",
+        candidate_payload=value,
+        method_discovery_diagnostics=method_diag,
+    )

@@ -1,0 +1,213 @@
+{
+  "schema": "learning-method-semantic-qualification/v1",
+  "result": "PASS_ISOLATED",
+  "base_head": "e04172f2abf31c18db1cc664a2c0894fd54e7375",
+  "production_changed": false,
+  "scope": {
+    "learning_method_semantic_consumer": true,
+    "archive": false,
+    "docs": false,
+    "experience": false
+  },
+  "design": {
+    "query_max_chars": 1200,
+    "related_methods_limit": 6,
+    "eligible_statuses": [
+      "active",
+      "qualified"
+    ],
+    "existing_methods_briefs_preserved": true,
+    "semantic_rank_is_advisory_not_authority": true,
+    "fail_open": true
+  },
+  "canonical_tool": {
+    "rows": 7,
+    "target_rank1": 7,
+    "semantic_effective": 7,
+    "fallback_rows": 0,
+    "missing_sum": 0,
+    "p50_ms": 412.7,
+    "max_ms": 534.2,
+    "build_s": 0.524,
+    "embedding_delta": {
+      "calls": 8,
+      "texts": 14,
+      "errors": 0
+    },
+    "queue_after": {
+      "active": false,
+      "foreground_waiters": 0,
+      "background_waiters": 0,
+      "active_queue": 0
+    }
+  },
+  "scale_model_ab": {
+    "off": {
+      "build_s": 0.06,
+      "rows": 3,
+      "dup_rows": 0,
+      "candidate_rows": 2,
+      "target_in_existing_methods": false,
+      "embedding_delta_calls": 0,
+      "embedding_delta_texts": 0,
+      "embedding_error_delta": 0,
+      "queue_after": {
+        "active": false,
+        "foreground_waiters": 0,
+        "background_waiters": 0,
+        "active_queue": 0
+      },
+      "p50_s": 46.83,
+      "max_s": 73.8
+    },
+    "on": {
+      "build_s": 0.234,
+      "rows": 3,
+      "dup_rows": 3,
+      "candidate_rows": 0,
+      "target_in_existing_methods": false,
+      "embedding_delta_calls": 6,
+      "embedding_delta_texts": 44,
+      "embedding_error_delta": 0,
+      "queue_after": {
+        "active": false,
+        "foreground_waiters": 0,
+        "background_waiters": 0,
+        "active_queue": 0
+      },
+      "p50_s": 14.19,
+      "max_s": 19.47
+    }
+  },
+  "canonical_model_ab": {
+    "off": {
+      "rows": 3,
+      "target_dup": 2,
+      "candidate_rows": 0,
+      "build_s": 0.057,
+      "p50_s": 17.13,
+      "max_s": 21.56,
+      "embedding_delta_calls": 0,
+      "embedding_delta_texts": 0,
+      "embedding_error_delta": 0,
+      "queue_after": {
+        "active": false,
+        "foreground_waiters": 0,
+        "background_waiters": 0,
+        "active_queue": 0
+      }
+    },
+    "on": {
+      "rows": 3,
+      "target_dup": 1,
+      "candidate_rows": 0,
+      "build_s": 0.17,
+      "p50_s": 17.31,
+      "max_s": 18.54,
+      "embedding_delta_calls": 4,
+      "embedding_delta_texts": 10,
+      "embedding_error_delta": 0,
+      "queue_after": {
+        "active": false,
+        "foreground_waiters": 0,
+        "background_waiters": 0,
+        "active_queue": 0
+      }
+    }
+  },
+  "fault": {
+    "build_ms": 172.2,
+    "rows": 2,
+    "target_rank1": 2,
+    "fallback_reasons": [
+      "primary_to_hash",
+      "primary_to_hash"
+    ],
+    "primary_transport_errors": [
+      "http_503",
+      "http_503"
+    ]
+  },
+  "journal_e2e": {
+    "target": "method:aaaa-journal-restart-provenance-08bcc0a79781",
+    "target_in_existing_methods": false,
+    "probe_target_rank": 1,
+    "probe_diag": {
+      "semantic_requested": true,
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "semantic_latency_ms": 26.137,
+      "query_embedding_ms": 15.275,
+      "embedding_queue_wait_ms": 0.003,
+      "embedding_encode_ms": 10.911,
+      "embedding_http_ms": 15.262,
+      "embedding_transport_error": "",
+      "candidate_missing_count": 0,
+      "cache_files_refreshed": 0,
+      "prewarm_scheduled": false,
+      "background_prewarm_inflight": false,
+      "last_prewarm_count": 0,
+      "last_prewarm_ms": 0.0,
+      "last_cache_flush_ms": 0.0,
+      "last_prewarm_error": "",
+      "semantic_hit_count": 14,
+      "keyword_hit_count": 24,
+      "fused_hit_count": 6,
+      "scope": "method",
+      "canonical_hydration_failures": 0,
+      "eligible_method_count": 41
+    },
+    "progressed": true,
+    "job_state": "none",
+    "job_reason": "none",
+    "attempt": 1,
+    "method_count_before": 49,
+    "method_count_after": 49,
+    "elapsed_s": 36.26,
+    "embedding_delta": {
+      "calls": 5,
+      "texts": 43,
+      "errors": 0
+    },
+    "queue_after": {
+      "active": false,
+      "foreground_waiters": 0,
+      "background_waiters": 0,
+      "active_queue": 0
+    }
+  },
+  "tests": {
+    "focused_adjacent_passed": 65,
+    "broad_adjacent_passed": 159,
+    "ruff": "PASS",
+    "compileall": "PASS",
+    "git_diff_check": "PASS",
+    "pyright_new_errors": 0,
+    "pyright_parent_existing_errors": 3,
+    "security_tree_files": 3254,
+    "security_tree": "PASS"
+  },
+  "artifacts": [
+    {
+      "path": "evals/retrieval_ab/learning-method-semantic-model-ab-20260926.json",
+      "sha256": "d047e923052e6ad792b7ef0558ade2b07d801c80f422461a8b87887d6e84dd04"
+    },
+    {
+      "path": "evals/retrieval_ab/learning-method-semantic-canonical-model-20260926.json",
+      "sha256": "18c20ac7282ddcb04015c1f6e9f97d9bfcbf5063c5030a752f3985375bc65cc9"
+    },
+    {
+      "path": "evals/retrieval_ab/learning-method-semantic-canonical-tool-20260926.json",
+      "sha256": "b4291e7ef4b52db603512c7e1557f3a5ca9dc21cf65e4818d3351c03e9bb9924"
+    },
+    {
+      "path": "evals/retrieval_ab/learning-method-semantic-fault-20260926.json",
+      "sha256": "93f0ce5dfef35b5ad083824337388a5b10107471059165155527caecd4547424"
+    },
+    {
+      "path": "evals/retrieval_ab/learning-method-semantic-journal-e2e-20260926.json",
+      "sha256": "f0cb49482a363f8d29026a0528b3fb4c9659ea7d53443b1a55d7fd229b2cd3c0"
+    }
+  ],
+  "production_activation_boundary": "Method remains OFF in canonical runtime; no service restart performed. Production activation requires a separate human checkpoint."
+}

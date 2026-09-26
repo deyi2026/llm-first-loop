@@ -29,7 +29,7 @@ from collections.abc import Callable
 from typing import Any
 
 from llm_loop.methods.learning_journal import LearningJob, LearningJournal
-from llm_loop.methods.reflection import reflect_on_episode
+from llm_loop.methods.reflection import MethodDiscovery, reflect_on_episode
 from llm_loop.resources.contracts import (
     AdmissionOutcome,
     AdmissionRequest,
@@ -71,6 +71,7 @@ class LearningPlane:
         resource_target_resolver: Callable[[str], tuple[str, str]],
         provider_call_coordinator: ProviderCallCoordinator | None = None,
         memory_extractor: Any | None = None,
+        method_discovery: MethodDiscovery | None = None,
         poll_interval_s: float = 5.0,
         quiet_period_s: float = 15.0,
         preempt_poll_s: float = 0.25,
@@ -86,6 +87,7 @@ class LearningPlane:
         self._resource_target_resolver = resource_target_resolver
         self._provider_call_coordinator = provider_call_coordinator
         self._memory_extractor = memory_extractor  # P0-C: kind=memory_extract 执行体
+        self._method_discovery = method_discovery
         self._poll_interval_s = max(1.0, float(poll_interval_s))
         # 2026-09-23 学习通道模型隔离（LFL_LEARNING_MODEL）：覆盖 source_model，
         # 缺省空 = 行为不变。资源目标与客户端解析统一走 _effective_model。
@@ -375,6 +377,7 @@ class LearningPlane:
                             run_end_reason=str((job.trigger_facts or {}).get("run_end_reason", "")),
                             final_answer=final_answer,
                             timeout_s=timeout_s,
+                            method_discovery=self._method_discovery,
                         )
                     else:
                         with site_scope:
@@ -389,6 +392,7 @@ class LearningPlane:
                                 ),
                                 final_answer=final_answer,
                                 timeout_s=timeout_s,
+                                method_discovery=self._method_discovery,
                             )
                 except BaseException as exc:  # noqa: BLE001 - transported to the learning thread
                     result["error"] = exc
@@ -432,6 +436,15 @@ class LearningPlane:
             if "error" in result:
                 raise result["error"]
             outcome = result["outcome"]
+            method_discovery_diagnostics = getattr(
+                outcome, "method_discovery_diagnostics", None
+            )
+            if method_discovery_diagnostics is not None:
+                logger.info(
+                    "learning job %s method discovery: %s",
+                    job.job_id,
+                    method_discovery_diagnostics,
+                )
             if outcome.candidate_payload is not None:  # reason == schema_ok
                 try:
                     record = self._method_store.save_candidate(

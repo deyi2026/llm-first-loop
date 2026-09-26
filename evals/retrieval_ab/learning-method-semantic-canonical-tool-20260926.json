@@ -1,0 +1,313 @@
+{
+  "build_s": 0.524,
+  "rows": [
+    {
+      "id": "root-cause",
+      "target": "method:method-root-cause",
+      "rank": 1,
+      "refs": [
+        "method:method-root-cause",
+        "method:method-ab-experiment"
+      ],
+      "statuses": [
+        "active",
+        "active"
+      ],
+      "ms": 420.3,
+      "diag": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 169.973,
+        "query_embedding_ms": 20.683,
+        "embedding_queue_wait_ms": 0.003,
+        "embedding_encode_ms": 15.677,
+        "embedding_http_ms": 20.637,
+        "embedding_transport_error": "",
+        "candidate_missing_count": 0,
+        "cache_files_refreshed": 0,
+        "prewarm_scheduled": false,
+        "background_prewarm_inflight": false,
+        "last_prewarm_count": 0,
+        "last_prewarm_ms": 0.0,
+        "last_cache_flush_ms": 0.0,
+        "last_prewarm_error": "",
+        "semantic_hit_count": 2,
+        "keyword_hit_count": 0,
+        "fused_hit_count": 2,
+        "scope": "method",
+        "canonical_hydration_failures": 0,
+        "eligible_method_count": 7
+      }
+    },
+    {
+      "id": "repo-api",
+      "target": "method:method-repo-api-discovery",
+      "rank": 1,
+      "refs": [
+        "method:method-repo-api-discovery",
+        "method:method-self-distill"
+      ],
+      "statuses": [
+        "active",
+        "active"
+      ],
+      "ms": 381.2,
+      "diag": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 161.624,
+        "query_embedding_ms": 14.148,
+        "embedding_queue_wait_ms": 0.004,
+        "embedding_encode_ms": 8.523,
+        "embedding_http_ms": 14.124,
+        "embedding_transport_error": "",
+        "candidate_missing_count": 0,
+        "cache_files_refreshed": 0,
+        "prewarm_scheduled": false,
+        "background_prewarm_inflight": false,
+        "last_prewarm_count": 0,
+        "last_prewarm_ms": 0.0,
+        "last_cache_flush_ms": 0.0,
+        "last_prewarm_error": "",
+        "semantic_hit_count": 2,
+        "keyword_hit_count": 0,
+        "fused_hit_count": 2,
+        "scope": "method",
+        "canonical_hydration_failures": 0,
+        "eligible_method_count": 7
+      }
+    },
+    {
+      "id": "ab",
+      "target": "method:method-ab-experiment",
+      "rank": 1,
+      "refs": [
+        "method:method-ab-experiment",
+        "method:method-self-distill",
+        "method:method-repo-api-discovery",
+        "method:method-semantic-operation"
+      ],
+      "statuses": [
+        "active",
+        "active",
+        "active",
+        "active"
+      ],
+      "ms": 371.7,
+      "diag": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 161.034,
+        "query_embedding_ms": 13.896,
+        "embedding_queue_wait_ms": 0.006,
+        "embedding_encode_ms": 9.05,
+        "embedding_http_ms": 13.876,
+        "embedding_transport_error": "",
+        "candidate_missing_count": 0,
+        "cache_files_refreshed": 0,
+        "prewarm_scheduled": false,
+        "background_prewarm_inflight": false,
+        "last_prewarm_count": 0,
+        "last_prewarm_ms": 0.0,
+        "last_cache_flush_ms": 0.0,
+        "last_prewarm_error": "",
+        "semantic_hit_count": 3,
+        "keyword_hit_count": 2,
+        "fused_hit_count": 4,
+        "scope": "method",
+        "canonical_hydration_failures": 0,
+        "eligible_method_count": 7
+      }
+    },
+    {
+      "id": "fresh-finality",
+      "target": "method:fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4",
+      "rank": 1,
+      "refs": [
+        "method:fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4",
+        "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50"
+      ],
+      "statuses": [
+        "active",
+        "active"
+      ],
+      "ms": 366.3,
+      "diag": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 146.418,
+        "query_embedding_ms": 12.771,
+        "embedding_queue_wait_ms": 0.003,
+        "embedding_encode_ms": 8.24,
+        "embedding_http_ms": 12.754,
+        "embedding_transport_error": "",
+        "candidate_missing_count": 0,
+        "cache_files_refreshed": 0,
+        "prewarm_scheduled": false,
+        "background_prewarm_inflight": false,
+        "last_prewarm_count": 0,
+        "last_prewarm_ms": 0.0,
+        "last_cache_flush_ms": 0.0,
+        "last_prewarm_error": "",
+        "semantic_hit_count": 2,
+        "keyword_hit_count": 0,
+        "fused_hit_count": 2,
+        "scope": "method",
+        "canonical_hydration_failures": 0,
+        "eligible_method_count": 7
+      }
+    },
+    {
+      "id": "resume",
+      "target": "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+      "rank": 1,
+      "refs": [
+        "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+        "method:method-self-distill",
+        "method:method-semantic-operation",
+        "method:method-repo-api-discovery",
+        "method:method-root-cause",
+        "method:fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4"
+      ],
+      "statuses": [
+        "active",
+        "active",
+        "active",
+        "active",
+        "active",
+        "active"
+      ],
+      "ms": 534.2,
+      "diag": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 210.935,
+        "query_embedding_ms": 12.743,
+        "embedding_queue_wait_ms": 0.003,
+        "embedding_encode_ms": 7.65,
+        "embedding_http_ms": 12.729,
+        "embedding_transport_error": "",
+        "candidate_missing_count": 0,
+        "cache_files_refreshed": 0,
+        "prewarm_scheduled": false,
+        "background_prewarm_inflight": false,
+        "last_prewarm_count": 0,
+        "last_prewarm_ms": 0.0,
+        "last_cache_flush_ms": 0.0,
+        "last_prewarm_error": "",
+        "semantic_hit_count": 7,
+        "keyword_hit_count": 1,
+        "fused_hit_count": 6,
+        "scope": "method",
+        "canonical_hydration_failures": 0,
+        "eligible_method_count": 7
+      }
+    },
+    {
+      "id": "semantic-op",
+      "target": "method:method-semantic-operation",
+      "rank": 1,
+      "refs": [
+        "method:method-semantic-operation",
+        "method:method-self-distill",
+        "method:method-ab-experiment",
+        "method:method-root-cause",
+        "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+        "method:method-repo-api-discovery"
+      ],
+      "statuses": [
+        "active",
+        "active",
+        "active",
+        "active",
+        "active",
+        "active"
+      ],
+      "ms": 471.0,
+      "diag": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 185.767,
+        "query_embedding_ms": 13.033,
+        "embedding_queue_wait_ms": 0.004,
+        "embedding_encode_ms": 8.116,
+        "embedding_http_ms": 12.992,
+        "embedding_transport_error": "",
+        "candidate_missing_count": 0,
+        "cache_files_refreshed": 0,
+        "prewarm_scheduled": false,
+        "background_prewarm_inflight": false,
+        "last_prewarm_count": 0,
+        "last_prewarm_ms": 0.0,
+        "last_cache_flush_ms": 0.0,
+        "last_prewarm_error": "",
+        "semantic_hit_count": 6,
+        "keyword_hit_count": 1,
+        "fused_hit_count": 6,
+        "scope": "method",
+        "canonical_hydration_failures": 0,
+        "eligible_method_count": 7
+      }
+    },
+    {
+      "id": "distill",
+      "target": "method:method-self-distill",
+      "rank": 1,
+      "refs": [
+        "method:method-self-distill",
+        "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+        "method:method-root-cause",
+        "method:method-semantic-operation"
+      ],
+      "statuses": [
+        "active",
+        "active",
+        "active",
+        "active"
+      ],
+      "ms": 412.7,
+      "diag": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 167.47,
+        "query_embedding_ms": 15.999,
+        "embedding_queue_wait_ms": 0.006,
+        "embedding_encode_ms": 10.779,
+        "embedding_http_ms": 15.984,
+        "embedding_transport_error": "",
+        "candidate_missing_count": 0,
+        "cache_files_refreshed": 0,
+        "prewarm_scheduled": false,
+        "background_prewarm_inflight": false,
+        "last_prewarm_count": 0,
+        "last_prewarm_ms": 0.0,
+        "last_cache_flush_ms": 0.0,
+        "last_prewarm_error": "",
+        "semantic_hit_count": 4,
+        "keyword_hit_count": 0,
+        "fused_hit_count": 4,
+        "scope": "method",
+        "canonical_hydration_failures": 0,
+        "eligible_method_count": 7
+      }
+    }
+  ],
+  "embedding_delta": {
+    "calls": 8,
+    "texts": 14,
+    "errors": 0
+  },
+  "queue_after": {
+    "active": false,
+    "foreground_waiters": 0,
+    "background_waiters": 0,
+    "active_queue": 0
+  }
+}

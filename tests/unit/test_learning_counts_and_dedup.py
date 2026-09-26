@@ -7,6 +7,7 @@ system 指令 dup 短路，防止语义重复卡重复产 token。
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -110,3 +111,139 @@ def test_reflection_briefs_fail_open_on_store_error() -> None:
             raise RuntimeError("store unavailable")
 
     assert refl._existing_method_briefs(_Boom()) == []  # type: ignore[arg-type]
+
+
+class _ReflectionStore:
+    def get(self, ref: str):
+        if ref == "method:method-self-distill":
+            return SimpleNamespace(body="core body")
+        return None
+
+    def list(self, query: str = "", limit: int = 20):
+        return [
+            {
+                "id": "global-active",
+                "key": "method:global-active",
+                "status": "active",
+                "description": "global fallback method",
+            }
+        ]
+
+
+class _CaptureClient:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def chat(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(content='{"decision":"none","reason":"dup:method:restart-check"}')
+
+
+def _episode() -> dict:
+    return {
+        "messages": [
+            {"role": "user", "content": "重启服务后，怎样确认新进程真的加载了目标代码？", "reasoning_content": "SECRET"},
+            {"role": "tool", "content": "pid changed; manifest head=e04172f2"},
+            {"role": "assistant", "content": "需要交叉核对进程、manifest 和实际 import provenance。"},
+        ]
+    }
+
+
+def test_reflection_method_semantic_related_methods_are_advisory_and_diagnostic() -> None:
+    """ON: related_methods 进入 payload；existing_methods 仍保留；diagnostics 可观测。"""
+    from llm_loop.methods import reflection as refl
+
+    seen: dict[str, object] = {}
+
+    def discover(query: str, limit: int):
+        seen["query"] = query
+        seen["limit"] = limit
+        return (
+            [
+                {
+                    "id": "restart-check",
+                    "key": "method:restart-check",
+                    "status": "qualified",
+                    "summary": "Verify restarted process provenance",
+                    "description": "Cross-check PID, manifest head, and imported module path.",
+                    "task_applicability": "not_evaluated",
+                }
+            ],
+            {
+                "scope": "method",
+                "semantic_requested": True,
+                "semantic_effective": True,
+                "semantic_fallback_reason": "",
+                "semantic_hit_count": 1,
+            },
+        )
+
+    client = _CaptureClient()
+    outcome = refl.reflect_on_episode(
+        llm_client=client,
+        store=_ReflectionStore(),  # type: ignore[arg-type]
+        episode_entry=_episode(),
+        trigger_facts={"run_end_reason": "completed", "rounds": 8},
+        tool_trace=[],
+        run_end_reason="completed",
+        final_answer="done",
+        method_discovery=discover,
+    )
+
+    assert seen["limit"] == 6
+    assert "SECRET" not in str(seen["query"])
+    assert len(str(seen["query"])) <= 1200
+    payload = json.loads(client.calls[0]["messages"][1]["content"])
+    assert payload["related_methods"][0]["ref"] == "method:restart-check"
+    assert payload["related_methods"][0]["task_applicability"] == "not_evaluated"
+    assert "global-active" in "\n".join(payload["existing_methods"])
+    assert payload["method_discovery"]["semantic_effective"] is True
+    assert outcome.method_discovery_diagnostics["semantic_hit_count"] == 1
+
+
+def test_reflection_method_semantic_callback_failure_is_fail_open() -> None:
+    """semantic discovery 异常不能阻断 Reflection，也不能伪称 semantic-effective。"""
+    from llm_loop.methods import reflection as refl
+
+    def boom(_query: str, _limit: int):
+        raise RuntimeError("embedding sidecar unavailable")
+
+    client = _CaptureClient()
+    outcome = refl.reflect_on_episode(
+        llm_client=client,
+        store=_ReflectionStore(),  # type: ignore[arg-type]
+        episode_entry=_episode(),
+        trigger_facts={"run_end_reason": "completed"},
+        tool_trace=[],
+        run_end_reason="completed",
+        final_answer="done",
+        method_discovery=boom,
+    )
+
+    payload = json.loads(client.calls[0]["messages"][1]["content"])
+    assert payload["related_methods"] == []
+    assert payload["method_discovery"]["semantic_requested"] is True
+    assert payload["method_discovery"]["semantic_effective"] is False
+    assert payload["method_discovery"]["semantic_fallback_reason"] == "discovery_error:RuntimeError"
+    assert outcome.attempted is True
+
+
+def test_reflection_method_semantic_off_does_not_invent_diagnostics() -> None:
+    """OFF: callback=None 保持旧行为，不声称请求过 semantic。"""
+    from llm_loop.methods import reflection as refl
+
+    client = _CaptureClient()
+    outcome = refl.reflect_on_episode(
+        llm_client=client,
+        store=_ReflectionStore(),  # type: ignore[arg-type]
+        episode_entry=_episode(),
+        trigger_facts={"run_end_reason": "completed"},
+        tool_trace=[],
+        run_end_reason="completed",
+        final_answer="done",
+    )
+
+    payload = json.loads(client.calls[0]["messages"][1]["content"])
+    assert payload["related_methods"] == []
+    assert payload["method_discovery"] == {"semantic_requested": False, "semantic_effective": False}
+    assert outcome.method_discovery_diagnostics == payload["method_discovery"]

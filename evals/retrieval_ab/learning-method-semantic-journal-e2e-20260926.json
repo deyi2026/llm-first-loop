@@ -1,0 +1,48 @@
+{
+  "target": "method:aaaa-journal-restart-provenance-08bcc0a79781",
+  "target_in_existing_methods": false,
+  "probe_target_rank": 1,
+  "probe_diag": {
+    "semantic_requested": true,
+    "semantic_effective": true,
+    "semantic_fallback_reason": "",
+    "semantic_latency_ms": 26.137,
+    "query_embedding_ms": 15.275,
+    "embedding_queue_wait_ms": 0.003,
+    "embedding_encode_ms": 10.911,
+    "embedding_http_ms": 15.262,
+    "embedding_transport_error": "",
+    "candidate_missing_count": 0,
+    "cache_files_refreshed": 0,
+    "prewarm_scheduled": false,
+    "background_prewarm_inflight": false,
+    "last_prewarm_count": 0,
+    "last_prewarm_ms": 0.0,
+    "last_cache_flush_ms": 0.0,
+    "last_prewarm_error": "",
+    "semantic_hit_count": 14,
+    "keyword_hit_count": 24,
+    "fused_hit_count": 6,
+    "scope": "method",
+    "canonical_hydration_failures": 0,
+    "eligible_method_count": 41
+  },
+  "progressed": true,
+  "job_state": "none",
+  "job_reason": "none",
+  "attempt": 1,
+  "method_count_before": 49,
+  "method_count_after": 49,
+  "elapsed_s": 36.26,
+  "embedding_delta": {
+    "calls": 5,
+    "texts": 43,
+    "errors": 0
+  },
+  "queue_after": {
+    "active": false,
+    "foreground_waiters": 0,
+    "background_waiters": 0,
+    "active_queue": 0
+  }
+}
