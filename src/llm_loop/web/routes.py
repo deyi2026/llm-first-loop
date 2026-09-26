@@ -1,3 +1,5 @@
+from llm_loop.timekeeping import system_local_now
+
 """Web 路由（M36 薄壳适配器）。
 
 仅经 request.app.state.engine 访问核心引擎，不复制核心逻辑。
@@ -1972,7 +1974,6 @@ async def escalation_review(request: Request) -> Response:
     请求体见 schemas.EscalationReviewRequest；幂等约束: 仅 pending 可决，
     重复审批返回 409 语义（fail-closed 到首个决定）。
     """
-    from datetime import UTC, datetime
     from pathlib import Path
 
     from llm_loop.tools.escalation import EscalationStore
@@ -1988,7 +1989,7 @@ async def escalation_review(request: Request) -> Response:
     try:
         audit_file.parent.mkdir(parents=True, exist_ok=True)
         audit_line = {
-            "ts": datetime.now(UTC).isoformat(),
+            "ts": system_local_now().isoformat(),
             "action": "ESCALATION_REVIEW_WEB",
             "id": payload.id,
             "decision": payload.decision,
@@ -2119,14 +2120,13 @@ def _log_web_review(
     AI 侧（search_files content="EVO_REVIEW_WEB"）可直接定位人工何时批了什么；
     fail-open：审计写入失败不影响审批回执本身。
     """
-    from datetime import UTC, datetime
 
     try:
         base = Path(data_dir).expanduser().resolve()
         audit_dir = base / "audit"
         audit_dir.mkdir(parents=True, exist_ok=True)
         record = {
-            "ts": datetime.now(UTC).isoformat(),
+            "ts": system_local_now().isoformat(),
             "source": "web_panel",
             "action": "EVO_REVIEW_WEB",
             "id": evo_id,

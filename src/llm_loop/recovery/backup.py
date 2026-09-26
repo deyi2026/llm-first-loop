@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from llm_loop.recovery.policy import RetryPolicy
+from llm_loop.timekeeping import system_local_now
 
 
 @dataclass
@@ -215,7 +216,7 @@ class BackupStore:
         """
         if not self._dir.exists():
             return {"pruned": 0}
-        now = datetime.now().astimezone()
+        now = system_local_now()
         cutoff = now.timestamp() - RetryPolicy.RETENTION_PERIOD_DAYS * 86400
         pruned = 0
 

@@ -20,7 +20,6 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from dataclasses import replace as dataclasses_replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -30,6 +29,7 @@ from llm_loop.event_log.session_types import (  # noqa: F401 — SessionIdConfli
     BranchSeed,
     SessionIdConflictError,
 )
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ _EVENT_TOP_FIELDS = (
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 @dataclass
@@ -1799,7 +1799,7 @@ class SessionStore:
 
             archive_root = Path(archived_dir) if archived_dir else (self._dir / "_trimmed")
             archive_root.mkdir(parents=True, exist_ok=True)
-            ts_slug = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            ts_slug = system_local_now().strftime("%Y%m%d-%H%M%S")
             backup_path = archive_root / f"{session_id}_{ts_slug}.json"
             backup_path.write_text(
                 json.dumps(asdict(session), ensure_ascii=False, indent=2),

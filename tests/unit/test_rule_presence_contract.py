@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
-import json
 import re
 import sys
 from pathlib import Path
@@ -158,7 +157,7 @@ def test_conclude_receipt_avoids_boundary_wire_tokens() -> None:
 # ── INV-3 / INV-4 / INV-9：边界释放、自陈记录、非边界轮隐藏 ──
 
 
-def test_conclude_releases_boundary_and_reopens_normal_tool_surface(tmp_path, monkeypatch) -> None:
+def test_repeated_calls_do_not_replace_real_tool_surface(tmp_path, monkeypatch) -> None:
     engine, fake = _mk(
         tmp_path,
         monkeypatch,
@@ -166,38 +165,24 @@ def test_conclude_releases_boundary_and_reopens_normal_tool_surface(tmp_path, mo
             _read_resp("c1"),
             _read_resp("c2"),
             _read_resp("c3"),
-            _conclude_resp("decision-conclude"),
-            LLMResponse(content="收口后的回答", tool_calls=[], provider="fake"),
+            LLMResponse(content="直接收口", tool_calls=[], provider="fake"),
         ],
     )
     _capture_tools(fake)
     sid = engine.session.create()
     result = engine.run(sid, "真实任务")
-    assert result.final_answer == "收口后的回答"
-    assert _tool_names(fake.calls[3]) == ["convergence_decide"]
-    assert "read_file" in _tool_names(fake.calls[4])
-    assert "convergence_decide" not in _tool_names(fake.calls[4])
+    assert result.final_answer == "直接收口"
+    assert "read_file" in _tool_names(fake.calls[3])
+    assert "convergence_decide" not in _tool_names(fake.calls[3])
 
 
-def test_conclude_records_declaration_only_in_action_trace(tmp_path, monkeypatch) -> None:
-    engine, fake = _mk(
+def test_default_test_engine_does_not_register_convergence_meta_router(tmp_path, monkeypatch) -> None:
+    engine, _fake = _mk(
         tmp_path,
         monkeypatch,
-        responses=[
-            _read_resp("c1"),
-            _read_resp("c2"),
-            _read_resp("c3"),
-            _conclude_resp("decision-conclude"),
-            LLMResponse(content="收口后的回答", tool_calls=[], provider="fake"),
-        ],
+        responses=[LLMResponse(content="done", tool_calls=[], provider="fake")],
     )
-    _capture_tools(fake)
-    sid = engine.session.create()
-    engine.run(sid, "真实任务")
-    trace = json.dumps(engine.status.snapshot().get("action_trace", []), ensure_ascii=False)
-    assert "conclude" in trace
-    for banned in ("completed", "succeeded", "任务完成"):
-        assert banned not in trace
+    assert "convergence_decide" not in engine.registry.names()
 
 
 def test_non_boundary_round_hides_convergence_decide(tmp_path, monkeypatch) -> None:

@@ -11,15 +11,15 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from llm_loop.llm.errors import LLMError, LLMHTTPError, parse_provider_error_code
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
-_SNAPSHOT_SCHEMA = 2
+_SNAPSHOT_SCHEMA = 3
 
 
 def is_err1210(exc: LLMError) -> bool:
@@ -55,15 +55,14 @@ def snapshot_offending_payload(
     if os.environ.get("ERR1210_SNAPSHOT", "1") != "1":
         return None
     try:
-        from datetime import UTC, datetime
 
-        ts = datetime.now(UTC)
-        ts_str = ts.strftime("%Y%m%dT%H%M%S") + f"{ts.microsecond // 1000:03d}Z"
+        ts = system_local_now()
+        ts_str = ts.strftime("%Y%m%dT%H%M%S") + f"{ts.microsecond // 1000:03d}" + ts.strftime("%z")
         out_dir = Path(data_dir) / "audit" / "offending_payloads"
         out_dir.mkdir(parents=True, exist_ok=True)
         snap = {
             "schema": _SNAPSHOT_SCHEMA,
-            "ts_utc": ts.isoformat(),
+            "ts_local": ts.isoformat(),
             "session_id": session_id,
             "model": model,
             "is_compact_first": bool(is_compact_first),  # historical diagnostic field
@@ -73,7 +72,7 @@ def snapshot_offending_payload(
             "recovery_contract": "tail_user_normalization_only",
             "trace_key": {
                 "session_id": session_id,
-                "local_ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "local_ts": ts.isoformat(timespec="seconds"),
             },
         }
         path = out_dir / f"{ts_str}_{session_id[:8]}.json"

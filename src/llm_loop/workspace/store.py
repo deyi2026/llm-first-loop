@@ -16,12 +16,13 @@ import logging
 import os
 import shutil
 import threading
-import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from weakref import WeakValueDictionary
+
+from llm_loop.timekeeping import system_local_now
 
 try:
     import fcntl
@@ -346,7 +347,7 @@ class WorkspaceStore:
                 digest_len = min(64, digest_len + 4)
         ws = Workspace(
             path=normalized,
-            created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+            created_at=system_local_now().isoformat(timespec="seconds"),
             id=ws_id,
         )
         self._workspaces[ws.id] = ws

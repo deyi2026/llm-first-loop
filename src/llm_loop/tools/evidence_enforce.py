@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 
 from llm_loop.core.message import RecoverabilityStatus, ToolCall, ToolResult, ToolResultStatus
 from llm_loop.core.run_context import current_run_generation
@@ -22,6 +22,7 @@ from llm_loop.memory.evidence import (
     evidence_origin_facts,
     make_capture_request,
 )
+from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.evidence_shadow import source_for_call
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ class EvidenceEnforcer:
         self.capture = capture
         self.projection = projection
         self.owner_resolver = owner_resolver
-        self.clock = clock or (lambda: datetime.now(UTC))
+        self.clock = clock or (lambda: system_local_now())
         self.projection_budget_chars = projection_budget_chars
         self.capsule_mode = _capsule_mode(capsule_mode)
 

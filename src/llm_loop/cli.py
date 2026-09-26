@@ -11,7 +11,6 @@ import argparse
 import json
 import sys
 from collections import Counter
-from datetime import UTC
 from pathlib import Path
 
 from llm_loop.config import load_settings
@@ -20,6 +19,7 @@ from llm_loop.core.session import (
     SessionMutationBusyError,
     SessionStore,
 )
+from llm_loop.timekeeping import system_local_now
 
 
 def _run_single(engine, text: str, session_id: str | None = None) -> None:
@@ -588,9 +588,8 @@ def _cmd_evolve_verify(engine, suggestion_id: str, note: str) -> int:
     if entry.get("verified_at"):
         print(f"[已核验（幂等跳过）] {suggestion_id} 已于 {entry['verified_at']} 核验")
         return 0
-    from datetime import datetime
 
-    now = datetime.now(UTC).isoformat(timespec="seconds")
+    now = system_local_now().isoformat(timespec="seconds")
     store.transition(suggestion_id, status="executed", verified_at=now, verify_note=note)
     print(f"[核验完成] {suggestion_id} → executed（verified_at={now}）: {note}")
     return 0
@@ -602,7 +601,6 @@ def _cmd_export_distill(argv: list[str]) -> int:
     导出带思考链的 ReAct 蒸馏数据集（`data/sessions/*.json` → JSONL + 统计报告）。
     用法: llm_loop export-distill [--input-dir DIR] [--output FILE] [--report FILE] [--force]
     """
-    from datetime import datetime
 
     from llm_loop.introspection.export_distill import (
         _DEFAULT_INPUT_DIR,
@@ -635,7 +633,7 @@ def _cmd_export_distill(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    ts = system_local_now().strftime("%Y%m%d-%H%M%S")
     output = args.output or f"data/export_distill/distill_{ts}.jsonl"
     report_path = args.report or f"data/export_distill/report_{ts}.json"
 

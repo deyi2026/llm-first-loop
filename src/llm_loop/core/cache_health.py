@@ -21,10 +21,10 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_loop.runtime.resolver import business_config_snapshot
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -702,7 +702,7 @@ class CacheHealthMonitor:
         """审计事件落盘（append-only JSONL）: 复发可从 cache_breaker.jsonl 直接判定."""
         try:
             row = {
-                "ts": datetime.now(UTC).isoformat(),
+                "ts": system_local_now().isoformat(),
                 "event": event,
                 "session_id": session_id,
                 "model": model_ref,

@@ -105,7 +105,6 @@ def _make_engine(tmp_path, pool, settings):
     from llm_loop.introspection.status import ArchitectureStatusProvider
     from llm_loop.memory.archive import ArchiveStore
     from llm_loop.memory.store import MemoryStore
-    from llm_loop.tools.builtin.convergence_decide import ConvergenceDecideTool
     from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
     from llm_loop.tools.builtin.read_file import ReadFileTool
     from llm_loop.tools.registry import ToolRegistry
@@ -120,7 +119,6 @@ def _make_engine(tmp_path, pool, settings):
     )
     tool_registry.register(ReadFileTool())
     tool_registry.register(ExecuteCommandTool())
-    tool_registry.register(ConvergenceDecideTool())
     status = ArchitectureStatusProvider(
         audit_dir=settings.audit_dir,
         enabled=settings.self_inspection_enabled,

@@ -49,6 +49,7 @@ from llm_loop.llm.errors import (
 )
 from llm_loop.llm.schemas import ToolCallDeltaAggregator
 from llm_loop.runtime.causality import effective_generation_contract
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -622,7 +623,7 @@ def _maybe_rotate_trace_file(path: str) -> str:
         if not active.exists():
             return path
         mtime_day = datetime.fromtimestamp(active.stat().st_mtime).strftime("%Y%m%d")
-        today = datetime.now().strftime("%Y%m%d")
+        today = system_local_now().strftime("%Y%m%d")
         if mtime_day != today:
             archived = active.with_name(f"{active.stem}-{mtime_day}{active.suffix}")
             if archived.exists():
@@ -721,7 +722,7 @@ def _trace_payload_fingerprint(
         tools_wire = _hw(payload.get("tools") or [])
         params_wire = _hw(top)
         record = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "ts": system_local_now().isoformat(timespec="seconds"),
             "session_id": session_id,
             "provider": provider,
             "model": model,

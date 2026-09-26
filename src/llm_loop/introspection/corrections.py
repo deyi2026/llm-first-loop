@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +30,7 @@ from llm_loop.introspection import (
     registry_task,
 )
 from llm_loop.introspection.status import ArchitectureStatusProvider
+from llm_loop.timekeeping import system_local_now
 
 _REGISTRIES = (
     registry_introspection,
@@ -49,7 +49,7 @@ _REGISTRIES = (
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 @dataclass
@@ -219,7 +219,7 @@ class CorrectionToolRegistry:
         try:
             self._audit_dir.mkdir(parents=True, exist_ok=True)
             record = {
-                "id": f"COR-{datetime.now(UTC).strftime('%Y%m%d')}",
+                "id": f"COR-{system_local_now().strftime('%Y%m%d')}",
                 "ts": _now(),
                 "tool_name": tool_name,
                 "arguments": arguments,
@@ -248,7 +248,7 @@ class CorrectionToolRegistry:
         try:
             self._audit_dir.mkdir(parents=True, exist_ok=True)
             record = {
-                "id": f"COR-{datetime.now(UTC).strftime('%Y%m%d')}",
+                "id": f"COR-{system_local_now().strftime('%Y%m%d')}",
                 "ts": _now(),
                 "tool_name": "model_fallback",
                 "arguments": {"from": from_model, "to": to_model, "reason": reason, "detail": detail},

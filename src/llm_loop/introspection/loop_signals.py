@@ -10,11 +10,11 @@ normal tools/status APIs.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
 from llm_loop.notify import confirm  # EVO-20260810-86e777d1: 系统通知/授权确认（fail-open）
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +157,7 @@ class LoopSignalDetector:
             import json as _json
 
             record = {
-                "ts": datetime.now(UTC).isoformat(),
+                "ts": system_local_now().isoformat(),
                 "sid": sid,
                 "reason": "ghost",
                 "content": content_preview[:60],

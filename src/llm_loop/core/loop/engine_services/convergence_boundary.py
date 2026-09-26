@@ -1,9 +1,9 @@
-"""Prompt-neutral multi-round convergence decision boundary.
+"""Prompt-neutral multi-round convergence observation.
 
-The program owns only mechanical facts and the temporary provider tool surface. It never
-decides that the user's task is complete. When bounded mechanical signals are present,
-the next model round may either answer directly or call ``convergence_decide`` to reopen
-the ordinary tool surface with a model-authored unresolved fact.
+The program owns only bounded mechanical telemetry.  It never decides that the user's
+task is complete and it has no authority to narrow, replace, or block the normal provider
+tool surface.  A model with a concrete next action calls the real tool directly; a model
+that is done answers directly.
 
 No system/user message is injected and no program-authored strategy prose is persisted.
 """

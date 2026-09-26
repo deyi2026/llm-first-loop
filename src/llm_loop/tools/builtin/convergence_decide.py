@@ -1,4 +1,4 @@
-"""Ephemeral model decision tool used only at a mechanical convergence boundary."""
+"""Legacy convergence decision tool kept for replay/tests; not factory-registered."""
 
 from __future__ import annotations
 

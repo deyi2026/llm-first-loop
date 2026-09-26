@@ -19,8 +19,9 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
+
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +67,9 @@ class GoalStore:
 
     def create(self, objective: str, session_id: str = "", *, method_use_gate: bool = False) -> Goal:
         """创建任务目标（active 初始态；与checkpoint/update共享同一写锁）."""
-        now = datetime.now(UTC).isoformat()
+        now = system_local_now().isoformat()
         goal = Goal(
-            id=f"GOAL-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
+            id=f"GOAL-{system_local_now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
             objective=objective,
             status="active",
             generation=f"gen-{uuid.uuid4().hex}",
@@ -140,14 +141,14 @@ class GoalStore:
                         out.append(json.dumps(entry, ensure_ascii=False))
                         continue  # 非active明确拒绝：返回None，工具层不得误报已记录
                     cp = {
-                        "ts": datetime.now(UTC).isoformat(),
+                        "ts": system_local_now().isoformat(),
                         "what": what,
                         "evidence": evidence,
                         "path": path,
                         "next": next_step,
                     }
                     entry.setdefault("checkpoints", []).append(cp)
-                    entry["updated_at"] = datetime.now(UTC).isoformat()
+                    entry["updated_at"] = system_local_now().isoformat()
                     target = entry
                 out.append(json.dumps(entry, ensure_ascii=False))
             if not matched and malformed_lines:
@@ -189,7 +190,7 @@ class GoalStore:
                             out.append(json.dumps(entry, ensure_ascii=False))
                             continue
                         raise ValueError(f"Goal 终态不可逆: {current} → {status}")
-                    now = datetime.now(UTC).isoformat()
+                    now = system_local_now().isoformat()
                     entry["status"] = status
                     entry["updated_at"] = now
                     if status == "complete":
@@ -367,4 +368,4 @@ class GoalStore:
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 
 from llm_loop.core.message import ToolCall, ToolResult
 from llm_loop.core.run_context import current_run_generation
@@ -23,6 +23,7 @@ from llm_loop.memory.evidence import (
     SourceVersionPolicy,
     make_capture_request,
 )
+from llm_loop.timekeeping import system_local_now
 
 
 class EvidenceShadowRecorder:
@@ -35,7 +36,7 @@ class EvidenceShadowRecorder:
     ) -> None:
         self.capture = capture
         self.owner_resolver = owner_resolver
-        self.clock = clock or (lambda: datetime.now(UTC))
+        self.clock = clock or (lambda: system_local_now())
 
     def __call__(self, call: ToolCall, result: ToolResult) -> None:
         raw = result.raw_observation if result.raw_observation is not None else result.content

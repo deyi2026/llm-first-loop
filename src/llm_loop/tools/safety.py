@@ -20,9 +20,10 @@ import os
 import re
 import shlex
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
+
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -351,7 +352,7 @@ class CatastrophicGuard:
         try:
             self._audit_dir.mkdir(parents=True, exist_ok=True)
             rec = {
-                "ts": datetime.now(UTC).isoformat(),
+                "ts": system_local_now().isoformat(),
                 "tool_name": tool_name,
                 "command": command[:200],
                 "reason": decision.reason,

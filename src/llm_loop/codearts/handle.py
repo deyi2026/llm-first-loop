@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import replace
-from datetime import UTC, datetime
 from typing import Any
 
 from llm_loop.codearts.models import ExecutionHandle, HandleStatus, RemoteStatus
@@ -22,6 +21,7 @@ from llm_loop.event_log.model import (
     EVENT_CODEARTS_DISPATCHED,
 )
 from llm_loop.event_log.store import EventStore
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class HandleRegistry:
                 handle,
                 status=status,
                 remote_status=new_remote,
-                last_synced_at=datetime.now(UTC).isoformat(),
+                last_synced_at=system_local_now().isoformat(),
             )
             self._handles[handle_id] = updated
             return drift

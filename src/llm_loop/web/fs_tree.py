@@ -16,12 +16,13 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ def _audit(request: Request, action: str, detail: str) -> None:
         base.mkdir(parents=True, exist_ok=True)
         with (base / "fs_operations.jsonl").open("a", encoding="utf-8") as f:
             entry = {
-                "ts": datetime.now(UTC).isoformat(),
+                "ts": system_local_now().isoformat(),
                 "action": action,
                 "detail": detail,
             }

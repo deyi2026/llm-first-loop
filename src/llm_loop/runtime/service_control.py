@@ -48,6 +48,7 @@ from llm_loop.runtime.admission_barrier import (
     BarrierConflictError,
 )
 from llm_loop.runtime.learning_idle import learning_busy_reason
+from llm_loop.timekeeping import system_local_now
 
 _DEPLOYMENT_SCHEMA = "managed-service-deployment/v1"
 
@@ -548,8 +549,8 @@ class RestartPlan:
     env: dict[str, str]
 
 
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+def _local_now() -> str:
+    return system_local_now().isoformat()
 
 
 def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -917,7 +918,7 @@ class ManagedServiceDeploymentStore:
 
     def _reap_stale_waiting_actions_unlocked(self) -> None:
         """Fail waiting actions whose detached worker died; defense in depth."""
-        stale_before = datetime.now(UTC).timestamp() - (
+        stale_before = system_local_now().timestamp() - (
             _REQUESTER_EXIT_TIMEOUT_S + _IDLE_TIMEOUT_S + _STALE_WAITING_MARGIN_S
         )
         for path in sorted(self.actions_dir.glob("*.json")):
@@ -938,7 +939,7 @@ class ManagedServiceDeploymentStore:
                 dataclasses.replace(
                     action,
                     status="failed",
-                    updated_at=_utc_now(),
+                    updated_at=_local_now(),
                     detail="stale waiting state reaped: detached worker presumed dead",
                 )
             )
@@ -977,7 +978,7 @@ class ManagedServiceDeploymentStore:
             updated = dataclasses.replace(
                 action,
                 status=status,
-                updated_at=_utc_now(),
+                updated_at=_local_now(),
                 detail=detail_text,
                 reason_ref=reason_ref or action.reason_ref,
                 stage_fact=action.stage_fact if stage_fact is None else stage_fact,
@@ -1025,7 +1026,7 @@ class ManagedServiceDeploymentStore:
                     f"current={deployment.generation}"
                 )
             self._reap_stale_waiting_actions_unlocked()
-            now = _utc_now()
+            now = _local_now()
             action = ServiceControlAction(
                 schema=_ACTION_SCHEMA,
                 action_id=f"svc-{uuid.uuid4().hex}",
@@ -1098,7 +1099,7 @@ class ManagedServiceDeploymentStore:
                     dataclasses.replace(
                         action,
                         status="failed",
-                        updated_at=_utc_now(),
+                        updated_at=_local_now(),
                         detail=f"admission barrier establishment failed, acceptance rejected: {exc}",
                     )
                 )
@@ -1111,7 +1112,7 @@ class ManagedServiceDeploymentStore:
                     dataclasses.replace(
                         action,
                         status="failed",
-                        updated_at=_utc_now(),
+                        updated_at=_local_now(),
                         detail=f"admission barrier conflict, acceptance rejected: {conflict}",
                     )
                 )
@@ -1331,7 +1332,7 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
                 )
 
     waiting_timeout: list[dict[str, Any]] = []
-    now = datetime.now(UTC)
+    now = system_local_now()
     timeout_s = _REQUESTER_EXIT_TIMEOUT_S + _IDLE_TIMEOUT_S + _STALE_WAITING_MARGIN_S
     for action in actions:
         if not action.status.startswith("waiting"):
@@ -1570,7 +1571,7 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
         # 显示事实：服务器本地时区 UTC 偏移（分钟，含夏令时实时值）。前端据此
         # 把 ISO 时间渲染为"服务器挂钟"，与访问设备的浏览器时区无关。
         "server_tz_offset_minutes": round(
-            datetime.now().astimezone().utcoffset().total_seconds() // 60
+            system_local_now().utcoffset().total_seconds() // 60
         ),
     }
 
@@ -1625,7 +1626,7 @@ def _append_exit_audit(store: ManagedServiceDeploymentStore, record: Mapping[str
     audit_dir = store.data_dir / "audit"
     try:
         audit_dir.mkdir(parents=True, exist_ok=True)
-        payload = {"ts": _utc_now(), **dict(record)}
+        payload = {"ts": _local_now(), **dict(record)}
         with (audit_dir / "service_control_exits.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
     except OSError as exc:
@@ -1944,7 +1945,7 @@ def record_model_override(
         "evidence": evidence,
         "reason": reason,
         "operator": operator,
-        "ts": _utc_now(),
+        "ts": _local_now(),
     }
     note = (
         f"model override accepted: gate={gate} level={level}"
@@ -2053,7 +2054,7 @@ def acknowledge_verify(
             verify_evidence=evidence,
             verify_verdict=verdict,
             release_barriers=_barrier_services_for_target(action.target),
-            acknowledged_at=_utc_now(),
+            acknowledged_at=_local_now(),
         )
         _append_exit_audit(
             store,
@@ -2577,7 +2578,7 @@ def _mark_action(
         updated = dataclasses.replace(
             action,
             status=status,  # type: ignore[arg-type]
-            updated_at=_utc_now(),
+            updated_at=_local_now(),
             detail=detail_text,
             reason_ref=reason_ref or action.reason_ref,
             stage_fact=action.stage_fact if stage_fact is None else stage_fact,
@@ -3006,7 +3007,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                 runtime_root=plan.env["LFL_RESTART_RUNTIME_ROOT"],
                 extra=extra_env,
             )
-            restarted_at = _utc_now()
+            restarted_at = _local_now()
             # S4a（2026-09-22 15:12 gen66 事故 svc-8011bb79）：物理重启绝不能
             # 继承调用方 stdio 的生命周期。S3 的 inline CLI 把自身管道交给
             # restart_mirror，读端先死时 bash 在写输出瞬间被 SIGPIPE 杀死
@@ -3825,7 +3826,7 @@ def scan_unacknowledged_failed_actions(data_dir: str | Path) -> list[dict[str, A
     """
     results: list[dict[str, Any]] = []
     try:
-        from datetime import UTC, datetime
+        from datetime import datetime
 
         store = ManagedServiceDeploymentStore(data_dir)
         desired_generation: int | None = None
@@ -3834,7 +3835,7 @@ def scan_unacknowledged_failed_actions(data_dir: str | Path) -> list[dict[str, A
             desired_generation = deployment.generation if deployment else None
         except Exception:  # noqa: BLE001 — 过滤信息缺失时按未 supersede 处理
             desired_generation = None
-        cutoff = datetime.now(UTC).timestamp() - 24 * 3600
+        cutoff = system_local_now().timestamp() - 24 * 3600
         for path in sorted(
             (p for p in store.actions_dir.glob("*.json") if p.is_file()),
             key=lambda p: p.name,

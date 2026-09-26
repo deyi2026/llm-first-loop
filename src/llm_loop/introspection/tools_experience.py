@@ -7,10 +7,10 @@ save_experience/refine_experience：参数校验 → 调 ExperienceStore → 如
 from __future__ import annotations
 
 import re
-from datetime import datetime
 
 from llm_loop.experiences.document import ExperienceDocument
 from llm_loop.experiences.store import ExperienceStore
+from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.arg_coerce import coerce_obj, coerce_str_list
 
 # EVO-20260923-6fe23c9b F2(a): 保存时强制"可执行的当前性验证动作"（防裸结论卡 stale 后误导弱模型）
@@ -86,7 +86,7 @@ def run_save_experience(
     # EVO-20260923-6fe23c9b F2(a): 强制可执行当前性验证动作
     if not freshness_action_ok(solution, body, root_cause, scenario):
         return FRESHNESS_ACTION_ERR
-    now = datetime.now().astimezone().isoformat()
+    now = system_local_now().isoformat()
     doc = ExperienceDocument(
         title=title,
         scenario=scenario,

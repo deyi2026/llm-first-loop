@@ -1,3 +1,5 @@
+from llm_loop.timekeeping import system_local_now
+
 """Web 接入层（薄壳适配器，M36）。
 
 复用 load_settings + build_engine（与 CLI 同源装配路径），核心零改动。
@@ -204,7 +206,6 @@ def _install_exit_signal_log() -> None:
     fail-open：写失败静默、信号注册异常不阻塞启动。
     """
     import contextlib
-    import datetime
     import signal
 
     exit_log_path = os.path.join(os.environ.get("DATA_DIR", "data"), "web_exit.log")
@@ -212,7 +213,7 @@ def _install_exit_signal_log() -> None:
     def _log_web_exit(reason: str) -> None:
         try:
             with open(exit_log_path, "a", encoding="utf-8") as f:
-                f.write(f"{datetime.datetime.now().isoformat()} pid={os.getpid()} {reason}\n")
+                f.write(f"{system_local_now().isoformat()} pid={os.getpid()} {reason}\n")
         except OSError as exc:  # fail-open：退出日志写失败不影响启动
             logger.debug("退出日志写失败（fail-open）: %s", exc)
 

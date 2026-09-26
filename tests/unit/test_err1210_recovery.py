@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 
 from llm_loop.core.cache_health import CacheHealthMonitor
@@ -391,8 +392,12 @@ def test_snapshot_is_diagnostic_only_without_injection_span(tmp_path, monkeypatc
     )
     assert p is not None
     row = json.loads(p.read_text(encoding="utf-8"))
-    assert row["schema"] == 2
+    assert row["schema"] == 3
     assert row["recovery_contract"] == "tail_user_normalization_only"
+    assert "ts_local" in row and "ts_utc" not in row
+    local_ts = datetime.fromisoformat(row["ts_local"])
+    assert local_ts.tzinfo is not None
+    assert local_ts.utcoffset() == datetime.now().astimezone().utcoffset()
     assert "injection_span" not in row
 
 

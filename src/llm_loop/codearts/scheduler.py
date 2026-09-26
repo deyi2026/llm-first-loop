@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
 
 from llm_loop.codearts.audit import AuditLogger
 from llm_loop.codearts.client import (
@@ -44,6 +43,7 @@ from llm_loop.codearts.sync import StateSynchronizer
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.event_log.model import EVENT_CODEARTS_CANCELLED
 from llm_loop.event_log.store import EventStore
+from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.safety import CatastrophicGuard
 
 logger = logging.getLogger(__name__)
@@ -300,7 +300,7 @@ class CodeArtsScheduler:
                 "handle_id": handle_id,
                 "session_id": sid,
                 "trace_id": handle.trace_id,
-                "cancelled_at": datetime.now(UTC).isoformat(),
+                "cancelled_at": system_local_now().isoformat(),
                 "remote_cancelled": remote_cancelled,
             },
         )

@@ -21,13 +21,14 @@ from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 from llm_loop.introspection.task_evidence import (
     TaskEvidenceVerificationError,
     TaskEvidenceVerifier,
 )
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ class Task:
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 class TaskStore:

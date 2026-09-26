@@ -20,8 +20,10 @@ import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+
+from llm_loop.timekeeping import system_local_now
 
 _PATH_TOKEN_RE = re.compile(r"[\w./\\\-]+")
 _FILE_EXT_RE = re.compile(r"\.\w{1,8}$")
@@ -29,7 +31,7 @@ _URL_RE = re.compile(r"https?://\S+")
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 @dataclass
@@ -353,7 +355,7 @@ class ArchiveStore:
         if key_paths_override is not None:
             paths = list(key_paths_override)
         entry = ArchiveEntry(
-            id=f"ARC-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
+            id=f"ARC-{system_local_now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
             ts=_now(),
             role=role,
             source=source,
@@ -877,9 +879,9 @@ class ArchiveStore:
             except ValueError as exc:
                 logging.getLogger(__name__).warning("档案GC owner不可判定（跳过）: %s", exc)
 
-        cutoff_ts = None
+        cutoff_at = None
         if ttl_days > 0:
-            cutoff_ts = (datetime.now(UTC) - timedelta(days=ttl_days)).isoformat()
+            cutoff_at = system_local_now() - timedelta(days=ttl_days)
 
         for sid, segs in groups.items():
             try:
@@ -894,14 +896,20 @@ class ArchiveStore:
                         line = line.strip()
                         if not line:
                             continue
-                        if cutoff_ts is not None:
+                        if cutoff_at is not None:
                             try:
                                 entry = json.loads(line)
                             except json.JSONDecodeError:
                                 kept.append(line)  # 无法解析的条目保留（fail-open）
                                 continue
                             ts = entry.get("ts", "")
-                            if ts and ts < cutoff_ts:
+                            try:
+                                recorded_at = datetime.fromisoformat(str(ts)) if ts else None
+                                if recorded_at is not None and recorded_at.tzinfo is None:
+                                    recorded_at = recorded_at.astimezone()
+                            except (TypeError, ValueError):
+                                recorded_at = None
+                            if recorded_at is not None and recorded_at < cutoff_at:
                                 total_pruned += 1
                                 continue
                         kept.append(line)

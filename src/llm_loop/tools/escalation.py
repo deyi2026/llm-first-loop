@@ -33,8 +33,10 @@ import logging
 import secrets
 import threading
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +46,7 @@ _STATUS_FLOW = {"pending", "approved", "denied", "consumed", "expired"}
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 def _public(rec: dict) -> dict:
@@ -106,16 +108,15 @@ class EscalationStore:
     def _mutate(self, fn) -> list[dict]:
         """锁内 读-改-写（flock 跨进程 + 进程锁跨线程）。"""
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with _PROC_LOCK:
-            with self._lock_path.open("a") as lf:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-                try:
-                    records = self._load()
-                    records = fn(records) or records
-                    self._save(records)
-                    return records
-                finally:
-                    fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+        with _PROC_LOCK, self._lock_path.open("a") as lf:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+            try:
+                records = self._load()
+                records = fn(records) or records
+                self._save(records)
+                return records
+            finally:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
     # ── 对外 API ──
     def create(
@@ -141,7 +142,7 @@ class EscalationStore:
                 ):
                     created = r
                     return records  # 幂等复用已有 pending
-            rid = "ESC-" + datetime.now(UTC).strftime("%Y%m%d") + "-" + secrets.token_hex(4)
+            rid = "ESC-" + system_local_now().strftime("%Y%m%d") + "-" + secrets.token_hex(4)
             rec = {
                 "id": rid,
                 "tool_name": tool_name,
@@ -219,7 +220,7 @@ class EscalationStore:
                 if decision == "approved":
                     r["token"] = secrets.token_urlsafe(24)
                     r["token_expires_at"] = (
-                        datetime.now(UTC) + timedelta(minutes=max(1, int(ttl_minutes)))
+                        system_local_now() + timedelta(minutes=max(1, int(ttl_minutes)))
                     ).isoformat()
                 result = r
                 self._log("decided", r, {"decision": decision, "note": note[:300]})
@@ -264,7 +265,7 @@ class EscalationStore:
             exp = str(hit.get("token_expires_at") or "")
             if exp:
                 try:
-                    if datetime.fromisoformat(exp) < datetime.now(UTC):
+                    if datetime.fromisoformat(exp) < system_local_now():
                         hit["status"] = "expired"
                         self._log("token_expired", hit)
                         reason = f"令牌已过期（{exp}）"

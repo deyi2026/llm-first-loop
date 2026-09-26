@@ -10,8 +10,9 @@ import json
 import logging
 import os
 import subprocess
-from datetime import UTC, datetime
 from pathlib import Path
+
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ def record_process_start(service: str) -> None:
         path = _audit_dir() / "proc_versions.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         record = {
-            "ts": datetime.now(UTC).isoformat(),
+            "ts": system_local_now().isoformat(),
             "pid": os.getpid(),
             "service": service,
             "git_head": git_head(),
@@ -232,7 +233,7 @@ def record_change_log(tool_name: str, detail: str, session_id: str = "") -> None
         path = _audit_dir() / "change_log.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         record = {
-            "ts": datetime.now(UTC).isoformat(),
+            "ts": system_local_now().isoformat(),
             "pid": os.getpid(),
             "tool": tool_name,
             "session_id": session_id,

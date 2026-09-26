@@ -15,15 +15,16 @@ import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 from llm_loop.core.message import ToolResultStatus
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType, EventReporter
+from llm_loop.timekeeping import system_local_now
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 def _model_fact_integrity(
@@ -884,12 +885,12 @@ def cleanup_audit_logs(audit_dir: str | Path, ttl_days: int) -> dict:
     if ttl_days <= 0:
         return {"pruned_files": 0, "pruned_entries": 0}
     import logging
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
     d = Path(audit_dir)
     if not d.exists():
         return {"pruned_files": 0, "pruned_entries": 0}
-    cutoff = (datetime.now(UTC) - timedelta(days=ttl_days)).isoformat()
+    cutoff = system_local_now() - timedelta(days=ttl_days)
     total = 0
     files = 0
     for p in sorted(d.glob("*.jsonl")):
@@ -901,10 +902,14 @@ def cleanup_audit_logs(audit_dir: str | Path, ttl_days: int) -> dict:
                     continue
                 try:
                     ts = json.loads(line).get("ts", "")
-                    if isinstance(ts, str) and ts and ts < cutoff:
-                        total += 1
-                        continue
-                except (json.JSONDecodeError, AttributeError) as exc:
+                    if isinstance(ts, str) and ts:
+                        recorded_at = datetime.fromisoformat(ts)
+                        if recorded_at.tzinfo is None:
+                            recorded_at = recorded_at.astimezone()
+                        if recorded_at < cutoff:
+                            total += 1
+                            continue
+                except (json.JSONDecodeError, AttributeError, TypeError, ValueError) as exc:
                     # fail-open：无法解析的行保守保留
                     logging.getLogger(__name__).debug("审计行解析失败，保守保留（fail-open）: %s", exc)
                 kept.append(line)

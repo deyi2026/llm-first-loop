@@ -28,6 +28,7 @@ from llm_loop.codearts.models import (
     RemoteStatus,
     ResultStatus,
 )
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +210,6 @@ class HttpxCodeArtsClient:
         self, task: DispatchTask, credential: Credential, *, region: str
     ) -> ExecutionHandle:
         """触发 CodeArts 子 Agent 执行，返回执行句柄."""
-        from datetime import UTC, datetime
 
         body = {
             "task_description": task.task_description,
@@ -229,9 +229,9 @@ class HttpxCodeArtsClient:
             handle_id=handle_id,
             session_id="",
             trace_id=task.trace_id,
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=system_local_now().isoformat(),
             status=HandleStatus.RUNNING,
-            last_synced_at=datetime.now(UTC).isoformat(),
+            last_synced_at=system_local_now().isoformat(),
             remote_status=RemoteStatus.RUNNING,
         )
 

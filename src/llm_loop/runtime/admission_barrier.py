@@ -36,8 +36,9 @@ import logging
 import os
 import socket
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
+
+from llm_loop.timekeeping import system_local_now
 
 _BARRIER_SCHEMA = "service-admission-barrier/v1"
 _BARRIER_DIR = Path("runtime") / "service-control-barriers"
@@ -73,8 +74,8 @@ class ServiceAdmissionBarrier:
         }
 
 
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+def _local_now() -> str:
+    return system_local_now().isoformat()
 
 
 def _created_by() -> str:
@@ -93,7 +94,7 @@ def _append_audit_jsonl(
     audit_dir = Path(data_dir).expanduser() / "audit"
     try:
         audit_dir.mkdir(parents=True, exist_ok=True)
-        record = {"ts": _utc_now(), **payload}
+        record = {"ts": _local_now(), **payload}
         with (audit_dir / filename).open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
         return True
@@ -200,7 +201,7 @@ class AdmissionBarrierRegistry:
                 "service": service,
                 "operation_id": operation_id,
                 "reason": reason,
-                "created_at": _utc_now(),
+                "created_at": _local_now(),
                 "created_by": _created_by(),
             },
             ensure_ascii=False,
@@ -282,7 +283,7 @@ class AdmissionBarrierRegistry:
                 "service": service,
                 "operation_id": operation_id,
                 "reason": reason,
-                "created_at": current.created_at or _utc_now(),
+                "created_at": current.created_at or _local_now(),
                 "created_by": _created_by(),
                 "adopted_from": previous_owner,
             },

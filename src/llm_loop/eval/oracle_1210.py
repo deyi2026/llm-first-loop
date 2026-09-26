@@ -37,6 +37,7 @@ from typing import Any
 
 from llm_loop.core.loop.err1210 import is_err1210
 from llm_loop.llm.errors import LLMError
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ class OracleReport:
     confidence: str = ""
     incomplete_reason: str = ""  # 空=完整；budget_exhausted | throttled
     coverage: str = ""  # 如 "3/5"（已执行/应执行含被跳过；完整实验为空）
-    ts_utc: str = ""
+    ts_local: str = ""
     dry_run: bool = False
     report_dir: str = ""
 
@@ -439,16 +440,15 @@ def run_oracle(
       "保真轨数据 + 官方证据源"等效两轨构成: 保真轨复现 → COMPOUND_TRIGGER，
       不复现 → STRUCTURE_TRIGGER（工单为结构证据）。
     """
-    from datetime import UTC, datetime
 
-    ts_utc = datetime.now(UTC).isoformat()
+    ts_local = system_local_now().isoformat()
     t_start = time_fn()
     report = OracleReport(
         sample_ref=str(sample.session_id),
         session_id=sample.session_id,
         model=sample.model,
         budget=budget,
-        ts_utc=ts_utc,
+        ts_local=ts_local,
         dry_run=dry_run,
     )
     results: list[VariantResult] = []
@@ -632,7 +632,7 @@ def run_oracle(
         if data_dir is not None
         else Path(__file__).resolve().parents[3] / "data"
     )
-    ts_compact = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    ts_compact = system_local_now().strftime("%Y%m%dT%H%M%S%z")
     report_dir = (
         base / "audit" / "oracle_1210"
         / f"{ts_compact}_{sample.session_id[:8] or 'nosession'}"
@@ -664,7 +664,7 @@ def _report_to_dict(report: OracleReport) -> dict:
         "confidence": report.confidence,
         "incomplete_reason": report.incomplete_reason,
         "coverage": report.coverage,
-        "ts_utc": report.ts_utc,
+        "ts_local": report.ts_local,
         "dry_run": report.dry_run,
     }
 
@@ -711,7 +711,7 @@ def _report_markdown(report: OracleReport) -> str:
         "# err1210 双轨 oracle 实验报告",
         "",
         f"- 样本会话: `{report.session_id}`　模型: `{report.model}`",
-        f"- 时点(UTC): {report.ts_utc}　dry_run: {report.dry_run}",
+        f"- 时点(本机): {report.ts_local}　dry_run: {report.dry_run}",
         f"- 预算: {report.budget_used}/{report.budget}　实测 QPS: {report.qps_actual}",
         f"- 完整性: {'完整' if not report.incomplete_reason else f'不完整（{report.incomplete_reason}，覆盖率 {report.coverage}）'}",
         f"- **Verdict: {report.verdict or '（未判定）'}**　置信度: {report.confidence}",

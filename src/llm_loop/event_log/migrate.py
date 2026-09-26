@@ -16,7 +16,6 @@ import os
 import shutil
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_loop.event_log.model import (
@@ -28,6 +27,7 @@ from llm_loop.event_log.model import (
 from llm_loop.event_log.reconcile import reconcile
 from llm_loop.event_log.replay import _TOP_LEVEL_DEFAULTS, replay_session
 from llm_loop.event_log.store import EventStore
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ def run_migration(
 
     # ── 备份先行（备份失败 → 中止迁移）──
     if backup_dir is None:
-        ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        ts = system_local_now().strftime("%Y%m%d-%H%M%S")
         backup_dir = logs_root / "_backup" / ts
     backup_root = Path(backup_dir)
     try:

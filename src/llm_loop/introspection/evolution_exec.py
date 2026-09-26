@@ -25,7 +25,6 @@ import contextlib
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -36,6 +35,7 @@ from llm_loop.introspection.evolution import (
     EvolutionStore,
     EvolutionSuggestion,
 )
+from llm_loop.timekeeping import system_local_now
 
 _VERIFY_GUIDE = (
     "验证结论请由 AI 自行对比执行前后架构状态（architecture_status）并如实汇报"
@@ -48,7 +48,7 @@ _ROLLBACK_GUIDE = (
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 def exec_level() -> int:
@@ -146,7 +146,7 @@ class ExecutionOutcome:
 
     def to_dict(self) -> dict:
         return {
-            "id": f"EVOEXEC-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6]}",
+            "id": f"EVOEXEC-{system_local_now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6]}",
             "suggestion_id": self.suggestion_id,
             "executor": self.executor,
             "ts_start": self.ts_start,

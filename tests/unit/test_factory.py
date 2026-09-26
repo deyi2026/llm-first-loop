@@ -53,6 +53,17 @@ def test_evolution_summary_present(tmp_path):
     assert "self_eval_enabled" in cfg
 
 
+def test_factory_does_not_register_convergence_meta_router(tmp_path):
+    """Concrete tools remain directly callable; convergence_decide is not runtime routing."""
+    from llm_loop.factory import build_engine
+
+    engine = build_engine(_settings(tmp_path))  # type: ignore[arg-type]
+
+    assert "convergence_decide" not in engine.registry.names()
+    assert "read_file" in engine.registry.names()
+    assert "execute_command" in engine.registry.names()
+
+
 def test_evolution_summary_empty_dir(tmp_path):
     """无建议文件 → 全 0 摘要（不报错）."""
     from llm_loop.factory import build_engine

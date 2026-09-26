@@ -22,8 +22,10 @@ import uuid
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, fields
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
+
+from llm_loop.timekeeping import system_local_now
 
 
 @dataclass
@@ -355,7 +357,7 @@ class MemoryStore:
 
     def _update_existing(self, existing: MemoryEntry, entry: MemoryEntry) -> MemoryEntry:
         """覆盖更新旧条目（保留 id/created_at/访问统计，版本 +1，旧版沉 version_history）."""
-        now = datetime.now(UTC).isoformat()
+        now = system_local_now().isoformat()
         # 旧版沉淀（不删除业务数据）
         existing.version_history.append(
             {
@@ -388,9 +390,9 @@ class MemoryStore:
 
     def _prepare_entry(self, entry: MemoryEntry) -> None:
         if not entry.id:
-            entry.id = f"MEM-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
+            entry.id = f"MEM-{system_local_now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
         if not entry.created_at:
-            entry.created_at = datetime.now(UTC).isoformat()
+            entry.created_at = system_local_now().isoformat()
         if not entry.content_fingerprint:
             entry.content_fingerprint = self._compute_fingerprint(entry)
 
@@ -424,7 +426,7 @@ class MemoryStore:
                             "content_fingerprint": entry.content_fingerprint,
                             "observed_version": observed_version,
                             "current_version": int(existing.version),
-                            "observed_at": datetime.now(UTC).isoformat(),
+                            "observed_at": system_local_now().isoformat(),
                         }
                     )
                     self._save()
@@ -475,7 +477,7 @@ class MemoryStore:
         if not keywords:
             return []
         scored: list[tuple[float, MemoryEntry]] = []
-        now = datetime.now(UTC).isoformat()
+        now = system_local_now().isoformat()
         for e in self._entries:
             if e.scope == "session" and not (session_id and e.source_session_id == session_id):
                 continue
@@ -505,7 +507,7 @@ class MemoryStore:
             return 1.0
         try:
             last = datetime.fromisoformat(entry.last_access_at)
-            days = (datetime.now(UTC) - last).total_seconds() / 86400.0
+            days = (system_local_now() - last).total_seconds() / 86400.0
             return round(1.0 * (0.5 ** max(0.0, days / _HALF_LIFE_DAYS)), 4)
         except (ValueError, TypeError):
             return 1.0
@@ -519,7 +521,7 @@ class MemoryStore:
         """
         if not entries:
             return
-        now = datetime.now(UTC).isoformat()
+        now = system_local_now().isoformat()
         for e in entries:
             e.inject_count += 1
             e.last_inject_at = now

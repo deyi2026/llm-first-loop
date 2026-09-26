@@ -7,11 +7,11 @@ Codex 风格 handoff 增强：在上下文压力高（context_usage > 70%）时�
 from __future__ import annotations
 
 import logging
-import time
 from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ def run_handoff_now(ctx: Any, audit: Any, args: dict) -> ToolResult:
     include_dec = bool(args.get("include_decisions", True))
     include_mem = bool(args.get("include_memory", True))
 
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    timestamp = system_local_now().strftime("%Y%m%d-%H%M%S")
     doc = _HANDOFF_TPL.format(
         timestamp=timestamp,
         urgency=urgency,

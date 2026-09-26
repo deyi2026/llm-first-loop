@@ -13,9 +13,10 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +202,7 @@ class RuntimeParams:
         """记录一次参数调整（PARAM-05）."""
         self._round_adjust_count += 1
         rec = ParamAdjustRecord(
-            ts=datetime.now(UTC).isoformat(),
+            ts=system_local_now().isoformat(),
             key=key,
             before=before,
             after=after,
@@ -219,7 +220,7 @@ class RuntimeParams:
             before = self._strategy.get(key)
             self._round_adjust_count += 1
             rec = ParamAdjustRecord(
-                ts=datetime.now(UTC).isoformat(),
+                ts=system_local_now().isoformat(),
                 key=key,
                 before=before,
                 after=after,

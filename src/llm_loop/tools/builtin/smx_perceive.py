@@ -25,11 +25,11 @@ import re
 import secrets
 import subprocess
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.timekeeping import system_local_now
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 _RUN_ID_RE = re.compile(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*")
@@ -480,12 +480,12 @@ class SmxPerceiveTool:
             [(f"r{i}", p) for i, p in enumerate(roots)], depth, budget
         )
         self._store.mkdir(parents=True, exist_ok=True)
-        sid = f"snap-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}-{secrets.token_hex(3)}"
+        sid = f"snap-{system_local_now().strftime('%Y%m%dT%H%M%S')}-{secrets.token_hex(3)}"
         doc = {
             "schema": 1,
             "tool": "smx_perceive",
             "snapshot_id": sid,
-            "at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "at": system_local_now().isoformat(timespec="seconds"),
             "smx_sha": self._smx_sha,
             "params": {"roots": roots, "depth": depth, "budget": budget},
             "scope": {"roots": sorted(roots), "depth": depth},

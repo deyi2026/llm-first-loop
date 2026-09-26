@@ -36,6 +36,7 @@ from urllib.parse import urlparse
 from weakref import WeakValueDictionary
 
 from llm_loop.browser.predicate import evaluate_predicate as evaluate_browser_predicate
+from llm_loop.timekeeping import system_local_now
 
 _SENSOR_CONTRACT = {
     "id": "browser-dom-ax-v0.1",
@@ -1622,9 +1623,7 @@ class BrowserPerceptionAdapter:
                 "sensor_grounding": sensor_grounding,
             }
         )
-        observed_at = str(raw_capture.get("observed_at") or "") or time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-        )
+        observed_at = str(raw_capture.get("observed_at") or "") or system_local_now().isoformat(timespec="seconds")
         snapshot = {
             "schema": "smc.world_snapshot.v0.1",
             "domain": "browser",
@@ -2488,7 +2487,7 @@ class PlaywrightPageCaptureBackend:
             "document_token": document_token,
             "url": main_url,
             "document_ready_state": document_ready_state,
-            "observed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "observed_at": system_local_now().isoformat(timespec="seconds"),
             "frames": frames,
             "dom": {
                 "available": True,

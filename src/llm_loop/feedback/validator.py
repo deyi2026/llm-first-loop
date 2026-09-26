@@ -13,11 +13,11 @@ import uuid
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_loop.core.message import Message, ToolResultStatus
 from llm_loop.core.run_context import current_session_id as _current_session_id
+from llm_loop.timekeeping import system_local_now
 
 # 声明动词表（写入/创建/删除/保存/修改/执行/更新/安装/下载…）
 _DECLARE_VERBS = [
@@ -506,7 +506,7 @@ class DeclarationValidator:
         if self._audit_dir is None:
             return
         self._audit_dir.mkdir(parents=True, exist_ok=True)
-        now = datetime.now(UTC)
+        now = system_local_now()
         record = {
             "id": f"DC-{now.strftime('%Y%m%dT%H%M%S%f')}-{uuid.uuid4().hex[:6]}",
             "ts": now.isoformat(),

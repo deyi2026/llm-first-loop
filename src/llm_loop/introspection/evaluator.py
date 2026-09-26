@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from llm_loop.timekeeping import system_local_now
+
 # 五维指标名（EVAL-02）
 METRIC_NAMES = (
     "success_rate",
@@ -30,7 +32,7 @@ METRIC_NAMES = (
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 @dataclass
@@ -181,7 +183,7 @@ class SelfEvaluator:
         格式 SE-YYYYMMDD-NNN-XXXX: 当日文件计数（self_eval_log.jsonl 中当日行数 + 1）
         + 随机后缀（防同日并发/读写竞态）；文件读取失败 fail-open（count=0 兜底）。
         """
-        now = datetime.now(UTC)
+        now = system_local_now()
         date = now.strftime("%Y%m%d")
         count = 0
         path = self._audit_dir / "self_eval_log.jsonl"
@@ -495,7 +497,7 @@ class SelfEvaluator:
         if not items or self._window_hours <= 0:
             return items
         try:
-            cutoff = datetime.now(UTC).timestamp() - self._window_hours * 3600
+            cutoff = system_local_now().timestamp() - self._window_hours * 3600
         except Exception:  # noqa: BLE001 — 时间计算失败不过滤（fail-open）
             return items
         out: list[dict] = []

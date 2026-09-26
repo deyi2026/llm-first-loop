@@ -19,11 +19,11 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from llm_loop.core.external_execution import ExternalExecutionJournal
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -470,7 +470,7 @@ class JobRegistry:
                 return
             base = self._notify_data_dir / "interop" / "lfl_to_dsh" / "pending"
             base.mkdir(parents=True, exist_ok=True)
-            now = datetime.now(UTC)
+            now = system_local_now()
             ts = now.strftime("%Y%m%d-%H%M%S")
             fname = f"{now.strftime('%Y%m%d')}-job-{ts}-{job_id}.json"
             payload = {

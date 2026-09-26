@@ -29,6 +29,7 @@ from llm_loop.core.reference_injection import (
     is_active_run_ingress_message,
     is_human_user_message,
 )
+from llm_loop.timekeeping import system_local_now
 
 
 def _message_time_marker(m: Message) -> float | None:
@@ -550,7 +551,6 @@ def _persist_semantic_state(session_id: str = "", *, data_dir: str | None = None
     if not session_id:
         return False
     try:
-        from datetime import UTC, datetime
         from pathlib import Path as _Path
 
         from llm_loop.cognitive.state import (
@@ -577,7 +577,7 @@ def _persist_semantic_state(session_id: str = "", *, data_dir: str | None = None
                 if isinstance(old, StateEnvelope) and old.tombstone is None:
                     old.tombstone = Tombstone(
                         reason=f"goal_{str(goal.get('status', ''))}",
-                        ts=datetime.now(UTC).isoformat(),
+                        ts=system_local_now().isoformat(),
                     )
                     store.save(session_id, old)
             return False  # 无活跃 goal：不覆盖既有状态文件（保留旧指针）

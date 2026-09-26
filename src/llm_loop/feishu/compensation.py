@@ -15,13 +15,13 @@ import json
 import logging
 import os
 import threading
-import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
 from llm_loop.runtime.resolver import business_config_snapshot
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def legacy_interrupted_path() -> str:
 
 
 def _now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%S")
+    return system_local_now().isoformat(timespec="seconds")
 
 
 @dataclass(kw_only=True)

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.introspection.rule_index import RuleIndex
+from llm_loop.timekeeping import system_local_now
 
 # EVO-20260923-6fe23c9b F2(b): 行为卡（method/experience/lesson）卡龄降权阈值（天，按 updated_at/ts）
 CARD_AGE_DOWNWEIGHT_DAYS = 14
@@ -30,7 +31,7 @@ def annotate_card_age(rows: list[dict]) -> list[dict]:
 
     exact hydration 路径不经过本函数（precise ref 不参与排序权衡）。
     """
-    now = datetime.now(UTC)
+    now = system_local_now()
     annotated: list[dict] = []
     for row in rows:
         ts = str(row.get("updated_at") or row.get("ts") or "")

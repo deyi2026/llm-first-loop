@@ -84,14 +84,8 @@ def _receipt(engine, sid: str, call_id: str) -> str:
     return str(matched[0].content)
 
 
-def test_antidrift_replay_r2_three_segments_supplied(tmp_path, monkeypatch):
-    """6.1 R2 分量: 对象被取代+变体探索+插话压力 → 边界回执三件套供给到位（观测型）.
-
-    期望观察记录（不作断言）：本场景两次边界 continue 后于第 9 轮收口——
-    符合 spec "≤2 轮转向/收口" 的期望路径，但测试只断言事实供给。
-    """
-    u1 = "对象 A 的读数仍未确认（变体探索继续）"
-    u2 = "对象 B 的 generation 达成待复核"
+def test_antidrift_replay_repeated_signals_preserve_direct_tool_authority(tmp_path, monkeypatch):
+    """Repeated exploration is observed, but concrete follow-up tools stay directly callable."""
     engine, fake = _mk(
         tmp_path,
         monkeypatch,
@@ -99,11 +93,10 @@ def test_antidrift_replay_r2_three_segments_supplied(tmp_path, monkeypatch):
             _read_resp("c1", "/obj/a"),
             _read_resp("c2", "/obj/a"),
             _read_resp("c3", "/obj/a"),
-            _decide("d1", u1),
+            # After A repeats three times, switch directly to B.  No meta-router hop.
             _read_resp("c4", "/obj/b"),
             _read_resp("c5", "/obj/b"),
             _read_resp("c6", "/obj/b"),
-            _decide("d2", u2),
             LLMResponse(content="重演后收口", tool_calls=[], provider="fake"),
         ],
     )
@@ -116,23 +109,18 @@ def test_antidrift_replay_r2_three_segments_supplied(tmp_path, monkeypatch):
     result = engine.run(sid, "对象 A 复核任务")
     assert result.final_answer == "重演后收口"
 
-    # 事实供给面 1：两度边界武装（对象 A 三连读 / 对象 B 三连读），武装轮工具面仅 convergence_decide
-    assert _tool_names(fake.calls[3]) == ["convergence_decide"]
-    assert _tool_names(fake.calls[7]) == ["convergence_decide"]
+    # The first round after A's repeated-call signal still exposes the real tool surface.
+    assert "read_file" in _tool_names(fake.calls[3])
+    assert "convergence_decide" not in _tool_names(fake.calls[3])
 
-    # 事实供给面 2：d1 回执三件套（vitals / 镜像 entries=0 / 队列压力 count=1）
-    d1 = _receipt(engine, sid, "d1")
-    assert d1.startswith(
-        "[状态: success] convergence_decision=continue; boundary_released=true"
-    )
-    assert "[run_vitals] rounds=4; wall_clock_s=" in d1
-    assert "[self_history_mirror] entries=0; truncated_oldest_count=0" in d1
-    assert "[queue_pressure] waiting_count=1; oldest_enqueued_at=" in d1
+    persisted = engine.session.load(sid)
+    c4 = [m for m in persisted.messages if m.role == "tool" and m.tool_call_id == "c4"]
+    assert len(c4) == 1
+    assert "reason_code=convergence_boundary" not in c4[0].content
 
-    # 事实供给面 3：d2 镜像含此前 unresolved 逐字原文（第 N+1 次回执恰含前 N 次）
-    d2 = _receipt(engine, sid, "d2")
-    assert "[self_history_mirror] entries=1; truncated_oldest_count=0" in d2
-    assert f"1. {u1}" in d2
+    trace = str(engine.status.snapshot().get("action_trace", []))
+    assert "convergence.observation" in trace
+    assert "direct_tool_continued" in trace
 
 
 def test_antidrift_replay_r1_wake_refs_delta_supplied(tmp_path, monkeypatch):

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -24,6 +23,7 @@ from llm_loop.resources.local_runtime import (
     LocalRuntimeIdentityObservation,
     observe_local_runtime_identity,
 )
+from llm_loop.timekeeping import system_local_now
 
 MODEL_CATALOG_TOOL_DEF: dict = {
     "name": "model_catalog",
@@ -465,8 +465,8 @@ def write_model_tools_audit(
     try:
         audit_dir.mkdir(parents=True, exist_ok=True)
         record = {
-            "id": f"COR-{datetime.now(UTC).strftime('%Y%m%d')}",
-            "ts": datetime.now(UTC).isoformat(),
+            "id": f"COR-{system_local_now().strftime('%Y%m%d')}",
+            "ts": system_local_now().isoformat(),
             "tool_name": tool_name,
             "arguments": arguments,
             "result_status": result_status,

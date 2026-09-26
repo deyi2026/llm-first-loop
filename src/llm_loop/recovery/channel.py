@@ -10,10 +10,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 
 from llm_loop.recovery.backup import BackupArchive, BackupStore
 from llm_loop.recovery.retry import retry_write
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class RecoveryChannel:
         # 重试耗尽，转备份
         archive = BackupArchive(
             source_id=source_id,
-            backup_at=datetime.now().astimezone().isoformat(),
+            backup_at=system_local_now().isoformat(),
             target_type=target_type,
             payload=payload_str,
             retry_count=result.attempts,

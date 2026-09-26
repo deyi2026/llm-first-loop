@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from llm_loop.core.message import Message
+from llm_loop.timekeeping import system_local_now
 
 if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine
@@ -168,7 +169,7 @@ class InteropService:
         返回 False（调用方跳过，幂等）；移动成功 → True（内容已读入内存，随调用方注入）。
         """
         try:
-            day = time.strftime("%Y%m%d")
+            day = system_local_now().strftime("%Y%m%d")
             target_dir = f.parent / "processed" / day
             target_dir.mkdir(parents=True, exist_ok=True)
             target = target_dir / f.name

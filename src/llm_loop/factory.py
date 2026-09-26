@@ -103,7 +103,6 @@ from llm_loop.tools.builtin.browser_semantic_operation import (
     BrowserSemanticOperationReceiptStore,
     BrowserSemanticOperationTool,
 )
-from llm_loop.tools.builtin.convergence_decide import ConvergenceDecideTool
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
 from llm_loop.tools.builtin.edit_file import EditFileTool
@@ -1178,9 +1177,8 @@ def build_engine(
     _register_basic("job_kill", JobKillTool())
     # DSH-PLUGINS-20260816 ③: 文件搜索（glob + 内容 grep，工具优先免碎调用）
     _register_basic("search_files", SearchFilesTool())
-    # P0-B: registered owner capability, but ordinary provider projection hides it.
-    # It appears only for one ephemeral convergence-boundary round.
-    _register_basic("convergence_decide", ConvergenceDecideTool())
+    # Convergence signals are telemetry only.  Do not register a meta-router:
+    # when the model knows the next concrete action it must call that real tool directly.
     # DSH-PLUGINS-20260816 ②: 定时提醒（at/after/rate → interop notify 注入会话）
     # BUGFIX(2026-08-27 双Store分裂): 注册工具与 SchedulerThread 共享同一
     # ScheduleStore 实例——原 ScheduleTool() 惰性自建与下方 engine.scheduler

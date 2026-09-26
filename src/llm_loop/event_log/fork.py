@@ -14,7 +14,6 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 from llm_loop.event_log.session_types import (  # ForkReport 兼容 re-export + 冲突异常/种子/窄口协议直用（R9-P3-02/03·D4）
@@ -23,12 +22,13 @@ from llm_loop.event_log.session_types import (  # ForkReport 兼容 re-export + 
     ForkReport,
     SessionIdConflictError,
 )
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 def _is_event_store_available(store: Any) -> bool:

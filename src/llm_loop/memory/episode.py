@@ -26,12 +26,12 @@ import json
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import Message
 from llm_loop.core.reference_injection import is_human_user_message
+from llm_loop.timekeeping import system_local_now
 
 EPISODE_SCHEMA = 1
 DEFAULT_HYDRATE_CHARS = 6000
@@ -46,7 +46,7 @@ TRUNCATION_ARTIFACT_SCHEMA = 1
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 def _validate_session_id(session_id: str) -> str:

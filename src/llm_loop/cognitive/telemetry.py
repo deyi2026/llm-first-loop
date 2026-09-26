@@ -9,15 +9,16 @@ cold_ref_count / packet_tokens / mode.
 设计约束（design.md L93）:
 - fail-open: 写失败仅静默返回（遥测不阻断主流程）;
 - env 关关默认零行为（与 ERR1210_* 开关族一致）;
-- 每事件一行 JSONL，UTC ISO 时间戳。
+- 每事件一行 JSONL，本机系统时区 ISO 时间戳。
 """
 
 from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime
 from pathlib import Path
+
+from llm_loop.timekeeping import system_local_now
 
 __all__ = ["telemetry_enabled", "emit_cognitive_event"]
 
@@ -49,7 +50,7 @@ def emit_cognitive_event(
     if not telemetry_enabled():
         return False
     rec = {
-        "ts": datetime.now(UTC).isoformat(),
+        "ts": system_local_now().isoformat(),
         "event": event,
         "session_id": session_id,
         "run_id": run_id,

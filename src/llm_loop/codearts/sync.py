@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
-from datetime import UTC, datetime
 from typing import Protocol
 
 from llm_loop.codearts.client import (
@@ -37,6 +36,7 @@ from llm_loop.event_log.model import (
     EVENT_CODEARTS_STATUS_UNKNOWN,
 )
 from llm_loop.event_log.store import EventStore
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ class PollingSynchronizer:
                             "trace_id": handle.trace_id,
                             "status": local_status.value,
                             "remote_status": remote_status.value,
-                            "synced_at": datetime.now(UTC).isoformat(),
+                            "synced_at": system_local_now().isoformat(),
                             "drift": drift,
                         },
                     )

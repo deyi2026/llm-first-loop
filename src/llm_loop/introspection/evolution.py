@@ -21,9 +21,10 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
+
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -160,8 +161,8 @@ class EvolutionStore:
             scope_norm = "global"  # 涉边界强制人工审，AI 指定 session 被覆盖（如实由回执标注）
         impact_files = self._extract_impact_files(impact_scope, content)
         suggestion = EvolutionSuggestion(
-            id=f"EVO-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
-            ts=datetime.now(UTC).isoformat(),
+            id=f"EVO-{system_local_now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
+            ts=system_local_now().isoformat(),
             content=content,
             evidence=evidence,
             impact_scope=impact_scope,
@@ -341,4 +342,4 @@ class EvolutionStore:
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()

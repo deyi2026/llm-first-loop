@@ -12,7 +12,6 @@ import hashlib
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from llm_loop.memory.evidence import (
     BlobStore,
@@ -25,6 +24,7 @@ from llm_loop.memory.evidence import (
     OwnerScope,
 )
 from llm_loop.memory.evidence import _file_lock as _evidence_file_lock
+from llm_loop.timekeeping import system_local_now
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +61,7 @@ class TaskEvidenceVerifier:
     def verify(self, refs: Sequence[str]) -> TaskEvidenceVerificationReport:
         normalized = [str(ref).strip() for ref in refs]
         digest = _refs_digest(normalized)
-        checked_at = datetime.now(UTC).isoformat()
+        checked_at = system_local_now().isoformat()
 
         parsed: list[EvidenceRef] = []
         for raw in normalized:

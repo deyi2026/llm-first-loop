@@ -13,11 +13,11 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import UTC, datetime
 
 from llm_loop.codearts.audit import AuditLogger
 from llm_loop.codearts.models import AuditAction, AuditRecord, AuditResult
 from llm_loop.codearts.sync import StateSynchronizer
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class CodeArtsEventReceiver:
         """审计落盘（fail-open）."""
         self._audit_logger.log(
             AuditRecord(
-                timestamp=datetime.now(UTC).isoformat(),
+                timestamp=system_local_now().isoformat(),
                 trace_id="",
                 action=AuditAction.QUERY,
                 target_api="webhook",

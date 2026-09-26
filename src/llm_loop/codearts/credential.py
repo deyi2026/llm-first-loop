@@ -9,11 +9,12 @@ token 过期自动刷新一次；刷新失败如实上抛不静默降级为匿�
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Protocol
 
 from llm_loop.codearts.config import CodeArtsSettings
 from llm_loop.codearts.models import Credential, CredentialKind
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ def _is_expired(expires_at: str) -> bool:
         return False
     try:
         exp = datetime.fromisoformat(expires_at)
-        return datetime.now(UTC) >= exp
+        return system_local_now() >= exp
     except ValueError:
         return False
 

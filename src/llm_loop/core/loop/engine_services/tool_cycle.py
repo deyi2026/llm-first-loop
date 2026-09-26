@@ -283,15 +283,10 @@ class ToolCycleService:
             _event_store = getattr(self._host, "_event_store", None)
             _wal_active = _event_store is not None and getattr(_event_store, "enabled", False)
             _assistant_decl_durable = (not _wal_active) or _assistant_event is not None
-        _boundary_pending = bool(self._host._run_state().convergence_boundary_pending)
-        _boundary_disallowed_ids = {
-            tc.id
-            for tc, _pair_id in _declared_calls
-            if tc.id and _boundary_pending and tc.name != "convergence_decide"
-        }
-        _wal_declared_calls = [
-            pair for pair in _declared_calls if pair[0].id not in _boundary_disallowed_ids
-        ]
+        # Convergence observations never revoke ordinary tool authority.  Every concrete
+        # provider declaration follows the normal WAL/execution path; there is no
+        # convergence meta-router fence in front of the real tool.
+        _wal_declared_calls = list(_declared_calls)
         _execution_ids = (
             self._declare_tool_execution_wal(sess, _wal_declared_calls, rounds)
             if _assistant_decl_durable
@@ -381,32 +376,13 @@ class ToolCycleService:
                         sess, valid_calls, executed_ids=set(), round_index=rounds)
                     self._reachability_finalize("cancelled_tools")
                     return
-                # P0-B convergence boundary is an exact execution capability fence, not
-                # merely a provider schema hint. A hallucinated ordinary tool declaration
-                # remains paired in history but is not WAL-started and cannot mutate state.
-                allowed_calls = [tc for tc in valid_calls if tc.id not in _boundary_disallowed_ids]
-                blocked_results = {
-                    tc.id: ToolResult(
-                        status=ToolResultStatus.BLOCKED,
-                        content=(
-                            "executed=false; reason_code=convergence_boundary; "
-                            "allowed_tool=convergence_decide"
-                        ),
-                        tool_call_id=tc.id,
-                        tool_name=tc.name,
-                    )
-                    for tc in valid_calls
-                    if tc.id in _boundary_disallowed_ids
-                }
+                # A convergence observation is not an execution fence.  If the model
+                # names a concrete tool, execute that tool under the normal registry/WAL
+                # safety layers instead of forcing a convergence_decide detour.
                 allowed_results, _wal_messages, _wal_result_sha = self._execute_allowed_with_wal(
-                    sess, allowed_calls, _execution_ids, rounds
+                    sess, valid_calls, _execution_ids, rounds
                 )
-                allowed_by_id = {r.tool_call_id: r for r in allowed_results if r.tool_call_id}
-                results = [
-                    blocked_results.get(tc.id) or allowed_by_id.get(tc.id)
-                    for tc in valid_calls
-                ]
-                results = [r for r in results if r is not None]
+                results = list(allowed_results)
                 # 对账不变量: 声明数 == 结果数（缺失 → 合成取消，防孤儿声明落盘）
                 if len(results) != len(valid_calls):
                     executed_ids = {r.tool_call_id for r in results if r.tool_call_id}
@@ -728,13 +704,14 @@ class ToolCycleService:
         P2-A: telemetry only. It never blocks a call, writes a model message, persists
         a cross-run deny state, or terminates the run.
         """
-        state = self._host._run_state().stagnation_state
+        bucket = self._host._run_state()
+        state = bucket.stagnation_state
         if (
             tc.name == "convergence_decide"
             and result is not None
             and result.status is ToolResultStatus.SUCCESS
         ):
-            bucket = self._host._run_state()
+            # Legacy/manual compatibility only; factory no longer registers this tool.
             bucket.convergence_boundary_pending = False
             bucket.convergence_boundary_evidence = {}
             bucket.stagnation_state = {
@@ -745,9 +722,18 @@ class ToolCycleService:
                 "empty_reminded": False,
             }
             self._host._record_action(
-                "convergence.boundary", "continue_declared", "prompt_chars=0"
+                "convergence.observation", "legacy_decision_seen", "prompt_chars=0"
             )
             return
+
+        # A real direct tool call is itself evidence that the model has a concrete next
+        # action.  Release the one-round observation latch without changing callability.
+        if bucket.convergence_boundary_pending:
+            bucket.convergence_boundary_pending = False
+            bucket.convergence_boundary_evidence = {}
+            self._host._record_action(
+                "convergence.observation", "direct_tool_continued", f"tool={tc.name}; prompt_chars=0"
+            )
 
         fp = self._stagnation_fingerprint(tc)
         # ① 精确完整调用指纹连续计数；不同参数就是不同事实。
@@ -807,15 +793,17 @@ class ToolCycleService:
             return None, None
 
     def _maybe_arm_convergence_boundary(self, sess, rounds: int) -> None:
-        """Arm one ephemeral next-round decision boundary from mechanical facts only."""
+        """Record one ephemeral convergence observation from mechanical facts only.
+
+        The latch is telemetry, not routing authority: it never changes the provider tool
+        surface and never blocks a direct real-tool declaration.
+        """
         bucket = self._host._run_state()
         if bucket.convergence_boundary_pending:
             return
         try:
-            if "convergence_decide" not in self._host.registry.names():
-                return
             obligations = self._host.registry.async_obligations(sess.session_id)
-        except Exception:  # noqa: BLE001 — unknown lifecycle state must not narrow tools
+        except Exception:  # noqa: BLE001 — unknown lifecycle state must not affect tools
             return
         state = bucket.stagnation_state or {}
         breakdown = bucket.last_breakdown or {}
@@ -849,9 +837,9 @@ class ToolCycleService:
             "outstanding_async_obligations": facts.outstanding_async_obligations,
         }
         self._host._record_action(
-            "convergence.boundary",
-            "armed",
-            f"reasons={','.join(verdict.reasons)}; prompt_chars=0",
+            "convergence.observation",
+            "observed",
+            f"reasons={','.join(verdict.reasons)}; direct_tools_remain_callable=true; prompt_chars=0",
         )
 
     def _schema_to_param(self, t: dict) -> dict:
@@ -922,26 +910,14 @@ class ToolCycleService:
         from llm_loop.tools.eligibility import runtime_tool_health
 
         registered = tool_schema_names(tool_schemas)
-        boundary_pending = bool(self._host._run_state().convergence_boundary_pending)
-        if boundary_pending:
-            boundary = [
-                schema
-                for schema in tool_schemas
-                if str(schema.get("name", "") or "") == "convergence_decide"
-            ]
-            if boundary:
-                tool_schemas = boundary
-            else:
-                # A missing decision tool must never dead-end the run.
-                self._host._run_state().convergence_boundary_pending = False
-                self._host._run_state().convergence_boundary_evidence = {}
-        else:
-            # Protocol-only tool: never part of the ordinary provider capability surface.
-            tool_schemas = [
-                schema
-                for schema in tool_schemas
-                if str(schema.get("name", "") or "") != "convergence_decide"
-            ]
+        # convergence_decide is retired from provider routing.  Even if an embedding or
+        # compatibility registry supplies it, hide only that meta-tool and leave every
+        # ordinary healthy tool directly callable.
+        tool_schemas = [
+            schema
+            for schema in tool_schemas
+            if str(schema.get("name", "") or "") != "convergence_decide"
+        ]
         effective: list[dict] = []
         quarantined: list[str] = []
         for schema in tool_schemas:
@@ -970,11 +946,7 @@ class ToolCycleService:
             logger.debug("stable tool-surface observability failed (fail-open)", exc_info=True)
 
         self._last_tool_eligibility = {
-            "mode": (
-                "convergence_boundary"
-                if bool(self._host._run_state().convergence_boundary_pending)
-                else "stable_runtime_health"
-            ),
+            "mode": "stable_runtime_health",
             "applied": bool(quarantined),
             "original_count": len(tool_schemas),
             "visible_count": len(effective),

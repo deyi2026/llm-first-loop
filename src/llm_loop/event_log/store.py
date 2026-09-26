@@ -18,17 +18,17 @@ import uuid
 import weakref
 from collections import OrderedDict
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from llm_loop.event_log.model import Event, serialize_event
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 def _validate_session_id(session_id: str) -> str:

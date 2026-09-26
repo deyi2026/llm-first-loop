@@ -11,7 +11,7 @@ introspection.status.ArchitectureStatusProvider._write_audit（经 factory 装�
 - args_digest 输入 = canonical 化 arguments（sort_keys）；result_digest 输入 =
   ToolResult.content 全文（hash 前绝不截断）；digest 为 one-way 摘要，
   非 secret-redaction / 安全边界（低熵原文可被字典枚举，禁止称"不可逆脱敏"）；
-- ts = observer 记录 terminal receipt 的时刻（datetime.now(UTC).isoformat()，
+- ts = observer 记录 terminal receipt 的时刻（system_local_now().isoformat()，
   与仓库 _now() 同语义）——非并发工具真实完成绝对先后；
 - route_context 由本模块内部取 RouteContext 进程级单例，调用方不传；
 - 缺 tool_call_id 的输入不入本流；fail-open 全吞、无 failure 计数器。
@@ -22,9 +22,9 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from datetime import UTC, datetime
 
 from llm_loop.runtime.route_context import get_route_context
+from llm_loop.timekeeping import system_local_now
 
 OctetSink = Callable[[str, dict], None]
 
@@ -47,8 +47,8 @@ def get_octet_sink() -> OctetSink | None:
 
 
 def _now() -> str:
-    """仓库 _now() 同语义：UTC ISO8601，observer receipt 时刻."""
-    return datetime.now(UTC).isoformat()
+    """仓库 _now() 同语义：本机系统时区 ISO8601，observer receipt 时刻."""
+    return system_local_now().isoformat()
 
 
 def _digest(text: str | None) -> str | None:

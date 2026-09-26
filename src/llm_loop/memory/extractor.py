@@ -25,7 +25,6 @@ import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -39,6 +38,7 @@ from llm_loop.resources.provider_settlement import (
     ProviderCallOutcome,
     ProviderCallPurpose,
 )
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -383,7 +383,7 @@ class MemoryExtractor:
         try:
             self._audit_dir.mkdir(parents=True, exist_ok=True)
             record = ExtractRecord(
-                ts=datetime.now(UTC).isoformat(),
+                ts=system_local_now().isoformat(),
                 session_id=session_id,
                 trigger=trigger,  # type: ignore[arg-type]
                 input_scope=input_scope,

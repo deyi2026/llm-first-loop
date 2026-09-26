@@ -27,6 +27,8 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import Any
 
+from llm_loop.timekeeping import system_local_now
+
 logger = logging.getLogger(__name__)
 
 STATE_UNKNOWN = "state_unknown"
@@ -284,7 +286,7 @@ class RestartGuardService:
             current_sub_item=current,
             next_step=nxt,
             pending_summary=self._frontier_summary(snap, state_note),
-            created_at=time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+            created_at=system_local_now().isoformat(timespec="seconds"),
         )
 
     def _read_anchor_parts(self, session_id: str, state_note: str) -> tuple[str, str, str]:

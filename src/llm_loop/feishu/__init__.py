@@ -1,3 +1,5 @@
+from llm_loop.timekeeping import system_local_now
+
 """飞书桥装配与启动（M42，薄壳适配器）.
 
 复用 load_settings + build_engine（与 CLI/Web 同源装配），核心零改动。
@@ -136,7 +138,6 @@ def main() -> None:
     print("飞书桥已启动（Ctrl+C 停止）。")
     # 优雅停机：SIGTERM（restart_system.sh）/ SIGINT / SIGHUP 均触发 bridge.stop()。
     # 退出原因记录到 data/feishu_exit.log（精确定位信号来源/异常退出，便于诊断反复退出）。
-    import datetime
     import os
     import signal
     import threading
@@ -148,7 +149,7 @@ def main() -> None:
     def _log_exit(reason: str) -> None:
         try:
             with open(_exit_log_path, "a", encoding="utf-8") as f:
-                f.write(f"{datetime.datetime.now().isoformat()} pid={os.getpid()} {reason}\n")
+                f.write(f"{system_local_now().isoformat()} pid={os.getpid()} {reason}\n")
         except OSError as exc:  # fail-open：退出日志写失败不影响退出
             logger.debug("退出日志写失败（fail-open）: %s", exc)
 

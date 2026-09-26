@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import re
-import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -21,6 +20,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from llm_loop.core.loop.err1210 import _SNAPSHOT_SCHEMA, is_err1210
 from llm_loop.llm.errors import LLMError
+from llm_loop.timekeeping import system_local_now
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -147,7 +147,7 @@ def record_defer_event(
         return
     try:
         line = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "ts": system_local_now().isoformat(timespec="seconds"),
             "event": event,
             "session_id": session_id,
             "slot_kind": slot_kind,
@@ -180,7 +180,7 @@ def snapshot_offending_payload(
     span: InjectionSpan | None,
     data_dir: str | Path,
 ) -> Path | None:
-    """1210 失败载荷全量落盘 <data_dir>/audit/offending_payloads/<UTCts>_<sid8>.json.
+    """1210 失败载荷全量落盘 <data_dir>/audit/offending_payloads/<local-ts>_<sid8>.json.
 
     排除 headers/凭据（入参即不含）；写失败返回 None 仅 WARN（fail-open，spec 4.2-2）。
     env ERR1210_SNAPSHOT=1 开关。
@@ -188,15 +188,14 @@ def snapshot_offending_payload(
     if os.environ.get("ERR1210_SNAPSHOT", "1") != "1":
         return None
     try:
-        from datetime import UTC, datetime
 
-        ts = datetime.now(UTC)
-        ts_str = ts.strftime("%Y%m%dT%H%M%S") + f"{ts.microsecond // 1000:03d}Z"
+        ts = system_local_now()
+        ts_str = ts.strftime("%Y%m%dT%H%M%S") + f"{ts.microsecond // 1000:03d}" + ts.strftime("%z")
         out_dir = Path(data_dir) / "audit" / "offending_payloads"
         out_dir.mkdir(parents=True, exist_ok=True)
         snap = {
             "schema": _SNAPSHOT_SCHEMA,
-            "ts_utc": ts.isoformat(),
+            "ts_local": ts.isoformat(),
             "session_id": session_id,
             "model": model,
             "is_compact_first": is_compact_first,
@@ -218,7 +217,7 @@ def snapshot_offending_payload(
             # trace 关联键: payload_trace 按 session_id + 秒级本地时间戳对齐（spec 6.1）
             "trace_key": {
                 "session_id": session_id,
-                "local_ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "local_ts": system_local_now().isoformat(timespec="seconds"),
             },
         }
         path = out_dir / f"{ts_str}_{session_id[:8]}.json"

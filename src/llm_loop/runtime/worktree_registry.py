@@ -16,9 +16,10 @@ import json
 import logging
 import os
 import subprocess
-import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,7 @@ def append_guard_log(runtime_root: Path, event: dict) -> None:
     path = Path(runtime_root) / GUARD_LOG_RELPATH
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        event = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **event}
+        event = {"ts": system_local_now().isoformat(timespec="seconds"), **event}
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(event, ensure_ascii=False) + "\n")
     except OSError as exc:
@@ -169,7 +170,7 @@ def bootstrap(
     nested = find_nested(out)
     registry = {
         "version": 1,
-        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "updated_at": system_local_now().isoformat(timespec="seconds"),
         "repo": str(Path(repo).resolve()),
         "counts": {
             "total": len(out),

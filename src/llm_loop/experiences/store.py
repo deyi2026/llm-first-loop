@@ -15,11 +15,11 @@ import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from llm_loop.experiences.document import ExperienceDocument
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class ExperienceStore:
         """写入经验文档；返回文件名。冲突时抛 FileExistsError（不覆盖）。"""
         self._require_write_safe()
         self._dir.mkdir(parents=True, exist_ok=True)
-        date_str = datetime.now().strftime("%Y%m%d")
+        date_str = system_local_now().strftime("%Y%m%d")
         slug = self.sanitize_slug(doc.title)
         if not slug:
             slug = "untitled"
@@ -599,7 +599,7 @@ class ExperienceStore:
             _skip_trace(path.name, exc)
             return False
         doc.status = status
-        doc.updated_at = datetime.now().astimezone().isoformat()
+        doc.updated_at = system_local_now().isoformat()
         path.write_text(doc.to_md(), encoding="utf-8")
         return True
 

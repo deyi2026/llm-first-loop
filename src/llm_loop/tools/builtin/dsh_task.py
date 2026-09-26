@@ -31,6 +31,7 @@ from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import current_session_id
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -450,7 +451,7 @@ class DshTaskTool:
                 f.write(
                     json.dumps(
                         {
-                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "ts": system_local_now().isoformat(timespec="seconds"),
                             "task": task[:200],
                             "cwd": cwd,
                             "outcome": str(outcome),

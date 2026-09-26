@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import Message
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def build_fault_feedback_message(
         dir_path = Path(audit_dir)
         dir_path.mkdir(parents=True, exist_ok=True)
         record = {
-            "ts": datetime.now(UTC).isoformat(),
+            "ts": system_local_now().isoformat(),
             "component": component,
             "error_type": type(exc).__name__,
             "error_message": str(exc)[:300],

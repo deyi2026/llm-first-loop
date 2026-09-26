@@ -18,9 +18,10 @@ import json
 import logging
 import os
 import subprocess
-import time
 from pathlib import Path
 from typing import Any
+
+from llm_loop.timekeeping import system_local_now
 
 from .build_identity import compute_build_identity
 from .identity import IdentityReport
@@ -234,7 +235,7 @@ def build_manifest(service: str, ec: EffectiveConfig,
         # —— 服务与进程 ——
         "service": service,
         "pid": os.getpid(),
-        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "started_at": system_local_now().isoformat(timespec="seconds"),
         # —— 身份事实（R1 IdentityReport）——
         "workspace_root": report.workspace_root,
         "git_head": report.git_head,

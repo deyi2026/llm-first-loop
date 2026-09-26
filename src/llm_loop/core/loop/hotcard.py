@@ -18,8 +18,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import UTC, datetime
 from pathlib import Path
+
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger("llm_loop.core.loop.hotcard")
 
@@ -33,7 +34,7 @@ def hotcard_path(data_dir: str | Path) -> Path:
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 def _atomic_write_json(path: Path, payload: dict) -> None:

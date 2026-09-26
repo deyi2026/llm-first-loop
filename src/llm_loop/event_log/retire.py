@@ -12,8 +12,9 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
+
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +40,11 @@ class RetireReport:
 
 
 def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return system_local_now().isoformat()
 
 
 def _now_ts() -> str:
-    return datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    return system_local_now().strftime("%Y%m%d-%H%M%S")
 
 
 def run_retire(

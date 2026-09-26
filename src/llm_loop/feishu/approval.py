@@ -16,9 +16,10 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from llm_loop.timekeeping import system_local_now
 
 _APPROVAL_LIST_CMDS = {"审批列表", "审批", "列表"}
 _APPROVAL_ACCEPT_CMDS = {"批准", "同意", "通过"}
@@ -99,8 +100,8 @@ def _allowed_open_ids() -> set[str]:
 
 
 def _now() -> str:
-    """当前 UTC ISO 时间戳（Approval UX v2 批 1: reviewed_at 落盘）."""
-    return datetime.now(UTC).isoformat()
+    """当前本机系统时区 ISO 时间戳（Approval UX v2 批 1: reviewed_at 落盘）."""
+    return system_local_now().isoformat()
 
 
 def list_pending(store: Any, limit: int = 5) -> str:

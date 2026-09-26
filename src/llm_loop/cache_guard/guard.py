@@ -24,12 +24,12 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_loop.core.message import dict_wire_chars
 from llm_loop.llm.errors import LLMError
 from llm_loop.runtime.resolver import business_config_snapshot
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -377,7 +377,7 @@ def validate_request(
     # 随规则决策带进出口审计（其余键零变化）。
     _rule_audit = decision.audit or {}
     decision.audit = {
-        "ts": datetime.now(UTC).isoformat(),
+        "ts": system_local_now().isoformat(),
         "session_id": meta.get("session_id", ""),
         "provider": meta.get("provider", "openai-compat"),
         "model": meta.get("model", ""),
@@ -480,7 +480,7 @@ class PromptGuard:
                 }
             # 对账行（append-only；与发送行经 ts/session_id 关联）
             row = {
-                "ts": datetime.now(UTC).isoformat(),
+                "ts": system_local_now().isoformat(),
                 "event": "llm_result",
                 "session_id": session_id,
                 "provider": provider or "openai-compat",

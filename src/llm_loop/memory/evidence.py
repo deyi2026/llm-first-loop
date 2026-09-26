@@ -22,11 +22,13 @@ import threading
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
+
+from llm_loop.timekeeping import system_local_now
 
 _BLOB_PREFIX = "blob://sha256/"
 _EVIDENCE_PREFIX = "evidence://v1/"
@@ -826,7 +828,7 @@ class EvidenceFreshness:
     def refresh(self, *, owner: OwnerScope, evidence_ref: EvidenceRef) -> EvidenceState:
         record = self.ledger.require_authorized(owner, evidence_ref)
         state = self.ledger.get_state(owner, evidence_ref)
-        now = datetime.now(UTC).isoformat()
+        now = system_local_now().isoformat()
         current = state or EvidenceState(
             evidence_ref=evidence_ref,
             freshness=FreshnessState.UNKNOWN,

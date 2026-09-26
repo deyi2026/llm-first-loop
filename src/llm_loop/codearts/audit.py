@@ -14,10 +14,10 @@ import json
 import logging
 import os
 import re
-from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_loop.codearts.models import AuditRecord
+from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
 
@@ -83,5 +83,5 @@ class AuditLogger:
 
     @staticmethod
     def now_iso() -> str:
-        """当前 UTC 时间 ISO8601（供构造 AuditRecord.timestamp）."""
-        return datetime.now(UTC).isoformat()
+        """当前本机系统时间 ISO8601（供构造 AuditRecord.timestamp）."""
+        return system_local_now().isoformat()

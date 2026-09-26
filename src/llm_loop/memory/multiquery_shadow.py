@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+
+from llm_loop.timekeeping import system_local_now
 
 Rewriter = Callable[[str], list[str]]
 SearchFn = Callable[[str], list[str]]
@@ -65,7 +68,7 @@ class MultiqueryShadowProbe:
         if not self.enabled or not query.strip():
             return None
         record: dict[str, Any] = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "ts": system_local_now().isoformat(timespec="seconds"),
             "kind": "multiquery_shadow",
             "session_id": session_id,
             "query": query,
