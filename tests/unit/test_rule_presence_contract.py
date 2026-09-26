@@ -14,6 +14,7 @@ from pathlib import Path
 from llm_loop.core.message import ToolCall, ToolResultStatus
 from llm_loop.core.prompt import _BASE_PROMPT, build_system_prompt
 from llm_loop.introspection.registry_introspection import _SEARCH_RECORDS_TOOL_DEF
+from llm_loop.introspection.tools_model import MODEL_CATALOG_TOOL_DEF
 from llm_loop.llm.client import LLMResponse
 from llm_loop.tools.builtin.convergence_decide import ConvergenceDecideTool
 from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS
@@ -239,6 +240,18 @@ def test_search_records_contract_carries_timing_semantics() -> None:
     assert "按需" in full and "非每轮强制" in full and "不强制检索顺序" in full
     assert "RULE-AI" in full
     assert "非每轮强制" in compact and "不强制顺序" in compact
+
+
+def test_model_catalog_contract_is_identity_verification_entrypoint_without_prompt_growth() -> None:
+    full = MODEL_CATALOG_TOOL_DEF["description"]
+    compact = _COMPACT_TOOL_DESCRIPTIONS["model_catalog"]
+    for text in (full, compact):
+        assert "当前模型" in text
+        assert "身份" in text
+    assert "路由标签" in full and "外层宿主/网页模型" in full
+    assert "外层网页模型身份" in compact
+    # Identity guidance belongs in the tool contract, not another universal-prompt rule copy.
+    assert build_system_prompt() == _BASE_PROMPT
 
 
 # ── 盘点器（只读 / 确定性 / 不可判定 / 台账覆盖） ──

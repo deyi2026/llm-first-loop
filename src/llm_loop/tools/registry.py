@@ -116,7 +116,10 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "skill_load": "按 skill_list 已发现或已知稳定名称加载外部 Skill 全文到当前执行上下文；加载不代表该 Skill 必然适用于当前任务。",
     "task_create": "在已存在的活动 Goal 下创建 durable Task；goal_id 用 get_goal 当前事实，不得猜。无活动 Goal 先 get_goal/create_goal；dependencies 只能引用同 Goal 已存在 task_id；acceptance 必填。",
     "task_update": "推进 durable Task；pending→in_progress/cancelled/failed；不能直接 pending→done；in_progress→done/blocked/cancelled/failed；blocked→in_progress/cancelled/failed；failed→in_progress。→blocked 要 blocked_reason；evidence_required 的 →done 要 evidence_refs；done 重开要当前用户授权+confirm=true。",
-    "model_catalog": "列出可用 provider/model、context、reasoning contract 与成本档。",
+    "model_catalog": (
+        "列出可用 provider/model、context、reasoning contract、成本档及当前会话模型；"
+        "询问当前模型/身份时用本工具核验 LFL 路由事实，request.model 或外层网页模型身份不能替代工具回执。"
+    ),
     "switch_model": "切换当前会话模型或恢复 default；按当前 registry 精确解析 provider/model。",
     "recover_from_backup": "从已存在备份恢复未落盘数据；冲突、损坏或不存在会如实失败。",
     "playwright_test": "生成并执行隔离 Playwright E2E 场景，返回截图与 pass/fail。",

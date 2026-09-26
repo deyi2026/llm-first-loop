@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from llm_loop.llm.chatgpt_transport import ChatGPTWebPageTransport
 from llm_loop.llm.chatgpt_web import (
     MODEL_PROTOCOL,
     ChatGPTModelProtocolError,
@@ -122,3 +123,26 @@ def test_thread_bound_transport_keeps_builder_exchange_and_close_on_one_thread()
         "close",
     ]
     assert len({thread_id for _, thread_id in lifecycle_threads}) == 1
+
+
+def test_chatgpt_web_request_wrapper_preserves_lfl_role_and_tool_authority():
+    rendered = ChatGPTWebPageTransport._render_request(
+        {
+            "protocol": MODEL_PROTOCOL,
+            "request_id": "lfl-model-0001",
+            "model": "web-gpt",
+            "messages": [
+                {"role": "system", "content": "current runtime facts require evidence"},
+                {"role": "user", "content": "你是什么模型"},
+            ],
+            "tools": [{"type": "function", "function": {"name": "model_catalog"}}],
+        }
+    )
+
+    assert "not an ordinary ChatGPT conversation" in rendered
+    assert "preserve role semantics" in rendered
+    assert "role=system are LFL system instructions" in rendered
+    assert "Do not substitute facts about the outer ChatGPT web session" in rendered
+    assert "request.tools are LFL tools" in rendered
+    assert "instead of answering from your own identity" in rendered
+    assert '"name":"model_catalog"' in rendered
