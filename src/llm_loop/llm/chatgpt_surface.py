@@ -393,6 +393,28 @@ class ChatGPTSurface:
         )
         return self.lease
 
+    def reset_to_project_root(self) -> BrowserSurfaceLease:
+        """Return the owned tab to the Project root for one fresh model snapshot.
+
+        ChatGPT Web is a transport for LFL model decisions, not a second owner of
+        conversation state.  Each provider decision must therefore start from a
+        fresh outer ChatGPT thread and receive only the current LFL-built request
+        snapshot.  The durable lease keeps physical target ownership, while the
+        previous ChatGPT conversation identity is cleared before the next send.
+        """
+        if self.lease is None or self.page is None:
+            raise BrowserSurfaceLeaseError("surface is not open")
+        current_url = str(getattr(self.page, "url", "") or "")
+        if current_url != self.project_url:
+            self.page.goto(self.project_url, wait_until="commit", timeout=15_000)
+        self._wait_for_page_context(self.page, expected_url=self.project_url)
+        self._bring_to_front(self.page)
+        self.lease = self.lease_store.update(
+            conversation_id=None,
+            conversation_url=None,
+        )
+        return self.lease
+
     def snapshot_identity(self) -> BrowserSurfaceLease:
         if self.lease is None:
             raise BrowserSurfaceLeaseError("surface is not open")

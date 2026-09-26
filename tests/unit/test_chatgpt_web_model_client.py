@@ -1,13 +1,16 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 
+from llm_loop.llm.chatgpt_page import PageBinding
 from llm_loop.llm.chatgpt_transport import ChatGPTWebPageTransport
 from llm_loop.llm.chatgpt_web import (
     MODEL_PROTOCOL,
     ChatGPTModelProtocolError,
     ChatGPTWebModelClient,
+    _SurfaceOwnedTransport,
     _ThreadBoundTransport,
 )
 
@@ -142,7 +145,120 @@ def test_chatgpt_web_request_wrapper_preserves_lfl_role_and_tool_authority():
     assert "not an ordinary ChatGPT conversation" in rendered
     assert "preserve role semantics" in rendered
     assert "role=system are LFL system instructions" in rendered
+    assert "already been composed by LFL context management" in rendered
+    assert "Rule/Method/Experience/Memory/Docs/Skill" in rendered
+    assert "do not use earlier messages from the outer ChatGPT conversation" in rendered
     assert "Do not substitute facts about the outer ChatGPT web session" in rendered
     assert "request.tools are LFL tools" in rendered
     assert "instead of answering from your own identity" in rendered
     assert '"name":"model_catalog"' in rendered
+
+
+def test_surface_owned_transport_starts_every_exchange_from_fresh_outer_thread():
+    events: list[str] = []
+
+    class Surface:
+        def reset_to_project_root(self):
+            events.append("reset")
+
+        def bind_conversation(self, binding):
+            events.append(f"bind:{binding.conversation_id}")
+
+        def close(self):
+            events.append("surface-close")
+
+    class Adapter:
+        def observe_identity(self):
+            return type("Binding", (), {"conversation_id": "conversation-new"})()
+
+    class Inner:
+        def rebind(self):
+            events.append("rebind")
+
+        def exchange(self, request, *, timeout_s=None):
+            events.append(f"exchange:{request['request_id']}")
+            return {"request_id": request["request_id"]}
+
+        def close(self):
+            events.append("inner-close")
+
+    transport = _SurfaceOwnedTransport(Inner(), surface=Surface(), adapter=Adapter())
+    assert transport.exchange({"request_id": "r1"}) == {"request_id": "r1"}
+    assert transport.exchange({"request_id": "r2"}) == {"request_id": "r2"}
+    transport.close()
+
+    assert events == [
+        "reset",
+        "rebind",
+        "exchange:r1",
+        "bind:conversation-new",
+        "reset",
+        "rebind",
+        "exchange:r2",
+        "bind:conversation-new",
+        "inner-close",
+        "surface-close",
+    ]
+
+
+def test_page_transport_uses_turn_budget_for_post_click_send_confirmation():
+    sent: list[dict] = []
+    binding = PageBinding(
+        profile_label="fixture",
+        url="https://chatgpt.com/g/project/c/conversation",
+        title="fixture",
+        project_ref="project",
+        conversation_id="conversation",
+    )
+
+    class Adapter:
+        def require_binding(self, observed):
+            assert observed == binding
+
+        def observe_generation(self):
+            return SimpleNamespace(assistant_count=0, latest_assistant_identity=None)
+
+        def send_text(self, text, **kwargs):
+            sent.append({"text": text, **kwargs})
+            return SimpleNamespace(
+                conversation_id="conversation",
+                user_message_identity="user-1",
+            )
+
+        def wait_for_assistant_completion(self, *_args, **_kwargs):
+            return SimpleNamespace(streaming=False)
+
+        def observe_native_tool_activity(self):
+            return SimpleNamespace(latest_assistant_citation_count=0)
+
+        def observe_latest_code_blocks(self):
+            return [
+                SimpleNamespace(
+                    language="lfl-model-response",
+                    text=(
+                        '{"protocol":"lfl-model/0.1","request_id":"r1",'
+                        '"content":"ok","tool_calls":[],"finish_reason":"stop"}'
+                    ),
+                )
+            ]
+
+    transport = ChatGPTWebPageTransport(
+        Adapter(),
+        binding=binding,
+        turn_timeout_s=120.0,
+        send_timeout_s=30.0,
+    )
+    response = transport.exchange(
+        {
+            "protocol": MODEL_PROTOCOL,
+            "request_id": "r1",
+            "model": "web-gpt",
+            "messages": [{"role": "user", "content": "x"}],
+            "tools": [],
+        },
+        timeout_s=120.0,
+    )
+
+    assert response["content"] == "ok"
+    assert sent[0]["timeout_s"] == 30.0
+    assert sent[0]["confirm_timeout_s"] == 120.0

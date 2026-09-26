@@ -335,6 +335,7 @@ class ChatGPTPageAdapter:
         text: str,
         *,
         timeout_s: float = 8.0,
+        confirm_timeout_s: float | None = None,
         poll_ms: int = 100,
         confirm_token: str | None = None,
     ) -> SendReceipt:
@@ -347,7 +348,12 @@ class ChatGPTPageAdapter:
         before_latest_user = before_users[-1] if before_users else None
         expected_content = canonical_text(text)
         expected_token = canonical_text(confirm_token or "")
-        composer = self._visible_composer(timeout_s=min(timeout_s, 3.0), poll_ms=poll_ms)
+        # Large LFL snapshots (compact history + full callable tool index) can
+        # take materially longer to hydrate the Project-root composer than a
+        # short ordinary message.  Reuse the caller's already-bounded send
+        # timeout instead of imposing a second shorter readiness deadline.
+        readiness_timeout_s = timeout_s
+        composer = self._visible_composer(timeout_s=readiness_timeout_s, poll_ms=poll_ms)
         composer.fill(text)
 
         # ChatGPT renders/enables the Send control asynchronously after the
@@ -356,7 +362,7 @@ class ChatGPTPageAdapter:
         # becomes visible+enabled immediately afterward.  Observe boundedly;
         # never fall back to pressing Enter (Project root Enter inserts a
         # newline per the P1 page contract).
-        send_deadline = time.monotonic() + min(timeout_s, 3.0)
+        send_deadline = time.monotonic() + readiness_timeout_s
         visible_send = None
         while time.monotonic() < send_deadline:
             send = self._page.get_by_role("button", name=self.SEND_BUTTON)
@@ -372,7 +378,14 @@ class ChatGPTPageAdapter:
             raise PageContractError("qualified visible/enabled Send button not found")
         visible_send.click()
 
-        deadline = time.monotonic() + timeout_s
+        # Dispatch exactly one click. Large LFL snapshots may already be accepted
+        # and generating before the virtualized DOM exposes the newly-created
+        # user turn. Confirmation therefore gets its own bounded budget; this
+        # never retries the send mutation.
+        confirmation_budget_s = float(
+            confirm_timeout_s if confirm_timeout_s is not None else timeout_s
+        )
+        deadline = time.monotonic() + confirmation_budget_s
         while time.monotonic() < deadline:
             self._page.wait_for_timeout(poll_ms)
             binding = self.observe_identity()
@@ -416,7 +429,9 @@ class ChatGPTPageAdapter:
                     conversation_id=binding.conversation_id,
                     user_message_identity=latest.identity,
                 )
-        raise PageContractError(f"send was not confirmed within {timeout_s:g}s")
+        raise PageContractError(
+            f"send was not confirmed within {confirmation_budget_s:g}s"
+        )
 
     def wait_for_assistant_completion(
         self,

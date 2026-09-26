@@ -213,6 +213,28 @@ def test_bind_conversation_persists_route_after_project_root_claim(tmp_path):
     assert BrowserSurfaceLeaseStore(tmp_path).load() == lease
 
 
+def test_reset_to_project_root_clears_outer_conversation_but_preserves_surface(tmp_path):
+    context = _Context()
+    surface, _pw = _surface(
+        tmp_path,
+        context,
+        recovery_conversation_id=CONVERSATION_ID,
+    )
+    page = surface.open()
+    before = surface.snapshot_identity()
+    assert page.url == CONVERSATION_URL
+
+    after = surface.reset_to_project_root()
+
+    assert page.url == PROJECT_URL
+    assert after.lease_id == before.lease_id
+    assert after.target_id == before.target_id
+    assert after.conversation_id is None
+    assert after.conversation_url is None
+    assert page.fronted == 2
+    assert BrowserSurfaceLeaseStore(tmp_path).load() == after
+
+
 def test_new_owned_page_absorbs_transient_navigation_context_loss(tmp_path):
     context = _Context()
     original_new_page = context.new_page

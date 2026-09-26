@@ -134,10 +134,19 @@ class _SurfaceOwnedTransport:
         *,
         timeout_s: float | None = None,
     ) -> dict[str, Any]:
+        # LFL is the sole context owner.  The durable browser lease owns a tab,
+        # not a ChatGPT task history: start every provider decision from the
+        # Project root so the outer web conversation cannot accumulate stale
+        # copies of earlier LFL snapshots outside LoopEngine history management.
+        self.surface.reset_to_project_root()
+        rebinder = getattr(self.inner, "rebind", None)
+        if not callable(rebinder):
+            raise RuntimeError("ChatGPT Web snapshot transport cannot rebind page identity")
+        rebinder()
         response = self.inner.exchange(request, timeout_s=timeout_s)
-        # The first Project-root send creates the concrete conversation id.
-        # Persist it into the same logical surface lease so browser/target loss
-        # can recover the exact conversation instead of guessing among tabs.
+        # Persist the latest concrete conversation only as physical recovery
+        # evidence.  The next provider decision will reset to Project root again;
+        # this conversation is never an LFL context authority.
         self.surface.bind_conversation(self.adapter.observe_identity())
         return response
 

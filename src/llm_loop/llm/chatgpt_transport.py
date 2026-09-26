@@ -47,9 +47,11 @@ class ChatGPTWebPageTransport:
         before = self.adapter.observe_generation()
         rendered_request = self._render_request(request)
         request_id = str(request.get("request_id") or "")
+        turn_timeout_s = float(timeout_s or self.turn_timeout_s)
         receipt = self.adapter.send_text(
             rendered_request,
-            timeout_s=min(float(timeout_s or self.turn_timeout_s), self.send_timeout_s),
+            timeout_s=min(turn_timeout_s, self.send_timeout_s),
+            confirm_timeout_s=turn_timeout_s,
             poll_ms=self.poll_ms,
             confirm_token=request_id or None,
         )
@@ -69,7 +71,7 @@ class ChatGPTWebPageTransport:
             baseline_assistant_identity=before.latest_assistant_identity,
             expected_user_identity=receipt.user_message_identity,
             expected_user_token=request_id or None,
-            timeout_s=float(timeout_s or self.turn_timeout_s),
+            timeout_s=turn_timeout_s,
             poll_ms=self.poll_ms,
             stability_polls=self.stability_polls,
         )
@@ -97,6 +99,11 @@ class ChatGPTWebPageTransport:
     def close(self) -> None:
         return None
 
+    def rebind(self, binding: PageBinding | None = None) -> PageBinding:
+        """Re-anchor the transport after the owned tab starts a fresh outer thread."""
+        self.binding = binding or self.adapter.observe_identity()
+        return self.binding
+
     @staticmethod
     def _render_request(request: dict[str, Any]) -> str:
         payload = json.dumps(request, ensure_ascii=False, separators=(",", ":"))
@@ -107,6 +114,13 @@ class ChatGPTWebPageTransport:
             "Treat request.messages as the actual LFL conversation and preserve role semantics: "
             "messages with role=system are LFL system instructions for this delegated model "
             "decision and must be followed subject only to higher-priority platform safety. "
+            "The snapshot has already been composed by LFL context management; it can contain "
+            "LFL-compacted history, working-state/working-set facts, and retrieved "
+            "Rule/Method/Experience/Memory/Docs/Skill or tool-schema results. Treat only the "
+            "current snapshot as task context; do not use earlier messages from the outer "
+            "ChatGPT conversation as supplemental task memory. If relevant LFL context is absent, "
+            "use the discovery/hydration tools actually present in request.tools rather than "
+            "guessing or relying on outer ChatGPT memory. "
             "Do not substitute facts about the outer ChatGPT web session for LFL runtime facts. "
             "request.tools are LFL tools: when the LFL messages require current evidence about "
             "the LFL model/runtime/workspace/config/files/external state, request the appropriate "
