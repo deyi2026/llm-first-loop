@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import itertools
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -152,6 +153,66 @@ class _SurfaceOwnedTransport:
             self.surface.close()
 
 
+class _ThreadBoundTransport:
+    """Keep all synchronous Playwright work on one dedicated OS thread.
+
+    FastAPI may execute consecutive requests for the same cached model client on
+    different worker threads. Playwright's sync API is greenlet-backed and its
+    objects cannot safely migrate across those threads. This wrapper creates the
+    browser surface lazily *inside* one single-thread executor and routes every
+    exchange/close through that same executor for the lifetime of the client.
+    """
+
+    def __init__(self, builder: Callable[[], ChatGPTModelTransport]) -> None:
+        self._builder = builder
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="chatgpt-web")
+        self._inner: ChatGPTModelTransport | None = None
+        self._closed = False
+        self._lock = threading.Lock()
+
+    def _get_or_build(self) -> ChatGPTModelTransport:
+        if self._inner is None:
+            self._inner = self._builder()
+        return self._inner
+
+    def exchange(
+        self,
+        request: dict[str, Any],
+        *,
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("ChatGPT Web transport is closed")
+            future = self._executor.submit(self._exchange_bound, request, timeout_s)
+        return future.result()
+
+    def _exchange_bound(
+        self,
+        request: dict[str, Any],
+        timeout_s: float | None,
+    ) -> dict[str, Any]:
+        return self._get_or_build().exchange(request, timeout_s=timeout_s)
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            future = self._executor.submit(self._close_bound)
+        try:
+            future.result()
+        finally:
+            self._executor.shutdown(wait=True, cancel_futures=False)
+
+    def _close_bound(self) -> None:
+        if self._inner is None:
+            return
+        closer = getattr(self._inner, "close", None)
+        if callable(closer):
+            closer()
+
+
 def build_chatgpt_web_model_client(settings: Any) -> ChatGPTWebModelClient:
     """Build the configured ChatGPT Web browser model lazily.
 
@@ -175,35 +236,39 @@ def build_chatgpt_web_model_client(settings: Any) -> ChatGPTWebModelClient:
             "PROJECT_REF / PROJECT_NAME"
         )
 
-    from llm_loop.llm.chatgpt_page import ChatGPTPageAdapter
-    from llm_loop.llm.chatgpt_surface import BrowserSurfaceLeaseStore, ChatGPTSurface
-    from llm_loop.llm.chatgpt_transport import ChatGPTWebPageTransport
-
     lease_root = Path(settings.data_dir) / "chatgpt-web-provider"
-    surface = ChatGPTSurface(
-        endpoint,
-        lease_store=BrowserSurfaceLeaseStore(lease_root),
-        project_url=project_url,
-        project_ref=project_ref,
-        profile_label=profile_label,
-    )
-    try:
-        page = surface.open()
-        if project_ref not in str(getattr(page, "url", "")):
-            raise ValueError("owned ChatGPT surface is outside the configured Project")
-        adapter = ChatGPTPageAdapter(
-            page,
+
+    def build_surface_transport() -> ChatGPTModelTransport:
+        from llm_loop.llm.chatgpt_page import ChatGPTPageAdapter
+        from llm_loop.llm.chatgpt_surface import BrowserSurfaceLeaseStore, ChatGPTSurface
+        from llm_loop.llm.chatgpt_transport import ChatGPTWebPageTransport
+
+        surface = ChatGPTSurface(
+            endpoint,
+            lease_store=BrowserSurfaceLeaseStore(lease_root),
+            project_url=project_url,
+            project_ref=project_ref,
             profile_label=profile_label,
-            project_name=project_name,
         )
-        inner = ChatGPTWebPageTransport(adapter, turn_timeout_s=timeout_s)
-        transport = _SurfaceOwnedTransport(inner, surface=surface, adapter=adapter)
-        return ChatGPTWebModelClient(transport, model_label=CHATGPT_WEB_MODEL_ID)
-    except Exception as exc:
-        surface.close()
-        if isinstance(exc, ValueError):
-            raise
-        raise ValueError(f"ChatGPT Web 浏览器连接失败: {exc}") from exc
+        try:
+            page = surface.open()
+            if project_ref not in str(getattr(page, "url", "")):
+                raise ValueError("owned ChatGPT surface is outside the configured Project")
+            adapter = ChatGPTPageAdapter(
+                page,
+                profile_label=profile_label,
+                project_name=project_name,
+            )
+            inner = ChatGPTWebPageTransport(adapter, turn_timeout_s=timeout_s)
+            return _SurfaceOwnedTransport(inner, surface=surface, adapter=adapter)
+        except Exception as exc:
+            surface.close()
+            if isinstance(exc, ValueError):
+                raise
+            raise ValueError(f"ChatGPT Web 浏览器连接失败: {exc}") from exc
+
+    transport = _ThreadBoundTransport(build_surface_transport)
+    return ChatGPTWebModelClient(transport, model_label=CHATGPT_WEB_MODEL_ID)
 
 
 def _validate_response(value: Any, *, request_id: str) -> dict[str, Any]:
