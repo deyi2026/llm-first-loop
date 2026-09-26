@@ -8,9 +8,9 @@
       "initial_missing": 246,
       "remaining_missing": 0,
       "passes": 1,
-      "elapsed_ms": 677.042
+      "elapsed_ms": 690.54
     },
-    "warm_wall_ms": 699.3,
+    "warm_wall_ms": 711.8,
     "warm_calls": 16,
     "warm_texts": 246,
     "positive_on_rank1": 24,
@@ -22,7 +22,7 @@
     "fallback_runs": 0,
     "missing_sum": 0,
     "latency_p50_ms": 32.7,
-    "latency_max_ms": 38.7,
+    "latency_max_ms": 40.1,
     "server_error_delta": 0,
     "server_queue_after": {
       "active": false,
@@ -59,7 +59,7 @@
       "semantic_fallback_reason": "",
       "candidate_missing_count": 0,
       "semantic_hit_count": 168,
-      "latency_ms": 30.9
+      "latency_ms": 32.8
     },
     {
       "repeat": 1,
@@ -88,7 +88,7 @@
       "semantic_fallback_reason": "",
       "candidate_missing_count": 0,
       "semantic_hit_count": 140,
-      "latency_ms": 34.2
+      "latency_ms": 36.0
     },
     {
       "repeat": 1,
@@ -117,7 +117,7 @@
       "semantic_fallback_reason": "",
       "candidate_missing_count": 0,
       "semantic_hit_count": 55,
-      "latency_ms": 34.2
+      "latency_ms": 32.2
     },
     {
       "repeat": 1,
@@ -146,7 +146,7 @@
       "semantic_fallback_reason": "",
       "candidate_missing_count": 0,
       "semantic_hit_count": 182,
-      "latency_ms": 38.5
+      "latency_ms": 37.6
     },
     {
       "repeat": 1,
@@ -175,7 +175,7 @@
       "semantic_fallback_reason": "",
       "candidate_missing_count": 0,
       "semantic_hit_count": 100,
-      "latency_ms": 38.2
+      "latency_ms": 38.7
     },
     {
       "repeat": 1,
@@ -204,288 +204,10 @@
       "semantic_fallback_reason": "",
       "candidate_missing_count": 0,
       "semantic_hit_count": 44,
-      "latency_ms": 21.4
-    },
-    {
-      "repeat": 1,
-      "id": "L2",
-      "kind": "lesson",
-      "class": "typed_positive",
-      "target": "EXPERIENCE-20260912-worktree-env",
-      "off_ids": [
-        "EXPERIENCE-20260912-worktree-env",
-        "EXPERIENCE-20260903-frozen-contract-vs-program-fact",
-        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
-        "EXPERIENCE-20260903-untitled",
-        "EXPERIENCE-20260915-2026-09-15-m1-g2"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260912-worktree-env",
-        "EXPERIENCE-20260903-frozen-contract-vs-program-fact",
-        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
-        "EXPERIENCE-20260903-untitled",
-        "EXPERIENCE-20260915-2026-09-15-m1-g2"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 48,
       "latency_ms": 22.3
     },
     {
       "repeat": 1,
-      "id": "C1",
-      "kind": "experience",
-      "class": "lexical_control",
-      "target": "EXPERIENCE-20260918-glm-provider-ttl-300s",
-      "off_ids": [
-        "EXPERIENCE-20260918-glm-provider-ttl-300s",
-        "EXPERIENCE-20260821-ttl-p14-cached-tokens",
-        "EXPERIENCE-20260822-provider-provider-model",
-        "EXPERIENCE-20260916-provider-embedding",
-        "EXPERIENCE-20260918-provider-client-econnrefused"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260918-glm-provider-ttl-300s",
-        "EXPERIENCE-20260821-ttl-p14-cached-tokens",
-        "EXPERIENCE-20260822-provider-provider-model",
-        "EXPERIENCE-20260916-provider-embedding",
-        "EXPERIENCE-20260918-provider-client-econnrefused"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 53,
-      "latency_ms": 27.5
-    },
-    {
-      "repeat": 1,
-      "id": "N1",
-      "kind": "experience",
-      "class": "noise",
-      "target": null,
-      "off_ids": [
-        "EXPERIENCE-20260822-p0-p1-precheck-p2-schema",
-        "EXPERIENCE-20260911-statebraid-phase9-main",
-        "EXPERIENCE-20260918-playwright-content-aria-snapshot-delta"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260822-p0-p1-precheck-p2-schema",
-        "EXPERIENCE-20260911-statebraid-phase9-main",
-        "EXPERIENCE-20260918-playwright-content-aria-snapshot-delta"
-      ],
-      "off_rank": null,
-      "on_rank": null,
-      "noise_expansion": [],
-      "semantic_effective": false,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 0,
-      "latency_ms": 29.3
-    },
-    {
-      "repeat": 1,
-      "id": "N2",
-      "kind": "lesson",
-      "class": "noise",
-      "target": null,
-      "off_ids": [
-        "EXPERIENCE-20260922-semif-logit-bias-label-35b"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260922-semif-logit-bias-label-35b"
-      ],
-      "off_rank": null,
-      "on_rank": null,
-      "noise_expansion": [],
-      "semantic_effective": false,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 0,
-      "latency_ms": 23.2
-    },
-    {
-      "repeat": 2,
-      "id": "E1",
-      "kind": "experience",
-      "class": "positive",
-      "target": "EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree",
-      "off_ids": [
-        "EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree",
-        "EXPERIENCE-20260917-mirror-service-control",
-        "EXPERIENCE-20260918-service-control-restart-fail-closed",
-        "EXPERIENCE-20260827-vs-p0",
-        "EXPERIENCE-20260821-pythonpath-src"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree",
-        "EXPERIENCE-20260917-mirror-service-control",
-        "EXPERIENCE-20260918-service-control-restart-fail-closed",
-        "EXPERIENCE-20260827-vs-p0",
-        "EXPERIENCE-20260917-managed-service-cas-cas"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 168,
-      "latency_ms": 36.6
-    },
-    {
-      "repeat": 2,
-      "id": "E2",
-      "kind": "experience",
-      "class": "positive",
-      "target": "EXPERIENCE-20260917-mirror-service-control",
-      "off_ids": [
-        "EXPERIENCE-20260917-mirror-service-control",
-        "EXPERIENCE-20260924-exec-seatbelt-scoped-write-eperm",
-        "EXPERIENCE-20260816-llm-first-loop-guard",
-        "EXPERIENCE-20260918-provider-client-econnrefused",
-        "EXPERIENCE-20260828-mirror-restart-launchd-trap"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260917-mirror-service-control",
-        "EXPERIENCE-20260816-llm-first-loop-guard",
-        "EXPERIENCE-20260924-exec-seatbelt-scoped-write-eperm",
-        "EXPERIENCE-20260918-provider-client-econnrefused",
-        "EXPERIENCE-20260828-mirror-restart-launchd-trap"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 140,
-      "latency_ms": 38.7
-    },
-    {
-      "repeat": 2,
-      "id": "E3",
-      "kind": "experience",
-      "class": "positive",
-      "target": "EXPERIENCE-20260916-embedding-provider-2-bug",
-      "off_ids": [
-        "EXPERIENCE-20260916-embedding-provider-2-bug",
-        "EXPERIENCE-20260916-a-b-hashembedder-2-5",
-        "EXPERIENCE-20260916-provider-embedding",
-        "EXPERIENCE-20260819-web-model-override-cli",
-        "EXPERIENCE-20260909-cache-health-per-session-ttl-session-model"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260916-embedding-provider-2-bug",
-        "EXPERIENCE-20260916-a-b-hashembedder-2-5",
-        "EXPERIENCE-20260916-provider-embedding",
-        "EXPERIENCE-20260819-web-model-override-cli",
-        "EXPERIENCE-20260909-cache-health-per-session-ttl-session-model"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 55,
-      "latency_ms": 36.0
-    },
-    {
-      "repeat": 2,
-      "id": "E4",
-      "kind": "experience",
-      "class": "ordering_gain",
-      "target": "EXPERIENCE-20260922-readonly-vs-vs-hang",
-      "off_ids": [
-        "EXPERIENCE-20260817-execute-command",
-        "EXPERIENCE-20260922-readonly-vs-vs-hang",
-        "EXPERIENCE-20260921-cwd-engine-workspace-root-contextvar-env-run-execu",
-        "EXPERIENCE-20260914-research-execute-command-eperm-tmp-mirror-staging",
-        "EXPERIENCE-20260911-execute-command-home-path-home"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260922-readonly-vs-vs-hang",
-        "EXPERIENCE-20260817-execute-command",
-        "EXPERIENCE-20260921-cwd-engine-workspace-root-contextvar-env-run-execu",
-        "EXPERIENCE-20260914-research-execute-command-eperm-tmp-mirror-staging",
-        "EXPERIENCE-20260911-execute-command-home-path-home"
-      ],
-      "off_rank": 2,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 182,
-      "latency_ms": 35.7
-    },
-    {
-      "repeat": 2,
-      "id": "E5",
-      "kind": "experience",
-      "class": "positive",
-      "target": "EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1",
-      "off_ids": [
-        "EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1",
-        "EXPERIENCE-20260911-llm-traceback-http-swap",
-        "EXPERIENCE-20260914-statebraid-fork-server",
-        "EXPERIENCE-20260817-llm-key-provider-providers-json-strip",
-        "EXPERIENCE-20260822-map-retrieve-consume"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1",
-        "EXPERIENCE-20260911-llm-traceback-http-swap",
-        "EXPERIENCE-20260914-statebraid-fork-server",
-        "EXPERIENCE-20260817-llm-key-provider-providers-json-strip",
-        "EXPERIENCE-20260819-reasoning-tail-0-1"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 100,
-      "latency_ms": 37.9
-    },
-    {
-      "repeat": 2,
-      "id": "L1",
-      "kind": "lesson",
-      "class": "typed_positive",
-      "target": "EXPERIENCE-20260919-service-control-cli-restart",
-      "off_ids": [
-        "EXPERIENCE-20260919-service-control-cli-restart",
-        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
-        "EXPERIENCE-20260924-service-control-stage-facts-per-service-succeeded",
-        "EXPERIENCE-20260920-schedule-wake-grant-owner",
-        "EXPERIENCE-20260919-grill-me"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260919-service-control-cli-restart",
-        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
-        "EXPERIENCE-20260924-service-control-stage-facts-per-service-succeeded",
-        "EXPERIENCE-20260920-schedule-wake-grant-owner",
-        "EXPERIENCE-20260919-grill-me"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 44,
-      "latency_ms": 22.7
-    },
-    {
-      "repeat": 2,
       "id": "L2",
       "kind": "lesson",
       "class": "typed_positive",
@@ -511,10 +233,10 @@
       "semantic_fallback_reason": "",
       "candidate_missing_count": 0,
       "semantic_hit_count": 48,
-      "latency_ms": 24.1
+      "latency_ms": 23.7
     },
     {
-      "repeat": 2,
+      "repeat": 1,
       "id": "C1",
       "kind": "experience",
       "class": "lexical_control",
@@ -540,10 +262,10 @@
       "semantic_fallback_reason": "",
       "candidate_missing_count": 0,
       "semantic_hit_count": 53,
-      "latency_ms": 28.8
+      "latency_ms": 29.4
     },
     {
-      "repeat": 2,
+      "repeat": 1,
       "id": "N1",
       "kind": "experience",
       "class": "noise",
@@ -565,288 +287,10 @@
       "semantic_fallback_reason": "",
       "candidate_missing_count": 0,
       "semantic_hit_count": 0,
-      "latency_ms": 29.8
+      "latency_ms": 32.6
     },
     {
-      "repeat": 2,
-      "id": "N2",
-      "kind": "lesson",
-      "class": "noise",
-      "target": null,
-      "off_ids": [
-        "EXPERIENCE-20260922-semif-logit-bias-label-35b"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260922-semif-logit-bias-label-35b"
-      ],
-      "off_rank": null,
-      "on_rank": null,
-      "noise_expansion": [],
-      "semantic_effective": false,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 0,
-      "latency_ms": 27.3
-    },
-    {
-      "repeat": 3,
-      "id": "E1",
-      "kind": "experience",
-      "class": "positive",
-      "target": "EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree",
-      "off_ids": [
-        "EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree",
-        "EXPERIENCE-20260917-mirror-service-control",
-        "EXPERIENCE-20260918-service-control-restart-fail-closed",
-        "EXPERIENCE-20260827-vs-p0",
-        "EXPERIENCE-20260821-pythonpath-src"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree",
-        "EXPERIENCE-20260917-mirror-service-control",
-        "EXPERIENCE-20260918-service-control-restart-fail-closed",
-        "EXPERIENCE-20260827-vs-p0",
-        "EXPERIENCE-20260917-managed-service-cas-cas"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 168,
-      "latency_ms": 36.6
-    },
-    {
-      "repeat": 3,
-      "id": "E2",
-      "kind": "experience",
-      "class": "positive",
-      "target": "EXPERIENCE-20260917-mirror-service-control",
-      "off_ids": [
-        "EXPERIENCE-20260917-mirror-service-control",
-        "EXPERIENCE-20260924-exec-seatbelt-scoped-write-eperm",
-        "EXPERIENCE-20260816-llm-first-loop-guard",
-        "EXPERIENCE-20260918-provider-client-econnrefused",
-        "EXPERIENCE-20260828-mirror-restart-launchd-trap"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260917-mirror-service-control",
-        "EXPERIENCE-20260816-llm-first-loop-guard",
-        "EXPERIENCE-20260924-exec-seatbelt-scoped-write-eperm",
-        "EXPERIENCE-20260918-provider-client-econnrefused",
-        "EXPERIENCE-20260828-mirror-restart-launchd-trap"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 140,
-      "latency_ms": 36.6
-    },
-    {
-      "repeat": 3,
-      "id": "E3",
-      "kind": "experience",
-      "class": "positive",
-      "target": "EXPERIENCE-20260916-embedding-provider-2-bug",
-      "off_ids": [
-        "EXPERIENCE-20260916-embedding-provider-2-bug",
-        "EXPERIENCE-20260916-a-b-hashembedder-2-5",
-        "EXPERIENCE-20260916-provider-embedding",
-        "EXPERIENCE-20260819-web-model-override-cli",
-        "EXPERIENCE-20260909-cache-health-per-session-ttl-session-model"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260916-embedding-provider-2-bug",
-        "EXPERIENCE-20260916-a-b-hashembedder-2-5",
-        "EXPERIENCE-20260916-provider-embedding",
-        "EXPERIENCE-20260819-web-model-override-cli",
-        "EXPERIENCE-20260909-cache-health-per-session-ttl-session-model"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 55,
-      "latency_ms": 36.2
-    },
-    {
-      "repeat": 3,
-      "id": "E4",
-      "kind": "experience",
-      "class": "ordering_gain",
-      "target": "EXPERIENCE-20260922-readonly-vs-vs-hang",
-      "off_ids": [
-        "EXPERIENCE-20260817-execute-command",
-        "EXPERIENCE-20260922-readonly-vs-vs-hang",
-        "EXPERIENCE-20260921-cwd-engine-workspace-root-contextvar-env-run-execu",
-        "EXPERIENCE-20260914-research-execute-command-eperm-tmp-mirror-staging",
-        "EXPERIENCE-20260911-execute-command-home-path-home"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260922-readonly-vs-vs-hang",
-        "EXPERIENCE-20260817-execute-command",
-        "EXPERIENCE-20260921-cwd-engine-workspace-root-contextvar-env-run-execu",
-        "EXPERIENCE-20260914-research-execute-command-eperm-tmp-mirror-staging",
-        "EXPERIENCE-20260911-execute-command-home-path-home"
-      ],
-      "off_rank": 2,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 182,
-      "latency_ms": 37.5
-    },
-    {
-      "repeat": 3,
-      "id": "E5",
-      "kind": "experience",
-      "class": "positive",
-      "target": "EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1",
-      "off_ids": [
-        "EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1",
-        "EXPERIENCE-20260911-llm-traceback-http-swap",
-        "EXPERIENCE-20260914-statebraid-fork-server",
-        "EXPERIENCE-20260817-llm-key-provider-providers-json-strip",
-        "EXPERIENCE-20260822-map-retrieve-consume"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1",
-        "EXPERIENCE-20260911-llm-traceback-http-swap",
-        "EXPERIENCE-20260914-statebraid-fork-server",
-        "EXPERIENCE-20260817-llm-key-provider-providers-json-strip",
-        "EXPERIENCE-20260819-reasoning-tail-0-1"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 100,
-      "latency_ms": 37.2
-    },
-    {
-      "repeat": 3,
-      "id": "L1",
-      "kind": "lesson",
-      "class": "typed_positive",
-      "target": "EXPERIENCE-20260919-service-control-cli-restart",
-      "off_ids": [
-        "EXPERIENCE-20260919-service-control-cli-restart",
-        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
-        "EXPERIENCE-20260924-service-control-stage-facts-per-service-succeeded",
-        "EXPERIENCE-20260920-schedule-wake-grant-owner",
-        "EXPERIENCE-20260919-grill-me"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260919-service-control-cli-restart",
-        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
-        "EXPERIENCE-20260924-service-control-stage-facts-per-service-succeeded",
-        "EXPERIENCE-20260920-schedule-wake-grant-owner",
-        "EXPERIENCE-20260919-grill-me"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 44,
-      "latency_ms": 27.7
-    },
-    {
-      "repeat": 3,
-      "id": "L2",
-      "kind": "lesson",
-      "class": "typed_positive",
-      "target": "EXPERIENCE-20260912-worktree-env",
-      "off_ids": [
-        "EXPERIENCE-20260912-worktree-env",
-        "EXPERIENCE-20260903-frozen-contract-vs-program-fact",
-        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
-        "EXPERIENCE-20260903-untitled",
-        "EXPERIENCE-20260915-2026-09-15-m1-g2"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260912-worktree-env",
-        "EXPERIENCE-20260903-frozen-contract-vs-program-fact",
-        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
-        "EXPERIENCE-20260903-untitled",
-        "EXPERIENCE-20260915-2026-09-15-m1-g2"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 48,
-      "latency_ms": 27.4
-    },
-    {
-      "repeat": 3,
-      "id": "C1",
-      "kind": "experience",
-      "class": "lexical_control",
-      "target": "EXPERIENCE-20260918-glm-provider-ttl-300s",
-      "off_ids": [
-        "EXPERIENCE-20260918-glm-provider-ttl-300s",
-        "EXPERIENCE-20260821-ttl-p14-cached-tokens",
-        "EXPERIENCE-20260822-provider-provider-model",
-        "EXPERIENCE-20260916-provider-embedding",
-        "EXPERIENCE-20260918-provider-client-econnrefused"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260918-glm-provider-ttl-300s",
-        "EXPERIENCE-20260821-ttl-p14-cached-tokens",
-        "EXPERIENCE-20260822-provider-provider-model",
-        "EXPERIENCE-20260916-provider-embedding",
-        "EXPERIENCE-20260918-provider-client-econnrefused"
-      ],
-      "off_rank": 1,
-      "on_rank": 1,
-      "noise_expansion": [],
-      "semantic_effective": true,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 53,
-      "latency_ms": 33.6
-    },
-    {
-      "repeat": 3,
-      "id": "N1",
-      "kind": "experience",
-      "class": "noise",
-      "target": null,
-      "off_ids": [
-        "EXPERIENCE-20260822-p0-p1-precheck-p2-schema",
-        "EXPERIENCE-20260911-statebraid-phase9-main",
-        "EXPERIENCE-20260918-playwright-content-aria-snapshot-delta"
-      ],
-      "on_ids": [
-        "EXPERIENCE-20260822-p0-p1-precheck-p2-schema",
-        "EXPERIENCE-20260911-statebraid-phase9-main",
-        "EXPERIENCE-20260918-playwright-content-aria-snapshot-delta"
-      ],
-      "off_rank": null,
-      "on_rank": null,
-      "noise_expansion": [],
-      "semantic_effective": false,
-      "semantic_fallback_reason": "",
-      "candidate_missing_count": 0,
-      "semantic_hit_count": 0,
-      "latency_ms": 31.7
-    },
-    {
-      "repeat": 3,
+      "repeat": 1,
       "id": "N2",
       "kind": "lesson",
       "class": "noise",
@@ -865,6 +309,562 @@
       "candidate_missing_count": 0,
       "semantic_hit_count": 0,
       "latency_ms": 27.1
+    },
+    {
+      "repeat": 2,
+      "id": "E1",
+      "kind": "experience",
+      "class": "positive",
+      "target": "EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree",
+      "off_ids": [
+        "EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree",
+        "EXPERIENCE-20260917-mirror-service-control",
+        "EXPERIENCE-20260918-service-control-restart-fail-closed",
+        "EXPERIENCE-20260827-vs-p0",
+        "EXPERIENCE-20260821-pythonpath-src"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree",
+        "EXPERIENCE-20260917-mirror-service-control",
+        "EXPERIENCE-20260918-service-control-restart-fail-closed",
+        "EXPERIENCE-20260827-vs-p0",
+        "EXPERIENCE-20260917-managed-service-cas-cas"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 168,
+      "latency_ms": 37.7
+    },
+    {
+      "repeat": 2,
+      "id": "E2",
+      "kind": "experience",
+      "class": "positive",
+      "target": "EXPERIENCE-20260917-mirror-service-control",
+      "off_ids": [
+        "EXPERIENCE-20260917-mirror-service-control",
+        "EXPERIENCE-20260924-exec-seatbelt-scoped-write-eperm",
+        "EXPERIENCE-20260816-llm-first-loop-guard",
+        "EXPERIENCE-20260918-provider-client-econnrefused",
+        "EXPERIENCE-20260828-mirror-restart-launchd-trap"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260917-mirror-service-control",
+        "EXPERIENCE-20260816-llm-first-loop-guard",
+        "EXPERIENCE-20260924-exec-seatbelt-scoped-write-eperm",
+        "EXPERIENCE-20260918-provider-client-econnrefused",
+        "EXPERIENCE-20260828-mirror-restart-launchd-trap"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 140,
+      "latency_ms": 38.5
+    },
+    {
+      "repeat": 2,
+      "id": "E3",
+      "kind": "experience",
+      "class": "positive",
+      "target": "EXPERIENCE-20260916-embedding-provider-2-bug",
+      "off_ids": [
+        "EXPERIENCE-20260916-embedding-provider-2-bug",
+        "EXPERIENCE-20260916-a-b-hashembedder-2-5",
+        "EXPERIENCE-20260916-provider-embedding",
+        "EXPERIENCE-20260819-web-model-override-cli",
+        "EXPERIENCE-20260909-cache-health-per-session-ttl-session-model"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260916-embedding-provider-2-bug",
+        "EXPERIENCE-20260916-a-b-hashembedder-2-5",
+        "EXPERIENCE-20260916-provider-embedding",
+        "EXPERIENCE-20260819-web-model-override-cli",
+        "EXPERIENCE-20260909-cache-health-per-session-ttl-session-model"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 55,
+      "latency_ms": 36.3
+    },
+    {
+      "repeat": 2,
+      "id": "E4",
+      "kind": "experience",
+      "class": "ordering_gain",
+      "target": "EXPERIENCE-20260922-readonly-vs-vs-hang",
+      "off_ids": [
+        "EXPERIENCE-20260817-execute-command",
+        "EXPERIENCE-20260922-readonly-vs-vs-hang",
+        "EXPERIENCE-20260921-cwd-engine-workspace-root-contextvar-env-run-execu",
+        "EXPERIENCE-20260914-research-execute-command-eperm-tmp-mirror-staging",
+        "EXPERIENCE-20260911-execute-command-home-path-home"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260922-readonly-vs-vs-hang",
+        "EXPERIENCE-20260817-execute-command",
+        "EXPERIENCE-20260921-cwd-engine-workspace-root-contextvar-env-run-execu",
+        "EXPERIENCE-20260914-research-execute-command-eperm-tmp-mirror-staging",
+        "EXPERIENCE-20260911-execute-command-home-path-home"
+      ],
+      "off_rank": 2,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 182,
+      "latency_ms": 38.6
+    },
+    {
+      "repeat": 2,
+      "id": "E5",
+      "kind": "experience",
+      "class": "positive",
+      "target": "EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1",
+      "off_ids": [
+        "EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1",
+        "EXPERIENCE-20260911-llm-traceback-http-swap",
+        "EXPERIENCE-20260914-statebraid-fork-server",
+        "EXPERIENCE-20260817-llm-key-provider-providers-json-strip",
+        "EXPERIENCE-20260822-map-retrieve-consume"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1",
+        "EXPERIENCE-20260911-llm-traceback-http-swap",
+        "EXPERIENCE-20260914-statebraid-fork-server",
+        "EXPERIENCE-20260817-llm-key-provider-providers-json-strip",
+        "EXPERIENCE-20260819-reasoning-tail-0-1"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 100,
+      "latency_ms": 39.1
+    },
+    {
+      "repeat": 2,
+      "id": "L1",
+      "kind": "lesson",
+      "class": "typed_positive",
+      "target": "EXPERIENCE-20260919-service-control-cli-restart",
+      "off_ids": [
+        "EXPERIENCE-20260919-service-control-cli-restart",
+        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
+        "EXPERIENCE-20260924-service-control-stage-facts-per-service-succeeded",
+        "EXPERIENCE-20260920-schedule-wake-grant-owner",
+        "EXPERIENCE-20260919-grill-me"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260919-service-control-cli-restart",
+        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
+        "EXPERIENCE-20260924-service-control-stage-facts-per-service-succeeded",
+        "EXPERIENCE-20260920-schedule-wake-grant-owner",
+        "EXPERIENCE-20260919-grill-me"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 44,
+      "latency_ms": 26.1
+    },
+    {
+      "repeat": 2,
+      "id": "L2",
+      "kind": "lesson",
+      "class": "typed_positive",
+      "target": "EXPERIENCE-20260912-worktree-env",
+      "off_ids": [
+        "EXPERIENCE-20260912-worktree-env",
+        "EXPERIENCE-20260903-frozen-contract-vs-program-fact",
+        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
+        "EXPERIENCE-20260903-untitled",
+        "EXPERIENCE-20260915-2026-09-15-m1-g2"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260912-worktree-env",
+        "EXPERIENCE-20260903-frozen-contract-vs-program-fact",
+        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
+        "EXPERIENCE-20260903-untitled",
+        "EXPERIENCE-20260915-2026-09-15-m1-g2"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 48,
+      "latency_ms": 26.4
+    },
+    {
+      "repeat": 2,
+      "id": "C1",
+      "kind": "experience",
+      "class": "lexical_control",
+      "target": "EXPERIENCE-20260918-glm-provider-ttl-300s",
+      "off_ids": [
+        "EXPERIENCE-20260918-glm-provider-ttl-300s",
+        "EXPERIENCE-20260821-ttl-p14-cached-tokens",
+        "EXPERIENCE-20260822-provider-provider-model",
+        "EXPERIENCE-20260916-provider-embedding",
+        "EXPERIENCE-20260918-provider-client-econnrefused"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260918-glm-provider-ttl-300s",
+        "EXPERIENCE-20260821-ttl-p14-cached-tokens",
+        "EXPERIENCE-20260822-provider-provider-model",
+        "EXPERIENCE-20260916-provider-embedding",
+        "EXPERIENCE-20260918-provider-client-econnrefused"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 53,
+      "latency_ms": 31.6
+    },
+    {
+      "repeat": 2,
+      "id": "N1",
+      "kind": "experience",
+      "class": "noise",
+      "target": null,
+      "off_ids": [
+        "EXPERIENCE-20260822-p0-p1-precheck-p2-schema",
+        "EXPERIENCE-20260911-statebraid-phase9-main",
+        "EXPERIENCE-20260918-playwright-content-aria-snapshot-delta"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260822-p0-p1-precheck-p2-schema",
+        "EXPERIENCE-20260911-statebraid-phase9-main",
+        "EXPERIENCE-20260918-playwright-content-aria-snapshot-delta"
+      ],
+      "off_rank": null,
+      "on_rank": null,
+      "noise_expansion": [],
+      "semantic_effective": false,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 0,
+      "latency_ms": 32.5
+    },
+    {
+      "repeat": 2,
+      "id": "N2",
+      "kind": "lesson",
+      "class": "noise",
+      "target": null,
+      "off_ids": [
+        "EXPERIENCE-20260922-semif-logit-bias-label-35b"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260922-semif-logit-bias-label-35b"
+      ],
+      "off_rank": null,
+      "on_rank": null,
+      "noise_expansion": [],
+      "semantic_effective": false,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 0,
+      "latency_ms": 27.0
+    },
+    {
+      "repeat": 3,
+      "id": "E1",
+      "kind": "experience",
+      "class": "positive",
+      "target": "EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree",
+      "off_ids": [
+        "EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree",
+        "EXPERIENCE-20260917-mirror-service-control",
+        "EXPERIENCE-20260918-service-control-restart-fail-closed",
+        "EXPERIENCE-20260827-vs-p0",
+        "EXPERIENCE-20260821-pythonpath-src"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree",
+        "EXPERIENCE-20260917-mirror-service-control",
+        "EXPERIENCE-20260918-service-control-restart-fail-closed",
+        "EXPERIENCE-20260827-vs-p0",
+        "EXPERIENCE-20260917-managed-service-cas-cas"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 168,
+      "latency_ms": 36.6
+    },
+    {
+      "repeat": 3,
+      "id": "E2",
+      "kind": "experience",
+      "class": "positive",
+      "target": "EXPERIENCE-20260917-mirror-service-control",
+      "off_ids": [
+        "EXPERIENCE-20260917-mirror-service-control",
+        "EXPERIENCE-20260924-exec-seatbelt-scoped-write-eperm",
+        "EXPERIENCE-20260816-llm-first-loop-guard",
+        "EXPERIENCE-20260918-provider-client-econnrefused",
+        "EXPERIENCE-20260828-mirror-restart-launchd-trap"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260917-mirror-service-control",
+        "EXPERIENCE-20260816-llm-first-loop-guard",
+        "EXPERIENCE-20260924-exec-seatbelt-scoped-write-eperm",
+        "EXPERIENCE-20260918-provider-client-econnrefused",
+        "EXPERIENCE-20260828-mirror-restart-launchd-trap"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 140,
+      "latency_ms": 40.1
+    },
+    {
+      "repeat": 3,
+      "id": "E3",
+      "kind": "experience",
+      "class": "positive",
+      "target": "EXPERIENCE-20260916-embedding-provider-2-bug",
+      "off_ids": [
+        "EXPERIENCE-20260916-embedding-provider-2-bug",
+        "EXPERIENCE-20260916-a-b-hashembedder-2-5",
+        "EXPERIENCE-20260916-provider-embedding",
+        "EXPERIENCE-20260819-web-model-override-cli",
+        "EXPERIENCE-20260909-cache-health-per-session-ttl-session-model"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260916-embedding-provider-2-bug",
+        "EXPERIENCE-20260916-a-b-hashembedder-2-5",
+        "EXPERIENCE-20260916-provider-embedding",
+        "EXPERIENCE-20260819-web-model-override-cli",
+        "EXPERIENCE-20260909-cache-health-per-session-ttl-session-model"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 55,
+      "latency_ms": 35.0
+    },
+    {
+      "repeat": 3,
+      "id": "E4",
+      "kind": "experience",
+      "class": "ordering_gain",
+      "target": "EXPERIENCE-20260922-readonly-vs-vs-hang",
+      "off_ids": [
+        "EXPERIENCE-20260817-execute-command",
+        "EXPERIENCE-20260922-readonly-vs-vs-hang",
+        "EXPERIENCE-20260921-cwd-engine-workspace-root-contextvar-env-run-execu",
+        "EXPERIENCE-20260914-research-execute-command-eperm-tmp-mirror-staging",
+        "EXPERIENCE-20260911-execute-command-home-path-home"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260922-readonly-vs-vs-hang",
+        "EXPERIENCE-20260817-execute-command",
+        "EXPERIENCE-20260921-cwd-engine-workspace-root-contextvar-env-run-execu",
+        "EXPERIENCE-20260914-research-execute-command-eperm-tmp-mirror-staging",
+        "EXPERIENCE-20260911-execute-command-home-path-home"
+      ],
+      "off_rank": 2,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 182,
+      "latency_ms": 36.5
+    },
+    {
+      "repeat": 3,
+      "id": "E5",
+      "kind": "experience",
+      "class": "positive",
+      "target": "EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1",
+      "off_ids": [
+        "EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1",
+        "EXPERIENCE-20260911-llm-traceback-http-swap",
+        "EXPERIENCE-20260914-statebraid-fork-server",
+        "EXPERIENCE-20260817-llm-key-provider-providers-json-strip",
+        "EXPERIENCE-20260822-map-retrieve-consume"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1",
+        "EXPERIENCE-20260911-llm-traceback-http-swap",
+        "EXPERIENCE-20260914-statebraid-fork-server",
+        "EXPERIENCE-20260817-llm-key-provider-providers-json-strip",
+        "EXPERIENCE-20260819-reasoning-tail-0-1"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 100,
+      "latency_ms": 38.8
+    },
+    {
+      "repeat": 3,
+      "id": "L1",
+      "kind": "lesson",
+      "class": "typed_positive",
+      "target": "EXPERIENCE-20260919-service-control-cli-restart",
+      "off_ids": [
+        "EXPERIENCE-20260919-service-control-cli-restart",
+        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
+        "EXPERIENCE-20260924-service-control-stage-facts-per-service-succeeded",
+        "EXPERIENCE-20260920-schedule-wake-grant-owner",
+        "EXPERIENCE-20260919-grill-me"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260919-service-control-cli-restart",
+        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
+        "EXPERIENCE-20260924-service-control-stage-facts-per-service-succeeded",
+        "EXPERIENCE-20260920-schedule-wake-grant-owner",
+        "EXPERIENCE-20260919-grill-me"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 44,
+      "latency_ms": 26.8
+    },
+    {
+      "repeat": 3,
+      "id": "L2",
+      "kind": "lesson",
+      "class": "typed_positive",
+      "target": "EXPERIENCE-20260912-worktree-env",
+      "off_ids": [
+        "EXPERIENCE-20260912-worktree-env",
+        "EXPERIENCE-20260903-frozen-contract-vs-program-fact",
+        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
+        "EXPERIENCE-20260903-untitled",
+        "EXPERIENCE-20260915-2026-09-15-m1-g2"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260912-worktree-env",
+        "EXPERIENCE-20260903-frozen-contract-vs-program-fact",
+        "EXPERIENCE-20260917-service-control-webui-dist-src-llm-loop-web-static",
+        "EXPERIENCE-20260903-untitled",
+        "EXPERIENCE-20260915-2026-09-15-m1-g2"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 48,
+      "latency_ms": 24.0
+    },
+    {
+      "repeat": 3,
+      "id": "C1",
+      "kind": "experience",
+      "class": "lexical_control",
+      "target": "EXPERIENCE-20260918-glm-provider-ttl-300s",
+      "off_ids": [
+        "EXPERIENCE-20260918-glm-provider-ttl-300s",
+        "EXPERIENCE-20260821-ttl-p14-cached-tokens",
+        "EXPERIENCE-20260822-provider-provider-model",
+        "EXPERIENCE-20260916-provider-embedding",
+        "EXPERIENCE-20260918-provider-client-econnrefused"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260918-glm-provider-ttl-300s",
+        "EXPERIENCE-20260821-ttl-p14-cached-tokens",
+        "EXPERIENCE-20260822-provider-provider-model",
+        "EXPERIENCE-20260916-provider-embedding",
+        "EXPERIENCE-20260918-provider-client-econnrefused"
+      ],
+      "off_rank": 1,
+      "on_rank": 1,
+      "noise_expansion": [],
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 53,
+      "latency_ms": 29.5
+    },
+    {
+      "repeat": 3,
+      "id": "N1",
+      "kind": "experience",
+      "class": "noise",
+      "target": null,
+      "off_ids": [
+        "EXPERIENCE-20260822-p0-p1-precheck-p2-schema",
+        "EXPERIENCE-20260911-statebraid-phase9-main",
+        "EXPERIENCE-20260918-playwright-content-aria-snapshot-delta"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260822-p0-p1-precheck-p2-schema",
+        "EXPERIENCE-20260911-statebraid-phase9-main",
+        "EXPERIENCE-20260918-playwright-content-aria-snapshot-delta"
+      ],
+      "off_rank": null,
+      "on_rank": null,
+      "noise_expansion": [],
+      "semantic_effective": false,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 0,
+      "latency_ms": 33.1
+    },
+    {
+      "repeat": 3,
+      "id": "N2",
+      "kind": "lesson",
+      "class": "noise",
+      "target": null,
+      "off_ids": [
+        "EXPERIENCE-20260922-semif-logit-bias-label-35b"
+      ],
+      "on_ids": [
+        "EXPERIENCE-20260922-semif-logit-bias-label-35b"
+      ],
+      "off_rank": null,
+      "on_rank": null,
+      "noise_expansion": [],
+      "semantic_effective": false,
+      "semantic_fallback_reason": "",
+      "candidate_missing_count": 0,
+      "semantic_hit_count": 0,
+      "latency_ms": 24.5
     }
   ]
 }

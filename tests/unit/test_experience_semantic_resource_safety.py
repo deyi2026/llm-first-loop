@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from llm_loop.experiences.document import ExperienceDocument
 from llm_loop.experiences.store import ExperienceStore
 from llm_loop.memory.retriever import SemanticRetriever
@@ -206,3 +208,33 @@ def test_cross_process_cache_refresh_uses_persisted_experience_vectors(tmp_path)
     assert reader_embedder.query_calls == 1
     assert reader_embedder.batch_calls == 0
     assert reader.last_cached_rank_diagnostics["cache_files_refreshed"] >= 1
+
+
+def test_cached_near_duplicate_tie_prefers_newest_chain_head(tmp_path):
+    exp_dir = tmp_path / "experiences"
+    writer = ExperienceStore(exp_dir)
+    older = writer.save(_doc("older equivalent"))
+    newer = writer.save(_doc("newer equivalent"))
+    older_path = exp_dir / older
+    newer_path = exp_dir / newer
+    older_path.touch()
+    newer_path.touch()
+    os.utime(older_path, (1, 1))
+    os.utime(newer_path, (2, 2))
+
+    class _TieRanker:
+        last_cached_rank_diagnostics = {}
+
+        def rank_cached_candidates(self, _query, candidates, *, top_k=None):
+            return [(index, 0.9) for index, _candidate in enumerate(candidates)][:top_k]
+
+    ranker = _TieRanker()
+    store = ExperienceStore(
+        exp_dir,
+        semantic_ranker=ranker.rank_cached_candidates,
+        near_dup_threshold=0.8,
+    )
+
+    hits = store._find_near_duplicate_ids("EXPERIENCE-probe.md", _doc("probe"), cap=1)  # noqa: SLF001
+
+    assert hits == [newer.removesuffix(".md")]

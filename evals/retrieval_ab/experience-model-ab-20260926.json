@@ -39,7 +39,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 10.64
+      "elapsed_s": 5.09
     },
     {
       "arm": "off",
@@ -64,7 +64,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 7.36
+      "elapsed_s": 10.15
     },
     {
       "arm": "off",
@@ -89,7 +89,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 4.06
+      "elapsed_s": 7.52
     },
     {
       "arm": "off",
@@ -108,13 +108,13 @@
           "status": "success",
           "arguments": {
             "kind": "experience",
-            "query": "glm provider 缓存 TTL 300s",
-            "limit": 5
+            "limit": 5,
+            "query": "glm provider 缓存 TTL 300s"
           }
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 6.74
+      "elapsed_s": 5.92
     },
     {
       "arm": "off",
@@ -139,7 +139,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 8.91
+      "elapsed_s": 6.65
     },
     {
       "arm": "off",
@@ -164,7 +164,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 6.85
+      "elapsed_s": 6.57
     },
     {
       "arm": "off",
@@ -189,7 +189,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 9.86
+      "elapsed_s": 7.74
     },
     {
       "arm": "off",
@@ -214,7 +214,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 6.87
+      "elapsed_s": 7.36
     },
     {
       "arm": "off",
@@ -239,7 +239,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 6.32
+      "elapsed_s": 2.81
     },
     {
       "arm": "off",
@@ -264,7 +264,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 7.36
+      "elapsed_s": 6.19
     },
     {
       "arm": "on",
@@ -289,7 +289,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 8.19
+      "elapsed_s": 3.71
     },
     {
       "arm": "on",
@@ -314,7 +314,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 7.39
+      "elapsed_s": 9.91
     },
     {
       "arm": "on",
@@ -339,7 +339,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 11.4
+      "elapsed_s": 3.56
     },
     {
       "arm": "on",
@@ -358,13 +358,13 @@
           "status": "success",
           "arguments": {
             "kind": "experience",
-            "query": "glm provider 缓存 TTL 300s",
-            "limit": 5
+            "limit": 5,
+            "query": "glm provider 缓存 TTL 300s"
           }
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 7.25
+      "elapsed_s": 3.54
     },
     {
       "arm": "on",
@@ -383,13 +383,13 @@
           "status": "success",
           "arguments": {
             "kind": "experience",
-            "query": "供应商 SLA 赔偿退款条款",
-            "limit": 5
+            "limit": 5,
+            "query": "供应商 SLA 赔偿退款条款"
           }
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 6.8
+      "elapsed_s": 6.63
     },
     {
       "arm": "on",
@@ -414,7 +414,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 6.08
+      "elapsed_s": 9.55
     },
     {
       "arm": "on",
@@ -439,7 +439,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 6.77
+      "elapsed_s": 7.99
     },
     {
       "arm": "on",
@@ -464,7 +464,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 7.71
+      "elapsed_s": 4.36
     },
     {
       "arm": "on",
@@ -489,7 +489,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 6.15
+      "elapsed_s": 3.14
     },
     {
       "arm": "on",
@@ -514,7 +514,7 @@
         }
       ],
       "only_one_exact_search": true,
-      "elapsed_s": 3.36
+      "elapsed_s": 6.54
     }
   ]
 }

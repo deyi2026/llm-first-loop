@@ -1,6 +1,6 @@
 {
   "cold_fail_open": {
-    "latency_ms": 18.1,
+    "latency_ms": 18.4,
     "same_lexical_order": true,
     "fallback_reason": "candidate_cache_cold",
     "missing_count": 194,
@@ -8,8 +8,8 @@
     "foreground_calls_delta": 0,
     "background_calls_after_settle": 2,
     "background_diag": {
-      "prewarm_ms": 140.762,
-      "cache_flush_ms": 6.411,
+      "prewarm_ms": 136.889,
+      "cache_flush_ms": 4.28,
       "missing_count": 32,
       "completed": true,
       "error": ""
@@ -22,9 +22,9 @@
       "initial_missing": 214,
       "remaining_missing": 0,
       "passes": 1,
-      "elapsed_ms": 620.03
+      "elapsed_ms": 534.99
     },
-    "latency_ms": 40.2,
+    "latency_ms": 30.8,
     "top1": "EXPERIENCE-20260922-readonly-vs-vs-hang",
     "semantic_diagnostics": {
       "semantic_requested": true,
@@ -35,18 +35,18 @@
       "cache_files_refreshed": 0,
       "prewarm_scheduled": false,
       "engine": "primary",
-      "latency_ms": 18.949,
+      "latency_ms": 12.479,
       "background_prewarm_inflight": false,
       "last_prewarm_count": 32,
-      "last_prewarm_ms": 140.762,
-      "last_cache_flush_ms": 6.411,
+      "last_prewarm_ms": 136.889,
+      "last_cache_flush_ms": 4.28,
       "last_prewarm_error": "",
       "threshold": 0.5,
       "semantic_hit_count": 182,
-      "query_embedding_ms": 12.183,
-      "embedding_queue_wait_ms": 0.003,
-      "embedding_encode_ms": 8.559,
-      "embedding_http_ms": 12.174,
+      "query_embedding_ms": 6.514,
+      "embedding_queue_wait_ms": 0.001,
+      "embedding_encode_ms": 3.219,
+      "embedding_http_ms": 6.506,
       "embedding_transport_error": ""
     },
     "foreground_calls_delta": 1
@@ -63,7 +63,7 @@
       "cache_files_refreshed": 1,
       "prewarm_scheduled": false,
       "engine": "primary",
-      "latency_ms": 32.734,
+      "latency_ms": 30.423,
       "background_prewarm_inflight": false,
       "last_prewarm_count": 0,
       "last_prewarm_ms": 0.0,
@@ -71,10 +71,10 @@
       "last_prewarm_error": "",
       "threshold": 0.5,
       "semantic_hit_count": 182,
-      "query_embedding_ms": 10.292,
+      "query_embedding_ms": 9.823,
       "embedding_queue_wait_ms": 0.001,
-      "embedding_encode_ms": 6.525,
-      "embedding_http_ms": 10.285,
+      "embedding_encode_ms": 5.706,
+      "embedding_http_ms": 9.816,
       "embedding_transport_error": ""
     }
   },
@@ -93,23 +93,23 @@
       "cache_files_refreshed": 0,
       "prewarm_scheduled": false,
       "engine": "primary",
-      "latency_ms": 15.69,
+      "latency_ms": 14.924,
       "background_prewarm_inflight": false,
       "last_prewarm_count": 1,
-      "last_prewarm_ms": 13.156,
-      "last_cache_flush_ms": 0.489,
+      "last_prewarm_ms": 12.552,
+      "last_cache_flush_ms": 0.438,
       "last_prewarm_error": "",
       "threshold": 0.5,
       "semantic_hit_count": 1,
-      "query_embedding_ms": 15.636,
-      "embedding_queue_wait_ms": 0.003,
-      "embedding_encode_ms": 11.4,
-      "embedding_http_ms": 15.632,
+      "query_embedding_ms": 14.875,
+      "embedding_queue_wait_ms": 0.002,
+      "embedding_encode_ms": 10.165,
+      "embedding_http_ms": 14.869,
       "embedding_transport_error": ""
     }
   },
   "query_transport_fail_open": {
-    "latency_ms": 27.7,
+    "latency_ms": 24.6,
     "same_lexical_order": true,
     "diagnostics": {
       "semantic_requested": true,
@@ -120,11 +120,11 @@
       "cache_files_refreshed": 0,
       "prewarm_scheduled": false,
       "engine": "primary",
-      "latency_ms": 5.401,
-      "query_embedding_ms": 5.068,
+      "latency_ms": 4.817,
+      "query_embedding_ms": 4.508,
       "embedding_queue_wait_ms": null,
       "embedding_encode_ms": null,
-      "embedding_http_ms": 5.045,
+      "embedding_http_ms": 4.483,
       "embedding_transport_error": "http_503"
     },
     "degradation_marked": true

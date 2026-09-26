@@ -448,6 +448,16 @@ class ExperienceStore:
                 and float(score) >= self._near_dup_threshold
                 and str(candidates[index].get("id") or "")
             ]
+            def _mtime(fid: str) -> float:
+                try:
+                    return (self._dir / f"{fid}.md").stat().st_mtime
+                except OSError:
+                    return 0.0
+
+            # Preserve the historical near-duplicate tie contract: newest canonical
+            # record wins when semantic scores tie, so cap truncation does not hide the
+            # latest chain head merely because filename ordering is older-first.
+            hits.sort(key=lambda row: (-row[0], -_mtime(row[1]), row[1]))
             return [fid for _score, fid in hits[:cap]]
         if self._embedder is None:
             return []
