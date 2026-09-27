@@ -250,6 +250,24 @@ def _env_chatgpt_web_context_tokens(
     return value
 
 
+def _env_chatgpt_web_max_request_chars(
+    name: str, env: Mapping[str, str] | None = None
+) -> int:
+    """Qualified ChatGPT Web text-ingress guard; invalid values fail safe."""
+    raw = _raw_env(name, env).strip()
+    if not raw:
+        return 150_000
+    try:
+        value = int(raw)
+    except ValueError:
+        _note_invalid_fallback(name, 150_000, "非整数")
+        return 150_000
+    if value <= 0:
+        _note_invalid_fallback(name, 150_000, "非正整数")
+        return 150_000
+    return value
+
+
 def _env_evolve_level(name: str, env: Mapping[str, str] | None = None) -> int:
     """EVOLVE_LOCAL_EXEC 三级解析（0/1/2；旧布尔 true/false 映射 1/0；非法回退 0）."""
     raw = _raw_env(name, env).strip().lower()
@@ -599,6 +617,7 @@ class Settings:
     chatgpt_web_turn_timeout_s: float = 120.0
     chatgpt_web_reasoning_effort: str = "high"
     chatgpt_web_context_tokens: int = 262_144
+    chatgpt_web_max_request_chars: int = 150_000
 
     # ── CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）──
     # CODEARTS_ENABLED=false 或凭证缺失时本组件不注册调度工具，对现有运行时零影响。
@@ -719,6 +738,7 @@ class Settings:
             "chatgpt_web_enabled": self.chatgpt_web_enabled,
             "chatgpt_web_reasoning_effort": self.chatgpt_web_reasoning_effort,
             "chatgpt_web_context_tokens": self.chatgpt_web_context_tokens,
+            "chatgpt_web_max_request_chars": self.chatgpt_web_max_request_chars,
             "chatgpt_web_configured": bool(
                 self.chatgpt_web_enabled
                 and self.chatgpt_web_cdp_endpoint
@@ -1080,6 +1100,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         chatgpt_web_context_tokens=env_one(
             _env_chatgpt_web_context_tokens,
             "CHATGPT_WEB_CONTEXT_TOKENS",
+        ),
+        chatgpt_web_max_request_chars=env_one(
+            _env_chatgpt_web_max_request_chars,
+            "CHATGPT_WEB_MAX_REQUEST_CHARS",
         ),
         # CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）
         # 凭证类字段仅从注入的 secret/env mapping 读取，不落盘不日志（DFX-SEC-02）

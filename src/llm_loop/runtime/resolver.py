@@ -97,6 +97,7 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("chatgpt_web", "turn_timeout_s"): TomlField(("CHATGPT_WEB_TURN_TIMEOUT_S",), "int"),
         ("chatgpt_web", "reasoning_effort"): TomlField(("CHATGPT_WEB_REASONING_EFFORT",), "str"),
         ("chatgpt_web", "context_tokens"): TomlField(("CHATGPT_WEB_CONTEXT_TOKENS",), "int"),
+        ("chatgpt_web", "max_request_chars"): TomlField(("CHATGPT_WEB_MAX_REQUEST_CHARS",), "int"),
         ("local_runtime", "observer"): TomlField(("LFL_LOCAL_RUNTIME_OBSERVER",), "str"),
         ("local_runtime", "admission_authority"): TomlField(("LFL_LOCAL_RUNTIME_ADMISSION_AUTHORITY",), "str"),
         ("local_runtime", "cli"): TomlField(("LFL_LFRT_CLI",), "str"),

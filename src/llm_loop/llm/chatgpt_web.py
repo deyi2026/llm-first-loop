@@ -251,6 +251,9 @@ def build_chatgpt_web_model_client(settings: Any) -> ChatGPTWebModelClient:
     reasoning_effort = str(
         getattr(settings, "chatgpt_web_reasoning_effort", "high") or "high"
     ).strip().lower()
+    max_request_chars = int(
+        getattr(settings, "chatgpt_web_max_request_chars", 150_000) or 150_000
+    )
     if not endpoint or not project_url or not project_ref or not project_name:
         raise ValueError(
             "ChatGPT Web 未完整配置：需要 CHATGPT_WEB_CDP_ENDPOINT / PROJECT_URL / "
@@ -280,7 +283,11 @@ def build_chatgpt_web_model_client(settings: Any) -> ChatGPTWebModelClient:
                 profile_label=profile_label,
                 project_name=project_name,
             )
-            inner = ChatGPTWebPageTransport(adapter, turn_timeout_s=timeout_s)
+            inner = ChatGPTWebPageTransport(
+                adapter,
+                turn_timeout_s=timeout_s,
+                max_request_chars=max_request_chars,
+            )
             return _SurfaceOwnedTransport(
                 inner,
                 surface=surface,

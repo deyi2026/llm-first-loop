@@ -6,6 +6,7 @@ import pytest
 
 from llm_loop.llm.chatgpt_page import PageBinding
 from llm_loop.llm.chatgpt_transport import ChatGPTWebPageTransport
+from llm_loop.llm.errors import LLMProtocolError, is_overflow_error
 from llm_loop.llm.chatgpt_web import (
     MODEL_PROTOCOL,
     ChatGPTModelProtocolError,
@@ -296,3 +297,49 @@ def test_chatgpt_web_wire_keeps_stable_tools_before_dynamic_dialogue_and_request
     assert first["stable_prefix_chars"] == second["stable_prefix_chars"]
     assert first["request_payload_sha256"] != second["request_payload_sha256"]
     assert first["authoritative"] is False
+
+
+def test_chatgpt_web_request_size_guard_fails_before_browser_send_and_is_overflow():
+    sent: list[str] = []
+    binding = PageBinding(
+        profile_label="fixture",
+        url="https://chatgpt.com/g/g-project/project",
+        title="ChatGPT",
+        project_ref="g-project",
+        conversation_id=None,
+    )
+
+    class Adapter:
+        def require_binding(self, _binding):
+            return binding
+
+        def observe_generation(self):
+            return SimpleNamespace(
+                streaming=False,
+                assistant_count=0,
+                latest_assistant_identity=None,
+            )
+
+        def send_text(self, text, **_kwargs):
+            sent.append(text)
+            raise AssertionError("browser send must not run for an oversized request")
+
+    transport = ChatGPTWebPageTransport(
+        Adapter(),
+        binding=binding,
+        max_request_chars=100,
+    )
+    request = {
+        "protocol": MODEL_PROTOCOL,
+        "request_id": "too-large",
+        "model": "web-gpt",
+        "messages": [{"role": "user", "content": "x" * 500}],
+        "tools": [],
+    }
+
+    with pytest.raises(LLMProtocolError, match="request_too_large") as caught:
+        transport.exchange(request)
+
+    assert sent == []
+    assert caught.value.provider == "chatgpt-web"
+    assert is_overflow_error(caught.value) is True

@@ -12,7 +12,12 @@ import json
 import logging
 from typing import Any
 
-from llm_loop.llm.chatgpt_web import MODEL_PROTOCOL, ChatGPTModelProtocolError
+from llm_loop.llm.chatgpt_web import (
+    CHATGPT_WEB_PROVIDER_ID,
+    MODEL_PROTOCOL,
+    ChatGPTModelProtocolError,
+)
+from llm_loop.llm.errors import LLMProtocolError
 
 from .chatgpt_page import ChatGPTPageAdapter, PageBinding, PageContractError
 
@@ -69,6 +74,7 @@ class ChatGPTWebPageTransport:
         send_timeout_s: float = 30.0,
         poll_ms: int = 100,
         stability_polls: int = 2,
+        max_request_chars: int = 150_000,
     ) -> None:
         self.adapter = adapter
         self.binding = binding or adapter.observe_identity()
@@ -76,6 +82,7 @@ class ChatGPTWebPageTransport:
         self.send_timeout_s = float(send_timeout_s)
         self.poll_ms = int(poll_ms)
         self.stability_polls = int(stability_polls)
+        self.max_request_chars = int(max_request_chars)
         self.last_prefix_diagnostics: dict[str, Any] = {}
 
     def exchange(
@@ -96,6 +103,13 @@ class ChatGPTWebPageTransport:
             self.last_prefix_diagnostics["request_payload_chars"],
         )
         rendered_request = self._render_request(request)
+        if self.max_request_chars > 0 and len(rendered_request) > self.max_request_chars:
+            raise LLMProtocolError(
+                "request_too_large: ChatGPT Web rendered request exceeds qualified text "
+                f"ingress limit (rendered_chars={len(rendered_request)}, "
+                f"max_request_chars={self.max_request_chars})",
+                provider=CHATGPT_WEB_PROVIDER_ID,
+            )
         request_id = str(request.get("request_id") or "")
         turn_timeout_s = float(timeout_s or self.turn_timeout_s)
         receipt = self.adapter.send_text(
