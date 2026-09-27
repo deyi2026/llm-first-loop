@@ -53,6 +53,46 @@ def test_deepseek_web_model_client_maps_lfl_tool_calls():
     ]
 
 
+def test_deepseek_web_model_client_accepts_json_encoded_tool_arguments():
+    transport = _Transport(
+        [
+            {
+                "content": None,
+                "tool_calls": [
+                    {"id": "c1", "name": "read_file", "arguments": '{"path":"x"}'}
+                ],
+                "finish_reason": "tool_calls",
+            }
+        ]
+    )
+    client = DeepSeekWebModelClient(transport)
+
+    response = client.chat([{"role": "user", "content": "read x"}], [{"type": "function"}])
+
+    assert [(c.id, c.name, c.arguments) for c in response.tool_calls] == [
+        ("c1", "read_file", {"path": "x"})
+    ]
+
+
+@pytest.mark.parametrize("arguments", ["not-json", "[]", '"text"', "null"])
+def test_deepseek_web_model_client_rejects_non_object_encoded_tool_arguments(arguments):
+    transport = _Transport(
+        [
+            {
+                "content": None,
+                "tool_calls": [
+                    {"id": "c1", "name": "read_file", "arguments": arguments}
+                ],
+                "finish_reason": "tool_calls",
+            }
+        ]
+    )
+    client = DeepSeekWebModelClient(transport)
+
+    with pytest.raises(DeepSeekModelProtocolError, match="arguments string"):
+        client.chat([{"role": "user", "content": "read x"}], [{"type": "function"}])
+
+
 def test_deepseek_request_local_reasoning_is_transport_only():
     transport = _Transport([_final("ok")])
     client = DeepSeekWebModelClient(transport)

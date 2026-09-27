@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import threading
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -331,6 +332,18 @@ def _validate_response(value: Any, *, request_id: str) -> dict[str, Any]:
         call_id = str(row["id"])
         name = str(row["name"])
         arguments = row["arguments"]
+        if isinstance(arguments, str):
+            try:
+                decoded_arguments = json.loads(arguments)
+            except json.JSONDecodeError as exc:
+                raise DeepSeekModelProtocolError(
+                    "tool_calls item arguments string must contain one JSON object"
+                ) from exc
+            if not isinstance(decoded_arguments, Mapping):
+                raise DeepSeekModelProtocolError(
+                    "tool_calls item arguments string must decode to object"
+                )
+            arguments = decoded_arguments
         if not call_id or call_id in seen or not name or not isinstance(arguments, Mapping):
             raise DeepSeekModelProtocolError("tool_calls item identity/arguments invalid")
         seen.add(call_id)

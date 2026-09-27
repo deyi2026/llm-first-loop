@@ -30,7 +30,9 @@ _REQUEST_PREAMBLE = (
     "web-native tools. Request LFL tools only through request.tools. Return exactly one "
     "fenced lfl-model-response block whose JSON object has exactly protocol, request_id, "
     "content, tool_calls, finish_reason. tool_calls items must have exactly id, name, "
-    "arguments. Use finish_reason=tool_calls when requesting LFL tools; use stop with "
+    "arguments. Each tool call id must be non-empty and unique, name must be non-empty, "
+    "and arguments must be a JSON object, never a JSON-encoded string. Use "
+    "finish_reason=tool_calls when requesting LFL tools; use stop with "
     "non-empty content for the final model answer. Echo protocol/request_id exactly.\n\n"
     "```lfl-model-request\n"
 )
