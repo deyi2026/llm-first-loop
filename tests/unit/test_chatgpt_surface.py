@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from llm_loop.llm.chatgpt_page import PageBinding
 from llm_loop.llm.chatgpt_surface import (
+    BrowserSurfaceLeaseError,
     BrowserSurfaceLeaseStore,
     ChatGPTSurface,
 )
@@ -211,6 +214,79 @@ def test_bind_conversation_persists_route_after_project_root_claim(tmp_path):
     assert lease.conversation_id == CONVERSATION_ID
     assert lease.conversation_url == CONVERSATION_URL
     assert BrowserSurfaceLeaseStore(tmp_path).load() == lease
+
+
+def test_bind_conversation_recovers_generic_chat_route_into_configured_project(tmp_path):
+    context = _Context()
+    surface, _pw = _surface(tmp_path, context)
+    page = surface.open()
+    assert page.url == PROJECT_URL
+
+    generic_url = f"https://chatgpt.com/c/{CONVERSATION_ID}"
+    page.url = generic_url
+    lease = surface.bind_conversation(
+        PageBinding(
+            profile_label="fixture-profile",
+            url=generic_url,
+            title="fixture",
+            project_ref=None,
+            conversation_id=CONVERSATION_ID,
+        )
+    )
+
+    assert page.url == CONVERSATION_URL
+    assert lease.project_ref == PROJECT_REF
+    assert lease.conversation_id == CONVERSATION_ID
+    assert lease.conversation_url == CONVERSATION_URL
+    assert BrowserSurfaceLeaseStore(tmp_path).load() == lease
+
+
+def test_bind_conversation_still_rejects_explicit_other_project(tmp_path):
+    context = _Context()
+    surface, _pw = _surface(tmp_path, context)
+    page = surface.open()
+    other_ref = "g-p-explicit-other-project"
+    other_url = f"https://chatgpt.com/g/{other_ref}/c/{CONVERSATION_ID}"
+    page.url = other_url
+
+    with pytest.raises(BrowserSurfaceLeaseError, match="another Project"):
+        surface.bind_conversation(
+            PageBinding(
+                profile_label="fixture-profile",
+                url=other_url,
+                title="fixture",
+                project_ref=other_ref,
+                conversation_id=CONVERSATION_ID,
+            )
+        )
+
+    assert page.url == other_url
+    assert surface.snapshot_identity().conversation_id is None
+
+
+def test_bind_conversation_rejects_non_chatgpt_route_without_project_identity(tmp_path):
+    context = _Context()
+    surface, _pw = _surface(tmp_path, context)
+    page = surface.open()
+    untrusted_url = f"https://example.invalid/c/{CONVERSATION_ID}"
+    page.url = untrusted_url
+
+    with pytest.raises(
+        BrowserSurfaceLeaseError,
+        match="without configured Project identity",
+    ):
+        surface.bind_conversation(
+            PageBinding(
+                profile_label="fixture-profile",
+                url=untrusted_url,
+                title="fixture",
+                project_ref=None,
+                conversation_id=CONVERSATION_ID,
+            )
+        )
+
+    assert page.url == untrusted_url
+    assert surface.snapshot_identity().conversation_id is None
 
 
 def test_reset_to_project_root_clears_outer_conversation_but_preserves_surface(tmp_path):

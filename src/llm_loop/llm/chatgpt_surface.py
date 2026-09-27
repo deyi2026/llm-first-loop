@@ -48,6 +48,15 @@ def _conversation_url(project_url: str, conversation_id: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, f"{path}/c/{conversation_id}", "", ""))
 
 
+def _is_generic_chatgpt_conversation_url(url: str, conversation_id: str) -> bool:
+    parts = urlsplit(url)
+    return (
+        parts.scheme == "https"
+        and parts.netloc == "chatgpt.com"
+        and parts.path.rstrip("/") == f"/c/{conversation_id}"
+    )
+
+
 @dataclass(frozen=True)
 class BrowserSurfaceLease:
     version: int
@@ -378,7 +387,7 @@ class ChatGPTSurface:
     def bind_conversation(self, binding: PageBinding) -> BrowserSurfaceLease:
         if self.lease is None or self.page is None:
             raise BrowserSurfaceLeaseError("surface is not open")
-        if binding.project_ref != self.project_ref:
+        if binding.project_ref is not None and binding.project_ref != self.project_ref:
             raise BrowserSurfaceLeaseError("cannot bind conversation from another Project")
         if not binding.conversation_id:
             return self.lease
@@ -387,9 +396,31 @@ class ChatGPTSurface:
                 "surface conversation drift: "
                 f"{self.lease.conversation_id!r} -> {binding.conversation_id!r}"
             )
+        conversation_url = binding.url
+        if binding.project_ref is None:
+            # ChatGPT can occasionally canonicalize a conversation created from a
+            # Project root to the generic `/c/<id>` route after the assistant has
+            # completed.  Missing Project identity is not evidence of a different
+            # Project, but it is also not safe durable recovery state: on restart
+            # the lease would claim the configured Project while the owned target
+            # still sits on a generic route.  Re-anchor that *same completed
+            # conversation* through the configured Project route and require the
+            # navigation to stabilize before persisting it.  An explicit non-empty
+            # different project_ref remains fail-closed above.
+            if not _is_generic_chatgpt_conversation_url(binding.url, binding.conversation_id):
+                raise BrowserSurfaceLeaseError(
+                    "cannot recover conversation without configured Project identity"
+                )
+            conversation_url = _conversation_url(self.project_url, binding.conversation_id)
+            current_url = str(getattr(self.page, "url", "") or "")
+            if current_url != binding.url:
+                raise BrowserSurfaceLeaseError("surface page changed before conversation bind")
+            self.page.goto(conversation_url, wait_until="commit", timeout=15_000)
+            self._wait_for_page_context(self.page, expected_url=conversation_url)
+            self._bring_to_front(self.page)
         self.lease = self.lease_store.update(
             conversation_id=binding.conversation_id,
-            conversation_url=binding.url,
+            conversation_url=conversation_url,
         )
         return self.lease
 
