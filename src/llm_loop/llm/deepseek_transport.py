@@ -171,6 +171,27 @@ class DeepSeekWebPageTransport:
         """Recover strict JSON from DeepSeek's flattened fenced-code rendering."""
 
         normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+        open_tag = f"<{cls.RESPONSE_FENCE}>"
+        close_tag = f"</{cls.RESPONSE_FENCE}>"
+        if normalized.startswith(open_tag):
+            if not normalized.endswith(close_tag):
+                raise DeepSeekModelProtocolError(
+                    "DeepSeek tagged response is missing closing lfl-model-response tag"
+                )
+            body = normalized[len(open_tag) : -len(close_tag)].strip()
+            decoder = json.JSONDecoder()
+            try:
+                _value, consumed = decoder.raw_decode(body)
+            except json.JSONDecodeError as exc:
+                raise DeepSeekModelProtocolError(
+                    f"invalid tagged lfl-model-response JSON: {exc}"
+                ) from exc
+            if body[consumed:].strip():
+                raise DeepSeekModelProtocolError(
+                    "unexpected DeepSeek tagged text after response JSON"
+                )
+            return body[:consumed]
+
         lines = normalized.split("\n")
         try:
             marker_index = next(

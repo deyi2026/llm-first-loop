@@ -170,6 +170,29 @@ def test_deepseek_rendered_code_fallback_rejects_extra_prose():
         )
 
 
+def test_deepseek_rendered_tag_fallback_accepts_single_json_object():
+    raw = DeepSeekWebPageTransport._extract_rendered_response_text(  # noqa: SLF001
+        '<lfl-model-response> {"protocol":"lfl-model/0.1","request_id":"r1",'
+        '"content":"","tool_calls":[{"id":"c1","name":"read_file",'
+        '"arguments":{"path":"x"}}],"finish_reason":"tool_calls"} '
+        '</lfl-model-response>'
+    )
+    assert json.loads(raw)["tool_calls"][0]["arguments"] == {"path": "x"}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<lfl-model-response>{"protocol":"lfl-model/0.1"}',
+        '<lfl-model-response>{"protocol":"lfl-model/0.1"} trailing</lfl-model-response>',
+        'prefix <lfl-model-response>{"protocol":"lfl-model/0.1"}</lfl-model-response>',
+    ],
+)
+def test_deepseek_rendered_tag_fallback_rejects_malformed_or_extra_text(text):
+    with pytest.raises(DeepSeekModelProtocolError):
+        DeepSeekWebPageTransport._extract_rendered_response_text(text)  # noqa: SLF001
+
+
 def test_deepseek_surface_owned_transport_resets_and_mechanically_controls_each_request():
     events = []
 
