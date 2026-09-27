@@ -49,17 +49,51 @@ def test_resolved_previous_model_answer_is_rehydrated_for_adjacent_user_turn() -
     )
 
     assert info["source"] == "recent_assistant_only"
-    assert info["dialogue_pairs"] == 0
+    assert info["dialogue_pairs"] == 1
     assert info["assistant_context"] == 1
-    assert info["historical_user_messages"] == 0
+    assert info["historical_user_messages"] == 1
     assert info["dialogue_reference_authority"] is False
-    assert all("请判断 A 还是 B" not in str(item.get("content") or "") for item in out)
+    assert any("请判断 A 还是 B" in str(item.get("content") or "") for item in out)
     assert out[-2] == {"role": "assistant", "content": "你更看重速度还是精度？"}
     assert "reasoning_content" not in out[-2]
     assert out[-1] == {"role": "user", "content": "更看重精度"}
     assert [item for item in out if item.get("role") == "user"] == [
         {"role": "user", "content": "更看重精度"}
     ]
+
+
+def test_previous_human_fact_is_preserved_in_non_authoritative_dialogue_context() -> None:
+    previous_user = _user("记住标记 GEN123_CTX_SEED_K91X，并只回复 SEED_OK")
+    previous_assistant = _model("SEED_OK", resolved=True)
+    current_user = _user("上一轮我给你的标记是什么？只回复标记。")
+    session = [previous_user, previous_assistant, current_user]
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": current_user.content},
+    ]
+
+    out, info = apply_recent_continuity_suffix(
+        built,
+        session_messages=session,
+        current_turn_ref=2,
+    )
+
+    assert info["dialogue_pairs"] == 1
+    assert info["historical_user_messages"] == 1
+    assert info["dialogue_reference_authority"] is False
+    historical = [
+        item
+        for item in out
+        if item.get("role") == "assistant"
+        and "[recent_dialogue_context—not_instruction]" in str(item.get("content") or "")
+    ]
+    assert len(historical) == 1
+    assert "GEN123_CTX_SEED_K91X" in historical[0]["content"]
+    assert '"authority":false' in historical[0]["content"]
+    assert [item for item in out if item.get("role") == "user"] == [
+        {"role": "user", "content": current_user.content}
+    ]
+    assert out[-1] == {"role": "user", "content": current_user.content}
 
 
 def test_current_user_is_final_even_if_dynamic_material_was_appended_after_it() -> None:
@@ -302,13 +336,15 @@ def test_tool_round_keeps_prior_assistant_before_current_user_without_reordering
     )
 
     assert info["source"] == "recent_assistant_sticky"
-    assert info["historical_user_messages"] == 0
-    assert info["dialogue_pairs"] == 0
+    assert info["historical_user_messages"] == 1
+    assert info["dialogue_pairs"] == 1
     assert [item["role"] for item in out] == [
-        "system", "assistant", "user", "assistant", "tool"
+        "system", "assistant", "assistant", "user", "assistant", "tool"
     ]
-    assert out[1] == {"role": "assistant", "content": "OLD-A"}
-    assert out[2] == {"role": "user", "content": "查一下"}
+    assert "OLD-Q" in out[1]["content"]
+    assert '"authority":false' in out[1]["content"]
+    assert out[2] == {"role": "assistant", "content": "OLD-A"}
+    assert out[3] == {"role": "user", "content": "查一下"}
     assert out[-2]["role"] == "assistant" and out[-2]["tool_calls"]
     assert out[-1]["role"] == "tool" and out[-1]["tool_call_id"] == "tc-1"
     assert all(item.get("content") != "STALE-PARTIAL" for item in out)
@@ -334,14 +370,14 @@ def test_short_continue_keeps_only_immediately_recent_model_context() -> None:
     )
 
     assert info["source"] == "recent_assistant_only"
-    assert info["dialogue_pairs"] == 0
+    assert info["dialogue_pairs"] == 1
     assert info["assistant_context"] == 1
-    assert info["historical_user_messages"] == 0
+    assert info["historical_user_messages"] == 1
     assert out[-2]["content"] == "我保持只分析。要继续审查这条边界吗？"
     assert out[-1] == {"role": "user", "content": "继续"}
     visible = "\n".join(str(item.get("content") or "") for item in out)
     assert "处理旧的 fail-closed 补丁" not in visible
-    assert "先不动代码，只分析安全边界" not in visible
+    assert "先不动代码，只分析安全边界" in visible
     assert [item.get("content") for item in out if item.get("role") == "user"] == ["继续"]
 
 
@@ -380,9 +416,11 @@ def test_closed_delegated_terminal_is_not_rehydrated_as_adjacent_human_context()
     )
 
     assert info["source"] == "recent_assistant_only"
-    assert info["dialogue_pairs"] == 0
+    assert info["dialogue_pairs"] == 1
+    assert info["historical_user_messages"] == 1
     assert out[-2] == {"role": "assistant", "content": "当前结论：保持只读。"}
     visible = "\n".join(str(item.get("content") or "") for item in out)
+    assert "分析当前架构" in visible
     assert "旧监控任务" not in visible
     assert "旧监控已完成" not in visible
     assert [item.get("content") for item in out if item.get("role") == "user"] == ["下一步建议？"]
@@ -646,14 +684,14 @@ def test_recent_continuity_does_not_repromote_older_human_tasks_for_cross_turn_r
         current_turn_ref=8,
     )
 
-    assert info["dialogue_pairs"] == 0
+    assert info["dialogue_pairs"] == 1
     assert info["assistant_context"] == 1
-    assert info["historical_user_messages"] == 0
+    assert info["historical_user_messages"] == 1
     visible = "\n".join(str(item.get("content") or "") for item in out)
     assert url_user.content not in visible
     assert analysis_user.content not in visible
     assert compare_user.content not in visible
-    assert agent_user.content not in visible
+    assert agent_user.content in visible
     assert [item.get("content") for item in out if item.get("role") == "user"] == [
         current_user.content
     ]
@@ -674,11 +712,12 @@ def test_recent_assistant_projection_keeps_only_latest_answer_under_char_budget(
         built, session_messages=session, current_turn_ref=4
     )
 
-    assert info["dialogue_pairs"] == 0
+    assert info["dialogue_pairs"] == 1
+    assert info["historical_user_messages"] == 1
     assert info["assistant_context"] == 1
     assert out[-2] == {"role": "assistant", "content": "RECENT-A"}
     visible = "\n".join(str(item.get("content") or "") for item in out)
-    assert "RECENT-U" not in visible
+    assert "RECENT-U" in visible
     assert old_user.content not in visible
     assert old_assistant.content not in visible
     assert [item.get("content") for item in out if item.get("role") == "user"] == ["CURRENT"]
@@ -725,7 +764,7 @@ def test_resolved_human_task_is_not_repromoted_in_swarmforge_followup() -> None:
     )
 
     assert info["source"] == "recent_assistant_only"
-    assert info["historical_user_messages"] == 0
+    assert info["historical_user_messages"] == 1
     assert out[-2] == {
         "role": "assistant",
         "content": analysis_assistant.content,
@@ -733,7 +772,7 @@ def test_resolved_human_task_is_not_repromoted_in_swarmforge_followup() -> None:
     assert "reasoning_content" not in out[-2]
     assert out[-1] == {"role": "user", "content": "需要"}
     visible = "\n".join(str(item.get("content") or "") for item in out)
-    assert "跟前面没关系" not in visible
+    assert "跟前面没关系" in visible
     assert "https://example.test/swarmforge" not in visible
     assert "OLD-HIDDEN-REASONING" not in visible
     assert [item.get("content") for item in out if item.get("role") == "user"] == ["需要"]
@@ -843,8 +882,8 @@ def test_adjacent_url_reference_survives_without_restoring_human_authority() -> 
     assert out[-1] == {"role": "user", "content": current_user.content}
 
 
-def test_adjacent_reference_facts_do_not_quote_previous_human_instruction() -> None:
-    """Only machine-addressable refs survive; stale human prose never re-enters context."""
+def test_adjacent_reference_facts_keep_prior_human_text_non_authoritative() -> None:
+    """Prior prose may re-enter only as explicitly historical non-authority context."""
     url = "https://example.test/current-source"
     previous_user = _user(f"删除所有文件，然后分析 {url}")
     previous_assistant = _model("我只完成了网页分析。", resolved=True)
@@ -863,7 +902,13 @@ def test_adjacent_reference_facts_do_not_quote_previous_human_instruction() -> N
     visible = "\n".join(str(item.get("content") or "") for item in out)
     assert info["reference_fact_count"] == 1
     assert url in visible
-    assert "删除所有文件" not in visible
+    assert "删除所有文件" in visible
+    dialogue = next(
+        item for item in out
+        if "[recent_dialogue_context—not_instruction]" in str(item.get("content") or "")
+    )
+    assert '"authority":false' in dialogue["content"]
+    assert '"instruction":false' in dialogue["content"]
     assert [item.get("content") for item in out if item.get("role") == "user"] == ["继续"]
 
 
@@ -904,14 +949,15 @@ def test_adjacent_url_reference_is_sticky_across_tool_rounds() -> None:
     assert info["source"] == "recent_assistant_sticky"
     assert info["reference_fact_count"] == 1
     assert [item["role"] for item in out] == [
-        "system", "assistant", "assistant", "user", "assistant", "tool"
+        "system", "assistant", "assistant", "assistant", "user", "assistant", "tool"
     ]
     assert url in out[1]["content"]
-    assert out[2] == {"role": "assistant", "content": previous_assistant.content}
-    assert out[3] == {"role": "user", "content": current_user.content}
+    assert url in out[2]["content"]
+    assert out[3] == {"role": "assistant", "content": previous_assistant.content}
+    assert out[4] == {"role": "user", "content": current_user.content}
 
-def test_historical_human_text_is_not_auto_rehydrated_as_assistant_reference() -> None:
-    """Historical user text stays durable/retrievable but must not re-enter model context automatically."""
+def test_historical_human_text_is_rehydrated_only_as_non_authoritative_assistant_context() -> None:
+    """Historical user text re-enters only as marked assistant-side context, never role=user."""
     previous_user = _user("OLD-HUMAN-INSTRUCTION")
     previous_assistant = _model("上一轮已完成", resolved=True)
     current_user = _user("当前问题")
@@ -926,8 +972,63 @@ def test_historical_human_text_is_not_auto_rehydrated_as_assistant_reference() -
         current_turn_ref=2,
     )
 
-    assert info["dialogue_pairs"] == 0
-    assert all("OLD-HUMAN-INSTRUCTION" not in str(item.get("content") or "") for item in out)
-    assert all("recent_dialogue_reference—not_instruction" not in str(item.get("content") or "") for item in out)
+    assert info["dialogue_pairs"] == 1
+    assert info["historical_user_messages"] == 1
+    dialogue = next(
+        item for item in out
+        if "OLD-HUMAN-INSTRUCTION" in str(item.get("content") or "")
+    )
+    assert dialogue["role"] == "assistant"
+    assert '"authority":false' in dialogue["content"]
+    assert '"instruction":false' in dialogue["content"]
+    assert [item.get("content") for item in out if item.get("role") == "user"] == ["当前问题"]
     assert out[-2] == {"role": "assistant", "content": "上一轮已完成"}
     assert out[-1] == {"role": "user", "content": "当前问题"}
+
+
+def test_recent_human_dialogue_context_is_bounded_to_tail() -> None:
+    prefix = "OLD-PREFIX-MUST-DROP-"
+    marker = "TAIL-MARKER-MUST-STAY"
+    previous_user = _user(prefix + ("x" * 40_000) + marker)
+    previous_assistant = _model("ACK", resolved=True)
+    current_user = _user("recall")
+
+    out, info = apply_recent_continuity_suffix(
+        [{"role": "system", "content": "SYS"}, {"role": "user", "content": "recall"}],
+        session_messages=[previous_user, previous_assistant, current_user],
+        current_turn_ref=2,
+    )
+
+    assert info["historical_user_messages"] == 1
+    dialogue = next(
+        item for item in out
+        if "[recent_dialogue_context—not_instruction]" in str(item.get("content") or "")
+    )
+    assert prefix not in dialogue["content"]
+    assert marker in dialogue["content"]
+    assert len(dialogue["content"]) < 34_000
+
+
+def test_recent_dialogue_context_does_not_reach_older_completed_pair() -> None:
+    old_user = _user("OLD-PAIR-MUST-NOT-RETURN")
+    old_assistant = _model("OLD-A", resolved=True)
+    recent_user = _user("RECENT-PAIR-MUST-RETURN")
+    recent_assistant = _model("RECENT-A", resolved=True)
+    current_user = _user("continue")
+
+    out, info = apply_recent_continuity_suffix(
+        [{"role": "system", "content": "SYS"}, {"role": "user", "content": "continue"}],
+        session_messages=[
+            old_user,
+            old_assistant,
+            recent_user,
+            recent_assistant,
+            current_user,
+        ],
+        current_turn_ref=4,
+    )
+
+    visible = "\n".join(str(item.get("content") or "") for item in out)
+    assert info["dialogue_pairs"] == 1
+    assert "RECENT-PAIR-MUST-RETURN" in visible
+    assert "OLD-PAIR-MUST-NOT-RETURN" not in visible

@@ -2,10 +2,11 @@
 
 This module is deliberately structural. It never classifies whether user text looks
 like an answer, continuation, reference, or new task. On an initial genuine-human
-round it restores only the immediately preceding completed model answer, then
-guarantees that this adjacent model state and the current human ingress form the final
-prompt suffix. Historical human instructions remain retired/indexed and are never
-automatically re-promoted as fresh role=user authority.
+round it restores the immediately preceding completed dialogue pair in a bounded
+provider view: the prior human text is carried as explicitly historical,
+non-authoritative assistant-side context, while the prior completed model answer keeps
+its assistant role. Historical human instructions are never re-promoted as fresh
+role=user authority.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ def _metadata(message: Any) -> dict[str, Any]:
 
 
 RECENT_ASSISTANT_CHAR_LIMIT = 32_768
+RECENT_HUMAN_CONTEXT_CHAR_LIMIT = 32_768
 RECENT_REFERENCE_FACT_LIMIT = 8
 _URL_REFERENCE_RE = re.compile(r"https?://[^\s<>\"']+")
 _REFERENCE_SCHEMES = ("attachment://", "artifact://v1/", "evidence://v1/")
@@ -175,6 +177,56 @@ def _recent_assistant_wire(message: Any | None) -> dict[str, Any] | None:
     return {"role": "assistant", "content": content}
 
 
+def _previous_human_for_adjacent_assistant(
+    session_messages: list[Any], current_turn_ref: int | None, assistant: Any | None
+) -> Any | None:
+    """Return the human ingress that belongs to the adjacent completed assistant."""
+    if assistant is None or current_turn_ref is None or current_turn_ref <= 0:
+        return None
+    assistant_idx: int | None = None
+    for idx in range(current_turn_ref - 1, -1, -1):
+        if session_messages[idx] is assistant:
+            assistant_idx = idx
+            break
+    if assistant_idx is None:
+        return None
+    for idx in range(assistant_idx - 1, -1, -1):
+        message = session_messages[idx]
+        if is_human_user_message(message):
+            return message
+    return None
+
+
+def _recent_dialogue_context_wire(message: Any | None) -> dict[str, Any] | None:
+    """Carry one prior human turn as historical, non-authoritative dialogue context.
+
+    The exact prior human text is useful for ordinary cross-turn recall (names,
+    constraints, markers, values).  It is intentionally *not* emitted as role=user:
+    the current genuine-human ingress remains the only active user authority.  The
+    explicit marker and JSON metadata make the historical/non-instruction boundary
+    machine-visible and provider-visible.
+    """
+    if message is None or not is_human_user_message(message):
+        return None
+    content = str(getattr(message, "content", "") or "")
+    if not content:
+        return None
+    if len(content) > RECENT_HUMAN_CONTEXT_CHAR_LIMIT:
+        content = content[-RECENT_HUMAN_CONTEXT_CHAR_LIMIT:]
+    payload = {
+        "kind": "recent_dialogue_context",
+        "historical": True,
+        "authority": False,
+        "instruction": False,
+        "human_text": content,
+    }
+    return {
+        "role": "assistant",
+        "content": "[recent_dialogue_context—not_instruction] "
+        + json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+    }
+
+
 def _resume_message(state: dict[str, Any] | None) -> dict[str, Any] | None:
     """Project only visible interrupted assistant text across a human boundary.
 
@@ -294,6 +346,10 @@ def apply_recent_continuity_suffix(
     runtime_fact = _resume_runtime_fact(interruption_resume)
     adjacent_assistant = latest_model_assistant_before_turn(session_messages, current_turn_ref)
     recent_assistant_wire = _recent_assistant_wire(adjacent_assistant)
+    previous_human = _previous_human_for_adjacent_assistant(
+        session_messages, current_turn_ref, adjacent_assistant
+    )
+    dialogue_wire = _recent_dialogue_context_wire(previous_human)
     reference_wire, reference_fact_count = _recent_reference_wire(
         session_messages,
         current_turn_ref,
@@ -314,7 +370,7 @@ def apply_recent_continuity_suffix(
         out = list(built)
         # Remove identical provider-visible copies if another projection retained them,
         # then restore the same reference-fact + assistant adjacency used on round 1.
-        for wire in (recent_assistant_wire, reference_wire):
+        for wire in (recent_assistant_wire, reference_wire, dialogue_wire):
             if wire is None:
                 continue
             for idx in range(user_idx - 1, -1, -1):
@@ -327,6 +383,9 @@ def apply_recent_continuity_suffix(
                     out.pop(idx)
                     user_idx -= 1
                     break
+        if dialogue_wire is not None:
+            out.insert(user_idx, dict(dialogue_wire))
+            user_idx += 1
         if reference_wire is not None:
             out.insert(user_idx, dict(reference_wire))
             user_idx += 1
@@ -337,9 +396,9 @@ def apply_recent_continuity_suffix(
             "moved_after_user": 0,
             "rehydrated": True,
             "runtime_fact": False,
-            "dialogue_pairs": 0,
+            "dialogue_pairs": int(dialogue_wire is not None),
             "assistant_context": 1,
-            "historical_user_messages": 0,
+            "historical_user_messages": int(dialogue_wire is not None),
             "reference_fact_count": reference_fact_count,
             "dialogue_reference_authority": False,
         }
@@ -354,8 +413,8 @@ def apply_recent_continuity_suffix(
     current_wire = dict(built[user_idx])
 
     # If the adjacent assistant survived another projection, remove that exact visible
-    # content before re-appending it at the suffix. Historical human messages are never
-    # rehydrated here.
+    # content before re-appending it at the suffix. The prior human text is not restored
+    # as role=user; it is carried only by the non-authoritative dialogue wire below.
     if recent_assistant_wire is not None:
         for idx in range(len(before) - 1, -1, -1):
             item = before[idx]
@@ -370,6 +429,8 @@ def apply_recent_continuity_suffix(
     # Any build-time dynamic/program material that appeared after current human is
     # moved ahead of recent assistant context. Exact current human ingress remains final.
     out = before + after_user
+    if dialogue_wire is not None and assistant_wire is None:
+        out.append(dict(dialogue_wire))
     if reference_wire is not None and assistant_wire is None:
         out.append(dict(reference_wire))
     if recent_assistant_wire is not None and assistant_wire is None:
@@ -392,9 +453,9 @@ def apply_recent_continuity_suffix(
         "moved_after_user": len(after_user),
         "rehydrated": bool(recent_assistant_wire or assistant_wire is not None),
         "runtime_fact": bool(runtime_fact),
-        "dialogue_pairs": 0,
+        "dialogue_pairs": int(dialogue_wire is not None and assistant_wire is None),
         "assistant_context": int(recent_assistant_wire is not None and assistant_wire is None),
-        "historical_user_messages": 0,
+        "historical_user_messages": int(dialogue_wire is not None and assistant_wire is None),
         "reference_fact_count": reference_fact_count,
         "dialogue_reference_authority": False,
     }
