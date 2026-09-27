@@ -1105,6 +1105,7 @@ def _stream_background(
                             "tool_call_id": getattr(tool_result, "tool_call_id", ""),
                             "status": getattr(tool_result, "status", ""),
                             "duration_ms": getattr(tool_result, "duration_ms", None),
+                            "result_chars": getattr(tool_result, "result_chars", None),
                         },
                     )
             elif etype == "done":
@@ -1423,6 +1424,7 @@ def chat_stream(
                                 "tool_call_id": delta.tool_result.tool_call_id,
                                 "status": delta.tool_result.status,
                                 "duration_ms": delta.tool_result.duration_ms,
+                                "result_chars": delta.tool_result.result_chars,
                             },
                         )
                 except StopIteration as exc:

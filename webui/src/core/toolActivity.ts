@@ -92,6 +92,9 @@ export function settleToolResult(
     ...(typeof event.duration_ms === "number" && Number.isFinite(event.duration_ms)
       ? { durationMs: event.duration_ms }
       : {}),
+    ...(typeof event.result_chars === "number" && Number.isFinite(event.result_chars)
+      ? { resultChars: event.result_chars }
+      : {}),
   };
   if (index >= 0) next[index] = settled;
   else next.push(settled);

@@ -5,7 +5,7 @@ import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/re
 import { Composer } from "./components/conversation/Composer";
 import { MessageList } from "./components/conversation/MessageList";
 import { sessionStore } from "./core/stores";
-import { conversationStore as conv } from "./core/conversation";
+import { checkBackgroundRun, conversationStore as conv } from "./core/conversation";
 
 function sseStream(frames: string[]): ReadableStream<Uint8Array> {
   const enc = new TextEncoder();
@@ -160,6 +160,90 @@ describe("发送链路", () => {
       expect(screen.getByText("识别完成：这是一张测试图片")).toBeInTheDocument();
     }, { timeout: 3000 });
     expect(conv.getState().streaming).toBe(false); // 流式状态复位
+  });
+
+  it("SSE 机械事实驱动进展阶段：工具开始→整理结果→生成回答", async () => {
+    const enc = new TextEncoder();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/chat/stream")) {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller;
+            controller.enqueue(enc.encode('data: {"type":"run_started","data":{"session_id":"s1","run_generation":"g-progress"}}\n\n'));
+            controller.enqueue(enc.encode('data: {"type":"tool_round","data":{"tool_call_id":"c1","tool_name":"read_file","round_index":1,"args_summary":"{\\"path\\":\\"README.md\\"}"}}\n\n'));
+          },
+        }), { status: 200 });
+      }
+      if (url.includes("/api/v1/models")) return new Response(JSON.stringify({ models: [] }), { status: 200 });
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    render(<><MessageList /><Composer /></>);
+    fireEvent.change(screen.getByTestId("composer-input"), { target: { value: "检查项目" } });
+    fireEvent.click(screen.getByText("发送"));
+
+    await waitFor(() => {
+      const st = conv.getState();
+      expect(st.messages[st.streamingIndex]?.progressStage).toBe("tool");
+      expect(st.messages[st.streamingIndex]?.toolActivities?.[0]?.status).toBe("running");
+    });
+
+    streamController!.enqueue(enc.encode('data: {"type":"tool_result","data":{"tool_call_id":"c1","tool_name":"read_file","status":"success","duration_ms":25,"result_chars":2400}}\n\n'));
+    await waitFor(() => {
+      const st = conv.getState();
+      expect(st.messages[st.streamingIndex]?.progressStage).toBe("integrating");
+      expect(screen.getByTestId("progress-card").textContent).toContain("最近结果：读取文件 · 2.4k 字符 · 25ms");
+    });
+
+    streamController!.enqueue(enc.encode('data: {"type":"answer_delta","data":{"data":"结论"}}\n\n'));
+    await waitFor(() => {
+      const st = conv.getState();
+      expect(st.messages[st.streamingIndex]?.progressStage).toBe("answering");
+      expect(screen.getByTestId("progress-card").textContent).toContain("正在生成回答");
+    });
+
+    streamController!.enqueue(enc.encode(`data: {"type":"done","data":${JSON.stringify({ ...DONE, final_answer: "结论" })}}\n\n`));
+    streamController!.close();
+    await waitFor(() => expect(conv.getState().streaming).toBe(false));
+  });
+
+  it("刷新/切回后 resume 重放工具事实，能恢复实时进展卡阶段", async () => {
+    const enc = new TextEncoder();
+    let resumeController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/chat/stream/status")) {
+        return new Response(JSON.stringify({ running: true, run_generation: "g-replay" }), { status: 200 });
+      }
+      if (url.includes("/api/v1/chat/stream")) {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            resumeController = controller;
+            controller.enqueue(enc.encode('data: {"type":"tool_round","data":{"tool_call_id":"c-replay","tool_name":"search_text","round_index":2,"args_summary":"{\\"query\\":\\"needle\\"}"}}\n\n'));
+          },
+        }), { status: 200 });
+      }
+      if (url.includes("/api/v1/sessions/") && url.includes("/messages")) {
+        return new Response(JSON.stringify({ messages: [], has_more: false }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+
+    const resume = checkBackgroundRun("s1");
+    await waitFor(() => {
+      const st = conv.getState();
+      expect(st.streaming).toBe(true);
+      expect(st.messages[st.streamingIndex]?.progressStage).toBe("tool");
+      expect(st.messages[st.streamingIndex]?.toolActivities?.[0]).toMatchObject({
+        name: "search_text",
+        status: "running",
+      });
+    });
+
+    resumeController!.enqueue(enc.encode(`data: {"type":"done","data":${JSON.stringify(DONE)}}\n\n`));
+    resumeController!.close();
+    await resume;
   });
 
   it("流式异常（网络错误）：输入仍清空 + 错误反馈可见 + streaming 复位", async () => {

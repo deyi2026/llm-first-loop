@@ -433,6 +433,7 @@ class ToolCycleService:
                             tool_call_id=tc.id,
                             status=result.status.value,
                             duration_ms=result.duration_ms,
+                            result_chars=len(result.content or ""),
                         ),
                     )
                 # EVO-20260903-ba25857b Phase 0: executed receipt facts + flush.

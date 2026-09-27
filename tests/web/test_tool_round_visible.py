@@ -78,6 +78,8 @@ def test_sse_tool_round_event(build_test_engine, tmp_path):
     assert result["status"] == "success"
     assert isinstance(result["duration_ms"], (int, float))
     assert result["duration_ms"] >= 0
+    assert isinstance(result["result_chars"], int)
+    assert result["result_chars"] > 0
     types = [e["type"] for e in events]
     assert types.index("tool_round") < types.index("tool_result") < types.index("done")
 
@@ -108,6 +110,8 @@ def test_sse_background_runner_emits_exact_tool_result(build_test_engine, tmp_pa
     assert len(result_events) == 1
     assert result_events[0]["data"]["tool_call_id"] == "bg-c1"
     assert result_events[0]["data"]["status"] == "success"
+    assert isinstance(result_events[0]["data"]["result_chars"], int)
+    assert result_events[0]["data"]["result_chars"] > 0
     types = [e["type"] for e in events]
     assert types.index("tool_round") < types.index("tool_result") < types.index("done")
 

@@ -3,7 +3,14 @@
 // 工具行折叠链、代码块 banner（语言+复制）+ 高亮 + 长块分块、笔记 footer）
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import type { AttachmentFact, ChatMessage, ToolActivity, ToolActivityStatus, ToolCallInfo } from "../../core/types";
+import type {
+  AttachmentFact,
+  ChatMessage,
+  ProgressStage,
+  ToolActivity,
+  ToolActivityStatus,
+  ToolCallInfo,
+} from "../../core/types";
 import {
   ensureMathRenderer,
   hasMathCandidate,
@@ -303,6 +310,107 @@ function ToolActivityPanel({ activities, streaming }: { activities: ToolActivity
         </div>
       ) : null}
     </div>
+  );
+}
+
+const PROGRESS_HEARTBEAT_MS = 12_000;
+
+function progressStageLabel(stage: ProgressStage | undefined): string {
+  switch (stage) {
+    case "preparing": return "正在准备";
+    case "analyzing": return "正在分析";
+    case "tool": return "正在使用工具";
+    case "integrating": return "正在整理结果";
+    case "answering": return "正在生成回答";
+    case "recovering": return "正在恢复连接";
+    default: return "正在处理";
+  }
+}
+
+function progressSnapshot(msg: ChatMessage, now: number): {
+  stage: string;
+  summary: string;
+  next: string;
+  heartbeat: string | null;
+} {
+  const activities = msg.toolActivities ?? [];
+  const running = activities.filter((item) => item.status === "running");
+  const issues = activities.filter((item) =>
+    ["failure", "error", "blocked", "unauthorized", "timeout", "cancelled", "interrupted", "unknown"].includes(item.status)
+  );
+  const completed = activities.length - running.length;
+  const activeTool = running.at(-1);
+  const latestSettled = [...activities].reverse().find((item) => item.status !== "running");
+  const stage = progressStageLabel(msg.progressStage);
+
+  let summary = "正在提交请求并等待运行确认。";
+  let next = "收到运行回执后继续显示模型与工具阶段。";
+  if (msg.progressStage === "recovering") {
+    summary = "正在重新连接当前后台 run，并恢复可重放的执行事实。";
+    next = "恢复后继续显示原 run 的工具和输出进展。";
+  } else if (activeTool) {
+    const subtitle = activitySubtitle(activeTool);
+    summary = `正在执行 ${toolDisplayName(activeTool.name)}${subtitle ? ` · ${subtitle}` : ""}`;
+    next = "等待工具返回后继续分析。";
+  } else if (msg.progressStage === "integrating" || (activities.length > 0 && !msg.content)) {
+    const resultSize = latestSettled && typeof latestSettled.resultChars === "number"
+      ? latestSettled.resultChars >= 1000
+        ? `${(latestSettled.resultChars / 1000).toFixed(1)}k 字符`
+        : `${latestSettled.resultChars} 字符`
+      : "";
+    const duration = latestSettled && typeof latestSettled.durationMs === "number"
+      ? latestSettled.durationMs >= 1000
+        ? `${(latestSettled.durationMs / 1000).toFixed(1)}s`
+        : `${Math.round(latestSettled.durationMs)}ms`
+      : "";
+    const latestFact = latestSettled
+      ? [toolDisplayName(latestSettled.name), resultSize, duration].filter(Boolean).join(" · ")
+      : "";
+    summary = `已完成 ${completed} 个工具步骤${issues.length ? `，其中 ${issues.length} 个需要关注` : ""}${latestFact ? `。最近结果：${latestFact}` : "。"}`;
+    next = issues.length ? "根据现有结果判断是否需要恢复或替代路径。" : "正在整合结果并决定下一步。";
+  } else if (msg.progressStage === "answering" || msg.content) {
+    summary = activities.length
+      ? `已处理 ${completed} 个工具步骤，正在组织最终回答。`
+      : "已有足够信息，正在组织回答。";
+    next = "继续输出最终内容。";
+  } else if (msg.progressStage === "analyzing" || msg.reasoningContent) {
+    summary = activities.length
+      ? `已获得 ${completed} 个工具结果，正在继续分析。`
+      : "正在分析当前请求并确定所需步骤。";
+    next = "需要外部证据时会显示相应工具调用。";
+  }
+
+  const updatedAt = msg.progressUpdatedAt ?? msg.streamStartedAt ?? now;
+  const idleMs = Math.max(0, now - updatedAt);
+  const heartbeat = idleMs >= PROGRESS_HEARTBEAT_MS
+    ? activeTool
+      ? `${toolDisplayName(activeTool.name)} 仍在执行 · ${Math.floor(idleMs / 1000)} 秒无新事件`
+      : `仍在处理 · ${Math.floor(idleMs / 1000)} 秒无新事件`
+    : null;
+  return { stage, summary, next, heartbeat };
+}
+
+function ProgressCard({ msg }: { msg: ChatMessage }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!msg.streaming) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [msg.streaming]);
+  const snapshot = useMemo(() => progressSnapshot(msg, now), [msg, now]);
+  const elapsedMs = Math.max(0, now - (msg.streamStartedAt ?? now));
+
+  return (
+    <section className="v2-progress-card" data-testid="progress-card" aria-live="polite">
+      <div className="v2-progress-head">
+        <span className="v2-progress-dot" aria-hidden="true" />
+        <strong>{snapshot.stage}</strong>
+        <span className="v2-progress-elapsed">{Math.floor(elapsedMs / 1000)}s</span>
+      </div>
+      <div className="v2-progress-summary">{snapshot.summary}</div>
+      <div className="v2-progress-next"><span>预计下一步</span>{snapshot.next}</div>
+      {snapshot.heartbeat ? <div className="v2-progress-heartbeat">{snapshot.heartbeat}</div> : null}
+    </section>
   );
 }
 
@@ -614,6 +722,7 @@ function MessageItemImpl({
   return (
     <div className="v2-msg assistant" data-testid="msg-assistant">
       <div className="v2-msg-body">
+        {msg.streaming ? <ProgressCard msg={msg} /> : null}
         {msg.reasoningContent ? (
           <ThinkingBlock text={msg.reasoningContent} streaming={msg.streaming} />
         ) : null}

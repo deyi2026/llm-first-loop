@@ -247,6 +247,75 @@ describe("MessageItem", () => {
     expect(screen.queryByText("读取文件")).not.toBeInTheDocument();
   });
 
+  it("实时任务进展卡：只显示高层阶段、工具摘要和下一步，不复述隐藏推理正文", () => {
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "",
+          reasoningContent: "PRIVATE_REASONING_SHOULD_NOT_ENTER_PROGRESS_CARD",
+          streaming: true,
+          streamStartedAt: Date.now() - 3_000,
+          progressUpdatedAt: Date.now(),
+          progressStage: "tool",
+          toolActivities: [{
+            id: "c-progress",
+            name: "read_file",
+            status: "running",
+            arguments: { path: "src/example.py" },
+          }],
+        }}
+      />
+    );
+    const card = screen.getByTestId("progress-card");
+    expect(within(card).getByText("正在使用工具")).toBeInTheDocument();
+    expect(card.textContent).toContain("正在执行 读取文件 · src/example.py");
+    expect(card.textContent).toContain("预计下一步");
+    expect(card.textContent).toContain("等待工具返回后继续分析");
+    expect(card.textContent).not.toContain("PRIVATE_REASONING_SHOULD_NOT_ENTER_PROGRESS_CARD");
+  });
+
+  it("实时任务进展卡：静默 12 秒后显示 heartbeat，明确不是卡死", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-27T08:00:20Z"));
+      render(
+        <MessageItem
+          msg={{
+            role: "assistant",
+            content: "",
+            streaming: true,
+            streamStartedAt: Date.now() - 20_000,
+            progressUpdatedAt: Date.now() - 13_000,
+            progressStage: "tool",
+            toolActivities: [{ id: "c-slow", name: "execute_command", status: "running" }],
+          }}
+        />
+      );
+      const card = screen.getByTestId("progress-card");
+      expect(card.textContent).toContain("运行命令 仍在执行 · 13 秒无新事件");
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
+  it("终态消息不保留实时任务进展卡，避免污染最终回答", () => {
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "完成",
+          streaming: false,
+          progressStage: "answering",
+          progressUpdatedAt: Date.now(),
+        }}
+      />
+    );
+    expect(screen.queryByTestId("progress-card")).toBeNull();
+    expect(screen.getByText("完成")).toBeInTheDocument();
+  });
+
   it("旧backend无exact status的completed保持中性，不渲染成功色", () => {
     render(
       <MessageItem

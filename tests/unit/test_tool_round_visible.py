@@ -31,6 +31,7 @@ def test_stream_delta_tool_result_exact_terminal_fact():
         tool_call_id="call_done",
         status="failure",
         duration_ms=12.5,
+        result_chars=321,
     )
     d = StreamDelta(text="", tool_result=info)
     assert d.tool_round is None
@@ -38,6 +39,7 @@ def test_stream_delta_tool_result_exact_terminal_fact():
     assert d.tool_result.tool_call_id == "call_done"
     assert d.tool_result.status == "failure"
     assert d.tool_result.duration_ms == 12.5
+    assert d.tool_result.result_chars == 321
 
 
 def test_tool_round_info_defaults():

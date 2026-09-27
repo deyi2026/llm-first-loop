@@ -449,6 +449,66 @@
 }
 
 /* ── Tool Activity：产品级实时工具过程（协议事实的 UI projection） ── */
+.v2-progress-card {
+  max-width: min(720px, 100%);
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-md);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 88%, transparent);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.v2-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.v2-progress-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: v2-tool-pulse 1.25s ease-in-out infinite;
+}
+
+.v2-progress-elapsed {
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.v2-progress-summary {
+  margin-top: 5px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.v2-progress-next {
+  display: flex;
+  gap: 6px;
+  margin-top: 3px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.v2-progress-next > span {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  font-weight: 600;
+}
+
+.v2-progress-heartbeat {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .v2-tool-activity {
   display: flex;
   flex-direction: column;

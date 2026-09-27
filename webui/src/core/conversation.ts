@@ -340,6 +340,8 @@ async function resumeBackgroundStream(
         reasoningContent: "",
         note: "连接中断，正在恢复…",
         streaming: true,
+        progressStage: "recovering",
+        progressUpdatedAt: Date.now(),
       });
     } else {
       const placeholder: ChatMessage = {
@@ -350,6 +352,8 @@ async function resumeBackgroundStream(
         note: null,
         streaming: true,
         streamStartedAt: Date.now(),
+        progressStage: "recovering",
+        progressUpdatedAt: Date.now(),
         tokens_in: 0,
         tokens_out: 0,
         tokens_cache_hit: 0,
@@ -365,8 +369,16 @@ async function resumeBackgroundStream(
     const acc = { answer: "", reasoning: "" };
     const sid = sessionId;
     // delta 补丁合并（同 sendMessage）：resume 重放+实时流式同样高频
-    const patchAnswer = makeCoalescedPatch(() => patchStreaming({ content: acc.answer }));
-    const patchReasoning = makeCoalescedPatch(() => patchStreaming({ reasoningContent: acc.reasoning }));
+    const patchAnswer = makeCoalescedPatch(() => patchStreaming({
+      content: acc.answer,
+      progressStage: "answering",
+      progressUpdatedAt: Date.now(),
+    }));
+    const patchReasoning = makeCoalescedPatch(() => patchStreaming({
+      reasoningContent: acc.reasoning,
+      progressStage: "analyzing",
+      progressUpdatedAt: Date.now(),
+    }));
     const outcome = await streamChatRequest(
       { message: "resume", session_id: sid, resume: true, run_generation: runGeneration },
       {
@@ -387,7 +399,11 @@ async function resumeBackgroundStream(
           const active = current.streamingIndex >= 0
             ? current.messages[current.streamingIndex]?.toolActivities
             : undefined;
-          patchStreaming({ toolActivities: startToolActivity(active, event) });
+          patchStreaming({
+            toolActivities: startToolActivity(active, event),
+            progressStage: "tool",
+            progressUpdatedAt: Date.now(),
+          });
         },
         onToolResult: (event: ToolResultEvent) => {
           if (sessionStore.getState().currentSessionId !== sid) return;
@@ -395,7 +411,11 @@ async function resumeBackgroundStream(
           const active = current.streamingIndex >= 0
             ? current.messages[current.streamingIndex]?.toolActivities
             : undefined;
-          patchStreaming({ toolActivities: settleToolResult(active, event) });
+          patchStreaming({
+            toolActivities: settleToolResult(active, event),
+            progressStage: "integrating",
+            progressUpdatedAt: Date.now(),
+          });
         },
       },
       controller.signal
@@ -539,6 +559,8 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     note: null,
     streaming: true,
     streamStartedAt: Date.now(),
+    progressStage: "preparing",
+    progressUpdatedAt: Date.now(),
     ts: localSendTs,
     tokens_in: 0,
     tokens_out: 0,
@@ -579,8 +601,16 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
   abortSessionId = ownerSessionId;
   const acc = { answer: "", reasoning: "" };
   // delta 补丁合并（见 makeCoalescedPatch 注释）：高频 delta 不逐条触发渲染
-  const patchAnswer = makeCoalescedPatch(() => patchStreaming({ content: acc.answer }));
-  const patchReasoning = makeCoalescedPatch(() => patchStreaming({ reasoningContent: acc.reasoning }));
+  const patchAnswer = makeCoalescedPatch(() => patchStreaming({
+    content: acc.answer,
+    progressStage: "answering",
+    progressUpdatedAt: Date.now(),
+  }));
+  const patchReasoning = makeCoalescedPatch(() => patchStreaming({
+    reasoningContent: acc.reasoning,
+    progressStage: "analyzing",
+    progressUpdatedAt: Date.now(),
+  }));
 
   const outcome = await streamChatRequest(
     body,
@@ -608,6 +638,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
         if (sessionStore.getState().currentSessionId !== sid && !sessionId) {
           sessionStore.setCurrentSession(sid);
         }
+        patchStreaming({ progressStage: "analyzing", progressUpdatedAt: Date.now() });
       },
       onAnswerDelta: (d) => {
         // 会话守卫（2026-08-23 多会话串扰修复）: 当前会话已切换 → 停止渲染（防 A 串写 B 视图）
@@ -626,7 +657,12 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
         const active = current.streamingIndex >= 0
           ? current.messages[current.streamingIndex]?.toolActivities
           : undefined;
-        patchStreaming({ toolActivities: startToolActivity(active, event), note: null });
+        patchStreaming({
+          toolActivities: startToolActivity(active, event),
+          note: null,
+          progressStage: "tool",
+          progressUpdatedAt: Date.now(),
+        });
       },
       onToolResult: (event: ToolResultEvent) => {
         if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
@@ -634,7 +670,12 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
         const active = current.streamingIndex >= 0
           ? current.messages[current.streamingIndex]?.toolActivities
           : undefined;
-        patchStreaming({ toolActivities: settleToolResult(active, event), note: null });
+        patchStreaming({
+          toolActivities: settleToolResult(active, event),
+          note: null,
+          progressStage: "integrating",
+          progressUpdatedAt: Date.now(),
+        });
       },
     },
     controller.signal

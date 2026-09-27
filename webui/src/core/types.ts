@@ -33,6 +33,8 @@ export interface ToolResultEvent {
   tool_name?: string;
   status?: string;
   duration_ms?: number | null;
+  /** Mechanical result size only; result text remains in the existing detailed tool surface. */
+  result_chars?: number | null;
 }
 
 export interface ToolActivity {
@@ -44,7 +46,20 @@ export interface ToolActivity {
   arguments?: Record<string, unknown>;
   resultContent?: string;
   durationMs?: number;
+  resultChars?: number;
 }
+
+/**
+ * UI-only high-level run phase.  This is deliberately mechanical and must not
+ * contain or derive hidden chain-of-thought text.
+ */
+export type ProgressStage =
+  | "preparing"
+  | "analyzing"
+  | "tool"
+  | "integrating"
+  | "answering"
+  | "recovering";
 
 export interface ToolCallDelta {
   id?: string;
@@ -71,6 +86,10 @@ export interface ChatMessage {
   toolCalls?: ToolCallInfo[] | null;
   /** UI-only projection of tool lifecycle; never persisted back into session history. */
   toolActivities?: ToolActivity[];
+  /** UI-only high-level progress projection for a live run. */
+  progressStage?: ProgressStage;
+  /** Last mechanical progress event timestamp (ms since epoch), used for local heartbeat. */
+  progressUpdatedAt?: number | null;
   toolCallId?: string | null;
   toolName?: string | null;
   /** Exact persisted tool-result status for role=tool history rows. */

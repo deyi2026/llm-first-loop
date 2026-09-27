@@ -153,6 +153,8 @@ class ToolResultInfo:
     tool_call_id: str
     status: str
     duration_ms: float | None = None
+    # Mechanical size only.  Never carries result text or hidden reasoning.
+    result_chars: int | None = None
 
 
 @dataclass
