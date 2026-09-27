@@ -342,6 +342,15 @@ class ChatGPTSurface:
                 if page is not None:
                     expected_url = lease.conversation_url or self.project_url
                     try:
+                        current_url = str(getattr(page, "url", "") or "")
+                        if current_url != expected_url:
+                            # Exact target-id ownership was already proven above.
+                            # If that owned tab is left on a stale route (for example
+                            # ChatGPT canonicalized a Project conversation to generic
+                            # `/c/<id>` before the previous process exited), restore
+                            # the durable lease route on the same target.  Never use
+                            # URL matching to choose a different tab here.
+                            page.goto(expected_url, wait_until="commit", timeout=15_000)
                         self._wait_for_page_context(page, expected_url=expected_url)
                     except BrowserSurfaceLeaseError:
                         is_closed = getattr(page, "is_closed", None)

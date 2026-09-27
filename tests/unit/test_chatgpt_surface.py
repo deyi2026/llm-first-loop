@@ -165,6 +165,45 @@ def test_restart_reacquires_exact_target_id_among_duplicate_urls(tmp_path):
     assert page.fronted == 2
 
 
+def test_restart_restores_exact_owned_target_to_lease_expected_url(tmp_path, monkeypatch):
+    context = _Context()
+    surface, _pw = _surface(tmp_path, context)
+    owned = surface.open()
+    lease = surface.snapshot_identity()
+    assert lease.conversation_id is None
+    assert owned.url == PROJECT_URL
+    surface.close()
+
+    stale_url = f"https://chatgpt.com/c/{CONVERSATION_ID}"
+    owned.url = stale_url
+    duplicate = _Page("unowned-project-tab", PROJECT_URL)
+    context.pages.append(duplicate)
+
+    def _strict_wait(page, *, expected_url, timeout_s=10.0):
+        if page.url != expected_url:
+            raise BrowserSurfaceLeaseError(
+                f"fixture route mismatch: {page.url!r} != {expected_url!r}"
+            )
+
+    monkeypatch.setattr(
+        ChatGPTSurface,
+        "_wait_for_page_context",
+        staticmethod(_strict_wait),
+    )
+
+    restarted, _pw2 = _surface(tmp_path, context)
+    page = restarted.open()
+
+    assert page is owned
+    assert page.url == PROJECT_URL
+    assert restarted.snapshot_identity().lease_id == lease.lease_id
+    assert restarted.snapshot_identity().target_id == lease.target_id
+    assert restarted.snapshot_identity().conversation_id is None
+    assert context.created == 1
+    assert duplicate.url == PROJECT_URL
+    assert duplicate.fronted == 0
+
+
 def test_missing_target_creates_one_replacement_and_moves_same_lease(tmp_path):
     context1 = _Context()
     surface1, _pw1 = _surface(
