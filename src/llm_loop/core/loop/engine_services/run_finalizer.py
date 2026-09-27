@@ -282,8 +282,26 @@ class RunFinalizer:
                 **_origin_metadata,
                 "program_final_placeholder": True,
             }
+            _longrun_manifest = None
+            if _run_end_reason in {"overflow", "projection_cannot_fit"}:
+                try:
+                    from llm_loop.core.longrun_continuity import build_longrun_manifest
+
+                    _longrun_manifest = build_longrun_manifest(
+                        session_id=session_id,
+                        data_dir=self._host.settings.data_dir,
+                        read_cache=self._host._run_state().longrun_read_cache,
+                        pressure=self._host._run_state().ingress_pressure_facts,
+                    )
+                    self._host._run_state().longrun_continuity_manifest = _longrun_manifest
+                    _origin_metadata = {
+                        **_origin_metadata,
+                        "longrun_continuity_manifest": _longrun_manifest,
+                    }
+                except Exception:  # noqa: BLE001 — handoff failure never hides terminal truth
+                    logger.warning("longrun continuity manifest build failed", exc_info=True)
             try:
-                self._host._event_append(
+                _program_final_event = self._host._event_append(
                     session_id,
                     "program.final",
                     {
@@ -291,8 +309,15 @@ class RunFinalizer:
                         "reason": _run_end_reason,
                         "answer_origin": "program",
                         "full_text": final_answer,
+                        "continuity_manifest": _longrun_manifest,
                     },
                 )
+                _event_seq = int(getattr(_program_final_event, "seq", 0) or 0)
+                if _event_seq > 0:
+                    _origin_metadata = {
+                        **_origin_metadata,
+                        "program_final_event_seq": _event_seq,
+                    }
             except Exception:  # noqa: BLE001 — audit 交付失败 fail-open（UI 轨不受影响）
                 logger.debug("program.final 事件写入失败（fail-open）")
         _persist_content = (

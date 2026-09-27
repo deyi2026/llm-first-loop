@@ -3116,13 +3116,54 @@ def get_session_messages(
         start = max(0, total - offset - limit)
         end = max(0, total - offset)
         source_messages = source_messages[start:end]
+    # Program-final assistant rows intentionally persist an empty protocol placeholder so
+    # subsequent provider prompts never ingest program-authored terminal prose.  The exact
+    # UI text is durably stored in EventStore; hydrate only this Web response by the seq
+    # recorded in provider-invisible Message.metadata.
+    _program_final_text_by_seq: dict[int, str] = {}
+    _wanted_program_final_seqs = {
+        int((getattr(m, "metadata", {}) or {}).get("program_final_event_seq") or 0)
+        for m in source_messages
+        if (getattr(m, "metadata", {}) or {}).get("program_final_placeholder") is True
+    }
+    _wanted_program_final_seqs.discard(0)
+    if _wanted_program_final_seqs:
+        try:
+            _event_store = getattr(engine, "_event_store", None)
+            _events = (
+                _event_store.read_cached(session_id)
+                if _event_store is not None and getattr(_event_store, "enabled", False)
+                else []
+            )
+            for _event in _events:
+                _seq = int(getattr(_event, "seq", 0) or 0)
+                if _seq not in _wanted_program_final_seqs:
+                    continue
+                if str(getattr(_event, "type", "") or "") != "program.final":
+                    continue
+                _payload = getattr(_event, "payload", None)
+                if isinstance(_payload, dict):
+                    _text = str(_payload.get("full_text") or "")
+                    if _text:
+                        _program_final_text_by_seq[_seq] = _text
+        except Exception:  # noqa: BLE001 — history stays truthful empty placeholder on failure
+            logger.warning("program.final UI hydration failed (fail-open)", exc_info=True)
+
+    def _history_content(message) -> str:
+        _md = getattr(message, "metadata", {}) or {}
+        if _md.get("program_final_placeholder") is True:
+            _seq = int(_md.get("program_final_event_seq") or 0)
+            if _seq > 0 and _seq in _program_final_text_by_seq:
+                return _program_final_text_by_seq[_seq]
+        return str(getattr(message, "content", "") or "")
+
     # Project only the requested page. Previously limit=100 still constructed
     # MessageItem objects for every message in multi-thousand-message sessions and
     # sliced afterwards, amplifying CPU/GIL pressure during Web polling.
     messages = [
         MessageItem(
             role=m.role,
-            content=m.content,
+            content=_history_content(m),
             tool_call_id=m.tool_call_id,
             status=getattr(getattr(m, "status", None), "value", None),
             tool_name=getattr(m, "tool_name", None),

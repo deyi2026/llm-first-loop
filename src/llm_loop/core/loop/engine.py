@@ -629,6 +629,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         _bucket.interruption_resume = (
             None  # rebuilt from durable interruption/checkpoint facts after ingress append
         )
+        _bucket.ingress_pressure_compact_count = 0
+        _bucket.ingress_pressure_facts = {}
+        _bucket.longrun_read_cache = {}
+        _bucket.longrun_continuity_manifest = None
         # P1-A/P1-B: runtime does not parse current-user semantics into task or
         # tool-selection authority. Delegated wakes remain explicitly attributable.
         if bool(getattr(ingress, "delegated", False)):
@@ -641,6 +645,26 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         )
         sess = plan.sess
         self._recover_pre_ingress_runtime_state(session_id, sess)
+        # Adjacent overflow handoff is durable provider-invisible metadata on the prior
+        # program-final placeholder.  Restore only mechanical read/frontier facts; the
+        # new human ingress remains the sole active instruction authority.
+        try:
+            from llm_loop.core.longrun_continuity import (
+                previous_overflow_manifest,
+                restore_read_cache,
+            )
+
+            _longrun_manifest = previous_overflow_manifest(sess.messages)
+            if _longrun_manifest is not None:
+                _bucket.longrun_continuity_manifest = _longrun_manifest
+                _bucket.longrun_read_cache = restore_read_cache(_longrun_manifest)
+                self._record_action(
+                    "run.longrun_continuity",
+                    "restored",
+                    f"read_anchors={len(_bucket.longrun_read_cache)}",
+                )
+        except Exception:  # noqa: BLE001 — continuity optimization must not block ingress
+            logger.warning("longrun continuity restore failed (fail-open)", exc_info=True)
 
         # Read-only correction/introspection compatibility may still expose the most
         # recent session on CorrectionContext.  Tool mutation ownership itself is
@@ -1193,6 +1217,74 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             "已阻止发送，未用旧请求或伪造摘要替代。"
                         )
                         break
+
+            # Browser providers can expose an exact request-envelope preflight.  Run it
+            # after final message/tool projection but before provider-call identity or
+            # BrowserSurface work.  One soft-watermark rebuild (plus one emergency hard
+            # preflight rebuild) is bounded per run; soft pressure alone never terminates.
+            _request_preflight = getattr(llm_client, "request_envelope_preflight", None)
+            if callable(_request_preflight):
+                try:
+                    _pf = dict(
+                        _request_preflight(messages, tools_param, model=chat_model_arg) or {}
+                    )
+                except Exception:  # noqa: BLE001 — optional preflight fail-open to hard guard
+                    logger.warning("request envelope preflight failed (fail-open)", exc_info=True)
+                    _pf = {}
+                _observed = int(_pf.get("observed_chars", 0) or 0)
+                _soft = int(_pf.get("soft_limit_chars", 0) or 0)
+                _hard = int(_pf.get("hard_limit_chars", 0) or 0)
+                _soft_pressure = bool(_pf.get("soft_pressure", False))
+                _hard_overflow = bool(_pf.get("hard_overflow", False))
+                _pressure_count = int(self._run_state().ingress_pressure_compact_count or 0)
+                _should_rebuild = _soft_pressure and (
+                    _pressure_count == 0 or (_hard_overflow and _pressure_count == 1)
+                )
+                if _should_rebuild and _observed > 0:
+                    _target = _soft if _soft > 0 else _hard
+                    if _target > 0:
+                        _factor = max(0.10, min(0.97, (_target / _observed) * 0.97))
+                        self._overflow_shrink_factor = _factor
+                        self._run_state().ingress_pressure_compact_count = _pressure_count + 1
+                        self._run_state().ingress_pressure_facts = {
+                            "observed_chars": _observed,
+                            "soft_limit_chars": _soft,
+                            "hard_limit_chars": _hard,
+                            "rebuild_count": _pressure_count + 1,
+                        }
+                        self._event_append(
+                            session_id,
+                            "request.ingress_pressure",
+                            {
+                                "round": rounds,
+                                **self._run_state().ingress_pressure_facts,
+                                "action": "rebuild_before_transport",
+                                "shrink_factor": _factor,
+                                "hard_overflow": _hard_overflow,
+                            },
+                        )
+                        self._record_action(
+                            "request.ingress_pressure",
+                            "rebuild_before_transport",
+                            f"chars={_observed};soft={_soft};hard={_hard};factor={_factor:.4f}",
+                        )
+                        # No provider call occurred, so this is not a logical model round.
+                        rounds -= 1
+                        continue
+                elif _soft_pressure:
+                    self._event_append(
+                        session_id,
+                        "request.ingress_pressure",
+                        {
+                            "round": rounds,
+                            "observed_chars": _observed,
+                            "soft_limit_chars": _soft,
+                            "hard_limit_chars": _hard,
+                            "rebuild_count": _pressure_count,
+                            "action": "bounded_preflight_exhausted",
+                            "hard_overflow": _hard_overflow,
+                        },
+                    )
 
             # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）
             # 供 architecture_status.context_usage.breakdown 注入；last_build_info 入桶保留。

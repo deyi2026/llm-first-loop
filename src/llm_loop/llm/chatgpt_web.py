@@ -70,6 +70,7 @@ class ChatGPTWebModelClient:
         *,
         model_label: str = CHATGPT_WEB_MODEL_ID,
         reasoning_effort: str = "high",
+        max_request_chars: int = 150_000,
     ) -> None:
         self.transport = transport
         self.model = model_label
@@ -78,12 +79,45 @@ class ChatGPTWebModelClient:
             if reasoning_effort in self.reasoning_efforts
             else "high"
         )
+        self.max_request_chars = max(0, int(max_request_chars or 0))
+        self.request_soft_limit_chars = (
+            int(self.max_request_chars * 0.90) if self.max_request_chars > 0 else 0
+        )
         self.calls: list[dict[str, Any]] = []
         self._request_seq = itertools.count(1)
         # One browser conversation is a serial transport.  The ModelClientPool
         # caches one client for this provider, so concurrent Web sessions must
         # not interleave composer/send/observe cycles on the same owned tab.
         self._guard = threading.RLock()
+
+    def request_envelope_preflight(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        model: str | None = None,
+    ) -> dict[str, int | bool]:
+        """Measure the canonical browser request before BrowserSurface is touched."""
+
+        from llm_loop.llm.chatgpt_transport import ChatGPTWebPageTransport
+
+        request = {
+            "protocol": MODEL_PROTOCOL,
+            "request_id": "lfl-model-0000",
+            "model": model or self.model,
+            "messages": messages,
+            "tools": tools,
+        }
+        observed = len(ChatGPTWebPageTransport._render_request(request))
+        hard = self.max_request_chars
+        soft = self.request_soft_limit_chars
+        return {
+            "observed_chars": observed,
+            "soft_limit_chars": soft,
+            "hard_limit_chars": hard,
+            "soft_pressure": bool(soft > 0 and observed > soft),
+            "hard_overflow": bool(hard > 0 and observed > hard),
+        }
 
     def chat(
         self,
@@ -324,6 +358,7 @@ def build_chatgpt_web_model_client(settings: Any) -> ChatGPTWebModelClient:
         transport,
         model_label=CHATGPT_WEB_MODEL_ID,
         reasoning_effort=reasoning_effort,
+        max_request_chars=max_request_chars,
     )
 
 

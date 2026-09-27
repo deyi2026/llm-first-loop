@@ -564,6 +564,18 @@ class _BuildMixin:
             # chronologically true while keeping Session/index mapping untouched.
             built = list(built)
             built.append({"role": "assistant", "content": _pre.working_state_text})
+        # Program-owned overflow handoff: historical mechanical facts only.  This is a
+        # distinct carrier from S1 model-authored working state and cannot become user
+        # authority or an instruction.
+        try:
+            from llm_loop.core.longrun_continuity import continuity_wire
+
+            _continuity = continuity_wire(self._run_state().longrun_continuity_manifest)
+            if _continuity is not None:
+                built = list(built)
+                built.append(_continuity)
+        except Exception:  # noqa: BLE001 — continuity is fail-open
+            logger.debug("longrun continuity wire projection failed", exc_info=True)
         effective_budget = _hist.effective_budget
         compact_view_box = _hist.compact_view_box
         _anchor_moved_this_build = _hist.anchor_moved

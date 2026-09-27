@@ -39,6 +39,52 @@ def test_chat_reuses_session(build_test_engine, fake_settings):
     assert len(engine.session.list_sessions()) == before  # 复用不新增
 
 
+def test_program_final_placeholder_stays_empty_in_session_but_history_recovers_event_text(
+    build_test_engine,
+    tmp_path,
+):
+    from llm_loop.core.message import Message, MessageSource
+    from llm_loop.event_log.store import EventStore
+
+    engine, _ = build_test_engine([])
+    engine._event_store = EventStore(tmp_path / "events", enabled=True)  # pyright: ignore[reportPrivateUsage]
+    sid = engine.session.create()
+    event = engine._event_store.append(  # pyright: ignore[reportPrivateUsage]
+        sid,
+        "program.final",
+        {
+            "session_id": sid,
+            "reason": "overflow",
+            "answer_origin": "program",
+            "full_text": "[上下文超限] rendered_chars=151651; max_request_chars=150000",
+        },
+    )
+    assert event is not None
+    sess = engine.session.load(sid)
+    sess.messages.append(
+        Message(
+            role="assistant",
+            content="",
+            source=MessageSource.SYSTEM,
+            metadata={
+                "answer_origin": "program",
+                "run_end_reason": "overflow",
+                "program_final_placeholder": True,
+                "program_final_event_seq": event.seq,
+            },
+        )
+    )
+    engine.session.save(sess)
+    assert engine.session.load(sid).messages[-1].content == ""
+
+    client = _make_client(engine)
+    response = client.get(f"/api/v1/sessions/{sid}/messages")
+    assert response.status_code == 200
+    assert response.json()["messages"][-1]["content"].startswith("[上下文超限]")
+    # UI hydration must not mutate the Session/model-visible protocol placeholder.
+    assert engine.session.load(sid).messages[-1].content == ""
+
+
 def test_chat_missing_message_422(build_test_engine, fake_settings):
     engine, _ = build_test_engine([])
     client = _make_client(engine)

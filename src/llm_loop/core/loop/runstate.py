@@ -41,6 +41,15 @@ class _RunState:
     # Current-run emergency fallback fact for user delivery only; never prompt authority.
     fallback_receipt: dict[str, str] | None = None
     overflow_reinject_count: int = 0
+    # ChatGPT Web browser ingress soft-pressure pass.  One program-owned rebuild is
+    # allowed before the physical 150k hard guard; a second soft hit is allowed to
+    # proceed to the hard guard instead of looping forever.
+    ingress_pressure_compact_count: int = 0
+    ingress_pressure_facts: dict[str, Any] = field(default_factory=dict)
+    # Exact read observations that may be reused mechanically inside a run or restored
+    # from an adjacent overflow handoff.  This is execution state, never prompt authority.
+    longrun_read_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+    longrun_continuity_manifest: dict[str, Any] | None = None
     context_warning_injected: bool = False
     round_warning_injected: bool = False
     # P0-B: ephemeral provider-surface boundary. Prompt-neutral and reset each run.

@@ -68,6 +68,27 @@ def test_chatgpt_web_model_client_maps_final_content():
     assert response.finish_reason == "stop"
 
 
+def test_request_envelope_preflight_uses_canonical_renderer_and_soft_watermark():
+    client = ChatGPTWebModelClient(_Transport([]), max_request_chars=10_000)
+    messages = [{"role": "user", "content": "x" * 8_000}]
+    tools = [{"type": "function", "function": {"name": "read_file", "parameters": {}}}]
+    facts = client.request_envelope_preflight(messages, tools)
+    rendered = ChatGPTWebPageTransport._render_request(
+        {
+            "protocol": MODEL_PROTOCOL,
+            "request_id": "lfl-model-0000",
+            "model": "web-gpt",
+            "messages": messages,
+            "tools": tools,
+        }
+    )
+    assert facts["observed_chars"] == len(rendered)
+    assert facts["soft_limit_chars"] == 9_000
+    assert facts["hard_limit_chars"] == 10_000
+    assert facts["soft_pressure"] is (len(rendered) > 9_000)
+    assert facts["hard_overflow"] is (len(rendered) > 10_000)
+
+
 @pytest.mark.parametrize(
     "response,match",
     [

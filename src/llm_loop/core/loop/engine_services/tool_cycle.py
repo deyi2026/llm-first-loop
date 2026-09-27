@@ -46,6 +46,7 @@ from llm_loop.core.loop.tool_exec import (
 from llm_loop.core.message import (
     Message,
     MessageSource,
+    RecoverabilityStatus,
     ToolResult,
     ToolResultStatus,
 )
@@ -131,6 +132,97 @@ class ToolCycleService:
                 logger.warning("tool execution declared WAL failed (fail-open)", exc_info=True)
         return execution_ids
 
+    def _continuity_reuse_result(self, call) -> ToolResult | None:
+        """Short-circuit an exact repeated durable read when source identity is unchanged.
+
+        Only read_evidence (immutable ref/range) and read_file (stat/artifact version
+        verified) participate.  Search/network/control tools are intentionally excluded.
+        """
+
+        if call.name not in {"read_file", "read_evidence"} or not isinstance(call.arguments, dict):
+            return None
+        try:
+            from llm_loop.core.longrun_continuity import (
+                canonical_read_key,
+                file_version_still_matches,
+            )
+
+            key = canonical_read_key(call.name, call.arguments)
+            cached = self._host._run_state().longrun_read_cache.get(key)
+            if not isinstance(cached, dict):
+                return None
+            version = str(cached.get("source_version_token") or "")
+            if call.name == "read_file" and not file_version_still_matches(
+                call.arguments, version
+            ):
+                return None
+            evidence_ref = str(cached.get("evidence_ref") or "")
+            artifact_ref = str(cached.get("artifact_ref") or "")
+            facts = [
+                "exact_read_reused=true",
+                f"tool={call.name}",
+                "source_execution_performed=false",
+            ]
+            if version:
+                facts.append(f"source_version_token={version}")
+            if evidence_ref:
+                facts.append(f"evidence_ref={evidence_ref}")
+            if artifact_ref:
+                facts.append(f"snapshot_ref={artifact_ref}")
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content="[longrun_continuity_reuse] " + "; ".join(facts),
+                tool_call_id=call.id,
+                tool_name=call.name,
+                recoverability_status=(
+                    RecoverabilityStatus.RECORDED
+                    if evidence_ref
+                    else RecoverabilityStatus.NOT_CONFIGURED
+                ),
+                evidence_ref=evidence_ref or None,
+                evidence_representation="ref_only" if evidence_ref else None,
+                evidence_projection_complete=False if evidence_ref else None,
+                evidence_source_version_token=version or None,
+                source_resolution_mode="longrun_continuity",
+                source_execution_performed=False,
+                short_circuit_kind="longrun_duplicate_read",
+            )
+        except Exception:  # noqa: BLE001 — cache optimization fail-open to physical read
+            logger.debug("longrun continuity read reuse failed", exc_info=True)
+            return None
+
+    def _remember_continuity_read(self, call, result: ToolResult) -> None:
+        """Record exact successful read facts for same-run/cross-overflow reuse."""
+
+        if (
+            call.name not in {"read_file", "read_evidence"}
+            or not isinstance(call.arguments, dict)
+            or result.status is not ToolResultStatus.SUCCESS
+            or result.short_circuit_kind == "longrun_duplicate_read"
+        ):
+            return
+        try:
+            from llm_loop.core.longrun_continuity import canonical_read_key
+
+            version = str(result.evidence_source_version_token or "")
+            if not version and isinstance(result.evidence_origin_facts, dict):
+                version = str(result.evidence_origin_facts.get("source_version_token") or "")
+            artifact_ref = ""
+            for fact in result.artifact_facts or ():
+                if isinstance(fact, dict) and fact.get("ref"):
+                    artifact_ref = str(fact.get("ref"))
+                    break
+            key = canonical_read_key(call.name, call.arguments)
+            self._host._run_state().longrun_read_cache[key] = {
+                "tool": call.name,
+                "arguments": dict(call.arguments),
+                "evidence_ref": str(result.evidence_ref or ""),
+                "source_version_token": version,
+                "artifact_ref": artifact_ref,
+            }
+        except Exception:  # noqa: BLE001 — observability/cache must not alter tool truth
+            logger.debug("longrun continuity read remember failed", exc_info=True)
+
     def _execute_allowed_with_wal(
         self,
         sess,
@@ -190,6 +282,7 @@ class ToolCycleService:
             # 保证 journal/WAL 持久化的即最终形态。None 分支的调用保留为防御路径
             # （两路互斥：execution_id 存在 ⇔ prebuilt 存在）。
             self._attach_convergence_receipt_facts(sess, call, result)
+            self._remember_continuity_read(call, result)
             tool_msg = tool_result_to_message(
                 result,
                 failure_guidance_enabled=self._host.registry.failure_guidance_enabled,
@@ -205,8 +298,18 @@ class ToolCycleService:
                 tool_message=tool_msg,
             )
 
-        if not executable_calls:
-            results = []
+        continuity_results: list[ToolResult] = []
+        physical_calls = []
+        for call in executable_calls:
+            reused = self._continuity_reuse_result(call)
+            if reused is not None:
+                continuity_results.append(reused)
+                persist_finished(call, reused)
+            else:
+                physical_calls.append(call)
+
+        if not physical_calls:
+            results = list(continuity_results)
         else:
             from llm_loop.core.run_context import current_workspace_root
 
@@ -215,21 +318,22 @@ class ToolCycleService:
                 session_id=sess.session_id,
                 execution_ids=execution_ids,
                 round_no=rounds,
-                calls=executable_calls,
+                calls=physical_calls,
                 workspace_root=current_workspace_root.get(),
             ):
                 try:
-                    results = self._host.registry.execute_many(
-                        executable_calls, on_result=persist_finished
+                    physical_results = self._host.registry.execute_many(
+                        physical_calls, on_result=persist_finished
                     )
                 except TypeError as exc:
                     # Legacy duck-typed registries may reject the new kwarg before entering
                     # their method body; retrying that specific signature mismatch is safe.
                     if "on_result" not in str(exc):
                         raise
-                    results = self._host.registry.execute_many(executable_calls)
-                    for call, result in zip(executable_calls, results, strict=False):
+                    physical_results = self._host.registry.execute_many(physical_calls)
+                    for call, result in zip(physical_calls, physical_results, strict=False):
                         persist_finished(call, result)
+            results = [*continuity_results, *physical_results]
         by_id = {r.tool_call_id: r for r in results if r.tool_call_id}
         ordered = [
             pre_results.get(call.id) or by_id.get(call.id)
