@@ -197,6 +197,74 @@ def _tool_evidence_receipt(message: Message) -> Message | None:
     return replace(message, content=" ".join(facts), metadata=projected_md)
 
 
+def _tool_evidence_bounded_first_view(
+    message: Message,
+    *,
+    first_view_chars: int,
+) -> Message | None:
+    """Return a bounded exact-prefix view for one durable large tool result.
+
+    This is representation mechanics only: no semantic summary or relevance decision is
+    created.  The original tool identity/pairing remains unchanged and the complete bytes
+    stay recoverable through the existing evidence handle.
+    """
+
+    if message.role != "tool" or first_view_chars <= 0:
+        return None
+    raw = message.content or ""
+    if len(raw) <= first_view_chars:
+        return None
+    md = _metadata(message)
+    if str(md.get("recoverability_status") or "") != "recorded":
+        return None
+    ref = str(md.get("evidence_ref") or "").strip()
+    if not ref:
+        return None
+
+    status = getattr(message.status, "value", None) or str(message.status or "unknown")
+    source = str(md.get("evidence_source_label") or message.tool_name or "")
+    coverage = str(md.get("evidence_coverage_label") or "")
+    representation = str(md.get("evidence_representation") or "")
+    complete = md.get("evidence_projection_complete")
+    facts = [
+        f"[状态: {status}] [tool_result_bounded_first_view]",
+        f"evidence_ref={ref}",
+        f"raw_chars={len(raw)}",
+        f"first_view_chars={first_view_chars}",
+    ]
+    if source:
+        facts.append(f"source={source}")
+    if coverage:
+        facts.append(f"coverage={coverage}")
+    if representation:
+        facts.append(f"representation={representation}")
+    if complete is not None:
+        facts.append(f"projection_complete={str(bool(complete)).lower()}")
+    origin = md.get("evidence_origin_facts")
+    if isinstance(origin, dict):
+        acquired_at = str(origin.get("acquired_at") or "").strip()
+        version_policy = str(origin.get("source_version_policy") or "").strip()
+        version_token = str(origin.get("source_version_token") or "").strip()
+        if acquired_at:
+            facts.append(f"acquired_at={acquired_at}")
+        if version_policy:
+            facts.append(f"version_policy={version_policy}")
+        if version_token:
+            facts.append(f"source_version_token={version_token}")
+    facts.append("task_applicability=not_evaluated")
+    facts.append("recovery_tool=read_evidence")
+
+    projected_md = dict(md)
+    projected_md["working_set_projection"] = "bounded_first_view"
+    projected_md["working_set_raw_chars"] = len(raw)
+    projected_md["working_set_first_view_chars"] = first_view_chars
+    return replace(
+        message,
+        content=" ".join(facts) + "\n[bounded_first_view]\n" + raw[:first_view_chars],
+        metadata=projected_md,
+    )
+
+
 _EVIDENCE_GROUP_DIGEST_VERSION = 1
 _EVIDENCE_ARGS_INLINE_CHARS = 384
 _EVIDENCE_ARGS_PREVIEW_CHARS = 192
@@ -740,6 +808,10 @@ class ToolWorkingSetProjectionStats:
     latest_raw_chars: int
     fold_boundaries: tuple[int, ...]
     fold_triggers: tuple[str, ...]
+    first_view_limit_chars: int = 0
+    bounded_first_view_results: int = 0
+    bounded_first_view_raw_chars: int = 0
+    bounded_first_view_projected_chars: int = 0
 
 
 def project_active_tool_working_set_with_stats(
@@ -784,6 +856,14 @@ def project_active_tool_working_set_with_stats(
         max(
             0,
             min(int(getattr(policy, "working_set_min_net_gain_chars", 16384)), 1_048_576),
+        )
+        if enabled
+        else 0
+    )
+    first_view_chars = (
+        max(
+            0,
+            min(int(getattr(policy, "working_set_first_view_chars", 8192)), 262_144),
         )
         if enabled
         else 0
@@ -864,6 +944,9 @@ def project_active_tool_working_set_with_stats(
     fold_boundaries: list[int] = []
     fold_triggers: list[str] = []
     latest_raw_chars = 0
+    bounded_first_view_results = 0
+    bounded_first_view_raw_chars = 0
+    bounded_first_view_projected_chars = 0
     for group in _collect_active_tool_group_spans(messages):
         group_raw_chars = sum(len(messages[idx].content or "") for idx in group.result_indices)
         if group.start in preserved_starts:
@@ -872,6 +955,17 @@ def project_active_tool_working_set_with_stats(
             continue
         if not group.exposed:
             latest_raw_chars += group_raw_chars
+            for idx in group.result_indices:
+                bounded = _tool_evidence_bounded_first_view(
+                    messages[idx],
+                    first_view_chars=first_view_chars,
+                )
+                if bounded is None:
+                    continue
+                projected[idx] = bounded
+                bounded_first_view_results += 1
+                bounded_first_view_raw_chars += len(messages[idx].content or "")
+                bounded_first_view_projected_chars += len(bounded.content or "")
         else:
             group_receipts: list[tuple[int, Message]] = []
             group_chars = 0
@@ -951,6 +1045,10 @@ def project_active_tool_working_set_with_stats(
         latest_raw_chars=latest_raw_chars,
         fold_boundaries=tuple(fold_boundaries),
         fold_triggers=tuple(fold_triggers),
+        first_view_limit_chars=first_view_chars,
+        bounded_first_view_results=bounded_first_view_results,
+        bounded_first_view_raw_chars=bounded_first_view_raw_chars,
+        bounded_first_view_projected_chars=bounded_first_view_projected_chars,
     )
 
 

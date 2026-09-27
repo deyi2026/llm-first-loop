@@ -62,6 +62,10 @@ class HistoryPolicySettings:
     working_set_soft_result_cap: int = 12
     working_set_hard_result_cap: int = 32
     working_set_min_net_gain_chars: int = 16384
+    # Recoverable large tool results keep the exact assistant/tool protocol pair but
+    # expose only a bounded byte-exact first window plus evidence handle on first view.
+    # 0 disables the projection; 8192 is the conservative production default.
+    working_set_first_view_chars: int = 8192
     compress_target_ratio: float = 0.6
     compact_ratio: float = 1.0
     nudge_growth_chars: int = 20000
@@ -969,6 +973,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
                 env_int("LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS", 16384),
                 1_048_576,
             ),
+        ),
+        working_set_first_view_chars=max(
+            0,
+            min(env_int("LFL_TOOL_WORKING_SET_FIRST_VIEW_CHARS", 8192), 262_144),
         ),
         compress_target_ratio=_compress_target,
         compact_ratio=_env_float("COMPACT_RATIO", 1.0, env_values),

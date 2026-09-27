@@ -68,6 +68,7 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("history", "working_set_soft_result_cap"): TomlField(("LFL_TOOL_WORKING_SET_SOFT_RESULT_CAP",), "int"),
         ("history", "working_set_hard_result_cap"): TomlField(("LFL_TOOL_WORKING_SET_HARD_RESULT_CAP",), "int"),
         ("history", "working_set_min_net_gain_chars"): TomlField(("LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS",), "int"),
+        ("history", "working_set_first_view_chars"): TomlField(("LFL_TOOL_WORKING_SET_FIRST_VIEW_CHARS",), "int"),
         ("history", "compress_target_ratio"): TomlField(("COMPRESS_TARGET_RATIO",), "float"),
         ("history", "compact_ratio"): TomlField(("COMPACT_RATIO",), "float"),
         ("history", "nudge_growth_chars"): TomlField(("NUDGE_GROWTH_CHARS",), "int"),

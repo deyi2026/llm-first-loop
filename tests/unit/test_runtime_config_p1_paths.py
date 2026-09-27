@@ -324,6 +324,7 @@ def test_history_policy_is_resolved_from_explicit_settings_not_stale_env(
             "HEAD_KEEP_RATIO": "0.31",
             "LFL_TOOL_WORKING_SET_RECEIPTS": "1",
             "LFL_TOOL_WORKING_SET_BATCH_CHARS": "65536",
+            "LFL_TOOL_WORKING_SET_FIRST_VIEW_CHARS": "6144",
         }
     )
 
@@ -332,6 +333,7 @@ def test_history_policy_is_resolved_from_explicit_settings_not_stale_env(
     assert settings.history_policy.head_keep_ratio == 0.31
     assert settings.history_policy.working_set_receipts is True
     assert settings.history_policy.working_set_batch_chars == 65536
+    assert settings.history_policy.working_set_first_view_chars == 6144
 
 
 def test_working_set_projection_uses_explicit_history_policy() -> None:
@@ -346,6 +348,7 @@ def test_working_set_projection_uses_explicit_history_policy() -> None:
         working_set_soft_result_cap=7,
         working_set_hard_result_cap=19,
         working_set_min_net_gain_chars=1234,
+        working_set_first_view_chars=4096,
     )
     projected, stats = project_active_tool_working_set_with_stats([], policy=policy)
 
@@ -356,6 +359,7 @@ def test_working_set_projection_uses_explicit_history_policy() -> None:
     assert stats.soft_result_cap == 7
     assert stats.hard_result_cap == 19
     assert stats.min_net_gain_chars == 1234
+    assert stats.first_view_limit_chars == 0  # no messages => no projection work
 
 
 def test_p1b2_history_consumers_have_no_direct_business_env_reads() -> None:
@@ -367,6 +371,7 @@ def test_p1b2_history_consumers_have_no_direct_business_env_reads() -> None:
             "LFL_TOOL_WORKING_SET_SOFT_RESULT_CAP",
             "LFL_TOOL_WORKING_SET_HARD_RESULT_CAP",
             "LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS",
+            "LFL_TOOL_WORKING_SET_FIRST_VIEW_CHARS",
         },
         "src/llm_loop/core/history.py": {
             "COMPRESS_TARGET_RATIO",
