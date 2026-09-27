@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from llm_loop.llm.errors import LLMError, is_overflow_error
+from llm_loop.llm.errors import LLMError, LLMRequestTooLargeError, is_overflow_error
 
 if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine
@@ -23,8 +23,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# R8.24-B B-D5: overflow 确定性收缩因子（build 链按收紧预算重组 + lossless 归档）
+# R8.24-B B-D5: provider 未暴露精确尺寸事实时的既有保守收缩因子。
 _OVERFLOW_SHRINK_FACTOR = 0.5
+# 本地 request-envelope preflight 拥有 observed/limit 同口径机械事实：
+# 只需按真实超额比例收缩，并额外留 3% 余量，避免轻微超限就丢掉一半历史。
+_REQUEST_ENVELOPE_SAFETY_MARGIN = 0.97
+_REQUEST_ENVELOPE_MIN_SHRINK_FACTOR = 0.10
+
+
+def _overflow_shrink_factor(exc: LLMError) -> tuple[float, str]:
+    """Return deterministic shrink factor plus factual source attribution."""
+    if isinstance(exc, LLMRequestTooLargeError):
+        observed = int(exc.observed_chars or 0)
+        limit = int(exc.limit_chars or 0)
+        if observed > limit > 0:
+            ratio = (limit / observed) * _REQUEST_ENVELOPE_SAFETY_MARGIN
+            factor = max(
+                _REQUEST_ENVELOPE_MIN_SHRINK_FACTOR,
+                min(_REQUEST_ENVELOPE_SAFETY_MARGIN, ratio),
+            )
+            return factor, "request_envelope"
+    return _OVERFLOW_SHRINK_FACTOR, "provider_overflow"
 
 
 class TerminationController:
@@ -95,13 +114,22 @@ class TerminationController:
         # compact occurrence 只落 telemetry 事件（B-D5），不注入任何模型可见文本。
         if host._run_state().overflow_reinject_count < 1:
             host._run_state().overflow_reinject_count += 1
-            host._overflow_shrink_factor = _OVERFLOW_SHRINK_FACTOR
+            shrink_factor, shrink_source = _overflow_shrink_factor(exc)
+            host._overflow_shrink_factor = shrink_factor
+            detail = f"factor={shrink_factor:.6f}; source={shrink_source}; "
+            if isinstance(exc, LLMRequestTooLargeError):
+                detail += (
+                    f"observed_chars={exc.observed_chars}; "
+                    f"limit_chars={exc.limit_chars}; "
+                )
+            detail += (
+                f"provider_window={model_window.get('context', '?')}; "
+                f"model={model_window.get('label', '?')}; prompt_chars=0"
+            )
             host._record_action(
                 "overflow.compact",
                 "budget_shrunk",
-                f"factor={_OVERFLOW_SHRINK_FACTOR}; "
-                f"provider_window={model_window.get('context', '?')}; "
-                f"model={model_window.get('label', '?')}; prompt_chars=0",
+                detail,
             )
             return ("reinject", None)
         # 第二次 overflow: 确定性压缩后仍超限 → 直接终止（纯事实终态，B-G3 口径；

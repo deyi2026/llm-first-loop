@@ -6,13 +6,17 @@ import pytest
 
 from llm_loop.llm.chatgpt_page import PageBinding
 from llm_loop.llm.chatgpt_transport import ChatGPTWebPageTransport
-from llm_loop.llm.errors import LLMProtocolError, is_overflow_error
 from llm_loop.llm.chatgpt_web import (
     MODEL_PROTOCOL,
     ChatGPTModelProtocolError,
     ChatGPTWebModelClient,
     _SurfaceOwnedTransport,
     _ThreadBoundTransport,
+)
+from llm_loop.llm.errors import (
+    LLMProtocolError,
+    LLMRequestTooLargeError,
+    is_overflow_error,
 )
 
 
@@ -341,5 +345,8 @@ def test_chatgpt_web_request_size_guard_fails_before_browser_send_and_is_overflo
         transport.exchange(request)
 
     assert sent == []
+    assert isinstance(caught.value, LLMRequestTooLargeError)
     assert caught.value.provider == "chatgpt-web"
+    assert caught.value.limit_chars == 100
+    assert caught.value.observed_chars > caught.value.limit_chars
     assert is_overflow_error(caught.value) is True

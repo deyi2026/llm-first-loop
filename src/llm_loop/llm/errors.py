@@ -40,6 +40,27 @@ class LLMProtocolError(LLMError):
     """响应协议解析失败（流式/字段缺失等）."""
 
 
+class LLMRequestTooLargeError(LLMProtocolError):
+    """Local request-envelope overflow with exact mechanical size evidence.
+
+    observed_chars and limit_chars describe the same serialized request envelope.
+    They are transport facts only; callers may use them to choose a deterministic
+    compaction ratio without inferring task semantics.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        observed_chars: int,
+        limit_chars: int,
+        provider: str = "",
+    ) -> None:
+        super().__init__(message, provider=provider)
+        self.observed_chars = max(0, int(observed_chars))
+        self.limit_chars = max(0, int(limit_chars))
+
+
 class LLMProjectionError(LLMProtocolError):
     """Local provider-request projection violated a mechanical wire invariant.
 
@@ -101,6 +122,8 @@ _GLM_OVERFLOW_PROVIDERS = ("glm", "glm-api", "zhipu")
 
 def is_overflow_error(exc: LLMError) -> bool:
     """识别 provider 返回的上下文溢出错误（R4: 如实反馈让 AI 决策）."""
+    if isinstance(exc, LLMRequestTooLargeError):
+        return True
     msg = str(exc).lower()
     if any(p in msg for p in _OVERFLOW_PATTERNS):
         return True

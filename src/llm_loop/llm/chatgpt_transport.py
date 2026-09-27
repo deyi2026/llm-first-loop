@@ -17,7 +17,7 @@ from llm_loop.llm.chatgpt_web import (
     MODEL_PROTOCOL,
     ChatGPTModelProtocolError,
 )
-from llm_loop.llm.errors import LLMProtocolError
+from llm_loop.llm.errors import LLMRequestTooLargeError
 
 from .chatgpt_page import ChatGPTPageAdapter, PageBinding, PageContractError
 
@@ -104,10 +104,12 @@ class ChatGPTWebPageTransport:
         )
         rendered_request = self._render_request(request)
         if self.max_request_chars > 0 and len(rendered_request) > self.max_request_chars:
-            raise LLMProtocolError(
+            raise LLMRequestTooLargeError(
                 "request_too_large: ChatGPT Web rendered request exceeds qualified text "
                 f"ingress limit (rendered_chars={len(rendered_request)}, "
                 f"max_request_chars={self.max_request_chars})",
+                observed_chars=len(rendered_request),
+                limit_chars=self.max_request_chars,
                 provider=CHATGPT_WEB_PROVIDER_ID,
             )
         request_id = str(request.get("request_id") or "")
