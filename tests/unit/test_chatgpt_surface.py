@@ -352,6 +352,80 @@ def test_reset_to_project_root_clears_outer_conversation_but_preserves_surface(t
     assert BrowserSurfaceLeaseStore(tmp_path).load() == after
 
 
+def test_reset_to_project_root_retries_transient_context_timeout_on_same_target(
+    tmp_path, monkeypatch
+):
+    context = _Context()
+    surface, _pw = _surface(
+        tmp_path,
+        context,
+        recovery_conversation_id=CONVERSATION_ID,
+    )
+    page = surface.open()
+    before = surface.snapshot_identity()
+    waits: list[tuple[str, float]] = []
+
+    def _flaky_wait(page_arg, *, expected_url, timeout_s=10.0):
+        assert page_arg is page
+        waits.append((expected_url, timeout_s))
+        if len(waits) == 1:
+            raise BrowserSurfaceLeaseError(
+                "owned ChatGPT page did not reach a stable execution context within 10s"
+            )
+        assert page_arg.url == PROJECT_URL
+
+    monkeypatch.setattr(
+        ChatGPTSurface,
+        "_wait_for_page_context",
+        staticmethod(_flaky_wait),
+    )
+
+    after = surface.reset_to_project_root()
+
+    assert waits == [(PROJECT_URL, 10.0), (PROJECT_URL, 20.0)]
+    assert context.created == 1
+    assert page.target_id == before.target_id == after.target_id
+    assert page.url == PROJECT_URL
+    assert page.fronted == 0
+    assert after.conversation_id is None
+    assert after.conversation_url is None
+
+
+def test_reset_to_project_root_persistent_context_timeout_still_fails_closed(
+    tmp_path, monkeypatch
+):
+    context = _Context()
+    surface, _pw = _surface(
+        tmp_path,
+        context,
+        recovery_conversation_id=CONVERSATION_ID,
+    )
+    page = surface.open()
+    before = surface.snapshot_identity()
+    waits: list[float] = []
+
+    def _always_fail(page_arg, *, expected_url, timeout_s=10.0):
+        assert page_arg is page
+        assert expected_url == PROJECT_URL
+        waits.append(timeout_s)
+        raise BrowserSurfaceLeaseError("fixture persistent context timeout")
+
+    monkeypatch.setattr(
+        ChatGPTSurface,
+        "_wait_for_page_context",
+        staticmethod(_always_fail),
+    )
+
+    with pytest.raises(BrowserSurfaceLeaseError, match="bounded same-target retry"):
+        surface.reset_to_project_root()
+
+    assert waits == [10.0, 20.0]
+    assert context.created == 1
+    assert page.target_id == before.target_id
+    assert surface.snapshot_identity() == before
+    assert page.fronted == 0
+
+
 def test_new_owned_page_absorbs_transient_navigation_context_loss(tmp_path):
     context = _Context()
     original_new_page = context.new_page

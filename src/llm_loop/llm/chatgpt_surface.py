@@ -435,10 +435,40 @@ class ChatGPTSurface:
         """
         if self.lease is None or self.page is None:
             raise BrowserSurfaceLeaseError("surface is not open")
-        current_url = str(getattr(self.page, "url", "") or "")
-        if current_url != self.project_url:
-            self.page.goto(self.project_url, wait_until="commit", timeout=15_000)
-        self._wait_for_page_context(self.page, expected_url=self.project_url)
+
+        # ChatGPT occasionally commits the Project-root navigation while the
+        # page is still tearing down/recreating its execution context.  A
+        # single 10s readiness window can therefore fail even though the exact
+        # leased target is healthy and becomes usable moments later.  Retry the
+        # *same exact target* once with a larger bounded window.  Never select a
+        # different same-URL tab, never relax Project identity, and never clear
+        # the durable conversation lease until the Project root is confirmed.
+        last_error: BrowserSurfaceLeaseError | None = None
+        for attempt, readiness_timeout_s in enumerate((10.0, 20.0)):
+            current_url = str(getattr(self.page, "url", "") or "")
+            if current_url != self.project_url:
+                self.page.goto(self.project_url, wait_until="commit", timeout=15_000)
+            try:
+                self._wait_for_page_context(
+                    self.page,
+                    expected_url=self.project_url,
+                    timeout_s=readiness_timeout_s,
+                )
+                last_error = None
+                break
+            except BrowserSurfaceLeaseError as exc:
+                last_error = exc
+                is_closed = getattr(self.page, "is_closed", None)
+                if callable(is_closed) and is_closed():
+                    raise
+                if attempt == 0:
+                    self.page.wait_for_timeout(250)
+                    continue
+        if last_error is not None:
+            raise BrowserSurfaceLeaseError(
+                "owned ChatGPT page did not reach a stable execution context after "
+                f"bounded same-target retry: {last_error}"
+            ) from last_error
         self.lease = self.lease_store.update(
             conversation_id=None,
             conversation_url=None,
