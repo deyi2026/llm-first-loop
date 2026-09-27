@@ -134,7 +134,7 @@ def test_duplicate_same_url_tabs_do_not_create_ambiguity(tmp_path):
     assert page.url == CONVERSATION_URL
     assert lease.target_id == page.target_id
     assert lease.conversation_id == CONVERSATION_ID
-    assert page.fronted == 1
+    assert page.fronted == 0
     assert first.closed is False and second.closed is False
 
 
@@ -162,7 +162,7 @@ def test_restart_reacquires_exact_target_id_among_duplicate_urls(tmp_path):
     assert restarted.snapshot_identity().lease_id == lease.lease_id
     assert restarted.snapshot_identity().target_id == lease.target_id
     assert context.created == 1
-    assert page.fronted == 2
+    assert page.fronted == 0
 
 
 def test_restart_restores_exact_owned_target_to_lease_expected_url(tmp_path, monkeypatch):
@@ -229,7 +229,7 @@ def test_missing_target_creates_one_replacement_and_moves_same_lease(tmp_path):
     assert after.target_id != before.target_id
     assert after.target_id == replacement.target_id
     assert after.conversation_id == CONVERSATION_ID
-    assert replacement.fronted == 1
+    assert replacement.fronted == 0
 
 
 def test_bind_conversation_persists_route_after_project_root_claim(tmp_path):
@@ -252,6 +252,7 @@ def test_bind_conversation_persists_route_after_project_root_claim(tmp_path):
 
     assert lease.conversation_id == CONVERSATION_ID
     assert lease.conversation_url == CONVERSATION_URL
+    assert page.fronted == 0
     assert BrowserSurfaceLeaseStore(tmp_path).load() == lease
 
 
@@ -277,6 +278,7 @@ def test_bind_conversation_recovers_generic_chat_route_into_configured_project(t
     assert lease.project_ref == PROJECT_REF
     assert lease.conversation_id == CONVERSATION_ID
     assert lease.conversation_url == CONVERSATION_URL
+    assert page.fronted == 0
     assert BrowserSurfaceLeaseStore(tmp_path).load() == lease
 
 
@@ -346,7 +348,7 @@ def test_reset_to_project_root_clears_outer_conversation_but_preserves_surface(t
     assert after.target_id == before.target_id
     assert after.conversation_id is None
     assert after.conversation_url is None
-    assert page.fronted == 2
+    assert page.fronted == 0
     assert BrowserSurfaceLeaseStore(tmp_path).load() == after
 
 
@@ -400,4 +402,4 @@ def test_closed_exact_target_is_replaced_without_selecting_same_url_duplicate(tm
     assert after.lease_id == before.lease_id
     assert after.target_id == replacement.target_id
     assert duplicate.closed is False
-    assert replacement.fronted == 1
+    assert replacement.fronted == 0

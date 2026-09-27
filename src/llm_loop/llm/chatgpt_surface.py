@@ -273,12 +273,6 @@ class ChatGPTSurface:
                     continue
         return None
 
-    @staticmethod
-    def _bring_to_front(page: Any) -> None:
-        bring = getattr(page, "bring_to_front", None)
-        if callable(bring):
-            bring()
-
     def _create_owned_page(self, url: str) -> tuple[Any, str]:
         context = self._owned_context()
         page = context.new_page()
@@ -289,7 +283,6 @@ class ChatGPTSurface:
             # readiness remains ChatGPTPageAdapter's responsibility.
             page.goto(url, wait_until="commit", timeout=15_000)
             self._wait_for_page_context(page, expected_url=url)
-            self._bring_to_front(page)
             target_id = self._target_id(context, page)
         except Exception:
             with contextlib.suppress(Exception):
@@ -358,7 +351,6 @@ class ChatGPTSurface:
                             raise
                         page = None
                 if page is not None:
-                    self._bring_to_front(page)
                     self.page = page
                     self.lease = lease
                     return page
@@ -426,7 +418,6 @@ class ChatGPTSurface:
                 raise BrowserSurfaceLeaseError("surface page changed before conversation bind")
             self.page.goto(conversation_url, wait_until="commit", timeout=15_000)
             self._wait_for_page_context(self.page, expected_url=conversation_url)
-            self._bring_to_front(self.page)
         self.lease = self.lease_store.update(
             conversation_id=binding.conversation_id,
             conversation_url=conversation_url,
@@ -448,7 +439,6 @@ class ChatGPTSurface:
         if current_url != self.project_url:
             self.page.goto(self.project_url, wait_until="commit", timeout=15_000)
         self._wait_for_page_context(self.page, expected_url=self.project_url)
-        self._bring_to_front(self.page)
         self.lease = self.lease_store.update(
             conversation_id=None,
             conversation_url=None,
