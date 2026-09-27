@@ -118,6 +118,50 @@ describe("product composer", () => {
     expect(screen.getByTestId("reasoning-button").textContent).toContain("xhigh");
   });
 
+  it("DeepSeek 网页版只暴露 instant/high 两档 provider-owned 推理", async () => {
+    vi.stubGlobal("fetch", baseFetch((url) => {
+      if (!url.includes("/api/v1/models")) return undefined;
+      return new Response(JSON.stringify({
+        models: ["glm/glm-5.3", "deepseek-web/web-deepseek"],
+        current: "glm/glm-5.3",
+        catalog: [
+          ...modelResponse().catalog.slice(0, 1),
+          {
+            id: "deepseek-web/web-deepseek",
+            provider: "deepseek-web",
+            model: "web-deepseek",
+            display_name: "DeepSeek 网页版",
+            context: 131_072,
+            reasoning_capable: true,
+            reasoning_control: "provider_owned",
+            reasoning_control_supported: true,
+            reasoning_can_disable: false,
+            reasoning_efforts: ["instant", "high"],
+            reasoning_default_effort: "high",
+          },
+        ],
+      }), { status: 200 });
+    }));
+    render(<Composer />);
+
+    const select = (await screen.findByTestId("model-select")) as HTMLSelectElement;
+    expect(within(select).getByRole("option", { name: "DeepSeek 网页版" })).toHaveValue(
+      "deepseek-web/web-deepseek"
+    );
+    fireEvent.change(select, { target: { value: "deepseek-web/web-deepseek" } });
+    fireEvent.click(screen.getByTestId("reasoning-button"));
+    const popover = screen.getByTestId("reasoning-popover");
+    expect(within(popover).getByRole("button", { name: "instant" })).toBeEnabled();
+    expect(within(popover).getByRole("button", { name: "high" })).toBeEnabled();
+    expect(within(popover).queryByRole("button", { name: "xhigh" })).toBeNull();
+    expect(within(popover).queryByRole("button", { name: "pro" })).toBeNull();
+
+    fireEvent.click(within(popover).getByRole("button", { name: "instant" }));
+    expect(sessionStore.getState().thinkingMode).toBe("on");
+    expect(sessionStore.getState().reasoningEffort).toBe("instant");
+    expect(screen.getByTestId("reasoning-button").textContent).toContain("instant");
+  });
+
   it("附件插入菜单支持点击外侧和 Escape 关闭，避免移动端浮层滞留", () => {
     vi.stubGlobal("fetch", baseFetch());
     render(<Composer />);

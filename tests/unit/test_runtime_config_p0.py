@@ -166,6 +166,49 @@ max_request_chars = 150000
     assert "CHATGPT_WEB_PROJECT_REF" not in learning.values
 
 
+def test_service_scoped_deepseek_web_is_visible_only_to_web(tmp_path: Path) -> None:
+    _runtime_toml(
+        tmp_path,
+        """
+[deepseek_web.web]
+enabled = true
+cdp_endpoint = "http://127.0.0.1:9229"
+root_url = "https://chat.deepseek.com/"
+profile_label = "lfl-web-deepseek-production"
+turn_timeout_s = 120
+reasoning_effort = "high"
+context_tokens = 131072
+max_request_chars = 100000
+""",
+    )
+
+    web = resolve_effective("web", env={}, workspace_root=tmp_path)
+    feishu = resolve_effective("feishu", env={}, workspace_root=tmp_path)
+    learning = resolve_effective("learning", env={}, workspace_root=tmp_path)
+
+    assert web.values["DEEPSEEK_WEB_ENABLED"] == "1"
+    assert web.values["DEEPSEEK_WEB_CDP_ENDPOINT"] == "http://127.0.0.1:9229"
+    assert web.values["DEEPSEEK_WEB_ROOT_URL"] == "https://chat.deepseek.com/"
+    assert web.values["DEEPSEEK_WEB_PROFILE_LABEL"] == "lfl-web-deepseek-production"
+    assert web.values["DEEPSEEK_WEB_TURN_TIMEOUT_S"] == "120"
+    assert web.values["DEEPSEEK_WEB_REASONING_EFFORT"] == "high"
+    assert web.values["DEEPSEEK_WEB_CONTEXT_TOKENS"] == "131072"
+    assert web.values["DEEPSEEK_WEB_MAX_REQUEST_CHARS"] == "100000"
+    assert web.sources["DEEPSEEK_WEB_ENABLED"] == "runtime_toml_service:web"
+
+    assert "DEEPSEEK_WEB_ENABLED" not in feishu.values
+    assert "DEEPSEEK_WEB_ROOT_URL" not in feishu.values
+    assert "DEEPSEEK_WEB_ENABLED" not in learning.values
+    assert "DEEPSEEK_WEB_ROOT_URL" not in learning.values
+
+
+def test_service_scoped_deepseek_web_rejects_non_web_service(tmp_path: Path) -> None:
+    bad = tmp_path / "bad-deepseek-service.toml"
+    bad.write_text("[deepseek_web.feishu]\nenabled = true\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="未知服务级 deepseek_web scope"):
+        parse_runtime_toml(bad, service="web")
+
+
 def test_service_scoped_chatgpt_web_rejects_non_web_service(tmp_path: Path) -> None:
     bad = tmp_path / "bad-chatgpt-service.toml"
     bad.write_text("[chatgpt_web.feishu]\nenabled = true\n", encoding="utf-8")

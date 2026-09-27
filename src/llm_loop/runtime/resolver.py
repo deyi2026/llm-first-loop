@@ -98,6 +98,14 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("chatgpt_web", "reasoning_effort"): TomlField(("CHATGPT_WEB_REASONING_EFFORT",), "str"),
         ("chatgpt_web", "context_tokens"): TomlField(("CHATGPT_WEB_CONTEXT_TOKENS",), "int"),
         ("chatgpt_web", "max_request_chars"): TomlField(("CHATGPT_WEB_MAX_REQUEST_CHARS",), "int"),
+        ("deepseek_web", "enabled"): TomlField(("DEEPSEEK_WEB_ENABLED",), "bool"),
+        ("deepseek_web", "cdp_endpoint"): TomlField(("DEEPSEEK_WEB_CDP_ENDPOINT",), "str"),
+        ("deepseek_web", "root_url"): TomlField(("DEEPSEEK_WEB_ROOT_URL",), "str"),
+        ("deepseek_web", "profile_label"): TomlField(("DEEPSEEK_WEB_PROFILE_LABEL",), "str"),
+        ("deepseek_web", "turn_timeout_s"): TomlField(("DEEPSEEK_WEB_TURN_TIMEOUT_S",), "int"),
+        ("deepseek_web", "reasoning_effort"): TomlField(("DEEPSEEK_WEB_REASONING_EFFORT",), "str"),
+        ("deepseek_web", "context_tokens"): TomlField(("DEEPSEEK_WEB_CONTEXT_TOKENS",), "int"),
+        ("deepseek_web", "max_request_chars"): TomlField(("DEEPSEEK_WEB_MAX_REQUEST_CHARS",), "int"),
         ("local_runtime", "observer"): TomlField(("LFL_LOCAL_RUNTIME_OBSERVER",), "str"),
         ("local_runtime", "admission_authority"): TomlField(("LFL_LOCAL_RUNTIME_ADMISSION_AUTHORITY",), "str"),
         ("local_runtime", "cli"): TomlField(("LFL_LFRT_CLI",), "str"),
@@ -165,6 +173,7 @@ _SERVICE_SCOPED_SECTIONS: Mapping[str, frozenset[str]] = MappingProxyType(
         # runtime switch service-scoped prevents Feishu/Learning from acquiring
         # the browser-backed provider on future independent restarts.
         "chatgpt_web": frozenset({"web"}),
+        "deepseek_web": frozenset({"web"}),
     }
 )
 

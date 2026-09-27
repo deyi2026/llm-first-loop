@@ -268,6 +268,52 @@ def _env_chatgpt_web_max_request_chars(
     return value
 
 
+def _env_deepseek_web_reasoning_effort(
+    name: str, env: Mapping[str, str] | None = None
+) -> str:
+    """DeepSeek Web DeepThink contract: instant=off, high=on."""
+    raw = _raw_env(name, env).strip().lower()
+    if raw in {"instant", "high"}:
+        return raw
+    if raw:
+        _note_invalid_fallback(name, "high", "非 instant/high 字符串")
+    return "high"
+
+
+def _env_deepseek_web_context_tokens(
+    name: str, env: Mapping[str, str] | None = None
+) -> int:
+    raw = _raw_env(name, env).strip()
+    if not raw:
+        return 131_072
+    try:
+        value = int(raw)
+    except ValueError:
+        _note_invalid_fallback(name, 131_072, "非整数")
+        return 131_072
+    if value <= 0:
+        _note_invalid_fallback(name, 131_072, "非正整数")
+        return 131_072
+    return value
+
+
+def _env_deepseek_web_max_request_chars(
+    name: str, env: Mapping[str, str] | None = None
+) -> int:
+    raw = _raw_env(name, env).strip()
+    if not raw:
+        return 100_000
+    try:
+        value = int(raw)
+    except ValueError:
+        _note_invalid_fallback(name, 100_000, "非整数")
+        return 100_000
+    if value <= 0:
+        _note_invalid_fallback(name, 100_000, "非正整数")
+        return 100_000
+    return value
+
+
 def _env_evolve_level(name: str, env: Mapping[str, str] | None = None) -> int:
     """EVOLVE_LOCAL_EXEC 三级解析（0/1/2；旧布尔 true/false 映射 1/0；非法回退 0）."""
     raw = _raw_env(name, env).strip().lower()
@@ -619,6 +665,18 @@ class Settings:
     chatgpt_web_context_tokens: int = 262_144
     chatgpt_web_max_request_chars: int = 150_000
 
+    # DeepSeek Web is a separate browser-backed provider from the DeepSeek API.
+    # LFL remains the sole tool/context authority; native Search/upload stay out
+    # of the provider contract.
+    deepseek_web_enabled: bool = False
+    deepseek_web_cdp_endpoint: str = "http://127.0.0.1:9229"
+    deepseek_web_root_url: str = "https://chat.deepseek.com/"
+    deepseek_web_profile_label: str = "lfl-web-deepseek"
+    deepseek_web_turn_timeout_s: float = 120.0
+    deepseek_web_reasoning_effort: str = "high"
+    deepseek_web_context_tokens: int = 131_072
+    deepseek_web_max_request_chars: int = 100_000
+
     # ── CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）──
     # CODEARTS_ENABLED=false 或凭证缺失时本组件不注册调度工具，对现有运行时零影响。
     # 凭证类字段（ak/sk/iam_token/webhook_secret）仅从 os.environ 读取，不落盘不日志。
@@ -745,6 +803,15 @@ class Settings:
                 and self.chatgpt_web_project_url
                 and self.chatgpt_web_project_ref
                 and self.chatgpt_web_project_name
+            ),
+            "deepseek_web_enabled": self.deepseek_web_enabled,
+            "deepseek_web_reasoning_effort": self.deepseek_web_reasoning_effort,
+            "deepseek_web_context_tokens": self.deepseek_web_context_tokens,
+            "deepseek_web_max_request_chars": self.deepseek_web_max_request_chars,
+            "deepseek_web_configured": bool(
+                self.deepseek_web_enabled
+                and self.deepseek_web_cdp_endpoint
+                and self.deepseek_web_root_url
             ),
             # CodeArts 集成配置状态（AI 可自查，不暴露凭证细节）
             "codearts_enabled": self.codearts.enabled,
@@ -1104,6 +1171,32 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         chatgpt_web_max_request_chars=env_one(
             _env_chatgpt_web_max_request_chars,
             "CHATGPT_WEB_MAX_REQUEST_CHARS",
+        ),
+        deepseek_web_enabled=env_bool("DEEPSEEK_WEB_ENABLED", False),
+        deepseek_web_cdp_endpoint=(
+            env_values.get("DEEPSEEK_WEB_CDP_ENDPOINT", "http://127.0.0.1:9229").strip()
+            or "http://127.0.0.1:9229"
+        ),
+        deepseek_web_root_url=(
+            env_values.get("DEEPSEEK_WEB_ROOT_URL", "https://chat.deepseek.com/").strip()
+            or "https://chat.deepseek.com/"
+        ),
+        deepseek_web_profile_label=(
+            env_values.get("DEEPSEEK_WEB_PROFILE_LABEL", "lfl-web-deepseek").strip()
+            or "lfl-web-deepseek"
+        ),
+        deepseek_web_turn_timeout_s=float(env_int("DEEPSEEK_WEB_TURN_TIMEOUT_S", 120)),
+        deepseek_web_reasoning_effort=env_one(
+            _env_deepseek_web_reasoning_effort,
+            "DEEPSEEK_WEB_REASONING_EFFORT",
+        ),
+        deepseek_web_context_tokens=env_one(
+            _env_deepseek_web_context_tokens,
+            "DEEPSEEK_WEB_CONTEXT_TOKENS",
+        ),
+        deepseek_web_max_request_chars=env_one(
+            _env_deepseek_web_max_request_chars,
+            "DEEPSEEK_WEB_MAX_REQUEST_CHARS",
         ),
         # CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）
         # 凭证类字段仅从注入的 secret/env mapping 读取，不落盘不日志（DFX-SEC-02）

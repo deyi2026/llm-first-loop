@@ -1884,7 +1884,11 @@ def list_models(request: Request) -> dict:
                     "provider": pid,
                     "model": mid,
                     "display_name": (
-                        "网页版 GPT" if model_ref == "chatgpt-web/web-gpt" else None
+                        "网页版 GPT"
+                        if model_ref == "chatgpt-web/web-gpt"
+                        else "DeepSeek 网页版"
+                        if model_ref == "deepseek-web/web-deepseek"
+                        else None
                     ),
                     "context": int(getattr(mspec, "context", 0) or 0),
                     "max_input_tokens": getattr(mspec, "max_input_tokens", None)

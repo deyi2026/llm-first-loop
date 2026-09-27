@@ -522,6 +522,21 @@ def build_engine(
             external_client_factories[CHATGPT_WEB_MODEL_REF] = (
                 lambda: build_chatgpt_web_model_client(settings)
             )
+    if settings.deepseek_web_enabled:
+        from llm_loop.llm.deepseek_web import (
+            DEEPSEEK_WEB_MODEL_REF,
+            build_deepseek_web_model_client,
+        )
+
+        effective_refs = {
+            f"{pid}/{mid}"
+            for pid, provider_spec in registry.providers.items()
+            for mid in provider_spec.models
+        }
+        if DEEPSEEK_WEB_MODEL_REF in effective_refs:
+            external_client_factories[DEEPSEEK_WEB_MODEL_REF] = (
+                lambda: build_deepseek_web_model_client(settings)
+            )
 
     model_pool = ModelClientPool(
         registry=registry,
