@@ -164,6 +164,12 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("feishu", "cross_sync_max_chars"): TomlField(("FEISHU_CROSS_SYNC_MAX_CHARS",), "int"),
         ("feishu", "cross_sync"): TomlField(("FEISHU_CROSS_SYNC",), "bool"),
         ("feishu", "audit_dir"): TomlField(("FEISHU_AUDIT_DIR",), "str"),
+        # EVO-20260928-e312b78f: 学习通道模型隔离入治理（此前 config 直接读
+        # os.environ["LEARNING_MODEL"]，launch 链路不解析该键 → .env 配置对
+        # dedicated learning 进程失效，source_model 指向下线 provider 的 job
+        # 解析失败无限留队）。入 schema 后随 resolve_effective → dotenv/toml
+        # → apply_to_environ → Settings.learning_model 全链生效。
+        ("learning", "model"): TomlField(("LEARNING_MODEL",), "str"),
     }
 )
 

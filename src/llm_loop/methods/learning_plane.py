@@ -269,6 +269,27 @@ class LearningPlane:
             return False
         try:
             request = self._resource_request(job)
+        except ValueError as exc:
+            # EVO-20260928-e312b78f 队头阻塞修复：model_ref 无法解析
+            # （provider 已下线等）是 registry.resolve 抛出的确定性
+            # ValueError，此类 job 永不可运行；若照旧 fail-open 留队且
+            # 不消耗 attempt，会按 created_at 永久占住 runnable_jobs 的
+            # 最老窗口、饿死后续任务（2026-09-28 实证：22 个 legacy job
+            # 堵死 29 个健康任务积压一天）。终态化放行队列，reason 落
+            # 未解析的模型引用供审计。
+            logger.warning(
+                "learning job %s target unresolvable, cancelling: %s", job.job_id, exc
+            )
+            try:
+                self._journal.cancel(
+                    job.job_id,
+                    f"model_unresolved:{self._effective_model(job.source_model)}",
+                )
+            except Exception:  # noqa: BLE001 - fail-open
+                logger.warning(
+                    "learning job %s cancel failed", job.job_id, exc_info=True
+                )
+            return False
         except Exception:  # noqa: BLE001 - unresolved target yields without consuming an attempt
             logger.warning("learning job %s resource target unavailable", job.job_id, exc_info=True)
             return False

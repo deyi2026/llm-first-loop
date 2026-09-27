@@ -521,8 +521,10 @@ def test_learning_plane_passes_method_discovery_to_reflection(tmp_path, monkeypa
     assert after is not None and after.state == "none"
 
 
-def test_learning_plane_unresolved_resource_target_yields_without_attempt(tmp_path):
-    """Unknown routing facts are not guessed and do not create an infinite failed-attempt loop."""
+def test_learning_plane_unresolved_resource_target_cancels_without_attempt(tmp_path):
+    """Unknown routing facts are not guessed: the job is terminalized (cancelled)
+    without consuming an attempt, instead of yield-remaining queued forever at the
+    head of runnable_jobs (queue-head starvation, EVO-20260928-e312b78f)."""
     journal = _mk(tmp_path)
     job = journal.enqueue("episode:s1:3:xyz", session_id="s1", source_model="missing/model")
     assert job is not None
@@ -536,7 +538,8 @@ def test_learning_plane_unresolved_resource_target_yields_without_attempt(tmp_pa
     plane._resource_target_resolver = lambda _model: (_ for _ in ()).throw(ValueError("unknown"))
     assert plane._try_execute(job) is False
     after = journal.job(job.job_id)
-    assert after is not None and after.state == "queued" and after.attempt == 0
+    assert after is not None and after.state == "cancelled" and after.attempt == 0
+    assert "model_unresolved:missing/model" in (after.reason or "")
     assert plane._resource_governor.active_leases() == ()
 
 
