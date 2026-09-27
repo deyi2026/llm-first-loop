@@ -59,6 +59,11 @@ def test_chatgpt_web_provider_registers_only_with_complete_explicit_config(tmp_p
     capable, control = registry.reasoning_contract("chatgpt-web", "web-gpt")
     assert capable is True
     assert control == "provider_owned"
+    model = spec.models["web-gpt"]
+    assert model.context == 262_144
+    assert model.long_context is True
+    assert model.reasoning_efforts == ("instant", "medium", "high", "xhigh", "pro")
+    assert model.reasoning_default_effort == "high"
 
 
 def test_external_browser_client_factory_is_lazy_and_cached(tmp_path):
@@ -117,3 +122,15 @@ def test_factory_wires_chatgpt_web_as_lazy_runtime_model_without_opening_browser
     )
     assert "chatgpt-web/web-gpt" in engine.llm_pool.external_client_factories
     assert "chatgpt-web/web-gpt" not in engine.llm_pool._provider_cache  # noqa: SLF001
+
+
+def test_chatgpt_web_provider_uses_explicit_context_and_reasoning_config(tmp_path):
+    settings = replace(
+        _configured_settings(tmp_path),
+        chatgpt_web_context_tokens=524_288,
+        chatgpt_web_reasoning_effort="xhigh",
+    )
+    model = load_registry(settings).providers["chatgpt-web"].models["web-gpt"]
+    assert model.context == 524_288
+    assert model.long_context is True
+    assert model.reasoning_default_effort == "xhigh"

@@ -122,10 +122,18 @@ class ChatGPTWebModelClient:
 class _SurfaceOwnedTransport:
     """Own the BrowserSurfaceLease lifecycle behind one model transport."""
 
-    def __init__(self, inner: ChatGPTModelTransport, *, surface: Any, adapter: Any) -> None:
+    def __init__(
+        self,
+        inner: ChatGPTModelTransport,
+        *,
+        surface: Any,
+        adapter: Any,
+        reasoning_effort: str = "high",
+    ) -> None:
         self.inner = inner
         self.surface = surface
         self.adapter = adapter
+        self.reasoning_effort = reasoning_effort
         self._closed = False
 
     def exchange(
@@ -139,6 +147,7 @@ class _SurfaceOwnedTransport:
         # Project root so the outer web conversation cannot accumulate stale
         # copies of earlier LFL snapshots outside LoopEngine history management.
         self.surface.reset_to_project_root()
+        self.adapter.ensure_reasoning_effort(self.reasoning_effort)
         rebinder = getattr(self.inner, "rebind", None)
         if not callable(rebinder):
             raise RuntimeError("ChatGPT Web snapshot transport cannot rebind page identity")
@@ -239,6 +248,9 @@ def build_chatgpt_web_model_client(settings: Any) -> ChatGPTWebModelClient:
         getattr(settings, "chatgpt_web_profile_label", "lfl-web-gpt") or "lfl-web-gpt"
     ).strip()
     timeout_s = float(getattr(settings, "chatgpt_web_turn_timeout_s", 120.0) or 120.0)
+    reasoning_effort = str(
+        getattr(settings, "chatgpt_web_reasoning_effort", "high") or "high"
+    ).strip().lower()
     if not endpoint or not project_url or not project_ref or not project_name:
         raise ValueError(
             "ChatGPT Web 未完整配置：需要 CHATGPT_WEB_CDP_ENDPOINT / PROJECT_URL / "
@@ -269,7 +281,12 @@ def build_chatgpt_web_model_client(settings: Any) -> ChatGPTWebModelClient:
                 project_name=project_name,
             )
             inner = ChatGPTWebPageTransport(adapter, turn_timeout_s=timeout_s)
-            return _SurfaceOwnedTransport(inner, surface=surface, adapter=adapter)
+            return _SurfaceOwnedTransport(
+                inner,
+                surface=surface,
+                adapter=adapter,
+                reasoning_effort=reasoning_effort,
+            )
         except Exception as exc:
             surface.close()
             if isinstance(exc, ValueError):

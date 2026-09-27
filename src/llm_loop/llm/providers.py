@@ -989,15 +989,24 @@ def load_registry(settings: Settings) -> ProviderRegistry:
             )
             return registry
         providers = dict(registry.providers)
+        web_context_tokens = int(
+            getattr(settings, "chatgpt_web_context_tokens", 262_144) or 262_144
+        )
         providers[CHATGPT_WEB_PROVIDER_ID] = ProviderSpec(
             id=CHATGPT_WEB_PROVIDER_ID,
             base_url="browser://chatgpt-web",
             api_key_env="",
             models={
                 CHATGPT_WEB_MODEL_ID: ModelSpec(
-                    context=_DEFAULT_CONTEXT,
+                    context=web_context_tokens,
                     reasoning_capable=True,
                     reasoning_control="provider_owned",
+                    reasoning=True,
+                    long_context=web_context_tokens >= 262_144,
+                    reasoning_efforts=("instant", "medium", "high", "xhigh", "pro"),
+                    reasoning_default_effort=str(
+                        getattr(settings, "chatgpt_web_reasoning_effort", "high") or "high"
+                    ),
                     cost_tier="subscription",
                     runtime_identity="chatgpt-web-browser-surface",
                 )

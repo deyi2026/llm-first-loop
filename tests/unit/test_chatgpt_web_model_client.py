@@ -168,6 +168,9 @@ def test_surface_owned_transport_starts_every_exchange_from_fresh_outer_thread()
             events.append("surface-close")
 
     class Adapter:
+        def ensure_reasoning_effort(self, effort):
+            events.append(f"reasoning:{effort}")
+
         def observe_identity(self):
             return type("Binding", (), {"conversation_id": "conversation-new"})()
 
@@ -189,10 +192,12 @@ def test_surface_owned_transport_starts_every_exchange_from_fresh_outer_thread()
 
     assert events == [
         "reset",
+        "reasoning:high",
         "rebind",
         "exchange:r1",
         "bind:conversation-new",
         "reset",
+        "reasoning:high",
         "rebind",
         "exchange:r2",
         "bind:conversation-new",
@@ -262,3 +267,32 @@ def test_page_transport_uses_turn_budget_for_post_click_send_confirmation():
     assert response["content"] == "ok"
     assert sent[0]["timeout_s"] == 30.0
     assert sent[0]["confirm_timeout_s"] == 120.0
+
+
+def test_chatgpt_web_wire_keeps_stable_tools_before_dynamic_dialogue_and_request_id():
+    base = {
+        "protocol": MODEL_PROTOCOL,
+        "request_id": "r1",
+        "model": "web-gpt",
+        "messages": [{"content": "first", "role": "user"}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "parameters": {"required": ["path"], "type": "object"},
+                    "name": "read_file",
+                },
+            }
+        ],
+    }
+    other = {**base, "request_id": "r2", "messages": [{"role": "user", "content": "second"}]}
+
+    rendered = ChatGPTWebPageTransport._render_request(base)
+    assert rendered.index('"tools"') < rendered.index('"messages"') < rendered.index('"request_id"')
+
+    first = ChatGPTWebPageTransport._prefix_diagnostics(base)
+    second = ChatGPTWebPageTransport._prefix_diagnostics(other)
+    assert first["stable_prefix_sha256"] == second["stable_prefix_sha256"]
+    assert first["stable_prefix_chars"] == second["stable_prefix_chars"]
+    assert first["request_payload_sha256"] != second["request_payload_sha256"]
+    assert first["authoritative"] is False

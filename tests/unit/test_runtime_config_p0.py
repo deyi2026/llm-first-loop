@@ -140,6 +140,8 @@ project_ref = "g-project"
 project_name = "LFL Web Project"
 profile_label = "lfl-web-gpt-production"
 turn_timeout_s = 120
+reasoning_effort = "high"
+context_tokens = 262144
 """,
     )
 
@@ -152,6 +154,8 @@ turn_timeout_s = 120
     assert web.values["CHATGPT_WEB_PROJECT_REF"] == "g-project"
     assert web.values["CHATGPT_WEB_PROFILE_LABEL"] == "lfl-web-gpt-production"
     assert web.values["CHATGPT_WEB_TURN_TIMEOUT_S"] == "120"
+    assert web.values["CHATGPT_WEB_REASONING_EFFORT"] == "high"
+    assert web.values["CHATGPT_WEB_CONTEXT_TOKENS"] == "262144"
     assert web.sources["CHATGPT_WEB_ENABLED"] == "runtime_toml_service:web"
 
     assert "CHATGPT_WEB_ENABLED" not in feishu.values

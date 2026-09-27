@@ -216,6 +216,40 @@ def _env_effort(name: str, env: Mapping[str, str] | None = None) -> str:
     return "high"
 
 
+def _env_chatgpt_web_reasoning_effort(
+    name: str, env: Mapping[str, str] | None = None
+) -> str:
+    """ChatGPT Web visible reasoning-strength contract; invalid values fail safe to high."""
+    raw = _raw_env(name, env).strip().lower()
+    if raw in {"instant", "medium", "high", "xhigh", "pro"}:
+        return raw
+    if raw:
+        _note_invalid_fallback(
+            name,
+            "high",
+            "非 instant/medium/high/xhigh/pro 字符串",
+        )
+    return "high"
+
+
+def _env_chatgpt_web_context_tokens(
+    name: str, env: Mapping[str, str] | None = None
+) -> int:
+    """Operational WebGPT projection budget; not a claim about browser physical context."""
+    raw = _raw_env(name, env).strip()
+    if not raw:
+        return 262_144
+    try:
+        value = int(raw)
+    except ValueError:
+        _note_invalid_fallback(name, 262_144, "非整数")
+        return 262_144
+    if value <= 0:
+        _note_invalid_fallback(name, 262_144, "非正整数")
+        return 262_144
+    return value
+
+
 def _env_evolve_level(name: str, env: Mapping[str, str] | None = None) -> int:
     """EVOLVE_LOCAL_EXEC 三级解析（0/1/2；旧布尔 true/false 映射 1/0；非法回退 0）."""
     raw = _raw_env(name, env).strip().lower()
@@ -563,6 +597,8 @@ class Settings:
     chatgpt_web_project_name: str = ""
     chatgpt_web_profile_label: str = "lfl-web-gpt"
     chatgpt_web_turn_timeout_s: float = 120.0
+    chatgpt_web_reasoning_effort: str = "high"
+    chatgpt_web_context_tokens: int = 262_144
 
     # ── CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）──
     # CODEARTS_ENABLED=false 或凭证缺失时本组件不注册调度工具，对现有运行时零影响。
@@ -681,6 +717,8 @@ class Settings:
             # M49: Fallback 链配置状态（仅计数, 不暴露降级链明细, 密钥安全 DFX-SEC-02）
             "model_fallbacks_count": _count_fallbacks(self.model_fallbacks_raw),
             "chatgpt_web_enabled": self.chatgpt_web_enabled,
+            "chatgpt_web_reasoning_effort": self.chatgpt_web_reasoning_effort,
+            "chatgpt_web_context_tokens": self.chatgpt_web_context_tokens,
             "chatgpt_web_configured": bool(
                 self.chatgpt_web_enabled
                 and self.chatgpt_web_cdp_endpoint
@@ -1035,6 +1073,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             env_values.get("CHATGPT_WEB_PROFILE_LABEL", "lfl-web-gpt").strip() or "lfl-web-gpt"
         ),
         chatgpt_web_turn_timeout_s=float(env_int("CHATGPT_WEB_TURN_TIMEOUT_S", 120)),
+        chatgpt_web_reasoning_effort=env_one(
+            _env_chatgpt_web_reasoning_effort,
+            "CHATGPT_WEB_REASONING_EFFORT",
+        ),
+        chatgpt_web_context_tokens=env_one(
+            _env_chatgpt_web_context_tokens,
+            "CHATGPT_WEB_CONTEXT_TOKENS",
+        ),
         # CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）
         # 凭证类字段仅从注入的 secret/env mapping 读取，不落盘不日志（DFX-SEC-02）
         codearts=CodeArtsSettings(

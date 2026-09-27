@@ -17,6 +17,7 @@ Important boundaries:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import re
 import time
@@ -33,6 +34,17 @@ _CONVERSATION_RE = re.compile(
     r"/c/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:/|$)"
 )
+_REASONING_STATUS_RE = re.compile(
+    r"^(即时|中|高|极高|Pro)，第\s*(\d+)\s*项，共\s*5\s*项。?$"
+)
+_REASONING_LABELS = {
+    "即时": "instant",
+    "中": "medium",
+    "高": "high",
+    "极高": "xhigh",
+    "Pro": "pro",
+}
+_REASONING_LEVELS = ("instant", "medium", "high", "xhigh", "pro")
 
 
 def canonical_text(text: str) -> str:
@@ -135,6 +147,8 @@ class ChatGPTPageAdapter:
     SEND_BUTTON = "发送"
     STOP_BUTTON = "停止"
     WEB_SEARCH_CITATION_SELECTOR = '[data-testid="chatgpt-citation"]'
+    MODEL_BUTTON = "选择 ChatGPT 模型"
+    STRENGTH_MENUITEM = "强度"
 
     def __init__(self, page: Any, *, profile_label: str, project_name: str | None = None):
         self._page = page
@@ -176,6 +190,116 @@ class ChatGPTPageAdapter:
                 f"{expected.conversation_id!r} -> {current.conversation_id!r}"
             )
         return current
+
+    @staticmethod
+    def _reasoning_effort_from_text(text: str) -> str | None:
+        normalized = canonical_text(text)
+        for label, effort in sorted(
+            _REASONING_LABELS.items(), key=lambda row: len(row[0]), reverse=True
+        ):
+            if normalized == label or normalized.endswith(f" {label}"):
+                return effort
+        match = _REASONING_STATUS_RE.match(normalized)
+        if match:
+            return _REASONING_LABELS[match.group(1)]
+        return None
+
+    def observe_reasoning_effort(self) -> str:
+        """Read the visible ChatGPT model-strength state without opening menus."""
+        trigger = self._page.get_by_role("button", name=self.MODEL_BUTTON)
+        visible = []
+        for index in range(trigger.count()):
+            candidate = trigger.nth(index)
+            if candidate.is_visible():
+                visible.append(candidate)
+        if len(visible) != 1:
+            raise PageContractError(
+                f"expected one visible ChatGPT model selector; got {len(visible)}"
+            )
+        effort = self._reasoning_effort_from_text(visible[0].inner_text() or "")
+        if effort is None:
+            raise PageContractError("visible ChatGPT reasoning strength is unrecognized")
+        return effort
+
+    def ensure_reasoning_effort(
+        self,
+        requested: str,
+        *,
+        timeout_s: float = 3.0,
+        poll_ms: int = 100,
+    ) -> str:
+        """Idempotently set and verify the qualified visible reasoning strength."""
+        desired = str(requested or "").strip().lower()
+        if desired not in _REASONING_LEVELS:
+            raise PageContractError(f"unsupported ChatGPT reasoning effort: {requested!r}")
+        current = self.observe_reasoning_effort()
+        if current == desired:
+            return current
+
+        trigger = self._page.get_by_role("button", name=self.MODEL_BUTTON)
+        visible_trigger = next(
+            (
+                trigger.nth(index)
+                for index in range(trigger.count())
+                if trigger.nth(index).is_visible()
+            ),
+            None,
+        )
+        if visible_trigger is None:
+            raise PageContractError("visible ChatGPT model selector disappeared")
+        deadline = time.monotonic() + timeout_s
+        actual = current
+        try:
+            visible_trigger.click()
+            strength_loc = self._page.get_by_role(
+                "menuitem", name=self.STRENGTH_MENUITEM
+            )
+            while time.monotonic() < deadline:
+                if strength_loc.count() and strength_loc.first.is_visible():
+                    break
+                self._page.wait_for_timeout(poll_ms)
+            else:
+                raise PageContractError("ChatGPT reasoning strength control not found")
+            strength = strength_loc.first
+            strength.click()
+
+            status = self._page.get_by_role("status")
+            observed_index: int | None = None
+            while time.monotonic() < deadline:
+                for index in range(status.count()):
+                    candidate = status.nth(index)
+                    if not candidate.is_visible():
+                        continue
+                    match = _REASONING_STATUS_RE.match(
+                        canonical_text(candidate.inner_text() or "")
+                    )
+                    if match:
+                        observed_index = int(match.group(2)) - 1
+                        break
+                if observed_index is not None:
+                    break
+                self._page.wait_for_timeout(poll_ms)
+            if observed_index is None:
+                raise PageContractError("ChatGPT reasoning strength status not observed")
+
+            desired_index = _REASONING_LEVELS.index(desired)
+            key = "ArrowRight" if desired_index > observed_index else "ArrowLeft"
+            for _ in range(abs(desired_index - observed_index)):
+                strength.press(key)
+                self._page.wait_for_timeout(poll_ms)
+        finally:
+            with contextlib.suppress(Exception):
+                self._page.keyboard.press("Escape")
+
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            actual = self.observe_reasoning_effort()
+            if actual == desired:
+                return actual
+            self._page.wait_for_timeout(poll_ms)
+        raise PageContractError(
+            f"ChatGPT reasoning effort verification failed: requested={desired!r} actual={actual!r}"
+        )
 
     def observe_messages(self) -> list[PageMessage]:
         binding = self.observe_identity()
