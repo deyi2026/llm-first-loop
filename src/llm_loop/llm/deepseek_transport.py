@@ -50,6 +50,208 @@ def _canonical_nested_json(value: Any) -> Any:
     return value
 
 
+def _decode_relaxed_dsml_string(body: str) -> str:
+    """Decode one DSML-rendered JSON string body without guessing structure.
+
+    DeepSeek's rendered DSML sometimes drops JSON escaping for quotes/newlines inside a
+    string-valued tool argument.  The structural parser below first proves the exact
+    closing quote; only then may this helper reinterpret interior quotes/control chars as
+    literal string content. Existing valid JSON escapes retain their JSON meaning.
+    """
+
+    encoded: list[str] = ['"']
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char == "\\":
+            if index + 1 >= len(body):
+                encoded.append("\\\\")
+                index += 1
+                continue
+            nxt = body[index + 1]
+            if nxt in {'"', "\\", "/", "b", "f", "n", "r", "t"}:
+                encoded.extend(("\\", nxt))
+                index += 2
+                continue
+            if (
+                nxt == "u"
+                and index + 5 < len(body)
+                and all(c in "0123456789abcdefABCDEF" for c in body[index + 2 : index + 6])
+            ):
+                encoded.append(body[index : index + 6])
+                index += 6
+                continue
+            # Shell/regex strings commonly contain non-JSON escapes such as \|. Preserve
+            # the literal backslash instead of assigning it a new escape meaning.
+            encoded.extend(("\\\\", nxt))
+            index += 2
+            continue
+        if char == '"':
+            encoded.append('\\"')
+        elif char == "\n":
+            encoded.append("\\n")
+        elif char == "\r":
+            encoded.append("\\r")
+        elif char == "\t":
+            encoded.append("\\t")
+        elif ord(char) < 0x20:
+            encoded.append(f"\\u{ord(char):04x}")
+        else:
+            encoded.append(char)
+        index += 1
+    encoded.append('"')
+    value = json.loads("".join(encoded))
+    if not isinstance(value, str):  # pragma: no cover - construction guarantees string
+        raise ValueError("decoded DSML value is not string")
+    return value
+
+
+def _parse_relaxed_dsml_arguments_object(
+    raw: str,
+    *,
+    function_schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Recover one flat-ish tool arguments object using the declared tool schema.
+
+    This is deliberately not a general permissive JSON parser. Top-level keys must be
+    declared by the selected tool schema. Non-string values still require strict JSON.
+    For string values, candidate closing quotes are accepted only when the remainder can
+    be parsed as the unique continuation of the same declared object. Multiple valid
+    parses are rejected as ambiguous.
+    """
+
+    schema = function_schema.get("parameters")
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    if not isinstance(properties, dict) or not properties:
+        raise DeepSeekModelProtocolError(
+            "DeepSeek DSML envelope arguments are invalid JSON and tool schema cannot disambiguate"
+        )
+    declared_fields = set(str(key) for key in properties)
+    text = str(raw or "").strip()
+    if not (text.startswith("{") and text.endswith("}")):
+        raise DeepSeekModelProtocolError(
+            "DeepSeek DSML envelope arguments must be an object"
+        )
+    inner = text[1:-1]
+    decoder = json.JSONDecoder()
+
+    def skip_ws(position: int) -> int:
+        while position < len(inner) and inner[position].isspace():
+            position += 1
+        return position
+
+    def quote_is_escaped(position: int) -> bool:
+        slashes = 0
+        cursor = position - 1
+        while cursor >= 0 and inner[cursor] == "\\":
+            slashes += 1
+            cursor -= 1
+        return bool(slashes % 2)
+
+    def continue_after_value(
+        position: int,
+        seen: frozenset[str],
+        key: str,
+        value: Any,
+    ) -> list[dict[str, Any]]:
+        position = skip_ws(position)
+        if position == len(inner):
+            return [{key: value}]
+        if inner[position] != ",":
+            return []
+        tails = parse_fields(position + 1, seen | {key})
+        return [{key: value, **tail} for tail in tails]
+
+    def parse_fields(position: int, seen: frozenset[str]) -> list[dict[str, Any]]:
+        position = skip_ws(position)
+        if position >= len(inner):
+            return []
+        try:
+            key_value, consumed = decoder.raw_decode(inner[position:])
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(key_value, str):
+            return []
+        key = key_value
+        if key not in declared_fields or key in seen:
+            return []
+        position += consumed
+        position = skip_ws(position)
+        if position >= len(inner) or inner[position] != ":":
+            return []
+        position = skip_ws(position + 1)
+        if position >= len(inner):
+            return []
+
+        if inner[position] == '"':
+            start = position + 1
+            terminal_solutions: list[dict[str, Any]] = []
+            for closing in range(start, len(inner)):
+                if inner[closing] != '"' or quote_is_escaped(closing):
+                    continue
+                after = skip_ws(closing + 1)
+                if after < len(inner) and inner[after] != ",":
+                    continue
+                try:
+                    value = _decode_relaxed_dsml_string(inner[start:closing])
+                except (ValueError, json.JSONDecodeError):
+                    continue
+                recovered = continue_after_value(after, seen, key, value)
+                if not recovered:
+                    continue
+                if after < len(inner) and inner[after] == ",":
+                    # A quote followed by a comma that can be parsed into another
+                    # declared field is the strongest available structural boundary.
+                    # Do not later swallow that field syntax into the current string.
+                    return recovered[:2]
+                terminal_solutions.extend(recovered)
+                if len(terminal_solutions) > 1:
+                    return terminal_solutions[:2]
+            return terminal_solutions
+
+        try:
+            value, consumed = decoder.raw_decode(inner[position:])
+        except json.JSONDecodeError:
+            return []
+        return continue_after_value(position + consumed, seen, key, value)
+
+    solutions = parse_fields(0, frozenset())
+    if len(solutions) != 1:
+        if not solutions:
+            raise DeepSeekModelProtocolError(
+                "DeepSeek DSML envelope arguments could not be recovered from declared schema"
+            )
+        raise DeepSeekModelProtocolError(
+            "DeepSeek DSML envelope arguments are structurally ambiguous"
+        )
+    return solutions[0]
+
+
+def _decode_dsml_envelope_arguments(
+    raw: str,
+    *,
+    function_schema: dict[str, Any],
+) -> dict[str, Any]:
+    candidate = str(raw or "").strip()
+    for _ in range(2):
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError:
+            break
+        if isinstance(value, dict):
+            return dict(value)
+        if isinstance(value, str):
+            candidate = value.strip()
+            continue
+        raise DeepSeekModelProtocolError(
+            "DeepSeek DSML envelope arguments must decode to an object"
+        )
+    return _parse_relaxed_dsml_arguments_object(
+        candidate,
+        function_schema=function_schema,
+    )
+
+
 class DeepSeekWebPageTransport:
     RESPONSE_FENCE = "lfl-model-response"
     _RENDERED_CODE_CHROME = frozenset({"复制", "下载", "Copy", "Download"})
@@ -205,59 +407,129 @@ class DeepSeekWebPageTransport:
         body = normalized[len(open_calls) : -len(close_calls)].strip()
         if not body:
             raise DeepSeekModelProtocolError("DeepSeek DSML calls block is empty")
-        lines = [line.strip() for line in body.split("\n") if line.strip()]
-        invoke_re = re.compile(rf'^<{re.escape(marker)} invoke name="([^"]+)">$')
-        parameter_re = re.compile(
-            rf'^<{re.escape(marker)} parameter name="([^"]+)" string="(true|false)">(.*)</{re.escape(marker)} parameter>$'
+        invoke_re = re.compile(
+            rf'<{re.escape(marker)} invoke name="([^"]+)">(.*?)</{re.escape(marker)} invoke>',
+            re.DOTALL,
         )
-        close_invoke = f"</{marker} invoke>"
+        parameter_re = re.compile(
+            rf'<{re.escape(marker)} parameter name="([^"]+)" string="(true|false)">(.*?)</{re.escape(marker)} parameter>',
+            re.DOTALL,
+        )
 
         tool_calls: list[dict[str, Any]] = []
-        index = 0
-        while index < len(lines):
-            match = invoke_re.fullmatch(lines[index])
-            if match is None:
+        used_call_ids: set[str] = set()
+        body_cursor = 0
+        for match in invoke_re.finditer(body):
+            if body[body_cursor : match.start()].strip():
                 raise DeepSeekModelProtocolError("unexpected text in DeepSeek DSML calls block")
             tool_name = match.group(1)
             if tool_name not in tools_by_name:
                 raise DeepSeekModelProtocolError(
                     f"DeepSeek DSML requested unknown LFL tool: {tool_name}"
                 )
-            index += 1
-            arguments: dict[str, Any] = {}
-            while index < len(lines) and lines[index] != close_invoke:
-                parameter_match = parameter_re.fullmatch(lines[index])
-                if parameter_match is None:
+            invoke_body = match.group(2)
+            function_schema = tools_by_name[tool_name]
+            schema = function_schema.get("parameters")
+            properties = schema.get("properties") if isinstance(schema, dict) else None
+            declared_fields = set(properties) if isinstance(properties, dict) else set()
+            parameters: dict[str, Any] = {}
+            envelope_arguments_raw: str | None = None
+            parameter_cursor = 0
+            for parameter_match in parameter_re.finditer(invoke_body):
+                if invoke_body[parameter_cursor : parameter_match.start()].strip():
                     raise DeepSeekModelProtocolError(
                         "unexpected text in DeepSeek DSML invoke block"
                     )
                 parameter_name, is_string, raw_value = parameter_match.groups()
-                if parameter_name in arguments:
+                if parameter_name in parameters:
                     raise DeepSeekModelProtocolError(
                         f"duplicate DeepSeek DSML parameter: {parameter_name}"
                     )
-                if is_string == "true":
-                    arguments[parameter_name] = raw_value
+                if parameter_name == "arguments" and parameter_name not in declared_fields:
+                    # Defer wrapper argument decoding until the exact envelope shape is
+                    # proven. DeepSeek's rendered DSML may have already removed JSON
+                    # escaping inside shell/code strings.
+                    envelope_arguments_raw = raw_value
+                    parameters[parameter_name] = raw_value
+                elif is_string == "true":
+                    parameters[parameter_name] = raw_value
                 else:
                     try:
-                        arguments[parameter_name] = json.loads(raw_value)
+                        parameters[parameter_name] = json.loads(raw_value.strip())
                     except json.JSONDecodeError as exc:
                         raise DeepSeekModelProtocolError(
                             f"invalid non-string DeepSeek DSML parameter: {parameter_name}"
                         ) from exc
-                index += 1
-            if index >= len(lines) or lines[index] != close_invoke:
-                raise DeepSeekModelProtocolError("DeepSeek DSML invoke block is not closed")
+                parameter_cursor = parameter_match.end()
+            if invoke_body[parameter_cursor:].strip():
+                raise DeepSeekModelProtocolError(
+                    "unexpected text in DeepSeek DSML invoke block"
+                )
+
+            # DeepSeek has two observed DSML shapes:
+            # 1) direct tool parameters (e.g. read_evidence: evidence_ref/start/limit), and
+            # 2) an OpenAI/LFL-style tool-call envelope rendered as DSML parameters:
+            #    arguments=<object-or-json-string>, id=..., name=..., type=function.
+            # Only unwrap shape (2) when `arguments` is not itself a declared tool field
+            # and every visible parameter is one of the exact envelope fields.
+            envelope_fields = {"arguments", "id", "name", "type"}
+            has_envelope_arguments = (
+                "arguments" in parameters and "arguments" not in declared_fields
+            )
+            if has_envelope_arguments and not set(parameters).issubset(envelope_fields):
+                raise DeepSeekModelProtocolError(
+                    "unexpected DeepSeek DSML tool-call envelope field"
+                )
+            is_envelope = has_envelope_arguments
+            call_id: str | None = None
+            if is_envelope:
+                envelope_name = parameters.get("name")
+                if envelope_name is not None and envelope_name != tool_name:
+                    raise DeepSeekModelProtocolError(
+                        "DeepSeek DSML envelope name does not match invoke name"
+                    )
+                envelope_type = parameters.get("type")
+                if envelope_type is not None and envelope_type != "function":
+                    raise DeepSeekModelProtocolError(
+                        "DeepSeek DSML envelope type must be function"
+                    )
+                envelope_id = parameters.get("id")
+                if envelope_id is not None:
+                    if not isinstance(envelope_id, str) or not envelope_id.strip():
+                        raise DeepSeekModelProtocolError(
+                            "DeepSeek DSML envelope id must be a non-empty string"
+                        )
+                    call_id = envelope_id.strip()
+
+                if envelope_arguments_raw is None:  # pragma: no cover - is_envelope proves it
+                    raise DeepSeekModelProtocolError(
+                        "DeepSeek DSML envelope arguments are missing"
+                    )
+                arguments = _decode_dsml_envelope_arguments(
+                    envelope_arguments_raw,
+                    function_schema=function_schema,
+                )
+            else:
+                arguments = parameters
+
             call_index = len(tool_calls) + 1
             request_id = str(request.get("request_id") or "")
+            if call_id is None:
+                call_id = f"{request_id}-dsml-{call_index}"
+            if call_id in used_call_ids:
+                raise DeepSeekModelProtocolError("duplicate DeepSeek DSML tool-call id")
+            used_call_ids.add(call_id)
             tool_calls.append(
                 {
-                    "id": f"{request_id}-dsml-{call_index}",
+                    "id": call_id,
                     "name": tool_name,
                     "arguments": arguments,
                 }
             )
-            index += 1
+            body_cursor = match.end()
+
+        if body[body_cursor:].strip():
+            raise DeepSeekModelProtocolError("unexpected text in DeepSeek DSML calls block")
 
         if not tool_calls:
             raise DeepSeekModelProtocolError("DeepSeek DSML calls block contains no invokes")

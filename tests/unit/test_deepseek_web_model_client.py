@@ -245,6 +245,226 @@ def test_deepseek_dsml_tool_response_normalizes_exact_lfl_tool_call():
     }
 
 
+def test_deepseek_dsml_tool_response_unwraps_observed_tool_call_envelope():
+    request = {
+        "request_id": "lfl-model-0005",
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_command",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string"},
+                            "workdir": {"type": "string"},
+                        },
+                        "required": ["command"],
+                    },
+                },
+            }
+        ],
+    }
+    text = "\n".join(
+        [
+            "<｜｜DSML｜｜ calls>",
+            '<｜｜DSML｜｜ invoke name="execute_command">',
+            '<｜｜DSML｜｜ parameter name="arguments" string="false">'
+            '{"command":"printf ok","workdir":"/tmp"}'
+            '</｜｜DSML｜｜ parameter>',
+            '<｜｜DSML｜｜ parameter name="id" string="true">lfl-0005-c1</｜｜DSML｜｜ parameter>',
+            '<｜｜DSML｜｜ parameter name="name" string="true">execute_command</｜｜DSML｜｜ parameter>',
+            '<｜｜DSML｜｜ parameter name="type" string="true">function</｜｜DSML｜｜ parameter>',
+            "</｜｜DSML｜｜ invoke>",
+            "</｜｜DSML｜｜ calls>",
+        ]
+    )
+
+    value = DeepSeekWebPageTransport._extract_dsml_tool_response(  # noqa: SLF001
+        text,
+        request=request,
+    )
+
+    assert value["tool_calls"] == [
+        {
+            "id": "lfl-0005-c1",
+            "name": "execute_command",
+            "arguments": {"command": "printf ok", "workdir": "/tmp"},
+        }
+    ]
+
+
+def test_deepseek_dsml_tool_response_accepts_multiline_envelope_parameter_body():
+    request = {
+        "request_id": "lfl-model-0006",
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_command",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string"},
+                            "workdir": {"type": "string"},
+                        },
+                    },
+                },
+            }
+        ],
+    }
+    wrapped = json.dumps(
+        {
+            "command": "cd /tmp\ncat > /tmp/probe.py <<'PY'\nprint('ok')\nPY\npython3 /tmp/probe.py",
+            "workdir": "/tmp",
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    text = (
+        "<｜｜DSML｜｜ calls>\n"
+        '<｜｜DSML｜｜ invoke name="execute_command">\n'
+        '<｜｜DSML｜｜ parameter name="arguments" string="false">\n'
+        f"{wrapped}\n"
+        "</｜｜DSML｜｜ parameter>\n"
+        '<｜｜DSML｜｜ parameter name="name" string="true">execute_command</｜｜DSML｜｜ parameter>\n'
+        "</｜｜DSML｜｜ invoke>\n"
+        "</｜｜DSML｜｜ calls>"
+    )
+
+    value = DeepSeekWebPageTransport._extract_dsml_tool_response(  # noqa: SLF001
+        text,
+        request=request,
+    )
+
+    assert value["tool_calls"][0]["arguments"] == {
+        "command": "cd /tmp\ncat > /tmp/probe.py <<'PY'\nprint('ok')\nPY\npython3 /tmp/probe.py",
+        "workdir": "/tmp",
+    }
+
+
+def test_deepseek_dsml_tool_response_unwraps_json_encoded_envelope_arguments():
+    request = {
+        "request_id": "lfl-model-0007",
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_command",
+                    "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
+                },
+            }
+        ],
+    }
+    inner = json.dumps({"command": "printf encoded"})
+    text = (
+        "<｜｜DSML｜｜ calls>\n"
+        '<｜｜DSML｜｜ invoke name="execute_command">\n'
+        f'<｜｜DSML｜｜ parameter name="arguments" string="true">{inner}</｜｜DSML｜｜ parameter>\n'
+        '<｜｜DSML｜｜ parameter name="name" string="true">execute_command</｜｜DSML｜｜ parameter>\n'
+        "</｜｜DSML｜｜ invoke>\n"
+        "</｜｜DSML｜｜ calls>"
+    )
+
+    value = DeepSeekWebPageTransport._extract_dsml_tool_response(  # noqa: SLF001
+        text,
+        request=request,
+    )
+
+    assert value["tool_calls"][0]["arguments"] == {"command": "printf encoded"}
+
+
+def test_deepseek_dsml_tool_response_recovers_rendered_shell_quotes_in_envelope():
+    request = {
+        "request_id": "lfl-model-0007b",
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_command",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string"},
+                            "workdir": {"type": "string"},
+                        },
+                        "required": ["command"],
+                    },
+                },
+            }
+        ],
+    }
+    # This is the exact failure class observed in the DeepSeek page: quote escaping
+    # inside the shell command was removed by the rendered DSML representation.
+    raw_arguments = (
+        '{"command": "cd /tmp && grep -m4 \'"event": "failed"\' journal.jsonl", '
+        '"workdir": "/tmp"}'
+    )
+    text = (
+        "<｜｜DSML｜｜ calls>\n"
+        '<｜｜DSML｜｜ invoke name="execute_command">\n'
+        '<｜｜DSML｜｜ parameter name="arguments" string="false">'
+        f"{raw_arguments}"
+        "</｜｜DSML｜｜ parameter>\n"
+        '<｜｜DSML｜｜ parameter name="name" string="true">execute_command</｜｜DSML｜｜ parameter>\n'
+        "</｜｜DSML｜｜ invoke>\n"
+        "</｜｜DSML｜｜ calls>"
+    )
+
+    value = DeepSeekWebPageTransport._extract_dsml_tool_response(  # noqa: SLF001
+        text,
+        request=request,
+    )
+
+    assert value["tool_calls"][0]["arguments"] == {
+        "command": 'cd /tmp && grep -m4 \'"event": "failed"\' journal.jsonl',
+        "workdir": "/tmp",
+    }
+
+
+def test_deepseek_dsml_tool_response_recovers_literal_multiline_shell_string():
+    request = {
+        "request_id": "lfl-model-0007c",
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_command",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string"},
+                            "workdir": {"type": "string"},
+                        },
+                    },
+                },
+            }
+        ],
+    }
+    command = "cd /tmp\ncat > /tmp/probe.py <<'PY'\nprint('ok')\nPY\npython3 /tmp/probe.py"
+    raw_arguments = '{"command": "' + command + '", "workdir": "/tmp"}'
+    text = (
+        "<｜｜DSML｜｜ calls>\n"
+        '<｜｜DSML｜｜ invoke name="execute_command">\n'
+        '<｜｜DSML｜｜ parameter name="arguments" string="false">'
+        f"{raw_arguments}"
+        "</｜｜DSML｜｜ parameter>\n"
+        '<｜｜DSML｜｜ parameter name="name" string="true">execute_command</｜｜DSML｜｜ parameter>\n'
+        "</｜｜DSML｜｜ invoke>\n"
+        "</｜｜DSML｜｜ calls>"
+    )
+
+    value = DeepSeekWebPageTransport._extract_dsml_tool_response(  # noqa: SLF001
+        text,
+        request=request,
+    )
+
+    assert value["tool_calls"][0]["arguments"] == {
+        "command": command,
+        "workdir": "/tmp",
+    }
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -267,6 +487,54 @@ def test_deepseek_dsml_tool_response_rejects_untrusted_or_ambiguous_shapes(text)
         )
         if value is None:
             raise DeepSeekModelProtocolError("not a DSML calls block")
+
+
+@pytest.mark.parametrize(
+    "text, match",
+    [
+        (
+            '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="execute_command">\n'
+            '<｜｜DSML｜｜ parameter name="arguments" string="false">{"command":"ok"}</｜｜DSML｜｜ parameter>\n'
+            '<｜｜DSML｜｜ parameter name="name" string="true">read_file</｜｜DSML｜｜ parameter>\n'
+            '</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>',
+            "name does not match",
+        ),
+        (
+            '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="execute_command">\n'
+            '<｜｜DSML｜｜ parameter name="arguments" string="true">[]</｜｜DSML｜｜ parameter>\n'
+            '</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>',
+            "must decode to an object",
+        ),
+        (
+            '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="execute_command">\n'
+            '<｜｜DSML｜｜ parameter name="arguments" string="false">{"command":"ok"}</｜｜DSML｜｜ parameter>\n'
+            '<｜｜DSML｜｜ parameter name="extra" string="true">x</｜｜DSML｜｜ parameter>\n'
+            '</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>',
+            "unexpected",
+        ),
+    ],
+)
+def test_deepseek_dsml_tool_response_rejects_invalid_envelopes(text, match):
+    request = {
+        "request_id": "lfl-model-0008",
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_command",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                    },
+                },
+            }
+        ],
+    }
+    with pytest.raises(DeepSeekModelProtocolError, match=match):
+        DeepSeekWebPageTransport._extract_dsml_tool_response(  # noqa: SLF001
+            text,
+            request=request,
+        )
 
 
 def test_deepseek_surface_owned_transport_resets_and_mechanically_controls_each_request():
