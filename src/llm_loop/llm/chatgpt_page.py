@@ -221,18 +221,34 @@ class ChatGPTPageAdapter:
             raise PageContractError("visible ChatGPT reasoning strength is unrecognized")
         return effort
 
+    def _wait_for_reasoning_effort(
+        self, *, timeout_s: float, poll_ms: int
+    ) -> str:
+        deadline = time.monotonic() + timeout_s
+        last_error: PageContractError | None = None
+        while time.monotonic() < deadline:
+            try:
+                return self.observe_reasoning_effort()
+            except PageContractError as exc:
+                last_error = exc
+                self._page.wait_for_timeout(poll_ms)
+        detail = f": {last_error}" if last_error is not None else ""
+        raise PageContractError(
+            f"ChatGPT model selector did not become visible within {timeout_s:g}s{detail}"
+        )
+
     def ensure_reasoning_effort(
         self,
         requested: str,
         *,
-        timeout_s: float = 3.0,
+        timeout_s: float = 8.0,
         poll_ms: int = 100,
     ) -> str:
         """Idempotently set and verify the qualified visible reasoning strength."""
         desired = str(requested or "").strip().lower()
         if desired not in _REASONING_LEVELS:
             raise PageContractError(f"unsupported ChatGPT reasoning effort: {requested!r}")
-        current = self.observe_reasoning_effort()
+        current = self._wait_for_reasoning_effort(timeout_s=timeout_s, poll_ms=poll_ms)
         if current == desired:
             return current
 
@@ -291,12 +307,9 @@ class ChatGPTPageAdapter:
             with contextlib.suppress(Exception):
                 self._page.keyboard.press("Escape")
 
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            actual = self.observe_reasoning_effort()
-            if actual == desired:
-                return actual
-            self._page.wait_for_timeout(poll_ms)
+        actual = self._wait_for_reasoning_effort(timeout_s=timeout_s, poll_ms=poll_ms)
+        if actual == desired:
+            return actual
         raise PageContractError(
             f"ChatGPT reasoning effort verification failed: requested={desired!r} actual={actual!r}"
         )

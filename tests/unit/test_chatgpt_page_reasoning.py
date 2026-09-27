@@ -25,6 +25,9 @@ class _Item:
 
     def is_visible(self):
         if self.kind == "trigger":
+            if self.page.trigger_hidden_checks > 0:
+                self.page.trigger_hidden_checks -= 1
+                return False
             return True
         if self.kind == "strength":
             return self.page.menu_open
@@ -71,8 +74,9 @@ class _Locator:
 
 
 class _Page:
-    def __init__(self, level=2):
+    def __init__(self, level=2, trigger_hidden_checks=0):
         self.level = level
+        self.trigger_hidden_checks = trigger_hidden_checks
         self.menu_open = False
         self.strength_open = False
         self.keyboard = _Keyboard(self)
@@ -144,3 +148,11 @@ def test_observe_reasoning_effort_fails_closed_on_unknown_visible_state():
     adapter = ChatGPTPageAdapter(page, profile_label="fixture")
     with pytest.raises(PageContractError, match="unrecognized"):
         adapter.observe_reasoning_effort()
+
+
+def test_ensure_reasoning_effort_waits_for_project_root_control_hydration():
+    page = _Page(level=2, trigger_hidden_checks=3)
+    adapter = ChatGPTPageAdapter(page, profile_label="fixture")
+
+    assert adapter.ensure_reasoning_effort("high", timeout_s=1.0, poll_ms=1) == "high"
+    assert page.trigger_hidden_checks == 0
