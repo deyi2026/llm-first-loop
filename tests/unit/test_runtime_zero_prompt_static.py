@@ -54,7 +54,9 @@ def test_overflow_path_is_deterministic_runtime_control():
     assert "overflow_feedback" not in overflow_src
     assert "render_program_appendix" not in overflow_src
     assert "budget_shrunk" in overflow_src  # 确定性收缩在场
-    assert "[上下文超限]" in overflow_src  # B-G3 纯事实终态文本在场
+    assert "[文本入口超限]" in overflow_src
+    assert "[上下文窗口超限]" in overflow_src
+    assert "mandatory_projection_cannot_fit" in overflow_src
 
 
 def test_repeat_and_empty_search_are_event_only():

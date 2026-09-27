@@ -199,7 +199,8 @@ def test_real_overflow_finalizer_persists_empty_placeholder_with_event_bound_han
 
     assert attempts == 2
     assert result.run_incomplete is True
-    assert result.final_answer.startswith("[上下文超限]")
+    assert result.final_answer.startswith("[文本入口超限]")
+    assert "本次终止不是由该 token 窗口直接触发" in result.final_answer
     sess = engine.session.load(sid)
     terminal = sess.messages[-1]
     assert terminal.role == "assistant"
@@ -216,3 +217,71 @@ def test_real_overflow_finalizer_persists_empty_placeholder_with_event_bound_han
     assert event.type == "program.final"
     assert event.payload["full_text"] == result.final_answer
     assert event.payload["continuity_manifest"]["version"] == 1
+
+
+def test_hard_preflight_overflow_never_reaches_provider_send(build_test_engine, tmp_path):
+    from llm_loop.event_log.store import EventStore
+
+    engine, fake = build_test_engine([{"content": "must-not-send"}])
+    engine._event_store = EventStore(tmp_path / "events", enabled=True)  # pyright: ignore[reportPrivateUsage]
+    preflight_calls = 0
+
+    def preflight(messages, tools, *, model=None):  # noqa: ARG001
+        nonlocal preflight_calls
+        preflight_calls += 1
+        return {
+            "observed_chars": 163_443,
+            "soft_limit_chars": 135_000,
+            "hard_limit_chars": 150_000,
+            "soft_pressure": True,
+            "hard_overflow": True,
+        }
+
+    fake.request_envelope_preflight = preflight
+    sid = engine.session.create()
+    result = engine.run(sid, "exact active ingress")
+
+    assert fake.calls == []
+    assert preflight_calls >= 2
+    assert result.final_answer.startswith("[文本入口超限]")
+    assert "mandatory_projection_cannot_fit" in result.final_answer
+    events = engine._event_store.read_cached(sid)  # pyright: ignore[reportPrivateUsage]
+    pressure = [event.payload for event in events if event.type == "request.ingress_pressure"]
+    assert any(row.get("action") == "minimum_projection_preflight" for row in pressure)
+
+
+def test_exact_wire_fit_uses_absolute_post_schema_history_cap(build_test_engine):
+    engine, fake = build_test_engine([{"content": "done"}])
+    preflight_calls = 0
+
+    def preflight(messages, tools, *, model=None):  # noqa: ARG001
+        nonlocal preflight_calls
+        preflight_calls += 1
+        if preflight_calls == 1:
+            return {
+                "observed_chars": 163_443,
+                "soft_limit_chars": 135_000,
+                "hard_limit_chars": 150_000,
+                "soft_pressure": True,
+                "hard_overflow": True,
+            }
+        return {
+            "observed_chars": 124_000,
+            "soft_limit_chars": 135_000,
+            "hard_limit_chars": 150_000,
+            "soft_pressure": False,
+            "hard_overflow": False,
+        }
+
+    fake.request_envelope_preflight = preflight
+    sid = engine.session.create()
+    result = engine.run(sid, "hello")
+
+    assert result.final_answer == "done"
+    assert len(fake.calls) == 1
+    cap = engine._run_state().ingress_history_budget_cap  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(cap, int) and cap > 0
+    facts = engine._run_state().ingress_pressure_facts  # pyright: ignore[reportPrivateUsage]
+    assert facts["history_budget_cap"] == cap
+    assert facts["history_budget_before"] > cap
+    assert facts["wire_deficit_chars"] == 28_443

@@ -132,7 +132,7 @@ def test_provider_overflow_on_mandatory_only_rebuild_is_cannot_fit(
     assert result.projection_cannot_fit
     assert result.run_incomplete
     assert not result.provider_output_truncated
-    assert "上下文压力" in result.final_answer
+    assert result.final_answer.startswith("[上下文窗口超限]")
     assert any(
         m.content == "MANDATORY_ONLY_CURRENT_INGRESS" for m in engine.session.load(sid).messages
     )

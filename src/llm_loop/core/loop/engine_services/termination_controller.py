@@ -97,16 +97,25 @@ class TerminationController:
         if projection_mandatory_only:
             host._record_action(
                 "overflow.cannot_fit",
-                "provider_rejected_mandatory_projection",
+                "mandatory_projection_cannot_fit",
                 f"provider_window={model_window.get('context', '?')}; "
                 f"model={model_window.get('label', '?')}; prompt_chars=0",
             )
-            final_text = (
-                "[上下文压力] 事实: provider 已拒绝当前 run 的机械最小合法投影；"
-                "该投影只保留 system、exact active ingress 与当前必须完整保留的最新协议组，"
-                "因此不存在可继续机械退休的旧组。未删除当前入口、未复用旧请求、未伪造摘要。\n"
-                f"原因: {exc}。"
-            )
+            if isinstance(exc, LLMRequestTooLargeError):
+                final_text = (
+                    "[文本入口超限] 事实: 当前 run 的机械最小合法投影仍超过 provider "
+                    "已验证文本入口限制（mandatory_projection_cannot_fit）。"
+                    f"渲染请求 {exc.observed_chars} chars，限制 {exc.limit_chars} chars。"
+                    "该投影只保留 system、exact active ingress 与当前必须完整保留的最新协议组，"
+                    "不存在可继续机械退休的旧组；未删除当前入口、未复用旧请求、未伪造摘要。"
+                )
+            else:
+                final_text = (
+                    "[上下文窗口超限] 事实: provider 已拒绝当前 run 的机械最小合法投影；"
+                    "该投影只保留 system、exact active ingress 与当前必须完整保留的最新协议组，"
+                    "因此不存在可继续机械退休的旧组。未删除当前入口、未复用旧请求、未伪造摘要。\n"
+                    f"原因: {exc}。"
+                )
             return ("cannot_fit", final_text)
         # 第一次 overflow: 确定性 compaction——预算收缩（build 链重组时超出部分
         # 走既有 lossless 归档：完整另存、信息零丢失、可检索找回；unresolved
@@ -140,13 +149,24 @@ class TerminationController:
             f"deterministic_compact_exhausted; provider_window="
             f"{model_window.get('context', '?')}; model={model_window.get('label', '?')}",
         )
-        final_text = (
-            f"[上下文超限] 事实: 上下文已达 provider 窗口上限"
-            f"（模型 {model_window.get('label', model_used)}，"
-            f"窗口 {model_window.get('context', '?')}），确定性压缩后仍超限，run 终止。\n"
-            f"原因: {exc}。\n"
-            f"超出部分已完整归档（信息零丢失，可经检索找回）。"
-        )
+        if isinstance(exc, LLMRequestTooLargeError):
+            final_text = (
+                "[文本入口超限] 事实: 当前 provider 请求渲染后超过已验证文本入口限制，"
+                "确定性压缩后仍超限，run 终止。\n"
+                f"渲染请求 {exc.observed_chars} chars，限制 {exc.limit_chars} chars；"
+                f"模型上下文窗口为 {model_window.get('context', '?')} tokens，"
+                "本次终止不是由该 token 窗口直接触发。\n"
+                f"原因: {exc}。\n"
+                "超出部分已完整归档（信息零丢失，可经检索找回）。"
+            )
+        else:
+            final_text = (
+                f"[上下文窗口超限] 事实: provider 上下文窗口已拒绝当前请求"
+                f"（模型 {model_window.get('label', model_used)}，"
+                f"窗口 {model_window.get('context', '?')}），确定性压缩后仍超限，run 终止。\n"
+                f"原因: {exc}。\n"
+                "超出部分已完整归档（信息零丢失，可经检索找回）。"
+            )
         return ("end", final_text)
 
     def _reset_overflow_state(self) -> None:

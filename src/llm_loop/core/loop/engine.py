@@ -93,7 +93,7 @@ from llm_loop.llm.client import (
     StreamDelta,
     provider_structure_violations,
 )
-from llm_loop.llm.errors import LLMError, LLMProjectionError
+from llm_loop.llm.errors import LLMError, LLMProjectionError, LLMRequestTooLargeError
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.memory.store import MemoryStore
 from llm_loop.resources.contracts import ExecutionClass, ServicePriority
@@ -631,6 +631,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         )
         _bucket.ingress_pressure_compact_count = 0
         _bucket.ingress_pressure_facts = {}
+        _bucket.ingress_history_budget_cap = None
         _bucket.longrun_read_cache = {}
         _bucket.longrun_continuity_manifest = None
         # P1-A/P1-B: runtime does not parse current-user semantics into task or
@@ -1052,6 +1053,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 _tool_schema_chars,
                 tool_schema_tokens=_tool_schema_tokens,
             )
+            _ingress_budget_cap = self._run_state().ingress_history_budget_cap
+            if isinstance(_ingress_budget_cap, int) and _ingress_budget_cap > 0:
+                effective_budget = min(effective_budget, _ingress_budget_cap)
+                _budget_info["ingress_history_budget_cap"] = _ingress_budget_cap
             _budget_info["pre_tool_history_budget"] = _pre_tool_budget
             _budget_info["tool_schema_reserve_chars"] = _tool_schema_chars
             _budget_info["effective_budget"] = effective_budget
@@ -1220,8 +1225,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
 
             # Browser providers can expose an exact request-envelope preflight.  Run it
             # after final message/tool projection but before provider-call identity or
-            # BrowserSurface work.  One soft-watermark rebuild (plus one emergency hard
-            # preflight rebuild) is bounded per run; soft pressure alone never terminates.
+            # BrowserSurface work.  A hard rendered-wire overflow is a send invariant:
+            # it MUST converge locally or terminate before transport.  Fitting is driven
+            # by the exact wire deficit and an absolute post-schema history budget cap;
+            # fixed protocol/schema/mandatory bytes are therefore not incorrectly scaled
+            # as if the whole request were compressible.
             _request_preflight = getattr(llm_client, "request_envelope_preflight", None)
             if callable(_request_preflight):
                 try:
@@ -1237,20 +1245,32 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 _soft_pressure = bool(_pf.get("soft_pressure", False))
                 _hard_overflow = bool(_pf.get("hard_overflow", False))
                 _pressure_count = int(self._run_state().ingress_pressure_compact_count or 0)
-                _should_rebuild = _soft_pressure and (
-                    _pressure_count == 0 or (_hard_overflow and _pressure_count == 1)
-                )
-                if _should_rebuild and _observed > 0:
+                if _soft_pressure and _observed > 0:
                     _target = _soft if _soft > 0 else _hard
-                    if _target > 0:
-                        _factor = max(0.10, min(0.97, (_target / _observed) * 0.97))
-                        self._overflow_shrink_factor = _factor
+                    _max_fit_rebuilds = 4
+                    _current_budget = max(1, int(effective_budget or 0))
+                    _can_fit_more = _pressure_count < _max_fit_rebuilds
+                    if _target > 0 and _can_fit_more and _current_budget > 1:
+                        _deficit = max(1, _observed - _target)
+                        _safety = max(1024, int(_target * 0.01))
+                        _min_step = max(1024, int(_current_budget * 0.05))
+                        _new_cap = max(
+                            1,
+                            min(
+                                _current_budget - _min_step,
+                                _current_budget - _deficit - _safety,
+                            ),
+                        )
+                        self._run_state().ingress_history_budget_cap = _new_cap
                         self._run_state().ingress_pressure_compact_count = _pressure_count + 1
                         self._run_state().ingress_pressure_facts = {
                             "observed_chars": _observed,
                             "soft_limit_chars": _soft,
                             "hard_limit_chars": _hard,
                             "rebuild_count": _pressure_count + 1,
+                            "history_budget_before": _current_budget,
+                            "history_budget_cap": _new_cap,
+                            "wire_deficit_chars": _deficit,
                         }
                         self._event_append(
                             session_id,
@@ -1258,33 +1278,146 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             {
                                 "round": rounds,
                                 **self._run_state().ingress_pressure_facts,
-                                "action": "rebuild_before_transport",
-                                "shrink_factor": _factor,
+                                "action": "exact_wire_fit_rebuild",
                                 "hard_overflow": _hard_overflow,
                             },
                         )
                         self._record_action(
                             "request.ingress_pressure",
-                            "rebuild_before_transport",
-                            f"chars={_observed};soft={_soft};hard={_hard};factor={_factor:.4f}",
+                            "exact_wire_fit_rebuild",
+                            (
+                                f"chars={_observed};soft={_soft};hard={_hard};"
+                                f"budget={_current_budget}->{_new_cap};deficit={_deficit}"
+                            ),
                         )
                         # No provider call occurred, so this is not a logical model round.
                         rounds -= 1
                         continue
-                elif _soft_pressure:
-                    self._event_append(
-                        session_id,
-                        "request.ingress_pressure",
-                        {
-                            "round": rounds,
-                            "observed_chars": _observed,
-                            "soft_limit_chars": _soft,
-                            "hard_limit_chars": _hard,
-                            "rebuild_count": _pressure_count,
-                            "action": "bounded_preflight_exhausted",
-                            "hard_overflow": _hard_overflow,
-                        },
-                    )
+
+                    if _hard_overflow:
+                        # Exact fitting did not converge.  Before declaring non-fit,
+                        # rebuild the mechanical minimum directly from durable Session
+                        # truth (system + exact active ingress + newest complete atomic
+                        # group) and measure *that exact browser wire* with the same
+                        # canonical renderer.  Provider send remains impossible while
+                        # hard_overflow is true.
+                        _minimal = self._build_conservative_active_run_messages(
+                            sess,
+                            max_chars=1,
+                            model=model,
+                            planned_label=planned_label,
+                            logical_round=rounds,
+                        )
+                        if _minimal.state != "rebuilt":
+                            self._record_action(
+                                "request.ingress_pressure",
+                                "minimum_projection_invalid",
+                                _minimal.detail[:200],
+                            )
+                            _run_end_reason = "projection_invalid"
+                            final_answer = (
+                                "[上下文投影失败] 无法从当前 durable state 重建机械最小合法 "
+                                "provider 请求；已阻止发送。"
+                            )
+                            break
+                        _minimal_messages = list(_minimal.messages)
+                        _minimal_pf = dict(
+                            _request_preflight(
+                                _minimal_messages,
+                                tools_param,
+                                model=chat_model_arg,
+                            )
+                            or {}
+                        )
+                        _minimal_observed = int(_minimal_pf.get("observed_chars", 0) or 0)
+                        _minimal_hard = int(_minimal_pf.get("hard_limit_chars", _hard) or _hard)
+                        _minimal_hard_overflow = bool(
+                            _minimal_pf.get("hard_overflow", False)
+                        )
+                        self._event_append(
+                            session_id,
+                            "request.ingress_pressure",
+                            {
+                                "round": rounds,
+                                "observed_chars": _minimal_observed,
+                                "soft_limit_chars": int(
+                                    _minimal_pf.get("soft_limit_chars", _soft) or _soft
+                                ),
+                                "hard_limit_chars": _minimal_hard,
+                                "rebuild_count": _pressure_count,
+                                "action": "minimum_projection_preflight",
+                                "hard_overflow": _minimal_hard_overflow,
+                                "mandatory_only": True,
+                            },
+                        )
+                        if _minimal_hard_overflow:
+                            _cannot_fit_exc = LLMRequestTooLargeError(
+                                "request_too_large: mechanical minimum rendered request "
+                                "exceeds qualified text ingress limit "
+                                f"(rendered_chars={_minimal_observed}, "
+                                f"max_request_chars={_minimal_hard})",
+                                observed_chars=_minimal_observed,
+                                limit_chars=_minimal_hard,
+                                provider=getattr(llm_client, "provider", ""),
+                            )
+                            _overflow_action, _overflow_final = self._termination._handle_overflow(
+                                _cannot_fit_exc,
+                                sess,
+                                model_used,
+                                model_window={
+                                    "label": model_used,
+                                    "context": _response_context_limit,
+                                },
+                                projection_mandatory_only=True,
+                            )
+                            self._record_action(
+                                "request.ingress_pressure",
+                                "mandatory_projection_cannot_fit",
+                                (
+                                    f"chars={_minimal_observed};hard={_minimal_hard};"
+                                    "provider_send=blocked"
+                                ),
+                            )
+                            _run_end_reason = "projection_cannot_fit"
+                            final_answer = _overflow_final or (
+                                "[文本入口超限] 当前机械最小合法投影仍超过 provider 文本入口限制；"
+                                "已阻止发送。"
+                            )
+                            break
+
+                        # The ordinary projection failed to fit but the mechanical
+                        # minimum is below the hard ingress limit.  Use that exact
+                        # current-truth projection for this call; no stale saved wire is
+                        # reused and no semantic summary is fabricated.
+                        messages = _minimal_messages
+                        _projection_mandatory_only = True
+                        _observed = _minimal_observed
+                        _soft = int(_minimal_pf.get("soft_limit_chars", _soft) or _soft)
+                        _hard = _minimal_hard
+                        _soft_pressure = bool(_minimal_pf.get("soft_pressure", False))
+                        _hard_overflow = False
+                        self._record_action(
+                            "request.ingress_pressure",
+                            "minimum_projection_selected",
+                            f"chars={_minimal_observed};hard={_minimal_hard}",
+                        )
+                    else:
+                        # Soft target is headroom, not a correctness boundary.  After
+                        # bounded exact fitting, a request that is proven <= hard limit
+                        # may proceed; record the fact instead of pretending convergence.
+                        self._event_append(
+                            session_id,
+                            "request.ingress_pressure",
+                            {
+                                "round": rounds,
+                                "observed_chars": _observed,
+                                "soft_limit_chars": _soft,
+                                "hard_limit_chars": _hard,
+                                "rebuild_count": _pressure_count,
+                                "action": "soft_fit_exhausted_safe_to_send",
+                                "hard_overflow": False,
+                            },
+                        )
 
             # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）
             # 供 architecture_status.context_usage.breakdown 注入；last_build_info 入桶保留。

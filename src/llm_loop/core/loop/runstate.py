@@ -46,6 +46,12 @@ class _RunState:
     # proceed to the hard guard instead of looping forever.
     ingress_pressure_compact_count: int = 0
     ingress_pressure_facts: dict[str, Any] = field(default_factory=dict)
+    # Browser rendered-wire fitting uses an absolute post-tool-schema history cap.
+    # Unlike ``_overflow_shrink_factor`` this is not a ratio over the whole request:
+    # exact preflight computes the wire deficit, then removes that many chars (plus a
+    # small safety margin) from the only mechanically compressible budget.  The cap is
+    # per-run and reset on every fresh human ingress.
+    ingress_history_budget_cap: int | None = None
     # Exact read observations that may be reused mechanically inside a run or restored
     # from an adjacent overflow handoff.  This is execution state, never prompt authority.
     longrun_read_cache: dict[str, dict[str, Any]] = field(default_factory=dict)

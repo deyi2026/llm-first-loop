@@ -100,7 +100,7 @@ def test_overflow_second_time_ends_loop(build_test_engine):
 
     engine, _fake = build_test_engine([raise_overflow, raise_overflow])
     result = engine.run("s2", "你好")
-    assert "上下文超限" in result.final_answer  # 新事实终态文案
+    assert result.final_answer.startswith("[上下文窗口超限]")
     sess = engine.session.load("s2")
     overflow_sys = [m for m in sess.messages if "上下文溢出" in m.content and m.role == "system"]
     assert len(overflow_sys) == 0
