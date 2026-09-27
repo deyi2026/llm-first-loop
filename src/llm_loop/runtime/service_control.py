@@ -1188,7 +1188,19 @@ def latest_succeeded_actions(
         if action.action != "restart" or action.status != "succeeded":
             continue
         current = latest.get(action.target)
-        if current is None or action.updated_at > current.updated_at:
+        try:
+            action_updated_ts = datetime.fromisoformat(action.updated_at).timestamp()
+        except ValueError:
+            action_updated_ts = 0.0
+        try:
+            current_updated_ts = (
+                datetime.fromisoformat(current.updated_at).timestamp()
+                if current is not None
+                else 0.0
+            )
+        except ValueError:
+            current_updated_ts = 0.0
+        if current is None or action_updated_ts > current_updated_ts:
             latest[action.target] = action
     return latest
 

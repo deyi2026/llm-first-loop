@@ -213,6 +213,32 @@ def test_service_specific_receipt_beats_all_receipt(tmp_path: Path) -> None:
     assert view["services"]["feishu"]["stable"]["action_id"] == "svc-all-old"
 
 
+def test_latest_receipt_orders_mixed_timezone_offsets_by_instant(tmp_path: Path) -> None:
+    """不同 ISO offset 必须按实际时刻排序，不能按字符串字典序误选旧回执."""
+    store = _green_store(tmp_path)
+    _write_receipt(
+        store,
+        action_id="svc-web-gen1-plus8",
+        target="web",
+        generation=1,
+        updated_at="2026-09-27T19:52:13.170526+08:00",
+    )
+    _publish(store, _deployment(tmp_path, 2, HEAD_B))
+    _write_manifest(store, "web", pid=os.getpid(), git_head=HEAD_B)
+    _write_receipt(
+        store,
+        action_id="svc-web-gen2-utc",
+        target="web",
+        generation=2,
+        updated_at="2026-09-27T13:23:30.660436+00:00",
+    )
+
+    stable = compose_service_identity_view(store)["services"]["web"]["stable"]
+    assert stable["action_id"] == "svc-web-gen2-utc"
+    assert stable["generation"] == 2
+    assert stable["matches_desired_generation"] is True
+
+
 def test_tool_status_exposes_identity_view(tmp_path: Path) -> None:
     store = _green_store(tmp_path)
     tool = ServiceControlTool(
