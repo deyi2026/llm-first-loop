@@ -34,7 +34,7 @@ class ChatRequest(BaseModel):
     )
     reasoning_effort: str | None = Field(
         default=None,
-        description="本次请求的 canonical 推理等级（如 low/medium/high/max/xhigh）；实际可用档位由所选模型声明，不传则用模型/provider 默认",
+        description="本次请求的 canonical 推理等级（如 instant/low/medium/high/max/xhigh/pro）；实际可用档位由所选模型声明，不传则用模型/provider 默认",
     )
     reasoning_mode: Literal["auto", "off", "on"] = Field(
         default="auto",

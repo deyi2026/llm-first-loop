@@ -90,12 +90,13 @@ describe("product composer", () => {
             provider: "chatgpt-web",
             model: "web-gpt",
             display_name: "网页版 GPT",
-            context: 131_072,
+            context: 262_144,
             reasoning_capable: true,
             reasoning_control: "provider_owned",
-            reasoning_control_supported: false,
+            reasoning_control_supported: true,
             reasoning_can_disable: false,
-            reasoning_efforts: [],
+            reasoning_efforts: ["instant", "medium", "high", "xhigh", "pro"],
+            reasoning_default_effort: "high",
           },
         ],
       }), { status: 200 });
@@ -106,6 +107,15 @@ describe("product composer", () => {
     expect(within(select).getByRole("option", { name: "网页版 GPT" })).toHaveValue("chatgpt-web/web-gpt");
     fireEvent.change(select, { target: { value: "chatgpt-web/web-gpt" } });
     expect(sessionStore.getState().model).toBe("chatgpt-web/web-gpt");
+
+    fireEvent.click(screen.getByTestId("reasoning-button"));
+    const popover = screen.getByTestId("reasoning-popover");
+    const xhigh = within(popover).getByRole("button", { name: "xhigh" });
+    expect(xhigh).toBeEnabled();
+    fireEvent.click(xhigh);
+    expect(sessionStore.getState().thinkingMode).toBe("on");
+    expect(sessionStore.getState().reasoningEffort).toBe("xhigh");
+    expect(screen.getByTestId("reasoning-button").textContent).toContain("xhigh");
   });
 
   it("附件插入菜单支持点击外侧和 Escape 关闭，避免移动端浮层滞留", () => {

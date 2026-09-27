@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from llm_loop.core.run_context import current_reasoning_effort
 from llm_loop.llm.chatgpt_page import PageBinding
 from llm_loop.llm.chatgpt_transport import ChatGPTWebPageTransport
 from llm_loop.llm.chatgpt_web import (
@@ -192,7 +193,9 @@ def test_surface_owned_transport_starts_every_exchange_from_fresh_outer_thread()
 
     transport = _SurfaceOwnedTransport(Inner(), surface=Surface(), adapter=Adapter())
     assert transport.exchange({"request_id": "r1"}) == {"request_id": "r1"}
-    assert transport.exchange({"request_id": "r2"}) == {"request_id": "r2"}
+    assert transport.exchange({"request_id": "r2", "_reasoning_effort": "xhigh"}) == {
+        "request_id": "r2"
+    }
     transport.close()
 
     assert events == [
@@ -202,13 +205,41 @@ def test_surface_owned_transport_starts_every_exchange_from_fresh_outer_thread()
         "exchange:r1",
         "bind:conversation-new",
         "reset",
-        "reasoning:high",
+        "reasoning:xhigh",
         "rebind",
         "exchange:r2",
         "bind:conversation-new",
         "inner-close",
         "surface-close",
     ]
+
+
+def test_chatgpt_web_client_carries_request_local_reasoning_effort_out_of_wire():
+    transport = _Transport([_final("ok")])
+    client = ChatGPTWebModelClient(transport, reasoning_effort="high")
+    token = current_reasoning_effort.set("pro")
+    try:
+        response = client.chat([{"role": "user", "content": "hi"}], [])
+    finally:
+        current_reasoning_effort.reset(token)
+
+    assert response.content == "ok"
+    request = transport.requests[0][0]
+    assert request["_reasoning_effort"] == "pro"
+    rendered = ChatGPTWebPageTransport._render_request(request)
+    assert '"_reasoning_effort"' not in rendered
+
+
+def test_chatgpt_web_client_ignores_effort_not_declared_by_browser_provider():
+    transport = _Transport([_final("ok")])
+    client = ChatGPTWebModelClient(transport, reasoning_effort="high")
+    token = current_reasoning_effort.set("max")
+    try:
+        client.chat([{"role": "user", "content": "hi"}], [])
+    finally:
+        current_reasoning_effort.reset(token)
+
+    assert transport.requests[0][0]["_reasoning_effort"] is None
 
 
 def test_page_transport_uses_turn_budget_for_post_click_send_confirmation():

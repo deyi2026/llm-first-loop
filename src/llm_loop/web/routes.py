@@ -1861,13 +1861,20 @@ def list_models(request: Request) -> dict:
             if model_ref not in names:
                 continue
             capable, control = registry.reasoning_contract(pid, mid)
-            control_supported = control in {"thinking_type", "chat_template", "always_on_effort"} or (
-                control == "legacy" and bool(getattr(mspec, "thinking", False))
+            efforts = list(getattr(mspec, "reasoning_efforts", ()) or ())
+            control_supported = (
+                control in {"thinking_type", "chat_template", "always_on_effort"}
+                or (control == "legacy" and bool(getattr(mspec, "thinking", False)))
+                # ChatGPT Web is browser/provider-owned rather than API-field
+                # controlled, but it exposes a qualified visible five-level
+                # effort selector.  When the model explicitly declares those
+                # levels, LFL Web may offer request-local effort selection; the
+                # transport applies/verifies it on the owned browser surface.
+                or (control == "provider_owned" and bool(efforts))
             )
             can_disable = control in {"thinking_type", "chat_template"} or (
                 control == "legacy" and bool(getattr(mspec, "thinking", False))
             )
-            efforts = list(getattr(mspec, "reasoning_efforts", ()) or ())
             default_effort = getattr(mspec, "reasoning_default_effort", None)
             catalog.append(
                 {

@@ -162,8 +162,20 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
                       key={item}
                       type="button"
                       className={effort === item ? "active" : ""}
-                      disabled={mode === "auto" || mode === "off"}
-                      onClick={() => sessionStore.setReasoningEffort(item)}
+                      disabled={
+                        mode === "off" ||
+                        !capability.reasoning_control_supported ||
+                        (mode === "auto" && capability.reasoning_control !== "provider_owned")
+                      }
+                      onClick={() => {
+                        // Browser-owned ChatGPT effort is directly selectable:
+                        // choosing a concrete level is itself an explicit
+                        // request override, so leave auto and enter `on`.
+                        if (capability.reasoning_control === "provider_owned" && mode === "auto") {
+                          sessionStore.setThinkingMode("on");
+                        }
+                        sessionStore.setReasoningEffort(item);
+                      }}
                     >
                       {item}
                     </button>
@@ -175,6 +187,10 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
               <div className="v2-mini-note">
                 该模型始终启用推理，“最低”不是关闭。
                 {capability.reasoning_default_effort ? ` 自动默认：${capability.reasoning_default_effort}。` : ""}
+              </div>
+            ) : capability?.reasoning_control === "provider_owned" ? (
+              <div className="v2-mini-note">
+                该等级会在本次请求发送前同步到网页版模型强度并机械确认；“自动”使用 provider 默认档位。
               </div>
             ) : !capability?.reasoning_control_supported ? (
               <div className="v2-mini-note">没有已证实的显式控制协议，保持模型/provider 默认。</div>

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from llm_loop.core.message import ToolCall
+from llm_loop.core.run_context import current_reasoning_effort
 from llm_loop.llm.client import LLMResponse
 
 MODEL_PROTOCOL = "lfl-model/0.1"
@@ -61,15 +62,22 @@ class ChatGPTWebModelClient:
     thinking_supported = False
     reasoning_capable = True
     reasoning_control = "provider_owned"
+    reasoning_efforts = ("instant", "medium", "high", "xhigh", "pro")
 
     def __init__(
         self,
         transport: ChatGPTModelTransport,
         *,
         model_label: str = CHATGPT_WEB_MODEL_ID,
+        reasoning_effort: str = "high",
     ) -> None:
         self.transport = transport
         self.model = model_label
+        self.reasoning_effort = (
+            reasoning_effort
+            if reasoning_effort in self.reasoning_efforts
+            else "high"
+        )
         self.calls: list[dict[str, Any]] = []
         self._request_seq = itertools.count(1)
         # One browser conversation is a serial transport.  The ModelClientPool
@@ -87,12 +95,20 @@ class ChatGPTWebModelClient:
     ) -> LLMResponse:
         with self._guard:
             request_id = f"lfl-model-{next(self._request_seq):04d}"
+            requested_effort = str(current_reasoning_effort.get() or "").strip().lower()
+            if requested_effort not in self.reasoning_efforts:
+                requested_effort = ""
             request = {
                 "protocol": MODEL_PROTOCOL,
                 "request_id": request_id,
                 "model": model or self.model,
                 "messages": messages,
                 "tools": tools,
+                # Transport-local control metadata.  ChatGPTWebPageTransport's
+                # canonical wire projection intentionally ignores unknown
+                # request keys, so this never enters the model-visible LFL
+                # protocol payload.
+                "_reasoning_effort": requested_effort or None,
             }
             self.calls.append(request)
             raw = self.transport.exchange(request, timeout_s=timeout_s)
@@ -147,7 +163,10 @@ class _SurfaceOwnedTransport:
         # Project root so the outer web conversation cannot accumulate stale
         # copies of earlier LFL snapshots outside LoopEngine history management.
         self.surface.reset_to_project_root()
-        self.adapter.ensure_reasoning_effort(self.reasoning_effort)
+        requested_effort = str(
+            request.get("_reasoning_effort") or self.reasoning_effort
+        ).strip().lower()
+        self.adapter.ensure_reasoning_effort(requested_effort)
         rebinder = getattr(self.inner, "rebind", None)
         if not callable(rebinder):
             raise RuntimeError("ChatGPT Web snapshot transport cannot rebind page identity")
@@ -301,7 +320,11 @@ def build_chatgpt_web_model_client(settings: Any) -> ChatGPTWebModelClient:
             raise ValueError(f"ChatGPT Web 浏览器连接失败: {exc}") from exc
 
     transport = _ThreadBoundTransport(build_surface_transport)
-    return ChatGPTWebModelClient(transport, model_label=CHATGPT_WEB_MODEL_ID)
+    return ChatGPTWebModelClient(
+        transport,
+        model_label=CHATGPT_WEB_MODEL_ID,
+        reasoning_effort=reasoning_effort,
+    )
 
 
 def _validate_response(value: Any, *, request_id: str) -> dict[str, Any]:
