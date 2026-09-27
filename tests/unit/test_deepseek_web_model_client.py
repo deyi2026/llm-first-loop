@@ -193,6 +193,82 @@ def test_deepseek_rendered_tag_fallback_rejects_malformed_or_extra_text(text):
         DeepSeekWebPageTransport._extract_rendered_response_text(text)  # noqa: SLF001
 
 
+def test_deepseek_dsml_tool_response_normalizes_exact_lfl_tool_call():
+    request = {
+        "protocol": "lfl-model/0.1",
+        "request_id": "lfl-model-0004",
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_evidence",
+                    "parameters": {"type": "object"},
+                },
+            }
+        ],
+    }
+    text = "\n".join(
+        [
+            "<｜｜DSML｜｜ calls>",
+            '<｜｜DSML｜｜ invoke name="read_evidence">',
+            '<｜｜DSML｜｜ parameter name="evidence_ref" string="true">evidence://v1/abc</｜｜DSML｜｜ parameter>',
+            '<｜｜DSML｜｜ parameter name="range_type" string="true">line</｜｜DSML｜｜ parameter>',
+            '<｜｜DSML｜｜ parameter name="start" string="false">0</｜｜DSML｜｜ parameter>',
+            '<｜｜DSML｜｜ parameter name="limit" string="false">200</｜｜DSML｜｜ parameter>',
+            "</｜｜DSML｜｜ invoke>",
+            "</｜｜DSML｜｜ calls>",
+        ]
+    )
+
+    value = DeepSeekWebPageTransport._extract_dsml_tool_response(  # noqa: SLF001
+        text,
+        request=request,
+    )
+
+    assert value == {
+        "protocol": "lfl-model/0.1",
+        "request_id": "lfl-model-0004",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "lfl-model-0004-dsml-1",
+                "name": "read_evidence",
+                "arguments": {
+                    "evidence_ref": "evidence://v1/abc",
+                    "range_type": "line",
+                    "start": 0,
+                    "limit": 200,
+                },
+            }
+        ],
+        "finish_reason": "tool_calls",
+    }
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="unknown">\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>',
+        'prefix\n<｜｜DSML｜｜ calls>\n</｜｜DSML｜｜ calls>',
+        '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="read_evidence">\n'
+        '<｜｜DSML｜｜ parameter name="start" string="false">not-json</｜｜DSML｜｜ parameter>\n'
+        '</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>',
+    ],
+)
+def test_deepseek_dsml_tool_response_rejects_untrusted_or_ambiguous_shapes(text):
+    request = {
+        "request_id": "lfl-model-0004",
+        "tools": [{"type": "function", "function": {"name": "read_evidence"}}],
+    }
+    with pytest.raises(DeepSeekModelProtocolError):
+        value = DeepSeekWebPageTransport._extract_dsml_tool_response(  # noqa: SLF001
+            text,
+            request=request,
+        )
+        if value is None:
+            raise DeepSeekModelProtocolError("not a DSML calls block")
+
+
 def test_deepseek_surface_owned_transport_resets_and_mechanically_controls_each_request():
     events = []
 

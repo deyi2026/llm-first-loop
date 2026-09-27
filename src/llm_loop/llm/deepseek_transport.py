@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from typing import Any
 
 from llm_loop.llm.errors import LLMRequestTooLargeError
@@ -137,6 +138,7 @@ class DeepSeekWebPageTransport:
                 "DeepSeek native Smart Search became active during an LFL model call"
             )
         blocks = self.adapter.observe_latest_code_blocks()
+        value: dict[str, Any] | None = None
         if len(blocks) == 1 and blocks[0].language in {
             "",
             "json",
@@ -144,24 +146,128 @@ class DeepSeekWebPageTransport:
         }:
             raw_response = blocks[0].text
         elif not blocks:
-            raw_response = self._extract_rendered_response_text(
-                str(state.latest_assistant_text or "")
-            )
+            rendered_text = str(state.latest_assistant_text or "")
+            value = self._extract_dsml_tool_response(rendered_text, request=request)
+            if value is None:
+                raw_response = self._extract_rendered_response_text(rendered_text)
         else:
             raise DeepSeekModelProtocolError(
                 "DeepSeek model call must render one LFL response payload"
             )
-        try:
-            value = json.loads(raw_response)
-        except json.JSONDecodeError as exc:
-            raise DeepSeekModelProtocolError(
-                f"invalid lfl-model-response JSON: {exc}"
-            ) from exc
+        if value is None:
+            try:
+                value = json.loads(raw_response)
+            except json.JSONDecodeError as exc:
+                raise DeepSeekModelProtocolError(
+                    f"invalid lfl-model-response JSON: {exc}"
+                ) from exc
         if not isinstance(value, dict):
             raise DeepSeekModelProtocolError("lfl-model-response body must be object")
         if state.streaming:
             raise DeepSeekModelProtocolError("assistant still streaming after completion")
         return value
+
+    @classmethod
+    def _extract_dsml_tool_response(
+        cls,
+        text: str,
+        *,
+        request: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Normalize DeepSeek's exact DSML tool-call rendering into LFL wire JSON.
+
+        This compatibility path is intentionally narrow: the entire rendered assistant
+        message must be one DSML calls block, every invoke must name a tool already
+        present in the current LFL request, and every parameter must be a single exact
+        DSML parameter line.  Anything else remains a protocol error.
+        """
+
+        normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+        marker = "｜｜DSML｜｜"
+        open_calls = f"<{marker} calls>"
+        close_calls = f"</{marker} calls>"
+        if not normalized.startswith(open_calls):
+            return None
+        if not normalized.endswith(close_calls):
+            raise DeepSeekModelProtocolError("DeepSeek DSML calls block is not closed")
+
+        tools_by_name: dict[str, dict[str, Any]] = {}
+        for tool in request.get("tools") or []:
+            if not isinstance(tool, dict):
+                continue
+            function = tool.get("function")
+            if not isinstance(function, dict):
+                continue
+            name = function.get("name")
+            if isinstance(name, str) and name:
+                tools_by_name[name] = function
+
+        body = normalized[len(open_calls) : -len(close_calls)].strip()
+        if not body:
+            raise DeepSeekModelProtocolError("DeepSeek DSML calls block is empty")
+        lines = [line.strip() for line in body.split("\n") if line.strip()]
+        invoke_re = re.compile(rf'^<{re.escape(marker)} invoke name="([^"]+)">$')
+        parameter_re = re.compile(
+            rf'^<{re.escape(marker)} parameter name="([^"]+)" string="(true|false)">(.*)</{re.escape(marker)} parameter>$'
+        )
+        close_invoke = f"</{marker} invoke>"
+
+        tool_calls: list[dict[str, Any]] = []
+        index = 0
+        while index < len(lines):
+            match = invoke_re.fullmatch(lines[index])
+            if match is None:
+                raise DeepSeekModelProtocolError("unexpected text in DeepSeek DSML calls block")
+            tool_name = match.group(1)
+            if tool_name not in tools_by_name:
+                raise DeepSeekModelProtocolError(
+                    f"DeepSeek DSML requested unknown LFL tool: {tool_name}"
+                )
+            index += 1
+            arguments: dict[str, Any] = {}
+            while index < len(lines) and lines[index] != close_invoke:
+                parameter_match = parameter_re.fullmatch(lines[index])
+                if parameter_match is None:
+                    raise DeepSeekModelProtocolError(
+                        "unexpected text in DeepSeek DSML invoke block"
+                    )
+                parameter_name, is_string, raw_value = parameter_match.groups()
+                if parameter_name in arguments:
+                    raise DeepSeekModelProtocolError(
+                        f"duplicate DeepSeek DSML parameter: {parameter_name}"
+                    )
+                if is_string == "true":
+                    arguments[parameter_name] = raw_value
+                else:
+                    try:
+                        arguments[parameter_name] = json.loads(raw_value)
+                    except json.JSONDecodeError as exc:
+                        raise DeepSeekModelProtocolError(
+                            f"invalid non-string DeepSeek DSML parameter: {parameter_name}"
+                        ) from exc
+                index += 1
+            if index >= len(lines) or lines[index] != close_invoke:
+                raise DeepSeekModelProtocolError("DeepSeek DSML invoke block is not closed")
+            call_index = len(tool_calls) + 1
+            request_id = str(request.get("request_id") or "")
+            tool_calls.append(
+                {
+                    "id": f"{request_id}-dsml-{call_index}",
+                    "name": tool_name,
+                    "arguments": arguments,
+                }
+            )
+            index += 1
+
+        if not tool_calls:
+            raise DeepSeekModelProtocolError("DeepSeek DSML calls block contains no invokes")
+        return {
+            "protocol": MODEL_PROTOCOL,
+            "request_id": str(request.get("request_id") or ""),
+            "content": "",
+            "tool_calls": tool_calls,
+            "finish_reason": "tool_calls",
+        }
 
     def close(self) -> None:
         return None
