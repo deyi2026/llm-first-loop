@@ -1,0 +1,68 @@
+{
+  "date": "2026-09-29",
+  "decisions": {
+    "scripts/restart_feishu.sh": {
+      "decision": "migrate",
+      "reason": "restart entry now uses runtime.launch feishu so startup writes runtime_manifest.feishu.json; legacy direct-start process remains discoverable for graceful takeover"
+    },
+    "scripts/restart_system.sh": {
+      "decision": "migrate",
+      "reason": "system-level Feishu start now uses the same runtime.launch authority and therefore refreshes service identity manifest"
+    },
+    "src/llm_loop/cache_guard/guard.py": {
+      "decision": "partial_migrate",
+      "migrated": "decision-time _PerfBlockModeView re-resolves current runtime.toml via business_config_snapshot",
+      "preserved": "system_local_now() host-local time authority",
+      "rejected": "main WIP datetime.now(UTC) timestamp changes"
+    },
+    "src/llm_loop/memory/store.py": {
+      "decision": "drop_main_wip_keep_production",
+      "reason": [
+        "production already contains cross-process mutation lock, unique temp writes, long-lived reader refresh, post-save hooks, remote-newer merge, and runtime counter preservation",
+        "prod-to-main-WIP residual consists only of reverting host-local time authority back to datetime.now(UTC)"
+      ],
+      "reconciliation_matches_gen161_bytes": true,
+      "sha256": "d7b94038afd0b674133c386cd8f2de594a66c098d56d10e9a288d4a2a1095e17"
+    },
+    "tests/scripts/test_restart_feishu_heartbeat.py": {
+      "decision": "migrate",
+      "reason": "locks both restart entrypoints to runtime.launch while preserving legacy process discovery"
+    },
+    "tests/unit/test_cache_block_reclassification.py": {
+      "decision": "migrate",
+      "reason": "proves a long-lived process sees perf_block_mode changes in runtime.toml without module reload"
+    }
+  },
+  "implementation_commit": "5bf17eed2b6ca6c858928a170a87e598fda5b448",
+  "next_phase": "review remaining untracked code/docs/tooling candidates separately from generated/eval evidence; then prepare canonical-main cutover plan",
+  "phase2_head": "42dfd2f1d",
+  "production_generation": 161,
+  "production_head": "67ce123c5fa8430ab833610857fbf276d55e589d",
+  "qualification": {
+    "bash_syntax": "PASS",
+    "broader_related": "59/59 PASS",
+    "focused_after_fix": "18/18 PASS",
+    "git_diff_check": "PASS",
+    "guard_ruff_format": "known baseline debt: candidate and untouched gen161 both return would-be-reformatted; whole-file reformat intentionally excluded",
+    "original_main_relevant_wip_drift": 0,
+    "py_compile": "PASS",
+    "ruff_check": "PASS",
+    "security_scan": "PASS",
+    "test_file_ruff_format": "PASS"
+  },
+  "red_baseline": {
+    "failures": [
+      "Feishu restart scripts did not use runtime.launch",
+      "cache guard remained WARN after runtime.toml changed perf_block_mode from enforce to on"
+    ],
+    "tests": "2/2 failed before implementation"
+  },
+  "safety": {
+    "original_main_modified": false,
+    "production_modified": false,
+    "production_restarted": false,
+    "worktrees_deleted": false
+  },
+  "schema": "lfl.mainline_reconciliation.phase3.v1",
+  "source_main_head": "8454c8a9813947173bc5696dcb5d5309d21cdf3b"
+}
