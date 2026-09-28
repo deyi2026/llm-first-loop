@@ -58,11 +58,18 @@ deprecated/legacy/compat 标记：src/llm_loop 范围内 70 个文件命中。
 
 | 对象 | 状态（2026-09-09） |
 |---|---|
-| .backup/（含 pollution-20260828） | 已从 staged 剔除；.gitignore 已加 `.backup/` |
+| .backup/（含 pollution-20260828） | 已从 staged 剔除；.gitignore 已加 `.backup/`。**2026-09-28 更正**：3 个存证文件此前仍被跟踪、尚在 HEAD，已由 `5063386ab` 清出（见 §3.1） |
 | swe-*.json | 磁盘已无；.gitignore 已加 `swe-*.json` 防复发 |
 | Nexitally_Surge*.conf | 个人代理配置；.gitignore 已加 |
 | data/（2.1G 运行时数据） | 历史已 ignore；唯一被跟踪资产 data/calib/h1c_control_bank.json 保留（校准资产） |
 | data/runtime/toolmode-off-*/src 快照树 | 磁盘删除待批（涉及不可恢复 rm，列入待用户确认项） |
+
+### 3.1 更正（2026-09-28）：存证 3 文件曾长期驻留 HEAD
+
+- **事实**：`.backup/pollution-20260828/{README.md, exception_polluted.jsonl, payload_trace_polluted.jsonl}` 自 `5ad31ab7d`（2026-08-28）起被跟踪；`.gitignore` 的 `.backup/` 规则由 `2f35e47752`（2026-09-09）追加，**晚于入库 12 天**。gitignore 对已 tracked 文件不生效——这也是 `git check-ignore .backup` 判「非忽略」假阴性的根因（consult index，非目录名写法）。
+- **处置**：`5063386ab`（2026-09-28）以 `git rm --cached` 清出 HEAD；磁盘副本保留于 `.backup/`（此后由忽略规则覆盖）。
+- **内容抽检**：payload trace 为记账字段（chars + hash，无正文），exception 为单条参数错误，README 为事故说明——无凭据明文；实际暴露面 = 会话 id / 模型参数 / 时序。
+- **边界**：已发布历史中的副本不回撤——`lfl`（PUBLIC 远端）仍有 102 个远端跟踪 ref 含该提交（含 `lfl/main`）。
 
 ## 4. 防复发机制（三条）
 
