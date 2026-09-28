@@ -177,6 +177,23 @@ def test_background_owner_load_respects_deleted_tombstone(tmp_path):
         store_b.load_from_identity_owner(sid)
 
 
+def test_global_presence_state_is_workspace_aware_and_respects_deleted_tombstone(tmp_path):
+    sessions_base = tmp_path / "sessions"
+    root_a = sessions_base / "workspace-a"
+    root_b = sessions_base / "workspace-b"
+    store_a = SessionStore(root_a, identity_root=sessions_base)
+    store_b = SessionStore(root_b, identity_root=sessions_base)
+    sid = store_a.create()
+
+    assert store_b.exists(sid) is False
+    assert store_b.global_presence_state(sid) == "present"
+    assert store_a.archive(sid) is True
+    assert store_b.global_presence_state(sid) == "present"
+    assert store_a.delete(sid) is True
+    assert store_b.global_presence_state(sid) == "deleted"
+    assert store_b.global_presence_state("never-created-session") == "missing"
+
+
 def test_background_owner_load_keeps_event_log_read_path(tmp_path):
     """Owner-directed reads preserve the configured event-log projection."""
     event_store = EventStore(tmp_path / "event_logs", enabled=True)

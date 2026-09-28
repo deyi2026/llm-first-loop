@@ -312,6 +312,38 @@ def test_session_binding_store_hashes_raw_session_id_and_rejects_project_drift(t
         )
 
 
+def test_session_binding_store_lists_history_and_deletes_only_unchanged_binding(tmp_path):
+    store = ChatGPTSessionBindingStore(tmp_path / "sessions")
+    binding = store.get_or_create(session_id="lfl-session-a", project_ref=PROJECT_REF)
+    binding = store.record_exchange(
+        binding,
+        conversation_id=CONVERSATION_ID,
+        conversation_url=CONVERSATION_URL,
+        request_chars=321,
+    )
+    binding = store.rollover(binding, reason="cumulative_request_chars")
+
+    rows = store.list_bindings()
+    assert [row.lfl_session_id for row in rows] == ["lfl-session-a"]
+    history = store.read_history("lfl-session-a")
+    assert len(history) == 1
+    assert history[0]["conversation_id"] == CONVERSATION_ID
+    assert history[0]["reason"] == "cumulative_request_chars"
+
+    assert store.delete_if_unchanged(
+        session_id="lfl-session-a",
+        expected_updated_at="stale-plan",
+    ) is False
+    assert store.load("lfl-session-a") == binding
+
+    assert store.delete_if_unchanged(
+        session_id="lfl-session-a",
+        expected_updated_at=binding.updated_at,
+    ) is True
+    assert store.load("lfl-session-a") is None
+    assert store.read_history("lfl-session-a") == []
+
+
 def test_restore_conversation_reuses_exact_owned_target(tmp_path):
     context = _Context()
     surface, _pw = _surface(tmp_path, context)

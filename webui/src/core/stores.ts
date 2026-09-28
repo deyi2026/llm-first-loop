@@ -210,7 +210,7 @@ export function useMainView(): MainView {
 }
 
 // ── 右侧面板 store：面板开合 + 活动页签（预览 tab 打开时全局联动 App 壳） ──
-export type RightPanelTab = "settings" | "jobs" | "preview";
+export type RightPanelTab = "settings" | "jobs" | "binding" | "preview";
 
 const rightPanelStoreRaw = createStore<{ open: boolean; tab: RightPanelTab }>({
   open: false,

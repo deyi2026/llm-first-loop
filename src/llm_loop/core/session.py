@@ -765,6 +765,56 @@ class SessionStore:
         )
         return owner_store.load(session_id)
 
+    def global_presence_state(self, session_id: str) -> str:
+        """Return cross-workspace lifecycle presence without changing ownership.
+
+        Values are deliberately conservative for destructive callers:
+
+        - present: a readable session exists in some durable workspace owner;
+        - deleted: the global identity tombstone explicitly records deletion;
+        - reserved: no readable session is proven, but global history still
+          occupies the id, so destructive sidecar GC must fail closed;
+        - missing: no session owner, tombstone, or durable history is known.
+
+        Unlike load_from_identity_owner(), this probe never creates an owner
+        claim for a legacy session. It may create/use the stable identity lock
+        file, but does not rewrite ownership metadata.
+        """
+
+        session_id = _validate_session_id(session_id)
+        with self._identity_lock(session_id):
+            owner_path = self._identity_path(session_id)
+            if os.path.exists(owner_path):
+                try:
+                    with open(owner_path, encoding="utf-8") as f:
+                        record = json.load(f)
+                    owner = str(record["owner"])
+                except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                    raise SessionIdConflictError(
+                        f"session_id {session_id} 的全局归属记录损坏，拒绝生命周期判断"
+                    ) from exc
+                if record.get("deleted_at"):
+                    return "deleted"
+                owner_root = self._identity_owner_root(owner)
+                if (owner_root / f"{session_id}.json").is_file():
+                    return "present"
+                if self._identity_history_in_use(session_id):
+                    return "reserved"
+                raise SessionIdConflictError(
+                    f"session_id {session_id} 有owner但无可读取会话或历史，拒绝生命周期判断"
+                )
+
+            owners = self._legacy_identity_owners(session_id)
+            if len(owners) > 1:
+                raise SessionIdConflictError(
+                    f"session_id {session_id} 已存在于多个历史工作区，拒绝生命周期判断"
+                )
+            if owners:
+                return "present"
+            if self._identity_history_in_use(session_id):
+                return "reserved"
+            return "missing"
+
     def _identity_history_in_use(self, session_id: str) -> bool:
         """无session JSON时检查全局Event/Archive历史是否已占用该sid；探针异常fail-closed。"""
         try:

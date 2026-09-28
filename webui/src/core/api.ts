@@ -185,6 +185,61 @@ export async function fetchSessions(includeArchived = false): Promise<SessionMet
   return (await fetchSessionsResult(includeArchived)).sessions;
 }
 
+export interface ChatGPTBindingSegment {
+  segment_seq?: number;
+  conversation_id?: string | null;
+  conversation_url?: string | null;
+  request_count?: number;
+  request_chars?: number;
+  closed_at?: string;
+  reason?: string;
+}
+
+export interface ChatGPTBindingRecord {
+  lfl_session_id?: string;
+  project_ref?: string;
+  conversation_id?: string | null;
+  conversation_url?: string | null;
+  segment_seq?: number;
+  segment_request_count?: number;
+  segment_request_chars?: number;
+  total_request_count?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ChatGPTBindingInfo {
+  provider?: string;
+  bound?: boolean;
+  session_id?: string;
+  session_status?: string;
+  binding?: ChatGPTBindingRecord;
+  history?: ChatGPTBindingSegment[];
+  lifecycle?: {
+    session_exists?: boolean;
+    session_status?: string;
+    gc_eligible?: boolean;
+    gc_reason?: string;
+    age_seconds?: number;
+  };
+  gc_policy?: {
+    automatic_gc?: boolean;
+    eligible_only_when_session_missing?: boolean;
+    default_min_age_days?: number;
+    requires_confirm?: boolean;
+    requires_expected_updated_at?: boolean;
+  };
+}
+
+export async function fetchSessionProviderBinding(
+  sessionId: string
+): Promise<ChatGPTBindingInfo | null> {
+  const { status, data } = await api<ChatGPTBindingInfo>(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/provider-binding`
+  );
+  return status === 200 ? data : null;
+}
+
 export async function archiveSession(sessionId: string, archived: boolean): Promise<boolean> {
   const { status } = await api(
     `/api/v1/sessions/${encodeURIComponent(sessionId)}/archive?archived=${archived}`,

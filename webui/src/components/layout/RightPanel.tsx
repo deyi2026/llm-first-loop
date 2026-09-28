@@ -20,6 +20,7 @@ import { fetchModels, type ModelCatalog } from "../../core/chat";
 import { useCapabilities } from "../../core/capabilities";
 import { ProviderManager } from "./ProviderManager";
 import { PreviewTabsPanel } from "../PreviewTabsPanel";
+import { SessionBindingPanel } from "../conversation/SessionBindingPanel";
 
 export function RightPanel({ open, width }: { open: boolean; width?: number }) {
   const caps = useCapabilities();
@@ -123,6 +124,14 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
         ) : null}
         <button
           type="button"
+          className={`v2-panel-tab ${tab === "binding" ? "active" : ""}`}
+          onClick={() => setTab("binding")}
+          data-testid="panel-tab-binding"
+        >
+          {zh.panelBinding}
+        </button>
+        <button
+          type="button"
           className={`v2-panel-tab ${tab === "preview" ? "active" : ""}`}
           onClick={() => setTab("preview")}
           data-testid="panel-tab-preview"
@@ -143,7 +152,9 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
       <div className="v2-panel-body" data-testid="panel-body">
         {tab === "preview" ? (
           <PreviewTabsPanel />
-        ) : tab === "settings" || !caps.jobs ? (
+        ) : tab === "binding" ? (
+          <SessionBindingPanel sessionId={currentSessionId} />
+        ) : tab === "settings" || (tab === "jobs" && !caps.jobs) ? (
           <SettingsView
             conn={conn}
             theme={theme}
@@ -152,7 +163,7 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
             reload={loadSettings}
             providerAdminEnabled={caps.providerAdmin}
           />
-        ) : (
+        ) : tab === "jobs" ? (
           <JobsView
             sessionId={currentSessionId}
             jobs={jobs}
@@ -160,6 +171,15 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
             busyId={jobBusy}
             onRefresh={loadJobs}
             onCancel={cancelJob}
+          />
+        ) : (
+          <SettingsView
+            conn={conn}
+            theme={theme}
+            catalog={catalog}
+            auth={auth}
+            reload={loadSettings}
+            providerAdminEnabled={caps.providerAdmin}
           />
         )}
       </div>

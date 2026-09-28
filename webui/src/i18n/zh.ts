@@ -17,6 +17,7 @@ export const zh = {
   themeDark: "暗色",
   panelSettings: "设置",
   panelJobs: "后台任务",
+  panelBinding: "会话绑定",
   panelPlaceholder: "模块建设中（阶段 {stage}）",
   sharedSession: "跨端共享",
   stage1Note: "阶段 1 基座：主题 / 布局壳 / 连接与 SSE 基建 / 会话列表",

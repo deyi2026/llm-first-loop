@@ -51,6 +51,64 @@ describe("product right panel", () => {
     expect(themeStore.getState().preference).toBe("dark");
   });
 
+  it("会话绑定页展示当前 conversation、segment 历史和保守 GC 策略", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/sessions/s1/provider-binding")) {
+        return new Response(JSON.stringify({
+          provider: "chatgpt-web",
+          bound: true,
+          session_id: "s1",
+          session_status: "active",
+          binding: {
+            conversation_id: "conv-current",
+            conversation_url: "https://chatgpt.com/g/g-p/c/conv-current",
+            segment_seq: 3,
+            segment_request_count: 2,
+            segment_request_chars: 54321,
+            total_request_count: 7,
+            updated_at: "2026-09-28T17:00:00+08:00",
+          },
+          history: [
+            {
+              segment_seq: 2,
+              conversation_id: "conv-old",
+              request_count: 3,
+              request_chars: 110000,
+              closed_at: "2026-09-28T16:30:00+08:00",
+              reason: "cumulative_request_chars",
+            },
+          ],
+          lifecycle: {
+            session_exists: true,
+            session_status: "active",
+            gc_eligible: false,
+            gc_reason: "session_exists",
+          },
+          gc_policy: {
+            automatic_gc: false,
+            default_min_age_days: 30,
+            requires_confirm: true,
+            requires_expected_updated_at: true,
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+
+    render(<RightPanel open={true} />);
+    fireEvent.click(screen.getByRole("button", { name: "会话绑定" }));
+
+    await waitFor(() => expect(screen.getByTestId("session-binding-panel")).toBeInTheDocument());
+    expect(screen.getByText("conv-current")).toBeInTheDocument();
+    expect(screen.getByText("conv-old")).toBeInTheDocument();
+    expect(screen.getByText("cumulative_request_chars")).toBeInTheDocument();
+    expect(screen.getByText("session_exists")).toBeInTheDocument();
+    expect(screen.getByText("关闭")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /清理|删除|GC/ })).toBeNull();
+    expect(screen.getByText(/Existing\/archived LFL Session 永不自动清理/)).toBeInTheDocument();
+  });
+
   it("后台任务只给本地可控 running job 停止按钮，orphan 只展示事实", async () => {
     let killCalls = 0;
     let killed = false;

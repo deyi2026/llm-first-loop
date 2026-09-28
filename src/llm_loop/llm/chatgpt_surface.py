@@ -195,6 +195,96 @@ class ChatGPTSessionBindingStore:
                 raise BrowserSurfaceLeaseError("ChatGPT session binding id/hash mismatch")
             return binding
 
+    def list_bindings(self) -> list[ChatGPTSessionBinding]:
+        """Return all readable durable bindings, newest first.
+
+        Empty/tombstoned directories are ignored. A malformed binding remains a
+        hard error so operators do not silently make GC decisions from partial
+        state.
+        """
+
+        rows: list[ChatGPTSessionBinding] = []
+        for path in self.root.glob(f"*/{self.FILE}"):
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise BrowserSurfaceLeaseError(
+                    f"ChatGPT session binding is unreadable: {path}: {exc}"
+                ) from exc
+            if not isinstance(value, dict):
+                raise BrowserSurfaceLeaseError(
+                    f"ChatGPT session binding root must be object: {path}"
+                )
+            rows.append(ChatGPTSessionBinding.from_dict(value))
+        rows.sort(key=lambda item: item.updated_at, reverse=True)
+        return rows
+
+    def read_history(self, session_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Read bounded closed-segment history for one LFL session."""
+
+        bounded = max(1, min(int(limit), 500))
+        with self._lock(session_id) as directory:
+            path = directory / self.HISTORY
+            if not path.is_file():
+                return []
+            rows: list[dict[str, Any]] = []
+            try:
+                for raw in path.read_text(encoding="utf-8").splitlines():
+                    if not raw.strip():
+                        continue
+                    value = json.loads(raw)
+                    if isinstance(value, dict):
+                        rows.append(value)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise BrowserSurfaceLeaseError(
+                    f"ChatGPT session history is unreadable: {exc}"
+                ) from exc
+            return rows[-bounded:]
+
+    def delete_if_unchanged(
+        self,
+        *,
+        session_id: str,
+        expected_updated_at: str,
+    ) -> bool:
+        """Delete one orphan binding only if the observed version is unchanged.
+
+        Session lifecycle eligibility is intentionally *not* decided here; callers
+        must prove the LFL session no longer exists immediately before mutation.
+        The optimistic timestamp guard prevents an old GC plan from deleting a
+        binding that resumed activity after the plan was produced.
+        """
+
+        expected = str(expected_updated_at).strip()
+        if not expected:
+            raise BrowserSurfaceLeaseError("expected_updated_at must be non-empty")
+        with self._lock(session_id) as directory:
+            path = directory / self.FILE
+            if not path.is_file():
+                return False
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise BrowserSurfaceLeaseError(
+                    f"ChatGPT session binding is unreadable: {exc}"
+                ) from exc
+            if not isinstance(value, dict):
+                raise BrowserSurfaceLeaseError("ChatGPT session binding root must be object")
+            binding = ChatGPTSessionBinding.from_dict(value)
+            if binding.lfl_session_id != str(session_id).strip():
+                raise BrowserSurfaceLeaseError("ChatGPT session binding id/hash mismatch")
+            if binding.updated_at != expected:
+                return False
+            for candidate in (directory / self.FILE, directory / self.HISTORY):
+                if candidate.exists():
+                    candidate.unlink()
+            dir_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+            return True
+
     def save(self, binding: ChatGPTSessionBinding) -> ChatGPTSessionBinding:
         binding.verify()
         with self._lock(binding.lfl_session_id) as directory:
