@@ -243,7 +243,12 @@ async def login(request: Request):
         max_age=ttl,
         httponly=True,
         secure=_secure_cookie(request),
-        samesite="strict",
+        # Lax is the correct browser-login boundary here: it allows the
+        # immediate top-level GET after a successful login redirect while
+        # still withholding the cookie from cross-site POST/subresource
+        # requests. Mutating routes remain independently protected by the
+        # exact-Origin CSRF middleware.
+        samesite="lax",
         path="/",
     )
     response.headers["Cache-Control"] = "no-store"

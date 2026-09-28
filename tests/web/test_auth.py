@@ -98,7 +98,7 @@ def test_public_domain_browser_login_cookie_protects_api_and_ui(
     assert good.status_code == 303
     cookie_header = good.headers["set-cookie"]
     assert "HttpOnly" in cookie_header
-    assert "SameSite=strict" in cookie_header
+    assert "SameSite=lax" in cookie_header
     assert "Secure" in cookie_header
 
     assert client.get("/health").status_code == 200
@@ -247,6 +247,7 @@ def test_public_https_origin_forces_secure_cookie_even_if_local_proxy_hop_is_htt
     )
     assert response.status_code == 303
     assert "Secure" in response.headers["set-cookie"]
+    assert "SameSite=lax" in response.headers["set-cookie"]
 
 
 @pytest.mark.parametrize("base_url", [
