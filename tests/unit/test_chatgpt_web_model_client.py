@@ -4,8 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from llm_loop.core.run_context import current_reasoning_effort
+from llm_loop.core.run_context import current_reasoning_effort, current_session_id
 from llm_loop.llm.chatgpt_page import PageBinding
+from llm_loop.llm.chatgpt_surface import ChatGPTSessionBindingStore
 from llm_loop.llm.chatgpt_transport import ChatGPTWebPageTransport
 from llm_loop.llm.chatgpt_web import (
     MODEL_PROTOCOL,
@@ -181,6 +182,21 @@ def test_chatgpt_web_request_wrapper_preserves_lfl_role_and_tool_authority():
     assert '"name":"model_catalog"' in rendered
 
 
+def test_chatgpt_web_client_carries_lfl_session_only_as_transport_metadata():
+    transport = _Transport([_final("ok")])
+    client = ChatGPTWebModelClient(transport)
+    token = current_session_id.set("session-abc")
+    try:
+        client.chat([{"role": "user", "content": "x"}], [])
+    finally:
+        current_session_id.reset(token)
+
+    request = transport.requests[0][0]
+    assert request["_lfl_session_id"] == "session-abc"
+    rendered = ChatGPTWebPageTransport._render_request(request)
+    assert "_lfl_session_id" not in rendered
+
+
 def test_surface_owned_transport_starts_every_exchange_from_fresh_outer_thread():
     events: list[str] = []
 
@@ -233,6 +249,229 @@ def test_surface_owned_transport_starts_every_exchange_from_fresh_outer_thread()
         "inner-close",
         "surface-close",
     ]
+
+
+def test_surface_owned_transport_reuses_per_lfl_session_and_switches_without_cross_talk(
+    tmp_path,
+):
+    events: list[str] = []
+    new_conversations = iter(["conversation-a", "conversation-b"])
+
+    class Surface:
+        active: str | None = None
+
+        def reset_to_project_root(self):
+            events.append("reset")
+            self.active = None
+
+        def restore_conversation(self, *, conversation_id, conversation_url):
+            events.append(f"restore:{conversation_id}")
+            self.active = conversation_id
+
+        def bind_conversation(self, binding):
+            events.append(f"bind:{binding.conversation_id}")
+            return SimpleNamespace(
+                conversation_id=binding.conversation_id,
+                conversation_url=f"https://chatgpt.com/g/project/c/{binding.conversation_id}",
+            )
+
+        def close(self):
+            events.append("surface-close")
+
+    surface = Surface()
+
+    class Adapter:
+        def ensure_reasoning_effort(self, effort):
+            events.append(f"reasoning:{effort}")
+
+        def observe_identity(self):
+            return SimpleNamespace(conversation_id=surface.active)
+
+    class Inner:
+        def rebind(self):
+            events.append("rebind")
+
+        def exchange(self, request, *, timeout_s=None):
+            if surface.active is None:
+                surface.active = next(new_conversations)
+            events.append(f"exchange:{request['request_id']}:{surface.active}")
+            return {"request_id": request["request_id"]}
+
+        def close(self):
+            events.append("inner-close")
+
+    store = ChatGPTSessionBindingStore(tmp_path / "sessions")
+    transport = _SurfaceOwnedTransport(
+        Inner(),
+        surface=surface,
+        adapter=Adapter(),
+        session_store=store,
+        project_ref="project",
+        segment_max_chars=1_000_000,
+    )
+    base = {
+        "protocol": MODEL_PROTOCOL,
+        "model": "web-gpt",
+        "messages": [{"role": "user", "content": "x"}],
+        "tools": [],
+    }
+
+    transport.exchange({**base, "request_id": "a1", "_lfl_session_id": "session-a"})
+    transport.exchange({**base, "request_id": "a2", "_lfl_session_id": "session-a"})
+    transport.exchange({**base, "request_id": "b1", "_lfl_session_id": "session-b"})
+    transport.exchange({**base, "request_id": "a3", "_lfl_session_id": "session-a"})
+
+    a = store.load("session-a")
+    b = store.load("session-b")
+    assert a is not None and b is not None
+    assert a.conversation_id == "conversation-a"
+    assert a.segment_request_count == 3
+    assert a.total_request_count == 3
+    assert b.conversation_id == "conversation-b"
+    assert b.segment_request_count == 1
+    assert b.total_request_count == 1
+    assert events.count("reset") == 2
+    assert events.count("restore:conversation-a") == 2
+
+
+def test_surface_owned_transport_rolls_segment_at_request_cap(tmp_path):
+    new_conversations = iter(["conversation-1", "conversation-2"])
+
+    class Surface:
+        active: str | None = None
+
+        def reset_to_project_root(self):
+            self.active = None
+
+        def restore_conversation(self, *, conversation_id, conversation_url):
+            self.active = conversation_id
+
+        def bind_conversation(self, binding):
+            return SimpleNamespace(
+                conversation_id=binding.conversation_id,
+                conversation_url=f"https://chatgpt.com/g/project/c/{binding.conversation_id}",
+            )
+
+        def close(self):
+            return None
+
+    surface = Surface()
+
+    class Adapter:
+        def ensure_reasoning_effort(self, effort):
+            return None
+
+        def observe_identity(self):
+            return SimpleNamespace(conversation_id=surface.active)
+
+    class Inner:
+        def rebind(self):
+            return None
+
+        def exchange(self, request, *, timeout_s=None):
+            if surface.active is None:
+                surface.active = next(new_conversations)
+            return {"request_id": request["request_id"]}
+
+    store = ChatGPTSessionBindingStore(tmp_path / "sessions")
+    transport = _SurfaceOwnedTransport(
+        Inner(),
+        surface=surface,
+        adapter=Adapter(),
+        session_store=store,
+        project_ref="project",
+        segment_max_chars=1_000_000,
+        segment_max_requests=2,
+    )
+    base = {
+        "protocol": MODEL_PROTOCOL,
+        "model": "web-gpt",
+        "messages": [{"role": "user", "content": "x"}],
+        "tools": [],
+        "_lfl_session_id": "session-a",
+    }
+
+    transport.exchange({**base, "request_id": "a1"})
+    transport.exchange({**base, "request_id": "a2"})
+    transport.exchange({**base, "request_id": "a3"})
+
+    binding = store.load("session-a")
+    assert binding is not None
+    assert binding.segment_seq == 2
+    assert binding.segment_request_count == 1
+    assert binding.total_request_count == 3
+    assert binding.conversation_id == "conversation-2"
+
+
+def test_surface_owned_transport_rolls_segment_at_cumulative_char_budget(tmp_path):
+    new_conversations = iter(["conversation-1", "conversation-2"])
+
+    class Surface:
+        active: str | None = None
+
+        def reset_to_project_root(self):
+            self.active = None
+
+        def restore_conversation(self, *, conversation_id, conversation_url):
+            self.active = conversation_id
+
+        def bind_conversation(self, binding):
+            return SimpleNamespace(
+                conversation_id=binding.conversation_id,
+                conversation_url=f"https://chatgpt.com/g/project/c/{binding.conversation_id}",
+            )
+
+        def close(self):
+            return None
+
+    surface = Surface()
+
+    class Adapter:
+        def ensure_reasoning_effort(self, effort):
+            return None
+
+        def observe_identity(self):
+            return SimpleNamespace(conversation_id=surface.active)
+
+    class Inner:
+        def rebind(self):
+            return None
+
+        def exchange(self, request, *, timeout_s=None):
+            if surface.active is None:
+                surface.active = next(new_conversations)
+            return {"request_id": request["request_id"]}
+
+    store = ChatGPTSessionBindingStore(tmp_path / "sessions")
+    base = {
+        "protocol": MODEL_PROTOCOL,
+        "model": "web-gpt",
+        "messages": [{"role": "user", "content": "x"}],
+        "tools": [],
+        "_lfl_session_id": "session-a",
+    }
+    one_request_chars = len(
+        ChatGPTWebPageTransport._render_request({**base, "request_id": "a1"})
+    )
+    transport = _SurfaceOwnedTransport(
+        Inner(),
+        surface=surface,
+        adapter=Adapter(),
+        session_store=store,
+        project_ref="project",
+        segment_max_chars=one_request_chars + 1,
+        segment_max_requests=99,
+    )
+
+    transport.exchange({**base, "request_id": "a1"})
+    transport.exchange({**base, "request_id": "a2"})
+
+    binding = store.load("session-a")
+    assert binding is not None
+    assert binding.segment_seq == 2
+    assert binding.segment_request_count == 1
+    assert binding.total_request_count == 2
+    assert binding.conversation_id == "conversation-2"
 
 
 def test_chatgpt_web_client_carries_request_local_reasoning_effort_out_of_wire():

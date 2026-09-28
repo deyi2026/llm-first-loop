@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from llm_loop.core.message import ToolCall
-from llm_loop.core.run_context import current_reasoning_effort
+from llm_loop.core.run_context import current_reasoning_effort, current_session_id
 from llm_loop.llm.client import LLMResponse
 
 MODEL_PROTOCOL = "lfl-model/0.1"
@@ -30,6 +30,8 @@ CHATGPT_WEB_PROVIDER_ID = "chatgpt-web"
 CHATGPT_WEB_MODEL_ID = "web-gpt"
 CHATGPT_WEB_MODEL_REF = f"{CHATGPT_WEB_PROVIDER_ID}/{CHATGPT_WEB_MODEL_ID}"
 CHATGPT_WEB_DISPLAY_NAME = "网页版 GPT"
+CHATGPT_WEB_SEGMENT_MAX_REQUESTS = 8
+CHATGPT_WEB_SEGMENT_BUDGET_RATIO = 0.75
 
 
 class ChatGPTModelProtocolError(RuntimeError):
@@ -143,6 +145,7 @@ class ChatGPTWebModelClient:
                 # request keys, so this never enters the model-visible LFL
                 # protocol payload.
                 "_reasoning_effort": requested_effort or None,
+                "_lfl_session_id": str(current_session_id.get() or "").strip() or None,
             }
             self.calls.append(request)
             raw = self.transport.exchange(request, timeout_s=timeout_s)
@@ -178,13 +181,71 @@ class _SurfaceOwnedTransport:
         *,
         surface: Any,
         adapter: Any,
+        session_store: Any | None = None,
+        project_ref: str = "",
+        segment_max_chars: int = 0,
+        segment_max_requests: int = CHATGPT_WEB_SEGMENT_MAX_REQUESTS,
         reasoning_effort: str = "high",
     ) -> None:
         self.inner = inner
         self.surface = surface
         self.adapter = adapter
+        self.session_store = session_store
+        self.project_ref = str(project_ref or "").strip()
+        self.segment_max_chars = max(0, int(segment_max_chars or 0))
+        self.segment_max_requests = max(1, int(segment_max_requests or 1))
         self.reasoning_effort = reasoning_effort
         self._closed = False
+
+    @staticmethod
+    def _request_chars(request: dict[str, Any]) -> int:
+        from llm_loop.llm.chatgpt_transport import ChatGPTWebPageTransport
+
+        return len(ChatGPTWebPageTransport._render_request(request))
+
+    def _prepare_session_binding(
+        self,
+        request: dict[str, Any],
+    ) -> tuple[Any | None, int]:
+        session_id = str(request.get("_lfl_session_id") or "").strip()
+        if not session_id or self.session_store is None or not self.project_ref:
+            # Fail-safe compatibility for out-of-run callers/tests: no attributable
+            # LFL session means no reusable outer history.
+            self.surface.reset_to_project_root()
+            return None, 0
+
+        request_chars = self._request_chars(request)
+        binding = self.session_store.get_or_create(
+            session_id=session_id,
+            project_ref=self.project_ref,
+        )
+        rollover_reason = ""
+        should_roll = binding.segment_request_count >= self.segment_max_requests
+        if should_roll:
+            rollover_reason = "request_cap"
+        if (
+            not should_roll
+            and self.segment_max_chars > 0
+            and binding.segment_request_count > 0
+            and binding.segment_request_chars + request_chars > self.segment_max_chars
+        ):
+            should_roll = True
+            rollover_reason = "cumulative_request_chars"
+
+        if should_roll:
+            self.surface.reset_to_project_root()
+            binding = self.session_store.rollover(
+                binding,
+                reason=rollover_reason,
+            )
+        elif binding.conversation_id and binding.conversation_url:
+            self.surface.restore_conversation(
+                conversation_id=binding.conversation_id,
+                conversation_url=binding.conversation_url,
+            )
+        else:
+            self.surface.reset_to_project_root()
+        return binding, request_chars
 
     def exchange(
         self,
@@ -192,11 +253,11 @@ class _SurfaceOwnedTransport:
         *,
         timeout_s: float | None = None,
     ) -> dict[str, Any]:
-        # LFL is the sole context owner.  The durable browser lease owns a tab,
-        # not a ChatGPT task history: start every provider decision from the
-        # Project root so the outer web conversation cannot accumulate stale
-        # copies of earlier LFL snapshots outside LoopEngine history management.
-        self.surface.reset_to_project_root()
+        # LFL is the sole context owner.  The outer ChatGPT conversation is only
+        # a bounded transport segment keyed by the authoritative LFL session.
+        # Reuse improves operator manageability; rollover prevents unbounded
+        # accumulation of repeated full LFL snapshots in provider-owned history.
+        session_binding, request_chars = self._prepare_session_binding(request)
         requested_effort = str(
             request.get("_reasoning_effort") or self.reasoning_effort
         ).strip().lower()
@@ -206,10 +267,18 @@ class _SurfaceOwnedTransport:
             raise RuntimeError("ChatGPT Web snapshot transport cannot rebind page identity")
         rebinder()
         response = self.inner.exchange(request, timeout_s=timeout_s)
-        # Persist the latest concrete conversation only as physical recovery
-        # evidence.  The next provider decision will reset to Project root again;
-        # this conversation is never an LFL context authority.
-        self.surface.bind_conversation(self.adapter.observe_identity())
+        # Persist physical route recovery plus the logical LFL-session binding.
+        # Neither record is a semantic/history authority.
+        lease = self.surface.bind_conversation(self.adapter.observe_identity())
+        if session_binding is not None:
+            if not lease.conversation_id or not lease.conversation_url:
+                raise RuntimeError("ChatGPT Web exchange completed without conversation identity")
+            self.session_store.record_exchange(
+                session_binding,
+                conversation_id=lease.conversation_id,
+                conversation_url=lease.conversation_url,
+                request_chars=request_chars,
+            )
         return response
 
     def close(self) -> None:
@@ -314,10 +383,18 @@ def build_chatgpt_web_model_client(settings: Any) -> ChatGPTWebModelClient:
         )
 
     lease_root = Path(settings.data_dir) / "chatgpt-web-provider"
+    segment_max_chars = max(
+        1,
+        int(max_request_chars * CHATGPT_WEB_SEGMENT_BUDGET_RATIO),
+    )
 
     def build_surface_transport() -> ChatGPTModelTransport:
         from llm_loop.llm.chatgpt_page import ChatGPTPageAdapter
-        from llm_loop.llm.chatgpt_surface import BrowserSurfaceLeaseStore, ChatGPTSurface
+        from llm_loop.llm.chatgpt_surface import (
+            BrowserSurfaceLeaseStore,
+            ChatGPTSessionBindingStore,
+            ChatGPTSurface,
+        )
         from llm_loop.llm.chatgpt_transport import ChatGPTWebPageTransport
 
         surface = ChatGPTSurface(
@@ -345,6 +422,9 @@ def build_chatgpt_web_model_client(settings: Any) -> ChatGPTWebModelClient:
                 inner,
                 surface=surface,
                 adapter=adapter,
+                session_store=ChatGPTSessionBindingStore(lease_root / "sessions"),
+                project_ref=project_ref,
+                segment_max_chars=segment_max_chars,
                 reasoning_effort=reasoning_effort,
             )
         except Exception as exc:

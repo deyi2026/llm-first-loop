@@ -3,19 +3,23 @@
 This module owns only browser transport identity/lifecycle.  It does not own an
 agent loop, tool policy, or any LFL semantic decision.
 
-The key invariant is that a durable LFL/ChatGPT session binds to one logical
-surface lease.  A live CDP target id is preferred over URL matching.  When the
-target disappears (for example after Chrome restart), recovery creates one new
+The physical browser target has one durable surface lease.  Logical LFL sessions
+bind independently to bounded ChatGPT conversation segments; switching sessions
+reuses the exact owned target but restores that session's recorded conversation
+route.  A live CDP target id is preferred over URL matching.  When the target
+disappears (for example after Chrome restart), recovery creates one new
 program-owned tab at the already-known Project/conversation URL and moves the
-same logical lease to that new target.  It never picks arbitrarily among two
+same physical lease to that new target.  It never picks arbitrarily among two
 same-URL tabs.
 """
 
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -28,6 +32,7 @@ from urllib.parse import urlsplit, urlunsplit
 from .chatgpt_page import PageBinding, PageContractError
 
 LEASE_VERSION = 1
+SESSION_BINDING_VERSION = 1
 
 
 class BrowserSurfaceLeaseError(PageContractError):
@@ -38,6 +43,252 @@ def _now() -> str:
     # Use the host OS local timezone.  This module cannot depend on the separate
     # timekeeping branch while this feature remains isolated from that WIP.
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+@dataclass(frozen=True)
+class ChatGPTSessionBinding:
+    """Durable logical mapping from one LFL session to one active ChatGPT segment.
+
+    LFL remains the sole context/history authority.  This record only remembers
+    which outer ChatGPT conversation currently carries the transport continuity
+    for a given LFL session, plus bounded rollover accounting.
+    """
+
+    version: int
+    lfl_session_id: str
+    project_ref: str
+    conversation_id: str | None
+    conversation_url: str | None
+    segment_seq: int
+    segment_request_count: int
+    segment_request_chars: int
+    total_request_count: int
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def new(cls, *, lfl_session_id: str, project_ref: str) -> ChatGPTSessionBinding:
+        now = _now()
+        binding = cls(
+            version=SESSION_BINDING_VERSION,
+            lfl_session_id=str(lfl_session_id).strip(),
+            project_ref=str(project_ref).strip(),
+            conversation_id=None,
+            conversation_url=None,
+            segment_seq=1,
+            segment_request_count=0,
+            segment_request_chars=0,
+            total_request_count=0,
+            created_at=now,
+            updated_at=now,
+        )
+        binding.verify()
+        return binding
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> ChatGPTSessionBinding:
+        try:
+            binding = cls(
+                version=int(value["version"]),
+                lfl_session_id=str(value["lfl_session_id"]),
+                project_ref=str(value["project_ref"]),
+                conversation_id=(
+                    str(value["conversation_id"]) if value.get("conversation_id") else None
+                ),
+                conversation_url=(
+                    str(value["conversation_url"]) if value.get("conversation_url") else None
+                ),
+                segment_seq=int(value["segment_seq"]),
+                segment_request_count=int(value["segment_request_count"]),
+                segment_request_chars=int(value["segment_request_chars"]),
+                total_request_count=int(value["total_request_count"]),
+                created_at=str(value["created_at"]),
+                updated_at=str(value["updated_at"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise BrowserSurfaceLeaseError(f"invalid ChatGPT session binding: {exc}") from exc
+        binding.verify()
+        return binding
+
+    def verify(self) -> None:
+        if self.version != SESSION_BINDING_VERSION:
+            raise BrowserSurfaceLeaseError(
+                f"unsupported ChatGPT session binding version: {self.version}"
+            )
+        if not self.lfl_session_id or not self.project_ref:
+            raise BrowserSurfaceLeaseError("ChatGPT session binding identity must be non-empty")
+        if self.segment_seq < 1:
+            raise BrowserSurfaceLeaseError("ChatGPT session segment_seq must be >= 1")
+        if (
+            self.segment_request_count < 0
+            or self.segment_request_chars < 0
+            or self.total_request_count < 0
+        ):
+            raise BrowserSurfaceLeaseError("ChatGPT session counters must be non-negative")
+        if bool(self.conversation_id) != bool(self.conversation_url):
+            raise BrowserSurfaceLeaseError(
+                "ChatGPT session conversation id/url must be present together"
+            )
+
+
+class ChatGPTSessionBindingStore:
+    """Durable per-LFL-session ChatGPT conversation bindings.
+
+    Ordinary safe session ids stay human-readable on disk for operations/debug.
+    Unusual or unsafe identifiers fall back to a stable hash so arbitrary input
+    can never escape the store root.  The original LFL session id always remains
+    inside the JSON record.
+    """
+
+    FILE = "binding.json"
+    LOCK = ".binding.lock"
+    HISTORY = "segments.jsonl"
+    _SAFE_SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+    def __init__(self, root: str | Path) -> None:
+        self.root = Path(root).expanduser().resolve()
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _key(session_id: str) -> str:
+        value = str(session_id).strip()
+        if not value:
+            raise BrowserSurfaceLeaseError("LFL session id must be non-empty")
+        if ChatGPTSessionBindingStore._SAFE_SESSION_RE.fullmatch(value):
+            return value
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
+
+    def _dir(self, session_id: str) -> Path:
+        return self.root / self._key(session_id)
+
+    @contextlib.contextmanager
+    def _lock(self, session_id: str):
+        try:
+            import fcntl
+        except ImportError as exc:  # pragma: no cover - production target is POSIX
+            raise BrowserSurfaceLeaseError("session binding store requires POSIX fcntl") from exc
+        directory = self._dir(session_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        fd = os.open(directory / self.LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield directory
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    def load(self, session_id: str) -> ChatGPTSessionBinding | None:
+        with self._lock(session_id) as directory:
+            path = directory / self.FILE
+            if not path.is_file():
+                return None
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise BrowserSurfaceLeaseError(
+                    f"ChatGPT session binding is unreadable: {exc}"
+                ) from exc
+            if not isinstance(value, dict):
+                raise BrowserSurfaceLeaseError("ChatGPT session binding root must be object")
+            binding = ChatGPTSessionBinding.from_dict(value)
+            if binding.lfl_session_id != str(session_id).strip():
+                raise BrowserSurfaceLeaseError("ChatGPT session binding id/hash mismatch")
+            return binding
+
+    def save(self, binding: ChatGPTSessionBinding) -> ChatGPTSessionBinding:
+        binding.verify()
+        with self._lock(binding.lfl_session_id) as directory:
+            self._write(directory / self.FILE, binding)
+        return binding
+
+    @staticmethod
+    def _write(path: Path, binding: ChatGPTSessionBinding) -> None:
+        tmp = path.with_suffix(".json.tmp")
+        data = json.dumps(asdict(binding), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+    def get_or_create(
+        self, *, session_id: str, project_ref: str
+    ) -> ChatGPTSessionBinding:
+        existing = self.load(session_id)
+        if existing is not None:
+            if existing.project_ref != project_ref:
+                raise BrowserSurfaceLeaseError(
+                    "ChatGPT session binding Project identity mismatch"
+                )
+            return existing
+        return self.save(
+            ChatGPTSessionBinding.new(
+                lfl_session_id=session_id,
+                project_ref=project_ref,
+            )
+        )
+
+    def rollover(
+        self,
+        binding: ChatGPTSessionBinding,
+        *,
+        reason: str,
+    ) -> ChatGPTSessionBinding:
+        binding.verify()
+        updated = replace(
+            binding,
+            conversation_id=None,
+            conversation_url=None,
+            segment_seq=binding.segment_seq + 1,
+            segment_request_count=0,
+            segment_request_chars=0,
+            updated_at=_now(),
+        )
+        updated.verify()
+        with self._lock(binding.lfl_session_id) as directory:
+            if binding.conversation_id and binding.conversation_url:
+                history = {
+                    "segment_seq": binding.segment_seq,
+                    "conversation_id": binding.conversation_id,
+                    "conversation_url": binding.conversation_url,
+                    "request_count": binding.segment_request_count,
+                    "request_chars": binding.segment_request_chars,
+                    "closed_at": updated.updated_at,
+                    "reason": str(reason or "rollover").strip() or "rollover",
+                }
+                history_path = directory / self.HISTORY
+                with history_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(history, ensure_ascii=False, sort_keys=True) + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            self._write(directory / self.FILE, updated)
+        return updated
+
+    def record_exchange(
+        self,
+        binding: ChatGPTSessionBinding,
+        *,
+        conversation_id: str,
+        conversation_url: str,
+        request_chars: int,
+    ) -> ChatGPTSessionBinding:
+        binding.verify()
+        updated = replace(
+            binding,
+            conversation_id=str(conversation_id).strip(),
+            conversation_url=str(conversation_url).strip(),
+            segment_request_count=binding.segment_request_count + 1,
+            segment_request_chars=binding.segment_request_chars + max(0, int(request_chars)),
+            total_request_count=binding.total_request_count + 1,
+            updated_at=_now(),
+        )
+        updated.verify()
+        return self.save(updated)
 
 
 def _conversation_url(project_url: str, conversation_id: str) -> str:
@@ -421,6 +672,39 @@ class ChatGPTSurface:
         self.lease = self.lease_store.update(
             conversation_id=binding.conversation_id,
             conversation_url=conversation_url,
+        )
+        return self.lease
+
+    def restore_conversation(
+        self,
+        *,
+        conversation_id: str,
+        conversation_url: str,
+    ) -> BrowserSurfaceLease:
+        """Navigate the exact owned tab back to one persisted session segment.
+
+        This changes only the physical transport route.  It does not grant the
+        outer ChatGPT thread any context authority; the next request still sends
+        the complete LFL-composed snapshot.
+        """
+        if self.lease is None or self.page is None:
+            raise BrowserSurfaceLeaseError("surface is not open")
+        conversation_id = str(conversation_id).strip()
+        conversation_url = str(conversation_url).strip()
+        if not conversation_id or not conversation_url:
+            raise BrowserSurfaceLeaseError("conversation restore requires id and url")
+        expected = _conversation_url(self.project_url, conversation_id)
+        if conversation_url != expected:
+            raise BrowserSurfaceLeaseError(
+                "session binding conversation URL is outside the configured Project"
+            )
+        current_url = str(getattr(self.page, "url", "") or "")
+        if current_url != expected:
+            self.page.goto(expected, wait_until="commit", timeout=15_000)
+        self._wait_for_page_context(self.page, expected_url=expected)
+        self.lease = self.lease_store.update(
+            conversation_id=conversation_id,
+            conversation_url=expected,
         )
         return self.lease
 

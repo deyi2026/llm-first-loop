@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 import pytest
@@ -8,6 +9,7 @@ from llm_loop.llm.chatgpt_page import PageBinding
 from llm_loop.llm.chatgpt_surface import (
     BrowserSurfaceLeaseError,
     BrowserSurfaceLeaseStore,
+    ChatGPTSessionBindingStore,
     ChatGPTSurface,
 )
 
@@ -254,6 +256,90 @@ def test_bind_conversation_persists_route_after_project_root_claim(tmp_path):
     assert lease.conversation_url == CONVERSATION_URL
     assert page.fronted == 0
     assert BrowserSurfaceLeaseStore(tmp_path).load() == lease
+
+
+def test_session_binding_store_persists_segment_accounting_and_rollover(tmp_path):
+    store = ChatGPTSessionBindingStore(tmp_path / "sessions")
+    binding = store.get_or_create(session_id="lfl-session-a", project_ref=PROJECT_REF)
+
+    assert binding.segment_seq == 1
+    assert binding.segment_request_count == 0
+    assert binding.conversation_id is None
+
+    binding = store.record_exchange(
+        binding,
+        conversation_id=CONVERSATION_ID,
+        conversation_url=CONVERSATION_URL,
+        request_chars=12_345,
+    )
+    assert store.load("lfl-session-a") == binding
+    assert binding.segment_request_count == 1
+    assert binding.segment_request_chars == 12_345
+    assert binding.total_request_count == 1
+
+    rolled = store.rollover(binding, reason="request_cap")
+    assert rolled.segment_seq == 2
+    assert rolled.segment_request_count == 0
+    assert rolled.segment_request_chars == 0
+    assert rolled.total_request_count == 1
+    assert rolled.conversation_id is None
+    assert rolled.conversation_url is None
+    history = (
+        tmp_path
+        / "sessions"
+        / "lfl-session-a"
+        / ChatGPTSessionBindingStore.HISTORY
+    ).read_text(encoding="utf-8")
+    row = json.loads(history)
+    assert row["segment_seq"] == 1
+    assert row["conversation_id"] == CONVERSATION_ID
+    assert row["reason"] == "request_cap"
+
+
+def test_session_binding_store_hashes_raw_session_id_and_rejects_project_drift(tmp_path):
+    store = ChatGPTSessionBindingStore(tmp_path / "sessions")
+    binding = store.get_or_create(
+        session_id="../../not-a-path",
+        project_ref=PROJECT_REF,
+    )
+
+    assert binding.lfl_session_id == "../../not-a-path"
+    assert not (tmp_path / "not-a-path").exists()
+    with pytest.raises(BrowserSurfaceLeaseError, match="Project identity mismatch"):
+        store.get_or_create(
+            session_id="../../not-a-path",
+            project_ref="g-p-other",
+        )
+
+
+def test_restore_conversation_reuses_exact_owned_target(tmp_path):
+    context = _Context()
+    surface, _pw = _surface(tmp_path, context)
+    page = surface.open()
+    target_id = page.target_id
+
+    restored = surface.restore_conversation(
+        conversation_id=CONVERSATION_ID,
+        conversation_url=CONVERSATION_URL,
+    )
+
+    assert page.target_id == target_id
+    assert page.url == CONVERSATION_URL
+    assert restored.target_id == target_id
+    assert restored.conversation_id == CONVERSATION_ID
+    assert restored.conversation_url == CONVERSATION_URL
+
+
+def test_restore_conversation_rejects_non_project_route(tmp_path):
+    context = _Context()
+    surface, _pw = _surface(tmp_path, context)
+    surface.open()
+
+    with pytest.raises(BrowserSurfaceLeaseError, match="outside the configured Project"):
+        surface.restore_conversation(
+            conversation_id=CONVERSATION_ID,
+            conversation_url=f"https://chatgpt.com/c/{CONVERSATION_ID}",
+        )
 
 
 def test_bind_conversation_recovers_generic_chat_route_into_configured_project(tmp_path):
