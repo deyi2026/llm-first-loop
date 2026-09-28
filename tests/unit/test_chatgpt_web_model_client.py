@@ -332,6 +332,68 @@ def test_surface_owned_transport_reuses_per_lfl_session_and_switches_without_cro
     assert b.total_request_count == 1
     assert events.count("reset") == 2
     assert events.count("restore:conversation-a") == 2
+    telemetry_a = store.read_events("session-a")
+    assert [row["event"] for row in telemetry_a].count("restore_succeeded") == 2
+    assert [row["event"] for row in telemetry_a].count("exchange_committed") == 3
+
+
+def test_surface_owned_transport_records_restore_failure_without_exchange(tmp_path):
+    store = ChatGPTSessionBindingStore(tmp_path / "sessions")
+    binding = store.get_or_create(session_id="session-a", project_ref="project")
+    binding = store.record_exchange(
+        binding,
+        conversation_id="conversation-a",
+        conversation_url="https://chatgpt.com/g/project/c/conversation-a",
+        request_chars=100,
+    )
+    called = {"exchange": 0}
+
+    class Surface:
+        def reset_to_project_root(self):
+            raise AssertionError("existing binding should attempt restore")
+
+        def restore_conversation(self, *, conversation_id, conversation_url):
+            raise RuntimeError("conversation disappeared")
+
+        def close(self):
+            return None
+
+    class Adapter:
+        def ensure_reasoning_effort(self, effort, **_kwargs):
+            return None
+
+    class Inner:
+        def rebind(self):
+            return None
+
+        def exchange(self, request, *, timeout_s=None):
+            called["exchange"] += 1
+            return {"request_id": request["request_id"]}
+
+    transport = _SurfaceOwnedTransport(
+        Inner(),
+        surface=Surface(),
+        adapter=Adapter(),
+        session_store=store,
+        project_ref="project",
+        segment_max_chars=1_000_000,
+    )
+    request = {
+        "protocol": MODEL_PROTOCOL,
+        "request_id": "a2",
+        "model": "web-gpt",
+        "messages": [{"role": "user", "content": "x"}],
+        "tools": [],
+        "_lfl_session_id": "session-a",
+    }
+
+    with pytest.raises(RuntimeError, match="conversation disappeared"):
+        transport.exchange(request)
+
+    assert called["exchange"] == 0
+    events = store.read_events("session-a")
+    assert events[-1]["event"] == "restore_failed"
+    assert events[-1]["error_type"] == "RuntimeError"
 
 
 def test_surface_owned_transport_rolls_segment_at_request_cap(tmp_path):

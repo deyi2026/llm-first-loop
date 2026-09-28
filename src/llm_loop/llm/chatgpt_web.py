@@ -15,6 +15,7 @@ LFL ``ToolRegistry`` and its safety/evidence/recovery pipeline.
 from __future__ import annotations
 
 import itertools
+import logging
 import threading
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -24,6 +25,8 @@ from typing import Any, Protocol
 from llm_loop.core.message import ToolCall
 from llm_loop.core.run_context import current_reasoning_effort, current_session_id
 from llm_loop.llm.client import LLMResponse
+
+logger = logging.getLogger(__name__)
 
 MODEL_PROTOCOL = "lfl-model/0.1"
 CHATGPT_WEB_PROVIDER_ID = "chatgpt-web"
@@ -204,6 +207,21 @@ class _SurfaceOwnedTransport:
 
         return len(ChatGPTWebPageTransport._render_request(request))
 
+    def _record_transport_event(
+        self,
+        binding: Any,
+        *,
+        event: str,
+        **facts: object,
+    ) -> None:
+        recorder = getattr(self.session_store, "record_transport_event", None)
+        if not callable(recorder):
+            return
+        try:
+            recorder(binding, event=event, **facts)
+        except Exception:  # noqa: BLE001 - observability must not block model traffic
+            logger.warning("ChatGPT transport telemetry record failed", exc_info=True)
+
     def _prepare_session_binding(
         self,
         request: dict[str, Any],
@@ -240,10 +258,23 @@ class _SurfaceOwnedTransport:
                 reason=rollover_reason,
             )
         elif binding.conversation_id and binding.conversation_url:
-            self.surface.restore_conversation(
-                conversation_id=binding.conversation_id,
-                conversation_url=binding.conversation_url,
-            )
+            try:
+                self.surface.restore_conversation(
+                    conversation_id=binding.conversation_id,
+                    conversation_url=binding.conversation_url,
+                )
+            except Exception as exc:
+                self._record_transport_event(
+                    binding,
+                    event="restore_failed",
+                    error_type=type(exc).__name__,
+                )
+                raise
+            else:
+                self._record_transport_event(
+                    binding,
+                    event="restore_succeeded",
+                )
         else:
             self.surface.reset_to_project_root()
         return binding, request_chars

@@ -2772,6 +2772,33 @@ def chatgpt_binding_gc_plan(
     )
 
 
+@router.get("/api/v1/chatgpt-web/bindings/health")
+def chatgpt_binding_health(request: Request) -> JSONResponse:
+    """Aggregate prompt-neutral ChatGPT binding metrics and operational alerts."""
+
+    from llm_loop.llm.chatgpt_web import CHATGPT_WEB_SEGMENT_BUDGET_RATIO
+    from llm_loop.runtime.chatgpt_binding_health import inspect_chatgpt_binding_health
+
+    engine = _engine_from(request)
+    settings = getattr(engine, "settings", None)
+    max_request_chars = max(
+        1,
+        int(getattr(settings, "chatgpt_web_max_request_chars", 150_000) or 150_000),
+    )
+    segment_max_chars = max(
+        1,
+        int(max_request_chars * CHATGPT_WEB_SEGMENT_BUDGET_RATIO),
+    )
+    return UTF8JSONResponse(
+        content=inspect_chatgpt_binding_health(
+            _chatgpt_binding_store(engine),
+            engine.session,
+            segment_max_chars=segment_max_chars,
+            min_gc_age_days=30,
+        )
+    )
+
+
 @router.post("/api/v1/chatgpt-web/bindings/gc")
 def chatgpt_binding_gc(
     payload: ChatGPTBindingGcRequest,

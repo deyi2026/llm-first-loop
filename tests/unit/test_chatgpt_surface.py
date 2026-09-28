@@ -294,6 +294,13 @@ def test_session_binding_store_persists_segment_accounting_and_rollover(tmp_path
     assert row["segment_seq"] == 1
     assert row["conversation_id"] == CONVERSATION_ID
     assert row["reason"] == "request_cap"
+    events = store.read_events("lfl-session-a")
+    assert [event["event"] for event in events] == [
+        "exchange_committed",
+        "segment_rollover",
+    ]
+    assert events[0]["request_chars"] == 12_345
+    assert events[1]["reason"] == "request_cap"
 
 
 def test_session_binding_store_hashes_raw_session_id_and_rejects_project_drift(tmp_path):
@@ -342,6 +349,32 @@ def test_session_binding_store_lists_history_and_deletes_only_unchanged_binding(
     ) is True
     assert store.load("lfl-session-a") is None
     assert store.read_history("lfl-session-a") == []
+    assert store.read_events("lfl-session-a") == []
+
+
+def test_binding_telemetry_append_failure_never_blocks_exchange_or_rollover(
+    tmp_path,
+    monkeypatch,
+):
+    store = ChatGPTSessionBindingStore(tmp_path / "sessions")
+    binding = store.get_or_create(session_id="lfl-session-a", project_ref=PROJECT_REF)
+
+    def broken_append(*_args, **_kwargs):
+        raise OSError("telemetry disk unavailable")
+
+    monkeypatch.setattr(store, "_append_event_locked", broken_append)
+    binding = store.record_exchange(
+        binding,
+        conversation_id=CONVERSATION_ID,
+        conversation_url=CONVERSATION_URL,
+        request_chars=777,
+    )
+    assert store.load("lfl-session-a") == binding
+    assert binding.segment_request_count == 1
+
+    rolled = store.rollover(binding, reason="request_cap")
+    assert store.load("lfl-session-a") == rolled
+    assert rolled.segment_seq == 2
 
 
 def test_restore_conversation_reuses_exact_owned_target(tmp_path):

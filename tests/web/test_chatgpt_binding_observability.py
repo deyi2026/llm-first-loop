@@ -74,6 +74,38 @@ def test_provider_binding_endpoint_returns_unbound_for_existing_session(build_te
     assert body["lifecycle"]["gc_reason"] == "session_exists"
 
 
+def test_binding_health_endpoint_reports_recent_restore_alert(build_test_engine):
+    engine, _ = build_test_engine([])
+    sid = engine.session.create(model_override="chatgpt-web/web-gpt")
+    store = _store(engine)
+    binding = store.get_or_create(session_id=sid, project_ref=PROJECT_REF)
+    binding = store.record_exchange(
+        binding,
+        conversation_id="conv-1",
+        conversation_url=f"https://chatgpt.com/g/{PROJECT_REF}/c/conv-1",
+        request_chars=1_000,
+    )
+    store.record_transport_event(
+        binding,
+        event="restore_failed",
+        error_type="BrowserSurfaceLeaseError",
+    )
+
+    response = _make_client(engine).get(
+        "/api/v1/chatgpt-web/bindings/health"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema"] == "lfl.chatgpt_binding_health.v1"
+    assert body["status"] == "warning"
+    assert body["metrics"]["bindings_total"] == 1
+    assert body["metrics"]["restore_failures_24h"] == 1
+    assert body["telemetry"]["coverage"] == "event_log_only"
+    alert = next(row for row in body["alerts"] if row["code"] == "restore_failures_recent")
+    assert alert["severity"] == "warning"
+
+
 def test_gc_plan_never_marks_existing_or_archived_session_eligible(build_test_engine):
     engine, _ = build_test_engine([])
     active_sid = engine.session.create()

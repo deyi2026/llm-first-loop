@@ -93,6 +93,34 @@ describe("product right panel", () => {
           },
         }), { status: 200 });
       }
+      if (url.endsWith("/api/v1/chatgpt-web/bindings/health")) {
+        return new Response(JSON.stringify({
+          schema: "lfl.chatgpt_binding_health.v1",
+          status: "warning",
+          observed_at: "2026-09-28T17:05:00+08:00",
+          metrics: {
+            bindings_total: 4,
+            exchanges_24h: 12,
+            rollovers_24h: 3,
+            restore_failures_24h: 1,
+            restore_success_rate_24h: 0.875,
+            segment_pressure_max_ratio: 0.92,
+          },
+          alerts: [
+            {
+              code: "restore_failures_recent",
+              severity: "warning",
+              message: "ChatGPT conversation restore failures occurred in the last 24h.",
+              count: 1,
+            },
+          ],
+          telemetry: {
+            coverage: "event_log_only",
+            event_count: 18,
+            last_event_at: "2026-09-28T17:04:00+08:00",
+          },
+        }), { status: 200 });
+      }
       return new Response(JSON.stringify({}), { status: 200 });
     }));
 
@@ -105,6 +133,11 @@ describe("product right panel", () => {
     expect(screen.getByText("cumulative_request_chars")).toBeInTheDocument();
     expect(screen.getByText("session_exists")).toBeInTheDocument();
     expect(screen.getByText("关闭")).toBeInTheDocument();
+    expect(screen.getByTestId("binding-health-card")).toHaveTextContent("warning");
+    expect(screen.getByTestId("binding-health-card")).toHaveTextContent("87.5%");
+    expect(screen.getByTestId("binding-health-card")).toHaveTextContent("92.0%");
+    expect(screen.getByText("restore_failures_recent")).toBeInTheDocument();
+    expect(screen.getByText(/event log，不回填历史调用/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /清理|删除|GC/ })).toBeNull();
     expect(screen.getByText(/Existing\/archived LFL Session 永不自动清理/)).toBeInTheDocument();
   });

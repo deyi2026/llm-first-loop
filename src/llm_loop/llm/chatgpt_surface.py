@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -30,6 +31,8 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from .chatgpt_page import PageBinding, PageContractError
+
+logger = logging.getLogger(__name__)
 
 LEASE_VERSION = 1
 SESSION_BINDING_VERSION = 1
@@ -143,6 +146,10 @@ class ChatGPTSessionBindingStore:
     FILE = "binding.json"
     LOCK = ".binding.lock"
     HISTORY = "segments.jsonl"
+    EVENTS = "events.jsonl"
+    EVENT_SCHEMA = "lfl.chatgpt_binding_event.v1"
+    _EVENT_MAX_BYTES = 1_000_000
+    _EVENT_TAIL_LINES = 2_000
     _SAFE_SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
     def __init__(self, root: str | Path) -> None:
@@ -241,6 +248,56 @@ class ChatGPTSessionBindingStore:
                 ) from exc
             return rows[-bounded:]
 
+    def read_events(self, session_id: str, *, limit: int = 500) -> list[dict[str, Any]]:
+        """Read bounded mechanical transport telemetry for one LFL session."""
+
+        bounded = max(1, min(int(limit), self._EVENT_TAIL_LINES))
+        with self._lock(session_id) as directory:
+            path = directory / self.EVENTS
+            if not path.is_file():
+                return []
+            rows: list[dict[str, Any]] = []
+            try:
+                for raw in path.read_text(encoding="utf-8").splitlines():
+                    if not raw.strip():
+                        continue
+                    value = json.loads(raw)
+                    if isinstance(value, dict):
+                        rows.append(value)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise BrowserSurfaceLeaseError(
+                    f"ChatGPT session telemetry is unreadable: {exc}"
+                ) from exc
+            return rows[-bounded:]
+
+    def record_transport_event(
+        self,
+        binding: ChatGPTSessionBinding,
+        *,
+        event: str,
+        **facts: object,
+    ) -> None:
+        """Append one bounded, prompt-free transport event."""
+
+        binding.verify()
+        name = str(event or "").strip()
+        if not name:
+            raise BrowserSurfaceLeaseError("ChatGPT transport event must be non-empty")
+        payload: dict[str, object] = {
+            "schema": self.EVENT_SCHEMA,
+            "ts": _now(),
+            "event": name,
+            "session_id": binding.lfl_session_id,
+            "segment_seq": binding.segment_seq,
+        }
+        if binding.conversation_id:
+            payload["conversation_id"] = binding.conversation_id
+        for key, value in facts.items():
+            if value is not None:
+                payload[str(key)] = value
+        with self._lock(binding.lfl_session_id) as directory:
+            self._try_append_event_locked(directory, payload)
+
     def delete_if_unchanged(
         self,
         *,
@@ -275,7 +332,11 @@ class ChatGPTSessionBindingStore:
                 raise BrowserSurfaceLeaseError("ChatGPT session binding id/hash mismatch")
             if binding.updated_at != expected:
                 return False
-            for candidate in (directory / self.FILE, directory / self.HISTORY):
+            for candidate in (
+                directory / self.FILE,
+                directory / self.HISTORY,
+                directory / self.EVENTS,
+            ):
                 if candidate.exists():
                     candidate.unlink()
             dir_fd = os.open(directory, os.O_RDONLY)
@@ -290,6 +351,52 @@ class ChatGPTSessionBindingStore:
         with self._lock(binding.lfl_session_id) as directory:
             self._write(directory / self.FILE, binding)
         return binding
+
+    def _append_event_locked(
+        self,
+        directory: Path,
+        payload: dict[str, object],
+    ) -> None:
+        path = directory / self.EVENTS
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return
+        if size <= self._EVENT_MAX_BYTES:
+            return
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return
+        tail = lines[-self._EVENT_TAIL_LINES :]
+        tmp = path.with_suffix(".jsonl.tmp")
+        with tmp.open("w", encoding="utf-8") as handle:
+            if tail:
+                handle.write("\n".join(tail) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        dir_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+    def _try_append_event_locked(
+        self,
+        directory: Path,
+        payload: dict[str, object],
+    ) -> bool:
+        try:
+            self._append_event_locked(directory, payload)
+            return True
+        except Exception:  # noqa: BLE001 - telemetry must never block provider traffic
+            logger.warning("ChatGPT binding telemetry append failed", exc_info=True)
+            return False
 
     @staticmethod
     def _write(path: Path, binding: ChatGPTSessionBinding) -> None:
@@ -342,6 +449,7 @@ class ChatGPTSessionBindingStore:
         updated.verify()
         with self._lock(binding.lfl_session_id) as directory:
             if binding.conversation_id and binding.conversation_url:
+                normalized_reason = str(reason or "rollover").strip() or "rollover"
                 history = {
                     "segment_seq": binding.segment_seq,
                     "conversation_id": binding.conversation_id,
@@ -349,13 +457,27 @@ class ChatGPTSessionBindingStore:
                     "request_count": binding.segment_request_count,
                     "request_chars": binding.segment_request_chars,
                     "closed_at": updated.updated_at,
-                    "reason": str(reason or "rollover").strip() or "rollover",
+                    "reason": normalized_reason,
                 }
                 history_path = directory / self.HISTORY
                 with history_path.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(history, ensure_ascii=False, sort_keys=True) + "\n")
                     handle.flush()
                     os.fsync(handle.fileno())
+                self._try_append_event_locked(
+                    directory,
+                    {
+                        "schema": self.EVENT_SCHEMA,
+                        "ts": updated.updated_at,
+                        "event": "segment_rollover",
+                        "session_id": binding.lfl_session_id,
+                        "segment_seq": binding.segment_seq,
+                        "conversation_id": binding.conversation_id,
+                        "reason": normalized_reason,
+                        "request_count": binding.segment_request_count,
+                        "request_chars": binding.segment_request_chars,
+                    },
+                )
             self._write(directory / self.FILE, updated)
         return updated
 
@@ -378,7 +500,24 @@ class ChatGPTSessionBindingStore:
             updated_at=_now(),
         )
         updated.verify()
-        return self.save(updated)
+        with self._lock(binding.lfl_session_id) as directory:
+            self._write(directory / self.FILE, updated)
+            self._try_append_event_locked(
+                directory,
+                {
+                    "schema": self.EVENT_SCHEMA,
+                    "ts": updated.updated_at,
+                    "event": "exchange_committed",
+                    "session_id": updated.lfl_session_id,
+                    "segment_seq": updated.segment_seq,
+                    "conversation_id": updated.conversation_id,
+                    "request_chars": max(0, int(request_chars)),
+                    "segment_request_count": updated.segment_request_count,
+                    "segment_request_chars": updated.segment_request_chars,
+                    "total_request_count": updated.total_request_count,
+                },
+            )
+        return updated
 
 
 def _conversation_url(project_url: str, conversation_id: str) -> str:

@@ -240,6 +240,39 @@ export async function fetchSessionProviderBinding(
   return status === 200 ? data : null;
 }
 
+export interface ChatGPTBindingAlert {
+  code?: string;
+  severity?: "warning" | "critical" | string;
+  message?: string;
+  count?: number;
+  session_ids?: string[];
+  max_ratio?: number;
+  error_type?: string;
+}
+
+export interface ChatGPTBindingHealth {
+  schema?: string;
+  status?: "healthy" | "warning" | "critical" | string;
+  observed_at?: string;
+  metrics?: Record<string, unknown>;
+  alerts?: ChatGPTBindingAlert[];
+  telemetry?: {
+    coverage?: string;
+    event_count?: number;
+    event_types?: Record<string, number>;
+    first_event_at?: string | null;
+    last_event_at?: string | null;
+  };
+  thresholds?: Record<string, number>;
+}
+
+export async function fetchChatGPTBindingHealth(): Promise<ChatGPTBindingHealth | null> {
+  const { status, data } = await api<ChatGPTBindingHealth>(
+    "/api/v1/chatgpt-web/bindings/health"
+  );
+  return status === 200 ? data : null;
+}
+
 export async function archiveSession(sessionId: string, archived: boolean): Promise<boolean> {
   const { status } = await api(
     `/api/v1/sessions/${encodeURIComponent(sessionId)}/archive?archived=${archived}`,

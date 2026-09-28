@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  fetchChatGPTBindingHealth,
   fetchSessionProviderBinding,
+  type ChatGPTBindingHealth,
   type ChatGPTBindingInfo,
 } from "../../core/api";
 
@@ -18,6 +20,7 @@ function fmtTime(value: unknown): string {
 
 export function SessionBindingPanel({ sessionId }: { sessionId: string | null }) {
   const [info, setInfo] = useState<ChatGPTBindingInfo | null>(null);
+  const [health, setHealth] = useState<ChatGPTBindingHealth | null>(null);
   const [loading, setLoading] = useState(false);
   const [readError, setReadError] = useState(false);
   const inFlight = useRef(false);
@@ -29,8 +32,12 @@ export function SessionBindingPanel({ sessionId }: { sessionId: string | null })
     inFlight.current = true;
     setLoading(true);
     try {
-      const next = await fetchSessionProviderBinding(sessionId);
+      const [next, nextHealth] = await Promise.all([
+        fetchSessionProviderBinding(sessionId),
+        fetchChatGPTBindingHealth(),
+      ]);
       if (activeSession.current !== sessionId) return;
+      setHealth(nextHealth);
       if (next) {
         setInfo(next);
         setReadError(false);
@@ -45,6 +52,7 @@ export function SessionBindingPanel({ sessionId }: { sessionId: string | null })
 
   useEffect(() => {
     setInfo(null);
+    setHealth(null);
     setReadError(false);
     if (!sessionId) return;
     void load();
@@ -77,6 +85,15 @@ export function SessionBindingPanel({ sessionId }: { sessionId: string | null })
   const history = Array.isArray(info.history) ? info.history : [];
   const lifecycle = info.lifecycle ?? {};
   const policy = info.gc_policy ?? {};
+  const metrics = health?.metrics ?? {};
+  const alerts = Array.isArray(health?.alerts) ? health.alerts : [];
+  const healthClass =
+    health?.status === "critical"
+      ? "err"
+      : health?.status === "warning"
+        ? "warn"
+        : "ok";
+  const metric = (key: string): unknown => metrics[key];
 
   return (
     <div className="v2-jobs" data-testid="session-binding-panel">
@@ -85,6 +102,56 @@ export function SessionBindingPanel({ sessionId }: { sessionId: string | null })
         <button type="button" className="v2-btn ghost" disabled={loading} onClick={() => void load()}>
           {loading ? "刷新中…" : "⟳ 刷新"}
         </button>
+      </div>
+      <div className="v2-job-card" data-testid="binding-health-card">
+        <div className="v2-job-head">
+          <strong>运行指标 / 告警</strong>
+          <span className={"v2-status-chip " + healthClass}>
+            {health?.status || "unknown"}
+          </span>
+        </div>
+        <div className="v2-kv">
+          <span className="k">Bindings</span><span className="v">{fmtNumber(metric("bindings_total"))}</span>
+          <span className="k">24h exchanges</span><span className="v">{fmtNumber(metric("exchanges_24h"))}</span>
+          <span className="k">24h rollovers</span><span className="v">{fmtNumber(metric("rollovers_24h"))}</span>
+          <span className="k">24h restore failures</span><span className="v">{fmtNumber(metric("restore_failures_24h"))}</span>
+          <span className="k">24h restore success</span>
+          <span className="v">
+            {typeof metric("restore_success_rate_24h") === "number"
+              ? (Number(metric("restore_success_rate_24h")) * 100).toFixed(1) + "%"
+              : "—"}
+          </span>
+          <span className="k">最大 segment 压力</span>
+          <span className="v">
+            {typeof metric("segment_pressure_max_ratio") === "number"
+              ? (Number(metric("segment_pressure_max_ratio")) * 100).toFixed(1) + "%"
+              : "—"}
+          </span>
+          <span className="k">Telemetry events</span><span className="v">{fmtNumber(health?.telemetry?.event_count)}</span>
+          <span className="k">最近事件</span><span className="v">{fmtTime(health?.telemetry?.last_event_at)}</span>
+        </div>
+        <div className="v2-job-note">
+          近 1h/24h 指标只覆盖 telemetry 上线后的 event log，不回填历史调用；告警仅观测，不自动
+          rollover、不自动 GC。
+        </div>
+        {alerts.length === 0 ? (
+          <div className="v2-job-note">当前无 Binding/rollover 告警。</div>
+        ) : (
+          alerts.map((alert, index) => (
+            <div className="v2-job-card" key={(alert.code || "alert") + "-" + index}>
+              <div className="v2-job-head">
+                <strong>{alert.code || "binding_alert"}</strong>
+                <span className={"v2-status-chip " + (alert.severity === "critical" ? "err" : "warn")}>
+                  {alert.severity || "warning"}
+                </span>
+              </div>
+              <div className="v2-job-note">{alert.message || "Binding telemetry alert"}</div>
+              {typeof alert.count === "number" ? (
+                <div className="v2-job-note">count: {alert.count}</div>
+              ) : null}
+            </div>
+          ))
+        )}
       </div>
       {!info.bound || !binding ? (
         <div className="v2-placeholder">
