@@ -3,7 +3,7 @@
 #
 # 管理常驻服务（cli 交互式，纳入 status/stop + 可启动校验，不参与常驻 start_all）:
 #   web    FastAPI 服务（python -m llm_loop.web，健康端点 GET /health）
-#   feishu 飞书桥（python -m llm_loop.feishu，WS 长连接）
+#   feishu 飞书桥（python -m llm_loop.runtime.launch feishu，WS 长连接）
 #   cli    终端 CLI（python -m llm_loop.cli，交互式需 tty，不能后台守护）
 #          cli start = 可启动性校验（import+版本）+ 提示手动终端启动（不伪装常驻）
 #
@@ -327,7 +327,10 @@ _start_service() {
       export FEISHU_EXIT_WAIT_S="${FEISHU_EXIT_WAIT_S:-10}"
       export FEISHU_EXIT_DRAIN_S="${FEISHU_EXIT_DRAIN_S:-3}"
       _log "[feishu] 启动飞书桥（日志: ${DATA_DIR}/feishu_bridge.log）..."
-      nohup "$VENV_PY" -m llm_loop.feishu >> "$DATA_DIR/feishu_bridge.log" 2>&1 &
+      # 统一走 runtime.launch：启动进程必须同步刷新 runtime_manifest.feishu.json。
+      # 直接 python -m llm_loop.feishu 会让 heartbeat 已换代但 startup manifest
+      # 仍指向旧 PID，service identity 面误报 live_pid_not_running。
+      nohup "$VENV_PY" -m llm_loop.runtime.launch feishu >> "$DATA_DIR/feishu_bridge.log" 2>&1 &
       echo "$!" > "$DATA_DIR/feishu.pid"   # 2026-08-17: 启动即落盘 pid（同 web 修复，防复发）
       ;;
     cli)

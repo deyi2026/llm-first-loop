@@ -58,7 +58,32 @@ _CACHE_GUARD_CONFIG = business_config_snapshot("cache_guard")
 #   4. 用户成本硬限
 #   5. safety 类拦截
 # 性能类理由（低命中/体积占比）不构成阻断——代价由 cost/observability 面承接。
-_PERF_BLOCK_MODE = _CACHE_GUARD_CONFIG.get("CACHE_GUARD_PERF_BLOCK", "enforce").strip().lower()
+class _PerfBlockModeView:
+    """Resolve perf_block_mode from the current runtime config at decision time.
+
+    Tests may still monkeypatch the module-level _PERF_BLOCK_MODE with a plain
+    string, preserving the existing explicit on/enforce override seam.
+    """
+
+    def _value(self) -> str:
+        current = business_config_snapshot("cache_guard")
+        return (
+            current.get(
+                "CACHE_GUARD_PERF_BLOCK",
+                _CACHE_GUARD_CONFIG.get("CACHE_GUARD_PERF_BLOCK", "enforce"),
+            )
+            .strip()
+            .lower()
+        )
+
+    def __eq__(self, other: object) -> bool:
+        return self._value() == other
+
+    def __repr__(self) -> str:
+        return repr(self._value())
+
+
+_PERF_BLOCK_MODE: str | _PerfBlockModeView = _PerfBlockModeView()
 # D'-1.1 核对结论（2026-08-31）: 规则 G（_check_hit_rate）全路径 WARN-only
 # （low_hit_rate_ttl / low_hit_rate_compressing / low_hit_rate_provider 三分支均
 # 无 BLOCK verdict——_HIT_RATE_BLOCK 仅作阈值比较）；规则 A（system_stability）/

@@ -106,6 +106,41 @@ class TestDG4PerfBlockReclassified:
         assert "event=guard.would_block" in joined
         assert "rule=submit_ratio_perf" in joined
 
+    def test_perf_mode_tracks_runtime_toml_changes_without_reload(self, tmp_path, monkeypatch):
+        """H11: 长驻进程内 runtime.toml 变更应影响下一次性能类判定，无需 reload."""
+        runtime_root = tmp_path / "runtime"
+        runtime_root.mkdir()
+        runtime_toml = runtime_root / "runtime.toml"
+        monkeypatch.setenv("LFL_RUNTIME_ROOT", str(runtime_root))
+        monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(Path(__file__).resolve().parents[2]))
+        monkeypatch.delenv("LFL_ALLOW_RUNTIME_OVERRIDE", raising=False)
+
+        msgs, sys_text = _over_ratio_msgs()
+        runtime_toml.write_text(
+            '[cache_guard]\nperf_block_mode = "enforce"\n',
+            encoding="utf-8",
+        )
+        d_enforce = validate_request(
+            system_text=sys_text,
+            messages=msgs,
+            meta={"history_budget": 6000, "breaker_active": False},
+            audit_file=tmp_path / "g.jsonl",
+        )
+
+        runtime_toml.write_text(
+            '[cache_guard]\nperf_block_mode = "on"\n',
+            encoding="utf-8",
+        )
+        d_on = validate_request(
+            system_text=sys_text,
+            messages=msgs,
+            meta={"history_budget": 6000, "breaker_active": False},
+            audit_file=tmp_path / "g.jsonl",
+        )
+
+        assert (d_enforce.verdict, d_enforce.rule) == ("WARN", "submit_ratio_perf")
+        assert (d_on.verdict, d_on.rule) == ("BLOCK", "submit_ratio")
+
     def test_enforce_state_warn_band_unchanged(self, tmp_path, monkeypatch):
         """85%~95% WARN 带（性能观察带）双态语义不变——不属 BLOCK 改造面."""
         monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "enforce")

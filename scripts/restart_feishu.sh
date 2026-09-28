@@ -23,7 +23,6 @@ cd "$PROJECT_DIR"
 VENV_PY="$PROJECT_DIR/.venv/bin/python"
 LOG_FILE="$PROJECT_DIR/data/feishu_bridge.log"
 PID_FILE="$PROJECT_DIR/data/feishu_bridge.pid"
-BRIDGE_MOD="llm_loop.feishu"
 HEARTBEAT_FILE="$PROJECT_DIR/data/feishu_heartbeat.json"
 
 # 可调参数（env 覆盖）
@@ -45,12 +44,18 @@ _current_pid() {
       return 0
     fi
   fi
-  # PID 文件失效 → pgrep 兜底（防残留误判）
-  # 2026-08-22 镜像修复：pgrep 加工作区路径精确匹配，防误匹配旧主区桥进程
-  # （主/镜像 .venv 同源符号链接，命令行 `python -m llm_loop.feishu` 相同；
-  # 不加路径前缀会 stop/restart 误杀旧主区桥，MIRROR 隔离要求旧主区零接触）
-  local match="$PROJECT_DIR/.venv/bin/python -m $BRIDGE_MOD"
-  pid="$(pgrep -f "$match" | head -1 || true)"
+  # PID 文件失效 → pgrep 兜底（防残留误判）。
+  # 新入口统一为 runtime.launch feishu；同时识别历史直启 llm_loop.feishu，
+  # 便于一次性优雅接管旧进程。两种模式都带工作区绝对 Python 路径，
+  # 避免跨 worktree 误杀。
+  local match_new="$PROJECT_DIR/.venv/bin/python -m llm_loop.runtime.launch feishu"
+  local match_legacy="$PROJECT_DIR/.venv/bin/python -m llm_loop.feishu"
+  pid="$(
+    {
+      pgrep -f "$match_new" || true
+      pgrep -f "$match_legacy" || true
+    } | head -1
+  )"
   printf '%s' "$pid"
 }
 
@@ -144,7 +149,9 @@ _start() {
   export FEISHU_EXIT_WAIT_S="${FEISHU_EXIT_WAIT_S:-10}"
   export FEISHU_EXIT_DRAIN_S="${FEISHU_EXIT_DRAIN_S:-3}"
   _log "启动飞书桥（日志: ${LOG_FILE}）..."
-  nohup "$VENV_PY" -m "$BRIDGE_MOD" >> "$LOG_FILE" 2>&1 &
+  # 统一入口会在启动时写 runtime_manifest.feishu.json，避免 heartbeat 已换代
+  # 但 service identity 仍保留旧 PID 的 live_pid_not_running 误报。
+  nohup "$VENV_PY" -m llm_loop.runtime.launch feishu >> "$LOG_FILE" 2>&1 &
   local new_pid=$!
   echo "$new_pid" > "$PID_FILE"
   _log "新进程 PID ${new_pid}，健康检查（${STARTUP_WAIT_S}s 超时）..."

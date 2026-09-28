@@ -41,3 +41,18 @@ def test_restart_system_injects_exit_env():
         text = script.read_text(encoding="utf-8")
         assert "FEISHU_EXIT_WAIT_S" in text
         assert "FEISHU_EXIT_DRAIN_S" in text
+
+
+def test_feishu_start_uses_runtime_launch_so_manifest_tracks_live_pid():
+    """所有 Feishu 重启入口都必须刷新 service-specific startup manifest."""
+    system_script = _SCRIPT.parents[1] / "scripts" / "restart_system.sh"
+    feishu_script = _SCRIPT.parents[1] / "scripts" / "restart_feishu.sh"
+
+    system_text = system_script.read_text(encoding="utf-8")
+    feishu_text = feishu_script.read_text(encoding="utf-8")
+
+    assert 'nohup "$VENV_PY" -m llm_loop.runtime.launch feishu' in system_text
+    assert 'nohup "$VENV_PY" -m llm_loop.runtime.launch feishu' in feishu_text
+    # 独立 Feishu 脚本仍能识别并优雅接管历史直启进程。
+    assert "match_legacy=" in feishu_text
+    assert "-m llm_loop.feishu" in feishu_text
