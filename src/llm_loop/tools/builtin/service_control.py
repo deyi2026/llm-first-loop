@@ -68,6 +68,75 @@ def _next_step_text(kinds: list[str]) -> str:
     return "next_step: " + "; ".join(rendered)
 
 
+_ACTION_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "status": (),
+    "publish": ("code_root",),
+    "update": ("code_root", "reason"),
+    "restart": ("target",),
+    "release": ("service", "reason"),
+    "adopt": ("service", "expected_owner", "evidence", "reason"),
+    "override": ("action_id", "gate", "evidence", "evidence_level", "reason"),
+    "verify_acknowledge": ("action_id", "verdict", "evidence", "reason"),
+}
+
+_SERVICE_TARGETS = ("web", "feishu", "learning", "all")
+_MANAGED_SERVICES = ("web", "feishu", "learning")
+_VERIFY_VERDICTS = ("accept", "reobserve", "override")
+_EVIDENCE_LEVELS = ("E1", "E2", "E3")
+
+
+def _service_control_contract_error(action: str, kwargs: dict) -> str:
+    """Return one aggregated mechanical argument error before any side effect."""
+
+    if action not in _ACTION_REQUIRED_FIELDS:
+        return ""
+    missing = [
+        field
+        for field in _ACTION_REQUIRED_FIELDS[action]
+        if not str(kwargs.get(field, "") or "").strip()
+    ]
+    invalid: list[str] = []
+    if action == "restart":
+        target = str(kwargs.get("target", "") or "").strip().lower()
+        if target and target not in _SERVICE_TARGETS:
+            invalid.append(f"target={target!r} (allowed={list(_SERVICE_TARGETS)})")
+    elif action == "update":
+        target = str(
+            kwargs.get("restart_target", "") or kwargs.get("target", "") or ""
+        ).strip().lower()
+        if target and target not in _SERVICE_TARGETS:
+            invalid.append(
+                f"restart_target={target!r} (allowed={list(_SERVICE_TARGETS)})"
+            )
+    elif action in {"release", "adopt"}:
+        service = str(kwargs.get("service", "") or "").strip().lower()
+        if service and service not in _MANAGED_SERVICES:
+            invalid.append(f"service={service!r} (allowed={list(_MANAGED_SERVICES)})")
+    elif action == "override":
+        level = str(kwargs.get("evidence_level", "") or "").strip().upper()
+        if level and level not in _EVIDENCE_LEVELS:
+            invalid.append(
+                f"evidence_level={level!r} (allowed={list(_EVIDENCE_LEVELS)})"
+            )
+    elif action == "verify_acknowledge":
+        verdict = str(kwargs.get("verdict", "") or "").strip().lower()
+        if verdict and verdict not in _VERIFY_VERDICTS:
+            invalid.append(f"verdict={verdict!r} (allowed={list(_VERIFY_VERDICTS)})")
+    if not missing and not invalid:
+        return ""
+    details: list[str] = []
+    if missing:
+        details.append("missing=" + ",".join(missing))
+    if invalid:
+        details.append("invalid=" + "; ".join(invalid))
+    return (
+        f"[参数错误] service_control action={action} 参数契约不满足: "
+        + "; ".join(details)
+        + "；请按本回执一次性修正全部字段；若需字段类型/enum，先读取 "
+        "get_tool_schema(service_control)"
+    )
+
+
 class ServiceControlTool:
     name = "service_control"
     description = (
@@ -179,7 +248,6 @@ class ServiceControlTool:
         },
         "required": ["action"],
     }
-
     def __init__(
         self,
         *,
@@ -195,6 +263,9 @@ class ServiceControlTool:
 
     def execute(self, **kwargs) -> ToolResult:
         action = str(kwargs.get("action", "") or "").strip().lower()
+        contract_error = _service_control_contract_error(action, kwargs)
+        if contract_error:
+            return self._failure(contract_error)
         if action == "status":
             action_id = str(kwargs.get("action_id", "") or "").strip()
             if action_id:
