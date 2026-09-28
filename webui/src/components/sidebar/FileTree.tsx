@@ -15,6 +15,7 @@ import {
   type FsTree,
   type HumanFileObservation,
 } from "../../core/api";
+import { writeClipboardText } from "../../core/clipboard";
 import { previewTabsStore } from "../../core/stores";
 import { zh } from "../../i18n/zh";
 
@@ -148,8 +149,13 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
     setExpanded((prev) => new Set(prev).add(node.path));
   };
 
-  const copyPath = (path: string) => {
-    void navigator.clipboard?.writeText(path).catch(() => undefined);
+  const copyPath = async (path: string) => {
+    const { ok } = await writeClipboardText(path);
+    if (!ok) {
+      setActionError("复制失败；请长按/选中路径后手动复制。");
+      return;
+    }
+    setActionError("");
     setCopied(path);
     window.setTimeout(() => setCopied((v) => (v === path ? null : v)), 1200);
   };
@@ -381,7 +387,7 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
           >
             {confirmDelete?.path === node.path ? "确认?" : "🗑"}
           </button>
-          <button type="button" className="v2-icon-btn" title={zh.copyPath} onClick={() => copyPath(node.path)}>
+          <button type="button" className="v2-icon-btn" title={zh.copyPath} onClick={() => void copyPath(node.path)}>
             {copied === node.path ? "✓" : "⧉"}
           </button>
         </span>

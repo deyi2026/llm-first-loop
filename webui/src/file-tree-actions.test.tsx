@@ -151,4 +151,32 @@ describe("file tree mutation controls", () => {
     await waitFor(() => expect(screen.getByText(/删除失败/)).toBeInTheDocument());
     expect(screen.getByText("a.txt")).toBeInTheDocument();
   });
+
+  it("copy path failure is reported instead of showing false success", async () => {
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/v1/fs/tree")) return treeResponse();
+      return new Response("{}", { status: 404 });
+    }));
+
+    try {
+      render(<FileTree sessionId="s1" />);
+      await waitFor(() => expect(screen.getByText("a.txt")).toBeInTheDocument());
+      const copy = screen.getByTitle("复制路径");
+      fireEvent.click(copy);
+      await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("复制失败"));
+      expect(copy).not.toHaveTextContent("✓");
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, "execCommand", originalExecCommand);
+      } else {
+        Reflect.deleteProperty(document, "execCommand");
+      }
+    }
+  });
 });

@@ -1635,6 +1635,24 @@
   opacity: 1;
 }
 
+@media (hover: none), (pointer: coarse) {
+  .v2-tree-row {
+    min-height: 38px;
+  }
+
+  .v2-tree-actions {
+    display: inline-flex;
+    gap: 2px;
+    opacity: 1;
+  }
+
+  .v2-tree-actions .v2-icon-btn {
+    min-width: 30px;
+    min-height: 36px;
+    padding-inline: 4px;
+  }
+}
+
 .v2-tree-loading {
   padding: 6px 10px;
   font-size: 12px;

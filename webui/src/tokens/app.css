@@ -947,6 +947,11 @@
   opacity: 1;
 }
 
+.v2-copy-btn.failed {
+  color: var(--dsw-alias-state-error-primary);
+  opacity: 1;
+}
+
 /* ── 消息反馈按钮 ── */
 .v2-feedback {
   display: inline-flex;
@@ -1115,6 +1120,27 @@
   /* 触屏没有可靠 hover：会话管理动作必须可见且可点。 */
   .v2-session-actions {
     display: inline-flex;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .v2-msg-actions,
+  .v2-feedback {
+    opacity: 1;
+  }
+
+  .v2-copy-btn,
+  .v2-fb-btn {
+    min-width: var(--v2-mobile-touch-target);
+    height: var(--v2-mobile-touch-target);
+    padding-inline: 10px;
+    opacity: 0.9;
+  }
+
+  .v2-code-copy {
+    min-width: var(--v2-mobile-touch-target);
+    min-height: var(--v2-mobile-touch-target);
+    padding-inline: 10px;
   }
 }
 

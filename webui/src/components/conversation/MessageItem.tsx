@@ -21,24 +21,16 @@ import { formatTokens } from "../../core/chat";
 import { forkSession, submitFeedback } from "../../core/api";
 import { useCapabilities } from "../../core/capabilities";
 import { loadHistory, prefillComposer } from "../../core/conversation";
+import { writeClipboardText } from "../../core/clipboard";
 import { sessionStore } from "../../core/stores";
 import { normalizeToolStatus, parseToolReceiptStatus } from "../../core/toolActivity";
 import { previewTabsStore } from "../../core/stores";
 import { zh } from "../../i18n/zh";
 
-/** 写剪贴板（navigator.clipboard 不可用/失败 → false，静默） */
-async function writeClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** 一键复制按钮（对齐 DSH MessageIconActions 的 copy：点击 → "已复制" 1s 恢复） */
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const timer = useRef<number | null>(null);
   useEffect(
     () => () => {
@@ -47,8 +39,13 @@ function CopyButton({ text }: { text: string }) {
     []
   );
   const onCopy = async () => {
-    const ok = await writeClipboard(text);
-    if (!ok) return;
+    const { ok } = await writeClipboardText(text);
+    setCopyFailed(!ok);
+    if (!ok) {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => setCopyFailed(false), 1600);
+      return;
+    }
     setCopied(true);
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setCopied(false), 1000);
@@ -56,12 +53,12 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       type="button"
-      className={`v2-copy-btn ${copied ? "copied" : ""}`}
+      className={`v2-copy-btn ${copied ? "copied" : ""} ${copyFailed ? "failed" : ""}`}
       data-testid="copy-btn"
-      title={copied ? zh.copied : zh.copy}
+      title={copied ? zh.copied : copyFailed ? "复制失败" : zh.copy}
       onClick={() => void onCopy()}
     >
-      {copied ? zh.copied : zh.copy}
+      {copied ? zh.copied : copyFailed ? "复制失败" : zh.copy}
     </button>
   );
 }
@@ -153,13 +150,19 @@ function Markdown({
     const btn = target.closest?.(".v2-code-copy") as HTMLButtonElement | null;
     if (!btn) return;
     const code = btn.closest(".v2-code-block")?.querySelector("pre code");
-    const ok = await writeClipboard(code?.textContent ?? "");
+    const { ok } = await writeClipboardText(code?.textContent ?? "");
     if (ok) {
       const orig = btn.textContent;
       btn.textContent = zh.copied;
       window.setTimeout(() => {
         btn.textContent = orig;
       }, 1000);
+    } else {
+      const orig = btn.textContent;
+      btn.textContent = "复制失败";
+      window.setTimeout(() => {
+        btn.textContent = orig;
+      }, 1600);
     }
   };
   return (

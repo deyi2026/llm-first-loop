@@ -2,19 +2,11 @@ import { useEffect, useState } from "react";
 import { archiveSession, deleteSession, setSessionPin } from "../../core/api";
 import { useCapabilities } from "../../core/capabilities";
 import { conversationStore } from "../../core/conversation";
+import { writeClipboardText } from "../../core/clipboard";
 import { refreshSessionsAndCurrent } from "../../core/events";
 import { sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
 import { buildSessionShareUrl, syncSessionIdInLocation } from "../../core/sessionUrl";
 import { useDismissibleLayer } from "../../core/useDismissibleLayer";
-
-async function writeClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function clearCurrentAndRefresh(targetId: string): Promise<void> {
   if (sessionStore.getState().currentSessionId === targetId) {
@@ -125,7 +117,7 @@ export function SessionHeaderActions({ onShowFiles }: { onShowFiles?: () => void
 
   const share = async () => {
     if (!currentId) return;
-    const ok = await writeClipboard(buildSessionShareUrl(currentId));
+    const { ok } = await writeClipboardText(buildSessionShareUrl(currentId));
     flash(ok ? "会话链接已复制" : "复制失败");
   };
 

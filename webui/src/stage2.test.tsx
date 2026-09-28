@@ -135,6 +135,30 @@ describe("MessageItem", () => {
     vi.unstubAllGlobals();
   });
 
+  it("Clipboard API 不可用时回退 execCommand，移动/域名环境仍可复制", async () => {
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    try {
+      render(<MessageItem msg={{ role: "assistant", content: "移动端复制" }} />);
+      fireEvent.click(screen.getByTestId("copy-btn"));
+      await waitFor(() => expect(screen.getByText("已复制")).toBeInTheDocument());
+      expect(execCommand).toHaveBeenCalledWith("copy");
+    } finally {
+      cleanup();
+      vi.unstubAllGlobals();
+      if (originalExecCommand) {
+        Object.defineProperty(document, "execCommand", originalExecCommand);
+      } else {
+        Reflect.deleteProperty(document, "execCommand");
+      }
+    }
+  });
+
   it("代码块复制 shell 命令时使用未污染的原始可见代码文本", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });

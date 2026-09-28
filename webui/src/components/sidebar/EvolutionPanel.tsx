@@ -4,6 +4,7 @@
 // 交互：分类 Tab / 详情懒加载 / 二次确认 / 拒绝理由必填 / 批量 / 409 冲突提示 / 涉边界禁用批量
 
 import { useEffect, useMemo, useState } from "react";
+import { writeClipboardText } from "../../core/clipboard";
 import { zh } from "../../i18n/zh";
 
 interface EvoItem {
@@ -170,26 +171,10 @@ export function EvolutionPanel() {
   };
 
   const copyReceipt = async (text: string) => {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-        setActionMsg("回执已复制到剪贴板");
-        return;
-      }
-    } catch {
-      /* 回退 execCommand */
-    }
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
+    const { ok } = await writeClipboardText(text);
+    if (ok) {
       setActionMsg("回执已复制到剪贴板");
-    } catch {
+    } else {
       setActionMsg("复制失败，请手动选中回执文本复制");
     }
   };
