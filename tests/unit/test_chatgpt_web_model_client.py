@@ -211,7 +211,7 @@ def test_surface_owned_transport_starts_every_exchange_from_fresh_outer_thread()
             events.append("surface-close")
 
     class Adapter:
-        def ensure_reasoning_effort(self, effort):
+        def ensure_reasoning_effort(self, effort, **_kwargs):
             events.append(f"reasoning:{effort}")
 
         def observe_identity(self):
@@ -281,7 +281,7 @@ def test_surface_owned_transport_reuses_per_lfl_session_and_switches_without_cro
     surface = Surface()
 
     class Adapter:
-        def ensure_reasoning_effort(self, effort):
+        def ensure_reasoning_effort(self, effort, **_kwargs):
             events.append(f"reasoning:{effort}")
 
         def observe_identity(self):
@@ -358,7 +358,7 @@ def test_surface_owned_transport_rolls_segment_at_request_cap(tmp_path):
     surface = Surface()
 
     class Adapter:
-        def ensure_reasoning_effort(self, effort):
+        def ensure_reasoning_effort(self, effort, **_kwargs):
             return None
 
         def observe_identity(self):
@@ -427,7 +427,7 @@ def test_surface_owned_transport_rolls_segment_at_cumulative_char_budget(tmp_pat
     surface = Surface()
 
     class Adapter:
-        def ensure_reasoning_effort(self, effort):
+        def ensure_reasoning_effort(self, effort, **_kwargs):
             return None
 
         def observe_identity(self):

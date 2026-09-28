@@ -32,6 +32,7 @@ CHATGPT_WEB_MODEL_REF = f"{CHATGPT_WEB_PROVIDER_ID}/{CHATGPT_WEB_MODEL_ID}"
 CHATGPT_WEB_DISPLAY_NAME = "网页版 GPT"
 CHATGPT_WEB_SEGMENT_MAX_REQUESTS = 8
 CHATGPT_WEB_SEGMENT_BUDGET_RATIO = 0.75
+CHATGPT_WEB_REASONING_READY_TIMEOUT_S = 20.0
 
 
 class ChatGPTModelProtocolError(RuntimeError):
@@ -261,7 +262,14 @@ class _SurfaceOwnedTransport:
         requested_effort = str(
             request.get("_reasoning_effort") or self.reasoning_effort
         ).strip().lower()
-        self.adapter.ensure_reasoning_effort(requested_effort)
+        # Session switches and segment rollovers may navigate from an existing
+        # conversation back to the Project root. The route can be stable before
+        # the model selector is re-mounted, so use the same bounded readiness
+        # scale as surface navigation instead of the adapter's shorter default.
+        self.adapter.ensure_reasoning_effort(
+            requested_effort,
+            timeout_s=CHATGPT_WEB_REASONING_READY_TIMEOUT_S,
+        )
         rebinder = getattr(self.inner, "rebind", None)
         if not callable(rebinder):
             raise RuntimeError("ChatGPT Web snapshot transport cannot rebind page identity")
