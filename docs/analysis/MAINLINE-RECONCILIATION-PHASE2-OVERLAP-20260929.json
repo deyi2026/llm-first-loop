@@ -1,0 +1,158 @@
+{
+  "date": "2026-09-29",
+  "decisions": {
+    "src/llm_loop/factory.py": {
+      "decision": "drop_main_wip_keep_production",
+      "reason": [
+        "semantic warmup/hooks and semantic_diagnostics already exist in production",
+        "main WIP would re-register convergence_decide, while current runtime contract retires it from routing",
+        "main WIP would remove current ChatGPT/DeepSeek Web external client factories",
+        "main WIP would regress Experience semantic ranker/cache warmup and Learning Method discovery/filtering"
+      ],
+      "validation": [
+        "test_convergence_boundary.py PASS",
+        "test_factory_does_not_register_convergence_meta_router PASS"
+      ]
+    },
+    "src/llm_loop/introspection/search.py": {
+      "decision": "drop_main_wip_keep_production",
+      "reason": [
+        "semantic scope flags/canonical hydration/diagnostics already exist in production",
+        "main WIP would replace system_local_now() with datetime.now(UTC), conflicting with host-local time authority",
+        "main WIP would remove Experience semantic diagnostic propagation"
+      ],
+      "validation": [
+        "host-local clock targeted test PASS",
+        "current search.py contains system_local_now and no datetime.now(UTC)"
+      ]
+    },
+    "src/llm_loop/memory/retriever.py": {
+      "decision": "drop_main_wip_production_is_superset",
+      "reason": [
+        "prod-to-main-WIP residual has zero main-WIP-only lines",
+        "production contains all reviewed memory/archive/method resource-safety behavior plus Experience semantic cache/warm/rank support",
+        "transplanting the WIP would delete current Experience semantic functionality"
+      ],
+      "validation": [
+        "test_experience_semantic_resource_safety.py PASS",
+        "test_semantic_resource_safety.py PASS",
+        "test_semantic_cross_process_freshness.py PASS"
+      ]
+    },
+    "tests/unit/test_learning_journal.py": {
+      "decision": "drop_main_wip_production_test_is_superset",
+      "reason": [
+        "prod-to-main-WIP residual has zero main-WIP-only lines",
+        "production already contains unresolved-resource terminal cancel contract",
+        "production additionally covers explicit repair requeue and Learning Method semantic discovery/filtering"
+      ],
+      "validation": [
+        "test_learning_journal.py PASS"
+      ]
+    }
+  },
+  "next_step": {
+    "review": "src/llm_loop/memory/store.py (three_way_clean)",
+    "then_clean_transplant_group": [
+      "scripts/restart_feishu.sh",
+      "scripts/restart_system.sh",
+      "src/llm_loop/cache_guard/guard.py",
+      "tests/scripts/test_restart_feishu_heartbeat.py",
+      "tests/unit/test_cache_block_reclassification.py"
+    ]
+  },
+  "production_generation": 161,
+  "production_head": "67ce123c5fa8430ab833610857fbf276d55e589d",
+  "qualification": {
+    "baseline_failure_scope": "other existing files (web/routes.py and two additional non-overlap files), not the four reviewed overlap files",
+    "baseline_reproduced_on_untouched_gen161": true,
+    "broader_targeted_run": "61 PASS / 1 known-baseline FAIL",
+    "known_baseline_failure": "tests/unit/test_timekeeping_local.py::test_source_does_not_serialize_new_wall_clock_in_utc",
+    "overlap_specific_tests": "59/59 PASS",
+    "source_files_changed_in_phase2": 0
+  },
+  "reconciliation_base_head": "8d104f90c08606f8f307e224ae850cec57f09150",
+  "residual_line_analysis": {
+    "src/llm_loop/factory.py": {
+      "main_wip_unique_line_count": 6,
+      "main_wip_unique_sample": [
+        "from llm_loop.tools.builtin.convergence_decide import ConvergenceDecideTool",
+        "    # P0-B: registered owner capability, but ordinary provider projection hides it.",
+        "    # It appears only for one ephemeral convergence-boundary round.",
+        "    _register_basic(\"convergence_decide\", ConvergenceDecideTool())",
+        "        embedder=embedder if settings.semantic_experience_enabled else None,",
+        "        _method_warm = semantic_retriever.warm_method_store(method_store)"
+      ],
+      "production_unique_line_count": 141,
+      "production_unique_sample": [
+        "from llm_loop.methods.reflection import MethodDiscovery",
+        "",
+        "    external_client_factories: dict[str, Any] = {}",
+        "    if settings.chatgpt_web_enabled:",
+        "        from llm_loop.llm.chatgpt_web import (",
+        "            CHATGPT_WEB_MODEL_REF,",
+        "            build_chatgpt_web_model_client,",
+        "        )",
+        "        effective_refs = {",
+        "            f\"{pid}/{mid}\"",
+        "            for pid, provider_spec in registry.providers.items()",
+        "            for mid in provider_spec.models"
+      ]
+    },
+    "src/llm_loop/introspection/search.py": {
+      "main_wip_unique_line_count": 1,
+      "main_wip_unique_sample": [
+        "    now = datetime.now(UTC)"
+      ],
+      "production_unique_line_count": 5,
+      "production_unique_sample": [
+        "from llm_loop.timekeeping import system_local_now",
+        "    now = system_local_now()",
+        "                self._last_semantic_diagnostics = None",
+        "        semantic_diag = getattr(self._experience_store, \"last_semantic_diagnostics\", None)",
+        "        self._last_semantic_diagnostics = dict(semantic_diag or {}) or None"
+      ]
+    },
+    "src/llm_loop/memory/retriever.py": {
+      "main_wip_unique_line_count": 0,
+      "main_wip_unique_sample": [],
+      "production_unique_line_count": 214,
+      "production_unique_sample": [
+        "        self._experience_emb_cache: dict[str, list[float]] = {}",
+        "        self._experience_cache_path: Path | None = None",
+        "        self.last_cached_rank_diagnostics: dict[str, Any] = {}",
+        "            \"experience_cache\": self._experience_emb_cache,",
+        "            \"experience_path\": self._experience_cache_path,",
+        "    def configure_experience_cache_dir(self, cache_dir: str | Path) -> None:",
+        "        \"\"\"Bind persistent Experience semantic cache to canonical shared runtime state.\"\"\"",
+        "        directory = Path(cache_dir)",
+        "        self._experience_emb_cache = self._load_emb_cache_versioned(directory)",
+        "        self._experience_cache_path = self._cache_path(directory)",
+        "",
+        "    def warm_experience_store(self, experience: Any, *, max_passes: int = 3) -> dict[str, Any]:"
+      ]
+    },
+    "tests/unit/test_learning_journal.py": {
+      "main_wip_unique_line_count": 0,
+      "main_wip_unique_sample": [],
+      "production_unique_line_count": 149,
+      "production_unique_sample": [
+        "def test_explicit_requeue_can_grant_one_repair_attempt_after_max_failure(tmp_path):",
+        "    \"\"\"Operator repair is append-only and does not reopen automatic toxic retries.\"\"\"",
+        "    journal = _mk(tmp_path, max_attempts=3)",
+        "    job = journal.enqueue(\"memory-extract:s1:37\", session_id=\"s1\", kind=\"memory_extract\")",
+        "    assert job is not None",
+        "    for _ in range(3):",
+        "        journal.mark_started(job.job_id)",
+        "        journal.mark_failed(job.job_id, \"worker_exception\")",
+        "",
+        "    exhausted = journal.job(job.job_id)",
+        "    assert exhausted is not None and exhausted.attempt == 3 and exhausted.state == \"failed\"",
+        "    assert journal.runnable_jobs() == []"
+      ]
+    }
+  },
+  "schema": "lfl.mainline_reconciliation.phase2_overlap_review.v1",
+  "scope": "semantic review of the four Phase1 overlap_requires_review files; no source migration",
+  "source_main_head": "8454c8a9813947173bc5696dcb5d5309d21cdf3b"
+}
