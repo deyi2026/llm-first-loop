@@ -119,6 +119,29 @@ describe("product right panel", () => {
             event_count: 18,
             last_event_at: "2026-09-28T17:04:00+08:00",
           },
+          notification_outlet: {
+            delivery: "macos_system_notification",
+            push_severities: ["warning", "critical"],
+            repeat_seconds: 3600,
+            retry_seconds: 300,
+            state: {
+              health_status: "warning",
+              active: {
+                "fp-1": {
+                  code: "restore_failures_recent",
+                  severity: "warning",
+                  last_success_at: "2026-09-28T17:04:30+08:00",
+                },
+              },
+            },
+            last_event: {
+              event: "notification_delivered",
+              ts: "2026-09-28T17:04:30+08:00",
+              code: "restore_failures_recent",
+              severity: "warning",
+              delivery: "macos_system_notification",
+            },
+          },
         }), { status: 200 });
       }
       return new Response(JSON.stringify({}), { status: 200 });
@@ -136,6 +159,9 @@ describe("product right panel", () => {
     expect(screen.getByTestId("binding-health-card")).toHaveTextContent("warning");
     expect(screen.getByTestId("binding-health-card")).toHaveTextContent("87.5%");
     expect(screen.getByTestId("binding-health-card")).toHaveTextContent("92.0%");
+    expect(screen.getByTestId("binding-health-card")).toHaveTextContent("macOS 系统通知");
+    expect(screen.getByTestId("binding-health-card")).toHaveTextContent("warning / critical");
+    expect(screen.getByTestId("binding-health-card")).toHaveTextContent("notification_delivered");
     expect(screen.getByText("restore_failures_recent")).toBeInTheDocument();
     expect(screen.getByText(/event log，不回填历史调用/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /清理|删除|GC/ })).toBeNull();

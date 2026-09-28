@@ -102,6 +102,8 @@ def test_binding_health_endpoint_reports_recent_restore_alert(build_test_engine)
     assert body["metrics"]["bindings_total"] == 1
     assert body["metrics"]["restore_failures_24h"] == 1
     assert body["telemetry"]["coverage"] == "event_log_only"
+    assert body["notification_outlet"]["status"] == "not_running"
+    assert body["notification_outlet"]["push_severities"] == ["warning", "critical"]
     alert = next(row for row in body["alerts"] if row["code"] == "restore_failures_recent")
     assert alert["severity"] == "warning"
 

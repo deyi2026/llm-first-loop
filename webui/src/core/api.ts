@@ -264,6 +264,33 @@ export interface ChatGPTBindingHealth {
     last_event_at?: string | null;
   };
   thresholds?: Record<string, number>;
+  notification_outlet?: {
+    delivery?: string;
+    status?: string;
+    push_severities?: string[];
+    repeat_seconds?: number;
+    retry_seconds?: number;
+    state?: {
+      health_status?: string;
+      updated_at?: string;
+      active?: Record<string, {
+        code?: string;
+        severity?: string;
+        last_seen_at?: string;
+        last_attempt_at?: string;
+        last_success_at?: string;
+        count?: number;
+        session_ids?: string[];
+      }>;
+    };
+    last_event?: {
+      event?: string;
+      ts?: string;
+      code?: string;
+      severity?: string;
+      delivery?: string;
+    } | null;
+  };
 }
 
 export async function fetchChatGPTBindingHealth(): Promise<ChatGPTBindingHealth | null> {

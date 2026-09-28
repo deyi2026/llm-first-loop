@@ -2789,14 +2789,30 @@ def chatgpt_binding_health(request: Request) -> JSONResponse:
         1,
         int(max_request_chars * CHATGPT_WEB_SEGMENT_BUDGET_RATIO),
     )
-    return UTF8JSONResponse(
-        content=inspect_chatgpt_binding_health(
-            _chatgpt_binding_store(engine),
-            engine.session,
-            segment_max_chars=segment_max_chars,
-            min_gc_age_days=30,
-        )
+    content = inspect_chatgpt_binding_health(
+        _chatgpt_binding_store(engine),
+        engine.session,
+        segment_max_chars=segment_max_chars,
+        min_gc_age_days=30,
     )
+    notifier = getattr(request.app.state, "chatgpt_binding_alert_notifier", None)
+    if notifier is None:
+        content["notification_outlet"] = {
+            "delivery": "macos_system_notification",
+            "status": "not_running",
+            "push_severities": ["warning", "critical"],
+        }
+    else:
+        try:
+            content["notification_outlet"] = notifier.snapshot()
+        except Exception as exc:  # noqa: BLE001 - health endpoint stays readable
+            content["notification_outlet"] = {
+                "delivery": "macos_system_notification",
+                "status": "snapshot_failed",
+                "error_type": type(exc).__name__,
+                "push_severities": ["warning", "critical"],
+            }
+    return UTF8JSONResponse(content=content)
 
 
 @router.post("/api/v1/chatgpt-web/bindings/gc")

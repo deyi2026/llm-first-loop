@@ -26,11 +26,18 @@ def notify(title: str, message: str) -> bool:
     try:
         safe_title = str(title).replace('"', '\\"')
         safe_msg = str(message).replace('"', '\\"')
-        subprocess.run(
+        proc = subprocess.run(
             ["osascript", "-e",
              f'display notification "{safe_msg}" with title "{safe_title}"'],
             capture_output=True, text=True, timeout=5,
         )
+        if proc.returncode != 0:
+            logger.warning(
+                "系统通知失败（osascript exit=%s）: %s",
+                proc.returncode,
+                proc.stderr.strip(),
+            )
+            return False
         return True
     except Exception:  # noqa: BLE001
         logger.warning("系统通知失败（fail-open）", exc_info=True)

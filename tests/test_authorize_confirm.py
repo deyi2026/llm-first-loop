@@ -76,6 +76,22 @@ def test_confirm_real_returns_bool(monkeypatch):
     assert notify("t", "m") is False
 
 
+def test_notify_nonzero_osascript_exit_is_delivery_failure(monkeypatch):
+    """osascript 存在但返回非0时必须如实返回 False，不能伪报已投递."""
+    import shutil
+    import subprocess
+
+    monkeypatch.setattr(shutil, "which", lambda *a, **k: "/usr/bin/osascript")
+
+    class _Proc:
+        returncode = 1
+        stderr = "notification denied"
+        stdout = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Proc())
+    assert notify("t", "m") is False
+
+
 def test_same_pending_only_prompts_once():
     """同建议保持 pending：第一次弹窗，第二次不再弹（去重）."""
     store = _FakeStore([{"id": "EVO-D1", "status": "pending_review", "content": "x"}])

@@ -94,6 +94,10 @@ export function SessionBindingPanel({ sessionId }: { sessionId: string | null })
         ? "warn"
         : "ok";
   const metric = (key: string): unknown => metrics[key];
+  const outlet = health?.notification_outlet;
+  const outletActive = outlet?.state?.active
+    ? Object.keys(outlet.state.active).length
+    : 0;
 
   return (
     <div className="v2-jobs" data-testid="session-binding-panel">
@@ -129,6 +133,15 @@ export function SessionBindingPanel({ sessionId }: { sessionId: string | null })
           </span>
           <span className="k">Telemetry events</span><span className="v">{fmtNumber(health?.telemetry?.event_count)}</span>
           <span className="k">最近事件</span><span className="v">{fmtTime(health?.telemetry?.last_event_at)}</span>
+          <span className="k">通知出口</span>
+          <span className="v">
+            {outlet?.delivery === "macos_system_notification" ? "macOS 系统通知" : (outlet?.delivery || "—")}
+          </span>
+          <span className="k">推送等级</span>
+          <span className="v">{outlet?.push_severities?.join(" / ") || "—"}</span>
+          <span className="k">活跃通知</span><span className="v">{fmtNumber(outletActive)}</span>
+          <span className="k">最近通知事件</span>
+          <span className="v">{outlet?.last_event?.event || outlet?.status || "—"}</span>
         </div>
         <div className="v2-job-note">
           近 1h/24h 指标只覆盖 telemetry 上线后的 event log，不回填历史调用；告警仅观测，不自动
