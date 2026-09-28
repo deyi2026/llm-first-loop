@@ -4,6 +4,7 @@ import { writeClipboardText } from "./clipboard";
 const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 const originalSecureContext = Object.getOwnPropertyDescriptor(window, "isSecureContext");
 const originalExecCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
 
 function setClipboard(value: unknown) {
   Object.defineProperty(navigator, "clipboard", {
@@ -26,6 +27,22 @@ function setExecCommand(fn: ((command: string) => boolean) | undefined) {
   });
 }
 
+function setCoarsePointer(value: boolean) {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn((query: string) => ({
+      matches: value && query.includes("pointer: coarse"),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
 function restoreProperty(
   target: object,
   key: PropertyKey,
@@ -42,6 +59,7 @@ afterEach(() => {
   restoreProperty(navigator, "clipboard", originalClipboard);
   restoreProperty(window, "isSecureContext", originalSecureContext);
   restoreProperty(document, "execCommand", originalExecCommand);
+  restoreProperty(window, "matchMedia", originalMatchMedia);
   document.querySelectorAll("textarea[aria-hidden='true']").forEach((node) => node.remove());
 });
 
@@ -89,6 +107,49 @@ describe("writeClipboardText", () => {
       method: "exec-command",
     });
     expect(execCommand).toHaveBeenCalledWith("copy");
+  });
+
+  it("uses synchronous fallback first on coarse-pointer devices", async () => {
+    let rejectWrite!: (reason?: unknown) => void;
+    const writeText = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectWrite = reject;
+        })
+    );
+    const execCommand = vi.fn(() => true);
+    setSecureContext(true);
+    setCoarsePointer(true);
+    setClipboard({ writeText });
+    setExecCommand(execCommand);
+
+    const result = writeClipboardText("mobile gesture");
+
+    // The legacy path must run before any async clipboard rejection can consume
+    // Safari/WebKit's transient user activation.
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(writeText).not.toHaveBeenCalled();
+    await expect(result).resolves.toEqual({
+      ok: true,
+      method: "exec-command",
+    });
+    rejectWrite?.(new DOMException("denied"));
+  });
+
+  it("uses Clipboard API on coarse-pointer devices when synchronous fallback fails", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const execCommand = vi.fn(() => false);
+    setSecureContext(true);
+    setCoarsePointer(true);
+    setClipboard({ writeText });
+    setExecCommand(execCommand);
+
+    await expect(writeClipboardText("mobile api fallback")).resolves.toEqual({
+      ok: true,
+      method: "clipboard-api",
+    });
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(writeText).toHaveBeenCalledWith("mobile api fallback");
   });
 
   it("restores the previously focused input after fallback copy", async () => {
