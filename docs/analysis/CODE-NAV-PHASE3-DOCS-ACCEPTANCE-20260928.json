@@ -1,0 +1,67 @@
+{
+  "artifacts": {
+    "docs/analysis/ANALYSIS-20260928-codebase-memory-mcp-adoption-eval.md": {
+      "bytes": 37559,
+      "lines": 324,
+      "sha256": "237e57edfe9d30fda353f372795880f24d31335339afb96c394038ad1ba22090"
+    },
+    "docs/analysis/PLAN-20260928-code-nav-hardening.md": {
+      "bytes": 33888,
+      "lines": 1052,
+      "sha256": "431d3dfed6dc1fa21f28cf60c9ef3a1e3b0aefd94e97e21bf4e002b35517f28f"
+    },
+    "scripts/code_nav.py": {
+      "bytes": 40449,
+      "lines": 1052,
+      "sha256": "dbd03690c7f923447f6581fda73d354147a2aadfa7b1392bacece9d9e77b8448"
+    },
+    "skills/code-nav/SKILL.md": {
+      "bytes": 6854,
+      "lines": 138,
+      "sha256": "e27db3a3d7f351b48ec8f8d9b271384ebad6d3143536809a331cb23a7472b932"
+    },
+    "tests/fixtures/code_nav_fake_lsp.py": {
+      "bytes": 4131,
+      "lines": 139,
+      "sha256": "1ae6bb330d869046cd7f6da04643579874555bf81eabe06539956ffa9baf4bba"
+    },
+    "tests/unit/test_code_nav_hardening_red.py": {
+      "bytes": 14528,
+      "lines": 425,
+      "sha256": "f8eeb1c370cc5b2a1e91bfb1ce1bf46634d087a118800cceb7916d5fe232c4b4"
+    }
+  },
+  "base_head": "889634f21c5f50b3859a9217949b9c24d437185a",
+  "commit_created": false,
+  "docs": {
+    "analysis_r10_present": true,
+    "historical_r7_r9_preserved": true,
+    "nonexistent_def_command_removed": true,
+    "phase2_evidence_indexed": true,
+    "script_docstring_hardened": true
+  },
+  "production_desired_generation": 159,
+  "production_desired_head": null,
+  "production_modified": false,
+  "schema": "lfl.code_nav.phase3_docs_acceptance.v1",
+  "skill": {
+    "body_lines": 133,
+    "frontmatter_name": "code-nav",
+    "loader_visible": true,
+    "name": "code-nav",
+    "stale_222_67_absent": true,
+    "stale_726_82_absent": true,
+    "worktree_local_venv_assumption_absent": true
+  },
+  "verification": {
+    "doctor": "PASS",
+    "doctor_langserver_source": "git_common_root_venv",
+    "doctor_pyright_version": "pyright 1.1.411",
+    "git_diff_check": "PASS",
+    "py_compile": "PASS",
+    "ruff_check": "PASS",
+    "ruff_format_check": "PASS",
+    "security_scan": "PASS",
+    "skill_loader_plus_hardening_tests": "35/35 PASS"
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "artifacts": {
+    "scripts/code_nav.py": {
+      "bytes": 39846,
+      "sha256": "bf7421f86e59fb9a37c992d12e5b144bae51a92285dc4d00962b616b998ce047"
+    },
+    "tests/fixtures/code_nav_fake_lsp.py": {
+      "bytes": 4131,
+      "sha256": "1ae6bb330d869046cd7f6da04643579874555bf81eabe06539956ffa9baf4bba"
+    },
+    "tests/unit/test_code_nav_hardening_red.py": {
+      "bytes": 14528,
+      "sha256": "f8eeb1c370cc5b2a1e91bfb1ce1bf46634d087a118800cceb7916d5fe232c4b4"
+    }
+  },
+  "base_head": "889634f21c5f50b3859a9217949b9c24d437185a",
+  "production_desired": {
+    "code_root": "REPO_ROOT/.worktrees/web-auth-mobile-cookie-20260928",
+    "deployment_id": "deploy-9acfff208d3b4964959657c795db9418",
+    "generation": 159,
+    "git_head": "889634f21c5f50b3859a9217949b9c24d437185a",
+    "runtime_root": "REPO_ROOT",
+    "schema": "managed-service-deployment/v1",
+    "webui_artifact_sha256": "908c0a1cb69d63d68897ea34e194553d60bdebcbcadb83d4e616b00bec838dc3"
+  },
+  "production_modified": false,
+  "real_pyright": {
+    "callees": {
+      "count": 361,
+      "sample": [
+        {
+          "name": "ensure_dirs",
+          "site_lines": [
+            397
+          ],
+          "site_path": "src/llm_loop/factory.py",
+          "target_definition_col": 9,
+          "target_definition_line": 731,
+          "target_path": "src/llm_loop/config.py"
+        },
+        {
+          "name": "load_registry",
+          "site_lines": [
+            418
+          ],
+          "site_path": "src/llm_loop/factory.py",
+          "target_definition_col": 5,
+          "target_definition_line": 961,
+          "target_path": "src/llm_loop/llm/providers.py"
+        },
+        {
+          "name": "resolve",
+          "site_lines": [
+            419,
+            1930
+          ],
+          "site_path": "src/llm_loop/factory.py",
+          "target_definition_col": 9,
+          "target_definition_line": 128,
+          "target_path": "src/llm_loop/llm/providers.py"
+        }
+      ]
+    },
+    "callers": {
+      "count": 21,
+      "sample": [
+        {
+          "caller_definition_col": 13,
+          "caller_definition_line": 738,
+          "caller_definition_path": "src/llm_loop/factory.py",
+          "name": "_evidence_owner_for_session",
+          "site_lines": [
+            742
+          ],
+          "site_path": "src/llm_loop/factory.py"
+        },
+        {
+          "caller_definition_col": 5,
+          "caller_definition_line": 189,
+          "caller_definition_path": "src/llm_loop/core/longrun_continuity.py",
+          "name": "file_version_still_matches",
+          "site_lines": [
+            209
+          ],
+          "site_path": "src/llm_loop/core/longrun_continuity.py"
+        },
+        {
+          "caller_definition_col": 9,
+          "caller_definition_line": 404,
+          "caller_definition_path": "src/llm_loop/introspection/search.py",
+          "name": "_search_special",
+          "site_lines": [
+            436
+          ],
+          "site_path": "src/llm_loop/introspection/search.py"
+        }
+      ]
+    },
+    "doctor_status": "ok",
+    "langserver": "REPO_ROOT/.venv/bin/pyright-langserver",
+    "langserver_source": "git_common_root_venv",
+    "not_ready": {
+      "rc": 1,
+      "status": "not_ready",
+      "trust": {
+        "analysis_ready": false,
+        "readiness_signal": "textDocument/publishDiagnostics"
+      }
+    },
+    "pyright_version": "pyright 1.1.411",
+    "readiness": true,
+    "refs": {
+      "count": 729,
+      "cross_check": {
+        "by_top_level_dir": {
+          "examples": 4,
+          "scripts": 16,
+          "src": 3,
+          "tests": 130
+        },
+        "include_classifier": "exact-prefix",
+        "inside_configured_include": {
+          "matching_files": 3,
+          "occurrences": 3
+        },
+        "lexical_only_files": 47,
+        "lsp_result_files": 82,
+        "matching_files": 47,
+        "matching_lines": 153,
+        "occurrences": 153,
+        "outside_configured_include": {
+          "matching_files": 44,
+          "occurrences": 150
+        },
+        "universe": "git-visible-python"
+      },
+      "files": 82,
+      "root_subdir_identical": true
+    }
+  },
+  "schema": "lfl.code_nav.phase2_acceptance.v1",
+  "tests": {
+    "diff_check": "PASS",
+    "hardening": "14/14 PASS",
+    "py_compile": "PASS",
+    "ruff_check": "PASS",
+    "ruff_format_check": "PASS",
+    "security_scan": "PASS"
+  }
+}

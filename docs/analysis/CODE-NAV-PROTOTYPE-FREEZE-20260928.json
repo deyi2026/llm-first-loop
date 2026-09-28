@@ -1,0 +1,26 @@
+{
+  "artifacts": [
+    {
+      "bytes": 26077,
+      "path": "scripts/code_nav.py",
+      "sha256": "39d3945e6fe3163caa78ca915a006ff192750a2517b40b3dce570c55688cf61e"
+    },
+    {
+      "bytes": 6123,
+      "path": "skills/code-nav/SKILL.md",
+      "sha256": "ebee9ba82de5d42e563a1e151f806b0affc626dc6889292faab06f3077137403"
+    },
+    {
+      "bytes": 33685,
+      "path": "docs/analysis/ANALYSIS-20260928-codebase-memory-mcp-adoption-eval.md",
+      "sha256": "2f973df2bfd2d5350545a9eeb1481349f9b550446c7bbda108cb60c388a52652"
+    },
+    {
+      "bytes": 33888,
+      "path": "docs/analysis/PLAN-20260928-code-nav-hardening.md",
+      "sha256": "431d3dfed6dc1fa21f28cf60c9ef3a1e3b0aefd94e97e21bf4e002b35517f28f"
+    }
+  ],
+  "base_production_head": "889634f21c5f50b3859a9217949b9c24d437185a",
+  "schema": "lfl.code_nav.prototype_freeze.v1"
+}
