@@ -344,7 +344,10 @@ def parse_lfrt_status(payload: object, *, observed_at: float) -> LFRTStatusSnaps
     listener = _dict(server.get("listener"))
     live_flags = _dict(process.get("flags"))
     configured_concurrency = _dict(config.get("concurrency"))
-    if listener is None or live_flags is None or configured_concurrency is None:
+    backend = str(config.get("backend") or "").strip()
+    if listener is None or live_flags is None:
+        return None
+    if backend != "llama" and configured_concurrency is None:
         return None
 
     if launchd.get("known") is not True or launchd.get("registered") is not True:
@@ -366,10 +369,20 @@ def parse_lfrt_status(payload: object, *, observed_at: float) -> LFRTStatusSnaps
 
     port = _positive_int(config.get("port"))
     live_port = _positive_int(live_flags.get("port"))
-    live_prompt = _positive_int(live_flags.get("prompt-concurrency"))
-    live_decode = _positive_int(live_flags.get("decode-concurrency"))
-    configured_prompt = _positive_int(configured_concurrency.get("prompt"))
-    configured_decode = _positive_int(configured_concurrency.get("decode"))
+    if backend == "llama":
+        # llama-server uses one slot count for both prompt/decode capacity. LFRT
+        # omits -np from process flags when the llama.cpp default (1) is in use.
+        live_parallel = _positive_int(live_flags.get("np")) or 1
+        configured_parallel = _positive_int(config.get("n_parallel"))
+        live_prompt = live_parallel
+        live_decode = live_parallel
+        configured_prompt = configured_parallel
+        configured_decode = configured_parallel
+    else:
+        live_prompt = _positive_int(live_flags.get("prompt-concurrency"))
+        live_decode = _positive_int(live_flags.get("decode-concurrency"))
+        configured_prompt = _positive_int(configured_concurrency.get("prompt"))
+        configured_decode = _positive_int(configured_concurrency.get("decode"))
     if None in (
         port,
         live_port,
@@ -385,7 +398,9 @@ def parse_lfrt_status(payload: object, *, observed_at: float) -> LFRTStatusSnaps
     assert live_prompt is not None and live_decode is not None
     assert configured_prompt is not None and configured_decode is not None
 
-    model_path = str(live_flags.get("model") or "").strip()
+    model_path = str(
+        live_flags.get("m") if backend == "llama" else live_flags.get("model") or ""
+    ).strip()
     configured_model = str(config.get("model_path") or "").strip()
     if not model_path or not configured_model:
         return None
@@ -393,12 +408,18 @@ def parse_lfrt_status(payload: object, *, observed_at: float) -> LFRTStatusSnaps
     if not model_identity:
         return None
 
-    aliases_raw = config.get("aliases")
-    if not isinstance(aliases_raw, list) or not all(
-        isinstance(alias, str) and alias.strip() for alias in aliases_raw
-    ):
-        return None
-    aliases = tuple(alias.strip() for alias in aliases_raw)
+    if backend == "llama":
+        alias_raw = config.get("alias")
+        if not isinstance(alias_raw, str) or not alias_raw.strip():
+            return None
+        aliases = (alias_raw.strip(),)
+    else:
+        aliases_raw = config.get("aliases")
+        if not isinstance(aliases_raw, list) or not all(
+            isinstance(alias, str) and alias.strip() for alias in aliases_raw
+        ):
+            return None
+        aliases = tuple(alias.strip() for alias in aliases_raw)
 
     endpoint_healthy = server.get("health")
     if not isinstance(endpoint_healthy, bool):

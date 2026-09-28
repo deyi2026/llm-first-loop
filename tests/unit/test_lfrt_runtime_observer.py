@@ -56,6 +56,42 @@ def _payload() -> dict:
     }
 
 
+def _llama_payload() -> dict:
+    return {
+        "ok": True,
+        "cmd": "status",
+        "ts": "2026-09-28T14:53:25",
+        "data": {
+            "launchd": {
+                "known": True,
+                "registered": True,
+                "state": "running",
+                "pid": 1130,
+            },
+            "process": {
+                "pid": 1130,
+                "flags": {
+                    "m": "/models/Qwen3.8-Flash-Next.gguf",
+                    "port": "8901",
+                    "alias": "qwen3.8-flash-next",
+                },
+            },
+            "server": {
+                "port_listening": True,
+                "listener": {"known": True, "pid": 1130},
+                "health": True,
+            },
+            "config": {
+                "backend": "llama",
+                "model_path": "/models/Qwen3.8-Flash-Next.gguf",
+                "alias": "qwen3.8-flash-next",
+                "n_parallel": 1,
+                "port": 8901,
+            },
+        },
+    }
+
+
 def test_parser_projects_validated_live_facts_and_uses_live_capacity() -> None:
     snapshot = parse_lfrt_status(_payload(), observed_at=123.0)
 
@@ -70,6 +106,55 @@ def test_parser_projects_validated_live_facts_and_uses_live_capacity() -> None:
     assert snapshot.max_concurrency == 1
     assert snapshot.endpoint_healthy is True
     assert snapshot.drift is False
+
+
+def test_parser_accepts_current_llama_status_contract_and_default_parallelism() -> None:
+    snapshot = parse_lfrt_status(_llama_payload(), observed_at=321.0)
+
+    assert snapshot is not None
+    assert snapshot.source_ref == "lfrt-status:8901:pid:1130"
+    assert snapshot.model_identity == "Qwen3.8-Flash-Next.gguf"
+    assert snapshot.live_prompt_concurrency == 1
+    assert snapshot.live_decode_concurrency == 1
+    assert snapshot.configured_prompt_concurrency == 1
+    assert snapshot.configured_decode_concurrency == 1
+    assert snapshot.aliases == ("qwen3.8-flash-next",)
+    assert snapshot.endpoint_healthy is True
+    assert snapshot.drift is False
+
+
+def test_parser_uses_explicit_llama_np_and_reports_parallelism_drift() -> None:
+    payload = _llama_payload()
+    payload["data"]["process"]["flags"]["np"] = "2"
+    payload["data"]["config"]["n_parallel"] = 4
+
+    snapshot = parse_lfrt_status(payload, observed_at=1.0)
+
+    assert snapshot is not None
+    assert snapshot.live_prompt_concurrency == 2
+    assert snapshot.live_decode_concurrency == 2
+    assert snapshot.configured_prompt_concurrency == 4
+    assert snapshot.configured_decode_concurrency == 4
+    assert snapshot.max_concurrency == 2
+    assert snapshot.drift is True
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("process", "flags", "m"), ""),
+        (("config", "alias"), ""),
+        (("config", "n_parallel"), 0),
+    ],
+)
+def test_parser_rejects_incomplete_llama_status_contract(path, value) -> None:
+    payload = _llama_payload()
+    target = payload["data"]
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+    assert parse_lfrt_status(payload, observed_at=1.0) is None
 
 
 def test_parser_reports_config_drift_without_replacing_live_capacity() -> None:
