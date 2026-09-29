@@ -98,6 +98,42 @@ def test_grill_me_focus_areas():
     print("✅ test_grill_me_focus_areas")
 
 
+# ── grill_me fail-closed（EVO-20260929-5283ab1b P0）──
+# 回归场景: 合法 JSON 但 focus_areas 全部为未知值时，旧实现静默跳过
+# （tools_skills.py 旧 252-257 行: `if area in _GRILL_QUESTIONS` 才生成问题），
+# 返回 SUCCESS + 第一层零问题，调用方误以为"盘问通过、无盲点"。
+def test_grill_me_unknown_focus_areas_fail_closed():
+    r = run_grill_me(_ctx(), _audit(), {
+        "design": "做缓存",
+        "focus_areas": ["availability", "cosplay"],  # 合法 string[]，全部不在白名单
+    })
+    assert r.status == ToolResultStatus.FAILURE, (
+        "全部未知领域必须 FAILURE，不得静默返回零问题 SUCCESS"
+    )
+    assert "无任何已识别领域" in r.content
+    assert "edge_cases" in r.content  # 回执里列出合法值供修正
+    print("✅ test_grill_me_unknown_focus_areas_fail_closed")
+
+
+def test_grill_me_mixed_focus_areas_warns_but_proceeds():
+    r = run_grill_me(_ctx(), _audit(), {
+        "design": "做缓存",
+        "focus_areas": ["security", "ai_alignment"],  # 一半合法一半未知
+    })
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "### security" in r.content          # 合法领域照常出问题
+    assert "已忽略未识别领域" in r.content        # 未知领域显式提示，不静默
+    assert "ai_alignment" in r.content
+    print("✅ test_grill_me_mixed_focus_areas_warns_but_proceeds")
+
+
+def test_grill_me_schema_focus_areas_has_enum():
+    items = GRILL_ME_TOOL_DEF["parameters"]["properties"]["focus_areas"]["items"]
+    assert "enum" in items, "focus_areas.items 必须有 enum（防 provider 端未校验时运行时兜底）"
+    assert set(items["enum"]) == {"edge_cases", "failure_modes", "scale", "security", "ux"}
+    print("✅ test_grill_me_schema_focus_areas_has_enum")
+
+
 def test_grill_me_empty_design():
     r = run_grill_me(_ctx(), _audit(), {"design": ""})
     assert r.status == ToolResultStatus.FAILURE
@@ -166,6 +202,9 @@ if __name__ == "__main__":
     test_grill_me_basic()
     test_grill_me_depth()
     test_grill_me_focus_areas()
+    test_grill_me_unknown_focus_areas_fail_closed()
+    test_grill_me_mixed_focus_areas_warns_but_proceeds()
+    test_grill_me_schema_focus_areas_has_enum()
     test_grill_me_empty_design()
     test_stop_slop_clean_text()
     test_stop_slop_detects_slop()

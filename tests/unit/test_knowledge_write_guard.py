@@ -33,9 +33,14 @@ def test_method_store_quarantine_blocks_candidate_write(tmp_path):
 
 def test_write_guard_is_evaluated_at_write_time(tmp_path):
     state = {"safe": True}
+    contract_body = (
+        "## Trigger\nguard probe\n\n## Discriminator\nwrite-time evaluation\n\n"
+        "## Short path\nsave then flip guard\n\n## Stop conditions\nquarantine\n\n"
+        "## Verification\nPermissionError\n\n## Counterexamples\nstartup-only guard"
+    )
     store = MethodStore(tmp_path / "methods", write_guard=lambda: state["safe"])
-    record = store.save_candidate(name="first", description="d", body="body-1")
+    record = store.save_candidate(name="first", description="d", body=contract_body)
     assert record.method_ref.startswith("method:")
     state["safe"] = False
     with pytest.raises(PermissionError, match="quarantined"):
-        store.save_candidate(name="second", description="d", body="body-2")
+        store.save_candidate(name="second", description="d", body=contract_body)

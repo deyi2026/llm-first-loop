@@ -19,6 +19,52 @@ _VALID_STATUSES = {"teacher", "candidate", "qualified", "active", "hold", "inval
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _SAFE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 
+# EVO-20260929-5283ab1b P2 (R5 Card Contract): the persistence layer requires the
+# same six sections the generation protocol demands, so a weak model cannot
+# bypass structure at the write boundary. Structure only — content quality stays
+# model-owned. Matches the reflection renderer exactly (## Trigger ...).
+_CARD_SECTIONS: tuple[str, ...] = (
+    "Trigger",
+    "Discriminator",
+    "Short path",
+    "Stop conditions",
+    "Verification",
+    "Counterexamples",
+)
+
+
+def _card_contract_missing(body: str) -> list[str]:
+    """Return required sections that are absent, empty, or placeholder ``(none)``."""
+    missing: list[str] = []
+    for title in _CARD_SECTIONS:
+        match = re.search(rf"^##\s+{re.escape(title)}\s*$", body, re.MULTILINE)
+        if match is None:
+            missing.append(title)
+            continue
+        rest = body[match.end():]
+        nxt = re.search(r"^##\s+", rest, re.MULTILINE)
+        chunk = rest[: nxt.start()] if nxt else rest
+        text = chunk.strip()
+        if not text or text == "(none)":
+            missing.append(title)
+    return missing
+
+
+def _checked_freshness_refs(refs: list[str]) -> list[str]:
+    """Validate+dedupe workspace-relative freshness_refs (shared by save/annotate)."""
+    checked: list[str] = []
+    for ref in refs:
+        clean = str(ref).strip()
+        if not clean:
+            continue
+        if clean.startswith(("/", "~")) or ".." in clean.split("/") or "\\" in clean:
+            raise ValueError(
+                f"freshness_refs entries must be workspace-relative paths without '..': {clean}"
+            )
+        if clean not in checked:
+            checked.append(clean)
+    return checked
+
 
 def _now() -> str:
     return system_local_now().isoformat()
@@ -558,7 +604,108 @@ class MethodStore:
             return []
         return result
 
-    def update_status(self, method_ref: str, target_status: str) -> MethodRecord:
+    def _blocked(self, method_ref: str, requested: str, missing_fact: str, detail: str, *, episode_ref: str = "") -> dict[str, Any]:
+        """Journal a mechanically blocked transition, then let the caller raise.
+
+        Never raises itself: a journaling failure must not mask the original
+        lifecycle error. See note_blocked_transition for the durable contract.
+        """
+        try:
+            return self.note_blocked_transition(
+                method_ref, requested=requested, missing_fact=missing_fact, detail=detail, episode_ref=episode_ref
+            )
+        except Exception:
+            return {"journal_persisted": False}
+
+    def _disposition_basis(self, record: MethodRecord) -> dict[str, Any]:
+        """Mechanical independence facts backing a destructive disposition.
+
+        Structure only: the program reports which independent evidence exists
+        (a qualification verdict=fail, or rejected use declarations from >=2
+        distinct episodes). It never weighs whether that evidence is *enough*
+        to kill the Method — that judgment belongs to the caller.
+        """
+        basis: dict[str, Any] = {}
+        fail_entries = [
+            e for e in self.qualification_entries(record.method_ref)
+            if e.get("verdict") == "fail"
+        ]
+        if fail_entries:
+            basis["independent_qualification_fail"] = [
+                str(e.get("qualification_episode_ref") or e.get("task_ref") or "") for e in fail_entries
+            ]
+        rejected_episodes: list[str] = []
+        for entry in self.usage_entries(record.method_ref):
+            if entry.get("decision") == "rejected":
+                ref = str(entry.get("episode_ref", ""))
+                if ref and ref not in rejected_episodes:
+                    rejected_episodes.append(ref)
+        if len(rejected_episodes) >= 2:
+            basis["cross_episode_rejected"] = rejected_episodes
+        return basis
+
+    def note_blocked_transition(
+        self,
+        method_ref: str,
+        *,
+        requested: str,
+        missing_fact: str,
+        detail: str = "",
+        episode_ref: str = "",
+    ) -> dict[str, Any]:
+        """Durably journal a lifecycle transition that was attempted and mechanically blocked.
+
+        EVO-20260929-5283ab1b P1 (R4 as journal, not a new lifecycle state):
+        historically a failed qualify (e.g. promotion=pass missing) left zero
+        durable trace and the candidate silently decayed. This append-only
+        journal keeps the attempt retrievable and countable; it never mutates
+        lifecycle status and never interprets why the model tried.
+        """
+        record = self.get(method_ref)
+        entry = {
+            "ts": _now(),
+            "event": "lifecycle_transition_attempt",
+            "method_ref": method_ref,
+            "method_status": record.status if record is not None else "unknown",
+            "requested": requested,
+            "result": "blocked",
+            "missing_fact": missing_fact,
+            "episode_ref": episode_ref.strip()[:256],
+            "detail": detail.strip()[:500],
+        }
+        try:
+            self._dir.mkdir(parents=True, exist_ok=True)
+            entry["journal_persisted"] = True
+            path = self._dir / "lifecycle_attempts.jsonl"
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+        except OSError:
+            entry["journal_persisted"] = False
+        return entry
+
+    def attempt_entries(self, method_ref: str = "") -> list[dict[str, Any]]:
+        """Read blocked lifecycle-transition attempts; mechanical facts only."""
+        path = self._dir / "lifecycle_attempts.jsonl"
+        if not path.is_file():
+            return []
+        wanted = method_ref.strip().lower()
+        result: list[dict[str, Any]] = []
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(value, dict):
+                    continue
+                if wanted and str(value.get("method_ref", "")).lower() != wanted:
+                    continue
+                result.append(value)
+        except OSError:
+            return []
+        return result
+
+    def update_status(self, method_ref: str, target_status: str, *, episode_ref: str = "") -> MethodRecord:
         """Mechanical lifecycle transition; semantic choice belongs to the caller/model/owner.
 
         Activating a candidate directly is rejected. A method must first pass through qualified,
@@ -573,8 +720,10 @@ class MethodStore:
         if target not in _VALID_STATUSES:
             raise ValueError(f"invalid method status: {target}")
         if record.status == "teacher" and target != "teacher":
+            self._blocked(method_ref, target, "teacher_immutable", "teacher lifecycle is immutable", episode_ref=episode_ref)
             raise ValueError("teacher lifecycle is immutable; create a candidate distilled from it")
         if record.status == "candidate" and target == "active":
+            self._blocked(method_ref, target, "independent_qualification", "candidate -> active is forbidden", episode_ref=episode_ref)
             raise ValueError("candidate cannot become active directly; qualify independently first")
         if target == "qualified":
             entries = self.qualification_entries(method_ref)
@@ -583,8 +732,21 @@ class MethodStore:
                 and (e.get("qualification_episode_ref") or e.get("task_ref"))
                 for e in entries
             ):
+                self._blocked(method_ref, target, "promotion_pass", "no promotion=pass with episode provenance", episode_ref=episode_ref)
                 raise ValueError(
                     "qualified requires at least one promotion=pass qualification with runtime episode provenance"
+                )
+        # EVO-20260929-5283ab1b P1 (R3): destructive disposition needs independent
+        # factual basis. The program never decides a Method *should* die; it only
+        # refuses to record a conviction resting solely on one session's own
+        # self-judgment. reopen stays permanently available (nothing is deleted).
+        if target in {"invalidated", "retired"} and record.status not in {"invalidated", "retired"}:
+            if not self._disposition_basis(record):
+                self._blocked(method_ref, target, "independent_disposition_evidence", "no independent basis", episode_ref=episode_ref)
+                raise ValueError(
+                    "destructive disposition (invalidate/retire) requires independent factual basis: "
+                    "one qualification with verdict=fail, or rejected use declarations from >=2 distinct "
+                    "episodes; record the evidence first, then retry the disposition"
                 )
         path = Path(record.path)
         raw = path.read_text(encoding="utf-8")
@@ -618,9 +780,23 @@ class MethodStore:
         source_episode_refs: list[str] | None = None,
         evidence_refs: list[str] | None = None,
         parent_ref: str = "",
+        freshness_refs: list[str] | None = None,
     ) -> MethodRecord:
         """Persist semantic content supplied by the model; never overwrite or auto-promote."""
         self._require_write_safe()
+        # P2 Card Contract: the persistence boundary demands the same structure
+        # the generation protocol promises. Applies to new writes only; the
+        # existing pool is never retroactively rescanned.
+        missing_sections = _card_contract_missing(body)
+        if missing_sections:
+            raise ValueError(
+                "Method Card contract violation: body must contain non-empty sections "
+                f"{list(_CARD_SECTIONS)} (missing/empty: {missing_sections})"
+            )
+        # P3 freshness_refs: model-declared workspace-relative paths baselined at
+        # qualification time; freshness() later reports current/changed/missing
+        # as mechanical facts and never downgrades lifecycle on drift.
+        checked_freshness_refs = _checked_freshness_refs(freshness_refs or [])
         if parent_ref and self.get(parent_ref) is None:
             raise ValueError(f"parent_ref not found: {parent_ref}")
         checked_teachers: list[str] = []
@@ -657,12 +833,74 @@ class MethodStore:
         front = "---\n" + line("method_id", method_id) + line("name", name) + line("description", description)
         front += "status: candidate\n" + line("source_model", source_model) + line("teacher_refs", ",".join(checked_teachers))
         front += line("source_episode_refs", ",".join(checked_episode_refs)) + line("evidence_refs", ",".join(evidence_refs or []))
+        front += line("freshness_refs", ",".join(checked_freshness_refs))
         front += line("parent_ref", parent_ref) + line("created_at", now) + line("updated_at", now) + "---\n"
         path.write_text(front + body.strip() + "\n", encoding="utf-8")
         record = self._load_path(path)
         if record is None:
             raise RuntimeError("candidate write did not round-trip")
         self._notify_post_save(record)
+        return record
+
+    def annotate_freshness(self, method_ref: str, freshness_refs: list[str]) -> MethodRecord:
+        """Update ONLY the frontmatter ``freshness_refs`` of an existing card.
+
+        EVO-20260929-5283ab1b P5-B follow-up: existing cards could not declare
+        freshness_refs after creation (save_candidate is idempotent by design
+        and never overwrites). This channel edits exactly one frontmatter key:
+        the card body and every other field stay byte-identical, and a SHA
+        baseline still only lands at the next qualification. The old→new value
+        goes to an append-only journal under the store root.
+        """
+        self._require_write_safe()
+        refs = _checked_freshness_refs(list(freshness_refs))
+        method_id = method_ref.removeprefix("method:").strip().lower()
+        if not _SAFE_ID_RE.fullmatch(method_id):
+            raise ValueError(f"invalid method ref: {method_ref}")
+        path = self._dir / method_id / "METHOD.md"
+        if not path.is_file():
+            raise ValueError(f"method not found in runtime store: {method_ref}")
+        raw = path.read_text(encoding="utf-8")
+        match = _FRONTMATTER_RE.match(raw)
+        if match is None:
+            raise ValueError("card has no parseable frontmatter")
+        front = match.group(1)
+        body = raw[match.end():]
+        now = _now()
+        old_match = re.search(r"^freshness_refs:.*$", front, re.MULTILINE)
+        old_value = old_match.group(0).split(":", 1)[1].strip() if old_match else ""
+        new_line = f"freshness_refs: {','.join(refs)}" if refs else "freshness_refs: "
+        if old_match:
+            front = front[: old_match.start()] + new_line + front[old_match.end():]
+        else:
+            status_match = re.search(r"^status:.*$", front, re.MULTILINE)
+            anchor = status_match.end() if status_match is not None else 0
+            front = front[:anchor] + "\n" + new_line + front[anchor:]
+        updated_match = re.search(r"^updated_at:.*$", front, re.MULTILINE)
+        if updated_match:
+            front = front[: updated_match.start()] + f"updated_at: {now}" + front[updated_match.end():]
+        path.write_text("---\n" + front + "\n---\n" + body, encoding="utf-8")
+        record = self._load_path(path)
+        if record is None:
+            raise RuntimeError("annotation did not round-trip")
+        try:
+            with (self._dir / "annotations.jsonl").open("a", encoding="utf-8") as f:
+                f.write(
+                    json.dumps(
+                        {
+                            "ts": now,
+                            "event": "annotate_freshness",
+                            "method_ref": method_id,
+                            "old": old_value,
+                            "new": refs,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+        except OSError:
+            # annotation itself succeeded; the journal is best-effort provenance
+            pass
         return record
 
     def find_by_evidence(self, evidence_ref: str) -> str | None:

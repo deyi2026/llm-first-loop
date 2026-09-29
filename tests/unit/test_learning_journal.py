@@ -179,7 +179,11 @@ def test_find_by_evidence_roundtrip(tmp_path):
     rec = store.save_candidate(
         name="Probe Candidate",
         description="probe",
-        body="# Probe\n正文",
+        body=(
+            "## Trigger\nprobe roundtrip\n\n## Discriminator\nevidence refs reconcile\n\n"
+            "## Short path\nfind_by_evidence\n\n## Stop conditions\nno match\n\n"
+            "## Verification\nref found\n\n## Counterexamples\nstale refs"
+        ),
         source_model="probe-model",
         evidence_refs=["learning:job-x", "other:ref"],
     )
@@ -268,13 +272,21 @@ def test_learning_method_semantic_filters_unqualified_candidates(tmp_path) -> No
         store.save_candidate(
             name=f"candidate-noise-{i:02d}",
             description="service restart runtime provenance pid manifest import path",
-            body="candidate noise",
+            body=(
+                "## Trigger\nnoise\n\n## Discriminator\nunqualified\n\n## Short path\nnone\n\n"
+                "## Stop conditions\nalways\n\n## Verification\nnone\n\n## Counterexamples\nnone"
+            ),
             source_model="test",
         )
     target = store.save_candidate(
         name="verified restart provenance",
         description="verify pid manifest git head and imported module path after restart",
-        body="verify replacement process code identity",
+        body=(
+            "## Trigger\nafter service restart\n\n## Discriminator\nlong-lived replacement process\n\n"
+            "## Short path\nverify pid manifest git head imported module path\n\n"
+            "## Stop conditions\nidentity confirmed\n\n## Verification\nmanifest matches\n\n"
+            "## Counterexamples\nstale config trust"
+        ),
         source_model="test",
     )
     store.record_qualification(

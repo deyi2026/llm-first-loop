@@ -175,7 +175,11 @@ GRILL_ME_TOOL_DEF: dict = {
         "properties": {
             "design": {"type": "string", "description": "当前设计/方案描述（可粗略，AI 会追问补全）"},
             "depth": {"type": "integer", "description": "追问深度（1-5，默认3，每层 4-6 个问题）"},
-            "focus_areas": {"type": "array", "items": {"type": "string"}, "description": "重点追问领域（default: edge_cases/failure_modes/scale/security/ux）"},
+            "focus_areas": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["edge_cases", "failure_modes", "scale", "security", "ux"]},
+                "description": "重点追问领域，仅接受: edge_cases/failure_modes/scale/security/ux（default: 全部）",
+            },
         },
         "required": ["design"],
     },
@@ -232,9 +236,24 @@ def run_grill_me(ctx: Any, audit: Any, args: dict) -> ToolResult:
         )
 
     depth = max(1, min(int(args.get("depth", 3) or 3), 5))
-    focus_areas = args.get("focus_areas") or list(_GRILL_QUESTIONS.keys())
-    if not isinstance(focus_areas, list):
-        focus_areas = list(_GRILL_QUESTIONS.keys())
+    focus_areas_raw = args.get("focus_areas") or list(_GRILL_QUESTIONS.keys())
+    if not isinstance(focus_areas_raw, list):
+        focus_areas_raw = list(_GRILL_QUESTIONS.keys())
+
+    # fail-closed（EVO-20260929-5283ab1b P0）: 合法 JSON 但领域全部未识别时，
+    # 不得静默返回零问题的 SUCCESS——那会让调用方误以为"盘问通过"。
+    valid_keys = sorted(_GRILL_QUESTIONS.keys())
+    focus_areas = [a for a in focus_areas_raw if isinstance(a, str) and a in _GRILL_QUESTIONS]
+    ignored = [a for a in focus_areas_raw if not (isinstance(a, str) and a in _GRILL_QUESTIONS)]
+    if not focus_areas:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                "[参数错误] 事实: focus_areas={} 中无任何已识别领域。"
+                "原因: 合法值仅为 {}。建议: 改用合法领域，或省略 focus_areas（默认全部领域）。"
+            ).format(focus_areas_raw, valid_keys),
+            tool_call_id="", tool_name="grill_me",
+        )
 
     lines = ["# 🔥 grill_me 追问式设计评审", ""]
     lines.append(f"**当前设计** ({len(design)} 字符):")
@@ -244,6 +263,8 @@ def run_grill_me(ctx: Any, audit: Any, args: dict) -> ToolResult:
     lines.append("")
     lines.append(f"**追问深度**: {depth} 层")
     lines.append(f"**重点领域**: {', '.join(focus_areas)}")
+    if ignored:
+        lines.append(f"**注意**: 已忽略未识别领域 {ignored}（合法: {', '.join(valid_keys)}）")
     lines.append("")
 
     # 第一层：必问问题

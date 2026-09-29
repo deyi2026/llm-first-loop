@@ -342,7 +342,11 @@ def test_method_startup_warm_makes_existing_candidates_hot(tmp_path):
     target = methods.save_candidate(
         name="Service restart verification",
         description="Verify runtime artifacts after restarting a long-lived service.",
-        body="Inspect live process identity and runtime-generated artifacts before trusting config.",
+        body=(
+            "## Trigger\nafter restart\n\n## Discriminator\nlong-lived service\n\n"
+            "## Short path\ninspect live process identity\n\n## Stop conditions\nconfig matches artifacts\n\n"
+            "## Verification\ncurrentness action recorded\n\n## Counterexamples\nnone yet"
+        ),
     )
     emb = _FakeAPI()
     retriever = SemanticRetriever(emb, timeout_s=1.0)
@@ -379,7 +383,11 @@ def test_new_method_candidate_vectors_after_durable_write(tmp_path):
     target = methods.save_candidate(
         name="Cache truth source",
         description="Use provider usage counters as the authoritative cache-hit source.",
-        body="Do not infer cache hits from prompt length alone.",
+        body=(
+            "## Trigger\nmeasuring cache hits\n\n## Discriminator\nprovider usage counters available\n\n"
+            "## Short path\nread usage counters\n\n## Stop conditions\ncounters unavailable\n\n"
+            "## Verification\ncompare counter delta\n\n## Counterexamples\nprompt length inference"
+        ),
     )
     save_ms = (time.monotonic() - started) * 1000
     assert save_ms < 30
