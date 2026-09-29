@@ -1,0 +1,117 @@
+{
+  "acceptance": {
+    "exact_four_worktrees": true,
+    "middleware_live_refs": 14,
+    "production_ok": true,
+    "removed_worktree_dirs_absent": true,
+    "retained_branches_present": true,
+    "root_wip_hash_drift": 0
+  },
+  "active_middleware": {
+    "branch": "fix/middleware-m1-currentness-gen120-20260926",
+    "live_process_type_counts": {
+      "chrome_profile_process": 12,
+      "middleware_human_loop": 1,
+      "middleware_supervisor": 1
+    },
+    "retained": true,
+    "worktree": ".worktrees/middleware-m1-currentness-gen120-20260926"
+  },
+  "canonical_main_before_evidence_commit": "08be00ca711668043d98bcd5e7fbde0e0de3ad27",
+  "cleanup": {
+    "generated_assets_deleted_before_eval_worktree_removal": [
+      {
+        "bytes": 1400000,
+        "classification": "generated_payload",
+        "path": "evals/web_gpt_long_context_512k/lfl_snapshot_1_4m.txt",
+        "sha256": "81166c2355dc7d6a74f446343a57e825a43cb582bd861eb9c1d708971b4e81cc"
+      },
+      {
+        "classification": "generated_bytecode_cache",
+        "path": "evals/web_gpt_long_context_512k/__pycache__/"
+      }
+    ],
+    "local_branches_deleted": 0,
+    "remote_refs_modified": false,
+    "worktrees_after": 4,
+    "worktrees_before": 6,
+    "worktrees_removed": [
+      {
+        "branch": "fix/chatgpt-web-exact-ingress-20260927",
+        "branch_retained": true,
+        "force_used": false,
+        "head": "ade11de5fdba186f2c77c844ea93e975bd512364"
+      },
+      {
+        "branch": "eval/web-gpt-512k-canary-20260927",
+        "branch_retained": true,
+        "force_used": false,
+        "head": "94cfad505ffb887e5078eab94ed9ee72bb1f5ee9"
+      }
+    ]
+  },
+  "date": "2026-09-29",
+  "final_topology": {
+    "local_branch_count": 106,
+    "worktree_count": 4,
+    "worktrees": [
+      {
+        "branch": "wip/main-pre-reconcile-20260929",
+        "head": "8454c8a9813947173bc5696dcb5d5309d21cdf3b",
+        "path": "."
+      },
+      {
+        "branch": "main",
+        "head": "08be00ca711668043d98bcd5e7fbde0e0de3ad27",
+        "path": ".worktrees/mainline-reconcile-gen161-20260929"
+      },
+      {
+        "branch": "fix/middleware-m1-currentness-gen120-20260926",
+        "head": "101beba03604479b80585caad6707fe65935f541",
+        "path": ".worktrees/middleware-m1-currentness-gen120-20260926"
+      },
+      {
+        "branch": "fix/mobile-copy-user-activation-20260929",
+        "head": "67ce123c5fa8430ab833610857fbf276d55e589d",
+        "path": ".worktrees/mobile-copy-user-activation-20260929"
+      }
+    ]
+  },
+  "preserved_root_wip": {
+    "branch": "wip/main-pre-reconcile-20260929",
+    "hash_drift": 0,
+    "head": "8454c8a9813947173bc5696dcb5d5309d21cdf3b",
+    "index_tree": "1d6bf5bd04e8eaf3857f8e4ae5ab85e61ef59616",
+    "tracked_modifications": 31
+  },
+  "production": {
+    "code_root": ".worktrees/mobile-copy-user-activation-20260929",
+    "generation": 161,
+    "git_head": "67ce123c5fa8430ab833610857fbf276d55e589d",
+    "restarted": false,
+    "service_control_verify": {
+      "generation": 161,
+      "ok": true
+    }
+  },
+  "result": "PASS",
+  "retained_branches": {
+    "eval/web-gpt-512k-canary-20260927": {
+      "disposition": "retain_unique_long_context_harness_archive",
+      "git_cherry_main": [
+        "- aa71c7a5a8a16becb1ed03e525aea4e06ddd1b76",
+        "+ 94cfad505ffb887e5078eab94ed9ee72bb1f5ee9"
+      ],
+      "head": "94cfad505ffb887e5078eab94ed9ee72bb1f5ee9"
+    },
+    "fix/chatgpt-web-exact-ingress-20260927": {
+      "disposition": "retain_unique_working_set_capture_prototype",
+      "git_cherry_main": [
+        "+ ade11de5fdba186f2c77c844ea93e975bd512364"
+      ],
+      "head": "ade11de5fdba186f2c77c844ea93e975bd512364"
+    }
+  },
+  "schema": "lfl.mainline_reconciliation.phase10_preserved_worktree_cleanup.v1",
+  "source_phase9_evidence": "docs/analysis/MAINLINE-RECONCILIATION-PHASE9-DIRTY-WORKTREE-PRESERVATION-20260929.json"
+}
