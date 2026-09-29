@@ -56,9 +56,10 @@ def _copy_provider_registry(settings, target: Path) -> list[str]:
 
 
 def _lfrt_json(settings, *args: str) -> dict:
-    path = str(settings.lfrt_cli or "").strip()
-    if not path:
+    raw = str(settings.lfrt_cli or "").strip()
+    if not raw:
         raise RuntimeError("EEv2.2 requires configured lfrt")
+    path = str(Path(raw).expanduser())
     proc = subprocess.run(
         [path, *args, "--json"],
         text=True,
