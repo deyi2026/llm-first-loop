@@ -1,0 +1,119 @@
+{
+  "canonical_main_before_closure_evidence_commit": "4082dca6518bf9994e2c86ffc7aaa186467657f7",
+  "closure_invariants": [
+    "primary repository root owns canonical main and is clean",
+    "production remains independently bound to gen161 and service_control verify passes",
+    "no deleted reconciliation/middleware worktree path remains in active config/manifests/launchd/process authority",
+    "production Chrome lifecycle is owned from data/runtime, outside all retired worktrees",
+    "all preserved dirty-root tracked WIP was audited before discard",
+    "all 805 historical untracked assets were dispositioned and preserved/superseded before cleanup",
+    "retained eval archive branch remains reachable",
+    "private preservation manifests remain outside Git under data/private-archive",
+    "candidate Methods were preserved as status=candidate without promoting runtime influence",
+    "current main adds no failing test/static-analysis fingerprint beyond exact gen161 baseline"
+  ],
+  "date": "2026-09-29",
+  "final_topology": {
+    "local_branches": 106,
+    "retained_archive_branch": "archive/root-untracked-eval-bundle-20260929",
+    "worktree_roles": [
+      "primary_root_main",
+      "production_gen161"
+    ],
+    "worktrees": 2
+  },
+  "known_baseline_debt": {
+    "full_pytest_failures": 9,
+    "policy": "Do not conflate reconciliation closure with unrelated technical-debt remediation.",
+    "pyright_errors": 58,
+    "ruff_findings": 32,
+    "status": "EXACTLY_REPRODUCED_ON_GEN161_NOT_INTRODUCED_BY_RECONCILIATION"
+  },
+  "phase_summary": [
+    {
+      "outcome": "froze dirty root and inventoried reconciliation scope",
+      "phase": 1
+    },
+    {
+      "outcome": "resolved semantic overlap between root WIP and reconciliation candidate",
+      "phase": 2
+    },
+    {
+      "outcome": "migrated qualified restart/cache runtime deltas",
+      "phase": 3
+    },
+    {
+      "outcome": "recovered qualified docs/knowledge and classified untracked assets",
+      "phase": 4
+    },
+    {
+      "outcome": "qualified canonical-main cutover against gen161 baseline",
+      "phase": 5
+    },
+    {
+      "outcome": "cut canonical main while preserving dirty root WIP",
+      "phase": 6
+    },
+    {
+      "outcome": "audited branch/worktree cleanup eligibility",
+      "phase": 7
+    },
+    {
+      "outcome": "mechanically reduced 53 worktrees to 6 and 149 branches to 106",
+      "phase": 8
+    },
+    {
+      "outcome": "preserved remaining dirty-worktree assets and migrated transient web-gpt fix",
+      "phase": 9
+    },
+    {
+      "outcome": "removed two preserved dirty worktrees, retaining unique branches",
+      "phase": 10
+    },
+    {
+      "outcome": "audited middleware retirement and discovered production Chrome dependency",
+      "phase": 11
+    },
+    {
+      "outcome": "decoupled Chrome/profile runtime and retired middleware worktree while retaining its branch",
+      "phase": 12
+    },
+    {
+      "outcome": "audited 31 tracked root-WIP files; zero migration candidates",
+      "phase": 13
+    },
+    {
+      "outcome": "audited/preserved all 805 root untracked assets and retained eval archive branch",
+      "phase": 14
+    },
+    {
+      "outcome": "cleaned preserved root, returned primary root to main, retired patch-equivalent WIP branch",
+      "phase": 15
+    },
+    {
+      "outcome": "full root-main qualification proves zero regressions beyond exact gen161 baseline and formally closes reconciliation",
+      "phase": 16
+    }
+  ],
+  "post_closure_scope": {
+    "phase17": "Audit/govern the remaining 106 local branches. No branch deletion is authorized by this closure ledger."
+  },
+  "preservation_refs": {
+    "eval_archive_branch": "80f7ff79b51252da162634bbcf391a6a0e3e2017",
+    "phase14_eval_raw_manifest_sha256": "d947790a54dc37a3c1e261df763467860ebeeeeff349d2134cdf122bfa69d462",
+    "phase14_noncanonical_manifest_sha256": "9580907e22db86f219d4c538b49ddaf97e9bd787c1291e8f370978de1fd23733",
+    "phase15_linked_main_audit_manifest_sha256": "cc879116345863de3663401afc9cc1908ab20ac3d5b0074b13ba813c9f11e955"
+  },
+  "production": {
+    "generation": 161,
+    "head": "67ce123c5fa8430ab833610857fbf276d55e589d",
+    "status": "HEALTHY_AND_INTENTIONALLY_NOT_ADVANCED_TO_MAIN"
+  },
+  "result": "CLOSED",
+  "safety": {
+    "production_published_to_main": false,
+    "production_restarted_for_closure": false,
+    "remote_refs_modified": false
+  },
+  "schema": "lfl.mainline_reconciliation.closure.v1"
+}
