@@ -101,6 +101,7 @@ data/methods/embeddings-*.json
 data/methods/embeddings-*.json.lock
 
 # 本地产出物/一次性分析（2026-09-20 收尾：/tmp 迁移产物与 unreferenced 脚本，不入库，本地保留）
+/deliverables/
 /output/
 /papers/
 /patches/
