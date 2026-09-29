@@ -1,0 +1,173 @@
+{
+  "ancestry": {
+    "main_commits_ahead": 32,
+    "merge_base": "67ce123c5fa8430ab833610857fbf276d55e589d",
+    "production_is_ancestor_of_main": true
+  },
+  "date": "2026-09-29",
+  "decision": {
+    "deployability": "QUALIFIED_FOR_DEPLOYMENT",
+    "deployment_executed": false,
+    "next_boundary": "Separate generation-CAS publish/restart/cutover requires explicit human authorization and a fresh immediate preflight; Phase20 does not perform it.",
+    "reason": "Deployable runtime delta is unchanged from Phase16, all current positive gates pass, full-test and static-analysis debt matches untouched gen161 exactly, and real current-main Web-GPT smoke passes."
+  },
+  "delta": {
+    "categories": {
+      "docs": 45,
+      "evals": 0,
+      "methods": 66,
+      "other": 7,
+      "scripts": 2,
+      "src": 2,
+      "tests": 3,
+      "webui": 0
+    },
+    "changed_paths": 125,
+    "code_root_bound_ai_rules_methods_skills_delta": 0,
+    "runtime_code_or_scripts": [
+      "scripts/restart_feishu.sh",
+      "scripts/restart_system.sh",
+      "src/llm_loop/cache_guard/guard.py",
+      "src/llm_loop/llm/chatgpt_page.py"
+    ],
+    "runtime_path_hashes": {
+      "scripts/restart_feishu.sh": {
+        "current_sha256": "e320fcf1a0e2f60fb7af17d6183c47b6862e75893e261188552ca4c75f247ddc",
+        "differs_from_gen161": true,
+        "phase16_sha256": "e320fcf1a0e2f60fb7af17d6183c47b6862e75893e261188552ca4c75f247ddc",
+        "production_gen161_sha256": "28c1ccbbeee78c35752ee67fd58a506316bea5b5228eac579152e3ce22f75138",
+        "unchanged_since_phase16": true
+      },
+      "scripts/restart_system.sh": {
+        "current_sha256": "024442d9262d8043b490de6d128ee6079d4d5679e3ddb553a47dc91bc06352fb",
+        "differs_from_gen161": true,
+        "phase16_sha256": "024442d9262d8043b490de6d128ee6079d4d5679e3ddb553a47dc91bc06352fb",
+        "production_gen161_sha256": "5a13865a15c33ad70824a285ebe961d5296061b62ece38eb9c11cc23abbbde62",
+        "unchanged_since_phase16": true
+      },
+      "src/llm_loop/cache_guard/guard.py": {
+        "current_sha256": "5fdb22d3d75ee379bae1090b685b13e0e00c049474224592cbcb39647f9a247d",
+        "differs_from_gen161": true,
+        "phase16_sha256": "5fdb22d3d75ee379bae1090b685b13e0e00c049474224592cbcb39647f9a247d",
+        "production_gen161_sha256": "ec3653ea371533bbc564979d47405e0d2bb793fa959a9110d22f02d7b63708e5",
+        "unchanged_since_phase16": true
+      },
+      "src/llm_loop/llm/chatgpt_page.py": {
+        "current_sha256": "04d82ea090f564b67364cddf0a68280875c5a0e53ff501f241e8171ac2c94bec",
+        "differs_from_gen161": true,
+        "phase16_sha256": "04d82ea090f564b67364cddf0a68280875c5a0e53ff501f241e8171ac2c94bec",
+        "production_gen161_sha256": "2f0136975fe75adbd90b73fe9e02ce7710f659fa28e2edcc21453f192e787b5e",
+        "unchanged_since_phase16": true
+      }
+    },
+    "runtime_paths_unchanged_since_phase16": true,
+    "webui_source_delta": 0
+  },
+  "gates": {
+    "active_authority_stale_nonproduction_worktree_refs": 0,
+    "code_nav_skills_real_pyright": "66/66 PASS",
+    "compileall_src_scripts": "PASS",
+    "full_pytest_main": {
+      "deselected": 16,
+      "failed": 9,
+      "failed_nodes": [
+        "tests/unit/test_arch_guards.py::test_local_imports_ratchet",
+        "tests/unit/test_arch_guards.py::test_runtime_cycles_match_known",
+        "tests/unit/test_resolved_episode.py::test_engine_second_run_retires_first_episode_but_episode_is_retrievable",
+        "tests/unit/test_resolved_episode.py::test_engine_anchor_remap_preserves_current_tool_protocol_after_retirement",
+        "tests/unit/test_runtime_paths.py::test_load_settings_materializes_persistent_knowledge_paths",
+        "tests/unit/test_safety.py::test_evo1_home_subpath_allowed_home_itself_blocked",
+        "tests/unit/test_safety_bypass.py::test_rm_rf_tilde_subdir_allowed",
+        "tests/unit/test_safety_bypass.py::test_rm_rf_home_var_subdir_allowed",
+        "tests/unit/test_timekeeping_local.py::test_source_does_not_serialize_new_wall_clock_in_utc"
+      ],
+      "passed": 7301,
+      "skipped": 107,
+      "summary": "9 failed, 7301 passed, 107 skipped, 16 deselected, 3 warnings in 293.28s (0:04:53)",
+      "warnings": 3
+    },
+    "git_diff_check": "PASS",
+    "live_process_stale_nonproduction_worktree_refs": 0,
+    "local_branch_count": 3,
+    "production_exact_failure_replay": {
+      "candidate_only_failures": 0,
+      "failed_same_nodes": "9/9"
+    },
+    "production_gen161_verify": "PASS",
+    "pyright_ab": {
+      "exact_fingerprint_match": true,
+      "files_analyzed_each": 389,
+      "main_errors": 58,
+      "main_only": 0,
+      "production_errors": 58,
+      "warnings_each": 0
+    },
+    "real_root_main_webgpt_smoke": {
+      "content": "PHASE20_ROOT_MAIN_OK",
+      "finish_reason": "stop",
+      "isolated_session_store": true,
+      "provider": "chatgpt-web",
+      "reasoning_effort": "xhigh",
+      "tool_calls": 0
+    },
+    "restart_shell_syntax": "PASS",
+    "root_clean_before_evidence": true,
+    "ruff_ab_broad_scope": {
+      "exact_fingerprint_match": true,
+      "main_findings": 148,
+      "main_only": 0,
+      "note": "Reported only as a broader supplemental scope; historical Phase16 apples-to-apples scope is src/tests/scripts.",
+      "production_findings": 148,
+      "scope": "."
+    },
+    "ruff_ab_historical_scope": {
+      "exact_fingerprint_match": true,
+      "main_findings": 32,
+      "main_only": 0,
+      "production_findings": 32,
+      "scope": "src tests scripts"
+    },
+    "runtime_broadened_adjacency": "108/108 PASS",
+    "runtime_changed_tests": "20/20 PASS",
+    "runtime_delta_ruff": "PASS",
+    "webui_build": "PASS (tsc -b + vite build)",
+    "webui_tests": "35 files / 263 tests PASS",
+    "worktree_count": 2
+  },
+  "phase16_reuse": {
+    "evidence_file": "docs/analysis/MAINLINE-RECONCILIATION-PHASE16-ROOT-MAIN-FINAL-QUALIFICATION-20260929.json",
+    "evidence_sha256": "e6b6bc90fadb87d0a37a98565c86e1b09731537906f7842c611ccc0d6a7ef7c2",
+    "phase16_qualification_head": "4082dca6518bf9994e2c86ffc7aaa186467657f7",
+    "phase16_result": "PASS_NO_NEW_REGRESSIONS_AGAINST_GEN161_BASELINE",
+    "reuse_basis": "All four deployable runtime paths are byte-identical to their Phase16-qualified versions."
+  },
+  "production": {
+    "generation": 161,
+    "head": "67ce123c5fa8430ab833610857fbf276d55e589d",
+    "production_is_running_main": false,
+    "published_in_phase20": false,
+    "restarted_in_phase20": false,
+    "service_control_verify": "PASS"
+  },
+  "qualification_head_before_evidence_commit": "43e02a35d2e1bac85fc7e9278178ed446685319a",
+  "qualification_rule": {
+    "candidate_only_regression_must_equal": 0,
+    "candidate_only_regression_observed": 0,
+    "existing_identical_production_debt_is_blocking": false
+  },
+  "schema": "lfl.deployment_qualification.main_to_gen161.v1",
+  "shared_data_plane": {
+    "code_root_bound_assets": {
+      "ai_rules_methods_skills_content_identical_main_vs_gen161": true,
+      "docs_dir": "<code-root>/docs",
+      "method_seed_dir": "<code-root>/methods",
+      "skills_dir": "<code-root>/skills"
+    },
+    "data_dir": "<repo-root>/data",
+    "experiences_dir": "<repo-root>/experiences",
+    "interpretation": "Runtime-learned data/methods is already canonical shared state for gen161 services; these tracked candidate Method additions are not waiting for code deployment to become visible to the runtime data plane.",
+    "method_records_observed": 555,
+    "methods_dir": "<repo-root>/data/methods"
+  },
+  "verdict": "QUALIFIED_FOR_DEPLOYMENT"
+}
