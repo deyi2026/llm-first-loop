@@ -1,0 +1,169 @@
+{
+  "schema": "lfl-execution-efficiency-v2-baseline/v0.1",
+  "date": "2026-09-29",
+  "scope": "offline-eval-only",
+  "runtime_mutation": false,
+  "tool_visibility_mutation": false,
+  "schema_mutation": false,
+  "qualification_order": [
+    "verified_correctness_hard_gate",
+    "first_call_ready",
+    "wrong_rejected_repair_calls",
+    "serial_barriers_and_wall_time",
+    "uncached_input_and_output_tokens"
+  ],
+  "weighted_score": null,
+  "tool_count_is_not_an_optimization_target": true,
+  "source": {
+    "canonical_main_before_evidence_commit": "f0d9cc5431b0aa2dc0e525c8879d7c7c63590d41",
+    "archive_branch": "archive/root-untracked-eval-bundle-20260929",
+    "archive_head": "80f7ff79b51252da162634bbcf391a6a0e3e2017",
+    "pilot_telemetry_sha256": "f9d35c07bc8907acdddb750daf150a55a655dbc1679d390a8960a52c370e2605"
+  },
+  "datasets": {
+    "p1a_whole_v0_2": {
+      "path": "evals/execution_efficiency_fcr/P1A-WHOLE-RAW.v0.2.jsonl",
+      "archive_git_blob": "0a169307b001a8dde19b1138273a03c844ae05bc",
+      "sha256": "76745ea044d9848a8f06ca010f00aa751b2490d2dd362a071fd63474a0c7cfcf",
+      "rows": 36,
+      "complete": true,
+      "external_correctness": "36/36",
+      "legacy_fcr": "13/36",
+      "fcr_v2": "36/36",
+      "wrong_first_tool_v2": 0,
+      "rejected_calls": 19,
+      "mechanical_contract_rejections": 4,
+      "runtime_failures": 15,
+      "unexpected_failures_legacy_oracle": 18,
+      "failure_to_repair_sequences": 13,
+      "schema_rereads": 0,
+      "redundant_reacquisitions": 6,
+      "serial_tool_barriers": 105,
+      "summary_sha256": "ade1cc822afae69528922e1e955bad19e7d057b73c0f4187748718bc4006d136",
+      "arms": {
+        "A-current": {
+          "correctness": "12/12",
+          "fcr_v2": "12/12",
+          "legacy_fcr": "5/12",
+          "rejected_calls": 8,
+          "mechanical_contract_rejections": 2,
+          "runtime_failures": 6,
+          "failure_to_repair_sequences": 6,
+          "serial_tool_barriers": 40,
+          "median_provider_rounds": 5.5,
+          "median_uncached_input_tokens": 1205.0,
+          "median_wall_s": 55.8655
+        },
+        "B-fcr-contract": {
+          "correctness": "12/12",
+          "fcr_v2": "12/12",
+          "legacy_fcr": "4/12",
+          "rejected_calls": 6,
+          "mechanical_contract_rejections": 1,
+          "runtime_failures": 5,
+          "failure_to_repair_sequences": 4,
+          "serial_tool_barriers": 33,
+          "median_provider_rounds": 4.5,
+          "median_uncached_input_tokens": 1456.5,
+          "median_wall_s": 46.547
+        },
+        "D-full-reference": {
+          "correctness": "12/12",
+          "fcr_v2": "12/12",
+          "legacy_fcr": "4/12",
+          "rejected_calls": 5,
+          "mechanical_contract_rejections": 1,
+          "runtime_failures": 4,
+          "failure_to_repair_sequences": 3,
+          "serial_tool_barriers": 32,
+          "median_provider_rounds": 4.0,
+          "median_uncached_input_tokens": 1463.0,
+          "median_wall_s": 49.3785
+        }
+      },
+      "rejection_root_causes": {
+        "execute_command_total": 15,
+        "execute_command_macos_cat_dash_A_portability": 13,
+        "execute_command_expected_t02_transient": 1,
+        "execute_command_shell_syntax": 1,
+        "edit_file_total": 4,
+        "edit_file_empty_anchor": 2,
+        "edit_file_snapshot_contract": 2
+      }
+    },
+    "p1b_v0_1_r1": {
+      "path": "evals/execution_efficiency_fcr/P1B-RAW.v0.1-r1.jsonl",
+      "archive_git_blob": "f6743c72f65e696e19273eef6fa76b64ecd24540",
+      "sha256": "ab458a7c600df16687b33cbe02825ab5c812bdebe73ccfd4dfe5700f61fbd69b",
+      "rows": 45,
+      "complete": false,
+      "expected_rows": 48,
+      "use": "diagnostic-only",
+      "summary_sha256": "6dbcb99ec01f42606261bf4e019e1fd82e72a73ac5d25fbdf55c4d971181ebb5"
+    },
+    "p2_v0_1_r1": {
+      "path": "evals/execution_efficiency_fcr/P2-RAW.v0.1-r1.jsonl",
+      "archive_git_blob": "d267f707a23bc085cdf44847f5749f5df3b042d8",
+      "sha256": "491d9e1b754ec0f3116c39ae4e72890c165bf2e9deb406924f5d67a724c2cab2",
+      "rows": 8,
+      "complete": true,
+      "wrong_tool_oracle_v2": "not-defined-do-not-infer",
+      "discovery_off_correctness": "2/4",
+      "discovery_on_correctness": "4/4",
+      "summary_sha256": "cee0d8efa719b1e7bef8f59cfd9c3741fe740a638cd3aa14193af0a4a8e70fda"
+    }
+  },
+  "current_lazy_tool_surface": {
+    "tool_count": 74,
+    "sum_per_tool_json_chars": 32749,
+    "largest_rows": [
+      ["browser_perceive", 4056],
+      ["browser_operate", 3359],
+      ["method_manage", 1113],
+      ["service_control", 1104],
+      ["task_update", 995],
+      ["search_records", 915],
+      ["workflow_run", 716],
+      ["source_synopsis", 672]
+    ],
+    "measured_failure_tools": {
+      "execute_command_chars": 298,
+      "edit_file_chars": 449,
+      "read_file_chars": 383,
+      "get_tool_schema_chars": 208
+    }
+  },
+  "findings": [
+    "Legacy P1A FCR materially undercounted valid first actions because its default oracle preferred read even for command-native tasks and conflated runtime tool failure with argument non-dispatchability.",
+    "The corrected six-task P1A corpus has 36/36 FCR-v2 and therefore has no wrong-tool discrimination headroom; it cannot justify semantic tool hiding or domain projection.",
+    "13 of 19 P1A rejected calls are macOS cat -A portability failures. The dominant measured friction is command construction portability, not tool discovery or the largest tool-schema rows.",
+    "B/D use slightly more median uncached input tokens than A but show fewer rejects, repair sequences and serial barriers at equal correctness/FCR-v2. Whole-run execution efficiency therefore must not be reduced to schema bytes or tool count.",
+    "Current edit_file compact schema already exposes the snapshot/version precondition that caused historical edit failures, so archived edit failures must not be assumed to reproduce on current main."
+  ],
+  "next_experiment": {
+    "name": "eev2.1-execute-command-portability-and-wrong-tool-holdout",
+    "keep_all_healthy_tools_visible": true,
+    "candidate_change": "Add only a short load-bearing execute_command command-field contract stating that commands execute on the actual host shell/toolset, must not assume GNU-only flags, and should prefer portable forms or inspect host/tool facts when portability matters.",
+    "heldout_requirements": [
+      "portable-shell failure family",
+      "true wrong-tool discriminator tasks with pre-registered acceptable and negative alternatives",
+      "edit_file current contract control"
+    ],
+    "gates": [
+      "correctness",
+      "fcr_v2",
+      "wrong_tool_first_call_count",
+      "mechanical_contract_rejections",
+      "runtime_failures",
+      "repair_sequences",
+      "serial_tool_barriers",
+      "wall_time",
+      "uncached_input_tokens"
+    ],
+    "not_authorized_by_this_baseline": [
+      "semantic tool hiding",
+      "main-execution-domain tool projection",
+      "production schema/default change"
+    ]
+  }
+}
