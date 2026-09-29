@@ -1,0 +1,291 @@
+{
+  "active_adapter": {
+    "latest_turn": {
+      "has_engine_result": false,
+      "has_final": false,
+      "has_ingress": false,
+      "phase": "armed",
+      "recovery_blocked": false,
+      "turn_index": 10
+    },
+    "launchd_managed": false,
+    "process_type_counts": {
+      "chrome_9229_profile_process": 7,
+      "middleware_human_loop": 1,
+      "middleware_supervisor": 1
+    },
+    "safe_stop_boundary_now": true,
+    "shutdown_semantics": "supervisor SIGTERM sets stop_requested, terminates child, then writes supervisor status=stopped; must revalidate latest durable turn immediately before stop because human ingress can arrive asynchronously.",
+    "supervisor_restart_count": 3322,
+    "supervisor_status": "running"
+  },
+  "canonical_main": {
+    "head": "aeca3aa4805e99285e9b3ba210793f6f44fe7a47"
+  },
+  "date": "2026-09-29",
+  "middleware_worktree": {
+    "branch": "fix/middleware-m1-currentness-gen120-20260926",
+    "branch_disposition": "RETAIN_ARCHIVE_BRANCH_NOT_DELETE_SAFE",
+    "head": "101beba03604479b80585caad6707fe65935f541",
+    "ignored_runtime_state_present": true,
+    "main_ahead_commit_count": 52,
+    "merge_base_with_main": "03a158a4e4575ab7500cf4858557a1fb379e16cc",
+    "path": ".worktrees/middleware-m1-currentness-gen120-20260926",
+    "tracked_clean": true,
+    "unique_commit_count": 34,
+    "unique_commits": [
+      {
+        "commit": "101beba03604479b80585caad6707fe65935f541",
+        "subject": "fix(mw): harden ChatGPT surface recovery"
+      },
+      {
+        "commit": "ae177d21108234f2411a954b191c0315c982a46b",
+        "subject": "feat(mw): stabilize ChatGPT browser surface"
+      },
+      {
+        "commit": "107caa29f6cec58450f21019cf2352c52855e2ad",
+        "subject": "feat(mw): improve final Markdown presentation"
+      },
+      {
+        "commit": "4ebaad5d21916245fbb9f358da5dc418545bf4fe",
+        "subject": "docs(mw): qualify ChatGPT adapter resilience"
+      },
+      {
+        "commit": "074c479acd586900fabd6f6e7e65b669386d8fb4",
+        "subject": "fix(mw): supervise ChatGPT adapter lifecycle"
+      },
+      {
+        "commit": "371c4b59169781be0bdda73a95741719ae414ecd",
+        "subject": "docs(mw): qualify continuous ChatGPT turns"
+      },
+      {
+        "commit": "a03faa40c45dc096c2c0b22ae8a4fa08bc7e7de8",
+        "subject": "fix(mw): keep ChatGPT LFL adapter listening across turns"
+      },
+      {
+        "commit": "dae2349276cdd7fbab79e300e735fdc4aba5c633",
+        "subject": "docs(mw): freeze thin LFL adapter contract"
+      },
+      {
+        "commit": "0020c3aa5889f3fb779e994da8c1c85350eea19b",
+        "subject": "refactor(mw): make ChatGPT a thin LFL adapter"
+      },
+      {
+        "commit": "2637335fe7eb3aa4a38189343a37f02bae716412",
+        "subject": "docs(mw): qualify M3D write canary"
+      },
+      {
+        "commit": "442829a3e0aefcb3fd86062f38bccbe3e915920a",
+        "subject": "test(mw): cover write recovery fault windows"
+      },
+      {
+        "commit": "488da7f6e774df0148bd770b8c8b2e85022631e8",
+        "subject": "style(mw): clean write canary imports"
+      },
+      {
+        "commit": "46fdd779ae7a9f17afa71d01305bb90d32e455a4",
+        "subject": "feat(mw): add controlled write canary"
+      },
+      {
+        "commit": "5ed95c9634ba8cec874c8b1aba181c2df290d6e1",
+        "subject": "docs(mw): qualify M3C durability gate"
+      },
+      {
+        "commit": "4ba9b282f7677484da291aff36b1b8d8f459221c",
+        "subject": "feat(mw): make ChatGPT loop recovery crash-safe"
+      },
+      {
+        "commit": "5a8665ea9658a772f212436618e8cca0a7c5e5dd",
+        "subject": "docs(mw): freeze M3B qualification"
+      },
+      {
+        "commit": "e242b16747abb34625a2ff79de1f7633c614d58f",
+        "subject": "feat(mw): add direct human LoopEngine IO"
+      },
+      {
+        "commit": "9cdfc4caa6b3504264bcddb02acd5909039d6ecd",
+        "subject": "fix(mw): handle virtualized ChatGPT turns"
+      },
+      {
+        "commit": "d0f9871ee2780b435a9fe9cdcf44f516457fdbea",
+        "subject": "feat(mw): run ChatGPT web inside LFL loop"
+      },
+      {
+        "commit": "14b0168d0bdc0ae328f44a714ee21ae9e62aaf90",
+        "subject": "chore(mw): preserve human-ingress tool-plane baseline"
+      },
+      {
+        "commit": "da5dca75358e22732c2b5fb87ac993688df40f63",
+        "subject": "feat(mw): qualify ChatGPT web driver roundtrip"
+      },
+      {
+        "commit": "6fe76407016ddc6026da3f460b3c08b3614d0d94",
+        "subject": "feat(mw): qualify ChatGPT page adapter"
+      },
+      {
+        "commit": "4050f4743de4cc5f5aa1e3c525a40ccbeb4b07b1",
+        "subject": "docs(mw): qualify final and need-input protocol"
+      },
+      {
+        "commit": "fe518cb658965923802c3fca8e5c5a076ad1531e",
+        "subject": "docs(mw): qualify ChatGPT web page contract"
+      },
+      {
+        "commit": "20f3798b9a44224d9f5b05c68b6a2541a7895e8c",
+        "subject": "feat(mw): freeze protocol v0.2 contracts"
+      },
+      {
+        "commit": "a65637eb20ead976739e1dfd762af1b1a93bbcbb",
+        "subject": "docs(mw): grill ChatGPT web LFL design v0.2"
+      },
+      {
+        "commit": "4a83a98985ff6534da8d42d7a6852b90ff25f61b",
+        "subject": "docs(mw): define ChatGPT web LFL v0.2 design"
+      },
+      {
+        "commit": "54787a28e9baef6d8193015414ba116f86ef5555",
+        "subject": "fix(mw): requalify M1 on generation120"
+      },
+      {
+        "commit": "0424cb5bd3ebab8b8750bcc9346f22e83b30eddb",
+        "subject": "feat(mw): M1 最小闭环——Kernel/协议层/守卫/证据 + mcp-console-http bridge + webchat driver + CLI"
+      },
+      {
+        "commit": "0014056a99d1df1d3d183ac37b16c4f3815f7def",
+        "subject": "docs(middleware): 二次受控探测关闭 P-1/P-5/P-8/G-6，拍板 D-1/D-3——M1 入口条件全部满足"
+      },
+      {
+        "commit": "e16b858defcf33ea8580d55491493346c62bfc67",
+        "subject": "docs(middleware): 评审修订 R1-R7 + P-10 决策——信封拒收统一产出 OutputContract"
+      },
+      {
+        "commit": "2b226a5e8a70264ddbe5ec2def0a292d04c502ed",
+        "subject": "docs(middleware): 需求设计文档 v0.1——三件套整合 + FR/NFR/SFR 编号化验收判据 + 21 缺口追溯"
+      },
+      {
+        "commit": "27100ae67ba82d8547d4fd1c5da733a3a8bef8a1",
+        "subject": "docs(middleware): 拷问补漏——状态机/取消/失败输出契约/driver.policy schema 落位/幂等归类/token scope/审计不可写/未决项 3→19"
+      },
+      {
+        "commit": "d97beafafc5e873eaf4d18ff53122df55db3af2c",
+        "subject": "docs(middleware): 信封协议 v0.1 + 治理清单 + 一体自研架构（路线C）"
+      }
+    ],
+    "unique_path_category_counts": {
+      "docs": 21,
+      "docs/data": 18,
+      "evals": 1,
+      "other": 1,
+      "scripts/mw": 14,
+      "src/envelope_mw": 28,
+      "src/llm_loop integration": 3,
+      "tests/mw": 12,
+      "tests/unit/chatgpt": 9
+    }
+  },
+  "production_dependency": {
+    "canonical_main_has_browser_launcher": false,
+    "canonical_provider_browser_lifecycle": "CONNECT_ONLY",
+    "chatgpt_web_cdp_endpoint": "http://127.0.0.1:9229",
+    "chatgpt_web_enabled": true,
+    "default_model": "glm/glm-5.3",
+    "impact": "Stopping/removing the Chrome/profile would break the configured chatgpt-web/web-gpt provider path even though default production model is GLM and current services need not hold an idle socket.",
+    "middleware_lease_target_live_in_9229_browser": true,
+    "only_9229_chrome_profile_is_inside_middleware_worktree": true,
+    "production_lease_target_live_in_9229_browser": true,
+    "production_profile_label": "lfl-web-gpt-production",
+    "same_project_ref_as_middleware": true
+  },
+  "result": "AUDIT_COMPLETE_RETIREMENT_BLOCKED_ON_PRODUCTION_BROWSER_DECOUPLING",
+  "retirement_gates": [
+    {
+      "acceptance": "Immediately before stopping, latest durable turn is still armed with no ingress/engine/final and no recovery-blocked marker; no intended pending human task in the lab.",
+      "gate": "Freeze/revalidate adapter ingress",
+      "id": "R1"
+    },
+    {
+      "acceptance": "SIGTERM supervisor; child exits; supervisor.json records stopped; no supervisor/runner process or open handle remains. Keep Chrome 9229 running during this gate so production web-gpt capability is unchanged.",
+      "gate": "Gracefully stop middleware adapter only",
+      "id": "R2"
+    },
+    {
+      "acceptance": "Because raw artifacts may contain human/final text, either move the ~11MB artifacts to a private non-Git archive with a manifest/hash or explicitly authorize discard; never commit raw artifacts.",
+      "gate": "Resolve private middleware evidence retention",
+      "id": "R3"
+    },
+    {
+      "acceptance": "With a controlled browser maintenance window, stop 9229 Chrome, move/copy authenticated profile to a production-owned ignored path outside `.worktrees`, and establish an independent reproducible lifecycle owner (prefer service-managed/minimal launcher). Do not delete the old profile until validation completes.",
+      "gate": "Extract production Chrome runtime from worktree",
+      "id": "R4"
+    },
+    {
+      "acceptance": "Relaunch Chrome on 127.0.0.1:9229 from the new profile path; CDP healthy; login/project available. Existing production surface lease may have stale target id; canonical ChatGPTSurface is allowed to create/rebind its owned target from durable conversation_url.",
+      "gate": "Re-establish production browser capability",
+      "id": "R5"
+    },
+    {
+      "acceptance": "Run a controlled canonical-main chatgpt-web/web-gpt smoke and verify lease/session binding updates and normal close. Re-run service_control verify; default GLM services remain healthy.",
+      "gate": "Production web-gpt acceptance",
+      "id": "R6"
+    },
+    {
+      "acceptance": "No process/open handle references the worktree, tracked status is clean, profile/artifacts are no longer required in-place; remove worktree without force.",
+      "gate": "Remove physical middleware worktree",
+      "id": "R7"
+    },
+    {
+      "acceptance": "Keep branch at qualified head because 34 commits remain unique. Branch deletion is out of scope unless a later archival/merge review proves those commits preserved elsewhere.",
+      "gate": "Retain middleware branch",
+      "id": "R8"
+    }
+  ],
+  "retirement_readiness": {
+    "adapter_stop_ready_now_subject_to_edge_recheck": true,
+    "blocking_reason": "Production chatgpt-web/web-gpt endpoint 9229 is served by a Chrome profile physically located inside the middleware worktree and canonical main has no independent Chrome lifecycle owner.",
+    "branch_delete_ready_now": false,
+    "worktree_remove_ready_now": false
+  },
+  "runtime_state": {
+    "chrome_profile": {
+      "approx_size_mib": 429.2,
+      "disposition": "MIGRATE_TO_PRODUCTION_OWNED_RUNTIME_PATH_BEFORE_WORKTREE_REMOVAL",
+      "git_ignored": true,
+      "path": ".worktrees/middleware-m1-currentness-gen120-20260926/data/chatgpt-web-chrome-profile",
+      "sensitive_state_present": [
+        "Default/Cookies",
+        "Default/Login Data",
+        "Default/Login Data For Account",
+        "Default/Web Data",
+        "Default/Local Storage",
+        "Default/Session Storage",
+        "Default/Sessions"
+      ],
+      "sensitivity": "AUTHENTICATED_BROWSER_PROFILE"
+    },
+    "middleware_artifacts": {
+      "class_bytes": {
+        "locks": 0,
+        "logs": 10659444,
+        "structured_json": 352643
+      },
+      "class_file_counts": {
+        "locks": 20,
+        "logs": 2,
+        "structured_json": 50
+      },
+      "git_ignored": true,
+      "path": ".worktrees/middleware-m1-currentness-gen120-20260926/data/chatgpt-lfl/runtime-smoke-001",
+      "reason": "runner persists ingress-event/result payloads that include human text/final answers plus durable recovery metadata; never commit raw archive to Git.",
+      "sensitivity": "PRIVATE_RUNTIME_EVIDENCE",
+      "size_bytes": 11012087
+    }
+  },
+  "schema": "lfl.mainline_reconciliation.phase11_middleware_retirement_audit.v1",
+  "supersession": {
+    "canonical_main_has_chatgpt_web_model_provider": true,
+    "canonical_main_has_human_ingress_supervisor_stack": false,
+    "canonical_main_has_src_envelope_mw": false,
+    "canonical_main_has_surface_lease_and_session_binding": true,
+    "conclusion": "PARTIAL_SUPERSESSION_ONLY: model-provider transport evolved in main, but the branch-specific direct-human ingress/supervisor subsystem remains unique."
+  }
+}
