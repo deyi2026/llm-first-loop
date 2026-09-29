@@ -474,6 +474,10 @@ class EvolutionReviewRequest(BaseModel):
         default=False,
         description="涉边界项（requires_human）单条批准额外确认标志（Approval UX v2 批 1，验证清单 #9）",
     )
+    exec_override: bool = Field(
+        default=False,
+        description="人工显式授权自动执行（方案A EVO-20260929）: 越过边界拦截，仍过权限级别；等价并强于 extra_confirm",
+    )
 
 
 class HumanFileObserveRequest(BaseModel):

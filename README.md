@@ -75,14 +75,14 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 
 单条性质提交保证 bisect 可判定（R9-P1-04）；机检为独立脚本形态（不装 git hook——`.git` 与外部会话共享，hook 会波及外部提交）。
 
-**提交队列（B3-PREP-06，串行化底座）**：多代理/多会话并行提交的唯一串行化点——机检/门禁/提交全段持锁（`<git-common-dir>/r9-commit.lock`，主区与各 worktree 共享一把、跨 checkout 互斥；flock 二进制缺失时回落 python fcntl 持锁，父亡孤儿自释）。排队语义：取锁后若 HEAD 已被前移，先在新队头基线重跑机检/门禁；暂存触碰面与前驱提交重叠即中止（stale 暂存基线防线）。锁超时 `R9_COMMIT_LOCK_TIMEOUT`（默认 900s）；基建快死（门禁未达测试步）中止不放行（空集豁免漏洞防护）。
+**提交队列（B3-PREP-06，串行化底座）**：多代理/多会话并行提交的唯一串行化点——机检/门禁/提交全段持锁（`<git-common-dir>/r9-commit.lock`，主检出与各 worktree 共享一把、跨 checkout 互斥；flock 二进制缺失时回落 python fcntl 持锁，父亡孤儿自释）。排队语义：取锁后若 HEAD 已被前移，先在新队头基线重跑机检/门禁；暂存触碰面与前驱提交重叠即中止（stale 暂存基线防线）。锁超时 `R9_COMMIT_LOCK_TIMEOUT`（默认 900s）；基建快死（门禁未达测试步）中止不放行（空集豁免漏洞防护）。
 
-## 共享主区安全纪律（2026-09-01 事件固化，立即生效）
+## 唯一工作区安全纪律（2026-09-01 事件固化；2026-09-29 主区退役修订）
 
-主区 = 外部会话与镜像共用的共享工作面。2026-09-01 drill 误提交经 `reset --hard` 清除时抹除外部未提交演进（M60，reflog 不可考）——以下条款自此事件固化：
+本工作区 = 唯一生产区（原"主区/镜像"双区拓扑已于 2026-09-29 退役，见 `docs/WORKSPACE-CHANGE-PROTOCOL.md`）。2026-09-01 drill 误提交经 `reset --hard` 清除时抹除外部未提交演进（M60，reflog 不可考）——以下条款自此事件固化：
 
-1. **主区绝对禁用 `reset --hard` / `checkout -- <file>` / `clean -f`** 等破坏工作树的命令；误提交清除一律 `reset --soft <bad>^`（只退引用不动工作树）+ 定向 `restore --staged`。
-2. **drill/自验/演练/排队测试提交一律在 worktree 施工**，共享主区命令白名单化：`git add / status / log / diff / show`、`bash scripts/r9_commit.sh`、只读诊断（pytest/lsof/ps）；白名单外任何变更主区工作树或引用的命令，执行前必须停机向用户确认。
+1. **本区绝对禁用 `reset --hard` / `checkout -- <file>` / `clean -f`** 等破坏工作树的命令；误提交清除一律 `reset --soft <bad>^`（只退引用不动工作树）+ 定向 `restore --staged`。
+2. **drill/自验/演练/排队测试提交一律在 worktree 施工**，本区命令白名单化：`git add / status / log / diff / show`、`bash scripts/r9_commit.sh`、只读诊断（pytest/lsof/ps）；白名单外任何变更本区工作树或引用的命令，执行前必须停机向用户确认。
 3. 运行中服务进程 = 外部演进的内存残面（最接近蒸发点），冻结不动、不重启不杀，直至恢复裁决完成。
 4. 事件全记录：`b3-execution-log.md` 事件节（M60 消失 + 两处 drill 误提交 + 复位回执）。
 

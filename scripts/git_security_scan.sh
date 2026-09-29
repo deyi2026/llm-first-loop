@@ -50,7 +50,7 @@ _ALLOWLIST=(
   'tests/codearts/test_audit.py'  # 脱敏测试：夹具用 AWS 文档示例密钥验证 AK 不落日志
   'tests/unit/test_cache_block_reclassification.py'  # D-G4/G5 脱敏测试：虚构 sk- 样例验证 privacy BLOCK 保留          # 脱敏测试：夹具用 AWS 文档示例密钥验证 AK 不落日志
   'docs/local/'                          # 本地过程文档（不入库，此处兜底）
-  'docs/MIRROR-workspace-protocol.md' # 镜像协议文档（合法引用工作区路径，非泄露）
+  'docs/WORKSPACE-CHANGE-PROTOCOL.md' 'docs/RESTART-GUIDE.md' # 工作区协议/重启指南（合法引用工作区路径，非泄露；2026-09-29 更名）
     "tests/unit/test_cache_guard.py"  # 缓存守卫测试样例（sk- 模式用例）
   'tests/unit/test_r824_final_gates.py'  # R9 六门哨兵：虚构 sk- 样例验证 privacy BLOCK 保留（同 cache_block_reclassification 先例，头部自文档化）
   'skills/mirror-restart/SKILL.md'  # 镜像重启标准操作技能（命令需绝对路径，同镜像协议文档先例，非泄露）

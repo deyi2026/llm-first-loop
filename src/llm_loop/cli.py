@@ -501,10 +501,13 @@ def _dispatch_command(argv: list[str]) -> int:
         if cmd == "evolve-list":
             return _cmd_evolve_list(engine, argv[1] if len(argv) > 1 else None)
         if cmd == "evolve-review":
-            if len(argv) < 3:
-                print("用法: llm_loop evolve-review <suggestion_id> <accepted|rejected>")
+            extra = [a for a in argv[3:] if a]
+            authorize = "--authorize-exec" in extra
+            unknown = [a for a in extra if a != "--authorize-exec"]
+            if len(argv) < 3 or unknown:
+                print("用法: llm_loop evolve-review <suggestion_id> <accepted|rejected> [--authorize-exec]")
                 return 2
-            return _cmd_evolve_review(engine, argv[1], argv[2])
+            return _cmd_evolve_review(engine, argv[1], argv[2], authorize)
         if cmd == "evolve-complete":
             if len(argv) < 3:
                 print('用法: llm_loop evolve-complete <suggestion_id> "<执行结果说明>"')
@@ -547,21 +550,27 @@ def _cmd_evolve_list(engine, status: str | None) -> int:
     return 0
 
 
-def _cmd_evolve_review(engine, suggestion_id: str, decision: str) -> int:
-    """人工审阅演进建议（accepted/rejected，EVOLVE-05 闭环；T60: accepted 自动触发执行）."""
+def _cmd_evolve_review(engine, suggestion_id: str, decision: str, authorize_exec: bool = False) -> int:
+    """人工审阅演进建议（accepted/rejected，EVOLVE-05 闭环；T60: accepted 自动触发执行）.
+
+    --authorize-exec（方案A EVO-20260929）: accepted 时显式授权自动执行（越过
+    requires_human/_touches_boundary 边界拦截，仍过权限级别门禁）；对已 accepted
+    条目可补授权（幂等重审 accepted + 落 human_exec_override 审计字段）。
+    """
     store = getattr(engine.correction_ctx, "evolution_store", None)
     if store is None:
         print("[演进建议不可用] EVOLVE_ENABLED=0")
         return 1
     try:
-        target = store.review(suggestion_id, decision)
+        target = store.review(suggestion_id, decision, exec_override=authorize_exec)
     except ValueError as exc:
         print(f"[参数错误] {exc}")
         return 2
     if target is None:
         print(f"[建议不存在] 未找到 {suggestion_id}")
         return 1
-    print(f"[审阅完成] {suggestion_id} → {target['status']}: {target.get('content', '')[:80]}")
+    suffix = "（已显式授权自动执行）" if (authorize_exec and decision == "accepted") else ""
+    print(f"[审阅完成] {suggestion_id} → {target['status']}{suffix}: {target.get('content', '')[:80]}")
     # T60: accepted 且权限允许 → 自动触发执行（EXEC-02）
     if decision == "accepted":
         _maybe_auto_execute(engine, store, target)

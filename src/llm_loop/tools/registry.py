@@ -94,7 +94,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "refresh_config": "重载 provider/model registry 等运行配置；共享默认 client 的启动 contract 仍需重启才变化。",
     "save_experience": "保存显式分型的 experience/lesson；正向 experience 必须声明 verified+evidence，成功返回 stable experience:<id>。",
     "refine_experience": "归档/失效/恢复 experience；stable experience:<id> 可直接作为标识。",
-    "submit_evolution": "提交结构化架构演进建议供人工审阅；硬安全/授权/协议边界只能建议，不可自行放宽。",
+    "submit_evolution": "提交结构化架构演进建议供人工审阅；硬安全/授权/协议边界只能建议，不可自行放宽；人工审批可显式 exec_override 授权后自动执行（方案A EVO-20260929）。",
     "evolution_complete": "登记 executing 演进建议已执行并验证；尚未完成时不得登记。",
     "generate_evolution_template": "根据现有改进证据生成结构化演进建议模板。",
     "create_goal": "创建可跨会话持续追踪的 durable Goal；适合长任务。",
