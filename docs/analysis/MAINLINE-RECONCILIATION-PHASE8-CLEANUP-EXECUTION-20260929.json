@@ -1,0 +1,218 @@
+{
+  "active_middleware": {
+    "branch": "fix/middleware-m1-currentness-gen120-20260926",
+    "live_process_type_counts": {
+      "chrome_profile_process": 12,
+      "middleware_human_loop": 1,
+      "middleware_supervisor": 1
+    },
+    "worktree": ".worktrees/middleware-m1-currentness-gen120-20260926"
+  },
+  "blocked_dirty_worktrees": [
+    {
+      "branch": "fix/chatgpt-web-exact-ingress-20260927",
+      "clean": false,
+      "head": "f264c2033fee07fb66021cd10265f8e36bbd8fba",
+      "path": ".worktrees/chatgpt-web-exact-ingress-20260927",
+      "status_entries": 2
+    },
+    {
+      "branch": "eval/web-gpt-512k-canary-20260927",
+      "clean": false,
+      "head": "961b9135f9aacc186440b63c159c6191f9edc352",
+      "path": ".worktrees/web-gpt-512k-canary-20260927",
+      "status_entries": 3
+    }
+  ],
+  "canonical_main_before_evidence_commit": "b6fb59451c59b1095814f94cc7a86e1f60af9bd5",
+  "canonical_main_clean_before_evidence_commit": true,
+  "date": "2026-09-29",
+  "execution": {
+    "batch_A": {
+      "branches_deleted": [
+        "deploy/20260916-anchor-integration",
+        "experiment/mem-citations-20260922",
+        "feat/worktree-lifecycle-evo-20260920",
+        "fix/chatgpt-surface-background-20260927",
+        "reconcile/mainline-gen161-20260929",
+        "tmp-integration-check-20260924"
+      ],
+      "worktrees_removed": 0
+    },
+    "batch_B": {
+      "branches_deleted": [
+        "deploy/gen148-ingress-clean-20260927",
+        "deploy/learning-evo20260928-e312b78f",
+        "feat/chatgpt-binding-notify-outlet-20260928",
+        "feat/chatgpt-binding-telemetry-alerts-20260928",
+        "feat/chatgpt-session-binding-20260928",
+        "feat/chatgpt-session-observability-gc-20260928",
+        "feat/deepseek-web-provider-20260927",
+        "feat/learning-method-semantic-20260926",
+        "feat/service-scoped-semantic-config-20260926",
+        "feat/web-chatgpt-model-switch-20260927",
+        "feat/web-gpt-ingress-budget-20260927",
+        "feat/web-gpt-reasoning-context-20260927",
+        "feat/web-progress-card-20260927",
+        "fix/chatgpt-surface-project-drift-20260927",
+        "fix/code-nav-hardening-20260928",
+        "fix/convergence-fingerprint-canonical-20260926",
+        "fix/deepseek-dsml-envelope-20260927",
+        "fix/deepseek-tool-arguments-20260927",
+        "fix/experience-semantic-qualification-20260926",
+        "fix/gen151-learning-on-gen149-20260928",
+        "fix/learning-cross-workspace-retry-20260926",
+        "fix/lfrt-status-llama-observer-20260928",
+        "fix/local-time-direct-tools-20260926",
+        "fix/recent-dialogue-continuity-20260927",
+        "fix/runtime-knowledge-path-bootstrap-20260926",
+        "fix/schema-token-accounting-p0a-20260922",
+        "fix/semantic-stabilization-deploy-20260926",
+        "fix/service-control-time-order-20260927",
+        "fix/web-auth-mobile-cookie-20260928",
+        "fix/web-docs-promotion-20260926",
+        "fix/web-gpt-context-parity-20260927",
+        "fix/web-gpt-ingress-guard-deploy-20260927",
+        "fix/web-gpt-reset-retry-20260927",
+        "fix/web-gpt-ui-reasoning-effort-20260927",
+        "fix/web-longrun-continuity-20260927",
+        "fix/web-mobile-copy-hardening-20260928",
+        "fix/web-product-audit-20260924"
+      ],
+      "worktrees_removed": 37
+    },
+    "batch_C": {
+      "branches_retained": [
+        "benchmark/reliable-v0-20260921",
+        "docs/middleware-envelope-protocol-v0.1-20260925",
+        "eval/p2a-older-history-eval-20260928",
+        "eval/p2a-receipt-ab-20260928",
+        "eval/stagec-tool-surface-c1-20260928",
+        "exp/execution-efficiency-fcr-p2-gen120-20260926",
+        "exp/qwen-reliability-s2b-20260927",
+        "feat/execution-ledger-query-s2-gen120-20260927",
+        "feat/execution-ledger-shadow-gen120-20260926",
+        "plan/skill-execution-ledger-gen120-20260926"
+      ],
+      "unique_patch_counts_after_cleanup": {
+        "benchmark/reliable-v0-20260921": 1,
+        "docs/middleware-envelope-protocol-v0.1-20260925": 6,
+        "eval/p2a-older-history-eval-20260928": 4,
+        "eval/p2a-receipt-ab-20260928": 8,
+        "eval/stagec-tool-surface-c1-20260928": 3,
+        "exp/execution-efficiency-fcr-p2-gen120-20260926": 3,
+        "exp/qwen-reliability-s2b-20260927": 6,
+        "feat/execution-ledger-query-s2-gen120-20260927": 4,
+        "feat/execution-ledger-shadow-gen120-20260926": 2,
+        "plan/skill-execution-ledger-gen120-20260926": 1
+      },
+      "worktrees_removed": 10
+    },
+    "patch_equivalent_non_ancestor_branches_deleted_after_git_cherry_revalidation": [
+      "deploy/20260916-anchor-integration",
+      "experiment/mem-citations-20260922",
+      "deploy/learning-evo20260928-e312b78f",
+      "feat/web-chatgpt-model-switch-20260927"
+    ],
+    "remote_branch_deletion_performed": false,
+    "worktree_remove_force_used": false
+  },
+  "final_worktrees": [
+    {
+      "branch": "wip/main-pre-reconcile-20260929",
+      "clean": false,
+      "head": "8454c8a9813947173bc5696dcb5d5309d21cdf3b",
+      "path": ".",
+      "status_entries": 161
+    },
+    {
+      "branch": "fix/chatgpt-web-exact-ingress-20260927",
+      "clean": false,
+      "head": "f264c2033fee07fb66021cd10265f8e36bbd8fba",
+      "path": ".worktrees/chatgpt-web-exact-ingress-20260927",
+      "status_entries": 2
+    },
+    {
+      "branch": "main",
+      "clean": true,
+      "head": "b6fb59451c59b1095814f94cc7a86e1f60af9bd5",
+      "path": ".worktrees/mainline-reconcile-gen161-20260929",
+      "status_entries": 0
+    },
+    {
+      "branch": "fix/middleware-m1-currentness-gen120-20260926",
+      "clean": true,
+      "head": "101beba03604479b80585caad6707fe65935f541",
+      "path": ".worktrees/middleware-m1-currentness-gen120-20260926",
+      "status_entries": 0
+    },
+    {
+      "branch": "fix/mobile-copy-user-activation-20260929",
+      "clean": true,
+      "head": "67ce123c5fa8430ab833610857fbf276d55e589d",
+      "path": ".worktrees/mobile-copy-user-activation-20260929",
+      "status_entries": 0
+    },
+    {
+      "branch": "eval/web-gpt-512k-canary-20260927",
+      "clean": false,
+      "head": "961b9135f9aacc186440b63c159c6191f9edc352",
+      "path": ".worktrees/web-gpt-512k-canary-20260927",
+      "status_entries": 3
+    }
+  ],
+  "phase7_evidence": "docs/analysis/MAINLINE-RECONCILIATION-PHASE7-CLEANUP-AUDIT-20260929.json",
+  "preserved_root_wip": {
+    "branch": "wip/main-pre-reconcile-20260929",
+    "frozen_hash_drift": 0,
+    "head": "8454c8a9813947173bc5696dcb5d5309d21cdf3b",
+    "index_tree": "1d6bf5bd04e8eaf3857f8e4ae5ab85e61ef59616",
+    "tracked_modifications": 31
+  },
+  "production": {
+    "code_root": ".worktrees/mobile-copy-user-activation-20260929",
+    "generation": 161,
+    "head": "67ce123c5fa8430ab833610857fbf276d55e589d",
+    "manifest_heads": {
+      "feishu": "67ce123c5fa8430ab833610857fbf276d55e589d",
+      "learning": "67ce123c5fa8430ab833610857fbf276d55e589d",
+      "web": "67ce123c5fa8430ab833610857fbf276d55e589d"
+    },
+    "manifest_identity_ok": {
+      "feishu": true,
+      "learning": true,
+      "web": true
+    },
+    "service_control_verify": {
+      "generation": 161,
+      "ok": true
+    }
+  },
+  "result": "PASS",
+  "schema": "lfl.mainline_reconciliation.phase8_cleanup_execution.v1",
+  "summary": {
+    "batch_A_branches_deleted": 6,
+    "batch_B_worktrees_removed_and_branches_deleted": 37,
+    "batch_C_worktrees_removed_branches_retained": 10,
+    "local_branches_after": 106,
+    "local_branches_before": 149,
+    "local_branches_removed": 43,
+    "worktrees_after": 6,
+    "worktrees_before": 53,
+    "worktrees_removed": 47
+  },
+  "verification": {
+    "A_refs_remaining": [],
+    "B_refs_remaining": [],
+    "C_refs_remaining_count": 10,
+    "C_worktrees_remaining_count": 0,
+    "final_worktree_branches": [
+      "eval/web-gpt-512k-canary-20260927",
+      "fix/chatgpt-web-exact-ingress-20260927",
+      "fix/middleware-m1-currentness-gen120-20260926",
+      "fix/mobile-copy-user-activation-20260929",
+      "main",
+      "wip/main-pre-reconcile-20260929"
+    ]
+  }
+}
