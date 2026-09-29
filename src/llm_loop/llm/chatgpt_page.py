@@ -52,6 +52,20 @@ def canonical_text(text: str) -> str:
     return " ".join((text or "").split())
 
 
+def _is_navigation_transient(exc: Exception) -> bool:
+    """True only for Playwright's known execution-context teardown during navigation."""
+    detail = str(exc).lower()
+    return "execution context was destroyed" in detail and "navigation" in detail
+
+
+def _is_conversation_identity_settling(exc: Exception) -> bool:
+    """Transient local-chat route: rendered turns can precede the durable conversation id."""
+    return (
+        isinstance(exc, PageContractError)
+        and str(exc) == "message turn observed before conversation identity appeared"
+    )
+
+
 def message_identity(
     conversation_id: str,
     role: str,
@@ -525,10 +539,15 @@ class ChatGPTPageAdapter:
         deadline = time.monotonic() + confirmation_budget_s
         while time.monotonic() < deadline:
             self._page.wait_for_timeout(poll_ms)
-            binding = self.observe_identity()
-            if not binding.conversation_id:
-                continue
-            messages = self.observe_messages()
+            try:
+                binding = self.observe_identity()
+                if not binding.conversation_id:
+                    continue
+                messages = self.observe_messages()
+            except Exception as exc:
+                if _is_navigation_transient(exc):
+                    continue
+                raise
             users = [message for message in messages if message.role == "user"]
             if not users:
                 continue
@@ -594,15 +613,20 @@ class ChatGPTPageAdapter:
         stable = 0
         while time.monotonic() < deadline:
             self._page.wait_for_timeout(poll_ms)
-            state = self.observe_generation()
-            if state.streaming:
-                stable = 0
-                continue
-            if not state.latest_assistant_text:
-                stable = 0
-                continue
-
-            messages = self.observe_messages()
+            try:
+                state = self.observe_generation()
+                if state.streaming:
+                    stable = 0
+                    continue
+                if not state.latest_assistant_text:
+                    stable = 0
+                    continue
+                messages = self.observe_messages()
+            except Exception as exc:
+                if _is_navigation_transient(exc) or _is_conversation_identity_settling(exc):
+                    stable = 0
+                    continue
+                raise
             latest_message = messages[-1] if messages else None
             if latest_message is None or latest_message.role != "assistant":
                 stable = 0
