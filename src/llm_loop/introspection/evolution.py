@@ -93,6 +93,13 @@ class EvolutionSuggestion:
     rejected_reason: str = ""  # 拒绝理由（持久化留痕）
     reviewed_at: str = ""      # 审批时间戳（approve/reject 时落）
     reason_history: list[dict] = field(default_factory=list)  # 理由补录只追加: [{reason, at}]
+    # ── 方案A（EVO-20260929 首席裁决）: 人工审批显式授权自动执行 ──
+    # requires_human/_touches_boundary 命中默认"需人工执行"；人工 accepted 时可显式
+    # exec_override=True 授权本条自动执行（唯一越过边界拦截的信号，仍须过权限级别/
+    # 白名单门禁）。仅人工 review 通道可设置；transition()（AI 可达通道）对该字段
+    # 显式抛错——AI 不可自授（EXEC-03a）。
+    human_exec_override: bool = False
+    exec_override_at: str = ""  # 授权时间戳（审计留痕）
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -214,16 +221,33 @@ class EvolutionStore:
             ("rejected_reason", ""),
             ("reviewed_at", ""),
             ("reason_history", []),
+            # 方案A（EVO-20260929）: 人工显式授权执行，旧记录缺省 False（不授权）
+            ("human_exec_override", False),
+            ("exec_override_at", ""),
         ):
             if key not in entry:
                 entry[key] = default
         return entry
 
-    def review(self, suggestion_id: str, decision: str) -> dict | None:
-        """人工审阅（EVOLVE-05）: accepted/rejected（审阅闭环）."""
+    def review(
+        self, suggestion_id: str, decision: str, *, exec_override: bool = False
+    ) -> dict | None:
+        """人工审阅（EVOLVE-05）: accepted/rejected（审阅闭环）.
+
+        exec_override=True（仅 accepted 合法，方案A EVO-20260929）: 人工在审批时刻
+        显式授权本条自动执行——越过 requires_human/_touches_boundary 边界拦截（仍须
+        过权限级别/白名单门禁），落 human_exec_override + exec_override_at 审计字段。
+        本方法为唯一设置通道（无 owner 断言 = 人工 CLI/飞书/Web 既有权限体系）。
+        """
         if decision not in {"accepted", "rejected"}:
             raise ValueError(f"decision 必须为 accepted/rejected，收到 {decision}")
-        return self._transition(suggestion_id, status=decision)
+        if exec_override and decision != "accepted":
+            raise ValueError("exec_override 仅用于 accepted（拒绝无执行可言）")
+        fields: dict[str, object] = {}
+        if exec_override:
+            fields["human_exec_override"] = True
+            fields["exec_override_at"] = system_local_now().isoformat()
+        return self._transition(suggestion_id, status=decision, **fields)
 
     def transition(
         self,
@@ -239,7 +263,14 @@ class EvolutionStore:
         owner_session_id 非 None 时，只要条目记录了 session_id，就必须与 owner
         精确匹配；空归属存量条目也不允许模型侧自证归属。None 表示人工通道
         CLI/飞书/Web 既有权限体系，显式放行。
+
+        方案A（EVO-20260929）: human_exec_override/exec_override_at 仅可经人工
+        review(exec_override=True) 设置——本通道（AI 可达）显式拒绝，AI 不可自授。
         """
+        if "human_exec_override" in fields or "exec_override_at" in fields:
+            raise ValueError(
+                "human_exec_override/exec_override_at 仅可经人工 review 通道设置（AI 不可自授）"
+            )
         return self._transition(
             suggestion_id, status=status, owner_session_id=owner_session_id, **fields
         )

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# restart_mirror.sh — 镜像工作区常驻服务重启脚本（2026-08-22 实践整理）
+# restart_mirror.sh — 唯一工作区常驻服务重启脚本（2026-08-22 实践整理；2026-09-29 主区退役，本区即唯一区）
 #
-# 管理镜像的常驻服务:
+# 拓扑现状（2026-09-29，用户指示）: 原主区（同级 llm-first-loop 目录，:8902）已物理删除，
+#   变更门禁见 docs/WORKSPACE-CHANGE-PROTOCOL.md。下方各条“旧主区”注意事项为历史事故实证记录，
+#   其防御机制（精确端口匹配/环境清理/PYTHONPATH 归零）保留为纵深防御，勿删。
+#
+# 管理本工作区常驻服务:
 #   web    FastAPI 服务（python -m llm_loop.web，端口 8903，公开就绪端点 GET /auth/status）
 #   feishu 飞书桥（python -m llm_loop.feishu，WS 长连接 msg-frontier.feishu.cn）
 #
@@ -954,7 +958,7 @@ _knowledge_binding_preflight() {
     _log "⚠️ [OVERRIDE] dual-root store 绑定已由模型显式声明推进（precheck:knowledge_binding），告警放行并留痕"
     return 0
   fi
-  _log "✗ dual-root store 绑定缺失/不可写；修复见 MIRROR-RESTART-GUIDE.md §13：主根与 worktree 两份 .env 显式声明 EXPERIENCES_DIR/METHODS_DIR 指向 canonical store，或 override(precheck:knowledge_binding)"
+  _log "✗ dual-root store 绑定缺失/不可写；修复见 RESTART-GUIDE.md §13：主根与 worktree 两份 .env 显式声明 EXPERIENCES_DIR/METHODS_DIR 指向 canonical store，或 override(precheck:knowledge_binding)"
   return 1
 }
 

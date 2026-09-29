@@ -268,3 +268,51 @@ def test_search_records_kind_evolution_exec(tmp_path):
         raise AssertionError("应抛出 ValueError")
     except ValueError:
         pass
+
+
+# ── 方案A（EVO-20260929）: 人工显式 exec_override 授权 → 越过边界拦截（仍过级别门禁）──
+
+def test_can_auto_exec_override_boundary_still_level_gated():
+    """涉边界 + human_exec_override → 边界放行但级别门禁不放水（level 0 仍仅建议）."""
+    sug = _sug("调整安全策略", "safety", requires_human=True)
+    sug.human_exec_override = True
+    ok, reason = can_auto_exec(sug, level=0)
+    assert ok is False
+    assert reason == "仅建议级"  # 授权不放宽权限级别（EXEC-01）
+    ok2, reason2 = can_auto_exec(sug, level=2)
+    assert ok2 is True
+    assert reason2 == ""
+
+
+def test_plan_boundary_override_recorded():
+    """AutoExecPlan: 授权越过边界 → allowed=True + boundary=True + override 如实入审计."""
+    executor = EvolutionExecutor(exec_level=2)
+    sug = _sug("调整安全策略", "safety", requires_human=True)
+    sug.human_exec_override = True
+    plan = executor.plan(sug)
+    assert plan.allowed is True
+    assert plan.boundary is True  # 涉边界事实如实记录（DFX-SEC-05 审计不因授权抹除）
+    assert plan.human_exec_override is True
+
+
+def test_maybe_auto_execute_override_sets_executing(tmp_path):
+    """全链路: submit(涉边界) → review(accepted, exec_override=True) → executing.
+
+    对照 test_maybe_auto_execute_boundary_returns_none: 同样涉边界，无授权停在
+    accepted；有授权推进 executing——两条路径唯一差异是人工显式信号。
+    """
+    import json as _json
+    store = EvolutionStore(tmp_path / "audit")
+    sug = store.submit(content="调整安全策略", impact_scope="safety")
+    target = store.review(sug.id, "accepted", exec_override=True)
+    assert target["human_exec_override"] is True
+    executor = EvolutionExecutor(exec_level=2, store=store, audit_dir=tmp_path / "audit")
+    outcome = executor.maybe_auto_execute(EvolutionSuggestion(**target))
+    assert outcome is not None
+    assert outcome.status == "executing"
+    assert outcome.executor == "ai"
+    record = _json.loads(
+        (tmp_path / "audit" / "evolution_exec_log.jsonl").read_text(encoding="utf-8").strip()
+    )
+    assert record["boundary"]["touches_boundary"] is True
+    assert record["boundary"]["human_exec_override"] is True

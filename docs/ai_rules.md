@@ -404,6 +404,21 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 ---
 
+## 规则二十六：时间标注统一宿主本地时区（RULE-AI-26，用户指示 2026-09-29）
+
+**适用范围**：AI 生成任何面向人或记录的时间标注——报告/文档/经验卡/方法卡/Goal checkpoint/飞书消息/evolution 提案中的时间戳与时间推算；跨环境续跑任务的时间锚定。
+
+**核心规则**：**时间权威锚点是宿主系统本地时钟。** 程序层唯一权威为 `system_local_now()`（timekeeping）；模型层的现成锚点为每条消息头的 `[message_time system_local=…]`。AI 书写时间时引用该锚或以同 offset 表述，不推断 UTC、不用训练先验猜时区、不跨环境迁移旧时区。
+
+1. **单一锚点**：需要"当前时间"时，以 `system_local_now()` 回执或最近 `[message_time system_local=]` 为准；两者缺失时不虚构时间，标注"时间未核验"。
+2. **显式 offset**：模型生成的时间戳一律带显式时区 offset（如 `2026-09-29T23:16+08:00`）；宿主非 UTC 时禁止裸本地时间（无 offset）与 "UTC/Z" 标注。
+3. **不迁移旧时区**：跨环境续跑以当前宿主的 system_local 为准；旧环境记忆中的时间仅作历史事实引用，不作当前时间锚。
+4. **分工边界**：源码序列化归程序守卫（`datetime.now(UTC)` 被 test_timekeeping_local 源码扫描禁止；新代码用 `system_local_now()`）；本规则只约束模型文字面。程序与模型各管一面，互不代偿。
+
+**程序角色**：提供 message_time 消息头与 `system_local_now()` 回执作锚点；不机械校验模型输出文字的时区（无可靠判据），文字面错误由 review/用户反馈收敛。
+
+---
+
 ## 配置扩展（2026-09-03 agency-first 修订）
 
 Universal prompt 不再提供隐藏配置扩展通道。`SYSTEM_PROMPT_EXTRA`、`LFL_SYSTEM_EXTRA_BUNDLE` 与 `build_system_prompt(extra=...)` 均不获得 prompt 写权限。
@@ -418,7 +433,7 @@ Universal prompt 不再提供隐藏配置扩展通道。`SYSTEM_PROMPT_EXTRA`、
 
 **背景**：配置是决策边界（程序不自检、等配置）。每项配置三问——程序能否自判（能则程序自适应，不该有配置）？是否必须运行时人/AI 决策（是则保留）？是否仍被读取（否则诚实删除）？
 
-**变更门禁（2026-08-20 用户批准，强制）**：涉及 LFL 自身代码/文件（src/、docs/ai_rules.md、prompt.py、.env、scripts/、tests/、webui/）的修改，一律先在镜像工作区（主区同级的 `*-mirror` 目录，端口 8903；路径见 `docs/MIRROR-workspace-protocol.md` §3 变量定义）修改并验证，产出 diff 与验证证据后提交用户审批，批准后才能应用到主区并重启；详见 `docs/MIRROR-workspace-protocol.md`。例外：data/ 运行时状态（记忆/经验/日志/会话）属正常运行不走镜像；用户明确指示立即执行时豁免但事后补验证。
+**变更门禁（2026-08-20 用户批准；2026-09-29 修订：主区已退役，本工作区即唯一生产区）**：涉及 LFL 自身代码/文件（src/、docs/ai_rules.md、prompt.py、.env、scripts/、tests/、webui/）的修改，一律先在本工作区验证（单元测试全量 + 行为验证），产出 diff 与验证证据后提交用户审批，批准后在本工作区提交生效并重启；**不存在"应用到主区"的跨区同步步骤**。详见 `docs/WORKSPACE-CHANGE-PROTOCOL.md`（原镜像工作区协议，2026-09-29 更名改写）。例外：data/ 运行时状态（记忆/经验/日志/会话）属正常运行不走审批；用户明确指示立即执行时豁免但事后补验证。
 
 **约束**（AI 新增配置/修改配置时遵守）：
 1. **新增配置必带生命周期**：临时开关（如 INBOX_WAKEUP、TOOL_GUARD_ENABLED）必须在 .env 注释写 `[验证计划] 何时验证/ [回收条件] 何时恢复或永久化`；验证完成后闭环（恢复/永久化二选一，标注实测依据），不留黑盒开关。

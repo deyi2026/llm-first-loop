@@ -165,6 +165,9 @@ def test_legacy_record_defaults(tmp_path):
     assert legacy_entry["executed_at"] == ""
     assert legacy_entry["verified_at"] == ""
     assert legacy_entry["rolled_back_at"] == ""
+    # 方案A（EVO-20260929）: 授权字段旧记录缺省 = 未授权
+    assert legacy_entry["human_exec_override"] is False
+    assert legacy_entry["exec_override_at"] == ""
 
 
 def test_review_accept_returns_pending_execution(tmp_path):
@@ -227,3 +230,59 @@ def test_old_records_default_scope_global(tmp_path):
         f.write(_json.dumps(old, ensure_ascii=False) + "\n")
     items = store.list()
     assert items[0]["scope"] == "global"
+
+
+# ── 方案A（EVO-20260929 首席裁决）: 人工审批显式 exec_override 授权自动执行 ──
+
+def test_review_exec_override_authorizes_boundary(tmp_path):
+    """人工 accepted + exec_override=True → 落 human_exec_override + exec_override_at 留痕."""
+    store = EvolutionStore(tmp_path / "audit")
+    s = store.submit(content="调整安全策略", impact_scope="safety")
+    assert s.requires_human is True  # 涉边界（EVOLVE-03）
+    target = store.review(s.id, "accepted", exec_override=True)
+    assert target is not None and target["status"] == "accepted"
+    assert target["human_exec_override"] is True
+    assert target["exec_override_at"]  # 时间戳审计留痕
+    # 对照: 普通审批不落授权字段
+    s2 = store.submit(content="调整协议硬约束", impact_scope="protocol")
+    t2 = store.review(s2.id, "accepted")
+    assert t2["human_exec_override"] is False
+
+
+def test_review_exec_override_rejected_invalid(tmp_path):
+    """exec_override 仅用于 accepted——rejected 携带即参数错误."""
+    store = EvolutionStore(tmp_path / "audit")
+    s = store.submit(content="建议 C", impact_scope="x")
+    try:
+        store.review(s.id, "rejected", exec_override=True)
+        raise AssertionError("应抛出 ValueError")
+    except ValueError:
+        pass
+
+
+def test_transition_rejects_override_fields(tmp_path):
+    """AI 可达通道 transition() 显式拒绝授权字段——AI 不可自授（EXEC-03a 防线）."""
+    store = EvolutionStore(tmp_path / "audit")
+    s = store.submit(content="建议 D", impact_scope="x")
+    store.review(s.id, "accepted")
+    try:
+        store.transition(s.id, status="executing", human_exec_override=True)
+        raise AssertionError("应抛出 ValueError")
+    except ValueError as exc:
+        assert "review" in str(exc)
+    try:
+        store.transition(s.id, status="executing", exec_override_at="2026-09-29T00:00:00")
+        raise AssertionError("应抛出 ValueError")
+    except ValueError:
+        pass
+
+
+def test_reaccept_with_override_idempotent(tmp_path):
+    """已 accepted 条目补授权（幂等重审 accepted）——存量卡住项的修复通道."""
+    store = EvolutionStore(tmp_path / "audit")
+    s = store.submit(content="调整安全策略", impact_scope="safety")
+    t1 = store.review(s.id, "accepted")
+    assert t1["human_exec_override"] is False
+    t2 = store.review(s.id, "accepted", exec_override=True)
+    assert t2["status"] == "accepted"  # 幂等: 不破坏状态
+    assert t2["human_exec_override"] is True

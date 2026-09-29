@@ -13,8 +13,10 @@ T57/T69 范围: EvolutionExecutor 执行引擎 + ExecutionOutcome 结果记录 +
 - complete(): AI 执行完成登记（executor=ai，executing→executed + 如实汇报验证/回滚结论）
 - manual_complete(): 人工执行通道（涉边界 accepted 演进人工完成标记 executed）
 
-判定顺序铁律（EXEC-03 最高优先，不因 accepted 放宽）:
-  边界（复用 EvolutionStore._touches_boundary，命中即拒）→ 权限级别（EXEC-01）→ 白名单（EXEC-08，级别 1 时）。
+判定顺序铁律（EXEC-03 最高优先，不因 accepted 隐式放宽）:
+  边界（复用 EvolutionStore._touches_boundary，命中即拒；唯一例外 = 人工审批显式
+  exec_override 授权，方案A EVO-20260929——仅人工 review 通道可设置，transition
+  对该字段抛错，AI 不可自授；授权只越过边界拦截，仍须过权限级别/白名单）→ 权限级别（EXEC-01）→ 白名单（EXEC-08，级别 1 时）。
 执行载体（移交后）: AI 经修正工具（adjust_strategy/retry_tool/refresh_config/恢复工具）自主执行，
 程序不代 AI 调用修正工具——程序只保留状态推进、审计落盘与如实标注（程序最小化，design.md 7.1.1）。
 """
@@ -91,10 +93,14 @@ def can_auto_exec(
     补充 "未配置白名单"））。
     判定顺序: 边界（EXEC-03，最高优先）→ 权限级别（EXEC-01）→ 白名单（EXEC-08，级别 1 时）。
     """
-    # 1. 边界判定（EXEC-03，最高优先）: 独立重查，不因 accepted 放宽（DFX-SEC-05）
-    if suggestion.requires_human or EvolutionStore._touches_boundary(
-        suggestion.impact_scope, suggestion.content
-    ):
+    # 1. 边界判定（EXEC-03，最高优先）: 独立重查，不因 accepted 隐式放宽（DFX-SEC-05）；
+    #    唯一例外 = 人工审批显式授权（human_exec_override，方案A EVO-20260929）——
+    #    仅人工 review 通道可设置（evolution.transition 对该字段抛错，AI 不可自授）。
+    #    授权只越过"边界拦截"，仍须过权限级别/白名单门禁（level 0 仍仅建议）。
+    if (
+        suggestion.requires_human
+        or EvolutionStore._touches_boundary(suggestion.impact_scope, suggestion.content)
+    ) and not getattr(suggestion, "human_exec_override", False):
         return False, "涉边界需人工执行"
     # 2. 权限级别（EXEC-01）
     if level <= 0:
@@ -121,6 +127,7 @@ class AutoExecPlan:
     reason: str  # 拒绝原因: "仅建议级" / "涉边界需人工执行" / "不在执行白名单"
     level: int
     boundary: bool  # 涉边界标记（审计记录，DFX-SEC-05）
+    human_exec_override: bool = False  # 人工显式授权越过边界拦截（方案A，审计记录）
 
 
 @dataclass
@@ -210,6 +217,7 @@ class EvolutionExecutor:
         boundary = {
             "touches_boundary": plan.boundary,
             "reason": plan.reason,
+            "human_exec_override": plan.human_exec_override,  # 方案A: 授权执行如实入审计
         }
         if not plan.allowed:
             self._audit_exec(
@@ -218,7 +226,7 @@ class EvolutionExecutor:
                     executor="ai",
                     actions=list(suggestion.actions),
                     status="skipped",  # 政策跳过（非执行失败）: 终态如实区分（EVO-20260918-a6088cb7）
-                    note=f"未自动执行: {plan.reason}（保持 accepted，等待人工执行）",
+                    note=f"未自动执行: {plan.reason}（保持 accepted；人工审批可 --authorize-exec 显式授权执行）",
                     ts_start=_now(),
                     ts_end=_now(),
                 ),
@@ -257,6 +265,7 @@ class EvolutionExecutor:
             reason=reason,
             level=self._level,
             boundary=boundary,
+            human_exec_override=bool(getattr(suggestion, "human_exec_override", False)),
         )
 
     def complete(

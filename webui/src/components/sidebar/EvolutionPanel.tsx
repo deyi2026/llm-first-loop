@@ -83,6 +83,7 @@ export function EvolutionPanel() {
   const [confirm, setConfirm] = useState<{ id: string; decision: string; requires_human?: boolean } | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [extraConfirmChecked, setExtraConfirmChecked] = useState(false); // 涉边界单条批准额外确认勾选（批 1 #9）
+  const [authorizeExecChecked, setAuthorizeExecChecked] = useState(false); // 方案A: 人工显式授权自动执行（越过边界拦截）
   // EVO-20260923-6fe23c9b: provider prompt 面硬检查勾选（所有批准必勾）
   const [promptSurfaceChecked, setPromptSurfaceChecked] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -179,7 +180,7 @@ export function EvolutionPanel() {
     }
   };
 
-  const review = (id: string, decision: string, reason: string, extraConfirm = false) => {
+  const review = (id: string, decision: string, reason: string, extraConfirm = false, execOverride = false) => {
     setBusy(true);
     setActionMsg("");
     setConfirmMsg("");
@@ -192,6 +193,7 @@ export function EvolutionPanel() {
         reason,
         expected_status: "pending_review", // CAS：仅待审批可操作
         extra_confirm: extraConfirm, // 涉边界项单条批准额外确认（Approval UX v2 批 1）
+        exec_override: execOverride, // 方案A EVO-20260929: 人工显式授权自动执行
       }),
     })
       .then(async (r) => {
@@ -575,6 +577,7 @@ export function EvolutionPanel() {
                     onClick={() => {
                       setRejectReason("");
                       setExtraConfirmChecked(false);
+                      setAuthorizeExecChecked(false);
                   setPromptSurfaceChecked(false);
                       setConfirmMsg("");
                       setConfirm({ id: viewerDetail.id, decision: "accepted", requires_human: viewerDetail.requires_human });
@@ -590,6 +593,7 @@ export function EvolutionPanel() {
                     onClick={() => {
                       setRejectReason("");
                       setExtraConfirmChecked(false);
+                      setAuthorizeExecChecked(false);
                   setPromptSurfaceChecked(false);
                       setConfirmMsg("");
                       setConfirm({ id: viewerDetail.id, decision: "rejected", requires_human: viewerDetail.requires_human });
@@ -636,6 +640,17 @@ export function EvolutionPanel() {
                     我已知悉此建议涉及安全边界，确认单条批准
                   </label>
                 )}
+                {confirm.requires_human && (
+                  <label className="v2-evo-modal-check">
+                    <input
+                      type="checkbox"
+                      data-testid="evo-authorize-exec"
+                      checked={authorizeExecChecked}
+                      onChange={(e) => setAuthorizeExecChecked(e.target.checked)}
+                    />
+                    批准并显式授权 AI 自动执行（方案A：越过边界拦截，仍过权限级别门禁；勾选即视为安全边界确认）
+                  </label>
+                )}
               </div>
             ) : (
               <div className="v2-evo-modal-note">
@@ -658,8 +673,8 @@ export function EvolutionPanel() {
             {confirm.decision === "accepted" && !promptSurfaceChecked ? (
               <div className="v2-evo-action-msg">请先勾选 Provider Prompt 影响核对，再执行批准。</div>
             ) : null}
-            {confirm.decision === "accepted" && confirm.requires_human && !extraConfirmChecked ? (
-              <div className="v2-evo-action-msg">请先勾选安全边界确认，再执行批准。</div>
+            {confirm.decision === "accepted" && confirm.requires_human && !extraConfirmChecked && !authorizeExecChecked ? (
+              <div className="v2-evo-action-msg">请先勾选安全边界确认或显式授权执行，再执行批准。</div>
             ) : null}
             <div className="v2-evo-modal-actions">
               <button
@@ -668,7 +683,7 @@ export function EvolutionPanel() {
                   busy ||
                   (confirm.decision === "rejected" && !rejectReason.trim()) ||
                   (confirm.decision === "accepted" && !promptSurfaceChecked) ||
-                  (confirm.decision === "accepted" && confirm.requires_human && !extraConfirmChecked)
+                  (confirm.decision === "accepted" && confirm.requires_human && !extraConfirmChecked && !authorizeExecChecked)
                 }
                 data-testid="evo-confirm-ok"
                 onClick={() => {
@@ -676,12 +691,14 @@ export function EvolutionPanel() {
                     confirm.id,
                     confirm.decision,
                     confirm.decision === "rejected" ? rejectReason.trim() : "",
-                    confirm.requires_human ? extraConfirmChecked : false
+                    confirm.requires_human ? extraConfirmChecked : false,
+                    confirm.requires_human ? authorizeExecChecked : false
                   ).then((ok) => {
                     if (ok) {
                       setConfirm(null); // UX 修复: 成功才关弹窗；失败保持弹窗可重试（消息面板级显示）
                       setRejectReason("");
                       setExtraConfirmChecked(false);
+                      setAuthorizeExecChecked(false);
                   setPromptSurfaceChecked(false);
                       setConfirmMsg("");
                       if (viewerSummary?.id === confirm.id) closeViewer();
@@ -697,6 +714,7 @@ export function EvolutionPanel() {
                   setConfirm(null);
                   setRejectReason("");
                   setExtraConfirmChecked(false);
+                  setAuthorizeExecChecked(false);
                   setPromptSurfaceChecked(false);
                   setConfirmMsg("");
                 }}

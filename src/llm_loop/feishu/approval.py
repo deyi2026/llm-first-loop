@@ -126,22 +126,28 @@ def list_pending(store: Any, limit: int = 5) -> str:
     return "\n".join(lines)
 
 
-def approve(store: Any, evo_id: str) -> tuple[bool, str, bool]:
-    """批准：review(accepted)。返回 (ok, 回执文本, 本次是否真正审批)."""
+def approve(store: Any, evo_id: str, *, exec_override: bool = False) -> tuple[bool, str, bool]:
+    """批准：review(accepted)。返回 (ok, 回执文本, 本次是否真正审批).
+
+    exec_override=True（方案A EVO-20260929）: 人工显式授权自动执行（越过边界拦截）；
+    对已 accepted 的条目也可补授权（幂等重审 accepted + 落授权字段）。
+    """
     try:
         cur = _find(store, evo_id)
         if cur is None:
             return False, f"⚠️ 未找到 {evo_id}（可回复「审批列表」查看）", False
         if cur.get("status") in ("executed", "failed", "rolled_back"):
             return False, f"ℹ️ {evo_id} 已处于 {cur.get('status')} 状态，无需重复审批。", False
-        if cur.get("status") == "accepted":
+        if cur.get("status") == "accepted" and not exec_override:
             return True, f"ℹ️ {evo_id} 已是 accepted（待执行）状态。", False
-        target = store.review(evo_id, "accepted")
+        target = store.review(evo_id, "accepted", exec_override=exec_override)
         if target is None:
             return False, f"⚠️ 审批失败：未找到 {evo_id}", False
         # Approval UX v2 批 1: 批准落审批时间戳（reviewed_at）；落盘失败不影响审批结果
         with contextlib.suppress(Exception):
             store.transition(evo_id, status="accepted", reviewed_at=_now())
+        if exec_override:
+            return True, f"✅ 已批准 {evo_id} → accepted（人工显式授权自动执行）", True
         return True, f"✅ 已批准 {evo_id} → accepted", True
     except Exception as exc:  # noqa: BLE001
         return False, f"⚠️ 审批异常：{type(exc).__name__}: {exc}", False
