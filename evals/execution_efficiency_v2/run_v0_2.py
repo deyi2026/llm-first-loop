@@ -101,9 +101,10 @@ def _manifest_guard(path: Path) -> dict[str, Any]:
 
 
 def _lfrt_json(settings: Any, *args: str) -> dict[str, Any]:
-    path = str(settings.lfrt_cli or "").strip()
-    if not path:
+    raw = str(settings.lfrt_cli or "").strip()
+    if not raw:
         raise RuntimeError("EEv2.2 requires configured lfrt")
+    path = str(Path(raw).expanduser())
     proc = subprocess.run(
         [path, *args, "--json"],
         text=True,
