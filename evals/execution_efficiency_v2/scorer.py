@@ -142,12 +142,23 @@ def _mechanical_contract_rejection(call: dict[str, Any]) -> bool:
     return any(marker.lower() in result for marker in MECHANICAL_CONTRACT_REJECTION_MARKERS)
 
 
+def _oracle_value(
+    row: dict[str, Any], task: dict[str, Any] | None, key: str
+) -> Any:
+    if isinstance(task, dict) and key in task:
+        return task.get(key)
+    return row.get(key)
+
+
 def _first_action_selection(
     row: dict[str, Any], calls: list[dict[str, Any]], task: dict[str, Any] | None
 ) -> bool | None:
     if not calls:
         return None
-    explicit = (task or {}).get("first_action_acceptable_classes_v2")
+    acceptable_tools = _oracle_value(row, task, "first_action_acceptable_tools_v2")
+    if isinstance(acceptable_tools, (list, tuple, set, frozenset)) and acceptable_tools:
+        return str(calls[0].get("name") or "") in {str(x) for x in acceptable_tools}
+    explicit = _oracle_value(row, task, "first_action_acceptable_classes_v2")
     acceptable = (
         frozenset(str(x) for x in explicit)
         if isinstance(explicit, (list, tuple, set, frozenset)) and explicit
@@ -157,6 +168,20 @@ def _first_action_selection(
         return None
     classes = {str(x) for x in (calls[0].get("classes") or [])}
     return bool(classes & acceptable)
+
+
+def _first_action_oracle_args_match(
+    row: dict[str, Any], calls: list[dict[str, Any]], task: dict[str, Any] | None
+) -> bool | None:
+    required = _oracle_value(row, task, "first_action_required_arguments_v2")
+    if not isinstance(required, dict) or not required:
+        return True
+    if not calls:
+        return None
+    actual = _json_args(calls[0].get("args"))
+    if actual is None:
+        return False
+    return all(actual.get(key) == value for key, value in required.items())
 
 
 def _first_action_dispatchable(calls: list[dict[str, Any]]) -> bool | None:
@@ -206,11 +231,17 @@ def score_row(row: dict[str, Any], task: dict[str, Any] | None = None) -> dict[s
 
     legacy_selection = fcr.get("first_tool_selection_correct")
     selection = _first_action_selection(row, calls, task)
+    oracle_args_match = _first_action_oracle_args_match(row, calls, task)
     dispatchable = _first_action_dispatchable(calls)
     first_call_ready_v2 = (
-        None if selection is None or dispatchable is None else bool(selection and dispatchable)
+        None
+        if selection is None or oracle_args_match is None or dispatchable is None
+        else bool(selection and oracle_args_match and dispatchable)
     )
     wrong_first = None if selection is None else int(selection is False)
+    oracle_arg_mismatch = (
+        None if oracle_args_match is None else int(oracle_args_match is False)
+    )
     schema_calls = [c for c in calls if c.get("name") == "get_tool_schema"]
     rejected = [c for c in calls if c.get("ok") is False]
     invalid_args = [c for c in rejected if _argument_rejection(c)]
@@ -261,17 +292,20 @@ def score_row(row: dict[str, Any], task: dict[str, Any] | None = None) -> dict[s
         "schema": "lfl-execution-efficiency-v2-row/v0.1",
         "row_id": str(row.get("row_id") or ""),
         "task_id": str(row.get("task_id") or ""),
+        "family": str(row.get("family") or ""),
         "arm": str(row.get("arm") or ""),
         "cache_cohort": row.get("cache_cohort"),
         "correctness_pass": external_pass,
         "first_call_ready": first_call_ready_v2,
         "first_tool_selection_correct": selection,
+        "first_action_oracle_args_match": oracle_args_match,
         "first_call_mechanically_dispatchable": dispatchable,
         "legacy_first_call_ready": legacy_first_call_ready,
         "legacy_first_tool_selection_correct": (
             legacy_selection if isinstance(legacy_selection, bool) else None
         ),
         "wrong_tool_first_call_count": wrong_first,
+        "first_action_oracle_arg_mismatch_count": oracle_arg_mismatch,
         "invalid_argument_rejection_count": len(invalid_args),
         "mechanical_contract_rejection_count": len(contract_rejected),
         "runtime_failure_count": len(rejected) - len(contract_rejected),
@@ -334,6 +368,9 @@ def _cell(rows: list[dict[str, Any]], *, arm: str | None = None) -> dict[str, An
         "legacy_fcr_known_rows": len(legacy_fcr),
         "legacy_fcr_ready": sum(legacy_fcr),
         "wrong_tool_first_calls": _sum_known(rows, "wrong_tool_first_call_count"),
+        "first_action_oracle_arg_mismatches": _sum_known(
+            rows, "first_action_oracle_arg_mismatch_count"
+        ),
         "invalid_argument_rejections": _sum_known(rows, "invalid_argument_rejection_count"),
         "mechanical_contract_rejections": _sum_known(
             rows, "mechanical_contract_rejection_count"
@@ -368,8 +405,12 @@ def _cell(rows: list[dict[str, Any]], *, arm: str | None = None) -> dict[str, An
 
 def summarize(scored: list[dict[str, Any]], *, dataset: str = "") -> dict[str, Any]:
     by_arm: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_family_arm: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in scored:
-        by_arm[str(row.get("arm") or "")].append(row)
+        arm = str(row.get("arm") or "")
+        family = str(row.get("family") or "")
+        by_arm[arm].append(row)
+        by_family_arm[(family, arm)].append(row)
     return {
         "schema": "lfl-execution-efficiency-v2-summary/v0.1",
         "dataset": dataset,
@@ -384,15 +425,30 @@ def summarize(scored: list[dict[str, Any]], *, dataset: str = "") -> dict[str, A
         "tool_count_is_not_an_optimization_target": True,
         "overall": _cell(scored),
         "by_arm": [_cell(by_arm[arm], arm=arm) for arm in sorted(by_arm)],
+        "by_family_arm": [
+            {**_cell(by_family_arm[(family, arm)], arm=arm), "family": family}
+            for family, arm in sorted(by_family_arm)
+        ],
     }
 
 
 def _load_tasks() -> dict[str, dict[str, Any]]:
+    tasks: dict[str, dict[str, Any]] = {}
     try:
-        from evals.pilot.tasks import TASKS
+        from evals.pilot import tasks as pilot_tasks_module
     except Exception:
-        return {}
-    return {str(task.get("id") or ""): task for task in TASKS}
+        pilot_tasks = []
+    else:
+        pilot_tasks = pilot_tasks_module.TASKS
+    tasks.update({str(task.get("id") or ""): task for task in pilot_tasks})
+    try:
+        from evals.execution_efficiency_v2 import tasks_v0_1 as eev21_tasks_module
+    except Exception:
+        eev21_tasks = []
+    else:
+        eev21_tasks = eev21_tasks_module.TASKS_V0_1
+    tasks.update({str(task.get("id") or ""): task for task in eev21_tasks})
+    return tasks
 
 
 def score_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:

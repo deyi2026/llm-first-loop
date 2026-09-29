@@ -39,6 +39,68 @@ def test_wrong_first_tool_is_a_conservative_lower_bound():
     assert scored["first_call_ready"] is False
 
 
+def test_exact_tool_oracle_overrides_class_equivalence():
+    row = _row(
+        [
+            {
+                "name": "read_evidence",
+                "classes": ["read"],
+                "args": "{}",
+                "ok": True,
+                "turn": 1,
+            }
+        ]
+    )
+    scored = score_row(row, task={"first_action_acceptable_tools_v2": ["read_file"]})
+    assert scored["first_tool_selection_correct"] is False
+    assert scored["wrong_tool_first_call_count"] == 1
+    assert scored["first_call_ready"] is False
+
+
+def test_first_action_required_arguments_are_separate_from_wrong_tool():
+    row = _row(
+        [
+            {
+                "name": "read_file",
+                "classes": ["read"],
+                "args": '{"path":"x"}',
+                "ok": True,
+                "turn": 1,
+            }
+        ]
+    )
+    scored = score_row(
+        row,
+        task={
+            "first_action_acceptable_tools_v2": ["read_file"],
+            "first_action_required_arguments_v2": {"snapshot": True},
+        },
+    )
+    assert scored["first_tool_selection_correct"] is True
+    assert scored["wrong_tool_first_call_count"] == 0
+    assert scored["first_action_oracle_args_match"] is False
+    assert scored["first_action_oracle_arg_mismatch_count"] == 1
+    assert scored["first_call_ready"] is False
+
+
+def test_row_embedded_oracle_supports_frozen_new_benchmarks():
+    row = _row(
+        [
+            {
+                "name": "get_tool_schema",
+                "classes": ["read"],
+                "args": '{"tool_name":"service_control"}',
+                "ok": True,
+                "turn": 1,
+            }
+        ]
+    )
+    row["first_action_acceptable_tools_v2"] = ["get_tool_schema"]
+    row["first_action_required_arguments_v2"] = {"tool_name": "service_control"}
+    scored = score_row(row)
+    assert scored["first_call_ready"] is True
+
+
 def test_expected_runtime_failure_can_still_be_first_call_ready():
     row = _row(
         [{"name": "execute_command", "classes": ["command"], "args": '{"command":"python3 gen.py"}',
