@@ -508,7 +508,7 @@ def build_engine(
 
     external_client_factories: dict[str, Any] = {}
     if settings.chatgpt_web_enabled:
-        from llm_loop.llm.chatgpt_web import (
+        from llm_loop.llm.chatgpt_web import (  # r9-import-exempt: plugin
             CHATGPT_WEB_MODEL_REF,
             build_chatgpt_web_model_client,
         )
@@ -523,7 +523,7 @@ def build_engine(
                 lambda: build_chatgpt_web_model_client(settings)
             )
     if settings.deepseek_web_enabled:
-        from llm_loop.llm.deepseek_web import (
+        from llm_loop.llm.deepseek_web import (  # r9-import-exempt: plugin
             DEEPSEEK_WEB_MODEL_REF,
             build_deepseek_web_model_client,
         )

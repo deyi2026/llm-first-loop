@@ -12,7 +12,7 @@ import json
 import logging
 from typing import Any
 
-from llm_loop.llm.chatgpt_web import (
+from llm_loop.llm.chatgpt_protocol import (
     CHATGPT_WEB_PROVIDER_ID,
     MODEL_PROTOCOL,
     ChatGPTModelProtocolError,

@@ -14,15 +14,18 @@ from llm_loop.core.message import ToolCall
 from llm_loop.core.run_context import current_reasoning_effort
 from llm_loop.llm.client import LLMResponse
 
-MODEL_PROTOCOL = "lfl-model/0.1"
-DEEPSEEK_WEB_PROVIDER_ID = "deepseek-web"
+# Leaf-module re-export (R9-P2-06a): these three symbols moved to
+# ``deepseek_protocol`` so the transport can consume them without a module-scope
+# cycle. Re-exported here so existing importers keep working unchanged.
+from llm_loop.llm.deepseek_protocol import (  # noqa: F401  (re-export)
+    DEEPSEEK_WEB_PROVIDER_ID,
+    MODEL_PROTOCOL,
+    DeepSeekModelProtocolError,
+)
+
 DEEPSEEK_WEB_MODEL_ID = "web-deepseek"
 DEEPSEEK_WEB_MODEL_REF = f"{DEEPSEEK_WEB_PROVIDER_ID}/{DEEPSEEK_WEB_MODEL_ID}"
 DEEPSEEK_WEB_DISPLAY_NAME = "DeepSeek 网页版"
-
-
-class DeepSeekModelProtocolError(RuntimeError):
-    """The DeepSeek Web surface returned an invalid LFL provider response."""
 
 
 class DeepSeekModelTransport(Protocol):

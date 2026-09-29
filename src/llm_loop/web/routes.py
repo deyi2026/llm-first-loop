@@ -111,7 +111,7 @@ def _binding_age_seconds(updated_at: str, *, now: datetime | None = None) -> flo
         return 0.0
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    current = now or datetime.now(UTC)
+    current = now or system_local_now()  # host-local authority; aware diff below is tz-equivalent
     return max(
         0.0,
         (
@@ -2278,10 +2278,21 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
             status_code=400,
             content={"error": "reason_required", "detail": "拒绝须提供理由（Approval UX v2 批 1: 拒绝理由必填留痕）。"},
         )
-    # Approval UX v2 批 1（验证清单 #9）: 涉边界项单条批准需额外确认标志（extra_confirm）
+    # 方案A（EVO-20260929）: exec_override 仅对 accepted 合法（拒绝无执行可言）
+    if payload.exec_override and decision != "accepted":
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_params", "detail": "exec_override 仅用于 accepted。"},
+        )
+    # Approval UX v2 批 1（验证清单 #9）: 涉边界项单条批准需额外确认标志（extra_confirm）；
+    # 方案A: exec_override（人工显式授权自动执行）等价并强于 extra_confirm——授权即确认。
     if decision == "accepted":
         cur_for_confirm = _find_suggestion(store, evo_id)
-        if cur_for_confirm is not None and bool(cur_for_confirm.get("requires_human")) and not payload.extra_confirm:
+        if (
+            cur_for_confirm is not None
+            and bool(cur_for_confirm.get("requires_human"))
+            and not (payload.extra_confirm or payload.exec_override)
+        ):
             return UTF8JSONResponse(
                 status_code=409,
                 content={
@@ -2306,7 +2317,7 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
             )
     try:
         if decision == "accepted":
-            ok, resp, reviewed = approve(store, evo_id)
+            ok, resp, reviewed = approve(store, evo_id, exec_override=payload.exec_override)
             if ok and reviewed:
                 from llm_loop.introspection.evolution_exec import maybe_auto_execute_from_engine
 

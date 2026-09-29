@@ -205,9 +205,22 @@ def _recent_dialogue_context_wire(message: Any | None) -> dict[str, Any] | None:
     the current genuine-human ingress remains the only active user authority.  The
     explicit marker and JSON metadata make the historical/non-instruction boundary
     machine-visible and provider-visible.
+
+    Retirement boundary: when the prior human turn belongs to an episode that has
+    been resolved and retired (``resolved_episode_ref`` metadata), its text must
+    leave the provider prompt entirely — durable recall stays available through
+    EpisodeStore search/hydrate. A non-authoritative summary is still a leak of
+    the retired human text, so we return ``None`` instead.
     """
     if message is None or not is_human_user_message(message):
         return None
+    try:
+        from llm_loop.core.episode_history import resolved_episode_ref
+
+        if resolved_episode_ref(message):
+            return None
+    except ImportError:  # pragma: no cover — episode_history is a stable core module
+        pass
     content = str(getattr(message, "content", "") or "")
     if not content:
         return None

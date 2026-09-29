@@ -19,6 +19,18 @@ def test_config_p1_defaults_and_env(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "m")
     monkeypatch.delenv("DATA_DIR", raising=False)
     monkeypatch.delenv("EMBEDDING_PROVIDER", raising=False)  # 清外部 .env 残留，测纯默认值
+    # SEMANTIC_* 同理：服务进程环境常驻 SEMANTIC_MEMORY_ENABLED=1 时会覆盖默认值
+    for key in (
+        "SEMANTIC_MEMORY_ENABLED",
+        "SEMANTIC_ARCHIVE_ENABLED",
+        "SEMANTIC_METHOD_ENABLED",
+        "SEMANTIC_DOCS_ENABLED",
+        "SEMANTIC_EXPERIENCE_ENABLED",
+        "SUMMARY_MODE",
+        "VALIDATE_SEMANTIC",
+        "EXTRACT_ENABLED",
+    ):
+        monkeypatch.delenv(key, raising=False)
     s = load_settings()
     # 默认值
     assert s.summary_mode == "off"

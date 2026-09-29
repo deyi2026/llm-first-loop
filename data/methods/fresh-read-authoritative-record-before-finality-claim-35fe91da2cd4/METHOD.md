@@ -8,6 +8,7 @@ source_episode_refs: episode:010fcc8e-3ba8-4948-9ae5-66a30cc8ea6e:870:a11555855c
 evidence_refs: learning:learn:4b80ef1e52ab
 created_at: 2026-09-17T15:35:27.181948+00:00
 updated_at: 2026-09-17T23:13:01.903113+00:00
+freshness_refs: src/llm_loop/runtime/service_control.py
 ---
 ## Trigger
 即将输出终局性/收官性/最终状态断言（总结表、'已完成'声明），且断言对象是共享可变资源，同时已知存在并发写者、其变更节奏（分钟到几十分钟级）不慢于我快照的年龄

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from llm_loop.runtime.knowledge_health import inspect_knowledge_health
+from llm_loop.runtime.knowledge_health import _method_pool_facts, inspect_knowledge_health
 from llm_loop.runtime.paths import resolve_runtime_paths
 
 
@@ -258,3 +258,83 @@ def test_method_store_untracked_count_degrades_to_none_outside_git(tmp_path):
     assert health["status"] == "healthy"
     assert health["stores"]["runtime_method"]["untracked_files"] is None
     assert health["warnings"] == []
+
+
+# ── EVO-20260929-5283ab1b P4: method pool lifecycle distribution (facts only) ──
+def test_method_pool_facts_report_mechanical_distribution(tmp_path):
+    canonical = tmp_path / "canonical"
+    code_root = tmp_path / "sidecar"
+    data_dir = canonical / "data"
+    data_dir.mkdir(parents=True)
+    code_root.mkdir()
+    _seed_code_assets(code_root)
+    _touch(canonical / "experiences" / "EXPERIENCE-20260913-ok.md")
+
+    methods = data_dir / "methods"
+    (methods / "c1").mkdir(parents=True)
+    (methods / "c1" / "METHOD.md").write_text(
+        "---\nstatus: candidate\nfreshness_refs: src/a.py,docs/b.md\n---\n## Trigger\nt\n",
+        encoding="utf-8",
+    )
+    (methods / "c1" / "qualification.jsonl").write_text('{"verdict":"pass"}\n', encoding="utf-8")
+    (methods / "c2").mkdir(parents=True)
+    (methods / "c2" / "METHOD.md").write_text("---\nstatus: candidate\n---\n## Trigger\nt\n", encoding="utf-8")
+    (methods / "a1").mkdir(parents=True)
+    (methods / "a1" / "METHOD.md").write_text(
+        "---\nstatus: active\nparent_ref: method:c1\n---\n## Trigger\nt\n", encoding="utf-8"
+    )
+    # use declarations live in the store-level top-level usage.jsonl (store.py layout)
+    (methods / "usage.jsonl").write_text(
+        '{"decision":"applied","method_ref":"method:a1"}\n{"decision":"rejected","method_ref":"method:c1"}\n',
+        encoding="utf-8",
+    )
+    (methods / "h1").mkdir(parents=True)
+    (methods / "h1" / "METHOD.md").write_text("---\nstatus: hold\n---\n## Trigger\nt\n", encoding="utf-8")
+    (methods / "lifecycle_attempts.jsonl").write_text(
+        '{"event":"lifecycle_transition_attempt"}\n{"event":"lifecycle_transition_attempt"}\n', encoding="utf-8"
+    )
+    paths = resolve_runtime_paths(data_dir=data_dir, code_root=code_root, env={})
+
+    health = inspect_knowledge_health(paths)
+
+    pool = health["stores"]["runtime_method"]["pool"]
+    assert pool["total"] == 4
+    assert pool["status"]["candidate"] == 2
+    assert pool["status"]["active"] == 1
+    assert pool["status"]["hold"] == 1
+    assert pool["status"]["retired"] == 0
+    assert pool["with_qualification"] == 1
+    assert pool["with_usage"] == 2  # distinct method_refs in top-level usage.jsonl
+    assert pool["with_freshness_refs"] == 1
+    assert pool["with_parent"] == 1
+    assert pool["blocked_transition_attempts"] == 2
+    # P4 additions: mechanical age buckets, use-decision distribution, freshness states
+    assert sum(pool["age_buckets"].values()) == 4
+    assert pool["age_buckets"]["unknown"] == 4  # no created_at frontmatter in fixtures
+    assert pool["use_decisions"] == {"applied": 1, "rejected": 1}
+    assert pool["freshness_states"]["not_tracked"] == 3
+    assert sum(pool["freshness_states"].values()) == 4
+    # facts surface only: no quality verdict keys ever appear
+    assert "quality" not in pool
+    assert health["warnings"] == []
+
+
+def test_method_pool_age_buckets_parse_created_at(tmp_path):
+    from datetime import datetime, timedelta
+
+    methods = tmp_path / "methods"
+    methods.mkdir(parents=True)
+    now = datetime.now().astimezone()
+    for name, age in (("fresh", timedelta(days=2)), ("mid", timedelta(days=12)), ("old", timedelta(days=90))):
+        created = (now - age).isoformat()
+        (methods / name).mkdir()
+        (methods / name / "METHOD.md").write_text(
+            f"---\nstatus: candidate\ncreated_at: {created}\n---\n## Trigger\nt\n", encoding="utf-8"
+        )
+    seed_dir = tmp_path / "seed"
+    seed_dir.mkdir()
+
+    pool = _method_pool_facts(methods, seed_dir=seed_dir)
+
+    assert pool["age_buckets"] == {"<=7d": 1, "8-30d": 1, ">30d": 1, "unknown": 0}
+    assert pool["freshness_states"]["not_tracked"] == 3

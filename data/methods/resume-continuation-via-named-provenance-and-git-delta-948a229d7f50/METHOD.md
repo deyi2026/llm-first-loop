@@ -8,6 +8,7 @@ source_episode_refs: episode:32d694c9-dbcd-4dc8-a941-0885c617868c:934:f2ef065cb2
 evidence_refs: learning:learn:5a3bd9a37e30
 created_at: 2026-09-20T00:54:28.515431+00:00
 updated_at: 2026-09-23T13:31:16.044106+00:00
+freshness_refs: src/llm_loop/introspection/search.py
 ---
 ## Trigger
 用户发出极简续跑指令（项目代号 + '继续'），当前无活动 goal，需要先重建项目状态才能行动。

@@ -69,6 +69,12 @@ def test_load_settings_materializes_persistent_knowledge_paths(tmp_path, monkeyp
     monkeypatch.setenv("LLM_API_KEY", "k")
     monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/v1")
     monkeypatch.setenv("DATA_DIR", str(data_dir))
+    # 真实仓根 .env 的 EXPERIENCES_DIR 等五键会被 load_settings 回填为 explicit_env
+    # 并压过 DATA_DIR 推断；把 runtime root 指到空目录隔离该回填（无 .env → parse 空）。
+    monkeypatch.setenv("LFL_RUNTIME_ROOT", str(tmp_path))
+    # LFL_DATA_DIR 优先级高于 DATA_DIR：服务进程环境常驻该键，不清则泄漏进
+    # 断言（2026-09-29 实测：binding data_dir_source=explicit_env 指向真实工作区）。
+    monkeypatch.delenv("LFL_DATA_DIR", raising=False)
     for key in ("EXPERIENCES_DIR", "METHODS_DIR", "METHOD_SEED_DIR", "SKILLS_DIR", "DOCS_DIR"):
         monkeypatch.delenv(key, raising=False)
 

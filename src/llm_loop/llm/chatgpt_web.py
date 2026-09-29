@@ -28,18 +28,21 @@ from llm_loop.llm.client import LLMResponse
 
 logger = logging.getLogger(__name__)
 
-MODEL_PROTOCOL = "lfl-model/0.1"
-CHATGPT_WEB_PROVIDER_ID = "chatgpt-web"
+# Leaf-module re-export (R9-P2-06a): these three symbols moved to
+# ``chatgpt_protocol`` so the transport can consume them without a module-scope
+# cycle. Re-exported here so existing importers keep working unchanged.
+from llm_loop.llm.chatgpt_protocol import (  # noqa: F401  (re-export)
+    CHATGPT_WEB_PROVIDER_ID,
+    MODEL_PROTOCOL,
+    ChatGPTModelProtocolError,
+)
+
 CHATGPT_WEB_MODEL_ID = "web-gpt"
 CHATGPT_WEB_MODEL_REF = f"{CHATGPT_WEB_PROVIDER_ID}/{CHATGPT_WEB_MODEL_ID}"
 CHATGPT_WEB_DISPLAY_NAME = "网页版 GPT"
 CHATGPT_WEB_SEGMENT_MAX_REQUESTS = 8
 CHATGPT_WEB_SEGMENT_BUDGET_RATIO = 0.75
 CHATGPT_WEB_REASONING_READY_TIMEOUT_S = 20.0
-
-
-class ChatGPTModelProtocolError(RuntimeError):
-    """The ChatGPT transport returned an invalid provider response."""
 
 
 class ChatGPTModelTransport(Protocol):

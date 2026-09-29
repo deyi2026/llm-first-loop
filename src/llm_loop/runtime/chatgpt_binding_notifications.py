@@ -32,7 +32,9 @@ _SEVERITY_RANK = {"warning": 1, "critical": 2}
 
 
 def _now() -> datetime:
-    return datetime.now(UTC)
+    from llm_loop.timekeeping import system_local_now
+
+    return system_local_now()  # host-local wall-clock authority
 
 
 def _parse_ts(value: object) -> datetime | None:
@@ -49,7 +51,7 @@ def _parse_ts(value: object) -> datetime | None:
 
 
 def _iso(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat(timespec="seconds")
+    return value.astimezone().isoformat(timespec="seconds")  # serialize in host-local tz; _parse_ts stays offset-aware
 
 
 def _alert_fingerprint(alert: Mapping[str, Any]) -> str:
