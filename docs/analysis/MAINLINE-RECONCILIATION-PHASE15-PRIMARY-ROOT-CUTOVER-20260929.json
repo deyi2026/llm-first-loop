@@ -1,0 +1,113 @@
+{
+  "canonical_main_before_evidence_commit": "4894979bdf299ce1037b214a79f9bc735ae20633",
+  "date": "2026-09-29",
+  "final_acceptance": {
+    "chrome": {
+      "cdp_endpoint": "127.0.0.1:9229",
+      "cdp_websocket": true,
+      "launchd_running": true
+    },
+    "embedding_lock_ignored_by_main": true,
+    "local_branch_count": 106,
+    "method_store": {
+      "active_or_qualified": 2,
+      "candidate": 542,
+      "records": 547
+    },
+    "production_verify": {
+      "generation": 161,
+      "ok": true
+    },
+    "retained_archive_branch_present": true,
+    "root_status_clean": true,
+    "web_gpt_smoke": {
+      "content": "PHASE15_ROOT_MAIN_OK",
+      "finish_reason": "stop",
+      "provider": "chatgpt-web",
+      "tool_calls": 0
+    },
+    "wip_branch_present": false,
+    "worktree_count": 2,
+    "worktrees": [
+      "main",
+      "fix/mobile-copy-user-activation-20260929"
+    ]
+  },
+  "phase15_actions": {
+    "linked_main_worktree_retirement": {
+      "env_hash_equal_to_primary_root": true,
+      "env_sha256": "a3a2adac3b06419a5a4014939a1c7a29bed94b2fdee278bc260dbf7c73b01efb",
+      "final_ignored_entries": 0,
+      "final_status_entries": 0,
+      "generated_build_cache_removed": true,
+      "ignored_entries_audited": 2312,
+      "open_handles": 0,
+      "private_audit_manifest_sha256": "cc879116345863de3663401afc9cc1908ab20ac3d5b0074b13ba813c9f11e955",
+      "private_audit_residue_bytes": 3632628,
+      "private_audit_residue_files": 1130,
+      "process_refs": 0,
+      "removed_without_force": true
+    },
+    "primary_root_cutover": {
+      "branch": "main",
+      "head_before_evidence_commit": "4894979bdf299ce1037b214a79f9bc735ae20633",
+      "tree_before_evidence_commit": "5bd4ee6ea1b56aaaafd0fa0d306abbebcc3d93b2",
+      "worktree_count": 2
+    },
+    "tracked_wip_cleanup": {
+      "post_restore_tracked_diff": 0,
+      "restored_exact_paths": 31,
+      "source": "wip/main-pre-reconcile-20260929 HEAD"
+    },
+    "untracked_cleanup": {
+      "deleted_preserved_or_superseded_files": 804,
+      "rehash_before_delete": "805/805 verified; 0 missing; 0 mismatch",
+      "retained_runtime_only_file": "data/methods/embeddings-api-v1_http___127.0.0.1_8765_v1_bge-ck2.json.lock"
+    },
+    "wip_branch_retirement": {
+      "all_patch_equivalent": true,
+      "archive_branch": "80f7ff79b51252da162634bbcf391a6a0e3e2017",
+      "attached_worktree": false,
+      "branch_absent_after_delete": true,
+      "deletion_mode": "git branch -D after explicit all-minus patch-equivalence verification",
+      "git_cherry": [
+        "- 5063386abaf604428f1e25f81ea679249a314566",
+        "- 8454c8a9813947173bc5696dcb5d5309d21cdf3b"
+      ],
+      "main_before_retirement": "4894979bdf299ce1037b214a79f9bc735ae20633",
+      "normal_delete_refused_due_to_ancestry": true,
+      "schema": "lfl.phase15.wip_retirement_receipt.v1",
+      "wip_branch": "wip/main-pre-reconcile-20260929",
+      "wip_head": "8454c8a9813947173bc5696dcb5d5309d21cdf3b"
+    }
+  },
+  "preservation_integrity": {
+    "phase14_eval_raw_bad": 0,
+    "phase14_eval_raw_files": 720,
+    "phase14_eval_raw_manifest_sha256": "d947790a54dc37a3c1e261df763467860ebeeeeff349d2134cdf122bfa69d462",
+    "phase14_noncanonical_bad": 0,
+    "phase14_noncanonical_files": 5,
+    "phase14_noncanonical_manifest_sha256": "9580907e22db86f219d4c538b49ddaf97e9bd787c1291e8f370978de1fd23733",
+    "phase15_linked_main_audit_bad": 0,
+    "phase15_linked_main_audit_files": 1130,
+    "phase15_linked_main_audit_manifest_sha256": "cc879116345863de3663401afc9cc1908ab20ac3d5b0074b13ba813c9f11e955",
+    "retained_archive_branch": "archive/root-untracked-eval-bundle-20260929",
+    "retained_archive_head": "80f7ff79b51252da162634bbcf391a6a0e3e2017"
+  },
+  "result": "PASS",
+  "safety": {
+    "production_modified": false,
+    "production_restarted": false,
+    "remote_refs_modified": false,
+    "retained_archive_branch_deleted": false
+  },
+  "schema": "lfl.mainline_reconciliation.phase15_primary_root_cutover.v1",
+  "starting_state": {
+    "linked_main_worktree": ".worktrees/mainline-reconcile-gen161-20260929",
+    "production_generation": 161,
+    "root_branch": "wip/main-pre-reconcile-20260929",
+    "root_head": "8454c8a9813947173bc5696dcb5d5309d21cdf3b",
+    "tracked_wip_files": 31,
+    "untracked_phase14_files": 805
+  }
+}
