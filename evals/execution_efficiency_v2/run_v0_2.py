@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -157,7 +158,7 @@ def _setup(task: dict[str, Any], ws: Path) -> None:
 def _verify(task: dict[str, Any], ws: Path) -> tuple[bool, str]:
     try:
         proc = subprocess.run(
-            [str(ROOT / ".venv/bin/python"), "-c", str(task["verify"])],
+            [sys.executable, "-c", str(task["verify"])],
             cwd=ws,
             text=True,
             capture_output=True,
