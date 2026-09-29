@@ -403,8 +403,13 @@ def test_local_imports_ratchet():
 
 
 def test_import_exempt_markers_zero_this_batch():
-    """本批豁免标记登记 0 处（D2 裁定：存量五键为总量基线，逐处语义标注留待
-    Phase 4/6/7 域收口时随拆分登记——标注即行为判断，不提前批量标注）。"""
+    """豁免标记登记 2 处（D2 裁定：标注即行为判断，不提前批量标注）。
+
+    登记簿（逐处语义，增量需同步更新断言与本注释）：
+    - 2026-09-29 +2 plugin：factory.py 的 chatgpt_web/deepseek_web provider 注册
+      （feat 0b5f411e5/b8857b381 引入，settings 门控的 registry 延迟插件加载，
+      恰为 D2 豁免两类语义之一；登记后棘轮回到基线 63）。
+    """
     b = _load_baseline()
     total_marks = 0
     for rel in b["local_imports"]:
@@ -412,7 +417,7 @@ def test_import_exempt_markers_zero_this_batch():
         if p.exists():
             _, exempt, _ = _count_fn_imports(_read_source(rel))
             total_marks += exempt
-    assert total_marks == 0, f"本批应登记 0 处豁免标记，实测 {total_marks} 处"
+    assert total_marks == 2, f"豁免标记应登记 2 处（见登记簿注释），实测 {total_marks} 处"
 
 
 # ── runtime cycle 守卫（B2-P2-05 / R9-P2-06·DFX-12）─────────────────────────

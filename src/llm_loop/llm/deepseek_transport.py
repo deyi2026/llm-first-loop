@@ -12,7 +12,7 @@ from llm_loop.llm.errors import LLMRequestTooLargeError
 
 from .chatgpt_page import PageBinding
 from .deepseek_page import DeepSeekPageAdapter, DeepSeekPageContractError
-from .deepseek_web import (
+from .deepseek_protocol import (
     DEEPSEEK_WEB_PROVIDER_ID,
     MODEL_PROTOCOL,
     DeepSeekModelProtocolError,

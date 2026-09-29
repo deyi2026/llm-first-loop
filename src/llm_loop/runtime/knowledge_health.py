@@ -16,6 +16,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Iterable
+from datetime import datetime
 from pathlib import Path
 
 from .paths import RuntimePaths
@@ -36,6 +37,162 @@ def _count_glob(root: Path, pattern: str) -> int:
 # fact for humans/models to batch-decide on.  It is NOT a store-integrity fault and
 # must never quarantine the store or disable writes (``reasons`` stays untouched).
 _METHOD_UNTRACKED_WARN_THRESHOLD = 50
+
+# EVO-20260929-5283ab1b P4: lifecycle distribution facts for the method pool.
+# Mechanical counts only — frontmatter status values, journal file presence, and
+# freshness_refs declarations. No quality scoring, no "pool is unhealthy"
+# verdicts: this stays a B-layer fact surface; interpretation belongs to the
+# model/owner reading it.
+_METHOD_POOL_STATUSES = ("teacher", "candidate", "qualified", "active", "hold", "invalidated", "retired")
+_METHOD_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*", re.DOTALL)
+_METHOD_STATUS_RE = re.compile(r"^status:\s*(\S+)\s*$", re.MULTILINE)
+_METHOD_FRESHNESS_RE = re.compile(r"^freshness_refs:\s*(\S.*)$", re.MULTILINE)
+
+
+def _count_lines(path: Path) -> int:
+    try:
+        return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+    except OSError:
+        return 0
+
+
+def _method_age_buckets(raw_text: str, *, now: datetime) -> str:
+    """Bucket a Method card by frontmatter ``created_at`` age (mechanical)."""
+    front = _METHOD_FRONTMATTER_RE.match(raw_text)
+    block = front.group(1) if front else ""
+    match = re.search(r"^created_at:\s*(\S+)", block, re.MULTILINE)
+    if match is None:
+        return "unknown"
+    try:
+        created = datetime.fromisoformat(match.group(1))
+    except ValueError:
+        return "unknown"
+    if created.tzinfo is None:
+        created = created.astimezone()
+    age_days = (now - created).total_seconds() / 86400.0
+    if age_days < 0:
+        return "unknown"
+    if age_days <= 7:
+        return "<=7d"
+    if age_days <= 30:
+        return "8-30d"
+    return ">30d"
+
+
+def _usage_facts(methods_dir: Path) -> tuple[dict[str, int], int]:
+    """Parse the store-level ``usage.jsonl`` (top-level file, mirrors store.py layout).
+
+    EVO-20260929-5283ab1b P4: use declarations live in ``methods_dir/usage.jsonl``
+    (store.py record_use/usage_entries), not per-card subdirectories — the
+    earlier per-card glob silently returned empty on the real pool.
+    """
+    counts: dict[str, int] = {}
+    refs: set[str] = set()
+    try:
+        lines = (methods_dir / "usage.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return counts, 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        decision = entry.get("decision")
+        if isinstance(decision, str) and decision:
+            counts[decision] = counts.get(decision, 0) + 1
+        ref = entry.get("method_ref")
+        if isinstance(ref, str) and ref:
+            refs.add(ref)
+    return counts, len(refs)
+
+
+def _method_freshness_states(methods_dir: Path, seed_dir: Path, *, tracked_method_ids: list[str], total: int) -> dict[str, int]:
+    """Aggregate ``MethodStore.freshness`` states (reuses the store's own semantics).
+
+    EVO-20260929-5283ab1b P4: only cards that declare ``freshness_refs`` are
+    checked against their qualification baseline; everything else counts as
+    ``not_tracked``. Reuses ``MethodStore`` so workspace-root resolution and
+    SHA comparison cannot drift from the runtime behavior.
+    """
+    counts: dict[str, int] = {"not_tracked": max(total - len(tracked_method_ids), 0), "unbaselined": 0, "current": 0, "changed": 0, "missing": 0}
+    if not tracked_method_ids:
+        return counts
+    from llm_loop.methods.store import MethodStore  # local import: keep module import graph flat
+
+    store = MethodStore(methods_dir, seed_dir=seed_dir)
+    for method_id in tracked_method_ids:
+        state = str(store.freshness(method_id).get("state", "unknown"))
+        if state == "missing_method":
+            state = "unknown"
+        counts[state] = counts.get(state, 0) + 1
+    return counts
+
+
+def _method_pool_facts(methods_dir: Path, *, seed_dir: Path | None = None) -> dict[str, object]:
+    """Count mechanical lifecycle facts over ``methods_dir/*/METHOD.md``."""
+    status_counts: dict[str, int] = {name: 0 for name in _METHOD_POOL_STATUSES}
+    total = 0
+    with_qualification = 0
+    with_freshness_refs = 0
+    with_parent = 0
+    age_buckets: dict[str, int] = {"<=7d": 0, "8-30d": 0, ">30d": 0, "unknown": 0}
+    tracked_method_ids: list[str] = []
+    now = datetime.now().astimezone()
+    try:
+        method_paths = sorted(methods_dir.glob("*/METHOD.md"))
+    except OSError:
+        method_paths = []
+    for method_path in method_paths:
+        if not method_path.is_file():
+            continue
+        total += 1
+        directory = method_path.parent
+        if (directory / "qualification.jsonl").is_file():
+            with_qualification += 1
+        try:
+            raw = method_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        age_buckets[_method_age_buckets(raw, now=now)] += 1
+        front = _METHOD_FRONTMATTER_RE.match(raw)
+        block = front.group(1) if front else ""
+        match = _METHOD_STATUS_RE.search(block)
+        if match is not None:
+            value = match.group(1).strip().lower()
+            if value in status_counts:
+                status_counts[value] += 1
+        freshness_match = _METHOD_FRESHNESS_RE.search(block)
+        if freshness_match is not None:
+            with_freshness_refs += 1
+            # Frontmatter holds a YAML list; grab the first bare id token mechanically.
+            first_ref = re.findall(r"[A-Za-z0-9._/\-]+", freshness_match.group(1))
+            if first_ref:
+                tracked_method_ids.append(directory.name)
+        if re.search(r"^parent_ref:\s*\S", block, re.MULTILINE) is not None:
+            with_parent += 1
+    use_decisions, distinct_used_methods = _usage_facts(methods_dir)
+    pool: dict[str, object] = {
+        "total": total,
+        "status": status_counts,
+        "with_qualification": with_qualification,
+        "with_usage": distinct_used_methods,
+        "with_freshness_refs": with_freshness_refs,
+        "with_parent": with_parent,
+        "age_buckets": age_buckets,
+        "use_decisions": use_decisions,
+        "blocked_transition_attempts": _count_lines(methods_dir / "lifecycle_attempts.jsonl"),
+    }
+    if seed_dir is not None:
+        pool["freshness_states"] = _method_freshness_states(
+            methods_dir,
+            seed_dir,
+            tracked_method_ids=tracked_method_ids,
+            total=total,
+        )
+    return pool
 
 
 def _git_untracked_count(directory: Path) -> int | None:
@@ -243,6 +400,7 @@ def inspect_knowledge_health(paths: RuntimePaths) -> dict[str, object]:
 
     runtime_method_facts = _dir_facts(paths.methods_dir, records=runtime_method_records)
     runtime_method_facts["untracked_files"] = method_untracked
+    runtime_method_facts["pool"] = _method_pool_facts(paths.methods_dir, seed_dir=paths.method_seed_dir)
 
     return {
         "schema": "lfl.knowledge_health.v1",

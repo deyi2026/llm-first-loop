@@ -78,7 +78,9 @@ def inspect_chatgpt_binding_health(
 ) -> dict[str, object]:
     """Return bounded aggregate metrics plus conservative operational alerts."""
 
-    observed = (now or datetime.now(UTC)).astimezone(UTC)
+    from llm_loop.timekeeping import system_local_now
+
+    observed = (now or system_local_now()).astimezone()  # host-local wall-clock authority
     one_hour_ago = observed - timedelta(hours=1)
     one_day_ago = observed - timedelta(days=1)
     alerts: list[dict[str, object]] = []
