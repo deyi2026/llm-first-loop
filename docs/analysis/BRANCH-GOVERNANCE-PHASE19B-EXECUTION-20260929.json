@@ -1,0 +1,67 @@
+{
+  "authorization": "User explicitly authorized Phase19B local retirement; remote refs remained out of scope.",
+  "date": "2026-09-29",
+  "execution": {
+    "forced_local_branch_D_after_ancestry_refusal": 61,
+    "merge_cherry_pick_rebase": false,
+    "ordinary_branch_d": 6,
+    "production_publish_restart": false,
+    "remote_refs_modified": false,
+    "target_local_refs_retired": 67
+  },
+  "final_expected_topology_after_receipt_commit": {
+    "local_branch_count": 3,
+    "local_branch_names": [
+      "main",
+      "fix/mobile-copy-user-activation-20260929",
+      "archive/root-untracked-eval-bundle-20260929"
+    ],
+    "note": "main advances by this docs-only receipt commit; production and existing archive refs remain exact.",
+    "worktree_count": 2
+  },
+  "main_head_before_receipt_commit": "4bc2c43a4d4b16e6644aa7139992abb0adc39860",
+  "postdelete_acceptance_before_receipt_commit": {
+    "bundle_advertised_heads": "67/67 exact",
+    "bundle_verify": "PASS complete history",
+    "fresh_restore_after_live_ref_retirement": "67/67 exact + git fsck --full --strict PASS",
+    "local_branch_count": 3,
+    "method_store": "555 records / 550 candidate / 2 active-or-qualified",
+    "production_generation": 161,
+    "production_verify": "PASS",
+    "remaining_local_refs": {
+      "refs/heads/archive/root-untracked-eval-bundle-20260929": "80f7ff79b51252da162634bbcf391a6a0e3e2017",
+      "refs/heads/fix/mobile-copy-user-activation-20260929": "67ce123c5fa8430ab833610857fbf276d55e589d",
+      "refs/heads/main": "4bc2c43a4d4b16e6644aa7139992abb0adc39860"
+    },
+    "remote_refs_sha256": "fc8dc145f2556cf52392382f50dd3cc436427e54d9e1b2dcaa8a72346e4587a5",
+    "remote_refs_unchanged": true,
+    "retired_target_refs_absent": "67/67",
+    "root_clean": true,
+    "worktree_count": 2
+  },
+  "predelete_gate": {
+    "bundle_verify": "PASS",
+    "isolated_restore": "67/67 exact + fsck PASS",
+    "local_branch_count": 70,
+    "production_generation": 161,
+    "production_verify": "PASS",
+    "remote_refs_sha256": "fc8dc145f2556cf52392382f50dd3cc436427e54d9e1b2dcaa8a72346e4587a5",
+    "root_clean": true,
+    "target_refs_exact": "67/67",
+    "worktree_count": 2
+  },
+  "private_recovery_path": "data/private-archive/branch-governance/phase19a/retained-unique-tips-20260929",
+  "protected_refs": {
+    "existing_archive": "80f7ff79b51252da162634bbcf391a6a0e3e2017",
+    "main_before_receipt_commit": "4bc2c43a4d4b16e6644aa7139992abb0adc39860",
+    "production": "67ce123c5fa8430ab833610857fbf276d55e589d"
+  },
+  "result": "PASS_LOCAL_REF_RETIREMENT",
+  "schema": "lfl.branch_governance.phase19b_execution_receipt.v1",
+  "source_evidence": {
+    "phase18_disposition_commit": "0d41b799d6ca3c1888184002a2e3d20fad997321",
+    "phase19a_bundle_sha256": "87184de9028935251e6b5ec8013db338b6cf9e3c15f188eec602031ff279d780",
+    "phase19a_evidence_commit": "1ce20480dfd9e5a4e15453d28aa432c2106bf663",
+    "phase19a_manifest_sha256": "322aed15e7f1c2b111219568b09ee82fd868b3eebc707965a64ac98f474347f1"
+  }
+}
