@@ -1,0 +1,80 @@
+{
+  "acceptance": {
+    "local_branch_count": 106,
+    "middleware_worktree_directory_absent": true,
+    "middleware_worktree_removed_without_force": true,
+    "post_retirement_webgpt_smoke": {
+      "content": "PHASE12_POSTRETIRE_OK",
+      "finish_reason": "stop",
+      "tool_calls": 0
+    },
+    "pre_retirement_webgpt_smoke": {
+      "content": "PHASE12_WEBGPT_OK",
+      "finish_reason": "stop",
+      "tool_calls": 0
+    },
+    "production_verify": {
+      "generation": 161,
+      "ok": true
+    },
+    "root_wip": {
+      "hash_drift": 0,
+      "index_tree": "1d6bf5bd04e8eaf3857f8e4ae5ab85e61ef59616",
+      "tracked_modifications": 31
+    },
+    "surface_recovery": "PASS; stale target rebound while conversation identity preserved",
+    "worktree_count": 3
+  },
+  "adapter_retirement": {
+    "pre_stop_gate": "turn-10 armed; no ingress/engine/final/recovery block",
+    "runner_remaining": 0,
+    "supervisor_final_status": "stopped",
+    "supervisor_stop": "graceful SIGTERM"
+  },
+  "browser_decoupling": {
+    "authentication": "user re-authentication required after profile migration/restart; subsequently verified",
+    "endpoint": "http://127.0.0.1:9229",
+    "launchd_label": "local.llmfirstloop.chatgpt-web-chrome",
+    "maintenance_event": "an over-strict pre-stop file-count/byte equality assertion halted the first cutover script before bootstrap because Chrome clean shutdown legitimately mutated runtime files; launchd bootstrap then restored 9229 from the migrated profile",
+    "profile_move": "same-filesystem atomic rename; directory inode preserved",
+    "profile_path": "data/runtime/chatgpt-web-chrome-profile",
+    "restore_last_session": true,
+    "runtime_plist": "data/runtime/launchd/local.llmfirstloop.chatgpt-web-chrome.plist",
+    "runtime_plist_sha256": "1b5fad58860174fc5555b88d229555f3dff9c0dd571dd01a2c50c31a261cc81f",
+    "user_launchagent": "~/Library/LaunchAgents/local.llmfirstloop.chatgpt-web-chrome.plist"
+  },
+  "canonical_main_before_evidence_commit": "7e80475e3108cd85586c47395df683d1975b2f53",
+  "date": "2026-09-29",
+  "final_worktrees": [
+    "wip/main-pre-reconcile-20260929",
+    "main",
+    "fix/mobile-copy-user-activation-20260929"
+  ],
+  "middleware_branch": {
+    "head": "101beba03604479b80585caad6707fe65935f541",
+    "name": "fix/middleware-m1-currentness-gen120-20260926",
+    "retained": true,
+    "unique_commits_vs_main": 34
+  },
+  "private_archives": [
+    {
+      "file_count": 72,
+      "git_ignored": true,
+      "manifest_sha256": "f6e5fca9cec43151826f0bec4196f85d6bef096ceab5e2999df3807cf678aaf2",
+      "path": "data/private-archive/mainline-reconciliation/phase12/middleware-runtime-smoke-001",
+      "total_bytes": 11012051
+    },
+    {
+      "file_count": 1818,
+      "git_ignored": true,
+      "manifest_sha256": "8a2599353fc2f062b613b2fb9ee6ead4fe4628bba5c560c32ef3877066bca51f",
+      "note": "redundant preservation copy including branch-tracked data; tracked data was restored from branch HEAD before worktree removal",
+      "path": "data/private-archive/mainline-reconciliation/phase12/middleware-worktree-residual-data",
+      "total_bytes": 35725305
+    }
+  ],
+  "production_restarted": false,
+  "remote_refs_modified": false,
+  "result": "PASS",
+  "schema": "lfl.mainline_reconciliation.phase12_browser_decoupling_retirement.v1"
+}
