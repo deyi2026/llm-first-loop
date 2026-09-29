@@ -1,0 +1,332 @@
+{
+  "branch_retirement_evidence": {
+    "all_wip_only_commits_patch_equivalent": true,
+    "git_cherry": [
+      "- 5063386abaf604428f1e25f81ea679249a314566",
+      "- 8454c8a9813947173bc5696dcb5d5309d21cdf3b"
+    ],
+    "main_only_commits": 64,
+    "merge_base": "393292a3a3cf30fdd1b6c19f794bccb7bb6de108",
+    "wip_only_commits": 2
+  },
+  "canonical_main": "87d249b623972942756a457dd606659fac50623e",
+  "classification_counts": {
+    "ABSORBED_OR_SUPERSEDED_BY_MAIN": 22,
+    "OBSOLETE_OR_CONFLICTING": 9,
+    "REQUIRES_SEPARATE_QUALIFICATION": 0,
+    "UNIQUE_VALUE_MIGRATION_CANDIDATE": 0
+  },
+  "date": "2026-09-29",
+  "files": [
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "net_new_migration_required": false
+      },
+      "path": ".env.example",
+      "reason": "WIP has zero WIP-only lines; current main adds the browser-provider configuration documentation used by production web-gpt."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "scripts/embedding_server.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "scripts/embedding_warmup.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "net_new_migration_required": false
+      },
+      "path": "scripts/restart_feishu.sh",
+      "reason": "Phase 3 migrated runtime.launch/legacy takeover semantics; remaining WIP-only delta is comment wording only."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "scripts/restart_system.sh",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "OBSOLETE_OR_CONFLICTING",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "replay_forbidden_without_new_design": true
+      },
+      "path": "src/llm_loop/cache_guard/guard.py",
+      "reason": "Useful live perf_block re-resolution was already migrated in Phase 3; replaying the residual WIP would replace host-local timestamp authority with datetime.now(UTC)."
+    },
+    {
+      "disposition": "OBSOLETE_OR_CONFLICTING",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "replay_forbidden_without_new_design": true
+      },
+      "path": "src/llm_loop/config.py",
+      "reason": "WIP is an older config surface: replay would remove current ChatGPT/DeepSeek browser provider settings, working-set first-view configuration, and canonical runtime-root Knowledge path hydration. Its single WIP-only env=env_values call is the superseded path-binding behavior."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "src/llm_loop/core/subagent_delivery.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "OBSOLETE_OR_CONFLICTING",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "replay_forbidden_without_new_design": true
+      },
+      "path": "src/llm_loop/factory.py",
+      "reason": "Phase 2 rejected this WIP: it would re-register convergence_decide, remove current external browser-client factories, and regress Experience/Method semantic wiring."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "src/llm_loop/introspection/docs_search.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "OBSOLETE_OR_CONFLICTING",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "replay_forbidden_without_new_design": true
+      },
+      "path": "src/llm_loop/introspection/search.py",
+      "reason": "Phase 2 rejected this WIP: only WIP-only behavior is datetime.now(UTC), conflicting with host-local time authority and dropping current Experience semantic diagnostics."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "src/llm_loop/introspection/tools_docs.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "src/llm_loop/introspection/tools_status.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "OBSOLETE_OR_CONFLICTING",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "replay_forbidden_without_new_design": true
+      },
+      "path": "src/llm_loop/memory/archive.py",
+      "reason": "Residual WIP reverts host-local timestamp authority to UTC and weakens TTL comparison from parsed datetimes to lexicographic ISO-string comparison."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "src/llm_loop/memory/embedder.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "net_new_migration_required": false
+      },
+      "path": "src/llm_loop/memory/retriever.py",
+      "reason": "Phase 2 residual analysis found zero WIP-only lines; current main is a strict semantic superset including Experience semantic cache/warm/rank support."
+    },
+    {
+      "disposition": "OBSOLETE_OR_CONFLICTING",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "replay_forbidden_without_new_design": true
+      },
+      "path": "src/llm_loop/memory/store.py",
+      "reason": "Phase 3 rejected the WIP after production proved a semantic superset; remaining WIP-only lines revert all new timestamps/IDs/observed_at/decay time to UTC."
+    },
+    {
+      "disposition": "OBSOLETE_OR_CONFLICTING",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "replay_forbidden_without_new_design": true
+      },
+      "path": "src/llm_loop/methods/learning_plane.py",
+      "reason": "Replaying WIP would remove current MethodDiscovery injection and method-discovery diagnostics from reflection; this capability was separately production-qualified."
+    },
+    {
+      "disposition": "OBSOLETE_OR_CONFLICTING",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "replay_forbidden_without_new_design": true
+      },
+      "path": "src/llm_loop/methods/store.py",
+      "reason": "Only WIP-only behavior is UTC timestamp generation, conflicting with the established host-local time authority."
+    },
+    {
+      "disposition": "OBSOLETE_OR_CONFLICTING",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "replay_forbidden_without_new_design": true
+      },
+      "path": "src/llm_loop/runtime/resolver.py",
+      "reason": "WIP parser is the older global-only runtime.toml model; replay would remove service-scoped semantic/chatgpt_web/deepseek_web authority and many current schema keys. Current parse_runtime_toml is a strict superset."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "net_new_migration_required": false
+      },
+      "path": "tests/scripts/test_restart_feishu_heartbeat.py",
+      "reason": "Current main asserts the same runtime.launch behavior and additionally locks legacy-process takeover; WIP-only delta is formatting."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "tests/unit/test_cache_block_reclassification.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "tests/unit/test_docs_search.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "tests/unit/test_emb_prewarm_debounce.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "tests/unit/test_embedder_v2.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": false,
+        "net_new_migration_required": false
+      },
+      "path": "tests/unit/test_learning_journal.py",
+      "reason": "Phase 2 residual analysis found zero WIP-only lines; current main adds repair requeue and Method semantic discovery/filtering coverage."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "tests/unit/test_memory_concurrent_write.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "tests/unit/test_method_learning.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "tests/unit/test_p1_final.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "tests/unit/test_retriever_fallback.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    },
+    {
+      "disposition": "ABSORBED_OR_SUPERSEDED_BY_MAIN",
+      "evidence": {
+        "byte_identical_to_main": true
+      },
+      "path": "tests/unit/test_subagent_settlement.py",
+      "reason": "WIP working-tree bytes are SHA256-identical to current canonical main."
+    }
+  ],
+  "preserved_root": {
+    "branch": "wip/main-pre-reconcile-20260929",
+    "frozen_hash_drift": 0,
+    "head": "8454c8a9813947173bc5696dcb5d5309d21cdf3b",
+    "index_tree": "1d6bf5bd04e8eaf3857f8e4ae5ab85e61ef59616",
+    "tracked_modifications": 31,
+    "untracked_files_out_of_scope": 805
+  },
+  "result": "PASS_NO_TRACKED_MIGRATION_REQUIRED",
+  "retirement_plan": [
+    {
+      "action": "Do not migrate any of the 31 tracked WIP files to main. Treat 22 as absorbed/superseded and 9 as obsolete/conflicting.",
+      "stage": "P13-A"
+    },
+    {
+      "action": "Keep root WIP byte-frozen until a separate untracked-asset audit resolves the 805 currently untracked files. Physical root normalization is blocked on that audit, not on tracked WIP.",
+      "stage": "P13-B"
+    },
+    {
+      "action": "After untracked assets are preserved/retired, revalidate the 31 frozen hashes and current-main head; then, under explicit human checkpoint, discard only these 31 tracked working-tree modifications by restoring exact paths from the preserved branch HEAD.",
+      "stage": "P13-C"
+    },
+    {
+      "action": "With root clean, revalidate `git cherry main wip/main-pre-reconcile-20260929` remains all-minus. Remove the clean linked canonical-main worktree, switch the root primary worktree to main, and verify production remains untouched.",
+      "stage": "P13-D"
+    },
+    {
+      "action": "Only after root is clean on main and the WIP branch is unattached, delete `wip/main-pre-reconcile-20260929` as a local patch-equivalent branch. Never delete remote refs as part of this plan.",
+      "stage": "P13-E"
+    }
+  ],
+  "safety": {
+    "physical_root_retirement_authorized": false,
+    "production_modified": false,
+    "remote_refs_modified": false,
+    "root_wip_modified": false
+  },
+  "schema": "lfl.mainline_reconciliation.phase13_root_tracked_wip_audit.v1",
+  "validation": {
+    "broader_suite_with_timekeeping_scanner": "159 passed / 1 known-baseline failed",
+    "canonical_focused_suite": "156 passed",
+    "known_baseline": "tests/unit/test_timekeeping_local.py::test_source_does_not_serialize_new_wall_clock_in_utc; Phase 2 evidence records the same failure on untouched gen161 and attributes it to other files, not these reviewed WIP paths.",
+    "mechanical_byte_equal_files": 17,
+    "production_service_control_verify": {
+      "generation": 161,
+      "ok": true
+    }
+  }
+}
