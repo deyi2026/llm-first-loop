@@ -1,0 +1,81 @@
+{
+  "date": "2026-09-29",
+  "destructive_boundary": {
+    "next_phase": "Phase 19B",
+    "performed": false,
+    "reached": true,
+    "requirement": "Explicit human authorization before retiring any of the 67 local refs. If authorized, revalidate ref heads against this manifest immediately before deletion, delete local refs only, never remote refs, and verify final topology/production afterward."
+  },
+  "mutations": {
+    "main_advances": [
+      {
+        "commit": "ad56767ec7f8bcfc1fb2771fbbb76efb37814fa1",
+        "reason": "preserve concurrent Learning candidate Method after 91/91 focused tests + security PASS before archive snapshot"
+      },
+      {
+        "commit": "this_evidence_commit",
+        "reason": "tracked Phase19A governance evidence only"
+      }
+    ],
+    "merge_cherry_pick_rebase": 0,
+    "production_publish_restart": 0,
+    "remote_refs": 0,
+    "target_tip_refs": 0
+  },
+  "phase18_evidence_commit": "0d41b799d6ca3c1888184002a2e3d20fad997321",
+  "phase18_ledger_sha256": "bf49bb4b770be63c13dc2a6f919086da726db8c0114e2d8069acd3c10792c9b9",
+  "private_archive": {
+    "files": {
+      "SHA256SUMS.txt": {
+        "sha256": "ec7f163488cd1425049b8238ee377920d90f46ee87b52729cb3d9591cd346a95"
+      },
+      "bundle-heads.txt": {
+        "sha256": "1e64c00d48cb3e123b9368ab7632235ee72d59fd82e904c994e3a5c6e5fbdd2c"
+      },
+      "bundle-verify.txt": {
+        "sha256": "88f2007b22559226bbd3d55c4c9f91b9b4f5c1f6b1713375f472f519b7d5a07b"
+      },
+      "manifest.json": {
+        "sha256": "322aed15e7f1c2b111219568b09ee82fd868b3eebc707965a64ac98f474347f1"
+      },
+      "restore-report.json": {
+        "sha256": "2657436e57f9b822706514aac7c6e6bdedba3d01f6818fd5282066c4911336ce"
+      },
+      "retained-unique-tips.bundle": {
+        "bytes": 16233761,
+        "sha256": "87184de9028935251e6b5ec8013db338b6cf9e3c15f188eec602031ff279d780"
+      }
+    },
+    "ignored_by_git": true,
+    "path": "data/private-archive/branch-governance/phase19a/retained-unique-tips-20260929"
+  },
+  "protected_refs": {
+    "existing_archive": "80f7ff79b51252da162634bbcf391a6a0e3e2017",
+    "main": "ad56767ec7f8bcfc1fb2771fbbb76efb37814fa1",
+    "production": "67ce123c5fa8430ab833610857fbf276d55e589d"
+  },
+  "result": "PASS_PRIVATE_ARCHIVE_AND_RESTORE_DRILL",
+  "schema": "lfl.branch_governance.phase19a_private_archive_evidence.v1",
+  "scope": {
+    "archive_only": 38,
+    "keep_active": 0,
+    "migrate_to_main": 0,
+    "superseded_semantically": 29,
+    "tip_refs": 67
+  },
+  "source_main_head": "ad56767ec7f8bcfc1fb2771fbbb76efb37814fa1",
+  "verification": {
+    "bundle_advertised_heads": "67/67 exact",
+    "current_local_refs_after_archive": "67/67 exact to manifest",
+    "first_restore_drill": "67/67 exact + git fsck --full --strict PASS",
+    "git_bundle_verify": "PASS; complete history",
+    "independent_second_restore_drill": "67/67 exact + git fsck --full --strict PASS",
+    "local_branch_count": 70,
+    "production_generation": 161,
+    "production_verify": "PASS",
+    "protected_refs_advertised_in_bundle": 0,
+    "root_clean": true,
+    "sha256sums": "5/5 PASS",
+    "worktree_count": 2
+  }
+}
