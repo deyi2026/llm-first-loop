@@ -54,10 +54,10 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["save_candidate", "record_use", "record_qualification", "refine"],
+                "enum": ["save_candidate", "record_use", "record_qualification", "refine", "annotate_freshness"],
                 "description": "动作类型",
             },
-            "method_ref": {"type": "string", "description": "record_use/qualification/refine 的 method:<id>"},
+            "method_ref": {"type": "string", "description": "record_use/qualification/refine/annotate_freshness 的 method:<id>"},
             "use_decision": {
                 "type": "string",
                 "enum": ["applied", "adapted", "not_applicable", "rejected"],
@@ -65,8 +65,9 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
             },
             "name": {"type": "string", "description": "save_candidate: Method 名称"},
             "description": {"type": "string", "description": "save_candidate: 触发条件/用途简介"},
-            "body": {"type": "string", "description": "save_candidate: 完整 Method Card；refine 需持久化的内容也应通过 save_candidate（parent_ref 关联来源）修订"},
+            "body": {"type": "string", "description": "save_candidate: 完整 Method Card，必须含六个非空节 ## Trigger / ## Discriminator / ## Short path / ## Stop conditions / ## Verification / ## Counterexamples（缺失将拒绝写入）；refine 需持久化的内容也应通过 save_candidate（parent_ref 关联来源）修订"},
             "parent_ref": {"type": "string", "description": "save_candidate: 修订来源 method ref（可选）"},
+            "freshness_refs": {"type": "array", "items": {"type": "string"}, "description": "save_candidate/annotate_freshness: 该 Method 依赖的 workspace 相对路径；qualification 时按 SHA 基线化，之后 freshness 只报告 current/changed/missing 事实，不自动降级生命周期。存量卡补声明走 annotate_freshness（只改这一个 frontmatter 键，卡体与其余字段逐字节不变）"},
             "verdict": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
             "mechanism": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
             "task_benefit": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
@@ -76,7 +77,7 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
             "transition": {
                 "type": "string",
                 "enum": ["qualify", "activate", "hold", "invalidate", "retire", "reopen"],
-                "description": "refine: 显式生命周期动作",
+                "description": "refine: 显式生命周期动作；invalidate/retire 需独立处置依据（一次 qualification verdict=fail，或 ≥2 个不同 episode 的 rejected 使用声明），程序只核事实存在、不判断该 Method 是否该退役；被拒的尝试会落账 journal；reopen 恒可用",
             },
         },
         "required": ["action"],
@@ -177,7 +178,43 @@ def _run_method_manage(args: dict, host: RegistryHost) -> ToolResult:
         forwarded = dict(args)
         forwarded["action"] = str(args.get("transition", "")).strip()
         return _run_refine_method(forwarded, host, tool_name="method_manage")
-    return _method_failure("method_manage", "[参数错误] action 必须为 save_candidate/record_use/record_qualification/refine")
+    if action == "annotate_freshness":
+        return _run_annotate_freshness(args, host, tool_name="method_manage")
+    return _method_failure(
+        "method_manage", "[参数错误] action 必须为 save_candidate/record_use/record_qualification/refine/annotate_freshness"
+    )
+
+
+def _run_annotate_freshness(args: dict, host: RegistryHost, *, tool_name: str) -> ToolResult:
+    """Existing-card freshness_refs channel (EVO-20260929-5283ab1b P5-B follow-up).
+
+    save_candidate is idempotent and never overwrites, so pre-P3 cards could
+    not declare freshness_refs without hand-editing frontmatter. This action
+    edits exactly that one key via the store and returns the fresh state.
+    """
+    store = host.method_store
+    if store is None:
+        return _method_failure(tool_name, "[程序异常] MethodStore 未装配")
+    method_ref = str(args.get("method_ref", "")).strip()
+    if not method_ref.startswith("method:"):
+        return _method_failure(tool_name, "[参数错误] method_ref 必须为 method:<id>")
+    freshness_refs = [str(v) for v in (args.get("freshness_refs") or [])]
+    if not freshness_refs:
+        return _method_failure(tool_name, "[参数错误] freshness_refs 不能为空")
+    try:
+        record = store.annotate_freshness(method_ref, freshness_refs)
+    except (OSError, ValueError, RuntimeError) as exc:
+        return _method_failure(tool_name, f"[freshness 注记失败] {type(exc).__name__}: {exc}")
+    fresh = store.freshness(method_ref)
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=(
+            f"[freshness 已注记] {record.method_ref} → {list(record.freshness_refs)}（卡体与其余字段未变）。\n"
+            f"当前 freshness 状态: {fresh.get('state')}（SHA 基线在下次 qualification 时落账；freshness 不自动降级生命周期）"
+        ),
+        tool_call_id="",
+        tool_name=tool_name,
+    )
 
 
 def _method_failure(tool_name: str, content: str) -> ToolResult:
@@ -212,6 +249,7 @@ def _run_save_method_candidate(args: dict, host: RegistryHost, *, tool_name: str
             source_episode_refs=[episode_ref] if episode_ref else [],
             evidence_refs=[str(v) for v in (args.get("evidence_refs") or [])],
             parent_ref=str(args.get("parent_ref", "")),
+            freshness_refs=[str(v) for v in (args.get("freshness_refs") or [])],
         )
     except (OSError, ValueError, RuntimeError) as exc:
         return _method_failure(tool_name, f"[Method candidate 写入失败] {type(exc).__name__}: {exc}")
@@ -316,8 +354,19 @@ def _run_refine_method(args: dict, host: RegistryHost, *, tool_name: str = "refi
     if not method_ref or target is None:
         return _method_failure(tool_name, "[参数错误] method_ref 必填且 action 必须为 qualify/activate/hold/invalidate/retire/reopen")
     try:
-        record = store.update_status(method_ref, target)
+        record = store.update_status(method_ref, target, episode_ref=str(getattr(host, "episode_ref", "") or ""))
     except (FileNotFoundError, OSError, ValueError, RuntimeError) as exc:
-        return _method_failure(tool_name, f"[Method 生命周期更新失败] {type(exc).__name__}: {exc}")
+        # EVO-20260929-5283ab1b P1 (R4): a blocked judgment must not vaporize.
+        # update_status already journaled the attempt store-side (universal for
+        # every caller); here we only surface the receipt honestly.
+        last = None
+        for entry in store.attempt_entries(method_ref):
+            if entry.get("requested") == target:
+                last = entry
+        if last is not None and last.get("journal_persisted"):
+            suffix = f"；已落账 lifecycle_transition_attempt（missing_fact={last.get('missing_fact')}）"
+        else:
+            suffix = "；[警告] 阻塞尝试未能写入 journal"
+        return _method_failure(tool_name, f"[Method 生命周期更新失败] {type(exc).__name__}: {exc}{suffix}")
     host.audit("refine_method", {"method_ref": method_ref, "status": record.status}, "success")
     return ToolResult(status=ToolResultStatus.SUCCESS, content=f"[refine_method] {method_ref} status={record.status}", tool_call_id="", tool_name=tool_name)

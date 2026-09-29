@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Any, cast
+
+import pytest
 
 from llm_loop.introspection.registry_experience import execute as execute_experience_tool
 from llm_loop.introspection.registry_experience import tool_defs as experience_tool_defs
@@ -44,6 +48,25 @@ def _seed_method(root: Path, method_id: str, *, status: str = "candidate", body:
         f"{body}\n",
         encoding="utf-8",
     )
+
+
+# EVO-20260929-5283ab1b P2: save_candidate now enforces the six-section Card
+# Contract at the persistence boundary, so every fixture body that flows through
+# save_candidate (not _seed_method, which writes files directly) must comply.
+_CONTRACT_BODY = (
+    "## Trigger\n"
+    "need the known-good path\n\n"
+    "## Discriminator\n"
+    "task matches the recorded scenario\n\n"
+    "## Short path\n"
+    "read -> apply -> verify\n\n"
+    "## Stop conditions\n"
+    "verification fails or evidence missing\n\n"
+    "## Verification\n"
+    "pytest green\n\n"
+    "## Counterexamples\n"
+    "SSR page\n"
+)
 
 
 def test_method_store_compact_discovery_and_exact_hydration(tmp_path: Path) -> None:
@@ -239,8 +262,8 @@ def test_lexical_method_receipt_is_not_subject_to_semantic_budget() -> None:
 
 def test_candidate_is_immutable_and_cannot_jump_directly_active(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
-    first = store.save_candidate(name="hydrate trace", description="trace producer", body="counterexample: SSR page")
-    second = store.save_candidate(name="hydrate trace", description="trace producer", body="counterexample: SSR page")
+    first = store.save_candidate(name="hydrate trace", description="trace producer", body=_CONTRACT_BODY)
+    second = store.save_candidate(name="hydrate trace", description="trace producer", body=_CONTRACT_BODY)
     assert first.method_ref == second.method_ref
     assert first.status == "candidate"
 
@@ -254,7 +277,7 @@ def test_candidate_is_immutable_and_cannot_jump_directly_active(tmp_path: Path) 
 
 def test_qualification_then_qualified_then_active(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
-    record = store.save_candidate(name="api refresh", description="fresh callsites", body="verify current tree")
+    record = store.save_candidate(name="api refresh", description="fresh callsites", body=_CONTRACT_BODY)
 
     try:
         store.update_status(record.method_ref, "qualified")
@@ -283,7 +306,7 @@ def test_same_source_episode_cannot_supply_promotion_pass(tmp_path: Path) -> Non
     record = store.save_candidate(
         name="source-bound",
         description="independent qualification required",
-        body="counterexample included",
+        body=_CONTRACT_BODY,
         source_episode_refs=["episode:s1:1:aa"],
     )
     try:
@@ -400,7 +423,7 @@ def test_method_use_receipt_is_append_only_observation_not_lifecycle_transition(
 
 def test_method_manage_record_use_derives_episode_and_model_and_never_promotes(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
-    record = store.save_candidate(name="bounded lookup", description="reuse known path", body="body")
+    record = store.save_candidate(name="bounded lookup", description="reuse known path", body=_CONTRACT_BODY)
     host = _Host(store)
     host.episode_ref = "episode:method-test-session:77:use"
 
@@ -433,6 +456,36 @@ def test_method_manage_record_use_derives_episode_and_model_and_never_promotes(t
     assert host.audit_rows[-1][0] == "record_method_use"
 
 
+def test_method_manage_annotate_freshness_routes_and_reports_state(tmp_path: Path) -> None:
+    store = MethodStore(tmp_path / "methods")
+    record = store.save_candidate(name="annotated card", description="legacy without refs", body=_CONTRACT_BODY)
+    host = _Host(store)
+
+    ok = execute_experience_tool(
+        "method_manage",
+        {"action": "annotate_freshness", "method_ref": record.method_ref, "freshness_refs": ["src/x.py"]},
+        cast(Any, host),
+    )
+    assert ok is not None and ok.status.value == "success"
+    assert "unbaselined" in ok.content
+    assert store.get(record.method_ref).freshness_refs == ("src/x.py",)
+
+    bad_ref = execute_experience_tool(
+        "method_manage",
+        {"action": "annotate_freshness", "method_ref": "not-a-method-ref", "freshness_refs": ["src/x.py"]},
+        cast(Any, host),
+    )
+    assert bad_ref is not None and bad_ref.status.value == "failure"
+
+    unsafe = execute_experience_tool(
+        "method_manage",
+        {"action": "annotate_freshness", "method_ref": record.method_ref, "freshness_refs": ["../escape.txt"]},
+        cast(Any, host),
+    )
+    assert unsafe is not None and unsafe.status.value == "failure"
+    assert store.get(record.method_ref).freshness_refs == ("src/x.py",)  # unchanged after rejected attempts
+
+
 def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
     host = _Host(store)
@@ -453,7 +506,7 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     try:
         saved = execute_experience_tool(
             "method_manage",
-            {"action": "save_candidate", "name": "trace source", "description": "follow provenance（当前性验证：先 grep -n provenance src/ 确认）", "body": "counterexample included"},
+            {"action": "save_candidate", "name": "trace source", "description": "follow provenance（当前性验证：先 grep -n provenance src/ 确认）", "body": _CONTRACT_BODY},
             cast(Any, host),
         )
     finally:
@@ -508,13 +561,13 @@ def test_model_facing_method_writes_require_runtime_episode_provenance(tmp_path:
 
     saved = execute_experience_tool(
         "method_manage",
-        {"action": "save_candidate", "name": "no source", "description": "must reject（当前性验证：先 grep 确认）", "body": "body"},
+        {"action": "save_candidate", "name": "no source", "description": "must reject（当前性验证：先 grep 确认）", "body": _CONTRACT_BODY},
         cast(Any, host),
     )
     assert saved is not None and saved.status.value == "failure"
     assert "provenance" in saved.content
 
-    record = store.save_candidate(name="existing", description="programmatic seed", body="body")
+    record = store.save_candidate(name="existing", description="programmatic seed", body=_CONTRACT_BODY)
     qualified = execute_experience_tool(
         "method_manage",
         {
@@ -617,7 +670,7 @@ def test_reflection_saves_candidate_without_reasoning_projection(tmp_path: Path)
             self.calls.append(kwargs)
             from llm_loop.llm.client import LLMResponse
             return LLMResponse(
-                content='{"decision":"candidate","name":"fresh callsite","description":"refresh current callsites","body":"trigger: signature changed\\ndiscriminator: current tree\\nshort_path: re-enumerate\\nstop_conditions: full gate green\\nverification: no missing args\\ncounterexamples: backwards compatible change"}',
+                content='{"decision":"candidate","name":"fresh callsite","description":"refresh current callsites","body":"## Trigger\\nsignature changed\\n\\n## Discriminator\\ncurrent tree\\n\\n## Short path\\nre-enumerate\\n\\n## Stop conditions\\nfull gate green\\n\\n## Verification\\nno missing args\\n\\n## Counterexamples\\nbackwards compatible change"}',
                 tool_calls=[],
                 provider="fake",
             )
@@ -667,7 +720,7 @@ def test_reflection_uses_one_teacher_fallback_on_invalid_structure(tmp_path: Pat
             if self.n == 1:
                 return LLMResponse(content="not-json", tool_calls=[], provider="fake")
             return LLMResponse(
-                content='{"decision":"candidate","name":"bounded retry","description":"use evidence-changing retry","body":"trigger: repeated failure\\ndiscriminator: result class\\nshort_path: alter hypothesis\\nstop_conditions: no new evidence\\nverification: changed observation\\ncounterexamples: transient first failure"}',
+                content='{"decision":"candidate","name":"bounded retry","description":"use evidence-changing retry","body":"## Trigger\\nrepeated failure\\n\\n## Discriminator\\nresult class\\n\\n## Short path\\nalter hypothesis\\n\\n## Stop conditions\\nno new evidence\\n\\n## Verification\\nchanged observation\\n\\n## Counterexamples\\ntransient first failure"}',
                 tool_calls=[],
                 provider="fake",
             )
@@ -707,3 +760,182 @@ def test_seed_lifecycle_is_copy_on_write_and_never_mutates_tracked_seed(tmp_path
     assert seed_path.read_bytes() == before
     assert (runtime / "seed-candidate" / "METHOD.md").exists()
     assert (runtime / "seed-candidate" / "qualification.jsonl").exists()
+
+
+# ── EVO-20260929-5283ab1b P1/P2/P3: journal, disposition basis, card contract, freshness_refs ──
+
+
+def test_blocked_qualification_lands_in_journal_not_vaporized(tmp_path: Path) -> None:
+    """R4-as-journal: a failed qualify must leave a durable, retrievable trace."""
+    store = MethodStore(tmp_path / "methods")
+    record = store.save_candidate(name="journal probe", description="blocked transition", body=_CONTRACT_BODY)
+
+    import pytest
+
+    with pytest.raises(ValueError):
+        store.update_status(record.method_ref, "qualified")  # no promotion=pass yet
+
+    assert store.get(record.method_ref).status == "candidate"  # lifecycle untouched
+    attempts = store.attempt_entries(record.method_ref)
+    assert len(attempts) == 1
+    entry = attempts[0]
+    assert entry["event"] == "lifecycle_transition_attempt"
+    assert entry["requested"] == "qualified"
+    assert entry["result"] == "blocked"
+    assert entry["missing_fact"] == "promotion_pass"
+    assert entry["method_status"] == "candidate"
+    assert entry["journal_persisted"] is True
+
+
+def test_refine_failure_reports_journaled_attempt(tmp_path: Path) -> None:
+    """Model-facing refine failure carries the journal receipt, not a silent no."""
+    store = MethodStore(tmp_path / "methods")
+    record = store.save_candidate(name="tool journal", description="refine path", body=_CONTRACT_BODY)
+    host = _Host(store)
+    host.episode_ref = "episode:method-test-session:9:qualification"
+
+    result = execute_experience_tool(
+        "method_manage",
+        {"action": "refine", "method_ref": record.method_ref, "transition": "qualify"},
+        cast(Any, host),
+    )
+    assert result is not None and result.status.value == "failure"
+    assert "已落账 lifecycle_transition_attempt" in result.content
+    assert "missing_fact=promotion_pass" in result.content
+    assert store.attempt_entries(record.method_ref)[0]["episode_ref"].startswith("episode:")
+
+
+def test_destructive_disposition_requires_independent_basis(tmp_path: Path) -> None:
+    """R3: a lone session cannot convict a Method on its own self-judgment."""
+    import pytest
+
+    store = MethodStore(tmp_path / "methods")
+    record = store.save_candidate(name="conviction", description="needs independent basis", body=_CONTRACT_BODY)
+
+    # No basis at all -> blocked, journaled, status untouched.
+    with pytest.raises(ValueError) as info:
+        store.update_status(record.method_ref, "invalidated")
+    assert "independent factual basis" in str(info.value)
+    assert store.attempt_entries(record.method_ref)[-1]["missing_fact"] == "independent_disposition_evidence"
+    assert store.get(record.method_ref).status == "candidate"
+
+    # One rejected use from a single episode is still not a basis.
+    store.record_use(record.method_ref, episode_ref="episode:s1:1:aa", decision="rejected")
+    with pytest.raises(ValueError):
+        store.update_status(record.method_ref, "invalidated")
+
+    # >=2 distinct episodes rejecting IS a mechanical basis (model still decided).
+    store.record_use(record.method_ref, episode_ref="episode:s2:2:bb", decision="rejected")
+    invalidated = store.update_status(record.method_ref, "invalidated")
+    assert invalidated.status == "invalidated"
+
+    # reopen stays permanently available; nothing was deleted.
+    reopened = store.update_status(record.method_ref, "candidate")
+    assert reopened.status == "candidate"
+
+
+def test_disposition_via_independent_qualification_fail(tmp_path: Path) -> None:
+    """A qualification verdict=fail is also a mechanical basis for disposition."""
+    import pytest
+
+    store = MethodStore(tmp_path / "methods")
+    record = store.save_candidate(name="fail verdict", description="fail path", body=_CONTRACT_BODY)
+
+    store.record_qualification(
+        record.method_ref,
+        task_ref="episode:s9:9:zz",
+        verdict="fail",
+        mechanism="fail",
+        task_benefit="mixed",
+        promotion="fail",
+    )
+    retired = store.update_status(record.method_ref, "retired")
+    assert retired.status == "retired"
+
+
+def test_card_contract_rejects_incomplete_bodies(tmp_path: Path) -> None:
+    """R5: structure is checked mechanically at the persistence boundary."""
+    import pytest
+
+    store = MethodStore(tmp_path / "methods")
+
+    with pytest.raises(ValueError) as info:
+        store.save_candidate(name="no sections", description="plain prose", body="just prose, no structure")
+    assert "Trigger" in str(info.value)
+
+    placeholder_body = _CONTRACT_BODY.replace("SSR page", "(none)")
+    with pytest.raises(ValueError) as info:
+        store.save_candidate(name="placeholder", description="empty section", body=placeholder_body)
+    assert "Counterexamples" in str(info.value)  # placeholder counts as missing
+
+    ok = store.save_candidate(name="compliant", description="six sections", body=_CONTRACT_BODY)
+    assert ok.status == "candidate"
+
+
+def test_freshness_refs_persist_and_validate(tmp_path: Path) -> None:
+    """P3: model-declared refs are persisted; non-relative paths are rejected."""
+    import pytest
+
+    store = MethodStore(tmp_path / "methods", workspace_root=tmp_path)
+
+    record = store.save_candidate(
+        name="fresh bound",
+        description="declares dependencies",
+        body=_CONTRACT_BODY,
+        freshness_refs=["src/llm_loop/methods/store.py", "docs/DESIGN-20260926-model-variance-containment.md"],
+    )
+    assert record.freshness_refs == (
+        "src/llm_loop/methods/store.py",
+        "docs/DESIGN-20260926-model-variance-containment.md",
+    )
+    # reloaded from disk, not just in-memory
+    reloaded = MethodStore(tmp_path / "methods", workspace_root=tmp_path).get(record.method_ref)
+    assert reloaded is not None and reloaded.freshness_refs == record.freshness_refs
+
+    with pytest.raises(ValueError):
+        store.save_candidate(name="abs path", description="must reject", body=_CONTRACT_BODY, freshness_refs=["/etc/passwd"])
+    with pytest.raises(ValueError):
+        store.save_candidate(name="traversal", description="must reject", body=_CONTRACT_BODY, freshness_refs=["../outside.txt"])
+
+
+# ── EVO-20260929-5283ab1b P5-B follow-up: annotate_freshness channel ──
+def test_annotate_freshness_updates_only_that_key(tmp_path: Path) -> None:
+    root = tmp_path / "methods"
+    store = MethodStore(root)
+    record = store.save_candidate(name="legacy card", description="no refs declared", body=_CONTRACT_BODY)
+    card_path = root / record.method_ref.removeprefix("method:") / "METHOD.md"
+    before = card_path.read_text(encoding="utf-8")
+    assert "freshness_refs" not in before
+
+    updated = store.annotate_freshness(record.method_ref, ["src/a.py", "docs/b.md"])
+
+    after = card_path.read_text(encoding="utf-8")
+    assert updated.freshness_refs == ("src/a.py", "docs/b.md")
+    # card body and every other frontmatter field stay byte-identical
+    assert after.split("## Trigger", 1)[1] == before.split("## Trigger", 1)[1]
+    for key in ("method_id", "name", "description", "status", "created_at"):
+        assert re.search(rf"^{key}:.*$", after, re.MULTILINE).group(0) == re.search(rf"^{key}:.*$", before, re.MULTILINE).group(0)
+    # no qualification yet → unbaselined until the next qualification
+    assert store.freshness(record.method_ref)["state"] == "unbaselined"
+    # append-only journal carries old→new
+    journal = (root / "annotations.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    entry = json.loads(journal[-1])
+    assert entry["event"] == "annotate_freshness" and entry["old"] == "" and entry["new"] == ["src/a.py", "docs/b.md"]
+
+
+def test_annotate_freshness_rejects_unsafe_paths_and_keeps_card_intact(tmp_path: Path) -> None:
+    root = tmp_path / "methods"
+    store = MethodStore(root)
+    record = store.save_candidate(name="guard card", description="path safety", body=_CONTRACT_BODY)
+    card_path = root / record.method_ref.removeprefix("method:") / "METHOD.md"
+    before = card_path.read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        store.annotate_freshness(record.method_ref, ["/etc/passwd"])
+    with pytest.raises(ValueError):
+        store.annotate_freshness(record.method_ref, ["../outside.txt"])
+    assert card_path.read_text(encoding="utf-8") == before
+
+    with pytest.raises(ValueError):
+        store.annotate_freshness("method:does-not-exist", ["src/a.py"])
+
