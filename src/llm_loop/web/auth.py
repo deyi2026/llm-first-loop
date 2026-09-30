@@ -201,7 +201,7 @@ def session_ttl_seconds() -> int:
     return ttl
 
 
-def session_cookie_domain() -> str | None:
+def session_cookie_domain(request_host: str = "") -> str | None:
     """Optional cookie parent domain so sibling hostnames share one login.
 
     Default (unset) keeps the session cookie host-only. For deployments where
@@ -220,7 +220,20 @@ def session_cookie_domain() -> str | None:
         raise ValueError("WEB_SESSION_COOKIE_DOMAIN host 无效") from exc
     if not host or any(ch.isspace() or ch in "/\\?#" for ch in host):
         raise ValueError("WEB_SESSION_COOKIE_DOMAIN 必须是纯域名")
-    return host
+    current = (request_host or "").strip().strip("[]").lower().rstrip(".")
+    if not current:
+        return None
+    try:
+        current = current.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+    # A Domain attribute is valid only when the response host is that domain or
+    # one of its subdomains.  Local/operator access (127.0.0.1/localhost) must
+    # remain host-only; otherwise browsers reject Set-Cookie entirely and a
+    # successful login immediately bounces back to /login.
+    if current == host or current.endswith(f".{host}"):
+        return host
+    return None
 
 
 class WebSessionStore:
