@@ -31,7 +31,14 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 _bearer = HTTPBearer(auto_error=False)
 
-SESSION_COOKIE_NAME = "lfl_web_session"
+SESSION_COOKIE_NAME = "lfl_web_session_v2"
+# v2 (2026-09-30): rename from lfl_web_session. During the dual-hostname era
+# (llmfirstloop.com + app.llmfirstloop.com, host-only cookies) browsers
+# accumulated several same-name stale cookies (per-host and, after the parent
+# domain rollout, domain-wide). Same-name multi-value headers are resolved
+# parser-order-dependently, which intermittently served a dead token from the
+# pre-restart store. Renaming guarantees every historical cookie is simply
+# never sent again; users re-login once.
 _PASSWORD_SCHEME = "pbkdf2_sha256"
 _PASSWORD_ITERATIONS = 310_000
 _PASSWORD_MIN_ITERATIONS = 100_000
@@ -264,6 +271,27 @@ def session_cookie_domain(request_host: str = "") -> str | None:
     if current == host or current.endswith(f".{host}"):
         return host
     return None
+
+
+def canonical_host() -> str:
+    """Optional public host that all proxied hostnames redirect to (308).
+
+    Set ``WEB_CANONICAL_HOST=llmfirstloop.com`` when several hostnames (apex +
+    subdomains) route to this origin. Requests arriving through a trusted
+    loopback proxy (cloudflared) on any alias hostname are redirected to the
+    canonical host so bookmarks/history cannot split auth state across
+    hostnames again. Empty (default) keeps every hostname as-is.
+    """
+    raw = os.environ.get("WEB_CANONICAL_HOST", "").strip().lower()
+    if not raw:
+        return ""
+    try:
+        host = raw.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError("WEB_CANONICAL_HOST host 无效") from exc
+    if not host or any(ch.isspace() or ch in "/\\?#" for ch in host):
+        raise ValueError("WEB_CANONICAL_HOST 必须是纯域名")
+    return host
 
 
 class WebSessionStore:
