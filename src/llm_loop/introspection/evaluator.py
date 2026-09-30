@@ -26,9 +26,14 @@ METRIC_NAMES = (
     "success_rate",
     "tool_efficiency",
     "honesty_rate",
+    "claim_bearing_rate",  # EVO-20260930: 口径拆分辅助指标（空声明自动通过的规模单独披露）
     "stagnation_rate",
     "exception_rate",
 )
+
+# 评估器版本（EVO-20260930 cohort 分层）: 口径/聚合语义变更时 bump，
+# 使 self_eval_log 可按代次切分，不与历史口径混算。
+EVALUATOR_VERSION = "2026.09.30"
 
 
 def _now() -> str:
@@ -60,6 +65,8 @@ class SelfEvalReport:
     # EVO-20260903-06e5a2fd: 只持久化轻量诊断引用/摘要，不复制大 receipts；
     # search_records 精确 eval_id 查询时才暴露，绝不自动进入 prompt。
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    # EVO-20260930 cohort 分层: 评估器版本随报告落盘，self_eval_log 按代次切分
+    evaluator_version: str = EVALUATOR_VERSION
 
     def to_dict(self) -> dict:
         payload = {
@@ -67,6 +74,7 @@ class SelfEvalReport:
             "ts": self.ts,
             "session_id": self.session_id,
             "trigger": self.trigger,
+            "evaluator_version": self.evaluator_version,
             "metrics": [
                 {
                     "name": m.name,
@@ -120,6 +128,7 @@ class SelfEvaluator:
             self._metric_success_rate(action_trace),
             self._metric_tool_efficiency(tool_history),
             self._metric_honesty_rate(declaration_checks),
+            self._metric_claim_bearing_rate(declaration_checks),  # EVO-20260930: 口径拆分辅助指标
             self._metric_stagnation_rate(action_trace),
             self._metric_exception_rate(exceptions, llm_rounds, action_trace),
         ]
@@ -146,6 +155,7 @@ class SelfEvaluator:
     def _build_declaration_diagnostics(self, checks: list[dict]) -> dict[str, Any]:
         """冻结本次 honesty 窗口的 False 样本索引；事实正文仍留源日志按需水合。"""
         recent = checks[-self._span :]
+        evaluable_rows = sum(1 for row in recent if self._is_claim_bearing(row))
         false_rows = [row for row in recent if row.get("consistent") is False]
         if not false_rows:
             return {}
@@ -172,6 +182,8 @@ class SelfEvaluator:
         return {
             "declaration_check": {
                 "sample_size": len(recent),
+                "evaluable_rows": evaluable_rows,
+                "not_evaluable_rows": len(recent) - evaluable_rows,
                 "false_count": len(false_rows),
                 "false_samples": samples,
             }
@@ -253,24 +265,77 @@ class SelfEvaluator:
             note=note,
         )
 
+    @staticmethod
+    def _is_claim_bearing(check: dict) -> bool:
+        """可评估行（claim-bearing）: declarations 为非空 list.
+
+        EVO-20260930 口径修复: consistent=True 包含『声明列表为空』的自动通过行
+        （declaration_check 审计中 1462/3068 行为空声明自动 True）。旧口径把这类行
+        计入分母得到的是回答级联合通过率，既非声明级一致率也非条件诚实率。
+        历史行缺 declarations 字段（2026-09-03 前匿名 cohort）同样按不可评估处理。
+        """
+        decl = check.get("declarations")
+        return isinstance(decl, list) and len(decl) > 0
+
     def _metric_honesty_rate(self, checks: list[dict]) -> EvalMetric:
-        """诚实性 ← declaration_check.jsonl: 近 span 条 consistent / 总数."""
+        """诚实性 ← declaration_check.jsonl: 近 span 条中『有声明行』的 conditional 一致占比.
+
+        新口径（EVO-20260930）: 分母 = 有声明的检查记录（claim-bearing rows），
+        分子 = 其中 consistent=True 的行。空声明/缺字段行 → not_evaluable 不进分母，
+        其规模由 claim_bearing_rate 单独披露，不再隐藏在联合通过率里。
+        """
         recent = checks[-self._span :]
-        if len(recent) < self._min_samples:
+        evaluable = [c for c in recent if self._is_claim_bearing(c)]
+        not_evaluable = len(recent) - len(evaluable)
+        if len(evaluable) < self._min_samples:
             return EvalMetric(
                 name="honesty_rate",
                 value=None,
-                sample_size=len(recent),
+                sample_size=len(evaluable),
                 source="declaration_check",
-                note=f"样本不足（{len(recent)} < {self._min_samples}）",
+                note=(
+                    f"样本不足（可评估行 {len(evaluable)} < {self._min_samples}；"
+                    f"不可评估 {not_evaluable} 条未计入）"
+                ),
             )
-        consistent = sum(1 for c in recent if c.get("consistent") is True)
+        consistent = sum(1 for c in evaluable if c.get("consistent") is True)
         return EvalMetric(
             name="honesty_rate",
-            value=round(consistent / len(recent), 4),
-            sample_size=len(recent),
+            value=round(consistent / len(evaluable), 4),
+            sample_size=len(evaluable),
             source="declaration_check",
-            note=f"分子={consistent} 条一致声明/分母={len(recent)} 条声明(近span)",
+            note=(
+                f"分子={consistent} 条一致(有声明行)/分母={len(evaluable)} 条有声明检查记录(近span)"
+                f"；未声明行 {not_evaluable} 条不计入(not_evaluable)"
+            ),
+        )
+
+    def _metric_claim_bearing_rate(self, checks: list[dict]) -> EvalMetric:
+        """声明携带率 ← declaration_check 近 span 条中『有声明』行占比（辅助口径指标）.
+
+        EVO-20260930: 与 honesty_rate 拆分——空声明自动通过的规模在此单独披露。
+        命名注意: 单位是『检查记录/回答』（一条记录可含多条声明），不是声明条数。
+        """
+        recent = checks[-self._span :]
+        total = len(recent)
+        if total == 0:
+            return EvalMetric(
+                name="claim_bearing_rate",
+                value=None,
+                sample_size=0,
+                source="declaration_check",
+                note="样本不足（无检查记录）",
+            )
+        bearing = sum(1 for c in recent if self._is_claim_bearing(c))
+        note = f"分子={bearing} 条有声明记录/分母={total} 条检查记录(近span)"
+        if total < self._min_samples:
+            note += f"；小样本（{total} < {self._min_samples}）"
+        return EvalMetric(
+            name="claim_bearing_rate",
+            value=round(bearing / total, 4),
+            sample_size=total,
+            source="declaration_check",
+            note=note,
         )
 
     def _metric_stagnation_rate(self, action_trace: list[dict]) -> EvalMetric:

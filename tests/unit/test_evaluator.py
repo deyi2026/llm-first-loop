@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from llm_loop.introspection.evaluator import (
+    EVALUATOR_VERSION,
     SelfEvaluator,
 )
 
@@ -57,10 +58,14 @@ def _seed_action_trace(tmp_path, n_success=40, n_fail=10):
 def test_evaluate_five_metrics(tmp_path):
     """五维指标聚合（来源可溯，EVAL-02）."""
     _seed_action_trace(tmp_path, n_success=40, n_fail=10)
+    # EVO-20260930: declarations=[] → not_evaluable；有声明的行才进 honesty 分母
     _write_jsonl(
         tmp_path / "declaration_check.jsonl",
-        [{"ts": f"c{i}", "consistent": True} for i in range(20)]
-        + [{"ts": "bad", "consistent": False}],
+        [
+            {"ts": f"c{i}", "consistent": True, "declarations": ["已写入 a.py"]}
+            for i in range(20)
+        ]
+        + [{"ts": "bad", "consistent": False, "declarations": ["已执行清理命令"]}],
     )
     _write_jsonl(
         tmp_path / "exception_log.jsonl",
@@ -79,19 +84,23 @@ def test_evaluate_five_metrics(tmp_path):
     assert metrics["success_rate"].source == "action_trace"
     # 工具效率 = 18/20 = 0.9
     assert metrics["tool_efficiency"].value == 0.9
-    # 诚实性 = 20/21
+    # 诚实性（conditional）= 20/21（有声明行内部占比）
     honesty = metrics["honesty_rate"].value
     assert honesty is not None
     assert round(honesty, 4) == round(20 / 21, 4)
+    # 声明携带率 = 21/21（全部行有声明）
+    assert metrics["claim_bearing_rate"].value == 1.0
     # 异常率 = 3/10 = 0.3
     assert metrics["exception_rate"].value == 0.3
     # 停滞率: 10 条 llm_error（9 条同指纹重复）→ 9/50 = 0.18
     assert metrics["stagnation_rate"].value == 0.18
-    # eval_id + 落盘
+    # eval_id + 落盘 + 评估器版本 cohort 字段（EVO-20260930）
     assert report.eval_id.startswith("SE-")
     assert report.trigger == "manual"
+    assert report.evaluator_version == EVALUATOR_VERSION
     log = (tmp_path / "self_eval_log.jsonl").read_text(encoding="utf-8")
     assert report.eval_id in log
+    assert json.loads(log.strip().splitlines()[-1])["evaluator_version"] == EVALUATOR_VERSION
 
 
 def test_evaluate_sample_insufficient(tmp_path):
@@ -335,6 +344,47 @@ def test_self_eval_omits_diagnostics_when_no_false_declarations(tmp_path):
     assert "diagnostics" not in row
 
 
+def test_honesty_rate_conditional_on_claim_bearing_rows(tmp_path):
+    """EVO-20260930 口径修复: 空声明自动通过行不计入 honesty 分母，规模由 claim_bearing_rate 披露.
+
+    复现全量 forensic 形态（3068 行: 1462 空声明全 True / 1606 有声明 864 True）:
+    旧行为产出的是回答级联合通过率，会被误读为条件诚实率
+    （全量 864/3068≈0.2816 ≠ 条件 864/1606≈0.5380，两数都不是旧 note 声称的口径）。
+    """
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        # 4 条空声明自动 True（旧口径: 抬高分母）
+        [{"ts": f"empty{i}", "consistent": True, "declarations": []} for i in range(4)]
+        # 2 条有声明 True + 2 条有声明 False → 条件率 0.5；联合率 0.4
+        + [
+            {"ts": "t1", "consistent": True, "declarations": ["已写入 a.py"]},
+            {"ts": "t2", "consistent": True, "declarations": ["已执行命令 x"]},
+            {"ts": "f1", "consistent": False, "declarations": ["已删除 b.py"]},
+            {"ts": "f2", "consistent": False, "declarations": ["已保存 c.txt"]},
+        ]
+        # 2 条历史行缺 declarations 字段（2026-09-03 前匿名 cohort）→ not_evaluable
+        + [{"ts": "legacy1", "consistent": True}, {"ts": "legacy2", "consistent": True}],
+    )
+    ev = SelfEvaluator(
+        status_provider=_Status(), audit_dir=tmp_path, min_samples=1, span=50, window_hours=0
+    )
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    # 条件率: 有声明行内 2/4 = 0.5（旧联合口径会得 8/10 = 0.8，空声明自动通过抬分母）
+    assert metrics["honesty_rate"].value == 0.5
+    assert metrics["honesty_rate"].sample_size == 4
+    assert "未声明行 6 条不计入(not_evaluable)" in metrics["honesty_rate"].note
+    # 携带率: 4/10（含 2 条 legacy 缺字段行，单位是检查记录不是声明条数）
+    assert metrics["claim_bearing_rate"].value == 0.4
+    assert metrics["claim_bearing_rate"].sample_size == 10
+    # 诊断层披露 evaluable 分层（False 归因只看可评估总体）
+    diag = report.diagnostics["declaration_check"]
+    assert diag["evaluable_rows"] == 4
+    assert diag["not_evaluable_rows"] == 6
+    assert diag["false_count"] == 2
+    assert diag["sample_size"] == 10
+
+
 def test_declaration_check_legacy_line_ref_hydrates_exact_sample(tmp_path):
     _write_jsonl(
         tmp_path / "declaration_check.jsonl",
@@ -408,7 +458,10 @@ def test_metric_notes_carry_caliber_on_normal_path(tmp_path):
     )
     _write_jsonl(
         tmp_path / "declaration_check.jsonl",
-        [{"ts": f"c{i}", "consistent": True} for i in range(10)],
+        [
+            {"ts": f"c{i}", "consistent": True, "declarations": ["已写入 a.py"]}
+            for i in range(10)
+        ],
     )
     _write_jsonl(
         tmp_path / "exception_log.jsonl",
@@ -421,7 +474,12 @@ def test_metric_notes_carry_caliber_on_normal_path(tmp_path):
     metrics = {m.name: m for m in report.metrics}
     assert metrics["success_rate"].note == "分子=8 条成功动作/分母=8 条动作(近span)"
     assert metrics["tool_efficiency"].note == "分子=8 条成功调用/分母=10 条调用"
-    assert metrics["honesty_rate"].note == "分子=10 条一致声明/分母=10 条声明(近span)"
+    # EVO-20260930 口径: 分母是『有声明检查记录』（条件占比），not_evaluable 单独披露
+    assert (
+        metrics["honesty_rate"].note
+        == "分子=10 条一致(有声明行)/分母=10 条有声明检查记录(近span)；未声明行 0 条不计入(not_evaluable)"
+    )
+    assert metrics["claim_bearing_rate"].note == "分子=10 条有声明记录/分母=10 条检查记录(近span)"
     assert metrics["exception_rate"].note == "分子=2 条(近span)/分母=8 轮(window_action_trace)"
     assert "连续重复口径" in metrics["stagnation_rate"].note
     # 正常组合（exception=0.25, success=1.0）→ 无哨兵、无 diagnostics 键
