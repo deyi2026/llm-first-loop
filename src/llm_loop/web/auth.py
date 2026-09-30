@@ -201,6 +201,28 @@ def session_ttl_seconds() -> int:
     return ttl
 
 
+def session_cookie_domain() -> str | None:
+    """Optional cookie parent domain so sibling hostnames share one login.
+
+    Default (unset) keeps the session cookie host-only. For deployments where
+    several hostnames (apex + subdomains) route to this same origin — e.g.
+    ``llmfirstloop.com`` and ``app.llmfirstloop.com`` through one Cloudflare
+    tunnel — set ``WEB_SESSION_COOKIE_DOMAIN=llmfirstloop.com`` so a login on
+    any hostname is recognized on all of them. Without this, browsers keep
+    per-host cookies and users bounce between two identical login pages.
+    """
+    raw = os.environ.get("WEB_SESSION_COOKIE_DOMAIN", "").strip().lower()
+    if not raw:
+        return None
+    try:
+        host = raw.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError("WEB_SESSION_COOKIE_DOMAIN host 无效") from exc
+    if not host or any(ch.isspace() or ch in "/\\?#" for ch in host):
+        raise ValueError("WEB_SESSION_COOKIE_DOMAIN 必须是纯域名")
+    return host
+
+
 class WebSessionStore:
     """In-memory, revocable browser sessions.
 

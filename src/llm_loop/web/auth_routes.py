@@ -19,6 +19,7 @@ from .auth import (
     is_loopback,
     normalize_origin,
     request_authenticated,
+    session_cookie_domain,
     session_ttl_seconds,
     verify_login_password,
 )
@@ -243,6 +244,10 @@ async def login(request: Request):
         max_age=ttl,
         httponly=True,
         secure=_secure_cookie(request),
+        # Parent-domain scope (WEB_SESSION_COOKIE_DOMAIN) lets sibling
+        # hostnames of one tunnel share the same login session; unset keeps
+        # the cookie host-only.
+        domain=session_cookie_domain(),
         # Lax is the correct browser-login boundary here: it allows the
         # immediate top-level GET after a successful login redirect while
         # still withholding the cookie from cross-site POST/subresource
@@ -262,7 +267,7 @@ def logout(request: Request):
     if isinstance(store, WebSessionStore):
         store.revoke(token)
     response = JSONResponse({"status": "ok"})
-    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/", domain=session_cookie_domain())
     response.headers["Cache-Control"] = "no-store"
     return response
 

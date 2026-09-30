@@ -106,6 +106,7 @@
 | `WEB_LOGIN_PASSWORD_HASH` | 空 | 浏览器登录 PBKDF2-SHA256 verifier；仅保存哈希，不保存明文。可在本机用 `python -c 'from llm_loop.web.auth import hash_login_password; import getpass; print(hash_login_password(getpass.getpass()))'` 生成后写入 `.env` |
 | `WEB_SESSION_TTL_SECONDS` | 43200 | 浏览器 server-side session 有效期，300..604800 秒；进程重启会使全部浏览器 session 失效 |
 | `WEB_AUTH_REQUIRE` | 0 | 1=回环也强制鉴权；**fail-closed**：启用但既无 `WEB_LOGIN_PASSWORD_HASH` 也无 `WEB_API_KEY` 时启动拒绝 + 请求 503 |
+| `WEB_SESSION_COOKIE_DOMAIN` | 空 | session cookie 绑定的父域（如 `llmfirstloop.com`）。多个主机名（apex+子域）经同一隧道路由到本源站时必配：默认 host-only 会让浏览器按主机名各存一份登录 cookie，用户在域名间切换时被反复弹回登录页（2026-09-30 登录循环事故）；配置后 Set-Cookie 带 `Domain=`，任一主机名登录全域有效。留空=host-only（单主机名部署） |
 | `WEB_ORIGIN_ALLOWLIST` | 空 | 逗号分隔**完整浏览器 Origin**（scheme + host + 可选非默认 port），如 `https://app.example.com`；裸域名兼容写法按 HTTPS 解释。只要非空就视为公网暴露意图并强制鉴权。mutating 请求的 Origin 必须与当前请求精确同源或命中此列表；同 host 不同 scheme/port 不再自动放行 |
 | `WEB_HOST` / `WEB_PORT` | 127.0.0.1 / 8902 | 绑定地址 / 端口；非回环监听未配置任何鉴权机制时拒绝启动 |
 | `SESSION_CONCURRENCY_LOCK` | 1 | 会话级并发锁（0=无锁） |
