@@ -83,6 +83,20 @@ _NEGATION_PREFIXES = ("未", "并未", "没有", "从未", "未曾", "不曾", "
 # B3 markdown 结构行（代码 fence/表格行/引用块）为引用内容，不进入声明抽取
 _MARKDOWN_STRUCT_PREFIXES = ("|", ">")
 
+# ── EVO-20260930: cohort 分层 + 引用内容二次抽取修复 ──
+# 校验器版本: 抽取/匹配语义变更时 bump。审计记录携带该字段后，历史 cohort
+# （如 2026-09-03 前无 id 的 1119 行匿名段）可与当前代次切分，不再混算
+# precision/误报归因（8 月旧 ±40 窗口行为 ≠ 当前整句单元行为）。
+VALIDATOR_VERSION = "2026.09.30"
+
+# inline code span（`...`）为引用/provenance 内容（EVO-20260930）。
+# 实证 DC-20260930T080447006508: 回答引用历史审计文本（"- `✅ RULE-AI-19 已落地…`"
+# 等 3 条 bullet）被重新抽为完成声明。fence/表格行/引用行已由
+# _strip_markdown_structures 剥离，inline code 是同族结构性引用——声明动词全部
+# 落在 span 内 → 按引用内容跳过；动词在 span 外（"已写入 `src/a.py`"）仍是自身
+# 完成声明，保留（路径 token 不剥离，keyword 匹配面不变）。
+_INLINE_CODE_RE = re.compile(r"`+([^`]+)`+")
+
 # ── EVO-20260917-27cd77ed: 完整句单元 + 叙事豁免 + 匹配面扩容 + 窗口扩大 ──
 # 回执双面: 匹配用长面（提案下限 ≥512，取 1024 平衡 8 轮滚动缓冲体积）；
 # 人读摘要/审计落盘仍用 120 字符短面（declaration_check.jsonl 体积与消费方不变）。
@@ -232,11 +246,13 @@ class DeclarationValidator:
         discrepancies: list[str] = []
         matched_by: list[str] = []
         cross_round_hits: list[str] = []
+        cross_round_eligible = 0  # EVO-20260930 telemetry: 本轮 miss → 进入跨轮补证路径的声明数
         for decl in declarations:
             matched = self._declaration_matches_receipt(decl, match_receipts)
             if matched:
                 matched_by.append(matched)
             else:
+                cross_round_eligible += 1
                 # 跨轮引用判定: 近 N 轮历史回执命中 → 标记跨轮引用（非真实不诚实）
                 cross = self._declaration_matches_receipt(decl, history)
                 if cross:
@@ -265,7 +281,13 @@ class DeclarationValidator:
             receipt_summary=receipts,
             cross_round_hits=cross_round_hits,
         )
-        self._audit(final_answer, tool_messages, result, matched_by=matched_by)
+        self._audit(
+            final_answer,
+            tool_messages,
+            result,
+            matched_by=matched_by,
+            cross_round_eligible=cross_round_eligible,
+        )
         return result
 
     def _extract_declarations(self, answer: str) -> list[str]:
@@ -284,6 +306,11 @@ class DeclarationValidator:
             if not text or text in decls:
                 continue
             if not any(v in text for v in _DECLARE_VERBS):
+                continue
+            # EVO-20260930: 声明动词全部位于 inline code span 内 → 引用/provenance
+            # 内容（引用历史审计/证据文本），非自身完成声明，跳过。
+            # 防漏网约束: 动词在 span 外（"已写入 `src/a.py`"）不豁免。
+            if self._is_quoted_inline_code(text):
                 continue
             # Agency-first: "未执行/没有修改/not executed" describes absence of an
             # action. It must not be turned into a fabricated completion claim that then
@@ -308,6 +335,26 @@ class DeclarationValidator:
                 continue
             decls.append(text)
         return decls
+
+    @staticmethod
+    def _is_quoted_inline_code(text: str) -> bool:
+        """声明动词是否全部位于 inline code span 内（EVO-20260930 引用豁免）.
+
+        豁免方向约束（与叙事/计划/能力豁免一致，宁误报不漏报）: 只要任一动词出现
+        在 span 外即返回 False（视为自身声明）；仅当所有动词 occurrence 都落在
+        span 内才豁免——"已写入 `src/a.py`"（动词在反引号外）永不因该规则逃脱校验，
+        路径 token 也完整保留在声明文本中供 keyword 匹配。
+        """
+        spans = [(m.start(1), m.end(1)) for m in _INLINE_CODE_RE.finditer(text)]
+        if not spans:
+            return False
+        for verb in _DECLARE_VERBS:
+            start = 0
+            while (idx := text.find(verb, start)) != -1:
+                if not any(s <= idx < e for s, e in spans):
+                    return False
+                start = idx + 1
+        return True
 
     @staticmethod
     def _split_sentences(text: str) -> list[str]:
@@ -501,20 +548,25 @@ class DeclarationValidator:
         tool_msgs: list[Message],
         result: DeclarationCheckResult,
         matched_by: list[str] | None = None,
+        cross_round_eligible: int = 0,
     ) -> None:
         """审计落盘（DFX-MNT-02 / P1 matched_by 可审计）."""
         if self._audit_dir is None:
             return
         self._audit_dir.mkdir(parents=True, exist_ok=True)
         now = system_local_now()
+        sid = _current_session_id.get() or ""
         record = {
             "id": f"DC-{now.strftime('%Y%m%dT%H%M%S%f')}-{uuid.uuid4().hex[:6]}",
             "ts": now.isoformat(),
-            "session_id": _current_session_id.get() or "",
+            "session_id": sid,
+            "validator_version": VALIDATOR_VERSION,  # EVO-20260930: cohort 分层（抽取/匹配语义代次）
             "consistent": result.consistent,
             "declarations": result.declarations,
             "discrepancies": result.discrepancies,
             "cross_round_hits": result.cross_round_hits,  # EVO-20260820-409f3f60: 跨轮引用命中可审计
+            "cross_round_eligible": cross_round_eligible,  # EVO-20260930: 本轮 miss 进入跨轮补证的声明数（telemetry，持续 eligible>0 且 hit=0 → 退役讨论依据）
+            "session_untracked": not sid,  # sid 缺失（contextvar 未设）→ "" 共享缓冲有跨会话串扰风险，审计可见
             "tool_call_ids": list(
                 dict.fromkeys(
                     str(m.tool_call_id)
