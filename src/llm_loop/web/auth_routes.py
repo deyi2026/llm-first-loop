@@ -13,11 +13,11 @@ from .auth import (
     SESSION_COOKIE_NAME,
     LoginRateLimiter,
     WebSessionStore,
-    auth_required,
     browser_login_configured,
     client_rate_limit_key,
     is_loopback,
     normalize_origin,
+    request_auth_required,
     request_authenticated,
     session_cookie_domain,
     session_ttl_seconds,
@@ -172,7 +172,7 @@ async def _login_payload(request: Request) -> tuple[str, str, bool]:
 
 @router.get("/", response_model=None)
 def browser_entry(request: Request):
-    if not auth_required():
+    if not request_auth_required(request):
         from .routes import root as service_root
 
         return service_root()
@@ -185,6 +185,8 @@ def browser_entry(request: Request):
 @router.get("/login", response_model=None)
 def login_page(request: Request, next: str = "/ui/v2/"):
     next_path = _safe_next(next)
+    if not request_auth_required(request):
+        return RedirectResponse(next_path, status_code=303)
     if request_authenticated(request):
         return RedirectResponse(next_path, status_code=303)
     return _login_response(next_path=next_path)
@@ -193,6 +195,10 @@ def login_page(request: Request, next: str = "/ui/v2/"):
 @router.post("/auth/login", response_model=None)
 async def login(request: Request):
     password, next_path, wants_json = await _login_payload(request)
+    if not request_auth_required(request):
+        if wants_json:
+            return JSONResponse({"status": "ok", "next": next_path, "auth_required": False})
+        return RedirectResponse(next_path, status_code=303)
     if not browser_login_configured():
         if wants_json:
             return JSONResponse({"error": "browser_login_not_configured"}, status_code=503)
@@ -283,6 +289,7 @@ def auth_status(request: Request):
         {
             "status": "ok",
             "authenticated": request_authenticated(request),
+            "auth_required": request_auth_required(request),
             "browser_login": browser_login_configured(),
         },
         headers={"Cache-Control": "no-store"},

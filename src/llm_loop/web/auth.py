@@ -68,6 +68,36 @@ def auth_required() -> bool:
     return not is_loopback(os.environ.get("WEB_HOST", "127.0.0.1"))
 
 
+def request_is_trusted_local(request: Request | None) -> bool:
+    """Whether this is a *direct* loopback request eligible for auth bypass.
+
+    Any proxy/forwarding marker revokes the bypass.  This deliberately keeps the
+    trust rule narrow: localhost means a browser talking directly to the loopback
+    listener, not a public request whose reverse proxy also happens to run locally.
+    """
+    if request is None:
+        return False
+    host = request.url.hostname or ""
+    peer = request.client.host if request.client else ""
+    if not is_loopback(host) or not is_loopback(peer):
+        return False
+    for header in (
+        "cf-connecting-ip",
+        "forwarded",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+    ):
+        if request.headers.get(header, "").strip():
+            return False
+    return True
+
+
+def request_auth_required(request: Request | None) -> bool:
+    """Apply public auth policy per request while direct loopback stays open."""
+    return auth_required() and not request_is_trusted_local(request)
+
+
 def auth_configured() -> bool:
     """Whether at least one usable authentication mechanism is configured."""
     return bool(_web_api_key() or _web_login_password_hash())
@@ -369,7 +399,7 @@ def require_api_key(
     The historical name is kept for compatibility with callers/tests.  It now
     represents the complete Web authentication gate rather than Bearer-only auth.
     """
-    if not auth_required():
+    if not request_auth_required(request):
         return
     if not auth_configured():
         raise HTTPException(
