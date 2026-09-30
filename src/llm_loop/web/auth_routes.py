@@ -247,7 +247,7 @@ async def login(request: Request):
         # Parent-domain scope (WEB_SESSION_COOKIE_DOMAIN) lets sibling
         # hostnames of one tunnel share the same login session; unset keeps
         # the cookie host-only.
-        domain=session_cookie_domain(),
+        domain=session_cookie_domain(request.url.hostname or ""),
         # Lax is the correct browser-login boundary here: it allows the
         # immediate top-level GET after a successful login redirect while
         # still withholding the cookie from cross-site POST/subresource
@@ -267,7 +267,11 @@ def logout(request: Request):
     if isinstance(store, WebSessionStore):
         store.revoke(token)
     response = JSONResponse({"status": "ok"})
-    response.delete_cookie(SESSION_COOKIE_NAME, path="/", domain=session_cookie_domain())
+    response.delete_cookie(
+        SESSION_COOKIE_NAME,
+        path="/",
+        domain=session_cookie_domain(request.url.hostname or ""),
+    )
     response.headers["Cache-Control"] = "no-store"
     return response
 

@@ -28,8 +28,8 @@ def auth_env(fake_settings, monkeypatch):
     monkeypatch.setenv("WEB_HOST", "127.0.0.1")
 
 
-def _client(engine):
-    return TestClient(build_app(engine=engine))
+def _client(engine, *, base_url: str = "http://testserver"):
+    return TestClient(build_app(engine=engine), base_url=base_url)
 
 
 def _login(client):
@@ -78,7 +78,7 @@ def test_parent_domain_cookie_marks_shared_scope(build_test_engine, auth_env, mo
     """修复后：Set-Cookie 带 Domain=llmfirstloop.com，token 服务端全局有效。"""
     monkeypatch.setenv("WEB_SESSION_COOKIE_DOMAIN", "llmfirstloop.com")
     engine, _ = build_test_engine([])
-    client = _client(engine)
+    client = _client(engine, base_url="https://app.llmfirstloop.com")
 
     resp = _login(client)
     assert resp.status_code == 303
@@ -96,10 +96,28 @@ def test_parent_domain_cookie_marks_shared_scope(build_test_engine, auth_env, mo
     assert ok.status_code == 200
 
 
+def test_parent_domain_config_keeps_loopback_cookie_host_only(build_test_engine, auth_env, monkeypatch):
+    """本机运维入口不能发送公网 Domain，否则浏览器会直接拒绝整个 cookie。"""
+    monkeypatch.setenv("WEB_SESSION_COOKIE_DOMAIN", "llmfirstloop.com")
+    engine, _ = build_test_engine([])
+    client = TestClient(build_app(engine=engine), base_url="http://127.0.0.1:8903")
+
+    resp = _login(client)
+    assert resp.status_code == 303
+    cookie = _cookie_header(resp)
+    assert SESSION_COOKIE_NAME in cookie
+    assert "domain=" not in cookie.lower()
+
+    # The browser jar accepts the host-only cookie and the immediate redirect
+    # target is authenticated instead of looping back to /login.
+    ok = client.get("/ui/v2/", follow_redirects=False)
+    assert ok.status_code == 200
+
+
 def test_logout_delete_cookie_keeps_domain_scope(build_test_engine, auth_env, monkeypatch):
     monkeypatch.setenv("WEB_SESSION_COOKIE_DOMAIN", "llmfirstloop.com")
     engine, _ = build_test_engine([])
-    client = _client(engine)
+    client = _client(engine, base_url="https://app.llmfirstloop.com")
 
     resp = _login(client)
     token = _session_token(resp)
