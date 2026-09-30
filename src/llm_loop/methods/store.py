@@ -10,6 +10,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,16 @@ from llm_loop.timekeeping import system_local_now
 _VALID_STATUSES = {"teacher", "candidate", "qualified", "active", "hold", "invalidated", "retired"}
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _SAFE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+
+# EVO-20260930-429f7c12: zero-signal candidate ranking decay.  A candidate that
+# has never produced any interaction signal (qualification or use declaration)
+# keeps its full ranking weight for a grace window (new cards need exposure),
+# then sinks by 2 points per idle day up to a cap.  Any recorded signal removes
+# the decay entirely — this changes discovery ordering only, never lifecycle
+# status, and the disposition evidence gate (EVO-20260929-5283ab1b) is untouched.
+_ZERO_SIGNAL_GRACE_DAYS = 7
+_ZERO_SIGNAL_DECAY_PER_DAY = 2
+_ZERO_SIGNAL_DECAY_CAP = 80
 
 # EVO-20260929-5283ab1b P2 (R5 Card Contract): the persistence layer requires the
 # same six sections the generation protocol demands, so a weak model cannot
@@ -68,6 +79,21 @@ def _checked_freshness_refs(refs: list[str]) -> list[str]:
 
 def _now() -> str:
     return system_local_now().isoformat()
+
+
+def _age_days(ts: str) -> int | None:
+    """Whole days between a past host-local ISO timestamp and now; None if unparseable."""
+    if not ts:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(ts).strip())
+        now = system_local_now()
+        if parsed.tzinfo is None and now.tzinfo is not None:
+            now = now.replace(tzinfo=None)
+        delta = now - parsed
+    except (ValueError, TypeError, OverflowError):
+        return None
+    return max(0, delta.days)
 
 
 def _scalar(value: str) -> Any:
@@ -167,6 +193,10 @@ class MethodStore:
         self._seed_dir = Path(seed_dir) if seed_dir is not None else None
         self._write_guard = write_guard
         self._post_save_hooks: list[Callable[[MethodRecord], None]] = []
+        # EVO-20260930-429f7c12: per-file signal cache keyed by path; value stamp
+        # is (mtime_ns, size) so external lifecycle writes invalidate correctly.
+        self._signal_stamp_cache: dict[str, tuple[int, int]] = {}
+        self._signal_value_cache: dict[str, Any] = {}
         if workspace_root is not None:
             self._workspace_root = Path(workspace_root).resolve()
         elif self._seed_dir is not None:
@@ -341,6 +371,84 @@ class MethodStore:
             "baseline": baseline,
         }
 
+    def _last_signal_ts(self, record: MethodRecord) -> str:
+        """Latest interaction-signal timestamp (qualification or use), '' when none.
+
+        EVO-20260930-429f7c12: both sources are appended with host-local ISO
+        timestamps of the same format, so lexicographic max is chronological max.
+        """
+        usage_index = self._usage_last_signal_index()
+        usage_ts = usage_index.get(record.method_ref, "")
+        qual_ts = self._qualification_last_signal(record)
+        return max(usage_ts, qual_ts)
+
+    def _usage_last_signal_index(self) -> dict[str, str]:
+        path = self._dir / "usage.jsonl"
+        cache_key = f"usage:{path}"
+        try:
+            stat = path.stat()
+            stamp = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            self._signal_stamp_cache.pop(cache_key, None)
+            self._signal_value_cache.pop(cache_key, None)
+            return {}
+        if self._signal_stamp_cache.get(cache_key) == stamp and cache_key in self._signal_value_cache:
+            value = self._signal_value_cache[cache_key]
+            return dict(value) if isinstance(value, dict) else {}
+        index: dict[str, str] = {}
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                ref = str(entry.get("method_ref") or "").strip().lower()
+                ts = str(entry.get("ts") or "").strip()
+                if ref and ts and ts > index.get(ref, ""):
+                    index[ref] = ts
+        except OSError:
+            index = {}
+        self._signal_stamp_cache[cache_key] = stamp
+        self._signal_value_cache[cache_key] = index
+        return dict(index)
+
+    def _qualification_last_signal(self, record: MethodRecord) -> str:
+        path = Path(record.path).parent / "qualification.jsonl"
+        cache_key = f"qual:{path}"
+        try:
+            stat = path.stat()
+            stamp = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            self._signal_stamp_cache.pop(cache_key, None)
+            self._signal_value_cache.pop(cache_key, None)
+            return ""
+        if self._signal_stamp_cache.get(cache_key) == stamp and cache_key in self._signal_value_cache:
+            return str(self._signal_value_cache[cache_key])
+        latest = ""
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                ts = str(entry.get("ts") or "").strip()
+                if ts > latest:
+                    latest = ts
+        except OSError:
+            latest = ""
+        self._signal_stamp_cache[cache_key] = stamp
+        self._signal_value_cache[cache_key] = latest
+        return latest
+
+    def _attach_last_signal_age(self, card: dict[str, Any], record: MethodRecord) -> None:
+        """Project days since the latest interaction signal; None means zero signals ever."""
+        last = self._last_signal_ts(record)
+        card["last_signal_age_days"] = _age_days(last)
+
     def list(self, query: str = "", limit: int = 20) -> list[dict[str, Any]]:
         query = query.strip()
         if query.lower().startswith("method:"):
@@ -348,6 +456,7 @@ class MethodStore:
             if record is None:
                 return []
             hydrated = record.hydrated()
+            self._attach_last_signal_age(hydrated, record)
             hydrated["qualification_entries"] = self.qualification_entries(query)
             hydrated["freshness"] = self.freshness(query)
             return [hydrated]
@@ -390,12 +499,25 @@ class MethodStore:
                 continue
             coverage = (matched / len(terms)) if terms else 0.0
             life = {"active": 35, "qualified": 25, "candidate": 0, "teacher": -5, "hold": -10, "invalidated": -20}.get(record.status, -25)
+            if record.status == "candidate":
+                # EVO-20260930-429f7c12: a candidate with zero interaction signals
+                # decays with idle age so mass-generated cards cannot crowd out
+                # qualified/active ones on lexical score alone.  Any qualification
+                # or use declaration restores full weight permanently.
+                if not self._last_signal_ts(record):
+                    age = _age_days(record.created_at)
+                    if age is not None and age > _ZERO_SIGNAL_GRACE_DAYS:
+                        life -= min(
+                            _ZERO_SIGNAL_DECAY_CAP,
+                            (age - _ZERO_SIGNAL_GRACE_DAYS) * _ZERO_SIGNAL_DECAY_PER_DAY,
+                        )
             score = identifier_bonus + lexical * 10 + int(coverage * 50) + life
             ranked.append((score, coverage, record))
         ranked.sort(key=lambda item: (item[0], item[1], item[2].method_id), reverse=True)
         result: list[dict[str, Any]] = []
         for _, _, record in ranked[:max(0, limit)]:
             card = record.card()
+            self._attach_last_signal_age(card, record)
             if record.freshness_refs:
                 card["freshness"] = self.freshness(record.method_ref)
             result.append(card)
