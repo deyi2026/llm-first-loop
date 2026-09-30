@@ -939,3 +939,75 @@ def test_annotate_freshness_rejects_unsafe_paths_and_keeps_card_intact(tmp_path:
     with pytest.raises(ValueError):
         store.annotate_freshness("method:does-not-exist", ["src/a.py"])
 
+
+# --- EVO-20260930-429f7c12: zero-signal candidate ranking decay ---
+
+
+def _seed_timed_method(
+    root: Path,
+    method_id: str,
+    *,
+    status: str = "candidate",
+    body: str = "timeout retry network diagnostic",
+    created_days_ago: float = 0,
+) -> None:
+    from datetime import timedelta
+
+    from llm_loop.timekeeping import system_local_now
+
+    d = root / method_id
+    d.mkdir(parents=True)
+    created = (system_local_now() - timedelta(days=created_days_ago)).isoformat()
+    (d / "METHOD.md").write_text(
+        "---\n"
+        f"method_id: {method_id}\n"
+        f"name: {method_id}\n"
+        f"description: timeout retry network diagnostic {method_id}\n"
+        f"status: {status}\n"
+        f"created_at: {created}\n"
+        "---\n"
+        f"{body}\n",
+        encoding="utf-8",
+    )
+
+
+def test_zero_signal_candidate_decays_and_sinks(tmp_path):
+    root = tmp_path / "methods"
+    _seed_timed_method(root, "stale-card", created_days_ago=40)
+    _seed_timed_method(root, "fresh-card", created_days_ago=2)
+    _seed_timed_method(root, "live-card", status="active", created_days_ago=90)
+
+    cards = MethodStore(root).list("timeout retry", 10)
+    order = [c["key"] for c in cards]
+    # Same lexical score; active(+35) > fresh candidate(0, inside grace window)
+    # > stale candidate(decayed by (40-7)*2 = 66, capped at 80).
+    assert order[0] == "method:live-card"
+    assert order[1] == "method:fresh-card"
+    assert order[2] == "method:stale-card"
+    stale = cards[2]
+    assert stale["last_signal_age_days"] is None  # zero signals ever
+    assert cards[0]["last_signal_age_days"] is None  # active card never qualified either
+
+
+def test_signal_restores_candidate_ranking(tmp_path):
+    root = tmp_path / "methods"
+    _seed_timed_method(root, "signaled-card", created_days_ago=40)
+
+    store = MethodStore(root)
+    store.record_qualification("method:signaled-card", task_ref="task:probe", verdict="not_evaluated")
+
+    cards = MethodStore(root).list("timeout retry", 10)
+    assert len(cards) == 1
+    # Any interaction signal removes the idle-age decay entirely and is projected.
+    assert cards[0]["last_signal_age_days"] == 0
+
+
+def test_hydrated_projection_includes_last_signal_age(tmp_path):
+    root = tmp_path / "methods"
+    _seed_timed_method(root, "probe-card", created_days_ago=30)
+    store = MethodStore(root)
+    cards = store.list("method:probe-card", 5)
+    assert len(cards) == 1
+    assert "last_signal_age_days" in cards[0]
+    assert cards[0]["last_signal_age_days"] is None
+
