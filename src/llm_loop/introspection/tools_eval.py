@@ -1,6 +1,7 @@
 """self_evaluate 工具实现（M16 审计 FR-AUDIT-AI-14 拆分: corrections.py → tools_eval.py）.
 
-self_evaluate: AI 主动发起自我评估（EVAL-01/04/05），五维指标来源可溯。
+self_evaluate: AI 主动发起自我评估（EVAL-01/04/05），五个核心指标 + honesty
+辅助口径（claim_bearing_rate），来源可溯；诚实性按当前 validator 代次隔离计算。
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 
 SELF_EVALUATE_TOOL_DEF: dict = {
     "name": "self_evaluate",
-    "description": "主动发起自我评估（五维指标: 成功率/工具效率/诚实性/停滞率/异常率，来源可溯）。何时用: 发现运行异常/完成阶段性任务/希望沉淀经验时。评估结果落盘可检索（search_records kind=self_eval），后续改进能力按评估结果按需提供。何时不用: 仅需查状态用 architecture_status；无需评估时不必调用（评估有成本）。失败对策: 样本不足时结果会标注“样本不足”，请基于现有数据解读，不强行下结论。",
+    "description": "主动发起自我评估（核心五维指标: 成功率/工具效率/诚实性/停滞率/异常率 + 诚实性辅助口径: 声明携带率 claim_bearing_rate，来源可溯；诚实性按当前 validator 代次隔离计算，旧代次行不混入）。何时用: 发现运行异常/完成阶段性任务/希望沉淀经验时。评估结果落盘可检索（search_records kind=self_eval），后续改进能力按评估结果按需提供。何时不用: 仅需查状态用 architecture_status；无需评估时不必调用（评估有成本）。失败对策: 样本不足时结果会标注“样本不足”，请基于现有数据解读，不强行下结论。",
     "parameters": {
         "type": "object",
         "properties": {

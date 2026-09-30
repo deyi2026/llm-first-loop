@@ -5,11 +5,12 @@
 ### honesty_rate 口径修复 + 声明审计 cohort 分层 + 引用内容二次抽取修复（2026-09-30）
 
 - **口径修复（measurement contract）**：`honesty_rate` 旧口径把「声明列表为空→自动通过」的行计入分母，产出的是回答级联合通过率（全量 3069 行 0.7582），会被误读为诚实率/条件率（同数据条件率实为 0.5380，联合的"有声明且一致"率 0.2816——三个数字此前混称）。现改为**条件率**：分母仅含有声明的检查记录（claim-bearing），空声明与历史缺 `declarations` 字段行计 `not_evaluable` 不进分母；其规模由新增辅助指标 `claim_bearing_rate`（近 50 条窗口 0.48——一半是空声明自动通过，此前不可见）单独披露。note 文案同步修正（"X 条声明"实为"X 条检查记录"）。self_eval 报告新增 `evaluator_version` 代次字段。
-- **cohort 分层**：`declaration_check` 审计记录新增 `validator_version`（抽取/匹配语义变更时 bump）——历史 cohort（2026-09-03 前无 id 匿名段条件 False 率 55.5% vs 有 ID 段 40.1%，8 月 ±40 窗口行为）不再与当前代次混算 precision/误报归因。
+- **cohort 分层 + 消费侧隔离**：`declaration_check` 审计记录新增 `validator_version`（抽取/匹配语义变更时 bump）；`SelfEvaluator` 聚合时按当前代次**整行隔离**（EVALUATOR_VERSION 2026.09.30.1，识别 cohort ≠ 隔离 cohort——写侧打版本必须配读侧排除）——历史 cohort（2026-09-03 前无 id 匿名段条件 False 率 55.5% vs 有 ID 段 40.1%，8 月 ±40 窗口行为）不与当前代次混算 honesty/claim_bearing/误报归因；diagnostics 披露 `window_rows/current_cohort_rows/excluded_other_cohort_rows/source_validator_versions`，重启过渡期当前代次样本不足时如实 N/A，不拿旧代次填样本量。
 - **引用内容二次抽取修复（实证 DC-20260930T080447006508）**：回答引用历史审计/证据文本（inline code bullet "- `✅ RULE-AI-19 已落地…`"）会被重新抽成自己的完成声明——fence/表格/引用行已有剥离，inline code span 补齐同族豁免。防漏网约束：仅当声明动词**全部**落在 span 内才豁免（"已写入 `src/a.py`"动词在 span 外仍是自身声明，路径 token 保留，keyword 匹配面不变）。
 - **跨轮 telemetry（不删 cross_round）**：全量 0 hit 但单测路径可达，"死代码"结论不成立；审计记录新增 `cross_round_eligible`（本轮 miss→进入跨轮补证的声明数）与 `session_untracked`（contextvar 未设→"" 共享缓冲串扰风险可见化）——持续 eligible>0 且 hit=0 才有退役讨论依据。
-- **P2 初标（人工 taxonomy）**：近 24h 5 条 False 全部为流水线机械误差（detection 2 / evidence attribution 1 / receipt matching 2），真实幻觉 0 条；分类与 gold set 要求冻结于 `docs/local/TAXONOMY-20260930-declaration-false-cohort.md`——词表冻结，后续改动过 precision+recall 双门。
-- **测试**：新增 `test_validator_cohort_inlinecode.py`（引用豁免 3 例 + cohort 字段 + eligible telemetry）、`test_honesty_rate_conditional_on_claim_bearing_rows`（口径复现）；相关子集 75 通过。
+- **P2 初标（人工 taxonomy seed）**：近 24h 5 条 False 全部为流水线机械误差（detection 2 / evidence attribution 1 / receipt matching 2），真实幻觉 **0/5（labeled seed 内观察值，非患病率估计）**；gold-set 协议与分类纪律冻结于 tracked 文档 `docs/analysis/DECLARATION-VALIDATOR-GOLDSET-PROTOCOL-20260930.md`（5 条人工判断与数据快照留 `docs/local/TAXONOMY-20260930-declaration-false-cohort.md`）——词表冻结，后续改动过 precision+recall 双门。
+- **指标契约整理**：`METRIC_NAMES` 拆为 `CORE_METRIC_NAMES`（5: 成功率/工具效率/诚实性/停滞率/异常率）+ `AUX_METRIC_NAMES`（claim_bearing_rate，honesty 的测量质量/support 披露）——修复"六项指标仍自称五维"的 contract 漂移；工具/模块文案统一为"核心五维 + 辅助口径"，后续测量质量指标归 AUX 不再膨胀核心维。
+- **测试**：新增 `test_validator_cohort_inlinecode.py`（引用豁免 3 例 + cohort 字段 + eligible telemetry）、`test_honesty_rate_conditional_and_cohort_isolated`（口径复现 + cohort 隔离 + legacy False 不进当前归因）、`test_honesty_rate_na_when_window_only_legacy_cohort`（重启过渡期如实 N/A）、`test_self_eval_diagnostics_carry_cohort_counts_without_false_samples`（无 False 也带 cohort 计数）、`test_metric_names_contract_core_plus_aux`（指标契约）；相关子集 138 通过。
 
 ### 死循环治理升级：跨 run 延续 + 执行前拦截 + done 重开确认门槛（2026-09-02）
 - **实测缺陷**：停滞计数按 run 重置——「每轮 run 重复 2~4 次同指纹调用即被 `[program-final]` 收束」的病理循环永不达事后熔断阈值（5）；且事后熔断已烧掉整轮 LLM 调用后才终止（发现滞后）。
