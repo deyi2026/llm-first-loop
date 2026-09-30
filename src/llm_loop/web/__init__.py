@@ -20,12 +20,14 @@ from llm_loop.timekeeping import system_local_now
 from .auth import (
     LoginRateLimiter,
     WebSessionStore,
+    canonical_host,
     configured_origin_allowlist,
     is_loopback,
     normalize_origin,
     request_auth_required,
     request_authenticated,
     require_api_key,
+    SESSION_COOKIE_NAME,
     validate_auth_require,
     validate_binding,
     validate_origin_allowlist,
@@ -120,6 +122,82 @@ class _OriginGuardMiddleware:
         await self.app(scope, receive, send)
 
 
+class _CanonicalOriginMiddleware:
+    """P0(2026-09-30): 公网 http→https 与别名主机名→canonical 308 归一.
+
+    事故背景: 同一浏览器在 https://llmfirstloop.com 登录成功(Secure cookie),
+    但历史记录/自动补全里还存在 http:// 或 https://app.llmfirstloop.com 入口。
+    http 请求不携带 Secure cookie、别名主机名的 cookie 边界不同,于是同一用户
+    "登录成功又被弹回登录页"交替出现(web.log favicon.svg 200/303 交替)。
+
+    规则(全部满足才 308):
+    - ASGI http 且 immediate peer 是 loopback(即 cloudflared 回源拓扑);
+    - 带可信 x-forwarded-proto 头(本地直连无此头,完全不受影响);
+    - proto=http → 升级 https;或 host(去端口)≠ WEB_CANONICAL_HOST 且是
+      canonical 或其子域 → 归一到 canonical。
+    308 永久重定向且保留方法/请求体,POST /auth/login 等表单无缝升级。
+    """
+
+    def __init__(self, app):
+        self.app = app
+        self._canonical = canonical_host()
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or not self._canonical:
+            await self.app(scope, receive, send)
+            return
+        client = scope.get("client")
+        peer = str(client[0]) if isinstance(client, (tuple, list)) and client else ""
+        if not is_loopback(peer):
+            await self.app(scope, receive, send)
+            return
+        forwarded = _scope_header(scope, b"x-forwarded-proto").split(",", 1)[0].strip().lower()
+        if not forwarded:
+            await self.app(scope, receive, send)
+            return
+        host = _scope_header(scope, b"host")
+        try:
+            host_name, _, port = host.partition(":")
+            host_name = host_name.strip().strip("[]").lower()
+            host_name = host_name.encode("idna").decode("ascii")
+        except (UnicodeError, AttributeError):
+            host_name = ""
+        scheme_upgrade = forwarded == "http"
+        host_is_alias = (
+            bool(host_name)
+            and host_name != self._canonical
+            and (host_name.endswith(f".{self._canonical}"))
+        )
+        if not scheme_upgrade and not host_is_alias:
+            await self.app(scope, receive, send)
+            return
+        target_scheme = "https"
+        target_host = self._canonical if host_is_alias or host_name == self._canonical else host_name
+        if not target_host:
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "/") or "/"
+        query = scope.get("query_string", b"").decode("latin-1", errors="replace")
+        location = f"{target_scheme}://{target_host}{path}"
+        if query:
+            location += f"?{query}"
+        # 端口仅当 Host 显式带非默认端口时保留(本地测试拓扑);公网 443 隐含。
+        if port and port not in {"80", "443"}:
+            location = f"{target_scheme}://{target_host}:{port}{path}"
+            if query:
+                location += f"?{query}"
+        await send({
+            "type": "http.response.start",
+            "status": 308,
+            "headers": [
+                (b"content-type", b"text/plain; charset=utf-8"),
+                (b"location", location.encode("latin-1", errors="replace")),
+                (b"cache-control", b"public, max-age=86400"),
+            ],
+        })
+        await send({"type": "http.response.body", "body": b"permanent redirect"})
+
+
 def build_app(settings=None, engine=None) -> FastAPI:
     """装配 FastAPI 应用（薄壳）。
 
@@ -168,6 +246,16 @@ def build_app(settings=None, engine=None) -> FastAPI:
                 and request.url.path.startswith("/ui/v2")
                 and not request_authenticated(request)
             ):
+                # P1(2026-09-30): 弹回登录页时记录 host/scheme/cookie 存在性——
+                # 2026-09-30 事故里 access log 无 Host,双域名/http 混用定位耗时
+                # 数小时。只记布尔与头名,不落任何 token 值。
+                logger.info(
+                    "auth_gate_redirect host=%s xfp=%s cookie_present=%s path=%s",
+                    request.headers.get("host", "-"),
+                    request.headers.get("x-forwarded-proto", "-"),
+                    SESSION_COOKIE_NAME in request.cookies,
+                    request.url.path,
+                )
                 from urllib.parse import quote
 
                 target = request.url.path
@@ -190,6 +278,13 @@ def build_app(settings=None, engine=None) -> FastAPI:
             if request.url.path.startswith("/ui/v2/"):
                 response.headers["Cache-Control"] = "no-store"
             return response
+
+    # P0(2026-09-30): http→https + 别名主机名→canonical 308 归一。必须在所有
+    # @app.middleware("http") 装饰器（auth gate / no-cache）之后注册——Starlette
+    # 后注册者在更外层——否则 auth gate 会先以未认证 303 抢答，归一永远不执行
+    # （首版实现即栽在此：/ui/v2/ 的 http 请求被 auth gate 303 到相对路径 /login，
+    # 仍停留在 http）。
+    app.add_middleware(_CanonicalOriginMiddleware)
 
     return app
 
