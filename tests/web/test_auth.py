@@ -44,6 +44,70 @@ def test_loopback_no_auth_required(build_test_engine, fake_settings, monkeypatch
     assert resp.status_code == 200
 
 
+def test_direct_loopback_bypasses_public_auth_policy(
+    build_test_engine, fake_settings, monkeypatch, tmp_path
+):
+    from llm_loop.web.auth import hash_login_password
+
+    ui = tmp_path / "dist"
+    ui.mkdir()
+    (ui / "index.html").write_text("<html>local-ui</html>", encoding="utf-8")
+    monkeypatch.setenv("UI_V2_DIR", str(ui))
+    monkeypatch.setenv("WEB_HOST", "127.0.0.1")
+    monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
+    monkeypatch.setenv("WEB_ORIGIN_ALLOWLIST", "https://app.llmfirstloop.com")
+    monkeypatch.setenv("WEB_LOGIN_PASSWORD_HASH", hash_login_password("correct-horse-battery"))
+    engine, _ = build_test_engine([])
+    client = TestClient(
+        build_app(engine=engine),
+        base_url="http://127.0.0.1:8903",
+        client=("127.0.0.1", 50000),
+    )
+
+    assert client.get("/health").status_code == 200
+    assert client.get("/ui/v2/", follow_redirects=False).status_code == 200
+    login = client.get("/login?next=/ui/v2/", follow_redirects=False)
+    assert login.status_code == 303
+    assert login.headers["location"] == "/ui/v2/"
+    status = client.get("/auth/status").json()
+    assert status["auth_required"] is False
+    assert status["authenticated"] is False
+
+
+@pytest.mark.parametrize(
+    ("base_url", "client_addr", "headers"),
+    [
+        ("https://app.llmfirstloop.com", ("127.0.0.1", 50000), {}),
+        ("http://127.0.0.1:8903", ("192.0.2.10", 50000), {}),
+        (
+            "http://127.0.0.1:8903",
+            ("127.0.0.1", 50000),
+            {"CF-Connecting-IP": "192.0.2.10"},
+        ),
+        (
+            "http://127.0.0.1:8903",
+            ("127.0.0.1", 50000),
+            {"X-Forwarded-For": "192.0.2.10"},
+        ),
+        (
+            "http://127.0.0.1:8903",
+            ("127.0.0.1", 50000),
+            {"X-Forwarded-Proto": "https"},
+        ),
+    ],
+)
+def test_local_auth_bypass_fails_closed_for_nonlocal_request_facts(
+    base_url, client_addr, headers, build_test_engine, fake_settings, monkeypatch
+):
+    monkeypatch.setenv("WEB_API_KEY", "secret-key")
+    monkeypatch.setenv("WEB_HOST", "127.0.0.1")
+    monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
+    engine, _ = build_test_engine([])
+    client = TestClient(build_app(engine=engine), base_url=base_url, client=client_addr)
+
+    assert client.get("/health", headers=headers).status_code == 401
+
+
 def test_sensitive_keys_not_leaked(build_test_engine, fake_settings, monkeypatch):
     monkeypatch.setenv("LLM_API_KEY", "llm-secret-xyz")
     monkeypatch.setenv("WEB_API_KEY", "web-secret-xyz")

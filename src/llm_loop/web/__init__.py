@@ -20,10 +20,10 @@ from llm_loop.timekeeping import system_local_now
 from .auth import (
     LoginRateLimiter,
     WebSessionStore,
-    auth_required,
     configured_origin_allowlist,
     is_loopback,
     normalize_origin,
+    request_auth_required,
     request_authenticated,
     require_api_key,
     validate_auth_require,
@@ -148,13 +148,9 @@ def build_app(settings=None, engine=None) -> FastAPI:
     _lock_enabled = os.environ.get("SESSION_CONCURRENCY_LOCK", "true").strip().lower() in ("true", "1", "")
     app.state.session_locks = {} if _lock_enabled else None
 
-    # 鉴权：公网/隧道暴露时，API 接受浏览器 session cookie 或 Bearer API key。
-    # auth_required() 同时覆盖 WEB_AUTH_REQUIRE、非回环绑定和 origin allowlist，
-    # 避免 cloudflared 回源 127.0.0.1 时误触回环豁免。
-    if auth_required():
-        app.include_router(router, dependencies=[Depends(require_api_key)])
-    else:
-        app.include_router(router)
+    # 鉴权是请求级策略：同一进程允许 direct-loopback 无登录访问，同时要求
+    # 公网域名/隧道请求使用浏览器 session 或 Bearer。
+    app.include_router(router, dependencies=[Depends(require_api_key)])
 
     # v1（原版 M37 前端 /static）已弃用：保留 static/ 历史产物，但不再挂载路由。
 
@@ -168,7 +164,7 @@ def build_app(settings=None, engine=None) -> FastAPI:
             # Mounted StaticFiles does not inherit APIRouter dependencies. Protect it
             # explicitly so unauthenticated users cannot load the application shell/assets.
             if (
-                auth_required()
+                request_auth_required(request)
                 and request.url.path.startswith("/ui/v2")
                 and not request_authenticated(request)
             ):
