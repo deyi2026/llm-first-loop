@@ -13,7 +13,6 @@ proto=http 一律升级 https，别名主机名一律 308 到 canonical（保留
 import pytest
 from fastapi.testclient import TestClient
 
-import llm_loop.web as web_module
 from llm_loop.web import build_app
 from llm_loop.web.auth import SESSION_COOKIE_NAME, hash_login_password
 
@@ -26,7 +25,11 @@ def canonical_env(fake_settings, monkeypatch):
     monkeypatch.setenv("WEB_LOGIN_PASSWORD_HASH", hash_login_password(TEST_PASSWORD))
     monkeypatch.setenv("WEB_HOST", "127.0.0.1")
     monkeypatch.setenv("WEB_CANONICAL_HOST", "llmfirstloop.com")
-    monkeypatch.setattr(web_module, "is_loopback", lambda _h: True)  # TestClient peer
+    # 注: 不 monkeypatch is_loopback——TestClient 的 scope client("testclient")非
+    # loopback,恰好模拟 uvicorn ProxyHeadersMiddleware 已把 client 改写为公网 IP
+    # 的真实隧道拓扑;中间件必须靠 WEB_HOST 绑定边界(127.0.0.1)才触发 308。
+    # 首版实现只查 peer loopback + 测试里 monkeypatch 强制 True,掩盖了
+    # "公网流量 client 恒非 loopback → 308 从未触发"的真实缺陷。
 
 
 def _client(engine, base_url: str) -> TestClient:
@@ -92,7 +95,6 @@ def test_unset_canonical_host_disables_middleware(build_test_engine, fake_settin
     monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
     monkeypatch.setenv("WEB_LOGIN_PASSWORD_HASH", hash_login_password(TEST_PASSWORD))
     monkeypatch.delenv("WEB_CANONICAL_HOST", raising=False)
-    monkeypatch.setattr(web_module, "is_loopback", lambda _h: True)
     engine, _ = build_test_engine([])
     with _client(engine, "https://app.llmfirstloop.com") as client:
         resp = client.get(
@@ -102,6 +104,37 @@ def test_unset_canonical_host_disables_middleware(build_test_engine, fake_settin
         )
     assert resp.status_code == 303  # 走原有 auth gate → /login
     assert "/login" in resp.headers["location"]
+
+
+def test_public_client_ip_via_loopback_listener_canonicalizes(build_test_engine, canonical_env):
+    """真实公网拓扑回归: uvicorn ProxyHeaders 已把 client 改写为公网 IP,
+    但 WEB_HOST 绑定 127.0.0.1(cloudflared 回源)→ 308 必须照常触发。
+    首版实现此场景静默失效,308 在公网从未生效。"""
+    engine, _ = build_test_engine([])
+    with _client(engine, "http://llmfirstloop.com") as client:
+        resp = client.get(
+            "/ui/v2/",
+            headers={"x-forwarded-proto": "http", "x-forwarded-for": "240e:47e::1"},
+            follow_redirects=False,
+        )
+    assert resp.status_code == 308
+    assert resp.headers["location"] == "https://llmfirstloop.com/ui/v2/"
+
+
+def test_public_listener_public_client_no_308(build_test_engine, fake_settings, monkeypatch):
+    """安全边界: 非回环绑定(公网直绑) + client 非 loopback → 头不可信,不 308。"""
+    monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
+    monkeypatch.setenv("WEB_LOGIN_PASSWORD_HASH", hash_login_password(TEST_PASSWORD))
+    monkeypatch.setenv("WEB_HOST", "0.0.0.0")
+    monkeypatch.setenv("WEB_CANONICAL_HOST", "llmfirstloop.com")
+    engine, _ = build_test_engine([])
+    with _client(engine, "http://llmfirstloop.com") as client:
+        resp = client.get(
+            "/ui/v2/",
+            headers={"x-forwarded-proto": "http", "x-forwarded-for": "203.0.113.9"},
+            follow_redirects=False,
+        )
+    assert resp.status_code != 308  # 伪造头不能触发归一
 
 
 def test_session_cookie_name_is_v2(build_test_engine, canonical_env):

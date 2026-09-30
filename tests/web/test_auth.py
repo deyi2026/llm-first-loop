@@ -137,7 +137,7 @@ def test_public_domain_browser_login_cookie_protects_api_and_ui(
     monkeypatch.delenv("WEB_API_KEY", raising=False)
 
     engine, _ = build_test_engine([])
-    client = TestClient(build_app(engine=engine), base_url="https://app.llmfirstloop.com")
+    client = TestClient(build_app(engine=engine), base_url="https://llmfirstloop.com")
 
     ui_resp = client.get("/ui/v2/", follow_redirects=False)
     assert ui_resp.status_code == 303
@@ -193,7 +193,7 @@ def test_browser_login_preserves_pasted_complex_password_exactly(
     monkeypatch.delenv("WEB_API_KEY", raising=False)
 
     engine, _ = build_test_engine([])
-    client = TestClient(build_app(engine=engine), base_url="https://app.llmfirstloop.com")
+    client = TestClient(build_app(engine=engine), base_url="https://llmfirstloop.com")
     page = client.get("/login")
     assert page.status_code == 200
     assert "手机端使用普通键盘" in page.text

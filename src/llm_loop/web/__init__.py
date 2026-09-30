@@ -131,7 +131,11 @@ class _CanonicalOriginMiddleware:
     "登录成功又被弹回登录页"交替出现(web.log favicon.svg 200/303 交替)。
 
     规则(全部满足才 308):
-    - ASGI http 且 immediate peer 是 loopback(即 cloudflared 回源拓扑);
+    - ASGI http 且「immediate peer 是 loopback」**或**「本进程 WEB_HOST 绑定本身是
+      loopback」(绑定边界: 服务只可能被本机进程直连,头伪造面与原方案等价;
+      真实缺陷修复 2026-09-30 P0: uvicorn ProxyHeadersMiddleware 先于本中间件把
+      scope["client"] 改写成 X-Forwarded-For 的公网 IP,原 is_loopback(peer) 对
+      公网流量恒 False,308 从未在公网触发,仅本地模拟直连测试暴露过假阳性);
     - 带可信 x-forwarded-proto 头(本地直连无此头,完全不受影响);
     - proto=http → 升级 https;或 host(去端口)≠ WEB_CANONICAL_HOST 且是
       canonical 或其子域 → 归一到 canonical。
@@ -141,6 +145,7 @@ class _CanonicalOriginMiddleware:
     def __init__(self, app):
         self.app = app
         self._canonical = canonical_host()
+        self._listener_loopback = is_loopback(os.environ.get("WEB_HOST", "127.0.0.1"))
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http" or not self._canonical:
@@ -148,7 +153,7 @@ class _CanonicalOriginMiddleware:
             return
         client = scope.get("client")
         peer = str(client[0]) if isinstance(client, (tuple, list)) and client else ""
-        if not is_loopback(peer):
+        if not (self._listener_loopback or is_loopback(peer)):
             await self.app(scope, receive, send)
             return
         forwarded = _scope_header(scope, b"x-forwarded-proto").split(",", 1)[0].strip().lower()
@@ -353,6 +358,15 @@ def main() -> None:
     _env_file = (Path.cwd() / ".env").resolve()
     os.environ.setdefault("LFL_ENV_FILE", str(_env_file))
     load_env_file(_env_file)
+    # P0(2026-09-30): llm_loop.* INFO 日志可见化——auth_gate_redirect 等诊断日志
+    # 依赖 root logger,而 root 默认 WARNING 把 INFO 全吞(web.log 只有 uvicorn access
+    # 行,事故定位缺 Host/scheme 线索数小时)。仅配 llm_loop 命名空间,第三方库不受影响。
+    _diag_logger = logging.getLogger("llm_loop")
+    _diag_logger.setLevel(logging.INFO)
+    if not _diag_logger.handlers:
+        _handler = logging.StreamHandler(sys.stderr)
+        _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        _diag_logger.addHandler(_handler)
     # P1 route attribution: 服务入口本身是 route 的权威事实；显式 LFL_ROUTE 仍优先。
     os.environ.setdefault("LFL_ROUTE", "web")
     # EVO-20260811-f94e5306: 记录进程启动版本（一致性检测）
