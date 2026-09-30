@@ -2,11 +2,11 @@
 method_id: timeout-symptom-read-new-scanning-code-first-0a5d95cd9ddd
 name: timeout-symptom-read-new-scanning-code-first
 description: 当测试表现为挂死/超时（无断言失败），且近期 diff 新增了正则/扫描/解析类代码时，按性能回归处理：先读新增 pattern 找超线性结构，用带每阶段硬超时的对抗输入族微基准定位，修复后对同族输入验证再跑套件——而不是先枚举测试环境假设。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:d3e8d89f-0695-48ca-8061-5ba53bfe928c
 created_at: 2026-09-09T20:30:28.952299+00:00
-updated_at: 2026-09-09T20:30:28.952299+00:00
+updated_at: 2026-09-30T15:30:38.545682+08:00
 ---
 trigger:
 - 测试超时/挂死（无断言失败输出），且首次挂起的 commit 新增了正则/文本扫描/解析代码

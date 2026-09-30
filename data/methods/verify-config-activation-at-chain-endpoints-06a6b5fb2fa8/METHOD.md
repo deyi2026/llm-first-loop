@@ -2,11 +2,11 @@
 method_id: verify-config-activation-at-chain-endpoints-06a6b5fb2fa8
 name: verify-config-activation-at-chain-endpoints
 description: 重启后验证配置是否生效时，若"加载机制→开关门→可观察产物"这条因果链在先前上下文已确立，则只检查链的两个端点——进程启动时间 vs 配置文件 mtime、以及链唯一命名的行为产物——不重读源码重新推导链中段，也不用宽架构快照替代对产物的直接检查。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:4d6c551c-a50d-4ef1-90cf-b0af9f557745
 created_at: 2026-09-09T16:57:15.281179+00:00
-updated_at: 2026-09-09T16:57:15.281179+00:00
+updated_at: 2026-09-30T15:30:38.546502+08:00
 ---
 trigger:
   - 用户问"重启后配置生效了吗"，且先前上下文已确认：配置仅在进程启动时读取一次、存在明确的生效门（非法/未设值即回退关闭）、以及生效后必然产生的输出产物位置（方法存储目录 + 特定日志 reason 串）

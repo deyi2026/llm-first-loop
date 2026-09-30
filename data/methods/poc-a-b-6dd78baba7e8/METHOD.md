@@ -2,11 +2,11 @@
 method_id: poc-a-b-6dd78baba7e8
 name: 冻结件PoC验证法（预写死边界+冻结+判定器+A/B+审计链）
 description: 验证"某能力是否真带来收益"的 PoC 方法：实验前写死判定边界并冻结，防结果后验合理化；判定器带对抗负例自测；A/B 对照隔离变量；审计链四态落盘。适用于任何域的工具/能力验证实验。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 source_episode_refs: episode:58f1fb38-3ba1-4ae5-a6a5-595012cfb4e6:2188:98298d9fce3ef71ec911
 created_at: 2026-09-12T01:39:19.727985+00:00
-updated_at: 2026-09-12T01:39:19.727985+00:00
+updated_at: 2026-09-30T15:30:38.543640+08:00
 ---
 # 冻结件 PoC 验证法
 

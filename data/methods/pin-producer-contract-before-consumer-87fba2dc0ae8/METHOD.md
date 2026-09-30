@@ -2,12 +2,12 @@
 method_id: pin-producer-contract-before-consumer-87fba2dc0ae8
 name: pin-producer-contract-before-consumer
 description: 新写调用方模块前先固化被调用方真实契约（入口签名+封闭结果词表），并用符号解析（import/grep）而非语法解析验证新文件，避免在想象契约上堆叠代码后返工。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 teacher_refs: method:method-self-distill-root-cause,method:method-self-distill-repo-api,method:method-self-distill-ab
 source_episode_refs: session:2274a444-654d-46a3-a72b-2d83058b2289
 created_at: 2026-09-09T18:50:37.755626+00:00
-updated_at: 2026-09-09T18:50:37.755626+00:00
+updated_at: 2026-09-30T15:30:38.543443+08:00
 ---
 trigger:
 - 即将一次性写出较长的 caller 模块，其核心路径调用另一既有模块的入口函数并按其返回值分支

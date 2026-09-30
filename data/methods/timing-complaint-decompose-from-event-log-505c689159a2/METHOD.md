@@ -2,11 +2,11 @@
 method_id: timing-complaint-decompose-from-event-log-505c689159a2
 name: timing-complaint-decompose-from-event-log
 description: 当用户抱怨'两个可观察事件之间卡很久/终止信号迟迟不来'并怀疑近期改动时，先用带时间戳的逐事件运行日志对被抱怨会话做时间差分解，让代码阅读与 git 排查只跟随测量所指；而不是先按想象机制做关键词 grep 或全库枚举找代码。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:2274a444-654d-46a3-a72b-2d83058b2289
 created_at: 2026-09-09T18:03:08.398324+00:00
-updated_at: 2026-09-09T18:03:08.398324+00:00
+updated_at: 2026-09-30T15:30:38.545881+08:00
 ---
 trigger:
   - 用户抱怨的是时序体感（如：输出流停了但 done/完成态很久才到、按钮迟迟不恢复），并怀疑最近改动导致

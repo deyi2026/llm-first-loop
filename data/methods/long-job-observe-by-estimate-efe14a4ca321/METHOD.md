@@ -2,11 +2,11 @@
 method_id: long-job-observe-by-estimate-efe14a4ca321
 name: long-job-observe-by-estimate
 description: 启动长时运行、需要观察进度的实验/批处理命令前，先用'步数×单步时延'估计总时长来决定同步/后台与轮询节奏，并强制逐行输出可见，避免超时、缓冲误杀与重叠轮询。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:d3e8d89f-0695-48ca-8061-5ba53bfe928c
 created_at: 2026-09-09T17:57:09.577688+00:00
-updated_at: 2026-09-09T17:57:09.577688+00:00
+updated_at: 2026-09-30T15:30:38.543238+08:00
 ---
 name: long-job-observe-by-estimate
 status: candidate

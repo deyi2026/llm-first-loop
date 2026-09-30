@@ -2,11 +2,11 @@
 method_id: r9-gate-breakdown-triage-47132c4c89f8
 name: r9-gate-breakdown-triage
 description: r9 提交门禁在合并后 HEAD 反复中止/暴露未知红时的分流诊断：基建失败（探针标记失配/mktemp 沙盒/manifest 漂移）与测试红（我方带入 vs 外部演进链配对面缺口）分离处置
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:2274a444-654d-46a3-a72b-2d83058b2289
 created_at: 2026-09-09T20:43:04.949486+00:00
-updated_at: 2026-09-09T20:43:04.949486+00:00
+updated_at: 2026-09-30T15:30:38.544339+08:00
 ---
 症状分流树：
 1. 「未达 [N/N] 测试步——基建失败」→ 不是测试问题。grep -n "═══ \[" ci_gate.sh 看实际步进标记（可能混合格式如 [1/4]+[x/5]），再 grep 探针脚本（r9_commit.sh）的探测标记，两者失配=探针 bug，对准最终测试步。修后 bash -n 验语法。

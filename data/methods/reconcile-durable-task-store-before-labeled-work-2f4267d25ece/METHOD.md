@@ -2,12 +2,12 @@
 method_id: reconcile-durable-task-store-before-labeled-work-2f4267d25ece
 name: reconcile-durable-task-store-before-labeled-work
 description: 当持久化 Goal/Task 系统与会话内计划表并行存在（两套编号共享同一前缀）时，在每个单元边界先用一次权威查询对齐编号、剩余项与状态；把持久化系统当作'还剩什么/验收口径/evidence 引用格式'的唯一权威，并在投入实现轮次之前向用户显式化任何范围分歧。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 teacher_refs: method:method-self-distill-root-cause,method:method-self-distill-repo-api,method:method-self-distill-ab
 source_episode_refs: session:d3e8d89f-0695-48ca-8061-5ba53bfe928c
 created_at: 2026-09-09T19:17:37.943325+00:00
-updated_at: 2026-09-09T19:17:37.943325+00:00
+updated_at: 2026-09-30T15:30:38.544548+08:00
 ---
 trigger:
   - 存在持久化任务/目标系统，且会话内另有一份带同形编号（如 T#）的平行计划表

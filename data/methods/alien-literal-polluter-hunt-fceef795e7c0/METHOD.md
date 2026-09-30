@@ -2,11 +2,11 @@
 method_id: alien-literal-polluter-hunt-fceef795e7c0
 name: alien-literal-polluter-hunt
 description: 当测试只在全量套件中失败、且断言 diff 中的 actual 是不属于本测试的外来字面量（另一测试的 fixture 标记串）时，先 grep 该字面量的生产者定位污染源，并用秒级 pair-run 确认因果；而不是为拿 traceback 重跑全量套件，或宽枚举文件做人工二分。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:d3e8d89f-0695-48ca-8061-5ba53bfe928c
 created_at: 2026-09-09T20:40:13.657313+00:00
-updated_at: 2026-09-09T20:40:13.657313+00:00
+updated_at: 2026-09-30T15:30:38.539897+08:00
 ---
 trigger:
 - 某测试在全量运行中稳定失败，但任务早期的小范围组合/单文件运行未见过该失败（全量专属失败）

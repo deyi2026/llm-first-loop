@@ -2,12 +2,12 @@
 method_id: runner-silence-is-invocation-error-6ddc25716e1a
 name: runner-silence-is-invocation-error
 description: 本 episode 最早摩擦：pytest 批次返回『退出码 0 + 0 行输出』（合法运行必有摘要行，这本身即异常），模型未诊断而是原样重跑、再用凭记忆的文件名（不存在的 test_history_elastic_budget.py）反复重组更大批次，多轮后靠 exit=4 才发现路径不存在。当时已有两条判别事实：摘要行缺失即调用层失败；ls 列出的目录清单已证明真实文件集。方法：凡终态必有摘要行的 runner，沉默=失败信号；批次含未验证的记忆路径时，先用目录真值校验路径再重跑，绝不把沉默当绿灯。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 teacher_refs: method:method-self-distill-root-cause,method:method-self-distill-repo-api,method:method-self-distill-ab
 source_episode_refs: session:d3e8d89f-0695-48ca-8061-5ba53bfe928c
 created_at: 2026-09-09T18:58:07.600033+00:00
-updated_at: 2026-09-09T18:58:07.600033+00:00
+updated_at: 2026-09-30T15:30:38.544836+08:00
 ---
 name: runner-silence-is-invocation-error
 status: candidate

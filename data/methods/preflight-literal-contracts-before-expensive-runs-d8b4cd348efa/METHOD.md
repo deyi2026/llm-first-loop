@@ -2,12 +2,12 @@
 method_id: preflight-literal-contracts-before-expensive-runs-d8b4cd348efa
 name: preflight-literal-contracts-before-expensive-runs
 description: 启动耗时门禁/包装脚本整跑前，静态枚举并批量校验 consumer 对 producer 的全部字面量契约（进度标记、清单哈希、临时文件模板），把『每轮整跑串行发现一个失配』压成启动前一次秒级预检。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 teacher_refs: method:method-self-distill-root-cause,method:method-self-distill-repo-api,method:method-self-distill-ab
 source_episode_refs: session:2274a444-654d-46a3-a72b-2d83058b2289
 created_at: 2026-09-09T20:47:28.826762+00:00
-updated_at: 2026-09-09T20:47:28.826762+00:00
+updated_at: 2026-09-30T15:30:38.543890+08:00
 ---
 trigger:
   - 即将启动一次分钟级的门禁/包装脚本整跑（consumer wrapper 消费另一组件 producer 的输出）
