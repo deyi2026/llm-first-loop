@@ -2,11 +2,11 @@
 method_id: locate-project-env-before-symptom-workarounds-f7dd29f1718b
 name: locate-project-env-before-symptom-workarounds
 description: 在项目仓库内，当用环境默认解释器跑命令出现依赖级失败（ModuleNotFoundError / PEP 668 externally-managed）时，先把『项目权威运行环境是什么』当作唯一先决未知量一次性解决（一次 ls 定位 .venv 等项目解释器），再用它重跑；而不是枚举症状级 workaround（--ignore 目录、grep 项目配置、向默认解释器 pip install）。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:d3e8d89f-0695-48ca-8061-5ba53bfe928c
 created_at: 2026-09-09T17:09:46.364218+00:00
-updated_at: 2026-09-09T17:09:46.364218+00:00
+updated_at: 2026-09-30T15:30:38.543035+08:00
 ---
 name: locate-project-env-before-symptom-workarounds
 status: candidate

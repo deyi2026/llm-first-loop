@@ -2,11 +2,11 @@
 method_id: candidate-a80acb208b99
 name: 会话级知识层双向同步（开局检索·使用裁决·收尾结算）
 description: 每个真实任务对经验/方法库做一次双向同步：开局检索+一行裁决、使用时显式标注、收尾结算+实录。打破慢记忆"只有单向写"的死锁。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 source_episode_refs: episode:feae84dd-a346-494a-b79b-f0b5708ed2c6:83:40833e4af7d01d3a843e
 created_at: 2026-09-11T05:57:04.585357+00:00
-updated_at: 2026-09-11T05:57:04.585357+00:00
+updated_at: 2026-09-30T15:30:38.541722+08:00
 ---
 # 目的
 让经验库/方法库（慢记忆）与当前会话（快记忆）在真实任务上双向同步一次，打破"只有单向写"死锁：条目未评估→命中不可信→被忽略→永不产生使用记录。

@@ -2,11 +2,11 @@
 method_id: structured-recovery-not-inline-rerun-8d2d28b50b9e
 name: structured-recovery-not-inline-rerun
 description: 长耗时验证运行（全量测试/构建等）的结果已经过一次不可靠通道丢失后，重跑必须换成结构化、自解析的落盘输出（junitxml/JSON 等），而不是把同样脆弱的人类可读终端输出重定向到文件；且对已落盘 artifact 的内容疑问只用读取（tail/grep）回答，绝不把内联重执行生产者捆绑进同一条命令。本 episode 用 4 次全量运行 + 1 次超时才拿到一组数字，该方法可缩到 1~2 次。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:d3e8d89f-0695-48ca-8061-5ba53bfe928c
 created_at: 2026-09-09T16:54:54.549050+00:00
-updated_at: 2026-09-09T16:54:54.549050+00:00
+updated_at: 2026-09-30T15:30:38.545466+08:00
 ---
 name: structured-recovery-not-inline-rerun
 status: candidate

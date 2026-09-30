@@ -2,11 +2,11 @@
 method_id: verify-causal-chain-before-kb-enumeration-30c124a06330
 name: verify-causal-chain-before-kb-enumeration
 description: 验证一条关于运行时行为的根因假设时，若初始符号检索已点名完整调用链的 file:line，先沿这条链逐文件闭环证据，再去做知识库/记录的宽泛检索（后者只服务于改法设计，不服务诊断）。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:2274a444-654d-46a3-a72b-2d83058b2289
 created_at: 2026-09-09T18:30:50.964827+00:00
-updated_at: 2026-09-09T18:30:50.964827+00:00
+updated_at: 2026-09-30T15:30:38.546289+08:00
 ---
 trigger:
   - 需要验证"某机制在运行时阻塞/拖慢了某个用户可见信号"这类根因假设

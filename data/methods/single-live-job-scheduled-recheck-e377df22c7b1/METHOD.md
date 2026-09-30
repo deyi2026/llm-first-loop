@@ -2,11 +2,11 @@
 method_id: single-live-job-scheduled-recheck-e377df22c7b1
 name: single-live-job-scheduled-recheck
 description: 长耗时验证（全量测试/大构建）转后台后，若命令输出经过 tail 类终止过滤，完成前轮询按构造必然 0 行、无任何信息；应保证同一验证只有一个活跃实例，用定时提醒代替轮询，等待期只做与结果独立的审查。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:4d6c551c-a50d-4ef1-90cf-b0af9f557745
 created_at: 2026-09-09T18:18:16.818223+00:00
-updated_at: 2026-09-09T18:18:16.818223+00:00
+updated_at: 2026-09-30T15:30:38.545248+08:00
 ---
 name: single-live-job-scheduled-recheck
 status: candidate

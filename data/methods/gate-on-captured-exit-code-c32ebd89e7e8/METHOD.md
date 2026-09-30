@@ -2,12 +2,12 @@
 method_id: gate-on-captured-exit-code-c32ebd89e7e8
 name: gate-on-captured-exit-code
 description: 当门禁命令的退出码已被刻意捕获进日志时，退出码+完成度标记即权威判定；统计行被插件吞掉不应触发多轮取证，精确计数只在验收确需时做一次机械推导。
-status: candidate
+status: hold
 source_model: glm/glm-5.3
 teacher_refs: method:method-self-distill-root-cause,method:method-self-distill-repo-api,method:method-self-distill-ab
 source_episode_refs: session:d3e8d89f-0695-48ca-8061-5ba53bfe928c
 created_at: 2026-09-09T23:34:53.293724+00:00
-updated_at: 2026-09-09T23:34:53.293724+00:00
+updated_at: 2026-09-30T15:30:38.542602+08:00
 ---
 trigger:
   - 后台/全量门禁命令结束时，日志里已有自己追加的 exit=$? 记录，但 pytest 风格的 'N passed' 统计行缺失或被插件输出（warnings/audit 块）截断
