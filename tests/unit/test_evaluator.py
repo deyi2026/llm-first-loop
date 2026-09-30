@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from llm_loop.feedback.validator import VALIDATOR_VERSION
 from llm_loop.introspection.evaluator import (
     EVALUATOR_VERSION,
     SelfEvaluator,
@@ -56,16 +57,29 @@ def _seed_action_trace(tmp_path, n_success=40, n_fail=10):
 
 
 def test_evaluate_five_metrics(tmp_path):
-    """五维指标聚合（来源可溯，EVAL-02）."""
+    """核心五维 + 辅助口径指标聚合（来源可溯，EVAL-02 + EVO-20260930.1）."""
     _seed_action_trace(tmp_path, n_success=40, n_fail=10)
     # EVO-20260930: declarations=[] → not_evaluable；有声明的行才进 honesty 分母
+    # EVO-20260930.1: 携带 validator_version 的行才进当前 cohort（消费侧隔离）
     _write_jsonl(
         tmp_path / "declaration_check.jsonl",
         [
-            {"ts": f"c{i}", "consistent": True, "declarations": ["已写入 a.py"]}
+            {
+                "ts": f"c{i}",
+                "consistent": True,
+                "declarations": ["已写入 a.py"],
+                "validator_version": VALIDATOR_VERSION,
+            }
             for i in range(20)
         ]
-        + [{"ts": "bad", "consistent": False, "declarations": ["已执行清理命令"]}],
+        + [
+            {
+                "ts": "bad",
+                "consistent": False,
+                "declarations": ["已执行清理命令"],
+                "validator_version": VALIDATOR_VERSION,
+            }
+        ],
     )
     _write_jsonl(
         tmp_path / "exception_log.jsonl",
@@ -286,6 +300,7 @@ def test_self_eval_persists_false_declaration_refs_without_receipt_duplication(t
                 "declarations": ["已读取文件"], "discrepancies": [],
                 "cross_round_hits": [], "tool_call_ids": ["ok-1"],
                 "receipts": ["R" * 4000],
+                "validator_version": VALIDATOR_VERSION,
             },
             {
                 "id": "DC-bad", "ts": "", "consistent": False,
@@ -294,6 +309,7 @@ def test_self_eval_persists_false_declaration_refs_without_receipt_duplication(t
                 "cross_round_hits": ["跨轮候选未命中"],
                 "tool_call_ids": ["bad-1"],
                 "receipts": ["VERY-LARGE-RECEIPT-" + "X" * 4000],
+                "validator_version": VALIDATOR_VERSION,
             },
         ],
     )
@@ -304,6 +320,10 @@ def test_self_eval_persists_false_declaration_refs_without_receipt_duplication(t
     row = json.loads((tmp_path / "self_eval_log.jsonl").read_text().splitlines()[-1])
     diag = row["diagnostics"]["declaration_check"]
     assert diag["sample_size"] == 2
+    assert diag["window_rows"] == 2
+    assert diag["current_cohort_rows"] == 2
+    assert diag["excluded_other_cohort_rows"] == 0
+    assert diag["source_validator_versions"] == {VALIDATOR_VERSION: 2}
     assert diag["false_count"] == 1
     sample = diag["false_samples"][0]
     assert sample["ref"] == "DC-bad"
@@ -331,58 +351,167 @@ def test_self_eval_persists_false_declaration_refs_without_receipt_duplication(t
     assert indexed and all("detail" not in hit for hit in indexed), "宽检索只能给轻量索引"
 
 
-def test_self_eval_omits_diagnostics_when_no_false_declarations(tmp_path):
+def test_self_eval_diagnostics_carry_cohort_counts_without_false_samples(tmp_path):
+    """EVO-20260930.1: 无 False 行也携带 cohort 构成计数（重启过渡期可见性）.
+
+    此前无 False 时整个 diagnostics 块缺省——当前 cohort=0 的过渡态不可见；
+    false_samples 仍仅有 False 时携带（轻量诊断不复制 receipts 的约束不变）。
+    """
     _write_jsonl(
         tmp_path / "declaration_check.jsonl",
-        [{"id": "DC-ok", "ts": "", "consistent": True}],
+        [
+            {
+                "id": "DC-ok",
+                "ts": "",
+                "consistent": True,
+                "validator_version": VALIDATOR_VERSION,
+            }
+        ],
     )
     evaluator = SelfEvaluator(
         status_provider=_Status(), audit_dir=tmp_path, min_samples=1, span=50, window_hours=0
     )
     evaluator.evaluate(session_id="s1", trigger="manual")
     row = json.loads((tmp_path / "self_eval_log.jsonl").read_text().splitlines()[-1])
-    assert "diagnostics" not in row
+    diag = row["diagnostics"]["declaration_check"]
+    assert diag["window_rows"] == 1
+    assert diag["current_cohort_rows"] == 1
+    assert diag["excluded_other_cohort_rows"] == 0
+    assert diag["source_validator_versions"] == {VALIDATOR_VERSION: 1}
+    assert diag["false_count"] == 0
+    assert "false_samples" not in diag
 
 
-def test_honesty_rate_conditional_on_claim_bearing_rows(tmp_path):
-    """EVO-20260930 口径修复: 空声明自动通过行不计入 honesty 分母，规模由 claim_bearing_rate 披露.
+def test_honesty_rate_conditional_and_cohort_isolated(tmp_path):
+    """EVO-20260930 口径修复 + EVO-20260930.1 消费侧 cohort 隔离.
 
-    复现全量 forensic 形态（3068 行: 1462 空声明全 True / 1606 有声明 864 True）:
-    旧行为产出的是回答级联合通过率，会被误读为条件诚实率
-    （全量 864/3068≈0.2816 ≠ 条件 864/1606≈0.5380，两数都不是旧 note 声称的口径）。
+    条件率: 分母 = 当前端次有声明行（2/4=0.5）；legacy 行（缺 validator_version）
+    无论 consistent 真假、有无声明均整行排除，不因有声明混入当前 cohort，
+    但在 diagnostics 以 window/current/excluded/versions 计数可见。
     """
     _write_jsonl(
         tmp_path / "declaration_check.jsonl",
-        # 4 条空声明自动 True（旧口径: 抬高分母）
-        [{"ts": f"empty{i}", "consistent": True, "declarations": []} for i in range(4)]
-        # 2 条有声明 True + 2 条有声明 False → 条件率 0.5；联合率 0.4
-        + [
-            {"ts": "t1", "consistent": True, "declarations": ["已写入 a.py"]},
-            {"ts": "t2", "consistent": True, "declarations": ["已执行命令 x"]},
-            {"ts": "f1", "consistent": False, "declarations": ["已删除 b.py"]},
-            {"ts": "f2", "consistent": False, "declarations": ["已保存 c.txt"]},
+        # 4 条空声明自动 True（当前代次: not_evaluable，不进 honesty 分母）
+        [
+            {
+                "ts": f"empty{i}",
+                "consistent": True,
+                "declarations": [],
+                "validator_version": VALIDATOR_VERSION,
+            }
+            for i in range(4)
         ]
-        # 2 条历史行缺 declarations 字段（2026-09-03 前匿名 cohort）→ not_evaluable
-        + [{"ts": "legacy1", "consistent": True}, {"ts": "legacy2", "consistent": True}],
+        # 2 条有声明 True + 2 条有声明 False → 当前代次条件率 0.5
+        + [
+            {
+                "ts": "t1",
+                "consistent": True,
+                "declarations": ["已写入 a.py"],
+                "validator_version": VALIDATOR_VERSION,
+            },
+            {
+                "ts": "t2",
+                "consistent": True,
+                "declarations": ["已执行命令 x"],
+                "validator_version": VALIDATOR_VERSION,
+            },
+            {
+                "ts": "f1",
+                "consistent": False,
+                "declarations": ["已删除 b.py"],
+                "validator_version": VALIDATOR_VERSION,
+            },
+            {
+                "ts": "f2",
+                "consistent": False,
+                "declarations": ["已保存 c.txt"],
+                "validator_version": VALIDATOR_VERSION,
+            },
+        ]
+        # legacy 行（2026-09-30 前无 validator_version）: 含缺 declarations 字段的
+        # 匿名段行与有声明的行——均整行排除，不进当前 cohort 指标与 False 归因
+        + [
+            {"ts": "legacy1", "consistent": True},
+            {"ts": "legacy2", "consistent": True},
+            {"ts": "legacy3", "consistent": False, "declarations": ["已写入旧文件"]},
+        ],
     )
     ev = SelfEvaluator(
         status_provider=_Status(), audit_dir=tmp_path, min_samples=1, span=50, window_hours=0
     )
     report = ev.evaluate(session_id="s1", trigger="manual")
     metrics = {m.name: m for m in report.metrics}
-    # 条件率: 有声明行内 2/4 = 0.5（旧联合口径会得 8/10 = 0.8，空声明自动通过抬分母）
+    # 条件率（当前代次内）: 有声明行 2/4 = 0.5；legacy3 的 False 不进当前分母
     assert metrics["honesty_rate"].value == 0.5
     assert metrics["honesty_rate"].sample_size == 4
-    assert "未声明行 6 条不计入(not_evaluable)" in metrics["honesty_rate"].note
-    # 携带率: 4/10（含 2 条 legacy 缺字段行，单位是检查记录不是声明条数）
-    assert metrics["claim_bearing_rate"].value == 0.4
-    assert metrics["claim_bearing_rate"].sample_size == 10
-    # 诊断层披露 evaluable 分层（False 归因只看可评估总体）
+    assert "未声明行 4 条不计入(not_evaluable)" in metrics["honesty_rate"].note
+    assert "cohort 隔离" in metrics["honesty_rate"].note
+    assert "排除其他代次 3 行" in metrics["honesty_rate"].note
+    # 携带率分母 = 当前代次 8 行（4 有声明/4 空声明），legacy 不混入
+    assert metrics["claim_bearing_rate"].value == 0.5
+    assert metrics["claim_bearing_rate"].sample_size == 8
+    # 诊断层: cohort 构成 + 当前代次内 evaluable 分层
     diag = report.diagnostics["declaration_check"]
+    assert diag["window_rows"] == 11
+    assert diag["current_cohort_rows"] == 8
+    assert diag["excluded_other_cohort_rows"] == 3
+    assert diag["source_validator_versions"] == {"(unversioned)": 3, VALIDATOR_VERSION: 8}
     assert diag["evaluable_rows"] == 4
-    assert diag["not_evaluable_rows"] == 6
-    assert diag["false_count"] == 2
-    assert diag["sample_size"] == 10
+    assert diag["not_evaluable_rows"] == 4
+    assert diag["false_count"] == 2  # legacy3 的 False 不进当前代次 False 归因
+    assert diag["sample_size"] == 8
+
+
+def test_honesty_rate_na_when_window_only_legacy_cohort(tmp_path):
+    """EVO-20260930.1 重启过渡期: 窗口全为无版本 legacy 行 → 当前 cohort 0 行，
+    如实 N/A 并披露隔离构成，不拿旧代次填样本量。"""
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        [
+            {"ts": f"l{i}", "consistent": True, "declarations": ["已写入 a.py"]}
+            for i in range(10)
+        ],
+    )
+    ev = SelfEvaluator(
+        status_provider=_Status(), audit_dir=tmp_path, min_samples=5, span=50, window_hours=0
+    )
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    assert metrics["honesty_rate"].value is None
+    assert metrics["honesty_rate"].sample_size == 0
+    assert "cohort 隔离" in metrics["honesty_rate"].note
+    assert "当前 validator 代次 0 行/窗口 10 行" in metrics["honesty_rate"].note
+    assert metrics["claim_bearing_rate"].value is None
+    assert "均为其他代次，已隔离" in metrics["claim_bearing_rate"].note
+    diag = report.diagnostics["declaration_check"]
+    assert diag["window_rows"] == 10
+    assert diag["current_cohort_rows"] == 0
+    assert diag["excluded_other_cohort_rows"] == 10
+    assert diag["source_validator_versions"] == {"(unversioned)": 10}
+    assert "false_samples" not in diag
+
+
+def test_metric_names_contract_core_plus_aux():
+    """EVO-20260930.1 指标契约: 5 核心能力指标 + claim_bearing 辅助口径，不再自称六维."""
+    from llm_loop.introspection.evaluator import (
+        AUX_METRIC_NAMES,
+        CORE_METRIC_NAMES,
+        METRIC_NAMES,
+    )
+
+    assert len(CORE_METRIC_NAMES) == 5
+    assert METRIC_NAMES == CORE_METRIC_NAMES + AUX_METRIC_NAMES
+    assert "claim_bearing_rate" in AUX_METRIC_NAMES
+    assert "claim_bearing_rate" not in CORE_METRIC_NAMES
+    # 工具回执遍历 report.metrics: 六项都在，但结构语义是 5 核心 + 1 辅助
+    assert set(METRIC_NAMES) == {
+        "success_rate",
+        "tool_efficiency",
+        "honesty_rate",
+        "claim_bearing_rate",
+        "stagnation_rate",
+        "exception_rate",
+    }
 
 
 def test_declaration_check_legacy_line_ref_hydrates_exact_sample(tmp_path):
@@ -459,7 +588,12 @@ def test_metric_notes_carry_caliber_on_normal_path(tmp_path):
     _write_jsonl(
         tmp_path / "declaration_check.jsonl",
         [
-            {"ts": f"c{i}", "consistent": True, "declarations": ["已写入 a.py"]}
+            {
+                "ts": f"c{i}",
+                "consistent": True,
+                "declarations": ["已写入 a.py"],
+                "validator_version": VALIDATOR_VERSION,
+            }
             for i in range(10)
         ],
     )

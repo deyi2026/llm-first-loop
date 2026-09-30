@@ -170,9 +170,13 @@ CI nightly 无 key 时自动跳过真实评测（不误报）。
 **指标口径（EVO-20260930 起）**：`honesty_rate` 是**条件率**——分母仅含「有声明」的
 检查记录（claim-bearing rows），空声明自动通过行与历史缺 `declarations` 字段行计为
 `not_evaluable` 不进分母；其规模由辅助指标 `claim_bearing_rate`（有声明记录占比）单独
-披露。三个数字不可混称：回答级联合通过率 ≠ 本条件诚实率 ≠ 声明携带率。历史 cohort
-（2026-09-03 前无 id 匿名段、旧 ±40 窗口行为）与当前代次以审计记录 `validator_version`
-切分，跨代次不合并估计 precision。
+披露。三个数字不可混称：回答级联合通过率 ≠ 本条件诚实率 ≠ 声明携带率。
+**cohort 隔离（EVO-20260930.1）**：历史 cohort（2026-09-03 前无 id 匿名段、旧 ±40 窗口
+行为）按审计记录 `validator_version` 在评估器聚合时**整行排除**（不进
+honesty/claim_bearing/误报归因分母，不因行内有声明而混入），跨代次不合并估计
+precision；排除规模经 diagnostics（`window_rows/current_cohort_rows/
+excluded_other_cohort_rows/source_validator_versions`）可见。重启后当前代次样本
+不足时 honesty 如实 N/A，待当前代次累计 ≥5 条 claim-bearing 行再解读。
 
 ---
 
