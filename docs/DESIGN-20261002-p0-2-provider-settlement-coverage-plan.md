@@ -1,7 +1,7 @@
 # P0-2 Provider Settlement 覆盖面补齐 — Seam 实现方案
 
 Date: 2026-10-02
-Status: **Phase A2 IMPLEMENTED（2026-10-02，RED→GREEN + focused gate + A.5 staged gate + 全量回归已过，commit: `feat(web): settle web transports via shadow recorder`；全量回归时预存 env-ratchet 红已由 `9af598d32` 基线补登记修复）**；A1 已证伪取消（§2 GAP-SUM-1）；B/C 阶段待启动
+Status: **Phase A2 IMPLEMENTED（2026-10-02，RED→GREEN + focused gate + A.5 staged gate + 全量回归已过，commit: `feat(web): settle web transports via shadow recorder`；全量回归时预存 env-ratchet 红已由 `9af598d32` 基线补登记修复）**；A1 已证伪取消（§2 GAP-SUM-1）；**B1 IMPLEMENTED（2026-10-02，`resources/content_digest.py`，23 单测 + ruff/pyright 0 error，含 env baseline 登记）**；B2/B3/C1 待启动
 上游：`docs/DESIGN-20261001-model-invocation-history-replay-safety.md` v1.1 §5/§11/§13
 证据底料：`docs/AUDIT-20261001-p0-1-invocation-history-gap.md`（含 2026-10-02 §6 补充核验）
 约束：v1.1 §11 —— 只补齐 Provider Settlement 覆盖面，**不另建 identity 系统**；RS-5 敏感内容分级；DEVELOPMENT_REPAIR_SAFETY 一个职责一个 commit。
@@ -80,6 +80,15 @@ P0-1/§6 已证实三件套完整可用：
 - credential 永不进 journal（现状保持，transport_observation 模块契约原文）。
 - 现存 `payload_trace` 裸 SHA-256[:16] 不提升为常态事实（audit D3/D6 结论）。
 
+#### B1 已落地：key 来源与轮换 mini-design（2026-10-02，`resources/content_digest.py`）
+
+- **原语**：`ContentHmacKey(key_id, secret)` → `digest(bytes|str)` / `digest_json(obj)` / `verify*`；HMAC-SHA256 全长 64-hex；canonical JSON 复用 `_h` 约定（`json.dumps(obj, ensure_ascii=False, sort_keys=True).encode()`）。
+- **key 解析顺序**（纯函数，无进程缓存）：显式参数 > env 注入（`LFL_CONTENT_HMAC_SECRET` hex ≥16B + `LFL_CONTENT_HMAC_KEY_ID`，默认 key_id `env`）> 本地 key 文件 `<LFL_DATA_DIR>/keys/content_hmac.json`（`LFL_CONTENT_HMAC_KEY_FILE` 可覆盖路径；缺省自动生成一次：32B secret、`k1-` 前缀 key_id、0600、temp+`os.replace` 原子落位 + fsync——`exists()` ⇒ 内容完整，消除并发读者解析到空文件的窗口）。
+- **轮换**：替换 key 文件或更换 env 对后重启进程；消费方（B2 起）在 recorder/journal 构造期持 key 实例。跨 key 摘要预期不等——`key_id` 随事实记录即为此。
+- **失败语义**：损坏/缺字段/过短 secret 一律 `ContentHmacKeyError` 大声失败；fail-open 属 settlement shadow 层职责，不在原语内静默兜底。
+- **合规**：secret 永不出 repr/日志；4 处字面量 env 直读已登记 env-access baseline（direct/access 137→142）。
+- **门**：23 单测（确定性/独立 HMAC oracle/轮换/0600/损坏大声失败/8 线程并发单 key）+ ruff check+format + pyright 0 errors。
+
 ### GAP-SUM-1 Summarizer 身份接线（~~Phase A1~~ **已取消 — 2026-10-02 实现阶段证伪**）
 
 - **改判**：原诊断（"factory.py L1820 构造漏传 `provider_call_coordinator`"）只核对了构造点，漏看 `4ae925599`（09-10）以来的构造后属性注入（factory RG-3C 注入块，summarizer/extractor 均接线）；`_provider_chat` 的 shadow settlement 实现完整。
@@ -99,7 +108,7 @@ P0-1/§6 已证实三件套完整可用：
 |---|---|---|---|
 | ~~A1~~ | ~~GAP-SUM-1 接线~~ **已取消**（2026-10-02 证伪，audit §6.4；无代码缺口可修） | — | — |
 | A2 | GAP-ID-1 Web 身份 | `feat(web): settle web transports via shadow recorder` | fake-transport 回归 + web 相邻 + journal schema snapshot |
-| B1 | GAP-POL-1 HMAC 原语 | `feat(resources): keyed hmac digest primitive` | 原语单测（含 key 轮换）+ ruff/pyright |
+| B1 ✅ | GAP-POL-1 HMAC 原语（2026-10-02 已实现） | `feat(resources): keyed hmac digest primitive` | 原语单测（含 key 轮换）+ ruff/pyright |
 | B2 | GAP-REQ-1 prepared | `feat(llm): prepared facts on transport attempts` | 六路径参数化回归 + 旧日志解析兼容测试 |
 | B3 | GAP-REQ-2 关联键 | `feat(engine): attempt ids in request usage/meta` | usage/meta 快照测试 |
 | C1 | GAP-RESP-1 settled | `feat(llm): settled response facts` | 三协议回显单测 + web 省略断言 |
