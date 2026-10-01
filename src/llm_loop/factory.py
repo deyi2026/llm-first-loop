@@ -520,7 +520,7 @@ def build_engine(
         }
         if CHATGPT_WEB_MODEL_REF in effective_refs:
             external_client_factories[CHATGPT_WEB_MODEL_REF] = (
-                lambda: build_chatgpt_web_model_client(settings)
+                lambda: build_chatgpt_web_model_client(settings, transport_observer=transport_observer)
             )
     if settings.deepseek_web_enabled:
         from llm_loop.llm.deepseek_web import (  # r9-import-exempt: plugin
@@ -535,7 +535,7 @@ def build_engine(
         }
         if DEEPSEEK_WEB_MODEL_REF in effective_refs:
             external_client_factories[DEEPSEEK_WEB_MODEL_REF] = (
-                lambda: build_deepseek_web_model_client(settings)
+                lambda: build_deepseek_web_model_client(settings, transport_observer=transport_observer)
             )
 
     model_pool = ModelClientPool(

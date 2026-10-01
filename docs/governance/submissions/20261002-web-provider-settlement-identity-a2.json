@@ -1,0 +1,63 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261002-web-provider-settlement-identity-a2",
+  "summary": "Give chatgpt-web and deepseek-web model clients the same provider-call settlement identity that API clients already have (audit AUDIT-20261001-P0-1 GAP-ID-1, design DESIGN-20261002 Phase A2). The web clients now carry a bound transport_observer so ProviderCallCoordinator.open_shadow_call_for_client stops silently returning None on web paths, and their chat() wraps the physical browser exchange in a fail-open RG-3C transport-attempt scope. No semantic judgment, no fabricated usage or finish_reason facts; program only records mechanical settlement facts through the existing journal.",
+  "components": [
+    {
+      "component_id": "web-provider-settlement-identity",
+      "paths": [
+        "src/llm_loop/llm/chatgpt_web.py",
+        "src/llm_loop/llm/deepseek_web.py",
+        "src/llm_loop/factory.py",
+        "tests/unit/test_web_provider_settlement.py",
+        "docs/AUDIT-20261001-p0-1-invocation-history-gap.md",
+        "docs/DESIGN-20261002-p0-2-provider-settlement-coverage-plan.md",
+        "docs/governance/submissions/20261002-web-provider-settlement-identity-a2.json"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "provider call settlement coverage for web (browser-owned) model transports",
+      "disposition": "ADMIT minimal identity wiring: factory injects the existing transport_observer into the two web build functions; each client stores it and opens a transport-attempt scope around the single physical exchange inside chat(); build signatures gain a keyword-only observer parameter (default None preserves old behavior). All observation paths fail open (observer missing, journal unset, site mismatch, or construction error degrade to nullcontext with no behavior change).",
+      "evidence": [
+        "historical data/event_logs scan: purpose web-provider settlement facts are zero because open_shadow_call_for_client returns None for clients without transport_observer (provider_calls.py getattr guard)",
+        "RED regression tests/unit/test_web_provider_settlement.py failed before wiring (TypeError on transport_observer kwarg), then GREEN: attempts_opened=1, attempts_settled=1, call_outcome=success, provider_id/model_id recorded",
+        "adjacent suites green: test_chatgpt_web_model_client.py, test_deepseek_web_model_client.py, test_provider_call_settlement.py plus new tests = 67 passed",
+        "pyright: zero new errors versus HEAD (verified by swapping HEAD file in place; remaining errors are pre-existing factory hook signatures and chatgpt_web record_exchange Optional)",
+        "ruff: zero new findings (remaining E402 re-export finding exists identically on HEAD)"
+      ],
+      "verification_level": "deterministic RED->GREEN + adjacent regression + HEAD-swap type/lint baseline comparison + architecture A.5 staged gate",
+      "model_evidence_veto_recovery_exit": "Program authority is limited to recording mechanical call/attempt facts for web transports. It does not decide semantic importance, does not fabricate usage or finish_reason where the web surface provides none, and cannot fail a model call: every observation path degrades to a no-op nullcontext.",
+      "rollback_route": "Revert this commit; no persisted data migration. Old call sites keep working because transport_observer defaults to None and the attempt scope is fail-open.",
+      "declaration_id": "web-provider-settlement-identity-decl"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "web-provider-settlement-identity-decl",
+      "g1": {
+        "necessity": "Every historical web model call produced zero provider.call / provider.transport.attempt settlement events, so invocation history for web runs is unrecoverable from the journal. The cause is purely mechanical: clients lacked the transport_observer attribute that open_shadow_call_for_client checks. API paths already settle through the identical coordinator, so web was the uncovered half of the same mechanism."
+      },
+      "g2": {
+        "authority_owner": "the existing ProviderCallCoordinator + ShadowTransportRecorder + ProviderCallSettlementJournal machinery in src/llm_loop/resources/",
+        "relationship": "reuse",
+        "non_duplication": "No second settlement system, no new identity scheme, no parallel journal. Web clients only join the existing observer contract that API clients already satisfy; engine and settlement code are untouched."
+      },
+      "g3": {
+        "model_evidence": [
+          "RED->GREEN regression for both web clients",
+          "67-test adjacent suite pass",
+          "HEAD-swap pyright/ruff baseline comparison showing zero new findings"
+        ],
+        "recovery_or_reason": "If the observer is absent, unset, mismatched, or raises, the scope degrades to nullcontext and the call proceeds exactly as before. Settlement facts may be missing but the model call path can never be blocked by observation."
+      },
+      "g4": {
+        "rollback": "Single-commit revert; web build functions return to no-observer behavior.",
+        "verification": [
+          "focused deterministic RED->GREEN",
+          "adjacent web client + settlement regression suite",
+          "Ruff and Pyright versus HEAD baseline",
+          "A.5 architecture submission gate on staged candidate"
+        ]
+      }
+    }
+  ]
+}
