@@ -48,9 +48,10 @@ import os
 import secrets
 import threading
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from llm_loop.timekeeping import system_local_now_iso
 
 _ALGORITHM = "hmac-sha256"
 _MIN_SECRET_BYTES = 16
@@ -173,7 +174,7 @@ def _create_key_file(path: Path) -> ContentHmacKey:
                 "key_id": key.key_id,
                 # hex of the raw key bytes; the file itself is the secret carrier
                 "secret_hex": key.secret_bytes().hex(),
-                "created_at": datetime.now(UTC).isoformat(),
+                "created_at": system_local_now_iso(),
             },
             ensure_ascii=False,
             indent=2,
