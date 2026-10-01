@@ -7,8 +7,9 @@ import json
 import threading
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from llm_loop.core.message import ToolCall
 from llm_loop.core.run_context import current_reasoning_effort
@@ -54,8 +55,10 @@ class DeepSeekWebModelClient:
         model_label: str = DEEPSEEK_WEB_MODEL_ID,
         reasoning_effort: str = "high",
         max_request_chars: int = 100_000,
+        transport_observer: Any | None = None,
     ) -> None:
         self.transport = transport
+        self.transport_observer = transport_observer
         self.model = model_label
         self.reasoning_effort = (
             reasoning_effort if reasoning_effort in self.reasoning_efforts else "high"
@@ -67,6 +70,20 @@ class DeepSeekWebModelClient:
         self.calls: list[dict[str, Any]] = []
         self._request_seq = itertools.count(1)
         self._guard = threading.RLock()
+
+    def _transport_attempt_scope(self, *, model_id: str) -> AbstractContextManager[Any]:
+        """RG-3C shadow settlement scope around the physical browser exchange (fail-open)."""
+        observer: Any = self.transport_observer
+        attempt: Any = getattr(observer, "transport_attempt", None) if observer is not None else None
+        if not callable(attempt):
+            return nullcontext()
+        try:
+            return cast(
+                "AbstractContextManager[Any]",
+                attempt(provider_id=self.provider, model_id=model_id, transport_retry_index=0),
+            )
+        except Exception:
+            return nullcontext()
 
     def request_envelope_preflight(
         self,
@@ -118,7 +135,8 @@ class DeepSeekWebModelClient:
                 "_reasoning_effort": requested or None,
             }
             self.calls.append(request)
-            raw = self.transport.exchange(request, timeout_s=timeout_s)
+            with self._transport_attempt_scope(model_id=str(request.get("model") or self.model)):
+                raw = self.transport.exchange(request, timeout_s=timeout_s)
             response = _validate_response(raw, request_id=request_id)
             calls = [
                 ToolCall(
@@ -241,7 +259,9 @@ class _ThreadBoundTransport:
             closer()
 
 
-def build_deepseek_web_model_client(settings: Any) -> DeepSeekWebModelClient:
+def build_deepseek_web_model_client(
+    settings: Any, *, transport_observer: Any | None = None
+) -> DeepSeekWebModelClient:
     endpoint = str(getattr(settings, "deepseek_web_cdp_endpoint", "") or "").strip()
     root_url = str(
         getattr(settings, "deepseek_web_root_url", "https://chat.deepseek.com/")
@@ -304,6 +324,7 @@ def build_deepseek_web_model_client(settings: Any) -> DeepSeekWebModelClient:
         model_label=DEEPSEEK_WEB_MODEL_ID,
         reasoning_effort=reasoning_effort,
         max_request_chars=max_request_chars,
+        transport_observer=transport_observer,
     )
 
 
