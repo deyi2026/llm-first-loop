@@ -1,7 +1,7 @@
 # P0-2 Provider Settlement 覆盖面补齐 — Seam 实现方案
 
 Date: 2026-10-02
-Status: **Phase A2 COMMITTED（2026-10-02 `3c9b0d52e`，RED→GREEN + focused + A.5 staged gate + 全量回归 6337 passed/0 failed；全量回归时预存 env-ratchet 红已由 `9af598d32` 基线补登记修复）**；A1 已证伪取消（§2 GAP-SUM-1）；**B1 COMMITTED（2026-10-02 `d005f275a`，`resources/content_digest.py`，23 单测 + ruff/pyright 0 error，含 env baseline 登记）**；**B2 代码在树、commit 待落（2026-10-02，六 seam prepared facts 落 opened 事件，8 单测 + 相邻 167 focused 全绿——commit `feat(llm): prepared facts on transport attempts` 尚未创建，收尾 gate + commit 待执行）**；B3/C1 待启动
+Status: **Phase A2 COMMITTED（2026-10-02 `3c9b0d52e`，RED→GREEN + focused + A.5 staged gate + 全量回归 6337 passed/0 failed；全量回归时预存 env-ratchet 红已由 `9af598d32` 基线补登记修复）**；A1 已证伪取消（§2 GAP-SUM-1）；**B1 COMMITTED（2026-10-02 `d005f275a`，`resources/content_digest.py`，23 单测 + ruff/pyright 0 error，含 env baseline 登记）**；**B2 COMMITTED（2026-10-02，六 seam prepared facts 落 opened 事件，8 单测 + 相邻 focused + targeted ruff/pyright + 全量回归已过，commit `feat(llm): prepared facts on transport attempts`；chatgpt_web 预存 E402/Optional gate 债已由 `bdc320843` 单独清偿）**；B3/C1 待启动
 上游：`docs/DESIGN-20261001-model-invocation-history-replay-safety.md` v1.1 §5/§11/§13
 证据底料：`docs/AUDIT-20261001-p0-1-invocation-history-gap.md`（含 2026-10-02 §6 补充核验）
 约束：v1.1 §11 —— 只补齐 Provider Settlement 覆盖面，**不另建 identity 系统**；RS-5 敏感内容分级；DEVELOPMENT_REPAIR_SAFETY 一个职责一个 commit。
