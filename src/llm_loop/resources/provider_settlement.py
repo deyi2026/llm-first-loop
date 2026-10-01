@@ -354,6 +354,7 @@ class ProviderCallSettlementJournal:
         site: ProviderCallSite,
         *,
         transport_retry_index: int,
+        prepared: Mapping[str, Any] | None = None,
     ) -> ProviderTransportAttempt:
         """Create a fresh identity immediately before one physical send."""
 
@@ -376,6 +377,9 @@ class ProviderCallSettlementJournal:
                 started_at=float(self._clock()),
             )
             payload = self._attempt_identity_payload(attempt)
+            prepared_facts = self._normalize_prepared(prepared)
+            if prepared_facts:
+                payload["prepared"] = prepared_facts
             written = (
                 self._event_store.append(site.call.session_id, self.TRANSPORT_OPENED, payload)
                 if self.enabled
@@ -386,6 +390,33 @@ class ProviderCallSettlementJournal:
                 self._last_attempt_id[attempt.call_id] = attempt.attempt_id
                 self._project_written_event(written)
             return attempt
+
+    @staticmethod
+    def _normalize_prepared(prepared: Mapping[str, Any] | None) -> dict[str, Any] | None:
+        """GAP-REQ-1 prepared facts: additive schema, mechanical typing, no semantics.
+
+        Unknown or mistyped fields are dropped, never coerced; absence stays
+        absence (old events hydrate unchanged).
+        """
+        if not isinstance(prepared, Mapping):
+            return None
+        out: dict[str, Any] = {}
+        digest_hex = str(prepared.get("payload_hmac") or "").strip().lower()
+        if digest_hex:
+            out["payload_hmac"] = digest_hex
+        key_id = str(prepared.get("payload_hmac_key_id") or "").strip()
+        if key_id:
+            out["payload_hmac_key_id"] = key_id
+        projected = prepared.get("projected_bytes")
+        if isinstance(projected, int) and not isinstance(projected, bool) and projected >= 0:
+            out["projected_bytes"] = projected
+        representation = str(prepared.get("representation") or "").strip()
+        if representation:
+            out["representation"] = representation
+        controls = prepared.get("controls")
+        if isinstance(controls, Mapping):
+            out["controls"] = {str(k): v for k, v in controls.items()}
+        return out or None
 
     @staticmethod
     def _attempt_identity_payload(attempt: ProviderTransportAttempt) -> dict[str, Any]:

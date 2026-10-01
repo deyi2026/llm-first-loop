@@ -57,6 +57,41 @@ class ChatGPTModelTransport(Protocol):
     ) -> dict[str, Any]: ...
 
 
+
+def _prepared_web_facts(
+    request: dict[str, Any], representation: str
+) -> dict[str, Any] | None:
+    """GAP-REQ-1 web prepared facts over the full rendered text (fail-open).
+
+    Web 路径的投影即渲染文本（preamble + 正文全量）；hash-only 默认，
+    key 缺失时 hmac 字段诚实省略，机械字段照常记录。
+    """
+    try:
+        from llm_loop.llm.chatgpt_transport import ChatGPTWebPageTransport
+
+        rendered = ChatGPTWebPageTransport._render_request(request)  # noqa: SLF001
+        data = rendered.encode("utf-8")
+        prepared: dict[str, Any] = {
+            "projected_bytes": len(data),
+            "representation": representation,
+            "controls": {
+                "model": str(request.get("model") or ""),
+                "reasoning_effort_requested": str(request.get("_reasoning_effort") or ""),
+                "controls_channel": "rendered_preamble",
+            },
+        }
+        try:
+            from llm_loop.resources.content_digest import resolve_content_hmac_key
+
+            key = resolve_content_hmac_key()
+            prepared["payload_hmac"] = key.digest(data)
+            prepared["payload_hmac_key_id"] = key.key_id
+        except Exception:  # noqa: BLE001 - hmac absence is honest, not an error
+            logger.debug("web prepared payload_hmac unavailable (honest absence)")
+        return prepared
+    except Exception:  # noqa: BLE001 - shadow must never block transport
+        return None
+
 class ChatGPTWebModelClient:
     """Duck-typed LFL model client backed by ChatGPT Web.
 
@@ -102,7 +137,9 @@ class ChatGPTWebModelClient:
         # not interleave composer/send/observe cycles on the same owned tab.
         self._guard = threading.RLock()
 
-    def _transport_attempt_scope(self, *, model_id: str) -> AbstractContextManager[Any]:
+    def _transport_attempt_scope(
+        self, *, model_id: str, prepared: Mapping[str, Any] | None = None
+    ) -> AbstractContextManager[Any]:
         """RG-3C shadow settlement scope around the physical browser exchange (fail-open)."""
         observer: Any = self.transport_observer
         attempt: Any = getattr(observer, "transport_attempt", None) if observer is not None else None
@@ -111,7 +148,12 @@ class ChatGPTWebModelClient:
         try:
             return cast(
                 "AbstractContextManager[Any]",
-                attempt(provider_id=self.provider, model_id=model_id, transport_retry_index=0),
+                attempt(
+                    provider_id=self.provider,
+                    model_id=model_id,
+                    transport_retry_index=0,
+                    prepared=prepared,
+                ),
             )
         except Exception:
             return nullcontext()
@@ -172,7 +214,10 @@ class ChatGPTWebModelClient:
                 "_lfl_session_id": str(current_session_id.get() or "").strip() or None,
             }
             self.calls.append(request)
-            with self._transport_attempt_scope(model_id=str(request.get("model") or self.model)):
+            with self._transport_attempt_scope(
+                model_id=str(request.get("model") or self.model),
+                prepared=_prepared_web_facts(request, "chatgpt-rendered-text"),
+            ):
                 raw = self.transport.exchange(request, timeout_s=timeout_s)
             response = _validate_response(raw, request_id=request_id)
             calls = [

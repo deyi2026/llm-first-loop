@@ -273,6 +273,7 @@ class ShadowTransportRecorder:
         provider_id: str,
         model_id: str,
         transport_retry_index: int = 0,
+        prepared: Mapping[str, Any] | None = None,
     ) -> Iterator[ProviderTransportAttempt | None]:
         """Correlate exactly one physical send with the current logical call."""
 
@@ -287,7 +288,7 @@ class ShadowTransportRecorder:
                 yield None
                 return
             attempt = journal.open_transport_attempt(
-                site, transport_retry_index=transport_retry_index
+                site, transport_retry_index=transport_retry_index, prepared=prepared
             )
         except Exception:
             yield None

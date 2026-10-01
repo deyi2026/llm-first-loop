@@ -65,8 +65,17 @@ class ContentHmacKeyError(RuntimeError):
     """Raised when a content HMAC key cannot be resolved or is invalid."""
 
 
-def _canonical_json_bytes(obj: Any) -> bytes:
+def canonical_json_bytes(obj: Any) -> bytes:
+    """Canonical JSON byte form (sorted keys, ensure_ascii=False, utf-8).
+
+    Shared by ``digest_json`` / ``verify_json`` and by call sites that need the
+    same bytes for ``projected_bytes`` (GAP-REQ-1). One convention, one place.
+    """
     return json.dumps(obj, ensure_ascii=False, sort_keys=True).encode("utf-8")
+
+
+# Backwards-compatible private alias for pre-B2 internal references.
+_canonical_json_bytes = canonical_json_bytes
 
 
 @dataclass(frozen=True)

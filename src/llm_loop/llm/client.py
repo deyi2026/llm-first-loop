@@ -21,7 +21,7 @@ import shutil
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1142,7 +1142,11 @@ class LLMClient:
             logger.debug("resource transport error observation failed (shadow)", exc_info=True)
 
     def _transport_attempt_scope(
-        self, *, model_id: str, transport_retry_index: int = 0
+        self,
+        *,
+        model_id: str,
+        transport_retry_index: int = 0,
+        prepared: Mapping[str, Any] | None = None,
     ) -> Any:
         """Return RG-3C physical-send correlation scope or a zero-behavior fallback."""
 
@@ -1155,9 +1159,55 @@ class LLMClient:
                 provider_id=self.provider,
                 model_id=model_id,
                 transport_retry_index=transport_retry_index,
+                prepared=prepared,
             )
         except Exception:  # noqa: BLE001 - settlement shadow can never block transport
             return nullcontext()
+
+    def _prepared_attempt_facts(
+        self,
+        *,
+        payload: Mapping[str, Any],
+        representation: str,
+        timeout_s: float,
+    ) -> dict[str, Any] | None:
+        """GAP-REQ-1 write-before-send prepared facts (hash-only default, fail-open).
+
+        Never blocks or alters the transport; any failure yields None (whole
+        prepared mapping omitted). Key-material failure alone yields honest
+        absence of the two hmac fields while keeping the mechanical facts.
+        """
+        try:
+            from llm_loop.resources.content_digest import (
+                canonical_json_bytes,
+                resolve_content_hmac_key,
+            )
+
+            data = canonical_json_bytes(payload)
+            controls: dict[str, Any] = dict(effective_generation_contract(self))
+            mode, capable, control, supported, requested = self.reasoning_contract_state()
+            controls.update(
+                reasoning_mode=mode,
+                reasoning_capable=capable,
+                reasoning_control_kind=control,
+                reasoning_control_supported=supported,
+                reasoning_requested=requested,
+                timeout_s=timeout_s,
+            )
+            prepared: dict[str, Any] = {
+                "projected_bytes": len(data),
+                "representation": representation,
+                "controls": controls,
+            }
+            try:
+                key = resolve_content_hmac_key()
+                prepared["payload_hmac"] = key.digest(data)
+                prepared["payload_hmac_key_id"] = key.key_id
+            except Exception:  # noqa: BLE001 - hmac absence is honest, not an error
+                logger.debug("prepared payload_hmac unavailable (honest absence)")
+            return prepared
+        except Exception:  # noqa: BLE001 - shadow must never block transport
+            return None
 
     def _thinking_supported(self) -> bool:
         """思考参数发送判定（M20 CFG-03 + M47 §5.5）.
@@ -1858,6 +1908,11 @@ class LLMClient:
             with self._transport_attempt_scope(
                 model_id=str(payload["model"]),
                 transport_retry_index=transport_retry_index,
+                prepared=self._prepared_attempt_facts(
+                    payload=payload,
+                    representation="openai-json",
+                    timeout_s=effective_timeout,
+                ),
             ), self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
@@ -2094,7 +2149,13 @@ class LLMClient:
         try:
             effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
             with self._transport_attempt_scope(
-                model_id=str(payload["model"]), transport_retry_index=0
+                model_id=str(payload["model"]),
+                transport_retry_index=0,
+                prepared=self._prepared_attempt_facts(
+                    payload=payload,
+                    representation="anthropic-converted",
+                    timeout_s=effective_timeout,
+                ),
             ), self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
@@ -2207,7 +2268,13 @@ class LLMClient:
         try:
             effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
             with self._transport_attempt_scope(
-                model_id=model_id, transport_retry_index=0
+                model_id=model_id,
+                transport_retry_index=0,
+                prepared=self._prepared_attempt_facts(
+                    payload=payload,
+                    representation="google-payload",
+                    timeout_s=effective_timeout,
+                ),
             ), self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
@@ -2305,7 +2372,13 @@ class LLMClient:
         try:
             effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
             with self._transport_attempt_scope(
-                model_id=model_id, transport_retry_index=0
+                model_id=model_id,
+                transport_retry_index=0,
+                prepared=self._prepared_attempt_facts(
+                    payload=payload,
+                    representation="lms-chat-json",
+                    timeout_s=effective_timeout,
+                ),
             ), self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
