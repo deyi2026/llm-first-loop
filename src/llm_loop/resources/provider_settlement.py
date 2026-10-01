@@ -278,6 +278,16 @@ class ProviderCallSettlementJournal:
         except (TypeError, ValueError):
             return None
 
+    def last_attempt_id_for_call(self, call_id: str) -> str | None:
+        """P0-2 B3 (GAP-REQ-2): read-only join key for event-log consumers.
+
+        Returns the latest transport attempt id recorded for one logical call,
+        or None when the call is unknown or its bounded cache was evicted; the
+        caller renders that as an empty join key instead of inventing an id.
+        """
+        with self._lock:
+            return self._last_attempt_id.get(str(call_id or ""))
+
     def open_call(
         self,
         *,

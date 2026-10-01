@@ -228,6 +228,28 @@ def _consume_live_interjections(engine: Any, session_id: str, sess: Any) -> list
 # 模块级函数随工具执行职责单元迁移，经此 re-export 保持 `engine._tool_args_summary` 等可导入。
 
 
+def _settlement_join_ids_for_usage(
+    call: Any, coordinator: Any
+) -> tuple[str, str]:
+    """P0-2 B3 (GAP-REQ-2): settlement join keys for a request.usage row.
+
+    Module-level helper so the giant round loop adds zero branch complexity:
+    ``provider_call_id`` names the logical shadow call, ``provider_attempt_id``
+    the latest transport attempt the settlement journal recorded for it.
+    request.meta is emitted before the physical send, so the attempt-level key
+    can only be honest here (post-response). "" means no binding this round —
+    never invented, never dropped from the payload.
+    """
+    try:
+        call_id = str(getattr(call, "call_id", "") or "")
+        attempt_id = str(coordinator.last_provider_attempt_id(call) or "") if (
+            call is not None and coordinator is not None
+        ) else ""
+        return call_id, attempt_id
+    except Exception:
+        return "", ""
+
+
 def format_tokens(n: int) -> str:
     """M52: token 计数人性化显示（1234 → "1.2k"）；0 = 未提供，如实返回 "0"."""
     if n >= 1000:
@@ -2185,6 +2207,13 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     if _context_window and _req_usage_available
                     else None
                 )
+                # P0-2 B3 (GAP-REQ-2): settlement join keys via module-level
+                # helper (zero added branch complexity in this function).
+                _provider_call_join_id, _provider_attempt_join_id = (
+                    _settlement_join_ids_for_usage(
+                        _provider_call, _provider_call_coordinator
+                    )
+                )
                 _request_usage_payload = {
                     "round": rounds,
                     "model": model_used or getattr(self.settings, "llm_model", ""),
@@ -2216,6 +2245,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     "cache_prefix_epoch": _cache_state.cache_prefix_epoch,
                     "compaction_epoch": _cache_state.compact_event_seq,
                     "runtime_pid": os.getpid(),
+                    "provider_call_id": _provider_call_join_id,
+                    "provider_attempt_id": _provider_attempt_join_id,
                     "usage_available": _req_usage_available,
                     "timing": cap.timing(total_ms=_llm_round_ms),
                 }

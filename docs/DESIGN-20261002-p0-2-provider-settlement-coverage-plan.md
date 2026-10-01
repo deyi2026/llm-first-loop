@@ -1,7 +1,7 @@
 # P0-2 Provider Settlement 覆盖面补齐 — Seam 实现方案
 
 Date: 2026-10-02
-Status: **Phase A2 COMMITTED（2026-10-02 `3c9b0d52e`，RED→GREEN + focused + A.5 staged gate + 全量回归 6337 passed/0 failed；全量回归时预存 env-ratchet 红已由 `9af598d32` 基线补登记修复）**；A1 已证伪取消（§2 GAP-SUM-1）；**B1 COMMITTED（2026-10-02 `d005f275a`，`resources/content_digest.py`，23 单测 + ruff/pyright 0 error，含 env baseline 登记）**；**B2 COMMITTED（2026-10-02，六 seam prepared facts 落 opened 事件，8 单测 + 相邻 focused + targeted ruff/pyright + 全量回归已过，commit `feat(llm): prepared facts on transport attempts`；chatgpt_web 预存 E402/Optional gate 债已由 `bdc320843` 单独清偿）**；B3/C1 待启动
+Status: **Phase A2 COMMITTED（2026-10-02 `3c9b0d52e`，RED→GREEN + focused + A.5 staged gate + 全量回归 6337 passed/0 failed；全量回归时预存 env-ratchet 红已由 `9af598d32` 基线补登记修复）**；A1 已证伪取消（§2 GAP-SUM-1）；**B1 COMMITTED（2026-10-02 `d005f275a`，`resources/content_digest.py`，23 单测 + ruff/pyright 0 error，含 env baseline 登记）**；**B2 COMMITTED（2026-10-02，六 seam prepared facts 落 opened 事件，8 单测 + 相邻 focused + targeted ruff/pyright + 全量回归已过，commit `feat(llm): prepared facts on transport attempts`；chatgpt_web 预存 E402/Optional gate 债已由 `bdc320843` 单独清偿）**；**B3 COMMITTED（2026-10-02，`request.usage` += `provider_call_id`/`provider_attempt_id`（空串=无绑定）；meta 先于物理发送的时序事实冻结为不新增 attempt id，见 §2 GAP-REQ-2 裁决；RED→GREEN 4 测试 + focused 140 相邻 + 全量回归已过，commit `feat(engine): attempt ids in request usage/meta`）**；C1 待启动
 上游：`docs/DESIGN-20261001-model-invocation-history-replay-safety.md` v1.1 §5/§11/§13
 证据底料：`docs/AUDIT-20261001-p0-1-invocation-history-gap.md`（含 2026-10-02 §6 补充核验）
 约束：v1.1 §11 —— 只补齐 Provider Settlement 覆盖面，**不另建 identity 系统**；RS-5 敏感内容分级；DEVELOPMENT_REPAIR_SAFETY 一个职责一个 commit。
@@ -60,6 +60,15 @@ P0-1/§6 已证实三件套完整可用：
 - `request.meta` 在已有 `provider_call_id` 基础上补 attempt 级 id（engine.py L1586-1641 区域）。
 - 纯加键，不改 seam；旧日志解析不受影响（additive schema）。
 
+#### B3 实现裁决（2026-10-02，RED→GREEN 后冻结）
+
+- **时序事实**：`request.meta` 在物理发送**之前**发出（engine.py meta 块先于 chat/stream 调用），settlement pattempt id 在该时点结构性不存在；在 additive-only 约束下 meta **不新增** attempt 级 id（不得伪造、不得改事件时序）。meta 的既有 `provider_call_id` 保持唯一 settlement join key。
+- **键名**：usage 新增键定为 `provider_call_id` + `provider_attempt_id`——meta 的 `attempt_id` 已被 reachability attempt 概念占用，统一用 `provider_attempt_id` 避免同名异义，两侧 join 语义一致。
+- **空值语义**：绑定不可用（无 coordinator / 无 observer / journal 异常）时两键为 `""`（与 meta 既有 `provider_call_id: getattr(..., "call_id", "")` 空串惯例一致），不省略、不丢行、不编造。
+- **只读访问器**：journal 新增 `last_attempt_id_for_call(call_id) -> str | None`（RLock 内读 `_last_attempt_id`，缓存逐出返回 None）；coordinator 新增 fail-open 包装 `last_provider_attempt_id(call) -> str`。
+- **engine 落位**：join 键计算放模块级 helper `_settlement_join_ids_for_usage(call, coordinator)`（fail-open 返回 `("", "")`），轮循环内仅一次解包调用、**零新增分支复杂度**——`_run_stream_inner` 已在 pyright 复杂度阈值边缘，内联 try/except 会触发 "too complex" 并**掩盖**该函数内 26 个预存 `dict[bytes]` 推断错误（HEAD 基线 pyright exit=1 / 26 errors，B3 不新增诊断，见 commit 门记录）。
+- **回归**：`tests/unit/test_request_usage_attempt_ids.py`——绑定场景断言 usage 两键 == settlement store 中 `provider.call.opened.call_id` / `provider.transport.opened.attempt_id` 且 == journal 访问器值；无绑定场景断言两键 `""`；meta 形状冻结测试（无伪造 attempt id）；settlement JSONL 纯 JSON 可解析。
+
 ### GAP-RESP-1 settled 扩展（Phase C1）
 
 `provider.transport.settled` 新增：
@@ -110,7 +119,7 @@ P0-1/§6 已证实三件套完整可用：
 | A2 | GAP-ID-1 Web 身份 | `feat(web): settle web transports via shadow recorder` | fake-transport 回归 + web 相邻 + journal schema snapshot |
 | B1 ✅ | GAP-POL-1 HMAC 原语（2026-10-02 已实现） | `feat(resources): keyed hmac digest primitive` | 原语单测（含 key 轮换）+ ruff/pyright |
 | B2 ✅ | GAP-REQ-1 prepared（2026-10-02 已实现：六 seam opened 事件携带 `prepared{payload_hmac, payload_hmac_key_id, projected_bytes, representation, controls}`；RED→GREEN 8 测试 + 旧日志 rehydrate 兼容；honest-absence 分层 fail-open） | `feat(llm): prepared facts on transport attempts` | 六路径参数化回归 + 旧日志解析兼容测试 |
-| B3 | GAP-REQ-2 关联键 | `feat(engine): attempt ids in request usage/meta` | usage/meta 快照测试 |
+| B3 ✅ | GAP-REQ-2 关联键（2026-10-02 已实现：usage += `provider_call_id`/`provider_attempt_id`，空串=无绑定；meta 时序裁决见 §2；journal/coordinator 只读访问器） | `feat(engine): attempt ids in request usage/meta` | usage/meta 快照测试 |
 | C1 | GAP-RESP-1 settled | `feat(llm): settled response facts` | 三协议回显单测 + web 省略断言 |
 
 每 Phase：staged candidate 上跑 final gate（防旧 HEAD 假绿）；不 push，阶段冻结。

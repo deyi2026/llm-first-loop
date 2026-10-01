@@ -157,6 +157,24 @@ class ProviderCallCoordinator:
         except Exception:
             return
 
+    def last_provider_attempt_id(self, call: ProviderCallIdentity | None) -> str:
+        """P0-2 B3 (GAP-REQ-2): latest settlement transport attempt id, "" when unbound.
+
+        Fail-open mirror of open_shadow_call_for_client: any missing binding or
+        journal error yields an honest empty join key for the usage event rather
+        than dropping the row or inventing an id.
+        """
+        journal = self._settlement_journal
+        if journal is None or call is None:
+            return ""
+        try:
+            attempt_id = journal.last_attempt_id_for_call(
+                str(getattr(call, "call_id", "") or "")
+            )
+            return str(attempt_id or "")
+        except Exception:
+            return ""
+
     def _legacy_shadow_conflicts(
         self,
         client: object,
