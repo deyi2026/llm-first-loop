@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # Leaf-module re-export (R9-P2-06a): these three symbols moved to
 # ``chatgpt_protocol`` so the transport can consume them without a module-scope
 # cycle. Re-exported here so existing importers keep working unchanged.
-from llm_loop.llm.chatgpt_protocol import (  # noqa: F401  (re-export)
+from llm_loop.llm.chatgpt_protocol import (  # noqa: F401, E402  (re-export; deliberate post-docstring placement)
     CHATGPT_WEB_PROVIDER_ID,
     MODEL_PROTOCOL,
     ChatGPTModelProtocolError,
@@ -333,12 +333,14 @@ class _SurfaceOwnedTransport:
         if session_binding is not None:
             if not lease.conversation_id or not lease.conversation_url:
                 raise RuntimeError("ChatGPT Web exchange completed without conversation identity")
-            self.session_store.record_exchange(
-                session_binding,
-                conversation_id=lease.conversation_id,
-                conversation_url=lease.conversation_url,
-                request_chars=request_chars,
-            )
+            store = self.session_store
+            if store is not None:
+                store.record_exchange(
+                    session_binding,
+                    conversation_id=lease.conversation_id,
+                    conversation_url=lease.conversation_url,
+                    request_chars=request_chars,
+                )
         return response
 
     def close(self) -> None:
