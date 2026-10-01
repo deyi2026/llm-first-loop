@@ -1,7 +1,7 @@
 # P0-2 Provider Settlement 覆盖面补齐 — Seam 实现方案
 
 Date: 2026-10-02
-Status: **Phase A2 IMPLEMENTED（2026-10-02，RED→GREEN + focused gate + A.5 staged gate + 全量回归已过，commit: `feat(web): settle web transports via shadow recorder`；全量回归时预存 env-ratchet 红已由 `9af598d32` 基线补登记修复）**；A1 已证伪取消（§2 GAP-SUM-1）；**B1 IMPLEMENTED（2026-10-02，`resources/content_digest.py`，23 单测 + ruff/pyright 0 error，含 env baseline 登记）**；B2/B3/C1 待启动
+Status: **Phase A2 COMMITTED（2026-10-02 `3c9b0d52e`，RED→GREEN + focused + A.5 staged gate + 全量回归 6337 passed/0 failed；全量回归时预存 env-ratchet 红已由 `9af598d32` 基线补登记修复）**；A1 已证伪取消（§2 GAP-SUM-1）；**B1 COMMITTED（2026-10-02 `d005f275a`，`resources/content_digest.py`，23 单测 + ruff/pyright 0 error，含 env baseline 登记）**；**B2 代码在树、commit 待落（2026-10-02，六 seam prepared facts 落 opened 事件，8 单测 + 相邻 167 focused 全绿——commit `feat(llm): prepared facts on transport attempts` 尚未创建，收尾 gate + commit 待执行）**；B3/C1 待启动
 上游：`docs/DESIGN-20261001-model-invocation-history-replay-safety.md` v1.1 §5/§11/§13
 证据底料：`docs/AUDIT-20261001-p0-1-invocation-history-gap.md`（含 2026-10-02 §6 补充核验）
 约束：v1.1 §11 —— 只补齐 Provider Settlement 覆盖面，**不另建 identity 系统**；RS-5 敏感内容分级；DEVELOPMENT_REPAIR_SAFETY 一个职责一个 commit。
@@ -109,7 +109,7 @@ P0-1/§6 已证实三件套完整可用：
 | ~~A1~~ | ~~GAP-SUM-1 接线~~ **已取消**（2026-10-02 证伪，audit §6.4；无代码缺口可修） | — | — |
 | A2 | GAP-ID-1 Web 身份 | `feat(web): settle web transports via shadow recorder` | fake-transport 回归 + web 相邻 + journal schema snapshot |
 | B1 ✅ | GAP-POL-1 HMAC 原语（2026-10-02 已实现） | `feat(resources): keyed hmac digest primitive` | 原语单测（含 key 轮换）+ ruff/pyright |
-| B2 | GAP-REQ-1 prepared | `feat(llm): prepared facts on transport attempts` | 六路径参数化回归 + 旧日志解析兼容测试 |
+| B2 ✅ | GAP-REQ-1 prepared（2026-10-02 已实现：六 seam opened 事件携带 `prepared{payload_hmac, payload_hmac_key_id, projected_bytes, representation, controls}`；RED→GREEN 8 测试 + 旧日志 rehydrate 兼容；honest-absence 分层 fail-open） | `feat(llm): prepared facts on transport attempts` | 六路径参数化回归 + 旧日志解析兼容测试 |
 | B3 | GAP-REQ-2 关联键 | `feat(engine): attempt ids in request usage/meta` | usage/meta 快照测试 |
 | C1 | GAP-RESP-1 settled | `feat(llm): settled response facts` | 三协议回显单测 + web 省略断言 |
 
