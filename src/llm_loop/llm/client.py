@@ -1164,6 +1164,61 @@ class LLMClient:
         except Exception:  # noqa: BLE001 - settlement shadow can never block transport
             return nullcontext()
 
+    def _note_settled_response_facts(
+        self,
+        *,
+        finish_reason: str | None,
+        content: str | None,
+        reasoning_content: str | None,
+        tool_calls: list[ToolCall] | list[Mapping[str, Any]] | None,
+        provider_observed_model: str | None = None,
+    ) -> None:
+        """GAP-RESP-1 (C1): attach response facts to the active attempt settlement.
+
+        Must run inside :meth:`_transport_attempt_scope` before it exits
+        (settle fires on scope exit).  Fail-open by contract: any failure,
+        including missing HMAC key material, only drops the shadow fact
+        (honest absence) and never affects the transport result.  Web paths
+        call the observer helper directly because ``provider_observed_model``
+        is structurally absent there.
+        """
+
+        observer = self.transport_observer
+        note = getattr(observer, "note_settled_response_facts", None) if observer is not None else None
+        if not callable(note):
+            return
+        try:
+            rows: list[dict[str, Any]] = []
+            for call in tool_calls or []:
+                if isinstance(call, ToolCall):
+                    rows.append({"id": call.id, "name": call.name, "arguments": call.arguments})
+                else:
+                    rows.append(
+                        {
+                            "id": str(call.get("id") or ""),
+                            "name": str(call.get("name") or ""),
+                            "arguments": call.get("arguments"),
+                        }
+                    )
+            digest: str | None = None
+            key_id: str | None = None
+            try:
+                from llm_loop.resources.content_digest import normalized_response_hmac
+
+                digest, key_id = normalized_response_hmac(
+                    content, reasoning_content, rows, allow_create=False
+                )
+            except Exception:  # noqa: BLE001 - missing key material is honest absence
+                logger.debug("settled response hmac unavailable (shadow)", exc_info=True)
+            note(
+                finish_reason=str(finish_reason) if finish_reason else None,
+                normalized_response_hmac=digest,
+                normalized_response_hmac_key_id=key_id,
+                provider_observed_model=str(provider_observed_model) if provider_observed_model else None,
+            )
+        except Exception:  # noqa: BLE001 - RG-3B/C shadow can never affect provider behavior
+            logger.debug("settled response facts note failed (shadow)", exc_info=True)
+
     def _prepared_attempt_facts(
         self,
         *,
@@ -1200,7 +1255,7 @@ class LLMClient:
                 "controls": controls,
             }
             try:
-                key = resolve_content_hmac_key()
+                key = resolve_content_hmac_key(allow_create=False)
                 prepared["payload_hmac"] = key.digest(data)
                 prepared["payload_hmac_key_id"] = key.key_id
             except Exception:  # noqa: BLE001 - hmac absence is honest, not an error
@@ -1919,6 +1974,7 @@ class LLMClient:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
                 _deadline = _stream_total_deadline(effective_timeout)
+                _observed_model: str | None = None
                 for line in resp.iter_lines():
                     _check_stream_deadline(_deadline, effective_timeout)
                     if not line or not line.startswith("data: "):
@@ -1933,6 +1989,10 @@ class LLMClient:
                     self._check_sse_error(
                         chunk, model_id=str(payload["model"]), http_status=int(resp.status_code)
                     )
+                    if _observed_model is None:
+                        _m = chunk.get("model")
+                        if isinstance(_m, str) and _m:
+                            _observed_model = _m
                     usage = chunk.get("usage")
                     if isinstance(usage, dict):
                         self._observe_transport_usage(usage, model_id=str(payload["model"]))
@@ -2049,6 +2109,13 @@ class LLMClient:
                     else:
                         acc.content_parts.append(text)
                         yield StreamDelta(text=text)
+                self._note_settled_response_facts(
+                    finish_reason=acc.finish_reason,
+                    content="".join(acc.content_parts) or None,
+                    reasoning_content="".join(acc.reasoning_parts) or None,
+                    tool_calls=agg.finish(),
+                    provider_observed_model=_observed_model,
+                )
         _attempt = 0
         while True:
             _attempt += 1
@@ -2162,6 +2229,7 @@ class LLMClient:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
                 _deadline = _stream_total_deadline(effective_timeout)
+                _observed_model: str | None = None
                 for line in resp.iter_lines():
                     _check_stream_deadline(_deadline, effective_timeout)
                     if not line.startswith("data: "):
@@ -2180,6 +2248,10 @@ class LLMClient:
                         acc.completion_tokens = int(usage.get("output_tokens") or 0)
                         # M58: Anthropic 缓存命中（cache_read_input_tokens）
                         acc.prompt_cache_hit_tokens = int(usage.get("cache_read_input_tokens") or 0)
+                        if _observed_model is None:
+                            _m = (evt.get("message") or {}).get("model")
+                            if isinstance(_m, str) and _m:
+                                _observed_model = _m
                     elif evt_type == "content_block_start":
                         block = evt.get("content_block") or {}
                         if block.get("type") == "tool_use":
@@ -2220,6 +2292,13 @@ class LLMClient:
                             acc.finish_reason = stop
                         if acc.finish_reason in ("max_tokens", "length"):
                             acc.truncated = True
+                self._note_settled_response_facts(
+                    finish_reason=acc.finish_reason,
+                    content="".join(acc.content_parts) or None,
+                    reasoning_content="".join(acc.reasoning_parts) or None,
+                    tool_calls=agg.finish(),
+                    provider_observed_model=_observed_model,
+                )
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
         except httpx.NetworkError as exc:
@@ -2281,6 +2360,7 @@ class LLMClient:
                 self._raise_for_status(resp, model_id=model_id)
                 self._observe_transport_response(resp, model_id=model_id)
                 _deadline = _stream_total_deadline(effective_timeout)
+                _observed_model: str | None = None
                 for line in resp.iter_lines():
                     _check_stream_deadline(_deadline, effective_timeout)
                     if not line.startswith("data: "):
@@ -2292,6 +2372,10 @@ class LLMClient:
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
                         continue
+                    if _observed_model is None:
+                        _m = chunk.get("modelVersion")
+                        if isinstance(_m, str) and _m:
+                            _observed_model = _m
                     usage = chunk.get("usageMetadata") or {}
                     if usage:
                         # M58 修复（审查中危）: 缺失不覆盖（与 openai 路径一致）
@@ -2324,6 +2408,13 @@ class LLMClient:
                                 }
                             )
                             google_fc_index += 1
+                self._note_settled_response_facts(
+                    finish_reason=acc.finish_reason,
+                    content="".join(acc.content_parts) or None,
+                    reasoning_content="".join(acc.reasoning_parts) or None,
+                    tool_calls=agg.finish(),
+                    provider_observed_model=_observed_model,
+                )
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
         except httpx.NetworkError as exc:
@@ -2386,6 +2477,7 @@ class LLMClient:
                     self._raise_for_status(resp, model_id=model_id)
                 self._observe_transport_response(resp, model_id=model_id)
                 _deadline = _stream_total_deadline(effective_timeout)
+                _observed_model: str | None = None
                 for line in resp.iter_lines():
                     _check_stream_deadline(_deadline, effective_timeout)
                     if not line or not line.startswith("data: "):
@@ -2421,6 +2513,19 @@ class LLMClient:
                         except Exception:  # noqa: BLE001 — 解析失败 fail-open（不影响输出）
                             pass
                         break
+                _lms_content = "".join(acc.content_parts) or None
+                _lms_tool_rows: list[dict[str, object]] = []
+                if _lms_content:
+                    for _i, _tc in enumerate(self._parse_text_tool_calls(_lms_content)):
+                        _lms_tool_rows.append(
+                            {"id": f"lms-{_i}", "name": _tc["name"], "arguments": _tc["arguments"]}
+                        )
+                self._note_settled_response_facts(
+                    finish_reason=None,
+                    content=_lms_content,
+                    reasoning_content="".join(acc.reasoning_parts) or None,
+                    tool_calls=_lms_tool_rows,
+                )
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
         except httpx.NetworkError as exc:

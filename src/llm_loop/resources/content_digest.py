@@ -235,3 +235,32 @@ def resolve_content_hmac_key(
             f"content HMAC key file {path} does not exist and allow_create=False"
         )
     return _create_key_file(path)
+
+
+def normalized_response_hmac(
+    content: str | None,
+    reasoning_content: str | None,
+    tool_calls: list[dict[str, object]] | None,
+    *,
+    allow_create: bool = True,
+) -> tuple[str | None, str | None]:
+    """GAP-RESP-1 (C1): keyed hmac over the normalized assistant-message projection.
+
+    ``tool_calls`` rows must already be normalized to ``{id, name, arguments}``
+    (arguments kept as-is: parsed object or string; canonical JSON makes both
+    deterministic).  Returns ``(digest_hex, key_id)``.  Key-resolution failures
+    propagate (``ContentHmacKeyError``, loud primitive per module contract) —
+    the settlement shadow layer catches and omits honestly; this wrapper exists
+    so API and web transports build the identical projection
+    ``{"content": ..., "reasoning_content": ..., "tool_calls": ...}``.
+
+    Shadow call sites pass ``allow_create=False``: an observation layer must
+    never provision key material as a side effect of a provider call.
+    """
+    projection = {
+        "content": content,
+        "reasoning_content": reasoning_content,
+        "tool_calls": tool_calls or [],
+    }
+    key = resolve_content_hmac_key(allow_create=allow_create)
+    return key.digest(canonical_json_bytes(projection)), key.key_id

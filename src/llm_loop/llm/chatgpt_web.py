@@ -83,7 +83,7 @@ def _prepared_web_facts(
         try:
             from llm_loop.resources.content_digest import resolve_content_hmac_key
 
-            key = resolve_content_hmac_key()
+            key = resolve_content_hmac_key(allow_create=False)
             prepared["payload_hmac"] = key.digest(data)
             prepared["payload_hmac_key_id"] = key.key_id
         except Exception:  # noqa: BLE001 - hmac absence is honest, not an error
@@ -219,7 +219,8 @@ class ChatGPTWebModelClient:
                 prepared=_prepared_web_facts(request, "chatgpt-rendered-text"),
             ):
                 raw = self.transport.exchange(request, timeout_s=timeout_s)
-            response = _validate_response(raw, request_id=request_id)
+                response = _validate_response(raw, request_id=request_id)
+                self._note_settled_web_facts(response)
             calls = [
                 ToolCall(
                     id=str(row["id"]),
@@ -235,6 +236,35 @@ class ChatGPTWebModelClient:
                 finish_reason=str(response["finish_reason"]),
                 reasoning_content=None,
             )
+
+    def _note_settled_web_facts(self, response: dict) -> None:
+        """GAP-RESP-1 (C1): settled envelope facts for the chatgpt web transport.
+
+        finish_reason comes from the validated envelope; provider_observed_model
+        is structurally absent on web surfaces and is never fabricated.  The
+        projection rows mirror the API-path helper (arguments kept as-is), so an
+        identical logical message digests identically across transports.
+        """
+        note = getattr(self.transport_observer, "note_settled_response_facts", None)
+        if note is None:
+            return
+        try:
+            from llm_loop.resources.content_digest import normalized_response_hmac
+
+            rows = [
+                {"id": row["id"], "name": row["name"], "arguments": row["arguments"]}
+                for row in response.get("tool_calls") or []
+            ]
+            digest, key_id = normalized_response_hmac(
+                response["content"], None, rows, allow_create=False
+            )
+            note(
+                finish_reason=str(response["finish_reason"]),
+                normalized_response_hmac=digest,
+                normalized_response_hmac_key_id=key_id,
+            )
+        except Exception:  # noqa: BLE001 — shadow facts never break the transport
+            logger.debug("web settled facts unavailable (honest absence)", exc_info=True)
 
     def close(self) -> None:
         closer = getattr(self.transport, "close", None)

@@ -455,8 +455,17 @@ class ProviderCallSettlementJournal:
         retry_after_seconds: float | None,
         rate_limits: tuple[Any, ...] | list[Any],
         error_type: str | None,
+        finish_reason: str | None = None,
+        normalized_response_hmac: str | None = None,
+        normalized_response_hmac_key_id: str | None = None,
+        provider_observed_model: str | None = None,
     ) -> dict[str, Any] | None:
-        """Append one terminal transport settlement; duplicate attempt IDs are idempotent."""
+        """Append one terminal transport settlement; duplicate attempt IDs are idempotent.
+
+        GAP-RESP-1 (C1) response facts are additive: each key is written only
+        when its value is present (missing protocol echo or missing HMAC key
+        material is an honest absence, never a fabricated value).
+        """
 
         with self._lock:
             self._hydrate_call_locked(session_id, attempt.call_id)
@@ -473,6 +482,16 @@ class ProviderCallSettlementJournal:
                 "rate_limits": self._normalize_rate_limits(rate_limits),
                 "error_type": error_type,
             }
+            if finish_reason:
+                candidate["finish_reason"] = str(finish_reason)
+            if normalized_response_hmac:
+                candidate["normalized_response_hmac"] = str(normalized_response_hmac)
+                if normalized_response_hmac_key_id:
+                    candidate["normalized_response_hmac_key_id"] = str(
+                        normalized_response_hmac_key_id
+                    )
+            if provider_observed_model:
+                candidate["provider_observed_model"] = str(provider_observed_model)
             if existing is not None:
                 self._assert_same_attempt_settlement(existing, candidate)
                 return dict(existing)
@@ -505,6 +524,10 @@ class ProviderCallSettlementJournal:
             "retry_after_seconds",
             "rate_limits",
             "error_type",
+            "finish_reason",
+            "normalized_response_hmac",
+            "normalized_response_hmac_key_id",
+            "provider_observed_model",
         )
         if any(existing.get(key) != candidate.get(key) for key in comparable):
             raise ValueError("conflicting provider transport settlement for attempt_id")

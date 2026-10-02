@@ -64,6 +64,11 @@ class _ActiveTransportCapture:
     provider_code: str | None = None
     retry_after_seconds: float | None = None
     rate_limits: tuple[RateLimitResetFacts, ...] = ()
+    # GAP-RESP-1 (C1): response-level facts noted before settle (first write wins).
+    finish_reason: str | None = None
+    normalized_response_hmac: str | None = None
+    normalized_response_hmac_key_id: str | None = None
+    provider_observed_model: str | None = None
 
     def observe(
         self,
@@ -323,6 +328,10 @@ class ShadowTransportRecorder:
                     retry_after_seconds=capture.retry_after_seconds,
                     rate_limits=capture.rate_limits,
                     error_type=error_type,
+                    finish_reason=capture.finish_reason,
+                    normalized_response_hmac=capture.normalized_response_hmac,
+                    normalized_response_hmac_key_id=capture.normalized_response_hmac_key_id,
+                    provider_observed_model=capture.provider_observed_model,
                 )
 
     def _append(
@@ -414,6 +423,32 @@ class ShadowTransportRecorder:
                 rate_limits=_rate_limit_facts(normalized),
             ),
         )
+
+    def note_settled_response_facts(
+        self,
+        *,
+        finish_reason: str | None = None,
+        normalized_response_hmac: str | None = None,
+        normalized_response_hmac_key_id: str | None = None,
+        provider_observed_model: str | None = None,
+    ) -> None:
+        """GAP-RESP-1 (C1): attach response facts to the active attempt settlement.
+
+        Must be called inside :meth:`transport_attempt` before the scope exits;
+        without an active capture this is a no-op (fail-open). First write wins
+        per attempt; ``None`` facts are dropped (honest absence at settle time).
+        """
+        active = self._active_transport.get(None)
+        if active is None:
+            return
+        if finish_reason and active.finish_reason is None:
+            active.finish_reason = str(finish_reason)
+        if normalized_response_hmac and active.normalized_response_hmac is None:
+            active.normalized_response_hmac = str(normalized_response_hmac)
+            if normalized_response_hmac_key_id:
+                active.normalized_response_hmac_key_id = str(normalized_response_hmac_key_id)
+        if provider_observed_model and active.provider_observed_model is None:
+            active.provider_observed_model = str(provider_observed_model)
 
     def snapshot(self) -> tuple[ShadowTransportObservation, ...]:
         with self._lock:
