@@ -18,7 +18,7 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -1256,7 +1256,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             if callable(_request_preflight):
                 try:
                     _pf = dict(
-                        _request_preflight(messages, tools_param, model=chat_model_arg) or {}
+                        cast(
+                            Mapping[str, Any],
+                            _request_preflight(messages, tools_param, model=chat_model_arg) or {},
+                        )
                     )
                 except Exception:  # noqa: BLE001 — optional preflight fail-open to hard guard
                     logger.warning("request envelope preflight failed (fail-open)", exc_info=True)
@@ -1344,12 +1347,15 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             break
                         _minimal_messages = list(_minimal.messages)
                         _minimal_pf = dict(
-                            _request_preflight(
-                                _minimal_messages,
-                                tools_param,
-                                model=chat_model_arg,
+                            cast(
+                                Mapping[str, Any],
+                                _request_preflight(
+                                    _minimal_messages,
+                                    tools_param,
+                                    model=chat_model_arg,
+                                )
+                                or {},
                             )
-                            or {}
                         )
                         _minimal_observed = int(_minimal_pf.get("observed_chars", 0) or 0)
                         _minimal_hard = int(_minimal_pf.get("hard_limit_chars", _hard) or _hard)
