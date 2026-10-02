@@ -1,7 +1,7 @@
 # P0-3 Strict Durability 裁决与实现方案
 
 Date: 2026-10-02
-Status: **DECIDED — Q1/Q2/Q3 已裁决；实现待排期（见 §5）**
+Status: **IMPLEMENTED（2026-10-02，§5 四项全落地：脚本 + hydration + snapshot + 回归；全量单文件层 8/8 已标记、重跑 0 新增；多段层发现复制 artifact，默认排除待归属裁决，见 §7）**
 裁决输入：`docs/DESIGN-20261002-p0-3-gap-dur-1-strict-durability-input.md`
 权威：`docs/DESIGN-20261001-model-invocation-history-replay-safety.md` v1.1 RI-1（L118）
 上游计划：`docs/DESIGN-20261002-p0-2-provider-settlement-coverage-plan.md` §2 GAP-DUR-1
@@ -81,3 +81,20 @@ strict durability（崩溃窗口事实不悬置，持久性轴）是独立属性
 - 不为孤儿回填 outcome / finish_reason / usage（伪造）；
 - 不把 orphaned 标记做成常驻后台任务（一次性事实）；
 - 不在 P0-3 内动 RI-2/RI-3/RI-5（各有独立 seam）。
+
+## 7. 实施期新发现：多段 session 层复制 artifact（2026-10-02，未裁决）
+
+实施全量扫描时发现 §1 的测量口径只覆盖**单文件 session**（`<sid>.jsonl`，539 个，
+4,335 opened——与 §1 表格完全一致）。多段 session 目录（`<sid>/<seg>.jsonl`，64 个）
+从未进入测量，其中另有 **48 个 opened-without-settled**（时间跨 09-16 ~ 09-22，
+glm 为主，attempt 后 session 仍有后续事件——非崩溃形态）。
+
+决定性证据：多段层存在 **1,189 个 attempt_id 跨 session 完整重复**（同微秒 ts、
+同 call_id、payload 逐字段一致），即事件被复制进多个 session 目录。因此多段层的
+opened-without-settled 是**复制/归属错位 artifact**，不是进程崩溃孤儿；对它们打
+orphaned 标记会把未裁决的复制问题固化为孤儿事实。
+
+处置：脚本默认**只扫单文件层**（与裁决冻结口径一致）；`--include-multi-segment`
+显式开关保留给未来归属裁决后使用。多段层归属/去重需要单独 mini-design，
+不在本 P0-3 范围内（§1"孤儿是历史遗留一次性事实"的结论在多段层被证伪——
+那是测量盲区，不是事实变化）。

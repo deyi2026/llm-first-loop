@@ -166,6 +166,7 @@ class ProviderCallSettlementJournal:
     CALL_OPENED = "provider.call.opened"
     TRANSPORT_OPENED = "provider.transport.opened"
     TRANSPORT_SETTLED = "provider.transport.settled"
+    TRANSPORT_ORPHANED = "provider.transport.orphaned"
     CALL_SETTLED = "provider.call.settled"
 
     def __init__(
@@ -185,6 +186,7 @@ class ProviderCallSettlementJournal:
         self._last_attempt_id: dict[str, str] = {}
         self._opened_attempts: dict[str, dict[str, Any]] = {}
         self._settled_attempts: dict[str, dict[str, Any]] = {}
+        self._orphaned_attempts: dict[str, dict[str, Any]] = {}
         self._settled_calls: dict[str, dict[str, Any]] = {}
 
     @property
@@ -210,6 +212,9 @@ class ProviderCallSettlementJournal:
         for attempt_id, payload in list(self._settled_attempts.items()):
             if str(payload.get("call_id") or "") == call_id:
                 self._settled_attempts.pop(attempt_id, None)
+        for attempt_id, payload in list(self._orphaned_attempts.items()):
+            if str(payload.get("call_id") or "") == call_id:
+                self._orphaned_attempts.pop(attempt_id, None)
 
     def _remember_call_locked(self, call_id: str) -> None:
         self._call_order[call_id] = None
@@ -249,6 +254,14 @@ class ProviderCallSettlementJournal:
                 attempt_id = str(payload.get("attempt_id") or "")
                 if attempt_id and call_id:
                     self._settled_attempts[attempt_id] = dict(payload)
+                    self._last_attempt_id[call_id] = attempt_id
+            elif event_type == self.TRANSPORT_ORPHANED:
+                # GAP-DUR-1: offline reconciliation fact; outcome unknown by
+                # construction.  The attempt leaves the opened semantics and is
+                # never counted as settled.
+                attempt_id = str(payload.get("attempt_id") or "")
+                if attempt_id and call_id:
+                    self._orphaned_attempts[attempt_id] = dict(payload)
                     self._last_attempt_id[call_id] = attempt_id
             elif event_type == self.CALL_SETTLED:
                 if call_id:
@@ -597,6 +610,14 @@ class ProviderCallSettlementJournal:
             self._hydrate_call_locked(sid, call_id)
             opened = [row for row in self._opened_attempts.values() if row.get("call_id") == call_id]
             settled = [row for row in self._settled_attempts.values() if row.get("call_id") == call_id]
+            orphaned_rows = [row for row in self._orphaned_attempts.values() if row.get("call_id") == call_id]
+            settled_ids = {row.get("attempt_id") for row in settled}
+            # GAP-DUR-1: an orphaned attempt left the opened semantics; it is
+            # counted separately and never treated as settled.
+            orphaned_ids = {
+                row.get("attempt_id") for row in orphaned_rows if row.get("attempt_id") not in settled_ids
+            }
+            opened = [row for row in opened if row.get("attempt_id") not in orphaned_ids]
             # Dict insertion order mirrors EventStore seq order both live and after hydration.
             # Do not use random attempt UUIDs as a tie-break when provider sends share a clock tick.
             known_sum: dict[str, int] = {}
@@ -613,6 +634,7 @@ class ProviderCallSettlementJournal:
                 "call_id": call_id,
                 "attempts_opened": len(opened),
                 "attempts_settled": len(settled),
+                "attempts_orphaned": len(orphaned_ids),
                 "attempts_complete": attempts_complete,
                 "known_usage_sum": known_sum,
                 "usage_complete": completeness,
