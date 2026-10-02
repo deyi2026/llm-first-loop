@@ -25,7 +25,8 @@ def test_prompt_keeps_program_non_arbitration_boundary():
 
 def test_common_governance_is_small_static_default_not_program_authority():
     prompt = build_system_prompt()
-    assert len(prompt) < 400
+    # 547 chars since EVO-20261003-8b053766 (+3 蒸馏纪律行); 仍属小型静态默认
+    assert len(prompt) < 700
     assert "保持目标约束" in prompt
     assert "未获成功回执不得声称完成" in prompt
     assert "参数失败时先核当前 Schema/代码/文档再修正" in prompt
