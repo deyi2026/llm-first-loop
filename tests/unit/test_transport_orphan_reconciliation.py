@@ -173,3 +173,90 @@ def test_multi_segment_sessions_excluded_by_default(tmp_path):
     assert widened["scanned_sessions"] == 2
     assert widened["already_orphaned"] == 1
     assert widened["candidates"] == 1  # only the multi-segment attempt remains
+
+
+def _write_multisegment(events_dir, sid: str, rows: list[tuple[str, dict]]) -> None:
+    """Raw multi-segment session directory mimicking the rotated layout."""
+    seg = events_dir / sid
+    seg.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for i, (etype, payload) in enumerate(rows, start=1):
+        lines.append(json.dumps({
+            "event_id": f"evt-{sid}-{i}",
+            "session_id": sid,
+            "seq": i,
+            "type": etype,
+            "ts": f"2026-10-02T00:00:{i:02d}+00:00",
+            "payload": payload,
+        }, ensure_ascii=False))
+    (seg / "1.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_multisegment_fork_replica_skipped_native_marked_and_idempotent(tmp_path):
+    """Attribution mini-design (2026-10-02): fork copies are replicas.
+
+    Layout mirrors production: child = session.created, copied events
+    (seq < forked marker), session.forked marker, then native events.
+    Only native settle-nowhere occurrences are marked; the replica of a
+    settle-lost attempt must never receive an orphaned event.
+    """
+
+    script = _load_script()
+    store = EventStore(tmp_path / "events")
+    # fork parent (multi-segment): native settle-loss attempt a1
+    _write_multisegment(tmp_path / "events", "parent", [
+        ("provider.transport.opened", _opened_payload("pcall:a", "pattempt:a1")),
+    ])
+    # fork child (multi-segment): copied a1 replica, forked marker, native b1
+    _write_multisegment(tmp_path / "events", "child", [
+        ("session.created", {"parent_id": None}),
+        ("provider.transport.opened", _opened_payload("pcall:a", "pattempt:a1")),
+        ("session.forked", {
+            "source_session_id": "parent", "inherited_event_count": 1, "fork_point": 1,
+        }),
+        ("provider.transport.opened", _opened_payload("pcall:b", "pattempt:b1", started_at=200.0)),
+    ])
+
+    dry = script.mark_orphaned_attempts(store, dry_run=True, now=1000.0, include_multi_segment=True)
+    assert dry["marked"] == 0
+    assert dry["candidates"] == 2
+    assert dry["replicas_skipped"] == 1
+
+    run1 = script.mark_orphaned_attempts(store, dry_run=False, now=1000.0, include_multi_segment=True)
+    assert run1["marked"] == 2  # a1 in parent (native) + b1 in child (native)
+    assert run1["replicas_skipped"] == 1
+    parent_orphans = [e for e in store.read("parent") if e.type == "provider.transport.orphaned"]
+    child_orphans = [e for e in store.read("child") if e.type == "provider.transport.orphaned"]
+    assert [o.payload["attempt_id"] for o in parent_orphans] == ["pattempt:a1"]
+    assert [o.payload["attempt_id"] for o in child_orphans] == ["pattempt:b1"]
+
+    run2 = script.mark_orphaned_attempts(store, dry_run=False, now=2000.0, include_multi_segment=True)
+    assert run2["marked"] == 0
+    assert run2["already_orphaned"] == 2
+    assert run2["replicas_skipped"] == 1
+    total = [e for e in store.read("parent") + store.read("child") if e.type == "provider.transport.orphaned"]
+    assert len(total) == 2
+
+
+def test_settle_in_sibling_session_suppresses_marking_even_in_default_scope(tmp_path):
+    """Settle-anywhere guard: a settle observed in ANY session (here: a
+    multi-segment parent settling after the fork copied the opened) means the
+    attempt is not orphaned anywhere — including in the default single-file
+    marking scope."""
+
+    script = _load_script()
+    store = EventStore(tmp_path / "events")
+    store.append("sf-child", "provider.transport.opened", _opened_payload("pcall:x", "pattempt:x1"))
+    _write_multisegment(tmp_path / "events", "parent-x", [
+        ("provider.transport.opened", _opened_payload("pcall:x", "pattempt:x1")),
+        ("provider.transport.settled", _settled_payload(_opened_payload("pcall:x", "pattempt:x1"))),
+    ])
+
+    default = script.mark_orphaned_attempts(store, dry_run=False, now=1.0)
+    assert default["marked"] == 0
+    assert default["candidates"] == 0
+    assert default["scanned_sessions"] == 1
+    widened = script.mark_orphaned_attempts(store, dry_run=True, now=2.0, include_multi_segment=True)
+    assert widened["marked"] == 0
+    assert widened["candidates"] == 0
+    assert [e for e in store.read("sf-child") if e.type == "provider.transport.orphaned"] == []
