@@ -1,7 +1,7 @@
 # P0-2 Provider Settlement 覆盖面补齐 — Seam 实现方案
 
 Date: 2026-10-02
-Status: **Phase A2 COMMITTED（2026-10-02 `3c9b0d52e`，RED→GREEN + focused + A.5 staged gate + 全量回归 6337 passed/0 failed；全量回归时预存 env-ratchet 红已由 `9af598d32` 基线补登记修复）**；A1 已证伪取消（§2 GAP-SUM-1）；**B1 COMMITTED（2026-10-02 `d005f275a`，`resources/content_digest.py`，23 单测 + ruff/pyright 0 error，含 env baseline 登记）**；**B2 COMMITTED（2026-10-02，六 seam prepared facts 落 opened 事件，8 单测 + 相邻 focused + targeted ruff/pyright + 全量回归已过，commit `feat(llm): prepared facts on transport attempts`；chatgpt_web 预存 E402/Optional gate 债已由 `bdc320843` 单独清偿）**；**B3 COMMITTED（2026-10-02，`request.usage` += `provider_call_id`/`provider_attempt_id`（空串=无绑定）；meta 先于物理发送的时序事实冻结为不新增 attempt id，见 §2 GAP-REQ-2 裁决；RED→GREEN 4 测试 + focused 140 相邻 + 全量回归已过，commit `feat(engine): attempt ids in request usage/meta`）**；**C1 IMPLEMENTED（2026-10-02，settled += finish_reason / normalized_response_hmac(+key_id) / provider_observed_model（openai 首 chunk `model` / anthropic `message_start` / google `modelVersion`；lms 与 Web 结构性省略）；shadow 路径统一 allow_create=False——观测层绝不副作用建 key，key 预置由 env 注入或既有 key 文件提供；Web `_validate_response` 移入 attempt scope 内，协议错误穿过 `__exit__` 结算为 error；RED→GREEN 10 测试 + focused 相邻 78 + targeted ruff/pyright 0 error + 全量回归 6382 passed/0 failed，commit `feat(llm): settled response facts`）**
+Status: **Phase A2 COMMITTED（2026-10-02 `3c9b0d52e`，RED→GREEN + focused + A.5 staged gate + 全量回归 6337 passed/0 failed；全量回归时预存 env-ratchet 红已由 `9af598d32` 基线补登记修复）**；A1 已证伪取消（§2 GAP-SUM-1）；**B1 COMMITTED（2026-10-02 `d005f275a`，`resources/content_digest.py`，23 单测 + ruff/pyright 0 error，含 env baseline 登记）**；**B2 COMMITTED（2026-10-02，六 seam prepared facts 落 opened 事件，8 单测 + 相邻 focused + targeted ruff/pyright + 全量回归已过，commit `feat(llm): prepared facts on transport attempts`；chatgpt_web 预存 E402/Optional gate 债已由 `bdc320843` 单独清偿）**；**B3 COMMITTED（2026-10-02，`request.usage` += `provider_call_id`/`provider_attempt_id`（空串=无绑定）；meta 先于物理发送的时序事实冻结为不新增 attempt id，见 §2 GAP-REQ-2 裁决；RED→GREEN 4 测试 + focused 140 相邻 + 全量回归已过，commit `feat(engine): attempt ids in request usage/meta`）**；**C1 IMPLEMENTED（2026-10-02，settled += finish_reason / normalized_response_hmac(+key_id) / provider_observed_model（openai 首 chunk `model` / anthropic `message_start` / google `modelVersion`；lms 与 Web 结构性省略）；shadow 路径统一 allow_create=False——观测层绝不副作用建 key，key 预置由 env 注入或既有 key 文件提供；Web `_validate_response` 移入 attempt scope 内，协议错误穿过 `__exit__` 结算为 error；RED→GREEN 10 测试 + focused 相邻 78 + targeted ruff/pyright 0 error + 全量回归 6382 passed/0 failed，commit `feat(llm): settled response facts`）**；**§4 rollout 验证已完成（2026-10-02，见 §6）：foreground 断言 3/4 达标 100%，断言 5 旧日志不变，断言 1/2 条件式（web 待流量 / SUMMARY_MODE=off），1 条 background 提取事实缺失残留待复现**
 上游：`docs/DESIGN-20261001-model-invocation-history-replay-safety.md` v1.1 §5/§11/§13
 证据底料：`docs/AUDIT-20261001-p0-1-invocation-history-gap.md`（含 2026-10-02 §6 补充核验）
 约束：v1.1 §11 —— 只补齐 Provider Settlement 覆盖面，**不另建 identity 系统**；RS-5 敏感内容分级；DEVELOPMENT_REPAIR_SAFETY 一个职责一个 commit。
@@ -141,3 +141,22 @@ rollout 后用与 audit §5 同型查询断言：
 - 不重构 Session 模型、不建签名基础设施、不动 `provider.structure.validated`（audit §3 原三不做）；
 - 不把 `payload_trace` 裸 SHA 提升为常态；
 - 不在本阶段落 full-content blob（保持 opt-in 关闭）。
+
+## 6. §4 rollout 验证记录（2026-10-02 08:39–08:46，gen 170）
+
+**部署事实**：web pid 717 @ `863ec1eaf`（matches_desired_generation=true，restart `svc-40b24f33` succeeded 08:37:06）；feishu/learning 补齐重启受理（`svc-cfb4ef3e` / `svc-c5d23dd8`，gen 170，受理时 confirmed_idle）；`SUMMARY_MODE=off` 已核（断言 2 条件式成立：off 期间 0 条属配置正确）。
+
+**测量口径**：`data/event_logs/9ceab5d6-9c2f-4cf4-a73d-9ed7ecee9969/*.jsonl` 中 `ts ≥ 2026-10-02T08:36:51`（新进程启动后）的 `provider.transport.*` / `provider.call.*` 事件。
+
+| 断言 | 结果 |
+|---|---|
+| 1 web pattempt > 0 | **待流量**：重启后尚无 chatgpt/deepseek web transport 调用，如实记 0（S5/S6 仅单测覆盖，见残留 2） |
+| 2 summarizer 条件式 | ✅（SUMMARY_MODE=off） |
+| 3 finish_reason 覆盖 ≥99% foreground | ✅ **foreground（purpose=task）8/8 = 100%**；all-attempt 8/9（88.9%，唯一缺失为残留 1 的 background 提取）；`normalized_response_hmac` 与 `provider_observed_model` 同 8/9（glm-5.3 回显正常） |
+| 4 prepared payload_hmac ≥99% | ✅ foreground 8/8 = 100%（key_id 全部 `k1-aa7f7d16`）；all 8/9 |
+| 5 D9 迁移 / 旧日志不变 | ✅ 旧 run opened 1021 条 prepared=0，未被重解释 |
+
+**残留（open residue，不阻塞 foreground 结论）**：
+
+1. **background 提取 attempt 事实缺失**：08:36:58 `purpose=memory_extractor`（`pcall:e0d8cc14` / `pattempt:a7ec0113`，outcome=success，82s）——settlement 身份事件齐全，但 `prepared` 与 settled response facts 整体缺失（字段省略而非伪造，fail-open 语义保持）。静态审查未定位根因：`_prepared_attempt_facts` 无前台/后台门控、journal `_normalize_prepared` 无 execution-class 过滤、`bind_shadow_call_site` 仅绑 contextvar；线索指向 learning plane worker thread（`lfl-memory-extract:*`）路径与 generator 跨上下文消费。后续动作：下一次 interval 提取时复现核对，或补线程路径回归测试。
+2. **web 两路径真实流量验证待补**：需一次真实 chatgpt/deepseek web provider 调用后复跑本表。
