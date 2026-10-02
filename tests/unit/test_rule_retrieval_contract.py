@@ -153,7 +153,8 @@ def test_rule_access_extends_existing_tool_without_expanding_universal_prompt():
     assert "rule" in kind_enum
     assert "RULE-AI" in _COMPACT_TOOL_DESCRIPTIONS["search_records"]
     prompt = build_system_prompt()
-    assert len(prompt) < 400
+    # 547 chars since EVO-20261003-8b053766 (+3 蒸馏纪律行); 仍未借道 universal prompt
+    assert len(prompt) < 700
     assert "RULE-AI" not in prompt
     assert "按需检索已验证经验/方法并核适用性" in prompt
 

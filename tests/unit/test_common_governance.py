@@ -9,8 +9,16 @@ def test_common_governance_prefix_is_deterministic_and_bounded():
     a = build_system_prompt()
     b = build_system_prompt()
     assert a == b
-    assert len(a) < 400
+    # 547 chars since EVO-20261003-8b053766 (+3 蒸馏纪律行); bound 留头部余量防回潮
+    assert len(a) < 700
     assert sha256(a.encode()).hexdigest() == sha256(b.encode()).hexdigest()
+
+
+DISCIPLINE_LINES_EVO_20261003 = (
+    "- 先核请求：一句话确认所问；前提有误时明说，按修正后的问题解决或只问一个具体问题，不静默接受、不绕行。\n"
+    "- 一条路走到底：选定最优路径推进到结论；只在能一句话说清的障碍出现时换路，不为模糊不安换方向。\n"
+    "- 结论不因压力翻转：对方未给出新事实或具体错误时，重申结论+一行依据，反问其依据的具体事实；有新证据立即更新并说明改变了什么。"
+)
 
 
 def test_current_evidence_invariant_has_one_structured_core_anchor():
@@ -22,11 +30,20 @@ def test_current_evidence_invariant_has_one_structured_core_anchor():
 
     assert prompt.count("[LFL核心认知]") == 1
     assert prompt.count(invariant) == 1
-    assert prompt.endswith(f"[LFL核心认知]\n{invariant}")
-    assert len(prompt) == 380
-    assert sha256(prompt.encode()).hexdigest() == (
-        "8934d96c3f25a6727df750e3f73e0ed73743c985b861d97f7bc3f7f2a4c60392"
+    assert prompt.endswith(
+        f"[LFL核心认知]\n{invariant}\n{DISCIPLINE_LINES_EVO_20261003}"
     )
+    assert len(prompt) == 547
+    assert sha256(prompt.encode()).hexdigest() == (
+        "66b4523a06e70cab5abd899745987345644f37cb171c236e18a2b4751ab2eaf5"
+    )
+
+
+def test_discipline_lines_evo_20261003_locked_verbatim_once_each():
+    prompt = build_system_prompt()
+    for line in DISCIPLINE_LINES_EVO_20261003.splitlines():
+        assert prompt.count(line) == 1
+    # 上线门: EVO-20261003-8b053766 弱模型 A/B PASS(见 evals/discipline_prompt_ab/results)
 
 
 def test_common_governance_encodes_reusable_anti_drift_invariants():
