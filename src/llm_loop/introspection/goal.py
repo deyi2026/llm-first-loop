@@ -52,6 +52,10 @@ class Goal:
     # EVO-20260923-618f7fd1 ②: goal 级方法 use 硬门开关（默认关）；
     # 开启后 evidence_required 任务 →done 需本会话至少一条 record_use 或显式声明
     method_use_gate: bool = False
+    # EVO-20261002-daa84575: spec 吸收源声明（可选；惯例 .codeartsdoer/specs/<id>/ 路径）。
+    # 声明后 complete 须过 spec_archive 归档门（归档清单或显式不适用）；
+    # 未声明的旧 Goal 零行为变化（仅 complete 时一次性提示补充）。
+    spec_change_ref: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -65,7 +69,14 @@ class GoalStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._dir / "goals.jsonl"
 
-    def create(self, objective: str, session_id: str = "", *, method_use_gate: bool = False) -> Goal:
+    def create(
+        self,
+        objective: str,
+        session_id: str = "",
+        *,
+        method_use_gate: bool = False,
+        spec_change_ref: str = "",
+    ) -> Goal:
         """创建任务目标（active 初始态；与checkpoint/update共享同一写锁）."""
         now = system_local_now().isoformat()
         goal = Goal(
@@ -77,6 +88,7 @@ class GoalStore:
             updated_at=now,
             session_id=session_id,
             method_use_gate=method_use_gate,
+            spec_change_ref=spec_change_ref,
         )
         with self._file_lock():
             lines = self._read_lines()
@@ -157,7 +169,9 @@ class GoalStore:
                 self._atomic_rewrite(out)
             return target
 
-    def update(self, goal_id: str, status: str, reason: str = "") -> dict | None:
+    def update(
+        self, goal_id: str, status: str, reason: str = "", *, spec_archive: dict | None = None
+    ) -> dict | None:
         """状态流转仅允许 active→complete/blocked；terminal 同状态幂等、跨终态拒绝。"""
         if status not in {"complete", "blocked"}:
             raise ValueError("status 仅允许 complete / blocked")
@@ -195,6 +209,10 @@ class GoalStore:
                     entry["updated_at"] = now
                     if status == "complete":
                         entry["completed_at"] = now
+                        if spec_archive is not None:
+                            # EVO-20261002-daa84575: spec 吸收归档声明随终局落账
+                            # （含旧 Goal 在 complete 补充声明的路径）。
+                            entry["spec_archive"] = spec_archive
                     else:
                         entry["blocked_reason"] = reason
                     target = entry

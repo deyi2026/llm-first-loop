@@ -11,10 +11,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.introspection.goal import GoalStore, GoalStoreCorruptionError
+from llm_loop.timekeeping import system_local_now
 
 CREATE_GOAL_TOOL_DEF: dict = {
     "name": "create_goal",
@@ -36,6 +38,16 @@ CREATE_GOAL_TOOL_DEF: dict = {
                     "本 goal 下 evidence_required 任务 →done 前，需本会话至少一条 "
                     "method_manage(action=record_use) 或 task_update(method_no_contact=true) "
                     "显式声明。何时用: 用户明确要求强化方法回记纪律的长任务。"
+                ),
+            },
+            "spec_change_ref": {
+                "type": "string",
+                "description": (
+                    "本 Goal 吸收的 spec 变更源（EVO-20261002-daa84575，可选）。格式: "
+                    ".codeartsdoer/specs/<id>/ 目录路径。声明后 complete 须带 spec_archive "
+                    "（归档清单或不适用声明），否则 BLOCKED spec_archive_missing。"
+                    "何时用: 本 Goal 将把某 spec 变更吸收进 docs/ 时。"
+                    "何时不用: 纯分析/无 spec 交互任务（可不声明或 complete 时声明不适用）。"
                 ),
             },
         },
@@ -83,10 +95,13 @@ GET_GOAL_TOOL_DEF: dict = {
 UPDATE_GOAL_TOOL_DEF: dict = {
     "name": "update_goal",
     "description": (
-        "更新任务目标状态（EVO-20260824-3cd4d74b；终局证据门 EVO-20260923-6bcc4880）。"
+        "更新任务目标状态（EVO-20260824-3cd4d74b；终局证据门 EVO-20260923-6bcc4880；"
+        "spec 归档门 EVO-20261002-daa84575）。"
         "status=complete 仅当全部需求已用当前证据验证: 程序级强制——任务图 open 任务须清零、"
         "evidence_required 任务须 evidence verified；无 done 任务依托（空任务图）时须自报"
-        " evidence_refs 并通过真实性校验，否则 BLOCKED 拒绝书写。status=blocked 仅当严格"
+        " evidence_refs 并通过真实性校验，否则 BLOCKED 拒绝书写；goal 声明 spec_change_ref"
+        " 时另须 spec_archive 归档清单或不适用声明（机械核验引用真实性）。"
+        "status=blocked 仅当严格"
         "阻塞条件实际满足（外部阻塞/安全边界/等人工），blocked 不走证据门。"
         "何时不用: 目标仍 active 推进中。"
     ),
@@ -101,6 +116,22 @@ UPDATE_GOAL_TOOL_DEF: dict = {
                 "items": {"type": "string"},
                 "description": "终局证据引用（可选；空任务图 complete 时必填，evidence:// 引用，"
                 "须过 TaskEvidenceVerifier 真实性校验）",
+            },
+            "spec_archive": {
+                "type": "object",
+                "description": (
+                    "spec 吸收归档声明（EVO-20261002-daa84575，可选；goal 声明"
+                    " spec_change_ref 时 complete 必填）。两种形态二选一: 归档清单 "
+                    "{result_doc: 结果清单路径或 evidence:// 引用, merged_docs: "
+                    "[吸收后的 docs/ 路径...]}（机械核验引用真实性，不判语义）; "
+                    "显式不适用 {applicable: false, reason: 纯分析类 Goal 等}"
+                ),
+                "properties": {
+                    "result_doc": {"type": "string", "description": "结果清单路径或 evidence:// 引用"},
+                    "merged_docs": {"type": "array", "items": {"type": "string"}, "description": "吸收后的文档路径"},
+                    "applicable": {"type": "boolean", "description": "false = 显式不适用"},
+                    "reason": {"type": "string", "description": "不适用理由（applicable=false 时必填）"},
+                },
             },
         },
         "required": ["goal_id", "status"],
@@ -118,6 +149,82 @@ def _store(ctx: Any, audit_dir: str | None) -> GoalStore | None:
         return GoalStore(audit_dir)
     except OSError:
         return None
+
+
+def _parse_spec_archive_declaration(decl: Any) -> dict:
+    """EVO-20261002-daa84575 §3: 解析 spec_archive 声明形态（机械边界: 只认形态，不判语义）.
+
+    两种合法形态:
+    - 归档清单: result_doc + merged_docs（均非空）;
+    - 显式不适用: applicable=false + 非空 reason（留痕）.
+    非法形态抛 ValueError。返回归一化记录（含 recorded_at）。
+    """
+    if not isinstance(decl, dict):
+        raise ValueError("spec_archive 须为对象")
+    result_doc = str(decl.get("result_doc", "") or "").strip()
+    merged = decl.get("merged_docs")
+    if isinstance(merged, str):
+        merged = [merged]
+    if merged is None:
+        merged = []
+    if not isinstance(merged, list) or any(not isinstance(x, (str, int, float)) for x in merged):
+        raise ValueError("merged_docs 须为字符串数组")
+    merged_docs = [str(x).strip() for x in merged if str(x).strip()]
+    reason = str(decl.get("reason", "") or "").strip()
+    applicable = decl.get("applicable")
+    if isinstance(applicable, bool) and not applicable:
+        if not reason:
+            raise ValueError("不适用声明须带非空 reason（留痕）")
+        return {
+            "applicable": False,
+            "reason": reason,
+            "result_doc": "",
+            "merged_docs": [],
+            "pending_verification": False,
+            "recorded_at": system_local_now().isoformat(),
+        }
+    if result_doc and merged_docs:
+        return {
+            "applicable": True,
+            "reason": reason,
+            "result_doc": result_doc,
+            "merged_docs": merged_docs,
+            "pending_verification": False,
+            "recorded_at": system_local_now().isoformat(),
+        }
+    raise ValueError("归档清单须同时含非空 result_doc 与 merged_docs（或改用 applicable=false + reason 不适用声明）")
+
+
+def _verify_spec_archive_references(record: dict, host: Any) -> tuple[bool, str, bool]:
+    """机械核验引用真实性: 文件路径存在 / evidence:// 过 verifier（不判内容语义）.
+
+    返回 (ok, detail, pending)。pending=True 表示校验器不可用/故障——按提案 §4.3
+    fail-open: 记 pending 标记放行（可见性轴 ≠ 终局真实性轴；与终局证据门
+    fail-closed 的差异是提案 §4.3 的明确决策）。
+    """
+    refs = [record["result_doc"], *record["merged_docs"]]
+    verifier = getattr(getattr(host, "ctx", None), "task_evidence_verifier", None)
+    pending = False
+    missing: list[str] = []
+    for ref in refs:
+        if ref.startswith("evidence://"):
+            if verifier is None:
+                pending = True  # fail-open（§4.3）: 校验器未装配 → pending 标记
+                continue
+            try:
+                report = verifier.verify([ref])
+            except Exception:  # noqa: BLE001 — §4.3 校验器故障 → pending
+                pending = True
+                continue
+            if getattr(report, "status", "") != "verified":
+                missing.append(f"{ref}（verifier status={getattr(report, 'status', '')}）")
+        else:
+            try:
+                if not Path(ref).exists():
+                    missing.append(ref)
+            except OSError:  # noqa: PERF203 — §4.3 探针故障 → pending
+                pending = True
+    return (not missing), ("; ".join(missing) if missing else ""), pending
 
 
 def run_create_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
@@ -145,6 +252,7 @@ def run_create_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
         objective,
         session_id=sid,
         method_use_gate=bool(args.get("method_use_gate", False)),
+        spec_change_ref=str(args.get("spec_change_ref", "") or "").strip(),
     )
     gate_note = (
         " method_use_gate=on（evidence_required 任务 →done 需 record_use 或显式声明）"
@@ -226,6 +334,18 @@ def run_get_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
             lines.append(f"  [{cp.get('ts','')[11:19]}] {str(cp.get('what',''))[:80]}")
     else:
         lines.append("checkpoints: 无（首个里程碑后 checkpoint_goal）")
+    # EVO-20261002-daa84575: spec 吸收账目跨会话可见（检索侧恢复入口）
+    _spec_ref = str(g.get("spec_change_ref", "") or "").strip()
+    if _spec_ref:
+        _sa = g.get("spec_archive")
+        if isinstance(_sa, dict):
+            lines.append(
+                f"spec_change_ref: {_spec_ref}（spec_archive 已记录: applicable={_sa.get('applicable')}"
+                + ("，pending_verification" if _sa.get("pending_verification") else "")
+                + "）"
+            )
+        else:
+            lines.append(f"spec_change_ref: {_spec_ref}（complete 时需 spec_archive 声明，否则 BLOCKED spec_archive_missing）")
     # DESIGN-20260828: 任务图摘要（跨会话恢复一并可见，fail-open）
     if host.audit_dir:
         try:
@@ -338,8 +458,79 @@ def run_update_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
                 "",
                 "update_goal",
             )
+    # EVO-20261002-daa84575 §3: spec 吸收归档门（G5，可见性轴）。
+    # 终局证据门保证"终局为真"；本门只保证"spec 吸收账目跨会话可见"。机械边界:
+    # 只查声明存在 + 引用真实，不判回写内容语义（语义质量归 tasks 验收 + 人审）。
+    # 未声明 spec_change_ref 的旧 Goal: 零行为变化红线——仅一次性提示，不阻断。
+    _spec_archive_record: dict | None = None
+    _spec_note = ""
+    if status == "complete":
+        _spec_ref = str(_probe.get("spec_change_ref", "") or "").strip()
+        _decl = args.get("spec_archive")
+        if _decl is None:
+            if _spec_ref:
+                return ToolResult(
+                    ToolResultStatus.BLOCKED,
+                    "[spec 归档门] reason_code=spec_archive_missing\n"
+                    f"goal {gid} 声明了 spec_change_ref={_spec_ref}，complete 须带 spec_archive 声明:\n"
+                    "① 归档清单 {result_doc: <结果清单路径或 evidence://>, merged_docs: [<吸收后 docs/ 路径>]}"
+                    "（引用须真实存在，机械核验）;\n"
+                    "② 显式不适用 {applicable: false, reason: <纯分析类 Goal 等>}。\n"
+                    "出口: 补归档清单重试 / 声明不适用重试 / 请人工确认 waive。",
+                    "",
+                    "update_goal",
+                )
+            _spec_note = (
+                "\n提示: 本 Goal 未声明 spec_change_ref；若任务产生了 spec 变更吸收，"
+                "可带 spec_archive 声明（归档清单或 applicable=false）补充留痕（EVO-20261002-daa84575）。"
+            )
+        else:
+            try:
+                _rec = _parse_spec_archive_declaration(_decl)
+                if _rec["applicable"]:
+                    _ok, _detail, _pending = _verify_spec_archive_references(_rec, host)
+                    if not _ok:
+                        return ToolResult(
+                            ToolResultStatus.BLOCKED,
+                            "[spec 归档门] reason_code=spec_archive_missing\n"
+                            f"spec_archive 引用未过真实性核验: {_detail}\n"
+                            "出口: 修正引用后重试 / 声明不适用重试 / 请人工确认 waive。",
+                            "",
+                            "update_goal",
+                        )
+                    if _pending:
+                        _rec["pending_verification"] = True
+                _spec_archive_record = _rec
+                _spec_note = (
+                    f"\nspec_archive 已记录: applicable={_rec['applicable']}"
+                    + ("（pending_verification: 校验器不可用，已留标记）" if _rec.get("pending_verification") else "")
+                )
+            except ValueError as exc:
+                return ToolResult(
+                    ToolResultStatus.BLOCKED,
+                    f"[spec 归档门] reason_code=spec_archive_missing\n声明形态无效: {exc}\n"
+                    "出口: 修正 spec_archive 声明后重试，或请人工确认 waive。",
+                    "",
+                    "update_goal",
+                )
+            except Exception as exc:  # noqa: BLE001 — §4.3 fail-open: 校验器故障记 pending 放行
+                _spec_archive_record = {
+                    "applicable": True,
+                    "reason": "",
+                    "result_doc": str(_decl.get("result_doc", "")) if isinstance(_decl, dict) else "",
+                    "merged_docs": [],
+                    "pending_verification": True,
+                    "recorded_at": system_local_now().isoformat(),
+                    "note": f"checker_failure: {exc}",
+                }
+                _spec_note = "\nspec_archive 已记录（pending_verification: 校验器故障 fail-open）"
     try:
-        g = store.update(gid, status, reason=str(args.get("reason", "")).strip())
+        g = store.update(
+            gid,
+            status,
+            reason=str(args.get("reason", "")).strip(),
+            spec_archive=_spec_archive_record,
+        )
     except GoalStoreCorruptionError as exc:
         return ToolResult(
             ToolResultStatus.FAILURE,
@@ -353,6 +544,6 @@ def run_update_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
         return ToolResult(ToolResultStatus.FAILURE, f"[更新失败] 目标 {gid} 不存在", "", "update_goal")
     return ToolResult(
         ToolResultStatus.SUCCESS,
-        f"[目标已更新] {gid} → {status}" + (f"\n理由: {str(args.get('reason',''))[:150]}" if args.get("reason") else ""),
+        f"[目标已更新] {gid} → {status}" + (f"\n理由: {str(args.get('reason',''))[:150]}" if args.get("reason") else "") + _spec_note,
         "", "update_goal",
     )
