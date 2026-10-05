@@ -7,7 +7,7 @@
     "dynamic_secret": 8,
     "secret": 6
   },
-  "access_count": 142,
+  "access_count": 143,
   "baseline_context": {
     "alias_recovered_direct_access_count": 8,
     "corrected_direct_access_count": 134,
@@ -43,7 +43,7 @@
     "dynamic_secret": 1,
     "secret": 4
   },
-  "direct_access_count": 142,
+  "direct_access_count": 143,
   "dynamic_helper_access_count": 3,
   "dynamic_secret_signatures": [
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>",
@@ -1014,6 +1014,7 @@
     "src/llm_loop/feishu/restart_guard.py|confirm_ttl_s|read|LFL_RESTART_CONFIRM_TTL_S": 1,
     "src/llm_loop/introspection/proc_version.py|_audit_dir|read|DATA_DIR": 1,
     "src/llm_loop/introspection/proc_version.py|_source_workspace|read|LFL_WORKSPACE_ROOT": 1,
+    "src/llm_loop/introspection/registry_experience.py|_method_subject_binding_enabled|read|<dynamic>": 1,
     "src/llm_loop/introspection/tools_feishu_outbound.py|_get_allowed_users|read|FEISHU_OUTBOUND_ALLOWED_USERS": 1,
     "src/llm_loop/introspection/tools_feishu_outbound.py|_get_rate_limit|read|FEISHU_OUTBOUND_RATE_PER_MIN": 1,
     "src/llm_loop/introspection/tools_feishu_outbound.py|_is_outbound_enabled|read|FEISHU_OUTBOUND_ENABLED": 1,
