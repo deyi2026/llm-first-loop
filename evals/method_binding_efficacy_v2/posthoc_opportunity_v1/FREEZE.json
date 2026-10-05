@@ -1,0 +1,12 @@
+{
+ "files": {
+  "OPPORTUNITY-FORENSIC.json": "6f2d148ff5866c24d4d45a960b95159869db8a813ed88a72d17ce0ab72d5b5c9",
+  "OPPORTUNITY-FORENSIC.md": "fa51bad96073508713960b674c38168034d85956b66c7d540678feecc889fa4c",
+  "V3-CALIBRATION-CONTRACT.md": "2787ffa562f557ec96dad61cb27157b1a4b494894f0b47244b512eec549424b4",
+  "analyze.py": "3023eea765b8f465f6d76d755785ed650316251a9bec5e4e2ebc1637bf618578"
+ },
+ "production_mutations": 0,
+ "provider_calls": 0,
+ "schema": "subject-binding-opportunity-forensic-freeze/v1",
+ "source_commit": "4f23a46762a75d4e40e8c10a87ee3099972a7976"
+}
