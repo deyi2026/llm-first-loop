@@ -1,0 +1,45 @@
+[audit_test_side_effects] ⚠️ 50 处待人工复核（仅告警不阻断）:
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_consumed_tool_span_r820.py:541 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_consumed_tool_span_r820.py:626 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_consumed_tool_span_r820.py:700 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_evidence_enforce.py:329 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_evidence_enforce.py:531 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_evidence_factory_shadow.py:14 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_evidence_phase4.py:230 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_evidence_phase5.py:31 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_evidence_phase7_gate.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_evidence_pipeline_integration.py:71 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_factory.py:199 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_factory.py:326 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-deepseek.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_factory.py:333 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new-glm.invalid/v4",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_factory.py:401 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.deepseek.com/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_learning_journal.py:204 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_learning_journal.py:244 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_lfrt_runtime_authority.py:515 真实provider base_url（低风险-隔离不触网则忽略）: base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_llm_client.py:1511 真实provider base_url（低风险-隔离不触网则忽略）: c = _client(base_url="https://api.deepseek.com/v1")
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_llm_client_close.py:55 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="http://close-test.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_llm_client_close.py:229 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="http://default/v1", model="default")
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_m50_three_end.py:896 真实provider base_url（低风险-隔离不触网则忽略）: fake.base_url = "https://api.deepseek.com/v1"  # 与 env 一致（model/wire_protocol 类属
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_model_pool_per_model.py:33 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_model_pool_per_model.py:251 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_model_pool_per_model.py:419 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://old.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_model_pool_per_model.py:431 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_model_pool_per_model.py:439 真实provider base_url（低风险-隔离不触网则忽略）: default = LLMClient(api_key="k", base_url="https://default.invalid/v1", model="p
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_model_pool_per_model.py:576 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_model_pool_per_model.py:620 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_model_pool_per_model.py:663 真实provider base_url（低风险-隔离不触网则忽略）: base_url="http://configured/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_p7_adversarial_context_integrity.py:25 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://glm.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_provider_call_resources.py:138 真实provider base_url（低风险-隔离不触网则忽略）: _client(base_url="https://remote-deepseek.invalid/v1", provider="deepseek"),
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_provider_call_resources.py:217 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://remote-minimax.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_provider_wire_integrity_p5.py:352 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://fallback.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_providers.py:237 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://api.minimax.chat/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_resource_ledger_projection.py:664 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://provider.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_resource_transport_shadow.py:26 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://provider.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_resource_transport_shadow.py:265 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://glm.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_routing_epoch.py:20 真实provider base_url（低风险-隔离不触网则忽略）: base_url="https://routing-epoch-new.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_selective_evidence_s1.py:398 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  - ~/Project/llm-first-loop-mirror/tests/unit/test_source_synopsis.py:249 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url="https://x.invalid/v1",
+  … 共 50 处
+........................................................................ [ 80%]
+..................                                                       [100%]
+90 passed in 0.55s

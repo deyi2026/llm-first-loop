@@ -1,0 +1,7 @@
+scanned_sessions: 648
+opened_total: 32193
+candidates: 0
+already_orphaned: 55
+replicas_skipped: 1
+marked: 0
+--- age-filtered custom scan (exclude own session, opened_at < now-600s) ---
