@@ -19,6 +19,14 @@ from llm_loop.browser.channel_binding import (
 )
 
 
+def _attest_dedicated(url: str):  # noqa: ANN001, ANN202 - S3b 测试桩
+    from llm_loop.browser.attestation import AttestationVerdict
+    return AttestationVerdict(
+        verdict="dedicated", user_data_dir="/tmp/attest-stub-profile",
+        argv_sha256="stub" * 16, argv=(), detail="unit-test stub",
+    )
+
+
 # ── 1. 纯逻辑 ────────────────────────────────────────────────────────────
 
 
@@ -105,6 +113,7 @@ def _perception_host(coord, target_id="t-1", uuid="uuid-A", port=9222):
         },
         ws_connect=lambda url: ws,
         binding_coordinator=coord,
+        attest_fn=_attest_dedicated,
     )
     return host
 
@@ -121,6 +130,7 @@ def _actuator(coord, target_id="t-1", uuid="uuid-A", port=9222):
         },
         ws_connect=lambda url: ws,
         binding_coordinator=coord,
+        attest_fn=_attest_dedicated,
     )
     return host
 

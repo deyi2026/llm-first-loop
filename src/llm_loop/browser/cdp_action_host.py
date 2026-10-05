@@ -10,12 +10,14 @@ from __future__ import annotations
 import contextlib
 import json
 import threading
+import logging
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 
 from websockets.sync.client import connect as websocket_connect
 
 from llm_loop.browser.action import BrowserDispatchResult
+from llm_loop.browser.attestation import AttestationVerdict, BindingPolicy, attest_debug_url
 from llm_loop.browser.cdp_host import (
     _CONNECTION_LOST_ERRORS,
     DEFAULT_CDP_MAX_FRAME_BYTES,
@@ -28,6 +30,8 @@ from llm_loop.browser.channel_binding import (
     BrowserChannelBindingCoordinator,
     extract_browser_ws_uuid,
 )
+
+_attest_logger = logging.getLogger("llm_loop.browser.cdp_action_host.attestation")
 
 _ALLOWED = frozenset({"DOM.resolveNode", "Runtime.callFunctionOn", "Page.enable", "Page.navigate"})
 
@@ -105,6 +109,8 @@ class CdpBrowserMutationActuator:
         ws_connect: Callable[[str], _WebSocketLike] | None = None,
         binding_coordinator: BrowserChannelBindingCoordinator | None = None,
         http_get_version_dict: Callable[[str], dict[str, Any]] | None = None,
+        binding_policy: BindingPolicy | None = None,
+        attest_fn: Callable[[str], AttestationVerdict] | None = None,
     ) -> None:
         if max_frame_bytes < 1:
             raise ValueError("max_frame_bytes must be >= 1")
@@ -121,6 +127,12 @@ class CdpBrowserMutationActuator:
         # （直连 harness/qualification 构造不受影响）。factory 注入同一协调器给感知 host。
         self._binding_coordinator = binding_coordinator
         self._http_get_version_dict = http_get_version_dict or _default_http_get_version_dict
+        # S3b（R3 attestation，S0 结论 ②）：policy 缺省 deny_real —— 直连入口零改动即
+        # fail-closed；attest_fn 缺省走 host 侧 lsof→PID→ps 真机制（测试可注入 stub）。
+        self._binding_policy = binding_policy or BindingPolicy.deny_real()
+        self._attest_fn: Callable[[str], AttestationVerdict] = (
+            attest_fn or (lambda url: attest_debug_url(url))
+        )
         self._websocket: _WebSocketLike | None = None
         self._session: _MutationCdpSession | None = None
         self._dispatch_lock = threading.Lock()
@@ -164,9 +176,16 @@ class CdpBrowserMutationActuator:
         elif websocket_url != self._bound_websocket_url:
             raise RuntimeError("bound Browser target websocket changed; recreate actuator explicitly")
         if self._session is None:
+            # S3b attestation（S0 结论 ②）：绑定前 host 侧进程证据判定；deny-real 默认
+            # fail-closed（shadow 模式只记录不拒绝）。先判后连——拒绝路径零连接成本。
+            _verdict = self._attest_fn(self.debug_base_url)
+            _allowed, _reason = self._binding_policy.check(_verdict)
+            if not _allowed:
+                raise RuntimeError(f"Browser channel attestation refused: {_reason}")
+            _attest_logger.info("browser channel attestation [%s]: %s", self.__class__.__name__, _reason)
             # S3a：actuator 不再拥有独立首绑语义——新建绑定前必须与共享协调器对身份
-            # （browser ws UUID + target + ws url 三字段）。感知 host 若已绑定另一台
-            # Chrome，此处直接拒绝（no cross-instance drift）。
+            # （browser ws UUID + target + ws url 三字段 + attestation 一致性）。
+            # 感知 host 若已绑定另一台 Chrome / 或 attestation verdict 不一致，此处直接拒绝。
             if self._binding_coordinator is not None:
                 version = self._http_get_version_dict(
                     f"{self.debug_base_url}/json/version"
@@ -175,7 +194,12 @@ class CdpBrowserMutationActuator:
                     str(version.get("webSocketDebuggerUrl") or "")
                 )
                 self._binding_coordinator.require_match(
-                    browser_ws_uuid, target_id, websocket_url
+                    browser_ws_uuid,
+                    target_id,
+                    websocket_url,
+                    argv_sha256=_verdict.argv_sha256,
+                    verdict=_verdict.verdict,
+                    checked_at=_verdict.checked_at,
                 )
             websocket = self._ws_connect(websocket_url)
             self._websocket = websocket

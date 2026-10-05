@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 import shutil
 import sys
 import tempfile
@@ -24,6 +25,7 @@ from typing import Any, Literal
 
 from llm_loop import config as _config
 from llm_loop.browser.action import BrowserActionAdapter, BrowserActionReceiptStore
+from llm_loop.browser.attestation import AttestationVerdict, BindingPolicy, attest_debug_url
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.channel_binding import BrowserChannelBindingCoordinator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
@@ -1161,11 +1163,55 @@ def build_engine(
             # browser ws UUID+target+ws url 三元组，另一 host 新建绑定时必须全匹配，
             # 否则拒绝（感知/执行不得落在两个不同 Chrome 上）。
             _browser_channel = BrowserChannelBindingCoordinator()
+            # S3b（R3 attestation，S0 结论 ②）：class=real+ACK ⇒ allow_real(ack_digest)；
+            # 其余一律 deny_real（fail-closed）。mode=shadow|enforce 显式两态。
+            # attest 闭包带 PATHS 语义（空=内置树；none=全判 real；非空=内置∪追加）。
+            _browser_policy = (
+                BindingPolicy.allow_real(
+                    ack_digest(_profile_decision.ack),
+                    mode=_profile_decision.attestation_mode,
+                )
+                if _profile_decision.profile_class == "real" and _profile_decision.ack
+                else BindingPolicy.deny_real(mode=_profile_decision.attestation_mode)
+            )
+            _browser_attest_paths_raw = settings.browser_real_profile_paths
+
+            def _browser_attest(debug_base_url: str) -> AttestationVerdict:
+                return attest_debug_url(debug_base_url, _browser_attest_paths_raw)
+
+            # 建绑 attestation 落盘首记录（BrowserPerceptionStore root/attestation.json，0600）
+            _browser_store_root = Path(settings.data_dir) / "browser_perception"
+
+            def _record_browser_attestation(binding) -> None:
+                try:
+                    _browser_store_root.mkdir(parents=True, exist_ok=True)
+                    record = {
+                        "kind": "browser_channel_attestation",
+                        "browser_ws_uuid": binding.browser_ws_uuid,
+                        "target_id": binding.target_id,
+                        "verdict": binding.verdict,
+                        "argv_sha256": binding.argv_sha256,
+                        "checked_at": binding.checked_at,
+                        "recorded_at": time.time(),
+                    }
+                    target_file = _browser_store_root / "attestation.json"
+                    tmp_file = target_file.with_suffix(".json.tmp")
+                    tmp_file.write_text(
+                        json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8"
+                    )
+                    os.chmod(tmp_file, 0o600)
+                    tmp_file.replace(target_file)
+                except Exception:  # noqa: BLE001 - 审计落盘失败不阻断绑定
+                    logger.exception("browser attestation record write failed")
+
+            _browser_channel.on_established(_record_browser_attestation)
             _browser_host = CdpReadOnlyBrowserHost(
                 settings.browser_perception_cdp_url,
                 target_id=settings.browser_perception_target_id,
                 max_frame_bytes=settings.browser_cdp_max_frame_bytes,
                 binding_coordinator=_browser_channel,
+                binding_policy=_browser_policy,
+                attest_fn=_browser_attest,
             )
             _browser_adapter = BrowserPerceptionAdapter(
                 store=BrowserPerceptionStore(Path(settings.data_dir) / "browser_perception")
@@ -1191,6 +1237,8 @@ def build_engine(
                     target_id=settings.browser_perception_target_id,
                     max_frame_bytes=settings.browser_cdp_max_frame_bytes,
                     binding_coordinator=_browser_channel,
+                    binding_policy=_browser_policy,
+                    attest_fn=_browser_attest,
                 )
                 _browser_action_adapter = BrowserActionAdapter(
                     perception=_browser_adapter,

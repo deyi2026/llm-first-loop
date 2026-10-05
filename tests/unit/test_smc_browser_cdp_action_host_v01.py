@@ -8,6 +8,15 @@ import pytest
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator, _MutationCdpSession
 
 
+def _attest_dedicated(url: str):  # noqa: ANN001, ANN202 - S3b 测试桩
+    from llm_loop.browser.attestation import AttestationVerdict
+    return AttestationVerdict(
+        verdict="dedicated", user_data_dir="/tmp/attest-stub-profile",
+        argv_sha256="stub" * 16, argv=(), detail="unit-test stub",
+    )
+
+
+
 class _FakeWs:
     def __init__(self) -> None:
         self.pending: list[str] = []
@@ -48,6 +57,7 @@ def _host() -> tuple[CdpBrowserMutationActuator, _FakeWs]:
         target_id="target-1",
         http_get_json=lambda url: json.loads(json.dumps(targets)),
         ws_connect=lambda url: ws,
+        attest_fn=_attest_dedicated,
     )
     return host, ws
 
@@ -112,6 +122,7 @@ def test_page_boundary_events_are_mechanical_and_non_exhaustive() -> None:
         target_id="target-1",
         http_get_json=lambda url: json.loads(json.dumps(targets)),
         ws_connect=lambda url: ws,
+        attest_fn=_attest_dedicated,
     )
     result = host.dispatch(verb="click", physical_target="dom:2", args={})
     assert {event["event"] for event in result.boundary_events} == {
@@ -134,6 +145,7 @@ def test_actuator_never_silently_rebinds_target() -> None:
         target_id="target-1",
         http_get_json=lambda url: json.loads(json.dumps(targets)),
         ws_connect=lambda url: ws,
+        attest_fn=_attest_dedicated,
     )
     host.dispatch(verb="click", physical_target="dom:2", args={})
     targets[:] = [{
