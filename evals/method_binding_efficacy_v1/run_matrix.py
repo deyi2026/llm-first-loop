@@ -56,8 +56,14 @@ for i in range(5):
 smokes = [r for r in read_rows() if r["kind"] == "smoke" and r.get("status") == "RUN_OK"][-10:]
 c0 = [r for r in smokes if r["arm"] == "C0"]; c1 = [r for r in smokes if r["arm"] == "C1"]
 log["smoke_raw"] = {"C0": [r["final_answer"][:40] for r in c0], "C1": [r["final_answer"][:40] for r in c1]}
-ok_c0 = all("NO" in r["final_answer"].upper() and "YES" not in r["final_answer"].upper() for r in c0) and len(c0) == 5
-ok_c1 = all("YES" in r["final_answer"].upper() for r in c1) and len(c1) == 5
+def affirmative(t):
+    t = t.upper()
+    return ("YES" in t or "是" in t or "包含" in t or "存在" in t) and ("NO" not in t and "否" not in t and "无" not in t and "不" not in t)
+def negative(t):
+    t = t.upper()
+    return ("NO" in t or "否" in t or "无" in t or "不" in t or "缺失" in t) and ("YES" not in t and "是" not in t)
+ok_c0 = all(negative(r["final_answer"]) for r in c0) and len(c0) == 5
+ok_c1 = all(affirmative(r["final_answer"]) for r in c1) and len(c1) == 5
 log["smoke_gates"] = {"C0_missing_5of5": ok_c0, "C1_visible_5of5": ok_c1}
 if not (ok_c0 and ok_c1):
     log["abort"] = "smoke gate failed"

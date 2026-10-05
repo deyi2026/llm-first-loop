@@ -25,7 +25,7 @@ APPLICABILITY_VERDICT: APPLY | SUBJECT: <本任务所围绕的核心对象，不
 """
 
 SMOKE_PROMPT = ("请检查你的可用工具中名为 save_experience 的工具描述原文，判断其中是否出现字符串 "
-                "lfl-method-applicability-subject-binding/v1。只输出 YES 或 NO，不要输出其他内容。")
+                "lfl-method-applicability-subject-binding/v1。只输出英文大写 YES 或 英文大写 NO 一个词，不要输出任何其他字符。")
 
 VERDICT_RE = re.compile(r"APPLICABILITY_VERDICT\s*[:：]\s*(APPLY|SKIP)\b")
 SMOKE_RE = re.compile(r"\b(YES|NO)\b")
