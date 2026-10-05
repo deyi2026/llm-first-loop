@@ -52,7 +52,7 @@ def main():
             if not args.smoke:
                 pool = json.loads((HERE / "pool.json").read_text())
                 case = pool["cases"][args.case_id]
-                row["kind"], row["expected"] = case["kind"], case["expected"]
+                row["case_kind"], row["expected"] = case["kind"], case["expected"]
                 prompt = PROMPT_TEMPLATE.format(trigger=case["trigger"], card=case["card"])
             sid = engine.session.create()
             result = engine.run(sid, prompt, ingress=issue_ingress("cli"))
