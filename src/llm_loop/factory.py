@@ -171,11 +171,17 @@ class _CorrectionAdapterTool:
     """把修正/检索工具包装为 Tool 协议（注册进 ToolRegistry，LLM 可见可调）."""
 
     def __init__(
-        self, corrections: CorrectionToolRegistry, name: str, description: str, parameters: dict
+        self,
+        corrections: CorrectionToolRegistry,
+        name: str,
+        description: str,
+        parameters: dict,
+        compact_description: str | None = None,
     ) -> None:
         self.name = name
         self.description = description
         self.parameters = parameters
+        self.compact_description = compact_description
         self._corrections = corrections
 
     def execute(self, **kwargs: Any) -> ToolResult:
@@ -1770,6 +1776,7 @@ def build_engine(
                 name=td["name"],
                 description=td["description"],
                 parameters=td["parameters"],
+                compact_description=td.get("compact_description"),
             )
         )
 
