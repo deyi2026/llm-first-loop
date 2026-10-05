@@ -1,0 +1,40 @@
+{"opaque_id": "ab4d262187dd", "verdict": "SKIP", "reason": "任务是不可逆删除/清理旧版本，卡是极简续跑指令+git delta 状态重建，触发与机制均不符", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "2914fb67544e", "verdict": "APPLY", "reason": "任务即卡的触发场景：新 worktree/全新 checkout 复用冻结 runner 首启，锚定工作根+gitignored 资产预检会实质正确化执行", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "d7382dc9e596", "verdict": "APPLY", "reason": "任务含未解析指代+近期可定位工件，卡的 artifact-first 恢复正是该场景，避免无效检索", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "a69859deb2df", "verdict": "SKIP", "reason": "任务对象是代码标识符，恰落入卡自身反例（精确标识符不拆词、精确检索即正确探针），采纳只会引入噪声", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "0f030fffc8b6", "verdict": "APPLY", "reason": "任务即该卡 Trigger 原文（自对照），artifact-first 恢复直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "b5fc9df649e2", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文：共享可变资源终局断言+并发写者，成稿前重读权威记录会实质正确化结论", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "140487a03a55", "verdict": "SKIP", "reason": "任务是 CLI 必填参数取运行时状态值，非仓库入库/忽略/删除建议；卡的治理记录对齐流程不改本任务执行", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "e60dbd0a1bfa", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文（超时状态不明+含状态变更），先幂等观察副作用落地、不整条重跑，直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "385307455b5c", "verdict": "APPLY", "reason": "已知同命令 duration prior 的后台任务等待，锚定轮询节奏（首查约 prior、递增间隔）会实质减少零信息连查", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "e98730ec0f28", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文（已授权远程变更+前提条件+锚点），一次闸门查询+锚点一致性校验直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "18ffc545f2c3", "verdict": "SKIP", "reason": "任务是核验文章/断言集事实，卡是服务假死时 restart 时间戳对齐诊断，域完全不符", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "14691511e63d", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文：关键事实已确立却准备再检索，停止重新发现、按既有 provenance 作答直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "d62de2ce72d9", "verdict": "SKIP", "reason": "任务是逐条对账多项交付声明真伪，卡是缺外部动作参数时检索记录+以动作回执验证，两场景不同", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "a8ddf1553076", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文（评审工具返回结构壳零追问），按声明领域自驱盘问+一次诊断性重试直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "042a55f02372", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文：判断声称机制当前是否生效，定义处职责边界+VCS 历史考古路径直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "3064a2cb77cb", "verdict": "SKIP", "reason": "任务是对跨重启证据流下健康/复现结论，卡是工具参数从环境观察推导（pwd/ls 锚定），问题域不同", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "b02b7054bb82", "verdict": "SKIP", "reason": "任务是开放式\"下一步建议\"类问题，卡是\"之前是否决定过X\"的历史存在性核查流程，问句类型不同", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "a5f0a69da346", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文（仓库内容入库/忽略/删除建议+治理记录可读），记录先于判断直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "44a7a3fecceb", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文（服务假死+lifecycle 元数据+事件流断档），对齐 restart 边界直读退出日志直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "f4b05552ec12", "verdict": "SKIP", "reason": "任务是极简续跑+active goal 的状态恢复，无终局断言也无并发写者，卡的触发条件不满足", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "8abc7a8d84c5", "verdict": "SKIP", "reason": "任务需分页 hydrate 取截断关键字段，恰是卡反例所指：事实只在持久化 Evidence 中、不在上下文，跳过检索不适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "4b921b038dfd", "verdict": "SKIP", "reason": "任务是服务假死诊断，卡是\"概念未成文\"断言的拆词探针，问题域不符", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "3991c19edd6a", "verdict": "SKIP", "reason": "任务参数是环境可观察的路径身份（workdir/code_root），首选现场锚定；卡的 records 检索+回执验证面向外部动作绑定参数，机制不匹配", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "f5d401162d03", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文：参数编码环境事实且无权威观察值，先 pwd/ls 锚定再推导、禁枚举相邻猜测直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "885bc2b985af", "verdict": "APPLY", "reason": "任务即卡的触发场景：哨兵告警后需裁定且 payload 带可归因字段，payload-first 取证+写前逐句溯源审计会实质正确化裁定", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "f8bdb61874fa", "verdict": "SKIP", "reason": "任务是按唯一 ID 取权威完整记录（截断则分页/hydrate），卡是 content 检索逐字 token 锚定；ID 已是最准 token，重锚定无增益", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "9b49371f6b70", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文（权威记录带 file:line 锚点、落地/核验其改动），锚点直读+逐跳读取直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "655d2eb34213", "verdict": "SKIP", "reason": "任务是回指既有决策的定位与回应，卡是终局断言前对并发共享资源重读，触发不满足", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "b9beb0e14c29", "verdict": "SKIP", "reason": "任务是未复现故障下的二元干预决策，卡是后台任务轮询节奏锚定，问题域不符", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "133f332c05b4", "verdict": "SKIP", "reason": "任务是执行结果写回/事实性汇报，卡是远程变更前的完整闸门查询，执行点不同", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "885f3cc78bf7", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文（极简续跑+无活动 goal），沿点名 provenance+git delta 重建状态直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "aeeb08e9bcf3", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文（历史存在性核查+可枚举记录面），一次性覆盖查询+混淆源归因直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "b39949ff3dc1", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文（content 搜索+已展示可逐字复用 token），逐字 token 锚定直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "0afaa4940645", "verdict": "APPLY", "reason": "任务即卡 Trigger 原文（外部动作缺可检索参数+可观察回执），记录→动作→回执验证链直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "b40404692a48", "verdict": "SKIP", "reason": "任务是具名桌面产品的进程定位与操作，卡是评审工具退化输出的自驱盘问，场景完全不符", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "556a9e9f8870", "verdict": "SKIP", "reason": "任务是用定向搜索命中定位所有权位置，卡是\"声称机制是否生效\"的判否+VCS 考古，问句不同", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "614b443c39f0", "verdict": "SKIP", "reason": "任务是定位存储位置未知的记录终态，卡前提是已持有带锚点记录且任务是落地改动；触发不满足", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "b0796777816a", "verdict": "APPLY", "reason": "任务即卡的触发场景：复合链超时各段状态未知，先幂等观察定落地段、只补缺失段（非幂等 push 段按目标端状态核）直接适用", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "8088461bd30d", "verdict": "SKIP", "reason": "任务是缓存指标下降的多因归因，卡是契约标识符名集从权威定义机械提取，域完全无关", "ts": "2026-10-05T22:58:40+08:00"}
+{"opaque_id": "1d37b7074afe", "verdict": "SKIP", "reason": "任务是核验声称标识符的存在性，卡前提是要新建/修改逐字枚举名集的工件，触发不满足", "ts": "2026-10-05T22:58:40+08:00"}
