@@ -27,6 +27,7 @@ from llm_loop.browser.action import BrowserActionAdapter, BrowserActionReceiptSt
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
+from llm_loop.browser.profile_policy import ack_digest, annotation_for, evaluate_profile_class
 from llm_loop.config import Settings
 from llm_loop.core.history import converge_history_budget
 from llm_loop.core.loop import LoopEngine
@@ -1133,54 +1134,78 @@ def build_engine(
     # (read-only sensing/wait) and, when writes are enabled, `browser_operate`
     # (one direct mutation). Typed waits/action/semantic_execute remain internal mechanics.
     if settings.browser_perception_cdp_url:
-        _browser_host = CdpReadOnlyBrowserHost(
-            settings.browser_perception_cdp_url,
-            target_id=settings.browser_perception_target_id,
-            max_frame_bytes=settings.browser_cdp_max_frame_bytes,
+        # S2 三级授权门（DESIGN-20261005 v4 §4.2）：默认档永远放行（行为与之前字节级一致）；
+        # real 档缺 ACK/格式坏/过期/键非法 ⇒ 拒绝注册全部 browser 工具（fail-closed）。
+        _profile_decision = evaluate_profile_class(
+            settings.browser_profile_class,
+            settings.browser_real_profile_ack,
+            settings.browser_real_profile_paths,
+            settings.browser_attestation_mode,
         )
-        _browser_adapter = BrowserPerceptionAdapter(
-            store=BrowserPerceptionStore(Path(settings.data_dir) / "browser_perception")
-        )
-        _browser_operation_receipt_store = BrowserSemanticOperationReceiptStore(
-            Path(settings.data_dir) / "browser_semantic_operation"
-        )
-        _register_basic(
-            "browser_perceive",
-            BrowserPerceiveTool(
-                adapter=_browser_adapter,
-                backend=_browser_host,
-                session_id_getter=lambda: current_session_id_ctx.get(),
-                exact_ref_hydrator=_browser_operation_receipt_store.hydrate,
-            ),
-        )
-        # Mutation capability is independently opt-in.  Perception alone never grants writes.
-        if settings.browser_action_enabled:
-            _browser_actuator = CdpBrowserMutationActuator(
+        if not _profile_decision.allowed:
+            logger.warning(
+                "browser tools NOT registered: profile class gate refused: %s",
+                _profile_decision.reason,
+            )
+        else:
+            if _profile_decision.profile_class == "real":
+                logger.info(
+                    "browser tools registered at profile_class=real (ack_digest=%s, "
+                    "attestation_mode=%s) — real 档审计注记将出现在回执",
+                    ack_digest(_profile_decision.ack),
+                    _profile_decision.attestation_mode,
+                )
+            _browser_profile_annotation = annotation_for(_profile_decision)
+            _browser_host = CdpReadOnlyBrowserHost(
                 settings.browser_perception_cdp_url,
                 target_id=settings.browser_perception_target_id,
                 max_frame_bytes=settings.browser_cdp_max_frame_bytes,
             )
-            _browser_action_adapter = BrowserActionAdapter(
-                perception=_browser_adapter,
-                receipt_store=BrowserActionReceiptStore(Path(settings.data_dir) / "browser_action"),
-                capture_backend=_browser_host,
-                actuator=_browser_actuator,
+            _browser_adapter = BrowserPerceptionAdapter(
+                store=BrowserPerceptionStore(Path(settings.data_dir) / "browser_perception")
             )
-            _browser_semantic_execute = BrowserSemanticExecuteTool(
-                perception=_browser_adapter,
-                action_adapter=_browser_action_adapter,
-                session_id_getter=lambda: current_session_id_ctx.get(),
+            _browser_operation_receipt_store = BrowserSemanticOperationReceiptStore(
+                Path(settings.data_dir) / "browser_semantic_operation"
             )
             _register_basic(
-                "browser_operate",
-                BrowserSemanticOperationTool(
-                    perception=_browser_adapter,
-                    capture_backend=_browser_host,
-                    semantic_execute=_browser_semantic_execute,
-                    receipt_store=_browser_operation_receipt_store,
+                "browser_perceive",
+                BrowserPerceiveTool(
+                    adapter=_browser_adapter,
+                    backend=_browser_host,
                     session_id_getter=lambda: current_session_id_ctx.get(),
+                    exact_ref_hydrator=_browser_operation_receipt_store.hydrate,
+                    profile_annotation=_browser_profile_annotation,
                 ),
             )
+            # Mutation capability is independently opt-in.  Perception alone never grants
+            # writes. 位于放行分支内：profile gate 拒绝 ⇒ browser_operate 一并不注册。
+            if settings.browser_action_enabled:
+                _browser_actuator = CdpBrowserMutationActuator(
+                    settings.browser_perception_cdp_url,
+                    target_id=settings.browser_perception_target_id,
+                    max_frame_bytes=settings.browser_cdp_max_frame_bytes,
+                )
+                _browser_action_adapter = BrowserActionAdapter(
+                    perception=_browser_adapter,
+                    receipt_store=BrowserActionReceiptStore(Path(settings.data_dir) / "browser_action"),
+                    capture_backend=_browser_host,
+                    actuator=_browser_actuator,
+                )
+                _browser_semantic_execute = BrowserSemanticExecuteTool(
+                    perception=_browser_adapter,
+                    action_adapter=_browser_action_adapter,
+                    session_id_getter=lambda: current_session_id_ctx.get(),
+                )
+                _register_basic(
+                    "browser_operate",
+                    BrowserSemanticOperationTool(
+                        perception=_browser_adapter,
+                        capture_backend=_browser_host,
+                        semantic_execute=_browser_semantic_execute,
+                        receipt_store=_browser_operation_receipt_store,
+                        session_id_getter=lambda: current_session_id_ctx.get(),
+                    ),
+                )
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
     _register_basic("inspect_code", InspectCodeTool())
     _register_basic("present_files", PresentFilesTool())
