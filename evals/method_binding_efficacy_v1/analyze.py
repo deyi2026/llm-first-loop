@@ -38,6 +38,11 @@ for cid in pool["run_order"]:
             tok[a].append(r["tokens_in"] + r["tokens_out"]); wall[a].append(r["wall_s"])
         per_case.append({"case_id": cid, "kind": case["kind"], "arm": a, "verdict": v,
                          "expected": case["expected"], "correct": correct})
+reruns_per_arm = {a: 0 for a in ("C0", "C1")}
+seen = set()
+for r in formal:  # count superseded rows per arm (later row wins)
+    if (r["case_id"], r["arm"]) in seen: reruns_per_arm[r["arm"]] += 1
+    else: seen.add((r["case_id"], r["arm"]))
 dups = len(formal) - len(cells)
 
 x1, n1 = acc["C1"]["all"][0], acc["C1"]["all"][1]
@@ -55,8 +60,10 @@ g2_pass = (g2["token_ratio_C1_over_C0"] is not None and g2["token_ratio_C1_over_
            and g2["wall_ratio_C1_over_C0"] is not None and g2["wall_ratio_C1_over_C0"] <= 1.15)
 strat = {a: {k: round(acc[a][k][0] / acc[a][k][1], 4) for k in ("match", "mismatch", "all")} for a in acc}
 d_match = strat["C1"]["match"] - strat["C0"]["match"]; d_mis = strat["C1"]["mismatch"] - strat["C0"]["mismatch"]
-safety_pass = (d_match >= -0.10) and (d_mis >= -0.10) and (other["C1"] <= other["C0"] + 3) and dups <= 2
+safety_pass = (d_match >= -0.10) and (d_mis >= -0.10) and (other["C1"] <= other["C0"] + 3) and reruns_per_arm["C1"] <= reruns_per_arm["C0"] + 2  # plan text: C1 rerun count <= C0 + 2
 
+import statistics as _st
+walldist = {a: {"median": round(_st.median(wall[a]),3), "p90": round(sorted(wall[a])[int(0.9*len(wall[a]))-1],3)} for a in wall}
 if m1_pass and g1_pass and g2_pass and safety_pass: verdict = "QUALIFIED"
 elif g2_pass and safety_pass and not m1_pass: verdict = "MECHANISM VISIBLE, EFFICACY NOT QUALIFIED"
 elif not g2_pass or not safety_pass: verdict = "GUARDRAIL BREACH - NARROW EXPOSURE"
@@ -69,8 +76,8 @@ result = {"spec_sha256": SPEC_SHA256,
           "accuracy": strat, "M1": {**{k: round(v, 4) for k, v in m1.items()}, "PASS": m1_pass},
           "G1": {"C1": round(g1r["C1"], 4), "C0": round(g1r["C0"], 4), "PASS": g1_pass, "degenerate_record_use_channel": g1_degenerate},
           "G2": {**g2, "PASS": g2_pass, "mean_tokens": {a: round(tokm[a], 1) for a in tokm}, "mean_wall_s": {a: round(wallm[a], 3) for a in wallm}},
-          "safety": {"delta_acc_match": round(d_match, 4), "delta_acc_mismatch": round(d_mis, 4),
-                     "OTHER": other, "technical_reruns": dups, "PASS": safety_pass},
+          "wall_dist": walldist, "safety": {"delta_acc_match": round(d_match, 4), "delta_acc_mismatch": round(d_mis, 4),
+                     "OTHER": other, "technical_reruns_total": dups, "reruns_per_arm": reruns_per_arm, "PASS": safety_pass},
           "verdict": verdict, "per_case": per_case}
 (HERE / "RESULT.json").write_text(json.dumps(result, ensure_ascii=False, indent=1))
 rs = hashlib.sha256((HERE / "RESULT.json").read_bytes()).hexdigest()

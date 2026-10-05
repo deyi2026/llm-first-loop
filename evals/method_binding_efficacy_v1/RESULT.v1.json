@@ -1,0 +1,700 @@
+{
+ "spec_sha256": "61da4b1557a552e347ecbc45bd2d0190addd7efd7d401115fd1029380182d624",
+ "pool_sha256": "17bd583c02966791675c54b1c16315d3b4251d502d978c18c0c516df25e16d3f",
+ "matrix_sha256": "2ac926d53201b81be60014d4655656991979fc2cacf51dc6a9e3e505629358d9",
+ "model": "deepseek/deepseek-v4-flash",
+ "n_per_arm": 40,
+ "accuracy": {
+  "C0": {
+   "match": 1.0,
+   "mismatch": 0.65,
+   "all": 0.825
+  },
+  "C1": {
+   "match": 1.0,
+   "mismatch": 0.7,
+   "all": 0.85
+  }
+ },
+ "M1": {
+  "p1": 0.85,
+  "p0": 0.825,
+  "delta": 0.025,
+  "z": 0.3031,
+  "p_value": 0.3809,
+  "ci95_lower": -0.1107,
+  "PASS": false
+ },
+ "G1": {
+  "C1": 0.0,
+  "C0": 0.0,
+  "PASS": true,
+  "degenerate_record_use_channel": true
+ },
+ "G2": {
+  "token_ratio_C1_over_C0": 1.0114,
+  "wall_ratio_C1_over_C0": 1.2529,
+  "PASS": false,
+  "mean_tokens": {
+   "C0": 13444.7,
+   "C1": 13598.4
+  },
+  "mean_wall_s": {
+   "C0": 2.345,
+   "C1": 2.938
+  }
+ },
+ "safety": {
+  "delta_acc_match": 0.0,
+  "delta_acc_mismatch": 0.05,
+  "OTHER": {
+   "C0": 0,
+   "C1": 0
+  },
+  "technical_reruns": 80,
+  "PASS": false
+ },
+ "verdict": "GUARDRAIL BREACH - NARROW EXPOSURE",
+ "per_case": [
+  {
+   "case_id": "mb-009",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-009",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-025",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-025",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-020",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-020",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-011",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-011",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-027",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-027",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-033",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-033",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-016",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-016",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-031",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-031",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-022",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-022",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-003",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-003",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-017",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-017",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-030",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  },
+  {
+   "case_id": "mb-030",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  },
+  {
+   "case_id": "mb-039",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-039",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-028",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  },
+  {
+   "case_id": "mb-028",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  },
+  {
+   "case_id": "mb-032",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  },
+  {
+   "case_id": "mb-032",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  },
+  {
+   "case_id": "mb-037",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-037",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-012",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-012",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-005",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-005",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-001",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-001",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-008",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-008",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-013",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-013",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-038",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  },
+  {
+   "case_id": "mb-038",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  },
+  {
+   "case_id": "mb-014",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-014",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-021",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-021",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-015",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-015",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-024",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  },
+  {
+   "case_id": "mb-024",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-029",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-029",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-040",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-040",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-036",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-036",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-023",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-023",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-004",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-004",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-006",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-006",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-002",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-002",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-034",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-034",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-007",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-007",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-010",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-010",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true
+  },
+  {
+   "case_id": "mb-026",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  },
+  {
+   "case_id": "mb-026",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  },
+  {
+   "case_id": "mb-019",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-019",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-035",
+   "kind": "match",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-035",
+   "kind": "match",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "APPLY",
+   "correct": true
+  },
+  {
+   "case_id": "mb-018",
+   "kind": "mismatch",
+   "arm": "C0",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  },
+  {
+   "case_id": "mb-018",
+   "kind": "mismatch",
+   "arm": "C1",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false
+  }
+ ]
+}
