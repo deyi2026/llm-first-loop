@@ -111,6 +111,16 @@ def test_apply_to_environ_sets_and_unsets(tmp_path, monkeypatch):
     assert "HISTORY_MAX_CHARS" not in os.environ  # 残留被清除
 
 
+def test_subject_binding_experimental_flag_projects_from_dotenv(tmp_path, monkeypatch):
+    _make_env_file(tmp_path, ["LFL_METHOD_SUBJECT_BINDING_EXPERIMENTAL=1"])
+    monkeypatch.delenv("LFL_METHOD_SUBJECT_BINDING_EXPERIMENTAL", raising=False)
+    ec = resolve_effective("web", env={}, workspace_root=tmp_path)
+    assert ec.values["LFL_METHOD_SUBJECT_BINDING_EXPERIMENTAL"] == "1"
+    assert ec.sources["LFL_METHOD_SUBJECT_BINDING_EXPERIMENTAL"] == "dotenv"
+    apply_to_environ(ec)
+    assert os.environ["LFL_METHOD_SUBJECT_BINDING_EXPERIMENTAL"] == "1"
+
+
 def test_summary_no_secret_leak(tmp_path):
     """to_summary 不泄漏密钥明文（整体序列化检查——修正旧断言笔误：
     str(s.values) 中 s.values 是 dict method 对象，其 str 永不含密钥，

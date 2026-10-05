@@ -82,6 +82,9 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("tools", "job_max_concurrent"): TomlField(("JOB_MAX_CONCURRENT",), "int"),
         ("tools", "evidence_capsule"): TomlField(("LFL_EVIDENCE_CAPSULE",), "str"),
         ("tools", "tool_guidance"): TomlField(("LFL_TOOL_GUIDANCE",), "str"),
+        ("tools", "method_subject_binding_experimental"): TomlField(
+            ("LFL_METHOD_SUBJECT_BINDING_EXPERIMENTAL",), "bool"
+        ),
         ("tools", "exec_sandbox"): TomlField(("EXEC_SANDBOX",), "str"),
         ("tools", "exec_sandbox_image"): TomlField(("EXEC_SANDBOX_IMAGE",), "str"),
         ("tools", "nonconvergence_fuse_windows"): TomlField(("LFL_NONCONV_FUSE_WINDOWS",), "int"),
