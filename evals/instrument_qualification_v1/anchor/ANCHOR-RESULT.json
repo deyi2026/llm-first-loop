@@ -1,0 +1,114 @@
+{
+ "adjudicated_at": "2026-10-05T23:41:09+08:00",
+ "prereg_sha256": "60c4252b121313091cc88fe65a58a46d757c02ebbbf07981c5b8d37a7986c4fa",
+ "n": 12,
+ "agreement": 9,
+ "G1_pass": false,
+ "A_agreement": "6/6",
+ "G2_pass": true,
+ "verdict": "HOLD",
+ "per_case": [
+  {
+   "case_id": "iq-B10",
+   "cell": "B",
+   "op": "APPLY",
+   "R1": "SKIP",
+   "agree": false,
+   "reason_op": "可用"
+  },
+  {
+   "case_id": "iq-D01",
+   "cell": "D",
+   "op": "APPLY",
+   "R1": "SKIP",
+   "agree": false,
+   "reason_op": "可用"
+  },
+  {
+   "case_id": "iq-D02",
+   "cell": "D",
+   "op": "APPLY",
+   "R1": "SKIP",
+   "agree": false,
+   "reason_op": "可用"
+  },
+  {
+   "case_id": "iq-A04",
+   "cell": "A",
+   "op": "APPLY",
+   "R1": "APPLY",
+   "agree": true,
+   "reason_op": "可用"
+  },
+  {
+   "case_id": "iq-C01",
+   "cell": "C",
+   "op": "APPLY",
+   "R1": "APPLY",
+   "agree": true,
+   "reason_op": "可用"
+  },
+  {
+   "case_id": "iq-B19",
+   "cell": "B",
+   "op": "APPLY",
+   "R1": "APPLY",
+   "agree": true,
+   "reason_op": "可用"
+  },
+  {
+   "case_id": "iq-A03",
+   "cell": "A",
+   "op": "APPLY",
+   "R1": "APPLY",
+   "agree": true,
+   "reason_op": "可用"
+  },
+  {
+   "case_id": "iq-C08",
+   "cell": "C",
+   "op": "APPLY",
+   "R1": "APPLY",
+   "agree": true,
+   "reason_op": "可用"
+  },
+  {
+   "case_id": "iq-A05",
+   "cell": "A",
+   "op": "APPLY",
+   "R1": "APPLY",
+   "agree": true,
+   "reason_op": "可用"
+  },
+  {
+   "case_id": "iq-A01",
+   "cell": "A",
+   "op": "APPLY",
+   "R1": "APPLY",
+   "agree": true,
+   "reason_op": "可用"
+  },
+  {
+   "case_id": "iq-A06",
+   "cell": "A",
+   "op": "APPLY",
+   "R1": "APPLY",
+   "agree": true,
+   "reason_op": "可用"
+  },
+  {
+   "case_id": "iq-A02",
+   "cell": "A",
+   "op": "APPLY",
+   "R1": "APPLY",
+   "agree": true,
+   "reason_op": "可用"
+  }
+ ],
+ "B19_disclosure": {
+  "verdict_op": "APPLY",
+  "verdict_R1": "APPLY",
+  "agree": true,
+  "reason_op": "可用"
+ }
+}
