@@ -1,0 +1,23 @@
+{
+ "schema": "subject-binding-efficacy-v2-invalid-run1/v1",
+ "verdict": "EXECUTION_INVALID__OPERATOR_ENV_CONTAMINATION",
+ "formal_status_count": 40,
+ "mechanically_healthy": 30,
+ "mechanically_unhealthy": 10,
+ "healthy_ordinals": [
+  1,
+  30
+ ],
+ "unhealthy_ordinals": [
+  31,
+  40
+ ],
+ "unconsumed_ordinals": [
+  41,
+  84
+ ],
+ "provider_send_for_unhealthy": false,
+ "efficacy_opened": false,
+ "root_cause": "resume invocation omitted explicit LFL_CANONICAL_RUNTIME_ROOT; isolated worktree became runtime root and lacked .env",
+ "policy": "no third attempt; no pooling/reuse as confirmatory efficacy observations"
+}
