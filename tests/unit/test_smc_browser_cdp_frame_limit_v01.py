@@ -29,6 +29,15 @@ from llm_loop.browser.cdp_host import (
 _WS_URL = "ws://127.0.0.1:9222/devtools/page/TARGET-1"
 
 
+
+def _attest_dedicated(url: str):  # noqa: ANN001, ANN202 - S3b 测试桩
+    from llm_loop.browser.attestation import AttestationVerdict
+    return AttestationVerdict(
+        verdict="dedicated", user_data_dir="/tmp/attest-stub-profile",
+        argv_sha256="stub" * 16, argv=(), detail="unit-test stub",
+    )
+
+
 def _target() -> dict[str, Any]:
     return {
         "id": "TARGET-1",
@@ -96,6 +105,7 @@ def test_capture_drops_dead_session_and_reconnects_same_target() -> None:
         "http://127.0.0.1:9222",
         http_get_json=lambda url: [_target()],
         ws_connect=lambda url: sockets.append(_DeadRecvWs()) or sockets[-1],
+        attest_fn=_attest_dedicated,
     )
 
     with pytest.raises(RuntimeError, match="connection lost; dropped session"):
@@ -119,6 +129,7 @@ def test_actuator_dispatch_drops_dead_session_and_reconnects_same_target() -> No
         "http://127.0.0.1:9222",
         http_get_json=lambda url: [_target()],
         ws_connect=lambda url: sockets.append(_DeadRecvWs()) or sockets[-1],
+        attest_fn=_attest_dedicated,
     )
 
     with pytest.raises(RuntimeError, match="mutation connection lost"):
@@ -172,6 +183,7 @@ def test_capture_failure_classifies_timeout_vs_frame_limit() -> None:
         "http://127.0.0.1:9222",
         http_get_json=lambda url: [_target()],
         ws_connect=lambda url: _TimeoutRecvWs(),
+        attest_fn=_attest_dedicated,
     )
     with pytest.raises(RuntimeError, match=r"capture_channel_degraded\[mode=timeout\]") as excinfo:
         timeout_host.capture()
@@ -182,6 +194,7 @@ def test_capture_failure_classifies_timeout_vs_frame_limit() -> None:
         "http://127.0.0.1:9222",
         http_get_json=lambda url: [_target()],
         ws_connect=lambda url: _FrameLimitRecvWs(),
+        attest_fn=_attest_dedicated,
     )
     with pytest.raises(RuntimeError, match=r"capture_channel_degraded\[mode=frame_too_large\]") as excinfo:
         frame_host.capture()
@@ -209,6 +222,7 @@ def test_capture_diagnostics_carry_last_request_facts() -> None:
         "http://127.0.0.1:9222",
         http_get_json=lambda url: [_target()],
         ws_connect=lambda url: _ThenDeadWs(),
+        attest_fn=_attest_dedicated,
     )
     # probe_page_target performs one allowlisted request; capture then times out.
     probe = host.probe_page_target()

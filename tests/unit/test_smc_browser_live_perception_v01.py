@@ -10,6 +10,15 @@ import pytest
 from llm_loop.config import Settings, load_settings
 
 
+def _attest_dedicated(url: str):  # noqa: ANN001, ANN202 - S3b 测试桩
+    from llm_loop.browser.attestation import AttestationVerdict
+    return AttestationVerdict(
+        verdict="dedicated", user_data_dir="/tmp/attest-stub-profile",
+        argv_sha256="stub" * 16, argv=(), detail="unit-test stub",
+    )
+
+
+
 class _FakeWs:
     def __init__(self) -> None:
         self.pending: list[str] = []
@@ -167,6 +176,7 @@ def test_cdp_host_persists_exact_target_and_never_silently_rebinds() -> None:
         target_id="target-1",
         http_get_json=_http_get,
         ws_connect=_ws_connect,
+        attest_fn=_attest_dedicated,
     )
     first = host.capture()
     assert first["page_token"] == "target:target-1"
@@ -218,6 +228,8 @@ def test_factory_registers_browser_perceive_only_when_explicitly_opted_in(
         target_id="target-1",
         max_frame_bytes=134_217_728,
         binding_coordinator=mock.ANY,  # S3a: factory 注入共享通道绑定协调器
+        binding_policy=mock.ANY,       # S3b: attestation 授权策略
+        attest_fn=mock.ANY,            # S3b: host 侧 attestation 闭包
     )
     tool = engine.registry.get("browser_perceive")
     assert tool._backend is fake_host
@@ -262,6 +274,8 @@ def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeyp
         target_id="target-1",
         max_frame_bytes=134_217_728,
         binding_coordinator=mock.ANY,  # S3a: 与感知 host 同一共享绑定协调器
+        binding_policy=mock.ANY,       # S3b: 同一 attestation 授权策略
+        attest_fn=mock.ANY,            # S3b: 同一 host 侧 attestation 闭包
     )
     tool = enabled.registry.get("browser_operate")
     assert tool._semantic_execute._action_adapter.actuator is fake_write
