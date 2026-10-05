@@ -26,6 +26,10 @@ import httpx
 from websockets.exceptions import ConnectionClosed as _WsConnectionClosed
 from websockets.sync.client import connect as websocket_connect
 
+from llm_loop.browser.channel_binding import (
+    BrowserChannelBindingCoordinator,
+    extract_browser_ws_uuid,
+)
 from llm_loop.browser.perception import PlaywrightPageCaptureBackend
 
 # EVO-20260918-753b4a91: websockets 默认 max_size=1MiB；DOM+AX 大页（如 GitHub 仓库页）
@@ -121,6 +125,20 @@ def _default_http_get_json(url: str) -> list[dict[str, Any]]:
     if not isinstance(payload, list):
         raise RuntimeError("Chrome /json/list did not return a list")
     return [item for item in payload if isinstance(item, dict)]
+
+
+def _default_http_get_version_dict(url: str) -> dict[str, Any]:
+    """S3a/BrowserChannelBinding：GET /json/version，必须返回 dict（F16b）。
+
+    独立于 /json/list 通道注入，测试可替换；不改变任何 /json/list 语义。
+    """
+    with httpx.Client(timeout=3.0, trust_env=False, follow_redirects=False) as client:
+        response = client.get(url)
+        response.raise_for_status()
+        payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("Chrome /json/version did not return a dict")
+    return payload
 
 
 def _default_ws_connect(url: str, *, max_frame_bytes: int = DEFAULT_CDP_MAX_FRAME_BYTES) -> _WebSocketLike:
@@ -223,6 +241,8 @@ class CdpReadOnlyBrowserHost:
         max_frame_bytes: int = DEFAULT_CDP_MAX_FRAME_BYTES,
         http_get_json: Callable[[str], list[dict[str, Any]]] | None = None,
         ws_connect: Callable[[str], _WebSocketLike] | None = None,
+        binding_coordinator: BrowserChannelBindingCoordinator | None = None,
+        http_get_version_dict: Callable[[str], dict[str, Any]] | None = None,
     ) -> None:
         if node_cap < 1:
             raise ValueError("node_cap must be >= 1")
@@ -240,6 +260,9 @@ class CdpReadOnlyBrowserHost:
         self._ws_connect: Callable[[str], _WebSocketLike] = ws_connect or (
             lambda url: _default_ws_connect(url, max_frame_bytes=self._max_frame_bytes)
         )
+        # S3a（DESIGN-20261005 v4 §4.3）：可选共享通道绑定；None ⇒ 行为与之前完全一致。
+        self._binding_coordinator = binding_coordinator
+        self._http_get_version_dict = http_get_version_dict or _default_http_get_version_dict
         self._websocket: _WebSocketLike | None = None
         self._session: _ReadOnlyCdpSession | None = None
         self._capture_lock = threading.Lock()
@@ -284,6 +307,19 @@ class CdpReadOnlyBrowserHost:
         elif websocket_url != self._bound_websocket_url:
             raise RuntimeError("bound Browser target websocket changed; recreate host explicitly")
         if self._session is None:
+            # S3a：即将新建绑定（首绑或断线重连）⇒ 与共享协调器对身份。
+            # /json/version 的 browser ws UUID 是浏览器进程级标识：两 host 若落在
+            # 不同 Chrome 上，此处三字段比对失败 ⇒ 拒绝（no cross-instance drift）。
+            if self._binding_coordinator is not None:
+                version = self._http_get_version_dict(
+                    f"{self.debug_base_url}/json/version"
+                )
+                browser_ws_uuid = extract_browser_ws_uuid(
+                    str(version.get("webSocketDebuggerUrl") or "")
+                )
+                self._binding_coordinator.require_match(
+                    browser_ws_uuid, target_id, websocket_url
+                )
             websocket = self._ws_connect(websocket_url)
             self._websocket = websocket
             self._session = _ReadOnlyCdpSession(websocket)

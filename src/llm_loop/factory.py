@@ -25,6 +25,7 @@ from typing import Any, Literal
 from llm_loop import config as _config
 from llm_loop.browser.action import BrowserActionAdapter, BrowserActionReceiptStore
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
+from llm_loop.browser.channel_binding import BrowserChannelBindingCoordinator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.browser.profile_policy import ack_digest, annotation_for, evaluate_profile_class
@@ -1156,10 +1157,15 @@ def build_engine(
                     _profile_decision.attestation_mode,
                 )
             _browser_profile_annotation = annotation_for(_profile_decision)
+            # S3a（v4-G3）：两 host 共享同一绑定协调器——首个绑定的 host 冻结
+            # browser ws UUID+target+ws url 三元组，另一 host 新建绑定时必须全匹配，
+            # 否则拒绝（感知/执行不得落在两个不同 Chrome 上）。
+            _browser_channel = BrowserChannelBindingCoordinator()
             _browser_host = CdpReadOnlyBrowserHost(
                 settings.browser_perception_cdp_url,
                 target_id=settings.browser_perception_target_id,
                 max_frame_bytes=settings.browser_cdp_max_frame_bytes,
+                binding_coordinator=_browser_channel,
             )
             _browser_adapter = BrowserPerceptionAdapter(
                 store=BrowserPerceptionStore(Path(settings.data_dir) / "browser_perception")
@@ -1184,6 +1190,7 @@ def build_engine(
                     settings.browser_perception_cdp_url,
                     target_id=settings.browser_perception_target_id,
                     max_frame_bytes=settings.browser_cdp_max_frame_bytes,
+                    binding_coordinator=_browser_channel,
                 )
                 _browser_action_adapter = BrowserActionAdapter(
                     perception=_browser_adapter,

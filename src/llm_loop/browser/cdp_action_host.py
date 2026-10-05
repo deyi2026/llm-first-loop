@@ -20,8 +20,13 @@ from llm_loop.browser.cdp_host import (
     _CONNECTION_LOST_ERRORS,
     DEFAULT_CDP_MAX_FRAME_BYTES,
     _default_http_get_json,
+    _default_http_get_version_dict,
     _normalize_loopback_debug_url,
     _validate_loopback_ws_url,
+)
+from llm_loop.browser.channel_binding import (
+    BrowserChannelBindingCoordinator,
+    extract_browser_ws_uuid,
 )
 
 _ALLOWED = frozenset({"DOM.resolveNode", "Runtime.callFunctionOn", "Page.enable", "Page.navigate"})
@@ -98,6 +103,8 @@ class CdpBrowserMutationActuator:
         max_frame_bytes: int = DEFAULT_CDP_MAX_FRAME_BYTES,
         http_get_json: Callable[[str], list[dict[str, Any]]] | None = None,
         ws_connect: Callable[[str], _WebSocketLike] | None = None,
+        binding_coordinator: BrowserChannelBindingCoordinator | None = None,
+        http_get_version_dict: Callable[[str], dict[str, Any]] | None = None,
     ) -> None:
         if max_frame_bytes < 1:
             raise ValueError("max_frame_bytes must be >= 1")
@@ -110,6 +117,10 @@ class CdpBrowserMutationActuator:
         self._ws_connect: Callable[[str], _WebSocketLike] = ws_connect or (
             lambda url: _default_ws_connect(url, max_frame_bytes=self._max_frame_bytes)
         )
+        # S3a（DESIGN-20261005 v4 §4.3）：可选共享通道绑定；None ⇒ 行为与之前完全一致
+        # （直连 harness/qualification 构造不受影响）。factory 注入同一协调器给感知 host。
+        self._binding_coordinator = binding_coordinator
+        self._http_get_version_dict = http_get_version_dict or _default_http_get_version_dict
         self._websocket: _WebSocketLike | None = None
         self._session: _MutationCdpSession | None = None
         self._dispatch_lock = threading.Lock()
@@ -153,6 +164,19 @@ class CdpBrowserMutationActuator:
         elif websocket_url != self._bound_websocket_url:
             raise RuntimeError("bound Browser target websocket changed; recreate actuator explicitly")
         if self._session is None:
+            # S3a：actuator 不再拥有独立首绑语义——新建绑定前必须与共享协调器对身份
+            # （browser ws UUID + target + ws url 三字段）。感知 host 若已绑定另一台
+            # Chrome，此处直接拒绝（no cross-instance drift）。
+            if self._binding_coordinator is not None:
+                version = self._http_get_version_dict(
+                    f"{self.debug_base_url}/json/version"
+                )
+                browser_ws_uuid = extract_browser_ws_uuid(
+                    str(version.get("webSocketDebuggerUrl") or "")
+                )
+                self._binding_coordinator.require_match(
+                    browser_ws_uuid, target_id, websocket_url
+                )
             websocket = self._ws_connect(websocket_url)
             self._websocket = websocket
             self._session = _MutationCdpSession(websocket)
