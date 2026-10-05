@@ -6,7 +6,7 @@
 - 标签噪声声明：mismatch 高重叠陷阱存在真双适用噪声；paired 同案双臂下 M1 差值不受影响，绝对正确率按下界解读
 - 臂定义：C0 = LFL_METHOD_SUBJECT_BINDING_EXPERIMENTAL 缺省；C1 = =1。实证（本仓库、2026-10-05）：load_env_file+load_settings 后 toml tools.method_subject_binding_experimental=true 不投影进进程 env，registry 实测 C0 缺省=无 binding、C1=有 binding；无偏离登记需要
 - 模型登记（两臂同一）：deepseek/deepseek-v4-flash（LLM_MODEL env 覆盖；providers.json 固定采样参数）
-- 隔离：两臂同用 LFL_DATA_DIR=evals/method_binding_efficacy_v1/run_data（绝对路径）；生产 gen177 冻结——实验窗口内不 publish/restart/改 runtime.toml 与 providers.json
+- 隔离：两臂同用 DATA_DIR=evals/method_binding_efficacy_v1/run_data（绝对路径；实证：LFL_DATA_DIR env 被 toml 显式 lfl_data_dir 压制，DATA_DIR env 优先生效——预数据修订）；生产 gen177 冻结——实验窗口内不 publish/restart/改 runtime.toml 与 providers.json
 - 前置门（任一失败即中止，不得开正式 80 例）：(1) 两臂 lazy 工具面 diff 仅限 save_experience；(2) C0 smoke n=5 全 MISSING；(3) C1 smoke n=5 全 VISIBLE（headless 载具复证）
 - 执行顺序：按 pool.run_order（seed 已定），每例内两臂交错 C0→C1；worker 断言 binding 态与臂一致、model_used=登记模型、data_dir=隔离路径
 - 技术失败处理：异常/超时/fallback 换模/truncated → 记 OTHER，该例允许恰好 1 次重跑并标记 rerun_of；禁止 outcome-driven 重跑
