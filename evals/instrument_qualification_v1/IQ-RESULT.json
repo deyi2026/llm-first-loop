@@ -1,0 +1,113 @@
+{
+ "analyzed_at": "2026-10-05T23:15:19+08:00",
+ "prereg_sha256": "b33df6e158164df715761977fe446853345153f880914ad8bf390247aa7140e5",
+ "sealed_sha256": "d181a7f284f1a176d293abfe8c7995aec0466144a7b1f81c432774daa67c3090",
+ "n": 40,
+ "kappa": 1.0,
+ "kappa_ci95": [
+  1.0,
+  1.0
+ ],
+ "raw_agreement": 1.0,
+ "bootstrap_n": 10000,
+ "bootstrap_seed": 20261005,
+ "per_cell": {
+  "A": {
+   "n": 6,
+   "certified": 6,
+   "r1_intended": 6,
+   "r2_intended": 6
+  },
+  "B": {
+   "n": 20,
+   "certified": 14,
+   "r1_intended": 14,
+   "r2_intended": 14
+  },
+  "C": {
+   "n": 8,
+   "certified": 8,
+   "r1_intended": 8,
+   "r2_intended": 8
+  },
+  "D": {
+   "n": 6,
+   "certified": 6,
+   "r1_intended": 6,
+   "r2_intended": 6
+  }
+ },
+ "R1_vs_intended_ACD": 1.0,
+ "gates": {
+  "Q1_kappa": {
+   "value": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "raw_agreement": 1.0,
+   "status": "PASS"
+  },
+  "R1_vs_intended_ACD": {
+   "value": 1.0,
+   "threshold": 0.9,
+   "status": "PASS"
+  },
+  "A_cert": {
+   "value": 6,
+   "threshold": ">=5/6",
+   "status": "PASS"
+  },
+  "D_cert": {
+   "value": 6,
+   "threshold": ">=5/6",
+   "status": "PASS"
+  },
+  "B_cert": {
+   "value": 14,
+   "threshold": ">=12/20",
+   "status": "PASS"
+  },
+  "C_cert": {
+   "value": 8,
+   "threshold": ">=6/8",
+   "status": "PASS"
+  },
+  "disagreement": {
+   "value": 0,
+   "rate": 0.0,
+   "threshold": "<=6/40",
+   "status": "PASS"
+  },
+  "Q3_headroom": {
+   "H_plus": 14,
+   "H_plus_threshold": 12,
+   "H_minus": 8,
+   "H_minus_threshold": 6,
+   "status": "PASS"
+  }
+ },
+ "Q1": "PASS",
+ "Q2": "PASS",
+ "Q3": "PASS",
+ "verdict": "PASS",
+ "disagreements": [],
+ "certified_B_case_ids": [
+  "iq-B01",
+  "iq-B02",
+  "iq-B03",
+  "iq-B04",
+  "iq-B05",
+  "iq-B06",
+  "iq-B07",
+  "iq-B08",
+  "iq-B10",
+  "iq-B11",
+  "iq-B12",
+  "iq-B17",
+  "iq-B18",
+  "iq-B20"
+ ],
+ "disclosure": "R2 非独立（L/D 归类作者、设计作者、评前已知 FORENSIC 内容）——载重结论挂 R1 与 κ（PREREG §8.1）",
+ "verdict_note": "PASS ⇒ 构造器 v2 挂 IQ-CTOR-v2；κ HOLD ⇒ 单轮指引修订+整表重评；任一 FAIL ⇒ 构造器/仪器重做；B/C 短缺 ⇒ 单轮替换（≤6/格，二轮仍短缺=构造器 FAIL）"
+}

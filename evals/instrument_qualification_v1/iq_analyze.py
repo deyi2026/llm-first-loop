@@ -69,8 +69,9 @@ for cell in "ABCD":
     per_cell[cell] = {"n": n, "certified": c_n, "r1_intended": r1_int, "r2_intended": r2_int}
     cell_rows[cell] = cell_ids
 
-r1_acd = sum(R1[i][0] == cases[i]["intended"] for i in ids if cases[i]["cell"] in "ACD")
-r1_acd_rate = r1_acd / 34
+acd_ids = [i for i in ids if cases[i]["cell"] in "ACD"]  # A6+C8+D6 = 20 构造确定例
+r1_acd = sum(R1[i][0] == cases[i]["intended"] for i in acd_ids)
+r1_acd_rate = r1_acd / len(acd_ids)
 disagree = [i for i in ids if R1[i][0] != R2[i][0]]
 
 gates = {}
@@ -120,14 +121,20 @@ result = {"analyzed_at": ts, "prereg_sha256": sealed["prereg_sha256"], "sealed_s
 md = [f"# IQ v1 结果（一次性裁决，{ts}）", "",
       f"- verdict：**{verdict}**（Q1={Q1} / Q2={Q2} / Q3={Q3}）",
       f"- κ(R1,R2) = {k:.4f}，95%CI [{ci_lo:.4f}, {ci_hi:.4f}]，raw agreement = {po:.4f}（{40 - len(disagree)}/40）",
-      f"- R1 vs intended（A/C/D 34 例）= {r1_acd}/34 = {r1_acd_rate:.3f}",
+      f"- R1 vs intended（A/C/D 构造确定 {len(acd_ids)} 例）= {r1_acd}/{len(acd_ids)} = {r1_acd_rate:.3f}",
       f"- 认证（双评一致判出 intended）：A {per_cell['A']['certified']}/6｜B {per_cell['B']['certified']}/20｜C {per_cell['C']['certified']}/8｜D {per_cell['D']['certified']}/6",
       f"- headroom：H⁺ = {H_plus}（门 ≥12）｜H⁻ = {H_minus}（门 ≥6）",
       f"- 分歧：{len(disagree)}/40（门 ≤6）", "",
       "## 门槛明细", "",
       "| gate | 值 | 阈值 | 状态 |", "|---|---|---|---|"]
 for g, v in gates.items():
-    md.append(f"| {g} | {v['value']} | {v['threshold']} | {v['status']} |")
+    if g == "Q1_kappa":
+        val, thr = f"{v['value']} (CI95 {v['ci95']}, po {v['raw_agreement']})", ">=0.70 (0.55-0.70 HOLD)"
+    elif g == "Q3_headroom":
+        val, thr = f"H⁺={v['H_plus']}, H⁻={v['H_minus']}", "H⁺>=12, H⁻>=6"
+    else:
+        val, thr = v["value"], v["threshold"]
+    md.append(f"| {g} | {val} | {thr} | {v['status']} |")
 md += ["", "## 分歧清单（裁定不救认证；R1 理由留痕归因）", ""]
 if disagree_rows:
     md.append("| opaque | cell | intended | R1 | R2 | R1 reason |")
