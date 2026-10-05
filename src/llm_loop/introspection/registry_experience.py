@@ -115,6 +115,10 @@ METHOD_SUBJECT_BINDING_TEXT = f"""[{METHOD_SUBJECT_BINDING_SCHEMA}; experimental
 - 只匹配当前明确可见的事实；缺失事实不得脑补，本提示不替你选择 applied/adapted/not_applicable/rejected。
 - 若已自主决定，继续按现有 method_manage(action=record_use) 规则恰好回记一次；不得仅为本提示新增搜索、取证或工具调用。
 [/{METHOD_SUBJECT_BINDING_SCHEMA}]"""
+METHOD_SUBJECT_BINDING_COMPACT = (
+    f"[{METHOD_SUBJECT_BINDING_SCHEMA}] 保存经验；判断已水合 Method 是否适用时，以当前任务 claim subject 为判别对象；"
+    "experience/result/fixture 默认仅为证据载体，不得替换 subject；缺失事实不脑补。"
+)
 
 
 def _method_subject_binding_enabled() -> bool:
@@ -131,6 +135,7 @@ def _save_experience_tool_def() -> dict[str, Any]:
         return _SAVE_EXPERIENCE_TOOL_DEF
     row = copy.deepcopy(_SAVE_EXPERIENCE_TOOL_DEF)
     row["description"] = str(row["description"]).rstrip() + "\n" + METHOD_SUBJECT_BINDING_TEXT
+    row["compact_description"] = METHOD_SUBJECT_BINDING_COMPACT
     return row
 
 
