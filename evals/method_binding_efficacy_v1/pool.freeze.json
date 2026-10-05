@@ -1,0 +1,15 @@
+{
+ "pool_sha256": "17bd583c02966791675c54b1c16315d3b4251d502d978c18c0c516df25e16d3f",
+ "spec_sha256": "61da4b1557a552e347ecbc45bd2d0190addd7efd7d401115fd1029380182d624",
+ "frozen_at": "2026-10-05T21:32:04",
+ "model": "deepseek/deepseek-v4-flash",
+ "arms": {
+  "C0": "env-absent",
+  "C1": "env=1"
+ },
+ "run_order_head": [
+  "mb-009",
+  "mb-025",
+  "mb-020"
+ ]
+}
