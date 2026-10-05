@@ -1,0 +1,95 @@
+{
+ "built_at": "2026-10-05T23:31:00+08:00",
+ "sample_seed": 20261006,
+ "order_seed": 20261007,
+ "n": 12,
+ "design": "A 全 6 + B(认证 1 + 未认证 1) + C 2 + D 2 = 12",
+ "order": [
+  {
+   "opaque_id": "140487a03a55",
+   "case_id": "iq-B10",
+   "cell": "B",
+   "intended": "SKIP",
+   "b_certified": true
+  },
+  {
+   "opaque_id": "8088461bd30d",
+   "case_id": "iq-D01",
+   "cell": "D",
+   "intended": "SKIP",
+   "b_certified": null
+  },
+  {
+   "opaque_id": "b9beb0e14c29",
+   "case_id": "iq-D02",
+   "cell": "D",
+   "intended": "SKIP",
+   "b_certified": null
+  },
+  {
+   "opaque_id": "885f3cc78bf7",
+   "case_id": "iq-A04",
+   "cell": "A",
+   "intended": "APPLY",
+   "b_certified": null
+  },
+  {
+   "opaque_id": "0f030fffc8b6",
+   "case_id": "iq-C01",
+   "cell": "C",
+   "intended": "APPLY",
+   "b_certified": null
+  },
+  {
+   "opaque_id": "2914fb67544e",
+   "case_id": "iq-B19",
+   "cell": "B",
+   "intended": "SKIP",
+   "b_certified": false
+  },
+  {
+   "opaque_id": "e98730ec0f28",
+   "case_id": "iq-A03",
+   "cell": "A",
+   "intended": "APPLY",
+   "b_certified": null
+  },
+  {
+   "opaque_id": "0afaa4940645",
+   "case_id": "iq-C08",
+   "cell": "C",
+   "intended": "APPLY",
+   "b_certified": null
+  },
+  {
+   "opaque_id": "a5f0a69da346",
+   "case_id": "iq-A05",
+   "cell": "A",
+   "intended": "APPLY",
+   "b_certified": null
+  },
+  {
+   "opaque_id": "44a7a3fecceb",
+   "case_id": "iq-A01",
+   "cell": "A",
+   "intended": "APPLY",
+   "b_certified": null
+  },
+  {
+   "opaque_id": "aeeb08e9bcf3",
+   "case_id": "iq-A06",
+   "cell": "A",
+   "intended": "APPLY",
+   "b_certified": null
+  },
+  {
+   "opaque_id": "b39949ff3dc1",
+   "case_id": "iq-A02",
+   "cell": "A",
+   "intended": "APPLY",
+   "b_certified": null
+  }
+ ],
+ "sheet_sha256": "5ff65de45d454393986223ae7c3abbe5f105b9f6262e70fe6e9860e82c9e8b8b",
+ "r1_sha256": "5055d8312da02efae69c0a4be5a628a84df05ab4facfbace0ee39c2350699dfb"
+}
