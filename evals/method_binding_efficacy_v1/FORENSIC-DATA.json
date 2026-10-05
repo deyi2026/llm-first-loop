@@ -1,0 +1,419 @@
+{
+ "basis": {
+  "matrix_sha256": "2ac926d53201b81be60014d4655656991979fc2cacf51dc6a9e3e505629358d9",
+  "result_sha256": "6f60fb7057ef4c44580643b2a4b6d121b9c3faa45e444b21e57c1882d65e638a",
+  "note": "post-hoc exploratory; frozen M1 verdict untouched"
+ },
+ "paired_transitions": {
+  "match": {
+   "双对": 20
+  },
+  "mismatch": {
+   "双对": 13,
+   "双错": 6,
+   "C0错→C1对": 1
+  }
+ },
+ "mismatch_cases": [
+  {
+   "case_id": "mb-020",
+   "trap_card": "align-repo-advice-with-recorded-decisions-first",
+   "trigger_source_method": "state-record-first-for-stateful-command-params-2ec22b820b16",
+   "expected": "SKIP",
+   "trigger": "CLI --help 列出的必填参数均为运行时状态值（根目录、代号、data 目录），同时任务叙述已引用对应记录存在于本地（如'记录 generation=55、git_head=…'、manifest head）",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: CLI必填参数取运行时状态值 | REASON: 该方法针对仓库内容入库/忽略/删除裁决，本任务是按本地记录填充运行时参数，场景不匹配"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: CLI必填参数的运行时状态取值 | REASON: 方法对象是仓库内容入库/忽略/删除建议，本任务对象是CLI参数取值，判据与记录对象均不同"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-016",
+   "trap_card": "act-on-provenance-rich-record-hit-receipt-verifies",
+   "trigger_source_method": "mechanical-identity-resolution-then-receipt-narrowed-retry-7701e37ca4b6",
+   "expected": "SKIP",
+   "trigger": "工具签名要求文件系统/git 身份参数（workdir、code_root、runtime_root 等），且当前上下文没有该参数的权威观察值；或动作失败回执显式点名缺失/无效参数。",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: workdir等身份参数缺失 | REASON: 路径类参数无动作回执可判定，错用静默且不可逆，缺三要素命中前提"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 文件系统/git身份参数取值 | REASON: 回执验证针对外部动作参数；路径身份参数错值常静默成功，缺同工具成功先例。"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-022",
+   "trap_card": "align-session-gap-with-restart-timestamps-before-broad-search",
+   "trigger_source_method": "route-article-claims-to-primary-sources-before-broad-search-0ed9248a3179",
+   "expected": "SKIP",
+   "trigger": "User provides an article or claim set and the answer will verify, correct, or extend facts beyond the article's own narrative.",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 文章/主张集事实核验 | REASON: 该Method面向服务/会话无响应的重启时间线排查，与文章事实核验任务无关。"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 文章/主张集的事实核验 | REASON: 候选方法针对服务/会话无响应的重启时间线排查，与文章事实核验无关，触发与判别条件均不匹配。"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-030",
+   "trap_card": "anchor-and-derive-environment-parameters",
+   "trigger_source_method": "mechanical-identity-resolution-then-receipt-narrowed-retry-7701e37ca4b6",
+   "expected": "SKIP",
+   "trigger": "工具签名要求文件系统/git 身份参数（workdir、code_root、runtime_root 等），且当前上下文没有该参数的权威观察值；或动作失败回执显式点名缺失/无效参数。",
+   "pairs": {
+    "C0": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 未观察环境参数(workdir等)的锚定推导 | REASON: 触发场景正是参数缺权威观察值；先pwd/ls锚定再推导，禁止枚举相邻猜测，程序与stop条件均契合。"
+    },
+    "C1": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 未确立的文件系统/git身份参数 | REASON: 触发条件正是缺权威参数观察值，方法要求先锚定探测再推导，且失败回执点名缺失参数属其范围"
+    }
+   },
+   "transition": "双错"
+  },
+  {
+   "case_id": "mb-028",
+   "trap_card": "anaphora-artifact-first-context-recovery",
+   "trigger_source_method": "followup-questions-route-to-recent-artifact-first-4ef2b5c311a1",
+   "expected": "SKIP",
+   "trigger": "用户追问以代词/省略主语指代先前任务中讨论过的实体或结论（'他''那个项目''过去交流一下'），且该任务在近期（同会话或最近 evidence 时间戳内）刚产出一份可定位的分析 artifact（报告/附件/输出文件）",
+   "pairs": {
+    "C0": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 代指实体的先前会话产物恢复 | REASON: 触发场景与卡片Trigger一致：短讯含无先行词代词且近期存在可定位分析工件，首未知量正是指代对象与产物"
+    },
+    "C1": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 未解析指代所指的先前分析工件 | REASON: 触发与判别条件一致：消息含无先行词指代且近期已有可定位工件，按新近度取工件再定向提取正对症。"
+    }
+   },
+   "transition": "双错"
+  },
+  {
+   "case_id": "mb-032",
+   "trap_card": "anchor-background-job-polling-to-duration-prior",
+   "trigger_source_method": "timed-harvest-instead-of-interim-polling-for-characterized-jobs-17289414e24c",
+   "expected": "SKIP",
+   "trigger": "刚启动一个后台长任务，且同一 runner/命令此前已完整跑过一次（时长与日志缓冲行为已知），任务系统回执已给出 job_id 与 durable 的 running 状态。",
+   "pairs": {
+    "C0": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 已知耗时先验的后台长任务轮询 | REASON: 同一命令已完整跑过、时长与无增量输出行为已知，正合该方法锚定prior、停等优于零信息连查"
+    },
+    "C1": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 同命令已有耗时先验的后台长任务 | REASON: prior与缓冲行为已知、完成前回执恒为running无增量，锚定prior可免零信息连查"
+    }
+   },
+   "transition": "双错"
+  },
+  {
+   "case_id": "mb-012",
+   "trap_card": "absence-proof-store-coverage-then-conclude",
+   "trigger_source_method": "provenance-before-defaults-advisory-state-4debbe308f39",
+   "expected": "SKIP",
+   "trigger": "用户对既有工作区提出开放式“下一步/你的建议”类问题，且存在已记录的 evidence/provenance 索引，同时状态可能散布在多个来源（结果文档、冻结回执、git 远端/分支）。",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 工作区开放式“下一步/建议” | REASON: 触发场景是发散式下一步建议，非“是否存在X”证否核查；无覆盖性否定需求，Stop条件不匹配。"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 既有工作区开放式“下一步/建议” | REASON: 本任务求前瞻性推进建议，非历史设置存在性核查；其“单次覆盖即证否”机制不适用，且git远端/分支非可枚举否定面。"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-008",
+   "trap_card": "absence-check-via-definition-site-then-vcs-history",
+   "trigger_source_method": "read-named-owner-before-enumerating-peers-b0901d59403c",
+   "expected": "SKIP",
+   "trigger": "任务可改写为少数具名未知量（如『某机制的写入侧归属』『某组件的回执构造点』），且一次定向内容搜索的命中列表中已出现该机制的所有权位置（含目标字面量的写入/变更调用行、与目标符号同名的 def/class、声明落盘责任的模块 docstring）",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 机制写入侧归属 | REASON: 命中已含写入调用行，属正向定位而非存在性否定，无需版本历史考古"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 机制写入侧归属与回执构造点定位 | REASON: 命中已含所有权落点，任务是定位归属/构造点而非判定机制是否生效，无需版本历史考古"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-038",
+   "trap_card": "anchor-declared-worktree-root-before-commands",
+   "trigger_source_method": "verify-declared-runtime-deps-in-fresh-execution-root-a4fa73c1d822",
+   "expected": "SKIP",
+   "trigger": "复用/改写仓库内别处的冻结 runner 或 worker 契约，且执行环境是新建的 git worktree 或全新 checkout；即将进行第一次端到端启动（dry-run 或 measured run）。",
+   "pairs": {
+    "C0": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 新worktree复用冻结runner首启 | REASON: 新checkout复用契约需先锚定工作根并预检gitignored运行时资产存在性"
+    },
+    "C1": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 新 worktree 内复用的冻结 runner/worker 契约 | REASON: 全新 checkout 不带 gitignored 运行时资产，复用契约启动前须锚定工作根并预检其存在性"
+    }
+   },
+   "transition": "双错"
+  },
+  {
+   "case_id": "mb-014",
+   "trap_card": "act-on-in-context-provenance-not-re-discovery-searches",
+   "trigger_source_method": "range-receipt-driven-evidence-recovery-d259013dab32",
+   "expected": "SKIP",
+   "trigger": "projection.complete=false 或 search_evidence 命中目标记录但截断在关键字段（如 grounding_ref）之前，且底层存在可分页 hydrate 的 evidence blob",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 截断证据的分页 hydrate | REASON: 该法针对上下文已确立事实避免重复检索；本任务是证据截断须按引用分页续读水合，方向相反。"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 分页 hydrate 恢复截断的 evidence blob | REASON: 目标字段未完整入上下文，需 read_evidence 分页取回，属新证据获取而非重复发现，方法核心前提不成立"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-024",
+   "trap_card": "allowlist-names-from-authoritative-definition-not-summary",
+   "trigger_source_method": "zero-hit-from-indexed-search-is-not-code-absence-proof-fa972dda9005",
+   "expected": "SKIP",
+   "trigger": "需要核验此前轮次或他人声称存在的代码标识符是否真实存在及其定义位置，而索引式内容搜索返回零命中、或只命中数据文件时。",
+   "pairs": {
+    "C0": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 声称存在的代码标识符及其定义位置 | REASON: 核验摘要所称标识符需对照权威定义面机械提取名集，幻影名判定机制直接适用"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 声称存在的代码标识符真实性核验 | REASON: 该方法面向写入逐字枚举工件前的取名集，本任务只核标识符是否存在及定义位置，无工件写入与摘要名集diff。"
+    }
+   },
+   "transition": "C0错→C1对"
+  },
+  {
+   "case_id": "mb-040",
+   "trap_card": "anchor-driven-reads-from-authoritative-record",
+   "trigger_source_method": "id-keyed-state-lookup-before-layout-enumeration-e1448b14a10d",
+   "expected": "SKIP",
+   "trigger": "需要获取某条已被命名记录（携带唯一 ID）的权威状态/终态，但其存储位置未知；环境中存在可用的文件名+内容搜索工具",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 未知存储位置的具名记录权威状态 | REASON: 本任务存储位置未知需先检索定位；该方法前提为已取回含锚点记录并禁止搜索，前提不成立"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 未定位的已命名记录权威状态 | REASON: 记录存储位置未知、尚无锚点，方法前提“已取回含path:line的记录”不成立，当前需先做发现检索。"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-036",
+   "trap_card": "anchor-content-search-on-observed-literal-tokens",
+   "trigger_source_method": "exact-id-locate-store-backing-file-by-scoped-find-not-wide-grep-7b1f386ab61c",
+   "expected": "SKIP",
+   "trigger": "结构化 record/event store 已用精确唯一 ID 命中（含 kind 标签与时间戳），但正文截断，需要权威完整记录；或索引型文件搜索对该 ID 返回确定性 no-match（success/无匹配，而非超时或报错）",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 精确ID命中后取权威全文记录 | REASON: 本任务靠精确ID直读权威记录，非content搜索；卡片前提字面子串检索与索引型no-match场景不符。"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 按精确ID取权威完整记录 | REASON: 方法针对content检索构造查询；本任务按ID直取记录，属其反例"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-004",
+   "trap_card": "fresh-read-authoritative-record-before-finality-claim",
+   "trigger_source_method": "resume-active-goal-from-checkpoint-git-delta-skip-reverification-82a6c69f25bc",
+   "expected": "SKIP",
+   "trigger": "极简续跑指令（如『继续』）+ goal 查询返回 active，且记录含『当前步』描述与带时间戳的 checkpoints/进度日志；工作在已知 worktree/分支上。",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 极简续跑下的当前步恢复 | REASON: 本任务只需按记录续跑，无并发写者也无终局断言，方法触发条件不成立。"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 续跑任务的 goal 检查点恢复 | REASON: 当前任务是续跑推进工作而非输出终局断言，且未建立并发写者节奏，触发前提不成立"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-006",
+   "trap_card": "resume-continuation-via-named-provenance-and-git-delta",
+   "trigger_source_method": "verify-active-pointer-before-deleting-old-version-0b130c190942",
+   "expected": "SKIP",
+   "trigger": "User asks to clean up or delete an old installed version or binary, and the deletion is irreversible.",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 删除旧版本/二进制的不可逆清理 | REASON: 该Method针对极简续跑指令与git未合并提交delta，与不可逆删除任务无关。"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 删除旧版本/二进制的不可逆清理操作 | REASON: 该方法针对极简续跑指令与git未合并提交的状态重建，与被触发场景无关。"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-002",
+   "trap_card": "self-execute-review-contract-on-degenerate-tool-output",
+   "trigger_source_method": "named-product-ops-identity-and-verified-experience-first-e521c85e2825",
+   "expected": "SKIP",
+   "trigger": "用户要求对某个具名桌面/客户端产品执行操作（重启/停止等）但未给出本机进程名或服务名；或按产品中文名/国内版名 grep 进程返回空；环境中存在带 verification_state 的经验记录库。",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 具名客户端产品进程/服务名定位 | REASON: 该Method针对评审工具退化输出后的自驱盘问，与本任务按产品名查找进程/服务名无关。"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 具名桌面产品的本机进程/服务名定位 | REASON: 该方法主题是评审工具退化输出自驱契约，与本任务进程名检索场景不同域。"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-034",
+   "trap_card": "anchor-complete-gate-query-before-remote-mutation",
+   "trigger_source_method": "writeback-only-receipt-backed-identifiers-db1ea44b81ca",
+   "expected": "SKIP",
+   "trigger": "完成工具动作后，要把执行结果（提案 ID、版本号、SHA、因果链、状态）写回持久文档或生成正式事实性汇报时",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 执行结果写回持久文档/正式汇报 | REASON: 该法是远程变更前一次性闸门查询与同步；本任务是结果落盘汇报，无变更闸门与锚点校验。"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 工具执行结果写回文档与事实汇报 | REASON: 该方法针对远程变更前的闸门查询与锚点校验，非结果落盘/汇报，场景与动作不匹配"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-010",
+   "trap_card": "absence-claim-probe-by-term-decomposition",
+   "trigger_source_method": "zero-hit-from-indexed-search-is-not-code-absence-proof-fa972dda9005",
+   "expected": "SKIP",
+   "trigger": "需要核验此前轮次或他人声称存在的代码标识符是否真实存在及其定义位置，而索引式内容搜索返回零命中、或只命中数据文件时。",
+   "pairs": {
+    "C0": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 代码标识符存在性与定义位置 | REASON: 断言对象是精确标识符，明确落在该卡片反例中；拆组分词探针只会引入噪声，不适用"
+    },
+    "C1": {
+     "verdict": "SKIP",
+     "correct": true,
+     "answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 代码标识符是否存在及定义位置 | REASON: 本任务对象是精确标识符，卡片反例明确排除拆词探针"
+    }
+   },
+   "transition": "双对"
+  },
+  {
+   "case_id": "mb-026",
+   "trap_card": "ambiguous-timeout-verify-landed-before-rerun",
+   "trigger_source_method": "compound-timeout-bounded-local-probe-first-8a88098e84bd",
+   "expected": "SKIP",
+   "trigger": "复合命令链（本地 git/文件操作在前，push/gh/远端调用在后）收到工具级超时回执，commit/stage/push/PR 等各段完成状态未知",
+   "pairs": {
+    "C0": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 复合命令链超时后各段完成状态 | REASON: 超时非失败码且commit/ref等可幂等观察，只补缺失步，push段另查远端"
+    },
+    "C1": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 超时复合命令链各段落地状态核验 | REASON: 回执仅超时、各段状态未知，适用先幂等观察判落地再补最小步骤；push/PR段须查目标端而非盲重跑"
+    }
+   },
+   "transition": "双错"
+  },
+  {
+   "case_id": "mb-018",
+   "trap_card": "adjudicate-from-alert-payload-audit-claims-before-write",
+   "trigger_source_method": "guard-fail-attribution-before-broad-forensics-7179e48d8700",
+   "expected": "SKIP",
+   "trigger": "守护/哨兵/审计类检查 FAIL（如 suspected prod spill、污染告警），且告警 payload 已携带可归因字段（被标记对象 id、id 重叠计数）或触发行自身终态已知",
+   "pairs": {
+    "C0": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: FAIL告警payload裁定 | REASON: 场景同为哨兵告警且payload含可归因字段，payload优先取证+写前断言审计适用"
+    },
+    "C1": {
+     "verdict": "APPLY",
+     "correct": false,
+     "answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 哨兵告警 payload 裁定收尾 | REASON: payload 已含可归因决定性字段，符合 Discriminator，可 payload-first 单跳取证并做写前 claim 审计"
+    }
+   },
+   "transition": "双错"
+  }
+ ]
+}
