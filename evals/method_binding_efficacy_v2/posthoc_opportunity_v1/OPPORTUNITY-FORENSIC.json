@@ -1,0 +1,268 @@
+{
+ "schema": "subject-binding-opportunity-forensic/v1",
+ "source_run2_result_sha256": "c9db95028f56da0fcc8b6a8a42a2a45f6fe3bda6c3fb0156443a340d7b4d92ec",
+ "selected_B": 13,
+ "realized_control_errors": {
+  "strong": 0,
+  "weak": 0
+ },
+ "explicit_anti_trigger_leak_cases": 11,
+ "positive_alternative_path_giveaway_cases": 2,
+ "exclusive_scope_cases": 6,
+ "all_B_have_easy_skip_channel": true,
+ "protocol_facts": {
+  "prompt_explicitly_requests_applicability": true,
+  "prompt_injects_full_card": true,
+  "prompt_mentions_save_experience": false,
+  "binding_text_mentions_save_experience": true,
+  "binding_appended_to_save_experience_tool_def": true,
+  "control_tool_calls": {
+   "strong": 0,
+   "weak": 0
+  }
+ },
+ "historical_hard_exemplar_mb024": {
+  "task": "需要核验此前轮次或他人声称存在的代码标识符是否真实存在及其定义位置，而索引式内容搜索返回零命中、或只命中数据文件时。",
+  "subject_method_id": "allowlist-names-from-authoritative-definition-not-summary-28a550ac5cac",
+  "trigger_source": "zero-hit-from-indexed-search-is-not-code-absence-proof-fa972dda9005",
+  "explicit_anti_trigger_hits": [],
+  "latest_C0": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 声称存在的代码标识符及其定义位置 | REASON: 核验摘要所称标识符需对照权威定义面机械提取名集，幻影名判定机制直接适用",
+  "latest_C1": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 声称存在的代码标识符真实性核验 | REASON: 该方法面向写入逐字枚举工件前的取名集，本任务只核标识符是否存在及定义位置，无工件写入与摘要名集diff。"
+ },
+ "cases": [
+  {
+   "case_id": "sb2-B01",
+   "task": "一个受管服务刚完成重启，部署记录已经给出 runtime_root、git_head；现在只需要从当前进程列表验证所有目标实例是否运行在该部署身份上。没有要解释的跨代日志或历史连接证据。",
+   "subject_method_id": "anchor-evidence-to-instance-lifecycle-window-fffe781df7d0",
+   "purpose_divergence": "任务目的是重启后的进程身份落地验证；subject 方法的目的是跨进程生命周期的证据窗口切分与同进程复现。",
+   "explicit_anti_trigger_hits": [
+    "没有"
+   ],
+   "exclusive_scope_hits": [
+    "只需要"
+   ],
+   "leak_class": "explicit_anti_trigger_leak",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 目标实例进程与部署身份一致性 | REASON: 任务无跨代证据窗口需锚定，只须核对进程列表与部署身份",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 当前进程实例的部署身份核验 | REASON: 仅比对当前进程与部署身份，无跨代证据流需锚定窗口",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  },
+  {
+   "case_id": "sb2-B03",
+   "task": "某门禁脚本依赖只存在于分支 X 的 artifact；当前 cwd 在分支 Y，直接运行会报 working tree 找不到文件。任务是先把执行上下文绑定到 artifact 所属 ref/worktree 再运行门禁；并不存在文件缺一族锚点的 checker 断言。",
+   "subject_method_id": "anchor-history-sweep-before-cross-branch-reproduction-f37203595eca",
+   "purpose_divergence": "任务目的是选择正确 worktree/ref 执行已有 gate；subject 方法只在 checker 声称文件缺锚点且需判 stale-contract vs regression 时适用。",
+   "explicit_anti_trigger_hits": [
+    "不存在"
+   ],
+   "exclusive_scope_hits": [],
+   "leak_class": "explicit_anti_trigger_leak",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 跨分支 artifact 上下文绑定跑门禁 | REASON: 本任务只是切 ref/worktree 后运行，无缺锚点 checker 断言，历史横扫归因无触发条件",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 门禁脚本的artifact ref/worktree绑定 | REASON: 卡片触发于“文件缺锚点”型checker假红，本任务明确无该断言",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  },
+  {
+   "case_id": "sb2-B04",
+   "task": "用户问还是连不上要不要重启。系统没有 authoritative status/dashboard 可用，但监督者显示进程 running，且公网端到端探测得到应用级 HTTP 303。需要据此决定是否重启。",
+   "subject_method_id": "anchor-on-self-report-then-probe-gaps-003c0af478b6",
+   "purpose_divergence": "任务不存在权威 self-report 工具；应由最小事实对裁决二元干预，而不是以 self-report healthy/status 为主判据。",
+   "explicit_anti_trigger_hits": [
+    "没有"
+   ],
+   "exclusive_scope_hits": [],
+   "leak_class": "explicit_anti_trigger_leak",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 连不上是否重启的决策 | REASON: 系统无 authoritative self-report 工具，Trigger 与 Discriminator 均不满足，无法以 healthy 字段为主判据",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 无自报接口时是否重启服务 | REASON: 任务明确无 authoritative self-report，Method 触发前提不成立",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  },
+  {
+   "case_id": "sb2-B05",
+   "task": "上轮已经发起异步 restart，action_id 与专属台账路径都在手。用户只问动作最终是否成功以及为什么没反馈；不需要查这个 ID 在代码里由谁生产或消费。",
+   "subject_method_id": "anchor-on-unique-identifier-to-find-mechanism-ae14900fecb5",
+   "purpose_divergence": "任务目的是读取既知 action 的终态并核反馈链；subject 方法用于未知机制的 producer/consumer 定位。",
+   "explicit_anti_trigger_hits": [
+    "不需要"
+   ],
+   "exclusive_scope_hits": [
+    "只问"
+   ],
+   "leak_class": "explicit_anti_trigger_leak",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 异步restart动作结果与反馈 | REASON: 任务只要动作终态与无反馈原因，不需查该ID的生产/消费机制，与本方法目标相反",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 异步restart动作终态与无反馈原因 | REASON: 任务只问动作成败与反馈缺失，卡片针对追生产者/消费者机制，触发条件不符",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  },
+  {
+   "case_id": "sb2-B07",
+   "task": "用户用唯一 EVO ID 引用一条已批准记录并要求按规格继续；records 搜索只返回截断预览，但持久台账可按该 ID 取全文。任务是先取完整权威记录再执行。",
+   "subject_method_id": "anchor-verification-over-narrative-recovery-73fa76a07438",
+   "purpose_divergence": "任务目的是按唯一 ID 恢复权威规格全文；subject 方法针对过去建议是否落实而把旧报告降级为声明清单逐锚验证。",
+   "explicit_anti_trigger_hits": [],
+   "exclusive_scope_hits": [
+    "先取完整权威记录再"
+   ],
+   "leak_class": "positive_alternative_path_giveaway",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 按EVO ID取权威记录全文 | REASON: 任务本身即取回原文再执行，非核对建议是否落实，属该方法反例且台账可按ID直取",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 按EVO ID取全文记录并执行 | REASON: 记录本身即待执行规格，锚点验证不取代取全文",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  },
+  {
+   "case_id": "sb2-B08",
+   "task": "要把同一个版本号从旧值改成新值，旧字面量在多个文件中出现；预检 grep 已显示各目标行。目标是从这些已显示的字面行派生替换并逐表面复查，没有指标分母、行为语义或测试期望需要重新定义。",
+   "subject_method_id": "assertions-as-spec-first-for-behavior-edits-c1f836aa31cd",
+   "purpose_divergence": "任务是多表面字面量迁移；subject 方法针对行为/指标契约变更，测试断言才是规范。",
+   "explicit_anti_trigger_hits": [
+    "没有"
+   ],
+   "exclusive_scope_hits": [],
+   "leak_class": "explicit_anti_trigger_leak",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 跨文件版本号字面量替换 | REASON: 无行为口径与断言契约可作规格，逐行派生替换即可",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 多文件版本号字面量替换 | REASON: 无行为口径与测试期望待重定义，断言非变更面，grep已给目标行",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  },
+  {
+   "case_id": "sb2-B09",
+   "task": "上轮 git fetch 挂死；现在到点决定是否重试。需要先对 remote host 做一条不超过 8 秒的网络探针，判断传输层是否恢复，再决定是否执行阻塞式 fetch。",
+   "subject_method_id": "async-wait-on-pipeline-conclusion-not-artifact-03a2fa7c25cb",
+   "purpose_divergence": "任务是阻塞网络重试的故障分类；subject 方法只适用于等待异步 pipeline 终态/产物。",
+   "explicit_anti_trigger_hits": [],
+   "exclusive_scope_hits": [],
+   "leak_class": "positive_alternative_path_giveaway",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: git fetch 前 remote host 网络探针 | REASON: 无异步流水线与产物，等待结论机制不可迁移",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: git fetch 重试前的网络连通性探针 | REASON: 卡片前提为产物由可查结论流水线生产且存在性轮询；本任务无流水线，核心是有时限传输层探针",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  },
+  {
+   "case_id": "sb2-B10",
+   "task": "浏览器重启后要验证 CDP binding 是否仍一致，任务上下文已明确 .env 记录真实端口和 TARGET_ID；应先读 .env 再按值探测。当前没有 connection refused，也不是判断能否接入。",
+   "subject_method_id": "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+   "purpose_divergence": "任务目的是已知配置源上的重绑一致性验证；subject 方法首先处理 connection refused 下的接入可行性。",
+   "explicit_anti_trigger_hits": [
+    "没有",
+    "不是"
+   ],
+   "exclusive_scope_hits": [
+    "先读 .env 再"
+   ],
+   "leak_class": "explicit_anti_trigger_leak",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: CDP binding 端口/TARGET_ID 一致性 | REASON: 无 connection refused、非可行性判定；任务按 .env 权威值核验绑定一致性",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 重启后CDP绑定一致性验证 | REASON: 任务无拒绝错误且非接入可行性判定，卡片触发前提不成立",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  },
+  {
+   "case_id": "sb2-B11",
+   "task": "CI 失败日志在 traceback 中途被截断，连 short test summary 都没看到。当前唯一目标是先从完整日志钉死全部 FAILED/ERROR 清单与数量；尚未进入这些失败是不是本次 diff 引入的归因阶段。",
+   "subject_method_id": "attribute-suite-failures-via-touched-set-and-clean-head-worktree-8d92c40cb6dc",
+   "purpose_divergence": "任务当前缺的是失败全集；subject 方法是在失败集合已知后用 touched-set 与 clean HEAD 对照做因果归因。",
+   "explicit_anti_trigger_hits": [
+    "不是",
+    "尚未"
+   ],
+   "exclusive_scope_hits": [
+    "当前唯一目标"
+   ],
+   "leak_class": "explicit_anti_trigger_leak",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 完整CI日志的FAILED/ERROR清单 | REASON: 本卡是改动归因闸门，任务尚在钉死失败清单阶段，未进入归因",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "<analysis>\n任务核心：CI 日志在 traceback 中途被截断，连 short test summary 都没有；当前唯一目标是先从完整日志钉死全部 FAILED/ERROR 清单与数量，任务陈述明确声明\"尚未进入归因阶段\"。\n\n卡片适用条件（Trigger/Discriminator）：编辑已落地 + 触面测试全绿 + 更大范围测试报失败 + 需要判定失败是本次改动引入还是存量债，以决定是否阻塞收尾。其核心新判别式是\"触碰集 ∩ 失败点名主题\"，以及 pinned 干净 HEAD worktree 单变量对照。\n\n对照结论：\n1. 时序错位——卡片作用在\"已有完整失败回执\"之后的归因闸门；本任务恰恰是失败清单本身还不完整、不可信（截断），前置输入缺失，交集运算无从做起。\n2. 目标错位——卡片没有任何\"恢复截断日志 / 取回完整 FAILED/ERROR 枚举\"的手段（其 short path 第一步 `--tb=short 重跑` 假设失败身份已可获得，且 --tb=short 反而会缩短 traceback，与\"从完整日志取证\"的方向相反）。\n3. 任务明确把归因排除在当前目标之外，套用卡片会提前进入 worktree 对照、触碰集交集等未被授权的阶段。\n\n因此应判 SKIP；本任务需要的是日志完整性恢复/全量重跑取证类方法，而非归因协议。\n</analysis>\n\nAPPLICABILITY_VERDICT: SKIP | SUBJECT: 截断CI日志的完整FAILED/ERROR清单取证 | REASON: 卡片是归因闸门，需完整失败回执且已入归因期；本任务仅补全日志",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  },
+  {
+   "case_id": "sb2-B12",
+   "task": "要审计一次会话为什么出现重复工具调用；会话经历 wake、compact 和 handoff，需要先拉完整未过滤事件流并定位控制流边界。问题不是某 lifecycle 是否完成，也不是统计 save/use/activate 阶段转移。",
+   "subject_method_id": "audit-closure-via-transition-event-receipts-not-artifact-grep-da92ba3b84c6",
+   "purpose_divergence": "任务目的是重复动作的时序/控制流归因；subject 方法用于生命周期闭环与阶段转移证明。",
+   "explicit_anti_trigger_hits": [
+    "不是",
+    "不是"
+   ],
+   "exclusive_scope_hits": [],
+   "leak_class": "explicit_anti_trigger_leak",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 会话重复工具调用根因 | REASON: 该任务是重复调用诊断与控制流边界定位，非阶段转移闭环或使用计数，取证口径不匹配",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 重复工具调用会话的事件流与控制流边界 | REASON: 任务非阶段闭环或计数，卡片触发条件被明确排除",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  },
+  {
+   "case_id": "sb2-B14",
+   "task": "一个 complete 动作此前已经发起，结果存疑；当前有唯一 action ID。需要先按裸 ID 取最新状态决定是否已经完成，而不是处理 requires evidence/reason 参数缺失。",
+   "subject_method_id": "batch-complete-required-fields-on-parameter-rejection-71b35b88bd44",
+   "purpose_divergence": "任务目的是避免重复状态迁移；subject 方法只处理首次调用或明确参数缺失拒绝后的字段补全。",
+   "explicit_anti_trigger_hits": [
+    "不是"
+   ],
+   "exclusive_scope_hits": [
+    "先按裸 ID 取最新状态决定"
+   ],
+   "leak_class": "explicit_anti_trigger_leak",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 按 action ID 查 complete 动作终态 | REASON: 本任务要先凭裸 ID 取状态核实是否已完成，非补全缺失参数重试",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 已发起complete动作的终态核对 | REASON: 无参数缺失型拒绝，只需按裸ID查状态，卡片前提不成立",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  },
+  {
+   "case_id": "sb2-B15",
+   "task": "要验证重启后的 CDP 端点与 TARGET_ID 是否仍匹配，且 .env 已给连接参数；没有 kill/清理动作，也不存在把端口误当 PID 的风险。",
+   "subject_method_id": "binding-identity-gate-before-destructive-ops-9e1d9ef8f671",
+   "purpose_divergence": "任务是连接绑定验证；subject 方法专用于破坏性操作前确认数字 ID 的实体类别与归属。",
+   "explicit_anti_trigger_hits": [
+    "没有",
+    "不存在"
+   ],
+   "exclusive_scope_hits": [],
+   "leak_class": "explicit_anti_trigger_leak",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 重启后CDP端点与TARGET_ID匹配校验 | REASON: 本任务无kill/清理破坏性操作，不存在端口误当PID分支，该方法门控前提不成立",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: CDP端点与TARGET_ID匹配性核验 | REASON: 本任务非破坏性核验，无kill/清理也无端口误当PID",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  },
+  {
+   "case_id": "sb2-B16",
+   "task": "要通过 shell heredoc 写一份约 120 行文档；历史上出现 exit 0 但文件只写了 8 行的输入截断。任务是分块写入并逐块核行数；不是读取 pytest/命令输出被截断。",
+   "subject_method_id": "bound-verification-output-to-survive-truncation-5879c1e4cca7",
+   "purpose_divergence": "任务风险是写入传输静默截断；subject 方法处理的是验证命令输出太长导致关键 summary 被截断。",
+   "explicit_anti_trigger_hits": [
+    "不是"
+   ],
+   "exclusive_scope_hits": [],
+   "leak_class": "explicit_anti_trigger_leak",
+   "strong_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: heredoc 分块写入行数核验 | REASON: 卡片治命令输出截断，本任务为输入截断，机制与判别条件均不匹配",
+   "strong_c0_correct": true,
+   "strong_c0_tool_calls": 0,
+   "weak_c0_final": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 分块写文档并逐块核行数 | REASON: 该方法治验证输出截断，本任务是heredoc写入侧输入截断，机制不同",
+   "weak_c0_correct": true,
+   "weak_c0_tool_calls": 0
+  }
+ ],
+ "conclusion": "failure_of_opportunity: v2 B labels were valid but confirmatory tasks exposed SKIP too directly; label validity was misused as a headroom proxy, while the explicit applicability/full-card prompt further compressed treatment opportunity."
+}
