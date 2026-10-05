@@ -1,0 +1,2 @@
+{"kind": "surface", "model_key": "strong", "arm": "C0", "case_id": "surface", "attempt": 0, "started_at": "2026-10-06T00:29:02+0800", "status": "WORKER_ERROR", "error_type": "NameError", "error": "name 'os' is not defined", "wall_s": 0.142}
+{"kind": "surface", "model_key": "strong", "arm": "C1", "case_id": "surface", "attempt": 0, "started_at": "2026-10-06T00:29:02+0800", "status": "WORKER_ERROR", "error_type": "NameError", "error": "name 'os' is not defined", "wall_s": 0.139}

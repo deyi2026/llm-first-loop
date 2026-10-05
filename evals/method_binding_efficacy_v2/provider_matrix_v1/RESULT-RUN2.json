@@ -1,0 +1,1039 @@
+{
+ "schema": "subject-binding-efficacy-v2-provider-run2-result/v1",
+ "plan_sha256": "22634f7ca18c8b7bee02c8eecc92876b6092b48ef07b102b9d2180cdc312983b",
+ "matrix_sha256": "016cdb67608aa8b80db7cf0c7e861f526c4476c2f4be2da2dd1f2b315fd06c35",
+ "run2_freeze_sha256": "d0f53f15b68dd1c10fe2cca78bc48a490f2b70ffcc10fc4ab4a09ad36c3a02d1",
+ "run1_invalid_sha256": "009c4d69de67d0e8007e32309f1a6ab8e59744f43794e00bdbf61f78d548c6d5",
+ "formal_rows_raw": 84,
+ "latest_cells": 84,
+ "models": {
+  "strong": {
+   "B_accuracy": {
+    "C0": 1.0,
+    "C1": 1.0
+   },
+   "B_positive_flips": 0,
+   "B_negative_flips": 0,
+   "B_net_flip": 0,
+   "efficacy_pass": false,
+   "nonregression": true,
+   "C_accuracy": {
+    "C0": 1.0,
+    "C1": 1.0
+   },
+   "C_new_harm": 0,
+   "reverse_risk_pass": true,
+   "OTHER": {
+    "C0": 0,
+    "C1": 0
+   },
+   "technical_retries": {
+    "C0": 0,
+    "C1": 0
+   },
+   "unhealthy_latest": {
+    "C0": 0,
+    "C1": 0
+   },
+   "safety_pass": true,
+   "cost": {
+    "mean_tokens": {
+     "C0": 13403.857142857143,
+     "C1": 13491.666666666666
+    },
+    "token_ratio": 1.006551063837346,
+    "mean_rounds": {
+     "C0": 1,
+     "C1": 1
+    },
+    "tool_calls": {
+     "C0": 0,
+     "C1": 0
+    },
+    "mean_wall_s_diagnostic": {
+     "C0": 1.974904761904762,
+     "C1": 2.227904761904762
+    }
+   },
+   "cost_pass": true
+  },
+  "weak": {
+   "B_accuracy": {
+    "C0": 1.0,
+    "C1": 1.0
+   },
+   "B_positive_flips": 0,
+   "B_negative_flips": 0,
+   "B_net_flip": 0,
+   "efficacy_pass": false,
+   "nonregression": true,
+   "C_accuracy": {
+    "C0": 1.0,
+    "C1": 1.0
+   },
+   "C_new_harm": 0,
+   "reverse_risk_pass": true,
+   "OTHER": {
+    "C0": 0,
+    "C1": 0
+   },
+   "technical_retries": {
+    "C0": 1,
+    "C1": 0
+   },
+   "unhealthy_latest": {
+    "C0": 0,
+    "C1": 0
+   },
+   "safety_pass": true,
+   "cost": {
+    "mean_tokens": {
+     "C0": 14037.285714285714,
+     "C1": 15347.761904761905
+    },
+    "token_ratio": 1.0933568082284257,
+    "mean_rounds": {
+     "C0": 1,
+     "C1": 1.0952380952380953
+    },
+    "tool_calls": {
+     "C0": 0,
+     "C1": 2
+    },
+    "mean_wall_s_diagnostic": {
+     "C0": 46.26376190476191,
+     "C1": 43.589190476190474
+    }
+   },
+   "cost_pass": true
+  }
+ },
+ "guardrails_all_pass": true,
+ "verdict": "EFFICACY_NOT_QUALIFIED",
+ "per_case": [
+  {
+   "model": "strong",
+   "case_id": "sb2-B01",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B01",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B03",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B03",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B04",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B04",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B05",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B05",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B07",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B07",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B08",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B08",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B09",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B09",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B10",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B10",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B11",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B11",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B12",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B12",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B14",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B14",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B15",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B15",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B16",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-B16",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C01",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C01",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C02",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C02",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C03",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C03",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C04",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C04",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C05",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C05",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C06",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C06",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C07",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C07",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C08",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "strong",
+   "case_id": "sb2-C08",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B01",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 1
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B01",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B03",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B03",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B04",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B04",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B05",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B05",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B07",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B07",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B08",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B08",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B09",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B09",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B10",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B10",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B11",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B11",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B12",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B12",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B14",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B14",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B15",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B15",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B16",
+   "cell": "B",
+   "arm": "C0",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-B16",
+   "cell": "B",
+   "arm": "C1",
+   "expected": "SKIP",
+   "healthy": true,
+   "verdict": "SKIP",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C01",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C01",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C02",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C02",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C03",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C03",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C04",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C04",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C05",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C05",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C06",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C06",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C07",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C07",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C08",
+   "cell": "C",
+   "arm": "C0",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  },
+  {
+   "model": "weak",
+   "case_id": "sb2-C08",
+   "cell": "C",
+   "arm": "C1",
+   "expected": "APPLY",
+   "healthy": true,
+   "verdict": "APPLY",
+   "correct": true,
+   "attempt": 0
+  }
+ ]
+}

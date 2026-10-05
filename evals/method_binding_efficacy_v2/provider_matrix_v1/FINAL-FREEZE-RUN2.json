@@ -1,0 +1,38 @@
+{
+ "evidence_sha256": {
+  "CLOSEOUT-RUN2.md": "ed1719d97238030c3e14df543c6e6b43f20dd9ff96ed292bd57bff6907587690",
+  "INVALID-RUN1.json": "009c4d69de67d0e8007e32309f1a6ab8e59744f43794e00bdbf61f78d548c6d5",
+  "PLAN-FREEZE.json": "1b608e7ae8dbe031d307c08a8e2b59a24cdb01a5911a9e9f83f3e7a06a2783cf",
+  "PREFLIGHT-RUN2.json": "87868037765f60db76927820829627261b224bca0e7da935eae0ae99f6ebe4e1",
+  "RESULT-RUN2.json": "c9db95028f56da0fcc8b6a8a42a2a45f6fe3bda6c3fb0156443a340d7b4d92ec",
+  "RUN2-FREEZE.json": "d0f53f15b68dd1c10fe2cca78bc48a490f2b70ffcc10fc4ab4a09ad36c3a02d1",
+  "SPEC.md": "b618c490566f64965caaf93e5cb8ff0d89e032cbc0c6d18aed4e30978acba5ee",
+  "SYNTHESIS-RUN2.md": "7a8c34bb259b3a27e0cad71e18d5078a1f554c6f409329ac1a993bf43dfc3e82",
+  "matrix.jsonl": "28394d5b4244cb2de491a74cdc321a55838533f69a24a13b64c21f9d82b8adb7",
+  "matrix_plan.json": "22634f7ca18c8b7bee02c8eecc92876b6092b48ef07b102b9d2180cdc312983b",
+  "preflight_v6.jsonl": "a448341fedaf3f3d14901950cf638f060a5e31db705d3f6b4ba9fa1e1b6cef8f",
+  "run2_matrix.jsonl": "016cdb67608aa8b80db7cf0c7e861f526c4476c2f4be2da2dd1f2b315fd06c35"
+ },
+ "formal_cells": 84,
+ "guardrails_all_pass": true,
+ "latest_mechanically_healthy": 84,
+ "production_mutations": 0,
+ "provider_rows_added_after_analysis": 0,
+ "publish_restart": false,
+ "push": false,
+ "run1_status_tree_sha256": "2da8541414a0f481c847f0893f387f908ee1a7b836aa0c43a2f0be53fd5cf3ac",
+ "run2_status_tree_sha256": "0f7acba674db3deae68d619322c07e1f05ff00ac0e173bd9a22bc03227d4bc40",
+ "run2_technical_retries": {
+  "strong": {
+   "C0": 0,
+   "C1": 0
+  },
+  "weak": {
+   "C0": 1,
+   "C1": 0
+  }
+ },
+ "schema": "subject-binding-efficacy-v2-run2-final-freeze/v1",
+ "source_commit": "738aaed6ae1ca733bb323c43a130f7f877e667d9",
+ "verdict": "EFFICACY_NOT_QUALIFIED"
+}

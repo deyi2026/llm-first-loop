@@ -1,0 +1,21 @@
+{
+ "surface_diff_only_save_experience": true,
+ "provider_preflight_rows": 4,
+ "all_provider_preflight_healthy": true,
+ "models": {
+  "strong": {
+   "bare": "deepseek-v4-flash",
+   "canonical": "deepseek/deepseek-v4-flash"
+  },
+  "weak": {
+   "bare": "cognilocal/qwen3.8-flash-next",
+   "canonical": "cognilocal/qwen3.8-flash-next"
+  }
+ },
+ "deviations": [
+  "DEV-PREFLIGHT-ENVLOAD: initial provider-free surface probe used worktree-default load_env_file(), found no worktree .env, and failed before engine/provider construction; provider_calls=0.",
+  "DEV-PREFLIGHT-V2-IMPORT: first explicit-runtime-root retry failed provider-free with worker NameError(os) before engine/provider construction; provider_calls=0.",
+  "DEV-PREFLIGHT-V3-WEAK-ROUTING: non-scored Weak C0 used the bare model ref and was routed to DeepSeek, producing HTTP400; formal rows remained 0/84.",
+  "DEV-PREFLIGHT-V4-DATA-DIR-REGISTRY: fully-qualified Weak ref still fell through to DeepSeek because fresh DATA_DIR omitted providers.local.json/providers.json. Formal rows remained 0/84. v5 copies canonical provider registry snapshots read-only into each fresh namespace and records hashes."
+ ]
+}
