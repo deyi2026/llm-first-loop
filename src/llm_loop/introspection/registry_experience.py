@@ -6,6 +6,8 @@ AI 优先：程序仅通道，提取/判断归 AI。
 
 from __future__ import annotations
 
+import copy
+import os
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -104,8 +106,36 @@ _REFINE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
 }
 
 
+METHOD_SUBJECT_BINDING_EXPERIMENTAL_ENV = "LFL_METHOD_SUBJECT_BINDING_EXPERIMENTAL"
+METHOD_SUBJECT_BINDING_SCHEMA = "lfl-method-applicability-subject-binding/v1"
+METHOD_SUBJECT_BINDING_TEXT = f"""[{METHOD_SUBJECT_BINDING_SCHEMA}; experimental=1]
+当你已在当前任务中精确水合 Method，并需要判断它是否适用于本次 save_experience 时：
+- 以当前任务/用户要求里实际要被断言、更新或持久化的 claim subject 为 Trigger / Discriminator / Counterexamples 的判别对象。
+- experience record、result/output 文件以及 observation/fixture record 默认只是证据或结果载体；除非任务明确把它们本身作为 claim subject，不得用这些载体替换 claim subject。
+- 只匹配当前明确可见的事实；缺失事实不得脑补，本提示不替你选择 applied/adapted/not_applicable/rejected。
+- 若已自主决定，继续按现有 method_manage(action=record_use) 规则恰好回记一次；不得仅为本提示新增搜索、取证或工具调用。
+[/{METHOD_SUBJECT_BINDING_SCHEMA}]"""
+
+
+def _method_subject_binding_enabled() -> bool:
+    return os.environ.get(METHOD_SUBJECT_BINDING_EXPERIMENTAL_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _save_experience_tool_def() -> dict[str, Any]:
+    if not _method_subject_binding_enabled():
+        return _SAVE_EXPERIENCE_TOOL_DEF
+    row = copy.deepcopy(_SAVE_EXPERIENCE_TOOL_DEF)
+    row["description"] = str(row["description"]).rstrip() + "\n" + METHOD_SUBJECT_BINDING_TEXT
+    return row
+
+
 def tool_defs() -> list[dict]:
-    return [_SAVE_EXPERIENCE_TOOL_DEF, _REFINE_EXPERIENCE_TOOL_DEF, _METHOD_MANAGE_TOOL_DEF]
+    return [_save_experience_tool_def(), _REFINE_EXPERIENCE_TOOL_DEF, _METHOD_MANAGE_TOOL_DEF]
 
 
 def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
