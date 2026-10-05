@@ -1,7 +1,10 @@
 """R3 绑定 attestation（DESIGN-20261005 v4 §4.3，S3b；机制按 S0 结论 ②）。
 
 机制：host 侧进程证据（`lsof -t -iTCP:<port> -sTCP:LISTEN` → 唯一 PID →
-`ps -ww -o command=` argv），不依赖浏览器自报。S0 四态实测（2026-10-06，
+原生 NUL 分隔 argv 源：macOS `sysctl(KERN_PROCARGS2)`、Linux `/proc/<pid>/cmdline`；
+`ps -ww -o command=`+shlex 仅作兜底——ps 输出按空格 join，无法还原参数内空格，
+含空格的 `--user-data-dir` 值会被截断 ⇒ 误 fail-closed real，S4-20261006 实测）。
+不依赖浏览器自报。S0 四态实测（2026-10-06，
 docs/S0-RESULT-20261005-browser-attestation-spike.md）：
 - Chrome 154 稳定版 getBrowserCommandLine 无 --enable-automation ⇒ ServerError（自报通道自锁）；
 - 加 flag ⇒ navigator.webdriver=true（dedicated 会话被污染，R1 主用例受害）；
@@ -145,7 +148,91 @@ def _listen_pids(port: int) -> list[str]:
     return [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
 
 
+def _parse_proc_cmdline(data: bytes) -> list[str]:
+    """Linux `/proc/<pid>/cmdline`：NUL 分隔，空参数与尾 NUL 剔除。空/无参 ⇒ ValueError。"""
+    argv = [p.decode("utf-8", "replace") for p in data.split(b"\x00") if p != b""]
+    if not argv:
+        raise ValueError("cmdline 无 NUL 分隔参数（内核线程/空）")
+    return argv
+
+
+def _linux_cmdline_argv(pid: str) -> list[str]:
+    with open(f"/proc/{pid}/cmdline", "rb") as fh:
+        return _parse_proc_cmdline(fh.read())
+
+
+def _parse_procargs2(data: bytes) -> list[str]:
+    """macOS `sysctl(KERN_PROCARGS2)` 布局：[argc:int32][exec path\\0][NUL padding][argv 各\\0 结尾]。
+
+    解析出恰好 argc 个 NUL 结尾字符串（保留参数内空格）；畸形/空 ⇒ ValueError。
+    """
+    if len(data) < 4:
+        raise ValueError(f"procargs2 缓冲过短: {len(data)}B")
+    argc = int.from_bytes(data[:4], sys.byteorder)
+    if not 1 <= argc <= 8192:
+        raise ValueError(f"procargs2 argc 越界: {argc}")
+    nul = data.find(b"\x00", 4)  # exec path 结束处
+    if nul == -1:
+        raise ValueError("procargs2 无 exec path 终止符")
+    off = nul + 1
+    while off < len(data) and data[off] == 0:  # argv 起点前的对齐 padding
+        off += 1
+    argv: list[str] = []
+    for _ in range(argc):
+        end = data.find(b"\x00", off)
+        if end == -1:
+            break  # 内核截断：不足 argc 个完整串
+        argv.append(data[off:end].decode("utf-8", "replace"))
+        off = end + 1
+    if not argv:
+        raise ValueError("procargs2 未解析出任何 argv")
+    return argv
+
+
+def _macos_procargs2_argv(pid: str) -> list[str]:
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    sysctl = libc.sysctl
+    sysctl.argtypes = [
+        ctypes.POINTER(ctypes.c_int), ctypes.c_uint,
+        ctypes.c_char_p, ctypes.POINTER(ctypes.c_size_t),
+        ctypes.c_char_p, ctypes.c_size_t,
+    ]
+    sysctl.restype = ctypes.c_int
+    mib = (ctypes.c_int * 3)(1, 49, int(pid))  # CTL_KERN, KERN_PROCARGS2, pid
+    size = ctypes.c_size_t(0)
+    if sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err), f"sysctl(KERN_PROCARGS2,{pid}) size")
+    if size.value <= 0:
+        raise ValueError(f"procargs2 size={size.value}")
+    buf = ctypes.create_string_buffer(size.value)
+    if sysctl(mib, 3, buf, ctypes.byref(size), None, 0) != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err), f"sysctl(KERN_PROCARGS2,{pid}) fetch")
+    return _parse_procargs2(buf.raw[: size.value])
+
+
+def _native_argv(pid: str) -> list[str] | None:
+    """平台原生 NUL 分隔 argv 源（保留参数内空格）。无源/失败 ⇒ None（上层回落 ps）。"""
+    if sys.platform == "darwin":
+        try:
+            return _macos_procargs2_argv(pid)
+        except Exception as exc:  # noqa: BLE001 - 回落兜底源，不改变 fail-closed 契约
+            logger.warning(
+                "KERN_PROCARGS2 读取失败，回落 ps（含空格参数可能被截断）: pid=%s %r", pid, exc,
+            )
+    elif sys.platform == "linux":
+        try:
+            return _linux_cmdline_argv(pid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("/proc/%s/cmdline 读取失败，回落 ps: %r", pid, exc)
+    return None
+
+
 def _ps_argv(pid: str) -> list[str]:
+    """兜底源：ps 文本按空格 join 后 shlex 猜切分，**无法还原参数内空格**（S4 已知限制）。"""
     out = subprocess.run(
         ["ps", "-ww", "-o", "command=", "-p", pid],
         capture_output=True, text=True, timeout=5,
@@ -155,8 +242,15 @@ def _ps_argv(pid: str) -> list[str]:
     return shlex.split(out.stdout.strip())
 
 
+def _pid_argv(pid: str) -> list[str]:
+    argv = _native_argv(pid)
+    if argv is not None:
+        return argv
+    return _ps_argv(pid)
+
+
 def attest_port(port: int, trees: tuple[Path, ...] | None) -> AttestationVerdict:
-    """host 侧机制：lsof→唯一 PID→ps argv→判定器 v2。任何一步失败 ⇒ fail-closed real。"""
+    """host 侧机制：lsof→唯一 PID→原生 argv→判定器 v2。任何一步失败 ⇒ fail-closed real。"""
 
     def _real(detail: str, argv: Sequence[str] = ()) -> AttestationVerdict:
         return AttestationVerdict(
@@ -176,9 +270,9 @@ def attest_port(port: int, trees: tuple[Path, ...] | None) -> AttestationVerdict
     if len(pids) > 1:
         return _real(f"端口 {port} 监听 PID 不唯一 {pids} fail-closed real")
     try:
-        argv = _ps_argv(pids[0])
+        argv = _pid_argv(pids[0])
     except Exception as exc:  # noqa: BLE001
-        return _real(f"ps argv 读取失败 fail-closed real: {exc!r}")
+        return _real(f"argv 读取失败 fail-closed real: {exc!r}")
     value = extract_user_data_dir_value(argv)
     verdict, detail = classify_user_data_dir(value, trees)
     return AttestationVerdict(

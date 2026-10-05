@@ -19,10 +19,22 @@
    探针进程与目录已全部清理，默认树无残留。
 4. **终态**：.env 保持 :9229；真实态 Chrome（PID 45369，chatgpt-web-chrome-profile）未受影响。
 
-## 新发现（非阻塞，fail-closed 方向）
+## 新发现（非阻塞，fail-closed 方向）→ **已于同日修复**
 
 `ps -ww -o command=` + `shlex.split` 对含空格的 `--user-data-dir=V` 值在空格处截断 ⇒ 解析失败 ⇒ fail-closed real。
-安全方向正确（宁可误拒不误放），但**dedicated profile 路径含空格时 enforce 下不可绑定**。规避：dedicated profile 用无空格路径。后续如需修复，可考虑 macOS 上从 `ps` 换用不依赖 argv 重排的证据源（该平台无 NUL 分隔 argv 可读），或对 `--user-data-dir=` token 做后随 token 拼接启发式（有误判风险，需评估）。
+安全方向正确（宁可误拒不误放），但**dedicated profile 路径含空格时 enforce 下不可绑定**。
+
+**修复（2026-10-06）**：argv 采集改走平台原生 NUL 分隔源——macOS `sysctl(KERN_PROCARGS2)`
+（原文误记"该平台无 NUL 分隔 argv 可读"，实际 `ps` 自身即读该源）、Linux `/proc/<pid>/cmdline`；
+`ps`+`shlex` 降为兜底（原生源失败时 warning + 回落，fail-closed 契约不变）。
+代码 `src/llm_loop/browser/attestation.py`（`_parse_proc_cmdline`/`_parse_procargs2`/`_native_argv`/`_pid_argv`）。
+
+修复后探针复核（生产代码 `attest_debug_url` + `BindingPolicy.deny_real(enforce)`，同日）：
+- **P1** 空格 dedicated profile（`/tmp/attest fix dir/profile with space`）：verdict=dedicated ⇒ 放行（修复目标，原误拒）；
+- **P2** 无空格 dedicated profile：verdict=dedicated ⇒ 放行（回归无退化）；
+- **N1b** 活监听 + 含空格 profile 位于授权树内（PATHS 附加树）：verdict=real ⇒ 拒绑（安全方向未松动）；
+- **9229 生产实例**只读复核：verdict=dedicated（argv[0] 二进制路径含空格现为单 token，argv_sha256 相应变化，仅审计指纹用途）。
+单测：`tests/unit/test_browser_attestation_v01.py` §6（解析器/兜底/端到端/真进程冒烟）28 passed。
 
 ## 唤醒链说明
 

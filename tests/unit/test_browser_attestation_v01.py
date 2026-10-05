@@ -9,10 +9,13 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 import pytest
 
+from llm_loop.browser import attestation as attestation_mod
 from llm_loop.browser.attestation import (
     AttestationVerdict,
     BindingPolicy,
@@ -247,3 +250,91 @@ def test_attest_debug_url_carries_paths_semantics():
     assert v.verdict == "real"
     v2 = attest_debug_url("http://127.0.0.1:39099", "bad/relative")
     assert v2.verdict == "real" and "PATHS" in v2.detail
+
+
+# ── 6. 原生 NUL 分隔 argv 源（S4 空格截断修复，2026-10-06） ────────────────
+
+CHROME_ARGV_SPACES = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "--user-data-dir=/tmp/attest dir with space",
+    "about:blank",
+]
+
+
+def test_parse_proc_cmdline_preserves_spaces():
+    data = b"\x00".join(a.encode() for a in CHROME_ARGV_SPACES) + b"\x00"
+    assert attestation_mod._parse_proc_cmdline(data) == CHROME_ARGV_SPACES
+    with pytest.raises(ValueError):
+        attestation_mod._parse_proc_cmdline(b"")  # 内核线程/空
+    with pytest.raises(ValueError):
+        attestation_mod._parse_proc_cmdline(b"\x00\x00")
+
+
+def test_parse_procargs2_preserves_spaces():
+    """构造真实布局：[argc:int32][exec path\\0][NUL padding][argv 各\\0]。"""
+    args = [CHROME_ARGV_SPACES[0], "--user-data-dir", "/tmp/dir  with  spaces", "about:blank"]
+    buf = len(args).to_bytes(4, sys.byteorder)
+    buf += args[0].encode() + b"\x00"  # exec path（其后 argv[0] 会重复出现）
+    while len(buf) % 8:  # 8 字节对齐 padding，模拟内核布局
+        buf += b"\x00"
+    for a in args:  # 全部 argc 个 argv 串（含 argv[0]）
+        buf += a.encode() + b"\x00"
+    assert attestation_mod._parse_procargs2(buf) == args
+    with pytest.raises(ValueError):
+        attestation_mod._parse_procargs2(b"\x01\x00")  # 过短
+    with pytest.raises(ValueError):
+        attestation_mod._parse_procargs2((0).to_bytes(4, sys.byteorder) + b"x\x00")  # argc=0
+    with pytest.raises(ValueError):
+        attestation_mod._parse_procargs2(b"\xff" * 4 + b"chrome\x00chrome\x00")  # argc 越界
+
+
+def test_pid_argv_prefers_native(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin", raising=False)
+    monkeypatch.setattr(
+        attestation_mod, "_macos_procargs2_argv",
+        lambda pid: list(CHROME_ARGV_SPACES),
+    )
+    called = {"ps": 0}
+
+    def _ps(pid):
+        called["ps"] += 1
+        raise AssertionError("不应回落 ps")
+
+    monkeypatch.setattr(attestation_mod, "_ps_argv", _ps)
+    assert attestation_mod._pid_argv("123") == CHROME_ARGV_SPACES
+    assert called["ps"] == 0
+
+
+def test_pid_argv_falls_back_to_ps_on_native_failure(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin", raising=False)
+
+    def _boom(pid):
+        raise OSError(1, "denied")
+
+    monkeypatch.setattr(attestation_mod, "_macos_procargs2_argv", _boom)
+    monkeypatch.setattr(attestation_mod, "_ps_argv", lambda pid: ["chrome", "--user-data-dir=/tmp/p"])
+    assert attestation_mod._pid_argv("123") == ["chrome", "--user-data-dir=/tmp/p"]
+
+
+def test_native_spaces_argv_classifies_dedicated(tmp_path, monkeypatch):
+    """端到端（argv 采集层）：含空格 profile 的完整 argv ⇒ verdict=dedicated 而非误 real。"""
+    profile = tmp_path / "dir with space"
+    profile.mkdir()
+    argv = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            f"--user-data-dir={profile}", "about:blank"]
+    value = extract_user_data_dir_value(argv)
+    assert value == str(profile)
+    verdict, _ = classify_user_data_dir(value, TREES)
+    assert verdict == "dedicated"
+    # 反例：默认树内含空格子目录 ⇒ 仍 real（修复不得放过真默认 profile）
+    sub = TREES[0] / "Profile 1"
+    verdict2, _ = classify_user_data_dir(str(sub), TREES)
+    assert verdict2 == "real"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="仅 macOS 有 KERN_PROCARGS2")
+def test_macos_procargs2_real_process():
+    """真进程冒烟：对自己（pytest 进程）读 procargs2，argv[0] 含 python 可执行路径。"""
+    argv = attestation_mod._macos_procargs2_argv(str(os.getpid()))
+    assert argv, "procargs2 应解析出非空 argv"
+    assert any("python" in a.lower() for a in argv[:1] + argv)
