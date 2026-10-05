@@ -55,6 +55,9 @@ mode = "off"
 
 [tools]
 schema_lazy = true
+# Experimental Method applicability subject-binding cue. Keep false by default;
+# production enablement belongs in the operator-owned runtime.toml.
+method_subject_binding_experimental = false
 nonconvergence_fuse_windows = 3
 nonconvergence_fuse_jaccard = 0.6
 nonconvergence_fuse_min_delta = 16
