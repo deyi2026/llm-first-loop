@@ -38,7 +38,7 @@ IQ v1 中 B 格未获认证的 6 例，其 subject（陷阱卡）与 v1 FORENSIC
 
 | # | 日期 | 下游任务 | 池规格 | 结果 | 备注 |
 |---|---|---|---|---|---|
-| — | — | 待 operator 指定首个下游构造目标 | — | — | 首用前每行需附 IQ 结果文件引用 |
+| 1 | 2026-10-05 | Subject-Binding Efficacy v2 Fresh Goldset | A8/B16/C8/D8，40 fresh cases；B=purpose-level near-miss；C=reverse-risk APPLY | **PASS** | ../method_binding_efficacy_v2/GOLDSET-RESULT.json sha256 decf64eab824e45d1c712a92eb0dc364a22edfce086202bbeeac4437000ac701；R1/R2 均为 fresh web-gpt proxy，4×10 blind batches，κ=0.8992，A 8/8、B 13/16、C 8/8、D 8/8；只资格化 goldset，未运行 efficacy provider matrix |
 
 ## 4. 事件记录
 
