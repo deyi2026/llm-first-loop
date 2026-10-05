@@ -1,0 +1,416 @@
+{
+ "prereg_sha256": "b33df6e158164df715761977fe446853345153f880914ad8bf390247aa7140e5",
+ "seal_salt": "309cc132d1b35dc50ffbdce543cc5710",
+ "built_at": "2026-10-05T22:37:21+08:00",
+ "v1_pairing_reproduced": "20/20",
+ "present_order": [
+  "ab4d262187dd",
+  "2914fb67544e",
+  "d7382dc9e596",
+  "a69859deb2df",
+  "0f030fffc8b6",
+  "b5fc9df649e2",
+  "140487a03a55",
+  "e60dbd0a1bfa",
+  "385307455b5c",
+  "e98730ec0f28",
+  "18ffc545f2c3",
+  "14691511e63d",
+  "d62de2ce72d9",
+  "a8ddf1553076",
+  "042a55f02372",
+  "3064a2cb77cb",
+  "b02b7054bb82",
+  "a5f0a69da346",
+  "44a7a3fecceb",
+  "f4b05552ec12",
+  "8abc7a8d84c5",
+  "4b921b038dfd",
+  "3991c19edd6a",
+  "f5d401162d03",
+  "885bc2b985af",
+  "f8bdb61874fa",
+  "9b49371f6b70",
+  "655d2eb34213",
+  "b9beb0e14c29",
+  "133f332c05b4",
+  "885f3cc78bf7",
+  "aeeb08e9bcf3",
+  "b39949ff3dc1",
+  "0afaa4940645",
+  "b40404692a48",
+  "556a9e9f8870",
+  "614b443c39f0",
+  "b0796777816a",
+  "8088461bd30d",
+  "1d37b7074afe"
+ ],
+ "cases": {
+  "44a7a3fecceb": {
+   "case_id": "iq-A01",
+   "cell": "A",
+   "intended": "APPLY",
+   "subject": "align-session-gap-with-restart-timestamps-before-broad-search-73202fbb57ff",
+   "trigger_source": "align-session-gap-with-restart-timestamps-before-broad-search-73202fbb57ff",
+   "ov_self": 0.7305
+  },
+  "b39949ff3dc1": {
+   "case_id": "iq-A02",
+   "cell": "A",
+   "intended": "APPLY",
+   "subject": "anchor-content-search-on-observed-literal-tokens-8d7925c691d2",
+   "trigger_source": "anchor-content-search-on-observed-literal-tokens-8d7925c691d2",
+   "ov_self": 0.4355
+  },
+  "e98730ec0f28": {
+   "case_id": "iq-A03",
+   "cell": "A",
+   "intended": "APPLY",
+   "subject": "anchor-complete-gate-query-before-remote-mutation-f3e6129501ef",
+   "trigger_source": "anchor-complete-gate-query-before-remote-mutation-f3e6129501ef",
+   "ov_self": 0.4125
+  },
+  "885f3cc78bf7": {
+   "case_id": "iq-A04",
+   "cell": "A",
+   "intended": "APPLY",
+   "subject": "resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+   "trigger_source": "resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+   "ov_self": 0.4091
+  },
+  "a5f0a69da346": {
+   "case_id": "iq-A05",
+   "cell": "A",
+   "intended": "APPLY",
+   "subject": "align-repo-advice-with-recorded-decisions-first-0973b39f2d2e",
+   "trigger_source": "align-repo-advice-with-recorded-decisions-first-0973b39f2d2e",
+   "ov_self": 0.3956
+  },
+  "aeeb08e9bcf3": {
+   "case_id": "iq-A06",
+   "cell": "A",
+   "intended": "APPLY",
+   "subject": "absence-proof-store-coverage-then-conclude-f0f333894129",
+   "trigger_source": "absence-proof-store-coverage-then-conclude-f0f333894129",
+   "ov_self": 0.3936
+  },
+  "b40404692a48": {
+   "case_id": "iq-B01",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+   "trigger_source": "named-product-ops-identity-and-verified-experience-first-e521c85e2825",
+   "v1_case_ref": "mb-002",
+   "ov_self": 0.1628,
+   "trap_overlap": 0.2174
+  },
+  "f4b05552ec12": {
+   "case_id": "iq-B02",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4",
+   "trigger_source": "resume-active-goal-from-checkpoint-git-delta-skip-reverification-82a6c69f25bc",
+   "v1_case_ref": "mb-004",
+   "ov_self": 0.2632,
+   "trap_overlap": 0.1375
+  },
+  "ab4d262187dd": {
+   "case_id": "iq-B03",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+   "trigger_source": "verify-active-pointer-before-deleting-old-version-0b130c190942",
+   "v1_case_ref": "mb-006",
+   "ov_self": 0.4091,
+   "trap_overlap": 0.3333
+  },
+  "556a9e9f8870": {
+   "case_id": "iq-B04",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "absence-check-via-definition-site-then-vcs-history-4a2c300a684f",
+   "trigger_source": "read-named-owner-before-enumerating-peers-b0901d59403c",
+   "v1_case_ref": "mb-008",
+   "ov_self": 0.2558,
+   "trap_overlap": 0.1681
+  },
+  "a69859deb2df": {
+   "case_id": "iq-B05",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "absence-claim-probe-by-term-decomposition-b574233f4f9a",
+   "trigger_source": "zero-hit-from-indexed-search-is-not-code-absence-proof-fa972dda9005",
+   "v1_case_ref": "mb-010",
+   "ov_self": 0.3133,
+   "trap_overlap": 0.0909
+  },
+  "b02b7054bb82": {
+   "case_id": "iq-B06",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "absence-proof-store-coverage-then-conclude-f0f333894129",
+   "trigger_source": "provenance-before-defaults-advisory-state-4debbe308f39",
+   "v1_case_ref": "mb-012",
+   "ov_self": 0.3936,
+   "trap_overlap": 0.1628
+  },
+  "8abc7a8d84c5": {
+   "case_id": "iq-B07",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "act-on-in-context-provenance-not-re-discovery-searches-26a2361824c5",
+   "trigger_source": "range-receipt-driven-evidence-recovery-d259013dab32",
+   "v1_case_ref": "mb-014",
+   "ov_self": 0.1974,
+   "trap_overlap": 0.2418
+  },
+  "3991c19edd6a": {
+   "case_id": "iq-B08",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "act-on-provenance-rich-record-hit-receipt-verifies-ca3c9572705a",
+   "trigger_source": "mechanical-identity-resolution-then-receipt-narrowed-retry-7701e37ca4b6",
+   "v1_case_ref": "mb-016",
+   "ov_self": 0.3086,
+   "trap_overlap": 0.321
+  },
+  "885bc2b985af": {
+   "case_id": "iq-B09",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "adjudicate-from-alert-payload-audit-claims-before-write-855b2b6f199a",
+   "trigger_source": "guard-fail-attribution-before-broad-forensics-7179e48d8700",
+   "v1_case_ref": "mb-018",
+   "ov_self": 0.3934,
+   "trap_overlap": 0.2073
+  },
+  "140487a03a55": {
+   "case_id": "iq-B10",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "align-repo-advice-with-recorded-decisions-first-0973b39f2d2e",
+   "trigger_source": "state-record-first-for-stateful-command-params-2ec22b820b16",
+   "v1_case_ref": "mb-020",
+   "ov_self": 0.3956,
+   "trap_overlap": 0.1596
+  },
+  "18ffc545f2c3": {
+   "case_id": "iq-B11",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "align-session-gap-with-restart-timestamps-before-broad-search-73202fbb57ff",
+   "trigger_source": "route-article-claims-to-primary-sources-before-broad-search-0ed9248a3179",
+   "v1_case_ref": "mb-022",
+   "ov_self": 0.7305,
+   "trap_overlap": 0.7692
+  },
+  "1d37b7074afe": {
+   "case_id": "iq-B12",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "allowlist-names-from-authoritative-definition-not-summary-28a550ac5cac",
+   "trigger_source": "zero-hit-from-indexed-search-is-not-code-absence-proof-fa972dda9005",
+   "v1_case_ref": "mb-024",
+   "ov_self": 0.3617,
+   "trap_overlap": 0.1636
+  },
+  "b0796777816a": {
+   "case_id": "iq-B13",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "ambiguous-timeout-verify-landed-before-rerun-2fad1c47ee54",
+   "trigger_source": "compound-timeout-bounded-local-probe-first-8a88098e84bd",
+   "v1_case_ref": "mb-026",
+   "ov_self": 0.2133,
+   "trap_overlap": 0.3077
+  },
+  "d7382dc9e596": {
+   "case_id": "iq-B14",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "anaphora-artifact-first-context-recovery-42e2e7649585",
+   "trigger_source": "followup-questions-route-to-recent-artifact-first-4ef2b5c311a1",
+   "v1_case_ref": "mb-028",
+   "ov_self": 0.129,
+   "trap_overlap": 0.2427
+  },
+  "f5d401162d03": {
+   "case_id": "iq-B15",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "anchor-and-derive-environment-parameters-8d332b7db8e5",
+   "trigger_source": "mechanical-identity-resolution-then-receipt-narrowed-retry-7701e37ca4b6",
+   "v1_case_ref": "mb-030",
+   "ov_self": 0.314,
+   "trap_overlap": 0.2346
+  },
+  "385307455b5c": {
+   "case_id": "iq-B16",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "anchor-background-job-polling-to-duration-prior-1dfd748c4afb",
+   "trigger_source": "timed-harvest-instead-of-interim-polling-for-characterized-jobs-17289414e24c",
+   "v1_case_ref": "mb-032",
+   "ov_self": 0.3143,
+   "trap_overlap": 0.2933
+  },
+  "133f332c05b4": {
+   "case_id": "iq-B17",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "anchor-complete-gate-query-before-remote-mutation-f3e6129501ef",
+   "trigger_source": "writeback-only-receipt-backed-identifiers-db1ea44b81ca",
+   "v1_case_ref": "mb-034",
+   "ov_self": 0.4125,
+   "trap_overlap": 0.1765
+  },
+  "f8bdb61874fa": {
+   "case_id": "iq-B18",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "anchor-content-search-on-observed-literal-tokens-8d7925c691d2",
+   "trigger_source": "exact-id-locate-store-backing-file-by-scoped-find-not-wide-grep-7b1f386ab61c",
+   "v1_case_ref": "mb-036",
+   "ov_self": 0.4355,
+   "trap_overlap": 0.1782
+  },
+  "2914fb67544e": {
+   "case_id": "iq-B19",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "anchor-declared-worktree-root-before-commands-695487311c0e",
+   "trigger_source": "verify-declared-runtime-deps-in-fresh-execution-root-a4fa73c1d822",
+   "v1_case_ref": "mb-038",
+   "ov_self": 0.382,
+   "trap_overlap": 0.369
+  },
+  "614b443c39f0": {
+   "case_id": "iq-B20",
+   "cell": "B",
+   "intended": "SKIP",
+   "subject": "anchor-driven-reads-from-authoritative-record-2da4c04b01dc",
+   "trigger_source": "id-keyed-state-lookup-before-layout-enumeration-e1448b14a10d",
+   "v1_case_ref": "mb-040",
+   "ov_self": 0.1642,
+   "trap_overlap": 0.2
+  },
+  "0f030fffc8b6": {
+   "case_id": "iq-C01",
+   "cell": "C",
+   "intended": "APPLY",
+   "subject": "anaphora-artifact-first-context-recovery-42e2e7649585",
+   "trigger_source": "anaphora-artifact-first-context-recovery-42e2e7649585",
+   "ov_self": 0.129
+  },
+  "a8ddf1553076": {
+   "case_id": "iq-C02",
+   "cell": "C",
+   "intended": "APPLY",
+   "subject": "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+   "trigger_source": "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+   "ov_self": 0.1628
+  },
+  "9b49371f6b70": {
+   "case_id": "iq-C03",
+   "cell": "C",
+   "intended": "APPLY",
+   "subject": "anchor-driven-reads-from-authoritative-record-2da4c04b01dc",
+   "trigger_source": "anchor-driven-reads-from-authoritative-record-2da4c04b01dc",
+   "ov_self": 0.1642
+  },
+  "14691511e63d": {
+   "case_id": "iq-C04",
+   "cell": "C",
+   "intended": "APPLY",
+   "subject": "act-on-in-context-provenance-not-re-discovery-searches-26a2361824c5",
+   "trigger_source": "act-on-in-context-provenance-not-re-discovery-searches-26a2361824c5",
+   "ov_self": 0.1974
+  },
+  "e60dbd0a1bfa": {
+   "case_id": "iq-C05",
+   "cell": "C",
+   "intended": "APPLY",
+   "subject": "ambiguous-timeout-verify-landed-before-rerun-2fad1c47ee54",
+   "trigger_source": "ambiguous-timeout-verify-landed-before-rerun-2fad1c47ee54",
+   "ov_self": 0.2133
+  },
+  "042a55f02372": {
+   "case_id": "iq-C06",
+   "cell": "C",
+   "intended": "APPLY",
+   "subject": "absence-check-via-definition-site-then-vcs-history-4a2c300a684f",
+   "trigger_source": "absence-check-via-definition-site-then-vcs-history-4a2c300a684f",
+   "ov_self": 0.2558
+  },
+  "b5fc9df649e2": {
+   "case_id": "iq-C07",
+   "cell": "C",
+   "intended": "APPLY",
+   "subject": "fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4",
+   "trigger_source": "fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4",
+   "ov_self": 0.2632
+  },
+  "0afaa4940645": {
+   "case_id": "iq-C08",
+   "cell": "C",
+   "intended": "APPLY",
+   "subject": "act-on-provenance-rich-record-hit-receipt-verifies-ca3c9572705a",
+   "trigger_source": "act-on-provenance-rich-record-hit-receipt-verifies-ca3c9572705a",
+   "ov_self": 0.3086
+  },
+  "8088461bd30d": {
+   "case_id": "iq-D01",
+   "cell": "D",
+   "intended": "SKIP",
+   "subject": "allowlist-names-from-authoritative-definition-not-summary-28a550ac5cac",
+   "trigger_source": "attribute-degradation-to-per-round-prefix-producers-3f8e96b65171",
+   "ov_self": 0.3617,
+   "min_overlap": 0.0
+  },
+  "b9beb0e14c29": {
+   "case_id": "iq-D02",
+   "cell": "D",
+   "intended": "SKIP",
+   "subject": "anchor-background-job-polling-to-duration-prior-1dfd748c4afb",
+   "trigger_source": "binary-intervention-sufficiency-gate-7631f80e335c",
+   "ov_self": 0.3143,
+   "min_overlap": 0.0
+  },
+  "3064a2cb77cb": {
+   "case_id": "iq-D03",
+   "cell": "D",
+   "intended": "SKIP",
+   "subject": "anchor-and-derive-environment-parameters-8d332b7db8e5",
+   "trigger_source": "anchor-evidence-to-instance-lifecycle-window-fffe781df7d0",
+   "ov_self": 0.314,
+   "min_overlap": 0.0
+  },
+  "4b921b038dfd": {
+   "case_id": "iq-D04",
+   "cell": "D",
+   "intended": "SKIP",
+   "subject": "absence-claim-probe-by-term-decomposition-b574233f4f9a",
+   "trigger_source": "align-session-gap-with-restart-timestamps-before-broad-search-73202fbb57ff",
+   "ov_self": 0.3133,
+   "min_overlap": 0.0
+  },
+  "d62de2ce72d9": {
+   "case_id": "iq-D05",
+   "cell": "D",
+   "intended": "SKIP",
+   "subject": "act-on-provenance-rich-record-hit-receipt-verifies-ca3c9572705a",
+   "trigger_source": "claim-by-claim-authoritative-state-audit-6785f55f3b95",
+   "ov_self": 0.3086,
+   "min_overlap": 0.0
+  },
+  "655d2eb34213": {
+   "case_id": "iq-D06",
+   "cell": "D",
+   "intended": "SKIP",
+   "subject": "fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4",
+   "trigger_source": "anchor-sufficiency-stop-959b50a21a4c",
+   "ov_self": 0.2632,
+   "min_overlap": 0.0
+  }
+ }
+}
