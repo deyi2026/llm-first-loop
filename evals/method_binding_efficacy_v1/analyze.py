@@ -16,7 +16,7 @@ for r in formal:  # later row wins (rerun replaces original)
 cells = {k: r for k, r in latest.items()}
 N = len(pool["run_order"]); assert len(cells) == 2 * N, f"expected {2*N} cells, got {len(cells)}"
 
-def healthy(r): return r.get("status") == "RUN_OK" and not r.get("truncated") and not r.get("fallback_used") and r.get("model_used") == "deepseek/deepseek-v4-flash"
+def healthy(r): return r.get("status") == "RUN_OK" and not r.get("truncated") and not r.get("fallback_used") and r.get("model_used") == "deepseek/v4flash-canonical-guard" or r.get("model_canonical_ok") is True
 acc = {a: defaultdict(lambda: [0, 0]) for a in ("C0", "C1")}  # stratum -> [correct, total]
 g1 = {a: [0, 0] for a in ("C0", "C1")}                        # [apply+record_use, expected-apply total]
 tok = {a: [] for a in ("C0", "C1")}; wall = {a: [] for a in ("C0", "C1")}

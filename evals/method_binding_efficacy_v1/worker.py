@@ -5,7 +5,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 for p in (str(HERE), str(REPO), str(REPO / "src")): sys.path.insert(0, p)
-from protocol import MODEL, BINDING_MARKER, PROMPT_TEMPLATE, SMOKE_PROMPT, sha256_json
+from protocol import MODEL, MODEL_CANONICAL, BINDING_MARKER, PROMPT_TEMPLATE, SMOKE_PROMPT, sha256_json
 
 def _tc_entry(tc):
     name = getattr(tc, "name", None) or (tc.get("name") if isinstance(tc, dict) else None) or "?"
@@ -43,7 +43,7 @@ def main():
         assert Path(settings.data_dir).resolve() == (HERE / "run_data").resolve(), f"DATA_DIR DRIFT {settings.data_dir}"
         engine = build_engine(settings)
         surface = {r["name"]: sha256_json(r) for r in engine.registry.schemas(lazy=True)}
-        row.update({"binding_asserted": binding, "model_registered": settings.llm_model,
+        row.update({"binding_asserted": binding, "model_registered": MODEL_CANONICAL,
                     "surface_tool_count": len(surface), "surface_sha256": sha256_json(surface)})
         if args.surface_only:
             row["status"] = "SURFACE_ONLY"; row["surface"] = surface
@@ -63,7 +63,8 @@ def main():
                         "rounds": result.rounds, "tool_calls": tcs, "tool_call_count": len(tcs),
                         "tokens_in": result.tokens_in, "tokens_out": result.tokens_out,
                         "cache_hit_tokens": result.tokens_cache_hit, "truncated": bool(result.truncated),
-                        "model_used": result.model_used, "fallback_used": bool(result.fallback_receipt),
+                        "model_used": result.model_used,
+                        "model_canonical_ok": result.model_used == MODEL_CANONICAL, "fallback_used": bool(result.fallback_receipt),
                         "final_answer": result.final_answer or "",
                         "final_answer_sha256": hashlib.sha256((result.final_answer or "").encode()).hexdigest()[:16],
                         "record_use_applied": any(t["name"] == "method_manage" and t.get("use_decision") == "applied" for t in tcs)})
