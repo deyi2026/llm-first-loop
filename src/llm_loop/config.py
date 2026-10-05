@@ -477,6 +477,17 @@ class Settings:
     # target_id 为空仅允许 endpoint 恰好一个 page，防程序替操作者猜 tab。
     browser_perception_cdp_url: str = ""
     browser_perception_target_id: str = ""
+    # ── profile class 三级授权键（DESIGN-20261005 v4 §4.2，S2）──
+    # class: ""≡dedicated（默认档，行为与 S2 之前完全一致）| dedicated | real。
+    # real 档须 LFL_BROWSER_REAL_PROFILE_ACK=<subject>|<scope>|<expires YYYY-MM-DD>，
+    # 缺/格式坏/过期 ⇒ factory 拒绝注册全部 browser 工具（fail-closed）。
+    # REAL_PROFILE_PATHS: real 档用户目录白名单（"," 分隔绝对路径；空=非白名单内指回
+    # 即拒绝；"none"=禁用白名单；S3b 判定消费）。
+    # ATTESTATION_MODE: shadow|enforce（默认 enforce；S3b 消费，S2 只做合法性门）。
+    browser_profile_class: str = ""
+    browser_real_profile_ack: str = ""
+    browser_real_profile_paths: str = ""
+    browser_attestation_mode: str = "enforce"
     # EVO-20260918-753b4a91: CDP websocket 单帧上限（websockets max_size）。库默认 1MiB 会让
     # DOM+AX 大页的 CDP 响应帧 1009 断连并困死会话；默认提升到 128MiB，env 可覆盖。
     browser_cdp_max_frame_bytes: int = 134_217_728
@@ -1059,6 +1070,12 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         browser_perception_target_id=env_values.get(
             "LFL_BROWSER_PERCEPTION_TARGET_ID", ""
         ).strip(),
+        browser_profile_class=env_values.get("LFL_BROWSER_PROFILE_CLASS", "").strip().lower(),
+        browser_real_profile_ack=env_values.get("LFL_BROWSER_REAL_PROFILE_ACK", "").strip(),
+        browser_real_profile_paths=env_values.get("LFL_BROWSER_REAL_PROFILE_PATHS", "").strip(),
+        browser_attestation_mode=env_values.get(
+            "LFL_BROWSER_ATTESTATION_MODE", "enforce"
+        ).strip().lower(),
         browser_action_enabled=env_bool("LFL_BROWSER_ACTION_ENABLED", False),
         browser_cdp_max_frame_bytes=env_int("LFL_BROWSER_CDP_MAX_FRAME_BYTES", 134_217_728),
         exec_mode=env_one(_env_exec_mode, "EXEC_MODE"),

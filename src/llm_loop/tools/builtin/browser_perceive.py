@@ -219,11 +219,15 @@ class BrowserPerceiveTool:
         backend: BrowserCaptureBackend | None,
         session_id_getter: Callable[[], str],
         exact_ref_hydrator: Callable[[str, str], dict[str, Any]] | None = None,
+        profile_annotation: dict[str, Any] | None = None,
     ) -> None:
         self._adapter = adapter
         self._backend = backend
         self._session_id_getter = session_id_getter
         self._exact_ref_hydrator = exact_ref_hydrator
+        # S2 三级授权（DESIGN-20261005 v4 §4.2）：仅 profile_class=real 且 ACK 合法时非 None，
+        # 回执顶层带 profile_class/ack_digest/ack_expires；默认档保持 None ⇒ 输出字节级不变。
+        self._profile_annotation = profile_annotation
         common_wait = {
             "adapter": adapter,
             "backend": backend,
@@ -235,6 +239,8 @@ class BrowserPerceiveTool:
         self._wait_object_text = BrowserWaitObjectTextTool(**common_wait)
 
     def _json_result(self, payload: dict[str, Any]) -> ToolResult:
+        if self._profile_annotation:
+            payload = {**self._profile_annotation, **payload}
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1),
