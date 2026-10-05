@@ -217,6 +217,7 @@ def test_factory_registers_browser_perceive_only_when_explicitly_opted_in(
         "http://127.0.0.1:9222",
         target_id="target-1",
         max_frame_bytes=134_217_728,
+        binding_coordinator=mock.ANY,  # S3a: factory 注入共享通道绑定协调器
     )
     tool = engine.registry.get("browser_perceive")
     assert tool._backend is fake_host
@@ -260,6 +261,7 @@ def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeyp
         "http://127.0.0.1:9222",
         target_id="target-1",
         max_frame_bytes=134_217_728,
+        binding_coordinator=mock.ANY,  # S3a: 与感知 host 同一共享绑定协调器
     )
     tool = enabled.registry.get("browser_operate")
     assert tool._semantic_execute._action_adapter.actuator is fake_write
