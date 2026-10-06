@@ -1,0 +1,24 @@
+{"opaque_id":"a29bdd646e62","verdict":"SKIP","reason":"任务要用原样复现、单变量修复和独立对照验证隐藏状态的因果归因，而该方法针对特定 EPERM 类环境写拒绝并优先查状态回执与既有记录，目的与验证路径不同。"}
+{"opaque_id":"9cd6e254d095","verdict":"SKIP","reason":"任务面对的是连续 403 后切换到其他未读来源，而该方法专门把确定性 404 作为资源不存在的证据并转向规范候选，且明确将 403 列为不适用情形。"}
+{"opaque_id":"2011313157cd","verdict":"SKIP","reason":"任务只需定向读取失败步骤日志并提取 gate 错误与违规清单来确定下一诊断对象，而该方法的核心目的还包括读取本地 gate 脚本、按相同 base/head 复现并修到 PASS，超出了当前任务阶段。"}
+{"opaque_id":"dbba385a2299","verdict":"APPLY","reason":"任务正是在重启产生新 PID 后从该 live PID 推导实际监听端点并只做一次 canary，完全符合该方法避免使用旧端口字面量的目的与短路径。"}
+{"opaque_id":"61fe8a082e6c","verdict":"SKIP","reason":"任务已取得失败步骤及脚本参数，目标是读取权威脚本并按 CI 差分本地复现到 PASS；该方法主要解决如何从 FAILURE 检查中收窄并提取失败日志，阶段已被任务跨过。"}
+{"opaque_id":"31dd5901d37c","verdict":"APPLY","reason":"任务把平台俗称对应的外部更新是否并入并生效转化为 remotes、main 与 remote/main 提交差集及运行进程 HEAD 的拓扑核验，正与该方法目的和判据一致。"}
+{"opaque_id":"d783e2c5e7ff","verdict":"APPLY","reason":"任务明确是守卫因复制旧契约而假红、权威测试为真相源，并要求改为委托测试、透传退出码及验证 runner 缺失、超时和负向探针，和该方法完全一致。"}
+{"opaque_id":"fc9409074ad0","verdict":"SKIP","reason":"任务只是由重启后的 live PID 推导实际绑定端口并执行一次健康探针，而该方法用于复发型守护进程故障的日志、解析缓存和 supervisor 级修复，问题层级与目的不匹配。"}
+{"opaque_id":"0ed299452fe2","verdict":"APPLY","reason":"任务正是依据pending=0、runtime健康和单槽占用转查系统级调度生命周期，定位触发到run交接并设计不依赖共享授权的兜底，与Method目的完全一致。"}
+{"opaque_id":"8b3c19b8db1b","verdict":"SKIP","reason":"任务是依据发布generation/git_head做部署验收和针对性测试，Method关注受保护远端的PR、submission manifest与推送前治理门禁，目的不同。"}
+{"opaque_id":"b247f0db2ef8","verdict":"SKIP","reason":"任务要把tool_timeout视为存在性零信息并改走窄查询和独立provenance，Method却用于依据文档限制、注册表和错误码判定服务端可用性，目的不符。"}
+{"opaque_id":"02ce9e50b318","verdict":"SKIP","reason":"任务已知守卫脚本复制契约落后，目标是改为subprocess委托权威测试并补健壮性探针；Method用于从已知失败节点的traceback诊断测试根因，并不解决契约委托重构。"}
+{"opaque_id":"b17dd9b7c582","verdict":"SKIP","reason":"任务是为受保护共享仓库推导PR与submission manifest交付契约并本地预验，Method则用于发布后沿commit身份做进程、入口、日志和针对性测试验收。"}
+{"opaque_id":"967c9b31fbed","verdict":"SKIP","reason":"任务围绕artifact_missing中的code_root来源核对权威status与路径并纠正规范root，Method针对检索超时不能作为不存在证据的取证规则，问题类型不同。"}
+{"opaque_id":"ec044b3fddcf","verdict":"APPLY","reason":"任务正是把内联lower归一化迁到共享helper，并要求接线前用大小写对照验证语义等价，与Method的diff归一化对等探针目的直接一致。"}
+{"opaque_id":"8f79095a3cd2","verdict":"SKIP","reason":"任务已明确红灯来自守卫脚本旧路径常量，目标是移除复制契约并委托权威测试；Method面向根因未知的多测试失败签名分诊，诊断目标已被任务越过。"}
+{"opaque_id":"299f7cddac23","verdict":"SKIP","reason":"任务要核验 publish 是否实际派发及 target 分布，Method 专用于跨实体重复记录的复制谱系根因取证，目的不一致。"}
+{"opaque_id":"d205979ff96e","verdict":"SKIP","reason":"任务要统计 requeue reason 并追踪字面量的代码发射点，Method 解决已知 record kind 下钻时避免关键词搜索的问题，并非该取证目标。"}
+{"opaque_id":"aa947481ca45","verdict":"SKIP","reason":"任务中的 action 已进入 failed 终态并需读取失败详情后补救，而 Method 仅适用于 durable/running 时延迟等待终态，触发条件相反。"}
+{"opaque_id":"ded7907eee4f","verdict":"APPLY","reason":"任务正是秒级失败的机械 CI gate，要求先取失败判定、沿点名 artifact 查 schema/样例并按同一 base/diff 本地复跑，与 Method 完全吻合。"}
+{"opaque_id":"db50b0a1d2ed","verdict":"SKIP","reason":"任务要用子系统状态回执和既有经验裁定“重启导致 EPERM”的因果说法，未提供带自述修复的 lesson 供单变量复现实验，Method 的核心触发不成立。"}
+{"opaque_id":"3a3d0c248801","verdict":"APPLY","reason":"任务明确以“机制只计算不生效”为待验证前提，并要求先查 reason_code、BLOCKED 与调用点再决定改动，正是 Method 的证伪流程。"}
+{"opaque_id":"151490f348ca","verdict":"SKIP","reason":"任务中的后台部署仍为 durable/running，应延迟检查终态；Method 专用于已 failed 且 action_id 已知后的台账查因与补救。"}
+{"opaque_id":"4966e1595ecb","verdict":"SKIP","reason":"任务关注发布完成后的变更身份、针对性测试及新进程入口日志验证，Method 处理的是切换世代前 ambient 环境变量残留导致的目标绑定风险。"}

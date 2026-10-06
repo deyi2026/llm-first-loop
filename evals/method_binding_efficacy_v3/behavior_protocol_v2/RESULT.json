@@ -1,0 +1,121 @@
+{
+ "schema": "subject-binding-v3-natural-v2-result/v1",
+ "verdict": "PASS",
+ "formal_rows": 44,
+ "record_use_ok": 44,
+ "record_use_rate": 1.0,
+ "experience_write_ok": 44,
+ "experience_write_rate": 1.0,
+ "exactly_one_save_experience_call": 29,
+ "duplicate_save_experience_call_rows": 15,
+ "weak_negative_decisions": 16,
+ "weak_n": 22,
+ "weak_negative_accuracy": 0.7272727272727273,
+ "malformed": 0,
+ "malformed_rate": 0.0,
+ "gates": {
+  "record_use_success": true,
+  "experience_write_success": true,
+  "weak_negative_accuracy": true,
+  "malformed_rate": true,
+  "mechanical_all_healthy": true
+ },
+ "families": {
+  "same_evidence_different_claim": {
+   "strong": {
+    "n": 5,
+    "negative": 2,
+    "negative_accuracy": 0.4,
+    "decisions": {
+     "applied": 1,
+     "adapted": 2,
+     "not_applicable": 2
+    }
+   },
+   "weak": {
+    "n": 5,
+    "negative": 3,
+    "negative_accuracy": 0.6,
+    "decisions": {
+     "applied": 2,
+     "not_applicable": 3
+    }
+   },
+   "viable": true
+  },
+  "same_infra_different_decision": {
+   "strong": {
+    "n": 6,
+    "negative": 4,
+    "negative_accuracy": 0.6666666666666666,
+    "decisions": {
+     "adapted": 2,
+     "not_applicable": 4
+    }
+   },
+   "weak": {
+    "n": 6,
+    "negative": 6,
+    "negative_accuracy": 1.0,
+    "decisions": {
+     "rejected": 1,
+     "not_applicable": 5
+    }
+   },
+   "viable": false
+  },
+  "same_object_different_action": {
+   "strong": {
+    "n": 6,
+    "negative": 4,
+    "negative_accuracy": 0.6666666666666666,
+    "decisions": {
+     "not_applicable": 4,
+     "adapted": 2
+    }
+   },
+   "weak": {
+    "n": 6,
+    "negative": 4,
+    "negative_accuracy": 0.6666666666666666,
+    "decisions": {
+     "not_applicable": 4,
+     "adapted": 2
+    }
+   },
+   "viable": true
+  },
+  "same_workflow_different_phase": {
+   "strong": {
+    "n": 5,
+    "negative": 3,
+    "negative_accuracy": 0.6,
+    "decisions": {
+     "adapted": 2,
+     "not_applicable": 3
+    }
+   },
+   "weak": {
+    "n": 5,
+    "negative": 3,
+    "negative_accuracy": 0.6,
+    "decisions": {
+     "adapted": 2,
+     "not_applicable": 3
+    }
+   },
+   "viable": true
+  }
+ },
+ "viable_families": [
+  "same_evidence_different_claim",
+  "same_object_different_action",
+  "same_workflow_different_phase"
+ ],
+ "input_sha256": {
+  "PREREG.md": "a6bca0019775aec7f1e70580c77498d5498e734bbb14699d69dd74a6f8af0235",
+  "FREEZE.json": "b85dd839c641a684a50411d268be401aa6cebc641b9a171feb2207a14b3b96a6",
+  "plan.json": "87a139717c51e2fa4e0317f19df991a0300da49e96552a354a4e9cd6d8d32a86",
+  "matrix.jsonl": "466361a3cfba1b66d732dc3d25965d7699a776079db28e779fb864f8d42dd507"
+ }
+}

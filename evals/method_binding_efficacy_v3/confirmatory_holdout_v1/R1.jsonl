@@ -1,0 +1,24 @@
+{"opaque_id":"a29bdd646e62","verdict":"SKIP","reason":"任务是在受控复现中验证某隐藏状态修复的因果机制，方法针对环境级EPERM写拒绝及既有记录短路诊断，目的不一致。"}
+{"opaque_id":"9cd6e254d095","verdict":"SKIP","reason":"任务面对的是持续403并要求切换到下一未读来源，而方法专门把确定性404视为资源不存在并转向规范候选，且明确排除403情形。"}
+{"opaque_id":"2011313157cd","verdict":"SKIP","reason":"任务只需收窄到失败步骤并提取门禁错误以确定下一诊断对象，方法的核心目的则是继续读取本地门禁脚本并按相同base/head复现修到PASS，超出当前任务阶段。"}
+{"opaque_id":"dbba385a2299","verdict":"APPLY","reason":"任务正是重启后依据新的live PID推导实际监听端点并只做一次canary，和方法的触发条件、短路径及验证目标完全一致。"}
+{"opaque_id":"61fe8a082e6c","verdict":"SKIP","reason":"任务已经取得失败步骤中的脚本与参数，下一步是读取脚本并本地同差分复现至PASS；该方法仅负责把日志查询收窄到门禁错误，达到该点即应停止。"}
+{"opaque_id":"31dd5901d37c","verdict":"APPLY","reason":"任务要求把平台俗称对应的外部更新转化为remote拓扑与提交集合差问题，并结合运行进程HEAD判断是否生效，正符合方法目的。"}
+{"opaque_id":"d783e2c5e7ff","verdict":"APPLY","reason":"任务中的守卫因复制旧契约而假红、权威测试为绿，并要求改为委托真相源且验证缺runner、超时和负向探针，与方法完整匹配。"}
+{"opaque_id":"fc9409074ad0","verdict":"SKIP","reason":"任务只是从重启后的live PID推导绑定端口并做健康探针，方法针对复发型常驻守护进程故障、进程日志与supervisor持久化修复，诊断目的不同。"}
+{"opaque_id":"0ed299452fe2","verdict":"APPLY","reason":"任务正是定时唤醒未生成run且快照呈pending=0、runtime健康、单槽占用，需转查系统级触发→run生命周期并设计不依赖共享授权的兜底，与Method目的完全一致。"}
+{"opaque_id":"8b3c19b8db1b","verdict":"SKIP","reason":"任务是依据generation/git_head做发布验收并按commit选择针对性测试，而Method解决的是受保护远端的PR、manifest与推送前门禁交付流程，目的不同。"}
+{"opaque_id":"b247f0db2ef8","verdict":"SKIP","reason":"任务核心是把tool_timeout视为存在性零信息并改用窄查询和独立provenance确认保存事实，Method却用于依据文档、注册表和错误码区分服务端可用性限制与本地配置问题。"}
+{"opaque_id":"02ce9e50b318","verdict":"SKIP","reason":"任务已知守卫脚本复制契约过期，目标是改为subprocess委托权威测试并加健壮性探针；Method针对已有失败节点的高详细度重跑诊断，不解决权威委托重构。"}
+{"opaque_id":"b17dd9b7c582","verdict":"SKIP","reason":"任务是从仓库历史推导受保护分支的PR与submission manifest交付契约并本地预验，Method则用于发布后沿变更标识做进程、入口、日志和针对性功能验收。"}
+{"opaque_id":"967c9b31fbed","verdict":"SKIP","reason":"任务面对的是artifact_missing及错误code_root输入，需要用权威status和路径事实确定规范root来源；Method针对检索超时不能作为不存在证据的存在性判断问题。"}
+{"opaque_id":"ec044b3fddcf","verdict":"APPLY","reason":"任务正是把内联lower归一化改为共享helper后，在接线前用大小写对照探针验证语义等价，与Method的归一化对等检查目的直接一致。"}
+{"opaque_id":"8f79095a3cd2","verdict":"SKIP","reason":"任务已明确红灯源于守卫脚本旧路径常量，目标是删除复制契约并委托权威测试；Method主要用于未知原因的多失败测试按签名分类诊断，阶段和目的不符。"}
+{"opaque_id":"299f7cddac23","verdict":"SKIP","reason":"任务要用 action 台账核验 publish 是否派发及 target 分布，Method 聚焦跨实体重复记录的字节复制与谱系归因，目的不一致。"}
+{"opaque_id":"d205979ff96e","verdict":"SKIP","reason":"任务要统计 journal 的 reason 分布并追踪主导 reason 的代码发射点，未给出预先命名的 record kind 检索轴，Method 的具名 kind 优先下钻条件不成立。"}
+{"opaque_id":"aa947481ca45","verdict":"SKIP","reason":"任务中的 action 已进入 failed 终态，应读取失败细节并补救；Method 仅适用于 durable/running 且剩余未知量只是等待终态的场景。"}
+{"opaque_id":"ded7907eee4f","verdict":"APPLY","reason":"任务正是秒级失败的机械 CI gate，需要先取失败判定、沿点名 artifact 读 schema/通过样例，并按相同 base/diff 语义本地复跑，与 Method 完全一致。"}
+{"opaque_id":"db50b0a1d2ed","verdict":"SKIP","reason":"任务要用子系统状态回执和既有经验裁定“重启导致 EPERM”的归因并确定人机分工，Method 要求复现带自述修复的机制断言并做单变量矩阵，任务目的与证据路径不同。"}
+{"opaque_id":"3a3d0c248801","verdict":"APPLY","reason":"任务明确要求先检索 reason_code、BLOCKED 回执和判定函数调用点，验证“只计算不生效”的前提后再决定改动，正是 Method 的核心流程。"}
+{"opaque_id":"151490f348ca","verdict":"SKIP","reason":"任务中的后台部署仍为 durable/running，目标是延迟检查终态；Method 只适用于已 failed 且需按 action_id 查失败台账并执行补救的场景。"}
+{"opaque_id":"4966e1595ecb","verdict":"SKIP","reason":"任务是在发布完成后依据 generation/git_head 做变更、测试、进程和日志验证，Method 聚焦世代切换前防止 ambient 环境变量指向旧目标，当前没有该前置风险。"}

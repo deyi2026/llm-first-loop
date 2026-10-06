@@ -1,0 +1,20 @@
+{
+ "c1_dev_calls": 0,
+ "files": {
+  "FREEZE.json": "b85dd839c641a684a50411d268be401aa6cebc641b9a171feb2207a14b3b96a6",
+  "PREREG.md": "a6bca0019775aec7f1e70580c77498d5498e734bbb14699d69dd74a6f8af0235",
+  "RESULT.json": "b600a1dc4380ae13de167e29f7194db2f94d78a36b1306ea23d0298c72eb15bd",
+  "SYNTHESIS.md": "b9e67be0de9b3de34e8e01775894d5c0f6d2df3cc74b5075936ca42bfdd6bfd5",
+  "analyze.py": "674c86fd6f3ac1499fd906f2ff5139ad8d30d8b724941121857abbc370c557c1",
+  "matrix.jsonl": "466361a3cfba1b66d732dc3d25965d7699a776079db28e779fb864f8d42dd507",
+  "plan.json": "87a139717c51e2fa4e0317f19df991a0300da49e96552a354a4e9cd6d8d32a86"
+ },
+ "provider_rows_after_analysis": 0,
+ "schema": "subject-binding-v3-natural-v2-result-freeze/v1",
+ "verdict": "PASS",
+ "viable_families": [
+  "same_evidence_different_claim",
+  "same_object_different_action",
+  "same_workflow_different_phase"
+ ]
+}

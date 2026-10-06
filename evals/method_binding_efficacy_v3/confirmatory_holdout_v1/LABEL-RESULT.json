@@ -1,0 +1,113 @@
+{
+ "schema": "subject-binding-v3-confirmatory-label-qualification/v1",
+ "verdict": "PASS",
+ "raw_agreement": 1.0,
+ "kappa": 1.0,
+ "r1_accuracy": 0.9583333333333334,
+ "r2_accuracy": 0.9583333333333334,
+ "challenge_dual_certified": 17,
+ "reverse_risk_apply_dual_certified": 6,
+ "families": {
+  "same_object_different_action": {
+   "certified": 6,
+   "n": 6
+  },
+  "same_evidence_different_claim": {
+   "certified": 5,
+   "n": 6
+  },
+  "same_workflow_different_phase": {
+   "certified": 6,
+   "n": 6
+  }
+ },
+ "anti_leak_unresolved": 0,
+ "gates": {
+  "raw_agreement": true,
+  "kappa": true,
+  "r1_intended_accuracy": true,
+  "r2_intended_accuracy": true,
+  "challenge_dual_certified": true,
+  "each_family": true,
+  "reverse_risk_apply": true,
+  "anti_leak": true
+ },
+ "disagreements": [],
+ "uncertified": [
+  {
+   "opaque_id": "31dd5901d37c",
+   "case_id": "v3h-B11",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "external-update-merge-status-via-remote-setdiff-not-label-search-36ab77644027",
+   "source_method_id": "derive-delivery-gates-from-repo-history-preverify-locally-0f4fbb2a1558",
+   "purpose_divergence": "任务判断外部更新是否已经合并生效；subject Method 面向从仓库历史推导未来提交的 PR/manifest 交付契约。",
+   "r1": "APPLY",
+   "r2": "APPLY",
+   "agree": true,
+   "r1_correct": false,
+   "r2_correct": false,
+   "dual_certified": false
+  }
+ ],
+ "certified_case_ids": [
+  "v3h-B09",
+  "v3h-B06",
+  "v3h-B13",
+  "v3h-A02",
+  "v3h-B14",
+  "v3h-A05",
+  "v3h-B18",
+  "v3h-A01",
+  "v3h-B05",
+  "v3h-B12",
+  "v3h-B15",
+  "v3h-B04",
+  "v3h-B01",
+  "v3h-A06",
+  "v3h-B02",
+  "v3h-B08",
+  "v3h-B07",
+  "v3h-B17",
+  "v3h-A03",
+  "v3h-B10",
+  "v3h-A04",
+  "v3h-B03",
+  "v3h-B16"
+ ],
+ "certified_challenge_case_ids": [
+  "v3h-B09",
+  "v3h-B06",
+  "v3h-B13",
+  "v3h-B14",
+  "v3h-B18",
+  "v3h-B05",
+  "v3h-B12",
+  "v3h-B15",
+  "v3h-B04",
+  "v3h-B01",
+  "v3h-B02",
+  "v3h-B08",
+  "v3h-B07",
+  "v3h-B17",
+  "v3h-B10",
+  "v3h-B03",
+  "v3h-B16"
+ ],
+ "certified_reverse_risk_case_ids": [
+  "v3h-A02",
+  "v3h-A05",
+  "v3h-A01",
+  "v3h-A06",
+  "v3h-A03",
+  "v3h-A04"
+ ],
+ "input_sha256": {
+  "PREREG.md": "776a4692489f633bc6008c93bb043aadd798d166c83cc851dedbf18af05545b1",
+  "candidates.json": "c4593204e9d591fdab864a66e9c4f301d66293d8393e463291c9c42cc2baec73",
+  "sealed.json": "4c0e0dfd06fddb01f9d1b1dcf8c8272d8e35d39fb9ef9e4d69dd1a5e4ec947a3",
+  "R1.jsonl": "5e1a3be446e724346a7930a38ea4d8590b33576cf81fd73189775dd69931017a",
+  "R2.jsonl": "d8fb019c10a34778fbe70792406718a67a0596d7a7702b8a683617a929d071b2"
+ }
+}

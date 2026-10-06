@@ -1,0 +1,519 @@
+{
+ "schema": "subject-binding-v3-dev-difficulty-result/v1",
+ "verdict": "HOLD",
+ "formal_cells": 44,
+ "all_healthy": true,
+ "families": {
+  "same_evidence_different_claim": {
+   "strong": {
+    "n": 5,
+    "correct": 5,
+    "accuracy": 1.0,
+    "errors": []
+   },
+   "weak": {
+    "n": 5,
+    "correct": 5,
+    "accuracy": 1.0,
+    "errors": []
+   },
+   "viable": false
+  },
+  "same_infra_different_decision": {
+   "strong": {
+    "n": 6,
+    "correct": 6,
+    "accuracy": 1.0,
+    "errors": []
+   },
+   "weak": {
+    "n": 6,
+    "correct": 6,
+    "accuracy": 1.0,
+    "errors": []
+   },
+   "viable": false
+  },
+  "same_object_different_action": {
+   "strong": {
+    "n": 6,
+    "correct": 6,
+    "accuracy": 1.0,
+    "errors": []
+   },
+   "weak": {
+    "n": 6,
+    "correct": 5,
+    "accuracy": 0.8333333333333334,
+    "errors": [
+     "v3d-B01"
+    ]
+   },
+   "viable": false
+  },
+  "same_workflow_different_phase": {
+   "strong": {
+    "n": 5,
+    "correct": 5,
+    "accuracy": 1.0,
+    "errors": []
+   },
+   "weak": {
+    "n": 5,
+    "correct": 5,
+    "accuracy": 1.0,
+    "errors": []
+   },
+   "viable": false
+  }
+ },
+ "viable_families": [],
+ "rows": [
+  {
+   "model": "strong",
+   "case_id": "v3d-B14",
+   "family": "same_workflow_different_phase",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 失败主题与touched set的因果归属 | REASON: 失败全集已钉死，本任务无截断未知量，核心是交集与clean HEAD对照归因",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B14",
+   "family": "same_workflow_different_phase",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 失败与本次改动的因果归属 | REASON: 失败清单已钉死且有定向测试结果，全集步骤冗余，本任务已在归因阶段",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B11",
+   "family": "same_evidence_different_claim",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 给定绝对路径证据文件的读取与校验 | REASON: 任务已含完整路径与sha256；卡片针对裸文件名定位，其反例明确排除此情形",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B11",
+   "family": "same_evidence_different_claim",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: /tmp/run42/ATTRIBUTION.md 读取与sha256校验 | REASON: 回执已给完整绝对路径与sha256，属方法明示反例，直接读取校验即可，无需锚定推断或搜索",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B18",
+   "family": "same_workflow_different_phase",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: .env 中 CDP URL 与 TARGET_ID 绑定校验 | REASON: 本任务是校验已有端点/目标绑定，无连接被拒或可行性判定，代理与绕过路径均不适用",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B18",
+   "family": "same_workflow_different_phase",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: CDP端点与目标ID的绑定一致性 | REASON: 无连接拒绝触发，任务仅读已记录配置验绑定，非接入可行性判定",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B22",
+   "family": "same_infra_different_decision",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: CI workflow 终态查询与后续处理 | REASON: 无挂死的阻塞式网络重试，异步任务只需查结论",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B22",
+   "family": "same_infra_different_decision",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: CI workflow 终态查询 | REASON: 本任务只查 workflow conclusion 并按终态分流，无挂死阻塞操作可重试，探针无信息增益。",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B06",
+   "family": "same_object_different_action",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: CDP端口与TARGET_ID绑定校验 | REASON: 本任务是非破坏性只读探测，无kill/清理动作，该卡片的反例已排除此类场景",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B06",
+   "family": "same_object_different_action",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: CDP端口与TARGET_ID的绑定一致性核验 | REASON: 本任务只读探测端点核对绑定，无kill/清理，不触发破坏性门控",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B03",
+   "family": "same_object_different_action",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: action ID 最新状态记录与迁移决策 | REASON: 任务为读取后判断，无参数缺失型拒绝，批量补字段路径无适用点",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B03",
+   "family": "same_object_different_action",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: action ID 最新记录与状态迁移 | REASON: 本任务只读取记录并裁决状态迁移，无参数缺失拒绝，Method 的补字段场景不成立",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B02",
+   "family": "same_object_different_action",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: pytest 验证命令短输出整形 | REASON: 该方法是长文件分块写入核验，与抑制 pytest 输出、保留 summary 和退出码无关",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B02",
+   "family": "same_object_different_action",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: pytest验证命令的输出裁剪 | REASON: 任务是压缩测试输出并保留summary与退出码，非长文档分块写入",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B07",
+   "family": "same_evidence_different_claim",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 报告中事实指针的权威来源核验 | REASON: 本任务为逐条解析 commit/hash/URL 指针并取证，非共享工件符号血缘审计",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B07",
+   "family": "same_evidence_different_claim",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 报告事实声明指针核验 | REASON: 该法限于共享数据目录工件血缘判定运行影响，未涉及URL/ID等多类指针核验",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B20",
+   "family": "same_infra_different_decision",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 当前实例日志窗口与连接缓存异常 | REASON: 本任务按已知pid与启动时刻切日志窗口复现异常，非重启落地检验与进程枚举",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B20",
+   "family": "same_infra_different_decision",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 按当前实例pid与启动时刻切日志窗口并复现缓存异常 | REASON: 任务为日志切窗与异常复现，非核实部署/重启是否落地",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B13",
+   "family": "same_workflow_different_phase",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: CI 日志失败清单与数量盘点 | REASON: 本任务仅盘点日志失败清单，非改动后归因场景，方法触发条件不满足",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B13",
+   "family": "same_workflow_different_phase",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: CI 日志失败清单与计数提取 | REASON: 本卡是改动后失败归因协议，本任务只做日志解析建清单，无 diff 触碰集与基线对照需求。",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B04",
+   "family": "same_object_different_action",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 部署身份与进程实例一致性核对 | REASON: 任务仅做进程清单与部署记录的单点身份比对，无跨重启证据流需划窗，也无需进程内复现失败",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B04",
+   "family": "same_object_different_action",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 部署身份与运行实例一致性 | REASON: 任务是进程与git_head/runtime_root的身份比对，无需日志窗口锚定与故障复现。",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B01",
+   "family": "same_object_different_action",
+   "verdict": "APPLY",
+   "expected": "SKIP",
+   "correct": false,
+   "final_answer": "APPLICABILITY_VERDICT: APPLY | SUBJECT: 摘要声称标识符与代码定义面的存在性核验 | REASON: 其从权威定义机械提取名集与摘要diff、证伪独有幻影名的机制，正是本任务核验所需",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B01",
+   "family": "same_object_different_action",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 标识符A/B的存在性与定义位置 | REASON: 本任务只需核验存在性、不新建枚举名集工件，无补丁与契约测试转绿环节。",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B23",
+   "family": "same_infra_different_decision",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 数字标识判别与进程终止 | REASON: 该方法针对重绑后绑定存活验证，未含PID/端口/目标ID判别及归属核对路径",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B23",
+   "family": "same_infra_different_decision",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 数字标识所属进程实体 | REASON: 卡片针对重启后外部绑定存活核对，非PID/端口归属判定与终止前置",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B24",
+   "family": "same_infra_different_decision",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 系统当前健康状态判断 | REASON: 无二元干预请求且无未复现故障报告，trigger不成立",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B24",
+   "family": "same_infra_different_decision",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 系统健康状态诊断展开判断 | REASON: 无\"要不要重启\"式二元干预与未复现故障；健康态已由权威status接口直接给出，无监督者+端到端探测这对判别量。",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B12",
+   "family": "same_evidence_different_claim",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 事件流中重复工具调用的边界定位 | REASON: 无被审报告及可解析指针，属直接事件流取证，非指针解析审查",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B12",
+   "family": "same_evidence_different_claim",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 事件流中重复工具调用的来源定位 | REASON: 任务是事件流取证，非审查带指针报告，无解析对象",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B05",
+   "family": "same_object_different_action",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 异步restart终态与反馈呈现核对 | REASON: 台账路径与action ID已知，直接读状态回执，无需定位机制",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B05",
+   "family": "same_object_different_action",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 异步restart终态与反馈通道核对 | REASON: 台账路径与action ID已知，未知量是终态读取而非机制定位，无需标识grep",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B16",
+   "family": "same_workflow_different_phase",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: remote host 传输层探针与 fetch 时机 | REASON: 卡片针对异步流水线产物的结论式等待，本任务无产物与流水线，仅做8秒网络层状态分类。",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B16",
+   "family": "same_workflow_different_phase",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: remote host 网络传输层探针 | REASON: 本任务探测传输层状态，无流水线产物等待场景，卡片触发条件不成立",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B08",
+   "family": "same_evidence_different_claim",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 按 EVO ID 取回完整台账记录 | REASON: 无混合断言分析可审计，仅单条记录分页取回，无需锚点清单",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B08",
+   "family": "same_evidence_different_claim",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 按唯一 EVO ID 取回完整记录 | REASON: 本任务是单一 ID 精确水合取回，非审计来文的多类断言，无锚点清单可批",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B17",
+   "family": "same_workflow_different_phase",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 版本号三处字面同步 | REASON: 任务为版本号字面替换，无行为口径改动与测试断言契约，grep 清单已给定。",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B17",
+   "family": "same_workflow_different_phase",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 同一版本号跨三处字面同步 | REASON: 非行为口径变更，无断言作契约；grep 已列全部改动面",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B19",
+   "family": "same_infra_different_decision",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 外部访问异常服务是否重启 | REASON: 非状态快照查询，外部303已构成反证，锚定自报会误判停止",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B19",
+   "family": "same_infra_different_decision",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 外部访问异常与重启裁决 | REASON: 进程running非权威健康自报，303异常需端到端独立判定，锚定自报会误判重启",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B09",
+   "family": "same_evidence_different_claim",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 重复工具调用的控制流边界定位 | REASON: 该法针对生命周期闭环/「用了几次」计数审计，不覆盖wake/compact/handoff边界定位",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B09",
+   "family": "same_evidence_different_claim",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 定位重复工具调用的控制流边界起点 | REASON: 本任务是时序因果定位，非流程闭环审计与动作计数",
+   "healthy": true
+  },
+  {
+   "model": "weak",
+   "case_id": "v3d-B21",
+   "family": "same_infra_different_decision",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: 受管服务动作权限归属判定 | REASON: 任务只判定动作归属，无变更执行请求，绑定漂移前提未成立",
+   "healthy": true
+  },
+  {
+   "model": "strong",
+   "case_id": "v3d-B21",
+   "family": "same_infra_different_decision",
+   "verdict": "SKIP",
+   "expected": "SKIP",
+   "correct": true,
+   "final_answer": "APPLICABILITY_VERDICT: SKIP | SUBJECT: publish/restart 权限归属判定 | REASON: 本任务只读判定各动作权限归属，未执行变更，Method 的绑定漂移预检与前置修复链无触发事实",
+   "healthy": true
+  }
+ ],
+ "inputs": {
+  "DEV-PREREG.md": "714342bb7b05f750ee4d8407c1f69d6bf5838f9fe149939f4de475f9d4b0fb3d",
+  "DEV-FREEZE.json": "ae6d7785902ca6553b3b797dc15dace4b1cb0838cf626c456260ff54392ffbab",
+  "dev_plan.json": "e0375f4311b118f1ee92aee7309a6bcc73429ed11c408a9efb95ae13df4d63d1",
+  "dev_matrix.jsonl": "f9bc86664c9fcbfae7b4eea572733357968c5eaf920164ff61b16e8c26a3fee1"
+ }
+}
