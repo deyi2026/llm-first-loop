@@ -104,4 +104,18 @@ Status: **AUTHORIZED — A1 已授权（2026-10-06 19:48:53 会话明示），A2
 - **G3 PASS（含一次机械处置）**：聚焦+邻接 117/117（13 文件，为 65 口径超集）；broad 邻接（foreground/provider-settlement/web-stream 15 文件）**206/206**（159 口径超集）；Ruff 六路径全绿；compileall PASS。Ruff 首跑 1 处**存量** I001（factory.py import 乱序，browser 漂移引入、与四契约无关、运行时代码同样存在）→ `ruff --fix` 纯 import 重排（diff 仅 3 行移动，行为零变化）单独 commit 后复跑全绿。
 - **G4 PASS（无实质偏差）**：当前 schema 下 publish 与 restart 为独立动作、restart 异步两阶段、`expected_generation` 缺省取当前期望代（与 §4-4 "当前+1" 等效）、publish 要求 tracked 树干净。§4 映射无需改写。
 - **G5 PASS**：journal 1183 job 无 pending（saved 762 / none 141 / failed 253 / cancelled 27）；embedding stderr 无请求错误（仅 1 处 resource_tracker UserWarning）；knowledge healthy；lfrt runtime-observation ok。基线上文（非 FR-1 面）：18:02 存量 1 条 `reflection_call_failed` 终态 job，激活前发生，列入 T+24h 观察对照。
-- **执行链与证据**：T+0 证据包见 §11（发布/重启回执、override 工件、dry-run JSON、manifest 快照、canary smoke JSON、PID 对照表）。
+- **执行链与证据**：见 §11。执行时间线：commit `337e2855f`（机械 lint）+ `3e502592b`（授权包/知识工件）→ publish **gen 181**（deploy-12fd22aa194c46fcb396f1390b9d4bbe, HEAD 3e502592b）→ runtime.toml `[semantic.learning] method=true` → dry-run PASS → restart learning（svc-a713b14ce45245c2a2fc9e18c919f3ce, 2.4s, verify=confirmed_ok）→ manifest/无扰动核验 → canary PASS。
+
+## 11. T+0 证据包（2026-10-06 20:1x）
+
+- **发布/重启回执**：desired gen **180→181**（webui sha 52970dd2…，git_head 3e502592bba38e88a309d8fa958a1c6a09712594）；restart action `svc-a713b14ce45245c2a2fc9e18c919f3ce` status=succeeded，learning 新 PID **68464** @19:59:29，head=3e502592b（仅 learning 重启；web/feishu 保持 gen 180 进程，属预期——代差仅为 docs+import 重排+知识工件）。
+- **Override 工件**：runtime.toml 追加段（含授权注释）；dry-run JSON `evals/retrieval_ab/fr1-activation-dryrun-20261006.json`（sha256 bbbb5989…）：learning `SEMANTIC_METHOD_ENABLED=1 ← runtime_toml_service:learning`，其余 4 个 semantic 键与 web/feishu 全部键不变（dotenv）。单变量判定 PASS。
+- **R-1b 回滚能力验证 PASS**：剥离 `[semantic.learning]` 段投影回 `0 ← dotenv`（`/tmp/fr1/runtime.toml.rollback` 等价验证）；回滚动作 = 删 5 行配置，零代码/.env 牵涉。
+- **Manifest 核验**：learning semantic_scopes = {memory:1, method:**1**, archive/docs/experience:0}，scope_sources.method=`runtime_toml_service:learning`，其余 dotenv —— 与 §1 期望完全一致。
+- **PID 对照**：web **40200**（16:38:13 不变）、feishu **40406**（16:38:29 不变）、learning 40913→**68464**。无扰动 ✅。
+- **Canary smoke PASS**（`evals/retrieval_ab/fr1-activation-t0-canary-20261006.json`）：G2 3/3 **rank#1 + semantic_effective + 零 fallback**（bge/api 8765 主引擎）。生产视图实测 8 员 = 3 权威卡 + 5 个 active 种子方法（method-ab-experiment / method-repo-api-discovery / method-root-cause / method-self-distill / method-semantic-operation）——与 factory 同构（store 含 seed_dir），非口径偏差；knowledge_health 的 630 池口径只计 data/methods。种子方法进 Learning dedup 权威视图与 qualification 时点一致（当时 7 active 家族亦含种子）。
+- **Memory 兼容**：进程级证据 = web/feishu 进程未动 + memory 旗标 dotenv=1 未变 + 侧车错误增量 0。独立探针（rank_cached_candidates）= **调用契约错配（candidate_cache_cold → 按契约 fail-open，只读+调度后台修复）**，不构成生产回归证据也不构成反证；如实记录。
+- **Sidecar/队列终态**：embedding stderr 错误计数全程 =1（仅存量 HF UserWarning，增量 0）；learning journal pending=[] 维持 idle。
+- **Stop conditions**：零触发（无 candidate 激增、无队列阻塞、无侧车错误、无 web/feishu 扰动、无 config_hash 漂移）。
+- **基线观察项（非 FR-1）**：18:02 存量 `reflection_call_failed` 终态 job；web/feishu 滞后 gen 181 一代（下次自然重启收敛，无需动作）。
+- **T+0 状态结论**：**FR-1 生产激活完成，无 stop condition**。观测进入 A3 默认节奏：T+24h（2026-10-07 晚）/ T+7d / T+28d，判据按 §5。
