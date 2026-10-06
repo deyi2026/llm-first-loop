@@ -240,6 +240,9 @@ class ToolResult:
     # content 与既有字段中。provider 不可见字段层（同 result_fingerprint 惯例）。
     interrupted_for_interjection: bool = False
     interrupt_reason_code: str = ""
+    # Runtime-owned Method declaration provenance; internal telemetry, never LLM wire.
+    # （合并注：与上方在途打断字段同位新增，二者语义独立，并排保留。）
+    method_use_receipt: dict[str, str] | None = None
 
     def to_message(self) -> Message:
         """构造为 tool 消息（如实承载状态，AI 视角：状态结构化呈现）.
