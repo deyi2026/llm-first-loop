@@ -1,0 +1,11 @@
+{
+ "formal_cells_consumed": 0,
+ "preflight_calls": 4,
+ "schema": "subject-binding-v3-confirmatory-preflight-freeze/v1",
+ "sha256": {
+  "FREEZE.json": "635f81d1bc911219a3a65cb0dbb6600fd6c8f7693bff118cd6ee540504f3f90b",
+  "PREFLIGHT.json": "abb660b882181449832daa18282352baec9862245f68c98b17e4f677d4200c2e",
+  "SURFACE-PROBE.json": "db596b1978dc0c06c5ec42900a035c77c6d4d65d563184ab6656220dfb525bff",
+  "preflight.jsonl": "f1c78aeedd0e214b6c0a05129212e272041c243b137bd827d8e68e7849d8791d"
+ }
+}
