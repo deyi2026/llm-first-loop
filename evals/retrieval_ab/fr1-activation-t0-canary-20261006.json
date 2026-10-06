@@ -1,0 +1,87 @@
+{
+  "ts": "2026-10-06T20:07+08:00",
+  "authority_view_members": [
+    "method:fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4",
+    "method:method-ab-experiment",
+    "method:method-repo-api-discovery",
+    "method:method-root-cause",
+    "method:method-self-distill",
+    "method:method-semantic-operation",
+    "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+    "method:self-execute-review-contract-on-degenerate-tool-output-c1088a737f27"
+  ],
+  "warm": {
+    "requested": true,
+    "candidate_count": 8,
+    "initial_missing": 0,
+    "remaining_missing": 0,
+    "passes": 0,
+    "elapsed_ms": 0.001
+  },
+  "cards": {
+    "fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4": {
+      "rank": 1,
+      "top1": "method:fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4",
+      "returned": [
+        "method:fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4",
+        "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50"
+      ],
+      "diag": {
+        "semantic_effective": true,
+        "semantic_fallback_reason": "",
+        "engine": null,
+        "semantic_hit_count": 2,
+        "keyword_hit_count": 0,
+        "fused_hit_count": 2
+      },
+      "rank1_semantic_effective": true
+    },
+    "resume-continuation-via-named-provenance-and-git-delta-948a229d7f50": {
+      "rank": 1,
+      "top1": "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+      "returned": [
+        "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+        "method:method-self-distill",
+        "method:method-repo-api-discovery"
+      ],
+      "diag": {
+        "semantic_effective": true,
+        "semantic_fallback_reason": "",
+        "engine": null,
+        "semantic_hit_count": 8,
+        "keyword_hit_count": 4,
+        "fused_hit_count": 3
+      },
+      "rank1_semantic_effective": true
+    },
+    "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27": {
+      "rank": 1,
+      "top1": "method:self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+      "returned": [
+        "method:self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+        "method:method-repo-api-discovery",
+        "method:method-ab-experiment"
+      ],
+      "diag": {
+        "semantic_effective": true,
+        "semantic_fallback_reason": "",
+        "engine": null,
+        "semantic_hit_count": 5,
+        "keyword_hit_count": 0,
+        "fused_hit_count": 3
+      },
+      "rank1_semantic_effective": true
+    }
+  },
+  "note": "view = active∪qualified over MethodStore(data/methods + methods/ seeds), mirrors factory _LearningMethodSemanticView",
+  "memory_compat_probe": {
+    "mode": "rank_cached_candidates (stable-key cache contract, same as production experience/memory consumers)",
+    "lex_candidates": 12,
+    "semantic_effective": false,
+    "fallback_reason": "candidate_cache_cold",
+    "engine": "primary",
+    "top_ranked": []
+  },
+  "canary_all_rank1_semantic_effective": true,
+  "canary_ts_final": "2026-10-06T20:09+08:00"
+}

@@ -1,0 +1,62 @@
+{
+  "config_file": "runtime.toml (root, gitignored)",
+  "generated_at_local": "2026-10-06 ~20:02",
+  "purpose": "FR-1 activation dry-run: Learning-only [semantic.learning] method=true projection",
+  "services": {
+    "feishu": {
+      "semantic": {
+        "SEMANTIC_ARCHIVE_ENABLED": "0",
+        "SEMANTIC_DOCS_ENABLED": "0",
+        "SEMANTIC_EXPERIENCE_ENABLED": "0",
+        "SEMANTIC_MEMORY_ENABLED": "1",
+        "SEMANTIC_METHOD_ENABLED": "0"
+      },
+      "semantic_sources": {
+        "SEMANTIC_ARCHIVE_ENABLED": "dotenv",
+        "SEMANTIC_DOCS_ENABLED": "dotenv",
+        "SEMANTIC_EXPERIENCE_ENABLED": "dotenv",
+        "SEMANTIC_MEMORY_ENABLED": "dotenv",
+        "SEMANTIC_METHOD_ENABLED": "dotenv"
+      }
+    },
+    "learning": {
+      "semantic": {
+        "SEMANTIC_ARCHIVE_ENABLED": "0",
+        "SEMANTIC_DOCS_ENABLED": "0",
+        "SEMANTIC_EXPERIENCE_ENABLED": "0",
+        "SEMANTIC_MEMORY_ENABLED": "1",
+        "SEMANTIC_METHOD_ENABLED": "1"
+      },
+      "semantic_sources": {
+        "SEMANTIC_ARCHIVE_ENABLED": "dotenv",
+        "SEMANTIC_DOCS_ENABLED": "dotenv",
+        "SEMANTIC_EXPERIENCE_ENABLED": "dotenv",
+        "SEMANTIC_MEMORY_ENABLED": "dotenv",
+        "SEMANTIC_METHOD_ENABLED": "runtime_toml_service:learning"
+      }
+    },
+    "web": {
+      "semantic": {
+        "SEMANTIC_ARCHIVE_ENABLED": "0",
+        "SEMANTIC_DOCS_ENABLED": "0",
+        "SEMANTIC_EXPERIENCE_ENABLED": "0",
+        "SEMANTIC_MEMORY_ENABLED": "1",
+        "SEMANTIC_METHOD_ENABLED": "0"
+      },
+      "semantic_sources": {
+        "SEMANTIC_ARCHIVE_ENABLED": "dotenv",
+        "SEMANTIC_DOCS_ENABLED": "dotenv",
+        "SEMANTIC_EXPERIENCE_ENABLED": "dotenv",
+        "SEMANTIC_MEMORY_ENABLED": "dotenv",
+        "SEMANTIC_METHOD_ENABLED": "dotenv"
+      }
+    }
+  },
+  "single_variable_verdict": {
+    "PASS": true,
+    "feishu!=1": true,
+    "learning=1": true,
+    "learning_source": "runtime_toml_service:learning",
+    "web!=1": true
+  }
+}
