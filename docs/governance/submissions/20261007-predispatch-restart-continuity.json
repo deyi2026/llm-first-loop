@@ -13,7 +13,7 @@
       "owning_subsystem": "existing human ingress, recent_continuity projection, and completed-episode identity",
       "disposition": "REUSE: persist only the exact completed-answer identity already eligible before dispatch; cross only matching anchored output-free human ingresses. No task selection or history authority promotion.",
       "evidence": [
-        "Original native GLM-5.3 recovery failure retained in results/native-recovery-20261007.json.",
+        "Original native recovery failure and isolated repair remain in chore/harness-evidence-20261006; this main integration is revalidated in evals/restart_continuity/results/main-integration-20261007.json.",
         "Fresh-engine EventStore recovery regression is RED on baseline and GREEN on repair.",
         "Original ordinary unresolved-human barrier tests remain unchanged and pass."
       ],
@@ -42,7 +42,10 @@
       "paths": [
         "docs/PLAN-20261007-lfl-restart-continuity-repair.md",
         "docs/governance/submissions/20261007-predispatch-restart-continuity.json",
-        "docs/PLAN-20261007-restart-continuity-main-integration.md"
+        "docs/PLAN-20261007-restart-continuity-main-integration.md",
+        "docs/RESULT-20261007-restart-continuity-main-integration.md",
+        "docs/PLAN-20261007-restart-continuity-rollout.md",
+        "evals/restart_continuity/results/main-integration-20261007.json"
       ],
       "control_machinery": false,
       "owning_subsystem": "repository repair record and A.5 presence/coverage declaration",
@@ -51,7 +54,8 @@
         "Latest user instruction: \u9700\u8981\u4fee\u590d; GLM-5.3 only, no DeepSeek.",
         "Qualification case/oracle/protocol retained from commit 457062ff0bf4f0e7d2e78c62ea398aabd709b0f2.",
         "Current-main review: retain initial empty transport-timeout receipt; one identical-input streaming transport replacement registered before call.",
-        "Max-effort code review exhausted tokens with no verdict; keep UNKNOWN. Additional identical-input low-effort GLM-5.3 review registered; native recovery profile/oracle remain max and unchanged."
+        "Max-effort code review exhausted tokens with no verdict; keep UNKNOWN. Additional identical-input low-effort GLM-5.3 review registered; native recovery profile/oracle remain max and unchanged.",
+        "Current-main full validation and one original-profile native GLM-5.3 recovery run PASS; baseline failures and review UNKNOWNs remain explicit."
       ],
       "verification_level": "Exact staged-path A.5, diff and security scan.",
       "model_evidence_veto_recovery_exit": "Owner and independent reviewer remain required for gate declarations and promotion; this metadata cannot approve deployment or increase score.",
