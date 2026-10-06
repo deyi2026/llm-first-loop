@@ -743,6 +743,8 @@ class ToolCycleService:
                 "fp_summary": fingerprint_summary(self._stagnation_fingerprint(tc)),
             }
         )
+        if result.method_use_receipt is not None:
+            tool_trace[-1]["method_use_receipt"] = dict(result.method_use_receipt)
         self._record_tool_history(result)
         # H-UI: 工具结果（实时状态条）
         self._host._notify_action(

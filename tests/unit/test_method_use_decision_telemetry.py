@@ -26,12 +26,16 @@ def _record_use(ref: str, decision: str, *, status: str = "success", **extra) ->
     args = {
         "action": "record_use",
         "method_ref": ref,
-        "episode_ref": extra.pop("episode_ref", "episode:s:1:abc"),
-        "method_content_hash": extra.pop("method_content_hash", "deadbeef"),
-        "decision": decision,
+        "use_decision": decision,
         **extra,
     }
-    return {"name": "method_manage", "arguments": args, "status": status}
+    return {
+        "name": "method_manage", "arguments": args, "status": status,
+        "method_use_receipt": {
+            "method_ref": ref, "decision": decision,
+            "episode_ref": "episode:s:1:abc", "method_content_hash": "deadbeef",
+        },
+    }
 
 
 def test_one_event_per_successful_record_use() -> None:
@@ -126,5 +130,43 @@ def test_non_dict_arguments_row_is_ignored() -> None:
         run_end_reason="completed",
         final_answer="",
         model_used="m",
+    )
+    assert eng.events == []
+
+
+def test_failed_or_unknown_search_is_not_counted_as_method_observation() -> None:
+    eng = _FakeEngine()
+    MethodLearningService(eng).post_run(
+        "sid", sess=None, rounds=1, run_end_reason="completed", final_answer="", model_used="m",
+        tool_trace=[
+            {"name": "search_records", "arguments": {"kind": "method", "query": "method:m1"}, "status": "error"},
+            {"name": "search_records", "arguments": {"kind": "method", "query": "method:m2"}},
+        ],
+    )
+    assert eng.events == []
+
+
+def test_runtime_receipt_wins_over_model_authored_provenance() -> None:
+    eng = _FakeEngine()
+    row = _record_use("method:m1", "applied", episode_ref="episode:forged", method_content_hash="forged")
+    MethodLearningService(eng).post_run(
+        "sid", sess=None, rounds=1, tool_trace=[row], run_end_reason="completed", final_answer="", model_used="m",
+    )
+    payload = eng.events[0][2]
+    assert payload["episode_ref"] == "episode:s:1:abc"
+    assert payload["method_content_hash"] == "deadbeef"
+    assert payload["application_proven"] is False
+    assert payload["task_benefit"] == "not_evaluated"
+
+
+def test_missing_success_status_or_runtime_receipt_emits_no_declaration() -> None:
+    eng = _FakeEngine()
+    missing_status = _record_use("method:m1", "applied")
+    missing_status.pop("status")
+    missing_receipt = _record_use("method:m2", "applied")
+    missing_receipt.pop("method_use_receipt")
+    MethodLearningService(eng).post_run(
+        "sid", sess=None, rounds=1, tool_trace=[missing_status, missing_receipt],
+        run_end_reason="completed", final_answer="", model_used="m",
     )
     assert eng.events == []

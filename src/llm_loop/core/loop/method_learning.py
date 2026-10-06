@@ -67,11 +67,13 @@ class MethodLearningService:
         rounds: int,
         model_used: str,
     ) -> None:
-        """Record exact Method hydration without claiming semantic application."""
+        """Observe successful exact searches; neither reading nor use is proven."""
         try:
             loaded_refs: list[str] = []
             for row in tool_trace:
                 if row.get("name") != "search_records":
+                    continue
+                if row.get("status") != "success":
                     continue
                 raw_args = row.get("arguments")
                 if not isinstance(raw_args, dict) or str(raw_args.get("kind", "")) != "method":
@@ -87,6 +89,7 @@ class MethodLearningService:
                 {
                     "method_refs": loaded_refs,
                     "application_proven": False,
+                    "observation_kind": "successful_exact_search",
                     "reason": run_end_reason,
                     "rounds": rounds,
                     "tool_calls": len(tool_trace),
@@ -107,24 +110,28 @@ class MethodLearningService:
     ) -> None:
         """Emit one method.record_use event per natural record_use decision.
 
-        Telemetry only（subject-binding v3 reopen 前置①）: decisions already land
+        Telemetry only: decisions already land
         in the method registry (usage.jsonl) and the audit log; this adds the
         at-scale session event-stream landing so natural declaration frequency
         and decision mix become queryable next to method.usage_observed
-        （漏斗：hydration → declaration）. No semantic change, fail-open.
+        （漏斗：search observation → declaration）. Runtime-owned receipts carry
+        provenance; model arguments cannot supply episode/hash. Fail-open.
         """
         try:
             for row in tool_trace:
                 if row.get("name") != "method_manage":
                     continue
-                if str(row.get("status", "success") or "") != "success":
+                if row.get("status") != "success":
                     continue
                 raw_args = row.get("arguments")
                 if not isinstance(raw_args, dict) or str(raw_args.get("action", "")) != "record_use":
                     continue
-                method_ref = str(raw_args.get("method_ref", "") or "").strip()
-                decision = str(raw_args.get("decision", "") or "").strip()
-                if not method_ref or not decision:
+                receipt = row.get("method_use_receipt")
+                if not isinstance(receipt, dict):
+                    continue
+                method_ref = str(receipt.get("method_ref", "") or "").strip()
+                decision = str(receipt.get("decision", "") or "").strip()
+                if not method_ref or decision not in {"applied", "adapted", "not_applicable", "rejected"}:
                     continue
                 self._engine._event_append(
                     session_id,
@@ -132,8 +139,11 @@ class MethodLearningService:
                     {
                         "method_ref": method_ref,
                         "decision": decision,
-                        "episode_ref": str(raw_args.get("episode_ref", "") or ""),
-                        "method_content_hash": str(raw_args.get("method_content_hash", "") or ""),
+                        "episode_ref": str(receipt.get("episode_ref", "") or ""),
+                        "method_content_hash": str(receipt.get("method_content_hash", "") or ""),
+                        "declaration_recorded": True,
+                        "application_proven": False,
+                        "task_benefit": "not_evaluated",
                         "reason": run_end_reason,
                         "rounds": rounds,
                         "model_used": model_used,
