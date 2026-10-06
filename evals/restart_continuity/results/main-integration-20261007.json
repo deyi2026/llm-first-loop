@@ -1,0 +1,132 @@
+{
+  "schema": "lfl.restart_continuity_main_integration.v1",
+  "base_commit": "424b298f255f1ad52e1bfb33a09b31eff0703b82",
+  "native_source_commit": "141952c66029711cefd729ebdb3f8ad0e695c5ba",
+  "product_source_sha256": {
+    "src/llm_loop/core/recent_continuity.py": "adeef84f3baee707e8b54c05b7b9dd926fe864d80f2a5c59c225cdfc2176e387",
+    "src/llm_loop/core/loop/engine.py": "d2c15c5bea9bc999e156213d70c930a74127e8192edd081fb403d9741f30888f"
+  },
+  "focused": {
+    "passed": 90
+  },
+  "full": {
+    "passed": 7508,
+    "failed": 3,
+    "skipped": 116,
+    "deselected": 16,
+    "seconds": 309.02,
+    "failure_class": "same exact-main baseline safety tests under managed home within /var; retained failing, not green"
+  },
+  "static": {
+    "changed_files_ruff": "PASS",
+    "ruff_candidate": 50,
+    "ruff_extracted_baseline": 52,
+    "ruff_introduced": [],
+    "ruff_context_only_removed": 2,
+    "context_only_files_byte_identical": true,
+    "pyright_candidate": 40,
+    "pyright_baseline": 40,
+    "pyright_introduced": []
+  },
+  "review": {
+    "valid_review_verdict": "PASS",
+    "profile": "GLM-5.3 low, max_tokens16000, independent static review with no prior validation outcomes",
+    "incomplete_max_reviews": "UNKNOWN retained (transport timeout; empty token-length completion)",
+    "findings": [
+      {
+        "severity": "low",
+        "mechanism": "service/program notice between answer and ingress prevents anchored recovery",
+        "decision": "Expected fail-closed boundary, no regression; do not bypass notices or modify projection to force success."
+      },
+      {
+        "severity": "low",
+        "mechanism": "event persistence failure may remove positive anchor proof",
+        "decision": "Fail-closed limitation, no regression. Normal non-queued event reload is covered by both one- and two-crash tests; event write passes msg.metadata and snapshot includes m.metadata. A failed durable write is not claimed recoverable."
+      }
+    ],
+    "scope_limits": [
+      "is_human_user_message, is_closed_delegated_span_message, resolved_episode_ref, origin_metadata, stable_episode_ref and the event/session persistence internals are not shown; the delegated-boundary and durable-metadata conclusions above assume the documented semantics of those helpers hold.",
+      "Message.to_llm_dict, provider build pipeline, _prepare_interruption_resume and the sticky re-append path in apply_recent_continuity_suffix were reviewed only for interaction with the new anchor; deep review of pre-existing projection logic was out of scope.",
+      "No execution of the test suite was performed; assessment is static reasoning over the supplied diff and file contents.",
+      "Repeated-crash chains, replay re-dispatch (QueuedIngressDurabilityError pop path) and caller-metadata injection were traced through the shown code but not against the dispatcher implementation.",
+      "PASS = no concrete introduced defect found in the supplied source; it is not owner, security, or production approval."
+    ],
+    "formal_gate_approval": false
+  },
+  "native_recovery": {
+    "pass": true,
+    "mechanical_checks": {
+      "prepare_native_success": true,
+      "prepare_no_output": true,
+      "prepare_settled": true,
+      "request_captured_before_kill": true,
+      "native_sigkill": true,
+      "crash_settled": true,
+      "crash_zero_upstream": true,
+      "crash_zero_tool_effects": true,
+      "resume_native_success": true,
+      "same_persisted_session": true,
+      "fixture_still_absent": true,
+      "resume_settled": true,
+      "saved_fact_in_resumed_wire_history": true,
+      "container_quiesced_before_grade": true,
+      "unchanged_recovery_oracle": true,
+      "observer_settled": true,
+      "container_removed": true,
+      "all_owned_groups_removed": true,
+      "actual_generations_glm53": true,
+      "actual_profile_max16000": true,
+      "no_length_truncation": true,
+      "resume_terminal_stop": true
+    },
+    "oracle": {
+      "pass": true,
+      "checks": {
+        "no_symlinks": true,
+        "json_exact": true,
+        "allowed_changes": true,
+        "no_scope_attempt": true,
+        "required_reads": true,
+        "fault_observed": true,
+        "exactly_one_result_write": true,
+        "two_turns": true,
+        "no_execute": true
+      }
+    },
+    "session_id": "764a3835-4a0d-46ad-bcca-a3436fd786f3",
+    "observer_posts": 9,
+    "upstream_generations": 5,
+    "http_200_all": true,
+    "wall_seconds": 25.690144499763846,
+    "usage": {
+      "prompt_tokens": 5340,
+      "completion_tokens": 531,
+      "total_tokens": 5871,
+      "cached_tokens": 4352,
+      "reasoning_tokens_subset_of_completion": 286
+    },
+    "billing_amount": "UNKNOWN",
+    "preregistered_sha256": {
+      "case.json": "fec9cdc2c61d5bbaa565d189ece090fd991063c5efb97812f079283d845cce82",
+      "oracle.json": "e224b9cffb9375fe1104623324776c362bca9b24e93bcbb23be59686138bb0f9",
+      "protocol.json": "86336aa1b68a95e0a2d3628768f508857b8fd5c837490ea7ee9984b77c1f9ae7"
+    },
+    "resumed_wire_roles": [
+      "system",
+      "user",
+      "assistant",
+      "user"
+    ],
+    "scope": "known public native pre-dispatch SIGKILL/restart only; no automatic rerun"
+  },
+  "deployment": "DEFERRED_FR1_T24H_PASS_REQUIRED",
+  "harness_design_gates": "UNCHANGED",
+  "formal_score": 76,
+  "raw_evidence": {
+    "archive": "LFL-GLM53-main-integration-evidence-20261007.zip",
+    "bytes": 473135,
+    "sha256": "65c4f618f3d9527c0d11367b02e65e556569b35deecee841e539cce2ca0ea702",
+    "library_file_id": "libfile_0ad23f4bbc2081919010b27413a45d5f",
+    "verified_manifest_files": 133
+  }
+}
