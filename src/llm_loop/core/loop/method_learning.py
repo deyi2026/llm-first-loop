@@ -41,6 +41,13 @@ class MethodLearningService:
             rounds=rounds,
             model_used=model_used,
         )
+        self._observe_method_use_decisions(
+            session_id=session_id,
+            tool_trace=tool_trace,
+            run_end_reason=run_end_reason,
+            rounds=rounds,
+            model_used=model_used,
+        )
         self._reflect_method_after_run(
             session_id=session_id,
             sess=sess,
@@ -88,6 +95,52 @@ class MethodLearningService:
             )
         except Exception:  # noqa: BLE001 - observability never blocks the user result
             logger.debug("Method usage observation failed-open", exc_info=True)
+
+    def _observe_method_use_decisions(
+        self,
+        *,
+        session_id: str,
+        tool_trace: list[dict[str, Any]],
+        run_end_reason: str,
+        rounds: int,
+        model_used: str,
+    ) -> None:
+        """Emit one method.record_use event per natural record_use decision.
+
+        Telemetry only（subject-binding v3 reopen 前置①）: decisions already land
+        in the method registry (usage.jsonl) and the audit log; this adds the
+        at-scale session event-stream landing so natural declaration frequency
+        and decision mix become queryable next to method.usage_observed
+        （漏斗：hydration → declaration）. No semantic change, fail-open.
+        """
+        try:
+            for row in tool_trace:
+                if row.get("name") != "method_manage":
+                    continue
+                if str(row.get("status", "success") or "") != "success":
+                    continue
+                raw_args = row.get("arguments")
+                if not isinstance(raw_args, dict) or str(raw_args.get("action", "")) != "record_use":
+                    continue
+                method_ref = str(raw_args.get("method_ref", "") or "").strip()
+                decision = str(raw_args.get("decision", "") or "").strip()
+                if not method_ref or not decision:
+                    continue
+                self._engine._event_append(
+                    session_id,
+                    "method.record_use",
+                    {
+                        "method_ref": method_ref,
+                        "decision": decision,
+                        "episode_ref": str(raw_args.get("episode_ref", "") or ""),
+                        "method_content_hash": str(raw_args.get("method_content_hash", "") or ""),
+                        "reason": run_end_reason,
+                        "rounds": rounds,
+                        "model_used": model_used,
+                    },
+                )
+        except Exception:  # noqa: BLE001 - observability never blocks the user result
+            logger.debug("Method record_use observation failed-open", exc_info=True)
 
     def _reflect_method_after_run(
         self,
