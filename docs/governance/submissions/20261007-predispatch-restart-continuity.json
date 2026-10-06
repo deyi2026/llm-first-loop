@@ -49,7 +49,8 @@
       "disposition": "Record original repair authorization and the subsequent user-authorized minimal current-main integration with deferred FR-1-gated deployment; retain unchanged public oracle and model profile.",
       "evidence": [
         "Latest user instruction: \u9700\u8981\u4fee\u590d; GLM-5.3 only, no DeepSeek.",
-        "Qualification case/oracle/protocol retained from commit 457062ff0bf4f0e7d2e78c62ea398aabd709b0f2."
+        "Qualification case/oracle/protocol retained from commit 457062ff0bf4f0e7d2e78c62ea398aabd709b0f2.",
+        "Current-main review: retain initial empty transport-timeout receipt; one identical-input streaming transport replacement registered before call."
       ],
       "verification_level": "Exact staged-path A.5, diff and security scan.",
       "model_evidence_veto_recovery_exit": "Owner and independent reviewer remain required for gate declarations and promotion; this metadata cannot approve deployment or increase score.",
