@@ -119,3 +119,34 @@ Status: **AUTHORIZED — A1 已授权（2026-10-06 19:48:53 会话明示），A2
 - **Stop conditions**：零触发（无 candidate 激增、无队列阻塞、无侧车错误、无 web/feishu 扰动、无 config_hash 漂移）。
 - **基线观察项（非 FR-1）**：18:02 存量 `reflection_call_failed` 终态 job；web/feishu 滞后 gen 181 一代（下次自然重启收敛，无需动作）。
 - **T+0 状态结论**：**FR-1 生产激活完成，无 stop condition**。观测进入 A3 默认节奏：T+24h（2026-10-07 晚）/ T+7d / T+28d，判据按 §5。
+
+## 12. T+24h 前冻结期只读复核：lint 债与 F811 裁决（2026-10-06）
+
+- **冻结纪律不变**：T+24h 五判据窗口关闭前不修改 `src/`。本节仅追加只读证据，不构成 FR-1 stop condition，也不改变 semantic 单变量。
+- **26 处 lint 为存量债**：E402×9、I001×4、SIM105×3、SIM102×2、UP035×2、UP032×2、UP037×2、F811×1、F401×1。除已在 G3 单独机械处置并留痕的 factory I001 外，其余不在本窗口清偿。
+- **F811 重新定性为 latent fail-open，不再记作“仅可读性味道”**：`src/llm_loop/browser/attestation.py` 的 frozen dataclass `BindingPolicy` 同时定义字段 `allow_real: bool = False` 与同名 `@classmethod allow_real(...)`。Python dataclass 生成签名的只读实测为：
+  - `BindingPolicy(allow_real=<bound method BindingPolicy.allow_real ...>, ack_digest=None, mode='enforce')`
+  - `BindingPolicy().allow_real` 实际类型为 bound method，而非 bool。
+  - 行为探针：`BindingPolicy().check(real_verdict)` **错误返回 allowed=True**；对照 `BindingPolicy.deny_real().check(real_verdict)` 正确返回 False/fail-closed。
+- **当前生产暴露面受限**：全仓调用盘点未发现直接 `BindingPolicy(...)` 构造；现有运行路径与测试均经 `BindingPolicy.deny_real()` / `BindingPolicy.allow_real(...)` 工厂进入，因此目前已核调用路径未触发该默认构造缺陷。
+- **处置裁决**：窗口内不改代码；T+24h PASS 后将 F811 从“API/可读性清偿”提升为**独立正确性修复项**，要求：
+  1. 先冻结直接构造/工厂调用 census 与回归测试；
+  2. 消除字段/类方法同名（优先保留字段语义，重命名 classmethod 或等价 API）；
+  3. 新增 `BindingPolicy()` 默认 fail-closed 回归；
+  4. 跑 browser attestation/factory 相邻回归与 Ruff；
+  5. 独立 commit，不与其他 lint 清偿混合。
+- **FR-1 影响判定**：该缺陷位于 browser attestation 面，与 Learning semantic activation 无因果路径；且 T+0 Web/Feishu 未重启、FR-1 生产链未调用默认 `BindingPolicy()`。因此记录为并行安全债，不回滚 FR-1，不破坏观测窗口。
+
+### 12.1 Owner 明示覆盖源码冻结并完成 F811 修复
+
+- **方向变更**：后续用户明示“继续修复”，覆盖本节原定“等 T+24h 后再改源码”的执行约束。覆盖范围仅限已坐实的 F811 latent fail-open；其余 25 条 lint 债仍不顺手清偿。
+- **最小修复**：保留 dataclass 字段 `allow_real: bool = False` 与直接构造语义；将同名授权 classmethod 从 `allow_real(...)` 改名为 `permit_real(...)`，并只更新 factory/测试调用点。这样消除 dataclass 默认值被 descriptor 覆盖的根因，同时保留字段/API 数据语义。
+- **回归保护**：新增 `test_policy_default_constructor_is_fail_closed`，机械断言 `BindingPolicy().allow_real is False` 且 real verdict 必须 fail-closed。
+- **验证**：
+  - browser attestation + channel binding + factory 邻接回归 **66/66 PASS**；
+  - Ruff `--select F811` 对实现/调用/测试 **PASS**；
+  - compileall PASS；
+  - 运行时签名恢复为 `BindingPolicy(allow_real: bool = False, ...)`；
+  - 行为探针：默认构造 real ⇒ False/fail-closed；`permit_real("digest")` real ⇒ True。
+- **存量 lint 隔离**：全规则 Ruff 仍会报告本文件/测试既有 UP035/F401/UP037/I001 等债；这些均非本修复引入，未机械顺带清偿。
+- **生产观测仍可解释**：本修复仅落 workspace/local commit，不 publish、不 restart。Learning 仍运行 gen181 原二进制，因此 FR-1 T+24h 的**生产运行时单变量**未改变；仅“源码工作树冻结”这一辅助纪律被 owner 明示覆盖。

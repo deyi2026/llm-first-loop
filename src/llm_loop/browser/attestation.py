@@ -316,7 +316,7 @@ class BindingPolicy:
         return cls(allow_real=False, ack_digest=None, mode=mode)
 
     @classmethod
-    def allow_real(cls, ack_digest: str, mode: str = "enforce") -> "BindingPolicy":
+    def permit_real(cls, ack_digest: str, mode: str = "enforce") -> "BindingPolicy":
         return cls(allow_real=True, ack_digest=ack_digest, mode=mode)
 
     def check(self, verdict: AttestationVerdict) -> tuple[bool, str]:

@@ -144,3 +144,9 @@ Status: **DRAFT — 需求设计，待用户裁决采纳；本文不含实现**
 5. **裁决采纳**：用户转达外部裁决——FR-1 激活准备为主线、停在 owner authorization checkpoint（不直接执行生产激活）；Q1 并行只读（已闭环）；Q2 后置到 FR-4 开工前。授权包已备：`PLAN-20261006-fr1-semantic-method-activation-authz.md`（READY，含 G1–G5 currentness gate，待 owner 授权）。
 6. **隔离声明**：FR-1 依据的 Learning Method semantic qualification（PLAN-20260926）与 Method Subject-Binding v3（EFFICACY_NOT_QUALIFIED，a33f6312 冻结、line retired）是两个不同裁决面，**证据互不借贷**——前者进入激活准备不推翻后者 no-promotion 结论，后者也不得引用前者 PASS 为 v4 复活背书。
 7. **权威集缩小说实**：qualification（09-26）时语义权威集为 7 active 家族，当前为 active 2 + qualified 1 = 3 张。FR-1 canary 目标集须按执行时权威集重新 derive（授权包 G2），不得照搬 7/7 历史口径。
+
+## 10. FR-1 执行后状态（2026-10-06）
+
+- FR-1 已按授权包完成生产激活并进入 **ACTIVATED / OBSERVING**：generation 181、Learning-only Method semantic=1、3/3 canary rank#1 + semantic_effective + 零 fallback，Web/Feishu 无扰动，零 stop condition。权威执行证据见 `PLAN-20261006-fr1-semantic-method-activation-authz.md` §10–§12。
+- 生命周期未在 T+0 直接标 COMPLETE：须继续 T+24h / T+7d / T+28d 观测；其中 T+24h 关闭“激活安全性”层，后续窗口验证持续稳定性与消费侧效果。
+- T+24h 前原计划保持 `src/` 冻结；只读 lint 复核发现 `BindingPolicy` 字段/classmethod 同名导致直接默认构造 `BindingPolicy()` 在 real verdict 上真实 fail-open。后续 owner 明示“继续修复”，仅对该 F811 正确性缺陷覆盖源码冻结：classmethod 改名为 `permit_real()`、补默认构造 fail-closed 回归并通过邻接验证；**未 publish/restart**，故 Learning gen181 的生产运行时单变量观测仍保持不变。详见授权包 §12–§12.1。
