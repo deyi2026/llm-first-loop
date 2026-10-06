@@ -12,10 +12,10 @@ import hashlib
 import json
 import logging
 import os
-import time
 import shutil
 import sys
 import tempfile
+import time
 import uuid
 from collections.abc import Callable, Sequence
 from contextlib import suppress
@@ -27,8 +27,8 @@ from llm_loop import config as _config
 from llm_loop.browser.action import BrowserActionAdapter, BrowserActionReceiptStore
 from llm_loop.browser.attestation import AttestationVerdict, BindingPolicy, attest_debug_url
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
-from llm_loop.browser.channel_binding import BrowserChannelBindingCoordinator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
+from llm_loop.browser.channel_binding import BrowserChannelBindingCoordinator
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.browser.profile_policy import ack_digest, annotation_for, evaluate_profile_class
 from llm_loop.config import Settings
