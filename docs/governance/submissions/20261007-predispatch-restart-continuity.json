@@ -1,0 +1,88 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261007-predispatch-restart-continuity",
+  "summary": "Preserve the existing recent completed visible answer across a durable output-free human ingress recovered after a native crash, using a runtime-owned stable episode anchor.",
+  "components": [
+    {
+      "component_id": "recent-continuity-recovery",
+      "paths": [
+        "src/llm_loop/core/recent_continuity.py",
+        "src/llm_loop/core/loop/engine.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "existing human ingress, recent_continuity projection, and completed-episode identity",
+      "disposition": "REUSE: persist only the exact completed-answer identity already eligible before dispatch; cross only matching anchored output-free human ingresses. No task selection or history authority promotion.",
+      "evidence": [
+        "Original native GLM-5.3 recovery failure retained in results/native-recovery-20261007.json.",
+        "Fresh-engine EventStore recovery regression is RED on baseline and GREEN on repair.",
+        "Original ordinary unresolved-human barrier tests remain unchanged and pass."
+      ],
+      "verification_level": "Deterministic RED/GREEN, adjacent protocol/isolation tests, full non-real-LLM suite and baseline static comparison; one preregistered GLM-5.3 native requalification after this commit.",
+      "model_evidence_veto_recovery_exit": "The model sees bounded exact visible assistant context and current native pending user text; hidden reasoning, retired human instructions, partial/program/delegated output and tool protocol do not acquire new authority. New human intent remains semantic authority.",
+      "rollback_route": "Revert the isolated repair commit; unknown opaque metadata is ignored by old code and no data migration is required.",
+      "declaration_id": "recent-continuity-recovery"
+    },
+    {
+      "component_id": "restart-regressions",
+      "paths": [
+        "tests/unit/test_recent_continuity_restart.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic recent-continuity regression coverage",
+      "disposition": "Tests assert restored visible facts, durable event recovery, repeated interruptions, completed-proof and anchor checks, tool protocol, and authority boundaries.",
+      "evidence": [
+        "90 focused checks passed before broad verification; no live model used in deterministic tests."
+      ],
+      "verification_level": "Focused and full non-real-LLM pytest.",
+      "model_evidence_veto_recovery_exit": "Tests own no runtime authority and do not alter the public qualification oracle.",
+      "rollback_route": "Revert with the repair."
+    },
+    {
+      "component_id": "repair-registration",
+      "paths": [
+        "docs/PLAN-20261007-lfl-restart-continuity-repair.md",
+        "docs/governance/submissions/20261007-predispatch-restart-continuity.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository repair record and A.5 presence/coverage declaration",
+      "disposition": "Record the explicit user-authorized candidate source-freeze exception and unchanged public live validation plan before model calls.",
+      "evidence": [
+        "Latest user instruction: 需要修复; GLM-5.3 only, no DeepSeek.",
+        "Qualification case/oracle/protocol retained from commit 457062ff0bf4f0e7d2e78c62ea398aabd709b0f2."
+      ],
+      "verification_level": "Exact staged-path A.5, diff and security scan.",
+      "model_evidence_veto_recovery_exit": "Owner and independent reviewer remain required for gate declarations and promotion; this metadata cannot approve deployment or increase score.",
+      "rollback_route": "Revert the documentation with the candidate repair."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "recent-continuity-recovery",
+      "g1": {
+        "necessity": "Existing adjacent-assistant restoration stops at the output-free crashed ingress, even though its previously eligible completed answer and facts remain durable. The real resumed provider request therefore loses the remembered facts."
+      },
+      "g2": {
+        "authority_owner": "Existing recent_continuity projection and engine human-ingress owner, using existing resolved_episode_ref completion proof.",
+        "relationship": "reuse",
+        "non_duplication": "One opaque message metadata identity is persisted through existing Session/Event serialization; no new store, task detector, recovery controller, oracle, or action authority."
+      },
+      "g3": {
+        "model_evidence": [
+          "Exact bounded visible completed model answer, same content as before crash.",
+          "Original facts and receipts remain retrievable from durable history.",
+          "Positive exact episode anchor and first-output completed proof; all unknown or mismatched boundaries fail closed."
+        ],
+        "recovery_or_reason": "Without the anchor or with intervening output, preserve the existing barrier. Legacy interrupted data is not retroactively relabeled. Users and model decide current intent; the program supplies only exact structurally eligible context."
+      },
+      "g4": {
+        "rollback": "Revert isolated repair; old versions ignore the metadata field without migration.",
+        "verification": [
+          "Baseline RED reproduction; fresh engines reload durable ingress from EventStore.",
+          "Repeated interruption, hidden-state, resolved-human, wrong-anchor, incomplete-answer, delegated and native tool-protocol regressions.",
+          "Full non-real-LLM pytest, Ruff/Pyright with exact baseline comparison, compile, diff/security and A.5 checks.",
+          "Commit before one GLM-5.3 LFL native crash/restart requalification with original case/oracle/protocol and zero automatic reruns."
+        ]
+      }
+    }
+  ]
+}
