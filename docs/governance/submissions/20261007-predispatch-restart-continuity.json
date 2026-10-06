@@ -50,7 +50,8 @@
       "evidence": [
         "Latest user instruction: \u9700\u8981\u4fee\u590d; GLM-5.3 only, no DeepSeek.",
         "Qualification case/oracle/protocol retained from commit 457062ff0bf4f0e7d2e78c62ea398aabd709b0f2.",
-        "Current-main review: retain initial empty transport-timeout receipt; one identical-input streaming transport replacement registered before call."
+        "Current-main review: retain initial empty transport-timeout receipt; one identical-input streaming transport replacement registered before call.",
+        "Max-effort code review exhausted tokens with no verdict; keep UNKNOWN. Additional identical-input low-effort GLM-5.3 review registered; native recovery profile/oracle remain max and unchanged."
       ],
       "verification_level": "Exact staged-path A.5, diff and security scan.",
       "model_evidence_veto_recovery_exit": "Owner and independent reviewer remain required for gate declarations and promotion; this metadata cannot approve deployment or increase score.",
