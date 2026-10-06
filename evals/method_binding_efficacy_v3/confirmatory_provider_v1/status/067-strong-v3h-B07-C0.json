@@ -1,0 +1,19 @@
+{
+ "state": "terminal",
+ "row": {
+  "ordinal": 67,
+  "block": 34,
+  "row_id": "strong:v3h-B07:C0:natural-confirm-v1",
+  "model": "strong",
+  "case_id": "v3h-B07",
+  "arm": "C0"
+ },
+ "attempts": [
+  {
+   "attempt": 0,
+   "rc": 0,
+   "healthy": true
+  }
+ ],
+ "mechanically_healthy": true
+}
