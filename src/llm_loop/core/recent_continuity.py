@@ -31,6 +31,7 @@ def _metadata(message: Any) -> dict[str, Any]:
 RECENT_ASSISTANT_CHAR_LIMIT = 32_768
 RECENT_HUMAN_CONTEXT_CHAR_LIMIT = 32_768
 RECENT_REFERENCE_FACT_LIMIT = 8
+RECENT_CONTINUITY_REF_KEY = "recent_continuity_episode_ref"
 _URL_REFERENCE_RE = re.compile(r"https?://[^\s<>\"']+")
 _REFERENCE_SCHEMES = ("attachment://", "artifact://v1/", "evidence://v1/")
 _REFERENCE_TRAILING_PUNCTUATION = ".,;:!?)]}，。；：！？）】》"
@@ -57,17 +58,49 @@ def _is_completed_model_answer(message: Any) -> bool:
 def latest_model_assistant_before_turn(
     session_messages: list[Any], current_turn_ref: int | None
 ) -> Any | None:
-    """Return the nearest real final model assistant in the immediately prior turn."""
-    if current_turn_ref is None or current_turn_ref <= 0 or current_turn_ref >= len(session_messages):
+    """Return adjacent visible context, including an anchored output-free ingress.
+
+    An ingress persisted before a process crash may have no assistant/tool output.
+    It can carry the exact completed-episode anchor that was already eligible when
+    that ingress began. Unanchored human boundaries and any intervening output still
+    stop this recovery; no user-text semantics or older task authority is inferred.
+    """
+    if (
+        current_turn_ref is None
+        or current_turn_ref <= 0
+        or current_turn_ref >= len(session_messages)
+    ):
         return None
     current = session_messages[current_turn_ref]
     if not is_human_user_message(current):
         return None
+    carried_ref: str | None = None
+    output_free = True
     for idx in range(current_turn_ref - 1, -1, -1):
         message = session_messages[idx]
         if is_human_user_message(message):
+            ref = _metadata(message).get(RECENT_CONTINUITY_REF_KEY)
+            if (
+                output_free
+                and isinstance(ref, str)
+                and ref.startswith("episode:")
+                and (carried_ref is None or carried_ref == ref)
+            ):
+                carried_ref = ref
+                continue
             break
         md = _metadata(message)
+        if carried_ref is not None:
+            # The first output before the anchored ingress must itself be the exact
+            # completed model answer. Never skip partials, tool protocol or program
+            # output to search for a matching older episode.
+            if (
+                _is_completed_model_answer(message)
+                and md.get("resolved_episode_ref") == carried_ref
+            ):
+                return message
+            return None
+        output_free = False
         content = str(getattr(message, "content", "") or "")
         if (
             getattr(message, "role", "") == "assistant"
@@ -82,6 +115,28 @@ def latest_model_assistant_before_turn(
         ):
             return message
     return None
+
+
+def attach_recent_continuity_anchor(session_messages: list[Any], current_turn_ref: int) -> None:
+    """Persist only an already-eligible completed-episode identity at human ingress.
+
+    Called by the ingress owner before message.appended. The opaque ref is runtime
+    metadata, never prompt prose, a summary, a tool receipt, or an action directive.
+    Existing legacy messages without this positive proof remain fail-closed.
+    """
+    if not 0 <= current_turn_ref < len(session_messages):
+        return
+    current = session_messages[current_turn_ref]
+    if not is_human_user_message(current):
+        return
+    md = _metadata(current)
+    md.pop(RECENT_CONTINUITY_REF_KEY, None)
+    previous = latest_model_assistant_before_turn(session_messages, current_turn_ref)
+    if previous is None or not _is_completed_model_answer(previous):
+        return
+    ref = _metadata(previous).get("resolved_episode_ref")
+    if isinstance(ref, str) and ref.startswith("episode:"):
+        md[RECENT_CONTINUITY_REF_KEY] = ref
 
 
 def _machine_reference_facts(message: Any | None) -> tuple[str, ...]:

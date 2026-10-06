@@ -69,6 +69,7 @@ from llm_loop.core.loop.tool_exec import (
 )
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt_eligibility import LEGACY_PROGRAM_FINAL_MARKER
+from llm_loop.core.recent_continuity import attach_recent_continuity_anchor
 from llm_loop.core.reference_injection import is_active_run_ingress_message
 from llm_loop.core.run_context import (
     current_reasoning_effort as _current_reasoning_effort,
@@ -840,6 +841,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         except Exception:  # noqa: BLE001 — 轮级提醒 fail-open
             logger.warning("service_action_turn_notice 注入失败（fail-open 跳过）", exc_info=True)
         sess.messages.append(user_msg)
+        # Persist the already-eligible recent answer's exact identity before dispatch.
+        # A crash with no output must not turn this ingress into an accidental barrier
+        # on restart. Only runtime metadata is added; historical authority is unchanged.
+        attach_recent_continuity_anchor(sess.messages, len(sess.messages) - 1)
         # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
         self._ensure_session_created(sess)
         _user_event = self._append_message_event(sess, user_msg)
