@@ -1,0 +1,12 @@
+{
+ "schema": "subject-binding-v3-natural-v1-invalid/v1",
+ "verdict": "EXECUTION_ENV_INVALID__KNOWLEDGE_SIDECAR_QUARANTINE",
+ "rows_consumed": 4,
+ "mechanically_healthy": 4,
+ "method_manage_calls": 4,
+ "save_experience_calls": 5,
+ "successful_record_use_writes": 0,
+ "successful_experience_files": 0,
+ "reason": "isolated DATA_DIR inside linked worktree triggered explicit_sidecar_state_root knowledge quarantine; rows are not applicability evidence",
+ "source_matrix_sha256": "c868cdfa1f80e167f42940e47c86e072c3cd3ad1c157c73bae71d7167746289e"
+}

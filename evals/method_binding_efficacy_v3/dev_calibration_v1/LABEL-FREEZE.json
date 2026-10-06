@@ -1,0 +1,17 @@
+{
+ "files": {
+  "BLIND-SHEET.md": "aaec84c60b2e4bd56cc777a09acfc7c377e80a34bd6ac889c0e1bb07431b592a",
+  "DEV-PREREG.md": "714342bb7b05f750ee4d8407c1f69d6bf5838f9fe149939f4de475f9d4b0fb3d",
+  "LABEL-RESULT.json": "2a3cc675adb699a9faa195e33e32417e2e073b0260ad10824127d79d373dc21b",
+  "R1.jsonl": "dd1feaee93e2c061019f5de34319b73d05a7bd83c6718e64f678f129453ce9d3",
+  "R2.jsonl": "fd582cef34abd3f1190bbdaf8c1711dc0f2dab73529c2a48609961a38466d0e9",
+  "analyze_labels.py": "acc7403234ec23b7bab12df5c8af2b7d9237073ed7f32acc755f54e159de5567",
+  "build_dev.py": "bcd16bdfe4be20917aae12fc1516df27c04b92d46980b00f8fca00c4b9525938",
+  "dev_candidates.json": "ec998c9aa17d24e334ff904d74f25415ffd0a97f311bfc062599e807eb15dc50",
+  "dev_sealed.json": "f22b27e4285d2e34ded9e5e74403fd031dc73f2e0c523e30d31022bb9bed85ba"
+ },
+ "production_mutations": 0,
+ "provider_calls": 0,
+ "schema": "subject-binding-v3-dev-label-freeze/v1",
+ "verdict": "PASS"
+}

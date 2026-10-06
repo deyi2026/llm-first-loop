@@ -1,0 +1,107 @@
+{
+ "schema": "subject-binding-v3-dev-label-qualification/v1",
+ "verdict": "PASS",
+ "raw_agreement": 0.96875,
+ "kappa": 0.92,
+ "r1_accuracy": 1.0,
+ "r2_accuracy": 0.96875,
+ "challenge_dual_certified": 23,
+ "apply_dual_certified": 8,
+ "families": {
+  "same_object_different_action": {
+   "certified": 6,
+   "n": 6
+  },
+  "same_evidence_different_claim": {
+   "certified": 5,
+   "n": 6
+  },
+  "same_workflow_different_phase": {
+   "certified": 6,
+   "n": 6
+  },
+  "same_infra_different_decision": {
+   "certified": 6,
+   "n": 6
+  }
+ },
+ "anti_leak_unresolved": 0,
+ "gates": {
+  "raw_agreement": true,
+  "kappa": true,
+  "r1_intended_accuracy": true,
+  "r2_intended_accuracy": true,
+  "challenge_dual_certified": true,
+  "each_family": true,
+  "apply_controls": true,
+  "anti_leak": true
+ },
+ "disagreements": [
+  {
+   "opaque_id": "35401242d2d9",
+   "case_id": "v3d-B10",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-verification-over-narrative-recovery-73fa76a07438",
+   "source_method_id": "answer-terse-ref-from-authoritative-goal-record-bound-recovery-f5a3ce3d72c2",
+   "purpose_divergence": "任务解析当前回指；subject Method 面向核验旧叙述声称是否已经落实。",
+   "r1": "SKIP",
+   "r2": "APPLY",
+   "agree": false,
+   "r1_correct": true,
+   "r2_correct": false,
+   "dual_certified": false
+  }
+ ],
+ "uncertified": [
+  {
+   "opaque_id": "35401242d2d9",
+   "case_id": "v3d-B10",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-verification-over-narrative-recovery-73fa76a07438",
+   "source_method_id": "answer-terse-ref-from-authoritative-goal-record-bound-recovery-f5a3ce3d72c2",
+   "purpose_divergence": "任务解析当前回指；subject Method 面向核验旧叙述声称是否已经落实。",
+   "r1": "SKIP",
+   "r2": "APPLY",
+   "agree": false,
+   "r1_correct": true,
+   "r2_correct": false,
+   "dual_certified": false
+  }
+ ],
+ "certified_challenge_case_ids": [
+  "v3d-B13",
+  "v3d-B20",
+  "v3d-B09",
+  "v3d-B11",
+  "v3d-B14",
+  "v3d-B06",
+  "v3d-B16",
+  "v3d-B05",
+  "v3d-B12",
+  "v3d-B15",
+  "v3d-B19",
+  "v3d-B24",
+  "v3d-B01",
+  "v3d-B04",
+  "v3d-B02",
+  "v3d-B23",
+  "v3d-B21",
+  "v3d-B08",
+  "v3d-B18",
+  "v3d-B07",
+  "v3d-B17",
+  "v3d-B22",
+  "v3d-B03"
+ ],
+ "input_sha256": {
+  "DEV-PREREG.md": "714342bb7b05f750ee4d8407c1f69d6bf5838f9fe149939f4de475f9d4b0fb3d",
+  "dev_candidates.json": "ec998c9aa17d24e334ff904d74f25415ffd0a97f311bfc062599e807eb15dc50",
+  "dev_sealed.json": "f22b27e4285d2e34ded9e5e74403fd031dc73f2e0c523e30d31022bb9bed85ba",
+  "R1.jsonl": "fc43637525fca44d99c50703b7bea42d6ef024b5278522340d71b089d50153a5",
+  "R2.jsonl": "3f88abb9ebb647dca35d32fbb4b4326cd3dbc470691f0dc45f159c424e0fbe5e"
+ }
+}

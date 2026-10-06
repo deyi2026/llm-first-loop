@@ -1,0 +1,10 @@
+{
+ "files": {
+  "PREREG.md": "9d47c1f06116ce653a56eb5bfdf415d9f3bff6c2e2fd747f50634efc60882bf1",
+  "plan.json": "7dd09d6fc4957f2fa8a0451685c69539958869380c5c618c04716b17088f55eb"
+ },
+ "formal_cells": 44,
+ "provider_calls_at_freeze": 0,
+ "schema": "subject-binding-v3-natural-dev-freeze/v1",
+ "source_dev_result_sha256": "d9dc0bb9d4802baf52c8c87fce88ef91f37bdfea1ea96b35f5747ab7703e0108"
+}

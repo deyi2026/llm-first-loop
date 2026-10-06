@@ -1,0 +1,32 @@
+{"opaque_id":"db6fd74071ba","verdict":"APPLY","reason":"任务正是基于权威 status self-report 先判定健康状态，再仅补查未覆盖维度，与方法目的和短路径完全一致。"}
+{"opaque_id":"776b355da180","verdict":"SKIP","reason":"任务要从完整 CI 日志钉死失败清单与数量，而该方法用于代码修改后通过 touched set 与 clean HEAD 对照归因失败因果，阶段与目的不同。"}
+{"opaque_id":"1d48851b7316","verdict":"SKIP","reason":"任务核心是按当前 PID 与启动时刻切分日志证据窗口并复现缓存异常，不是验证重启部署是否按 generation/git_head 身份真正落地。"}
+{"opaque_id":"b9347146b8c9","verdict":"SKIP","reason":"任务虽需完整事件流，但目的是定位重复工具调用从哪个 wake/compact/handoff 控制边界开始，而该方法用于证明生命周期阶段是否闭环及动作发生次数。"}
+{"opaque_id":"75c44552f7fa","verdict":"SKIP","reason":"任务已经获得证据文件的完整绝对路径与 sha256，可直接读取校验；该方法专门解决裸文件名引用下的路径定位猜测，且其反例明确排除此情形。"}
+{"opaque_id":"07a5b704cb73","verdict":"APPLY","reason":"任务是在受管 desired-state 变更前先核实工具面与源码规定的发布权限归属，正对应方法的 authority contract 前置门控。"}
+{"opaque_id":"60f3ad5cead6","verdict":"SKIP","reason":"任务中的失败全集已固定，当前要做 touched set 交集和 clean HEAD 因果对照；该方法解决的是日志截断时先补齐失败全集，当前前置阶段已经完成。"}
+{"opaque_id":"5b468be45fd9","verdict":"SKIP","reason":"任务只是依据已知 CDP 端口和 TARGET_ID 做非破坏性端点与绑定核验，而该方法仅针对 kill/清理前数字标识的破坏性身份门控，并明确排除非破坏性读取。"}
+{"opaque_id":"8e85cd3efe97","verdict":"APPLY","reason":"任务正是长 heredoc 写盘且曾出现 exit 0 但文件截断，目标与有界分块、逐块行数及最终完整性校验的方法完全一致。"}
+{"opaque_id":"edfe85267bcc","verdict":"APPLY","reason":"任务要证明 Method 从 save、use 到 activate 的生命周期闭环，正应以阶段转移事件与 action 回执逐段核对终态。"}
+{"opaque_id":"275301ff2e2c","verdict":"SKIP","reason":"任务是在 git fetch 挂起后做远端网络传输层探针并决定重试时机，不是等待可查询结论的异步流水线及其产物。"}
+{"opaque_id":"a99f9c893519","verdict":"SKIP","reason":"任务已有 action ID 和专属台账路径，只需读取动作终态与反馈呈现，不需要凭唯一标识去反查机制实现和操作流程。"}
+{"opaque_id":"21fbdef7437b","verdict":"SKIP","reason":"任务是直接分析完整 session 事件流中的 wake/compact/handoff 边界与重复调用来源，并非审查一份带指针的外部分析报告。"}
+{"opaque_id":"299a5703663f","verdict":"SKIP","reason":"任务核心是 git_head、当前 HEAD 与 dirty 增量造成的 binding drift 预检及 fence 接纳判断，而非判定 publish/restart 的权限归属与 operator handoff。"}
+{"opaque_id":"24076c231c5a","verdict":"SKIP","reason":"任务是依据监督者存活和公网端到端应用响应裁决是否重启，并没有以 authoritative healthy/status self-report 作为主要判别器。"}
+{"opaque_id":"506d16bcc6b7","verdict":"SKIP","reason":"任务只是依据权威 status 的 healthy 摘要决定是否扩展诊断，并非针对“是否重启”用监督者状态加公网端到端探针做二元干预裁决。"}
+{"opaque_id":"59f910088491","verdict":"SKIP","reason":"任务仅核验摘要所称标识符是否真实存在并定位定义，不涉及新建或修改逐字枚举允许集，未满足该方法的核心写入触发条件。"}
+{"opaque_id":"9faa7c90c740","verdict":"SKIP","reason":"任务是用部署身份与当前进程列表核对实例来源一致性，并非从跨重启证据流划生命周期窗口或在同进程复现故障。"}
+{"opaque_id":"68e0d3e1bc69","verdict":"SKIP","reason":"任务要压缩 pytest 输出以保住 summary 和退出码，方法解决的是 shell 长文件写入静默截断，失效模式与处置手段不同。"}
+{"opaque_id":"337909e190da","verdict":"APPLY","reason":"任务正是从当前 schema 与前端类型机械提取真实字段集、与旧摘要做差异后更新契约允许集，完全符合该方法的触发与短路径。"}
+{"opaque_id":"994e0d18f572","verdict":"SKIP","reason":"任务核心是判定数字标识的类型及其进程归属以避免误杀，并非依据配置工件验证重启后的外部绑定与功能恢复。"}
+{"opaque_id":"8c3db87f233d","verdict":"SKIP","reason":"任务当前只要求依据工具 schema 与代码注释判定 publish/restart 的权限归属，尚无绑定漂移或 dirty 教训记录等该方法的关键判别条件。"}
+{"opaque_id":"3f799865ac31","verdict":"APPLY","reason":"任务明确要求先从共享 ledger 工件追溯符号、提交和 writer 血缘，再判断机制对运行时指标的影响，与该方法目的和步骤直接一致。"}
+{"opaque_id":"16cf6029268f","verdict":"SKIP","reason":"任务是凭唯一 EVO ID 从持久台账取回被索引截断的完整记录并按其规格执行，不是审计既有分析中的多类断言与状态锚点。"}
+{"opaque_id":"b8c08c09f876","verdict":"SKIP","reason":"任务是读取已记录的 CDP URL/TARGET_ID 并核对重启后的绑定一致性，不涉及 connection refused 后的接入可行性判定或权威配置端点发现。"}
+{"opaque_id":"9385ddfb3f25","verdict":"SKIP","reason":"任务是逐个解析报告自带的 commit/hash/URL/ID 指针做事实核验，而方法专用于共享工件的写入者血缘与部署分支归因，目的不同。"}
+{"opaque_id":"70b6a51b1e66","verdict":"SKIP","reason":"任务只是已知三处字面版本号的同步替换与核对，不是修改既有行为口径并以测试断言反推契约。"}
+{"opaque_id":"b76b8de38dd0","verdict":"APPLY","reason":"任务正是定向测试已绿而大测试集有已知失败时，用 touched set 与 clean HEAD 对照判断失败是否由本轮改动引入。"}
+{"opaque_id":"35401242d2d9","verdict":"SKIP","reason":"任务已有 active Goal 的权威完成回执，只需把两个条目映射到用户的“前两个”回指，不存在旧报告恢复失败后改用锚点验证的问题。"}
+{"opaque_id":"f5415533ffde","verdict":"SKIP","reason":"任务是查询异步 CI workflow 的终态并据 conclusion 决策，不是对曾挂死的阻塞网络操作先做有界连通性探针再重试。"}
+{"opaque_id":"3639d7388503","verdict":"SKIP","reason":"complete 动作已发出且已有 action ID，当前只需查最新状态；方法核心是参数缺失拒绝后一次补齐必填字段再重试。"}
+{"opaque_id":"81fbc7109e80","verdict":"APPLY","reason":"任务要依据重启回执中的 generation、runtime_root 与 git_head 核对全部进程部署身份，正对应以部署身份锚定进程验证的方法。"}

@@ -1,0 +1,25 @@
+{
+ "challenge": 17,
+ "dev_result_sha256": "b600a1dc4380ae13de167e29f7194db2f94d78a36b1306ea23d0298c72eb15bd",
+ "formal_cells": 92,
+ "label_result_sha256": "1411bb019f484787ed7e1e48b2082d837b22aa13eb5cb378ea8449226133e8a0",
+ "production_mutations": 0,
+ "provider_calls_at_freeze": 0,
+ "push": false,
+ "reverse_risk": 6,
+ "schema": "subject-binding-v3-confirmatory-freeze/v1",
+ "selected_cases": 23,
+ "sha256": {
+  "SPEC.md": "7ab7859459d4d577c50d2226b8492d379edb7bdd751015a26e1a469fda0cff9d",
+  "analyze.py": "804aa43dd5e9d8ac961d32fab0519b7fad53f54da51cc05964c094aaf6c0c9fb",
+  "healthcheck.py": "d232d02a8ca29a3ddf3d7f061f0b8a5ea60eafee3a5870a8398e46abe52e5a19",
+  "plan.json": "cde98bfcac967eeea80be7610e6abd351404c8e08aa6088860aff425fa7d8468",
+  "preflight.py": "d75aa1441596e26f1d4a3257597b47e36c00c075728a563d213d2e420b4c6b39",
+  "protocol.py": "af7e5ba7a44724f5ad6172074800846993f2d2e9a6a4734c680ff8a32d7ddfe3",
+  "recover_reserved.py": "73f8674923ba539bf9785c830d538265c6836067c67a7ac6036f9becd13009a1",
+  "run_next.py": "6be244fc7e9c7287aacb0a4ba4b738ecd7775e5423f571655f9201ca031d8c70",
+  "surface_probe.py": "df2407cfe68ae4d01c268d75efae6da0814d115fccb44a1e97268515714bb225",
+  "worker.py": "58262444981fe1262fd9faaa0eb38d968391f10515aa5a5092fd5eac13d69899"
+ },
+ "source_commit": "e347fe3fa7a97cd0163a71a726f3968bc9b606cb"
+}

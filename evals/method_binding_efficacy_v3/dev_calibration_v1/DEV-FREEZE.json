@@ -1,0 +1,15 @@
+{
+ "files": {
+  "DEV-PREREG.md": "714342bb7b05f750ee4d8407c1f69d6bf5838f9fe149939f4de475f9d4b0fb3d",
+  "LABEL-RESULT.json": "7bf71ad2bf1e4b79e681275ca025e0b590e04258d0d87379883b68360d8f42ef",
+  "R1.jsonl": "3ebea1ba82f22e5d94ccd1ec2ab0eb99f5f52389c955ac0bbab2d1362dc78374",
+  "R2.jsonl": "371cc4075d5a34ed68091f1aca7d1dc8f1ae4b361b26cb9095d9bcedc60e41ef",
+  "dev_candidates.json": "ec998c9aa17d24e334ff904d74f25415ffd0a97f311bfc062599e807eb15dc50",
+  "dev_plan.json": "e0375f4311b118f1ee92aee7309a6bcc73429ed11c408a9efb95ae13df4d63d1",
+  "dev_sealed.json": "f22b27e4285d2e34ded9e5e74403fd031dc73f2e0c523e30d31022bb9bed85ba"
+ },
+ "formal_cells": 44,
+ "provider_calls_at_freeze": 0,
+ "schema": "subject-binding-v3-dev-freeze/v1",
+ "selected_challenges": 22
+}

@@ -1,0 +1,19 @@
+{
+ "state": "terminal",
+ "row": {
+  "ordinal": 9,
+  "block_ordinal": 5,
+  "model": "weak",
+  "case_id": "sb2-B09",
+  "arm": "C0",
+  "row_id": "weak:sb2-B09:C0"
+ },
+ "attempts": [
+  {
+   "attempt": 0,
+   "rc": 0,
+   "healthy": true
+  }
+ ],
+ "mechanically_healthy": true
+}
