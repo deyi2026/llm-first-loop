@@ -1,0 +1,725 @@
+{
+ "schema": "subject-binding-v3-dev-c0-plan/v1",
+ "seed": 20261006,
+ "source_label_result_sha256": "db5f2f6084a5a6678487f339402a86eaae5b8614050f2f148052fbe0abf12c1d",
+ "case_count": 23,
+ "formal_cells": 46,
+ "c1_authorized": false,
+ "cases": {
+  "v3d-B13": {
+   "case_id": "v3d-B13",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "attribute-suite-failures-via-touched-set-and-clean-head-worktree-8d92c40cb6dc",
+   "source_method_id": "complete-failure-inventory-before-root-cause-ce230cde7fa6",
+   "task": "CI 原始日志可完整读取，任务是从 short summary 与 FAILED/ERROR 行建立完整失败清单和数量，作为后续诊断输入。",
+   "shared_surface": "CI失败/测试日志/诊断",
+   "purpose_divergence": "任务建立失败全集；subject Method 面向失败集合已知后的 touched-set 与 clean-HEAD 因果归因。",
+   "card": "name: attribute-suite-failures-via-touched-set-and-clean-head-worktree\nmethod_id: attribute-suite-failures-via-touched-set-and-clean-head-worktree-8d92c40cb6dc\ndescription: 编辑已落地、触面测试全绿但更大范围测试出现失败时的归因闸门。先用失败回执点名的文件/模块/环名与本次触碰文件集求交集，形成可证伪假设（空集→存量债务假设；非空→直接修自己，不做归因实验）；再用 pinned 干净 HEAD 检出做单变量对照证明零因果。对照前先盘点既有 worktree（'already exists' 回执即证明基线环境已存在、可复用），并覆盖 venv 的 editable 路径解析（PYTHONPATH 指向 worktree 的 src），确保基线真的运行基线代码。归因结论附 HEAD hash，比对按测试身份逐一进行，然后停止。区别于通用根因诊断法：本卡是编辑收尾处的确定性归因协议，核心新判别式是触碰集∩失败点名主题。\n\n## Trigger\n任务内已完成代码修改且目标触面验证通过后，全量/更大范围测试报告若干失败，需判定这些失败是本次改动引入还是存量提交债，以决定是否阻塞收尾。\n\n## Discriminator\n两条当时即可读的事实：(1) 失败回执（traceback/guard 输出）点名具体文件、计数或环名，与本次 diff 触碰文件集求交集即可分出假设方向；(2) `git worktree list` 是既有干净检出的权威清单，新建命令返回的 'already exists' 回执本身即证明基线环境已存在、应复用而非重建。\n\n## Short path\n- 对失败测试用 --tb=short 重跑，收集失败身份与回执点名的文件/符号。\n- 与本次触碰文件集求交集：空集 → 存量债务假设；非空 → 放弃归因实验，直接修改动。\n- `git worktree list` 先盘点既有干净检出；存在 pin 在当前 HEAD 的 worktree 则直接复用，没有才 `git worktree add`。\n- 在基线 worktree 上只跑那几个失败测试；venv 为 editable 指向主仓 src 时，用 PYTHONPATH=<worktree>/src 覆盖解析，确保加载的是基线代码。\n- 逐一比对失败身份：基线失败集 ⊇ 观察集 ⇒ 记录为存量债务（附 HEAD hash）并停止；任一失败在基线消失 ⇒ 归因本次改动，转修复。\n\n## Stop conditions\n- 干净 HEAD（记录 commit hash）上复现同一组失败身份 ⇒ 判定存量债务，登记结论后停止归因。\n- 任一失败在基线不出现 ⇒ 归因本次改动，停止归因流程、转入修复。\n- 失败点名主题与触碰集相交 ⇒ 属确认级归因，跳过基线实验直接修复。\n\n## Verification\n- 基线运行 pin 到具体 HEAD commit 并记录 hash；比对按测试身份逐一进行，不做印象式'应该没问题'。\n- 确认基线进程实际加载 worktree 代码（PYTHONPATH 覆盖 editable 安装），而非主仓工作区代码。\n- 复用既有 worktree 前核对其 pin 的 commit 与当前 HEAD 一致；不一致则新建对照环境，不得拿旧基线充当当前 HEAD 基线。\n\n## Counterexamples\n- 失败 traceback 直接命中自己刚改的文件/函数：无需基线对照，修就是了。\n- 失败具 flaky/时间依赖特征：单次基线对照不足以下零因果结论，需重复采样或显式标记，不得套用单次对照流程。\n- 工作区无可用 commit 基线（测试依赖未提交生成物、工作区即唯一真相）时，worktree 对照无效，应改用 git stash 往返等其他隔离手段，而非强行套用本卡。",
+   "card_sha256": "3c0a986a87ca6dcbc6d7030b414f905c5fcbacd3c18193ec22c9edc36830ebdc",
+   "anti_leak_hits": [],
+   "opaque_id": "776b355da180"
+  },
+  "v3d-B20": {
+   "case_id": "v3d-B20",
+   "kind": "challenge",
+   "family": "same_infra_different_decision",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-process-verification-on-deployment-identity-1a2a8ee84ad1",
+   "source_method_id": "anchor-evidence-to-instance-lifecycle-window-fffe781df7d0",
+   "task": "同一运行日志跨过数次服务重启，当前实例的 pid 与启动时刻已知。任务是切出当前实例证据窗口并复现连接缓存异常。",
+   "shared_surface": "进程/重启/实例身份",
+   "purpose_divergence": "任务用生命周期身份切证据窗口并复现异常；subject Method 面向重启后核对进程是否落在目标部署身份。",
+   "card": "name: anchor-process-verification-on-deployment-identity\nmethod_id: anchor-process-verification-on-deployment-identity-1a2a8ee84ad1\ndescription: 验证重启/部署是否真正落地时，进程枚举的过滤键应从已拿到的部署记录（runtime_root、git_head、统一启动器命令模式）推导，而不是猜测组件关键词（如 uvicorn/服务名）。本例首轮 ps 用猜测关键词，漏掉一个服务并混入多个无关进程，被迫换过滤键重跑；若一开始就用部署身份作过滤键，一次查询即可精确枚举全部目标实例。\n\n## Trigger\n重启/部署动作完成后，需要核实全部目标服务实例已按期望代际（generation/git_head）真正运行，例如用户问“重启已完成，下一步”时的落地验证\n\n## Discriminator\n部署状态查询当时已返回部署身份：runtime_root/code_root 与 git_head；且 ps 输出中任一已匹配的目标进程行本身揭示了统一启动器模式（同一 runtime_root 下以同一 launcher 模块启动各服务）。这两条已知事实足以把过滤键从“猜测关键词”收敛为路径/模块精确匹配，一次枚举全部实例、零无关命中\n\n## Short path\n- 查询部署/服务管理器状态，记录 desired generation、git_head、runtime_root（部署身份）\n- 以 runtime_root 或已见的统一启动器模式作为进程过滤键，一次枚举全部服务实例及其启动时间\n- 核对每个实例启动时间晚于重启动作时间，且服务端口/端点健康响应\n- 核对 git HEAD 等于部署记录 git_head 且 tracked 工作区干净，确认新进程未夹带未提交代码\n- 输出核实结论（实例表+证据）与下一步建议，停止发现类动作\n\n## Stop conditions\n- 全部预期服务实例均在运行、启动时间晚于重启动作、代码指向期望 git_head、端点健康、tracked 工作区无修改\n- 若任一实例缺失或启动时间早于重启，转查重启动作终态/服务管理器日志定位原因，而不是放宽或更换 ps 关键词重试\n\n## Verification\n- 用部署身份派生的过滤键重跑进程枚举，结果应恰好等于预期服务集合，无同名无关进程（如聊天客户端、cron 常驻脚本）混入\n- 各实例的代码根/HEAD 与部署记录一致，端点探测返回预期状态码\n- 对照部署记录中的代际/时间戳确认实例代际无误\n\n## Counterexamples\n- 部署管理器已直接返回每服务 PID/uptime 等权威存活状态时，无需 ps 模式匹配，直接信任管理器输出即可\n- 部署记录不含 runtime_root/启动命令，且服务经 systemd/docker/supervisor 等多样方式包装运行时，单一路径过滤不可行，应按管理器逐服务查询\n- 核实对象是一次性脚本或用户自装应用（非受管部署）时，关键词 ps 本来就是自然工具，本方法不适用\n- 部署状态与实际运行环境分离（如 status 查询的是 desired 而非 live 状态）时，需另取 live 权威来源，仅靠身份锚定的 ps 不足以闭环",
+   "card_sha256": "ed93c38d6de892f5ec0092059dcdffcf25cdf95789317b4eceae5c839c26a903",
+   "anti_leak_hits": [],
+   "opaque_id": "1d48851b7316"
+  },
+  "v3d-B09": {
+   "case_id": "v3d-B09",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "audit-closure-via-transition-event-receipts-not-artifact-grep-da92ba3b84c6",
+   "source_method_id": "audit-duplicates-via-unfiltered-timeline-and-controlflow-boundary-340f7604d311",
+   "task": "会话出现重复工具调用，期间经历 wake、compact、handoff。任务是拉取完整事件流并定位重复从哪个控制流边界开始。",
+   "shared_surface": "事件流/控制流/工具调用",
+   "purpose_divergence": "任务解释重复动作的控制流来源；subject Method 面向生命周期阶段转移与闭环回执证明。",
+   "card": "name: audit-closure-via-transition-event-receipts-not-artifact-grep\nmethod_id: audit-closure-via-transition-event-receipts-not-artifact-grep-da92ba3b84c6\ndescription: 审计“某流程是否闭环/是否被用到”时，先把问题拆成阶段转移清单（如 save_candidate→record_use→record_qualification→activate），用统一事件流中该生命周期工具的 action 回执逐段证明转移发生过；『用了几次』只从 action 回执计数。不要 grep artifact 文本里的动作名来计数——正文提及≠发生（本例 grep 命中 6 个含 record_use 的文件但结构化 use 记录为 0）。各 store 的最新时间戳检索只用来补没有转移事件的阶段（如 self_eval/lesson 停摆多久）。\n\n## Trigger\n被问『X 流程闭环了吗 / 方法、经验有没有被用到』这类流程审计问题，且工作区存在逐条记录工具调用的统一事件流（action/tool 回执）\n\n## Discriminator\n事件流回执里已可见 action.tool_loop tool_call method_manage 等生命周期调用被逐条记录——说明阶段转移有一等回执可直接查询，先于对每个 store 做内容枚举；另一个判别信号：grep store 文件命中动作名 6 处但结构化决策 JSON 为 0，即『提及≠发生』\n\n## Short path\n- 从用户问题列出的阶段名导出需证明的转移清单（Episode 产生 / Reflection 运行 / candidate 全链 / use 反馈生效）\n- 按工具名查统一事件流（workspace scope）中该流程生命周期调用的回执，一次拿到全链时间戳与首次发生时间\n- 仅对无转移事件的阶段做各 store 最新时间戳检索（如 self_eval、lesson 的最后日期）\n- 计数『用了几次』：统计事件流 action 回执条数；机制生效用运行时事实验证（当前进程 head 是否包含相关 commit），不用 artifact 文本 grep 计数\n- 四段证据齐即停，输出每段状态+硬证据\n\n## Stop conditions\n- 所有阶段转移均已由事件回执或权威记录证明（发生/未发生/停摆时长）\n- use 计数与生效性已由 action 回执和运行时事实双重确认，不再追加确认性查询\n\n## Verification\n- 事件流中的转移时间戳与 store 记录交叉一致（如 active 卡的时间戳）\n- 计数口径复核：以 action 回执为准；与 grep 命中数不符时优先信回执并向用户解释差异（提及 vs 发生）\n\n## Counterexamples\n- 没有统一事件流或留存窗口覆盖不到要审的时间段→只能退回 artifact 时间戳/mtime 审计\n- 问题问的是 artifact 内容质量而非『某动作是否发生过』→内容检索才是正确工具\n- 事件流是采样/截断的（如 limit 30 条）→流内计数会低估，需结合 store 全量记录\n- 单 artifact 的事实问题、无流程阶段概念→不适用本方法",
+   "card_sha256": "d9cdb017578bfd5e063c5229fa81fe38fcbd1bd0182e29e5e63afe9e50d6358b",
+   "anti_leak_hits": [],
+   "opaque_id": "b9347146b8c9"
+  },
+  "v3d-B11": {
+   "case_id": "v3d-B11",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "bare-citation-anchor-not-path-guess-c0caae461a97",
+   "source_method_id": "authoritative-artifact-first-then-live-contract-probe-6867db304150",
+   "task": "一条回执提供证据文件的完整绝对路径 `/tmp/run42/ATTRIBUTION.md` 与 sha256。任务是读取该路径、校验 sha256，并提取结论。",
+   "shared_surface": "证据工件/路径/引用",
+   "purpose_divergence": "任务按已知绝对路径读取工件；subject Method 面向裸文件名引用下的路径定位。",
+   "card": "name: bare-citation-anchor-not-path-guess\nmethod_id: bare-citation-anchor-not-path-guess-c0caae461a97\ndescription: 当文档以裸文件名引用证据工件（如 ATTRIBUTION.md）时，不要按『引用出现在哪份文档就猜它在同目录』定位。先用本episode已取回的目录列表核对缺席（列表完整时缺席即证伪根路径假设），再沿引用的上下文锚（所属行/节/ID）与既有层级约定（rows/<行ID>/）构造行级路径直读，或做一次限定范围的文件名搜索。工具回执已登记『路径不存在(TTL内)』的路径禁止重试。本例可省掉一次必败的根路径读取，并让后续引用修正一次写对精确路径。\n\n## Trigger\n目标文档（结论稿/报告）中出现对某证据工件的裸文件名或无路径引用，且任务需要定位该工件取证、立案或把引用修正为精确路径\n\n## Discriminator\n猜测路径之前已可见的事实：①早前 ls 已完整列出 run 根目录全部条目（total 328 全量可见），其中不含 ATTRIBUTION.md——根路径假设当时已被证伪；②草稿第7行已暴露 rows/ 层级约定与行命名（t3::b0::k1），且归因引用挂在 t3 行上下文——真实位置可由锚+约定一步推出\n\n## Short path\n- 读目标文档，记下裸引用及其上下文锚（该引用挂在哪一行/节/ID）；未知量：需要定位哪个工件、为什么要它\n- 用已取回的目录列表核对工件是否在当前位置；本次列表为全量输出→缺席即证伪『同目录』假设，不再尝试该路径\n- 按上下文锚+层级约定构造行级路径（rows/<行ID>/ATTRIBUTION.md）直读，或一次 search_files 按文件名定位；未知量：工件真实路径与证据细节\n- 读命中工件取证（错误码1261、独立重放细节），据此提交外部修复项立案；未知量：追踪号\n- 快照+原子编辑把精确路径与追踪号写回文档，推广定稿本并标注被取代的旧稿；写后复读校验一致性后停止\n\n## Stop conditions\n- 裸引用已解析为经验证的真实路径，且工件内容与引用上下文相符\n- 工具回执登记某路径不存在（TTL内）→停止对该路径族的任何重试，立即切换为锚定推断或文件名搜索\n- 立案拿到追踪号且文档三处引用（标题/正文/收尾）均已写入，复读一致\n\n## Verification\n- 最终写入文档的引用路径与搜索/直读命中的路径逐字一致（本例 rows/t3_compact_multi_b0_k1/ATTRIBUTION.md）\n- 编辑走文件契约：前置快照 ref 匹配、原子写入、写后复读 sha256 一致\n- 立案证据锚指向已实际读取过的工件路径，而非任何猜测路径\n\n## Counterexamples\n- 目录列表是被截断的输出（如 head -N、limit 截断）：缺席不能证伪文件不存在，此时一次直读尝试可能反而是最短路径\n- 工件位置由固定契约约定（如 harness 规定根级 MANIFEST.json/固定配置路径）：应直接读约定位置，无需锚定推断或搜索\n- 引用本身已含完整路径或明确相对路径：直接使用即可，无需上下文锚定",
+   "card_sha256": "b7a8adb3086c89bca036fb0ae1993f7a1dc94cf5408136f2bee15a870f8b2201",
+   "anti_leak_hits": [],
+   "opaque_id": "75c44552f7fa"
+  },
+  "v3d-B14": {
+   "case_id": "v3d-B14",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "complete-failure-inventory-before-root-cause-ce230cde7fa6",
+   "source_method_id": "attribute-suite-failures-via-touched-set-and-clean-head-worktree-8d92c40cb6dc",
+   "task": "失败清单已经固定，定向测试也有结果。任务是把失败主题与本次 touched set 求交，并用 clean HEAD worktree 对照判断因果归属。",
+   "shared_surface": "CI失败/测试清单/根因诊断",
+   "purpose_divergence": "任务已进入因果归因阶段；subject Method 面向先钉死完整失败清单。",
+   "card": "name: complete-failure-inventory-before-root-cause\nmethod_id: complete-failure-inventory-before-root-cause-ce230cde7fa6\ndescription: 从截断的 CI 失败日志切片直接得出\"共 N 个失败\"并开始归因，会漏掉未被看到的第 N+1 个失败，导致第一轮修复推送后才重新开诊断循环。应把\"失败全集\"当作待解未知量：先从权威完整来源（如 short test summary 段、对全量日志 grep FAILED/ERROR）钉死清单与数量，再本地批量复现、对触发提交做 diff 归因。本集第 5 个失败与已修同根因纯属侥幸，通常需整轮重推重验。\n\n## Trigger\nCI/门禁失败后，通过带截断迹象的渠道读取失败日志（行数上限、输出在记录中途结束、未见 runner 的完整汇总段），并准备宣布失败数量、进入根因诊断时。\n\n## Discriminator\n工具回执可见截断事实：输出被行数上限截断、内容在 traceback 中途戛然而止、且未出现 pytest 'short test summary info' 等权威失败清单段——此刻即知失败全集尚未被任何完整来源钉死，不能从可见切片外推失败数量。\n\n## Short path\n- 从失败 check 取权威失败全集：对完整 --log-failed 做 grep（FAILED|ERROR）或定位 short test summary 段；解未知量：确切失败集合与数量 N\n- 按失败测试所属模块分组，diff 触发提交在这些模块上的改动，建立失败→改动映射；解未知量：每组根因落点\n- 修复前在本地一次性批量复现全部 N 个失败，确认清单无遗漏\n- 按根因修实现（而非放松测试），本地失败集全绿后推送\n- 以重新查询的 statusCheckRollup 全 SUCCESS 确认 CI，再进入合并→checkout→restart→receipt 部署链\n\n## Stop conditions\n- 失败全集已由完整权威来源钉死，且每个失败都已本地复现或明确归因到具体改动\n- 推送后重新查询 statusCheckRollup 无 FAILURE，原失败 check 全绿，才进入合并/部署步骤\n\n## Verification\n- 已诊断并修复的失败数 == 权威汇总段列出的失败数（无\"日志截断漏看\"缺口）\n- 合并决策基于推送后重新查询的 check 状态，而非推送前或截断日志的推断\n\n## Counterexamples\n- 日志渠道已给出完整汇总段（无截断、失败清单可见）时，全集步骤冗余，直接归因\n- 单一确定性失败且带明确 file:line（如 lint 错误）时，失败集平凡，无需全集步骤\n- 失败疑似 flaky/网络瞬态时，应先重跑收敛再清点，穷尽归因每个失败反而扩大搜索空间",
+   "card_sha256": "7f8f475002c1422542fc4608d840b1406faaf836c7d20e74b95f0bbc582b529d",
+   "anti_leak_hits": [],
+   "opaque_id": "60f3ad5cead6"
+  },
+  "v3d-B06": {
+   "case_id": "v3d-B06",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "binding-identity-gate-before-destructive-ops-9e1d9ef8f671",
+   "source_method_id": "binding-verify-config-first-probe-86ba90942add",
+   "task": "浏览器重启后，.env 给出 CDP 端口和 TARGET_ID。任务是按这些值探测端点并确认目标绑定一致。",
+   "shared_surface": "数字标识/CDP/目标归属",
+   "purpose_divergence": "任务验证连接绑定一致性；subject Method 面向破坏性操作前确认数字标识的实体类别与归属。",
+   "card": "name: binding-identity-gate-before-destructive-ops\nmethod_id: binding-identity-gate-before-destructive-ops-9e1d9ef8f671\ndescription: 对破坏性操作（kill/清理）的目标 ID 先做存在性检查，并把检查结果当作硬分支：零命中意味着 ID 类别判断错误（如把端口当 PID），必须先经映射证据（lsof 端口→PID）重建真实目标并核对命令行归属，再执行；命中且归属匹配则直接执行。不分支的'装饰性 pre-check'不算门控。本卡片只覆盖破坏性操作的身份门控，不构成绕过工具策略门控的依据。\n\n## Trigger\n用户要求清理/终止一组数字标识（如 45918/62427），且当前证据未直接确认它们是 PID 还是端口。\n\n## Discriminator\n杀前同一命令内 `ps -p 45918,62427` 已返回零行（表头下无任何进程），该事实在 SIGTERM 执行前即已可见；且任务上下文本就是浏览器调试端口（9222），提示这类数字更可能是端口而非 PID。\n\n## Short path\n- 未知量：45918/62427 是 PID 还是端口？先单独跑存在性检查（ps -p），空结果 ⇒ 排除 PID 假设\n- 按任务上下文假设为 debug 端口 ⇒ lsof -iTCP:<port> -sTCP:LISTEN 映射到监听 PID（98741/63901）\n- 杀前核对：ps -p <pid> -o command 确认 user-data-dir 与待清理目标匹配（browser_mount_test / .worktrees），排除误杀 9222 实例\n- kill 已核对 PID（含确认由其拉起的父 shell 98739）\n- 验证两端口无 LISTEN、目标 PID 消失、9222 实例仍在，停止\n\n## Stop conditions\n- lsof 对目标端口返回无 LISTEN（exit≠0）且 ps 确认目标 PID 已退出\n- 任一候选 PID 的 command line 不在用户指定的清理范围内时，停止等待澄清而非继续\n\n## Verification\n- 杀后复查 lsof 两端口：应无监听（对应本次 lsof_exit:1）\n- 复查剩余带 debug-port 的 chrome 主进程：只剩用户在用的 9222 实例\n\n## Counterexamples\n- 杀前检查已返回匹配行且 command line 含预期 user-data-dir ⇒ 直接杀，重新映射只会浪费一轮\n- 空结果本身即目标（验证进程已死/清理已完成）⇒ 空 ps 是成功信号，不是'换解释再杀'的触发器\n- 证据或用户已明确标注这些数字是 PID ⇒ 直接使用，不必改走端口映射\n- 目标是非破坏性读取（如查询端口占用）⇒ 无需同等级硬门控",
+   "card_sha256": "364feb42ca8475741871269acaba914e14f6afc080ca1cc59fd4be64646e0d32",
+   "anti_leak_hits": [],
+   "opaque_id": "5b468be45fd9"
+  },
+  "v3d-B16": {
+   "case_id": "v3d-B16",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "async-wait-on-pipeline-conclusion-not-artifact-03a2fa7c25cb",
+   "source_method_id": "bounded-probe-before-blocking-retry-e3e7b0a91b65",
+   "task": "上轮 git fetch 挂起；当前任务是对 remote host 做 8 秒网络探针，分类传输层状态并决定下一次 fetch 时机。",
+   "shared_surface": "等待/重试/远端状态",
+   "purpose_divergence": "任务对阻塞网络重试做有界故障分类；subject Method 面向异步 pipeline 的终态结论等待。",
+   "card": "name: async-wait-on-pipeline-conclusion-not-artifact\nmethod_id: async-wait-on-pipeline-conclusion-not-artifact-03a2fa7c25cb\ndescription: 等待异步流水线（CI/发布 workflow）产出最终产物时，不要把等待条件设为'产物存在'并用固定 sleep 盲轮询：流水线失败是吸收态，产物永远不会出现，存在性轮询注定超时；后台 job 完成也不会唤醒会话。应每步先查流水线结论（run list/view），失败立即读失败日志定位根因；仍需等待时注册定时唤醒按典型耗时接管，而非前台 sleep 碰运气。\n\n## Trigger\n设置（或准备设置）对异步流水线最终产物的等待/轮询：成功条件只有'产物存在'、用固定 sleep 循环等待、而流水线状态本身可查询时\n\n## Discriminator\n等待脚本的成功条件只有产物存在（如 release view 非空），而该产物的唯一生产者是可查询结论的流水线；失败一旦发生即为吸收态，存在性轮询必然 TIMEOUT；且后台 job 完成不会唤醒会话，固定 sleep 只能靠碰运气命中完成时刻\n\n## Short path\n- 设置等待前（或每轮迭代）先查产生该产物的流水线结论（按触发 tag/branch 过滤 run list/watch）——解决未知量：流水线是否已终止、结论是什么\n- 结论=success→读产物并核对一致性；结论=failure→立即读该 run 的失败日志（如 --log-failed）——解决未知量：失败步骤与根因\n- 仍需等待时注册定时唤醒（时长≈流水线典型耗时）接管后续动作，替代前台 sleep 盲轮询\n- 唤醒后第一步重新查 run 结论再决定下一步（合并/重触发/发布），不重复盲等\n\n## Stop conditions\n- 流水线结论已被权威来源确认：success 且产物与预期一致，或 failure 且根因已定位并修复\n- 已注册唤醒接管且当前没有前台阻塞等待\n\n## Verification\n- 等待逻辑包含对流水线结论的显式分支（in_progress/success/failure），failure 分支立即转入日志读取而非继续等待\n- 唤醒/接管后的第一个动作与最新 run 结论一致：fail→读日志定位，success→核对产物后收尾\n\n## Counterexamples\n- 产物来自无法查询状态的第三方系统（无 run/conclusion API）→ 只能存在性轮询，但须设硬超时并把超时本身视为失败信号\n- 流水线数秒内完成且环境不支持定时唤醒 → 短的同步 watch 可接受，无需排程\n- 产物存在多个独立 writer、无单一权威流水线 → 只监控一条 workflow 会漏因，应回到产物核对+多源检查",
+   "card_sha256": "e185a787eaed88782cab28873a96734c4e1cce5d91d35eba9a7df5e14545f4c4",
+   "anti_leak_hits": [],
+   "opaque_id": "275301ff2e2c"
+  },
+  "v3d-B05": {
+   "case_id": "v3d-B05",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-on-unique-identifier-to-find-mechanism-ae14900fecb5",
+   "source_method_id": "async-action-terminal-ledger-first-7f9a435b6e99",
+   "task": "此前异步 restart 已受理，action ID 和专属台账路径都已知。任务是读取终态并核对反馈通道的呈现状态与动作结果。",
+   "shared_surface": "action ID/台账/restart",
+   "purpose_divergence": "任务沿已知 action 读取终态和反馈；subject Method 面向借唯一标识定位未知 producer/consumer 机制。",
+   "card": "name: anchor-on-unique-identifier-to-find-mechanism\nmethod_id: anchor-on-unique-identifier-to-find-mechanism-ae14900fecb5\ndescription: 当状态/工具回执返回含唯一字面标识（schema 名、专有字段名、全局部署 ID）的结构化数据，而下一个未知量是『谁生产/消费它、对应操作流程是什么』时，先用这些精确字符串做定点定位：浅层 find 找数据/manifest 文件，grep 标识（scope 到已知的 code_root 的 src/docs/tests）找实现与操作文档；不要先做模糊关键词的 evidence/docs/files 宽搜，也不要全库无界 grep。唯一标识近乎零误报，能把搜索空间从『全仓库』缩成两三个可读文件。\n\n## Trigger\n结构化回执已给出全局唯一、可直接 grep 的字面标识（schema 字符串、专有字段名、ID），且回执同时给出了可作 grep scope 的路径（如 code_root），而任务需要弄清该数据的读写机制或操作步骤\n\n## Discriminator\n回执中是否存在非通用的唯一字面量（schema 版本串、复合专有字段名、全局 ID）——存在即意味着任何包含该字符串的文件定义性地属于机制本身（实现/文档/测试），模糊关键词搜索在此时是低信息动作\n\n## Short path\n- 读状态回执，提取唯一标识（schema 串、专有字段名、ID）与 scope 路径（code_root/runtime_root）\n- 用标识定点定位：runtime_root 浅层 find 找 manifest 数据文件；grep 标识但 scope 到 code_root 的 src/、docs/、tests/，命中实现、操作指南、测试三类文件\n- 读实现确认操作语义（操作是专用命令还是手改数据；派生字段如哈希如何计算），读指南确认人机分工与步骤\n- 按指南核对前提（目标 HEAD、产物在位、新旧提交是否触及产物目录），全部通过才生成命令\n- 命令中所有 expected/CAS 值来自刚读到的回执，禁止凭记忆或旧会话填入\n\n## Stop conditions\n- 实现代码与操作文档双重确认了操作方式，前提检查（HEAD、产物、diff）全部有直接证据，命令已生成并含读回校验\n- 唯一标识 grep 无任何命中（机制不在本仓库）→ 此条因果边断裂，才扩大到模糊 docs/files 搜索或外部询问\n\n## Verification\n- grep 命中应同时覆盖实现、文档、测试三类文件并互相印证；只有一类命中时先补另一类再下结论\n- 生成命令前用只读子命令（show/status）读回当前代次/版本作为 expected 值，不硬编码\n- 对『无需重建/可直接发布』类结论必须持有直接 diff 证据（如新旧提交对产物目录零改动）而非推断\n\n## Counterexamples\n- 标识是通用词（id、version、name）→ grep 泛滥误报，应改用路径 scope 或组合键，本方法不适用\n- 回执内容已完整回答用户问题 → 直接停止分析，不追生产者代码\n- 标识只出现在运行时数据文件、由外部系统生成（仓库内无实现）→ 边断裂，需宽发现或问人\n- 仓库巨大且无 scope 路径可用 → 无界 grep 会超时，应先从回执或目录结构推出 scope 再执行",
+   "card_sha256": "210cbb3c0cfcf49ae932c35cb2e69d5deb98b751f6c4f29aea2337c180eccabf",
+   "anti_leak_hits": [],
+   "opaque_id": "a99f9c893519"
+  },
+  "v3d-B12": {
+   "case_id": "v3d-B12",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "audit-report-by-resolving-cited-pointers-4cbbd66a7689",
+   "source_method_id": "audit-duplicates-via-unfiltered-timeline-and-controlflow-boundary-340f7604d311",
+   "task": "给定 session ID 和完整事件流，任务是定位两次相同工具调用之间的 wake/compact/handoff 边界并解释重复来源。",
+   "shared_surface": "会话证据/事件ID/审计",
+   "purpose_divergence": "任务分析单会话控制流重复；subject Method 面向带可解析指针的分析报告逐声明核验。",
+   "card": "name: audit-report-by-resolving-cited-pointers\nmethod_id: audit-report-by-resolving-cited-pointers-4cbbd66a7689\ndescription: 审查一份对本环境可访问系统的分析/评分报告时，不按叙述语气采信，也不全量重推导：先抽取带可解析指针的声明（generation/commit/配置键/内部 ID/测试计数/时间窗事件断言/引用 URL），逐个用权威来源解析——内部声明查本地系统回执，外部声明直接抓取被引 URL 而非关键词搜索。解析结果三分类：证实、不可核验（指针失效或全 surface 无落盘 artifact）、被权威记录反证；'我已核验'类叙述若无落盘证据一律降级为转录。评价性分数不解析，只标注其测量不可复现性。\n\n## Trigger\n用户要求审查/评估一份关于本环境有工具访问权的系统的分析报告（外部模型分析、前任会话总结、评审意见），报告混杂事实声明与评价性声明，且事实声明带有具体指针（ID、hash、配置键、计数、时间窗内事件断言、引用 URL）。\n\n## Discriminator\n任务起点报告中已自带全部可解析指针，这在调用任何验证工具之前就把'如何审查'的空间从{全盘采信, 全量重做}缩小为{逐指针解析+对不可解析声明保持沉默}；其中引用 URL 本身就是显式 provenance edge（本集对'Agent Harness'先做 2 次关键词搜索只得到首页噪声，抓取被引 URL 才命中）；指针解析结果本身就是降级证据：get_goal 返回'目标不存在'、'136/136'在文件/docs/records/evidence 全部零命中=无落盘、事件流在声称窗口内出现一条反例事件=全称断言被推翻。\n\n## Short path\n- 通读报告，抽取全部带指针的事实声明，标记结论承重的 3~5 条优先核验\n- 内部指针逐个用权威本地来源解析：runtime 快照、配置文件行号、git log、ID 解析工具、事件流；外部指针直接抓取被引 URL\n- 按回执三分类：证实→保留；指针失效或全 surface 检索无落盘→降级为'不可核验'；权威记录在声称窗口内出现反例→标为'与事实冲突'\n- 评价性声明（分数/排名/对比表）不解析，只检查测量可复现性与维度自指，标注为不可证伪\n- 成稿：每个 ✅/⚠️/❌ 引用具体回执（file:line、事件时间戳、hash、工具失败消息），被审材料中未获回执的内容一律标注为转述\n\n## Stop conditions\n- 所有承重指针均已解析并三分类，最终审查中不存在任何一条无回执支撑的事实断言\n- 指针全部解析且与叙述一致时，停止深挖非承重细节，避免为审查而审查\n- 目标系统完全不可访问且无公开引用时，停止尝试，输出'不可核验'而非伪造核验\n\n## Verification\n- 审查结论中每条事实判定都能指出具体回执来源（文件行、事件时间戳、git hash、工具失败消息），而非被审文本本身\n- 对'稳定/全部/已验证'类全称断言，已检查权威事件流在声称时间窗内是否存在单个反例（如重启后仍出现的旧状态自报）\n- 外部引用结论来自被引 URL 原文，而非搜索结果标题或首页\n\n## Counterexamples\n- 报告为纯观点/战略建议、无任何可解析指针：没有解析对象，直接评估论证质量，不要虚构检查来套用本方法\n- 指针指向你无权限访问的外部/私有系统且无公开引用：只能标注不可核验，不得用本地工具假装核验，也不得用搜索首页噪声充数\n- 指针可解析但所附声明是语义评价（如'9.8 分'）：解析成功只证明对象存在，不证明评价正确，此时方法不适用\n- 待核声明数量巨大且大多不承重：只抽结论依赖的承重子集，全量解析属于过度执行",
+   "card_sha256": "0c0ef67d40a8485b1954ce2f4e26d9f956c0ceae8ea0213764016881624974ce",
+   "anti_leak_hits": [],
+   "opaque_id": "21fbdef7437b"
+  },
+  "v3d-B15": {
+   "case_id": "v3d-B15",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "authority-contract-before-managed-mutation-62e4436f179e",
+   "source_method_id": "binding-drift-preflight-before-gated-service-mutation-e6f2166d36f7",
+   "task": "部署记录的 git_head 与当前 HEAD 出现差异，并行会话还留下 dirty 增量。任务是完成 binding drift preflight，判断受管变更是否会被 fence 接纳。",
+   "shared_surface": "受管变更/部署身份/前置门",
+   "purpose_divergence": "任务判定 binding drift 与可接纳性；subject Method 面向先确定动作权限归属。",
+   "card": "name: authority-contract-before-managed-mutation\nmethod_id: authority-contract-before-managed-mutation-62e4436f179e\ndescription: 在受管 desired-state 控制面执行变更前，先从契约（工具 schema、源码注释、清单字段）确认动作权限归属：若 desired 状态被明确标注为 operator-published，且自己的工具面只暴露只读/重启类动词，则把'发布'归为 operator 手工步骤，而不是先假设自己能跑全部 CLI 再靠拦截报错学习边界。自己的职责收敛为：只读核验前置（HEAD、工作树干净、绑定产物新鲜度，源码有变更则先测试再重建产物）→ 从源码提取 CLI 签名，组装带 CAS expected-generation 的精确命令与预期输出交给 operator → 待确认后用自己拥有的 restart 动词执行并轮询愈合、canary 收尾。\n\n## Trigger\n用户要求在带 CAS generation 的受管生命周期/desired-state 服务上执行发布、重启等状态变更，且模型只通过受限工具面（或共享拦截层）操作该系统\n\n## Discriminator\n尝试变更之前已经在工具输出里读到的角色归属事实：源码注释明确写着 'desired: operator-published deployment'（且工具契约只提供 status/restart）。这一条当时就足以把候选动作从'我自己执行 publish'收缩为'备齐前置+精确命令交 operator 执行'，无需等拦截报错\n\n## Short path\n- 调控制面只读 status，取当前 desired generation 与绑定（未知量：现状与 CAS expected-generation）\n- 读工具 schema 与关键源码注释，确认角色归属与自己的动词集（未知量：publish 归谁、发布绑定哪些字段）\n- 若发布属 operator：只读核验 HEAD/工作树干净；diff 上一 desired 提交..当前 HEAD 判断绑定构建产物是否过期，过期则跑相关测试后重建（未知量：前置是否全部满足）\n- 从源码提取发布 CLI 签名，组装含 expected-generation 与根路径的精确命令，附预期成功输出（新一代号、当前 HEAD、新产物哈希），一次性交给 operator\n- operator 确认后：用自己工具面的 restart 动词携带新 expected_generation 执行，轮询 status 至新 PID、live 绑定与 stable 收据愈合到新一代，canary 验证后收尾\n\n## Stop conditions\n- 契约显示发布动词在自己的工具面内 → 直接自行执行 CAS，不做 handoff\n- 无任何角色标注且无拦截证据 → 允许一次廉价探测；被拦截即转 handoff，不重复尝试同一路径\n- 前置核验失败（工作树脏、产物无法重建、门禁测试红）→ 停止并上报，不把命令交给 operator\n- restart 后 status 显示各进程新 PID、live git_head 等于 desired、收据愈合 → 任务完成，停止轮询\n\n## Verification\n- operator 命令的预期输出：generation = expected+1、git_head = 当前物理 HEAD、新的构建产物哈希\n- restart 后 status：live 绑定与 desired 一致、restart_required 归 false、stable 收据 generation 匹配新一代\n- canary：健康端点鉴权行为正常，build 标识包含新提交的 short sha\n\n## Counterexamples\n- 工具 schema 本身向模型暴露 publish/deploy 动词 → 应直接用工具执行 CAS 发布，做 operator handoff 反而增加摩擦与延迟\n- 无共享拦截层的单机脚本环境（单用户、无权限边界）→ 直接执行是默认正确动作，先查权限契约纯属浪费\n- desired 状态由 CI/外部系统自动发布 → 没有人工 publish 步骤，应等待并轮询外部发布者推进 generation，而不是交命令给 operator\n- 源码中的 operator-published 只是历史惯例描述、CLI 实际对本地所有进程开放 → 一次探测即可澄清边界，不应零探测直接 handoff",
+   "card_sha256": "cf8e350242cf2a02e337ec9ffa82378ef6af5144439acd2f2177a46dd75d631b",
+   "anti_leak_hits": [],
+   "opaque_id": "299a5703663f"
+  },
+  "v3d-B19": {
+   "case_id": "v3d-B19",
+   "kind": "challenge",
+   "family": "same_infra_different_decision",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-on-self-report-then-probe-gaps-003c0af478b6",
+   "source_method_id": "binary-intervention-sufficiency-gate-7631f80e335c",
+   "task": "用户报告外部访问异常并询问是否重启；监督者显示进程 running，公网端到端请求返回应用级 HTTP 303。任务是据此裁决重启动作。",
+   "shared_surface": "服务健康/状态/重启决策",
+   "purpose_divergence": "任务用最小事实对裁决二元干预；subject Method 面向 authoritative self-report 存在时以其状态字段为主锚。",
+   "card": "name: anchor-on-self-report-then-probe-gaps\nmethod_id: anchor-on-self-report-then-probe-gaps-003c0af478b6\ndescription: When user requests a health/status check on a system exposing an authoritative self-report tool, use the self-report's healthy/status field as the primary discriminator. Skip broad internal searches after self-report confirms healthy; only probe dimensions self-report does not cover with targeted queries.\n\n## Trigger\n用户请求健康检查/状态快照/系统状态类查询，且系统暴露有 authoritative self-report 工具（status / monitoring / dashboard 接口）\n\n## Discriminator\nself-report 工具回执已直接给出 healthy / status / health 字段（例如 healthy=true、status=consistent、model_fact_integrity.healthy=true）\n\n## Short path\n- 调 self-report 工具，解析 healthy / status 字段\n- 对照用户需求，列出 self-report 已覆盖与未覆盖的维度\n- 仅对未覆盖维度（host 资源、外部依赖、历史异常、独立指标）做定向 probe\n- 若 self-report healthy=true 且定向 probe 无异常，停止\n\n## Stop conditions\n- self-report healthy=true 且对未覆盖维度的定向 probe 无异常\n- 用户所需事实已被 self-report + 必要 probe 覆盖\n- self-report 显示 unhealthy，转入对应子系统的详细诊断分支\n\n## Verification\n- self-report 的 healthy 字段与外部 probe（host shell / 独立 metrics）结果一致\n- self-report 中 healthy 字段与子模块 breakdown 不自相矛盾\n- 报告中的每一行都能溯源到 self-report 或一次定向 probe\n\n## Counterexamples\n- 用户明确要求独立验证（审计、压测后、self-report 刚重启未稳定）\n- self-report 工具本身处于被怀疑状态（刚出过故障或正在变更/降级）\n- 用户需要历史趋势或异常历史，而 self-report 只提供当前瞬时快照",
+   "card_sha256": "f7b7dfcff0701636cb50ff6b5bf51aca3cdcb99197dfd9ea1271491f1b556fec",
+   "anti_leak_hits": [],
+   "opaque_id": "24076c231c5a"
+  },
+  "v3d-B24": {
+   "case_id": "v3d-B24",
+   "kind": "challenge",
+   "family": "same_infra_different_decision",
+   "intended": "SKIP",
+   "subject_method_id": "binary-intervention-sufficiency-gate-7631f80e335c",
+   "source_method_id": "anchor-on-self-report-then-probe-gaps-003c0af478b6",
+   "task": "用户询问系统当前健康状态，权威 status 接口直接返回 healthy 与状态摘要。任务是据此判断是否需要展开更宽的诊断。",
+   "shared_surface": "服务健康/状态/诊断",
+   "purpose_divergence": "任务以权威 self-report 回答健康问题；subject Method 面向用户提出重启/回滚等二元干预请求时的最小事实裁决。",
+   "card": "name: binary-intervention-sufficiency-gate\nmethod_id: binary-intervention-sufficiency-gate-7631f80e335c\ndescription: 当用户以\"还是连不上，要重启吗\"这类二元干预问题报告故障时，先用最小事实对决定答案：(1) 监督者报告的进程状态，(2) 一次穿透完整公网路径的端到端探测。两者皆为正向即否决重启，下一个未知量应转向报告方（客户端环境或告警源自身的探测路径），而不是继续枚举服务端健康维度。本例中这两条事实在前两步已定案，其后8次工具调用属于事后充分性确认。\n\n## Trigger\n用户提出\"要不要重启/回滚/重部署X\"式二元干预请求，且报告的故障在操作侧尚未复现\n\n## Discriminator\n在首次搜索扩散前已可见的两条事实：监督者（launchd）state=running 且 pid active；root/app/origin 三处均返回由源站应用生成的 HTTP 303（若隧道真挂，应表现为超时或 5xx，而非应用级重定向）。这两条事实当时已把候选空间从\"服务可能挂了需重启\"缩为\"服务存活，问题出在报告路径一侧\"\n\n## Short path\n- 1. 查监督者状态（如 launchctl print | grep state）→ 解决未知量：脚本是否已死、重启是否有据\n- 2. 一次跟随重定向的端到端黑盒探测（curl -sL 公网域名取最终状态码）→ 解决未知量：完整服务路径是否可用\n- 3. 两者皆正常 → 立即停止服务端健康枚举，转向收集报告方的判别信息（设备/网络/错误类别：超时、DNS、证书、5xx），或复现告警源自身的探测路径\n- 4. 任一事实失败 → 重启或深挖才有依据，按失败维度继续诊断\n\n## Stop conditions\n- 监督者报告存活 且 一次端到端探测取得源站生成的成功响应（如跟随重定向后的 200）→ 回答\"无需重启\"并向报告方索要客户端侧判别信息\n- 端到端探测超时/5xx，或进程已死/僵死 → 不满足停止条件，重启与继续诊断均有据\n\n## Verification\n- 成功响应必须是源站生成（重定向到应用真实页面/内容），而非边缘缓存页或错误页\n- 探测必须走用户实际使用的同一公网域名和完整路径（含重定向链）\n\n## Counterexamples\n- 监督者显示 running 但端到端探测超时或 5xx：两事实分歧时重启反而有据，不得在\"running\"处提前停\n- 故障是间歇性或发生在过去时间窗：单次通过的探测不足以下结论，需先查看覆盖故障窗口的日志\n- \"连不上\"的报告来自探测路径不同的外部监控（如 DoH、443 被阻断的探测脚本）：本机 curl 成功不能证伪该告警，必须复现监控自身的探测方式后才可判定误报",
+   "card_sha256": "aae071a70c0007bb75191ee48d9d8916ac846f0c611127908d3ced7544452c97",
+   "anti_leak_hits": [],
+   "opaque_id": "506d16bcc6b7"
+  },
+  "v3d-B01": {
+   "case_id": "v3d-B01",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "allowlist-names-from-authoritative-definition-not-summary-28a550ac5cac",
+   "source_method_id": "zero-hit-from-indexed-search-is-not-code-absence-proof-fa972dda9005",
+   "task": "一份审查摘要声称代码中存在标识符 A/B；索引搜索返回零命中。任务是核验这些标识符是否真实存在并定位定义位置，输出核验结论。",
+   "shared_surface": "标识符/权威定义/摘要",
+   "purpose_divergence": "任务核验标识符存在性；subject Method 面向写入逐字枚举工件前的名集提取。",
+   "card": "name: allowlist-names-from-authoritative-definition-not-summary\nmethod_id: allowlist-names-from-authoritative-definition-not-summary-28a550ac5cac\ndescription: 当修复需要写出逐字枚举标识符的工件（契约测试允许集、字段清单、schema）时，名字必须从当前权威定义（投影函数体逐行列出的键、Schema 字段声明、前端类型）机械提取，而不是转录此前审查/讨论摘要里的描述。写入前先对两个名集做 diff：只出现在摘要、不在任何定义里的名字即是幻影，进了补丁必然在集成阶段的契约测试被拦截，造成返工 commit。修复方向（扩测试允许集还是收窄代码投影）由独立消费者（前端 types、平行 roundtrip 测试）是否存在来决定，而非默认某一方正确。\n\n## Trigger\n需要新建或修改一个逐字枚举标识符集合的工件（契约测试允许集、API 字段清单、类型/schema、fixture），且手上还存在一份更早的审查摘要、会议记录或上轮结论也用自然语言描述过这批名字\n\n## Discriminator\n权威枚举定义已在当前代码中存在或一步可达：投影函数体逐字列出的键、Schema 字段声明、前端类型定义，可与摘要名集做机械对比；只出现在摘要中、任何定义面都找不到的名字，在写入补丁前即可判定为未证实的幻影名\n\n## Short path\n- 定位并读取权威定义面（投影函数/Schema/类型定义），未知量：真实契约名集到底是什么\n- 从定义体逐字机械提取名集，与摘要/记忆名集做 diff，显式标出仅存在于摘要中的幻影名\n- 用独立消费者确定修复方向：前端 types 或平行测试在消费这些字段→属计划内扩展、扩允许集；无任何消费者→收窄代码投影\n- 补丁只写入从定义提取的名字；计划内扩展同时补登记注释/平行测试\n- 先单点跑该契约测试转绿，再 merge+集成全量；对账所有定义面键集一致即停止\n\n## Stop conditions\n- 工件名集与从权威定义机械提取的结果集合相等，且目标契约测试单点转绿\n- 后端投影/Schema/前端类型等全部定义面名集一致，无单边新增或丢键\n- 摘要独有的幻影名已被证伪且未进入任何提交\n\n## Verification\n- 用 grep/AST 从权威定义机械提取键集，与补丁内容断言集合相等（不允许手抄）\n- 单点契约测试转绿后再执行 merge/集成全量，确认无同类失败复现\n- 对账所有定义面（后端投影函数、Schema、前端类型）的键集三方一致\n\n## Counterexamples\n- 契约尚未实现的设计/TDD 任务：权威是 spec 而非代码，应按 spec 写键、允许测试先红，此时按落后于设计的代码取名集是错的\n- 允许集是故意冻结的 ratchet，目的就是强制每个新键必须人工裁决：不能仅因代码已出现某键就机械扩集，必须先判定计划内/计划外并留下裁决记录\n- 多个定义面互相矛盾（投影≠schema≠前端）时不存在单一权威，取任一单边都会残留不一致，须先三方对账再定名集",
+   "card_sha256": "f2726296f9e02c0a53d0bc2862fb3ac4a7c0a377f5a1deb934f02e1fa30635ee",
+   "anti_leak_hits": [],
+   "opaque_id": "59f910088491"
+  },
+  "v3d-B04": {
+   "case_id": "v3d-B04",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-evidence-to-instance-lifecycle-window-fffe781df7d0",
+   "source_method_id": "anchor-process-verification-on-deployment-identity-1a2a8ee84ad1",
+   "task": "服务完成重启，部署记录给出 runtime_root 与 git_head。任务是检查当前进程列表中的目标实例是否来自该部署身份，并输出一致性清单。",
+   "shared_surface": "进程/重启/部署身份",
+   "purpose_divergence": "任务核对当前进程的部署身份；subject Method 面向跨进程生命周期证据切窗与当前实例复现。",
+   "card": "name: anchor-evidence-to-instance-lifecycle-window\nmethod_id: anchor-evidence-to-instance-lifecycle-window-fffe781df7d0\ndescription: 当待解释的证据流（日志、缓存、连接行为）横跨多次重启或多个进程生命周期时，不要按固定行数/体积采样后直接解释，而应先用已在手的当前实例标识（PID、启动标记、启动时间）划出证据窗口，只解释窗口内证据；若窗口内没有目标事件，且故障域被判定为“进程内长期存活对象”，则验证必须在同进程内用真实失败源复现（而非另起进程、mock 或寻找内建探针），并以可区分的前后状态作为结论依据。本次摩擦点发生在按固定行数读取跨代日志、随后不得不回头定位启动边界重读的那一步。\n\n## Trigger\n需要对一个跨多次重启/多进程生命周期累积的证据流（日志、缓存、连接状态）下结论，并判断“当前实例”是否健康或能否复现故障。\n\n## Discriminator\n当前实例的可机械定位标识是否已在手——进程/部署探测的同一批回执里已经给出当前 web 实例的 PID 与约 1 分钟前的启动时刻（且该日志体积表明其横跨多代重启），因此存在一个无需按体积采样的精确窗口锚点。\n\n## Short path\n- 从部署/进程回执中取出当前实例标识（PID + 启动时间），未知量：哪些证据属于当前实例。\n- 用该标识直接定位日志中的生命周期边界（对应 PID 的启动标记行 / 服务监听行），得到行区间，而不是先读固定行数。\n- 只读取该区间到文件末尾的片段；未知量：当前实例窗口内是否真的发生了目标事件。\n- 若窗口内无目标事件，先判定故障域：故障只出现在进程内长期存活对象、而新起进程与命令行客户端正常，则排除“另起进程探针”和“找内建探针”两条路。\n- 在同一进程内用真实失败源复现（指向一个必然拒连的端口），观察失败信号、回调触发、以及下一次取用时是否返回重建后的新实例。\n- 取得可区分的前后状态后停止，并显式标注仍未证的部分（原始触发条件未复现）。\n\n## Stop conditions\n- 已能用完全属于当前实例窗口的证据回答“当前实例是否存在该故障”\n- 窗口内无目标事件时，已在同一进程内用真实失败源复现并观测到可区分的前后状态\n- 用户所需结论已由权威来源或可复现实验支持，且未证部分已显式声明\n\n## Verification\n- 最终断言中的每条日志/行为证据都能回溯到当前实例窗口内的具体行或同一次实验输出\n- 复现实验使用真实失败源（真实拒连端口）而非 mock，并同时观测到失败分类、回调触发与缓存对象被替换为不同标识的新实例\n- 记录被替换实例与新建实例的可比较标识（如对象 id / 生成序号）作为“重建确实发生”的证据\n\n## Counterexamples\n- 证据流没有重启边界（单实例、单次运行），按体积读取尾部即可，锚定动作纯属浪费\n- 故障属于外部共享资源（上游代理/端口整体不可达），新起进程同样失败——此时必须做跨进程横向比较并验证外部可达性，进程内复现会得出错误结论\n- 任务本身是“失败从何时开始”的跨窗口审计或统计，强行锚定单一窗口会漏掉历史证据",
+   "card_sha256": "1279404f19905eebc0f9b258d2491818ba02764967c3ea5f0fd4aa12f5833d63",
+   "anti_leak_hits": [],
+   "opaque_id": "9faa7c90c740"
+  },
+  "v3d-B02": {
+   "case_id": "v3d-B02",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "bounded-chunk-write-verify-for-long-file-artifacts-45c00c2ebf00",
+   "source_method_id": "bound-verification-output-to-survive-truncation-5879c1e4cca7",
+   "task": "pytest 输出包含大量 warning，工具窗口经常截掉末尾 summary 与退出码。任务是把验证命令塑造成短输出，保留最终 summary 和 exit code。",
+   "shared_surface": "截断/验证/输出",
+   "purpose_divergence": "任务压缩验证命令输出；subject Method 面向长文件写入传输的分块与落盘核验。",
+   "card": "name: bounded-chunk-write-verify-for-long-file-artifacts\nmethod_id: bounded-chunk-write-verify-for-long-file-artifacts-45c00c2ebf00\ndescription: 通过 shell heredoc/cat 写入长文档时，传输可能静默截断内容，而命令仍返回 exit 0——回执证明的是'执行了'，不是'写完整了'。对长度超过单次命令可靠规模的交付物，应预先切成有界块（首块 cat >，后续 cat >>），每块后核对回执中的累计行数，末块附文末哨兵；一旦回读发现行数不足或句中截断，不要追加修补，而是删除后按更小块重建。\n\n## Trigger\n需要用 shell heredoc/cat 把长文档（数十行以上）写入文件交付物，或对一次写盘后的内容完整性没有独立回执、只能靠 exit 0 判断的场景。\n\n## Discriminator\n写入后立即可观察的事实：回执仅 exit 0 无输出，但 read_file 显示文件只有 8 行且在句中截断（预期约 115 行）——证明退出码与'成功'字样不等于内容完整；后续每个 ~30-45 行的 chunk 写入均完整到达预期行数（33→73→115、44→64→95），说明有界分块+逐块行数核对+文末哨兵可稳定绕开该失效模式。\n\n## Short path\n- 起草时按目标长度预切有界块，每块规模远小于出现截断的单次写入（本环境中 ~30-45 行的块均成功，单次 ~115 行写入在第 8 行被截断）\n- 首块 cat > 写入，回执累计行数应等于该块预期行数\n- 后续逐块 cat >> 追加，每块后核对累计行数（如 33→73→115）\n- 末块确认最后一句完整并追加文末哨兵（如 NO_CORRUPTION_MARKER）\n- read_file 抽查头/尾与句界完整性，再声明交付\n\n## Stop conditions\n- 累计行数与逐块预期一致，且文末哨兵在位/最后一句无句中截断，即可停止写入进入交付\n- 某块后行数不符或尾部截断时，停止追加，删除重建为更小的块，不继续在同一文件上修补\n\n## Verification\n- 每个 chunk 后以回执中的累计行数核对预期值\n- 最终 read_file 至少覆盖文件头、尾与截断敏感位置，确认无句中截断、哨兵在位\n- 不以 shell exit 0 或'执行成功'作为长文档内容完整的证据\n\n## Counterexamples\n- 短文件（几行、远低于单次写入可靠规模）：单次写入+一次回读即可，分块只增加噪音与调用数\n- 写入由专用 write_file 工具完成且回执自带字节数/行数：以该回执为准，无需 shell 分块\n- 文件会被并发读者立即读取、不能容忍中间态：分块追加会暴露部分写入状态，应写临时文件后原子 rename，而非套用本方法\n- 截断根因不是传输规模（如磁盘满、权限错误，通常表现为非零退出码或显式错误）：分块写不解决该类失败",
+   "card_sha256": "9a57648636f90f23e44e59d3a33b1f94d840b46d7b54523a19ae2542d14ffb71",
+   "anti_leak_hits": [],
+   "opaque_id": "68e0d3e1bc69"
+  },
+  "v3d-B23": {
+   "case_id": "v3d-B23",
+   "kind": "challenge",
+   "family": "same_infra_different_decision",
+   "intended": "SKIP",
+   "subject_method_id": "binding-verify-config-first-probe-86ba90942add",
+   "source_method_id": "binding-identity-gate-before-destructive-ops-9e1d9ef8f671",
+   "task": "准备对一个数字标识执行进程终止操作。任务是先判断该数字代表 PID、端口还是目标 ID，并核对它归属的进程实体。",
+   "shared_surface": "数字标识/进程/绑定",
+   "purpose_divergence": "任务是破坏性操作前的实体身份门；subject Method 面向重启后按配置值验证外部连接绑定。",
+   "card": "name: binding-verify-config-first-probe\nmethod_id: binding-verify-config-first-probe-86ba90942add\ndescription: 验证外部绑定（浏览器 CDP、loopback 服务、目标 ID）在重启/重绑后是否存活一致时，先读权威配置工件（.env/部署清单）提取精确连接参数（URL/端口/TARGET_ID），再据此构造探针；绝不在同一条命令里既 grep 配置又按熟知默认值（如 9222 端口）发请求。本例 .env 已写明 CDP 在 45918，先 curl 默认端口 9222 得空响应并触发 JSON 解码失败，虽随即纠正，但按'先读值再探测'可整体避免。适用于'环境绑定核对→功能恢复验证'类收尾任务，每步只收窄一个未知量：代码版本→绑定参数→端点存活→核心感知路径→旧故障依赖路径。\n\n## Trigger\n任务要求验证某个外部绑定/连接（如 CDP 端点+TARGET_ID、服务 URL）在重启、重绑或恢复后是否存活一致，且任务上下文已指明记录这些参数的权威配置工件（.env、manifest）\n\n## Discriminator\n权威配置工件在计划阶段已被点名（如'.env TARGET_ID 与 CDP 目标列表核对'）且读取成本极低——探针参数应从其内容导出而非假设默认值；grep 输出本身即刻揭示真实端口(45918)与默认值(9222)不同，证明默认假设在读取前就已被固化为命令参数\n\n## Short path\n- 读部署状态（generation/git_head）：服务是否运行在预期代码、阻塞工作线是否已提交\n- 读权威配置（.env）提取 CDP_URL 与 TARGET_ID：确定要验证的确切端点与目标，不引入默认端口假设\n- 用配置中的精确 URL 探测 /json/version 与目标列表：CDP 是否存活、TARGET_ID 是否以预期类型（page target）存在\n- 调用感知工具取 snapshot：重绑+重启后感知是否端到端恢复（看 grounding_ref 与 completeness，非空壳回执）\n- 调用一个轻量谓词（此前死锁链中的依赖路径）：旧缺陷在恢复会话中是否已不复现\n- 绑定一致性+核心路径+旧故障路径均以真实回执 PASS 即停；仅当存在既有记录未覆盖的新事实时才补录经验\n\n## Stop conditions\n- 配置中的 TARGET_ID 已在 CDP 目标列表中按预期类型存活\n- snapshot 与轻量谓词两条路径均拿到真实回执且 PASS（如 observer_error_count=0）\n- 检索既有记录确认无未沉淀的净新增事实，不再扩查\n\n## Verification\n- 回执中的 target id / url 与配置值逐字一致\n- snapshot 回执含有效 grounding_ref 与 completeness 状态\n- 谓词回执 satisfied 且采样错误计数为 0\n- 部署 git_head 与主仓 HEAD 一致（前提未被推翻）\n\n## Counterexamples\n- 配置工件可能过期（进程以不同 env 启动）时，应读运行时真实状态（ps/lsof/连接表）而非信配置文件，本方法不适用\n- 被测工具自身能返回含绑定信息的明确错误时，直接调用工具是更便宜的预言机，先探原始端点反而多余\n- 不存在配置工件且默认值有文档约定时，按默认端口首探是正确做法\n- 任务只是验证工具自身行为而非绑定时，无需先核配置，直接最小用例调用工具即可",
+   "card_sha256": "afcb3aefd0696f57f271621346fa57ec9bd1e915765bb9251cb545debe67b5cd",
+   "anti_leak_hits": [],
+   "opaque_id": "994e0d18f572"
+  },
+  "v3d-B21": {
+   "case_id": "v3d-B21",
+   "kind": "challenge",
+   "family": "same_infra_different_decision",
+   "intended": "SKIP",
+   "subject_method_id": "binding-drift-preflight-before-gated-service-mutation-e6f2166d36f7",
+   "source_method_id": "authority-contract-before-managed-mutation-62e4436f179e",
+   "task": "受管系统准备执行 publish/restart，当前工具 schema 暴露 status/restart，代码注释描述 desired deployment 的发布责任。任务是先确定各动作的权限归属。",
+   "shared_surface": "受管服务/变更门/发布重启",
+   "purpose_divergence": "任务判动作 authority contract；subject Method 面向已知权限契约下的代码树与部署绑定漂移。",
+   "card": "name: binding-drift-preflight-before-gated-service-mutation\nmethod_id: binding-drift-preflight-before-gated-service-mutation-e6f2166d36f7\ndescription: 对共享服务的变更操作（restart/publish 类）先做绑定漂移预检，再修模型侧前置，最后停在 operator 闸门：并行取部署记录与进程版本，若部署记录绑定的代码身份 ≠ 工作区当前 HEAD，直接执行必被 fail-closed；此时优先读并行会话在 dirty 增量中留下的、与该操作同名的教训记录，得到围栏机制与修复链。随后逐项收敛模型侧前置：先跑测试再补提交被已提交代码 import 的未跟踪模块；grep 验证 gitignore 的构建产物是否含新功能（防『后端新前端旧』的静默半上线），陈旧则重建并复验；从当前源码而非旧记录核对 operator-only 命令参数，最后向用户交付唯一一条命令与预期结果（新代数、绑定 HEAD、产物指纹），不反复试探被围栏拦截的操作。\n\n## Trigger\n用户要求对受管共享服务执行重启/发布等变更操作，或报告『此前承诺的自动/队列式执行没有动静』；环境中存在并行会话痕迹（两次检查之间工作树 dirty 状态发生变化、出现新的未跟踪记录）。\n\n## Discriminator\n动手前即可读出的两条事实：(1) 部署记录绑定的 git_head 与工作区当前 HEAD 不一致——预示直接 restart 会被 binding 校验 fail-closed；(2) dirty 增量中存在文件名与本次操作类完全匹配的教训/经验记录——直接给出围栏机制、前置条件与修复链。二者把『直接重启试试』从候选空间中删去。\n\n## Short path\n- 并行取部署记录 + 进程版本，比较发布绑定的代码身份与当前 HEAD；未知量：这次变更操作会被什么挡住？\n- 发现绑定漂移 ⇒ 放弃直接 restart；扫描 dirty 增量中与本操作相关的教训记录并读取；未知量：围栏与修复链是什么？\n- 按记录逐项修模型侧前置：跑测试后补提交被已提交代码引用的未跟踪模块；grep 构建产物验证新功能是否在产物内，不在则重建并复验。\n- 从当前源码核对 operator-only 命令的准确参数（不照抄记录里的旧命令），可用一次轻量探测确认围栏仍活跃。\n- 向用户交付唯一一条经源码核实的命令 + 预期结果（新代数、绑定 HEAD、产物指纹），停止于用户闸门，待回报后再执行 restart 与核验。\n\n## Stop conditions\n- 模型侧前置全部有回执变绿：测试通过、tracked-clean、新功能字符串已出现在构建产物中，且 operator 命令已按当前源码核实并交付。\n- 用户回报发布完成后才进入 restart 与结果核验；此前不重复试探已知会被围栏拦截的操作。\n\n## Verification\n- restart 后出现新 pid、服务 git_head 等于发布绑定的 HEAD、启动时间为当下、新功能路由/面板可达。\n- 构建产物 grep 命中新功能标识，排除『后端新前端旧』的半上线。\n- 教训记录所述围栏与当前源码（预检逻辑/命令参数定义）一致；交付给用户的命令以源码为准。\n\n## Counterexamples\n- 无部署绑定的本地/沙箱进程重启：不适用绑定漂移预检，直接执行即可，套用即过度预检。\n- 部署记录与 HEAD 一致且构建产物新鲜：判别式不成立，应直接执行操作而非先读记录。\n- dirty 增量中没有任何与本次操作相关的记录：跳过记录扫描，不要为简单变更全量审计工作树。\n- 教训记录已陈旧、围栏在新代码中变更：必须以当前源码重新核实命令，不得照抄记录。",
+   "card_sha256": "b78f243c9329c04f9fdd6413ff9b76ddeed38cd42dceea692072a70fcb24e2fb",
+   "anti_leak_hits": [],
+   "opaque_id": "8c3db87f233d"
+  },
+  "v3d-B08": {
+   "case_id": "v3d-B08",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-first-claim-audit-81071f5c9dc1",
+   "source_method_id": "authoritative-record-first-when-preview-truncated-0155675ee421",
+   "task": "用户给出唯一 EVO ID，records 索引返回截断预览。任务是按 ID 从持久台账取回完整记录并依其规格继续执行。",
+   "shared_surface": "EVO记录/索引预览/权威台账",
+   "purpose_divergence": "任务恢复具名规格全文；subject Method 面向报告事实声明的持久状态锚点优先审计。",
+   "card": "name: anchor-first-claim-audit\nmethod_id: anchor-first-claim-audit-81071f5c9dc1\ndescription: 审计一份此前写好的系统分析时，先从来文枚举全部可检验断言并三分类：可各用一条廉价命令核实的持久状态锚点（git HEAD、deployment/manifest JSON、action receipts、journal 统计）、有明确指向位置的代码行为断言、不可独立复核的遥测统计。第一批并行核实所有状态锚点——它们最廉价、因分析写作时刻滞后而失真率最高，且证伪会级联改变方案（如版本漂移层数、部署排序）。代码断言只在被指向的确切 file:line 验证；遥测类显式标注'未独立复核、按来源采信'。行动方案只从已核实事实重排，每条修正须可追溯到第一手命令输出。本 episode 中 git HEAD 锚点首轮即证伪'main=606755367'，但 deployment/receipts 等同级廉价锚点拖到第 7/8 轮才查，且开场只声明核'三处'导致各轮被动扩围——前置批量锚点可近乎减半轮次。\n\n## Trigger\n收到一份先前写成的分析/评审/报告，其中混合引用持久运行状态（版本号、部署代、action 回执、统计计数）与代码行为断言，且后续行动方案依赖这些断言成立\n\n## Discriminator\n来文本身是否点名了可各用一条廉价命令直接核实的持久状态工件（git HEAD、managed deployment/desired-state JSON、service action receipts、journal 计数）。这类断言存在写作滞后、失真率最高，且单条证伪即可级联改变方案优先级；该判别在收到消息当时即可做出，无需任何后续发现。\n\n## Short path\n- 通读来文，枚举全部可检验断言并三分类：持久状态锚点 / 代码行为断言（记录其指向的确切位置）/ 不可独立复核的遥测统计\n- 第一批并行核实所有状态锚点（git log/status、deployment JSON、最近 action receipts、journal 计数，各一条命令），立即标记被证伪或滞后项\n- 仅对未被锚点证伪的代码断言，按其指向的确切 file:line 读取验证，标 ✅/❌/nuance\n- 无法廉价复核的遥测统计显式标注'未独立复核、按来源采信'，不与已核实事实混列\n- 用核验表重排行动方案：每条修正给出第一手输出出处，并说明对方案的影响（如漂移层数、gen 发布排序）\n\n## Stop conditions\n- 所有影响行动方案的断言均已核实或显式标注采信\n- 新出现的待核断言先入表分类，不再无清单地临时补查\n- 对已核实断言不再追加'再确认'式读取\n\n## Verification\n- 最终核验表每行 ✅/❌ 均引用确切 file:line 或第一手命令输出\n- 每条修正可追溯到锚点命令输出，而非用户复述或事后推断\n- 未核项与已核项在结论中显式区分，方案仅基于已核项\n\n## Counterexamples\n- 来文只含纯代码语义断言、未引用任何持久状态工件 → 无锚可批，直接按位置读码\n- 状态工件读取昂贵或有副作用（生产库、破坏性命令）而代码在本地 → 反转顺序或仅抽样\n- 分析是本会话实时生成、无滞后窗口 → 锚点失真概率低，无需前置批量复核\n- 用户只要求核验单一断言 → 不建全量清单",
+   "card_sha256": "c4f78a928e21476912ca6a6ad4e3e7580d91982b6d7ee4c8b7ac2591e9fc1d6a",
+   "anti_leak_hits": [],
+   "opaque_id": "16cf6029268f"
+  },
+  "v3d-B18": {
+   "case_id": "v3d-B18",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+   "source_method_id": "binding-verify-config-first-probe-86ba90942add",
+   "task": "浏览器重启后，.env 中记录了当前 CDP URL 与 TARGET_ID。任务是读取这些值并验证端点和目标仍保持同一绑定。",
+   "shared_surface": "浏览器/CDP/配置探针",
+   "purpose_divergence": "任务按权威配置做重绑一致性验证；subject Method 面向接入失败场景先判断 attach 可行性。",
+   "card": "name: attach-feasibility-gate-then-authoritative-config\nmethod_id: attach-feasibility-gate-then-authoritative-config-42e640eda0c3\ndescription: 当浏览器/自动化工具连接被拒且用户称目标已打开时：先用一次进程参数+端口监听检查判定接入是否根本可行（如无 --remote-debugging-port 即为终局性答案），据此先回答用户问题；若继续追内容，读取唯一权威配置源（如系统代理设置）而非枚举猜测端口与协议变体；遇登录墙/反爬等需用户凭证的硬阻塞时停止叠加绕过层，转为给出最小用户动作（分享链接/粘贴/带参重启）。\n\n## Trigger\nbrowser/自动化工具对用户已打开的目标返回 connection refused（终局性错误而非瞬态）；或连接失败后正要开始枚举环境候选（猜端口、换协议、叠绕过层）\n\n## Discriminator\n目标主进程启动参数是否缺少所需调试/服务标志且对应端口未监听（实测 Chrome 无 --remote-debugging-port、9222 未开）——此单一已观察事实把『拒绝原因的众多假设：端口错/代理干扰/工具bug/进程陈旧』收敛为『当前无法接入』并终结可行性问题；若目标改为取内容，scutil --proxy 一条权威读取即可给出真实代理端点，替代对猜测端口做多协议探测\n\n## Short path\n- 复现一次连接错误并读错误类别：refused（终局性）vs timeout/transient（可重试）\n- 查目标主进程启动参数与所需端口监听状态 → 判定 attach 可行性\n- 若不可行：这即是对『能否操作』的最终答案——报告阻塞+最小解除动作（带调试参数重启），并确认用户底层目标是否为取内容\n- 若底层目标是内容：读权威配置源（系统代理设置）得到确定端点，做一次连通验证即止\n- 遇登录墙/反爬 403 等需用户凭证的硬阻塞：停止枚举绕过（猜端口/换指纹/渲染代理叠加），转为请求用户动作（生成公开分享链接/直接粘贴）\n\n## Stop conditions\n- 进程证据证明目标无调试/服务端点 → 可行性问题已终结，输出答案而非继续诊断\n- 内容源被证明需登录态或被反爬硬拦且绕过已一次证伪 → 请求用户操作，不再尝试更多绕过\n- 任一取回路径已返回真实目标内容 → 停止发现，进入分析\n\n## Verification\n- 报告的根因与观察证据一致（ps 无调试参数、错误类型为 refused 而非超时）\n- 建议的解除动作与根因一一对应（调试参数↔attach 失败；公开分享链接↔登录墙）\n- 回查轨迹：在可行性已有定论后，未再对同一环境分支做端口/协议枚举或叠加同质绕过\n\n## Counterexamples\n- 错误为 timeout/5xx 等瞬态故障：可行性检查不能终结问题，应重试/健康检查而非下结论\n- 用户实际诉求就是取回内容而非『能否操作』：代理与抓取路径从第一步即主任务，不算绕路\n- 环境中不存在权威配置源可读：此时枚举监听端口/协议反而是合理的收窄手段\n- 直连抓取已成功返回正文：无需渲染代理或任何进一步绕过，直接分析并停止",
+   "card_sha256": "2f7e205127051a7991fb274a7b47bacc92f0672029a26f561a9ed44864dcb5c0",
+   "anti_leak_hits": [],
+   "opaque_id": "b8c08c09f876"
+  },
+  "v3d-B07": {
+   "case_id": "v3d-B07",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "artifact-symbol-lineage-before-mechanism-reading-e22289ec79cf",
+   "source_method_id": "audit-report-by-resolving-cited-pointers-4cbbd66a7689",
+   "task": "分析报告中的事实声明都带 commit/hash/URL/内部 ID。任务是逐个解析这些指针，以权威来源给出证实、证伪或证据缺口。",
+   "shared_surface": "报告/工件/指针证据",
+   "purpose_divergence": "任务裁定报告声明真伪；subject Method 面向共享数据工件的写入者符号血缘归因。",
+   "card": "name: artifact-symbol-lineage-before-mechanism-reading\nmethod_id: artifact-symbol-lineage-before-mechanism-reading-e22289ec79cf\ndescription: 当审计'某机制是否影响运行时指标'且证据来自共享数据目录的工件（ledger/审计行/事件日志）时，先提取工件自带的独特符号（kind/事件名/写入函数名）并与被审计部署代码根做血缘匹配：符号零命中即证明写入者另有其人，应立即用 VCS 溯源（git log --all -S 符号）定位真实写入提交与所属分支，先判定'生产影响是否存在'，再决定读哪份实现。避免血缘未定前深读非部署实现、把开发期测试写入当生产证据，或按猜测的文件布局写聚合脚本。\n\n## Trigger\n多分支/多 worktree 共享同一数据目录的环境中，需要判断某机制是否影响运行时指标，且已拿到带独特符号与元数据（pid/时间戳/工具名）的证据工件和被审计部署代码根\n\n## Discriminator\n工件的独特符号（如 kind 标记、对应写入函数/import）在被审计部署根的 grep 中零命中，同时工件行带测试痕迹（单 pid 突发、'xyz' 类非生产工具名、时间戳早于引入提交）→ 该工件不是被审计运行线写出的，下一步应查写入者身份而非继续读当前实现\n\n## Short path\n- 一次取三组事实：工件内容（提取独特符号+pid/ts/tool 元数据）、被审计部署根、指标观测面字段；后续所有 grep 限定在该部署根内\n- 在部署根 grep 工件独特符号：命中→直接读该实现与开关；零命中→部署代码不是写入者，未知量切换为'谁写的'\n- 用 git log --all -S <符号> 溯源引入提交及其分支/worktree，检查该提交是否在部署根 HEAD 祖先中；不在→工件属未部署线/开发期写入，经此路径的生产影响为零\n- 读真实写入者的实现验证影响面：是否只写旁路审计文件、fail-open、有 kill switch、不触碰 wire 字节\n- 对已部署的残余同类路径：读实现确认作用位置（历史尾部追加、一次写入冻结）并核对默认配置/开关是否使其根本不进正文\n- 先确认本会话数据文件实际布局（单文件 vs 滚动分段目录）再聚合实测指标，比对前缀指纹稳定性与变更原因字段\n\n## Stop conditions\n- 符号在部署代码命中且配置证明其运行：写入者问题消解，转实现与实测核验\n- 工件被证实为非部署线/测试写入，且已部署路径的影响面与实测指标均已验证，血缘/实现/实测三面一致\n- 实测指标覆盖目标会话全部分段且前缀指纹全程单一不变、变更原因全空\n\n## Verification\n- git -S 找到的引入提交所属分支与部署根 HEAD 的祖先关系一致（不在祖先中=未部署）\n- 工件行 pid/时间戳落在写入提交的开发期窗口而非生产运行窗口\n- 聚合脚本前先列出数据目录实际布局，结果覆盖全部滚动分段\n- 结论同时具备按构造安全（实现/开关）与实测零扰动（指纹/命中率）两路证据\n\n## Counterexamples\n- 符号在部署代码中直接命中：写入者即当前代码，无需 VCS 溯源，直接读实现\n- 单工作区无分支歧义：符号缺席意味着'从未存在'，工件可能来自其他环境或陈旧数据，git -S 无意义\n- 用户只关心当前运行时行为且证据工件与之无关：不应追工件血缘\n- 符号命中但位于死代码或默认关闭路径：存在≠运行，必须补配置/开关核验才能下结论",
+   "card_sha256": "f04289822fdf32896f120d44f5b0bb6dd3d1069217b4ea10dfe64512092a2621",
+   "anti_leak_hits": [],
+   "opaque_id": "9385ddfb3f25"
+  },
+  "v3d-B17": {
+   "case_id": "v3d-B17",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "assertions-as-spec-first-for-behavior-edits-c1f836aa31cd",
+   "source_method_id": "bulk-edit-from-displayed-literal-anchor-free-per-surface-verify-95849638b2f5",
+   "task": "同一个版本号需要同步到 pyproject、源码常量和 README；预检 grep 已列出三处完整字面行。任务是完成替换并逐表面核对新值。",
+   "shared_surface": "多文件编辑/验证/版本面",
+   "purpose_divergence": "任务执行多表面字面量迁移；subject Method 面向行为或指标契约变更时以断言作为规格。",
+   "card": "name: assertions-as-spec-first-for-behavior-edits\nmethod_id: assertions-as-spec-first-for-behavior-edits-c1f836aa31cd\ndescription: 修改既有行为/指标口径（分母、判定规则、文案）时，把测试断言点当作当前行为的权威契约：先做一次跨 src+tests 的 grep 定位目标符号的定义点与断言点，从断言中的期望值与 note 文案反推现行口径，再让实现与断言同批修改、三处口径一致（实现/断言/note），按受影响子集→全量顺序验证。避免先分块通读上千行源文件、最后才'看看测试了解现有规范'导致的口径返工与调用数膨胀。\n\n## Trigger\n任务为修改/优化既有实现中的行为或指标口径（如改某指标分母、判定规则、note 文案），且早前 find/grep 回执已列出对应测试文件；此时尚未查看这些测试对该符号的断言。\n\n## Discriminator\n测试中对目标行为存在精确断言（期望值、比率、note 文案），且这些测试文件路径在更早的列目录/find 回执中已出现——断言点本身就是'当前契约+必改面'，一次 grep 即可在通读源码前获得。本 episode 中模型读完两个约 540 行源文件后才执行 'grep honesty tests/unit/test_evaluator.py'，而该 grep 一次就给出了精确现行口径（含 note 原文）。\n\n## Short path\n- 把变更清单逐项映射到文件/符号（此类任务起点通常已有明确项列表）\n- 对目标符号做一次 src+tests 的 grep，得到定义点与断言点清单\n- 只精读断言点附近与定义点区域：从断言的期望值/note 反推当前口径（分母、单位、文案）\n- 实现与断言同批修改，保持实现、断言、note/文档三处口径一致\n- 先跑受影响单测子集，绿后再全量测试与 lint 各一次收尾\n\n## Stop conditions\n- 受影响单测子集通过，且 grep 确认 src 与 tests 中无旧口径残留字面值（旧期望值、旧 note 文案）\n- 实现、断言、note 三处口径一致；全量 suite 与 lint 已各跑一次并绿\n\n## Verification\n- grep 目标符号及其 note/文案关键字，确认无旧口径残留\n- 先跑受影响测试子集再跑全量；若有失败，先核对是否为断言与实现的口径差而非环境问题\n\n## Counterexamples\n- 全新功能/新增指标（无既有断言可作 spec）：grep-first 无对象，仍需按现有结构阅读源码并新写测试\n- 纯结构重构、行为不变：断言是回归护栏而非变更面，通读定义仍然必要\n- 目标文件很小或变更覆盖大半文件：整体阅读成本低，先读全文件不构成绕路，不必强套本方法",
+   "card_sha256": "aa4303007b2966ac81aaa796e4cf881276fef0eb25d8c61678da3672846f5dad",
+   "anti_leak_hits": [],
+   "opaque_id": "70b6a51b1e66"
+  },
+  "v3d-B22": {
+   "case_id": "v3d-B22",
+   "kind": "challenge",
+   "family": "same_infra_different_decision",
+   "intended": "SKIP",
+   "subject_method_id": "bounded-probe-before-blocking-retry-e3e7b0a91b65",
+   "source_method_id": "async-wait-on-pipeline-conclusion-not-artifact-03a2fa7c25cb",
+   "task": "CI workflow 正在后台运行，release artifact 由成功终态产生。任务是查询 workflow conclusion，并依据终态决定后续处理。",
+   "shared_surface": "等待/异步状态/终态",
+   "purpose_divergence": "任务等待异步 pipeline 的结论；subject Method 面向阻塞式命令重试前的本地有界探针。",
+   "card": "name: bounded-probe-before-blocking-retry\nmethod_id: bounded-probe-before-blocking-retry-e3e7b0a91b65\ndescription: 重试一个此前挂死/超时的阻塞式网络操作（如 git fetch）前，先对同一依赖主机发一条有界廉价探针（curl -m 8，host 取自 remote get-url 的真实远端）做故障分类：exit 28/0字节/http 000 = 传输层断；拿到任何 HTTP 状态码 = 传输层通、问题在应用层。探针不通就跳过阻塞重试，不烧满 60s 工具超时；并把探针写成退避闹钟的前置条件，让未来自动唤醒自门控（不通即放弃、不再续设）。探针通再执行原操作，若仍失败则转应用层诊断。\n\n## Trigger\n到点要重试一个上一轮已挂死或超时的阻塞式网络操作（fetch/push/长请求），或要为这类操作设置自动退避重试闹钟。\n\n## Discriminator\n本次动作是'重试'且上轮症状是挂死而非明确报错（材料中助手自述'网络路径还没恢复'，说明先前已知疑似断网）——失败模式尚未分类。一条 ≤8s 的有界探针（对 remote get-url 得到的真实 host 发 curl -m 8）即可把'本机到远端网络层断 vs git/凭证问题'缩成一类：探针 000/超时即网络层，无需用 60s 阻塞超时去换这个结论。\n\n## Short path\n- 唤醒/到点时先确认：这是对已挂死操作的重试，未知量=故障原因是否已恢复，而非'操作会不会成功'。\n- 单命令有界探针：git remote get-url 取真实 host + curl -m 8 探该 host + 顺带读当前 refs 做基线；≤8s 完成传输层/应用层分类。\n- 探针 000/超时 → 不执行阻塞 fetch（省掉 60s 挂死）；判定网络层断，设退避闹钟并把'先探针、不通即本次放弃不再续设、通了只动 refs 后停手等裁决'写进前置条件。\n- 探针通 → 执行原操作（限定 scope，如仅 fetch --prune）；若仍失败，按应用层/凭证路径诊断。\n- 停止：故障已分类、下次重试已带探针门控、当前 refs/状态已汇报。\n\n## Stop conditions\n- 探针结果已给出唯一故障分类（传输层 vs 应用层），不再重复同类探测或盲试阻塞操作。\n- 退避闹钟已含探针前置与明确放弃分支；本轮不再手动重试。\n- 操作成功完成且结果已与重试前的 refs/SHA 基线核对无部分副作用。\n\n## Verification\n- 探针 host 必须取自 remote get-url 的真实目标，而非泛互联网连通性（避免代理规则差异导致误判）。\n- 分类规则显式化：curl exit 28/0 字节/http 000 = 传输层断；任何 HTTP 状态码（含 4xx/5xx）= 传输层通。\n- 闹钟文本包含探针命令、不通时的放弃分支、通时操作完成后的停手点（汇报分叉、等用户裁决）。\n- 重试前后 refs/SHA 一致性核对，确认挂死的操作没有留下半完成状态。\n\n## Counterexamples\n- 首次执行（无先前失败）：直接执行即可，先探针是纯增延迟、无信息增益。\n- 上轮是明确应用层报错（403/凭证拒绝/冲突，非挂死）：传输探针通了也不预示成功，应读错误本身做诊断。\n- 操作自带短超时或异步非阻塞：直接重试比'探针+重试'两跳更便宜。\n- 探针与目标操作走不同代理/路由路径时，探针成功不能证明操作可达，需同路径探测，否则分类失真。",
+   "card_sha256": "a2ae8a2edee479b4dfd06f28251502ade1bb0184cc3aa3942ddbaad5faa66c76",
+   "anti_leak_hits": [],
+   "opaque_id": "f5415533ffde"
+  },
+  "v3d-B03": {
+   "case_id": "v3d-B03",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "batch-complete-required-fields-on-parameter-rejection-71b35b88bd44",
+   "source_method_id": "bare-id-state-reconcile-before-transition-retry-588019de930e",
+   "task": "此前 complete 动作已经发出，当前有 action ID 与状态存储入口。任务是读取该 ID 的最新记录并决定后续状态迁移。",
+   "shared_surface": "complete/action ID/状态迁移",
+   "purpose_divergence": "任务先对账已发起动作的最新状态；subject Method 面向参数缺失型拒绝后的字段补全重试。",
+   "card": "name: batch-complete-required-fields-on-parameter-rejection\nmethod_id: batch-complete-required-fields-on-parameter-rejection-71b35b88bd44\ndescription: 对状态变更类 control API（closure/acknowledge 类）首次调用前，先从工具 schema/help 或既往回执枚举必填字段全集；若已被 'requires <field>' 类错误拒绝，把错误当作部分 schema，一次补齐所有必填字段（含语义成对字段如 evidence+reason），而不是每次只补一个字段、靠连续拒绝逐个学参数。本集把 3 次闭合调用缩为 1 次。\n\n## Trigger\n需要在本会话中首次调用某个会改变系统状态的管理/闭环 API，其必填参数尚不完全可知；或调用刚被 'requires evidence/reason/...' 这类参数缺失型错误拒绝，正准备重试\n\n## Discriminator\n拒绝信息是显式的参数 schema 提示（点名缺失字段），而非状态冲突或权限错误——这意味着正确的下一步是补全参数而不是换动作；同时该类闭环 API 的回执/文档惯例是 evidence 与 reason 成对必填\n\n## Short path\n- 诊断阶段保持原路径：沿 provenance 读失败动作台账，找到持有 admission barrier 的具体 action_id（本集此段高效，不变更）\n- 首次调用变更类 API 前，从工具 schema/help/同类回执确认必填字段全集（本例为 evidence + reason）\n- 一次调用同时提供全部必填字段闭合过期单，消除 '每次拒绝学一个字段' 的串行试错\n- 受理新单后按成功回执内嵌的指引异步核对终态（status, action_id=...），未查到 succeeded/failed 不宣布结果\n\n## Stop conditions\n- 变更调用返回 accepted:true / verdict:accept，且后续受理动作不再出现 barrier 冲突\n- 补全字段后仍失败且错误类型不再是参数缺失（转为状态/权限冲突）→ 停止补参数，转向冲突诊断\n- 用户问题所需事实已由权威回执确认，不再追加确认性查询\n\n## Verification\n- 重试一次即通过，不再出现第二个字段缺失型拒绝\n- barrier 释放被间接验证：下一个受理动作成功 accepted\n- 异步终态通过 status(action_id=...) 或 event_stream 核对，而非假设完成\n\n## Counterexamples\n- 工具是 strict schema、对多余字段报 unexpected keyword → 只补错误点名的字段，不得批量猜测\n- 拒绝原因是状态冲突或权限不足而非缺参数 → 补字段无效，应改查状态/权限\n- 只读查询类调用试错成本低 → 最小重试即可，先读文档反而绕远",
+   "card_sha256": "029a2ffa242059d68e771e066cb385136a3b23bc3cc86ef87a81a4d9d0b69435",
+   "anti_leak_hits": [],
+   "opaque_id": "3639d7388503"
+  }
+ },
+ "formal_rows": [
+  {
+   "ordinal": 1,
+   "row_id": "strong:v3d-B12:C0",
+   "model": "strong",
+   "case_id": "v3d-B12",
+   "arm": "C0",
+   "family": "same_evidence_different_claim"
+  },
+  {
+   "ordinal": 2,
+   "row_id": "weak:v3d-B12:C0",
+   "model": "weak",
+   "case_id": "v3d-B12",
+   "arm": "C0",
+   "family": "same_evidence_different_claim"
+  },
+  {
+   "ordinal": 3,
+   "row_id": "weak:v3d-B06:C0",
+   "model": "weak",
+   "case_id": "v3d-B06",
+   "arm": "C0",
+   "family": "same_object_different_action"
+  },
+  {
+   "ordinal": 4,
+   "row_id": "strong:v3d-B06:C0",
+   "model": "strong",
+   "case_id": "v3d-B06",
+   "arm": "C0",
+   "family": "same_object_different_action"
+  },
+  {
+   "ordinal": 5,
+   "row_id": "strong:v3d-B01:C0",
+   "model": "strong",
+   "case_id": "v3d-B01",
+   "arm": "C0",
+   "family": "same_object_different_action"
+  },
+  {
+   "ordinal": 6,
+   "row_id": "weak:v3d-B01:C0",
+   "model": "weak",
+   "case_id": "v3d-B01",
+   "arm": "C0",
+   "family": "same_object_different_action"
+  },
+  {
+   "ordinal": 7,
+   "row_id": "weak:v3d-B07:C0",
+   "model": "weak",
+   "case_id": "v3d-B07",
+   "arm": "C0",
+   "family": "same_evidence_different_claim"
+  },
+  {
+   "ordinal": 8,
+   "row_id": "strong:v3d-B07:C0",
+   "model": "strong",
+   "case_id": "v3d-B07",
+   "arm": "C0",
+   "family": "same_evidence_different_claim"
+  },
+  {
+   "ordinal": 9,
+   "row_id": "strong:v3d-B04:C0",
+   "model": "strong",
+   "case_id": "v3d-B04",
+   "arm": "C0",
+   "family": "same_object_different_action"
+  },
+  {
+   "ordinal": 10,
+   "row_id": "weak:v3d-B04:C0",
+   "model": "weak",
+   "case_id": "v3d-B04",
+   "arm": "C0",
+   "family": "same_object_different_action"
+  },
+  {
+   "ordinal": 11,
+   "row_id": "weak:v3d-B19:C0",
+   "model": "weak",
+   "case_id": "v3d-B19",
+   "arm": "C0",
+   "family": "same_infra_different_decision"
+  },
+  {
+   "ordinal": 12,
+   "row_id": "strong:v3d-B19:C0",
+   "model": "strong",
+   "case_id": "v3d-B19",
+   "arm": "C0",
+   "family": "same_infra_different_decision"
+  },
+  {
+   "ordinal": 13,
+   "row_id": "strong:v3d-B22:C0",
+   "model": "strong",
+   "case_id": "v3d-B22",
+   "arm": "C0",
+   "family": "same_infra_different_decision"
+  },
+  {
+   "ordinal": 14,
+   "row_id": "weak:v3d-B22:C0",
+   "model": "weak",
+   "case_id": "v3d-B22",
+   "arm": "C0",
+   "family": "same_infra_different_decision"
+  },
+  {
+   "ordinal": 15,
+   "row_id": "weak:v3d-B08:C0",
+   "model": "weak",
+   "case_id": "v3d-B08",
+   "arm": "C0",
+   "family": "same_evidence_different_claim"
+  },
+  {
+   "ordinal": 16,
+   "row_id": "strong:v3d-B08:C0",
+   "model": "strong",
+   "case_id": "v3d-B08",
+   "arm": "C0",
+   "family": "same_evidence_different_claim"
+  },
+  {
+   "ordinal": 17,
+   "row_id": "strong:v3d-B18:C0",
+   "model": "strong",
+   "case_id": "v3d-B18",
+   "arm": "C0",
+   "family": "same_workflow_different_phase"
+  },
+  {
+   "ordinal": 18,
+   "row_id": "weak:v3d-B18:C0",
+   "model": "weak",
+   "case_id": "v3d-B18",
+   "arm": "C0",
+   "family": "same_workflow_different_phase"
+  },
+  {
+   "ordinal": 19,
+   "row_id": "weak:v3d-B14:C0",
+   "model": "weak",
+   "case_id": "v3d-B14",
+   "arm": "C0",
+   "family": "same_workflow_different_phase"
+  },
+  {
+   "ordinal": 20,
+   "row_id": "strong:v3d-B14:C0",
+   "model": "strong",
+   "case_id": "v3d-B14",
+   "arm": "C0",
+   "family": "same_workflow_different_phase"
+  },
+  {
+   "ordinal": 21,
+   "row_id": "strong:v3d-B24:C0",
+   "model": "strong",
+   "case_id": "v3d-B24",
+   "arm": "C0",
+   "family": "same_infra_different_decision"
+  },
+  {
+   "ordinal": 22,
+   "row_id": "weak:v3d-B24:C0",
+   "model": "weak",
+   "case_id": "v3d-B24",
+   "arm": "C0",
+   "family": "same_infra_different_decision"
+  },
+  {
+   "ordinal": 23,
+   "row_id": "weak:v3d-B02:C0",
+   "model": "weak",
+   "case_id": "v3d-B02",
+   "arm": "C0",
+   "family": "same_object_different_action"
+  },
+  {
+   "ordinal": 24,
+   "row_id": "strong:v3d-B02:C0",
+   "model": "strong",
+   "case_id": "v3d-B02",
+   "arm": "C0",
+   "family": "same_object_different_action"
+  },
+  {
+   "ordinal": 25,
+   "row_id": "strong:v3d-B11:C0",
+   "model": "strong",
+   "case_id": "v3d-B11",
+   "arm": "C0",
+   "family": "same_evidence_different_claim"
+  },
+  {
+   "ordinal": 26,
+   "row_id": "weak:v3d-B11:C0",
+   "model": "weak",
+   "case_id": "v3d-B11",
+   "arm": "C0",
+   "family": "same_evidence_different_claim"
+  },
+  {
+   "ordinal": 27,
+   "row_id": "weak:v3d-B13:C0",
+   "model": "weak",
+   "case_id": "v3d-B13",
+   "arm": "C0",
+   "family": "same_workflow_different_phase"
+  },
+  {
+   "ordinal": 28,
+   "row_id": "strong:v3d-B13:C0",
+   "model": "strong",
+   "case_id": "v3d-B13",
+   "arm": "C0",
+   "family": "same_workflow_different_phase"
+  },
+  {
+   "ordinal": 29,
+   "row_id": "strong:v3d-B03:C0",
+   "model": "strong",
+   "case_id": "v3d-B03",
+   "arm": "C0",
+   "family": "same_object_different_action"
+  },
+  {
+   "ordinal": 30,
+   "row_id": "weak:v3d-B03:C0",
+   "model": "weak",
+   "case_id": "v3d-B03",
+   "arm": "C0",
+   "family": "same_object_different_action"
+  },
+  {
+   "ordinal": 31,
+   "row_id": "weak:v3d-B20:C0",
+   "model": "weak",
+   "case_id": "v3d-B20",
+   "arm": "C0",
+   "family": "same_infra_different_decision"
+  },
+  {
+   "ordinal": 32,
+   "row_id": "strong:v3d-B20:C0",
+   "model": "strong",
+   "case_id": "v3d-B20",
+   "arm": "C0",
+   "family": "same_infra_different_decision"
+  },
+  {
+   "ordinal": 33,
+   "row_id": "strong:v3d-B05:C0",
+   "model": "strong",
+   "case_id": "v3d-B05",
+   "arm": "C0",
+   "family": "same_object_different_action"
+  },
+  {
+   "ordinal": 34,
+   "row_id": "weak:v3d-B05:C0",
+   "model": "weak",
+   "case_id": "v3d-B05",
+   "arm": "C0",
+   "family": "same_object_different_action"
+  },
+  {
+   "ordinal": 35,
+   "row_id": "weak:v3d-B16:C0",
+   "model": "weak",
+   "case_id": "v3d-B16",
+   "arm": "C0",
+   "family": "same_workflow_different_phase"
+  },
+  {
+   "ordinal": 36,
+   "row_id": "strong:v3d-B16:C0",
+   "model": "strong",
+   "case_id": "v3d-B16",
+   "arm": "C0",
+   "family": "same_workflow_different_phase"
+  },
+  {
+   "ordinal": 37,
+   "row_id": "strong:v3d-B21:C0",
+   "model": "strong",
+   "case_id": "v3d-B21",
+   "arm": "C0",
+   "family": "same_infra_different_decision"
+  },
+  {
+   "ordinal": 38,
+   "row_id": "weak:v3d-B21:C0",
+   "model": "weak",
+   "case_id": "v3d-B21",
+   "arm": "C0",
+   "family": "same_infra_different_decision"
+  },
+  {
+   "ordinal": 39,
+   "row_id": "weak:v3d-B17:C0",
+   "model": "weak",
+   "case_id": "v3d-B17",
+   "arm": "C0",
+   "family": "same_workflow_different_phase"
+  },
+  {
+   "ordinal": 40,
+   "row_id": "strong:v3d-B17:C0",
+   "model": "strong",
+   "case_id": "v3d-B17",
+   "arm": "C0",
+   "family": "same_workflow_different_phase"
+  },
+  {
+   "ordinal": 41,
+   "row_id": "strong:v3d-B15:C0",
+   "model": "strong",
+   "case_id": "v3d-B15",
+   "arm": "C0",
+   "family": "same_workflow_different_phase"
+  },
+  {
+   "ordinal": 42,
+   "row_id": "weak:v3d-B15:C0",
+   "model": "weak",
+   "case_id": "v3d-B15",
+   "arm": "C0",
+   "family": "same_workflow_different_phase"
+  },
+  {
+   "ordinal": 43,
+   "row_id": "weak:v3d-B09:C0",
+   "model": "weak",
+   "case_id": "v3d-B09",
+   "arm": "C0",
+   "family": "same_evidence_different_claim"
+  },
+  {
+   "ordinal": 44,
+   "row_id": "strong:v3d-B09:C0",
+   "model": "strong",
+   "case_id": "v3d-B09",
+   "arm": "C0",
+   "family": "same_evidence_different_claim"
+  },
+  {
+   "ordinal": 45,
+   "row_id": "strong:v3d-B23:C0",
+   "model": "strong",
+   "case_id": "v3d-B23",
+   "arm": "C0",
+   "family": "same_infra_different_decision"
+  },
+  {
+   "ordinal": 46,
+   "row_id": "weak:v3d-B23:C0",
+   "model": "weak",
+   "case_id": "v3d-B23",
+   "arm": "C0",
+   "family": "same_infra_different_decision"
+  }
+ ]
+}
