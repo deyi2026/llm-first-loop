@@ -1163,11 +1163,11 @@ def build_engine(
             # browser ws UUID+target+ws url 三元组，另一 host 新建绑定时必须全匹配，
             # 否则拒绝（感知/执行不得落在两个不同 Chrome 上）。
             _browser_channel = BrowserChannelBindingCoordinator()
-            # S3b（R3 attestation，S0 结论 ②）：class=real+ACK ⇒ allow_real(ack_digest)；
+            # S3b（R3 attestation，S0 结论 ②）：class=real+ACK ⇒ permit_real(ack_digest)；
             # 其余一律 deny_real（fail-closed）。mode=shadow|enforce 显式两态。
             # attest 闭包带 PATHS 语义（空=内置树；none=全判 real；非空=内置∪追加）。
             _browser_policy = (
-                BindingPolicy.allow_real(
+                BindingPolicy.permit_real(
                     ack_digest(_profile_decision.ack),
                     mode=_profile_decision.attestation_mode,
                 )

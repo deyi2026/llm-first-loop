@@ -132,8 +132,15 @@ def test_policy_enforce_refuses_real_without_allow():
     assert ok is False and "fail-closed" in reason
 
 
+def test_policy_default_constructor_is_fail_closed():
+    policy = BindingPolicy()
+    assert policy.allow_real is False
+    ok, reason = policy.check(_v("real"))
+    assert ok is False and "fail-closed" in reason
+
+
 def test_policy_enforce_allows_real_with_ack():
-    ok, reason = BindingPolicy.allow_real("digest123").check(_v("real"))
+    ok, reason = BindingPolicy.permit_real("digest123").check(_v("real"))
     assert ok is True and "digest123" in reason
 
 
@@ -195,7 +202,7 @@ def test_direct_entry_default_policy_refuses_real_chrome():
 
 
 def test_allow_real_policy_binds_real_chrome():
-    host = _perceive(policy=BindingPolicy.allow_real("digest"), attest=_v("real"))
+    host = _perceive(policy=BindingPolicy.permit_real("digest"), attest=_v("real"))
     info = host.probe_page_target()
     assert info["target_id"] == "t-1"
 
@@ -229,7 +236,7 @@ def test_coordinator_attestation_verdict_mismatch_refused():
             "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/browser/uuid-1"},
         ws_connect=lambda url: _FakeWs(),
         binding_coordinator=coord,
-        binding_policy=BindingPolicy.allow_real("digest"),
+        binding_policy=BindingPolicy.permit_real("digest"),
         attest_fn=lambda url: _v("real", sha="e" * 64),
     )
     with pytest.raises(RuntimeError, match="attestation"):
