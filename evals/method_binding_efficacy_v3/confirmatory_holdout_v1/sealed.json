@@ -1,0 +1,247 @@
+{
+ "schema": "subject-binding-v3-holdout-sealed/v1",
+ "present_order": [
+  "a29bdd646e62",
+  "9cd6e254d095",
+  "2011313157cd",
+  "dbba385a2299",
+  "61fe8a082e6c",
+  "31dd5901d37c",
+  "d783e2c5e7ff",
+  "fc9409074ad0",
+  "0ed299452fe2",
+  "8b3c19b8db1b",
+  "b247f0db2ef8",
+  "02ce9e50b318",
+  "b17dd9b7c582",
+  "967c9b31fbed",
+  "ec044b3fddcf",
+  "8f79095a3cd2",
+  "299f7cddac23",
+  "d205979ff96e",
+  "aa947481ca45",
+  "ded7907eee4f",
+  "db50b0a1d2ed",
+  "3a3d0c248801",
+  "151490f348ca",
+  "4966e1595ecb"
+ ],
+ "cases": {
+  "967c9b31fbed": {
+   "case_id": "v3h-B01",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "failure-receipt-is-zero-info-not-absence-20ac7bad5b0a",
+   "source_method_id": "falsify-error-receipt-on-identical-recurrence-verify-echoed-input-c0166d5a76ba",
+   "purpose_divergence": "任务校验回显输入与真实 root；subject Method 用失败/超时检索回执区分“零命中”与“零信息”。"
+  },
+  "8f79095a3cd2": {
+   "case_id": "v3h-B02",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "failing-test-red-triage-by-failure-signature-86ac002c4e46",
+   "source_method_id": "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+   "purpose_divergence": "任务修复假红守卫的重复真相源；subject Method 面向多失败测试的签名分诊与根因分类。"
+  },
+  "151490f348ca": {
+   "case_id": "v3h-B03",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "failed-action-keyed-ledger-lookup-then-prescribed-remediation-efed0f93c3f4",
+   "source_method_id": "durable-job-defer-terminal-check-2a5ca0503c58",
+   "purpose_divergence": "任务处理仍在运行的 durable job；subject Method 面向已经卡住或失败的 action 读取失败台账并执行补救。"
+  },
+  "b17dd9b7c582": {
+   "case_id": "v3h-B04",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "deploy-acceptance-follow-change-identity-b334d83e67f1",
+   "source_method_id": "derive-delivery-gates-from-repo-history-preverify-locally-0f4fbb2a1558",
+   "purpose_divergence": "任务准备提交交付门禁；subject Method 面向发布完成后的 change identity 验收。"
+  },
+  "8b3c19b8db1b": {
+   "case_id": "v3h-B05",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "derive-delivery-gates-from-repo-history-preverify-locally-0f4fbb2a1558",
+   "source_method_id": "deploy-acceptance-follow-change-identity-b334d83e67f1",
+   "purpose_divergence": "任务执行发布后的功能和运维验收；subject Method 面向提交进入受保护远端前的 PR/manifest 交付契约。"
+  },
+  "9cd6e254d095": {
+   "case_id": "v3h-B06",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "deterministic-404-is-an-answer-pivot-to-canonical-candidate-daaa7d2b6d35",
+   "source_method_id": "definitive-failure-swap-source-not-restart-discovery-5abed48afb10",
+   "purpose_divergence": "任务处理访问策略封锁并替换来源；subject Method 面向具名资源的确定性 404 存在性反证与规范候选转向。"
+  },
+  "d205979ff96e": {
+   "case_id": "v3h-B07",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "drilldown-via-named-source-kind-before-keyword-search-7cee909454b4",
+   "source_method_id": "dominant-reason-literal-to-emission-site-94d0631e6859",
+   "purpose_divergence": "任务用 reason 分布裁定因果并追发射点；subject Method 面向报告已点名 record kind 时直接按 kind 下钻指标证据。"
+  },
+  "299f7cddac23": {
+   "case_id": "v3h-B08",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "dup-forensics-volatile-field-identity-plus-copy-lineage-2e19786207b7",
+   "source_method_id": "falsify-selection-premise-via-origin-target-ledger-570c187396ab",
+   "purpose_divergence": "任务用 origin×target tally 证伪选择前提；subject Method 面向跨实体重复记录的易变字段一致性与复制谱系。"
+  },
+  "a29bdd646e62": {
+   "case_id": "v3h-B09",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "denial-signature-records-first-b749e7b81591",
+   "source_method_id": "falsify-mechanism-attribution-via-remedy-reproduction-23940a181dc9",
+   "purpose_divergence": "任务复现实验检验 lesson 的因果归因；subject Method 面向环境级 EPERM 拒绝签名与用户的近期变更归因。"
+  },
+  "db50b0a1d2ed": {
+   "case_id": "v3h-B10",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "falsify-mechanism-attribution-via-remedy-reproduction-23940a181dc9",
+   "source_method_id": "denial-signature-records-first-b749e7b81591",
+   "purpose_divergence": "任务裁定环境写拒绝与近期重启的因果关系；subject Method 面向带“根因+修复”机制断言的单变量复现实验。"
+  },
+  "31dd5901d37c": {
+   "case_id": "v3h-B11",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "external-update-merge-status-via-remote-setdiff-not-label-search-36ab77644027",
+   "source_method_id": "derive-delivery-gates-from-repo-history-preverify-locally-0f4fbb2a1558",
+   "purpose_divergence": "任务判断外部更新是否已经合并生效；subject Method 面向从仓库历史推导未来提交的 PR/manifest 交付契约。"
+  },
+  "b247f0db2ef8": {
+   "case_id": "v3h-B12",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "documented-availability-limits-and-logs-before-config-archaeology-ad25f7196c99",
+   "source_method_id": "failure-receipt-is-zero-info-not-absence-20ac7bad5b0a",
+   "purpose_divergence": "任务判断查询失败对“是否存在”的证据含义；subject Method 面向功能不可用时用官方限制、注册表与错误码区分服务端权限和本地配置。"
+  },
+  "2011313157cd": {
+   "case_id": "v3h-B13",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "failed-ci-gate-diagnose-from-local-gate-script-repro-04eed411f3de",
+   "source_method_id": "failure-scoped-ci-log-triage-f602c22331b4",
+   "purpose_divergence": "任务处于失败输出定位阶段；subject Method 面向失败命令已点名本地 gate 脚本后，用相同 base/head 做本地复现与修复。"
+  },
+  "61fe8a082e6c": {
+   "case_id": "v3h-B14",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "failure-scoped-ci-log-triage-f602c22331b4",
+   "source_method_id": "failed-ci-gate-diagnose-from-local-gate-script-repro-04eed411f3de",
+   "purpose_divergence": "任务已经进入本地复现与修复阶段；subject Method 面向先从 named FAILURE 中收窄并取得失败输出。"
+  },
+  "02ce9e50b318": {
+   "case_id": "v3h-B15",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "diagnose-known-failing-tests-via-node-scoped-max-tb-rerun-25ece289a3f8",
+   "source_method_id": "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+   "purpose_divergence": "任务修复已判定的 false-red 设计；subject Method 面向精确失败节点已知后用单节点高 traceback 诊断断言根因。"
+  },
+  "4966e1595ecb": {
+   "case_id": "v3h-B16",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "explicit-redeclare-target-env-on-generation-switch-6e73ca09c81d",
+   "source_method_id": "deploy-acceptance-follow-change-identity-b334d83e67f1",
+   "purpose_divergence": "任务处于部署后的验收阶段；subject Method 面向持久 shell 切换目标世代时在部署调用前重声明环境变量。"
+  },
+  "aa947481ca45": {
+   "case_id": "v3h-B17",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "durable-job-defer-terminal-check-2a5ca0503c58",
+   "source_method_id": "failed-action-keyed-ledger-lookup-then-prescribed-remediation-efed0f93c3f4",
+   "purpose_divergence": "任务处理已失败的 action 并补救；subject Method 面向 durable/running 任务把时间型未知延后到一次终态检查。"
+  },
+  "fc9409074ad0": {
+   "case_id": "v3h-B18",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "failing-daemon-own-log-first-fix-at-real-supervisor-297cab3af0ce",
+   "source_method_id": "derive-endpoint-from-live-pid-before-probe-64db93a2fd0f",
+   "purpose_divergence": "任务处于重启后端点发现与探针阶段；subject Method 面向复发守护进程故障从进程日志定位缓存坏地址并修正 supervisor 配置。"
+  },
+  "0ed299452fe2": {
+   "case_id": "v3h-A01",
+   "kind": "apply_reverse_risk",
+   "family": "reverse_risk_apply",
+   "intended": "APPLY",
+   "subject_method_id": "deferred-action-failure-layer-scoped-lifecycle-trace-ae4184904e2b",
+   "source_method_id": "deferred-action-failure-layer-scoped-lifecycle-trace-ae4184904e2b",
+   "purpose_divergence": "task positively matches subject Method; carrier is related distractor"
+  },
+  "dbba385a2299": {
+   "case_id": "v3h-A02",
+   "kind": "apply_reverse_risk",
+   "family": "reverse_risk_apply",
+   "intended": "APPLY",
+   "subject_method_id": "derive-endpoint-from-live-pid-before-probe-64db93a2fd0f",
+   "source_method_id": "derive-endpoint-from-live-pid-before-probe-64db93a2fd0f",
+   "purpose_divergence": "task positively matches subject Method; carrier is related distractor"
+  },
+  "ded7907eee4f": {
+   "case_id": "v3h-A03",
+   "kind": "apply_reverse_risk",
+   "family": "reverse_risk_apply",
+   "intended": "APPLY",
+   "subject_method_id": "fastfail-ci-gate-filtered-verdict-then-named-artifact-14e1acb2a084",
+   "source_method_id": "fastfail-ci-gate-filtered-verdict-then-named-artifact-14e1acb2a084",
+   "purpose_divergence": "task positively matches subject Method; carrier is related distractor"
+  },
+  "3a3d0c248801": {
+   "case_id": "v3h-A04",
+   "kind": "apply_reverse_risk",
+   "family": "reverse_risk_apply",
+   "intended": "APPLY",
+   "subject_method_id": "falsify-behavior-premise-before-inherited-change-6c6091650c9c",
+   "source_method_id": "falsify-behavior-premise-before-inherited-change-6c6091650c9c",
+   "purpose_divergence": "task positively matches subject Method; carrier is related distractor"
+  },
+  "d783e2c5e7ff": {
+   "case_id": "v3h-A05",
+   "kind": "apply_reverse_risk",
+   "family": "reverse_risk_apply",
+   "intended": "APPLY",
+   "subject_method_id": "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+   "source_method_id": "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+   "purpose_divergence": "task positively matches subject Method; carrier is related distractor"
+  },
+  "ec044b3fddcf": {
+   "case_id": "v3h-A06",
+   "kind": "apply_reverse_risk",
+   "family": "reverse_risk_apply",
+   "intended": "APPLY",
+   "subject_method_id": "diff-normalization-parity-probe-before-wiring-13850e612a58",
+   "source_method_id": "diff-normalization-parity-probe-before-wiring-13850e612a58",
+   "purpose_divergence": "task positively matches subject Method; carrier is related distractor"
+  }
+ }
+}

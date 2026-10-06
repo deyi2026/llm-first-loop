@@ -1,0 +1,19 @@
+{
+ "state": "terminal",
+ "row": {
+  "ordinal": 7,
+  "row_id": "weak:v3d-B22:C0",
+  "model": "weak",
+  "arm": "C0",
+  "case_id": "v3d-B22",
+  "family": "same_infra_different_decision"
+ },
+ "attempts": [
+  {
+   "attempt": 0,
+   "rc": 0,
+   "healthy": true
+  }
+ ],
+ "mechanically_healthy": true
+}

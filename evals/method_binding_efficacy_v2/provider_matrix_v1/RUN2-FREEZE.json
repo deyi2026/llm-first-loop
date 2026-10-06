@@ -1,0 +1,16 @@
+{
+ "schema": "subject-binding-efficacy-v2-run2-freeze/v1",
+ "source_spec_sha256": "b618c490566f64965caaf93e5cb8ff0d89e032cbc0c6d18aed4e30978acba5ee",
+ "source_plan_sha256": "22634f7ca18c8b7bee02c8eecc92876b6092b48ef07b102b9d2180cdc312983b",
+ "source_plan_freeze_sha256": "1b608e7ae8dbe031d307c08a8e2b59a24cdb01a5911a9e9f83f3e7a06a2783cf",
+ "source_goldset_result_sha256": "decf64eab824e45d1c712a92eb0dc364a22edfce086202bbeeac4437000ac701",
+ "recovery_amendment_sha256": "fe0fdbdfff6099f674a060e0b2746623c9d2a959487ce1f97d921e5444096bbc",
+ "run_next_v2_sha256": "9d899e9cb3e5ef113d3ecfa2a0b08276afdc0d5a5e49e8573c5db834863b68e9",
+ "preflight_v6_sha256": "444a9d8882482e1dc89c4a7e8520481fdd5192c0527d46fc01e5782a5a03f061",
+ "run1_invalid_sha256": "009c4d69de67d0e8007e32309f1a6ab8e59744f43794e00bdbf61f78d548c6d5",
+ "run2_formal_cells": 84,
+ "run2_namespaces_fresh": true,
+ "provider_calls_at_freeze": 0,
+ "production_mutations": 0,
+ "push": false
+}

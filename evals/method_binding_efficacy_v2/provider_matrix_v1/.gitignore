@@ -1,0 +1,6 @@
+__pycache__/
+run_data/
+run2_data/
+preflight_run_data_v*/
+
+*.log

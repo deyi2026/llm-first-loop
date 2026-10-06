@@ -1,0 +1,15 @@
+{
+ "schema": "subject-binding-v3-dev-preflight/v1",
+ "rows": 2,
+ "all_healthy": true,
+ "models": {
+  "strong": {
+   "bare": "deepseek-v4-flash",
+   "canonical": "deepseek/deepseek-v4-flash"
+  },
+  "weak": {
+   "bare": "cognilocal/qwen3.8-flash-next",
+   "canonical": "cognilocal/qwen3.8-flash-next"
+  }
+ }
+}

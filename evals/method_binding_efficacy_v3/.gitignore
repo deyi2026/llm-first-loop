@@ -1,0 +1,6 @@
+**/__pycache__/
+**/*.pyc
+**/run_data/
+**/dev_run_data/
+**/dev_preflight_data/
+**/preflight_run_data*/
