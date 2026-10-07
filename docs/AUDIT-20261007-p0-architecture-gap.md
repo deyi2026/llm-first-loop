@@ -4,6 +4,7 @@
 - 输入：① 外部 GPT 审查（评分/竞品部分未核验，不作为依据）② 本次对仓库当前事实的逐项核验
 - 性质：纯文档分析，未改任何产品代码
 - 结论级别标注：[事实]=仓库当前可核验；[推断]=基于事实的判断；[未核验]=本轮无证据
+- **rev 2（2026-10-07 22:5x）**：修正 rev 1 自身的 currentness 错误——rev 1 依据 10-07 上午的 CHANGES 文档断言"B 面尾注已实现待部署"，但 `af480f80d`（同日 14:16）已按用户指令删除 B 面自动尾注，且生产 web 已运行 gen 195 @ `54fc378c4`（含该删除）。受影响：§0 G3、§1 末行、§4、§5 P0-1；详见 §4.4 preflight 与 §6 方法记录。
 
 ## 0. 一页结论
 
@@ -13,7 +14,7 @@
 |---|---|---|
 | G1 | Kernel 无显式边界契约 | 事实 kernel 分散在 core/loop + event_log + resources + runtime，六面是操作模型不是代码结构；机械守卫只有局部（local-import ratchet + 函数尺寸 only-decrease） |
 | G2 | durability 基座分散 | 每个 Incident 新增一套专属持久化（最新：schedule 私有签名账本），无统一 Durable Run Contract |
-| G3 | method 消费闭环未上生产 | A/B 面机制已 commit 且回归通过，但未 publish/restart，T0 观察窗未起算；消费率 6/673 ≈ 0.9% |
+| G3 | method 消费闭环缺 T0 基线 | **[rev 2 修正]** B 面自动尾注已按用户指令删除（`af480f80d`）；A 面/pull-mode 已在生产 gen 195 生效；真正缺的是按实际机制起算的 T0 观察窗；消费率 6/677 ≈ 0.9% |
 | G4 | 横向扩张仍在进行 | 10-07 当天仍有新能力合入 main（browser target_id 换绑等）；"冻结"是策略决策，目前无机械执行 |
 
 ## 1. 对外部审查的逐项裁决修正
@@ -22,9 +23,9 @@
 |---|---|---|
 | P0 序列：冻结扩张 → Invocation Journal → ExecutionRuntime → Durable Run Contract → trace/benchmark | P0-1 审计（AUDIT-20261001）已冻结；P0-2 五提交 `3c9b0d52e`/`d005f275a`/`518441614`/`52496d327`/`25b737ce3` 全部在 git；`deepseek_web.py`/`chatgpt_web.py` 均含 `transport_observer`（L119-122/144/248） | **第 2 项过时**：Invocation Journal 已实现。剩余残留仅 §1.1 |
 | "最大风险是能力增速超过收敛速度" | §3.3 证据：单日 4 个 schedule durability 补丁；673 卡 vs 6 条消费 | 同意 |
-| "673 卡供给远超消费" | `data/methods/` 673 目录；`usage.jsonl` 6 条（含今日补记 1 条） | 属实，且根因不只是检索质量——闭环尚未上生产（§4.3） |
+| "673 卡供给远超消费" | `data/methods/` 677 目录（rev 2 重数）；`usage.jsonl` 6 条（含今日补记 1 条） | 属实，且根因不只是检索质量——T0 观察窗尚未按实际机制起算（§4.3） |
 | 评分 79/92.3、OpenAI Agents API/OpenHands/Letta 现状 | web_search 无有效命中 | 未核验，不采用 |
-| "method 消费闭环未开始" | CHANGES-20261007：A 面锚点 + B 面尾注已实现，7/7 单测 + 全量回归通过 | 修正：已实现未部署 |
+| "method 消费闭环未开始" | CHANGES-20261007（上午）：A 面锚点 + B 面尾注已实现 | **rev 2 再修正**：rev 1 只读 CHANGES 未做 symbol survival check——B 面尾注当日 14:16 被 `af480f80d` 按用户指令删除；A 面/pull-mode 已在生产 gen 195 生效（§4.4） |
 
 ### 1.1 P0-2 惟一残留 [事实]
 Web 路径断言依赖真实流量出现后才生效（conditional assertions）。低风险，等待流量即可，不需要工程动作。
@@ -48,7 +49,7 @@ Web 路径断言依赖真实流量出现后才生效（conditional assertions）
 | 5,555 | 14 | feishu/ | Action（outbound） |
 | 3,843 | 13 | event_log/ | kernel 候选（事件事实源） |
 | 3,448 | 4 | semantic_logic/ | 跨面（语义权威） |
-| 2,570 | 5 | methods/ | Learning（B 面检索） |
+| 2,570 | 5 | methods/ | Learning（pull-mode 检索消费） |
 | 2,414 | **2** | subagent/ | Mission（2 文件巨石） |
 | 2,194/2,158/2,000 | 9/7/12 | task_quality/ workspace/ codearts/ | Evaluation / 跨面 / Action |
 | ≤1,566 | ≤6 | cognitive feedback fleet experiences eval cache_guard recovery skills knowledge | Evaluation / Reasoning 辅助 / Mission / Learning / Learning / Epistemic / Context 辅助 |
@@ -59,7 +60,7 @@ Web 路径断言依赖真实流量出现后才生效（conditional assertions）
 - `web/`（9.9k LOC）：交付/呈现面，六面无此面。架构文档未覆盖"对用户的交付"。
 - `semantic_logic/`：SMC 语义权威，横切所有面。
 - `core/session.py`（109KB 单文件）、`core/history.py`（97KB）、`episode_history.py`（75KB）：会话/历史聚合根，天然跨面。
-- `methods/`：既被检索（B 面，Epistemic）又被注入（A 面，Reasoning）。
+- `methods/`：被检索消费（pull-mode，Epistemic）且 `introspection/registry_introspection.py` + `tools/registry.py` 提供工具面锚点（A 面，Reasoning）；B 面自动尾注已删除（`af480f80d`）。
 
 ### 2.3 事实 kernel 与其边界现状 [事实+推断]
 - 事实 kernel = `core/loop/`（engine + 20 个 engine_services：convergence/termination/recovery/routing/token_budget/method_injection…）+ `event_log/` + `resources/` + `runtime/` + `llm/` transport。
@@ -94,29 +95,37 @@ Web 路径断言依赖真实流量出现后才生效（conditional assertions）
 
 ## 4. Method 消费闭环（G3）
 
-### 4.1 已实现 [事实]
-- A 面：`registry.py` + `registry_introspection.py`——5 个具体触发域 + 行为触发。
-- B 面：`RecordSearcher.search()` → `_maybe_collect_related_methods` → `related_methods` 属性 → `tools_status.py::_format_related_methods_hint`（尾注），`method_related_hint_enabled` 默认 true。
-- 质量：7/7 单测 + 全量回归（6,458 passed）。
-- 评估计划已定义（T0 / T+7d 对比）。
+### 4.1 当前生效机制 [事实，rev 2 重核]
+- A 面（Reasoning）：`tools/registry.py` + `introspection/registry_introspection.py`——5 个具体触发域 + 行为触发。
+- pull-mode（Epistemic）：`search_records(kind=method)` 词法检索路径（`introspection/search.py::_search_method`）恒可用；`SEMANTIC_METHOD_ENABLED=0`（.env:268）仅关闭语义 RRF 扩展层（L762-768），不阻断词法发现。
+- `method_manage` 生命周期工具；Learning reflection 中的 related-method advisory。
+- **B 面（已删除）**：rev 1 记载的 `RecordSearcher.search() → _maybe_collect_related_methods → tools_status.py::_format_related_methods_hint`（尾注，`method_related_hint_enabled`）链路——`6dddb6962` 引入，线上观测补丁 `7e4cee69a`/`8ce30c626`，用户否决后由 `af480f80d`（10-07 14:16）删除；三符号当前 `grep --include="*.py"` 零命中。
 
-### 4.2 未完成 [事实]
-- **未 publish / 未 restart——候选默认值不代表生产已启用。**
-- **T0 观察窗未起算。**
+### 4.2 rev 1 的错误与更正 [事实]
+- rev 1 断言"A/B 面已实现、未 publish/restart"——两半都不成立：B 面当日已被用户指令删除；A 面/pull-mode 无"待部署"增量（见 4.4）。
+- 错误根因：只读 CHANGES 文档（上午版本）即写入结论，未做 HEAD 上的 symbol survival check——本审计自己犯了它要求外部审查过的错（§6）。
 
-### 4.3 消费率断点排序 [推断]
-1. 闭环未上生产（本节）——先做这个，否则后续优化无数据。
-2. usage 记录依赖手动/补办（usage.jsonl 内含补记条目）。
-3. 673 卡中必然存在低触发域覆盖卡（A 面锚点仅 5 域）。
+### 4.3 消费率断点排序 [推断，rev 2 修订]
+1. T0 观察窗从未按实际机制起算——无数据支持任何归因。
+2. usage 记录依赖手动/补办（usage.jsonl 6 条含补记）。
+3. 677 卡中必然存在低触发域覆盖卡（A 面锚点仅 5 域）；语义扩展层关闭进一步限制召回宽度。
+
+### 4.4 currentness preflight [事实，2026-10-07 22:5x]
+- 生产 web：generation 195 @ `54fc378c4`，22:09:02 启动，matches_desired=true，restart_required=false。
+- HEAD `4bd0b9356` 与生产的产品代码差 = `git diff --stat` 仅本审计文档；**当前 main 不存在"已实现未部署"的 Method 消费改动**。
+- B 面删除（`af480f80d`）早于生产代 `54fc378c4` → 生产代码不含 B 面，无复活风险。
+- T0 基线（实际机制指标，非尾注计数）：method 卡 677；usage.jsonl 6；`kind=method` 检索调用历史累计 24（T0 后 0）；`method_manage.record_use` 调用累计 1（T0 后 0）。
+- **T0 = 2026-10-07 22:09:02（gen 195 启动时刻）**；T+7d 指标：kind=method 调用增量、record_use 增量、usage.jsonl 增量。
 
 ## 5. 可执行任务清单
 
 > 纯增量动作，均不与已完成项重复。每条含验收标准。P0=本周，P1=两周内，P2=决策后。
 
-### P0-1 【部署】method 消费闭环上生产并起算 T0
-- 动作：publish + restart；记录 T0 基线（usage 条数、检索命中率、尾注出现次数）
-- 验收：生产会话可见 related_methods 尾注 ≥1 次；T0 基线落 docs/
-- 依赖：无。成本最低收益最直接。
+### P0-1 【观测】method 消费闭环 T0 起算（rev 2 改写；原"部署"前提已被 preflight 否证）
+- rev 1 原文（publish + restart + 统计尾注次数）**作废**：§4.4 证明生产 gen 195 已含全部现行机制，无待部署增量；尾注载体已被用户否决删除，重统计它无意义。
+- 动作：以 T0 = 2026-10-07 22:09:02（gen 195 启动）落观测基线文档；T+7d 检查点统计 `kind=method` 调用增量、`method_manage.record_use` 增量、usage.jsonl 增量。
+- 验收：基线文档落 docs/（含 677 卡 / 6 usage / 24 次历史检索的起点值与采集命令）；T+7d 有一次复查记录。
+- 依赖：无。**不做 publish/restart**（无产品代码增量，重启纯风险）。
 
 ### P0-2 【决策】Durable Run Contract 立项决策（先文档后代码）
 - 动作：按 §3.3 选项 A 写 DESIGN 文档：接口语义（单写者/原子性/恢复钩子/idempotency）、现有 7 基座符合性矩阵、schedule 私有账本作为首个迁移 client
@@ -155,3 +164,4 @@ Web 路径断言依赖真实流量出现后才生效（conditional assertions）
 
 ## 6. 本审计自身的方法记录
 - 关键修正：外部审查基于的材料落后于 main 约 5 天（10-02 的 P0-2/3 落地未被其覆盖）。任何外部评审结论进入任务清单前必须先过"是否已被 main 落地"这一关。
+- rev 2 追加（本审计自身犯错后的机械规则）：**任务清单引用的任何 capability，必须先在 HEAD 上做 symbol/commit survival check（`grep` 关键符号 + `git log` 确认引用提交仍是 HEAD 祖先），只读 CHANGES 文档不构成充分证据。** 本审计 rev 1 引用"B 面尾注已实现"仅依据当日上午 CHANGES，未察觉同日 14:16 的删除提交 `af480f80d` 与 22:09 的 gen 195 部署——与外部审查落后 5 天是同型错误，落后 8 小时也是落后。此规则同样适用于部署状态断言：声称"未 publish/restart"前必须先查 service 状态的当前 generation 与 git_head。
