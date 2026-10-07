@@ -1254,6 +1254,10 @@ def build_engine(
                     # FR-2 settle wait rides the same actuator channel;
                     # env-gated the same way (default off = pre-FR-2 behavior).
                     settle_enabled=settings.browser_dispatch_settle_enabled,
+                    # FR-5b inline diff summary on terminal receipts, env-gated
+                    # the same way (default off = pre-FR-5b byte-identical).
+                    receipt_diff_summary_enabled=settings.browser_receipt_diff_summary_enabled,
+                    receipt_diff_summary_cap=settings.browser_receipt_diff_summary_cap,
                 )
                 _browser_semantic_execute = BrowserSemanticExecuteTool(
                     perception=_browser_adapter,

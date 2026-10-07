@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
 
-from llm_loop.browser.perception import BrowserPerceptionAdapter
+from llm_loop.browser.perception import BrowserPerceptionAdapter, diff_summary_for_receipt
 from llm_loop.core.tool_execution_journal import current_effect_mutation_authority
 
 _MUTATION_CONTRACT: dict[str, dict[str, Any]] = {
@@ -268,6 +268,8 @@ class BrowserActionAdapter:
         guard_collector: Callable[[str], dict[str, Any]] | None = None,
         guard_enabled: bool = False,
         settle_enabled: bool = False,
+        receipt_diff_summary_enabled: bool = False,
+        receipt_diff_summary_cap: int = 32,
     ) -> None:
         self.perception = perception
         self.receipt_store = receipt_store
@@ -282,6 +284,12 @@ class BrowserActionAdapter:
         # reason: with the flag off the execute path is byte-identical to the
         # pre-FR-2 behavior (no settle round trip, no "wait" receipt field).
         self.settle_enabled = bool(settle_enabled)
+        # FR-5b inline diff summary on the terminal receipt. Default off:
+        # with the flag off the persisted receipt stays byte-identical to the
+        # pre-FR-5b shape (no "diff_summary" key inside observed_effects).
+        # Cap starts at 32; Q5 calibration may move the number only.
+        self.receipt_diff_summary_enabled = bool(receipt_diff_summary_enabled)
+        self.receipt_diff_summary_cap = max(1, int(receipt_diff_summary_cap))
 
     @staticmethod
     def _settle_mode(verb: str, semantic_object: dict[str, Any] | None) -> str:
@@ -750,6 +758,7 @@ class BrowserActionAdapter:
         after_version: str | None = None
         after_ref: str | None = None
         diff_ref: str | None = None
+        semantic_diff: dict[str, Any] | None = None
         post_reasons: list[str] = []
         if not dispatch_authority_lost:
             try:
@@ -764,6 +773,7 @@ class BrowserActionAdapter:
                         from_version=before_version,
                         to_version=after_version,
                     )
+                    semantic_diff = diff
                     diff_ref = str(diff.get("full_list_ref") or "") or None
                     if not bool((diff.get("completeness") or {}).get("complete")):
                         post_reasons.extend(
@@ -775,11 +785,20 @@ class BrowserActionAdapter:
         terminal = self._receipt_base(action)
         terminal["before_version"] = before_version
         terminal["after_version"] = after_version
-        terminal["observed_effects"] = {
+        observed_effects: dict[str, Any] = {
             "diff_ref": diff_ref,
             "scope_transition_ref": None,
             "provisional": True,
         }
+        if self.receipt_diff_summary_enabled and semantic_diff is not None:
+            # FR-5b: inline the field-name granularity summary derived from
+            # the very diff document diff_ref points at — ids and changed
+            # field names only, never values; value-level consumption still
+            # goes through hydrate (no new value exposure surface).
+            observed_effects["diff_summary"] = diff_summary_for_receipt(
+                semantic_diff, cap=self.receipt_diff_summary_cap
+            )
+        terminal["observed_effects"] = observed_effects
         if guard_verdict is not None:
             # FR-1: persist the guard verdict (pass or the exemption it earned)
             # on the terminal receipt alongside the version it adjudicated.

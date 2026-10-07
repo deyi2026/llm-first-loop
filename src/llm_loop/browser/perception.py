@@ -2967,3 +2967,56 @@ class PlaywrightPageCaptureBackend:
                 "nodes": ax_nodes,
             },
         }
+
+
+def diff_summary_for_receipt(diff: dict[str, Any], *, cap: int = 32) -> dict[str, Any]:
+    """FR-5b inline diff summary for the terminal action receipt.
+
+    Field-name granularity only: created/removed ids and per-object changed
+    field names are inlined — never values, so value-level consumption still
+    goes through hydrate (no new value exposure surface). Each class carries
+    its honest total plus ``min(cap, total)`` items and a ``truncated`` flag;
+    the cap starts at 32 and Q5 calibration may move the number only, never
+    the mechanism. A ``None`` section means "unknown" (e.g. incomplete
+    post-observation), which is deliberately distinct from total=0.
+    """
+    effective_cap = max(1, int(cap))
+
+    def _section(entries: list[Any] | None) -> dict[str, Any] | None:
+        if entries is None:
+            return None
+        total = len(entries)
+        return {
+            "total": total,
+            "returned": min(effective_cap, total),
+            "truncated": total > effective_cap,
+            "items": [str(item) for item in entries[:effective_cap]]
+            if entries and isinstance(entries[0], str)
+            else list(entries[:effective_cap]),
+        }
+
+    comparable = bool(diff.get("comparable"))
+    completeness = diff.get("completeness")
+    completeness = completeness if isinstance(completeness, dict) else {}
+    summary: dict[str, Any] = {
+        "schema": "smc.browser_diff_summary.v0.1",
+        "comparable": comparable,
+        "scope_relation": str(diff.get("scope_relation") or "unknown"),
+        "complete": bool(completeness.get("complete")),
+        "reasons": [str(reason) for reason in list(completeness.get("reasons") or [])[:8]],
+        "cap": effective_cap,
+    }
+    if not comparable:
+        return summary
+    changed = [
+        {
+            "id": str(entry.get("id")),
+            "fields": [str(field) for field in list(entry.get("fields") or [])],
+        }
+        for entry in list(diff.get("changed") or [])
+        if isinstance(entry, dict)
+    ]
+    summary["created"] = _section(diff.get("created"))
+    summary["removed"] = _section(diff.get("removed"))
+    summary["changed"] = _section(changed)
+    return summary
