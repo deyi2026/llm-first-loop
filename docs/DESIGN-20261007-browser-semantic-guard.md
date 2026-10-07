@@ -112,8 +112,8 @@ Status: **CONVERGED — 设计已收敛（2026-10-07 三轮拷问自主收敛，
 |---|---|---|
 | M1 | ~~§7 Q1/Q2 基线实测~~ **已完成（三轮）**：Q1 无独立 document 摘要（需新增字段）、Q2 attestation 不落页面内容但 persist 落 value_text 明文 | 无 |
 | M0 | ~~FR-6 敏感值修复 + 存量清理 + 验收回归~~ **已完成（2026-10-07 实施触发）**：单点白名单 `SENSITIVE_VALUE_SENTINEL`/`_redact_value_text` 落 perception.py（DOM 路径 + AX 路径 + sensor 层防御三层接入同一函数，归一化匹配覆盖 "verification code"/"verification_code" 变体）；hydrate/diff/bundle content_sha256 全链路实测零明文（密码变更 produce 零 delta）；存量 414 bundle/551MB 清零；附带修复：TTL 过期 bundle 惰性删除（原只报错不删，累积根因），availability=expired 对外契约保持；验收测试 `tests/unit/test_browser_perception_sensitive_redaction.py` 8 用例 | M1 ✅ |
-| M2 | FR-1 守卫实现 + 故障注入测试 | M1 ✅, M0 ✅ |
-| M3 | FR-1 用例验收（动画/遮挡/敏感字段回归） | M2 |
+| M2 | ~~FR-1 守卫实现 + 故障注入测试~~ **已完成（2026-10-07 实施触发）**：基线指纹随 snapshot 落 bundle `guard_baseline`（分层 hash：document=url-only / target=语义属性+脱敏 value / neighborhood=form·dialog·tr·li 邻域结构；两采集口径钉死同构——name=aria-label‖name、text=直接文本子聚合、value=attribute 口径、id/viewport/几何不入指纹）；守卫探针为 cdp_host 固定只读 JS 常量（DOM.resolveNode + Runtime.callFunctionOn，resolve 失败→guard_detach、evaluate 失败→guard_timeout、遮挡/零尺寸→guard_occluded、分层失配→guard_document_changed:layer）；执行序=守卫先于 before-capture（拒绝零捕获成本）+ guard pass 豁免"可比但不等"的 version mismatch（availability 类失败不可豁免，守卫基线不可读时退回 version 单闸门=fail 到旧行为）；verdict 沿回执链路落 receipt["guard"]；配置 `LFL_BROWSER_SEMANTIC_GUARD_ENABLED` 默认 off；实现口径修正：readyState 不入 doc 指纹（sensor 通道不持久化该字段，入则必假失配）。测试 `tests/unit/test_browser_semantic_guard_v01.py` 14 用例（基线落盘/哨兵进指纹/全拒绝分类/豁免放行/快速失败/off 回归/无 collector 惰性） | M1 ✅, M0 ✅ |
+| M3 | FR-1 用例验收（动画/遮挡/敏感字段回归；真实 CDP 浏览器端到端） | M2 ✅ |
 | M4 | FR-2 等待粒度 | 独立，可与 M2 并行 |
 | M5 | FR-3/FR-4 结论归档（本文即归档） | 无 |
 | M6 | FR-5a 消费协议进方法卡 + eval 重放基线（每步全取次数 / verdict 分布 / diff 可比率）；含 Q6 兜底报表口径。**方法卡部分已完成（2026-10-07）**：method_card.py compact 增 diff-first/空 diff 裁决/哨兵纪律；MethodStore 新卡 `mutation-verify-consumption-protocol`（parent=method-semantic-operation）。eval 重放基线未动 | 无，可先行 |

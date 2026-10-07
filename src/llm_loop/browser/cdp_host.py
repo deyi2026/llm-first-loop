@@ -90,6 +90,57 @@ _DOCUMENT_READY_STATE_PARAMS: dict[str, Any] = {
     "throwOnSideEffect": True,
 }
 
+# FR-1 (DESIGN-20261007-browser-semantic-guard) fixed read-only guard probe.
+# Parameter surface: the resolved element only. Extraction rules are pinned to
+# the sensor canonicalize semantics -- any drift here is a correctness bug on
+# the baseline-vs-current comparison:
+#   name     aria-label || name attribute
+#   text     DIRECT text-child aggregation only (no descendant text leak)
+#   value    HTML value ATTRIBUTE (the .value property is intentionally not
+#            read; the sensor source materializes the attribute)
+#   no id, no viewport/scroll/geometry in fingerprints (they only feed the
+#            occlusion check); sensitive value redaction happens server-side
+#            in perception.assess_guard via the single FR-6 whitelist.
+_GUARD_COLLECT_FUNCTION = (
+    "function(el){"
+    "try{"
+    "var r=el.getBoundingClientRect();"
+    "var cx=r.x+r.width/2,cy=r.y+r.height/2;"
+    "var hit=document.elementFromPoint(cx,cy);"
+    "var occluded=false,hitTag=null;"
+    "if(hit){hitTag=hit.tagName.toLowerCase();"
+    "occluded=hit!==el&&!el.contains(hit)&&!hit.contains(el);}"
+    "var anc=el.closest('form,dialog,tr,[role=form],[role=dialog],[role=row],li');"
+    "var nb=null;"
+    "if(anc){"
+    "var kids=Array.prototype.slice.call(anc.children,0,32);"
+    "nb={tag:anc.tagName.toLowerCase(),"
+    "role:anc.getAttribute('role')||null,"
+    "children:kids.map(function(c){"
+    "var t='';"
+    "for(var i=0;i<c.childNodes.length;i++){"
+    "if(c.childNodes[i].nodeType===3){t+=c.childNodes[i].textContent;}}"
+    "return {tag:c.tagName.toLowerCase(),"
+    "name:c.getAttribute('aria-label')||c.getAttribute('name')||null,"
+    "text:t.trim().slice(0,40)};})};}"
+    "var dt='';"
+    "for(var j=0;j<el.childNodes.length;j++){"
+    "if(el.childNodes[j].nodeType===3){dt+=el.childNodes[j].textContent;}}"
+    "return {ok:true,"
+    "doc:{url:location.href},"
+    "target:{tag:el.tagName.toLowerCase(),"
+    "name:el.getAttribute('aria-label')||el.getAttribute('name')||null,"
+    "role:el.getAttribute('role')||null,"
+    "type:el.getAttribute('type')||null,"
+    "text:dt.trim().slice(0,200),"
+    "value:el.getAttribute('value')},"
+    "nb:nb,"
+    "geo:{w:r.width,h:r.height,visible:r.width>0&&r.height>0},"
+    "occluded:occluded,hitTag:hitTag};"
+    "}catch(err){return {ok:false,stage:'evaluate',"
+    "error_type:'js_error',message:String(err&&err.message||err).slice(0,200)};}}"
+)
+
 
 class _WebSocketLike(Protocol):
     def send(self, payload: str) -> None: ...
@@ -217,6 +268,48 @@ class _ReadOnlyCdpSession:
         if value not in {"loading", "interactive", "complete"}:
             raise RuntimeError("Browser document.readyState observation returned invalid value")
         return str(value)
+
+    def collect_guard_observation(self, backend_node_id: int) -> dict[str, Any]:
+        """FR-1 guard probe: resolve one node, run the fixed read-only guard JS.
+
+        Two protocol messages, one atomic semantic collection. The script is a
+        module constant (no dynamic expression), the only parameter is the
+        backend node id resolved from the already-persisted snapshot identity.
+        Returns {"ok": True, ...payload} on success, {"ok": False, "stage":
+        "resolve"|"evaluate"} for probe-level misses so the caller can classify
+        guard_detach vs guard_timeout without guessing from exception types.
+        """
+
+        try:
+            resolved = self._request("DOM.resolveNode", {"backendNodeId": int(backend_node_id)})
+        except (RuntimeError, OSError) as exc:
+            return {"ok": False, "stage": "resolve", "error_type": type(exc).__name__}
+        node = resolved.get("node") if isinstance(resolved, dict) else None
+        object_id = str((node or {}).get("objectId") or "")
+        if not object_id:
+            return {"ok": False, "stage": "resolve", "error_type": "no_object_id"}
+        try:
+            call = self._request(
+                "Runtime.callFunctionOn",
+                {
+                    "functionDeclaration": _GUARD_COLLECT_FUNCTION,
+                    "objectId": object_id,
+                    "arguments": [{"objectId": object_id}],
+                    "returnByValue": True,
+                    "awaitPromise": False,
+                    "userGesture": False,
+                },
+            )
+        except (RuntimeError, OSError) as exc:
+            return {"ok": False, "stage": "evaluate", "error_type": type(exc).__name__}
+        remote = call.get("result") if isinstance(call, dict) else None
+        remote = remote if isinstance(remote, dict) else {}
+        if isinstance(call, dict) and call.get("exceptionDetails"):
+            return {"ok": False, "stage": "evaluate", "error_type": "evaluate_exception"}
+        value = remote.get("value")
+        if not isinstance(value, dict) or "ok" not in value:
+            return {"ok": False, "stage": "evaluate", "error_type": "invalid_payload"}
+        return value
 
 
 class _CdpContextShim:
@@ -376,9 +469,35 @@ class CdpReadOnlyBrowserHost:
                     f"; diag={diag}; error_type={type(exc).__name__}"
                 ) from exc
 
+    def collect_guard_observation(self, physical_id: str) -> dict[str, Any]:
+        """FR-1: probe one element's current semantic fingerprint.
+
+        physical_id is the persisted snapshot identity form ("dom:<backend
+        node id>"). Connection loss re-raises with the same degraded-channel
+        semantics as capture() so the executor classifies it guard_timeout
+        (fail-closed) rather than retrying on a dead socket.
+        """
+
+        raw = str(physical_id or "").strip()
+        if not raw.startswith("dom:") or not raw[4:].isdigit():
+            return {"ok": False, "stage": "resolve", "error_type": "invalid_physical_id"}
+        with self._capture_lock:
+            target = self._resolve_target()
+            session = self._ensure_session(target)
+            try:
+                return session.collect_guard_observation(int(raw[4:]))
+            except _CONNECTION_LOST_ERRORS as exc:
+                diag = dict(getattr(session, "last_diag", {}) or {})
+                mode = _classify_connection_loss(exc)
+                self._drop_session()
+                raise RuntimeError(
+                    f"guard_channel_degraded[mode={mode}]; "
+                    "CDP guard probe connection lost; dropped session for same-target reconnect"
+                    f"; diag={diag}; error_type={type(exc).__name__}"
+                ) from exc
+
     def probe_page_target(self) -> dict[str, Any]:
         """EVO-20260918-4766011b: lightweight page-target existence probe.
-
         Uses only the already-allowlisted read-only CDP surface
         (Target.getTargetInfo) - no DOM/AX capture - so resource-level
         transition verbs can verify their precondition when a full capture

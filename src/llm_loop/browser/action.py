@@ -14,7 +14,7 @@ import threading
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
 
 from llm_loop.browser.perception import BrowserPerceptionAdapter
@@ -265,11 +265,18 @@ class BrowserActionAdapter:
         receipt_store: BrowserActionReceiptStore,
         capture_backend: BrowserCaptureBackend,
         actuator: BrowserMutationActuator,
+        guard_collector: Callable[[str], dict[str, Any]] | None = None,
+        guard_enabled: bool = False,
     ) -> None:
         self.perception = perception
         self.receipt_store = receipt_store
         self.capture_backend = capture_backend
         self.actuator = actuator
+        # FR-1 local semantic guard (DESIGN-20261007-browser-semantic-guard).
+        # Default off: the guard is an additive pre-dispatch gate; enabling it
+        # must never change behavior for sessions that did not ask for it.
+        self.guard_collector = guard_collector
+        self.guard_enabled = bool(guard_enabled) and guard_collector is not None
 
     @staticmethod
     def _validate(action: dict[str, Any]) -> str | None:
@@ -381,6 +388,7 @@ class BrowserActionAdapter:
         *,
         before_version: str | None = None,
         before_ref: str | None = None,
+        guard: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         receipt = self._receipt_base(action)
         receipt["status"] = "rejected"
@@ -388,6 +396,8 @@ class BrowserActionAdapter:
         receipt["grounding_refs"]["before"] = before_ref
         receipt["completeness"] = {"complete": False, "reasons": [reason]}
         receipt["retry"]["reason"] = reason
+        if guard is not None:
+            receipt["guard"] = guard
         return self.receipt_store.append(session_id, str(action["action_id"]), receipt)
 
     @staticmethod
@@ -402,6 +412,50 @@ class BrowserActionAdapter:
         if source not in {"dom", "ax"}:
             return None
         return physical if physical.startswith("dom:") else f"dom:{physical}"
+
+    def _run_guard(
+        self, session_id: str, action: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """FR-1 pre-dispatch local semantic guard.
+
+        None means not applicable (disabled, no collector, resource-level
+        verb, unreadable baseline): the version mechanism stays the sole gate,
+        exactly the pre-FR-1 behavior. Reject verdicts short-circuit before
+        the full before-capture; a pass verdict may later exempt a version
+        mismatch whose cause is provably outside the target's semantic
+        neighborhood (animation/ads -- the false-invalidation class FR-1
+        exists to absorb).
+        """
+
+        if not self.guard_enabled or self.guard_collector is None:
+            return None
+        verb = str(action["verb"])
+        if verb not in {"click", "fill", "select", "scroll"}:
+            return None
+        try:
+            baseline = self.perception.guard_baseline(
+                session_id, str(action["expected_version"]), str(action["target_id"])
+            )
+        except Exception:  # noqa: BLE001 - unreadable baseline degrades to version-only gate.
+            return None
+        if not isinstance(baseline, dict):
+            return None
+        physical_id = str(baseline.get("physical_id") or "")
+        if not physical_id:
+            return None
+        try:
+            raw = self.guard_collector(physical_id)
+        except Exception as exc:  # noqa: BLE001 - any probe channel failure fails closed.
+            return {
+                "schema": "smc.browser_guard_verdict.v0.1",
+                "domain": "browser",
+                "verdict": "reject",
+                "reason": f"guard_timeout:{type(exc).__name__}",
+                "mismatched_layer": None,
+                "occluded": False,
+                "observed": {},
+            }
+        return self.perception.assess_guard(baseline=baseline, raw=raw)
 
     def execute(self, session_id: str, action: dict[str, Any]) -> dict[str, Any]:
         if not session_id:
@@ -442,6 +496,18 @@ class BrowserActionAdapter:
         )
         if not self.receipt_store.reserve(session_id, action_id, fingerprint):
             return self._append_rejected(session_id, action, "duplicate_action_id")
+
+        # FR-1: run the local semantic guard BEFORE the full before-capture so
+        # a guard rejection never pays the capture cost, and so the verdict is
+        # available to adjudicate a later version mismatch.
+        guard_verdict = self._run_guard(session_id, action)
+        if isinstance(guard_verdict, dict) and guard_verdict.get("verdict") == "reject":
+            return self._append_rejected(
+                session_id,
+                action,
+                str(guard_verdict.get("reason") or "guard_rejected"),
+                guard=guard_verdict,
+            )
 
         light_mode = False
         try:
@@ -488,13 +554,28 @@ class BrowserActionAdapter:
                 target_id=(str(action["target_id"]) if action["version_scope"] == "object" else None),
             )
             if assessment.get("result") != "match":
-                return self._append_rejected(
-                    session_id,
-                    action,
-                    f"version_precondition_{assessment.get('result')}:{assessment.get('reason')}",
-                    before_version=before_version,
-                    before_ref=before_ref,
+                # FR-1 exemption: a guard pass proves the target's semantic
+                # neighborhood (document url/ready-state, target semantics,
+                # neighborhood structure) is unchanged since the model's
+                # expected observation, so a version mismatch must come from
+                # content OUTSIDE that neighborhood (animation, ad rotation) --
+                # the false-invalidation class FR-1 exists to absorb. Any
+                # availability-style failure can never reach a guard pass
+                # (the baseline itself was unreadable), so this branch is
+                # reachable only for comparable-but-different observations.
+                guard_pass = (
+                    isinstance(guard_verdict, dict)
+                    and guard_verdict.get("verdict") == "pass"
                 )
+                if not guard_pass:
+                    return self._append_rejected(
+                        session_id,
+                        action,
+                        f"version_precondition_{assessment.get('result')}:{assessment.get('reason')}",
+                        before_version=before_version,
+                        before_ref=before_ref,
+                        guard=guard_verdict,
+                    )
         else:
             # Lightweight resource-level precondition: reuse the full mechanical
             # assessment against the model-declared version itself (both sides of
@@ -629,6 +710,10 @@ class BrowserActionAdapter:
             "scope_transition_ref": None,
             "provisional": True,
         }
+        if guard_verdict is not None:
+            # FR-1: persist the guard verdict (pass or the exemption it earned)
+            # on the terminal receipt alongside the version it adjudicated.
+            terminal["guard"] = guard_verdict
         terminal["grounding_refs"] = {
             "before": before_ref,
             "after": after_ref,

@@ -140,6 +140,77 @@ _SENSOR_CONTRACT = {
     "vision": "explicit_only_evidence_layer",
 }
 
+# ---------------------------------------------------------------------------
+# FR-1 local semantic guard fingerprints (DESIGN-20261007-browser-semantic-guard).
+#
+# Two extraction sources feed the SAME payload shape so baseline-vs-current
+# comparison never sees format drift:
+#   * baseline  - sensor DOM tree (perception canonicalize path)
+#   * current   - the fixed read-only guard JS probe (cdp_host guard constant)
+#
+# Aligned extraction rules (drift is a correctness bug, not a style issue):
+#   name        aria-label || name attribute (sensor rule, line ~2485)
+#   text        DIRECT text-child aggregation only (button > span Label must
+#               NOT leak into the button's own text), capped
+#   value       HTML value ATTRIBUTE semantics (the sensor source); the live
+#               .value property intentionally excluded until sensors track it
+#   id          excluded (mutable locator, sensor does not capture it)
+#   geometry    excluded from fingerprints (bbox/scroll/viewport changes are
+#               exactly the false-invalidation class FR-1 exists to absorb);
+#               occlusion is checked only in the current-state probe
+#   sensitivity value_text passes through the same FR-6 single whitelist
+#               function (_redact_value_text) on both sides, so sensitive
+#               values contribute only their sentinel to any layer hash.
+# ---------------------------------------------------------------------------
+
+_GUARD_TEXT_CAP = 200
+_GUARD_NAME_CAP = 120
+_GUARD_NEIGHBORHOOD_CHILD_CAP = 32
+_GUARD_NEIGHBORHOOD_CHILD_TEXT_CAP = 40
+_GUARD_ANCESTOR_WALK_CAP = 64
+_GUARD_NEIGHBORHOOD_TAGS = frozenset({"form", "dialog", "tr", "li"})
+_GUARD_NEIGHBORHOOD_ROLES = frozenset({"form", "dialog", "row"})
+
+
+def _guard_clip(value: Any, cap: int) -> str:
+    return str(value if value is not None else "").strip()[:cap]
+
+
+def _guard_target_payload(attributes: dict[str, Any]) -> dict[str, Any]:
+    """Shape one target-layer payload from sensor-style node attributes."""
+
+    payload: dict[str, Any] = {
+        "tag": _guard_clip(attributes.get("tag"), 40).lower() or None,
+        "name": _guard_clip(attributes.get("name"), _GUARD_NAME_CAP) or None,
+        "role": _guard_clip(attributes.get("role"), 60) or None,
+        "input_type": _guard_clip(attributes.get("input_type"), 40) or None,
+        "text": _guard_clip(attributes.get("text"), _GUARD_TEXT_CAP) or None,
+    }
+    value_text = attributes.get("value_text")
+    if value_text is not None:
+        payload["value_text"] = _guard_clip(value_text, _GUARD_NAME_CAP) or None
+    return payload
+
+
+def _guard_document_payload(url: Any) -> dict[str, Any]:
+    # url only: readyState is a page lifecycle timing fact, not a semantic
+    # one, and the sensor capture channel does not persist it -- including it
+    # would make the document layer mismatch on every single probe.
+    return {
+        "url": _guard_clip(url, 2000),
+    }
+
+
+def _guard_layer_hashes(
+    document: dict[str, Any], target: dict[str, Any], neighborhood: dict[str, Any] | None
+) -> dict[str, str]:
+    return {
+        "document": _sha256(document),
+        "target": _sha256(target),
+        "neighborhood": _sha256(neighborhood),
+    }
+
+
 _ATTRIBUTE_FIELDS = {
     "role",
     "name",
@@ -1621,6 +1692,109 @@ class BrowserPerceptionAdapter:
                 }
         return observations
 
+    def _build_guard_baseline(
+        self,
+        *,
+        raw_capture: dict[str, Any],
+        dom_nodes: list[dict[str, Any]],
+        build: _ObjectBuild,
+    ) -> dict[str, dict[str, Any]]:
+        """FR-1: derive per-object baseline fingerprints from the sensor DOM tree.
+
+        Stored under bundle["guard_baseline"][semantic_id]; only stable DOM-
+        physical identities get an entry (an AX-only object has no probe
+        address, and an unstable one must not pin a baseline). Layer hashes
+        are pure derived data and deliberately excluded from content_sha256.
+        """
+
+        by_phys: dict[str, dict[str, Any]] = {}
+        children_by_parent: dict[str, list[dict[str, Any]]] = {}
+        for node in dom_nodes:
+            phys = str(node.get("physical_id") or "")
+            if phys:
+                by_phys.setdefault(phys, node)
+            parent = str(node.get("parent_id") or "")
+            if parent:
+                children_by_parent.setdefault(parent, []).append(node)
+
+        document_hash = _sha256(_guard_document_payload(raw_capture.get("url")))
+        baseline: dict[str, dict[str, Any]] = {}
+        for semantic_id, identity in (build.private_identity or {}).items():
+            if not isinstance(identity, dict) or identity.get("stable") is not True:
+                continue
+            physical = str(identity.get("physical_id") or "").strip()
+            if not physical:
+                continue
+            # identity and dom_nodes share the sensor physical-id namespace
+            # ("n-..." on the Playwright/fixture channel, "dom:<backend>" on
+            # the CDP channel); probe both through the SAME value, never a
+            # rewritten one -- rewriting here once caused an empty baseline.
+            node = by_phys.get(physical)
+            if node is None:
+                # No DOM-side view of this object: the guard probe has no
+                # matching baseline; leave the entry absent (not_applicable).
+                continue
+            attributes = node.get("attributes") or {}
+            target_payload = _guard_target_payload(attributes)
+            neighborhood_payload: dict[str, Any] | None = None
+            walk_node: dict[str, Any] | None = node
+            for _ in range(_GUARD_ANCESTOR_WALK_CAP):
+                if walk_node is None:
+                    break
+                parent_phys = str(walk_node.get("parent_id") or "")
+                if not parent_phys:
+                    break
+                walk_node = by_phys.get(parent_phys)
+                if walk_node is None:
+                    break
+                anc_attrs = walk_node.get("attributes") or {}
+                anc_tag = _guard_clip(anc_attrs.get("tag"), 40).lower()
+                anc_role = _guard_clip(anc_attrs.get("role"), 60) or None
+                if anc_tag in _GUARD_NEIGHBORHOOD_TAGS or (
+                    anc_role and anc_role.lower() in _GUARD_NEIGHBORHOOD_ROLES
+                ):
+                    child_payloads = []
+                    for child in children_by_parent.get(
+                        str(walk_node.get("physical_id") or ""), []
+                    )[:_GUARD_NEIGHBORHOOD_CHILD_CAP]:
+                        child_attrs = child.get("attributes") or {}
+                        child_payloads.append(
+                            {
+                                "tag": _guard_clip(child_attrs.get("tag"), 40).lower() or None,
+                                "name": _guard_clip(child_attrs.get("name"), _GUARD_NAME_CAP) or None,
+                                "text": _guard_clip(
+                                    child_attrs.get("text"), _GUARD_NEIGHBORHOOD_CHILD_TEXT_CAP
+                                )
+                                or None,
+                            }
+                        )
+                    neighborhood_payload = {
+                        "tag": anc_tag or None,
+                        "role": anc_role,
+                        "children": child_payloads,
+                    }
+                    break
+            layers = _guard_layer_hashes(
+                _guard_document_payload(raw_capture.get("url")),
+                target_payload,
+                neighborhood_payload,
+            )
+            baseline[semantic_id] = {
+                "schema": "smc.browser_guard_baseline.v0.1",
+                "physical_id": physical,
+                "document": layers["document"],
+                "target": layers["target"],
+                "neighborhood": layers["neighborhood"],
+                # Diagnostic facts only (non-sensitive): let rejection
+                # receipts say WHAT changed without persisting raw text.
+                "target_facts": {
+                    "tag": target_payload["tag"],
+                    "name": target_payload["name"],
+                    "role": target_payload["role"],
+                },
+            }
+        return baseline
+
     @_serialized_browser_session_state
     def snapshot(
         self,
@@ -1778,6 +1952,12 @@ class BrowserPerceptionAdapter:
                 "identity": build.private_identity,
                 "scope_observations": scope_observations,
             },
+            # FR-1 derived baseline fingerprints; intentionally excluded from
+            # content_sha (derived data, never compared for observation
+            # equality) and from every projection surface.
+            "guard_baseline": self._build_guard_baseline(
+                raw_capture=raw_capture, dom_nodes=dom_nodes, build=build
+            ),
         }
         self.store.persist(session_id, bundle)
         self.store.persist_session_state(session_id, state.to_wire())
@@ -2198,6 +2378,154 @@ class BrowserPerceptionAdapter:
             return response("match", "resource_unchanged_new_observation", True)
 
         return response("stale", "different_snapshot_same_generation", True)
+
+    def guard_baseline(
+        self, session_id: str, expected_version: str, target_id: str
+    ) -> dict[str, Any] | None:
+        """Load one object's FR-1 baseline fingerprint from its expected bundle.
+
+        Returns None whenever the guard cannot be sourced (bundle unavailable,
+        wrong session, no baseline entry). The caller treats None as
+        not_applicable: the version mechanism stays the sole gate exactly as
+        before FR-1 -- the guard never weakens an availability failure.
+        """
+
+        bundle, _load_error = self.store._load(expected_version)
+        if bundle is None:
+            return None
+        if bundle.get("owner_session_sha256") != _session_hash(session_id):
+            return None
+        entry = (bundle.get("guard_baseline") or {}).get(target_id)
+        if not isinstance(entry, dict):
+            return None
+        return entry
+
+    def assess_guard(
+        self, *, baseline: dict[str, Any], raw: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Adjudicate the current-state guard probe against a baseline entry.
+
+        raw is the fixed read-only guard probe payload (cdp_host constant):
+          {"ok": bool, "stage"?: "resolve"|"evaluate", "doc", "target", "nb",
+           "geo", "occluded", "hitTag"} -- shape errors fail closed as
+           guard_timeout; a resolve-stage miss is guard_detach.
+        """
+
+        verdict: dict[str, Any] = {
+            "schema": "smc.browser_guard_verdict.v0.1",
+            "domain": "browser",
+        }
+        if not isinstance(raw, dict) or not raw.get("ok"):
+            stage_source = raw if isinstance(raw, dict) else {}
+            stage = str(stage_source.get("stage") or "evaluate")
+            reason = "guard_detach" if stage == "resolve" else "guard_timeout"
+            return {
+                **verdict,
+                "verdict": "reject",
+                "reason": reason,
+                "mismatched_layer": None,
+                "occluded": False,
+                "observed": {},
+            }
+        doc_raw = raw.get("doc") or {}
+        target_raw = raw.get("target") or {}
+        geo = raw.get("geo") or {}
+        occluded = bool(raw.get("occluded"))
+        if not geo.get("visible", True):
+            # Zero-size elements cannot be hit by a pointer; classify with
+            # occlusion rather than inventing a fifth rejection class.
+            occluded = True
+        value = target_raw.get("value")
+        value_text: str | None = None
+        if value is not None:
+            # Same single FR-6 whitelist on the probe side: sensitive values
+            # only ever contribute their sentinel to the target-layer hash.
+            value_text = _redact_value_text(
+                value=str(value),
+                tag=str(target_raw.get("tag") or ""),
+                input_type=str(target_raw.get("type") or ""),
+                name=str(target_raw.get("name") or ""),
+                role=str(target_raw.get("role") or ""),
+            )
+        current_target = {
+            "tag": _guard_clip(target_raw.get("tag"), 40).lower() or None,
+            "name": _guard_clip(target_raw.get("name"), _GUARD_NAME_CAP) or None,
+            "role": _guard_clip(target_raw.get("role"), 60) or None,
+            "input_type": _guard_clip(target_raw.get("type"), 40) or None,
+            "text": _guard_clip(target_raw.get("text"), _GUARD_TEXT_CAP) or None,
+        }
+        if value_text is not None:
+            current_target["value_text"] = _guard_clip(value_text, _GUARD_NAME_CAP) or None
+        current_nb: dict[str, Any] | None = None
+        nb_raw = raw.get("nb")
+        if isinstance(nb_raw, dict):
+            current_nb = {
+                "tag": _guard_clip(nb_raw.get("tag"), 40).lower() or None,
+                "role": _guard_clip(nb_raw.get("role"), 60) or None,
+                "children": [
+                    {
+                        "tag": _guard_clip(c.get("tag"), 40).lower() or None,
+                        "name": _guard_clip(c.get("name"), _GUARD_NAME_CAP) or None,
+                        "text": _guard_clip(
+                            c.get("text"), _GUARD_NEIGHBORHOOD_CHILD_TEXT_CAP
+                        )
+                        or None,
+                    }
+                    for c in (nb_raw.get("children") or [])[
+                        :_GUARD_NEIGHBORHOOD_CHILD_CAP
+                    ]
+                    if isinstance(c, dict)
+                ],
+            }
+        layers = _guard_layer_hashes(
+            _guard_document_payload(doc_raw.get("url")),
+            current_target,
+            current_nb,
+        )
+        observed = {
+            "geo": {
+                "width": geo.get("w"),
+                "height": geo.get("h"),
+                "visible": bool(geo.get("visible", False)),
+            },
+            "hit_tag": _guard_clip(raw.get("hitTag"), 40) or None,
+        }
+        if occluded:
+            return {
+                **verdict,
+                "verdict": "reject",
+                "reason": "guard_occluded",
+                "mismatched_layer": None,
+                "occluded": True,
+                "observed": observed,
+            }
+        mismatches = [
+            layer
+            for layer in ("document", "target", "neighborhood")
+            if isinstance(baseline.get(layer), str)
+            and baseline.get(layer) != layers.get(layer)
+        ]
+        if mismatches:
+            primary = "target"
+            if "target" not in mismatches:
+                primary = "neighborhood" if "neighborhood" in mismatches else "document"
+            return {
+                **verdict,
+                "verdict": "reject",
+                "reason": f"guard_document_changed:layer={primary}",
+                "mismatched_layer": primary,
+                "mismatched_layers": sorted(mismatches),
+                "occluded": occluded,
+                "observed": observed,
+            }
+        return {
+            **verdict,
+            "verdict": "pass",
+            "reason": None,
+            "mismatched_layer": None,
+            "occluded": occluded,
+            "observed": observed,
+        }
 
     @_serialized_browser_session_state
     def evaluate_predicate(
