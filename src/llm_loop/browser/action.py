@@ -267,6 +267,7 @@ class BrowserActionAdapter:
         actuator: BrowserMutationActuator,
         guard_collector: Callable[[str], dict[str, Any]] | None = None,
         guard_enabled: bool = False,
+        settle_enabled: bool = False,
     ) -> None:
         self.perception = perception
         self.receipt_store = receipt_store
@@ -277,6 +278,48 @@ class BrowserActionAdapter:
         # must never change behavior for sessions that did not ask for it.
         self.guard_collector = guard_collector
         self.guard_enabled = bool(guard_enabled) and guard_collector is not None
+        # FR-2 post-dispatch settle wait. Default off for the same NFR-3
+        # reason: with the flag off the execute path is byte-identical to the
+        # pre-FR-2 behavior (no settle round trip, no "wait" receipt field).
+        self.settle_enabled = bool(settle_enabled)
+
+    @staticmethod
+    def _settle_mode(verb: str, semantic_object: dict[str, Any] | None) -> str:
+        """Server-side fixed rule for the FR-2 settle predicate mode.
+
+        Combobox-class clicks wait for "visible option appears" (200ms cap);
+        everything else settles on the 2-rAF/50ms baseline. Misclassification
+        is fail-safe: a missed combobox only loses the longer predicate and
+        falls back to the baseline race.
+        """
+        if verb == "click" and isinstance(semantic_object, dict):
+            kind = str(semantic_object.get("kind") or "")
+            role = str((semantic_object.get("attributes") or {}).get("role") or "").strip().lower()
+            # kind truth: the capture layer normalizes role=combobox elements
+            # to kind="select" (_kind_for), so "select" is the post-merge
+            # surface where combobox semantics actually live.
+            if kind in {"select", "combobox"} or role in {"combobox", "listbox"}:
+                return "combobox_options"
+        return "raf_baseline"
+
+    def _settle_after_dispatch(
+        self, *, verb: str, semantic_object: dict[str, Any] | None, physical_target: str | None
+    ) -> dict[str, Any]:
+        """Run the FR-2 settle wait; degrade to an honest verdict, never raise.
+
+        Settle is an observation-quality enhancement following a dispatch, not
+        a safety gate: channel/actuator failures are recorded as
+        verdict "unavailable" so the post-capture path proceeds exactly as it
+        would have without FR-2.
+        """
+        mode = self._settle_mode(verb, semantic_object)
+        settle = getattr(self.actuator, "settle", None)
+        if not callable(settle):
+            return {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode, "verdict": "unavailable", "reason": "actuator_no_settle"}
+        try:
+            return settle(physical_target=physical_target, mode=mode)
+        except Exception as exc:  # noqa: BLE001 - settle must never break the dispatch path.
+            return {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode, "verdict": "unavailable", "reason": f"settle_error:{type(exc).__name__}"}
 
     @staticmethod
     def _validate(action: dict[str, Any]) -> str | None:
@@ -608,6 +651,7 @@ class BrowserActionAdapter:
         target_id = str(action["target_id"])
         scope_ref = str(action["scope_ref"])
         physical_target: str | None = None
+        semantic_object: dict[str, Any] | None = None
         if verb in {"click", "fill", "select", "scroll"}:
             object_grounding = (before_bundle.get("object_grounding") or {}).get(target_id)
             semantic_object = (object_grounding or {}).get("semantic_object") if isinstance(object_grounding, dict) else None
@@ -683,6 +727,26 @@ class BrowserActionAdapter:
                 except Exception as exc:  # noqa: BLE001 - ambiguity must be surfaced, never replayed.
                     dispatch_error = exc
 
+        # FR-2: post-dispatch settle window between the acknowledged dispatch
+        # and the post-capture, so the first valid observation after an
+        # interaction lands one polling cycle earlier (DESIGN-20261007). Runs
+        # only on the acknowledged mutation path; verdicts are honest
+        # (settled/timeout/unavailable) and never gate or fail the receipt.
+        wait_verdict: dict[str, Any] | None = None
+        if (
+            self.settle_enabled
+            and not dispatch_authority_lost
+            and dispatch_error is None
+            and dispatch_result is not None
+            and dispatch_result.acknowledged
+            and physical_target is not None
+        ):
+            wait_verdict = self._settle_after_dispatch(
+                verb=verb,
+                semantic_object=semantic_object,
+                physical_target=physical_target,
+            )
+
         after_version: str | None = None
         after_ref: str | None = None
         diff_ref: str | None = None
@@ -720,6 +784,11 @@ class BrowserActionAdapter:
             # FR-1: persist the guard verdict (pass or the exemption it earned)
             # on the terminal receipt alongside the version it adjudicated.
             terminal["guard"] = guard_verdict
+        if wait_verdict is not None:
+            # FR-2: persist the settle verdict so the model can tell whether
+            # the after observation followed a settled render or a capped/
+            # timeout race, instead of guessing from the diff alone.
+            terminal["wait"] = wait_verdict
         terminal["grounding_refs"] = {
             "before": before_ref,
             "after": after_ref,

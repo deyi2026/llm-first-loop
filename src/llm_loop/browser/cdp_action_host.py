@@ -35,6 +35,70 @@ _attest_logger = logging.getLogger("llm_loop.browser.cdp_action_host.attestation
 
 _ALLOWED = frozenset({"DOM.resolveNode", "Runtime.callFunctionOn", "Page.enable", "Page.navigate"})
 
+# FR-2 (DESIGN-20261007-browser-semantic-guard): post-dispatch settle waits.
+# Fixed JS constants under version control; the only parameter surface is the
+# server-resolved objectId (NFR-2 discipline: zero model-controllable script
+# input). Both predicates resolve exactly once and clean up their timers, so
+# no page-side leakage across repeated dispatches.
+#   baseline:    2 animation frames OR 50ms, whichever comes first (race).
+#   combobox:    >=1 visible option inside the aria-controls popup or the
+#                neighborhood listbox, polled ~1 frame, 200ms hard cap.
+_SETTLE_BASELINE_JS = (
+    "function(){"
+    "const t0=performance.now(),cap=50;"
+    "return new Promise(function(resolve){"
+    "var done=false,timer=null;"
+    "function fin(by){if(done)return;done=true;"
+    "if(timer){clearTimeout(timer);}"
+    "resolve({settled:by!=='cap',settled_by:by,"
+    "elapsed_ms:Math.round(performance.now()-t0),cap_ms:cap});}"
+    # Defensive view resolution: element hosts carry ownerDocument.defaultView,
+    # document-root hosts have ownerDocument === null and expose defaultView
+    # themselves (proven by the real-Chromium probe, not assumed).
+    "var view=(this.ownerDocument&&this.ownerDocument.defaultView)||this.defaultView||window,n=0;"
+    "function raf(){n+=1;if(n>=2){fin('raf');return;}"
+    "view.requestAnimationFrame(raf);}"
+    "view.requestAnimationFrame(raf);"
+    "timer=view.setTimeout(function(){fin('cap');},cap);"
+    "});}"
+)
+
+_SETTLE_COMBOBOX_JS = (
+    "function(){"
+    "const t0=performance.now(),cap=200;"
+    # Defensive host resolution: for element targets this.ownerDocument exists,
+    # but document-root targets have ownerDocument === null (proven by the
+    # real-Chromium probe); resolve the view across all host shapes.
+    "var el=(this&&typeof this.getAttribute==='function')?this:null;"
+    "function fin0(){return {settled:false,settled_by:'cap',visible_options:0,"
+    "elapsed_ms:Math.round(performance.now()-t0),cap_ms:cap};}"
+    "if(!el){return Promise.resolve(fin0());}"
+    "function visible(node){"
+    "var r=node.getBoundingClientRect(),s=getComputedStyle(node);"
+    "return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';}"
+    "function opts(){"
+    "var root=document.getElementById(el.getAttribute('aria-controls')||'')||el.parentElement||el;"
+    "var list=root.matches('[role=listbox],ul,ol')?root:(root.querySelector('[role=listbox]')||root);"
+    "var sel=list.querySelectorAll('[role=option],option,li'),n=0;"
+    "for(var i=0;i<sel.length;i+=1){if(visible(sel[i])){n+=1;}}"
+    "return n;}"
+    "return new Promise(function(resolve){"
+    "var done=false,iv=null,timer=null;"
+    "function fin(n,by){if(done)return;done=true;"
+    "if(iv){clearInterval(iv);}if(timer){clearTimeout(timer);}"
+    "resolve({settled:n>0,settled_by:by,visible_options:n,"
+    "elapsed_ms:Math.round(performance.now()-t0),cap_ms:cap});}"
+    "var first=opts();if(first>0){fin(first,'options');}"
+    "else{iv=setInterval(function(){var n=opts();if(n>0){fin(n,'options');}},16);"
+    "timer=setTimeout(function(){fin(opts(),'cap');},cap);}"
+    "});}"
+)
+
+_SETTLE_SCRIPTS: dict[str, str] = {
+    "raf_baseline": _SETTLE_BASELINE_JS,
+    "combobox_options": _SETTLE_COMBOBOX_JS,
+}
+
 _BOUNDARY_EVENT_METHODS = {
     "Page.windowOpen": "new_window",
     "Page.downloadWillBegin": "download_started",
@@ -311,6 +375,54 @@ class CdpBrowserMutationActuator:
                 raise RuntimeError(
                     "CDP mutation connection lost; dropped session for same-target reconnect"
                 ) from exc
+
+    def settle(self, *, physical_target: str | None, mode: str) -> dict[str, Any]:
+        """FR-2: single-round-trip post-dispatch settle wait on the bound page.
+
+        Runs a fixed, version-controlled predicate (``_SETTLE_SCRIPTS[mode]``)
+        via Runtime.callFunctionOn with awaitPromise so the rAF/timeout race
+        and option polling happen page-side in one round trip. Deterministic
+        failures resolve to verdict "unavailable" (with reason) instead of
+        raising: settle is an observation-quality enhancement, not a safety
+        gate, so it must never break the dispatch path it follows.
+        """
+        script = _SETTLE_SCRIPTS.get(mode)
+        if script is None:
+            return {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode, "verdict": "unavailable", "reason": "unknown_mode"}
+        with self._dispatch_lock:
+            try:
+                session = self._ensure_session()
+                object_id = self._object_id(session, physical_target)
+                result = session.send(
+                    "Runtime.callFunctionOn",
+                    {
+                        "objectId": object_id,
+                        "functionDeclaration": script,
+                        "arguments": [],
+                        "returnByValue": True,
+                        "awaitPromise": True,
+                    },
+                )
+            except _CONNECTION_LOST_ERRORS as exc:
+                self._drop_session()
+                return {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode, "verdict": "unavailable", "reason": f"connection_lost: {exc}"}
+        if result.get("exceptionDetails"):
+            details = result.get("exceptionDetails") or {}
+            desc = str(((details.get("exception") or {}).get("description")) or details.get("text") or "")[:200]
+            return {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode, "verdict": "unavailable", "reason": f"predicate_raised: {desc}"}
+        remote = result.get("result") or {}
+        value = remote.get("value")
+        if not isinstance(value, dict) or "settled" not in value:
+            return {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode, "verdict": "unavailable", "reason": "unexpected_predicate_shape"}
+        verdict = {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode}
+        verdict.update(value)
+        if not isinstance(verdict.get("elapsed_ms"), int):
+            verdict["elapsed_ms"] = -1
+        if verdict.get("settled"):
+            verdict["verdict"] = "settled"
+        else:
+            verdict["verdict"] = "timeout"
+        return verdict
 
     def _dispatch_locked(
         self, *, verb: str, physical_target: str | None, args: dict[str, Any]

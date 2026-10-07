@@ -496,6 +496,10 @@ class Settings:
     # FR-1 local semantic guard (DESIGN-20261007-browser-semantic-guard):
     # additive pre-dispatch gate; default off = exact pre-FR-1 behavior.
     browser_semantic_guard_enabled: bool = False
+    # FR-2 post-dispatch settle wait (same design doc): single-round-trip
+    # rAF/option-predicate settle between dispatch and post-capture;
+    # default off = exact pre-FR-2 behavior (no settle, no "wait" receipt).
+    browser_dispatch_settle_enabled: bool = False
     # ── Fleet ExecutionWorkspace/WorkerLease 生产接线（2026-09-19 slice4 G1）──
     # 缺省全空 = fleet 完全关闭（零行为零回归）；显式配置 LFL_FLEET_WORKSPACE_ROOT
     # 后 factory 才构造 ProjectCoordinator 注入 SubAgentRunner（run 边界
@@ -1081,6 +1085,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ).strip().lower(),
         browser_action_enabled=env_bool("LFL_BROWSER_ACTION_ENABLED", False),
         browser_semantic_guard_enabled=env_bool("LFL_BROWSER_SEMANTIC_GUARD_ENABLED", False),
+        browser_dispatch_settle_enabled=env_bool("LFL_BROWSER_DISPATCH_SETTLE_ENABLED", False),
         browser_cdp_max_frame_bytes=env_int("LFL_BROWSER_CDP_MAX_FRAME_BYTES", 134_217_728),
         exec_mode=env_one(_env_exec_mode, "EXEC_MODE"),
         exec_allowlist=env_values.get("EXEC_ALLOWLIST", "").strip(),
