@@ -1737,3 +1737,108 @@ def test_stream_total_budget_guard_factor_positive():
     import llm_loop.llm.client as client_mod
 
     assert client_mod._STREAM_TOTAL_BUDGET_FACTOR > 1.0
+
+
+# ── EVO-20261007-519eeb93: 空响应同模型有界自动重试 ──
+
+
+def _drive_chat_stream(llm):
+    """迭代 chat_stream 至终止，返回 (deltas, 终态: LLMResponse 或 LLMError)."""
+    deltas = []
+    it = llm.chat_stream([{"role": "user", "content": "hi"}], [])
+    while True:
+        try:
+            d = next(it)
+        except StopIteration as exc:
+            return deltas, exc.value
+        except Exception as exc:  # noqa: BLE001 — 测试驱动器：异常作为结果返回
+            return deltas, exc
+        deltas.append(d)
+
+
+def test_empty_response_retries_once_then_succeeds(monkeypatch, caplog):
+    """首次空响应→0.5s 退避后同模型重试 1 次→成功；不整轮中断。"""
+    import llm_loop.llm.client as client_mod
+    from llm_loop.llm.client import LLMResponse, StreamDelta
+
+    llm = _client()
+    calls: list[int] = []
+
+    def _fake_stream(messages, tools, **kwargs):
+        calls.append(1)
+
+        def _gen():
+            if len(calls) == 1:
+                # 首次：仅投递 reasoning 后空收尾（glm-5.3 事故形态）
+                yield StreamDelta(text="", reasoning="思考中")
+                return LLMResponse(content="", tool_calls=[])
+            # 重试：正常产出
+            yield StreamDelta(text="答案")
+            return LLMResponse(content="答案", tool_calls=[])
+
+        return _gen()
+
+    monkeypatch.setattr(llm, "_stream_openai", _fake_stream)
+    monkeypatch.setattr(client_mod, "_EMPTY_RESPONSE_RETRY_BACKOFF_S", 0.0)
+    with caplog.at_level("WARNING", logger="llm_loop.llm.client"):
+        deltas, final = _drive_chat_stream(llm)
+    assert len(calls) == 2, "空响应必须恰好触发 1 次同模型重试"
+    assert final is not None and final.content == "答案"
+    assert len(deltas) == 2, "重试不重放首次的空产出（仅 reasoning+text 各一次）"
+    assert any("同模型自动重试" in r.message for r in caplog.records)
+
+
+def test_empty_response_raises_after_bounded_retry(monkeypatch):
+    """重试后仍空→如实上抛 LLMEmptyResponseError（不无限重试、不静默）。"""
+    import llm_loop.llm.client as client_mod
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.llm.errors import LLMEmptyResponseError
+
+    llm = _client()
+    calls: list[int] = []
+
+    def _fake_stream(messages, tools, **kwargs):
+        calls.append(1)
+
+        def _gen():
+            return LLMResponse(content="", tool_calls=[])
+            yield  # pragma: no cover — 标记为生成器（unreachable）
+
+        return _gen()
+
+    monkeypatch.setattr(llm, "_stream_openai", _fake_stream)
+    monkeypatch.setattr(client_mod, "_EMPTY_RESPONSE_RETRY_BACKOFF_S", 0.0)
+    deltas, outcome = _drive_chat_stream(llm)
+    assert isinstance(outcome, LLMEmptyResponseError)
+    assert len(calls) == 2, "有界：1 次原始 + 1 次重试后停止"
+    assert "重试 1 次仍为空" in str(outcome)
+
+
+def test_nonempty_response_never_retries(monkeypatch):
+    """正常响应零额外请求（重试循环不得改变正常路径语义）。"""
+    from llm_loop.llm.client import LLMResponse
+
+    llm = _client()
+    calls: list[int] = []
+
+    def _fake_stream(messages, tools, **kwargs):
+        calls.append(1)
+
+        def _gen():
+            return LLMResponse(content="ok", tool_calls=[])
+            yield  # pragma: no cover
+
+        return _gen()
+
+    monkeypatch.setattr(llm, "_stream_openai", _fake_stream)
+    deltas, final = _drive_chat_stream(llm)
+    assert len(calls) == 1
+    assert final is not None and final.content == "ok"
+
+
+def test_empty_response_is_fallback_eligible():
+    """client 重试后仍空→默认装配路径可降级（strict override 由 engine 侧另行拦截）。"""
+    from llm_loop.core.loop.engine_services.fallback import FallbackService
+    from llm_loop.llm.errors import LLMEmptyResponseError
+
+    assert FallbackService._is_fallback_eligible_error(LLMEmptyResponseError("empty")) is True
