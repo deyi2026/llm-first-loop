@@ -15,12 +15,15 @@ LLM 可见的工具分派/呈现层在 introspection/corrections.py（消费本�
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from llm_loop.introspection.rule_index import RuleIndex
 from llm_loop.timekeeping import system_local_now
+
+_LOGGER = logging.getLogger("llm_loop.introspection.search")
 
 # EVO-20260923-6fe23c9b F2(b): 行为卡（method/experience/lesson）卡龄降权阈值（天，按 updated_at/ts）
 CARD_AGE_DOWNWEIGHT_DAYS = 14
@@ -270,6 +273,9 @@ class RecordSearcher:
         """
         self._last_related_methods = None
         if not self._method_related_hint_enabled:
+            # EVO-20261007: 开关关闭时逐次可见——曾经出现"settings 默认开、运行中进程却不产尾注"
+            # 且无任何痕迹可查的静默分叉，故该分支从无声 return 升级为可观测。
+            _LOGGER.info("method_hint: disabled (flag off) kind=%s", kind)
             return
         if kind not in {"experience", "lesson", "memory"}:
             return
@@ -277,17 +283,22 @@ class RecordSearcher:
         if not raw or raw.lower().startswith(("method:", "memory:", "experience:", "lesson:", "rule:")):
             return
         if self._method_store is None:
+            _LOGGER.warning("method_hint: method_store missing, hint skipped")
             return
         # 附带检索不得覆盖主结果的诊断透传（_search_method 会写语义诊断）——保存/恢复
         saved_diag = (self._last_diagnostics, self._last_semantic_diagnostics)
         try:
             rows = self._search_method(raw, 2)
         except Exception:
+            _LOGGER.exception("method_hint: collect failed (fail-open, hint omitted)")
             return
         finally:
             self._last_diagnostics, self._last_semantic_diagnostics = saved_diag
         if rows:
             self._last_related_methods = rows
+            _LOGGER.debug("method_hint: %d candidate(s) attached", len(rows))
+        else:
+            _LOGGER.debug("method_hint: zero method rows (len=%d query prefix)", len(raw))
 
     def search(
         self,
