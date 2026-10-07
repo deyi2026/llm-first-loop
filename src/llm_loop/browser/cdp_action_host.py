@@ -30,6 +30,12 @@ from llm_loop.browser.channel_binding import (
     BrowserChannelBindingCoordinator,
     extract_browser_ws_uuid,
 )
+from llm_loop.browser.errors import (
+    MultiPageAmbiguityError,
+    PageRecord,
+    PageTargetNotFoundError,
+    page_records_from_targets,
+)
 
 _attest_logger = logging.getLogger("llm_loop.browser.cdp_action_host.attestation")
 
@@ -220,11 +226,40 @@ class CdpBrowserMutationActuator:
                 raise RuntimeError(f"bound Browser target disappeared: {self._bound_target_id}; no silent rebind")
             raise RuntimeError(f"configured Browser target not found: {expected}")
         if len(pages) != 1:
-            raise RuntimeError(
-                "Browser CDP endpoint must expose exactly one page when target_id is omitted; "
-                f"observed={len(pages)}"
-            )
+            # EVO-20261007-11ae668f：多页且未显式指定 target ⇒ 结构化歧义错误，
+            # 携带只读页面清单；不做任何自动选择。
+            raise MultiPageAmbiguityError(page_records_from_targets(pages))
         return pages[0]
+
+    def list_pages(self) -> list[PageRecord]:
+        """EVO-20261007-11ae668f：只读页面清单，不绑定、不建会话、无副作用。"""
+
+        pages = [
+            item for item in self._http_get_json(f"{self.debug_base_url}/json/list")
+            if str(item.get("type") or "") == "page"
+        ]
+        return page_records_from_targets(pages)
+
+    def rebind_target(self, target_id: str) -> PageRecord:
+        """EVO-20261007-11ae668f：显式换页（确定性，非静默）。
+
+        语义与 CdpReadOnlyBrowserHost.rebind_target 一致：target 必须命中
+        当前清单；既有绑定/会话立即丢弃；coordinator 由上层 controller 统一重绑。
+        """
+
+        raw = str(target_id or "").strip()
+        if not raw:
+            raise ValueError("rebind_target requires a non-empty explicit target_id")
+        with self._dispatch_lock:
+            records = self.list_pages()
+            for record in records:
+                if record.page_id == raw:
+                    self._configured_target_id = raw
+                    self._bound_target_id = ""
+                    self._bound_websocket_url = ""
+                    self._drop_session()
+                    return record
+            raise PageTargetNotFoundError(raw, records)
 
     def _ensure_session(self) -> _MutationCdpSession:
         target = self._resolve_target()

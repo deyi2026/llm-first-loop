@@ -63,7 +63,7 @@ def test_a_prime_perceive_provider_surface_has_observation_specific_url_role_onl
         assert "url" not in root_props
         assert "url" not in _property_keys(params)
         assert "expected_url" in root_props
-        assert set(page_props) == {"action", "kind", "match", "expected_url", "within_ms"}
+        assert set(page_props) == {"action", "kind", "match", "expected_url", "within_ms", "target_id"}
         assert set(page_url.get("required") or []) == {
             "action",
             "kind",
@@ -77,7 +77,7 @@ def test_a_prime_operate_keeps_destination_url_for_navigate() -> None:
     navigate = _branch(params, discriminator="do", value="navigate")
     props = navigate.get("properties") or {}
 
-    assert set(props) == {"do", "url"}
+    assert set(props) == {"do", "url", "target_id"}
     assert set(navigate.get("required") or []) == {"do", "url"}
     assert "expected_url" not in _property_keys(params)
 

@@ -29,6 +29,7 @@ from llm_loop.browser.attestation import AttestationVerdict, BindingPolicy, atte
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
 from llm_loop.browser.channel_binding import BrowserChannelBindingCoordinator
+from llm_loop.browser.page_binding import BrowserPageBindingController
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.browser.profile_policy import ack_digest, annotation_for, evaluate_profile_class
 from llm_loop.config import Settings
@@ -1213,6 +1214,13 @@ def build_engine(
                 binding_policy=_browser_policy,
                 attest_fn=_browser_attest,
             )
+            # EVO-20261007-11ae668f：显式换页协调器（两 host 原子换绑 + 只读页面清单）。
+            # mutation actuator 在 action-enabled 分支内构造后经 attach_mutation_host 挂载。
+            _browser_page_controller = BrowserPageBindingController(
+                perception_host=_browser_host,
+                mutation_host=None,
+                coordinator=_browser_channel,
+            )
             _browser_adapter = BrowserPerceptionAdapter(
                 store=BrowserPerceptionStore(Path(settings.data_dir) / "browser_perception")
             )
@@ -1227,6 +1235,7 @@ def build_engine(
                     session_id_getter=lambda: current_session_id_ctx.get(),
                     exact_ref_hydrator=_browser_operation_receipt_store.hydrate,
                     profile_annotation=_browser_profile_annotation,
+                    page_controller=_browser_page_controller,
                 ),
             )
             # Mutation capability is independently opt-in.  Perception alone never grants
@@ -1240,6 +1249,7 @@ def build_engine(
                     binding_policy=_browser_policy,
                     attest_fn=_browser_attest,
                 )
+                _browser_page_controller.attach_mutation_host(_browser_actuator)
                 _browser_action_adapter = BrowserActionAdapter(
                     perception=_browser_adapter,
                     receipt_store=BrowserActionReceiptStore(Path(settings.data_dir) / "browser_action"),
@@ -1272,6 +1282,7 @@ def build_engine(
                         semantic_execute=_browser_semantic_execute,
                         receipt_store=_browser_operation_receipt_store,
                         session_id_getter=lambda: current_session_id_ctx.get(),
+                        page_controller=_browser_page_controller,
                     ),
                 )
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）

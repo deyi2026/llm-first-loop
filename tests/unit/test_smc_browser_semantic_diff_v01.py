@@ -104,6 +104,7 @@ def test_model_surface_keeps_diff_and_aggregated_wait_read_only(tmp_path: Path) 
         "value",
         "field",
         "text",
+        "target_id",
         "within_ms",
     }
     assert "condition" not in props

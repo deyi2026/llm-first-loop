@@ -37,7 +37,8 @@ def _common_wait(*, until: str = "enabled", within_ms: int | None = None) -> dic
 def test_mf5_2_provider_common_wait_uses_natural_state_affordance() -> None:
     branch = _historical_wait_branch()
     props = branch["properties"]
-    assert set(props) == {"do", "target", "until", "within_ms"}
+    # EVO-20261007-11ae668f：增加显式换页参数 target_id（可选）。
+    assert set(props) == {"do", "target", "until", "within_ms", "target_id"}
     assert branch["required"] == ["do", "target", "until"]
     assert props["until"]["enum"] == [
         "exists",
@@ -147,7 +148,8 @@ def _historical_wait_text_branch() -> dict[str, Any]:
 def test_mf5_2_provider_preserves_advanced_text_wait_as_semantic_escape_hatch() -> None:
     branch = _historical_wait_text_branch()
     props = branch["properties"]
-    assert set(props) == {"do", "target", "field", "match", "text", "within_ms"}
+    # EVO-20261007-11ae668f：增加显式换页参数 target_id（可选）。
+    assert set(props) == {"do", "target", "field", "match", "text", "within_ms", "target_id"}
     assert branch["required"] == ["do", "target", "field", "match", "text"]
     assert props["field"]["enum"] == ["name", "value_text"]
     assert props["match"]["enum"] == ["equals", "contains", "starts_with", "ends_with"]

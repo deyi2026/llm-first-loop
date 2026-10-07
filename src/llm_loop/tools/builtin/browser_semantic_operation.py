@@ -18,6 +18,10 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from llm_loop.browser.perception import SEMANTIC_OBJECT_KINDS, BrowserPerceptionAdapter
+from llm_loop.browser.errors import (
+    MultiPageAmbiguityError,
+    PageTargetNotFoundError,
+)
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
 from llm_loop.tools.builtin.browser_wait import BrowserWaitObjectTool
@@ -435,6 +439,7 @@ class BrowserSemanticOperationTool:
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["navigate"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "url": {"type": "string", "minLength": 1},
             },
             "required": ["do", "url"],
@@ -444,6 +449,7 @@ class BrowserSemanticOperationTool:
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["click"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "target": _SHORT_TARGET_SCHEMA,
             },
             "required": ["do", "target"],
@@ -453,6 +459,7 @@ class BrowserSemanticOperationTool:
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["set_text", "append_text"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "target": _SHORT_TARGET_SCHEMA,
                 "text": {"type": "string"},
             },
@@ -463,6 +470,7 @@ class BrowserSemanticOperationTool:
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["select"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "target": _SHORT_TARGET_SCHEMA,
                 "value": {"type": "string"},
             },
@@ -473,6 +481,7 @@ class BrowserSemanticOperationTool:
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["scroll"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "target": _SHORT_TARGET_SCHEMA,
                 "delta_pages": {"type": "number"},
             },
@@ -483,6 +492,7 @@ class BrowserSemanticOperationTool:
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["wait"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "target": _SHORT_TARGET_SCHEMA,
                 "until": {"type": "string", "enum": list(_MODEL_FRIENDLY_WAIT_STATES)},
                 "within_ms": {"type": "integer", "minimum": 1, "maximum": 60000},
@@ -494,6 +504,7 @@ class BrowserSemanticOperationTool:
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["wait_text"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "target": _SHORT_TARGET_SCHEMA,
                 "field": {"type": "string", "enum": list(_MODEL_FRIENDLY_WAIT_TEXT_FIELDS)},
                 "match": {
@@ -537,6 +548,17 @@ class BrowserSemanticOperationTool:
             "text": {"type": "string"},
             "value": {"type": "string"},
             "delta_pages": {"type": "number"},
+            "target_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "EVO-20261007-11ae668f：显式指定要绑定的 CDP page target_id"
+                    "（来自 browser_perceive 页面清单回执的 page_id）。携带 target_id 的调用"
+                    "是一个独立动作：本调用只执行换绑（两 host 原子换到该页，同浏览器实例内，"
+                    "跨实例拒绝）并返回回执；mutation 需在下一次不带 target_id 的调用发起。"
+                    "target_id 不在当前清单 ⇒ 确定性失败并返回当前页面清单。"
+                ),
+            },
         },
         "oneOf": _DIRECT_STEP_VARIANTS,
         "additionalProperties": False,
@@ -551,12 +573,15 @@ class BrowserSemanticOperationTool:
         semantic_execute: BrowserSemanticExecuteTool,
         receipt_store: BrowserSemanticOperationReceiptStore,
         session_id_getter: Callable[[], str],
+        page_controller: Any | None = None,
     ) -> None:
         self._perception = perception
         self._capture_backend = capture_backend
         self._semantic_execute = semantic_execute
         self._receipt_store = receipt_store
         self._session_id_getter = session_id_getter
+        # EVO-20261007-11ae668f：显式换页协调器（可选注入；缺省 ⇒ target_id 参数不可用）。
+        self._page_controller = page_controller
         self._wait_object = BrowserWaitObjectTool(
             adapter=perception,
             backend=capture_backend,
@@ -966,6 +991,29 @@ class BrowserSemanticOperationTool:
     def execute_request(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
         if not session_id:
             raise BrowserSemanticOperationContractError("session_id_missing")
+        # EVO-20261007-11ae668f：显式 target_id ⇒ 本调用只执行换绑并返回回执，
+        # mutation 由下一次不带 target_id 的调用发起（单一动作、复验分离）。
+        request = dict(request)
+        explicit_target_id = str(request.pop("target_id", "") or "").strip()
+        if explicit_target_id:
+            if self._page_controller is None:
+                raise BrowserSemanticOperationContractError(
+                    "page_controller_unavailable: target_id rebind not wired in this session"
+                )
+            try:
+                rebound = self._page_controller.rebind(explicit_target_id)
+            except PageTargetNotFoundError as exc:
+                return {
+                    "do": "rebind",
+                    "status": "failed",
+                    "reason": "target_not_found",
+                    "target_id": exc.target_id,
+                    "pages": [page.to_dict() for page in exc.pages],
+                    "hint": (
+                        "target_id 不在当前页面清单中；请从 pages 里选择确切 page_id 重试。"
+                    ),
+                }
+            return {"do": "rebind", "status": "ok", "rebound": rebound}
         direct_verbs = {"navigate", "click", "set_text", "append_text", "select", "scroll"}
         direct_model_friendly = isinstance(request.get("do"), str) and "steps" not in request
         historical_steps = set(request) == {"steps"}
@@ -1148,6 +1196,28 @@ class BrowserSemanticOperationTool:
                     "[browser_operate] contract rejected; "
                     f"reason={exc}; no automatic retry/rebind/target substitution."
                 ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type=type(exc).__name__,
+                error_detail=str(exc),
+            )
+        except MultiPageAmbiguityError as exc:
+            # EVO-20261007-11ae668f：多页且未显式指定 target ⇒ 确定性失败 + 只读页面清单；
+            # 绝不自动选页执行 mutation。
+            payload = {
+                "action": "page_list",
+                "reason": "multi_page_ambiguity",
+                "hint": (
+                    "CDP 端点当前暴露多个 page 且无已建绑定；mutation 未执行。"
+                    "请决策后用 browser_perceive / browser_operate 携带显式 "
+                    "target_id=<page_id> 换绑，再发起操作。"
+                ),
+                "pages": [page.to_dict() for page in exc.pages],
+                "page_count": len(exc.pages),
+            }
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=json.dumps(payload, ensure_ascii=False, indent=2),
                 tool_call_id="",
                 tool_name=self.name,
                 error_type=type(exc).__name__,

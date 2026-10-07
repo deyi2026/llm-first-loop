@@ -66,7 +66,8 @@ def test_mf5_3_1_perceive_wait_fields_are_flat_not_nested_condition() -> None:
     props = page_url.get("properties") or {}
 
     assert "condition" not in props
-    assert set(props) == {"action", "kind", "match", "expected_url", "within_ms"}
+    # EVO-20261007-11ae668f：wait 分支增加显式换页参数 target_id（可选，独立 rebind 动作）。
+    assert set(props) == {"action", "kind", "match", "expected_url", "within_ms", "target_id"}
     assert set(page_url.get("required") or []) == {"action", "kind", "match", "expected_url"}
 
 
@@ -83,28 +84,32 @@ def test_mf5_3_1_action_specific_branches_exclude_cross_action_fields() -> None:
                 "projection_kinds",
                 "projection_cursor",
                 "vision",
+                "target_id",
             },
             {"action"},
         ),
-        ("hydrate", ""): ({"action", "grounding_ref"}, {"action", "grounding_ref"}),
+        ("hydrate", ""): (
+            {"action", "grounding_ref", "target_id"},
+            {"action", "grounding_ref"},
+        ),
         ("diff", ""): (
-            {"action", "from_version", "to_version"},
+            {"action", "from_version", "to_version", "target_id"},
             {"action", "from_version", "to_version"},
         ),
         ("wait", "page_ready"): (
-            {"action", "kind", "state", "within_ms"},
+            {"action", "kind", "state", "within_ms", "target_id"},
             {"action", "kind", "state"},
         ),
         ("wait", "page_url"): (
-            {"action", "kind", "match", "expected_url", "within_ms"},
+            {"action", "kind", "match", "expected_url", "within_ms", "target_id"},
             {"action", "kind", "match", "expected_url"},
         ),
         ("wait", "object_state"): (
-            {"action", "kind", "grounding_ref", "state", "value", "within_ms"},
+            {"action", "kind", "grounding_ref", "state", "value", "within_ms", "target_id"},
             {"action", "kind", "grounding_ref", "state", "value"},
         ),
         ("wait", "object_text"): (
-            {"action", "kind", "grounding_ref", "field", "match", "text", "within_ms"},
+            {"action", "kind", "grounding_ref", "field", "match", "text", "within_ms", "target_id"},
             {"action", "kind", "grounding_ref", "field", "match", "text"},
         ),
     }
