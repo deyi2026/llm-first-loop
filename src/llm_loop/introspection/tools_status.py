@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -23,8 +22,6 @@ from llm_loop.introspection.search import (
     InvalidSearchKindError,
     InvalidSearchQueryError,
 )
-
-_LOGGER = logging.getLogger("llm_loop.introspection.tools_status")
 
 # R3(P1-2): hint 与 _VALID_KINDS 同源生成（事实源唯一，消除手写清单漂移；
 # 下划线名跨模块导入有 test_introspection.py:391 既有先例）
@@ -699,46 +696,6 @@ def _render_archive_record(record: dict, fallback_kind: str) -> str:
     )
 
 
-def _format_related_methods_hint(search_fn: Any) -> str | None:
-    """EVO-20261007 B 面: 记忆检索附带的 Method 候选尾注（duck-typing；缺失/空 → None）.
-
-    searcher.related_methods 由 RecordSearcher 在 kind ∈ {experience,lesson,memory}
-    且 query 非空、method 命中时回填（≤2 张 compact 卡）。零命中/其他 kind/开关关
-    闭时为 None——尾注零噪声消失。文案与既有候选尾注同纪律：仅检索候选，适用性
-    未评估，不替模型选方法。
-    """
-    rows = getattr(search_fn, "related_methods", None)
-    if rows is None:
-        # 兼容注入形态：绑定方法经 __self__ 到达检索器；适配器直接暴露属性
-        owner = getattr(search_fn, "__self__", None)
-        rows = getattr(owner, "related_methods", None)
-    if not rows:
-        _LOGGER.info(
-            "method_hint: hint omitted at tool layer fn_type=%s owner_type=%s",
-            type(search_fn).__name__,
-            type(getattr(search_fn, "__self__", None)).__name__,
-        )
-        return None
-    _LOGGER.info(
-        "method_hint: %d row(s) formatted at tool layer fn_type=%s",
-        len(rows),
-        type(search_fn).__name__,
-    )
-    cards = "; ".join(
-        "{} ({}, status={}, task_applicability=not_evaluated)".format(
-            _single_line(str(r.get("summary", "")), 100),
-            r.get("key", ""),
-            r.get("status", ""),
-        )
-        for r in rows[:2]
-    )
-    return (
-        "[Method 候选提示（同 query 附带）] "
-        + cards
-        + "。仅为检索候选，task_applicability 未评估；如需采用先 exact method:<id> 水合。"
-    )
-
-
 def _finalize_search_records(
     search_fn: Any, kind: str, query: str, limit: int, result: list[dict]
 ) -> ToolResult:
@@ -786,9 +743,6 @@ def _finalize_search_records(
                     f"当前 ref 不存在。若你是在发现方法，请改用普通关键词 query=\"{discovery}\"；"
                     "程序不会把 exact miss 静默改写成 discovery，也不会替你选择 Method。"
                 )
-        related_hint = _format_related_methods_hint(search_fn)
-        if related_hint:
-            miss += "\n" + related_hint  # B 面: 记忆零命中但 method 有候选——消费缺口典型场景
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=miss,
@@ -917,9 +871,6 @@ def _finalize_search_records(
         )
     if degraded or skipped:
         content += "\n" + _diag_section(len(result))
-    related_hint = _format_related_methods_hint(search_fn)
-    if related_hint:
-        content += "\n" + related_hint  # B 面: 记忆命中时同 query 的 Method 候选尾注
     from llm_loop.core.run_context import current_evidence_shadow_enabled
 
     raw_content = "[search_records] 命中 " + str(len(result)) + " 条:\n" + "\n".join(raw_lines)

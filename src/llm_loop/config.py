@@ -610,10 +610,6 @@ class Settings:
     semantic_method_enabled: bool = False
     semantic_docs_enabled: bool = False
     semantic_experience_enabled: bool = False
-    # EVO-20261007 method 消费闭环（B 面）: 记忆类检索（experience/lesson/memory）回执
-    # 附带同 query 的 Method 候选尾注（≤2 张 compact 卡，零命中不渲染）。默认开；
-    # 关闭即回到纯模型自律触发（A 面 schema 锚点仍生效）。
-    method_related_hint_enabled: bool = True
     retrieve_timeout_s: float = 1.0
     retrieve_semantic_top_k: int = (
         20  # auto-adaptive: env 未显式设置时按检索分数自适应（<0.3→10/>0.7→30，硬上限 50）
@@ -817,8 +813,6 @@ class Settings:
             "method_reflection_min_tools": self.method_reflection_min_tools,
             "method_reflection_min_failures": self.method_reflection_min_failures,
             "method_reflection_timeout_s": self.method_reflection_timeout_s,
-            # EVO-20261007 B面: 记忆检索 method 候选尾注开关（可观测性投影，无路径/密钥）
-            "method_related_hint_enabled": self.method_related_hint_enabled,
             "self_eval_min_samples": self.self_eval_min_samples,
             "self_eval_span": self.self_eval_span,
             # P2-3: 文档检索入口状态（AI 可自查，不暴露路径细节）
@@ -1164,7 +1158,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         semantic_method_enabled=env_bool("SEMANTIC_METHOD_ENABLED", False),
         semantic_docs_enabled=env_bool("SEMANTIC_DOCS_ENABLED", False),
         semantic_experience_enabled=env_bool("SEMANTIC_EXPERIENCE_ENABLED", False),
-        method_related_hint_enabled=env_bool("METHOD_RELATED_HINT_ENABLED", True),  # EVO-20261007 B 面
         retrieve_timeout_s=float(env_int("RETRIEVE_TIMEOUT_S", 1)),
         retrieve_semantic_top_k=env_int("RETRIEVE_SEMANTIC_TOP_K", 20),
         retrieval_multiquery_mode=env_one(_env_multiquery_mode, "RETRIEVAL_MULTIQUERY_MODE"),
