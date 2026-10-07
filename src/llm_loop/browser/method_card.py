@@ -19,5 +19,12 @@ SEMANTIC_OPERATION_METHOD_CARD = (
     "own pending action can change (e.g. url still about:blank after a rejected navigate), "
     "re-dispatch that action instead of waiting longer; "
     "gate predicates on objects, not on scope: target button enabled / status text Ready -> "
-    "browser_wait_object_state / browser_wait_object_text, not scope ready/url."
+    "browser_wait_object_state / browser_wait_object_text, not scope ready/url; "
+    "diff-first consumption: after an executed mutation, consume the returned diff "
+    "(inline summary or hydrate of changed grounding refs) before re-snapshotting; "
+    "an empty diff is evidence only for a 'nothing should change' expectation — any "
+    "expected visual/interactive effect still requires re-observe (fresh snapshot or "
+    "vision evidence), because attribute-level diff can miss rendered change; "
+    "value_text '<redacted:sensitive>' is a policy exclusion sentinel: treat the field "
+    "as redacted, never match or assert its concrete value."
 )
