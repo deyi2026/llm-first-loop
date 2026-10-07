@@ -60,6 +60,13 @@ _TOOL_RECEIPT_KEYWORDS = {
     "web_fetch": ["抓取", "获取", "下载", "fetched"],
 }
 
+# 回执前缀标注（check() 构造回执时使用；匹配器按状态过滤时消费同一常量，
+# 防两处字面量漂移）。工具名后紧跟的只有三种形态:
+# `tool_name: …`（普通成功）/ `tool_name（⚠️截断…）: …`（成功但截断）/
+# `tool_name（已阻断）: …`（BLOCKED，非成功证据）。
+_RECEIPT_TRUNCATED_PREFIX = "（⚠️截断"
+_RECEIPT_BLOCKED_PREFIX = "（已阻断）"
+
 
 # EVO-20260810-50816b30: 能力陈述 vs 行为声明语义区分
 # 情态/能力标志（表"能力/意愿"，非"已完成"）
@@ -87,7 +94,9 @@ _MARKDOWN_STRUCT_PREFIXES = ("|", ">")
 # 校验器版本: 抽取/匹配语义变更时 bump。审计记录携带该字段后，历史 cohort
 # （如 2026-09-03 前无 id 的 1119 行匿名段）可与当前代次切分，不再混算
 # precision/误报归因（8 月旧 ±40 窗口行为 ≠ 当前整句单元行为）。
-VALIDATOR_VERSION = "2026.09.30"
+# 2026.10.07: 第三方评述句豁免（属实/见下文/见上文/详见——DC-20261007T081417368324
+# 实证: 对第三方项目设计的评语被抽为完成声明）→ 抽取语义变更，bump 代次。
+VALIDATOR_VERSION = "2026.10.07"
 
 # inline code span（`...`）为引用/provenance 内容（EVO-20260930）。
 # 实证 DC-20260930T080447006508: 回答引用历史审计文本（"- `✅ RULE-AI-19 已落地…`"
@@ -117,6 +126,11 @@ _NARRATIVE_MARKERS = [
     # 未来/进行中（实证: "等你确认后执行"、"正在执行的演进"）
     "再", "将要", "将会", "准备", "打算", "稍后", "随后", "正在", "待我", "等你", "待你",
     "待用户", "待动作", "待办", "待确认", "待执行", "待验证", "will ", "shall ",
+    # 第三方评述/交叉引用（实证 DC-20261007T081417368324: "**执行前校验** —
+    # 属实且是最讲究的部分（见下文"最值得偷的"）"是对第三方项目设计的评语，
+    # 非自身动作声明，被判 false 造成假阳性）；防漏网同前: 含完成标志的真声明
+    # （"已执行校验，属实"）仍保留校验
+    "属实", "见下文", "见上文", "详见",
 ]
 _NARRATIVE_ENUM_MARKERS = ("①", "②", "③", "④", "⑤", "⑥")
 # 结论句（实证: "判断和方案全部成立"）
@@ -218,7 +232,11 @@ class DeclarationValidator:
         for m in tool_messages:
             content = m.content or ""
             if m.status == ToolResultStatus.SUCCESS:
-                _tag = "（⚠️截断: 部分数据未核验）" if "[输出已截断]" in content else ""
+                _tag = (
+                    f"{_RECEIPT_TRUNCATED_PREFIX}: 部分数据未核验）"
+                    if "[输出已截断]" in content
+                    else ""
+                )
                 receipts.append(f"{m.tool_name}{_tag}: {content[:_RECEIPT_DISPLAY_CHARS]}")
                 match_receipts.append(f"{m.tool_name}{_tag}: {content[:_RECEIPT_MATCH_CHARS]}")
                 # 组合工具可携带真实嵌套 SUCCESS 证据；metadata 不进模型 wire，
@@ -229,7 +247,7 @@ class DeclarationValidator:
                         receipts.append(f"nested:{nested_text}")
                         match_receipts.append(f"nested:{nested_text}")
             elif m.status == ToolResultStatus.BLOCKED:
-                blocked = f"{m.tool_name}（已阻断）: {content[:_RECEIPT_DISPLAY_CHARS]}"
+                blocked = f"{m.tool_name}{_RECEIPT_BLOCKED_PREFIX}: {content[:_RECEIPT_DISPLAY_CHARS]}"
                 receipts.append(blocked)
                 match_receipts.append(blocked)
 
@@ -264,8 +282,11 @@ class DeclarationValidator:
                     # 原 receipts[:3] 取最早回执（本轮首个工具），漂移轮被最早轮的
                     # model_catalog（身份话题）样本直接诱导复读"系统状态"。取最新
                     # 3 条（[-3:]）让提醒贴近当前动作，旧话题文本引用体积同步最小化。
+                    # EVO-20261007-c1313de6: 判语必须停在匹配级事实——"均未见对应
+                    # 成功记录"是池级断言，会被自己引用的 [退出码 0] 样本推翻
+                    # （实证 DC-…b4a4fe）；真实情况是匹配未命中，不是池为空。
                     discrepancies.append(
-                        f"声明: {decl} — 但本轮及近 {self._recent_window} 轮回执中均未见对应成功记录（回执: {receipts[-3:] or '无'}）"
+                        f"声明: {decl} — 但本轮及近 {self._recent_window} 轮成功回执中未匹配到对应记录（回执: {receipts[-3:] or '无'}）"
                     )
 
         # 本轮成功回执滚入近 N 轮窗口（供下轮跨轮引用补证；EVO-20260917-27cd77ed B:
@@ -522,15 +543,38 @@ class DeclarationValidator:
         for verb in _DECLARE_VERBS:
             if verb in declaration and any(verb in r for r in receipts):
                 return "keyword"
-        # 结构化工具名匹配：声明出现该工具语义动词，成功回执中存在对应 tool name。
-        # `_TOOL_RECEIPT_KEYWORDS` 过去仅定义未消费；这里补上原设计意图，同时
-        # 支持 nested:execute_command:success 等组合工具证据。
+        # 结构化工具名匹配（EVO-20261007-c1313de6）: 声明含该工具语义动词，成功回执
+        # 池中存在该工具的回执。原实现 `receipt == f"nested:{tool_name}:success"` 精确
+        # 相等只覆盖组合工具嵌套证据，普通 `execute_command: [命令]… [退出码 0]` 形态
+        # 结构性永不命中（跨语动词↔工具名缺口）。
+        # 两重保护:
+        # 1) 状态过滤: match_receipts 同时含 BLOCKED 回执（形如
+        #    `execute_command（已阻断）: …`，同样以工具名开头），不能作为执行
+        #    成功证据——前缀条件只接受普通/截断标注两种成功形态，显式排除
+        #    已阻断标签（建议 A 审查点，回归测试强制）；
+        # 2) 动词-宾语锚定: 声明含 path-like token 且未命中（能走到这里即路径匹配
+        #    全部 miss）时，不得用"该类工具恰好有成功回执"泛化兜底——
+        #    "已写入 output.txt" + 仅 read_file/execute_command 回执仍是 miss；
+        #    无宾语锚点的泛化声明（"我已执行该校验"）才允许工具名兜底。
         lower_decl = declaration.lower()
-        for tool_name, keywords in _TOOL_RECEIPT_KEYWORDS.items():
-            if not any(str(keyword).lower() in lower_decl for keyword in keywords):
-                continue
-            if any(receipt == f"nested:{tool_name}:success" for receipt in receipts):
-                return "keyword"
+        has_unmatched_object = any(
+            "/" in tok or "\\" in tok or "." in tok for tok in path_tokens
+        )
+        if not has_unmatched_object:
+            for tool_name, keywords in _TOOL_RECEIPT_KEYWORDS.items():
+                if not any(str(k).lower() in lower_decl for k in keywords):
+                    continue
+                if any(
+                    (
+                        r.startswith(
+                            (f"{tool_name}:", f"{tool_name}{_RECEIPT_TRUNCATED_PREFIX}")
+                        )
+                        and not r.startswith(f"{tool_name}{_RECEIPT_BLOCKED_PREFIX}")
+                    )
+                    or r == f"nested:{tool_name}:success"
+                    for r in receipts
+                ):
+                    return "keyword"
         # P1 语义匹配（可选，默认关闭）
         if self._semantic_matcher is not None:
             try:
@@ -587,6 +631,6 @@ def build_discrepancy_feedback(result: DeclarationCheckResult) -> str:
     lines = ["[声明-回执校验] 事实: 你的最终回答中存在与工具执行回执不符的完成声明："]
     for d in result.discrepancies:
         lines.append(f"  - {d}")
-    lines.append("原因: 以下声明在本轮工具回执中无对应成功记录。")
+    lines.append("原因: 以下声明未能在本轮工具成功回执中匹配到对应记录（匹配未命中，非回执池为空）。")
     lines.append("建议: 请如实更正声明（说明实际完成情况），或重新执行相应工具后再回答。")
     return "\n".join(lines)
