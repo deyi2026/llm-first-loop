@@ -92,6 +92,8 @@ evals/pilot/data/results_*.jsonl
 # git worktrees（旁路工作区，登记在 .git/worktrees）
 .worktrees/
 .context-integrity-wt/
+# publish 物化的固定提交 release checkout（EVO-20261007-9c6eccf3，可再生：删后重 publish 即重建）
+.releases/
 # 临时/一次性目录（本地保留，不入库）
 .tmp-rebase-backup/
 .formal-v1/

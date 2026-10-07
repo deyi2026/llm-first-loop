@@ -428,13 +428,15 @@ def test_publish_builds_exact_binding_and_verify_accepts_it(tmp_path: Path) -> N
     code, runtime = _git_deployment_fixture(tmp_path)
     deployment = build_deployment(code_root=code, runtime_root=runtime, generation=1)
     assert deployment.generation == 1
-    assert deployment.code_root == str(code.resolve())
+    # EVO-20261007-9c6eccf3: code_root 绑定物化的 release checkout（固定 HEAD），
+    # 开发树只作为 publish 时的代码来源，前移不再影响既有期望代。
+    assert deployment.code_root == str((runtime / ".releases" / deployment.git_head).resolve())
     assert deployment.runtime_root == str(runtime.resolve())
     assert len(deployment.git_head) == 40
     assert len(deployment.webui_artifact_sha256) == 64
     assert verify_deployment_binding(
         deployment,
-        code_root=code,
+        code_root=Path(deployment.code_root),
         runtime_root=runtime,
     ) == []
 
@@ -445,42 +447,45 @@ def test_verify_detects_root_head_dirty_and_webui_artifact_drift(tmp_path: Path)
     code, runtime = _git_deployment_fixture(tmp_path)
     deployment = build_deployment(code_root=code, runtime_root=runtime, generation=1)
 
+    # EVO-20261007-9c6eccf3: 漂移全部改测绑定树（release checkout）——
+    # runtime/head/dirty/webui 的检测语义不变，仅事实源从开发树移到绑定树。
+    bound = Path(deployment.code_root)
     wrong_runtime = tmp_path / "wrong-runtime"
     wrong_runtime.mkdir()
     problems = verify_deployment_binding(
         deployment,
-        code_root=code,
+        code_root=bound,
         runtime_root=wrong_runtime,
     )
     assert any("runtime_root mismatch" in item for item in problems)
 
-    (code / "webui" / "dist" / "app.js").write_text("console.log('v2')\n", encoding="utf-8")
-    problems = verify_deployment_binding(deployment, code_root=code, runtime_root=runtime)
+    (bound / "webui" / "dist" / "app.js").write_text("console.log('v2')\n", encoding="utf-8")
+    problems = verify_deployment_binding(deployment, code_root=bound, runtime_root=runtime)
     assert any("webui artifact mismatch" in item for item in problems)
     # Feishu-only restart intentionally does not depend on WebUI artifacts.
     assert verify_deployment_binding(
         deployment,
-        code_root=code,
+        code_root=bound,
         runtime_root=runtime,
         verify_webui=False,
     ) == []
 
-    (code / "pyproject.toml").write_text("[project]\nname='p0a'\nversion='dirty'\n", encoding="utf-8")
+    (bound / "pyproject.toml").write_text("[project]\nname='p0a'\nversion='dirty'\n", encoding="utf-8")
     problems = verify_deployment_binding(
         deployment,
-        code_root=code,
+        code_root=bound,
         runtime_root=runtime,
         verify_webui=False,
     )
     assert "code_root tracked worktree is dirty" in problems
-    subprocess.run(["git", "-C", str(code), "checkout", "--", "pyproject.toml"], check=True)
+    subprocess.run(["git", "-C", str(bound), "checkout", "--", "pyproject.toml"], check=True)
 
-    (code / "next.txt").write_text("next\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(code), "add", "next.txt"], check=True)
-    subprocess.run(["git", "-C", str(code), "commit", "-qm", "next"], check=True)
+    (bound / "next.txt").write_text("next\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(bound), "add", "next.txt"], check=True)
+    subprocess.run(["git", "-C", str(bound), "commit", "-qm", "next"], check=True)
     problems = verify_deployment_binding(
         deployment,
-        code_root=code,
+        code_root=bound,
         runtime_root=runtime,
         verify_webui=False,
     )
@@ -723,8 +728,9 @@ def test_worker_reverifies_dirty_target_before_old_script_execution(tmp_path: Pa
         requester_session_id="session-dirty",
     )
 
-    # Drift after publish/accept: generation/deployment_id still match, bytes do not.
-    (code / "pyproject.toml").write_text(
+    # Drift after publish/accept: generation/deployment_id still match, bytes do not
+    # （EVO-20261007-9c6eccf3: 漂移改测绑定树 release checkout，开发树前移不再是失败源）。
+    (Path(deployment.code_root) / "pyproject.toml").write_text(
         "[project]\nname='p0a'\nversion='dirty-after-publish'\n",
         encoding="utf-8",
     )

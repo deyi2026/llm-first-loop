@@ -44,12 +44,28 @@ class ScheduleWakeDelivery:
         self.subject_facts = subject_facts
 
     def _degrade(self, entry: ScheduleEntry, reason: str) -> bool:
+        # EVO-20261007-8057c39a 案2: 降级通知携带再锚定 payload——sid/原因之外
+        # 补齐原始调度规格（触发时刻/重复参数/max_count），下一会话可据此
+        # re-issue schedule，原计划不再随降级丢失。
+        reanchor = {
+            "sid": entry.sid,
+            "session_id": entry.session_id,
+            "reason": reason,
+            "message": entry.message,
+            "trigger_at": getattr(entry, "trigger_at", None),
+            "repeat_interval": getattr(entry, "repeat_interval", None),
+            "max_count": getattr(entry, "max_count", None),
+        }
         SchedulerThread._notify_via_interop(
-            entry, data_dir=self.data_dir, wake_degraded_reason=reason,
+            entry,
+            data_dir=self.data_dir,
+            wake_degraded_reason=reason,
+            wake_degraded_payload=reanchor,
         )
         self.record_action(
             "schedule.wake", "degraded_to_notify",
-            f"sid={entry.sid};reason={reason};notify_chars={len(entry.message) + 7};prompt_chars=0",
+            f"sid={entry.sid};reason={reason};notify_chars={len(entry.message) + 7}"
+            ";prompt_chars=0;reanchor=1",
         )
         return True
 
@@ -86,7 +102,10 @@ class ScheduleWakeDelivery:
                 entry.wake_owner_pid == os.getpid() and authority_state != "pending"
             ):
                 return self._degrade(entry, "grant_consumed_stale")
-            return self._defer(entry, "grant_lost_owner_dead")
+            # EVO-20261007-8057c39a 案1: grant 丢失且 ledger 恢复失败是确定性终态
+            # (2026-10-07 双 sid 实证: 6 次退避 ~30 分钟无一自愈)。立即降级为
+            # 通知并携带再锚定 payload,不再走瞬态退避路径。
+            return self._degrade(entry, "grant_lost_owner_dead")
         if self.restart_barrier is not None:
             try:
                 barrier = self.restart_barrier()
