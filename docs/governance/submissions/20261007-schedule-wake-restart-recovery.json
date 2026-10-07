@@ -10,11 +10,12 @@
         "src/llm_loop/core/schedule_delivery.py",
         "src/llm_loop/core/trace_leak/wake_authority.py",
         "src/llm_loop/core/trace_leak/ingress_token.py",
-        "src/llm_loop/factory.py"
+        "src/llm_loop/factory.py",
+        "src/llm_loop/core/loop/engine_services/session_lifecycle.py"
       ],
       "control_machinery": true,
       "owning_subsystem": "既有同会话一次性 schedule 委派",
-      "disposition": "修复真实准入与既有授权恢复，不新增真人入口或周期自治",
+      "disposition": "修复真实准入与既有授权恢复，不新增真人入口或周期自治；旧共享 writer 缺字段由验签投影恢复，准入回调失败阻断 provider",
       "evidence": [
         "docs/schedule-wake-restart-recovery.md",
         "tests/unit/test_schedule_restart_recovery.py"

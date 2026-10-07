@@ -49,4 +49,14 @@
 | runtime cycle / local-import ratchet | PASS | 初次门禁发现本轮新环与导入增量，已修正依赖方向；无基线扩容 |
 | A.5 staged 16-path coverage / security scan / diff-check / compile | PASS | 提交覆盖与无敏感内容；不替代架构语义审查 |
 
-以上是隔离候选的验收，没有合入 main、远程推送、publish 或生产重启。生产跨重启模型唤醒与实际终态尚未验收；保留既有 FR-1 生产观测发布边界。完整 CI 仍存在可复现基线债务，不宣称 CI 全绿或线上闭环完成。
+以上是首次上线前的隔离候选验收。随后用户明确授权 Web 上线测试，生产记录见下节。完整 CI 仍存在可复现基线债务，不宣称 CI 全绿。
+
+## 2026-10-07 生产首次验收暴露的补充根因
+
+首次 gen190 实测恢复委派后，模型输出了 marker，但提醒未 ack，私有授权仍为 pending，因此验收判为失败并撤销两条测试提醒，Web 回退至基线 gen191（相邻服务保持原进程）。真正原因是混合版本共享写入：旧 Feishu/Learning 的 ScheduleStore 每 tick 重读并按旧 schema 全量序列化，丢弃 `scheduled_trigger_at`、`wake_delivery_state`、`wake_wait_reason`。重试时原定时刻变为退避时刻，授权 scope 校验失败；SessionLifecycle 的历史 accepted callback fail-open 又吞掉该异常，仍继续调用模型。
+
+补充修复将上述新增投影字段保存在既有私有签名账本内。仅字段缺失且签名与原授权 scope 全部匹配时补回；内容、原时刻或签名变动均拒绝恢复，不建立第二调度队列。新旧服务可继续共存。准入回调按签名确定参数数量，只调用一次；任何回调异常在 provider 之前阻断运行，防止“未消费授权却已经执行”。覆盖旧 schema 子进程重写、篡改拒绝、真实 LoopEngine 准入异常（ValueError/TypeError/OSError）以及旧零参 callback 兼容，共新增 8 条回归。
+
+全量补充检查还发现普通提醒在无私有账本时误入新增 fcntl 路径，影响既有非 POSIX 文件锁回退。无账本时投影恢复/保存现在直接返回，普通提醒保持既有回退；scheduler 与授权恢复定向 46 项通过。
+
+补充修复最终代码验证 tree `8b1cb5b17c171ff97634d155e319230d45e1e490`：全量非 real_llm `7599 passed, 116 skipped, 16 deselected, 3 failed, 5 errors`（317.28s），剩余恰为已在精确 af480 基线复现的 3 个 HOME 安全断言和 5 个 Chromium 缺失 setup errors，无新增失败。定向 112 passed，scheduler/fallback 46 passed，规则/提交/epistemic 守卫 45 passed，runtime-cycle/local-import 14 passed；新增恢复测试累计 26 条。Ruff 58、Pyright 44 与基线诊断多重集完全一致，改动范围 Ruff、compile、diff、安全扫描和 A.5 精确 17-path 覆盖通过；WebUI TS/Vite 重新构建通过。此回执仅在验证后追加，代码与验证 tree 一致。生产重新验收须另核对 managed restart 的 succeeded 以及真实 GLM run.end completed，一次 started、无待执行条目，不能从 marker 单独推断成功。

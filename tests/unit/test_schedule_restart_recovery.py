@@ -328,3 +328,117 @@ print(json.dumps({'calls':engine.calls,'remaining':len(store.list())}))
     assert restarted.recover_wake_grant(sid) is None
     second = json.loads(subprocess.check_output([sys.executable, "-c", consumer, str(path)], text=True, env=child_env))
     assert second["calls"] == 0
+
+
+def _legacy_schema_roundtrip(path):
+    """The pre-upgrade shared writer retains only its known entry schema."""
+    script = '''
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+rows = json.loads(p.read_text())
+for row in rows:
+    for key in ("scheduled_trigger_at", "wake_delivery_state", "wake_wait_reason"):
+        row.pop(key, None)
+p.write_text(json.dumps(rows))
+'''
+    subprocess.check_call([sys.executable, "-c", script, str(path)])
+
+
+def test_old_shared_writer_preserves_authorized_scope_and_retry_facts(tmp_path):
+    store, sid, entry, _, _, delivery = fixture_delivery(tmp_path)
+    original_trigger = entry.scheduled_trigger_at
+    delivery(entry)
+    before = store.list()[0]
+    _legacy_schema_roundtrip(tmp_path / "schedule.json")
+    store.clear_wake_grant(sid)
+    restarted = ScheduleStore(tmp_path / "schedule.json")
+    row = restarted.list()[0]
+    assert row["scheduled_trigger_at"] == original_trigger
+    assert row["trigger_at"] == before["trigger_at"] != original_trigger
+    assert row["wake_wait_reason"] == "session_busy"
+    assert row["wake_delivery_state"] == "retrying"
+    assert row["retry_count"] == 1
+    assert restarted.recover_wake_grant(sid).delegated is True
+    claimed = restarted.claim_due("after-old-writer", now=row["trigger_at"] + 1)[0]
+    runner = ControlledRunner("admit")
+    delivered = ScheduleWakeDelivery(restarted, runner, data_dir=str(tmp_path), record_action=lambda *args: None)
+    delivered(claimed)
+    assert runner.calls == 1
+    assert restarted.list() == []
+
+
+@pytest.mark.parametrize("tamper", ["message", "scheduled_trigger_at", "signature"])
+def test_legacy_projection_never_repairs_changed_authorization(tmp_path, tamper):
+    store, sid, _, _, _, _ = fixture_delivery(tmp_path)
+    _legacy_schema_roundtrip(tmp_path / "schedule.json")
+    path = tmp_path / "schedule.json"
+    rows = json.loads(path.read_text())
+    if tamper == "signature":
+        authority = tmp_path / "schedule-wake-authority.json"
+        records = json.loads(authority.read_text())
+        records[sid]["signature"] = "invalid"
+        authority.write_text(json.dumps(records))
+    else:
+        rows[0][tamper] = "different task" if tamper == "message" else 1.0
+        path.write_text(json.dumps(rows))
+    store.clear_wake_grant(sid)
+    restarted = ScheduleStore(path)
+    assert restarted.recover_wake_grant(sid) is None
+    assert restarted.authority_state(sid) == "invalid"
+
+
+@pytest.mark.parametrize("error_type", [ValueError, TypeError, OSError])
+def test_real_admission_callback_failure_stops_before_provider(
+    build_test_engine, tmp_path, monkeypatch, error_type,
+):
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    engine, llm = build_test_engine([{"content": "must never run"}])
+    session_id = engine.session.create()
+    store = ScheduleStore(tmp_path / "schedule.json")
+    sid = store.add("report completion", after=0, wake=True, session_id=session_id,
+                    wake_grant=delegate_ingress(issue_ingress("web"), entry="schedule_wake"))
+    calls = []
+
+    def failed_consume(*args, **kwargs):
+        calls.append(1)
+        raise error_type("admission rejected")
+
+    monkeypatch.setattr(store, "note_wake_started", failed_consume)
+    runner = BackgroundRunner(engine)
+    handles = []
+    original_start = runner.start
+
+    def capture_start(*args, **kwargs):
+        handle, events = original_start(*args, **kwargs)
+        handles.append(handle)
+        return handle, events
+
+    monkeypatch.setattr(runner, "start", capture_start)
+    delivery = ScheduleWakeDelivery(store, runner, data_dir=str(tmp_path), record_action=lambda *args: None)
+    delivery(store.claim_due("failed-admission")[0])
+    deadline = time.time() + 3
+    while runner.is_running(session_id) and time.time() < deadline:
+        time.sleep(0.01)
+    assert len(calls) == 1
+    assert llm.calls == []
+    assert handles[0].status == "error"
+    assert store.authority_state(sid) == "pending"
+    row = store.list()[0]
+    assert row["wake_started_at"] == 0
+    assert row["wake_wait_reason"] == "runner_admission_failed"
+
+
+def test_legacy_zero_argument_admission_callback_runs_once(build_test_engine):
+    engine, llm = build_test_engine([{"content": "completed"}])
+    session_id = engine.session.create()
+    calls = []
+    stream = engine._run_stream_with_acquired(
+        session_id, "test legacy callback", None,
+        on_run_acquired=lambda: calls.append(1), ingress=issue_ingress("web"),
+    )
+    for _ in stream:
+        pass
+    assert calls == [1]
+    assert len(llm.calls) == 1

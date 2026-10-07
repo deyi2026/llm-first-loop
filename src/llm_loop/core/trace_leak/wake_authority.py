@@ -142,11 +142,61 @@ class WakeAuthorizationStore:
                 "version": 1, "sid": sid, "scope": _scope(entry),
                 "channel": grant.channel, "entry": grant.entry,
                 "nonce": secrets.token_hex(16), "state": "pending",
+                "projection": self._projection(entry),
             }
             record["signature"] = self._sign(record, key)
             records[sid] = record
             self._write(records)
         return True
+
+    @staticmethod
+    def _projection(entry: dict[str, Any]) -> dict[str, Any]:
+        # Pre-upgrade services rewrite the shared schedule using their old schema.
+        # Keep new projection fields in the signed private ledger, never a second queue.
+        return {name: entry.get(name) for name in (
+            "scheduled_trigger_at", "wake_delivery_state", "wake_wait_reason",
+        )}
+
+    def restore_fields(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """Restore only absent fields after verifying the original authorization scope."""
+        if not self._path.exists():
+            return entry
+        try:
+            with self._locked():
+                record = self._read().get(str(entry.get("sid") or ""))
+                if not isinstance(record, dict) or not isinstance(record.get("projection"), dict):
+                    return entry
+                restored = dict(entry)
+                for name, value in record["projection"].items():
+                    if name in self._projection(entry) and name not in restored:
+                        restored[name] = value
+                if self._valid(record, restored, self._key()):
+                    return restored
+        except (OSError, ValueError, TypeError, KeyError):
+            pass
+        return entry
+
+    def preserve_fields(self, entries: list[dict[str, Any]]) -> None:
+        """Keep signed UI/admission projections across older writers' schema round trips."""
+        if not self._path.exists():
+            return
+        with self._locked():
+            records = self._read()
+            if not records:
+                return
+            key = self._key()
+            changed = False
+            for entry in entries:
+                record = records.get(str(entry.get("sid") or ""))
+                if not isinstance(record, dict) or not self._valid(record, entry, key):
+                    continue
+                projection = self._projection(entry)
+                if record.get("projection") != projection:
+                    record["projection"] = projection
+                    record["signature"] = self._sign(record, key)
+                    changed = True
+            if changed:
+                self._write(records)
 
     def state(self, entry: dict[str, Any]) -> str:
         try:
