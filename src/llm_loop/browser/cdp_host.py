@@ -133,7 +133,8 @@ _GUARD_COLLECT_FUNCTION = (
     "role:el.getAttribute('role')||null,"
     "type:el.getAttribute('type')||null,"
     "text:dt.trim().slice(0,200),"
-    "value:el.getAttribute('value')},"
+    "value:el.getAttribute('value'),"
+    "connected:el.isConnected},"
     "nb:nb,"
     "geo:{w:r.width,h:r.height,visible:r.width>0&&r.height>0},"
     "occluded:occluded,hitTag:hitTag};"
@@ -284,7 +285,11 @@ class _ReadOnlyCdpSession:
             resolved = self._request("DOM.resolveNode", {"backendNodeId": int(backend_node_id)})
         except (RuntimeError, OSError) as exc:
             return {"ok": False, "stage": "resolve", "error_type": type(exc).__name__}
-        node = resolved.get("node") if isinstance(resolved, dict) else None
+        # DOM.resolveNode returns {"object": RemoteObject} at the top level
+        # (the "node" key belongs to DOM.getDocument-style responses).  The
+        # E2E pass against a real Chromium caught the fake-ws unit fixture
+        # having modelled the wrong response shape.
+        node = resolved.get("object") if isinstance(resolved, dict) else None
         object_id = str((node or {}).get("objectId") or "")
         if not object_id:
             return {"ok": False, "stage": "resolve", "error_type": "no_object_id"}

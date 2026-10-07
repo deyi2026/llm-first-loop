@@ -576,6 +576,12 @@ class BrowserActionAdapter:
                         before_ref=before_ref,
                         guard=guard_verdict,
                     )
+                # FR-1 observability: the exemption must be visible on the
+                # receipt (the model has to see "mismatch absorbed because
+                # semantics are stable", not a plain ok indistinguishable
+                # from a genuine version match).
+                guard_verdict["exempted"] = True
+                guard_verdict["exemption_reason"] = "version_mismatch_semantics_stable"
         else:
             # Lightweight resource-level precondition: reuse the full mechanical
             # assessment against the model-declared version itself (both sides of

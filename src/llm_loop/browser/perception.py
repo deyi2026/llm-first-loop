@@ -2490,6 +2490,20 @@ class BrowserPerceptionAdapter:
             },
             "hit_tag": _guard_clip(raw.get("hitTag"), 40) or None,
         }
+        if target_raw.get("connected") is False:
+            # Real-Chromium E2E (M3): a removed node still resolves and
+            # evaluates (dangling objectId) with zero-size geometry, which
+            # otherwise misclassifies as occlusion. isConnected is the
+            # precise detach signal and steers the model to re-snapshot and
+            # rebind instead of waiting out a phantom overlay.
+            return {
+                **verdict,
+                "verdict": "reject",
+                "reason": "guard_detach",
+                "mismatched_layer": None,
+                "occluded": False,
+                "observed": {},
+            }
         if occluded:
             return {
                 **verdict,
