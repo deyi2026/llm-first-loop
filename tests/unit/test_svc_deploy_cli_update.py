@@ -112,6 +112,9 @@ def _update_argv(
         str(root),
         "--data-dir",
         str(root / "data"),
+        # GOAL-20261008-f143e051：CLI 默认 detach worker；本文件全部用例
+        # 断言"CLI 返回时已终态"的内联端到端语义 → 显式 --wait。
+        "--wait",
     ]
     return argv + list(extra or [])
 

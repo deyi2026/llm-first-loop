@@ -803,7 +803,11 @@ class TestRestartCLI:
             TestR1ReceiptConsumption()._script(action="web", rc=1, detail="knowledge_preflight_failed"),
         )
         reg = AdmissionBarrierRegistry(data)
-        rc = sc.main(["restart", "--data-dir", str(data), "--target", "web", "--requester", "cli-test"])
+        # GOAL-20261008-f143e051：CLI 默认 detach worker；本用例断言
+        # "CLI 返回时已终态"的内联端到端语义 → 显式 --wait。
+        rc = sc.main(
+            ["restart", "--wait", "--data-dir", str(data), "--target", "web", "--requester", "cli-test"]
+        )
         assert rc == 1  # worker rc 透传（脚本失败）
         lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("{")]
         accepted = json.loads(lines[0])
