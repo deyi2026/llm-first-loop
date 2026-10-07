@@ -500,6 +500,12 @@ class Settings:
     # rAF/option-predicate settle between dispatch and post-capture;
     # default off = exact pre-FR-2 behavior (no settle, no "wait" receipt).
     browser_dispatch_settle_enabled: bool = False
+    # FR-5b (DESIGN-20261007 M7): inline diff summary on terminal action
+    # receipts. Default off = persisted receipts stay byte-identical to the
+    # pre-FR-5b shape (no "diff_summary" key inside observed_effects).
+    browser_receipt_diff_summary_enabled: bool = False
+    # Q5 calibration surface: cap entries per diff class; mechanism is frozen.
+    browser_receipt_diff_summary_cap: int = 32
     # ── Fleet ExecutionWorkspace/WorkerLease 生产接线（2026-09-19 slice4 G1）──
     # 缺省全空 = fleet 完全关闭（零行为零回归）；显式配置 LFL_FLEET_WORKSPACE_ROOT
     # 后 factory 才构造 ProjectCoordinator 注入 SubAgentRunner（run 边界
@@ -1086,6 +1092,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         browser_action_enabled=env_bool("LFL_BROWSER_ACTION_ENABLED", False),
         browser_semantic_guard_enabled=env_bool("LFL_BROWSER_SEMANTIC_GUARD_ENABLED", False),
         browser_dispatch_settle_enabled=env_bool("LFL_BROWSER_DISPATCH_SETTLE_ENABLED", False),
+        browser_receipt_diff_summary_enabled=env_bool(
+            "LFL_BROWSER_RECEIPT_DIFF_SUMMARY_ENABLED", False
+        ),
+        browser_receipt_diff_summary_cap=env_int("LFL_BROWSER_RECEIPT_DIFF_SUMMARY_CAP", 32),
         browser_cdp_max_frame_bytes=env_int("LFL_BROWSER_CDP_MAX_FRAME_BYTES", 134_217_728),
         exec_mode=env_one(_env_exec_mode, "EXEC_MODE"),
         exec_allowlist=env_values.get("EXEC_ALLOWLIST", "").strip(),

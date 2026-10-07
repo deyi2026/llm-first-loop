@@ -893,43 +893,71 @@ class BrowserSemanticOperationTool:
             if isinstance(observed, dict) and observed.get("diff_ref"):
                 diff_ref = str(observed["diff_ref"])
                 compact["diff_ref"] = diff_ref
-                hydrated = self._perception.hydrate(session_id, diff_ref)
-                availability = str(hydrated.get("availability") or "unavailable")
-                content = hydrated.get("content")
-                if availability == "available" and isinstance(content, dict) and content.get(
-                    "schema"
-                ) == "smc.semantic_diff.v0.1":
-                    completeness = content.get("completeness")
-                    completeness = completeness if isinstance(completeness, dict) else {}
-
-                    def count_or_none(value: Any) -> int | None:
-                        return len(value) if isinstance(value, list) else None
+                inline_summary = observed.get("diff_summary")
+                if isinstance(inline_summary, dict) and inline_summary.get("comparable") is True:
+                    # FR-5b: the terminal receipt already carries the
+                    # field-name granularity summary derived from the same
+                    # diff document, so counting no longer requires a hydrate
+                    # round trip — and the model sees the id/field-name list
+                    # inline. Pre-FR-5b receipts (no summary key) and
+                    # non-comparable diffs fall through to the hydrate path.
+                    def _inline_total(section: Any) -> int | None:
+                        return section.get("total") if isinstance(section, dict) else None
 
                     compact["delta"] = {
                         "ref": diff_ref,
-                        "comparable": bool(content.get("comparable")),
-                        "scope_relation": str(content.get("scope_relation") or "unknown"),
-                        "complete": bool(completeness.get("complete")),
+                        "comparable": True,
+                        "scope_relation": str(inline_summary.get("scope_relation") or "unknown"),
+                        "complete": bool(inline_summary.get("complete")),
                         "reasons": [
                             str(reason)
-                            for reason in list(completeness.get("reasons") or [])[:8]
+                            for reason in list(inline_summary.get("reasons") or [])[:8]
                         ],
                         "counts": {
-                            "created": count_or_none(content.get("created")),
-                            "removed": count_or_none(content.get("removed")),
-                            "changed": count_or_none(content.get("changed")),
+                            "created": _inline_total(inline_summary.get("created")),
+                            "removed": _inline_total(inline_summary.get("removed")),
+                            "changed": _inline_total(inline_summary.get("changed")),
                         },
+                        "diff_summary": inline_summary,
                     }
                 else:
-                    reason = str(hydrated.get("reason") or "projection_mismatch")
-                    compact["delta"] = {
-                        "ref": diff_ref,
-                        "comparable": None,
-                        "scope_relation": "unknown",
-                        "complete": False,
-                        "reasons": [f"diff_{availability}:{reason}"],
-                        "counts": {"created": None, "removed": None, "changed": None},
-                    }
+                    hydrated = self._perception.hydrate(session_id, diff_ref)
+                    availability = str(hydrated.get("availability") or "unavailable")
+                    content = hydrated.get("content")
+                    if availability == "available" and isinstance(content, dict) and content.get(
+                        "schema"
+                    ) == "smc.semantic_diff.v0.1":
+                        completeness = content.get("completeness")
+                        completeness = completeness if isinstance(completeness, dict) else {}
+
+                        def count_or_none(value: Any) -> int | None:
+                            return len(value) if isinstance(value, list) else None
+
+                        compact["delta"] = {
+                            "ref": diff_ref,
+                            "comparable": bool(content.get("comparable")),
+                            "scope_relation": str(content.get("scope_relation") or "unknown"),
+                            "complete": bool(completeness.get("complete")),
+                            "reasons": [
+                                str(reason)
+                                for reason in list(completeness.get("reasons") or [])[:8]
+                            ],
+                            "counts": {
+                                "created": count_or_none(content.get("created")),
+                                "removed": count_or_none(content.get("removed")),
+                                "changed": count_or_none(content.get("changed")),
+                            },
+                        }
+                    else:
+                        reason = str(hydrated.get("reason") or "projection_mismatch")
+                        compact["delta"] = {
+                            "ref": diff_ref,
+                            "comparable": None,
+                            "scope_relation": "unknown",
+                            "complete": False,
+                            "reasons": [f"diff_{availability}:{reason}"],
+                            "counts": {"created": None, "removed": None, "changed": None},
+                        }
             boundary_events = action_receipt.get("boundary_events")
             if isinstance(boundary_events, list) and boundary_events:
                 compact["boundary_events"] = boundary_events
