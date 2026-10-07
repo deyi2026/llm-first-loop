@@ -67,7 +67,7 @@ _SEARCH_ARCHIVE_TOOL_DEF: dict[str, Any] = {
 
 _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
     "name": "search_records",
-    "description": "检索持久记录与按需知识索引：运行审计、memory、archive、experience、lesson、self_eval、resolved/truncated episode、synopsis、rule 等。episode 表示已解决/退休的对话片段，不代表当前活动任务；experience=正向/legacy 经验 discovery，lesson=失败/未验证/已证伪教训；两者 exact 内容均用 stable experience:<id> 水合。当前 Goal/Task 状态用 get_goal/task_frontier。历史命中仍需检查时间与当前适用性。kind=method 时普通关键词用于 discovery；复杂/高摩擦/重复型任务若既有方法可能减少探索，可做一次有界 Method discovery（通常 limit<=5），简单明确任务无需机械搜索；method:<id> 仅用于把搜索结果已经返回的 stable Method ref 原样精确水合，不要猜 method:<关键词>。停滞/当前事实不足/需要规则依据时，可按需用 kind=rule 水合 RULE-AI-xx；非每轮强制、不强制检索顺序。",
+    "description": "检索持久记录与按需知识索引：运行审计、memory、archive、experience、lesson、self_eval、resolved/truncated episode、synopsis、rule 等。episode 表示已解决/退休的对话片段，不代表当前活动任务；experience=正向/legacy 经验 discovery，lesson=失败/未验证/已证伪教训；两者 exact 内容均用 stable experience:<id> 水合。当前 Goal/Task 状态用 get_goal/task_frontier。历史命中仍需检查时间与当前适用性。kind=method 时普通关键词用于 discovery；动手前先查既有方法：失败重试/换源、编辑冲突与写前校验、超时判定、浏览器元素定位、检索与验证纪律等高频域，或准备直接开始重试、修复、拼装多步流程时，先做一次有界 Method discovery（通常 limit<=5）；简单明确任务无需机械搜索；method:<id> 仅用于把搜索结果已经返回的 stable Method ref 原样精确水合，不要猜 method:<关键词>。记忆类检索回执附带 [Method 候选提示] 尾注。停滞/当前事实不足/需要规则依据时，可按需用 kind=rule 水合 RULE-AI-xx；非每轮强制、不强制检索顺序。",
     "parameters": {
         "type": "object",
         "properties": {

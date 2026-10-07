@@ -952,7 +952,6 @@ def build_engine(
     _pipe_cfg = PipelineConfig(
         enabled=settings.tool_pipeline_enabled,
         materialize=settings.tool_materialize_enabled,
-        guard=settings.tool_guard_enabled,
     )
     if _pipe_cfg.enabled:
         registry.set_pipeline(ToolExecutionPipeline(_pipe_cfg))
@@ -1752,6 +1751,7 @@ def build_engine(
         synopsis_store=_synopsis_store,
         synopsis_source_resolver=_resolve_synopsis_source,
         multiquery_shadow=multiquery_probe,
+        method_related_hint_enabled=settings.method_related_hint_enabled,  # EVO-20261007 B 面
     )
 
     # EVO-20260814: 适配器同时支持 search_records（可调用）与 event_stream（对象方法）
@@ -1781,6 +1781,12 @@ def build_engine(
             """最近一次 semantic 检索的机械诊断，供运行态观测/评测读取."""
 
             return getattr(self._searcher, "semantic_diagnostics", None)
+
+        @property
+        def related_methods(self) -> Any:
+            """EVO-20261007: 记忆检索附带的 Method 候选（工具层 duck-typing 读取；缺失 None）."""
+
+            return getattr(self._searcher, "related_methods", None)
 
     corrections._search_records_fn = _RecordSearcherAdapter(searcher)  # noqa: SLF001
     corrections._experience_store = experience_store  # noqa: SLF001 — P1-2: 工具分派注入

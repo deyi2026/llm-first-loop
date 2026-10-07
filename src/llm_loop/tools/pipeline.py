@@ -175,7 +175,7 @@ class PipelineConfig:
 
     enabled: bool = False  # 总开关（对应 TOOL_PIPELINE_ENABLED）
     materialize: bool = False  # 参数物化+深冻结（TOOL_MATERIALIZE_ENABLED）
-    guard: bool = False  # 单调守卫（TOOL_GUARD_ENABLED）
+    guard: bool = False  # 单调守卫门（env 入口已回收 2026-10-07；保留为 set_guard 集成路径构造位）
 
 
 class ToolExecutionPipeline:

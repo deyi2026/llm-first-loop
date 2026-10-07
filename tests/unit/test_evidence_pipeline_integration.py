@@ -74,7 +74,6 @@ def test_factory_current_production_pipeline_subset_builds_with_enforce_and_pres
         evidence_mode="enforce",
         tool_pipeline_enabled=True,
         tool_materialize_enabled=True,
-        tool_guard_enabled=False,
         extract_enabled=False,
         tool_runtime=ToolRuntimeSettings(evidence_capsule="on"),
     )
