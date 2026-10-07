@@ -74,11 +74,24 @@ DurableContract(Protocol):
 - 迁移验收（未来实施时）：i) 覆写经 tmp+`os.replace`+目录 fsync；ii) OSError 不再 fail-open（重试+显式降级事件）；iii) `recover()` 能报告截断/损坏条目数；iv) 现有 schedule 回归全绿。
 - 迁移顺序建议：#3a → #7 → #2（补 fsync）→ #4（核验归档）；#3b 不迁移。
 
+### 实施记录（2026-10-07 rev4：#3a 已实施）
+
+- 写路径：`_persist`/`_mutate` 落盘统一走 `_commit_state` = tmp(O_CREAT|O_EXCL)→write→flush→file fsync→`os.replace`→目录 fsync；两个方法写路径的 fail-open（`except OSError: warning` 后吞掉）已移除，重试耗尽抛 `SchedulePersistError(OSError 子类)`。
+- 单写者：POSIX `flock` 锁文件打开/加锁 OSError 不再 fail-open 成无锁写，改为 `SchedulePersistError` fail-closed；无 `fcntl` 的非 POSIX 兼容路径仍保留进程内 RLock fallback，并明确不声称跨进程 T2 保证。
+- 读侧边界：`recover()` 能识别非法条目后，`_load/refresh/_persist/_mutate` 同步把非 dict 导致的 `AttributeError` 纳入既有 fail-open 分类；顺序敏感回归证明“非法元素在第一条”不再崩初始化。
+- 显式降级语义（§7.2 落地）：不新增持久化面——异常向调用方传播；调度 tick 循环既有 except 捕获后 error 级记录（自愈继续），工具路径以失败结果回给模型。内存态不回滚，下次成功提交重新落盘。
+- 边界钉子（实施中发现）：旧 `_mutate` 的宽 `except OSError` 顺带吞掉 `preserve_fields` 内的授权账本写失败——这是 wake 投递 `WAKE_DEFERRED` 降级语义的既有依赖（授权持久化失败必须阻止模型工作）。迁移后语义拆分：主状态写失败=显式抛出；授权投影失败=跳过本次提交（不写半套状态）+ warning，不抛。由 `test_schedule_durability.py::test_authority_projection_failure_skips_commit_without_raising` 与既有 `test_failed_authority_persistence_prevents_model_work` 双向钉住。
+- `recover()`（§7.1 决策：仅启动时调用，`_load` 记录报告）：exists/readable/corrupt/entries/invalid_entries/orphan_tmp；损坏基底处理策略不变（读侧 fail-open），但不再静默。
+- 验收 i–iii：`tests/unit/test_schedule_durability.py` 覆盖六点写入故障注入（temp 前 / temp 半写 / fsync 后 replace 前 / replace 后 dirfsync 前 / 损坏旧 state 重启恢复 / 重试耗尽与瞬态自愈），并补读侧非法结构顺序与 POSIX lock fail-closed 边界；iv：提交时全量 `not real_llm` 回归。
+- 最终验证：Schedule/Wake/Web surface/CodeArts/Arch guards focused = **135 passed**；全量 `not real_llm` = **7649 passed / 107 skipped / 16 deselected / 3 failed / 5 errors**，其中 3 fail 仍为 HOME 位于 `/var` 的已知 safety 环境基线，5 errors 仍为缺 Playwright Chromium executable，无本迁移新增产品失败。
+- registry：`schedule_store` migrate→conform。WakeAuthorizationStore（#3b）与 scheduler 其余逻辑零改动。
+
 ## 7. 开放决策点
 
 1. `recover()` 的调用时机：仅启动时 vs 每次 acquire 前（成本/收益待定）。
 2. fail-open 全局禁令是否有例外（如"宁可丢一条提醒也不能阻塞主循环"的 schedule 场景——若是，降级事件必须落 EventStore）。
 3. 契约归档位置：并入 P1-4 kernel 边界契约，或独立 ARCHITECTURE 章节。
+4. commit-uncertain 窗口：若 `os.replace` 已成功但 directory fsync 最终失败，当前主状态在本机可见已前进、但掉电耐久性未确认，因此仍抛 `SchedulePersistError`。T2 原子性本轮已满足，但调用级 idempotency/“失败后是否可盲重试”仍是独立问题；调用方应先按 sid/列表事实 reconcile，不能把异常等价为“肯定未提交”。
 
 ## 8. 与其他任务的关系
 

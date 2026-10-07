@@ -175,8 +175,50 @@ class WakeDefer(NamedTuple):
     next_delay_s: float
 
 
+# ---- DRC T2 写路径（DESIGN-20261007-durable-run-contract §6 首迁 client）----
+# 主状态覆写禁止裸 write_text / fail-open 吞写失败（契约红线 1）：
+# tmp 独占创建 → flush+file fsync → os.replace → 目录 fsync；torn write 只可能
+# 停留在 tmp，读者任意时刻看到旧全文或新全文。失败有界重试后显式抛
+# SchedulePersistError（tick 循环捕获并记录=显式降级，不新增持久化面）。
+_PERSIST_ATTEMPTS = 3
+_PERSIST_RETRY_DELAY_S = 0.05
+
+
+class SchedulePersistError(OSError):
+    """主状态落盘失败（有界重试耗尽）。禁止 fail-open 吞掉；调用方须显式降级。"""
+
+
+def _write_temp_exclusive(temp: Path, text: str) -> None:
+    """独占创建 tmp 并完整写入 + file fsync（半写只会污染 tmp，不碰主状态）。"""
+    fd = os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(directory: Path) -> None:
+    """目录 fsync：让 rename 本身在掉电后可见（对齐 wake_authority._write）。"""
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _write_state_atomic(path: Path, text: str) -> None:
+    """T2 原子覆写：tmp → fsync → replace → 目录 fsync；任何失败都清理 tmp。"""
+    temp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:12]}.tmp")
+    try:
+        _write_temp_exclusive(temp, text)
+        os.replace(temp, path)
+        _fsync_directory(path.parent)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
 class ScheduleStore:
-    """提醒持久化存储（JSON 文件，fail-open + 跨进程写锁）.
+    """提醒持久化存储（JSON 文件，T2 原子覆写 + 读侧 fail-open + 跨进程写锁）.
 
     多进程（web/feishu/CLI）共享同一 data/ 目录、各自实例化本类——原实现
     _persist 全量覆写，后写进程用自己内存副本覆盖先写进程的条目（丢提醒）。
@@ -195,14 +237,53 @@ class ScheduleStore:
         self._load()
 
     def _load(self) -> None:
+        report = self.recover()
+        if report["corrupt"]:
+            logger.error("schedule 主状态自检：文件损坏，按空基底继续（读侧 fail-open）: %s", report)
+        elif report["invalid_entries"] or report["orphan_tmp"]:
+            logger.warning("schedule 主状态自检发现异常项: %s", report)
         try:
             if self._path.exists():
                 data = json.loads(self._path.read_text(encoding="utf-8"))
                 for d in data:
                     e = ScheduleEntry.from_dict(self._authority.restore_fields(d))
                     self._entries[e.sid] = e
-        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        except (OSError, json.JSONDecodeError, ValueError, TypeError, AttributeError) as exc:
             logger.warning("schedule 存储加载失败（fail-open）: %s", exc)
+
+    def recover(self) -> dict[str, Any]:
+        """DRC T2 启动自检（只读不修复）：截断/损坏/无效条目/孤儿 tmp 计数。
+
+        §7.1 决策：仅启动（_load）时调用。损坏基底的处理策略不变（读侧
+        fail-open），但必须留下可审计报告，不再静默空基底。
+        """
+        report: dict[str, Any] = {
+            "path": str(self._path), "exists": False, "readable": False,
+            "corrupt": False, "entries": 0, "invalid_entries": 0, "orphan_tmp": 0,
+        }
+        if self._path.exists():
+            report["exists"] = True
+            try:
+                data = json.loads(self._path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, ValueError):
+                data = None
+                report["corrupt"] = True
+            if isinstance(data, list):
+                report["readable"] = True
+                for d in data:
+                    report["entries"] += 1
+                    if not isinstance(d, dict):
+                        report["invalid_entries"] += 1
+                        continue
+                    try:
+                        ScheduleEntry.from_dict(d)
+                    except (ValueError, TypeError):
+                        report["invalid_entries"] += 1
+            elif data is not None:
+                report["corrupt"] = True
+        if self._path.parent.exists():
+            report["orphan_tmp"] = len(list(self._path.parent.glob(self._path.name + ".*.tmp")))
+        return report
 
     def refresh(self) -> None:
         """读侧同步（2026-08-27 BUGFIX 配套）: 以磁盘 SoT 重载内存.
@@ -221,12 +302,16 @@ class ScheduleStore:
                     e.sid: e
                     for e in (ScheduleEntry.from_dict(self._authority.restore_fields(d)) for d in data)
                 }
-        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        except (OSError, json.JSONDecodeError, ValueError, TypeError, AttributeError) as exc:
             logger.warning("schedule 存储刷新失败（fail-open，沿用内存）: %s", exc)
 
     @contextmanager
     def _file_lock(self) -> Iterator[None]:
-        """跨进程写锁（flock LOCK_EX；非 POSIX 回退进程内锁，对齐 session.py）."""
+        """跨进程写锁（flock LOCK_EX；POSIX 锁失败 fail-closed）.
+
+        非 POSIX 无 fcntl 时保留进程内兼容 fallback；但在支持 fcntl 的运行时，
+        锁文件打开/加锁失败不能继续无锁写，否则不满足 T2 单写者语义。
+        """
         lock_path = self._path.with_suffix(self._path.suffix + ".lock")
         try:
             import fcntl
@@ -241,71 +326,107 @@ class ScheduleStore:
         except OSError as exc:
             if handle is not None:
                 handle.close()
-            logger.warning("schedule 文件锁不可用（fail-open，并发保护降级）: %s", exc)
-            yield
-            return
+            raise SchedulePersistError(
+                f"schedule 跨进程文件锁不可用，拒绝无锁写入: {exc}"
+            ) from exc
         try:
             yield
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
             handle.close()
 
+    def _commit_state(self, data: list[dict]) -> None:
+        """T2 提交：原子覆写 + 有界重试；耗尽抛 SchedulePersistError（红线：不吞写失败）。"""
+        payload = json.dumps(data, ensure_ascii=False)
+        last: OSError = OSError("schedule persist: no attempt recorded")
+        for attempt in range(1, _PERSIST_ATTEMPTS + 1):
+            if attempt > 1:
+                time.sleep(_PERSIST_RETRY_DELAY_S * (attempt - 1))
+            try:
+                _write_state_atomic(self._path, payload)
+                return
+            except OSError as exc:
+                last = exc
+                logger.warning(
+                    "schedule 主状态原子写失败（attempt %s/%s）: %s", attempt, _PERSIST_ATTEMPTS, exc
+                )
+        logger.error("schedule 主状态落盘放弃（重试 %s 次，内存态未回滚）: %s", _PERSIST_ATTEMPTS, last)
+        raise SchedulePersistError(
+            f"schedule 主状态落盘失败（重试 {_PERSIST_ATTEMPTS} 次后放弃）: {last}"
+        ) from last
+
     def _persist(self) -> None:
-        """跨进程安全持久化: 锁内重读磁盘 → 合并（保留其他进程新增）→ 覆写.
+        """跨进程安全持久化: 锁内重读磁盘 → 合并（保留其他进程新增）→ T2 原子覆写.
 
         注意: 删除类操作必须走 _mutate（先重读磁盘再删），否则磁盘上已删条目
         会被合并逻辑读回（本实现 _persist 仅为内存已与磁盘同步时的落盘兜底）。
+        写失败不再 fail-open：_commit_state 重试耗尽后抛 SchedulePersistError。
         """
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            with self._file_lock():
-                # 重读磁盘（其他进程可能新增/删除条目）
-                disk: dict[str, ScheduleEntry] = {}
-                if self._path.exists():
-                    try:
-                        disk_data = json.loads(self._path.read_text(encoding="utf-8"))
-                        for d in disk_data:
-                            e = ScheduleEntry.from_dict(self._authority.restore_fields(d))
-                            disk[e.sid] = e
-                    except (OSError, json.JSONDecodeError, ValueError, TypeError):
-                        disk = {}  # 磁盘损坏 → 以内存为准（fail-open）
-                # 合并: 内存为主；磁盘上本进程没有的条目保留（防覆盖丢）
-                with self._lock:
-                    merged = dict(disk)
-                    merged.update(self._entries)
-                    self._entries = merged
-                    data = [e.to_dict() for e in self._entries.values()]
-                    self._authority.preserve_fields(data)
-                self._path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except OSError as exc:
-            logger.warning("schedule 存储写盘失败（fail-open）: %s", exc)
+            raise SchedulePersistError(f"schedule 主状态目录不可用: {exc}") from exc
+        with self._file_lock():
+            # 重读磁盘（其他进程可能新增/删除条目）
+            disk: dict[str, ScheduleEntry] = {}
+            if self._path.exists():
+                try:
+                    disk_data = json.loads(self._path.read_text(encoding="utf-8"))
+                    for d in disk_data:
+                        e = ScheduleEntry.from_dict(self._authority.restore_fields(d))
+                        disk[e.sid] = e
+                except (OSError, json.JSONDecodeError, ValueError, TypeError, AttributeError):
+                    disk = {}  # 磁盘损坏 → 以内存为准（读侧 fail-open）
+            # 合并: 内存为主；磁盘上本进程没有的条目保留（防覆盖丢）
+            with self._lock:
+                merged = dict(disk)
+                merged.update(self._entries)
+                self._entries = merged
+                data = [e.to_dict() for e in self._entries.values()]
+                try:
+                    self._authority.preserve_fields(data)
+                except OSError as exc:
+                    # 授权投影失败=authority 域降级（wake 投递依赖其非致命，
+                    # 见 test_failed_authority_persistence_prevents_model_work）：
+                    # 跳过本次主状态提交、不写半套状态；内存已应用，下次提交重试。
+                    logger.warning("schedule 主状态提交中止（授权投影写失败）: %s", exc)
+                    return
+            self._commit_state(data)
 
     def _mutate(self, fn: Callable[[dict[str, ScheduleEntry]], None]) -> None:
-        """锁内读-改-写（跨进程安全）：重读磁盘到内存 → 应用操作 → 覆写.
+        """锁内读-改-写（跨进程安全）：重读磁盘到内存 → 应用操作 → T2 原子覆写.
 
         删除/修改类操作必须走本方法：先以磁盘最新状态为基底，再应用操作，
         避免"内存已删、persist 又读回"或"覆盖其他进程新增"两类丢数据。
+        写失败不再 fail-open：_commit_state 重试耗尽后抛 SchedulePersistError
+        （fn 已应用于内存、不回滚；下次成功提交会重新落盘）。授权投影
+        （preserve_fields）失败是 authority 域降级：跳过本次提交不写半套状态。
         """
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            with self._file_lock():
-                # 以磁盘为基底重建内存
-                self._entries.clear()
-                if self._path.exists():
-                    try:
-                        disk_data = json.loads(self._path.read_text(encoding="utf-8"))
-                        for d in disk_data:
-                            e = ScheduleEntry.from_dict(self._authority.restore_fields(d))
-                            self._entries[e.sid] = e
-                    except (OSError, json.JSONDecodeError, ValueError, TypeError):
-                        self._entries.clear()  # 磁盘损坏 → 空基底（fail-open）
-                with self._lock:
-                    fn(self._entries)
-                    data = [e.to_dict() for e in self._entries.values()]
-                    self._authority.preserve_fields(data)
-                self._path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except OSError as exc:
-            logger.warning("schedule 存储写盘失败（fail-open）: %s", exc)
+            raise SchedulePersistError(f"schedule 主状态目录不可用: {exc}") from exc
+        with self._file_lock():
+            # 以磁盘为基底重建内存
+            self._entries.clear()
+            if self._path.exists():
+                try:
+                    disk_data = json.loads(self._path.read_text(encoding="utf-8"))
+                    for d in disk_data:
+                        e = ScheduleEntry.from_dict(self._authority.restore_fields(d))
+                        self._entries[e.sid] = e
+                except (OSError, json.JSONDecodeError, ValueError, TypeError, AttributeError):
+                    self._entries.clear()  # 磁盘损坏 → 空基底（读侧 fail-open）
+            with self._lock:
+                fn(self._entries)
+                data = [e.to_dict() for e in self._entries.values()]
+                try:
+                    self._authority.preserve_fields(data)
+                except OSError as exc:
+                    # 同 _persist：authority 域降级语义，非主状态 fail-open 回潮。
+                    logger.warning("schedule 主状态提交中止（授权投影写失败）: %s", exc)
+                    return
+            self._commit_state(data)
 
     def add(
         self, message: str, *, after: float = 0, at: float | None = None,
