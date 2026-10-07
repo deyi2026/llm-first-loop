@@ -1,0 +1,117 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261007-schedule-wake-restart-recovery",
+  "summary": "忙时不误标 started；验证既有同会话委派跨重启恢复；真实等待事实投影",
+  "components": [
+    {
+      "component_id": "wake-authority-and-admission",
+      "paths": [
+        "src/llm_loop/core/scheduler.py",
+        "src/llm_loop/core/schedule_delivery.py",
+        "src/llm_loop/core/trace_leak/wake_authority.py",
+        "src/llm_loop/core/trace_leak/ingress_token.py",
+        "src/llm_loop/factory.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "既有同会话一次性 schedule 委派",
+      "disposition": "修复真实准入与既有授权恢复，不新增真人入口或周期自治",
+      "evidence": [
+        "docs/schedule-wake-restart-recovery.md",
+        "tests/unit/test_schedule_restart_recovery.py"
+      ],
+      "verification_level": "隔离候选回归/全量门禁，生产验证另行记录",
+      "model_evidence_veto_recovery_exit": "等待原因与原定/重试时间可见；cancel_schedule 取消、wake=false 通知；旧条目由原会话真人重新安排",
+      "rollback_route": "Revert this commit; retain consumed/revoked authority tombstones; restore prior Web release",
+      "declaration_id": "wake-admission-recovery"
+    },
+    {
+      "component_id": "contract-and-product-facts",
+      "paths": [
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/tools/builtin/schedule.py",
+        "webui/src/components/conversation/ScheduleCatalog.tsx",
+        "webui/src/core/api.ts",
+        "webui/src/i18n/zh.ts"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "既有同会话一次性 schedule 委派",
+      "disposition": "修复真实准入与既有授权恢复，不新增真人入口或周期自治",
+      "evidence": [
+        "docs/schedule-wake-restart-recovery.md",
+        "tests/unit/test_schedule_restart_recovery.py"
+      ],
+      "verification_level": "隔离候选回归/全量门禁，生产验证另行记录",
+      "model_evidence_veto_recovery_exit": "等待原因与原定/重试时间可见；cancel_schedule 取消、wake=false 通知；旧条目由原会话真人重新安排",
+      "rollback_route": "Revert this commit; retain consumed/revoked authority tombstones; restore prior Web release"
+    },
+    {
+      "component_id": "regressions",
+      "paths": [
+        "tests/unit/test_schedule_restart_recovery.py",
+        "tests/web/test_schedule_surface.py",
+        "webui/src/schedule-catalog.test.tsx",
+        "tests/unit/test_factory.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "既有同会话一次性 schedule 委派",
+      "disposition": "修复真实准入与既有授权恢复，不新增真人入口或周期自治",
+      "evidence": [
+        "docs/schedule-wake-restart-recovery.md",
+        "tests/unit/test_schedule_restart_recovery.py"
+      ],
+      "verification_level": "隔离候选回归/全量门禁，生产验证另行记录",
+      "model_evidence_veto_recovery_exit": "等待原因与原定/重试时间可见；cancel_schedule 取消、wake=false 通知；旧条目由原会话真人重新安排",
+      "rollback_route": "Revert this commit; retain consumed/revoked authority tombstones; restore prior Web release"
+    },
+    {
+      "component_id": "documentation",
+      "paths": [
+        "docs/schedule-wake-restart-recovery.md",
+        "docs/governance/submissions/20261007-schedule-wake-restart-recovery.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "既有同会话一次性 schedule 委派",
+      "disposition": "修复真实准入与既有授权恢复，不新增真人入口或周期自治",
+      "evidence": [
+        "docs/schedule-wake-restart-recovery.md",
+        "tests/unit/test_schedule_restart_recovery.py"
+      ],
+      "verification_level": "隔离候选回归/全量门禁，生产验证另行记录",
+      "model_evidence_veto_recovery_exit": "等待原因与原定/重试时间可见；cancel_schedule 取消、wake=false 通知；旧条目由原会话真人重新安排",
+      "rollback_route": "Revert this commit; retain consumed/revoked authority tombstones; restore prior Web release"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "wake-admission-recovery",
+      "g1": {
+        "necessity": "真实事故：重启丢 grant；session_busy 前误写 started；模型不能推测授权是否尚未消费。持久化既有一次性授权和准入边界事实以恢复消费。"
+      },
+      "g2": {
+        "authority_owner": "ScheduleStore / IngressToken / BackgroundRunner actual run lease",
+        "relationship": "reuse",
+        "non_duplication": "复用原签发、原会话、原Goal及原一次消费边界；账本只保存批准范围与消费事实，不签发新真人授权。"
+      },
+      "g3": {
+        "model_evidence": [
+          "等待授权/空闲/重启/执行等机械状态",
+          "原定时间与下次尝试分列",
+          "schedule.wake started 仅在实际 run acquisition 后审计"
+        ],
+        "recovery_or_reason": "模型可 cancel_schedule 或使用 wake=false；新真人 run 可重建提醒。取消、已消费、范围/签名不符及Goal替换拒绝恢复；不裁判任务语义。"
+      },
+      "g4": {
+        "rollback": "Revert commit and restore prior Web release; preserve authority tombstones.",
+        "verification": [
+          "actual busy regression",
+          "fresh-process recovery without human ingress",
+          "cancel/Goal replacement before admission",
+          "late worker cannot defer another owner",
+          "old schedule snapshot never replays",
+          "API secret-free status and WebUI labels",
+          "exact candidate full CI equivalent"
+        ]
+      }
+    }
+  ]
+}

@@ -2,9 +2,9 @@
 
 程序只承载机械边界：schedule.json 持久化、跨进程 claim/lease、一次性 wake
 capability 与失败重试。普通提醒只走 notify/UI，不进入模型 prompt；wake 只能消费
-当前真人 run 降权委派出的同会话 capability；grant 永不落盘、永不伪造。重启后
-grant 丢失不再直接丢弃：同会话下一次真人 run 会 re-arm 重铸（EVO-20260919-f119847d），
-有界退避窗口内未恢复才降级为通知。
+当前真人 run 降权委派出的同会话 capability。token 对象不落盘；已授权的一次性
+委派通过独立私有签名账本恢复，started/revoked 不可再次启动。无账本的历史提醒
+仍需同会话真人 run re-arm，有界退避窗口内未恢复才降级为通知。
 """
 
 from __future__ import annotations
@@ -75,6 +75,9 @@ class ScheduleEntry:
         goal_id: str = "",
         goal_generation: str = "",
         subject_refs: list | None = None,
+        scheduled_trigger_at: float | None = None,
+        wake_delivery_state: str = "scheduled",
+        wake_wait_reason: str = "",
     ) -> None:
         self.sid = sid
         self.message = message
@@ -93,6 +96,9 @@ class ScheduleEntry:
         self.retry_deadline_at = float(retry_deadline_at or 0.0)
         self.goal_id = str(goal_id or "")
         self.goal_generation = str(goal_generation or "")
+        self.scheduled_trigger_at = trigger_at if scheduled_trigger_at is None else float(scheduled_trigger_at)
+        self.wake_delivery_state = str(wake_delivery_state)
+        self.wake_wait_reason = str(wake_wait_reason)
         # antidrift R1: 排程时模型自报的结构化对象引用（封闭枚举三类）；缺省空=行为与现状一致
         self.subject_refs: list[dict] = [
             dict(r) for r in (subject_refs or []) if isinstance(r, dict)
@@ -117,6 +123,9 @@ class ScheduleEntry:
             "retry_deadline_at": self.retry_deadline_at,
             "goal_id": self.goal_id,
             "goal_generation": self.goal_generation,
+            "scheduled_trigger_at": self.scheduled_trigger_at,
+            "wake_delivery_state": self.wake_delivery_state,
+            "wake_wait_reason": self.wake_wait_reason,
         }
         # 仅非空时含键：不带 refs 的条目形态与现状逐字一致（回归项）
         if self.subject_refs:
@@ -143,6 +152,9 @@ class ScheduleEntry:
             retry_deadline_at=float(d.get("retry_deadline_at", 0.0) or 0.0),
             goal_id=str(d.get("goal_id", "") or ""),
             goal_generation=str(d.get("goal_generation", "") or ""),
+            scheduled_trigger_at=d.get("scheduled_trigger_at"),
+            wake_delivery_state=str(d.get("wake_delivery_state") or "scheduled"),
+            wake_wait_reason=str(d.get("wake_wait_reason") or ""),
             subject_refs=[
                 dict(r) for r in (d.get("subject_refs") or []) if isinstance(r, dict)
             ],
@@ -176,7 +188,10 @@ class ScheduleStore:
         self._path = Path(path)
         self._lock = threading.RLock()
         self._entries: dict[str, ScheduleEntry] = {}
-        # wake grant 只存在模块级进程内 capability registry；磁盘只保存意图/owner PID。
+        from llm_loop.core.trace_leak.wake_authority import WakeAuthorizationStore
+
+        self._authority = WakeAuthorizationStore(self._path)
+        # Token 对象只存在进程内；独立私有账本保存已授权范围与一次消费状态。
         self._load()
 
     def _load(self) -> None:
@@ -219,16 +234,21 @@ class ScheduleStore:
             with self._lock:
                 yield
             return
+        handle = None
         try:
-            with lock_path.open("a", encoding="utf-8") as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            handle = lock_path.open("a", encoding="utf-8")
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         except OSError as exc:
+            if handle is not None:
+                handle.close()
             logger.warning("schedule 文件锁不可用（fail-open，并发保护降级）: %s", exc)
             yield
+            return
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
 
     def _persist(self) -> None:
         """跨进程安全持久化: 锁内重读磁盘 → 合并（保留其他进程新增）→ 覆写.
@@ -307,6 +327,7 @@ class ScheduleStore:
         # Capability must exist before the persisted entry becomes claimable. This removes
         # the after=0 window where a scheduler could see wake=True but no grant yet.
         if wake and wake_grant is not None:
+            self._authority.issue(entry.to_dict(), wake_grant)
             self._set_wake_grant(sid, wake_grant)
         self._mutate(lambda es: es.__setitem__(sid, entry))
         return sid
@@ -319,7 +340,7 @@ class ScheduleStore:
             _WAKE_GRANTS[self._wake_grant_key(sid)] = grant
 
     def wake_grant(self, sid: str) -> Any | None:
-        """返回本进程同一 schedule SoT 的 wake capability；永不从磁盘恢复。"""
+        """返回进程内 capability；恢复必须单独验证私有授权账本。"""
         with _WAKE_GRANT_LOCK:
             return _WAKE_GRANTS.get(self._wake_grant_key(sid))
 
@@ -327,7 +348,7 @@ class ScheduleStore:
         with _WAKE_GRANT_LOCK:
             _WAKE_GRANTS.pop(self._wake_grant_key(sid), None)
 
-    def note_wake_started(self, sid: str) -> None:
+    def note_wake_started(self, sid: str, *, owner: str = "") -> None:
         """EVO-20260919-f119847d: 启动自动续跑前先落 started 标记（幂等）。
 
         该标记让跨进程/重启后仍能区分"grant 已消费（run 已启动过，stale 条目）"
@@ -335,15 +356,26 @@ class ScheduleStore:
         同一条目二次启动为自治 run。
         """
         now = time.time()
+        marked: list[bool] = []
 
         def _mark(entries: dict[str, ScheduleEntry]) -> None:
             e = entries.get(sid)
+            if owner and (e is None or e.lease_owner != owner or e.lease_until <= now or e.scheduled_trigger_at > now):
+                raise ValueError("wake claim cancelled, replaced or expired before admission")
             if e is not None and e.wake and e.wake_started_at <= 0.0:
+                self._authority.consume(e.to_dict())
                 e.wake_started_at = now
+                e.wake_delivery_state = "started"
+                e.wake_wait_reason = ""
+                marked.append(True)
+            elif owner:
+                raise ValueError("wake already started")
 
         self._mutate(_mark)
+        if owner and not marked:
+            raise ValueError("wake start could not be persisted")
 
-    def defer_wake_retry(self, sid: str, *, owner: str = "") -> WakeDefer:
+    def defer_wake_retry(self, sid: str, *, owner: str = "", reason: str = "") -> WakeDefer:
         """EVO-20260919-f119847d: wake 交付瞬态失败 → 有界指数退避。
 
         推迟：retry_count+1、trigger_at=now+退避间隔、释放 lease（条目保留，
@@ -368,6 +400,8 @@ class ScheduleStore:
             count = e.retry_count + 1
             delay = WAKE_RETRY_DELAYS_S[min(count - 1, len(WAKE_RETRY_DELAYS_S) - 1)]
             e.retry_count = count
+            e.wake_wait_reason = reason
+            e.wake_delivery_state = "waiting_human" if reason == "grant_lost_owner_dead" else "retrying"
             if count >= WAKE_MAX_RETRIES or now + delay >= deadline:
                 result[0] = WakeDefer(True, True, count, delay)
                 return
@@ -383,7 +417,60 @@ class ScheduleStore:
         removed: list[bool] = []
         self._mutate(lambda es: removed.append(es.pop(sid, None) is not None))
         self.clear_wake_grant(sid)
+        self._authority.revoke(sid)
         return bool(removed and removed[0])
+
+    def note_wake_waiting(self, sid: str, reason: str) -> None:
+        def _note(entries: dict[str, ScheduleEntry]) -> None:
+            e = entries.get(sid)
+            if e is not None:
+                e.wake_delivery_state = "queued"
+                e.wake_wait_reason = reason
+
+        self._mutate(_note)
+
+    def authority_state(self, sid: str) -> str:
+        row = next((e for e in self.list() if e["sid"] == sid), None)
+        return self._authority.state(row) if row is not None else "missing"
+
+    def recover_wake_grant(self, sid: str) -> Any | None:
+        row = next((e for e in self.list() if e["sid"] == sid), None)
+        if row is None or row.get("wake_started_at"):
+            return None
+        grant = self._authority.recover(row)
+        if grant is None:
+            return None
+        adopted: list[bool] = []
+
+        def _adopt(entries: dict[str, ScheduleEntry]) -> None:
+            e = entries.get(sid)
+            if e is None or e.wake_started_at > 0 or self._authority.state(e.to_dict()) != "pending":
+                return
+            e.wake_owner_pid = os.getpid()
+            e.wake_delivery_state = "scheduled"
+            e.wake_wait_reason = ""
+            adopted.append(True)
+
+        self._mutate(_adopt)
+        if not adopted:
+            return None
+        self._set_wake_grant(sid, grant)
+        logger.info("wake delegation recovered from private authority sid=%s", sid)
+        return grant
+
+    def wake_delivery_facts(self, row: dict[str, Any]) -> dict[str, Any]:
+        if not row.get("wake"):
+            return {}
+        state = str(row.get("wake_delivery_state") or "scheduled")
+        reason = str(row.get("wake_wait_reason") or "")
+        authority_state = self._authority.state(row)
+        if row.get("wake_started_at") or authority_state in {"started", "revoked"}:
+            state = "inactive"
+            reason = "delegation_consumed"
+        elif self.wake_grant(str(row["sid"])) is None and authority_state != "pending":
+            state = "waiting_human"
+            reason = "grant_unavailable"
+        return {"delivery_state": state, "wait_reason": reason}
 
     def list(self) -> list[dict]:
         """列出当前提醒（读侧 SoT: 先 refresh 磁盘，与 due() 一致——
@@ -460,6 +547,7 @@ class ScheduleStore:
         self._mutate(_ack)
         if completed:
             self.clear_wake_grant(sid)
+            self._authority.revoke(sid)
 
 
 def _pid_alive(pid: int) -> bool:
@@ -575,18 +663,34 @@ def rearm_wake_grants(
         except ValueError:
             logger.warning("wake grant re-arm 委派被拒（跳过）sid=%s", sid)
             continue
-        store._set_wake_grant(sid, grant)
+        adopted: list[bool] = []
 
-        def _adopt(entries: dict[str, ScheduleEntry], _sid: str = sid) -> None:
+        def _adopt(
+            entries: dict[str, ScheduleEntry], _sid: str = sid,
+            _grant: Any = grant, _adopted: list[bool] = adopted,
+        ) -> None:
             e = entries.get(_sid)
-            if e is None:
+            if e is None or e.session_id != target or e.wake_started_at > 0:
                 return
+            if wake_goal_binding_state(e, goal_binding_resolver) not in {"active", "unbound"}:
+                return
+            try:
+                store._authority.issue(e.to_dict(), _grant)
+            except ValueError:
+                return  # consumption/cancellation raced the human re-arm snapshot
             e.wake_owner_pid = os.getpid()
             e.retry_count = 0
             e.retry_deadline_at = 0.0
+            e.wake_delivery_state = "scheduled"
+            e.wake_wait_reason = ""
+            e.trigger_at = min(e.trigger_at, max(e.scheduled_trigger_at, time.time()))
+            _adopted.append(True)
 
         # 不触碰 lease：他进程若正持有 claim，到期后自然让渡给 owner（本进程）。
         store._mutate(_adopt)
+        if not adopted:
+            continue
+        store._set_wake_grant(sid, grant)
         rearmed += 1
         logger.info("wake grant 已重铸（re-arm）sid=%s session=%s", sid, target)
     return rearmed

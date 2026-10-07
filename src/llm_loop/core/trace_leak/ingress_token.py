@@ -97,9 +97,9 @@ def delegate_ingress(token: IngressToken, *, entry: str) -> IngressToken:
     """把真实 human ingress 降权为一次性程序续跑凭据。
 
     委派 token 保留原 human channel 以复用既有白名单，但显式标记 delegated，
-    且只驻留进程内、不写 schedule.json；进程重启后 grant 丢失——同会话下一次
-    真人 run 会 re-arm 重铸（EVO-20260919-f119847d），有界退避窗口内未恢复
-    才降级为通知。
+    token 对象只驻留进程内、不写 schedule.json。新提醒的范围与消费状态经
+    私有签名账本持久化，重启可恢复同会话的一次性降权凭据；旧提醒无账本时
+    仍需同会话真人 re-arm，超出有界退避窗口才降级为通知。
     """
     if not isinstance(token, IngressToken) or token.delegated or not is_whitelisted(token):
         raise ValueError("ingress 不可委派：必须是未委派的真实 human ingress")
@@ -116,3 +116,33 @@ def is_whitelisted(token: object) -> bool:
     from llm_loop.core.trace_leak.channel_whitelist import whitelist_allows
 
     return whitelist_allows(token)
+
+
+_WAKE_PROOF_PIN = object()
+
+
+class VerifiedWakeAuthorization:
+    """Immutable proof; only the verifying ledger uses the private constructor pin."""
+
+    __slots__ = ("channel", "entry")
+    channel: str
+    entry: str
+
+    def __init__(self, pin: object, channel: str, entry: str) -> None:
+        if pin is not _WAKE_PROOF_PIN:
+            raise ValueError("wake authorization proof cannot be constructed externally")
+        object.__setattr__(self, "channel", channel)
+        object.__setattr__(self, "entry", entry)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("wake authorization proof is immutable")
+
+
+def restore_scheduled_ingress(proof: object) -> IngressToken:
+    """Restore only a verified pending one-shot delegation, never a human ingress."""
+    if not isinstance(proof, VerifiedWakeAuthorization):
+        raise ValueError("scheduled ingress requires verified durable authorization")
+    token = IngressToken(_ISSUE_PIN, proof.channel, proof.entry, delegated=True)
+    if not is_whitelisted(token):
+        raise ValueError("recovered delegation is outside the ingress whitelist")
+    return token

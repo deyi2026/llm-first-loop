@@ -3283,7 +3283,7 @@ def _schedule_store(request: Request):
     return store
 
 
-def _schedule_row(entry: dict) -> dict:
+def _schedule_row(entry: dict, delivery_facts: dict | None = None) -> dict:
     """会话级只读投影：保留展示所需的机械事实，剥宿主/租约/wake 授权内部字段."""
     repeat_interval = float(entry.get("repeat_interval") or 0.0)
     return {
@@ -3298,6 +3298,8 @@ def _schedule_row(entry: dict) -> dict:
         "count": int(entry.get("count") or 0),
         "wake": bool(entry.get("wake")),
         "created_at": float(entry.get("created_at") or 0.0),
+        "scheduled_trigger_at": float(entry.get("scheduled_trigger_at") or entry.get("trigger_at") or 0.0),
+        **(delivery_facts or {}),
     }
 
 
@@ -3310,9 +3312,10 @@ def list_session_schedule(session_id: str, request: Request) -> Response:
             status_code=404,
             content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
         )
+    store = _schedule_store(request)
     rows = [
-        _schedule_row(entry)
-        for entry in _schedule_store(request).list()
+        _schedule_row(entry, store.wake_delivery_facts(entry))
+        for entry in store.list()
         if str(entry.get("session_id") or "") == session_id
     ]
     rows.sort(key=lambda row: (row["trigger_at"], row["sid"]))

@@ -559,6 +559,9 @@ export interface ScheduleItem {
   count?: number;
   wake?: boolean;
   created_at?: number;
+  scheduled_trigger_at?: number;
+  delivery_state?: "scheduled" | "waiting_human" | "retrying" | "queued" | "started" | "inactive";
+  wait_reason?: string;
 }
 
 export async function fetchSessionScheduleResult(

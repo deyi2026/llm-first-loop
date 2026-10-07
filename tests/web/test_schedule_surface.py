@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from llm_loop.core.scheduler import ScheduleStore
+from llm_loop.core.trace_leak.ingress_token import delegate_ingress, issue_ingress
 from llm_loop.web import build_app
 
 
@@ -80,6 +81,39 @@ def test_schedule_surface_unknown_session_404(build_test_engine) -> None:
     resp = _client(engine).get("/api/v1/sessions/no-such-session/schedule")
     assert resp.status_code == 404
     assert resp.json()["error"] == "session_not_found"
+
+
+def test_schedule_surface_projects_actual_wait_without_authority_secrets(build_test_engine) -> None:
+    engine, _ = build_test_engine([])
+    sid = engine.session.create()
+    store = _store(engine)
+    target = store.add(
+        "resume once", after=0, session_id=sid, wake=True,
+        wake_grant=delegate_ingress(issue_ingress("web"), entry="schedule_wake"),
+    )
+    original_deadline = store.list()[0]["trigger_at"]
+    store.defer_wake_retry(target, reason="session_busy")
+    row = _client(engine).get(f"/api/v1/sessions/{sid}/schedule").json()["schedule"][0]
+    assert row["delivery_state"] == "retrying"
+    assert row["wait_reason"] == "session_busy"
+    assert row["scheduled_trigger_at"] == original_deadline
+    assert row["trigger_at"] > original_deadline
+    for secret in ("signature", "nonce", "channel", "entry", "wake_grant", "lease_owner"):
+        assert secret not in row
+    store.clear_wake_grant(target)
+    # A new process can restore a pending durable delegation, so no false missing-auth status.
+    row = _client(engine).get(f"/api/v1/sessions/{sid}/schedule").json()["schedule"][0]
+    assert row["delivery_state"] == "retrying"
+
+
+def test_schedule_surface_reports_legacy_missing_authorization(build_test_engine) -> None:
+    engine, _ = build_test_engine([])
+    sid = engine.session.create()
+    store = _store(engine)
+    store.add("old reminder", after=60, session_id=sid, wake=True)
+    row = _client(engine).get(f"/api/v1/sessions/{sid}/schedule").json()["schedule"][0]
+    assert row["delivery_state"] == "waiting_human"
+    assert row["wait_reason"] == "grant_unavailable"
 
 
 def test_schedule_cancel_is_owner_scoped_and_explicit(build_test_engine) -> None:
