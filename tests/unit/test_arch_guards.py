@@ -912,3 +912,105 @@ def test_top_level_scan_semantics(tmp_path):
     pkgs, mods = _scan_top_level_units(base)
     assert pkgs == {"pkg_a"}  # __pycache__ 排除
     assert mods == {"top.py"}  # __init__.py 与非 py 排除
+
+
+# ---------------------------------------------------------------------------
+# P1-4 Kernel v1 import ratchet（ARCHITECTURE-20261007-kernel-v1-contract）
+# ---------------------------------------------------------------------------
+
+_KERNEL_INTERNAL_ROOTS = {"core", "event_log", "resources", "runtime", "llm"}
+
+
+def _kernel_owner(rel: str) -> str | None:
+    if rel.startswith("src/llm_loop/core/loop/"):
+        return "core/loop"
+    for root in ("event_log", "resources", "runtime", "llm"):
+        if rel.startswith(f"src/llm_loop/{root}/"):
+            return root
+    return None
+
+
+def _kernel_cross_plane_edges(root: Path | None = None) -> set[str]:
+    """AST 扫描 Kernel v1 的 package-level 反向依赖 edge."""
+    base = root if root is not None else SRC
+    out: set[str] = set()
+    llm_root = base / "llm_loop"
+    candidates = [llm_root / "core" / "loop"]
+    candidates.extend(llm_root / name for name in ("event_log", "resources", "runtime", "llm"))
+    for directory in candidates:
+        if not directory.exists():
+            continue
+        for p in sorted(directory.rglob("*.py")):
+            rel = f"src/{p.relative_to(base).as_posix()}"
+            owner = _kernel_owner(rel)
+            if owner is None:
+                continue
+            try:
+                tree = ast.parse(p.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    parts = node.module.split(".")
+                    if len(parts) >= 2 and parts[0] == "llm_loop":
+                        imported = parts[1]
+                        if imported not in _KERNEL_INTERNAL_ROOTS:
+                            out.add(f"{owner}->{imported}")
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        parts = alias.name.split(".")
+                        if len(parts) >= 2 and parts[0] == "llm_loop":
+                            imported = parts[1]
+                            if imported not in _KERNEL_INTERNAL_ROOTS:
+                                out.add(f"{owner}->{imported}")
+    return out
+
+
+def test_kernel_import_edges_match_frozen_baseline():
+    """Kernel→capability 现存债务精确冻结：新增/陈旧 edge 均 FAIL."""
+    registered = set(_load_baseline().get("kernel_import_edges", []))
+    current = _kernel_cross_plane_edges()
+    added = sorted(current - registered)
+    stale = sorted(registered - current)
+    assert not added and not stale, (
+        "Kernel v1 import ratchet 漂移：\n"
+        + ("  未登记新增 edge: " + ", ".join(added) + "\n" if added else "")
+        + ("  已消失 edge 仍在基线（应随偿还删除）: " + ", ".join(stale) if stale else "")
+    )
+
+
+def test_kernel_import_edges_baseline_only_decreases():
+    """防绕过：不能通过同提交把新反向 edge 顺手登记进 baseline."""
+    rel = BASELINE_PATH.relative_to(ROOT).as_posix()
+    try:
+        proc = subprocess.run(
+            ["git", "show", f"HEAD:{rel}"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=ROOT,
+        )
+        head_base = json.loads(proc.stdout)
+        if "kernel_import_edges" not in head_base:
+            pytest.skip("kernel_import_edges 首次建基线：HEAD 尚无该节")
+        head_edges = set(head_base["kernel_import_edges"])
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        pytest.skip("kernel_import_edges 首次提交前无 HEAD 基线")
+    current_registered = set(_load_baseline().get("kernel_import_edges", []))
+    added = sorted(current_registered - head_edges)
+    assert not added, (
+        "kernel_import_edges 基线只允许减少；检测到新增登记 "
+        + ", ".join(added)
+        + "。新 kernel→capability 依赖必须改设计，不得扩 baseline。"
+    )
+
+
+def test_kernel_import_edge_synthetic_negative(tmp_path):
+    """合成负例：kernel 新 import 一个 capability root 必须被扫描出来."""
+    target = tmp_path / "src" / "llm_loop" / "runtime"
+    target.mkdir(parents=True)
+    (target / "x.py").write_text(
+        "from llm_loop.new_capability.api import Thing\n",
+        encoding="utf-8",
+    )
+    assert _kernel_cross_plane_edges(tmp_path / "src") == {"runtime->new_capability"}

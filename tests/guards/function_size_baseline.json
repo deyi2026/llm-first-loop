@@ -108,5 +108,29 @@
       "timekeeping.py": "kernel-candidate"
     },
     "exemptions": {}
-  }
+  },
+  "kernel_import_edges": [
+    "core/loop->cache_guard",
+    "core/loop->cognitive",
+    "core/loop->config",
+    "core/loop->feedback",
+    "core/loop->introspection",
+    "core/loop->memory",
+    "core/loop->methods",
+    "core/loop->skills",
+    "core/loop->timekeeping",
+    "core/loop->tools",
+    "core/loop->workspace",
+    "event_log->memory",
+    "event_log->timekeeping",
+    "llm->cache_guard",
+    "llm->cognitive",
+    "llm->config",
+    "llm->timekeeping",
+    "resources->timekeeping",
+    "runtime->config",
+    "runtime->methods",
+    "runtime->notify",
+    "runtime->timekeeping"
+  ]
 }
