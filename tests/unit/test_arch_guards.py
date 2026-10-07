@@ -1014,3 +1014,135 @@ def test_kernel_import_edge_synthetic_negative(tmp_path):
         encoding="utf-8",
     )
     assert _kernel_cross_plane_edges(tmp_path / "src") == {"runtime->new_capability"}
+
+
+# ---------------------------------------------------------------------------
+# Durable Run Contract: filesystem persistence-write candidate registry
+# ---------------------------------------------------------------------------
+
+
+def _literal_write_mode(call: ast.Call) -> str | None:
+    mode_node: ast.expr | None = None
+    if isinstance(call.func, ast.Name) and call.func.id == "open":
+        if len(call.args) >= 2:
+            mode_node = call.args[1]
+    elif (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "open"
+        and call.args
+    ):
+        mode_node = call.args[0]
+    for kw in call.keywords:
+        if kw.arg == "mode":
+            mode_node = kw.value
+    if isinstance(mode_node, ast.Constant) and isinstance(mode_node.value, str):
+        return mode_node.value
+    return None
+
+
+def _os_open_has_write_flag(call: ast.Call) -> bool:
+    if not (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "os"
+        and call.func.attr == "open"
+        and len(call.args) >= 2
+    ):
+        return False
+    names = {n.id for n in ast.walk(call.args[1]) if isinstance(n, ast.Name)}
+    attrs = {n.attr for n in ast.walk(call.args[1]) if isinstance(n, ast.Attribute)}
+    flags = names | attrs
+    return bool(flags & {"O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND"})
+
+
+def _durability_write_candidate_files(root: Path | None = None) -> set[str]:
+    """返回出现明确 filesystem 写入原语的生产源码文件.
+
+    这是“需分类面”，不是“都是 durability surface”的断言。每个候选必须至少被
+    一个 durability surface 覆盖，或进入 durability_write_exemptions；同一源码
+    文件可承载多个不同 tier 的 semantic surface（例如 Evidence blob + ledger）。
+    """
+    base = root if root is not None else SRC
+    out: set[str] = set()
+    for p in sorted((base / "llm_loop").rglob("*.py")):
+        rel = f"src/{p.relative_to(base).as_posix()}"
+        try:
+            tree = ast.parse(p.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+            func = call.func
+            attr = func.attr if isinstance(func, ast.Attribute) else ""
+            is_path_write = attr in {"write_text", "write_bytes"}
+            is_open = (
+                isinstance(func, ast.Name)
+                and func.id == "open"
+                or isinstance(func, ast.Attribute)
+                and func.attr == "open"
+            )
+            mode = _literal_write_mode(call) if is_open else None
+            if is_path_write or (mode is not None and any(c in mode for c in "wax+")) or _os_open_has_write_flag(call):
+                out.add(rel)
+                break
+    return out
+
+
+def _registered_durability_write_files() -> tuple[set[str], list[str]]:
+    reg = _load_baseline().get("durability_registry", {})
+    files: set[str] = set()
+    surface_files: set[str] = set()
+    problems: list[str] = []
+    surfaces = reg.get("surfaces", {})
+    exemptions = reg.get("write_exemptions", {})
+    for surface_id, spec in surfaces.items():
+        if spec.get("tier") not in {"T1", "T2", "T3"}:
+            problems.append(f"  surface {surface_id}: tier 必须为 T1/T2/T3")
+        if spec.get("status") not in {"conform", "migrate", "partial", "observe"}:
+            problems.append(
+                f"  surface {surface_id}: status 必须为 conform/migrate/partial/observe"
+            )
+        paths = spec.get("paths", [])
+        if not paths:
+            problems.append(f"  surface {surface_id}: paths 不能为空")
+        if not str(spec.get("owner", "")).strip():
+            problems.append(f"  surface {surface_id}: owner 不能为空")
+        if not str(spec.get("rationale", "")).strip():
+            problems.append(f"  surface {surface_id}: rationale 不能为空")
+        for path in paths:
+            surface_files.add(path)
+            files.add(path)
+    for path, reason in exemptions.items():
+        if path in surface_files:
+            problems.append(f"  surface/exemption 重复登记: {path}")
+        if len(str(reason).strip()) < 10:
+            problems.append(f"  exemption 理由过短: {path}")
+        files.add(path)
+    return files, problems
+
+
+def test_durability_write_candidates_registered():
+    """所有明确 filesystem 写入文件必须归入 durable surface 或显式非-durable 豁免."""
+    registered, problems = _registered_durability_write_files()
+    current = _durability_write_candidate_files()
+    missing = sorted(current - registered)
+    stale = sorted(registered - current)
+    if missing:
+        problems.append("  未登记写入候选: " + ", ".join(missing))
+    if stale:
+        problems.append("  登记已失效/扫描不到写入原语: " + ", ".join(stale))
+    assert not problems, "Durability surface registry 漂移:\n" + "\n".join(problems)
+
+
+def test_durability_write_candidate_synthetic_negative(tmp_path):
+    """合成负例：既有包中新造 write_text 也必须被扫描，不能绕过顶层单元 guard."""
+    target = tmp_path / "src" / "llm_loop" / "runtime"
+    target.mkdir(parents=True)
+    (target / "new_store.py").write_text(
+        "from pathlib import Path\n"
+        "def persist(path: Path, value: str) -> None:\n"
+        "    path.write_text(value, encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    assert _durability_write_candidate_files(tmp_path / "src") == {
+        "src/llm_loop/runtime/new_store.py"
+    }

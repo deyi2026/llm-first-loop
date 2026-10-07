@@ -72,7 +72,7 @@ HEAD currentness AST 扫描得到以下 root-level 反向 edge（22 条）：
 
 ## 6. Durability relationship
 
-Durable Run Contract 属于 kernel 级机械语义。新持久化 surface 必须在实现前声明 T1/T2/T3 或显式豁免；当前 P0-3 顶层单元 guard 只能阻止“新增顶层 capability”，不能发现既有包内部新造的持久化 surface，因此 durability-surface registry 是后续 guard 增量，不把它伪装成本轮已完成。
+Durable Run Contract 属于 kernel 级机械语义。新持久化 surface 必须在实现前声明 T1/T2/T3 或显式豁免。durability-surface registry 现通过 AST 写入原语扫描覆盖既有包内部新增文件，补上 top-level-unit guard 的盲区；registry 中 `observe` 仅代表已发现/分类，不代表合规。
 
 ## 7. Verification
 

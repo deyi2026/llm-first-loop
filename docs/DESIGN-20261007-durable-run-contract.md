@@ -82,7 +82,7 @@ DurableContract(Protocol):
 
 ## 8. 与其他任务的关系
 
-- P0-3 的 guard 扩展应把"新持久化基座必须声明 tier"纳入登记项（本文 §4 红线 3）。
+- P0-3 的 guard 扩展已落为 filesystem-write candidate registry：生产源码中新增明确写入原语的文件必须声明 tier（T1/T2/T3）+ status（conform/migrate/partial/observe），或给出 non-durable exemption；登记不等于合规证明。
 - P1-4 kernel 契约：`event_log` 在 kernel 集合内，T1 语义即 kernel 级契约的一部分。
 
 ## 9. rev 3 currentness 修正（2026-10-07）
@@ -91,3 +91,10 @@ DurableContract(Protocol):
 - HEAD 核验：`scheduler.py` 主状态仍为裸 `write_text`；`wake_authority.py::_write` 已明确执行 tmp → file fsync → `os.replace` → directory fsync。
 - 因此迁移对象严格限定为 **ScheduleStore 主状态文件**；WakeAuthorizationStore 归档为 T2 参考 surface。
 - 新数量口径：**7 个子系统，至少 8 个持久化 surface**。后续新增 surface 必须声明 T1/T2/T3 或显式豁免，不能只按“子系统数”统计。
+
+## 10. registry guard 补充（2026-10-07）
+
+- “至少 8 个”是 rev3 已逐项核验的高价值 durability 子集，不再冒充全仓完整数量。
+- 机械 guard 对 `src/llm_loop` 做 AST 扫描，捕获 `Path.write_text/write_bytes`、literal write-mode `open`、以及带写 flags 的 `os.open`；当前所有命中文件必须进入 `durability_registry.surfaces` 或 `write_exemptions`。
+- registry 的 `observe` 只表示“已发现并分类”，不表示已满足对应 tier；只有有专项证据的条目才标 `conform/migrate/partial`。
+- 新写入面不是永久禁止，但必须通过 `guard(r9):` 可见提交显式登记，避免在既有包内部悄悄新增第 N+1 套持久化。
