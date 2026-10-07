@@ -777,6 +777,7 @@ class SchedulerThread:
         *,
         data_dir: str | Path | None = None,
         wake_degraded_reason: str | None = None,
+        wake_degraded_payload: dict[str, object] | None = None,
     ) -> None:
         """默认通知：写 interop LFL inbox（lfl_to_dsh/pending/，topic=notify）.
 
@@ -806,4 +807,9 @@ class SchedulerThread:
         }
         if wake_degraded_reason:
             payload["wake_degraded_reason"] = wake_degraded_reason
+            # EVO-20261007-8057c39a 案2: 降级通知携带可再锚定 payload
+            # （sid/时间/原因之外补齐原始调度规格），供下一会话
+            # 直接 re-issue schedule 而非丢失原计划。
+            if wake_degraded_payload is not None:
+                payload["wake_degraded_payload"] = dict(wake_degraded_payload)
         (inbox / fname).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

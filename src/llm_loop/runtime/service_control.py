@@ -31,6 +31,7 @@ import os
 import pwd
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -3293,6 +3294,85 @@ def verify_deployment_binding(
     ]
 
 
+def _materialize_release_checkout(code: Path, runtime: Path, head: str, artifact: str) -> Path:
+    """EVO-20261007-9c6eccf3: 物化固定提交 release checkout，解除 code_root 对开发工作树 HEAD 的绑定。
+
+    2026-10-07 17:25/18:28 实证：publish 后开发树 HEAD 前移导致既有期望代 restart
+    precheck git_head mismatch 连续失败。此处把发布代码物化为同仓 linked worktree
+    （HEAD 永久钉在 publish 时的 commit），webui/dist 为 gitignored 产物，从开发树
+    复制后按 tree-sha 验证。
+
+    语义：release checkout 是纯衍生工件（可再生）。已存在且 HEAD 一致 + tracked
+    干净 → 复用（幂等）；HEAD 分歧或 tracked 脏 → 在 publish 时点（lifecycle 锁内）
+    重建（remove --force 后重新 add），restart/verify 永不自动 mutation。
+    """
+    releases = runtime / ".releases"
+    releases.mkdir(parents=True, exist_ok=True)
+    target = releases / head
+    if target.is_dir():
+        # 复用前必须确认 target 是本仓注册的 worktree：仓库内的 bogus 目录会让
+        # `git -C target rev-parse` 向上爬到父仓库 .git 而误判可复用（已测）。
+        listed = subprocess.run(
+            ["git", "-C", str(code), "worktree", "list", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        ).stdout
+        registered = f"worktree {target}" in listed
+        current = subprocess.run(
+            ["git", "-C", str(target), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "-C", str(target), "status", "--porcelain", "--untracked-files=no"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        if registered and current == head and not dirty:
+            return target
+        # 衍生工件分歧：重建（bogus 非 worktree 目录走 rmtree 兜底）。
+        remove = subprocess.run(
+            ["git", "-C", str(code), "worktree", "remove", "--force", str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if remove.returncode != 0 and target.is_dir():
+            shutil.rmtree(target)
+    subprocess.run(
+        ["git", "-C", str(code), "worktree", "prune"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    subprocess.run(
+        ["git", "-C", str(code), "worktree", "add", "--detach", str(target), head],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    dist_src = code / "webui" / "dist"
+    dist_dst = target / "webui" / "dist"
+    if dist_src.is_dir():
+        shutil.copytree(dist_src, dist_dst, dirs_exist_ok=True)
+    actual = _tree_sha256(dist_dst)
+    if actual != artifact:
+        raise DeploymentBindingError(
+            f"release checkout webui artifact mismatch: expected={artifact} actual={actual}",
+            kind=BindingProblemKind.WEBUI_ARTIFACT_MISMATCH,
+        )
+    return target
+
+
 def build_deployment(
     *,
     code_root: str | Path,
@@ -3323,12 +3403,15 @@ def build_deployment(
             kind=BindingProblemKind.TRACKED_WORKTREE_DIRTY,
         )
     artifact = _tree_sha256(code / "webui" / "dist")
+    # EVO-20261007-9c6eccf3: code_root 绑定物化后的 release checkout（固定
+    # HEAD），与开发工作树解耦；旧期望代（code_root 仍指开发树）语义不变。
+    release = _materialize_release_checkout(code, runtime, head, artifact)
     return ManagedServiceDeployment(
         schema=_DEPLOYMENT_SCHEMA,
         deployment_id=f"deploy-{uuid.uuid4().hex}",
         generation=generation,
         git_head=head,
-        code_root=str(code),
+        code_root=str(release),
         runtime_root=str(runtime),
         webui_artifact_sha256=artifact,
     )

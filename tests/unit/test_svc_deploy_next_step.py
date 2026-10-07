@@ -474,14 +474,17 @@ def test_next_step_generation_has_zero_side_effects(tmp_path: Path) -> None:
 def test_structured_source_projects_to_verbatim_verify_text(tmp_path: Path) -> None:
     code = _make_repo(tmp_path / "feishu-code")
     deployment = sc.build_deployment(code_root=code, runtime_root=code, generation=1)
-    assert sc.verify_deployment_binding(deployment, code_root=code, runtime_root=code) == []
+    # EVO-20261007-9c6eccf3: 漂移改测绑定树（release checkout）——开发树前移
+    # 不再构成绑定漂移（这正是该 EVO 的目标语义）。
+    bound = Path(deployment.code_root)
+    assert sc.verify_deployment_binding(deployment, code_root=bound, runtime_root=code) == []
 
-    _advance_head(code)
+    _advance_head(bound)
 
-    facts = sc._binding_problems_structured(deployment, code_root=code, runtime_root=code)
+    facts = sc._binding_problems_structured(deployment, code_root=bound, runtime_root=code)
     assert [fact.kind for fact in facts] == [BindingProblemKind.GIT_HEAD_MISMATCH]
     assert [fact.text for fact in facts] == sc.verify_deployment_binding(
-        deployment, code_root=code, runtime_root=code
+        deployment, code_root=bound, runtime_root=code
     )
     assert "git_head mismatch desired=" in facts[0].text
     assert facts[0].desired == deployment.git_head
@@ -535,8 +538,9 @@ def test_incident_e1_rejection_carries_publish_next_step_then_e3_retry_succeeds(
         expected_generation=0,
     )
 
-    # --- E1：物理 HEAD 前进但 desired 未 publish → restart 必须被拒 ---
-    _advance_head(code)
+    # --- E1：绑定树（release checkout）HEAD 前进但 desired 未 publish → restart 必须被拒 ---
+    # （EVO-20261007-9c6eccf3: 开发树前移不再是漂移源；E1 成因改为绑定树分歧。）
+    _advance_head(Path(store.read().code_root))
     rc = sc.main(
         ["restart", "--data-dir", str(data), "--target", "feishu", "--requester", "cli-test"]
     )
@@ -664,13 +668,15 @@ def test_cli_publish_without_artifacts_reports_missing_and_next_step(
 def test_structured_source_flags_dirty_tracked_worktree(tmp_path: Path) -> None:
     code = _make_repo(tmp_path / "feishu-code")
     deployment = sc.build_deployment(code_root=code, runtime_root=code, generation=1)
-    (code / "app.py").write_text("print('dirty')\n", encoding="utf-8")
+    # EVO-20261007-9c6eccf3: 绑定树为 release checkout，脏树改测绑定树。
+    bound = Path(deployment.code_root)
+    (bound / "app.py").write_text("print('dirty')\n", encoding="utf-8")
 
-    facts = sc._binding_problems_structured(deployment, code_root=code, runtime_root=code)
+    facts = sc._binding_problems_structured(deployment, code_root=bound, runtime_root=code)
     assert [fact.kind for fact in facts] == [BindingProblemKind.TRACKED_WORKTREE_DIRTY]
     assert facts[0].text == "code_root tracked worktree is dirty"
     assert [fact.text for fact in facts] == sc.verify_deployment_binding(
-        deployment, code_root=code, runtime_root=code
+        deployment, code_root=bound, runtime_root=code
     )
 
 
