@@ -817,6 +817,8 @@ class Settings:
             "method_reflection_min_tools": self.method_reflection_min_tools,
             "method_reflection_min_failures": self.method_reflection_min_failures,
             "method_reflection_timeout_s": self.method_reflection_timeout_s,
+            # EVO-20261007 B面: 记忆检索 method 候选尾注开关（可观测性投影，无路径/密钥）
+            "method_related_hint_enabled": self.method_related_hint_enabled,
             "self_eval_min_samples": self.self_eval_min_samples,
             "self_eval_span": self.self_eval_span,
             # P2-3: 文档检索入口状态（AI 可自查，不暴露路径细节）
