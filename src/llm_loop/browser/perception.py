@@ -38,6 +38,100 @@ from weakref import WeakValueDictionary
 from llm_loop.browser.predicate import evaluate_predicate as evaluate_browser_predicate
 from llm_loop.timekeeping import system_local_now
 
+SENSITIVE_VALUE_SENTINEL = "<redacted:sensitive>"
+
+# FR-6 (DESIGN-20261007-browser-semantic-guard): single-point value_text
+# redaction shared by the DOM and AX sensor paths (and later by FR-1
+# canonical fingerprints). Runs at the sensor layer, before
+# canonicalize/persist/diff/hydrate, so the sentinel — not the raw value —
+# is what every downstream consumer sees. Fail-closed: over-matching is an
+# acceptable safe-side outcome; extend tokens on evidence of real leakage,
+# never on speculation.
+_SENSITIVE_NAME_TOKENS = (
+    "password",
+    "passwd",
+    "pwd",
+    "passphrase",
+    "passcode",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "access_key",
+    "credential",
+    "private_key",
+    "otp",
+    "one_time_code",
+    "verification_code",
+    "verify_code",
+    "pin_code",
+    "pincode",
+    "pin number",
+    "ssn",
+    "social_security",
+    "密码",
+    "口令",
+    "验证码",
+    "动态密码",
+    "密钥",
+)
+
+
+def _matches_sensitive_name(name_text: str | None) -> bool:
+    lowered = (name_text or "").lower()
+    if not lowered:
+        return False
+    # Normalize separators so "verification code", "verification-code" and
+    # "verification_code" all hit the same token.
+    squashed = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "_", lowered)
+    return any(token in lowered or token in squashed for token in _SENSITIVE_NAME_TOKENS)
+
+
+def _redact_value_text(
+    *,
+    value: str,
+    tag: str | None = None,
+    input_type: str | None = None,
+    name: str | None = None,
+    role: str | None = None,
+    kind: str | None = None,
+) -> str:
+    if (input_type or "").lower() == "password":
+        return SENSITIVE_VALUE_SENTINEL
+    for label in (name, role, kind, tag):
+        if label and _matches_sensitive_name(str(label)):
+            return SENSITIVE_VALUE_SENTINEL
+    return value
+
+
+def _redact_sensor_value_text(node: dict[str, Any]) -> dict[str, Any]:
+    """FR-6 defense-in-depth: re-run the same policy on pre-parsed sensor nodes.
+
+    The capture backend already redacts at extraction time; this second pass
+    guarantees that any pre-parsed capture path (tests, adapters, injected
+    sensor nodes) sees identical treatment before canonicalize/persist/diff.
+    """
+    attributes = node.get("attributes")
+    if not isinstance(attributes, dict):
+        return node
+    value = attributes.get("value_text")
+    if not isinstance(value, str) or not value:
+        return node
+    redacted = _redact_value_text(
+        value=value,
+        tag=attributes.get("tag"),
+        input_type=attributes.get("input_type"),
+        name=attributes.get("name"),
+        role=attributes.get("role"),
+        kind=node.get("kind"),
+    )
+    if redacted is value:
+        return node
+    patched = dict(node)
+    patched["attributes"] = {**attributes, "value_text": redacted}
+    return patched
+
+
 _SENSOR_CONTRACT = {
     "id": "browser-dom-ax-v0.1",
     "active_sources": ["dom", "ax"],
@@ -485,6 +579,17 @@ class BrowserPerceptionStore:
         actual = _sha256({k: v for k, v in doc.items() if k != "bundle_sha256"})
         if not isinstance(expected, str) or expected != actual:
             return None, "integrity_error"
+        # FR-6 storage hygiene: lazily unlink expired bundles so retention is
+        # enforced on read, not merely reported (551MB of dead snapshots had
+        # accumulated because expiry only raised, never deleted). Bundles
+        # without a retention block (expires_at <= 0) are treated as
+        # non-expiring to preserve legacy semantics.
+        retention = doc.get("retention") or {}
+        expires_at = float(retention.get("expires_at_epoch") or 0)
+        if expires_at > 0 and self._now() > expires_at:
+            with suppress(OSError):
+                path.unlink()
+            return None, "expired"
         return doc, None
 
     def load_snapshot_bundle(self, session_id: str, snapshot_id: str) -> dict[str, Any]:
@@ -506,12 +611,13 @@ class BrowserPerceptionStore:
         """Return mechanical availability/retention facts without recapture or rebinding."""
         bundle, load_error = self._load(snapshot_id)
         if bundle is None:
+            expired = load_error == "expired"
             return {
-                "availability": "unavailable",
-                "reason": load_error or "unavailable",
+                "availability": "expired" if expired else "unavailable",
+                "reason": "retention_expired" if expired else (load_error or "unavailable"),
                 "bundle": None,
                 "expires_at_epoch": None,
-                "seconds_until_expiry": None,
+                "seconds_until_expiry": 0.0 if expired else None,
             }
         if bundle.get("owner_session_sha256") != _session_hash(session_id):
             return {
@@ -623,7 +729,10 @@ class BrowserPerceptionStore:
         if bundle is None:
             return {
                 "grounding_ref": ref,
-                "availability": "unavailable",
+                # expired bundles are unlinked at _load time (FR-6 storage
+                # hygiene) but keep their historical availability=expired
+                # contract for consumers.
+                "availability": "expired" if load_error == "expired" else "unavailable",
                 "reason": load_error or "unavailable",
             }
         if bundle.get("owner_session_sha256") != _session_hash(session_id):
@@ -1121,6 +1230,10 @@ class BrowserPerceptionAdapter:
         ax_nodes = [
             node for node in list(ax_sensor.get("nodes") or []) if not node.get("ignored")
         ]
+        dom_nodes = [_redact_sensor_value_text(node) for node in dom_nodes]
+        ax_nodes = [_redact_sensor_value_text(node) for node in ax_nodes]
+        dom_sensor["nodes"] = dom_nodes
+        ax_sensor["nodes"] = ax_nodes
         if len(dom_nodes) > self.capture_node_cap:
             dom_nodes = dom_nodes[: self.capture_node_cap]
             dom_sensor["truncated"] = True
@@ -2378,7 +2491,13 @@ class PlaywrightPageCaptureBackend:
                 if raw_attrs.get("type"):
                     dom_attributes["input_type"] = raw_attrs["type"]
                 if raw_attrs.get("value"):
-                    dom_attributes["value_text"] = raw_attrs["value"]
+                    dom_attributes["value_text"] = _redact_value_text(
+                        value=raw_attrs["value"],
+                        tag=tag,
+                        input_type=raw_attrs.get("type"),
+                        name=name,
+                        role=role,
+                    )
                 if raw_attrs.get("href"):
                     dom_attributes["href"] = raw_attrs["href"]
                 if idx < len(node_values):
@@ -2449,7 +2568,11 @@ class PlaywrightPageCaptureBackend:
             if name:
                 ax_attributes["name"] = name
             if value_text is not None:
-                ax_attributes["value_text"] = str(value_text)
+                ax_attributes["value_text"] = _redact_value_text(
+                    value=str(value_text),
+                    name=name,
+                    role=role,
+                )
             ax_state: dict[str, Any] = {"exists": True}
             if "disabled" in props:
                 ax_state["enabled"] = not bool(props["disabled"])
