@@ -212,7 +212,18 @@ class InteropService:
             payload = json.loads(f.read_text(encoding="utf-8"))
             payload["status"] = "done"
             target = done_dir / f.name
-            if target.exists():  # 防覆盖: done 已有同名 → 时间戳后缀
+            if target.exists():
+                # Same durable effect retried after its schedule ack failed: consume the
+                # duplicate pending file without creating a second user-visible done row.
+                try:
+                    existing = json.loads(target.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError):
+                    existing = {}
+                current_id = str(payload.get("id") or "")
+                if current_id and str(existing.get("id") or "") == current_id:
+                    f.unlink()
+                    return True
+                # Different effect accidentally reusing a filename must still be preserved.
                 target = done_dir / f"{f.stem}-{int(time.time())}{f.suffix}"
             target.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             f.unlink()

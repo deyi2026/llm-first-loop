@@ -65,33 +65,47 @@ DurableContract(Protocol):
 | 4 | ServiceControl | **部分符合** | CAS 语义强；desired 落盘原子性未核验 | 核验后归档；不改语义 |
 | 6 | usage.jsonl | **豁免（低风险 T1）** | 单行小 append，进程模型下交错窗口小；读侧跳坏行 | 显式豁免登记；不加锁 |
 | 7 | ExperienceStore | **迁移（T2，第 2 顺位）** | 裸 write_text 覆写，崩溃可致整卡损坏 | 换 tmp+replace；改动极小 |
-| 3a | **ScheduleStore 主状态** | **迁移（T2，首个 client）** | 非原子覆写+fail-open 丢写+当日 4 补丁集中爆发 | 见 §6 |
+| 3a | **ScheduleStore 主状态** | **符合（T2，首个 client）** | 原子可见性+目录 durability fence+跨进程锁+显式 commit outcome/reconcile | 见 §6 |
 | 3b | WakeAuthorizationStore | **符合（T2 参考）** | 锁+tmp+file fsync+replace+目录 fsync；HMAC scope 与 one-shot tombstone | 零改动；作为 schedule 迁移的同子系统参考 |
 
-## 6. 首个迁移 client：ScheduleStore 主状态（本轮不实施）
+## 6. 首个迁移 client：ScheduleStore 主状态（已实施）
 
 - 理由：a) 风险最高（fail-open + 非原子）；b) 事故密度最高（10-07 四补丁：`06e6a587c`/`ee75b861d`/`a829e254a`/`54fc378c4`）；c) 改动面最小（仅 `ScheduleStore._persist`/`_mutate` 的主状态落盘语义需要迁移）；d) 同子系统的 `WakeAuthorizationStore._write` 已有 tmp+fsync+replace+directory-fsync，可作为实现参考，**不得重复改造授权账本**。
 - 迁移验收（未来实施时）：i) 覆写经 tmp+`os.replace`+目录 fsync；ii) OSError 不再 fail-open（重试+显式降级事件）；iii) `recover()` 能报告截断/损坏条目数；iv) 现有 schedule 回归全绿。
 - 迁移顺序建议：#3a → #7 → #2（补 fsync）→ #4（核验归档）；#3b 不迁移。
 
-### 实施记录（2026-10-07 rev4：#3a 已实施）
+### 实施记录（2026-10-08 rev5：#3a + commit outcome 已闭合）
 
-- 写路径：`_persist`/`_mutate` 落盘统一走 `_commit_state` = tmp(O_CREAT|O_EXCL)→write→flush→file fsync→`os.replace`→目录 fsync；两个方法写路径的 fail-open（`except OSError: warning` 后吞掉）已移除，重试耗尽抛 `SchedulePersistError(OSError 子类)`。
+- 写路径分相：`_persist`/`_mutate` 统一走 `_commit_state`。**replace 前** = tmp(O_CREAT|O_EXCL)→write→flush→file fsync→`os.replace`，可有界重做完整 payload；**replace 后**只重试 directory fsync，绝不再次 rewrite/rename 同一 semantic mutation。
 - 单写者：POSIX `flock` 锁文件打开/加锁 OSError 不再 fail-open 成无锁写，改为 `SchedulePersistError` fail-closed；无 `fcntl` 的非 POSIX 兼容路径仍保留进程内 RLock fallback，并明确不声称跨进程 T2 保证。
 - 读侧边界：`recover()` 能识别非法条目后，`_load/refresh/_persist/_mutate` 同步把非 dict 导致的 `AttributeError` 纳入既有 fail-open 分类；顺序敏感回归证明“非法元素在第一条”不再崩初始化。
-- 显式降级语义（§7.2 落地）：不新增持久化面——异常向调用方传播；调度 tick 循环既有 except 捕获后 error 级记录（自愈继续），工具路径以失败结果回给模型。内存态不回滚，下次成功提交重新落盘。
+- **两类机械 outcome**：
+  - replace 前耗尽/锁失败/目录不可用 → `SchedulePersistError`, `outcome=definitely_not_committed`；`_mutate` 回滚到 mutation 前内存快照，调用点再声明该操作自己的 `retry_safe`。
+  - replace 已成功、directory fsync 耗尽 → `ScheduleCommitUncertainError`, `outcome=commit_outcome_uncertain`；在仍持 store flock 时逐字 readback intended payload，附 `expected_sha256 + visible_state(matches|mismatch|unreadable)`。禁止把异常解释成“肯定没写”后盲重放。
+- **reconcile policy（按 mutation，而不是按异常文本猜）**：
+
+| mutation | definitely-not-committed | uncertain + exact `matches` | 对外语义 |
+|---|---|---|---|
+| `add` | 内存回滚；wake 先行 authority/grant 补偿撤销；新注册可重试 | 不撤 authority；向调用方返回 sid + uncertain | user/model 必须先按 sid 核当前排程，禁止直接重复 add |
+| `cancel` | 同 sid 重试安全 | 仍向调用方报告 uncertain | cancel 是同 sid 幂等，可 reconcile/retry |
+| `claim_due` | 下 tick 可重试 | 接受可见 lease，不再 claim 第二次 | 纯内部生命周期 |
+| `retry_later` / `defer_wake_retry` / `note_wake_waiting` | 同 sid 重试安全 | 接受可见状态 | 纯内部生命周期 |
+| `mark_triggered` | ack 可重试；普通 notify effect 本身按 occurrence 幂等 | 接受可见 ack | 不因 durability uncertain 再做第二个 semantic mutation |
+| `note_wake_started` | **不可**当普通可重试：authority consume 可能已落 tombstone | 接受可见 started；authority `started` 保持 at-most-once | provider work 仍受 durable authority tombstone 约束 |
+| `recover_wake_grant` / re-arm | 同 sid 可重试 | 接受可见 adopt | 不新造 human authority |
+
+- **普通提醒 effect identity**：interop notify 使用 `schedule:<sid>:<count>` 与稳定文件名 `notify-<sid>-occ-<count>.json`。同 occurrence 的 ack 失败重试复用同一 effect；Interop done 已有同名且同 id 时只消费 pending，不再制造第二份用户可见通知。repeat 合法下一次因 `count` 增长获得新 identity。
+- **调用 surface**：`schedule` / `schedule_cancel` ToolResult 与 Web cancel API 都结构化暴露 `outcome/sid/visible_state/durability_confirmed/retry_safe`；程序只给机械事实，不替模型判断任务层是否要重新安排。
 - 边界钉子（实施中发现）：旧 `_mutate` 的宽 `except OSError` 顺带吞掉 `preserve_fields` 内的授权账本写失败——这是 wake 投递 `WAKE_DEFERRED` 降级语义的既有依赖（授权持久化失败必须阻止模型工作）。迁移后语义拆分：主状态写失败=显式抛出；授权投影失败=跳过本次提交（不写半套状态）+ warning，不抛。由 `test_schedule_durability.py::test_authority_projection_failure_skips_commit_without_raising` 与既有 `test_failed_authority_persistence_prevents_model_work` 双向钉住。
 - `recover()`（§7.1 决策：仅启动时调用，`_load` 记录报告）：exists/readable/corrupt/entries/invalid_entries/orphan_tmp；损坏基底处理策略不变（读侧 fail-open），但不再静默。
-- 验收 i–iii：`tests/unit/test_schedule_durability.py` 覆盖六点写入故障注入（temp 前 / temp 半写 / fsync 后 replace 前 / replace 后 dirfsync 前 / 损坏旧 state 重启恢复 / 重试耗尽与瞬态自愈），并补读侧非法结构顺序与 POSIX lock fail-closed 边界；iv：提交时全量 `not real_llm` 回归。
-- 最终验证：Schedule/Wake/Web surface/CodeArts/Arch guards focused = **135 passed**；全量 `not real_llm` = **7649 passed / 107 skipped / 16 deselected / 3 failed / 5 errors**，其中 3 fail 仍为 HOME 位于 `/var` 的已知 safety 环境基线，5 errors 仍为缺 Playwright Chromium executable，无本迁移新增产品失败。
-- registry：`schedule_store` migrate→conform。WakeAuthorizationStore（#3b）与 scheduler 其余逻辑零改动。
+- 验收：`tests/unit/test_schedule_durability.py` 保留六点写入故障注入，并新增 outcome 分型、pre-replace 内存回滚、post-replace no-rewrite、add/cancel surface、wake authority compensation/retention、claim/ack/started reconcile；scheduler/interop 测试覆盖 notification occurrence identity 与 durable done dedupe。最终 candidate full `not real_llm` = **7662 passed / 107 skipped / 16 deselected / 3 failed / 5 errors**；3 fail 均为 MCP sandbox `HOME=/var/.../home` 导致的既有 safety 环境红项，5 errors 均为缺 Playwright Chromium executable。为避免历史口径豁免，另在 detached pre-change `4704e3a20` 上只复跑这 8 项，精确复现 **3 failed / 5 errors**，故无本轮新增 full-suite regression。
+- registry：`schedule_store` 保持 `T2/conform`，但 rationale 升级为 outcome/reconcile 级保证。WakeAuthorizationStore（#3b）本轮仍零改动；为闭合普通 notify 重投幂等，仅调整 scheduler notify effect identity 与 Interop done 同-id 归档去重。
 
 ## 7. 开放决策点
 
 1. `recover()` 的调用时机：仅启动时 vs 每次 acquire 前（成本/收益待定）。
 2. fail-open 全局禁令是否有例外（如"宁可丢一条提醒也不能阻塞主循环"的 schedule 场景——若是，降级事件必须落 EventStore）。
 3. 契约归档位置：并入 P1-4 kernel 边界契约，或独立 ARCHITECTURE 章节。
-4. commit-uncertain 窗口：若 `os.replace` 已成功但 directory fsync 最终失败，当前主状态在本机可见已前进、但掉电耐久性未确认，因此仍抛 `SchedulePersistError`。T2 原子性本轮已满足，但调用级 idempotency/“失败后是否可盲重试”仍是独立问题；调用方应先按 sid/列表事实 reconcile，不能把异常等价为“肯定未提交”。
 
 ## 8. 与其他任务的关系
 

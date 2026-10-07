@@ -10,7 +10,11 @@ from collections.abc import Callable
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import current_session_id
-from llm_loop.core.scheduler import ScheduleStore
+from llm_loop.core.scheduler import (
+    ScheduleCommitUncertainError,
+    SchedulePersistError,
+    ScheduleStore,
+)
 from llm_loop.core.trace_leak.ingress_token import (
     current_ingress_session_id,
     current_ingress_token,
@@ -33,7 +37,8 @@ class ScheduleTool:
         "旧提醒无持久授权时需同会话真人 re-arm，窗口内未恢复才降级为通知。"
         "何时用: 需要延迟/周期性提醒（如 60 秒后检查后台任务、每 5 分钟汇报状态）。"
         "何时不用: 即时动作直接执行；一次性协调消息走 interop。"
-        "失败对策: 参数校验失败如实返回；存储异常 fail-open。"
+        "失败对策: 参数校验失败如实返回；存储失败区分 definitely_not_committed 与 "
+        "commit_outcome_uncertain，后者返回 sid/current-state 机械事实并明确禁止盲重试。"
     )
     parameters = {
         "type": "object",
@@ -263,13 +268,42 @@ class ScheduleTool:
                 if binding is not None:
                     wake_goal_id, wake_goal_generation = binding
 
-        sid = self._get_store().add(
-            message, after=after, at=at_ts, repeat_interval=repeat_interval,
-            max_count=max_count, wake=wake, session_id=wake_session_id,
-            wake_grant=wake_grant, goal_id=wake_goal_id,
-            goal_generation=wake_goal_generation,
-            subject_refs=subject_refs,
-        )
+        try:
+            sid = self._get_store().add(
+                message, after=after, at=at_ts, repeat_interval=repeat_interval,
+                max_count=max_count, wake=wake, session_id=wake_session_id,
+                wake_grant=wake_grant, goal_id=wake_goal_id,
+                goal_generation=wake_goal_generation,
+                subject_refs=subject_refs,
+            )
+        except ScheduleCommitUncertainError as exc:
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    "[schedule] commit_outcome_uncertain: "
+                    f"sid={exc.sid}; visible_state={exc.visible_state}; "
+                    "durability_confirmed=false; retry_safe=false。"
+                    "当前文件可见状态已机械核对；不要直接重复注册同一提醒，"
+                    "先按 sid/会话排程事实 reconcile。"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type=type(exc).__name__,
+                error_detail=str(exc),
+            )
+        except SchedulePersistError as exc:
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    "[schedule] definitely_not_committed: "
+                    f"sid={exc.sid or '-'}; "
+                    f"retry_safe={'true' if exc.retry_safe else 'false'}; error={exc}"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type=type(exc).__name__,
+                error_detail=str(exc),
+            )
         when = f"after {after}s" if after > 0 else (f"at {at}" if at else "immediate")
         if repeat_interval > 0:
             when += f"（每 {repeat_interval}s，最多 {max_count} 次）"
@@ -328,6 +362,35 @@ class ScheduleCancelTool:
             )
         try:
             removed = self._get_store().cancel(sid)
+        except ScheduleCommitUncertainError as exc:
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    "[schedule_cancel] commit_outcome_uncertain: "
+                    f"sid={sid}; visible_state={exc.visible_state}; "
+                    "durability_confirmed=false; "
+                    f"retry_safe={'true' if exc.retry_safe else 'false'}。"
+                    "取消是同 sid 幂等操作，可用同一 sid 重试/核对排程事实；"
+                    "不要创建替代提醒。"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type=type(exc).__name__,
+                error_detail=str(exc),
+            )
+        except SchedulePersistError as exc:
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    "[schedule_cancel] definitely_not_committed: "
+                    f"sid={sid}; retry_safe={'true' if exc.retry_safe else 'false'}; "
+                    f"error={exc}"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type=type(exc).__name__,
+                error_detail=str(exc),
+            )
         except Exception as exc:  # noqa: BLE001 — fail-open 如实回执
             return ToolResult(
                 status=ToolResultStatus.ERROR,

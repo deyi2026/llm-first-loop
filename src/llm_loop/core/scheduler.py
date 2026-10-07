@@ -9,6 +9,7 @@ capability 与失败重试。普通提醒只走 notify/UI，不进入模型 prom
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -185,7 +186,52 @@ _PERSIST_RETRY_DELAY_S = 0.05
 
 
 class SchedulePersistError(OSError):
-    """主状态落盘失败（有界重试耗尽）。禁止 fail-open 吞掉；调用方须显式降级。"""
+    """主状态确定未提交（replace 前失败/锁失败/目录不可用）。"""
+
+    outcome = "definitely_not_committed"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.operation = ""
+        self.sid = ""
+        self.retry_safe = False
+
+    def bind(
+        self, *, operation: str = "", sid: str = "", retry_safe: bool = False
+    ) -> SchedulePersistError:
+        self.operation = str(operation or "")
+        self.sid = str(sid or "")
+        self.retry_safe = bool(retry_safe)
+        return self
+
+
+class ScheduleCommitUncertainError(SchedulePersistError):
+    """replace 已发生，但 directory fsync 最终失败；禁止盲重放语义 mutation。"""
+
+    outcome = "commit_outcome_uncertain"
+
+    def __init__(
+        self,
+        *,
+        path: Path,
+        expected_sha256: str,
+        visible_state: str,
+        cause: OSError,
+    ) -> None:
+        super().__init__(f"schedule 主状态 replace 已生效但 durability 未确认: {cause}")
+        self.path = str(path)
+        self.expected_sha256 = str(expected_sha256)
+        self.visible_state = str(visible_state)
+        self.cause = cause
+        self.retry_safe = False
+
+    def __str__(self) -> str:
+        base = super().__str__()
+        return (
+            f"{base}; outcome={self.outcome}; visible_state={self.visible_state}; "
+            f"retry_safe={'true' if self.retry_safe else 'false'}; "
+            f"operation={self.operation or '-'}; sid={self.sid or '-'}"
+        )
 
 
 def _write_temp_exclusive(temp: Path, text: str) -> None:
@@ -207,14 +253,22 @@ def _fsync_directory(directory: Path) -> None:
 
 
 def _write_state_atomic(path: Path, text: str) -> None:
-    """T2 原子覆写：tmp → fsync → replace → 目录 fsync；任何失败都清理 tmp。"""
+    """原子可见性阶段：tmp → file fsync → replace；任何失败都清理 tmp."""
     temp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:12]}.tmp")
     try:
         _write_temp_exclusive(temp, text)
         os.replace(temp, path)
-        _fsync_directory(path.parent)
     finally:
         temp.unlink(missing_ok=True)
+
+
+def _payload_visible_state(path: Path, payload: str) -> str:
+    """持有 store flock 时核当前文件是否逐字等于 intended payload."""
+    try:
+        current = path.read_text(encoding="utf-8")
+    except OSError:
+        return "unreadable"
+    return "matches" if current == payload else "mismatch"
 
 
 class ScheduleStore:
@@ -336,24 +390,62 @@ class ScheduleStore:
             handle.close()
 
     def _commit_state(self, data: list[dict]) -> None:
-        """T2 提交：原子覆写 + 有界重试；耗尽抛 SchedulePersistError（红线：不吞写失败）。"""
+        """T2 提交：replace 前重写可重试；replace 后只重试 directory fsync."""
         payload = json.dumps(data, ensure_ascii=False)
+        payload_sha256 = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         last: OSError = OSError("schedule persist: no attempt recorded")
         for attempt in range(1, _PERSIST_ATTEMPTS + 1):
             if attempt > 1:
                 time.sleep(_PERSIST_RETRY_DELAY_S * (attempt - 1))
             try:
                 _write_state_atomic(self._path, payload)
-                return
+                break
             except OSError as exc:
                 last = exc
                 logger.warning(
-                    "schedule 主状态原子写失败（attempt %s/%s）: %s", attempt, _PERSIST_ATTEMPTS, exc
+                    "schedule 主状态 replace 前写失败（attempt %s/%s）: %s",
+                    attempt,
+                    _PERSIST_ATTEMPTS,
+                    exc,
                 )
-        logger.error("schedule 主状态落盘放弃（重试 %s 次，内存态未回滚）: %s", _PERSIST_ATTEMPTS, last)
-        raise SchedulePersistError(
-            f"schedule 主状态落盘失败（重试 {_PERSIST_ATTEMPTS} 次后放弃）: {last}"
-        ) from last
+        else:
+            logger.error(
+                "schedule 主状态确定未提交（replace 前重试 %s 次耗尽）: %s",
+                _PERSIST_ATTEMPTS,
+                last,
+            )
+            raise SchedulePersistError(
+                f"schedule 主状态确定未提交（replace 前重试 {_PERSIST_ATTEMPTS} 次后放弃）: {last}"
+            ) from last
+
+        last_dir: OSError = OSError("schedule directory fsync: no attempt recorded")
+        for attempt in range(1, _PERSIST_ATTEMPTS + 1):
+            if attempt > 1:
+                time.sleep(_PERSIST_RETRY_DELAY_S * (attempt - 1))
+            try:
+                _fsync_directory(self._path.parent)
+                return
+            except OSError as exc:
+                last_dir = exc
+                logger.warning(
+                    "schedule 主状态 replace 后目录 fsync 失败（attempt %s/%s）: %s",
+                    attempt,
+                    _PERSIST_ATTEMPTS,
+                    exc,
+                )
+        visible_state = _payload_visible_state(self._path, payload)
+        logger.error(
+            "schedule 主状态 commit outcome uncertain：replace 已发生但目录 fsync 重试耗尽；"
+            "visible_state=%s expected_sha256=%s",
+            visible_state,
+            payload_sha256,
+        )
+        raise ScheduleCommitUncertainError(
+            path=self._path,
+            expected_sha256=payload_sha256,
+            visible_state=visible_state,
+            cause=last_dir,
+        ) from last_dir
 
     def _persist(self) -> None:
         """跨进程安全持久化: 锁内重读磁盘 → 合并（保留其他进程新增）→ T2 原子覆写.
@@ -398,8 +490,8 @@ class ScheduleStore:
 
         删除/修改类操作必须走本方法：先以磁盘最新状态为基底，再应用操作，
         避免"内存已删、persist 又读回"或"覆盖其他进程新增"两类丢数据。
-        写失败不再 fail-open：_commit_state 重试耗尽后抛 SchedulePersistError
-        （fn 已应用于内存、不回滚；下次成功提交会重新落盘）。授权投影
+        replace 前确定未提交时回滚内存 mutation；replace 后 uncertain 保留 intended
+        内存态并显式抛 ScheduleCommitUncertainError，调用方不得盲重放。授权投影
         （preserve_fields）失败是 authority 域降级：跳过本次提交不写半套状态。
         """
         try:
@@ -418,6 +510,7 @@ class ScheduleStore:
                 except (OSError, json.JSONDecodeError, ValueError, TypeError, AttributeError):
                     self._entries.clear()  # 磁盘损坏 → 空基底（读侧 fail-open）
             with self._lock:
+                before_data = [e.to_dict() for e in self._entries.values()]
                 fn(self._entries)
                 data = [e.to_dict() for e in self._entries.values()]
                 try:
@@ -426,7 +519,50 @@ class ScheduleStore:
                     # 同 _persist：authority 域降级语义，非主状态 fail-open 回潮。
                     logger.warning("schedule 主状态提交中止（授权投影写失败）: %s", exc)
                     return
-            self._commit_state(data)
+            try:
+                self._commit_state(data)
+            except ScheduleCommitUncertainError:
+                raise
+            except SchedulePersistError:
+                with self._lock:
+                    self._entries = {}
+                    for d in before_data:
+                        e = ScheduleEntry.from_dict(d)
+                        self._entries[e.sid] = e
+                raise
+
+    def _mutate_reconciled(
+        self,
+        fn: Callable[[dict[str, ScheduleEntry]], None],
+        *,
+        operation: str,
+        sid: str = "",
+        retry_safe: bool,
+        accept_visible_match: bool,
+    ) -> None:
+        """Bind mutation identity and reconcile post-replace uncertainty mechanically.
+
+        visible_state=matches is an exact whole-file readback while the store flock is
+        still held. Internal lifecycle transitions may accept that visible state and
+        continue; user-facing creation/cancellation keep surfacing uncertainty because
+        durability confirmation itself is part of their contract.
+        """
+        try:
+            self._mutate(fn)
+        except ScheduleCommitUncertainError as exc:
+            exc.bind(operation=operation, sid=sid, retry_safe=retry_safe)
+            if accept_visible_match and exc.visible_state == "matches":
+                logger.warning(
+                    "schedule mutation durability uncertain but visible state matches; "
+                    "reconciled without semantic replay: operation=%s sid=%s",
+                    operation,
+                    sid or "-",
+                )
+                return
+            raise
+        except SchedulePersistError as exc:
+            exc.bind(operation=operation, sid=sid, retry_safe=retry_safe)
+            raise
 
     def add(
         self, message: str, *, after: float = 0, at: float | None = None,
@@ -450,9 +586,31 @@ class ScheduleStore:
         # Capability must exist before the persisted entry becomes claimable. This removes
         # the after=0 window where a scheduler could see wake=True but no grant yet.
         if wake and wake_grant is not None:
-            self._authority.issue(entry.to_dict(), wake_grant)
+            authority_issued = self._authority.issue(entry.to_dict(), wake_grant)
             self._set_wake_grant(sid, wake_grant)
-        self._mutate(lambda es: es.__setitem__(sid, entry))
+        else:
+            authority_issued = False
+        try:
+            self._mutate(lambda es: es.__setitem__(sid, entry))
+        except ScheduleCommitUncertainError as exc:
+            exc.bind(operation="add", sid=sid, retry_safe=False)
+            raise
+        except SchedulePersistError as exc:
+            # 主状态确定未提交：先行签发的 wake authority 不得留下可恢复 pending。
+            self.clear_wake_grant(sid)
+            if authority_issued:
+                try:
+                    self._authority.revoke(sid)
+                except (OSError, ValueError, TypeError):
+                    # 无 schedule entry 时孤儿 authority 不能自行触发；保留审计痕迹，
+                    # 但不要用补偿异常覆盖 definitely-not-committed 事实。
+                    logger.warning(
+                        "schedule add 失败后的 wake authority 补偿失败 sid=%s",
+                        sid,
+                        exc_info=True,
+                    )
+            exc.bind(operation="add", sid=sid, retry_safe=True)
+            raise
         return sid
 
     def _wake_grant_key(self, sid: str) -> tuple[str, str]:
@@ -494,7 +652,13 @@ class ScheduleStore:
             elif owner:
                 raise ValueError("wake already started")
 
-        self._mutate(_mark)
+        self._mutate_reconciled(
+            _mark,
+            operation="note_wake_started",
+            sid=sid,
+            retry_safe=False,
+            accept_visible_match=True,
+        )
         if owner and not marked:
             raise ValueError("wake start could not be persisted")
 
@@ -533,12 +697,24 @@ class ScheduleStore:
             e.lease_until = 0.0
             result[0] = WakeDefer(True, False, count, delay)
 
-        self._mutate(_defer)
+        self._mutate_reconciled(
+            _defer,
+            operation="defer_wake_retry",
+            sid=sid,
+            retry_safe=True,
+            accept_visible_match=True,
+        )
         return result[0]
 
     def cancel(self, sid: str) -> bool:
         removed: list[bool] = []
-        self._mutate(lambda es: removed.append(es.pop(sid, None) is not None))
+        self._mutate_reconciled(
+            lambda es: removed.append(es.pop(sid, None) is not None),
+            operation="cancel",
+            sid=sid,
+            retry_safe=True,
+            accept_visible_match=False,
+        )
         self.clear_wake_grant(sid)
         self._authority.revoke(sid)
         return bool(removed and removed[0])
@@ -550,7 +726,13 @@ class ScheduleStore:
                 e.wake_delivery_state = "queued"
                 e.wake_wait_reason = reason
 
-        self._mutate(_note)
+        self._mutate_reconciled(
+            _note,
+            operation="note_wake_waiting",
+            sid=sid,
+            retry_safe=True,
+            accept_visible_match=True,
+        )
 
     def authority_state(self, sid: str) -> str:
         row = next((e for e in self.list() if e["sid"] == sid), None)
@@ -574,7 +756,13 @@ class ScheduleStore:
             e.wake_wait_reason = ""
             adopted.append(True)
 
-        self._mutate(_adopt)
+        self._mutate_reconciled(
+            _adopt,
+            operation="recover_wake_grant",
+            sid=sid,
+            retry_safe=True,
+            accept_visible_match=True,
+        )
         if not adopted:
             return None
         self._set_wake_grant(sid, grant)
@@ -651,7 +839,12 @@ class ScheduleStore:
                 e.lease_until = now + max(1.0, lease_s)
                 claimed.append(e)
 
-        self._mutate(_claim)
+        self._mutate_reconciled(
+            _claim,
+            operation="claim_due",
+            retry_safe=True,
+            accept_visible_match=True,
+        )
         return claimed
 
     def retry_later(self, sid: str, owner: str, *, delay_s: float = 5.0) -> None:
@@ -666,7 +859,13 @@ class ScheduleStore:
             e.lease_owner = ""
             e.lease_until = 0.0
 
-        self._mutate(_retry)
+        self._mutate_reconciled(
+            _retry,
+            operation="retry_later",
+            sid=sid,
+            retry_safe=True,
+            accept_visible_match=True,
+        )
 
     def mark_triggered(
         self, sid: str, now: float | None = None, *, owner: str = ""
@@ -682,7 +881,13 @@ class ScheduleStore:
             completed.append(True)
             _advance(entries, sid, now)
 
-        self._mutate(_ack)
+        self._mutate_reconciled(
+            _ack,
+            operation="mark_triggered",
+            sid=sid,
+            retry_safe=True,
+            accept_visible_match=True,
+        )
         if completed:
             self.clear_wake_grant(sid)
             self._authority.revoke(sid)
@@ -825,7 +1030,13 @@ def rearm_wake_grants(
             _adopted.append(True)
 
         # 不触碰 lease：他进程若正持有 claim，到期后自然让渡给 owner（本进程）。
-        store._mutate(_adopt)
+        store._mutate_reconciled(
+            _adopt,
+            operation="rearm_wake_grant",
+            sid=sid,
+            retry_safe=True,
+            accept_visible_match=True,
+        )
         if not adopted:
             continue
         store._set_wake_grant(sid, grant)
@@ -883,6 +1094,16 @@ class SchedulerThread:
                             # WAKE_DEFERRED：交付方已自行 defer（条目保留、退避
                             # 已排）；此时 ack 会把等待 re-arm 的 wake 提前消费掉。
                             self._store.mark_triggered(e.sid, owner=self._owner)
+                    except ScheduleCommitUncertainError as exc:
+                        # replace 已发生：禁止再用 retry_later 追加第二个 semantic mutation。
+                        # 下一 tick/进程从磁盘 SoT reconcile；这里只报告 durability 未确认。
+                        logger.error(
+                            "提醒状态 commit outcome uncertain（禁止盲 retry_later）: "
+                            "sid=%s visible_state=%s",
+                            e.sid,
+                            exc.visible_state,
+                            exc_info=True,
+                        )
                     except Exception:  # noqa: BLE001 — 单条失败保留提醒并退避重试
                         logger.warning("提醒触发失败（保留并重试）: %s", e.sid, exc_info=True)
                         self._store.retry_later(
@@ -914,10 +1135,14 @@ class SchedulerThread:
         inbox = data_root / "interop" / "lfl_to_dsh" / "pending"
         inbox.mkdir(parents=True, exist_ok=True)
         now = _dt.now(UTC)
-        ts = now.strftime("%Y%m%d-%H%M%S")
-        fname = f"{now.strftime('%Y%m%d')}-sched-{ts}-{entry.sid}.json"
+        # Effect identity is sid + occurrence.  Ack persistence failure may cause the same
+        # occurrence to be delivered again; reusing one filename/id makes that retry
+        # mechanically idempotent instead of emitting another user-visible notification.
+        occurrence = max(0, int(entry.count))
+        effect_id = f"schedule:{entry.sid}:{occurrence}"
+        fname = f"notify-{entry.sid}-occ-{occurrence}.json"
         payload = {
-            "id": f"{now.strftime('%Y%m%d')}-sched-{entry.sid}",
+            "id": effect_id,
             "from": "lfl-scheduler",
             "to": "lfl",
             "ts": now.isoformat(),

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from llm_loop.core.scheduler import ScheduleStore
+from llm_loop.core.scheduler import ScheduleCommitUncertainError, ScheduleStore
 from llm_loop.core.trace_leak.ingress_token import delegate_ingress, issue_ingress
 from llm_loop.web import build_app
 
@@ -138,6 +138,33 @@ def test_schedule_cancel_is_owner_scoped_and_explicit(build_test_engine) -> None
 
     again = client.post(f"/api/v1/sessions/{sid}/schedule/{target}/cancel")
     assert again.status_code == 404
+
+
+def test_schedule_cancel_surfaces_commit_uncertain(build_test_engine, monkeypatch) -> None:
+    engine, _ = build_test_engine([])
+    sid = engine.session.create()
+    store = _store(engine)
+    target = store.add("uncertain cancel", after=60.0, session_id=sid)
+    client = _client(engine)
+    client.app.state.schedule_store = store
+
+    def uncertain_cancel(_sid: str) -> bool:
+        raise ScheduleCommitUncertainError(
+            path=store._path,
+            expected_sha256="deadbeef",
+            visible_state="matches",
+            cause=OSError(5, "dir fsync failed"),
+        ).bind(operation="cancel", sid=target, retry_safe=True)
+
+    monkeypatch.setattr(store, "cancel", uncertain_cancel)
+    resp = client.post(f"/api/v1/sessions/{sid}/schedule/{target}/cancel")
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["error"] == "schedule_commit_uncertain"
+    assert body["sid"] == target
+    assert body["visible_state"] == "matches"
+    assert body["retry_safe"] is True
+    assert body["durability_confirmed"] is False
 
 
 def test_capability_manifest_declares_schedule(build_test_engine) -> None:

@@ -10,6 +10,7 @@ from llm_loop.core.run_context import current_session_id
 from llm_loop.core.scheduler import (
     WAKE_DEFERRED,
     WAKE_MAX_RETRIES,
+    ScheduleCommitUncertainError,
     ScheduleEntry,
     SchedulerThread,
     ScheduleStore,
@@ -177,6 +178,44 @@ def test_scheduler_false_delivery_retries_without_losing_entry(tmp_path):
         assert len(entries) == 1 and entries[0]["sid"] == sid
         assert entries[0]["trigger_at"] > time.time()
         assert entries[0]["lease_owner"] == ""
+    finally:
+        th.stop()
+
+
+def test_scheduler_uncertain_ack_does_not_blind_retry_later(tmp_path, monkeypatch):
+    """ack outcome uncertain 时不得再做 retry_later 二次语义变更；下 tick 从磁盘 reconcile."""
+    path = tmp_path / "schedule.json"
+    store = ScheduleStore(path)
+    sid = store.add("once", after=0)
+    retry_calls: list[str] = []
+    notified: list[str] = []
+
+    def notify(entry):
+        notified.append(entry.sid)
+        return True
+
+    def uncertain_ack(_sid, now=None, *, owner=""):
+        raise ScheduleCommitUncertainError(
+            path=path,
+            expected_sha256="deadbeef",
+            visible_state="matches",
+            cause=OSError(5, "dir fsync failed"),
+        )
+
+    def forbidden_retry(sid_arg, owner, *, delay_s=5.0):
+        retry_calls.append(sid_arg)
+
+    monkeypatch.setattr(store, "mark_triggered", uncertain_ack)
+    monkeypatch.setattr(store, "retry_later", forbidden_retry)
+    th = SchedulerThread(store, tick_interval=0.02, notify=notify)
+    th.start()
+    try:
+        deadline = time.time() + 1
+        while not notified and time.time() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.05)
+        assert notified == [sid]
+        assert retry_calls == []
     finally:
         th.stop()
 

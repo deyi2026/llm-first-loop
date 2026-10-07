@@ -139,6 +139,25 @@ def test_notify_first_and_duplicate_are_observability_only(tmp_path, monkeypatch
     assert json.loads(done.read_text())["status"] == "done"
 
 
+def test_notify_same_effect_id_and_filename_archives_idempotently(tmp_path):
+    """同一 durable effect retry 不得在 done/ 制造第二份用户可见通知."""
+    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    inbox.mkdir(parents=True)
+    eng = _bare_engine(tmp_path)
+    name = "notify-sched-stable1-occ-0.json"
+    msg_id = "schedule:sched-stable1:0"
+    _write_msg(inbox, name, "notify", "same occurrence", ref="sched-stable1", msg_id=msg_id)
+    assert eng._interop_inbox_messages() == []
+
+    done_dir = tmp_path / "interop" / "lfl_to_dsh" / "done"
+    assert [p.name for p in done_dir.glob("*.json")] == [name]
+
+    _write_msg(inbox, name, "notify", "same occurrence", ref="sched-stable1", msg_id=msg_id)
+    assert eng._interop_inbox_messages() == []
+    assert not (inbox / name).exists()
+    assert [p.name for p in done_dir.glob("*.json")] == [name]
+
+
 def test_notify_action_trace_has_zero_prompt_chars(tmp_path, monkeypatch):
     """notify 的结构化 observability 保留，但内容不进入模型."""
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
