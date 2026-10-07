@@ -1251,6 +1251,9 @@ def build_engine(
                     # (default off = exact pre-FR-1 behavior).
                     guard_collector=_browser_host.collect_guard_observation,
                     guard_enabled=settings.browser_semantic_guard_enabled,
+                    # FR-2 settle wait rides the same actuator channel;
+                    # env-gated the same way (default off = pre-FR-2 behavior).
+                    settle_enabled=settings.browser_dispatch_settle_enabled,
                 )
                 _browser_semantic_execute = BrowserSemanticExecuteTool(
                     perception=_browser_adapter,
