@@ -1245,6 +1245,12 @@ def build_engine(
                     receipt_store=BrowserActionReceiptStore(Path(settings.data_dir) / "browser_action"),
                     capture_backend=_browser_host,
                     actuator=_browser_actuator,
+                    # FR-1 local semantic guard (DESIGN-20261007): additive
+                    # pre-dispatch gate. Collector is the host-bounded
+                    # read-only probe; the switch stays explicit env-gated
+                    # (default off = exact pre-FR-1 behavior).
+                    guard_collector=_browser_host.collect_guard_observation,
+                    guard_enabled=settings.browser_semantic_guard_enabled,
                 )
                 _browser_semantic_execute = BrowserSemanticExecuteTool(
                     perception=_browser_adapter,
