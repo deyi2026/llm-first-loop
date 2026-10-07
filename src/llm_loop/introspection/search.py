@@ -211,6 +211,7 @@ class RecordSearcher:
         synopsis_store: Any | None = None,
         synopsis_source_resolver: Any | None = None,
         multiquery_shadow: Any | None = None,
+        method_related_hint_enabled: bool = True,
     ) -> None:
         self._audit_dir = Path(audit_dir)
         self._memory = memory_store
@@ -232,6 +233,9 @@ class RecordSearcher:
         # R3(P0-3/D11): experience 检索诊断透传——search() 入口重置，experience/all 路径回填
         self._last_diagnostics: dict[str, Any] | None = None
         self._last_semantic_diagnostics: dict[str, Any] | None = None
+        # EVO-20261007 method 消费闭环（B 面）: 记忆检索附带 method 候选
+        self._method_related_hint_enabled = bool(method_related_hint_enabled)
+        self._last_related_methods: list[dict] | None = None
 
     @property
     def last_diagnostics(self) -> dict[str, Any] | None:
@@ -246,6 +250,44 @@ class RecordSearcher:
     def semantic_diagnostics(self) -> dict[str, Any] | None:
         """最近一次 semantic 检索的机械诊断，不包含查询正文或记录内容."""
         return self._last_semantic_diagnostics
+
+    @property
+    def related_methods(self) -> list[dict] | None:
+        """最近一次记忆类检索（experience/lesson/memory）同 query 附带的 Method 候选卡片.
+
+        每次 search() 入口重置为 None，仅记忆类 kind 且 query 非空、method 命中时回填
+        （最多 2 张，compact 卡，不含正文）。零命中/其他 kind/开关关闭时为 None——
+        工具层据此零噪声降级（无尾注）。卡片是检索候选，task_applicability 未评估。
+        """
+        return self._last_related_methods
+
+    def _maybe_collect_related_methods(self, kind: str, query: str) -> None:
+        """记忆检索附带 method 候选（EVO-20261007 消费闭环 B 面）.
+
+        条件全部满足才计算：开关开 + kind ∈ {experience, lesson, memory} + query 非空
+        且非 exact-ref 水合形态。附带用同一 query 走 _search_method（词法/语义 RRF），
+        相关性由检索器背书；fail-open：附带失败不影响主结果。
+        """
+        self._last_related_methods = None
+        if not self._method_related_hint_enabled:
+            return
+        if kind not in {"experience", "lesson", "memory"}:
+            return
+        raw = str(query or "").strip()
+        if not raw or raw.lower().startswith(("method:", "memory:", "experience:", "lesson:", "rule:")):
+            return
+        if self._method_store is None:
+            return
+        # 附带检索不得覆盖主结果的诊断透传（_search_method 会写语义诊断）——保存/恢复
+        saved_diag = (self._last_diagnostics, self._last_semantic_diagnostics)
+        try:
+            rows = self._search_method(raw, 2)
+        except Exception:
+            return
+        finally:
+            self._last_diagnostics, self._last_semantic_diagnostics = saved_diag
+        if rows:
+            self._last_related_methods = rows
 
     def search(
         self,
@@ -268,10 +310,12 @@ class RecordSearcher:
         # R3(P0-3): 每次检索重置诊断，防上一次 experience/all 检索的陈旧诊断跨 kind 泄漏
         self._last_diagnostics = None
         self._last_semantic_diagnostics = None
+        self._last_related_methods = None
         if kind not in _VALID_KINDS:
             raise InvalidSearchKindError(f"kind '{kind}' 不在可选范围: {', '.join(sorted(_VALID_KINDS))}")
         special = self._search_special(kind, query, limit, session_id)
         if special is not None:
+            self._maybe_collect_related_methods(kind, query)  # B 面: 记忆检索附带 method 候选
             return special
 
         # P1-4: kind=all 时各 kind 均匀分配 limit（避免前序 kind 挤占、后序永远不可见）

@@ -527,7 +527,8 @@ class Settings:
     # ── EVO-20260813-9ced1f4c: 工具执行瀑布（pipeline.py，默认全关零回归）──
     tool_pipeline_enabled: bool = False  # 总开关（TOOL_PIPELINE_ENABLED）
     tool_materialize_enabled: bool = False  # 参数物化+深冻结（TOOL_MATERIALIZE_ENABLED）
-    tool_guard_enabled: bool = False  # 单调守卫（TOOL_GUARD_ENABLED）
+    # tool_guard_enabled 已按 ai_rules 约束4 回收（2026-10-07：不立项内核 deny 集，配置链路删除；
+    # MonotonicGuard/set_guard 保留为已测 API，装配入口移除）
     # Provider-view only: collapse runs of >=3 byte-equivalent tool action+observation groups.
     # Session/EventLog remain untouched; default off until local canary is explicitly enabled.
     exact_duplicate_tool_fold: bool = False  # LFL_EXACT_DUPLICATE_TOOL_FOLD
@@ -609,6 +610,10 @@ class Settings:
     semantic_method_enabled: bool = False
     semantic_docs_enabled: bool = False
     semantic_experience_enabled: bool = False
+    # EVO-20261007 method 消费闭环（B 面）: 记忆类检索（experience/lesson/memory）回执
+    # 附带同 query 的 Method 候选尾注（≤2 张 compact 卡，零命中不渲染）。默认开；
+    # 关闭即回到纯模型自律触发（A 面 schema 锚点仍生效）。
+    method_related_hint_enabled: bool = True
     retrieve_timeout_s: float = 1.0
     retrieve_semantic_top_k: int = (
         20  # auto-adaptive: env 未显式设置时按检索分数自适应（<0.3→10/>0.7→30，硬上限 50）
@@ -775,7 +780,6 @@ class Settings:
             "tool_schema_lazy": self.tool_schema_lazy,
             "tool_pipeline_enabled": self.tool_pipeline_enabled,
             "tool_materialize_enabled": self.tool_materialize_enabled,
-            "tool_guard_enabled": self.tool_guard_enabled,
             "exact_duplicate_tool_fold": self.exact_duplicate_tool_fold,
             "runner_background": self.runner_background,
             "cache_hit_show_in_answer": self.cache_hit_show_in_answer,
@@ -1103,7 +1107,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         tool_schema_lazy=env_bool("TOOL_SCHEMA_LAZY", True),  # EVO-20260814: 默认开
         tool_pipeline_enabled=env_bool("TOOL_PIPELINE_ENABLED", False),
         tool_materialize_enabled=env_bool("TOOL_MATERIALIZE_ENABLED", False),
-        tool_guard_enabled=env_bool("TOOL_GUARD_ENABLED", False),
         exact_duplicate_tool_fold=env_bool("LFL_EXACT_DUPLICATE_TOOL_FOLD", False),
         runner_background=env_bool("RUNNER_BACKGROUND", True),  # EVO 后台 run 改造: 默认开
         # EVO-20260819-2254e3b4 方案B（用户批准）: 回答末尾常态展示缓存命中率
@@ -1159,6 +1162,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         semantic_method_enabled=env_bool("SEMANTIC_METHOD_ENABLED", False),
         semantic_docs_enabled=env_bool("SEMANTIC_DOCS_ENABLED", False),
         semantic_experience_enabled=env_bool("SEMANTIC_EXPERIENCE_ENABLED", False),
+        method_related_hint_enabled=env_bool("METHOD_RELATED_HINT_ENABLED", True),  # EVO-20261007 B 面
         retrieve_timeout_s=float(env_int("RETRIEVE_TIMEOUT_S", 1)),
         retrieve_semantic_top_k=env_int("RETRIEVE_SEMANTIC_TOP_K", 20),
         retrieval_multiquery_mode=env_one(_env_multiquery_mode, "RETRIEVAL_MULTIQUERY_MODE"),
