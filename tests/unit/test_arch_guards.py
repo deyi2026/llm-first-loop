@@ -838,3 +838,77 @@ def test_loop_engine_mixin_ratchet():
     assert len(current) <= len(head_bases), (
         f"基类数 {len(current)} > HEAD {len(head_bases)}：违反单调递减棘轮（R9-P5-01）"
     )
+
+
+# ---------------------------------------------------------------------------
+# P0-3 扩张冻结（AUDIT-20261007 rev2 / 用户授权 2026-10-07）：顶层单元登记制
+# ---------------------------------------------------------------------------
+
+
+def _scan_top_level_units(base: Path) -> tuple[set[str], set[str]]:
+    """src/llm_loop 直下单元扫描：返回 (packages, modules)。
+
+    纯函数——tmp_path 构造树单测直调；真实树传 ``SRC / "llm_loop"``。
+    ``__pycache__`` 与 ``__init__.py`` 不计；**untracked 新目录/新文件同样在
+    扫描面内**（扩张冻结的设防对象就是"未经登记的新增"，含未提交者）。
+    """
+    pkgs: set[str] = set()
+    mods: set[str] = set()
+    if not base.exists():
+        return pkgs, mods
+    for p in sorted(base.iterdir()):
+        if p.name == "__pycache__":
+            continue
+        if p.is_dir():
+            pkgs.add(p.name)
+        elif p.is_file() and p.suffix == ".py" and p.name != "__init__.py":
+            mods.add(p.name)
+    return pkgs, mods
+
+
+def test_top_level_units_registered():
+    """[新增顶层包/能力文件未登记] → [CI FAIL]（P0-3 扩张冻结，EARS 断言面）.
+
+    - 未登记的新包/新文件 → FAIL（登记通道：baseline ``top_level_units`` 节 +
+      ``guard(r9):`` 前缀提交——scripts/r9_commit_check.sh 规则④机检）。
+    - 已登记但磁盘消失（拆分/更名后未清理）→ FAIL（防登记簿腐化成纸面）。
+    - 登记值（plane 归属）必须非空；exemptions 须带非空 reason。
+    """
+    units = _load_baseline()["top_level_units"]
+    reg_pkgs, reg_mods = set(units["packages"]), set(units["modules"])
+    exempt = set(units["exemptions"])
+    problems: list[str] = []
+    for name, plane in {**units["packages"], **units["modules"]}.items():
+        if not str(plane).strip():
+            problems.append(f"  {name}: 登记的 plane 归属为空（登记必须含六面/kernel/delivery 归属）")
+    for name in exempt:
+        if not str(units["exemptions"][name]).strip():
+            problems.append(f"  exemptions[{name}]: 必须带非空 reason")
+    real_pkgs, real_mods = _scan_top_level_units(SRC / "llm_loop")
+    for name in sorted((real_pkgs - reg_pkgs) - exempt):
+        problems.append(f"  未登记顶层包: src/llm_loop/{name}/")
+    for name in sorted((real_mods - reg_mods) - exempt):
+        problems.append(f"  未登记能力文件: src/llm_loop/{name}")
+    for name in sorted((reg_pkgs - real_pkgs) - exempt):
+        problems.append(f"  登记已失效（包不存在，请随拆分提交清理）: {name}")
+    for name in sorted((reg_mods - real_mods) - exempt):
+        problems.append(f"  登记已失效（文件不存在，请随拆分提交清理）: {name}")
+    assert not problems, (
+        "P0-3 扩张冻结违例（新顶层单元必须登记归属或显式豁免，AUDIT-20261007 rev2）：\n"
+        + "\n".join(problems)
+        + "\n登记：tests/guards/function_size_baseline.json → top_level_units 节 + guard(r9): 前缀提交"
+    )
+
+
+def test_top_level_scan_semantics(tmp_path):
+    """tmp 构造树：包/模块/排除项（__pycache__、__init__.py、非 py）四形态。"""
+    base = tmp_path / "src" / "llm_loop"
+    (base / "pkg_a").mkdir(parents=True)
+    (base / "__pycache__").mkdir()
+    (base / "pkg_a" / "m.py").write_text("", encoding="utf-8")
+    (base / "top.py").write_text("", encoding="utf-8")
+    (base / "__init__.py").write_text("", encoding="utf-8")
+    (base / "notes.txt").write_text("", encoding="utf-8")
+    pkgs, mods = _scan_top_level_units(base)
+    assert pkgs == {"pkg_a"}  # __pycache__ 排除
+    assert mods == {"top.py"}  # __init__.py 与非 py 排除
