@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,8 @@ from llm_loop.introspection.search import (
     InvalidSearchKindError,
     InvalidSearchQueryError,
 )
+
+_LOGGER = logging.getLogger("llm_loop.introspection.tools_status")
 
 # R3(P1-2): hint 与 _VALID_KINDS 同源生成（事实源唯一，消除手写清单漂移；
 # 下划线名跨模块导入有 test_introspection.py:391 既有先例）
@@ -710,7 +713,17 @@ def _format_related_methods_hint(search_fn: Any) -> str | None:
         owner = getattr(search_fn, "__self__", None)
         rows = getattr(owner, "related_methods", None)
     if not rows:
+        _LOGGER.info(
+            "method_hint: hint omitted at tool layer fn_type=%s owner_type=%s",
+            type(search_fn).__name__,
+            type(getattr(search_fn, "__self__", None)).__name__,
+        )
         return None
+    _LOGGER.info(
+        "method_hint: %d row(s) formatted at tool layer fn_type=%s",
+        len(rows),
+        type(search_fn).__name__,
+    )
     cards = "; ".join(
         "{} ({}, status={}, task_applicability=not_evaluated)".format(
             _single_line(str(r.get("summary", "")), 100),

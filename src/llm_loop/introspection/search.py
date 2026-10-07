@@ -296,9 +296,19 @@ class RecordSearcher:
             self._last_diagnostics, self._last_semantic_diagnostics = saved_diag
         if rows:
             self._last_related_methods = rows
-            _LOGGER.debug("method_hint: %d candidate(s) attached", len(rows))
+            _LOGGER.info(
+                "method_hint: %d candidate(s) attached kind=%s query_prefix=%r",
+                len(rows),
+                kind,
+                raw[:40],
+            )
         else:
-            _LOGGER.debug("method_hint: zero method rows (len=%d query prefix)", len(raw))
+            _LOGGER.info(
+                "method_hint: zero method rows kind=%s len=%d query_prefix=%r",
+                kind,
+                len(raw),
+                raw[:40],
+            )
 
     def search(
         self,
