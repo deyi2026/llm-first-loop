@@ -500,6 +500,21 @@ class ScheduleStore:
 
         def _claim(entries: dict[str, ScheduleEntry]) -> None:
             for e in entries.values():
+                live_other_owner = (
+                    e.wake_owner_pid and e.wake_owner_pid != os.getpid()
+                    and _pid_alive(e.wake_owner_pid)
+                )
+                # Recover a dead owner's verified delegation before checking due time.
+                # Otherwise an older shared scheduler can win every due-time claim and
+                # keep deferring a grant it cannot restore. No provider starts here.
+                if e.wake and e.wake_started_at <= 0 and not live_other_owner and self.wake_grant(e.sid) is None:
+                    grant = self._authority.recover(e.to_dict())
+                    if grant is not None:
+                        e.wake_owner_pid = os.getpid()
+                        e.wake_delivery_state = "retrying" if e.retry_count else "scheduled"
+                        e.wake_wait_reason = ""
+                        self._set_wake_grant(e.sid, grant)
+                        logger.info("wake delegation recovered before due sid=%s", e.sid)
                 if e.trigger_at > now:
                     continue
                 if e.lease_owner and e.lease_until > now:

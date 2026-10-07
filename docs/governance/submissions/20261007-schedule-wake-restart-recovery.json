@@ -86,7 +86,7 @@
     {
       "declaration_id": "wake-admission-recovery",
       "g1": {
-        "necessity": "真实事故：重启丢 grant；session_busy 前误写 started；模型不能推测授权是否尚未消费。持久化既有一次性授权和准入边界事实以恢复消费。"
+        "necessity": "真实事故：重启丢 grant；session_busy 前误写 started；模型不能推测授权是否尚未消费。持久化既有一次性授权和准入边界事实以恢复消费。 混合旧版本到点claim反复抢占导致新消费者无恢复机会，需在到点前验签接回死owner；未来提醒不提前启动。"
       },
       "g2": {
         "authority_owner": "ScheduleStore / IngressToken / BackgroundRunner actual run lease",
@@ -110,7 +110,8 @@
           "late worker cannot defer another owner",
           "old schedule snapshot never replays",
           "API secret-free status and WebUI labels",
-          "exact candidate full CI equivalent"
+          "exact candidate full CI equivalent",
+          "future delegated recovery protects against old consumers; live owner/altered/consumed deny"
         ]
       }
     }

@@ -60,3 +60,11 @@
 全量补充检查还发现普通提醒在无私有账本时误入新增 fcntl 路径，影响既有非 POSIX 文件锁回退。无账本时投影恢复/保存现在直接返回，普通提醒保持既有回退；scheduler 与授权恢复定向 46 项通过。
 
 补充修复最终代码验证 tree `8b1cb5b17c171ff97634d155e319230d45e1e490`：全量非 real_llm `7599 passed, 116 skipped, 16 deselected, 3 failed, 5 errors`（317.28s），剩余恰为已在精确 af480 基线复现的 3 个 HOME 安全断言和 5 个 Chromium 缺失 setup errors，无新增失败。定向 112 passed，scheduler/fallback 46 passed，规则/提交/epistemic 守卫 45 passed，runtime-cycle/local-import 14 passed；新增恢复测试累计 26 条。Ruff 58、Pyright 44 与基线诊断多重集完全一致，改动范围 Ruff、compile、diff、安全扫描和 A.5 精确 17-path 覆盖通过；WebUI TS/Vite 重新构建通过。此回执仅在验证后追加，代码与验证 tree 一致。生产重新验收须另核对 managed restart 的 succeeded 以及真实 GLM run.end completed，一次 started、无待执行条目，不能从 marker 单独推断成功。
+
+## 混合版本到点认领竞争
+
+gen192 实机复测继续失败，但这次没有调用模型：审计精确定位旧 Feishu 原进程抢先 claim 重启前 owner 已死亡的提醒，在 16:10:00、16:10:30、16:11:30 连续写 `grant_lost_owner_dead`。新 Web 只有抢到到点 claim 才能进恢复分支，因此可被旧线程持续饿死。该测试提醒已取消，独立忙时验收因前置未通过而未启动。
+
+补充修复在 `claim_due` 的到点判断之前验证并接回死 owner 的 pending 委派，登记新 PID 和进程内凭据。未来提醒在此阶段仍不准入、不调用 provider；旧消费者复用既有 alive-owner 规则自动跳过。活 owner、范围/签名不符、取消或已消费记录不接管。新增 4 条回归，含独立旧消费者的所有权判断，定向 scheduler/恢复/factory/API/stream 共 136 passed。保留相邻旧服务作为生产复测条件。
+
+到点前接回修复的最终代码验证 tree `635cb454a4d28cc426144c62b8fa0c7f61649752`：全量非 real_llm `7603 passed, 116 skipped, 16 deselected, 3 failed, 5 errors`（326.15s）。剩余失败/错误与精确 af480 基线集合相同，无新增；提醒恢复新增回归累计 30 条。定向 136 passed；scoped Ruff、Pyright 无新增诊断、A.5 精确 17-path、diff 与安全扫描通过。此回执在验证后追加，代码与验证 tree 一致；生产 v3 验收独立记录。

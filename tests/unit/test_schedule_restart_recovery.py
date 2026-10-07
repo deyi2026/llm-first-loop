@@ -442,3 +442,57 @@ def test_legacy_zero_argument_admission_callback_runs_once(build_test_engine):
         pass
     assert calls == [1]
     assert len(llm.calls) == 1
+
+
+def test_future_delegation_recovery_prevents_legacy_claim_starvation(tmp_path):
+    store = ScheduleStore(tmp_path / "schedule.json")
+    sid = store.add("future restart canary", after=300, wake=True, session_id="fixture",
+                    wake_grant=delegate_ingress(issue_ingress("web"), entry="schedule_wake"))
+    rows = json.loads((tmp_path / "schedule.json").read_text())
+    rows[0]["wake_owner_pid"] = 99999999  # dead issuer after restart
+    (tmp_path / "schedule.json").write_text(json.dumps(rows))
+    store.clear_wake_grant(sid)
+    restarted = ScheduleStore(tmp_path / "schedule.json")
+    assert restarted.claim_due("new-web") == []  # future means no model admission
+    row = restarted.list()[0]
+    assert row["wake_owner_pid"] == os.getpid()
+    assert row["wake_started_at"] == 0
+    assert restarted.authority_state(sid) == "pending"
+    assert restarted.wake_grant(sid).delegated is True
+    # Exact pre-upgrade ownership predicate in an independent old consumer.
+    script = '''
+import json, os, sys
+row = json.load(open(sys.argv[1]))[0]
+try:
+    os.kill(row['wake_owner_pid'], 0)
+    old_consumer_can_claim = row['wake_owner_pid'] == os.getpid()
+except ProcessLookupError:
+    old_consumer_can_claim = True
+print(json.dumps({'can_claim': old_consumer_can_claim}))
+'''
+    legacy = json.loads(subprocess.check_output([sys.executable, "-c", script, str(tmp_path / "schedule.json")], text=True))
+    assert legacy == {"can_claim": False}
+
+
+@pytest.mark.parametrize("blocked_by", ["live_owner", "altered_scope", "consumed"])
+def test_future_recovery_does_not_override_lifecycle_or_authority(tmp_path, monkeypatch, blocked_by):
+    from llm_loop.core import scheduler
+
+    store = ScheduleStore(tmp_path / "schedule.json")
+    sid = store.add("future", after=300, wake=True, session_id="fixture",
+                    wake_grant=delegate_ingress(issue_ingress("web"), entry="schedule_wake"))
+    path = tmp_path / "schedule.json"
+    rows = json.loads(path.read_text())
+    rows[0]["wake_owner_pid"] = 99999999
+    if blocked_by == "altered_scope":
+        rows[0]["message"] = "changed task"
+    elif blocked_by == "consumed":
+        store._authority.consume(rows[0])  # old pending snapshot after consumption
+    else:
+        monkeypatch.setattr(scheduler, "_pid_alive", lambda _pid: True)
+    path.write_text(json.dumps(rows))
+    store.clear_wake_grant(sid)
+    restarted = ScheduleStore(path)
+    assert restarted.claim_due("new-web") == []
+    assert restarted.list()[0]["wake_owner_pid"] == 99999999
+    assert restarted.wake_grant(sid) is None
