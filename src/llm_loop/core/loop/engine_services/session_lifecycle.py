@@ -28,6 +28,7 @@ _fault_feedback / _record_program_fault / _record_action / _evidence_legacy_migr
 from __future__ import annotations
 
 import contextlib
+import inspect
 import logging
 from contextlib import contextmanager
 from pathlib import Path
@@ -256,18 +257,19 @@ class SessionLifecycle:
             self._host.session._bind_run_save_token(sess, run_save_token)
         accepted_changed = False
         if on_run_acquired is not None:
+            # Accepted-boundary callbacks own authorization/queue admission. Failure
+            # must stop the run before provider work; it is not optional telemetry.
+            # Determine legacy arity before invoking: an internal TypeError must not
+            # cause a second invocation with different arguments.
+            callback_signature = inspect.signature(on_run_acquired)
             try:
-                on_run_acquired(sess)
-                accepted_changed = True
+                callback_signature.bind(sess)
             except TypeError:
-                # BackgroundRunner.before_start 历史兼容：旧内部调用方可能仍传零参 callback。
-                try:
-                    on_run_acquired()
-                    accepted_changed = True
-                except Exception:  # noqa: BLE001 — accepted 辅助动作 fail-open
-                    logger.warning("run accepted callback 失败（fail-open）", exc_info=True)
-            except Exception:  # noqa: BLE001 — accepted 辅助动作 fail-open
-                logger.warning("run accepted callback 失败（fail-open）", exc_info=True)
+                callback_signature.bind()
+                on_run_acquired()
+            else:
+                on_run_acquired(sess)
+            accepted_changed = True
 
         if not session_existed:
             # 2026-08-20 (EVO-20260820-0b96348d, 用户决策): 新会话首轮仅重置活动窗口与

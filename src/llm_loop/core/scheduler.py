@@ -199,7 +199,7 @@ class ScheduleStore:
             if self._path.exists():
                 data = json.loads(self._path.read_text(encoding="utf-8"))
                 for d in data:
-                    e = ScheduleEntry.from_dict(d)
+                    e = ScheduleEntry.from_dict(self._authority.restore_fields(d))
                     self._entries[e.sid] = e
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
             logger.warning("schedule 存储加载失败（fail-open）: %s", exc)
@@ -219,7 +219,7 @@ class ScheduleStore:
             with self._lock:
                 self._entries = {
                     e.sid: e
-                    for e in (ScheduleEntry.from_dict(d) for d in data)
+                    for e in (ScheduleEntry.from_dict(self._authority.restore_fields(d)) for d in data)
                 }
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
             logger.warning("schedule 存储刷新失败（fail-open，沿用内存）: %s", exc)
@@ -265,7 +265,7 @@ class ScheduleStore:
                     try:
                         disk_data = json.loads(self._path.read_text(encoding="utf-8"))
                         for d in disk_data:
-                            e = ScheduleEntry.from_dict(d)
+                            e = ScheduleEntry.from_dict(self._authority.restore_fields(d))
                             disk[e.sid] = e
                     except (OSError, json.JSONDecodeError, ValueError, TypeError):
                         disk = {}  # 磁盘损坏 → 以内存为准（fail-open）
@@ -275,6 +275,7 @@ class ScheduleStore:
                     merged.update(self._entries)
                     self._entries = merged
                     data = [e.to_dict() for e in self._entries.values()]
+                    self._authority.preserve_fields(data)
                 self._path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except OSError as exc:
             logger.warning("schedule 存储写盘失败（fail-open）: %s", exc)
@@ -294,13 +295,14 @@ class ScheduleStore:
                     try:
                         disk_data = json.loads(self._path.read_text(encoding="utf-8"))
                         for d in disk_data:
-                            e = ScheduleEntry.from_dict(d)
+                            e = ScheduleEntry.from_dict(self._authority.restore_fields(d))
                             self._entries[e.sid] = e
                     except (OSError, json.JSONDecodeError, ValueError, TypeError):
                         self._entries.clear()  # 磁盘损坏 → 空基底（fail-open）
                 with self._lock:
                     fn(self._entries)
                     data = [e.to_dict() for e in self._entries.values()]
+                    self._authority.preserve_fields(data)
                 self._path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except OSError as exc:
             logger.warning("schedule 存储写盘失败（fail-open）: %s", exc)
