@@ -60,6 +60,15 @@ logger = logging.getLogger(__name__)
 # 不判断 provider 语义；>1 保证深推理的正常长流不被误伤。
 _STREAM_TOTAL_BUDGET_FACTOR = 5.0
 
+# EVO-20261007-519eeb93: 空响应（流正常结束但零内容零工具调用；glm-5.3 thinking
+# 高发瞬态）同模型有界自动重试。幂等性依据：空响应条件本身保证零 text/tool delta
+# 已投递（text delta 必进 content_parts，tool 终态必进 result.tool_calls），唯一
+# 可能已上抛的是 reasoning delta——重复投递只影响 UI 展示与中断半截产物（非权威
+# 状态；成功落盘只取终态 LLMResponse）；非收敛熔断需 3 连击相似窗口，单次重试
+# 最多贡献 1-2 个窗口，不可能单独触发。
+_EMPTY_RESPONSE_RETRY_MAX = 1
+_EMPTY_RESPONSE_RETRY_BACKOFF_S = 0.5
+
 
 def _stream_total_deadline(effective_timeout: float) -> float:
     return time.monotonic() + effective_timeout * _STREAM_TOTAL_BUDGET_FACTOR
@@ -1699,46 +1708,69 @@ class LLMClient:
         messages = self._validate_and_strip_provider_structure(
             messages, guard_context=_guard_ctx
         )
-        try:
-            if protocol == "anthropic":
-                result = yield from self._stream_anthropic(
-                    messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+        # EVO-20261007-519eeb93: 外层 while 仅由空响应重试路径 continue 驱动（≤1 次），
+        # 其余路径（正常返回/异常上抛）与原实现语义完全一致。
+        _empty_retries_used = 0
+        while True:
+            try:
+                if protocol == "anthropic":
+                    result = yield from self._stream_anthropic(
+                        messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+                    )
+                elif protocol == "google":
+                    result = yield from self._stream_google(
+                        messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+                    )
+                elif protocol == "lms-chat":
+                    result = yield from self._stream_lms_chat(messages, tools, timeout_s=timeout_s, model=model)
+                else:
+                    result = yield from self._stream_openai(
+                        messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+                    )
+            except LLMHTTPError:
+                # EVO-20260827 V3: 参数类 400（如智谱 1210 笼统无定位）携带本轮 arguments
+                # 串化诊断，异常侧日志可直接归因到消息位置/工具名。
+                if _v3_diag:
+                    logger.error(
+                        "LLM HTTP 错误伴随 V3 诊断: 本请求有 %d 处非串 arguments 已强制串化"
+                        "（首个 msg#%s call#%s %s）——若仍 400 属其他结构残留",
+                        _v3_diag.get("fixed_total", 0),
+                        _v3_diag.get("msg_idx"),
+                        _v3_diag.get("call_idx"),
+                        _v3_diag.get("tool"),
+                    )
+                raise
+            # EVO-20260818-92bd97d6: 空响应兜底——流正常结束但无任何内容/工具调用
+            # 视为异常（流被截断/模型异常），抛异常走如实反馈，不再静默记为 content=(空)
+            # EVO-20261007-519eeb93: 上抛前先同模型自动重试（幂等性依据见模块常量注释：
+            # 空响应保证零 text/tool delta 已投递）；重试后仍空才如实上抛——默认装配
+            # 路径由引擎 fallback 链接管，strict override 会话照实反馈（不静默换模型）。
+            if result is not None and not result.content and not result.tool_calls:
+                if _empty_retries_used < _EMPTY_RESPONSE_RETRY_MAX:
+                    _empty_retries_used += 1
+                    logger.warning(
+                        "空响应（provider=%s, model=%s, finish_reason=%s, reasoning_tokens=%s）"
+                        "→ %.1fs 后同模型自动重试（第 %d/%d 次）",
+                        self.provider,
+                        self.model,
+                        result.finish_reason,
+                        result.reasoning_tokens,
+                        _EMPTY_RESPONSE_RETRY_BACKOFF_S,
+                        _empty_retries_used,
+                        _EMPTY_RESPONSE_RETRY_MAX,
+                    )
+                    time.sleep(_EMPTY_RESPONSE_RETRY_BACKOFF_S)
+                    continue
+                raise LLMEmptyResponseError(
+                    f"模型返回空响应（无内容且无工具调用，provider={self.provider}，model={self.model}；"
+                    f"已同模型自动重试 {_empty_retries_used} 次仍为空）",
+                    provider=self.provider,
+                    finish_reason=result.finish_reason,
+                    completion_tokens=result.completion_tokens,
+                    reasoning_tokens=result.reasoning_tokens,
+                    provider_truncated=result.truncated,
                 )
-            elif protocol == "google":
-                result = yield from self._stream_google(
-                    messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
-                )
-            elif protocol == "lms-chat":
-                result = yield from self._stream_lms_chat(messages, tools, timeout_s=timeout_s, model=model)
-            else:
-                result = yield from self._stream_openai(
-                    messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
-                )
-        except LLMHTTPError:
-            # EVO-20260827 V3: 参数类 400（如智谱 1210 笼统无定位）携带本轮 arguments
-            # 串化诊断，异常侧日志可直接归因到消息位置/工具名。
-            if _v3_diag:
-                logger.error(
-                    "LLM HTTP 错误伴随 V3 诊断: 本请求有 %d 处非串 arguments 已强制串化"
-                    "（首个 msg#%s call#%s %s）——若仍 400 属其他结构残留",
-                    _v3_diag.get("fixed_total", 0),
-                    _v3_diag.get("msg_idx"),
-                    _v3_diag.get("call_idx"),
-                    _v3_diag.get("tool"),
-                )
-            raise
-        # EVO-20260818-92bd97d6: 空响应兜底——流正常结束但无任何内容/工具调用
-        # 视为异常（流被截断/模型异常），抛异常走如实反馈，不再静默记为 content=(空)
-        if result is not None and not result.content and not result.tool_calls:
-            raise LLMEmptyResponseError(
-                f"模型返回空响应（无内容且无工具调用，provider={self.provider}，model={self.model}）",
-                provider=self.provider,
-                finish_reason=result.finish_reason,
-                completion_tokens=result.completion_tokens,
-                reasoning_tokens=result.reasoning_tokens,
-                provider_truncated=result.truncated,
-            )
-        return result
+            return result
 
     def _provider_replay_contract(self, model: str | None = None) -> dict[str, Any]:
         """Return the exact secret-free generation contract for native replay scope."""

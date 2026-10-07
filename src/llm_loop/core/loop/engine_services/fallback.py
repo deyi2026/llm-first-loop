@@ -20,6 +20,7 @@ from llm_loop.core.loop.tool_exec import _json_dumps_args
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.client import GuardRequestContext, LLMClient, LLMResponse
 from llm_loop.llm.errors import (
+    LLMEmptyResponseError,
     LLMError,
     LLMHTTPError,
     LLMNetworkError,
@@ -102,6 +103,8 @@ class FallbackService:
         - LLMNetworkError (网络不可达)
         - LLMHTTPError(status_code >= 500)（上游服务错误）
         - LLMHTTPError(status_code == 429)（限流, design §5.4 表「5xx/429」）
+        - LLMEmptyResponseError（EVO-20261007-519eeb93：client 侧同模型重试后仍空——
+          瞬时可用性故障语义与超时/网络同类；strict override 会话仍不降级，用户选择权优先）
 
         不进入 availability failover:
         - LLMHTTPError(其他 4xx)：不归类为默认 provider 的瞬时可用性故障
@@ -113,7 +116,7 @@ class FallbackService:
         Returns:
             True 可降级, False 走如实反馈路径.
         """
-        if isinstance(exc, (LLMTimeoutError, LLMNetworkError)):
+        if isinstance(exc, (LLMTimeoutError, LLMNetworkError, LLMEmptyResponseError)):
             return True
         if isinstance(exc, LLMHTTPError):
             return exc.status_code == 429 or exc.status_code >= 500
