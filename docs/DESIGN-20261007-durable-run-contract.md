@@ -1,18 +1,19 @@
 # DESIGN: Durable Run Contract（P0-2，决策文档，无代码变更）
 
 - 状态：设计决策（Option A 为主候选）；本轮零产品代码改动。
-- 输入：AUDIT-20261007 §3.3（G2：durability 基座分散 7 套；10-07 单日 4 个 schedule durability 补丁）。
+- 输入：AUDIT-20261007 §3.3（G2：7 个子系统中至少 8 个 durability surface 分散；10-07 单日 4 个 schedule durability 补丁）。
 - 证据基线：main @ `4bd0b9356`（本文所有 file:line 均对此版本核验）。
 
 ## 1. 问题陈述 [事实]
 
-"每个事故新增一套持久化"是复发模式。当前并存 7 套持久化基座，各自实现锁/原子性/恢复/幂等，语义不一致：
+"每个事故新增一套持久化"是复发模式。当前至少 7 个子系统、8 个持久化 surface 各自实现锁/原子性/恢复/幂等，语义不一致。Schedule 子系统必须拆成主状态与授权账本两个 surface 看待：
 
 | # | 基座 | 位置 | 写入语义（核验） | 原子性 | 锁 | fsync | 崩溃恢复 | 幂等 |
 |---|---|---|---|---|---|---|---|---|
 | 1 | EventStore | `event_log/store.py` | 会话级稳定锁 `<sid>.lock`（flock）+ O_APPEND 单行；seq 续号；分段轮转 | 行级 append | ✅ | 未见 | 尾部截断行丢弃（读侧容错） | seq 单调 |
 | 2 | Fleet 结算账本 | `fleet/store.py` | fcntl 跨进程锁；`_save`=tmp+`os.replace`（L142-145） | ✅ tmp+replace | ✅ | ❌ | 最后完整 JSON | lease 租约 CAS |
-| 3 | **Schedule 私有签名账本** | `core/scheduler.py:178` + `core/trace_leak/wake_authority.py` | flock + 锁内重读磁盘合并 + **`write_text` 覆写**（L253-282）；OSError → **fail-open 仅告警**；HMAC 签名字段 `preserve_fields/restore_fields` 往返保真 | ❌ 非原子 | ✅ | ❌ | 磁盘损坏 → 以内存为准（fail-open） | ❌ |
+| 3a | **ScheduleStore 主状态** | `core/scheduler.py:178+` | flock + 锁内重读磁盘合并 + **`write_text` 覆写**；OSError → **fail-open 仅告警** | ❌ 非原子 | ✅ | ❌ | 磁盘损坏 → 以内存/空基底继续（fail-open） | ❌ |
+| 3b | **WakeAuthorizationStore 私有授权账本** | `core/trace_leak/wake_authority.py:52+` | 0600 私有文件 + flock；`_write` 使用 unique tmp + file fsync + `os.replace` + directory fsync；HMAC scope/signature + consumed/revoked tombstone | ✅ | ✅ | ✅✅ | 完整 JSON + 签名校验；无效授权 fail-closed | scope/signature + one-shot state |
 | 4 | ServiceControl CAS | `runtime/service_control.py` | generation 乐观并发（publish 时 CAS+git head+webui 产物 hash 绑定）；desired 部署态 to_dict/from_dict | 语义强（CAS） | CAS | 未核验 | 代际回退屏障 | expected_generation |
 | 5 | Evidence blob | `memory/evidence.py` | `put_text`：tmp+fsync+`os.replace`+目录 fsync（L1367-1389） | ✅ 最强 | 写一次 | ✅✅（文件+目录） | 内容寻址天然完整 | sha256 键 |
 | 6 | usage.jsonl | `methods/store.py:627` | 裸 `open("a")` 追加单行 | 行级 append | ❌ | ❌ | 读侧跳过坏行 | 无键 |
@@ -26,7 +27,7 @@
 ## 3. 候选方案
 
 - **Option A（主候选）统一持久化语义接口**：定义 `DurableContract`（分层 tier + 显式恢复钩子 + 幂等键），存量实现逐个适配，不强制共享后端。
-  - 优点：不动数据格式，迁移可按基座独立推进；evidence blob（#5）已是事实参考实现；与 P1-4 kernel 契约方向一致。
+  - 优点：不动数据格式，迁移可按 surface 独立推进；evidence blob（#5）与 WakeAuthorizationStore（#3b）已经提供两类事实参考实现；与 P1-4 kernel 契约方向一致。
   - 缺点：契约若无人强制会退化为纸面（→ 需 P0-3 式机械 guard 配套：新持久化基座必须声明 tier）。
 - Option B（否决）事件溯源统一后端：所有基座改写为 EventStore 事件流。
   - 否决理由：改写面=全部 7 套 + schema，风险与当前"冻结扩张"方针冲突；schedule 账本的 HMAC 签名投影语义在纯 append 流上需重建。
@@ -64,13 +65,14 @@ DurableContract(Protocol):
 | 4 | ServiceControl | **部分符合** | CAS 语义强；desired 落盘原子性未核验 | 核验后归档；不改语义 |
 | 6 | usage.jsonl | **豁免（低风险 T1）** | 单行小 append，进程模型下交错窗口小；读侧跳坏行 | 显式豁免登记；不加锁 |
 | 7 | ExperienceStore | **迁移（T2，第 2 顺位）** | 裸 write_text 覆写，崩溃可致整卡损坏 | 换 tmp+replace；改动极小 |
-| 3 | **Schedule 账本** | **迁移（T2，首个 client）** | 非原子覆写+fail-open 丢写+当日 4 补丁集中爆发 | 见 §6 |
+| 3a | **ScheduleStore 主状态** | **迁移（T2，首个 client）** | 非原子覆写+fail-open 丢写+当日 4 补丁集中爆发 | 见 §6 |
+| 3b | WakeAuthorizationStore | **符合（T2 参考）** | 锁+tmp+file fsync+replace+目录 fsync；HMAC scope 与 one-shot tombstone | 零改动；作为 schedule 迁移的同子系统参考 |
 
-## 6. 首个迁移 client：ScheduleStore（本轮不实施）
+## 6. 首个迁移 client：ScheduleStore 主状态（本轮不实施）
 
-- 理由：a) 风险最高（fail-open + 非原子）；b) 事故密度最高（10-07 四补丁：`06e6a587c`/`ee75b861d`/`a829e254a`/`54fc378c4`）；c) 改动面最小（仅 `_persist`/`_mutate` 落盘尾部换 tmp+fsync+replace，HMAC 投影逻辑不动）。
+- 理由：a) 风险最高（fail-open + 非原子）；b) 事故密度最高（10-07 四补丁：`06e6a587c`/`ee75b861d`/`a829e254a`/`54fc378c4`）；c) 改动面最小（仅 `ScheduleStore._persist`/`_mutate` 的主状态落盘语义需要迁移）；d) 同子系统的 `WakeAuthorizationStore._write` 已有 tmp+fsync+replace+directory-fsync，可作为实现参考，**不得重复改造授权账本**。
 - 迁移验收（未来实施时）：i) 覆写经 tmp+`os.replace`+目录 fsync；ii) OSError 不再 fail-open（重试+显式降级事件）；iii) `recover()` 能报告截断/损坏条目数；iv) 现有 schedule 回归全绿。
-- 迁移顺序建议：#3 → #7 → #2（补 fsync）→ #4（核验归档）。
+- 迁移顺序建议：#3a → #7 → #2（补 fsync）→ #4（核验归档）；#3b 不迁移。
 
 ## 7. 开放决策点
 
@@ -82,3 +84,10 @@ DurableContract(Protocol):
 
 - P0-3 的 guard 扩展应把"新持久化基座必须声明 tier"纳入登记项（本文 §4 红线 3）。
 - P1-4 kernel 契约：`event_log` 在 kernel 集合内，T1 语义即 kernel 级契约的一部分。
+
+## 9. rev 3 currentness 修正（2026-10-07）
+
+- 初版把 ScheduleStore 主状态与 WakeAuthorizationStore 私有授权账本合写成一行，造成“私有账本非原子”的错误印象。
+- HEAD 核验：`scheduler.py` 主状态仍为裸 `write_text`；`wake_authority.py::_write` 已明确执行 tmp → file fsync → `os.replace` → directory fsync。
+- 因此迁移对象严格限定为 **ScheduleStore 主状态文件**；WakeAuthorizationStore 归档为 T2 参考 surface。
+- 新数量口径：**7 个子系统，至少 8 个持久化 surface**。后续新增 surface 必须声明 T1/T2/T3 或显式豁免，不能只按“子系统数”统计。

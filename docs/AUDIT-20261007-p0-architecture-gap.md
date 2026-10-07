@@ -33,7 +33,7 @@ Web 路径断言依赖真实流量出现后才生效（conditional assertions）
 ## 2. Kernel v1 边界审计（G1）
 
 ### 2.1 当前结构事实 [事实]
-27 个子包按 LOC 排序（源 src/llm_loop）：
+26 个顶层包按 LOC 排序（源 src/llm_loop；另有 6 个顶层能力模块由 P0-3 guard 单独登记）：
 
 | LOC | 文件数 | 包 | 六面归属 |
 |---|---|---|---|
@@ -82,14 +82,16 @@ Web 路径断言依赖真实流量出现后才生效（conditional assertions）
 ### 3.2 持久化基座清单（已核验，非穷举）[事实]
 1. EventStore JSONL（append-only 事件事实）
 2. Provider settlement journal（P0-2 已收敛入 EventStore 语义）
-3. ScheduleStore + 私有签名账本 + tombstones + keys
+3. Schedule 子系统包含两个不同持久化 surface：
+   - `ScheduleStore` 主状态文件：flock + 锁内重读合并，但仍以裸 `write_text` 覆写，写失败 fail-open；
+   - `WakeAuthorizationStore` 私有签名账本：0600 + flock + tmp + file fsync + `os.replace` + directory fsync，已具备强 T2 原子持久化语义。
 4. service_control desired-state / generation CAS
 5. Evidence blob store + ledger（evidence://）
 6. `data/methods/usage.jsonl` + 各卡 `qualification.jsonl`
 7. experiences / episodes 存储
 
 ### 3.3 收敛方向（决策待做，不写实现）[推断]
-选项 A：Durable Run Contract——定义统一"持久化语义接口"（单写者/原子性/恢复钩子/idempotency key），现有基座逐个声明符合或迁移；schedule 私有账本为第一个 client。
+选项 A：Durable Run Contract——定义统一"持久化语义接口"（单写者/原子性/恢复钩子/idempotency key），现有基座逐个声明符合或迁移；ScheduleStore 主状态文件为第一个迁移 client，已具备强原子性的 WakeAuthorizationStore 不重复建设。
 选项 B：维持分立但建立 durability 清单与一致性测试矩阵（成本最低，风险是第 N+1 套仍会出现）。
 推荐 A，理由：GPT 与本次审计共同指向的"分散 durability"是复发模式，B 不改变生成机制。
 
@@ -134,7 +136,7 @@ Web 路径断言依赖真实流量出现后才生效（conditional assertions）
 
 ### P0-3 【策略+机械】横向扩张冻结的执行机制
 - 动作：把"新能力合入需声明归属面/或显式豁免"写进 CHANGE 纪律；扩展 test_arch_guards：新顶层子包/新工具文件需在基线中登记
-- 验收：guards 测试在未登记新增包/文件时 fail；现有 27 包全部登记
+- 验收：guards 测试在未登记新增包/文件时 fail；现有 26 包 + 6 顶层能力模块全部登记
 - 依赖：无
 
 ### P1-4 【契约】Kernel v1 边界契约文档 + import ratchet 扩展
@@ -165,3 +167,4 @@ Web 路径断言依赖真实流量出现后才生效（conditional assertions）
 ## 6. 本审计自身的方法记录
 - 关键修正：外部审查基于的材料落后于 main 约 5 天（10-02 的 P0-2/3 落地未被其覆盖）。任何外部评审结论进入任务清单前必须先过"是否已被 main 落地"这一关。
 - rev 2 追加（本审计自身犯错后的机械规则）：**任务清单引用的任何 capability，必须先在 HEAD 上做 symbol/commit survival check（`grep` 关键符号 + `git log` 确认引用提交仍是 HEAD 祖先），只读 CHANGES 文档不构成充分证据。** 本审计 rev 1 引用"B 面尾注已实现"仅依据当日上午 CHANGES，未察觉同日 14:16 的删除提交 `af480f80d` 与 22:09 的 gen 195 部署——与外部审查落后 5 天是同型错误，落后 8 小时也是落后。此规则同样适用于部署状态断言：声称"未 publish/restart"前必须先查 service 状态的当前 generation 与 git_head。
+- rev 3 追加：P0-3 机械扫描确认 `src/llm_loop` 当前是 **26 个顶层包 + 6 个顶层能力模块**；rev 2 的"27 个子包"为统计口径错误。Durability 计数也改为"7 个子系统、至少 8 个持久化 surface"：ScheduleStore 主状态与 WakeAuthorizationStore 私有授权账本必须分开判断。后续任何新增持久化 surface 都必须先声明 Durable tier（T1/T2/T3）或显式豁免，再进入实现评审。
