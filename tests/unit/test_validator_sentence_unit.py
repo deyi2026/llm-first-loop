@@ -55,6 +55,14 @@ def test_third_party_passive_exempt():
     assert v._extract_declarations("文章已被作者删除、下线，或链接本身有误") == []
 
 
+def test_third_party_commentary_exempt():
+    v = _v()
+    # 实证 DC-20261007T081417368324: 对第三方项目设计的评语（属实/见下文/详见）
+    # 非自身动作声明，不得抽为完成声明
+    assert v._extract_declarations("**执行前校验** — 属实且是最讲究的部分（见下文\"最值得偷的\"）") == []
+    assert v._extract_declarations("该设计详见上游 README 的执行章节，属实") == []
+
+
 def test_metric_noun_exempt():
     v = _v()
     assert v._extract_declarations("该包月下载 30,031，未见第三方评测") == []
@@ -102,6 +110,13 @@ def test_completion_marker_overrides_narrative_markers():
     # 含"已"的真完成声明即便携带观点/批准/结论词也必须被抽取
     decls = v._extract_declarations("永远不要怀疑，我已写入 src/real.py，批准人是你。")
     assert any("已写入" in d for d in decls)
+
+
+def test_completion_marker_overrides_commentary_markers():
+    v = _v()
+    # 防漏网: 含完成标志的真声明即便携带评述词（属实/详见）也必须被抽取
+    decls = v._extract_declarations("我已执行该校验，属实；详见回执。")
+    assert any("已执行" in d for d in decls)
 
 
 def test_self_agent_blocks_third_party_passive():
