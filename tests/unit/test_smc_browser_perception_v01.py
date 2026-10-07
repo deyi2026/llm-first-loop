@@ -85,6 +85,7 @@ def test_model_surface_is_read_only_and_has_no_backend_locator_parameters(tmp_pa
         "value",
         "field",
         "text",
+        "target_id",
         "within_ms",
     }
     assert "condition" not in props

@@ -32,6 +32,12 @@ from llm_loop.browser.channel_binding import (
     BrowserChannelBindingCoordinator,
     extract_browser_ws_uuid,
 )
+from llm_loop.browser.errors import (
+    MultiPageAmbiguityError,
+    PageRecord,
+    PageTargetNotFoundError,
+    page_records_from_targets,
+)
 from llm_loop.browser.perception import PlaywrightPageCaptureBackend
 
 _attest_logger = logging.getLogger("llm_loop.browser.cdp_host.attestation")
@@ -398,11 +404,38 @@ class CdpReadOnlyBrowserHost:
                 )
             raise RuntimeError(f"configured Browser target not found: {expected}")
         if len(pages) != 1:
-            raise RuntimeError(
-                "Browser CDP endpoint must expose exactly one page when target_id is omitted; "
-                f"observed={len(pages)}"
-            )
+            # EVO-20261007-11ae668f：多页且未显式指定 target ⇒ 结构化歧义错误，
+            # 携带只读页面清单；不做任何自动选择。
+            raise MultiPageAmbiguityError(page_records_from_targets(pages))
         return pages[0]
+
+    def list_pages(self) -> list[PageRecord]:
+        """EVO-20261007-11ae668f：只读页面清单，不绑定、不建会话、无副作用。"""
+
+        return page_records_from_targets(self._page_targets())
+
+    def rebind_target(self, target_id: str) -> PageRecord:
+        """EVO-20261007-11ae668f：显式换页（确定性，非静默）。
+
+        - target_id 必须命中当前 /json/list 的 page 项，否则 PageTargetNotFoundError。
+        - 既有绑定/会话立即丢弃（no silent rebind 语义保留：这里是调用方显式发起）。
+        - coordinator 身份由上层 controller 统一重绑（感知/执行两 host 原子换页），
+          本方法不触碰 coordinator。
+        """
+
+        raw = str(target_id or "").strip()
+        if not raw:
+            raise ValueError("rebind_target requires a non-empty explicit target_id")
+        with self._capture_lock:
+            records = page_records_from_targets(self._page_targets())
+            for record in records:
+                if record.page_id == raw:
+                    self._configured_target_id = raw
+                    self._bound_target_id = ""
+                    self._bound_websocket_url = ""
+                    self._drop_session()
+                    return record
+            raise PageTargetNotFoundError(raw, records)
 
     def _ensure_session(self, target: dict[str, Any]) -> _ReadOnlyCdpSession:
         target_id = str(target.get("id") or "").strip()

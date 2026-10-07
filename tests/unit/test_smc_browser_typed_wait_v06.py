@@ -125,6 +125,7 @@ def test_v06_provider_surface_aggregates_wait_over_closed_typed_primitives() -> 
         "value",
         "field",
         "text",
+        "target_id",
         "within_ms",
     }
     assert "condition" not in perceive_props

@@ -1,0 +1,158 @@
+{
+ "model": "qwen3.8-flash-next",
+ "n_runs": 3,
+ "gates": {
+  "G1": {
+   "A_ok": 2,
+   "B_ok": 3,
+   "pass": true
+  },
+  "G2": {
+   "A_parse": 3,
+   "B_parse": 3,
+   "A_spur": 0,
+   "B_spur": 0,
+   "pass": true
+  },
+  "G3": {
+   "A_parse": 3,
+   "B_parse": 3,
+   "A_hit": 3,
+   "B_hit": 3,
+   "pass": true
+  }
+ },
+ "results": {
+  "arm-B_new_surface": {
+   "G1_identity": [
+    {
+     "out": "我是通义千问（Qwen），由阿里巴巴通义实验室研发的大语言模型，当前作为代理程序运行。确定能使用的工具名：browser_perceive、browser_operate。",
+     "judge": true
+    },
+    {
+     "out": "我是当前运行中的代理程序，由本环境运行。\n\n确定能使用的工具名：`browser_perceive`、`browser_operate`。",
+     "judge": true
+    },
+    {
+     "out": "我是当前运行中的代理程序，由本环境/宿主运行。  \n确定能使用的工具名：`browser_perceive`、`browser_operate`。",
+     "judge": true
+    }
+   ],
+   "G2_task_normal": [
+    {
+     "out": "{\n  \"action\": \"snapshot\"\n}",
+     "judge": {
+      "parse_ok": true,
+      "spurious_target_id": false
+     }
+    },
+    {
+     "out": "{\n  \"action\": \"snapshot\"\n}",
+     "judge": {
+      "parse_ok": true,
+      "spurious_target_id": false
+     }
+    },
+    {
+     "out": "{\n  \"action\": \"snapshot\"\n}",
+     "judge": {
+      "parse_ok": true,
+      "spurious_target_id": false
+     }
+    }
+   ],
+   "G3_task_ambiguity": [
+    {
+     "out": "{\"action\":\"snapshot\",\"target_id\":\"page-A\"}",
+     "judge": {
+      "parse_ok": true,
+      "target_id_hit": true,
+      "blind_retry": false
+     }
+    },
+    {
+     "out": "{\"action\":\"snapshot\",\"target_id\":\"page-A\"}",
+     "judge": {
+      "parse_ok": true,
+      "target_id_hit": true,
+      "blind_retry": false
+     }
+    },
+    {
+     "out": "{\"action\":\"snapshot\",\"target_id\":\"page-A\"}",
+     "judge": {
+      "parse_ok": true,
+      "target_id_hit": true,
+      "blind_retry": false
+     }
+    }
+   ]
+  },
+  "arm-A_old_surface": {
+   "G1_identity": [
+    {
+     "out": "我是当前运行中的代理程序，由本环境运行。确定能使用的工具名：browser_perceive、browser_operate。",
+     "judge": true
+    },
+    {
+     "out": "我是当前运行中的代理程序，由本环境运行。\n\n确定能使用的工具名：`browser_perceive`、`browser_operate`。",
+     "judge": true
+    },
+    {
+     "out": "我是当前环境中的浏览器代理助手，由 OpenAI 运行。  \n确定能使用的工具名：browser_perceive、browser_operate。",
+     "judge": false
+    }
+   ],
+   "G2_task_normal": [
+    {
+     "out": "{\n  \"action\": \"snapshot\"\n}",
+     "judge": {
+      "parse_ok": true,
+      "spurious_target_id": false
+     }
+    },
+    {
+     "out": "{\n  \"action\": \"snapshot\"\n}",
+     "judge": {
+      "parse_ok": true,
+      "spurious_target_id": false
+     }
+    },
+    {
+     "out": "{\n  \"action\": \"snapshot\"\n}",
+     "judge": {
+      "parse_ok": true,
+      "spurious_target_id": false
+     }
+    }
+   ],
+   "G3_task_ambiguity": [
+    {
+     "out": "{\"action\":\"snapshot\",\"target_id\":\"page-A\"}",
+     "judge": {
+      "parse_ok": true,
+      "target_id_hit": true,
+      "blind_retry": false
+     }
+    },
+    {
+     "out": "{\"action\":\"snapshot\",\"target_id\":\"page-A\"}",
+     "judge": {
+      "parse_ok": true,
+      "target_id_hit": true,
+      "blind_retry": false
+     }
+    },
+    {
+     "out": "{\"action\":\"snapshot\",\"target_id\":\"page-A\"}",
+     "judge": {
+      "parse_ok": true,
+      "target_id_hit": true,
+      "blind_retry": false
+     }
+    }
+   ]
+  }
+ },
+ "overall_pass": true
+}

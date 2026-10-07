@@ -12,6 +12,10 @@ import json
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from llm_loop.browser.errors import (
+    MultiPageAmbiguityError,
+    PageTargetNotFoundError,
+)
 from llm_loop.browser.method_card import SEMANTIC_OPERATION_METHOD_REF
 from llm_loop.browser.perception import BrowserPerceptionAdapter
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -33,7 +37,8 @@ class BrowserPerceiveTool:
         "Browser 只读感知：snapshot 读取 host 已绑定当前页面，hydrate 精确水合既有 ref，"
         "diff 比较两张 exact snapshot，wait 只读等待页面 ready/URL 或已观察对象 state/text。"
         "页面 wait 机械绑定当前 host-bound page；对象 wait 必须使用 exact grounding_ref。"
-        "运行时拥有轮询节奏和默认超时；不导航、不 mutation、不 fuzzy/latest/rebind/retry，"
+        "运行时拥有轮询节奏和默认超时；不导航、不 mutation、不 fuzzy/latest/auto-select/retry，"
+        "多标签歧义时返回只读页面清单；可用显式 target_id 换绑指定页（EVO-20261007-11ae668f）。"
         "不判断 task completion，也不暴露 selector/坐标/CDP node id/AX index。"
         f"method_ref={SEMANTIC_OPERATION_METHOD_REF}。"
     )
@@ -42,6 +47,7 @@ class BrowserPerceiveTool:
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["snapshot"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "projection_limit": {"type": "integer", "minimum": 1, "maximum": 500},
                 "projection_kinds": {
                     "type": "array",
@@ -57,6 +63,7 @@ class BrowserPerceiveTool:
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["hydrate"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "grounding_ref": {"type": "string", "minLength": 1},
             },
             "required": ["action", "grounding_ref"],
@@ -66,6 +73,7 @@ class BrowserPerceiveTool:
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["diff"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "from_version": {"type": "string", "minLength": 1},
                 "to_version": {"type": "string", "minLength": 1},
             },
@@ -76,6 +84,7 @@ class BrowserPerceiveTool:
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["wait"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "kind": {"type": "string", "enum": ["page_ready"]},
                 "state": {"type": "string", "enum": ["loading", "interactive", "complete"]},
                 "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
@@ -87,6 +96,7 @@ class BrowserPerceiveTool:
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["wait"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "kind": {"type": "string", "enum": ["page_url"]},
                 "match": {
                     "type": "string",
@@ -102,6 +112,7 @@ class BrowserPerceiveTool:
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["wait"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "kind": {"type": "string", "enum": ["object_state"]},
                 "grounding_ref": {"type": "string", "minLength": 1},
                 "state": {
@@ -126,6 +137,7 @@ class BrowserPerceiveTool:
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["wait"]},
+                "target_id": {"type": "string", "minLength": 1},
                 "kind": {"type": "string", "enum": ["object_text"]},
                 "grounding_ref": {"type": "string", "minLength": 1},
                 "field": {"type": "string", "enum": ["name", "value_text"]},
@@ -187,6 +199,17 @@ class BrowserPerceiveTool:
             "field": {"type": "string", "enum": ["name", "value_text"]},
             "text": {"type": "string"},
             "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
+            "target_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "EVO-20261007-11ae668f：显式指定要绑定的 CDP page target_id"
+                    "（来自页面清单回执的 page_id）。携带 target_id 的调用是一个独立动作："
+                    "本调用只执行换绑（两 host 原子换到该页，同浏览器实例内，跨实例拒绝）并返回"
+                    "回执；观察/操作动作需在下一次不带 target_id 的调用发起。"
+                    "target_id 不在当前清单 ⇒ 确定性失败并返回当前页面清单。"
+                ),
+            },
         },
         "required": ["action"],
         "oneOf": _PROVIDER_BRANCHES,
@@ -198,9 +221,9 @@ class BrowserPerceiveTool:
     lazy_parameters = parameters
 
     _FLAT_WAIT_FIELDS = {
-        "page_ready": {"action", "kind", "state", "within_ms"},
-        "page_url": {"action", "kind", "match", "expected_url", "within_ms"},
-        "object_state": {"action", "kind", "grounding_ref", "state", "value", "within_ms"},
+        "page_ready": {"action", "kind", "state", "within_ms", "target_id"},
+        "page_url": {"action", "kind", "match", "expected_url", "within_ms", "target_id"},
+        "object_state": {"action", "kind", "grounding_ref", "state", "value", "within_ms", "target_id"},
         "object_text": {
             "action",
             "kind",
@@ -209,6 +232,7 @@ class BrowserPerceiveTool:
             "match",
             "text",
             "within_ms",
+            "target_id",
         },
     }
 
@@ -220,6 +244,7 @@ class BrowserPerceiveTool:
         session_id_getter: Callable[[], str],
         exact_ref_hydrator: Callable[[str, str], dict[str, Any]] | None = None,
         profile_annotation: dict[str, Any] | None = None,
+        page_controller: Any | None = None,
     ) -> None:
         self._adapter = adapter
         self._backend = backend
@@ -228,6 +253,8 @@ class BrowserPerceiveTool:
         # S2 三级授权（DESIGN-20261005 v4 §4.2）：仅 profile_class=real 且 ACK 合法时非 None，
         # 回执顶层带 profile_class/ack_digest/ack_expires；默认档保持 None ⇒ 输出字节级不变。
         self._profile_annotation = profile_annotation
+        # EVO-20261007-11ae668f：显式换页协调器（可选注入；缺省 ⇒ target_id 参数不可用）。
+        self._page_controller = page_controller
         common_wait = {
             "adapter": adapter,
             "backend": backend,
@@ -237,6 +264,22 @@ class BrowserPerceiveTool:
         self._wait_scope_url = BrowserWaitScopeUrlTool(**common_wait)
         self._wait_object_state = BrowserWaitObjectStateTool(**common_wait)
         self._wait_object_text = BrowserWaitObjectTextTool(**common_wait)
+
+    def _page_list_result(self, exc: MultiPageAmbiguityError) -> ToolResult:
+        """多页歧义 ⇒ 结构化只读页面清单（不绑定、不建会话、无副作用）。"""
+
+        payload = {
+            "action": "page_list",
+            "reason": "multi_page_ambiguity",
+            "hint": (
+                "CDP 端点当前暴露多个 page 且无已建绑定；不做任何自动选择。"
+                "请人工/模型决策后，在下次 browser_perceive / browser_operate 调用中"
+                "显式携带 target_id=<page_id> 换绑到目标页。"
+            ),
+            "pages": [page.to_dict() for page in exc.pages],
+            "page_count": len(exc.pages),
+        }
+        return self._json_result(payload)
 
     def _json_result(self, payload: dict[str, Any]) -> ToolResult:
         if self._profile_annotation:
@@ -265,15 +308,16 @@ class BrowserPerceiveTool:
                 "projection_kinds",
                 "projection_cursor",
                 "vision",
+                "target_id",
             },
-            "hydrate": {"action", "grounding_ref"},
-            "diff": {"action", "from_version", "to_version"},
+            "hydrate": {"action", "grounding_ref", "target_id"},
+            "diff": {"action", "from_version", "to_version", "target_id"},
         }
         if action == "wait":
             # Historical nested condition remains executable for frozen evidence and
             # deterministic compatibility, but it is absent from the provider schema.
             if "condition" in kwargs:
-                allowed = {"action", "condition", "within_ms"}
+                allowed = {"action", "condition", "within_ms", "target_id"}
             else:
                 kind = str(kwargs.get("kind") or "").strip()
                 allowed = self._FLAT_WAIT_FIELDS.get(kind)
@@ -324,6 +368,41 @@ class BrowserPerceiveTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        # EVO-20261007-11ae668f：显式 target_id ⇒ 先换绑（确定性，非静默），再执行观察。
+        explicit_target_id = str(kwargs.get("target_id") or "").strip()
+        if explicit_target_id:
+            if self._page_controller is None:
+                return self._fail(
+                    "[browser_perceive] target_id 换绑不可用：本会话未装配 page controller。"
+                )
+            try:
+                rebind_receipt = self._page_controller.rebind(explicit_target_id)
+            except PageTargetNotFoundError as exc:
+                return self._json_result(
+                    {
+                        "action": "rebind",
+                        "status": "failed",
+                        "reason": "target_not_found",
+                        "target_id": exc.target_id,
+                        "pages": [page.to_dict() for page in exc.pages],
+                        "hint": "target_id 不在当前页面清单中；请从 pages 里选择确切 page_id 重试。",
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001 - rebind failure must stay explicit.
+                return self._fail(
+                    f"[browser_perceive] target_id 换绑失败：error_type={type(exc).__name__}; error={exc}"
+                )
+            else:
+                result = self._json_result(
+                    {
+                        "action": "rebind",
+                        "status": "ok",
+                        "rebound": rebind_receipt,
+                    }
+                )
+                # 换绑本身是一个已完成的显式动作：本次调用到此为止，观察动作需
+                # 在下一次调用发起（单一动作、复验分离，避免换绑+观察耦合）。
+                return result
         mismatch = self._field_mismatch(action, dict(kwargs))
         if mismatch is not None:
             return mismatch
@@ -333,7 +412,7 @@ class BrowserPerceiveTool:
                 condition = {
                     key: value
                     for key, value in kwargs.items()
-                    if key not in {"action", "within_ms"}
+                    if key not in {"action", "within_ms", "target_id"}
                 }
             elif not isinstance(condition, dict):
                 return self._fail("[browser_perceive:wait] condition 必须是闭合 object。")
@@ -378,6 +457,9 @@ class BrowserPerceiveTool:
                         if isinstance(item, dict) and item.get("kind") == "page"
                     )
                     scope_ref = str(page_scope.get("scope_ref") or "").strip()
+                except MultiPageAmbiguityError as ambiguity:
+                    # EVO-20261007-11ae668f：多页且未显式指定 target ⇒ 只读页面清单。
+                    return self._page_list_result(ambiguity)
                 except Exception as exc:  # noqa: BLE001 - observation failure must stay explicit.
                     return ToolResult(
                         status=ToolResultStatus.ERROR,
@@ -564,6 +646,10 @@ class BrowserPerceiveTool:
                 )
             try:
                 raw = self._backend.capture()
+            except MultiPageAmbiguityError as ambiguity:
+                # EVO-20261007-11ae668f：多页且未显式指定 target ⇒ 只读页面清单。
+                return self._page_list_result(ambiguity)
+            try:
                 result = self._adapter.snapshot(
                     session_id,
                     raw,

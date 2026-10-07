@@ -178,6 +178,7 @@ def test_model_surface_aggregates_wait_while_typed_primitives_remain_closed(tmp_
         "value",
         "field",
         "text",
+        "target_id",
         "within_ms",
     }
     assert "condition" not in props

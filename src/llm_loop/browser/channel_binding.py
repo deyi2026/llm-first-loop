@@ -154,3 +154,42 @@ class BrowserChannelBindingCoordinator:
         for listener in listeners:
             listener(established)
         return established
+
+    def rebind(
+        self,
+        browser_ws_uuid: str,
+        target_id: str,
+        target_ws_url: str,
+    ) -> BrowserChannelBinding:
+        """EVO-20261007-11ae668f：同浏览器实例内的显式换页重绑。
+
+        边界（与 require_match 一致，不放宽任何安全约束）：
+        - 无既有 binding ⇒ 等价 require_match 建立首个身份（不重复回调语义）。
+        - browser_ws_uuid 不匹配 ⇒ 拒绝（换 Chrome 实例仍被禁止，硬边界不变）。
+        - 其余情况 ⇒ 以新 target_id/target_ws_url 重建 binding 身份；
+          attestation 冻结字段随换页一并重置（新页需要重新走建绑冻结），
+          created_at 保留首绑时间以保留审计线索。
+        本方法只改身份，不触发 established 回调（首记录语义不变）。
+        """
+        with self._lock:
+            current = self._binding
+            if current is None:
+                self._binding = BrowserChannelBinding(
+                    browser_ws_uuid=browser_ws_uuid,
+                    target_id=target_id,
+                    target_ws_url=target_ws_url,
+                )
+                return self._binding
+            if browser_ws_uuid != current.browser_ws_uuid:
+                raise RuntimeError(
+                    "Browser channel rebind rejected — browser ws uuid mismatch "
+                    f"(coordinator={current.browser_ws_uuid} vs now={browser_ws_uuid}); "
+                    "cross-instance rebind is forbidden; no cross-instance drift"
+                )
+            self._binding = BrowserChannelBinding(
+                browser_ws_uuid=current.browser_ws_uuid,
+                target_id=target_id,
+                target_ws_url=target_ws_url,
+                created_at=current.created_at,
+            )
+            return self._binding
