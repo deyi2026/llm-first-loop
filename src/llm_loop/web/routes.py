@@ -3325,6 +3325,8 @@ def list_session_schedule(session_id: str, request: Request) -> Response:
 @router.post("/api/v1/sessions/{session_id}/schedule/{sid}/cancel")
 def cancel_session_schedule(session_id: str, sid: str, request: Request) -> Response:
     """Explicit authenticated-user cancellation of one owner-scoped reminder."""
+    from llm_loop.core.scheduler import ScheduleCommitUncertainError, SchedulePersistError
+
     engine = _engine_from(request)
     if not engine.session.exists(session_id):
         return UTF8JSONResponse(
@@ -3346,7 +3348,31 @@ def cancel_session_schedule(session_id: str, sid: str, request: Request) -> Resp
             status_code=404,
             content={"error": "schedule_not_found", "detail": "该提醒不存在或不属于当前会话"},
         )
-    store.cancel(sid)
+    try:
+        store.cancel(sid)
+    except ScheduleCommitUncertainError as exc:
+        return UTF8JSONResponse(
+            status_code=503,
+            content={
+                "error": "schedule_commit_uncertain",
+                "sid": sid,
+                "outcome": exc.outcome,
+                "visible_state": exc.visible_state,
+                "durability_confirmed": False,
+                "retry_safe": bool(exc.retry_safe),
+            },
+        )
+    except SchedulePersistError as exc:
+        return UTF8JSONResponse(
+            status_code=503,
+            content={
+                "error": "schedule_persist_failed",
+                "sid": sid,
+                "outcome": exc.outcome,
+                "durability_confirmed": False,
+                "retry_safe": bool(exc.retry_safe),
+            },
+        )
     return UTF8JSONResponse(content={"status": "ok", "sid": sid})
 
 

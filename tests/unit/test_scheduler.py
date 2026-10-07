@@ -126,6 +126,25 @@ def test_scheduler_thread_notify(tmp_path):
         SchedulerThread._notify_via_interop = orig
 
 
+def test_schedule_notify_effect_identity_is_stable_per_occurrence(tmp_path):
+    """同一 sid+count 重试必须复用同一 interop effect，不生成第二份通知."""
+    entry = ScheduleEntry(
+        sid="sched-stable1",
+        message="same occurrence",
+        trigger_at=time.time(),
+        count=0,
+    )
+    SchedulerThread._notify_via_interop(entry, data_dir=tmp_path)
+    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    files = list(inbox.glob("*.json"))
+    assert [f.name for f in files] == ["notify-sched-stable1-occ-0.json"]
+    payload = json.loads(files[0].read_text(encoding="utf-8"))
+    assert payload["id"] == "schedule:sched-stable1:0"
+
+    SchedulerThread._notify_via_interop(entry, data_dir=tmp_path)
+    assert [f.name for f in inbox.glob("*.json")] == ["notify-sched-stable1-occ-0.json"]
+
+
 def test_due_sees_other_store_add(tmp_path):
     """BUGFIX(2026-08-27) oracle: 运行中 Store A 必须看到另一实例 B 后注册的提醒.
 
