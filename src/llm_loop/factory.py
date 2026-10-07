@@ -44,6 +44,7 @@ from llm_loop.core.run_context import (
 from llm_loop.core.run_context import (
     workspace_base as runtime_workspace_base,
 )
+from llm_loop.core.schedule_delivery import ScheduleWakeDelivery
 from llm_loop.core.scheduler import ScheduleStore  # 2026-08-27 BUGFIX: 共享实例装配
 from llm_loop.core.session import SessionStore, _validate_session_id
 from llm_loop.feedback.honesty import delete_feedback_for_session
@@ -2124,158 +2125,23 @@ def build_engine(
     # 新实例，双 Store 内存互不可见 → 提醒永不触发）
     try:
         from llm_loop.core.scheduler import (
-            WAKE_DEFERRED,
-            ScheduleEntry,
             SchedulerThread,
             rearm_wake_grants,
-            wake_goal_binding_state,
         )
+        from llm_loop.tools.builtin.job_registry import format_session_jobs_facts
 
-        def _deliver_schedule(entry: ScheduleEntry) -> object:
-            """提醒交付：普通通知；或持有效 one-shot grant 的同会话续跑。
-
-            EVO-20260919-f119847d：wake 交付失败不再即时丢弃——瞬态失败
-            （会话忙 / workspace 切换守卫占用 / runner 暂不可用）与 grant 随
-            owner 进程死亡丢失，统一进入有界指数退避（30s→1m→2m→4m→8m，
-            双上限：次数 / 首败+30min）；窗口内同会话下一次真人 run 会 re-arm
-            重铸 grant（scheduler.rearm_wake_grants），超窗才降级为可见通知。
-            run 已启动过的 stale 条目（wake_started_at>0 或本进程 grant 已消费）
-            一律降级收尾，绝不二次启动自治 run。
-            """
-            if not getattr(entry, "wake", False):
-                SchedulerThread._notify_via_interop(entry, data_dir=settings.data_dir)
-                return True
-
-            def _degrade(reason: str) -> bool:
-                body = f"[定时提醒] {entry.message}"
-                # EVO-20260920-213965a1 案2: 降级原因随通知结构化落盘，
-                # 下一会话 pending 投影可见（sid/时间/原因），不再零可见。
-                SchedulerThread._notify_via_interop(
-                    entry,
-                    data_dir=settings.data_dir,
-                    wake_degraded_reason=reason,
-                )
-                # 审计修正：通知正文字符数如实记录；prompt_chars 恒 0（无字符
-                # 进入模型 prompt），不再以单一 0 掩盖"完整消息已送达"的事实。
-                engine._record_action(
-                    "schedule.wake",
-                    "degraded_to_notify",
-                    f"sid={entry.sid};reason={reason}"
-                    f";notify_chars={len(body)};prompt_chars=0",
-                )
-                return True
-
-            def _defer_or_degrade(reason: str) -> object:
-                res = _schedule_store.defer_wake_retry(entry.sid)
-                if not res.present or res.exhausted:
-                    return _degrade(f"{reason}_retry_cap")
-                engine._record_action(
-                    "schedule.wake",
-                    "deferred_retry",
-                    f"sid={entry.sid};reason={reason}"
-                    f";retry_count={res.retry_count}"
-                    f";next_delay_s={res.next_delay_s:.0f}",
-                )
-                return WAKE_DEFERRED
-
-            goal_binding_state = wake_goal_binding_state(entry, _schedule_goal_binding)
-            if goal_binding_state == "stale":
-                # Bound Goal became terminal or was replaced: consume as a true no-op.
-                # No model run and no user-facing reminder is emitted from stale task intent.
-                engine._record_action(
-                    "schedule.wake",
-                    "goal_stale_noop",
-                    f"sid={entry.sid};goal_id={entry.goal_id};prompt_chars=0",
-                )
-                return True
-            if goal_binding_state == "unknown":
-                # Lifecycle truth unreadable: never authorize an autonomous model run.
-                return _defer_or_degrade("goal_binding_unknown")
-
-            grant = _schedule_store.wake_grant(entry.sid)
-            session_id = str(getattr(entry, "session_id", "") or "")
-            if grant is None or not session_id:
-                if grant is None and session_id and (
-                    float(getattr(entry, "wake_started_at", 0.0) or 0.0) > 0.0
-                    or int(getattr(entry, "wake_owner_pid", 0) or 0) == os.getpid()
-                ):
-                    # grant 已消费：自动续跑 run 已真实启动过（成功 start 后 ack
-                    # 落盘失败的 stale 条目，或跨进程重启残留）。不再启动第二次
-                    # 自治 run，也不等待 re-arm——收尾为通知。
-                    return _degrade("grant_consumed_stale")
-                # grant 不持久化：owner 进程死亡后 grant 结构性丢失，重试本身
-                # 救不回；但同会话下一次真人 run 的 re-arm 可以重铸 grant——
-                # 在有界退避窗口内保留条目等待，超窗才降级为通知，不伪造授权。
-                if grant is None and session_id:
-                    return _defer_or_degrade("grant_lost_owner_dead")
-                return _degrade("grant_unavailable")
-
-            # §8.2-2/T08: 服务重启 waiting 窗口内不发起续跑 run——定时/委派
-            # 任务不得连续抢占排空窗口。退避保留条目，屏障释放后自动重试；
-            # grant 不消费（one-shot 能力留给窗口后的下一次投递）。
-            try:
-                _data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
-                _restart_barrier = task_admission_barrier(
-                    Path(str(_data_dir)).expanduser(), "web_schedule_wake"
-                )
-            except Exception:  # noqa: BLE001 — 屏障读取失败不阻断已授权续跑
-                _restart_barrier = None
-            if _restart_barrier is not None:
-                return _defer_or_degrade("service_restart_barrier")
-
-            # EVO-20260919-eee9d3b8（人工已审）: 唤醒 prompt 追加本会话后台任务机械现状，
-            # 避免唤醒 run 在无终态回执可见时盲目重放/重复轮询；投影失败 fail-open。
-            wake_prompt = f"[定时续跑·先前真人授权的程序委派·非新真人输入] {entry.message}"
-            try:
-                from llm_loop.tools.builtin.job_registry import format_session_jobs_facts
-
-                jobs_facts = format_session_jobs_facts(session_id)
-            except Exception:  # noqa: BLE001 — 投影失败不阻断已授权续跑
-                jobs_facts = ""
-            if jobs_facts:
-                wake_prompt = f"{wake_prompt}\n{jobs_facts}"
-
-            # antidrift R1: 自报 refs 差量事实段，追加于 jobs_facts 之后（fail-open，零结论）
-            refs_facts = ""
-            try:
-                refs_facts = _render_subject_refs_facts(entry, _data_dir)
-            except Exception:  # noqa: BLE001 — 投影失败不阻断已授权续跑
-                refs_facts = ""
-            if refs_facts:
-                wake_prompt = f"{wake_prompt}\n{refs_facts}"
-
-            # EVO-20260919-f119847d: 先落 started 标记再启动。极端情况下（启动
-            # 后 ack 落盘失败的 stale 条目）宁可退化为一次通知，也不能让
-            # re-arm 误判为"grant 丢失"而把同一 wake 二次启动为自治 run。
-            try:
-                _schedule_store.note_wake_started(entry.sid)
-            except Exception:  # noqa: BLE001 — 标记失败不阻断已授权续跑
-                logger.warning("wake started 标记落盘失败 sid=%s", entry.sid)
-            handle, _q = background_runner.start(
-                session_id,
-                wake_prompt,
-                ingress=grant,
-            )
-            if handle is not None:
-                # Consume the one-shot capability immediately after a real run starts.
-                # If schedule ack persistence later fails, a stale entry may notify again
-                # but can never launch a second autonomous model run.
-                _schedule_store.clear_wake_grant(entry.sid)
-                engine._record_action(
-                    "schedule.wake",
-                    "started",
-                    f"sid={entry.sid};session={session_id};delegated=1",
-                )
-                return True
-            if background_runner.is_running(session_id) or background_runner.is_sync_active(session_id):
-                return _defer_or_degrade("session_busy")
-
-            if not background_runner.enabled:
-                # RUNNER_BACKGROUND=0 是持久配置而非瞬态：退避重试无意义，
-                # 维持原语义——立即降级为可见通知，不延迟送达。
-                return _degrade("runner_disabled")
-            # workspace 切换守卫占用等瞬态不可启动：退避窗口内保留重试。
-            return _defer_or_degrade("runner_unavailable")
+        _deliver_schedule = ScheduleWakeDelivery(
+            _schedule_store,
+            background_runner,
+            data_dir=settings.data_dir,
+            record_action=engine._record_action,
+            goal_binding_resolver=_schedule_goal_binding,
+            restart_barrier=lambda: task_admission_barrier(
+                Path(settings.data_dir).expanduser(), "web_schedule_wake"
+            ),
+            jobs_facts=format_session_jobs_facts,
+            subject_facts=lambda entry: _render_subject_refs_facts(entry, settings.data_dir),
+        )
 
         engine.scheduler = SchedulerThread(_schedule_store, notify=_deliver_schedule)
         engine.scheduler.start()

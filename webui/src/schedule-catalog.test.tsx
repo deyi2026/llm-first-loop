@@ -63,6 +63,29 @@ afterEach(() => {
 });
 
 describe("schedule catalog (DSH ScheduleCatalogAction parity)", () => {
+  it.each([
+    ["waiting_human", "grant_unavailable", "等待恢复授权"],
+    ["retrying", "session_busy", "等待会话空闲"],
+    ["retrying", "service_restart_barrier", "等待重启完成"],
+    ["retrying", "runner_unavailable", "等待重试"],
+    ["queued", "awaiting_run_admission", "等待执行"],
+    ["inactive", "delegation_consumed", "委派已消费，不重复续跑"],
+  ] as const)("显示真实交付状态 %s/%s", async (state, reason, label) => {
+    const now = Math.floor(Date.now() / 1000);
+    const reminder: ScheduleItem = {
+      ...items()[0], wake: true, delivery_state: state, wait_reason: reason,
+      scheduled_trigger_at: now - 120, trigger_at: now + 60,
+    };
+    installFetch((url) => url.includes("/api/v1/sessions/s1/schedule")
+      ? new Response(JSON.stringify({ schedule: [reminder], count: 1 }), { status: 200 })
+      : undefined);
+    render(<ScheduleCatalog />);
+    fireEvent.click(await screen.findByTestId("schedule-catalog-trigger"));
+    const row = await screen.findByTestId("schedule-catalog-row");
+    expect(row).toHaveTextContent(label);
+    expect(row).toHaveTextContent("下次尝试");
+    expect(row).not.toHaveTextContent("等待中");
+  });
   it("transient read failure preserves last known reminders instead of fabricating empty", async () => {
     let fail = false;
     installFetch((url) => {

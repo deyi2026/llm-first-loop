@@ -46,6 +46,19 @@ function formatFrequency(item: ScheduleItem): string {
   return zh.frequencyEvery(value, unitLabel(selected[0]));
 }
 
+function scheduleStatus(item: ScheduleItem, overdue: boolean): string {
+  if (item.delivery_state === "waiting_human") return zh.statusWaitingAuthorization;
+  if (item.delivery_state === "queued") return zh.statusWaitingRun;
+  if (item.delivery_state === "started") return zh.statusStarted;
+  if (item.delivery_state === "inactive") return zh.statusInactive;
+  if (item.delivery_state === "retrying") {
+    if (item.wait_reason === "session_busy") return zh.statusWaitingIdle;
+    if (item.wait_reason === "service_restart_barrier") return zh.statusWaitingRestart;
+    return zh.statusRetrying;
+  }
+  return overdue ? zh.statusOverdue : zh.statusScheduled;
+}
+
 function formatLocalTime(epochS: number): string {
   return new Intl.DateTimeFormat("zh-CN", {
     dateStyle: "medium",
@@ -204,7 +217,7 @@ export function ScheduleCatalog() {
               >
                 <span className="v2-catalog-status">
                   <span className="v2-catalog-dot" aria-hidden="true" />
-                  <span>{overdue ? zh.statusOverdue : zh.statusScheduled}</span>
+                  <span>{scheduleStatus(item, overdue)}</span>
                 </span>
                 <span className="v2-catalog-prompt" title={item.message}>
                   {item.message}
@@ -212,7 +225,10 @@ export function ScheduleCatalog() {
                 <span className="v2-catalog-metadata">
                   <span>{formatFrequency(item)}</span>
                   <span aria-hidden="true">·</span>
-                  <span>{formatLocalTime(item.trigger_at)}</span>
+                  <span>{formatLocalTime(item.scheduled_trigger_at ?? item.trigger_at)}</span>
+                  {item.scheduled_trigger_at && item.scheduled_trigger_at !== item.trigger_at ? (
+                    <span>{zh.nextAttempt} {formatLocalTime(item.trigger_at)}</span>
+                  ) : null}
                   <span aria-hidden="true">·</span>
                   <span className={overdue ? "v2-catalog-relative-overdue" : ""}>
                     {formatRelative(item.trigger_at, now)}
