@@ -97,6 +97,9 @@ _ACTION_OPTIONAL_FIELDS = frozenset(
         "next_step",
         # EVO-20260924-8266b693 B: failed 动作"待确认"闭合戳；旧记录缺失即未确认。
         "acknowledged_at",
+        # 生命周期加固（GOAL-20261008-f143e051）：执行 worker pid；旧记录缺失即 0
+        # （未知，reaper 回退旧 2100s 时窗）。
+        "worker_pid",
     }
 )
 _MANAGED_SERVICES = ("web", "feishu", "learning")
@@ -126,6 +129,10 @@ _REQUESTER_EXIT_TIMEOUT_S = 900.0
 _IDLE_POLL_S = 5.0
 _IDLE_TIMEOUT_S = 900.0
 _STALE_WAITING_MARGIN_S = 300.0
+# 生命周期加固（GOAL-20261008-f143e051）：waiting action 带 worker_pid 时，
+# reaper 可按进程存活判定提前回收——dead-pid 宽限覆盖 poll 间隔与 stamp 延迟，
+# 把 caller 超时杀 worker 的锁死窗口从最长 2100s 收缩到秒级。
+_STALE_PID_GRACE_S = 30.0
 # lifecycle_agency L6/L7（已删除）: 旧 `_VERIFY_MAX_ATTEMPTS=2` 让程序据核验
 # 结论自动重跑脚本并自动判终态——这是程序替模型做策略判断（违反 Q5），也是
 # "判据缺失被当失败"的来源。现 `_verify_restart_targets` 只产三态证据
@@ -486,6 +493,9 @@ class ServiceControlAction:
     # verify_acknowledge(verdict=accept) on failed；确认前 failed 动作持续占用
     # pending_actions 投影与开场状态提醒（即使 desired 代已前进/被新动作接管）。
     acknowledged_at: str = ""
+    # 生命周期加固（GOAL-20261008-f143e051）：执行 worker pid（0 = 未知/旧记录）。
+    # reaper 据此按进程存活判定 waiting 回收，替代纯时间窗。
+    worker_pid: int = 0
 
     def __post_init__(self) -> None:
         if self.schema != _ACTION_SCHEMA:
@@ -533,6 +543,7 @@ class ServiceControlAction:
             origin=str(raw.get("origin") or ""),
             next_step=str(raw.get("next_step") or ""),
             acknowledged_at=str(raw.get("acknowledged_at") or ""),
+            worker_pid=int(raw.get("worker_pid") or 0),
         )
 
 
@@ -917,11 +928,33 @@ class ManagedServiceDeploymentStore:
     def _write_action_unlocked(self, action: ServiceControlAction) -> None:
         _atomic_json(self.action_path(action.action_id), action.to_dict())
 
+    def record_worker_pid(self, action_id: str, pid: int) -> None:
+        """生命周期加固（GOAL-20261008-f143e051）：盖章执行 worker pid。
+
+        幂等：pid 未变则不写（避免无谓 bump updated_at 重置 reaper 时窗）。
+        仅写 pid 与 updated_at，不改 status/detail——与 update_action 的
+        状态迁移/屏障释放/终态事件语义完全隔离。
+        """
+        with self.lease():
+            action = self.read_action(action_id)
+            if action is None or action.worker_pid == pid:
+                return
+            self._write_action_unlocked(
+                dataclasses.replace(action, worker_pid=pid, updated_at=_local_now())
+            )
+
     def _reap_stale_waiting_actions_unlocked(self) -> None:
-        """Fail waiting actions whose detached worker died; defense in depth."""
-        stale_before = system_local_now().timestamp() - (
+        """Fail waiting actions whose detached worker died; defense in depth.
+
+        生命周期加固（GOAL-20261008-f143e051）：优先按 worker_pid 存活判定——
+        pid 已死且超过宽限即回收（秒级解锁屏障）；无 pid 的旧 action 或 pid
+        复用等无法确认的场景回退原 2100s 时间窗。
+        """
+        now_ts = system_local_now().timestamp()
+        stale_before = now_ts - (
             _REQUESTER_EXIT_TIMEOUT_S + _IDLE_TIMEOUT_S + _STALE_WAITING_MARGIN_S
         )
+        pid_grace_before = now_ts - _STALE_PID_GRACE_S
         for path in sorted(self.actions_dir.glob("*.json")):
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
@@ -934,14 +967,25 @@ class ManagedServiceDeploymentStore:
                 updated_ts = datetime.fromisoformat(action.updated_at).timestamp()
             except ValueError:
                 updated_ts = 0.0
-            if updated_ts >= stale_before:
+            reap_detail = ""
+            if (
+                action.worker_pid > 0
+                and updated_ts < pid_grace_before
+                and _pid_dead(action.worker_pid)
+            ):
+                reap_detail = (
+                    f"stale waiting state reaped: worker pid {action.worker_pid} dead"
+                )
+            elif updated_ts < stale_before:
+                reap_detail = "stale waiting state reaped: detached worker presumed dead"
+            if not reap_detail:
                 continue
             self._write_action_unlocked(
                 dataclasses.replace(
                     action,
                     status="failed",
                     updated_at=_local_now(),
-                    detail="stale waiting state reaped: detached worker presumed dead",
+                    detail=reap_detail,
                 )
             )
             # waiting 态未开始任何副作用：屏障随终态释放（§8.3）。
@@ -2909,7 +2953,25 @@ def _verify_restart_targets(
         time.sleep(_VERIFY_POLL_S)
 
 
+def _pid_dead(pid: int) -> bool:
+    """进程存活探测（signal 0）；pid 复用/他人进程视为存活（保守回退）。"""
+    try:
+        os.kill(pid, 0)
+        return False
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+
+
 def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> int:
+    # 生命周期加固（GOAL-20261008-f143e051）：本进程即执行 worker，进入任何
+    # 检查/等待前先盖章 pid——deployment 缺失即时退出的孤儿场景同样受益
+    # （reaper 可按死 pid 秒级回收）。盖章失败不阻断执行（旧 store 兼容）。
+    try:
+        store.record_worker_pid(action_id, os.getpid())
+    except (OSError, ValueError):
+        pass
     action = store.read_action(action_id)
     deployment = store.read()
     if action is None or deployment is None:
@@ -3480,6 +3542,15 @@ def main(argv: list[str] | None = None) -> int:
         default="cli-restart",
         help="requester identity recorded on the durable action (audit)",
     )
+    restart_cmd.add_argument(
+        "--wait",
+        action="store_true",
+        help=(
+            "inline worker (debug): CLI blocks until terminal state; worst-case "
+            f"~{_REQUESTER_EXIT_TIMEOUT_S + _IDLE_TIMEOUT_S}s+ before physical restart. "
+            "Default dispatches a detached worker (survives caller timeout/exit)."
+        ),
+    )
 
     # svc_deploy I5：CLI 一键部署入口（与工具面 action=update 同名同语义），
     # 附显式别名 deploy。内部只复用既有机械边界，不另起判据。
@@ -3504,6 +3575,15 @@ def main(argv: list[str] | None = None) -> int:
         help="期望的当前 desired 代（CAS）；缺省自动取当前代",
     )
     update_cmd.add_argument("--data-dir")
+    update_cmd.add_argument(
+        "--wait",
+        action="store_true",
+        help=(
+            "inline worker (debug): CLI blocks until terminal state; worst-case "
+            f"~{_REQUESTER_EXIT_TIMEOUT_S + _IDLE_TIMEOUT_S}s+ before physical restart. "
+            "Default dispatches a detached worker (survives caller timeout/exit)."
+        ),
+    )
 
     barriers = sub.add_parser("barriers")
     barriers.add_argument("--data-dir", required=True)
@@ -3691,23 +3771,48 @@ def main(argv: list[str] | None = None) -> int:
             ),
             flush=True,
         )
-        rc = run_action_worker(store, action.action_id)
+        if args.wait:
+            # 调试语义：内联 worker 直到终态。启动前显式提示最坏 wall time，
+            # 避免调用方（如 execute_command 默认 30s 超时）误杀内联 worker 后
+            # action 卡 waiting、屏障持有至 stale reap（最长 2100s）。
+            print(
+                "[cli-restart] inline worker (--wait): worst-case "
+                f"~{_REQUESTER_EXIT_TIMEOUT_S + _IDLE_TIMEOUT_S}s+ before physical "
+                "restart; caller timeout below this will orphan the waiting action",
+                file=sys.stderr,
+                flush=True,
+            )
+            rc = run_action_worker(store, action.action_id)
+        else:
+            # 生命周期加固（GOAL-20261008-f143e051）：默认与工具面同款 detached
+            # worker——受理后立即返回，worker 独立于调用方存活，杜绝 caller
+            # 超时把 waiting action 留成孤儿屏障。
+            spawn_service_control_worker(store, action.action_id)
+            rc = 0
         final = store.read_action(action.action_id)
         # svc_deploy I6：末行 JSON 只增键（next_step）、不增行；detail 的既有
         # [:400] 行为与 rc 语义不变。
+        receipt: dict[str, Any] = {
+            "ok": bool(final is not None and final.status == "succeeded"),
+            "action_id": action.action_id,
+            "status": final.status if final else "missing",
+            # L19: 展示片段 + 稳定 ref，完整原因经 reason_ref 可回读。
+            "detail": (final.detail if final else "")[:400],
+            "reason_ref": final.reason_ref if final else "",
+            "next_step": decode_next_steps(final.next_step if final else ""),
+        }
+        if not args.wait:
+            # detached 回执如实反映瞬时态：非 succeeded 但 ok=False 并非失败，
+            # 附 detached 标记与收敛视图说明仍在执行。
+            receipt["ok"] = True
+            receipt["detached"] = True
+            receipt["hint"] = "worker detached; poll status/show for terminal state"
+            try:
+                receipt["convergence"] = compose_convergence_view(store)
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
         print(
-            json.dumps(
-                {
-                    "ok": bool(final is not None and final.status == "succeeded"),
-                    "action_id": action.action_id,
-                    "status": final.status if final else "missing",
-                    # L19: 展示片段 + 稳定 ref，完整原因经 reason_ref 可回读。
-                    "detail": (final.detail if final else "")[:400],
-                    "reason_ref": final.reason_ref if final else "",
-                    "next_step": decode_next_steps(final.next_step if final else ""),
-                },
-                ensure_ascii=False,
-            ),
+            json.dumps(receipt, ensure_ascii=False),
             flush=True,
         )
         return rc
@@ -3845,7 +3950,21 @@ def main(argv: list[str] | None = None) -> int:
             ),
             flush=True,
         )
-        rc = run_action_worker(store, action.action_id)
+        if args.wait:
+            # 调试语义同 restart：内联 worker；显式提示最坏 wall time。
+            print(
+                "[cli-update] inline worker (--wait): worst-case "
+                f"~{_REQUESTER_EXIT_TIMEOUT_S + _IDLE_TIMEOUT_S}s+ before physical "
+                "restart; caller timeout below this will orphan the waiting action",
+                file=sys.stderr,
+                flush=True,
+            )
+            rc = run_action_worker(store, action.action_id)
+        else:
+            # 生命周期加固（GOAL-20261008-f143e051）：默认 detached worker，
+            # publish/CAS 已生效，物理生效由 detached worker 完成。
+            spawn_service_control_worker(store, action.action_id)
+            rc = 0
         final = store.read_action(action.action_id)
         # EVO-20260924-dc3c7c78：终局回执附只读收敛快照——重启完成后同一眼
         # 看到仍 lagging 的服务；读取失败只缺省该键。
@@ -3857,6 +3976,12 @@ def main(argv: list[str] | None = None) -> int:
             "reason_ref": final.reason_ref if final else "",
             "next_step": decode_next_steps(final.next_step if final else ""),
         }
+        if not args.wait:
+            # detached 回执如实反映瞬时态：desired 已固化、worker 正在执行；
+            # ok=True 语义 = 受理+发布成功，物理生效看 convergence/status。
+            update_out["ok"] = True
+            update_out["detached"] = True
+            update_out["hint"] = "worker detached; poll status/show for terminal state"
         try:
             update_out["convergence"] = compose_convergence_view(store)
         except (OSError, ValueError, json.JSONDecodeError):

@@ -542,7 +542,17 @@ def test_incident_e1_rejection_carries_publish_next_step_then_e3_retry_succeeds(
     # （EVO-20261007-9c6eccf3: 开发树前移不再是漂移源；E1 成因改为绑定树分歧。）
     _advance_head(Path(store.read().code_root))
     rc = sc.main(
-        ["restart", "--data-dir", str(data), "--target", "feishu", "--requester", "cli-test"]
+        [
+            "restart",
+            "--data-dir",
+            str(data),
+            "--target",
+            "feishu",
+            "--requester",
+            "cli-test",
+            # 终态断言 → 内联（GOAL-20261008-f143e051：默认 detach）。
+            "--wait",
+        ]
     )
     assert rc == 4
 
@@ -588,7 +598,17 @@ def test_incident_e1_rejection_carries_publish_next_step_then_e3_retry_succeeds(
     assert published["generation"] == 2
     assert len(published["git_head"]) == 40
 
-    rc = sc.main(["restart", "--data-dir", str(data), "--target", "feishu"])
+    rc = sc.main(
+        [
+            "restart",
+            "--data-dir",
+            str(data),
+            "--target",
+            "feishu",
+            # 终态断言 → 内联（GOAL-20261008-f143e051：默认 detach）。
+            "--wait",
+        ]
+    )
     assert rc == 0
     retry_accepted, retry_final = _json_lines(capsys.readouterr().out)
     assert retry_final["ok"] is True
