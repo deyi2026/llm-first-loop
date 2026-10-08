@@ -19,6 +19,19 @@ from llm_loop.web.auth import SESSION_COOKIE_NAME, hash_login_password
 TEST_PASSWORD = "test-password-12345"
 
 
+@pytest.fixture(autouse=True)
+def ui_v2_stub_dist(tmp_path, monkeypatch):
+    """/ui/v2/ 依构建产物存在性条件挂载（webui/dist 在 .gitignore，CI 无产物）。
+
+    注入临时产物目录使挂载确定发生，摆脱对本机构建产物的隐性依赖
+    （远端 CI 首跑实测：auth gate 303 断言变 404）。
+    """
+    ui = tmp_path / "dist"
+    ui.mkdir()
+    (ui / "index.html").write_text("<html>stub-ui</html>", encoding="utf-8")
+    monkeypatch.setenv("UI_V2_DIR", str(ui))
+
+
 @pytest.fixture()
 def canonical_env(fake_settings, monkeypatch):
     monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
