@@ -102,9 +102,26 @@ class KnowledgeRun:
             if name == "search_records":
                 ref = str(args.get("query") or "")
                 kind = str(args.get("kind") or "")
-                if (kind == "method" and ref.startswith("method:")) or (
-                    kind in {"experience", "lesson"} and ref.startswith("experience:")
-                ):
+                content = str(getattr(message, "content", "") or "")
+                # A successful search_records call can also mean ZERO matches.
+                # An exact-looking query alone does not prove hydration.
+                hydrated = (
+                    content.startswith("[search_records] 命中 ")
+                    and (
+                        (
+                            kind == "method" and ref.startswith("method:")
+                            and "--- exact Method ---" in content
+                            and ref in content
+                        )
+                        or (
+                            kind in {"experience", "lesson"}
+                            and ref.startswith("experience:")
+                            and f"\nexperience_ref={ref}\n" in content
+                            and "\nbody=" in content
+                        )
+                    )
+                )
+                if hydrated:
                     self._hydrated_refs.add(ref)
                     self._emit("knowledge.hydration_observed", binding, {
                         "call_id": call_id, "kind": kind, "ref": ref,
@@ -244,10 +261,10 @@ def _paired_tool_trace(messages: list[Any], turn_index: int) -> tuple[list[dict]
         status = str(getattr(getattr(message, "status", None), "value", "") or "")
         if not status:
             continue
-        seen.add(call_id)
         name, args = declared[call_id]
         if str(getattr(message, "tool_name", "") or "") != name:
             continue
+        seen.add(call_id)
         trace.append({"id": call_id, "name": name, "status": status, "arguments": args})
         receipts.append(message)
     return trace, receipts
@@ -278,7 +295,15 @@ def project_execution_knowledge(
         if not isinstance(turn_index, int) or ingress is None:
             return built
         sid = str(getattr(sess, "session_id", "") or "")
-        run_ref = f"{sid}:turn:{turn_index}"
+        # A re-admitted run of the same persisted turn is a distinct execution
+        # generation. Never borrow the prior run's dedupe keys or failure latch.
+        from llm_loop.core.run_context import current_run_generation
+
+        generation = str(current_run_generation.get() or "")
+        run_ref = (
+            f"{sid}:turn:{turn_index}:run:{generation}" if generation
+            else f"{sid}:turn:{turn_index}"
+        )
         tracker = getattr(state, "knowledge_runtime", None)
         if tracker is None or getattr(state, "knowledge_turn_identity", "") != run_ref:
             registry = getattr(host, "corrections", None)
@@ -337,6 +362,18 @@ def project_execution_knowledge(
         )
         if not reference:
             return built
+        # GLM 1210: two consecutive tail user messages can be rejected by the
+        # provider. Merge at the *transient wire projection* only, preserving
+        # the original user text/marker as the exact prefix and a visibly
+        # lower-authority REFERENCE appendix as the suffix. Session/EventStore
+        # and the original built list/dicts remain byte-for-byte untouched.
+        if built and built[-1].get("role") == "user":
+            original_content = built[-1].get("content")
+            if not isinstance(original_content, str):
+                return built
+            joined = dict(built[-1])
+            joined["content"] = original_content + "\n\n" + reference
+            return [*built[:-1], joined]
         return [*built, {"role": "user", "content": reference}]
     except Exception:
         return built  # Reference failure must not change actual tool/provider truth.

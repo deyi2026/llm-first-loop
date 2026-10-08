@@ -121,8 +121,10 @@ def test_web_allowlist_low_risk_injects_reference_only_into_wire() -> None:
         host, sess, baseline, logical_round=1, history_budget=5000,
     )
     assert len(baseline) == 1 and len(sess.messages) == 1
-    assert len(projected) == 2 and "[资料·记忆/经验]" in projected[-1]["content"]
-    assert projected[-1]["role"] == "user"  # program-labeled, not a persisted human turn
+    assert len(projected) == 1 and "[资料·记忆/经验]" in projected[-1]["content"]
+    assert projected[-1]["role"] == "user"  # no second tail user / GLM 1210
+    assert projected[-1]["content"].startswith(turn.content + "\n\n")
+    assert baseline[0]["content"] == turn.content
     assert host.search_calls == ["method", "experience", "lesson"]
     assert host.state.knowledge_turn_identity == "web-one:turn:0"
     assert project_execution_knowledge(
@@ -192,7 +194,7 @@ def test_actual_session_tool_pair_drives_failure_learning_and_second_reference()
     baseline = [{"role": "user", "content": turn.content}]
     assert len(project_execution_knowledge(
         host, sess, baseline, logical_round=1, history_budget=5000,
-    )) == 2
+    )) == 1
     sess.messages.append(_call("bad", args='{"command":"pytest -q"}'))
     failure = ToolResult(
         status=ToolResultStatus.FAILURE, content="fixture missing",
@@ -205,7 +207,7 @@ def test_actual_session_tool_pair_drives_failure_learning_and_second_reference()
     projected = project_execution_knowledge(
         host, sess, baseline, logical_round=2, history_budget=5000,
     )
-    assert len(projected) == 2
+    assert len(projected) == 1 and "[资料·记忆/经验]" in projected[-1]["content"]
     assert [name for _sid, name, _payload in host.events].count(
         "knowledge.failure_observed"
     ) == 1

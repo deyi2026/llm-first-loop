@@ -122,3 +122,42 @@ stops PROMOTION but must not erase the learning evidence.
 
 This batch needs separate owner authorization for main FF and later Web-only
 Canary; no production publish, restart, remote push, or Feishu/Learning enablement.
+
+## 7. Predeployment hardening (2026-10-09)
+
+Release readiness must be assessed against the real next-provider input,
+not only against a mocked KnowledgeAdvisor return string.
+
+1. **GLM-1210 tail structure:** a separate program-reference user message
+   immediately following the genuine user message produces consecutive tail
+   users, a known provider rejection shape. The isolated predeployment change
+   uses copy-on-write to join a lower-authority, explicitly labeled REFERENCE
+   appendix to the last user projection if it is already a user. The first
+   bytes of that user's content, its exact active ingress marker and the
+   persisted Session/EventStore message are not overwritten. If the projection
+   currently ends in a tool/assistant, one program-labeled user reference can
+   be appended after the complete tool-result pair. No extra provider call,
+   tool invocation, or retry is performed.
+2. **Run identity:** Session ID and persisted turn offset do not uniquely
+   identify a re-admitted execution of that same turn. Bind the run-local
+   observation ledger to the existing current_run_generation when present;
+   a different run may not inherit a previous failure latch or discovery set.
+3. **Hydration truth:** search_records may return SUCCESS with zero hits or
+   degraded evidence. Exact query plus SUCCESS is not proof that the named
+   record was hydrated. Require a matching rendered complete Method/Experience
+   record in the paired actual tool receipt before writing a hydration event.
+   Model-declared use remains separate from verified impact.
+4. **Regression:** use real LoopEngine and offline Fake Provider to confirm
+   bounded reference insertion; an actual failed read_file followed by recovery
+   at the next provider decision; unchanged tool-call identities, no extra
+   program-initiated effects, and no reference persisted into Session history.
+   Enforce mechanical provider-structure checks, default OFF and Web identity
+   negative controls.
+
+Predeployment exit requires official R9 synthetic full CI terminal receipt,
+security scan, postcommit gates, a clean main-line fast-forward after
+user-authorized integration and no live deployment changes. Local green
+proves eligibility for a gen205 deployment with advisor OFF; it does NOT
+prove live GLM-5.3 compatibility, shadow retrieval cost or Canary task efficacy.
+Web-only shadow/Canary activation is a separate identity-bound change requiring
+explicit authorization, actual provider smoke and frozen effectiveness tests.
