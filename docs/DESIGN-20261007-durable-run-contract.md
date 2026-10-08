@@ -110,6 +110,26 @@ DurableContract(Protocol):
 - 验收：新增 `tests/unit/test_service_control_durability.py` 7 项故障注入（正常无 tmp 残留/replace 前分型+旧态保留+重试计数/目录 fsync 耗尽 uncertain+no-rewrite+sha 校验/预算内瞬时恢复/readback unreadable/CAS 集成两态）全绿；service_control 相关既有回归 250 passed / 0 failed。
 - registry：`service_control_state` `T2/partial` → `T2/conform`，rationale 记录写路径、outcome 分型、单写者与验收口径。
 
+### 实施记录（2026-10-08 rev7：action/barrier uncertain reconcile）
+
+- rev6 后续核验发现：desired deployment 的 uncertain 已可由 generation CAS 机械 reconcile，但 action transition 仍有后置副作用顺序。原顺序为
+  `_write_action_unlocked(updated)` → barrier release/establish → terminal event；若 action 文件已 replace 成新状态、仅 directory fsync 耗尽，
+  `ServiceControlCommitUncertainError(visible_state=matches)` 会在后置副作用前抛出，造成“action 已 succeeded、barrier 仍残留”等控制面裂缝。
+- 修正：`_write_action_unlocked` 在持 state lease 下捕获 **post-replace uncertain + visible_state=matches**，随后重新读取同一 action；
+  仅当反序列化后的完整 `ServiceControlAction` 与 intended action 完全相等时，才把本次写视为“可见态已机械 reconcile”，继续既定后置 transition effects；
+  不重写 action、不重放 semantic mutation。若 `visible_state` 为 mismatch/unreadable，或 exact action readback 不相等，则保持 fail-closed 并继续抛出 uncertain。
+- transition 语义不变：`accepted` uncertain+matches 后继续建立 admission barrier；`accepted/waiting → failed` 与 `→ succeeded` 按既有策略释放 barrier；
+  `running → failed` 仍因可能已有物理副作用而保留 barrier。terminal event 仍只在 transition 后置阶段发一次。
+- 故障注入：`tests/unit/test_service_control_durability.py` 从 7 项扩为 **12 项**，新增 accepted/succeeded/failed 三类 action 生命周期验证、
+  running→failed fail-closed barrier 保留、terminal event 单次、accepted uncertain no-rewrite 与 non-matches 不建立 barrier。
+  最终相邻回归：service_control 关联测试 **305 passed**、arch guards **21 passed**；Ruff 相对 pre-change HEAD 零新增（候选与 HEAD 均只剩同 4 个既有 SIM105）。
+- full `not real_llm` 候选：**7686 passed / 107 skipped / 16 deselected / 3 failed / 5 errors**。3 fail 为 MCP sandbox
+  `HOME=/var/.../home` 下既有 safety 环境红项，5 errors 为缺 Playwright Chromium executable。为避免口头豁免，另在 detached pre-change
+  `97d1eff43` 上只复跑这 8 项，精确复现 **3 failed / 5 errors**；故本 rev7 无新增 full-suite regression。
+- 测试隔离修正：rev7 full 首跑额外暴露两条 durability 计数失败，根因为测试全局 monkeypatch `os.replace` 截获后台 Scheduler 写入；
+  fault injection 已改为仅匹配本测试目标 path。与 ScheduleStore 既有测试隔离纪律一致，混跑
+  `test_service_control_durability.py + test_schedule_durability.py` = **34 passed**。
+
 ## 7. 开放决策点
 
 1. `recover()` 的调用时机：仅启动时 vs 每次 acquire 前（成本/收益待定）。

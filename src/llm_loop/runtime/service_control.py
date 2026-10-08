@@ -1070,7 +1070,39 @@ class ManagedServiceDeploymentStore:
         return ServiceControlAction.from_dict(raw)
 
     def _write_action_unlocked(self, action: ServiceControlAction) -> None:
-        _atomic_json(self.action_path(action.action_id), action.to_dict())
+        """Persist one action transition and reconcile post-replace uncertainty.
+
+        `_atomic_json` deliberately surfaces directory-fsync exhaustion as
+        `ServiceControlCommitUncertainError` even when the intended bytes are
+        already visible. Action transitions have ordered post-write effects
+        (barrier establish/release, terminal-event emission), so propagating a
+        `visible_state=matches` uncertainty here would split the control
+        state: the action file advances but its post-write effect is skipped.
+
+        While holding the state lease, exact readback of the same action is a
+        sufficient mechanical reconcile signal to continue those effects
+        without rewriting/replaying the semantic transition. Any mismatch or
+        unreadable state remains fail-closed.
+        """
+        path = self.action_path(action.action_id)
+        try:
+            _atomic_json(path, action.to_dict())
+            return
+        except ServiceControlCommitUncertainError as exc:
+            if exc.visible_state != "matches":
+                raise
+            try:
+                current = self.read_action(action.action_id)
+            except (OSError, ValueError) as readback_exc:
+                raise exc from readback_exc
+            if current != action:
+                raise exc
+            logger.warning(
+                "service-control action durability 未确认但 exact readback matches；"
+                "按当前 action 状态继续后置 transition effects: action_id=%s status=%s",
+                action.action_id,
+                action.status,
+            )
 
     def record_worker_pid(self, action_id: str, pid: int) -> None:
         """生命周期加固（GOAL-20261008-f143e051）：盖章执行 worker pid。
