@@ -19,20 +19,16 @@ Skipped automatically when playwright/chromium is unavailable.
 from __future__ import annotations
 
 import json
+import os
 import re
+import select
 import subprocess
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-pytestmark = pytest.mark.browser_e2e
-
-try:
-    from playwright.sync_api import sync_playwright
-except ImportError:  # pragma: no cover
-    pytest.skip("playwright not installed", allow_module_level=True)
 
 from llm_loop.browser.action import BrowserActionAdapter, BrowserActionReceiptStore
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
@@ -42,6 +38,13 @@ from llm_loop.browser.perception import (
     BrowserPerceptionAdapter,
     BrowserPerceptionStore,
 )
+
+try:
+    from playwright.sync_api import Browser, sync_playwright
+except ImportError:  # pragma: no cover
+    pytest.skip("playwright not installed", allow_module_level=True)
+
+pytestmark = pytest.mark.browser_e2e
 
 PAGE_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>Guard E2E</title></head><body>
@@ -83,9 +86,7 @@ def _attest_dedicated(base_url: str):  # noqa: ANN001, ANN202 - e2e stub
 
 
 @pytest.fixture(scope="module")
-def env(tmp_path_factory: Path) -> SimpleNamespace:
-    from playwright.sync_api import sync_playwright
-
+def env(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SimpleNamespace]:
     with sync_playwright() as pw:
         try:
             chromium = pw.chromium.executable_path
@@ -107,39 +108,57 @@ def env(tmp_path_factory: Path) -> SimpleNamespace:
             text=True,
         )
         ws_url = None
-        deadline = time.monotonic() + 15.0
-        while time.monotonic() < deadline:
-            line = proc.stderr.readline()
-            if not line:
-                if proc.poll() is not None:
-                    break
-                continue
-            m = re.search(r"DevTools listening on (ws://\S+)", line)
-            if m:
-                ws_url = m.group(1)
-                break
-        if ws_url is None:  # pragma: no cover
-            proc.terminate()
-            pytest.skip("chromium did not expose a DevTools endpoint")
-        port = int(re.match(r"ws://[^:]+:(\d+)/", ws_url).group(1))
-        browser = pw.chromium.connect_over_cdp(ws_url)
-        page = None
-        for ctx in browser.contexts:
-            if ctx.pages:
-                page = ctx.pages[0]
-                break
-        if page is None:  # pragma: no cover
-            page = browser.contexts[0].new_page()
-        ns = SimpleNamespace(page=page, base=f"http://127.0.0.1:{port}")
+        browser: Browser | None = None
+        stderr_pipe = proc.stderr
+        assert stderr_pipe is not None
         try:
+            # stderr.readline() is unbounded even inside a time.monotonic()
+            # loop: Chromium can remain alive without emitting a newline.
+            # Poll bytes with a real deadline, preserving the existing
+            # skip-on-no-CDP policy without hanging full CI indefinitely.
+            deadline = time.monotonic() + 15.0
+            stderr_bytes = bytearray()
+            while proc.poll() is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                ready, _, _ = select.select([stderr_pipe], [], [], remaining)
+                if not ready:
+                    break
+                chunk = os.read(stderr_pipe.fileno(), 4096)
+                if not chunk:
+                    break
+                stderr_bytes.extend(chunk)
+                found = re.search(rb"DevTools listening on (ws://\S+)", stderr_bytes)
+                if found is not None:
+                    ws_url = found.group(1).decode("ascii")
+                    break
+            if ws_url is None:  # pragma: no cover
+                pytest.skip("chromium did not expose a DevTools endpoint within 15s")
+            port_match = re.match(r"ws://[^:]+:(\d+)/", ws_url)
+            assert port_match is not None
+            port = int(port_match.group(1))
+            browser = pw.chromium.connect_over_cdp(ws_url, timeout=10_000)
+            page = None
+            for ctx in browser.contexts:
+                if ctx.pages:
+                    page = ctx.pages[0]
+                    break
+            if page is None:  # pragma: no cover
+                page = browser.contexts[0].new_page()
+            ns = SimpleNamespace(page=page, base=f"http://127.0.0.1:{port}")
             yield ns
         finally:
-            browser.close()
-            proc.terminate()
+            if browser is not None:
+                browser.close()
+            if proc.poll() is None:
+                proc.terminate()
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:  # pragma: no cover
                 proc.kill()
+                proc.wait(timeout=5)
+            stderr_pipe.close()
 
 
 @pytest.fixture()
@@ -165,7 +184,7 @@ def stack(tmp_path: Path, env: SimpleNamespace, page_html: Path) -> SimpleNamesp
 
 
 @pytest.fixture(scope="module")
-def page_html(tmp_path_factory: Path) -> Path:
+def page_html(tmp_path_factory: pytest.TempPathFactory) -> Path:
     p = tmp_path_factory.mktemp("e2e-page") / "page.html"
     p.write_text(PAGE_HTML, encoding="utf-8")
     return p
