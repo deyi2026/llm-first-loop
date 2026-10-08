@@ -85,18 +85,41 @@ def _note_invalid_fallback(name: str, fallback_value: Any, invalid_value_type: s
     )
 
 
+def _strip_inline_comment(val: str) -> str:
+    """剥离行内注释: 值与 # 之间的空白分隔处截断（EVO-20260813-ba4a107c）.
+
+    ASSESS-20261008 BUG-13c: 引号内的 ' #' 是值的一部分，不是注释——
+    原实现无脑 split(" #") 把 X="abc #def" 截成 "abc 且保留引号。
+    无空格的普通 #（如 1#tag）保持不截断（原契约）。
+    """
+    quote = ""
+    for i, ch in enumerate(val):
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "#" and i > 0 and val[i - 1] in (" ", "\t"):
+            return val[:i].rstrip()
+    return val
+
+
+def _strip_quotes(val: str) -> str:
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+        return val[1:-1]
+    return val
+
+
 def _raw_env(name: str, env: Mapping[str, str] | None = None) -> str:
     """读取环境变量并剥离行内注释（与 load_env_file EVO-ba4a107c 对齐）.
 
     防外层 shell 残留脏值（如 RETRIEVE_TIMEOUT_S="1  # 注释"）导致解析失败回退默认：
     环境变量优先原则下 .env 无法覆盖已存在的脏值，解析函数自身剥离注释兜底。
+    ASSESS-20261008 BUG-13c: 注释剥离改为引号感知，随后剥离包裹引号。
     """
     values = os.environ if env is None else env
     if name in values:
-        raw = values[name]
-        if " #" in raw:
-            raw = raw.split(" #", 1)[0]
-        return raw
+        return _strip_quotes(_strip_inline_comment(values[name]))
     return ""
 
 
@@ -175,11 +198,9 @@ def load_env_file(path: str | Path | None = None) -> None:
             if key in os.environ:
                 continue  # 环境变量优先，已设置的键不覆盖
             val = val.strip()
-            # 行内注释剥离（EVO-20260813-ba4a107c）: 值与 # 之间的空白分隔处截断，
-            # 避免 `KEY=1  # 注释` 把注释带进值导致 _env_int 解析失败回退默认
-            val = val.split(" #", 1)[0].strip()
-            if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
-                val = val[1:-1]
+            # ASSESS-20261008 BUG-13c: 引号感知的行内注释剥离 + 引号剥离
+            # （原 split(" #") 把 X="abc #def" 截成 "abc 且保留引号）
+            val = _strip_quotes(_strip_inline_comment(val)).strip()
             os.environ[key] = val
     except OSError:
         pass  # 读取失败 fail-open
@@ -193,8 +214,10 @@ def _env_bool(name: str, default: bool, env: Mapping[str, str] | None = None) ->
         return True
     if raw in {"0", "false", "no", "off"}:
         return False
-    _note_invalid_fallback(name, False, "非布尔字符串")
-    return False
+    # ASSESS-20261008 BUG-13a: 非法值回退传入 default（原硬编码 False——
+    # default=True 的开关在 typo 时被静默关掉），告警不泄露原值。
+    _note_invalid_fallback(name, default, "非布尔字符串")
+    return default
 
 
 def _env_thinking_mode(name: str, env: Mapping[str, str] | None = None) -> bool:
@@ -1048,7 +1071,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         thinking_mode=env_one(_env_thinking_mode, "LLM_THINKING_MODE"),
         reasoning_effort=env_one(_env_effort, "LLM_REASONING_EFFORT"),
         max_iterations=env_int("LLM_MAX_ITERATIONS", 500),
-        llm_timeout_s=float(env_int("LLM_TIMEOUT_S", 120)),
+        # ASSESS-20261008 BUG-13b: timeout 是浮点字段，直接走 float parser
+        # （原经 env_int 拒绝 "0.5" 后回退 120——用户显式配置被静默丢弃）。
+        llm_timeout_s=_env_float("LLM_TIMEOUT_S", 120.0),
         llm_max_tokens=env_int("LLM_MAX_TOKENS", 16000),  # 2026-08-15 显式输出预算
         llm_wire_protocol=env_values.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
         llm_trust_env=env_optional_true_set("LLM_TRUST_ENV"),
