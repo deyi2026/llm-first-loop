@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.26 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.27 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
 
 大模型是核心，所有动作围绕大模型展开。架构核心 = **消息进 → 理解 → 行动 → 真诚回答 → 记住**。
 
@@ -101,7 +101,10 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 - **记忆智能**：LLM 语义摘要（`SUMMARY_MODE`）、语义检索（`EMBEDDING_PROVIDER`）、独立记忆提取（会话结束/定期/手动）
 - **多会话管理**：CLI 子命令 `list / delete / archive / unarchive / search / extract` + `--session` 复用
 - **模型体系**（M47-M50）：`model_catalog` 查目录 / `switch_model` 自主切换（带 reason 审计落盘，AI 决策权）；Provider 注册表 + `MODEL_FALLBACKS` 应急降级链（仅默认装配模型失败时自动应急降级并如实标注，用户显式选择的模型不降级）；模型窗口自适应历史预算（按当前模型 context 收紧/放宽）
-- **双端接入**（Web + 飞书桥）：Web 管理界面（FastAPI :8902）+ 飞书长连接桥；配置 `FEISHU_OWNER_OPEN_ID` 后两端共享同一会话（一端说话另一端可续聊同一上下文）；飞书桥内置假死防护（SDK 锁泄漏运行时修补 + 看门狗心跳 + 健康检查按心跳新鲜度判定）
+- **双端接入**（Web + 飞书桥）：Web 管理界面（FastAPI :8903）+ 飞书长连接桥；配置 `FEISHU_OWNER_OPEN_ID` 后两端共享同一会话（一端说话另一端可续聊同一上下文）；飞书桥内置假死防护（SDK 锁泄漏运行时修补 + 看门狗心跳 + 健康检查按心跳新鲜度判定）
+- **浏览器感知与操作**（EVO-20260918/20261007）：`browser_perceive` 只读感知（snapshot 语义对象投影/固定参数视觉证据、hydrate 精确 ref、diff、wait——页面就绪/URL/对象状态/文本）+ `browser_operate` 单派发 mutation（navigate/click/set_text/append_text/select/scroll）；操作目标 = 精确 kind+name grounding + 版本化，程序不做 fuzzy/重试/完成判断；多标签页经页面清单 + 显式 `target_id` 原子换绑；经 CDP 接管真实 Chromium
+- **服务生命周期控制**（service_control）：status/publish/update/restart——发布新 desired deployment（当前代 CAS + 干净 git 树 + webui 产物 hash 绑定）；restart 走 desired-state 绑定的官方重启脚本；终态失败屏障可被新 restart 接管（自恢复）
+- **检索多查询融合（影子模式）**：`RETRIEVAL_MULTIQUERY_MODE=shadow` 在主检索旁路测量 RRF 融合收益（观测契约 `retrieval_shadow.jsonl`），默认 off 零行为变化
 - **蒸馏数据集导出**（export_distill，纯读只读薄壳）：`export-distill` 子命令把 `data/sessions/*.json` 会话轨迹导出为带思考链的 ReAct JSONL 蒸馏集 + 结构化统计报告——user 边界切分任务段 → `status=success` + 闭环完整性段级过滤（过滤原因分类计数）→ ReAct 三元组样本（thought/action/observation 与源逐字节一致，缺失思考链如实置 null）→ JSONL（`ensure_ascii=False` 超长不截断）+ 报告（通过+过滤=段总数闭环对账）；只产数据不训练、不切分/增强/脱敏；损坏文件 fail-open 如实标注跳过，输出已存在默认拒绝（`--force` 覆盖），源 session 文件只读零修改
 - **事件源化单一真相源**（D1 事件日志）：`data/event_logs/<session_id>.jsonl` 事件日志作为轨迹单一真相源（5 类事件：session.created / message.appended / context.compressed / session.meta_changed / session.forked），运行期经 fail-open 钩子追加事件，`event-replay` 回放重建派生视图；`event-inventory` 只读盘点（哈希+mtime 零修改）→ `event-migrate` 从存量 session JSON 迁移生成事件日志（迁移前自动备份 `event_logs/_backup/<ts>/`，v3 旧会话缺省字段自动补默认，幂等二次迁移 0 迁移）→ `event-verify` 重放视图与源逐字段对账（差异如实标注）→ `event-rollback` 备份区逐字节恢复（`--remove-events` 还原事件日志）；`EVENT_LOG_ENABLED=0` 时事件写入零行为，三套存量存储保留双轨可对账
 - **D1 后续批次**（d1_es_followup）：**D3 会话 fork**——`session-fork` / `POST /api/v1/sessions/{id}/fork` 触发事件日志物理复制继承（保留 type/ts/payload 重分配 seq/event_id/session_id）+ session.forked 事件承载 fork 元信息 + 源会话逐字节不变 + 新会话事件独立可 replay；**三套存储退役**——`event-retire` 编排（备份→双轨对账→归档 action_trace/session JSON→切读路径 `READ_PATH_SOURCE=event_log`）+ `event-retire-rollback` 逐字节恢复，对账全量通过方可切换（不一致不切换不退役）；**事件日志滚动**——多段目录 `<sid>/<segment_seq>.jsonl`（大小/天数/会话结束三触发条件）+ `event-rotate-status` 段清单 + 跨段 replay 逐字节一致 + 归档段只读；**D4 过滤钩子**——`EventStore.append` 入口 HookChain（filter 丢弃 / desensitize 脱敏 / transform 转换，按 priority 升序）+ 审计落盘 `_hook_audit.jsonl`（不含原始 payload 敏感内容）+ fail-open 异常不阻断 + `event-hooks` CLI（list/test）+ 钩子链默认空零行为零回归
@@ -110,7 +113,7 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 - **人工审批流**（T5a）：EXEC_MODE 拦截项在 CLI 交互模式可经终端确认放行（`_cli_approval_prompt`，无终端 fail-closed 拒绝）；审批审计落盘 `data/audit/approval_audit.jsonl`（decision/tool/参数摘要，不含密钥）；灾难性安全硬阻断不可审批
 - **symlink 写防护**（T5b）：edit_file 写路径含符号链接（自身/父目录）拒绝写入防越界（fail-closed + realpath 引导）；read_file 读 symlink 如实标注不拒绝
 - **评测体系**（T4）：固定评测集 `tests/eval_sets/scenarios_v1.json`（6 场景，判定口径源自内部实证基线）+ 运行器 `scripts/run_eval.py`（真实 LLM / `--dry` 管道验证，判定 + Wilson CI + 报告落盘 `docs/metrics/`）+ CI nightly 自动运行
-- **CI + 版本**（T7/B11）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；语义化版本 v0.6.14；tag 触发门禁复核 + 单写者 Release 草稿 + GitHub 自动生成发布说明（发布节奏制度化）
+- **CI + 版本**（T7/B11）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；语义化版本 v0.6.27；tag 触发门禁复核 + 单写者 Release 草稿 + GitHub 自动生成发布说明（发布节奏制度化）
 - **插件化 Skill**（B3）：`skills/<name>/SKILL.md` 目录自动扫描（`SKILLS_DIR`，默认 ./skills），AI 经 `skill_list`/`skill_load` 发现并加载外部技能执行——外部开发者零代码扩展框架能力；损坏/缺失文件 fail-open 跳过；仓库自带示例技能（`skills/`：notebook-session/incident-report）可直接 `skill_list` 发现体验
 - **Method Learning v1**：`search_records(kind=method)` 渐进发现/精确水合，支持 Teacher/Candidate/qualified/active/hold 等生命周期与独立 qualification；运行时 candidate 默认写 `data/methods/`，不自动注入 prompt。`METHOD_REFLECTION_MODE` 默认 `auto`——run 完成后按机械 friction（≥6 轮 / ≥6 工具 / ≥2 失败 / 重复调用 ≥2 / 停滞）触发一次隔离 self-distill，每次入队至多产生 1 次后台模型调用；`off` 显式关闭（非法值 fail-safe 回 off）。
 - **Learning Plane 装配**（DESIGN-20260910 §6）：`LEARNING_PLANE_ENABLED=1` 时 `engine.learning_journal` 注入（工厂/直接构造两路径反查断链=0），episode 完成后 LearningJournal 落 durable 队列，LearningPlane 后台消费执行 ReflectionRun（前台运行让位：进程内注册表 + 跨进程 `*.run.lock` 探测，requeue 不忙等），candidate 经 MethodStore 写入并带运行时推导 provenance（真实 episode ref + learning job ref）；**默认开启**（2026-09-17 起学习闭环为一等能力；`LEARNING_PLANE_ENABLED=0` 显式关闭，置空同 0——空 journal 时仅空闲守护线程、零模型调用）；method qualification 的 verdict（pass/fail/mixed/insufficient）判定权在模型——程序只证 episode 身份与 provenance（qualification episode ≠ source episode 防自证），旧 verdict ≠ 当前源真相，适用性由模型按当前任务自主判断
