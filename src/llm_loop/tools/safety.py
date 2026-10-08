@@ -39,11 +39,13 @@ class BlockDecision:
 
 # 不可逆删除 / 系统破坏的最小灾难性模式集合（design.md §2.1.3.5）
 _CATASTROPHIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    # rm -rf 指向根 / 用户主目录 / 系统关键目录
+    # rm -rf 指向根 / 系统关键目录（/home 不在此层：Linux HOME=/home/<user>，
+    # 前缀命中会误伤 $HOME 严格子路径；home 判定由分词层
+    # _is_dangerous_rm_target 的显式豁免承担——GH Actions runner 实测暴露）
     (
         "rm -rf 指向根目录或系统关键目录",
         re.compile(
-            r"rm\s+(-[a-z]*r[a-z]*f[a-z]*|-f[a-z]*r[a-z]*|-[a-z]*rf)\s+(\/\s*$|~\/?\s*$|/(etc|boot|usr|bin|sbin|lib|var|home)(\s|/|$))",
+            r"rm\s+(-[a-z]*r[a-z]*f[a-z]*|-f[a-z]*r[a-z]*|-[a-z]*rf)\s+(\/\s*$|~\/?\s*$|/(etc|boot|usr|bin|sbin|lib|var)(\s|/|$))",
             re.IGNORECASE,
         ),
     ),
@@ -178,8 +180,15 @@ def _is_dangerous_rm_target(target: str) -> bool:
     t = target.rstrip("/")
     if t in ("", "/"):
         return True
-    if t == os.path.expanduser("~"):
+    home = os.path.expanduser("~").rstrip("/")
+    if t == home:
         return True
+    # 修正 1 的显式实现：$HOME 严格子路径放行。此前仅在 HOME 恰不位于
+    # 系统目录下（如 macOS /Users/x）偶然成立；Linux HOME=/home/<user> 会
+    # 落入 /home 前缀被误拦（GH Actions runner 实测：rm -rf $HOME/data
+    # 期望放行却阻断）。
+    if home and home != "/" and t.startswith(home + "/"):
+        return False
     return any(t == d or t.startswith(d + "/") for d in _SYSTEM_DIRS)
 
 

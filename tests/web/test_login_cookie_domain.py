@@ -21,6 +21,19 @@ from llm_loop.web.auth import SESSION_COOKIE_NAME, hash_login_password
 TEST_PASSWORD = "test-password-12345"
 
 
+@pytest.fixture(autouse=True)
+def ui_v2_stub_dist(tmp_path, monkeypatch):
+    """/ui/v2/ 依构建产物存在性条件挂载（webui/dist 在 .gitignore，CI 无产物）。
+
+    本文件全部流程围绕 /ui/v2/ 展开：注入临时产物目录使挂载确定发生，
+    摆脱对本机构建产物的隐性依赖（远端 CI 首跑实测 404）。
+    """
+    ui = tmp_path / "dist"
+    ui.mkdir()
+    (ui / "index.html").write_text("<html>stub-ui</html>", encoding="utf-8")
+    monkeypatch.setenv("UI_V2_DIR", str(ui))
+
+
 @pytest.fixture()
 def auth_env(fake_settings, monkeypatch):
     monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
@@ -57,11 +70,9 @@ def test_default_host_only_cookie_reproduces_loop(build_test_engine, auth_env, m
     """旧行为：无 Domain 属性 → 浏览器 per-host 隔离，另一主机名下无会话。"""
     monkeypatch.delenv("WEB_SESSION_COOKIE_DOMAIN", raising=False)
     engine, _ = build_test_engine([])
-    from fastapi.testclient import TestClient as _TC
-
     app = build_app(engine=engine)
-    client = _TC(app)
-    sibling_browser = _TC(app)  # 另一主机名的浏览器：独立 jar，无 cookie
+    client = TestClient(app)
+    sibling_browser = TestClient(app)  # 另一主机名的浏览器：独立 jar，无 cookie
 
     resp = _login(client)
     assert resp.status_code == 303
