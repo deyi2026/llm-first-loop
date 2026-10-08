@@ -45,6 +45,7 @@ from llm_loop.llm.errors import (
     LLMHTTPError,
     LLMNetworkError,
     LLMProjectionError,
+    LLMStreamProviderError,
     LLMTimeoutError,
 )
 from llm_loop.llm.schemas import ToolCallDeltaAggregator
@@ -2274,6 +2275,33 @@ class LLMClient:
                     except json.JSONDecodeError:
                         continue
                     evt_type = evt.get("type")
+                    if evt_type == "error":
+                        # ASSESS-20261008 BUG-04: Anthropic 流内 error 事件显式上抛。
+                        # 原实现无分支——partial 后 error 会以"半截成功"收尾。
+                        err = evt.get("error") if isinstance(evt.get("error"), dict) else {}
+                        err_code = (
+                            _safe_provider_code_value(err.get("type"))
+                            or _safe_provider_code_value(err.get("code"))
+                        )
+                        err_msg = str(err.get("message") or "Anthropic 流内错误事件")
+                        partial = sum(len(p) for p in acc.content_parts) + sum(
+                            len(p) for p in acc.reasoning_parts
+                        )
+                        try:
+                            err_body = json.dumps(
+                                {"error": {"type": err.get("type"), "message": err_msg[:2000]}},
+                                ensure_ascii=False,
+                            )[:2000]
+                        except Exception:  # noqa: BLE001
+                            err_body = err_msg[:2000]
+                        raise LLMStreamProviderError(
+                            f"Anthropic 流内错误事件（type={err_code or '未知'}）: {err_msg[:500]}",
+                            status_code=int(resp.status_code),
+                            provider_code=err_code,
+                            body=err_body,
+                            provider=self.provider,
+                            partial_chars=partial,
+                        )
                     if evt_type == "message_start":
                         usage = (evt.get("message") or {}).get("usage") or {}
                         acc.prompt_tokens = int(usage.get("input_tokens") or 0)
@@ -2408,6 +2436,35 @@ class LLMClient:
                         _m = chunk.get("modelVersion")
                         if isinstance(_m, str) and _m:
                             _observed_model = _m
+                    err_obj = chunk.get("error")
+                    if isinstance(err_obj, dict):
+                        # ASSESS-20261008 BUG-04: Google 流内 error 事件显式上抛
+                        # （原实现无分支，partial 后 error 以"半截成功"收尾）。
+                        err_code = (
+                            _safe_provider_code_value(err_obj.get("status"))
+                            or _safe_provider_code_value(err_obj.get("code"))
+                        )
+                        err_msg = str(err_obj.get("message") or "Google 流内错误事件")
+                        partial = sum(len(p) for p in acc.content_parts) + sum(
+                            len(p) for p in acc.reasoning_parts
+                        )
+                        try:
+                            err_body = json.dumps(
+                                {"error": {"code": err_obj.get("code"),
+                                           "status": err_obj.get("status"),
+                                           "message": err_msg[:2000]}},
+                                ensure_ascii=False,
+                            )[:2000]
+                        except Exception:  # noqa: BLE001
+                            err_body = err_msg[:2000]
+                        raise LLMStreamProviderError(
+                            f"Google 流内错误事件（{err_code or '未知'}）: {err_msg[:500]}",
+                            status_code=int(resp.status_code),
+                            provider_code=err_code,
+                            body=err_body,
+                            provider=self.provider,
+                            partial_chars=partial,
+                        )
                     usage = chunk.get("usageMetadata") or {}
                     if usage:
                         # M58 修复（审查中危）: 缺失不覆盖（与 openai 路径一致）
@@ -2731,10 +2788,11 @@ class LLMClient:
     ) -> None:
         if resp.status_code >= 400:
             body = resp.read().decode("utf-8", errors="replace")[:2000]
+            provider_code = _safe_provider_code_from_body(body)
             self._observe_transport_error(
                 model_id=model_id or self.model,
                 status_code=int(resp.status_code),
-                provider_code=_safe_provider_code_from_body(body),
+                provider_code=provider_code,
                 headers=getattr(resp, "headers", None),
             )
             raise LLMHTTPError(
@@ -2742,6 +2800,7 @@ class LLMClient:
                 status_code=resp.status_code,
                 body=body,
                 provider=self.provider,
+                provider_code=provider_code,
             )
 
     def _check_sse_error(
@@ -2751,25 +2810,37 @@ class LLMClient:
         model_id: str | None = None,
         http_status: int | None = None,
     ) -> None:
-        """P1-FEISHU: LM Studio SSE 错误事件检测（HTTP 200 + data: {error:...}）."""
+        """SSE 流内 error 事件检测（HTTP 2xx + data: {error:...}）.
+
+        ASSESS-20261008 BUG-03 事实分离契约: status_code 保留真实 HTTP 状态，
+        业务码由 LLMStreamProviderError.provider_code 承载（原实现把业务码灌入
+        status_code 且非数值码回退 500，污染上层分类与降级判定）。
+        body 存结构化 JSON（含业务码），保持 parse_provider_error_code 可解析。
+        """
         err_obj = chunk.get("error")
         if isinstance(err_obj, dict):
-            msg = err_obj.get("message") or err_obj.get("code") or "未知 SSE 错误"
+            msg = str(err_obj.get("message") or err_obj.get("code") or "未知 SSE 错误")
             raw_code = err_obj.get("code")
-            code = raw_code or 500
+            code = _safe_provider_code_value(raw_code)
+            # 能进入流循环说明 HTTP 头已是 2xx（否则 _raise_for_status 已上抛）
+            real_status = int(http_status) if http_status is not None else 200
             self._observe_transport_error(
                 model_id=model_id or self.model,
-                status_code=http_status,
-                provider_code=_safe_provider_code_value(raw_code),
+                status_code=real_status,
+                provider_code=code,
             )
             try:
-                code_i = int(code)
-            except Exception:
-                code_i = 500
-            raise LLMHTTPError(
-                f"SSE provider error: {msg[:500]}",
-                status_code=code_i,
-                body=msg[:2000],
+                body = json.dumps(
+                    {"error": {"code": raw_code, "message": msg[:2000]}},
+                    ensure_ascii=False,
+                )[:2000]
+            except Exception:  # noqa: BLE001 — body 只是事实载体，构造失败退裸摘要
+                body = msg[:2000]
+            raise LLMStreamProviderError(
+                f"SSE 流内错误（HTTP {real_status} 码={code or '未知'}）: {msg[:500]}",
+                status_code=real_status,
+                provider_code=code,
+                body=body,
                 provider=self.provider,
             )
 
