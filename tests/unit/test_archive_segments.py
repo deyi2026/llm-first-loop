@@ -292,17 +292,19 @@ def test_late_async_summary_backfill_cannot_overwrite_newer_append(
     first_id = _mk(store, _SID, "A1 archived payload")
     segment = tmp_path / f"{_SID}.jsonl"
 
-    real_write_text = Path.write_text
+    from llm_loop.memory import archive as archive_module
+
+    real_replace = archive_module._atomic_replace_bytes
     rewrite_ready = threading.Event()
     allow_rewrite = threading.Event()
 
-    def _gated_write(path: Path, data: str, *args, **kwargs):  # noqa: ANN002, ANN003
+    def _gated_write(path: Path, data: bytes, *, operation: str) -> None:
         if path == segment and threading.current_thread().name == "late-summary":
             rewrite_ready.set()
             assert allow_rewrite.wait(timeout=2.0)
-        return real_write_text(path, data, *args, **kwargs)
+        return real_replace(path, data, operation=operation)
 
-    monkeypatch.setattr(Path, "write_text", _gated_write)
+    monkeypatch.setattr(archive_module, "_atomic_replace_bytes", _gated_write)
     update_result: list[bool] = []
     append_result: list[str] = []
     append_done = threading.Event()

@@ -178,6 +178,16 @@ DurableContract(Protocol):
 - 只读 `recover()` 报告 runtime `records/invalid_records/incomplete_dirs/unclassified_dirs/orphan_stages`；只在目录含 Method 专属残余（如 qualification.json）时归为 incomplete，普通非 Method 目录单列 unclassified，不能凭目录名断言损坏；不会自动清理 stage 或把残余文件升级为 active Method。
 - 范围限制：不修改 Method Card 格式、旧卡内容、已有 lifecycle/provenance 判定或 model-owned 语义；不自动 promote/retire；无 remote push；不重启承载当前会话的旧 CLI 宿主。相关测试及最终回归数量以独立候选正式验收回执为准。
 
+### 实施记录（2026-10-08 rev11：ArchiveStore Fleet T2 批次3，本地候选）
+
+- 边界：生产继续运行 gen201 / `500ee8f3e`，本地候选基线 `main@26c738076`。归档原文 JSONL 是唯一 source of truth：append 仍独立 T1，不把 sidecar `*.jsonl.idx`、summary 的修改与整会话 GC 合写成一个跨文件/跨段原子事务。索引只是可重建派生数据，失败不阻断原文归档。
+- 原问题：原文 `archive()` 只有实例内 RLock，未保证进程间偏移与 sidecar 顺序、未 file fsync；`update_summary()`、`cleanup()` 裸 `Path.write_text` 覆盖整段，与另一进程 append 可丢失完整原文；`rebuild_segment_index()` 裸覆写 sidecar 可能留下截断索引；`get_by_tool_call_id()` 使用失效 offset 时未确认返回条目就是所请求的 tool_call_id。
+- 写入纪律：根目录稳定锁 `.__archive_store.lock`、进程内 RLock + POSIX `flock`，锁获取失败 fail-closed。append 同锁内完成字节偏移计算、整行追加、flush/file fsync；追加/fsync 失败在锁内 `truncate` 回滚并 fsync，回滚失败为 typed `ArchiveCommitUncertainError`，不得盲重放；首次建立段文件及新段目录经 directory fsync，返回确认后才追加 sidecar 和通知 post-save hook。没有 `fcntl` 时只保留单进程互斥，不宣称跨进程 T2。
+- T2 原文段 RMW：异步 `update_summary` 和启动 GC 的原文覆写改为同 writer 锁内读取→计划→O_EXCL 临时文件→file fsync→`os.replace`→目录 fsync。替换前故障为 `ArchivePersistError`（旧段完整可读），替换成功后目录 fsync 耗尽为 `ArchiveCommitUncertainError`（`path/operation/expected_sha256/visible_state`，按原文 exact readback，不盲重放）。`update_summary` 保留 bool fail-open 契约；GC 仍为**逐段提交、逐会话 fail-open**，不承诺整个 archive/会话 ACID，计数只包含已成功提交的段。删除会话与 GC 删除也参与 writer 锁，删除后目录 fsync 不确定不能假报完全 durable。
+- 派生 sidecar：`_index_append` flush/file fsync；`rebuild_segment_index` 同锁内原子替换索引，异常保留原文、失败回退扫描（不自动放宽归档删除/身份边界）。对索引失效 offset，`search` 校验 canonical entry `id/session_id`，`get_by_tool_call_id` 校验 `id/session_id/tool_call_id` 后才认定命中；负值/非法 offset 被跳过并回退全文。扫描顺序、session ownership 与 `identity_filtered` sticky summary 规则保持。
+- 调用方：`memory/summarize._backfill` 异步摘要已有 try/except fail-open，不能因摘要落盘失败丢原文；`factory` 启动 GC 已 catch Exception，不能因清理失败中断服务；`factory.delete_session_sidecars` 的显式用户删除若遭遇目录 fsync 不确定，会向上暴露 typed OSError，不可宣称已彻底删除。
+- 故障/并发回归：`tests/unit/test_archive_store_durability.py` 覆盖 file fsync 失败尾部回滚、rollback uncertain 与无 hook、replace 前原文保真、replace 后 SHA/readback、两个 Store 实例与两个独立进程并发、GC 与 append 竞态、index 原子重建/失效 offset 校验、锁失败、删除及原文与摘要的可逆性；旧 `test_archive_segments` 的 write_text hook 已升级到真正的 atomic-replace 提交点，未删除并发断言。最终 qualification 数量以官方 R9 门禁正式验收为准，本批不 publish gen202、不 remote push、不重启现网。
+
 ## 7. 开放决策点
 
 1. `recover()` 的调用时机：仅启动时 vs 每次 acquire 前（成本/收益待定）。
