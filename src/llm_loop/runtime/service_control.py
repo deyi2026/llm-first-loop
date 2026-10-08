@@ -565,11 +565,154 @@ def _local_now() -> str:
     return system_local_now().isoformat()
 
 
+# ---- DRC T2 写路径（service_control_state partial → conform，2026-10-08）----
+# 复用 ScheduleStore durability contract（scheduler._commit_state 两阶段语义；
+# DESIGN-20261007-durable-run-contract §4 契约红线 1：T2 覆写禁止裸 write_text、
+# 禁止 fail-open 吞写失败）：
+#   replace 前（确定性区）：tmp O_EXCL → write → flush → file fsync → os.replace，
+#     整 payload 可有界重试；任何失败清理 tmp，主状态保持旧全文；
+#   replace 后（durability fence 区）：只重试 directory fsync，绝不再次
+#     rewrite/rename 同一 semantic mutation。
+# 耗尽分型：
+#   replace 前失败 → ServiceControlPersistError（outcome=definitely_not_committed）；
+#   replace 后目录 fsync 耗尽 → ServiceControlCommitUncertainError
+#     （outcome=commit_outcome_uncertain，expected_sha256 + 持锁逐字 readback 的
+#     visible_state）；调用方禁止把 uncertain 解释成"肯定没写"后盲重放。
+# 调用约定：两个调用点（compare_and_swap / _write_action_unlocked）均持
+# ManagedServiceDeploymentStore.lease，readback 因此是单写者视野下的核对。
+_STATE_PERSIST_ATTEMPTS = 3
+_STATE_PERSIST_RETRY_DELAY_S = 0.05
+
+
+class ServiceControlPersistError(OSError):
+    """service-control 状态确定未提交（replace 前失败/目录不可用）。"""
+
+    outcome = "definitely_not_committed"
+
+
+class ServiceControlCommitUncertainError(ServiceControlPersistError):
+    """replace 已生效但 directory fsync 耗尽；禁止盲重放语义 mutation。"""
+
+    outcome = "commit_outcome_uncertain"
+
+    def __init__(
+        self,
+        *,
+        path: Path,
+        expected_sha256: str,
+        visible_state: str,
+        cause: OSError,
+    ) -> None:
+        super().__init__(f"service-control 状态 replace 已生效但 durability 未确认: {cause}")
+        self.path = str(path)
+        self.expected_sha256 = str(expected_sha256)
+        self.visible_state = str(visible_state)
+        self.cause = cause
+
+    def __str__(self) -> str:
+        base = super().__str__()
+        return (
+            f"{base}; outcome={self.outcome}; visible_state={self.visible_state}; "
+            f"expected_sha256={self.expected_sha256}"
+        )
+
+
+def _write_temp_exclusive(temp: Path, text: str) -> None:
+    """独占创建 tmp 并完整写入 + file fsync（半写只污染 tmp，不碰主状态）。"""
+    fd = os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(directory: Path) -> None:
+    """目录 fsync：让 rename 本身在掉电后可见（对齐 scheduler._fsync_directory）。"""
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _payload_visible_state(path: Path, payload: str) -> str:
+    """持 state lease 时核当前文件是否逐字等于 intended payload."""
+    try:
+        current = path.read_text(encoding="utf-8")
+    except OSError:
+        return "unreadable"
+    return "matches" if current == payload else "mismatch"
+
+
 def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    tmp.write_text(json.dumps(dict(value), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    """T2 原子覆写：tmp+file fsync+replace+目录 fsync；失败分型显式抛出。
+
+    调用方必须已持 ``ManagedServiceDeploymentStore.lease``（单写者）。
+    """
+    payload = json.dumps(dict(value), ensure_ascii=False, indent=2) + "\n"
+    payload_sha256 = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ServiceControlPersistError(f"service-control 状态目录不可用: {exc}") from exc
+
+    last: OSError = OSError("service-control state persist: no attempt recorded")
+    for attempt in range(1, _STATE_PERSIST_ATTEMPTS + 1):
+        if attempt > 1:
+            time.sleep(_STATE_PERSIST_RETRY_DELAY_S * (attempt - 1))
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        try:
+            _write_temp_exclusive(tmp, payload)
+            os.replace(tmp, path)
+            break
+        except OSError as exc:
+            last = exc
+            logger.warning(
+                "service-control 状态 replace 前写失败（attempt %s/%s）: %s",
+                attempt,
+                _STATE_PERSIST_ATTEMPTS,
+                exc,
+            )
+        finally:
+            tmp.unlink(missing_ok=True)
+    else:
+        logger.error(
+            "service-control 状态确定未提交（replace 前重试 %s 次耗尽）: %s",
+            _STATE_PERSIST_ATTEMPTS,
+            last,
+        )
+        raise ServiceControlPersistError(
+            f"service-control 状态确定未提交（replace 前重试 {_STATE_PERSIST_ATTEMPTS} 次后放弃）: {last}"
+        ) from last
+
+    last_dir: OSError = OSError("service-control directory fsync: no attempt recorded")
+    for attempt in range(1, _STATE_PERSIST_ATTEMPTS + 1):
+        if attempt > 1:
+            time.sleep(_STATE_PERSIST_RETRY_DELAY_S * (attempt - 1))
+        try:
+            _fsync_directory(path.parent)
+            return
+        except OSError as exc:
+            last_dir = exc
+            logger.warning(
+                "service-control 状态 replace 后目录 fsync 失败（attempt %s/%s）: %s",
+                attempt,
+                _STATE_PERSIST_ATTEMPTS,
+                exc,
+            )
+    visible_state = _payload_visible_state(path, payload)
+    logger.error(
+        "service-control 状态 commit outcome uncertain：replace 已发生但目录 fsync 重试耗尽；"
+        "visible_state=%s expected_sha256=%s",
+        visible_state,
+        payload_sha256,
+    )
+    raise ServiceControlCommitUncertainError(
+        path=path,
+        expected_sha256=payload_sha256,
+        visible_state=visible_state,
+        cause=last_dir,
+    ) from last_dir
 
 
 class EvidenceRef:
@@ -880,8 +1023,9 @@ class ManagedServiceDeploymentStore:
 
     def read(self) -> ManagedServiceDeployment | None:
         # Readers never take the state lease: every write is an atomic
-        # same-directory tmp+rename (_atomic_json), so a reader observes
-        # the previous snapshot, the new snapshot, or no file at all.
+        # same-directory tmp+file fsync+rename (_atomic_json, DRC T2), so a
+        # reader observes the previous snapshot, the new snapshot, or no file
+        # at all.
         # Observing missing state must stay physically read-only: no
         # directory/lock-file creation and no exclusive flock on the
         # read path (status/show/verify observations included).

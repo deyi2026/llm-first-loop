@@ -62,7 +62,7 @@ DurableContract(Protocol):
 | 5 | evidence blob | **符合（T3 参考）** | tmp+fsync+replace+目录 fsync+内容寻址，全仓最强 | 作为接口参考实现，零改动 |
 | 1 | EventStore | **符合（T1）** | 锁+O_APPEND+读侧容错+seq | 零改动；可选：fsync 策略显式化 |
 | 2 | Fleet 结算 | **符合（T2）** | 锁+tmp+replace | 补目录 fsync 即全绿；低优先 |
-| 4 | ServiceControl | **部分符合** | CAS 语义强；desired 落盘原子性未核验 | 核验后归档；不改语义 |
+| 4 | ServiceControl | **符合（T2，2026-10-08 迁移）** | CAS+state lease；`_atomic_json` 已迁 tmp+file fsync+replace+目录 fsync+outcome 分型 | 已实施；见 §6 rev6 |
 | 6 | usage.jsonl | **豁免（低风险 T1）** | 单行小 append，进程模型下交错窗口小；读侧跳坏行 | 显式豁免登记；不加锁 |
 | 7 | ExperienceStore | **迁移（T2，第 2 顺位）** | 裸 write_text 覆写，崩溃可致整卡损坏 | 换 tmp+replace；改动极小 |
 | 3a | **ScheduleStore 主状态** | **符合（T2，首个 client）** | 原子可见性+目录 durability fence+跨进程锁+显式 commit outcome/reconcile | 见 §6 |
@@ -100,6 +100,15 @@ DurableContract(Protocol):
 - `recover()`（§7.1 决策：仅启动时调用，`_load` 记录报告）：exists/readable/corrupt/entries/invalid_entries/orphan_tmp；损坏基底处理策略不变（读侧 fail-open），但不再静默。
 - 验收：`tests/unit/test_schedule_durability.py` 保留六点写入故障注入，并新增 outcome 分型、pre-replace 内存回滚、post-replace no-rewrite、add/cancel surface、wake authority compensation/retention、claim/ack/started reconcile；scheduler/interop 测试覆盖 notification occurrence identity 与 durable done dedupe。最终 candidate full `not real_llm` = **7662 passed / 107 skipped / 16 deselected / 3 failed / 5 errors**；3 fail 均为 MCP sandbox `HOME=/var/.../home` 导致的既有 safety 环境红项，5 errors 均为缺 Playwright Chromium executable。为避免历史口径豁免，另在 detached pre-change `4704e3a20` 上只复跑这 8 项，精确复现 **3 failed / 5 errors**，故无本轮新增 full-suite regression。
 - registry：`schedule_store` 保持 `T2/conform`，但 rationale 升级为 outcome/reconcile 级保证。WakeAuthorizationStore（#3b）本轮仍零改动；为闭合普通 notify 重投幂等，仅调整 scheduler notify effect identity 与 Interop done 同-id 归档去重。
+
+### 实施记录（2026-10-08 rev6：#4 service_control_state partial → conform）
+
+- 顺序调整授权：§6 原建议顺序为 #3a → #7 → #2 → #4；2026-10-08 发布链 dual-root sidecar 事故（gen196/gen197 双次实证根因）闭环验证（gen198 restart 三服务 succeeded、收敛 `51f7f4755`、preflight 无人工补文件 PASS）后，GPT 接力 08:18 顺序将 #4 提前实施，#7/#2 顺延。
+- 写路径迁移：`runtime/service_control.py::_atomic_json`（desired-state `managed_service_deployment.json` 与 `service-control-actions/*.json` 共用落盘点）改为与 `_commit_state` 相同的两阶段语义——replace 前 tmp(O_CREAT|O_EXCL)→write→flush→file fsync→`os.replace`，可有界重试（3 次）整 payload 并清理 tmp；replace 后只重试 directory fsync，绝不重写/重命名同一 semantic mutation。
+- outcome 分型：replace 前/目录不可用 → `ServiceControlPersistError`（`definitely_not_committed`）；replace 后目录 fsync 耗尽 → `ServiceControlCommitUncertainError`（`commit_outcome_uncertain`，含 `expected_sha256` + 持 state lease 逐字 readback 的 `visible_state`）。单写者沿用既有 state lease flock fail-closed；readback 因两个调用点均持 lease 而成立。
+- CAS 协同：uncertain 后磁盘已推进到新代，按旧 `expected_generation` 盲重放被 `DeploymentGenerationConflictError` 机械拒绝（reconcile 由 CAS 承担，无需新增调用面）。
+- 验收：新增 `tests/unit/test_service_control_durability.py` 7 项故障注入（正常无 tmp 残留/replace 前分型+旧态保留+重试计数/目录 fsync 耗尽 uncertain+no-rewrite+sha 校验/预算内瞬时恢复/readback unreadable/CAS 集成两态）全绿；service_control 相关既有回归 250 passed / 0 failed。
+- registry：`service_control_state` `T2/partial` → `T2/conform`，rationale 记录写路径、outcome 分型、单写者与验收口径。
 
 ## 7. 开放决策点
 
