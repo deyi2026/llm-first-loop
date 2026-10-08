@@ -178,7 +178,15 @@ def _run_save_experience(args: dict, host: RegistryHost) -> ToolResult:
         source=args.get("source") or {},
         body=args.get("body", ""),
     )
-    status = ToolResultStatus.SUCCESS if content.startswith("[save_experience]") else ToolResultStatus.FAILURE
+    # The same prefix also occurs on FileExists and durability-uncertain
+    # receipts. Only the exact confirmed-create shape proves the write.
+    status = (
+        ToolResultStatus.SUCCESS
+        if content.startswith("[save_experience] 已沉淀 ")
+        and " experience_ref=experience:" in content
+        and " status=active " in content
+        else ToolResultStatus.FAILURE
+    )
     return ToolResult(status=status, content=content, tool_call_id="", tool_name="save_experience")
 
 
@@ -198,7 +206,12 @@ def _run_refine_experience(args: dict, host: RegistryHost) -> ToolResult:
         experience_id=args.get("experience_id", ""),
         action=args.get("action", ""),
     )
-    status = ToolResultStatus.SUCCESS if content.startswith("[refine_experience]") else ToolResultStatus.FAILURE
+    status = (
+        ToolResultStatus.SUCCESS
+        if content.startswith("[refine_experience] experience:")
+        and "状态已更新为 " in content
+        else ToolResultStatus.FAILURE
+    )
     return ToolResult(status=status, content=content, tool_call_id="", tool_name="refine_experience")
 
 

@@ -45,6 +45,10 @@ class ToolRuntimeSettings:
     job_max_concurrent: int = 5
     evidence_capsule: str = "off"
     tool_guidance: str = "off"
+    # Independent reference-only Method/Experience/Lesson execution discovery.
+    # Canary requires an exact, explicitly approved Web session allowlist.
+    knowledge_advisor_mode: str = "off"
+    knowledge_advisor_sessions: str = ""
     exec_sandbox: str = "none"
     exec_sandbox_image: str = "python:3.13-slim"
     nonconvergence_fuse_windows: int = 3
@@ -1052,6 +1056,12 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ),
         tool_guidance=_mode(
             "LFL_TOOL_GUIDANCE", "off", {"on", "shadow", "off"}
+        ),
+        knowledge_advisor_mode=_mode(
+            "LFL_KNOWLEDGE_ADVISOR", "off", {"off", "shadow", "canary"}
+        ),
+        knowledge_advisor_sessions=str(
+            env_values.get("LFL_KNOWLEDGE_ADVISOR_SESSIONS", "") or ""
         ),
         exec_sandbox=_mode(
             "EXEC_SANDBOX", "none", {"none", "bwrap", "docker"}

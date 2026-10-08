@@ -645,7 +645,17 @@ class _BuildMixin:
             "final_messages": len(_ta.built),
         }
         # CR-R1 (spec 5.2.1): 认知决策包阶段——build 终点单管线聚合尾注（fail-open）。
-        return self._run_cognitive_packet_stage(sess, _ta.built)
+        _built = self._run_cognitive_packet_stage(sess, _ta.built)
+        if getattr(self.settings.tool_runtime, "knowledge_advisor_mode", "off") == "off":
+            return _built  # explicit off: zero knowledge retrieval and wire change
+        from llm_loop.core.loop.engine_services.knowledge_runtime import (
+            project_execution_knowledge,
+        )
+
+        return project_execution_knowledge(
+            self, sess, _built, logical_round=logical_round,
+            history_budget=effective_budget,
+        )
 
     # ── CR-R1: 认知决策包阶段（四槽 → 唯一决策包 → 单条聚合 user 尾注） ──
 

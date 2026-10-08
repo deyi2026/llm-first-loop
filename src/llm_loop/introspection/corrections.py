@@ -122,6 +122,17 @@ class CorrectionToolRegistry:
         self._skills_dir: str | None = None  # B3: 插件化 Skill 目录（None=未注入零回归）
         self._skill_execution_facts: dict[str, str] = {}
 
+    def build_knowledge_advisor(self, mode: str) -> Any | None:
+        """Re-use the installed authoritative search adapter, without a new store.
+
+        Called only by the opt-in run projection; off never reads an index.
+        """
+        if mode == "off" or self._search_records_fn is None:
+            return None
+        from llm_loop.introspection.knowledge_advisor import KnowledgeAdvisor
+
+        return KnowledgeAdvisor(self._search_records_fn, mode=mode)
+
     # ── 暴露私有属性为公开名供 registry 模块访问（RegistryHost 协议）──
     _PUBLIC_MAP = {
         "audit_dir": "_audit_dir",
