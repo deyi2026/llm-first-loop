@@ -2,11 +2,24 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
-## v0.6.27 — 多查询融合影子模式（2026-09-24）
+## v0.6.27 — 多查询融合影子模式 + 浏览器感知/操作 + 服务生命周期控制（2026-10-08）
 
-- **影子探针（默认 off，零行为变化）**：`RETRIEVAL_MULTIQUERY_MODE=shadow` 启用后，生产 memory 语义检索旁路执行"原查询 + LLM 盲改写 2 变体"的等权 RRF 融合，只记录不生效；返回值与 off 逐字节一致（单测锁定）。目的：接入评审前实测改写延迟、检索成本与 top1 置换率。
+- **多查询融合影子模式（默认 off，零行为变化）**：`RETRIEVAL_MULTIQUERY_MODE=shadow` 启用后，生产 memory 语义检索旁路执行"原查询 + LLM 盲改写 2 变体"的等权 RRF 融合，只记录不生效；返回值与 off 逐字节一致（单测锁定）。目的：接入评审前实测改写延迟、检索成本与 top1 置换率。
 - **观测契约**：`<data_dir>/retrieval_shadow.jsonl` 每查询一条（latency 分解/primary vs fused top10/overlap@5/primary top1 保位标志）；探针全异常捕获，LLM 失败/落盘失败只记 error 行，绝不影响主路径。
 - **防递归**：变体检索经 `_skip_shadow` 复用 `_search_memory`；enforce 路径明确不做，待影子数据过决策门（docs/DESIGN-20260924-multiquery-fusion-shadow.md）。
+- **浏览器感知/操作双工具（CDP 接管真实 Chromium）**：`browser_perceive` 只读感知（snapshot 语义对象投影 + 固定参数视觉证据截图、hydrate 精确 ref、diff、wait——页面就绪/URL/对象状态/文本）与 `browser_operate` 单派发 mutation（navigate/click/set_text/append_text/select/scroll）；操作目标 = 精确 kind+name grounding + 版本化，程序不做 fuzzy/重试/完成判断。
+- **多标签页显式换绑（EVO-20261007-11ae668f）**：页面清单回执 page_id；携带 target_id 的调用是独立动作（两 host 原子换绑），观察/操作在后续不带 target_id 的调用发起；语义对象投影支持 kind 过滤 + 游标分页（EVO-20260918-c69527a1）。
+- **浏览器 attestation**：argv 原生 NUL 源修复；M3 语义守卫 E2E（真实 Chromium 全链路）跑通并修复配套缺陷。
+- **服务生命周期控制（service_control）**：restart/update 默认分离 worker 后台执行（`--wait` 内联等待）；grant_lost_owner_dead 确定性降级；发布固定 release checkout（双根 sidecar .env 兼容独立 venv）。
+- **调度持久化修复**：混合版本写者下一次性 wake 权限保持；到期认领前恢复委托 owner；实际 run 准入时恢复一次性 wake。
+- **Web 认证与会话**：308 规范化源回跳、v2 会话 cookie（host-only、父域配置修复）、回环豁免收紧、ProxyHeaders 下 308 修复；移动端登录/剪贴板修复；interject 孤儿恢复；KaTeX 懒加载。
+- **检索与学习**：语义检索 rollout 稳定化与服务级语义运行时配置；反思期语义 method 检索；method 生命周期闭环 v2.2（record_use / record_qualification / annotate_freshness / 状态流转）；method discovery 衰减零信号候选。
+- **验证器**：第三方评述豁免 + 跨语言动词↔工具名回执匹配。
+- **诚实口径**：honesty_rate 统计口径修复（防重复计入）。
+- **LLM 引擎事实面**：settled response facts、attempt ids、传输尝试 prepared facts、keyed HMAC 摘要、重复 tool fingerprint 规范化。
+- **演进通道**：人工 exec_override 授权通道（RULE-AI-26，EVO-20260929 方案A）。
+- **ChatGPT Web 浏览器托管 provider 稳定性**：绑定生命周期可观测与告警、浏览器内模型切换、线程绑定 IO、瞬态导航身份容忍、配置收敛到 Web 域。
+- **版本面**：pyproject / web SERVICE_VERSION / README（中英）/ CHANGELOG 全表面对齐 0.6.27（版本一致性测试约束）；内部治理审计类文档不再随公开库分发。
 
 ## v0.6.26 — 语义缓存冷启动批量预热 + 持久化去抖（2026-09-24）
 
