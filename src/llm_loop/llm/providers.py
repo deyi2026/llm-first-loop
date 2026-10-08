@@ -54,6 +54,12 @@ def _observation_key(registry: Any, provider_id: str, model_id: str) -> str | No
     return f"{scope}|{provider_id}/{model_id}"
 
 
+def _invalidate_dial_target(key: str | None) -> None:
+    """No observation is owned when a registry has no valid scope identity."""
+    if key is not None:
+        _DIAL_OBSERVATIONS.pop(key, None)
+
+
 def public_url(url: str) -> str:
     """无凭证地址化: 去 userinfo 与 query（鉴权参数可能出现在两者），保留 scheme://host:port/path."""
     try:
@@ -386,24 +392,24 @@ class ProviderRegistry:
                     # （无凭证地址; api_key 永不落观测）——状态查询只读观测，
                     # 不为状态再次触发服务发现。
                     _pub = public_url(base_url)
-                    if _pub:
+                    if _pub and _obs_key is not None:
                         _DIAL_OBSERVATIONS[_obs_key] = _pub
                     else:
                         # 改写发生但无凭证化失败: 不可声称"与路由一致"，也不
                         # 残留可能失真的旧观测 → 失效（不虚构拨号事实）。
-                        _DIAL_OBSERVATIONS.pop(_obs_key, None)
+                        _invalidate_dial_target(_obs_key)
                 else:
                     # ASSESS-20261008 BUG-07 rev4: 发现失败回退配置路由时，
                     # 必须失效上一次成功改写留下的旧观测——否则拨号已回退
                     # 路由而状态仍显示旧直连地址（观测失真，复现: dial=1234
                     # / obs 仍 7777）。
-                    _DIAL_OBSERVATIONS.pop(_obs_key, None)
+                    _invalidate_dial_target(_obs_key)
             except Exception:  # noqa: BLE001 — 发现失败回退配置（fail-open）
-                _DIAL_OBSERVATIONS.pop(_obs_key, None)
+                _invalidate_dial_target(_obs_key)
         else:
             # 直连未启用（LMS_DIRECT=0 / 非 local / 路由非本机）: 拨号=路由，
             # 同样不得残留旧直连观测。
-            _DIAL_OBSERVATIONS.pop(_obs_key, None)
+            _invalidate_dial_target(_obs_key)
 
         return {
             "api_key": api_key,

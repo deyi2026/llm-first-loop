@@ -281,3 +281,42 @@ def test_status_query_across_registries_has_no_discovery_side_effect(monkeypatch
         assemble_effective_model_status(reg_b, "local/small", "settings", "settings")
         assemble_effective_model_status(reg_a, "local/small", "settings", "settings")
     disc.assert_not_called()
+
+
+def test_identityless_registry_rewrite_preserves_dial_without_null_key(monkeypatch):
+    """Legacy registry with lost identity must not insert None into observation map."""
+    reg = _registry()
+    object.__setattr__(reg, "_observation_scope", "")
+    monkeypatch.setenv("LMS_DIRECT", "1")
+    with mock.patch.object(
+        providers_mod, "_discover_llama_server",
+        return_value=("http://127.0.0.1:7777/v1", "sk"),
+    ):
+        params = reg.client_params("local", "small")
+    assert params["base_url"] == "http://127.0.0.1:7777/v1"
+    assert dial_target_observation(reg, "local", "small") is None
+    assert providers_mod._DIAL_OBSERVATIONS == {}
+
+
+def test_identityless_registry_fallbacks_preserve_other_scope(monkeypatch):
+    """None observation key is a no-op for discovery fallback and direct-off."""
+    real = _registry()
+    legacy = _registry()
+    object.__setattr__(legacy, "_observation_scope", "")
+    monkeypatch.setenv("LMS_DIRECT", "1")
+    with mock.patch.object(
+        providers_mod, "_discover_llama_server",
+        return_value=("http://127.0.0.1:8888/v1", "sk"),
+    ):
+        real.client_params("local", "small")
+    expected = dict(providers_mod._DIAL_OBSERVATIONS)
+    with mock.patch.object(providers_mod, "_discover_llama_server", return_value=None):
+        assert legacy.client_params("local", "small")["base_url"] == "http://127.0.0.1:1234/v1"
+    with mock.patch.object(
+        providers_mod, "_discover_llama_server", side_effect=RuntimeError("offline"),
+    ):
+        assert legacy.client_params("local", "small")["base_url"] == "http://127.0.0.1:1234/v1"
+    monkeypatch.setenv("LMS_DIRECT", "0")
+    assert legacy.client_params("local", "small")["base_url"] == "http://127.0.0.1:1234/v1"
+    assert expected == providers_mod._DIAL_OBSERVATIONS
+    assert dial_target_observation(real, "local", "small") == "http://127.0.0.1:8888/v1"
