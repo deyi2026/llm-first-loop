@@ -119,3 +119,6 @@ evals/browser_smc_semantic_execute_recovery_smoke/summarize_comparison.py
 # 2026-09-24 批量裁剪：本地临时目录与隧道运行日志不入库（同类先例 logs/、cloudflared/tunnel.json）
 /tmp/
 cloudflared/tunnel-runtime.log
+
+# 本地测试运行日志不随库分发（安全扫描 .log$ 拦截；2026-10-08）
+.arts/*.log
