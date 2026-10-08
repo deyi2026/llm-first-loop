@@ -1,6 +1,6 @@
 # T7(2026-08-14): CI 三件套门禁 + nightly 真实评测
 #
-# - push/PR: pytest（非 real_llm）+ ruff + pyright 全量门禁（零触网零 LLM 消费）
+# - push/PR: pytest（非 real_llm）+ ruff/pyright 历史债 ratchet 门禁（2026-10-08 与本地 ci_gate 统一口径；零触网零 LLM 消费）
 # - 每日 20:00 UTC（北京 04:00）: real_llm 冒烟 + 评测集真实运行
 # - key 策略（2026-08-14 用户决策 A）: 默认不配置 secrets——nightly 无 key 时自动跳过
 #   （不误报）；评测集在本地运行（`python scripts/run_eval.py`，读项目 .env，key 不上传）。
@@ -39,16 +39,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: 安装依赖
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+      - uses: astral-sh/setup-uv@v5
+      - name: 安装依赖（uv.lock 冻结环境，与本地 ci_gate 同一面）
+        run: uv sync --frozen --extra dev
       - name: ruff
-        run: ruff check src tests scripts
+        run: uv run --no-sync python scripts/check_static_diagnostics.py --tool ruff
       - name: pyright
-        run: pyright src --pythonpath python
+        run: uv run --no-sync python scripts/check_static_diagnostics.py --tool pyright
       - name: pytest（非真实 LLM）
-        run: python -m pytest tests/ -q -m "not real_llm"
+        run: uv run --no-sync python -m pytest tests/ -q -m "not real_llm"
 
   nightly-real:
     name: nightly 真实 LLM 冒烟 + 评测集
