@@ -1304,7 +1304,17 @@ class SessionStore:
 
     @contextmanager
     def _shared_file_lock(self, name: str) -> Iterator[None]:
-        """data/ 根级共享文件锁（如 shared_current_session；语义同 _session_lock）."""
+        """data/ 根级共享文件锁（如 shared_current_session；语义同 _session_lock）.
+
+        ASSESS-20261008 BUG-01 修复契约:
+        - 整个上下文只 yield 一次——加锁失败路径提前 yield 后 return，
+          不再让 except 包住主体导致二次 yield（contextlib 生成器协议）;
+        - 业务异常（含 OSError/ValueError）原样传播: 锁已取得时主体的异常
+          不被加锁 fallback 捕获，也不被误标为"锁不可用";
+        - 三个失败阶段分开归因: open/flock 失败 → fail-open（既有契约）+
+          锁日志; 主体异常 → 传播; unlock 失败 → 清理阶段日志，不覆盖
+          传播中的业务异常（文件关闭时内核释放锁）。
+        """
         lock_path = self._dir.parent / f"{name}.lock"
         try:
             import fcntl
@@ -1315,15 +1325,29 @@ class SessionStore:
                 yield
             return
         try:
-            with open(lock_path, "a", encoding="utf-8") as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            f = open(lock_path, "a", encoding="utf-8")  # noqa: SIM115 — 有意分离 open 失败与主体异常阶段
         except OSError as exc:
             logger.warning("共享文件锁不可用（fail-open）: %s: %s", lock_path, exc)
             yield
+            return
+        with f:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            except OSError as exc:
+                logger.warning("共享文件锁不可用（fail-open）: %s: %s", lock_path, exc)
+                yield
+                return
+            try:
+                yield
+            finally:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                except OSError as exc:
+                    # 清理阶段故障: 单独归因; 不覆盖传播中的业务异常
+                    # （with f 关闭文件时内核会释放该锁）。
+                    logger.warning(
+                        "共享文件锁释放失败（关闭时释放）: %s: %s", lock_path, exc
+                    )
 
     def _event_append(self, session_id: str, event_type: str, payload: dict) -> None:
         """D1 事件写入（fail-open：未注入/禁用/异常均如实记录，不抛穿调用方）."""
