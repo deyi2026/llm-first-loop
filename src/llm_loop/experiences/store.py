@@ -12,8 +12,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import os
 import re
-from collections.abc import Callable
+import threading
+import uuid
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,6 +65,67 @@ def _skip_trace(filename: str, exc: BaseException) -> None:
         pass
 
 
+class ExperiencePersistError(OSError):
+    """经验写入确定未提交（跨进程锁不可用 / replace·link 前失败）；同一 payload 重试安全."""
+
+
+class ExperienceCommitUncertainError(OSError):
+    """经验文档已原子可见但目录 fsync 未确认：提交结果不确定.
+
+    DRC T2 红线：禁止把本异常解释成"肯定没写"后盲重放——save 可能已占用文件名
+    （同日同 slug），update 可能已生效；必须先按 expected_sha256 + visible_state
+    对最终文件做逐字 readback reconcile（store.get），再决定语义层动作。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        experience_id: str,
+        expected_sha256: str,
+        visible_state: str,
+    ) -> None:
+        super().__init__(message)
+        self.experience_id = experience_id
+        self.expected_sha256 = expected_sha256
+        self.visible_state = visible_state
+
+
+_DIR_FSYNC_ATTEMPTS = 3
+_LOCK_FILENAME = ".__experience_store.lock"
+
+
+def _write_temp_exclusive(path: Path, payload: str) -> None:
+    """独占 tmp 写入 + file fsync（DRC T2 replace 前；O_EXCL 防复用旧 tmp）."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(path: Path) -> None:
+    """目录 fsync：让 link/replace 的目录项变更跨崩溃可见（T2 durability fence）."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _payload_sha256(payload: str) -> str:
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _visible_state(path: Path, payload: str) -> str:
+    """逐字 readback：最终文件是否等于 intended payload（matches/mismatch/unreadable）."""
+    try:
+        current = path.read_text(encoding="utf-8")
+    except OSError:
+        return "unreadable"
+    return "matches" if current == payload else "mismatch"
+
+
 class ExperienceStore:
     """经验库存储组件（操作 experiences/ 目录）。"""
 
@@ -74,6 +139,8 @@ class ExperienceStore:
         near_dup_threshold: float = 0.80,
     ) -> None:
         self._dir = Path(experiences_dir)
+        # DRC T2：非 POSIX 无 fcntl 运行时的进程内写锁 fallback（不声称跨进程保证）
+        self._thread_lock = threading.RLock()
         self._write_guard = write_guard
         self._embedder = embedder  # T5: 可选 embedder 注入（None 时走关键词匹配，零回归）
         self._semantic_ranker = semantic_ranker
@@ -131,8 +198,49 @@ class ExperienceStore:
         s = re.sub(r"[^a-zA-Z0-9]+", "-", slug).strip("-").lower()
         return s[:50].rstrip("-")
 
+    @contextmanager
+    def _file_lock(self) -> Iterator[None]:
+        """跨进程单写者锁（flock LOCK_EX；POSIX 锁失败 fail-closed，DRC T2）.
+
+        多进程（web/feishu/learning 服务）共享同一 experiences/ 目录：save 的
+        exists 检查 + 近重复扫描、update_status 的 read-modify-write 都必须在
+        单写者临界区内完成。无 fcntl 的非 POSIX 运行时退化为进程内 RLock
+        （与 ScheduleStore._file_lock 同形，明确不声称跨进程 T2）。
+        """
+        try:
+            import fcntl
+        except ImportError:
+            with self._thread_lock:
+                yield
+            return
+        lock_path = self._dir / _LOCK_FILENAME
+        handle = None
+        try:
+            handle = lock_path.open("a", encoding="utf-8")
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except OSError as exc:
+            if handle is not None:
+                handle.close()
+            raise ExperiencePersistError(
+                f"经验库跨进程文件锁不可用，拒绝无锁写入: {exc}"
+            ) from exc
+        try:
+            yield
+        finally:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                handle.close()
+
     def save(self, doc: ExperienceDocument) -> str:
-        """写入经验文档；返回文件名。冲突时抛 FileExistsError（不覆盖）。"""
+        """写入经验文档；返回文件名。冲突时抛 FileExistsError（不覆盖）.
+
+        DRC T2（#7 迁移，2026-10-08）：store flock 内 tmp(O_EXCL)→file fsync
+        →os.link 原子 create-if-absent→目录 fsync。replace/link 前失败=
+        ExperiencePersistError（确定未提交，同一 payload 重试安全）；link 成功后
+        目录 fsync 耗尽=ExperienceCommitUncertainError（禁止盲重放，先 get() 逐字
+        readback）。post_save_hooks 仅在确定提交后运行（derived work 不参与回滚）。
+        """
         self._require_write_safe()
         self._dir.mkdir(parents=True, exist_ok=True)
         date_str = system_local_now().strftime("%Y%m%d")
@@ -141,18 +249,43 @@ class ExperienceStore:
             slug = "untitled"
         filename = f"EXPERIENCE-{date_str}-{slug}.md"
         path = self._dir / filename
-        if path.exists():
-            raise FileExistsError(f"经验文档已存在: {filename}（同日同 slug 冲突，不覆盖）")
-        # T0-C1（2026-09-16）: 写时近重复无损链接——新条目记 supersedes 指针，绝不改写
-        # 旧条目（合并走人工批准事务）；embedder 缺失/故障一律跳过（fail-open 不阻断写入）。
-        try:
-            near = self._find_near_duplicate_ids(filename, doc)
-            if near:
-                doc.supersedes = list(dict.fromkeys([*(doc.supersedes or []), *near]))
-                logger.info("[经验库] 近重复无损链接: %s supersedes %s", filename, near)
-        except Exception:  # noqa: BLE001 — 链接探测失败不影响写入本身
-            logger.warning("[经验库] 近重复探测异常，本次跳过链接（fail-open）", exc_info=True)
-        path.write_text(doc.to_md(), encoding="utf-8")
+        experience_id = filename.removesuffix(".md")
+        with self._file_lock():
+            if path.exists():
+                raise FileExistsError(f"经验文档已存在: {filename}（同日同 slug 冲突，不覆盖）")
+            # T0-C1（2026-09-16）: 写时近重复无损链接——新条目记 supersedes 指针，绝不改写
+            # 旧条目（合并走人工批准事务）；embedder 缺失/故障一律跳过（fail-open 不阻断写入）。
+            try:
+                near = self._find_near_duplicate_ids(filename, doc)
+                if near:
+                    doc.supersedes = list(dict.fromkeys([*(doc.supersedes or []), *near]))
+                    logger.info("[经验库] 近重复无损链接: %s supersedes %s", filename, near)
+            except Exception:  # noqa: BLE001 — 链接探测失败不影响写入本身
+                logger.warning("[经验库] 近重复探测异常，本次跳过链接（fail-open）", exc_info=True)
+            payload = doc.to_md()
+            temp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:12]}.tmp")
+            try:
+                _write_temp_exclusive(temp, payload)
+                try:
+                    os.link(temp, path)  # 原子 create-if-absent：绝不覆盖任何已存在文件
+                except FileExistsError as exc:
+                    raise FileExistsError(
+                        f"经验文档已存在: {filename}（并发创建冲突，不覆盖）"
+                    ) from exc
+                except OSError as exc:
+                    raise ExperiencePersistError(
+                        f"经验文档创建失败(确定未提交): {filename}: {exc}"
+                    ) from exc
+            except OSError as exc:
+                # FileExistsError 是既有语义冲突契约，原样上抛；其余 replace 前失败=确定未提交
+                if not isinstance(exc, (FileExistsError, ExperiencePersistError)):
+                    raise ExperiencePersistError(
+                        f"经验文档写入失败(确定未提交): {filename}: {exc}"
+                    ) from exc
+                raise
+            finally:
+                temp.unlink(missing_ok=True)
+            self._fsync_dir_or_uncertain(path, payload, experience_id)
         candidate = self._semantic_candidate(filename, doc)
         for hook in tuple(self._post_save_hooks):
             try:
@@ -160,6 +293,26 @@ class ExperienceStore:
             except Exception:  # noqa: BLE001 — derived vector work never rolls back durable write
                 logger.debug("experience post-save hook failed", exc_info=True)
         return filename
+
+    def _fsync_dir_or_uncertain(self, path: Path, payload: str, experience_id: str) -> None:
+        """link/replace 已生效后的目录 fsync：有界重试，耗尽→typed uncertain + readback.
+
+        持 store flock 时逐字 readback 最终文件（单写者下 readback 可信）；
+        调用方必须仍处于 _file_lock 临界区内。
+        """
+        last_exc: OSError | None = None
+        for _ in range(_DIR_FSYNC_ATTEMPTS):
+            try:
+                _fsync_directory(path.parent)
+                return
+            except OSError as exc:
+                last_exc = exc
+        raise ExperienceCommitUncertainError(
+            f"经验文档已原子可见但目录 fsync 失败(提交结果不确定): {experience_id}: {last_exc}",
+            experience_id=experience_id,
+            expected_sha256=_payload_sha256(payload),
+            visible_state=_visible_state(path, payload),
+        )
 
     def list_active(
         self,
@@ -586,21 +739,38 @@ class ExperienceStore:
     def update_status(self, experience_id: str, status: str) -> bool:
         """更新 status 字段 + 刷新 updated_at，不删除文档；不存在/读取故障返回 False.
 
-        写入段零变化：降级形态 source 经 to_md round-trip 保留原形态（design §2.1.3-3）。
+        DRC T2（#7 迁移，2026-10-08）：read-modify-write 在跨进程 store flock 内
+        执行，tmp(O_EXCL)→file fsync→os.replace→目录 fsync——最终文件只可能是
+        整体旧或整体新，不再出现崩溃截断的半卡。replace 前失败=
+        ExperiencePersistError（原文件原样保留，同一 payload 重试安全）；replace 后
+        目录 fsync 耗尽=ExperienceCommitUncertainError（禁止盲重放，先 get() 核对）。
+        降级形态 source 经 to_md round-trip 保留原形态（design §2.1.3-3）。
         """
         self._require_write_safe()
         self._reset_diagnostics()
         path = self._safe_path(experience_id)
         if path is None or not path.exists():
             return False
-        try:
-            doc = ExperienceDocument.from_md(path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001 — 防御纵深（design §2.1.3-4.1），写入段零变化
-            _skip_trace(path.name, exc)
-            return False
-        doc.status = status
-        doc.updated_at = system_local_now().isoformat()
-        path.write_text(doc.to_md(), encoding="utf-8")
+        with self._file_lock():
+            try:
+                doc = ExperienceDocument.from_md(path.read_text(encoding="utf-8"))
+            except Exception as exc:  # noqa: BLE001 — 防御纵深（design §2.1.3-4.1），读取面 fail-open
+                _skip_trace(path.name, exc)
+                return False
+            doc.status = status
+            doc.updated_at = system_local_now().isoformat()
+            payload = doc.to_md()
+            temp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:12]}.tmp")
+            try:
+                _write_temp_exclusive(temp, payload)
+                os.replace(temp, path)
+            except OSError as exc:
+                raise ExperiencePersistError(
+                    f"经验文档状态更新失败(确定未提交，原文件保留): {path.name}: {exc}"
+                ) from exc
+            finally:
+                temp.unlink(missing_ok=True)
+            self._fsync_dir_or_uncertain(path, payload, path.name.removesuffix(".md"))
         return True
 
     def _safe_path(self, experience_id: str) -> Path | None:

@@ -9,7 +9,11 @@ from __future__ import annotations
 import re
 
 from llm_loop.experiences.document import ExperienceDocument
-from llm_loop.experiences.store import ExperienceStore
+from llm_loop.experiences.store import (
+    ExperienceCommitUncertainError,
+    ExperiencePersistError,
+    ExperienceStore,
+)
 from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.arg_coerce import coerce_obj, coerce_str_list
 
@@ -112,6 +116,19 @@ def run_save_experience(
         )
     except FileExistsError as exc:
         return f"[save_experience] 文件冲突: {exc}"
+    except ExperienceCommitUncertainError as exc:
+        return (
+            f"[save_experience] 提交结果不确定: experience:{exc.experience_id} "
+            f"已原子可见但目录 fsync 未确认（expected_sha256={exc.expected_sha256} "
+            f"visible_state={exc.visible_state}）。禁止盲重存：同日同 slug 已占用，"
+            f"重存必然冲突；先按 expected_sha256 逐字核对（store.get/search_records），"
+            f"一致即已落盘，无需任何补救写"
+        )
+    except ExperiencePersistError as exc:
+        return (
+            f"[save_experience] 确定未提交（{exc}）。"
+            f"同一 payload 重试安全；改写内容前先核对库内现状"
+        )
     except OSError as exc:
         return f"[程序异常] 经验写入失败（{type(exc).__name__}: {exc}）"
 
@@ -132,6 +149,18 @@ def run_refine_experience(
     target_status = action_map[action]
     try:
         ok = store.update_status(normalized_id, target_status)
+    except ExperienceCommitUncertainError as exc:
+        return (
+            f"[refine_experience] 提交结果不确定: experience:{exc.experience_id} "
+            f"已原子可见但目录 fsync 未确认（expected_sha256={exc.expected_sha256} "
+            f"visible_state={exc.visible_state}）。禁止叠加第二次语义动作：先 "
+            f"exact get()/search_records 按当前实际 status 决定；同目标 status "
+            f"重放幂等（updated_at 会刷新），不同目标需基于新读值重判"
+        )
+    except ExperiencePersistError as exc:
+        return (
+            f"[refine_experience] 确定未提交（{exc}）。原文件未改动，可安全重试"
+        )
     except OSError as exc:
         return f"[程序异常] 经验状态更新失败（{type(exc).__name__}: {exc}）"
     if not ok:

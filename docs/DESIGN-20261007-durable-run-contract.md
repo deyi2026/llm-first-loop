@@ -17,7 +17,7 @@
 | 4 | ServiceControl CAS | `runtime/service_control.py` | generation 乐观并发（publish 时 CAS+git head+webui 产物 hash 绑定）；desired 部署态 to_dict/from_dict | 语义强（CAS） | CAS | 未核验 | 代际回退屏障 | expected_generation |
 | 5 | Evidence blob | `memory/evidence.py` | `put_text`：tmp+fsync+`os.replace`+目录 fsync（L1367-1389） | ✅ 最强 | 写一次 | ✅✅（文件+目录） | 内容寻址天然完整 | sha256 键 |
 | 6 | usage.jsonl | `methods/store.py:627` | 裸 `open("a")` 追加单行 | 行级 append | ❌ | ❌ | 读侧跳过坏行 | 无键 |
-| 7 | ExperienceStore | `experiences/store.py:155,603` | 单记录 markdown 文件 `write_text` 覆写 | ❌ | ❌ | ❌ | 无 | 文件名=experience:<id> |
+| 7 | ExperienceStore | `experiences/store.py`（save/update_status，2026-10-08 T2 迁移后） | 单记录 markdown：store flock 内 tmp(O_EXCL)→file fsync→link(create-if-absent)/replace→目录 fsync，typed 结果分型 | ✅ T2（2026-10-08） | save=创建一次；update=单写者 RMW | ✅✅（文件+目录） | 锁失败 fail-closed；损坏旧记录 fail-open 跳过 | 文件名=experience:<id>；同日同 slug 冲突不覆盖 |
 
 ## 2. 目标 / 非目标
 
@@ -64,7 +64,7 @@ DurableContract(Protocol):
 | 2 | Fleet 结算 | **符合（T2）** | 锁+tmp+replace | 补目录 fsync 即全绿；低优先 |
 | 4 | ServiceControl | **符合（T2，2026-10-08 迁移）** | CAS+state lease；`_atomic_json` 已迁 tmp+file fsync+replace+目录 fsync+outcome 分型 | 已实施；见 §6 rev6 |
 | 6 | usage.jsonl | **豁免（低风险 T1）** | 单行小 append，进程模型下交错窗口小；读侧跳坏行 | 显式豁免登记；不加锁 |
-| 7 | ExperienceStore | **迁移（T2，第 2 顺位）** | 裸 write_text 覆写，崩溃可致整卡损坏 | 换 tmp+replace；改动极小 |
+| 7 | ExperienceStore | **符合（T2，2026-10-08 迁移）** | ~~裸 write_text 覆写，崩溃可致整卡损坏~~ → save=store flock+tmp+fsync+link 原子 create-if-absent；update_status=单写者 RMW+replace；两者均区分 definitely_not_committed / commit_outcome_uncertain + exact readback（`test_experience_store_durability.py` 12 例故障注入） | 已完成（含调用面 receipt 分型：`tools_experience.py` 禁止 uncertain 盲重放） |
 | 3a | **ScheduleStore 主状态** | **符合（T2，首个 client）** | 原子可见性+目录 durability fence+跨进程锁+显式 commit outcome/reconcile | 见 §6 |
 | 3b | WakeAuthorizationStore | **符合（T2 参考）** | 锁+tmp+file fsync+replace+目录 fsync；HMAC scope 与 one-shot tombstone | 零改动；作为 schedule 迁移的同子系统参考 |
 
@@ -129,6 +129,30 @@ DurableContract(Protocol):
 - 测试隔离修正：rev7 full 首跑额外暴露两条 durability 计数失败，根因为测试全局 monkeypatch `os.replace` 截获后台 Scheduler 写入；
   fault injection 已改为仅匹配本测试目标 path。与 ScheduleStore 既有测试隔离纪律一致，混跑
   `test_service_control_durability.py + test_schedule_durability.py` = **34 passed**。
+
+### 实施记录（2026-10-08 rev8：#7 ExperienceStore migrate → conform）
+
+- 写路径迁移（`experiences/store.py`）：`save()` 由裸 `write_text` 改为 store flock 内
+  tmp(O_EXCL)→write→file fsync→`os.link` 原子 create-if-absent→目录 fsync；`update_status()`
+  由裸 read-modify-write 覆写改为 store flock 内单写者 RMW + tmp→fsync→`os.replace`→目录 fsync。
+  最终文件只可能整体旧或整体新，崩溃位不再产生截断半卡。
+- 新增跨进程单写者锁 `_file_lock`（flock LOCK_EX，锁失败 fail-closed；无 fcntl 运行时退化进程内
+  RLock 并显式不声称跨进程）。覆盖此前两处 TOCTOU/丢更新窗口：save 的 exists 检查（并发同日同
+  slug 现在必然一方 FileExistsError，不再静默覆盖）与 update_status 的丢失更新。
+- outcome 分型：replace/link 前失败 → `ExperiencePersistError`（确定未提交，同一 payload 重试安全）；
+  link/replace 已生效但目录 fsync 有界重试（3 次）耗尽 → `ExperienceCommitUncertainError`
+  （含 `expected_sha256` + 持锁逐字 readback 的 `visible_state`，禁止盲重放）。post_save_hooks
+  仅在确定提交后运行；uncertain 不触发 hooks。
+- 调用面（`introspection/tools_experience.py`）：save/refine receipt 对两类 typed 异常分别给出
+  reconcile 指令——save uncertain 后"同日同 slug 已占用，重存必然冲突，先按 expected_sha256 核对"；
+  refine uncertain 后"先 get() 按实际 status 决定，同目标幂等，禁止叠加第二份语义动作"。
+- 故障注入验收：新增 `tests/unit/test_experience_store_durability.py` **12 例**全绿（happy path 无
+  tmp 残留 / replace 前分型+原样保留 / 冲突契约不覆盖 / save uncertain=matches+sha 校验+重存必然
+  冲突 / update uncertain=整体新完整卡+重试计数 / replace 失败原样 / 双实例 8 线程并发 save 单赢家
+  / 并发 update_status 串行不撕裂 / 损坏旧记录 fail-open 原样 / 孤儿 tmp 与 lock 文件不入扫描 /
+  uncertain 后 get() 可逐字取回+故障恢复后续写）。相邻面 experience+introspection **200 passed**；
+  arch guards **21 passed**。
+- registry：`experience_store` `T2/migrate` → `T2/conform`（rationale 记录写路径、分型与验收口径）。
 
 ## 7. 开放决策点
 

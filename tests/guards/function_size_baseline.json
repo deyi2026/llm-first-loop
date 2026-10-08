@@ -152,7 +152,7 @@
       "trace_leak_quarantine": {"tier":"T2","status":"observe","owner":"core","paths":["src/llm_loop/core/trace_leak/leak_events.py"],"rationale":"trace leak quarantine 产物承载隔离后的恢复/审计状态。"},
       "wake_authorization_store": {"tier":"T2","status":"conform","owner":"core","paths":["src/llm_loop/core/trace_leak/wake_authority.py"],"rationale":"DRC 已核：0600+flock+tmp+file fsync+replace+directory fsync+签名/tombstone。"},
       "event_store": {"tier":"T1","status":"conform","owner":"event_log","paths":["src/llm_loop/event_log/store.py","src/llm_loop/event_log/rotate.py"],"rationale":"DRC 已核：锁+O_APPEND 单行+读侧尾部截断容错+seq。"},
-      "experience_store": {"tier":"T2","status":"migrate","owner":"experiences","paths":["src/llm_loop/experiences/store.py"],"rationale":"DRC 已核：单记录 markdown 裸 write_text 覆写，列第二迁移顺位。"},
+      "experience_store": {"tier":"T2","status":"conform","owner":"experiences","paths":["src/llm_loop/experiences/store.py"],"rationale":"2026-10-08 T2 迁移完成：save=store flock+tmp(O_EXCL)+file fsync+os.link 原子 create-if-absent；update_status=单写者 RMW+os.replace；均含目录 fsync fence 与 definitely_not_committed/commit_outcome_uncertain 分型+exact readback（test_experience_store_durability.py 12 例故障注入）。"},
       "browser_attestation_state": {"tier":"T2","status":"observe","owner":"factory","paths":["src/llm_loop/factory.py"],"rationale":"factory 装配期 browser attestation 通过临时文件覆盖持久化。"},
       "service_exit_audit": {"tier":"T1","status":"observe","owner":"delivery","paths":["src/llm_loop/feishu/__init__.py","src/llm_loop/web/__init__.py"],"rationale":"Web/Feishu 退出原因以追加审计日志记录。"},
       "feishu_bridge_state": {"tier":"T2","status":"observe","owner":"feishu","paths":["src/llm_loop/feishu/bridge.py"],"rationale":"Feishu interrupted/dedup 等桥接状态存在覆盖式持久化。"},
