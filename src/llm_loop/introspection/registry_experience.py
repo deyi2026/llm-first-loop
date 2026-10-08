@@ -12,6 +12,7 @@ from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.introspection.registry_host import RegistryHost
+from llm_loop.methods.store import MethodCommitUncertainError, MethodPersistError
 
 _SAVE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
     "name": "save_experience",
@@ -238,6 +239,10 @@ def _run_annotate_freshness(args: dict, host: RegistryHost, *, tool_name: str) -
         return _method_failure(tool_name, "[参数错误] freshness_refs 不能为空")
     try:
         record = store.annotate_freshness(method_ref, freshness_refs)
+    except MethodCommitUncertainError as exc:
+        return _method_uncertain_receipt(tool_name, exc)
+    except MethodPersistError as exc:
+        return _method_failure(tool_name, f"[freshness 注记确定未提交] {exc}；原卡未改，可先核对后重试")
     except (OSError, ValueError, RuntimeError) as exc:
         return _method_failure(tool_name, f"[freshness 注记失败] {type(exc).__name__}: {exc}")
     fresh = store.freshness(method_ref)
@@ -254,6 +259,18 @@ def _run_annotate_freshness(args: dict, host: RegistryHost, *, tool_name: str) -
 
 def _method_failure(tool_name: str, content: str) -> ToolResult:
     return ToolResult(status=ToolResultStatus.FAILURE, content=content, tool_call_id="", tool_name=tool_name)
+
+
+def _method_uncertain_receipt(tool_name: str, exc: MethodCommitUncertainError) -> ToolResult:
+    """An atomically visible card is not proof of a confirmed durable commit."""
+    return _method_failure(
+        tool_name,
+        f"[Method 提交结果不确定] {exc.method_ref} operation={exc.operation} "
+        f"expected_sha256={exc.expected_sha256} visible_state={exc.visible_state}。"
+        "目录 fsync 未确认；禁止盲重放。先用 exact method_ref 重新读取卡片 SHA、"
+        "status/freshness_refs，若涉及 qualification 还需单独读取 qualification_entries，"
+        "再按当前事实决定是否仍需要原动作。",
+    )
 
 
 def _run_save_method_candidate(args: dict, host: RegistryHost, *, tool_name: str = "save_method_candidate") -> ToolResult:
@@ -286,6 +303,10 @@ def _run_save_method_candidate(args: dict, host: RegistryHost, *, tool_name: str
             parent_ref=str(args.get("parent_ref", "")),
             freshness_refs=[str(v) for v in (args.get("freshness_refs") or [])],
         )
+    except MethodCommitUncertainError as exc:
+        return _method_uncertain_receipt(tool_name, exc)
+    except MethodPersistError as exc:
+        return _method_failure(tool_name, f"[Method candidate 确定未提交] {exc}；先按 stable id 核对再重试")
     except (OSError, ValueError, RuntimeError) as exc:
         return _method_failure(tool_name, f"[Method candidate 写入失败] {type(exc).__name__}: {exc}")
     host.audit("save_method_candidate", {"method_ref": record.method_ref, "content_hash": record.content_hash}, "success")
@@ -361,6 +382,10 @@ def _run_record_method_qualification(args: dict, host: RegistryHost, *, tool_nam
             evidence_refs=[str(v) for v in (args.get("evidence_refs") or [])],
             note=str(args.get("note", "")),
         )
+    except MethodCommitUncertainError as exc:
+        return _method_uncertain_receipt(tool_name, exc)
+    except MethodPersistError as exc:
+        return _method_failure(tool_name, f"[Method qualification 确定未提交] {exc}；读取原卡与日志后再重试")
     except (FileNotFoundError, OSError, ValueError) as exc:
         return _method_failure(tool_name, f"[Method qualification 写入失败] {type(exc).__name__}: {exc}")
     host.audit(
@@ -390,18 +415,22 @@ def _run_refine_method(args: dict, host: RegistryHost, *, tool_name: str = "refi
         return _method_failure(tool_name, "[参数错误] method_ref 必填且 action 必须为 qualify/activate/hold/invalidate/retire/reopen")
     try:
         record = store.update_status(method_ref, target, episode_ref=str(getattr(host, "episode_ref", "") or ""))
+    except MethodCommitUncertainError as exc:
+        return _method_uncertain_receipt(tool_name, exc)
+    except MethodPersistError as exc:
+        return _method_failure(tool_name, f"[Method 生命周期确定未提交] {exc}；原卡未改，先 exact get 核对后重试")
     except (FileNotFoundError, OSError, ValueError, RuntimeError) as exc:
         # EVO-20260929-5283ab1b P1 (R4): a blocked judgment must not vaporize.
         # update_status already journaled the attempt store-side (universal for
         # every caller); here we only surface the receipt honestly.
-        last = None
-        for entry in store.attempt_entries(method_ref):
-            if entry.get("requested") == target:
-                last = entry
-        if last is not None and last.get("journal_persisted"):
-            suffix = f"；已落账 lifecycle_transition_attempt（missing_fact={last.get('missing_fact')}）"
-        else:
-            suffix = "；[警告] 阻塞尝试未能写入 journal"
+        suffix = ""
+        if isinstance(exc, ValueError):
+            last = None
+            for entry in store.attempt_entries(method_ref):
+                if entry.get("requested") == target:
+                    last = entry
+            if last is not None and last.get("journal_persisted"):
+                suffix = f"；已落账 lifecycle_transition_attempt（missing_fact={last.get('missing_fact')}）"
         return _method_failure(tool_name, f"[Method 生命周期更新失败] {type(exc).__name__}: {exc}{suffix}")
     host.audit("refine_method", {"method_ref": method_ref, "status": record.status}, "success")
     return ToolResult(status=ToolResultStatus.SUCCESS, content=f"[refine_method] {method_ref} status={record.status}", tool_call_id="", tool_name=tool_name)

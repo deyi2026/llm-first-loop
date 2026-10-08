@@ -5,9 +5,14 @@ identity, lifecycle, provenance and exact bytes; semantic applicability remains 
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import os
 import re
+import shutil
+import threading
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -19,6 +24,99 @@ from llm_loop.timekeeping import system_local_now
 _VALID_STATUSES = {"teacher", "candidate", "qualified", "active", "hold", "invalidated", "retired"}
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _SAFE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+_STORE_LOCK_FILE = ".__method_store.lock"
+_STAGING_DIR = ".__method_store_staging"
+_DIR_FSYNC_ATTEMPTS = 3
+_PROCESS_LOCK = threading.RLock()
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX retains only in-process exclusion
+    fcntl = None  # type: ignore[assignment]
+
+
+class MethodPersistError(OSError):
+    """A Method card mutation did not reach its atomic visibility point."""
+
+
+class MethodCommitUncertainError(OSError):
+    """A card is atomically visible, but the directory durability fence failed.
+
+    The caller must reconcile by exact readback and must not blindly repeat a
+    lifecycle transition, qualification, or candidate creation.
+    """
+
+    def __init__(
+        self, message: str, *, method_ref: str, operation: str,
+        expected_sha256: str, visible_state: str,
+    ) -> None:
+        super().__init__(message)
+        self.method_ref = method_ref
+        self.operation = operation
+        self.expected_sha256 = expected_sha256
+        self.visible_state = visible_state
+
+
+@contextlib.contextmanager
+def _store_lock(directory: Path):
+    """One writer across Web/Feishu/Learning (POSIX flock + process RLock).
+
+    Lock acquisition failures fail closed. Exceptions raised inside the critical
+    section retain their type: a lifecycle denial is not a lock failure.
+    """
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise MethodPersistError(f"Method store directory unavailable: {exc}") from exc
+    with _PROCESS_LOCK:
+        if fcntl is None:
+            yield
+            return
+        fd: int | None = None
+        try:
+            fd = os.open(directory / _STORE_LOCK_FILE, os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as exc:
+            if fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+            raise MethodPersistError(f"Method store lock unavailable: {exc}") from exc
+        try:
+            yield
+        finally:
+            with contextlib.suppress(OSError):
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            with contextlib.suppress(OSError):
+                os.close(fd)
+
+
+def _write_file_exclusive(path: Path, payload: bytes) -> None:
+    """Create in a non-observable staging location, then fsync file bytes."""
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except BaseException:
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+        raise
+
+
+def _fsync_directory(directory: Path) -> None:
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _visible_state(path: Path, payload: bytes) -> str:
+    try:
+        return "matches" if path.read_bytes() == payload else "mismatch"
+    except OSError:
+        return "unreadable"
 
 # EVO-20260930-429f7c12: zero-signal candidate ranking decay.  A candidate that
 # has never produced any interaction signal (qualification or use declaration)
@@ -226,6 +324,82 @@ class MethodStore:
         if not allowed:
             raise PermissionError("knowledge store quarantined: mutation disabled")
 
+    def _fsync_or_uncertain(
+        self, path: Path, payload: bytes, method_ref: str,
+        operation: str, directories: tuple[Path, ...],
+    ) -> None:
+        """Fsync directory entries without replaying an already-visible mutation."""
+        for directory in directories:
+            last_error: OSError | None = None
+            for _ in range(_DIR_FSYNC_ATTEMPTS):
+                try:
+                    _fsync_directory(directory)
+                    break
+                except OSError as exc:
+                    last_error = exc
+            else:
+                raise MethodCommitUncertainError(
+                    f"Method {operation} atomically visible but directory fsync unconfirmed: {last_error}",
+                    method_ref=method_ref,
+                    operation=operation,
+                    expected_sha256=hashlib.sha256(payload).hexdigest(),
+                    visible_state=_visible_state(path, payload),
+                )
+
+    def _commit_new_directory(
+        self, method_id: str, files: dict[str, bytes], *, operation: str,
+    ) -> Path:
+        """Atomically publish a complete new Method directory from invisible staging.
+
+        Used for both first candidate writes and seed overlays. The stage is
+        two levels below the store root, so ordinary */METHOD.md discovery does
+        not expose in-flight cards. Only the final rename makes them visible.
+        Call under the store's single-writer lock.
+        """
+        dest = self._dir / method_id
+        if dest.exists():
+            raise FileExistsError(f"Method runtime directory exists: {dest}")
+        stage_root = self._dir / _STAGING_DIR
+        stage = stage_root / f"{method_id}.{uuid.uuid4().hex}.stage"
+        try:
+            stage_root.mkdir(exist_ok=True)
+            stage.mkdir(mode=0o700)
+            for filename, data in files.items():
+                if filename not in {"METHOD.md", "qualification.json"}:
+                    raise ValueError(f"invalid staged Method filename: {filename}")
+                _write_file_exclusive(stage / filename, data)
+            _fsync_directory(stage)
+            os.rename(stage, dest)
+        except FileExistsError:
+            raise
+        except OSError as exc:
+            raise MethodPersistError(f"Method {operation} not committed: {exc}") from exc
+        finally:
+            if stage.exists():
+                shutil.rmtree(stage, ignore_errors=True)
+        payload = files["METHOD.md"]
+        self._fsync_or_uncertain(
+            dest / "METHOD.md", payload, f"method:{method_id}", operation,
+            (self._dir, stage_root),
+        )
+        return dest
+
+    def _replace_card(self, path: Path, payload: str, *, operation: str) -> None:
+        """Single-writer atomic RMW card replacement; no in-place truncation."""
+        data = payload.encode("utf-8")
+        temp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:12]}.tmp")
+        try:
+            _write_file_exclusive(temp, data)
+            os.replace(temp, path)
+        except OSError as exc:
+            raise MethodPersistError(f"Method {operation} not committed: {exc}") from exc
+        finally:
+            with contextlib.suppress(OSError):
+                temp.unlink(missing_ok=True)
+        self._fsync_or_uncertain(
+            path, data, f"method:{path.parent.name}", operation, (path.parent,),
+        )
+
     @staticmethod
     def _safe_id(value: str) -> str:
         candidate = value.strip().lower()
@@ -304,6 +478,44 @@ class MethodStore:
             if seed_path.exists():
                 return self._load_path(seed_path)
         return None
+
+    def recover(self) -> dict[str, Any]:
+        """Read-only T2 recovery inventory; never auto-delete or promote cards.
+
+        A staged partial directory is outside normal Method discovery and needs
+        operator review, not implicit deletion. Report invalid and incomplete
+        runtime entries separately instead of silently treating them as cards.
+        """
+        report: dict[str, Any] = {
+            "exists": self._dir.is_dir(), "records": 0,
+            "invalid_records": [], "incomplete_dirs": [],
+            "unclassified_dirs": [], "orphan_stages": [],
+        }
+        if not self._dir.is_dir():
+            return report
+        stage_root = self._dir / _STAGING_DIR
+        if stage_root.is_dir():
+            report["orphan_stages"] = sorted(p.name for p in stage_root.iterdir())
+        for directory in sorted(self._dir.iterdir()):
+            if not directory.is_dir() or not _SAFE_ID_RE.fullmatch(directory.name):
+                continue
+            path = directory / "METHOD.md"
+            if not path.is_file():
+                # A plain foreign directory is not proof of a failed Method
+                # commit. Only Method-specific residual files indicate an
+                # incomplete old overlay; surface all others without claiming.
+                names = {p.name for p in directory.iterdir()}
+                if names.intersection({"qualification.json", "qualification.jsonl"}) or any(
+                    name.startswith("METHOD.") for name in names
+                ):
+                    report["incomplete_dirs"].append(directory.name)
+                else:
+                    report["unclassified_dirs"].append(directory.name)
+            elif self._load_path(path) is None:
+                report["invalid_records"].append(directory.name)
+            else:
+                report["records"] += 1
+        return report
 
     @staticmethod
     def _search_terms(query: str) -> list[str]:
@@ -499,18 +711,17 @@ class MethodStore:
                 continue
             coverage = (matched / len(terms)) if terms else 0.0
             life = {"active": 35, "qualified": 25, "candidate": 0, "teacher": -5, "hold": -10, "invalidated": -20}.get(record.status, -25)
-            if record.status == "candidate":
-                # EVO-20260930-429f7c12: a candidate with zero interaction signals
-                # decays with idle age so mass-generated cards cannot crowd out
-                # qualified/active ones on lexical score alone.  Any qualification
-                # or use declaration restores full weight permanently.
-                if not self._last_signal_ts(record):
-                    age = _age_days(record.created_at)
-                    if age is not None and age > _ZERO_SIGNAL_GRACE_DAYS:
-                        life -= min(
-                            _ZERO_SIGNAL_DECAY_CAP,
-                            (age - _ZERO_SIGNAL_GRACE_DAYS) * _ZERO_SIGNAL_DECAY_PER_DAY,
-                        )
+            # EVO-20260930-429f7c12: a candidate with zero interaction signals
+            # decays with idle age so mass-generated cards cannot crowd out
+            # qualified/active ones on lexical score alone. Any qualification
+            # or use declaration restores full weight permanently.
+            if record.status == "candidate" and not self._last_signal_ts(record):
+                age = _age_days(record.created_at)
+                if age is not None and age > _ZERO_SIGNAL_GRACE_DAYS:
+                    life -= min(
+                        _ZERO_SIGNAL_DECAY_CAP,
+                        (age - _ZERO_SIGNAL_GRACE_DAYS) * _ZERO_SIGNAL_DECAY_PER_DAY,
+                    )
             score = identifier_bonus + lexical * 10 + int(coverage * 50) + life
             ranked.append((score, coverage, record))
         ranked.sort(key=lambda item: (item[0], item[1], item[2].method_id), reverse=True)
@@ -549,7 +760,11 @@ class MethodStore:
         return result
 
     def _ensure_runtime_copy(self, record: MethodRecord) -> MethodRecord:
-        """Copy a tracked seed to runtime storage before any mutable lifecycle write."""
+        """Publish a complete seed overlay before any mutable lifecycle write.
+
+        Requires the store lock; first-time overlays are committed as an atomic
+        directory rename with the seed qualification summary included.
+        """
         source = Path(record.path)
         runtime_path = self._dir / record.method_id / "METHOD.md"
         if runtime_path.exists():
@@ -565,18 +780,38 @@ class MethodStore:
             source_is_runtime = False
         if source_is_runtime:
             return record
-        runtime_path.parent.mkdir(parents=True, exist_ok=False)
-        runtime_path.write_bytes(source.read_bytes())
-        # Seed-side qualification summary is evidence shipped with the seed, not mutable runtime state.
+        # Seed-side qualification summary is shipped evidence, not mutable runtime state.
         seed_q = source.parent / "qualification.json"
-        if seed_q.exists():
-            (runtime_path.parent / "qualification.json").write_bytes(seed_q.read_bytes())
+        files = {"METHOD.md": source.read_bytes()}
+        if seed_q.is_file():
+            files["qualification.json"] = seed_q.read_bytes()
+        self._commit_new_directory(record.method_id, files, operation="seed_overlay")
         copied = self._load_path(runtime_path)
         if copied is None:
             raise RuntimeError("runtime Method overlay did not round-trip")
         return copied
 
     def record_use(
+        self,
+        method_ref: str,
+        *,
+        episode_ref: str,
+        decision: str,
+        note: str = "",
+        model: str = "",
+        evidence_refs: list[str] | None = None,
+        session_id: str = "",
+    ) -> dict[str, Any]:
+        """Serialize use evidence with any destructive disposition it may support."""
+        self._require_write_safe()
+        with _store_lock(self._dir):
+            return self._record_use_locked(
+                method_ref, episode_ref=episode_ref, decision=decision,
+                note=note, model=model, evidence_refs=evidence_refs,
+                session_id=session_id,
+            )
+
+    def _record_use_locked(
         self,
         method_ref: str,
         *,
@@ -595,7 +830,6 @@ class MethodStore:
         session_id (EVO-20260923-618f7fd1 ②) is optional provenance used by the
         goal-level method_use_gate; legacy entries without it simply never match.
         """
-        self._require_write_safe()
         record = self.get(method_ref)
         if record is None:
             raise FileNotFoundError(method_ref)
@@ -627,6 +861,8 @@ class MethodStore:
         path = self._dir / "usage.jsonl"
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
         return entry
 
     def usage_entries(self, method_ref: str = "") -> list[dict[str, Any]]:
@@ -664,8 +900,29 @@ class MethodStore:
         note: str = "",
         evaluator: str = "model",
     ) -> dict[str, Any]:
-        """Append a bounded qualification declaration without changing lifecycle status."""
+        """Serialize seed overlay creation and qualification append with lifecycle RMW."""
         self._require_write_safe()
+        with _store_lock(self._dir):
+            return self._record_qualification_locked(
+                method_ref, task_ref=task_ref, verdict=verdict, mechanism=mechanism,
+                task_benefit=task_benefit, promotion=promotion,
+                evidence_refs=evidence_refs, note=note, evaluator=evaluator,
+            )
+
+    def _record_qualification_locked(
+        self,
+        method_ref: str,
+        *,
+        task_ref: str,
+        verdict: str,
+        mechanism: str = "not_evaluated",
+        task_benefit: str = "not_evaluated",
+        promotion: str = "not_evaluated",
+        evidence_refs: list[str] | None = None,
+        note: str = "",
+        evaluator: str = "model",
+    ) -> dict[str, Any]:
+        """Append a bounded qualification declaration without changing lifecycle status."""
         record = self.get(method_ref)
         if record is None:
             raise FileNotFoundError(method_ref)
@@ -704,6 +961,8 @@ class MethodStore:
         qpath = Path(record.path).parent / "qualification.jsonl"
         with qpath.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
         return entry
 
     def qualification_entries(self, method_ref: str) -> list[dict[str, Any]]:
@@ -784,7 +1043,7 @@ class MethodStore:
         lifecycle status and never interprets why the model tried.
         """
         record = self.get(method_ref)
-        entry = {
+        entry: dict[str, Any] = {
             "ts": _now(),
             "event": "lifecycle_transition_attempt",
             "method_ref": method_ref,
@@ -828,12 +1087,17 @@ class MethodStore:
         return result
 
     def update_status(self, method_ref: str, target_status: str, *, episode_ref: str = "") -> MethodRecord:
+        """Serialize lifecycle checks, seed overlay, and atomic card transition."""
+        self._require_write_safe()
+        with _store_lock(self._dir):
+            return self._update_status_locked(method_ref, target_status, episode_ref=episode_ref)
+
+    def _update_status_locked(self, method_ref: str, target_status: str, *, episode_ref: str = "") -> MethodRecord:
         """Mechanical lifecycle transition; semantic choice belongs to the caller/model/owner.
 
         Activating a candidate directly is rejected. A method must first pass through qualified,
         so a same-episode self-distillation cannot become active in one write.
         """
-        self._require_write_safe()
         record = self.get(method_ref)
         if record is None:
             raise FileNotFoundError(method_ref)
@@ -862,14 +1126,17 @@ class MethodStore:
         # factual basis. The program never decides a Method *should* die; it only
         # refuses to record a conviction resting solely on one session's own
         # self-judgment. reopen stays permanently available (nothing is deleted).
-        if target in {"invalidated", "retired"} and record.status not in {"invalidated", "retired"}:
-            if not self._disposition_basis(record):
-                self._blocked(method_ref, target, "independent_disposition_evidence", "no independent basis", episode_ref=episode_ref)
-                raise ValueError(
-                    "destructive disposition (invalidate/retire) requires independent factual basis: "
-                    "one qualification with verdict=fail, or rejected use declarations from >=2 distinct "
-                    "episodes; record the evidence first, then retry the disposition"
-                )
+        if (
+            target in {"invalidated", "retired"}
+            and record.status not in {"invalidated", "retired"}
+            and not self._disposition_basis(record)
+        ):
+            self._blocked(method_ref, target, "independent_disposition_evidence", "no independent basis", episode_ref=episode_ref)
+            raise ValueError(
+                "destructive disposition (invalidate/retire) requires independent factual basis: "
+                "one qualification with verdict=fail, or rejected use declarations from >=2 distinct "
+                "episodes; record the evidence first, then retry the disposition"
+            )
         path = Path(record.path)
         raw = path.read_text(encoding="utf-8")
         meta, body = _parse_frontmatter(raw)
@@ -885,7 +1152,10 @@ class MethodStore:
             value = meta[key]
             if value not in (None, ""):
                 lines.append(f"{key}: {value}")
-        path.write_text("---\n" + "\n".join(lines) + "\n---\n" + body.strip() + "\n", encoding="utf-8")
+        self._replace_card(
+            path, "---\n" + "\n".join(lines) + "\n---\n" + body.strip() + "\n",
+            operation="update_status",
+        )
         updated = self._load_path(path)
         if updated is None:
             raise RuntimeError("method lifecycle update did not round-trip")
@@ -904,8 +1174,33 @@ class MethodStore:
         parent_ref: str = "",
         freshness_refs: list[str] | None = None,
     ) -> MethodRecord:
-        """Persist semantic content supplied by the model; never overwrite or auto-promote."""
+        """Write-once candidate publication; derived hooks run only on certain commits."""
         self._require_write_safe()
+        with _store_lock(self._dir):
+            record, created = self._save_candidate_locked(
+                name=name, description=description, body=body,
+                source_model=source_model, teacher_refs=teacher_refs,
+                source_episode_refs=source_episode_refs, evidence_refs=evidence_refs,
+                parent_ref=parent_ref, freshness_refs=freshness_refs,
+            )
+        if created:
+            self._notify_post_save(record)
+        return record
+
+    def _save_candidate_locked(
+        self,
+        *,
+        name: str,
+        description: str,
+        body: str,
+        source_model: str = "",
+        teacher_refs: list[str] | None = None,
+        source_episode_refs: list[str] | None = None,
+        evidence_refs: list[str] | None = None,
+        parent_ref: str = "",
+        freshness_refs: list[str] | None = None,
+    ) -> tuple[MethodRecord, bool]:
+        """Persist semantic content supplied by the model; never overwrite or auto-promote."""
         # P2 Card Contract: the persistence boundary demands the same structure
         # the generation protocol promises. Applies to new writes only; the
         # existing pool is never retroactively rescanned.
@@ -946,8 +1241,9 @@ class MethodStore:
             record = self._load_path(path)
             if record is None:
                 raise ValueError("existing candidate is unreadable")
-            return record
-        out_dir.mkdir(parents=True, exist_ok=False)
+            return record, False
+        if out_dir.exists():
+            raise MethodPersistError("Method directory exists without readable METHOD.md; reconcile before saving")
         now = _now()
         def line(k: str, v: str) -> str:
             clean = v.replace("\n", " ").strip()
@@ -957,14 +1253,19 @@ class MethodStore:
         front += line("source_episode_refs", ",".join(checked_episode_refs)) + line("evidence_refs", ",".join(evidence_refs or []))
         front += line("freshness_refs", ",".join(checked_freshness_refs))
         front += line("parent_ref", parent_ref) + line("created_at", now) + line("updated_at", now) + "---\n"
-        path.write_text(front + body.strip() + "\n", encoding="utf-8")
+        self._commit_new_directory(method_id, {"METHOD.md": (front + body.strip() + "\n").encode("utf-8")}, operation="save_candidate")
         record = self._load_path(path)
         if record is None:
             raise RuntimeError("candidate write did not round-trip")
-        self._notify_post_save(record)
-        return record
+        return record, True
 
     def annotate_freshness(self, method_ref: str, freshness_refs: list[str]) -> MethodRecord:
+        """Serialize one-key annotation RMW with qualification/lifecycle updates."""
+        self._require_write_safe()
+        with _store_lock(self._dir):
+            return self._annotate_freshness_locked(method_ref, freshness_refs)
+
+    def _annotate_freshness_locked(self, method_ref: str, freshness_refs: list[str]) -> MethodRecord:
         """Update ONLY the frontmatter ``freshness_refs`` of an existing card.
 
         EVO-20260929-5283ab1b P5-B follow-up: existing cards could not declare
@@ -974,7 +1275,6 @@ class MethodStore:
         baseline still only lands at the next qualification. The old→new value
         goes to an append-only journal under the store root.
         """
-        self._require_write_safe()
         refs = _checked_freshness_refs(list(freshness_refs))
         method_id = method_ref.removeprefix("method:").strip().lower()
         if not _SAFE_ID_RE.fullmatch(method_id):
@@ -1001,7 +1301,7 @@ class MethodStore:
         updated_match = re.search(r"^updated_at:.*$", front, re.MULTILINE)
         if updated_match:
             front = front[: updated_match.start()] + f"updated_at: {now}" + front[updated_match.end():]
-        path.write_text("---\n" + front + "\n---\n" + body, encoding="utf-8")
+        self._replace_card(path, "---\n" + front + "\n---\n" + body, operation="annotate_freshness")
         record = self._load_path(path)
         if record is None:
             raise RuntimeError("annotation did not round-trip")
