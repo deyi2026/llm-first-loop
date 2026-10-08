@@ -1747,7 +1747,18 @@ class LLMClient:
             # 空响应保证零 text/tool delta 已投递）；重试后仍空才如实上抛——默认装配
             # 路径由引擎 fallback 链接管，strict override 会话照实反馈（不静默换模型）。
             if result is not None and not result.content and not result.tool_calls:
-                if _empty_retries_used < _EMPTY_RESPONSE_RETRY_MAX:
+                # ASSESS-20261008 BUG-15: reasoning-only 响应已投递思考 delta——
+                # 不满足同模型重试的"零 delta 投递"幂等前提（重试会把两次思考
+                # 拼成一个成功回答，且已发生的 provider 请求/计费不因重试抹掉），
+                # 如实上抛空响应异常并携带已投递事实；引擎层按其 fallback 政策
+                # 决定是否换模型，展示侧保留 attempt 边界。
+                _reasoning_delivered = bool(
+                    getattr(result, "reasoning_content", None)
+                ) or bool(getattr(result, "reasoning_tokens", None) or 0)
+                if (
+                    not _reasoning_delivered
+                    and _empty_retries_used < _EMPTY_RESPONSE_RETRY_MAX
+                ):
                     _empty_retries_used += 1
                     logger.warning(
                         "空响应（provider=%s, model=%s, finish_reason=%s, reasoning_tokens=%s）"
@@ -1762,9 +1773,14 @@ class LLMClient:
                     )
                     time.sleep(_EMPTY_RESPONSE_RETRY_BACKOFF_S)
                     continue
+                _reasoning_note = (
+                    f"；已投递思考 {len(result.reasoning_content)} 字符"
+                    if _reasoning_delivered and result.reasoning_content
+                    else ""
+                )
                 raise LLMEmptyResponseError(
                     f"模型返回空响应（无内容且无工具调用，provider={self.provider}，model={self.model}；"
-                    f"已同模型自动重试 {_empty_retries_used} 次仍为空）",
+                    f"已同模型自动重试 {_empty_retries_used} 次仍为空{_reasoning_note}）",
                     provider=self.provider,
                     finish_reason=result.finish_reason,
                     completion_tokens=result.completion_tokens,
@@ -1990,8 +2006,18 @@ class LLMClient:
         _tc_seen = False
 
         def _openai_stream_once(transport_retry_index: int) -> Iterator[StreamDelta]:
-            """单次流式请求（yield delta；传输异常向上抛，由外层重试判定）."""
-            nonlocal _tc_seen
+            """单次流式请求（yield delta；传输异常向上抛，由外层重试判定）.
+
+            ASSESS-20261008 BUG-12: 每次 transport attempt 重新初始化 response
+            accumulator 与工具聚合——finish/truncation 状态不跨 attempt 残留
+            （复现: attempt1 length-only 零输出后断连，重试成功 stop 但最终
+            truncated 仍为 True）。失败 attempt 的 usage/transport 事实仍保留
+            在 attempt journal（_observe_transport_usage /
+            _note_settled_response_facts 逐 attempt 记录），不因重试被丢弃。
+            """
+            nonlocal _tc_seen, acc, agg
+            acc = _StreamAcc()
+            agg = ToolCallDeltaAggregator()
             think_parser = _ThinkTagStreamParser()
             with self._transport_attempt_scope(
                 model_id=str(payload["model"]),
@@ -2162,7 +2188,17 @@ class LLMClient:
                 # 2026-09-18: 连接级失败先上报持有者（退休本实例，使后续调用按当前系统代理/
                 # 网络配置重建），再按既有单次重试语义决定是否重试。
                 self._notify_transport_failure(exc)
-                _output_seen = bool(acc.content_parts or acc.reasoning_parts) or _tc_seen
+                # ASSESS-20261008 BUG-12: 重试判定读取失败 attempt 的已投递事实
+                # （acc 在下一 attempt 开始时才重置）——content/reasoning/details/
+                # 工具任一已投递即不重试，避免 UI 重复与工具重复执行。
+                _output_seen = (
+                    bool(
+                        acc.content_parts
+                        or acc.reasoning_parts
+                        or acc.reasoning_details_text
+                    )
+                    or _tc_seen
+                )
                 if _attempt <= _retry_disconnect and not _output_seen:
                     logger.warning(
                         "LLM 流式传输中断（尚无输出已产出），重试 %d/%d: %s",
@@ -2352,6 +2388,19 @@ class LLMClient:
                             acc.finish_reason = stop
                         if acc.finish_reason in ("max_tokens", "length"):
                             acc.truncated = True
+                        usage = evt.get("usage") or {}
+                        # ASSESS-20261008 BUG-11: message_delta.usage 为累计值
+                        # （platform.claude.com/docs streaming）——按字段存在即更新，
+                        # 缺字段不清零（M58 缺失不覆盖契约延续），不与已有值相加。
+                        if isinstance(usage, dict):
+                            if usage.get("input_tokens") is not None:
+                                acc.prompt_tokens = int(usage["input_tokens"])
+                            if usage.get("output_tokens") is not None:
+                                acc.completion_tokens = int(usage["output_tokens"])
+                            if usage.get("cache_read_input_tokens") is not None:
+                                acc.prompt_cache_hit_tokens = int(
+                                    usage["cache_read_input_tokens"]
+                                )
                 self._note_settled_response_facts(
                     finish_reason=acc.finish_reason,
                     content="".join(acc.content_parts) or None,
