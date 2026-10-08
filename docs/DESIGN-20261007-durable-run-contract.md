@@ -6,7 +6,7 @@
 
 ## 1. 问题陈述 [事实]
 
-"每个事故新增一套持久化"是复发模式。当前至少 7 个子系统、8 个持久化 surface 各自实现锁/原子性/恢复/幂等，语义不一致。Schedule 子系统必须拆成主状态与授权账本两个 surface 看待：
+"每个事故新增一套持久化"是复发模式。原审计至少 7 个子系统、8 个持久化 surface 各自实现锁/原子性/恢复/幂等，语义不一致（2026-10-08 rev9 补：AST registry 扫描将恢复路径自身的 BackupStore 列为 #8，见 §1/§5/§6 rev9）。Schedule 子系统必须拆成主状态与授权账本两个 surface 看待：
 
 | # | 基座 | 位置 | 写入语义（核验） | 原子性 | 锁 | fsync | 崩溃恢复 | 幂等 |
 |---|---|---|---|---|---|---|---|---|
@@ -18,6 +18,7 @@
 | 5 | Evidence blob | `memory/evidence.py` | `put_text`：tmp+fsync+`os.replace`+目录 fsync（L1367-1389） | ✅ 最强 | 写一次 | ✅✅（文件+目录） | 内容寻址天然完整 | sha256 键 |
 | 6 | usage.jsonl | `methods/store.py:627` | 裸 `open("a")` 追加单行 | 行级 append | ❌ | ❌ | 读侧跳过坏行 | 无键 |
 | 7 | ExperienceStore | `experiences/store.py`（save/update_status，2026-10-08 T2 迁移后） | 单记录 markdown：store flock 内 tmp(O_EXCL)→file fsync→link(create-if-absent)/replace→目录 fsync，typed 结果分型 | ✅ T2（2026-10-08） | save=创建一次；update=单写者 RMW | ✅✅（文件+目录） | 锁失败 fail-closed；损坏旧记录 fail-open 跳过 | 文件名=experience:<id>；同日同 slug 冲突不覆盖 |
+| 8 | BackupStore | `recovery/backup.py`（save/mark，2026-10-08 Fleet 批次1 T2 迁移后） | 单记录 JSON 状态文件：store flock 内 tmp(O_EXCL)→file fsync→link(create-if-absent)/replace→目录 fsync，typed 结果分型；**备份永不静默覆盖** | ✅ T2（2026-10-08） | save=创建一次；mark=单写者 RMW | ✅✅（文件+目录） | 锁失败 fail-closed；损坏文件 fail-open 原样保留 | backup_id=source+秒级 ts+target；同 id 同 payload 幂等、异 payload 拒绝覆盖 |
 
 ## 2. 目标 / 非目标
 
@@ -67,6 +68,7 @@ DurableContract(Protocol):
 | 7 | ExperienceStore | **符合（T2，2026-10-08 迁移）** | ~~裸 write_text 覆写，崩溃可致整卡损坏~~ → save=store flock+tmp+fsync+link 原子 create-if-absent；update_status=单写者 RMW+replace；两者均区分 definitely_not_committed / commit_outcome_uncertain + exact readback（`test_experience_store_durability.py` 12 例故障注入） | 已完成（含调用面 receipt 分型：`tools_experience.py` 禁止 uncertain 盲重放） |
 | 3a | **ScheduleStore 主状态** | **符合（T2，首个 client）** | 原子可见性+目录 durability fence+跨进程锁+显式 commit outcome/reconcile | 见 §6 |
 | 3b | WakeAuthorizationStore | **符合（T2 参考）** | 锁+tmp+file fsync+replace+目录 fsync；HMAC scope 与 one-shot tombstone | 零改动；作为 schedule 迁移的同子系统参考 |
+| 8 | BackupStore | **符合（T2，2026-10-08 Fleet 批次1 迁移）** | ~~save 裸 write_text（同秒同 source+target 静默 last-writer-wins）+ mark_recovered 裸 RMW 可撕裂~~ → save=store flock+tmp+fsync+link 原子 create-if-absent（同 id 同 payload 幂等 / 异 payload 拒绝覆盖先到保留）；mark=单写者 RMW+replace+uncertain 持锁 readback reconcile，bool 契约不抛穿（`test_backup_store_durability.py` 13 例故障注入） | 已完成；见 §6 rev9 |
 
 ## 6. 首个迁移 client：ScheduleStore 主状态（已实施）
 
@@ -153,6 +155,17 @@ DurableContract(Protocol):
   uncertain 后 get() 可逐字取回+故障恢复后续写）。相邻面 experience+introspection **200 passed**；
   arch guards **21 passed**。
 - registry：`experience_store` `T2/migrate` → `T2/conform`（rationale 记录写路径、分型与验收口径）。
+
+### 实施记录（2026-10-08 rev9：BackupStore T2 迁移，Fleet 批次1）
+
+- 背景：BackupStore 位于恢复路径自身（主状态事故时的最后一道保险），原审计未列 §1 矩阵，由 P0-3 的 AST registry 扫描发现（`recovery/backup.py`，`T2/observe`）。迁移前：`save_archive` 裸 `write_text`（同秒同 source+target 静默 last-writer-wins 覆盖）；`mark_recovered` 裸 RMW 覆写（崩溃可撕裂）。
+- 写路径分相：`save_archive` = store flock 内 tmp(O_EXCL)→file fsync→`os.link` 原子 create-if-absent→目录 fsync；`mark_recovered` = 同锁单写者 RMW + tmp→file fsync→`os.replace`→目录 fsync。`delete_source`/`cleanup` 共用 store flock（写者互斥），删除后 best-effort 目录 fsync（删除不 durable 属保守面：最坏=已删备份复活，由恢复侧幂等裁决）。
+- **备份永不静默覆盖**：同 backup_id 同 payload 逐字 readback 幂等返回；不同 payload → `FileExistsError`（先到的备份保留）。相对旧语义的行为变化：同秒同 source+target 的第二份失败备份不再覆盖第一份（旧=last-writer-wins 丢第一份；新=保留第一份+显式冲突，channel `except Exception` 吸收面不变，回执 error 携带原文）。
+- outcome 分型：save 侧 link/replace 前失败 → `BackupPersistError`（definitely_not_committed，同 payload 重试安全）；link 已生效目录 fsync 耗尽 → `BackupCommitUncertainError`（backup_id/expected_sha256/visible_state，禁止盲重放）。两型均为 OSError 子类，保持 channel fail-open 吸收面。
+- `mark_recovered` bool 契约保持（recover() 不因 mark 抛穿）：缺失/损坏/锁不可用/replace 前失败 → False（原文件保真；语义动作是幂等设置 recovered=True，重试不叠加第二份动作）；目录 fsync 耗尽 → 持锁 readback reconcile：matches → True；mismatch/unreadable → False + warning。
+- 故障注入验收：`tests/unit/test_backup_store_durability.py` **13 例**全绿（happy path 无 tmp 残留 / link 前分型+无残骸+可重试 / 冲突先到保留 / 同 payload 幂等零写入 / save uncertain=typed 字段+reconcile / mark replace 前原样保真 / mark uncertain=matches reconcile True / mismatch 不盲重放 / 双实例并发 save 单赢家 / 8 线程并发 mark 不撕裂 / 缺失+损坏 fail-open 原样 / 孤儿 tmp+lock 不入扫描面 / typed OSError 子类契约）。相邻面 fail_open unit+integration **58 passed**。实施期 fault-injection 抓出两个真实缺陷并已修复：i) 锁上下文曾把临界区内 `FileExistsError` 误包装为锁失败（→ 仅锁获取失败映射 `BackupPersistError`，临界区异常原样穿透）；ii) mark replace 失败路径 tmp 残留（→ except 路径清理）。
+- registry：`backup_store` `T2/observe` → `T2/conform`。孤儿 tmp 命名 `<backup_id>.<uuid12>.tmp`、锁文件 `.__backup_store.lock` 均不匹配 `*.pending.json` 扫描面。
+- 冻结基线：gen200 / `a0e6e33b0` 之上实施；仅本地资格化提交，不 publish（是否 gen201 另行决定）。
 
 ## 7. 开放决策点
 
