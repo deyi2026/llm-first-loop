@@ -58,6 +58,7 @@ from llm_loop.introspection.search import RecordSearcher
 from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.introspection.task_evidence import TaskEvidenceVerifier
 from llm_loop.llm.client import LLMClient
+from llm_loop.llm.providers import dial_target_observation, public_url
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.attachments import AttachmentStore
 from llm_loop.memory.embedder import HashEmbedder
@@ -2564,8 +2565,6 @@ def assemble_effective_model_status(
     try:
         pid, mid = registry_snapshot.resolve(label)
         provider = registry_snapshot.providers[pid]
-        from llm_loop.llm.providers import dial_target_observation, public_url
-
         return {
             "llm_model": f"{pid}/{mid}",
             "llm_base_url": public_url(provider.base_url),

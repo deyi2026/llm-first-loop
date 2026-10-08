@@ -343,6 +343,7 @@ class ProviderRegistry:
         # LM Studio 代理（1234）时自动发现真实 llama-server 端口/key 直连——代理每次
         # 新请求不复用 KV（全量 prefill 慢）; 直连同 slot 固定前缀 → KV 命中 97%
         # （只 prefill 增量 → 输入秒级）。LMS_DIRECT=0 关闭（回退代理, 零回归）。
+        _obs_key = f"{provider_id}/{model_id}"
         if (
             provider_id == "local"
             and os.environ.get("LMS_DIRECT", "1") == "1"
@@ -357,9 +358,23 @@ class ProviderRegistry:
                     # 不为状态再次触发服务发现。
                     _pub = public_url(base_url)
                     if _pub:
-                        _DIAL_OBSERVATIONS[f"{provider_id}/{model_id}"] = _pub
+                        _DIAL_OBSERVATIONS[_obs_key] = _pub
+                    else:
+                        # 改写发生但无凭证化失败: 不可声称"与路由一致"，也不
+                        # 残留可能失真的旧观测 → 失效（不虚构拨号事实）。
+                        _DIAL_OBSERVATIONS.pop(_obs_key, None)
+                else:
+                    # ASSESS-20261008 BUG-07 rev4: 发现失败回退配置路由时，
+                    # 必须失效上一次成功改写留下的旧观测——否则拨号已回退
+                    # 路由而状态仍显示旧直连地址（观测失真，复现: dial=1234
+                    # / obs 仍 7777）。
+                    _DIAL_OBSERVATIONS.pop(_obs_key, None)
             except Exception:  # noqa: BLE001 — 发现失败回退配置（fail-open）
-                pass
+                _DIAL_OBSERVATIONS.pop(_obs_key, None)
+        else:
+            # 直连未启用（LMS_DIRECT=0 / 非 local / 路由非本机）: 拨号=路由，
+            # 同样不得残留旧直连观测。
+            _DIAL_OBSERVATIONS.pop(_obs_key, None)
 
         return {
             "api_key": api_key,

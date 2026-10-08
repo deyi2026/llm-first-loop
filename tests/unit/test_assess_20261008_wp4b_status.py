@@ -124,6 +124,68 @@ def test_client_params_discovery_failure_fallback_no_observation(monkeypatch):
     assert dial_target_observation("local", "small") is None
 
 
+def test_client_params_discovery_failure_invalidates_stale_observation(monkeypatch):
+    """rev4: 先成功直连记 7777; 发现失败回退路由后旧观测必须失效.
+
+    复现: dial 回退 1234 而 obs 仍 7777（状态显示失真旧值）。
+    """
+    reg = _registry()
+    monkeypatch.setenv("LMS_DIRECT", "1")
+    with mock.patch.object(
+        providers_mod,
+        "_discover_llama_server",
+        return_value=("http://127.0.0.1:7777/v1", "sk-local"),
+    ):
+        params1 = reg.client_params("local", "small")
+    assert params1["base_url"] == "http://127.0.0.1:7777/v1"
+    assert dial_target_observation("local", "small") == "http://127.0.0.1:7777/v1"
+    # llama-server 消失 → 发现抛错 → 拨号回退路由
+    with mock.patch.object(
+        providers_mod, "_discover_llama_server", side_effect=RuntimeError("down")
+    ):
+        params2 = reg.client_params("local", "small")
+    assert params2["base_url"] == "http://127.0.0.1:1234/v1"
+    assert dial_target_observation("local", "small") is None  # 旧 7777 不残留
+    s = assemble_effective_model_status(reg, "local/small", "settings", "settings")
+    assert s["llm_dial_target"] is None  # 状态不再显示失真旧值
+
+
+def test_client_params_discovery_none_invalidates_stale_observation(monkeypatch):
+    """发现返回 None（无候选）同样失效旧观测."""
+    reg = _registry()
+    monkeypatch.setenv("LMS_DIRECT", "1")
+    providers_mod._DIAL_OBSERVATIONS["local/small"] = "http://127.0.0.1:7777/v1"
+    with mock.patch.object(providers_mod, "_discover_llama_server", return_value=None):
+        params = reg.client_params("local", "small")
+    assert params["base_url"] == "http://127.0.0.1:1234/v1"
+    assert dial_target_observation("local", "small") is None
+
+
+def test_client_params_direct_disabled_invalidates_stale_observation(monkeypatch):
+    """LMS_DIRECT=0（或非 local 路由）: 拨号=路由，旧直连观测失效且不触发发现."""
+    reg = _registry()
+    monkeypatch.setenv("LMS_DIRECT", "0")
+    providers_mod._DIAL_OBSERVATIONS["local/small"] = "http://127.0.0.1:7777/v1"
+    with mock.patch.object(providers_mod, "_discover_llama_server") as disc:
+        params = reg.client_params("local", "small")
+    disc.assert_not_called()
+    assert params["base_url"] == "http://127.0.0.1:1234/v1"
+    assert dial_target_observation("local", "small") is None
+
+
+def test_client_params_rewrite_but_unparseable_url_no_fabricated_observation(monkeypatch):
+    """改写发生但无凭证化失败（public_url 空）: 不虚构观测，也不残留旧值."""
+    reg = _registry()
+    monkeypatch.setenv("LMS_DIRECT", "1")
+    providers_mod._DIAL_OBSERVATIONS["local/small"] = "http://127.0.0.1:7777/v1"
+    with mock.patch.object(
+        providers_mod, "_discover_llama_server", return_value=("not a url", "sk")
+    ):
+        params = reg.client_params("local", "small")
+    assert params["base_url"] == "not a url"  # 拨号确已改写
+    assert dial_target_observation("local", "small") is None  # 但不虚构地址
+
+
 def test_status_query_does_not_trigger_discovery():
     reg = _registry()
     with mock.patch.object(providers_mod, "_discover_llama_server") as disc:
