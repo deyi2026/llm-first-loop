@@ -34,44 +34,13 @@ fi
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 MODE="${1:-full}"
 
-echo "═══ [1/4] ruff 全量门禁（全量阻断 + 外部层呈现）═══"
-# 口径（R9-B2-P1-05 升级）：`ruff check src tests scripts` 退出码【阻断】——
-# R9 拥有面零违规（B1 时点存量 113 处已于 ae6faca 清偿：R9 面 94 修复 +
-# 外部层只读避让；wrapper 提交窗口内 staged==working，工作区口径即提交口径）。
-# 外部混合层 M/untracked 文件（三分表②/③区）的违规属外部责任面——沿 D-07
-# 区分逻辑：外部文件 = 当前脏 ∧ 未被 R9 提交链触碰（R9_BASE..HEAD）；R9 拥有
-# 面（R9 提交过的文件——含其编辑窗口——及一切干净文件）违规即阻断。R9 编辑
-# 窗口内 staged==working，工作区口径即提交口径（负例实测：R9 文件注入违规
-# 必须阻断，不得因"变脏"误判外部级）。
-# B3 口径修正（并行底座）：阻断面 = R9 提交链触碰过的文件（绝对口径，与
-# porcelain 无关）——worktree 干净检出下"非外部=R9 拥有面"的旧相对判定会把
-# 外部历史遗留违规（HEAD 上的 I001 等）全量误判阻断（parity 实测 0.31s 即挂）。
-# R9 编辑窗口语义不变：R9 文件无论 staged/working 均在 diff 集 → 违规阻断。
-R9_BASE="${LFL_R9_BASE:-eac9b2a}"
-_r9_py="$(git diff --name-only --diff-filter=d "${R9_BASE}..HEAD" -- '*.py' | sort -u || true)"
-_ext_py="$(git status --porcelain | awk '$1=="M"||$1=="??"{print $2}' | grep '\.py$' | grep -vxFf <(printf '%s\n' "$_r9_py") || true)"
-_ruff_out="$("$PY" -m ruff check src tests scripts --output-format=concise 2>&1 || true)"
-_vfiles="$(printf '%s\n' "$_ruff_out" | grep -oE '^[^:]+\.py' | sort -u || true)"
-if [ -n "$_vfiles" ]; then
-  _blocked="$(printf '%s\n' "$_vfiles" | grep -xFf <(printf '%s\n' "$_r9_py") || true)"
-  printf '%s\n' "$_ruff_out" | grep -E '^[^:]+\.py:[0-9]+' | while IFS= read -r ln; do
-    _f="$(printf '%s' "$ln" | cut -d: -f1)"
-    if printf '%s\n' "$_ext_py" | grep -qxF "$_f"; then
-      echo "⚠️  外部级（呈现不阻断）: $ln"
-    fi
-  done
-  if [ -n "$_blocked" ]; then
-    echo "❌ ruff 违规（R9 拥有面，阻断）:"
-    printf '%s\n' "$_ruff_out" | grep -E '^[^:]+\.py:[0-9]+' | while IFS= read -r ln; do
-      _f="$(printf '%s' "$ln" | cut -d: -f1)"
-      printf '%s\n' "$_blocked" | grep -qxF "$_f" && echo "$ln"
-    done
-    exit 1
-  fi
-  echo "（R9 拥有面零违规；上述外部级项属三分表②/③区责任面，外部合流时清偿）"
-else
-  echo "（全量零违规——src tests scripts 干净）"
-fi
+echo "═══ [1/5] Ruff 全树静态诊断门禁（精确历史债 ratchet；修改文件零红）═══"
+# 2026-10-08 CI contract: immutable gen201 baseline, every full-tree error visible.
+# Fail on any new fingerprint/additional occurrence; all modified Python files
+# must be 0-error even if the error predates this commit. A ledger edit itself
+# is blocked unless independently reviewed under new governance. Never use
+# arbitrary LFL_R9_BASE to reclassify already-known historical source debt.
+"$PY" scripts/check_static_diagnostics.py --tool ruff
 
 echo "═══ [2/5] 测试环境声明门禁（精确压缩预算断言必须声明 COMPACT_RATIO）═══"
 # R817 教训固化（2026-09-09）：压缩阈值 = max_chars × COMPACT_RATIO（env 直读，
@@ -80,8 +49,54 @@ echo "═══ [2/5] 测试环境声明门禁（精确压缩预算断言必须�
 # 静态全树扫描，违例即阻断；规则与修复样例见 scripts/check_test_env_pins.py。
 "$PY" scripts/check_test_env_pins.py
 
-echo "═══ [3/5] pyright（类型检查 src）═══"
-"$PY" -m pyright
+echo "═══ [3/5] Pyright 全树静态诊断门禁（精确历史债 ratchet；修改文件零红）═══"
+"$PY" scripts/check_static_diagnostics.py --tool pyright
+
+echo "═══ [4/5] 测试运行前置：隔离 HOME + 从候选源码构建 WebUI ═══"
+# The MCP sandbox HOME is under /var/...; CatastrophicGuard intentionally
+# blocks rm -rf /var/... even when the test calls that path "$HOME/data".
+# Give pytest its own private, workspace-local, ignored HOME rather than
+# weakening any safety assertion. The R9 PROBE worktree is removed by the
+# wrapper; neither production HOME nor production data is touched.
+CI_TEST_HOME="$ROOT/data/.ci-test-home"
+mkdir -p "$CI_TEST_HOME"
+chmod 700 "$CI_TEST_HOME"
+export HOME="$CI_TEST_HOME"
+
+# Playwright resolves its browser binary below HOME by default; since pytest
+# has a deliberately isolated HOME, point it at the preinstalled *binary*
+# cache for this OS account. Browser profiles still use pytest tmp_path.
+# This is read-only reuse of installed test dependencies, not the user's
+# live Chrome profile, and does not download anything from the network.
+if [[ -z "${PLAYWRIGHT_BROWSERS_PATH:-}" ]]; then
+  ACCOUNT_HOME="$("$PY" -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')"
+  for BROWSER_CACHE in "$ACCOUNT_HOME/Library/Caches/ms-playwright" "$ACCOUNT_HOME/.cache/ms-playwright"; do
+    if [[ -d "$BROWSER_CACHE" ]]; then
+      export PLAYWRIGHT_BROWSERS_PATH="$BROWSER_CACHE"
+      break
+    fi
+  done
+fi
+
+# Git intentionally does not track webui/dist or webui/node_modules. The
+# isolated R9 PROBE must BUILD assets from its own candidate sources:
+# otherwise tests expecting /ui/v2/ fail with 404, unrelated to source.
+# Reuse only installed dependency binaries from the canonical main worktree,
+# not its dist (which could be stale or from a different commit). Never
+# fetch dependencies from the network at a release qualification gate.
+if [[ ! -d "$ROOT/webui/node_modules" ]]; then
+  MAIN_WT="$(git worktree list --porcelain | head -1 | cut -d' ' -f2)"
+  if [[ ! -d "$MAIN_WT/webui/node_modules" ]]; then
+    echo "❌ CI WebUI dependencies unavailable; preinstall pinned dependencies offline before gate" >&2
+    exit 1
+  fi
+  ln -s "$MAIN_WT/webui/node_modules" "$ROOT/webui/node_modules"
+fi
+if ! (cd "$ROOT/webui" && npm run build) >/dev/null; then
+  echo "❌ CI WebUI candidate build failed" >&2
+  exit 1
+fi
+test -f "$ROOT/webui/dist/index.html" || { echo "❌ CI WebUI candidate dist missing" >&2; exit 1; }
 
 echo "═══ [4/5] pytest tier0 预检（分钟级快反馈，非提交门禁）═══"
 "$PY" -m pytest -m tier0 -q
@@ -92,6 +107,13 @@ if [[ "$MODE" == "--quick" ]]; then
 fi
 
 echo "═══ [5/5] pytest 全量门禁（xdist loadfile 并行；提交门禁恒为全量）═══"
+# `-n auto` otherwise schedules 18 workers on this macOS host and can
+# collide with another session's full-suite run, failing before pytest can
+# even produce FAILED/ERROR node IDs. Bound concurrency; do NOT reduce
+# collected test cases, turn off xdist, or reinterpret resource failures as
+# passing tests. Operators may explicitly override the worker budget.
+export PYTEST_XDIST_AUTO_NUM_WORKERS="${PYTEST_XDIST_AUTO_NUM_WORKERS:-4}"
+echo "xdist worker budget=${PYTEST_XDIST_AUTO_NUM_WORKERS} (full test selection unchanged)"
 GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_ser.XXXXXX)"
 if "$PY" -m pytest --dist loadfile -n auto -q >"$GATE_OUT" 2>&1; then
   echo "（xdist 全量绿）"
@@ -99,7 +121,11 @@ else
   # xdist 假红降级（D-B2-09，第四轮审查采纳）：红 → serial 单点复核——
   # serial 绿 = xdist worker 分布假红（呈现不阻断 + 登记观察）；仍红 = 真回归（阻断）。
   # 不登记永久 flaky 豁免（假红清单会烂账）；门禁语义 = serial 可复现红才阻断。
-  fail_files="$(grep '^FAILED' "$GATE_OUT" | sed 's/^FAILED //' | cut -d: -f1 | sort -u)"
+  # With set -euo pipefail, a zero-match grep would exit the gate before the
+  # actual pytest error was surfaced. ERROR fixture/setup nodes matter just
+  # as much as FAILED assertions; collect both without masking other failures.
+  fail_files="$({ grep '^FAILED ' "$GATE_OUT" || true; grep '^ERROR ' "$GATE_OUT" || true; } \
+    | sed -E 's/^(FAILED|ERROR) //' | cut -d: -f1 | sort -u)"
   if [ -z "$fail_files" ]; then
     cat "$GATE_OUT"; rm -f "$GATE_OUT" "$GATE_SER"; exit 1
   fi
