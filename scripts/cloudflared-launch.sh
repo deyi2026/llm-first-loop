@@ -9,7 +9,7 @@
 # 注意: macOS 自带 bash 3.2，空数组 + set -u 需用 ${ARR[@]+"${ARR[@]}"} 惯用法。
 set -u
 CF=/opt/homebrew/bin/cloudflared
-CONFIG=/Users/yyj/Project/llm-first-loop-mirror/cloudflared/config.local.yaml
+CONFIG="$(cd "$(dirname "$0")/.." && pwd)/cloudflared/config.local.yaml"
 TAG="[cloudflared-launch]"
 
 pick_ip() {
