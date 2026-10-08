@@ -2550,7 +2550,8 @@ def assemble_effective_model_status(
     - llm_dial_target: 最近一次实际构造 client 时的拨号目标观测（仅当 local
       直连发现发生改写才记录; None = 与路由一致或未观测到）。
     状态查询只读观测映射，不触发服务发现、无新副作用；保密字段（userinfo/
-    query/api_key）不进入输出。
+    query/api_key）不进入输出。§7.3 身份绑定: llm_dial_target 按 registry_snapshot
+    （本次状态的 authority 实例）身份读取，跨 registry / run 不串扰。
     """
     if registry_snapshot is None:
         return {
@@ -2569,7 +2570,7 @@ def assemble_effective_model_status(
             "llm_model": f"{pid}/{mid}",
             "llm_base_url": public_url(provider.base_url),
             "llm_base_url_kind": "registry_route",
-            "llm_dial_target": dial_target_observation(pid, mid),
+            "llm_dial_target": dial_target_observation(registry_snapshot, pid, mid),
             "llm_provider": pid,
             "llm_config_scope": scope,
             "llm_config_source": source,

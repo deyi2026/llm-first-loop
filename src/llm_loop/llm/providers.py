@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import os
@@ -33,7 +34,24 @@ _DEFAULT_CONTEXT = 131072
 # ASSESS-20261008 BUG-07: 实际拨号事实观测——仅当 client_params 实际构造并发生
 # local 直连改写时记录（状态查询只读该映射，不触发服务发现、无新副作用）。
 # 只记无凭证地址（_public_url 去 userinfo/query），api_key 永不落观测。
+# §7.3 身份绑定：观测键绑定写入它的 registry 实例身份（_observation_scope）。
+# 不同 registry / 不同 run（新实例）的同标签观测互不可见，不靠测试每例 reset 掩盖串扰。
+_REGISTRY_OBSERVATION_SEQ = itertools.count(1)
 _DIAL_OBSERVATIONS: dict[str, str] = {}
+
+
+def observation_scope(registry: Any) -> str:
+    """适用 registry 的观测身份 scope；无身份（None / duck 快照）返回空串，不回退全局。"""
+    scope = getattr(registry, "_observation_scope", "")
+    return scope if isinstance(scope, str) and scope else ""
+
+
+def _observation_key(registry: Any, provider_id: str, model_id: str) -> str | None:
+    """观测键 = registry 身份 scope | provider/model；无身份返回 None（不虚构、不泄漏）。"""
+    scope = observation_scope(registry)
+    if not scope:
+        return None
+    return f"{scope}|{provider_id}/{model_id}"
 
 
 def public_url(url: str) -> str:
@@ -52,13 +70,16 @@ def public_url(url: str) -> str:
         return ""
 
 
-def dial_target_observation(provider_id: str, model_id: str) -> str | None:
-    """返回最近一次实际构造 client 时的拨号目标（无凭证地址）; None = 未观测到改写.
+def dial_target_observation(registry: Any, provider_id: str, model_id: str) -> str | None:
+    """返回绑定该 registry 身份的最近一次实际拨号目标（无凭证地址）; None = 未观测到改写.
 
-    语义: None 表示"拨号目标与 registry 路由一致，或该模型尚未实际构造 client"，
-    不虚构拨号事实。
+    语义: None 表示"该 registry 身份下拨号目标与路由一致，或尚未实际构造 client"，
+    不虚构拨号事实，也不跨 registry / run 身份泄漏他人观测。
     """
-    return _DIAL_OBSERVATIONS.get(f"{provider_id}/{model_id}")
+    key = _observation_key(registry, provider_id, model_id)
+    if key is None:
+        return None
+    return _DIAL_OBSERVATIONS.get(key)
 
 
 def reset_dial_observations() -> None:
@@ -159,6 +180,14 @@ class ProviderRegistry:
     providers: dict[str, ProviderSpec]
     degraded: bool = False
     degraded_reason: str = ""
+    # ASSESS-20261008 BUG-07 §7.3: 拨号观测身份键。每个 registry 实例唯一，
+    # 观测写入/读取都经它隔离；compare=False 保持既有相等性/哈希语义不变。
+    _observation_scope: str = field(
+        default_factory=lambda: f"reg-{next(_REGISTRY_OBSERVATION_SEQ)}",
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def resolve(self, model_ref: str) -> tuple[str, str]:
         """解析 model_ref → (provider_id, model_id).
@@ -343,7 +372,7 @@ class ProviderRegistry:
         # LM Studio 代理（1234）时自动发现真实 llama-server 端口/key 直连——代理每次
         # 新请求不复用 KV（全量 prefill 慢）; 直连同 slot 固定前缀 → KV 命中 97%
         # （只 prefill 增量 → 输入秒级）。LMS_DIRECT=0 关闭（回退代理, 零回归）。
-        _obs_key = f"{provider_id}/{model_id}"
+        _obs_key = _observation_key(self, provider_id, model_id)
         if (
             provider_id == "local"
             and os.environ.get("LMS_DIRECT", "1") == "1"
