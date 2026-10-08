@@ -58,10 +58,13 @@ def test_fault_before_replace_is_definitely_not_committed(tmp_path, monkeypatch)
     path.write_text(old_payload, encoding="utf-8")
 
     calls = {"n": 0}
+    real_replace = sc.os.replace
 
-    def boom(*args, **kwargs):
-        calls["n"] += 1
-        raise OSError("replace boom")
+    def boom(src, dst, *args, **kwargs):
+        if Path(dst) == path:
+            calls["n"] += 1
+            raise OSError("replace boom")
+        return real_replace(src, dst, *args, **kwargs)
 
     monkeypatch.setattr(sc.os, "replace", boom)
 
@@ -88,9 +91,10 @@ def test_dir_fsync_exhaustion_is_uncertain_and_does_not_rewrite(tmp_path, monkey
         writes["n"] += 1
         real_write(temp, text)
 
-    def counted_replace(*args, **kwargs):
-        replaces["n"] += 1
-        return real_replace(*args, **kwargs)
+    def counted_replace(src, dst, *args, **kwargs):
+        if Path(dst) == path:
+            replaces["n"] += 1
+        return real_replace(src, dst, *args, **kwargs)
 
     def fail_dir_fsync(directory: Path) -> None:
         raise OSError("dir fsync boom")
@@ -165,9 +169,12 @@ def test_cas_pre_replace_failure_keeps_old_generation(tmp_path, monkeypatch):
     store = ManagedServiceDeploymentStore(tmp_path / "data")
     first = _deployment(tmp_path, generation=1)
     store.compare_and_swap(first, expected_generation=0)
+    real_replace = sc.os.replace
 
-    def boom(*args, **kwargs):
-        raise OSError("replace boom")
+    def boom(src, dst, *args, **kwargs):
+        if Path(dst) == store.path:
+            raise OSError("replace boom")
+        return real_replace(src, dst, *args, **kwargs)
 
     monkeypatch.setattr(sc.os, "replace", boom)
 
@@ -198,3 +205,138 @@ def test_cas_uncertain_advances_file_and_blocks_blind_replay(tmp_path, monkeypat
     assert store.read().generation == 2
     with pytest.raises(DeploymentGenerationConflictError):
         store.compare_and_swap(second, expected_generation=1)
+
+
+def _store_with_accepted_web_action(
+    tmp_path: Path,
+) -> tuple[ManagedServiceDeploymentStore, sc.ServiceControlAction]:
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    store.compare_and_swap(_deployment(tmp_path, generation=1), expected_generation=0)
+    action = store.accept_restart(
+        target="web",
+        expected_generation=1,
+        requester_session_id="durability-probe",
+    )
+    assert store.barriers.blocked("web") is not None
+    return store, action
+
+
+def _fail_action_dir_fsync(
+    store: ManagedServiceDeploymentStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_fsync = sc._fsync_directory
+
+    def fail(directory: Path) -> None:
+        if Path(directory) == store.actions_dir:
+            raise OSError("action directory fsync boom")
+        real_fsync(directory)
+
+    monkeypatch.setattr(sc, "_fsync_directory", fail)
+
+
+def test_action_succeeded_uncertain_matches_reconciles_and_releases_barrier(
+    tmp_path, monkeypatch
+):
+    """Action visible_state=matches 时必须继续 terminal barrier release."""
+    store, action = _store_with_accepted_web_action(tmp_path)
+    _fail_action_dir_fsync(store, monkeypatch)
+    emitted: list[str] = []
+    monkeypatch.setattr(
+        sc,
+        "_emit_terminal_event",
+        lambda _store, terminal: emitted.append(terminal.action_id),
+    )
+
+    updated = store.update_action(action.action_id, status="succeeded")
+
+    assert updated.status == "succeeded"
+    assert store.read_action(action.action_id).status == "succeeded"
+    assert store.barriers.blocked("web") is None
+    assert emitted == [action.action_id]
+
+
+def test_action_failed_uncertain_matches_reconciles_and_releases_pre_run_barrier(
+    tmp_path, monkeypatch
+):
+    """accepted→failed 尚无物理副作用，uncertain exact-match 后仍须释放 barrier."""
+    store, action = _store_with_accepted_web_action(tmp_path)
+    _fail_action_dir_fsync(store, monkeypatch)
+
+    updated = store.update_action(action.action_id, status="failed", detail="pre-run reject")
+
+    assert updated.status == "failed"
+    assert store.read_action(action.action_id).status == "failed"
+    assert store.barriers.blocked("web") is None
+
+
+def test_action_running_to_failed_uncertain_matches_keeps_barrier_fail_closed(
+    tmp_path, monkeypatch
+):
+    """running→failed 可能已有物理副作用；reconcile 后仍须保持 barrier."""
+    store, action = _store_with_accepted_web_action(tmp_path)
+    running = store.update_action(action.action_id, status="running")
+    assert running.status == "running"
+    _fail_action_dir_fsync(store, monkeypatch)
+
+    updated = store.update_action(
+        action.action_id,
+        status="failed",
+        detail="restart may have stopped a service",
+    )
+
+    assert updated.status == "failed"
+    assert store.read_action(action.action_id).status == "failed"
+    barrier = store.barriers.blocked("web")
+    assert barrier is not None
+    assert barrier.operation_id == action.action_id
+
+
+def test_accept_restart_uncertain_matches_continues_to_establish_barrier(
+    tmp_path, monkeypatch
+):
+    """accepted 文件已 exact-visible 时不得留下“action 有、barrier 无”的裂缝."""
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    store.compare_and_swap(_deployment(tmp_path, generation=1), expected_generation=0)
+    _fail_action_dir_fsync(store, monkeypatch)
+    real_replace = sc.os.replace
+    action_replaces: list[Path] = []
+
+    def counted_replace(src, dst, *args, **kwargs):
+        if Path(dst).parent == store.actions_dir:
+            action_replaces.append(Path(dst))
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(sc.os, "replace", counted_replace)
+
+    action = store.accept_restart(
+        target="web",
+        expected_generation=1,
+        requester_session_id="durability-probe",
+    )
+
+    assert store.read_action(action.action_id) == action
+    barrier = store.barriers.blocked("web")
+    assert barrier is not None
+    assert barrier.operation_id == action.action_id
+    assert action_replaces == [store.action_path(action.action_id)]
+
+
+def test_accept_restart_uncertain_nonmatching_state_stays_fail_closed(
+    tmp_path, monkeypatch
+):
+    """readback 非 matches 时不得建立 barrier 或继续 action 生命周期."""
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    store.compare_and_swap(_deployment(tmp_path, generation=1), expected_generation=0)
+    _fail_action_dir_fsync(store, monkeypatch)
+    monkeypatch.setattr(sc, "_payload_visible_state", lambda path, payload: "mismatch")
+
+    with pytest.raises(sc.ServiceControlCommitUncertainError) as caught:
+        store.accept_restart(
+            target="web",
+            expected_generation=1,
+            requester_session_id="durability-probe",
+        )
+
+    assert caught.value.visible_state == "mismatch"
+    assert store.barriers.blocked("web") is None
