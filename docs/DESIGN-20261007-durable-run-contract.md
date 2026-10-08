@@ -16,9 +16,10 @@
 | 3b | **WakeAuthorizationStore 私有授权账本** | `core/trace_leak/wake_authority.py:52+` | 0600 私有文件 + flock；`_write` 使用 unique tmp + file fsync + `os.replace` + directory fsync；HMAC scope/signature + consumed/revoked tombstone | ✅ | ✅ | ✅✅ | 完整 JSON + 签名校验；无效授权 fail-closed | scope/signature + one-shot state |
 | 4 | ServiceControl CAS | `runtime/service_control.py` | generation 乐观并发（publish 时 CAS+git head+webui 产物 hash 绑定）；desired 部署态 to_dict/from_dict | 语义强（CAS） | CAS | 未核验 | 代际回退屏障 | expected_generation |
 | 5 | Evidence blob | `memory/evidence.py` | `put_text`：tmp+fsync+`os.replace`+目录 fsync（L1367-1389） | ✅ 最强 | 写一次 | ✅✅（文件+目录） | 内容寻址天然完整 | sha256 键 |
-| 6 | usage.jsonl | `methods/store.py:627` | 裸 `open("a")` 追加单行 | 行级 append | ❌ | ❌ | 读侧跳过坏行 | 无键 |
+| 6 | usage.jsonl | `methods/store.py`（Fleet T2 批次2后） | append 单行 + store flock 单写者 + flush/file fsync；仍独立按 T1 评价 | 行级 append | ✅ | 文件 fsync | 读侧跳过坏行；重复 append 需按原始 episode/证据判定 | 无全局一次性键 |
 | 7 | ExperienceStore | `experiences/store.py`（save/update_status，2026-10-08 T2 迁移后） | 单记录 markdown：store flock 内 tmp(O_EXCL)→file fsync→link(create-if-absent)/replace→目录 fsync，typed 结果分型 | ✅ T2（2026-10-08） | save=创建一次；update=单写者 RMW | ✅✅（文件+目录） | 锁失败 fail-closed；损坏旧记录 fail-open 跳过 | 文件名=experience:<id>；同日同 slug 冲突不覆盖 |
 | 8 | BackupStore | `recovery/backup.py`（save/mark，2026-10-08 Fleet 批次1 T2 迁移后） | 单记录 JSON 状态文件：store flock 内 tmp(O_EXCL)→file fsync→link(create-if-absent)/replace→目录 fsync，typed 结果分型；**备份永不静默覆盖** | ✅ T2（2026-10-08） | save=创建一次；mark=单写者 RMW | ✅✅（文件+目录） | 锁失败 fail-closed；损坏文件 fail-open 原样保留 | backup_id=source+秒级 ts+target；同 id 同 payload 幂等、异 payload 拒绝覆盖 |
+| 9 | MethodStore 卡片 | `methods/store.py`（2026-10-08 Fleet 批次2 本地候选） | 同一 store flock：新卡/seed overlay 由不可见 staged directory 原子 rename 发布；status/freshness 以 tmp+replace 原子 RMW；typed outcome 与 exact readback | ✅ T2（候选） | 单写者+candidate 内容 hash 身份；qualification/use 追加独立 T1 | ✅✅（文件+目录） | 无半卡；post-commit uncertainty 不盲重放，卡片原文按 method:<id> 可 hydrate | 新候选幂等；seed overlay 保留已有 qualification 事实 |
 
 ## 2. 目标 / 非目标
 
@@ -64,11 +65,12 @@ DurableContract(Protocol):
 | 1 | EventStore | **符合（T1）** | 锁+O_APPEND+读侧容错+seq | 零改动；可选：fsync 策略显式化 |
 | 2 | Fleet 结算 | **符合（T2）** | 锁+tmp+replace | 补目录 fsync 即全绿；低优先 |
 | 4 | ServiceControl | **符合（T2，2026-10-08 迁移）** | CAS+state lease；`_atomic_json` 已迁 tmp+file fsync+replace+目录 fsync+outcome 分型 | 已实施；见 §6 rev6 |
-| 6 | usage.jsonl | **豁免（低风险 T1）** | 单行小 append，进程模型下交错窗口小；读侧跳坏行 | 显式豁免登记；不加锁 |
+| 6 | usage.jsonl | **独立 T1 append** | 单行 append 仍非 exactly-once；批次2 随 MethodStore 共用 flock 并 file fsync，读侧继续跳坏行 | T1 语义保留，非 T2 卡片原子写 |
 | 7 | ExperienceStore | **符合（T2，2026-10-08 迁移）** | ~~裸 write_text 覆写，崩溃可致整卡损坏~~ → save=store flock+tmp+fsync+link 原子 create-if-absent；update_status=单写者 RMW+replace；两者均区分 definitely_not_committed / commit_outcome_uncertain + exact readback（`test_experience_store_durability.py` 12 例故障注入） | 已完成（含调用面 receipt 分型：`tools_experience.py` 禁止 uncertain 盲重放） |
 | 3a | **ScheduleStore 主状态** | **符合（T2，首个 client）** | 原子可见性+目录 durability fence+跨进程锁+显式 commit outcome/reconcile | 见 §6 |
 | 3b | WakeAuthorizationStore | **符合（T2 参考）** | 锁+tmp+file fsync+replace+目录 fsync；HMAC scope 与 one-shot tombstone | 零改动；作为 schedule 迁移的同子系统参考 |
 | 8 | BackupStore | **符合（T2，2026-10-08 Fleet 批次1 迁移）** | ~~save 裸 write_text（同秒同 source+target 静默 last-writer-wins）+ mark_recovered 裸 RMW 可撕裂~~ → save=store flock+tmp+fsync+link 原子 create-if-absent（同 id 同 payload 幂等 / 异 payload 拒绝覆盖先到保留）；mark=单写者 RMW+replace+uncertain 持锁 readback reconcile，bool 契约不抛穿（`test_backup_store_durability.py` 13 例故障注入） | 已完成；见 §6 rev9 |
+| 9 | MethodStore 卡片 | **符合（T2，本地候选；未发布）** | save_candidate / seed overlay 原子目录可见；update_status / annotate_freshness 锁内 RMW+replace；目录 fsync 后确定完成，uncertain 返回 SHA/readback 而不盲重做，model-facing receipt 分型；T1 use/qualification/annotation 日志不冒充整卡事务 | Fleet 批次2 本地资格化，见 §6 rev10；需单独决定是否上线 |
 
 ## 6. 首个迁移 client：ScheduleStore 主状态（已实施）
 
@@ -166,6 +168,15 @@ DurableContract(Protocol):
 - 故障注入验收：`tests/unit/test_backup_store_durability.py` **13 例**全绿（happy path 无 tmp 残留 / link 前分型+无残骸+可重试 / 冲突先到保留 / 同 payload 幂等零写入 / save uncertain=typed 字段+reconcile / mark replace 前原样保真 / mark uncertain=matches reconcile True / mismatch 不盲重放 / 双实例并发 save 单赢家 / 8 线程并发 mark 不撕裂 / 缺失+损坏 fail-open 原样 / 孤儿 tmp+lock 不入扫描面 / typed OSError 子类契约）。相邻面 fail_open unit+integration **58 passed**。实施期 fault-injection 抓出两个真实缺陷并已修复：i) 锁上下文曾把临界区内 `FileExistsError` 误包装为锁失败（→ 仅锁获取失败映射 `BackupPersistError`，临界区异常原样穿透）；ii) mark replace 失败路径 tmp 残留（→ except 路径清理）。
 - registry：`backup_store` `T2/observe` → `T2/conform`。孤儿 tmp 命名 `<backup_id>.<uuid12>.tmp`、锁文件 `.__backup_store.lock` 均不匹配 `*.pending.json` 扫描面。
 - 冻结基线：gen200 / `a0e6e33b0` 之上实施；仅本地资格化提交，不 publish（是否 gen201 另行决定）。
+
+### 实施记录（2026-10-08 rev10：MethodStore Fleet T2 批次2，候选资格化）
+
+- 边界：生产截至本批实施仍为 gen201 / `500ee8f3e`。本批只修 `src/llm_loop/methods/store.py` 的卡片实体文件，不把独立 `usage.jsonl`、`qualification.jsonl`、`lifecycle_attempts.jsonl`、`annotations.jsonl` 假称为同一跨文件原子事务；append 日志仍按 T1 评价。`record_use` 与 `record_qualification` 的 append 在 store 单写者锁内执行并 flush/file fsync，以免基于未确认的 qualification/use 事实推进后续 T2 生命周期状态。
+- 原问题：`save_candidate` 首次裸写卡；`_ensure_runtime_copy` 首次直接写 seed overlay 与 qualification summary；`update_status`/`annotate_freshness` 裸 `write_text` RMW；多进程 Web/Feishu/Learning 对同一 `METHOD.md` 交错写可能留下半卡或丢掉另一项状态/新鲜度更新。
+- 本批改造：store 根稳定 flock + 进程内 RLock（POSIX 锁失败 fail-closed；无 fcntl 仅进程内保证）；新卡及 seed overlay 全部先写 `.__method_store_staging/<unique>.stage` 内完整文件、file fsync + stage dir fsync，再原子 rename 到最终 `<method_id>/`，最后 fsync 两端父目录。隔离 staging 路径不满足扫描器 `*/METHOD.md`，崩溃残余不可见。status/freshness 写入从裸覆写改为锁内重读→构造 payload→O_EXCL 临时文件+file fsync→`os.replace`→目录 fsync，旧卡或完整新卡二选一。
+- outcome：可见点前失败=`MethodPersistError`，确定未提交；rename/replace 成功而目录 fsync 3 次仍失败=`MethodCommitUncertainError`，含 `method_ref/operation/expected_sha256/visible_state`，需 exact get + SHA/status/freshness/qualification_entries 对账；**不得盲重放**。model-facing `method_manage`/refine 错误回执已区分两类，不把存储错误错误描述成 blocked lifecycle journal；后置 semantic hook 仅确定提交后调用。
+- 只读 `recover()` 报告 runtime `records/invalid_records/incomplete_dirs/unclassified_dirs/orphan_stages`；只在目录含 Method 专属残余（如 qualification.json）时归为 incomplete，普通非 Method 目录单列 unclassified，不能凭目录名断言损坏；不会自动清理 stage 或把残余文件升级为 active Method。
+- 范围限制：不修改 Method Card 格式、旧卡内容、已有 lifecycle/provenance 判定或 model-owned 语义；不自动 promote/retire；无 remote push；不重启承载当前会话的旧 CLI 宿主。相关测试及最终回归数量以独立候选正式验收回执为准。
 
 ## 7. 开放决策点
 
