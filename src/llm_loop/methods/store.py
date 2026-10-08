@@ -408,15 +408,17 @@ class MethodStore:
         return candidate
 
     def _iter_paths(self) -> list[Path]:
-        paths: list[Path] = []
-        if self._seed_dir is not None and self._seed_dir.exists():
-            paths.extend(self._seed_dir.glob("*/METHOD.md"))
-        if self._dir.exists():
-            paths.extend(self._dir.glob("*/METHOD.md"))
-        # Runtime copy wins exact-id collisions, but both stores remain independently auditable.
+        # ASSESS-20261008 BUG-18: seed → runtime 显式覆盖——同 ID 冲突由来源身份
+        # 决定（Runtime copy wins），各来源内部确定性排序。原实现把两类路径整体
+        # sorted 后用后者覆盖，优先级实际取决于目录字典序（z-seed/a-runtime 下
+        # seed 会赢），与注释意图相反。
         by_id: dict[str, Path] = {}
-        for path in sorted(paths):
-            by_id[path.parent.name] = path
+        if self._seed_dir is not None and self._seed_dir.exists():
+            for path in sorted(self._seed_dir.glob("*/METHOD.md")):
+                by_id[path.parent.name] = path
+        if self._dir.exists():
+            for path in sorted(self._dir.glob("*/METHOD.md")):
+                by_id[path.parent.name] = path
         return [by_id[k] for k in sorted(by_id)]
 
     def _load_path(self, path: Path) -> MethodRecord | None:
