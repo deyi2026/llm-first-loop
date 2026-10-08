@@ -1073,7 +1073,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         max_iterations=env_int("LLM_MAX_ITERATIONS", 500),
         # ASSESS-20261008 BUG-13b: timeout 是浮点字段，直接走 float parser
         # （原经 env_int 拒绝 "0.5" 后回退 120——用户显式配置被静默丢弃）。
-        llm_timeout_s=_env_float("LLM_TIMEOUT_S", 120.0),
+        # rev4 追补: 必须线程 env_values——漏传时 parser 回落 os.environ，
+        # 显式 mapping 调用方（hermetic 契约）的 LLM_TIMEOUT_S 被进程环境
+        # 覆盖或整体丢弃（复现: mapping=30 → 120; procenv=93 时 → 93）。
+        llm_timeout_s=_env_float("LLM_TIMEOUT_S", 120.0, env_values),
         llm_max_tokens=env_int("LLM_MAX_TOKENS", 16000),  # 2026-08-15 显式输出预算
         llm_wire_protocol=env_values.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
         llm_trust_env=env_optional_true_set("LLM_TRUST_ENV"),

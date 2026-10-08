@@ -44,6 +44,30 @@ def test_env_float_accepts_decimal_timeout():
     assert _env_float("LLM_TIMEOUT_S", 120.0, env={"LLM_TIMEOUT_S": "abc"}) == 120.0
 
 
+def test_settings_llm_timeout_explicit_mapping_hermetic(monkeypatch, tmp_path):
+    """rev4 追补: load_settings(env=显式 mapping) 只认 mapping（hermetic 契约）.
+
+    原 13b 修复在 Settings 装配处漏传 env_values → parser 回落 os.environ：
+    mapping=30 得 120（显式值被丢）或被进程环境值覆盖（复现 93）。
+    """
+    from llm_loop.config import load_settings
+
+    monkeypatch.setenv("LLM_TIMEOUT_S", "93")  # 进程脏值不得穿透显式 mapping
+    env = {
+        "LLM_API_KEY": "k",
+        "LLM_BASE_URL": "http://x.example/v1",
+        "LLM_TIMEOUT_S": "30",
+        "DATA_DIR": str(tmp_path),
+    }
+    assert load_settings(env=env).llm_timeout_s == 30.0
+    # mapping 未含 timeout 时同样 hermetic: 不继承进程值，取默认 120
+    env2 = {k: v for k, v in env.items() if k != "LLM_TIMEOUT_S"}
+    assert load_settings(env=env2).llm_timeout_s == 120.0
+    # 小数显式 mapping 亦成立
+    env3 = dict(env, LLM_TIMEOUT_S="0.5")
+    assert load_settings(env=env3).llm_timeout_s == 0.5
+
+
 def test_settings_llm_timeout_uses_float_parser(monkeypatch, tmp_path):
     """load_settings: LLM_TIMEOUT_S=0.5 → llm_timeout_s=0.5（原回退 120）."""
     from llm_loop.config import load_settings
