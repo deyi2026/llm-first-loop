@@ -3356,6 +3356,58 @@ def verify_deployment_binding(
     ]
 
 
+_RELEASE_SIDECAR_KEYS: tuple[str, ...] = ("EXPERIENCES_DIR", "METHODS_DIR")
+
+
+def _release_sidecar_content(runtime: Path) -> str:
+    lines = (
+        f"EXPERIENCES_DIR={runtime / 'experiences'}",
+        f"METHODS_DIR={runtime / 'data' / 'methods'}",
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _materialize_release_sidecar(target: Path, runtime: Path) -> None:
+    """release checkout 的最小非敏感 dual-root sidecar `.env` 自动物化。
+
+    gen196/gen197 两次实证的确定性发布链缺口：`.releases/<sha>` 是 linked
+    worktree 且 DATA_DIR 在 code_root 之外，restart_mirror.sh 的
+    _knowledge_binding_preflight 在 `env -u EXPERIENCES_DIR -u METHODS_DIR`
+    下运行 `--check-binding`，两键的唯一来源是模块相对 load_env_file() 读
+    release/.env；而 release checkout 只含 tracked 快照，天生缺这两行 ⇒
+    preflight 报 dual_root_store_binding_missing，此前靠人工后补。
+
+    契约：sidecar 是与 release checkout 同级的衍生工件——仅白名单两键、
+    指向 canonical runtime root、mode 0600、fsync 落盘；内容与期望不一致
+    （缺键/路径漂移/白名单外键）即原子重写。绝不复制 canonical `.env` 的
+    其它键或 secrets。仅在 build_deployment（publish 生命周期锁内）调用。
+    """
+    sidecar = target / ".env"
+    wanted = _release_sidecar_content(runtime)
+    try:
+        if (
+            sidecar.read_text(encoding="utf-8") == wanted
+            and (sidecar.stat().st_mode & 0o777) == 0o600
+        ):
+            return
+    except OSError:
+        pass
+    tmp = sidecar.with_name(f".{sidecar.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, wanted.encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, sidecar)
+    os.chmod(sidecar, 0o600)
+    dir_fd = os.open(str(sidecar.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
 def _materialize_release_checkout(code: Path, runtime: Path, head: str, artifact: str) -> Path:
     """EVO-20261007-9c6eccf3: 物化固定提交 release checkout，解除 code_root 对开发工作树 HEAD 的绑定。
 
@@ -3397,6 +3449,7 @@ def _materialize_release_checkout(code: Path, runtime: Path, head: str, artifact
             timeout=5,
         ).stdout.strip()
         if registered and current == head and not dirty:
+            _materialize_release_sidecar(target, runtime)
             return target
         # 衍生工件分歧：重建（bogus 非 worktree 目录走 rmtree 兜底）。
         remove = subprocess.run(
@@ -3432,6 +3485,7 @@ def _materialize_release_checkout(code: Path, runtime: Path, head: str, artifact
             f"release checkout webui artifact mismatch: expected={artifact} actual={actual}",
             kind=BindingProblemKind.WEBUI_ARTIFACT_MISMATCH,
         )
+    _materialize_release_sidecar(target, runtime)
     return target
 
 
