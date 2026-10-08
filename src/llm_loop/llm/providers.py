@@ -30,6 +30,41 @@ _FALSY_STRINGS = frozenset({"0", "false", "no", "off"})
 # P1-3: context 缺失回退默认值（与 ModelSpec.context 默认一致, 全项目 context window 既有默认值）.
 _DEFAULT_CONTEXT = 131072
 
+# ASSESS-20261008 BUG-07: 实际拨号事实观测——仅当 client_params 实际构造并发生
+# local 直连改写时记录（状态查询只读该映射，不触发服务发现、无新副作用）。
+# 只记无凭证地址（_public_url 去 userinfo/query），api_key 永不落观测。
+_DIAL_OBSERVATIONS: dict[str, str] = {}
+
+
+def public_url(url: str) -> str:
+    """无凭证地址化: 去 userinfo 与 query（鉴权参数可能出现在两者），保留 scheme://host:port/path."""
+    try:
+        from urllib.parse import urlsplit, urlunsplit
+
+        parts = urlsplit(str(url))
+        host = parts.hostname or ""
+        if not parts.scheme and not host:
+            return ""  # 非地址输入不输出猜测
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        return urlunsplit((parts.scheme, host, parts.path, "", ""))
+    except Exception:  # noqa: BLE001 — 地址不可解析时不输出猜测
+        return ""
+
+
+def dial_target_observation(provider_id: str, model_id: str) -> str | None:
+    """返回最近一次实际构造 client 时的拨号目标（无凭证地址）; None = 未观测到改写.
+
+    语义: None 表示"拨号目标与 registry 路由一致，或该模型尚未实际构造 client"，
+    不虚构拨号事实。
+    """
+    return _DIAL_OBSERVATIONS.get(f"{provider_id}/{model_id}")
+
+
+def reset_dial_observations() -> None:
+    """清空拨号观测（测试隔离用）。"""
+    _DIAL_OBSERVATIONS.clear()
+
 
 @dataclass(frozen=True)
 class ModelSpec:
@@ -317,6 +352,12 @@ class ProviderRegistry:
                 _lms = _discover_llama_server(model_id)
                 if _lms:
                     base_url, api_key = _lms
+                    # ASSESS-20261008 BUG-07: 发生改写才记录实际拨号目标
+                    # （无凭证地址; api_key 永不落观测）——状态查询只读观测，
+                    # 不为状态再次触发服务发现。
+                    _pub = public_url(base_url)
+                    if _pub:
+                        _DIAL_OBSERVATIONS[f"{provider_id}/{model_id}"] = _pub
             except Exception:  # noqa: BLE001 — 发现失败回退配置（fail-open）
                 pass
 

@@ -1487,32 +1487,7 @@ def build_engine(
 
     def _effective_model_status() -> dict[str, Any]:
         registry_snapshot, label, scope, source = _effective_model_binding()
-        if registry_snapshot is None:
-            return {
-                "llm_model": label,
-                "llm_base_url": None,
-                "llm_provider": None,
-                "llm_config_scope": scope,
-                "llm_config_source": "run_registry_unavailable" if scope == "current_run" else source,
-            }
-        try:
-            pid, mid = registry_snapshot.resolve(label)
-            provider = registry_snapshot.providers[pid]
-            return {
-                "llm_model": f"{pid}/{mid}",
-                "llm_base_url": provider.base_url,
-                "llm_provider": pid,
-                "llm_config_scope": scope,
-                "llm_config_source": source,
-            }
-        except Exception:  # noqa: BLE001 — unresolved current fact stays explicit
-            return {
-                "llm_model": label,
-                "llm_base_url": None,
-                "llm_provider": None,
-                "llm_config_scope": scope,
-                "llm_config_source": source,
-            }
+        return assemble_effective_model_status(registry_snapshot, label, scope, source)
 
     # 架构自省（M17 FR-REVIEW-AI-05: config_status 闭包含演进状态摘要，fail-open;
     # M18 AA10: memory_stats_fn 补记忆真实数据）
@@ -2559,6 +2534,57 @@ def _build_selfheal_budget(settings) -> Any:
         max_attempts=getattr(settings, "selfheal_max_attempts", 3),
         max_per_round=getattr(settings, "selfheal_max_per_round", 6),
     )
+
+
+def assemble_effective_model_status(
+    registry_snapshot: Any,
+    label: str,
+    scope: str,
+    source: str,
+) -> dict[str, Any]:
+    """组装当前生效模型的状态事实（ASSESS-20261008 BUG-07）.
+
+    事实分层（同一状态里可区分，不虚构）:
+    - llm_base_url / llm_base_url_kind: registry 路由声明（无凭证化）;
+    - llm_dial_target: 最近一次实际构造 client 时的拨号目标观测（仅当 local
+      直连发现发生改写才记录; None = 与路由一致或未观测到）。
+    状态查询只读观测映射，不触发服务发现、无新副作用；保密字段（userinfo/
+    query/api_key）不进入输出。
+    """
+    if registry_snapshot is None:
+        return {
+            "llm_model": label,
+            "llm_base_url": None,
+            "llm_base_url_kind": None,
+            "llm_dial_target": None,
+            "llm_provider": None,
+            "llm_config_scope": scope,
+            "llm_config_source": "run_registry_unavailable" if scope == "current_run" else source,
+        }
+    try:
+        pid, mid = registry_snapshot.resolve(label)
+        provider = registry_snapshot.providers[pid]
+        from llm_loop.llm.providers import dial_target_observation, public_url
+
+        return {
+            "llm_model": f"{pid}/{mid}",
+            "llm_base_url": public_url(provider.base_url),
+            "llm_base_url_kind": "registry_route",
+            "llm_dial_target": dial_target_observation(pid, mid),
+            "llm_provider": pid,
+            "llm_config_scope": scope,
+            "llm_config_source": source,
+        }
+    except Exception:  # noqa: BLE001 — unresolved current fact stays explicit
+        return {
+            "llm_model": label,
+            "llm_base_url": None,
+            "llm_base_url_kind": None,
+            "llm_dial_target": None,
+            "llm_provider": None,
+            "llm_config_scope": scope,
+            "llm_config_source": source,
+        }
 
 
 def _build_memory_stats_fn(memory) -> Any:

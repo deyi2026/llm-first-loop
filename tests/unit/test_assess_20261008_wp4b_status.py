@@ -1,0 +1,131 @@
+"""ASSESS-20261008-project-audit rev3 §7 WP4b-3 回归: BUG-07.
+
+修复契约: 状态输出区分"配置路由（registry 声明）"与"实际拨号目标（仅当
+client 实际构造时观测，local 直连发现改写才记录）"；状态查询只读观测映射，
+不触发服务发现、无新副作用；保密字段（userinfo/query/api_key）不泄露。
+"""
+
+from __future__ import annotations
+
+from unittest import mock
+
+from llm_loop.factory import assemble_effective_model_status
+from llm_loop.llm import providers as providers_mod
+from llm_loop.llm.providers import (
+    ModelSpec,
+    ProviderRegistry,
+    ProviderSpec,
+    dial_target_observation,
+    public_url,
+    reset_dial_observations,
+)
+
+
+def _registry() -> ProviderRegistry:
+    return ProviderRegistry(
+        providers={
+            "local": ProviderSpec(
+                id="local",
+                base_url="http://127.0.0.1:1234/v1",
+                api_key_env="",
+                models={"small": ModelSpec(context=8192)},
+            ),
+            "cloud": ProviderSpec(
+                id="cloud",
+                base_url="https://user:pw@cloud.example/v1?api_key=SECRET",
+                api_key_env="CLOUD_KEY",
+                models={"big": ModelSpec(context=131072)},
+            ),
+        },
+    )
+
+
+def setup_function(function):
+    reset_dial_observations()
+
+
+# ───────────────────────── 无凭证地址化 ─────────────────────────
+
+
+def test_public_url_strips_credentials():
+    assert public_url("https://user:pw@h.example/v1?api_key=SECRET") == "https://h.example/v1"
+    assert public_url("http://127.0.0.1:9999/v1") == "http://127.0.0.1:9999/v1"
+    assert public_url("not a url") == ""
+
+
+# ───────────────────────── 路由/拨号区分 ─────────────────────────
+
+
+def test_status_route_and_dial_distinguished():
+    reg = _registry()
+    # 未实际构造 client: 拨号目标如 None（不虚构）
+    s = assemble_effective_model_status(reg, "local/small", "current_run", "run")
+    assert s["llm_base_url"] == "http://127.0.0.1:1234/v1"
+    assert s["llm_base_url_kind"] == "registry_route"
+    assert s["llm_dial_target"] is None
+    # client 实际构造时发现改写了拨号目标 → 状态可区分
+    providers_mod._DIAL_OBSERVATIONS["local/small"] = "http://127.0.0.1:9999/v1"
+    s2 = assemble_effective_model_status(reg, "local/small", "current_run", "run")
+    assert s2["llm_base_url"] == "http://127.0.0.1:1234/v1"  # 路由声明不变
+    assert s2["llm_dial_target"] == "http://127.0.0.1:9999/v1"  # 实际拨号事实
+
+
+def test_status_no_secrets_in_output():
+    reg = _registry()
+    s = assemble_effective_model_status(reg, "cloud/big", "settings", "settings")
+    blob = str(s)
+    assert "SECRET" not in blob
+    assert "user:pw" not in blob
+    assert s["llm_base_url"] == "https://cloud.example/v1"
+
+
+def test_status_registry_unavailable_explicit():
+    s = assemble_effective_model_status(None, "x/y", "current_run", "run")
+    assert s["llm_model"] == "x/y"
+    assert s["llm_base_url"] is None
+    assert s["llm_config_source"] == "run_registry_unavailable"
+    assert s["llm_dial_target"] is None
+
+
+# ───────────────────────── 拨号观测记录契约 ─────────────────────────
+
+
+def test_client_params_rewrite_records_sanitized_dial_target(monkeypatch):
+    reg = _registry()
+    monkeypatch.setenv("LMS_DIRECT", "1")
+    with mock.patch.object(
+        providers_mod,
+        "_discover_llama_server",
+        return_value=("http://127.0.0.1:7777/v1?token=SECRET", "sk-local"),
+    ):
+        params = reg.client_params("local", "small")
+    assert params["base_url"] == "http://127.0.0.1:7777/v1?token=SECRET"
+    obs = dial_target_observation("local", "small")
+    assert obs == "http://127.0.0.1:7777/v1"  # 无凭证化
+    assert "SECRET" not in obs and "token" not in obs
+
+
+def test_client_params_no_rewrite_no_observation(monkeypatch):
+    reg = _registry()
+    monkeypatch.setenv("LMS_DIRECT", "1")
+    with mock.patch.object(providers_mod, "_discover_llama_server", return_value=None):
+        reg.client_params("local", "small")
+    assert dial_target_observation("local", "small") is None
+
+
+def test_client_params_discovery_failure_fallback_no_observation(monkeypatch):
+    reg = _registry()
+    monkeypatch.setenv("LMS_DIRECT", "1")
+    with mock.patch.object(
+        providers_mod, "_discover_llama_server", side_effect=RuntimeError("down")
+    ):
+        params = reg.client_params("local", "small")  # fail-open 回退路由
+    assert params["base_url"] == "http://127.0.0.1:1234/v1"
+    assert dial_target_observation("local", "small") is None
+
+
+def test_status_query_does_not_trigger_discovery():
+    reg = _registry()
+    with mock.patch.object(providers_mod, "_discover_llama_server") as disc:
+        assemble_effective_model_status(reg, "local/small", "settings", "settings")
+    disc.assert_not_called()  # 状态查询无新副作用
