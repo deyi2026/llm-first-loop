@@ -123,6 +123,13 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         # 非法值由 config._env_multiquery_mode fail-safe 回 off
         ("retrieval", "multiquery_mode"): TomlField(("RETRIEVAL_MULTIQUERY_MODE",), "str"),
         ("tools", "schema_lazy"): TomlField(("TOOL_SCHEMA_LAZY",), "bool"),
+        # Execution-time Method/Experience/Lesson reference discovery is
+        # deliberately limited to Web in the first live rollout. In particular,
+        # a generic .env switch must never silently opt Feishu/Learning in.
+        ("knowledge_advisor", "mode"): TomlField(("LFL_KNOWLEDGE_ADVISOR",), "str"),
+        ("knowledge_advisor", "sessions"): TomlField(
+            ("LFL_KNOWLEDGE_ADVISOR_SESSIONS",), "str"
+        ),
         ("dsh", "home"): TomlField(("DSH_HOME",), "str"),
         ("dsh", "sessions_root"): TomlField(("DSH_SESSIONS_ROOT",), "str"),
         ("cache_guard", "perf_block_mode"): TomlField(("CACHE_GUARD_PERF_BLOCK",), "str"),
@@ -179,6 +186,7 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
 _SERVICE_SCOPED_SECTIONS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "semantic": frozenset({"web", "feishu", "learning"}),
+        "knowledge_advisor": frozenset({"web"}),
         # ChatGPT browser I/O is intentionally a Web-only surface.  Keeping the
         # runtime switch service-scoped prevents Feishu/Learning from acquiring
         # the browser-backed provider on future independent restarts.
@@ -218,6 +226,9 @@ _LEGACY_GOVERNED_KEYS = (
 )
 
 BUSINESS_KEYS = tuple(dict.fromkeys((*_TOML_ENV_KEYS, *_LEGACY_GOVERNED_KEYS)))
+_WEB_ONLY_KNOWLEDGE_KEYS = frozenset({
+    "LFL_KNOWLEDGE_ADVISOR", "LFL_KNOWLEDGE_ADVISOR_SESSIONS",
+})
 
 # Secret/credential material is never accepted by runtime.toml.
 _SECRET_KEYS = (
@@ -249,6 +260,7 @@ def _mask_secret(key: str, val: str) -> str:
         or "SECRET" in key
         or "TOKEN" in key
         or "PASSWORD" in key
+        or key == "LFL_KNOWLEDGE_ADVISOR_SESSIONS"
     ):
         return f"<secret:{len(val)}chars>"
     return val
@@ -362,6 +374,14 @@ def _parse_runtime_toml_layers(
                 raise ValueError(f"runtime.toml 禁止存放凭证/密钥字段: {where}")
             raise ValueError(f"runtime.toml 未知字段: {where}")
         field_path = (raw_path[0], raw_path[1])
+        if field_path[0] == "knowledge_advisor":
+            # A global activation could affect unrelated Feishu/Learning
+            # services on a later independent restart, despite the first
+            # rollout being Web-only. Fail before any process is restarted.
+            raise ValueError(
+                "runtime.toml knowledge_advisor 仅支持服务级 "
+                "[knowledge_advisor.web]，不允许全局开启"
+            )
         spec = TOML_SCHEMA.get(field_path)
         if spec is None:
             where = ".".join(field_path)
@@ -508,6 +528,18 @@ def resolve_effective(
     ignored: dict[str, str] = {}
 
     for key in BUSINESS_KEYS:
+        if (
+            key in _WEB_ONLY_KNOWLEDGE_KEYS
+            and str(service).strip().lower() != "web"
+        ):
+            # The service-specific runtime contract is authoritative even
+            # under an operator's generic .env / shell override. No silent
+            # expansion to Feishu or Learning, and no user-message veto.
+            values[key] = "off" if key == "LFL_KNOWLEDGE_ADVISOR" else ""
+            sources[key] = "service_scope:disabled"
+            if env_values.get(key):
+                ignored[key] = str(env_values[key])
+            continue
         if cli_overrides and key in cli_overrides:
             values[key] = str(cli_overrides[key])
             sources[key] = "cli"

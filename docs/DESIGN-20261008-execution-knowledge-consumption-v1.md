@@ -161,3 +161,60 @@ proves eligibility for a gen205 deployment with advisor OFF; it does NOT
 prove live GLM-5.3 compatibility, shadow retrieval cost or Canary task efficacy.
 Web-only shadow/Canary activation is a separate identity-bound change requiring
 explicit authorization, actual provider smoke and frozen effectiveness tests.
+
+## 8. Web-only Shadow configuration authority (2026-10-09)
+
+The gen205 application understands LFL_KNOWLEDGE_ADVISOR, but its
+runtime.launch resolver omitted that key from the closed RuntimeConfig
+schema. Editing .env therefore did not reliably set the process's
+ToolRuntimeSettings; adding an unknown runtime.toml section could fail
+launch before the Web process started. This is a source-binding defect,
+not proof that KnowledgeAdvisor discovery was ineffective.
+
+The next isolated candidate registers only:
+
+- LFL_KNOWLEDGE_ADVISOR = off | shadow | canary, default off.
+- LFL_KNOWLEDGE_ADVISOR_SESSIONS = exact Web-only session allowlist
+  (empty by default).
+
+The authoritative TOML spelling is the service-scoped
+[knowledge_advisor.web] with mode = "shadow" (and optional sessions).
+A global [knowledge_advisor] activation, or
+[knowledge_advisor.feishu]/[knowledge_advisor.learning], is rejected
+before service restart. Feishu/Learning always receive off and an empty
+allowlist, including when .env, shell override or
+LFL_ALLOW_RUNTIME_OVERRIDE=1 supplies a different value. The output
+provenance explicitly records a disabled service scope. Session allowlist
+IDs are masked in resolver dry-run summaries.
+
+**Mixed-version deployment:** do not append [knowledge_advisor.web] to the
+shared production runtime.toml while Feishu/Learning run older resolvers.
+Older releases parse every TOML key and may fail on a later independent
+restart, even if the new key targets Web only.
+
+The safer separately authorized sequence is:
+
+1. Qualify and publish this schema patch in a new immutable release with
+   Knowledge Advisor OFF by default.
+2. In a separately authorized Web-only Shadow activation, use the canonical
+   runtime-root .env key LFL_KNOWLEDGE_ADVISOR=shadow, leaving sessions
+   empty. The new resolver projects this for Web only; old Feishu/Learning
+   code keeps its existing behavior. Validate resolved Settings and
+   provenance at the actual launcher, not simply the file contents.
+3. Restart Web only through service_control, respecting real run-idle
+   locks. Verify the exact restart receipt, PID, immutable SHA, effective
+   Shadow mode, and knowledge-store health.
+4. Exercise low-risk tasks to check the real per-kind Method/Experience/
+   Lesson discovery events, zero knowledge reference in provider input,
+   no automatic application, bounded search latency and no unexpected
+   provider call.
+5. On errors, latency regression or observation leakage, revert to OFF
+   using the same authoritative configuration path. Canary still requires
+   independent human authorization and controlled effectiveness evidence.
+
+The initial read-only real-store probe found 693 Method cards and 343
+Experience files. Independent lexical searches found Method, positive
+Experience and Lesson records. A KnowledgeRun Shadow query returned two
+candidate references and one observation event with zero provider-reference
+bytes. No model/provider call, execution tool or knowledge write occurred.
+This verifies the discovery path, not GLM-5.3 task-benefit efficacy.
