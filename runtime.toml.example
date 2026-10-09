@@ -42,6 +42,8 @@ nudge_growth_chars = 20000
 [web]
 host = "127.0.0.1"
 port = 8903
+# Default OFF. Operator must provision distinct signing service/UIDs first.
+# task_budget_canary_config = "/absolute/operator-controlled/one-session.json"
 
 [local_runtime]
 # On-demand diagnostic visibility only; independent from admission authority.

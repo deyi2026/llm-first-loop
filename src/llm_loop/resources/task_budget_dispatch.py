@@ -15,12 +15,13 @@ from __future__ import annotations
 import hashlib
 import threading
 import uuid
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from llm_loop.resources.task_budget_contracts import (
     BudgetDimension,
@@ -33,6 +34,7 @@ from llm_loop.resources.task_budget_store import (
     TaskBudgetStore,
     _finite_time,
 )
+from llm_loop.resources.task_budget_transport_context import active_isolated_transport_profile
 
 _MAX_CAS_RETRIES = 12
 
@@ -52,6 +54,48 @@ class TaskBudgetExecution:
     _local_stop: threading.Event = field(
         default_factory=threading.Event, repr=False, compare=False
     )
+    # Each response is owned by its exact Run; Stop may interrupt its own
+    # network socket but must never close an unrelated client or pooled stream.
+    _transport_lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
+    _transport_aborters: dict[int, Callable[[], None]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+
+    @contextmanager
+    def track_transport(self, abort: Callable[[], None]) -> Iterator[None]:
+        """Register an active, owner-scoped physical abort callback.
+
+        Double-check the local stop while holding the transport lock: no
+        callback may be attached after Stop has already drained this Run.
+        The callback is never treated as a remote cancellation/billing ACK.
+        """
+        self._get_validated()
+        key = id(abort)
+        with self._transport_lock:
+            if self._local_stop.is_set():
+                raise TaskBudgetDeniedError("local_run_stop_requested")
+            self._transport_aborters[key] = abort
+        try:
+            yield
+        finally:
+            with self._transport_lock:
+                self._transport_aborters.pop(key, None)
+
+    def abort_active_transports(self) -> None:
+        """Best-effort shutdown only of sockets registered to this Run.
+
+        Physical close/read termination is verified by transport-layer tests
+        or receipts, not by this request or the local stop flag.
+        """
+        with self._transport_lock:
+            callbacks = list(self._transport_aborters.values())
+            self._transport_aborters.clear()
+        for abort in callbacks:
+            # An already-closed socket cannot authorize further work.
+            with suppress(OSError, ValueError):
+                abort()
 
     def _get_validated(self) -> dict[str, Any]:
         if self._local_stop.is_set():
@@ -86,6 +130,36 @@ class TaskBudgetExecution:
         ):
             raise TaskBudgetDeniedError("active_workspace_scope_mismatch")
         return snapshot
+
+    def assert_provider_target(
+        self, *, provider_id: str, model_id: str,
+        wire_protocol: str, target_url: str,
+    ) -> None:
+        """I5-G: freeze the signed target before any physical send/charge."""
+        snapshot = self._get_validated()
+        grant = snapshot["grant"]
+        if grant["provider_identity"] and provider_id != grant["provider_identity"]:
+            raise TaskBudgetDeniedError("signed_provider_identity_mismatch")
+        if grant["exact_model_ref"] and model_id != grant["exact_model_ref"]:
+            raise TaskBudgetDeniedError("signed_model_identity_mismatch")
+        if grant["profile"] != "web-glm-one-physical-attempt-v3":
+            return
+        profile = active_isolated_transport_profile()
+        if profile is None or profile.verify is not True or profile.proxy is not None:
+            raise TaskBudgetDeniedError("positive_budget_requires_exclusive_verified_process")
+        if wire_protocol != "openai" or provider_id != "glm" or model_id != "glm-5.3":
+            raise TaskBudgetDeniedError("positive_budget_provider_wire_unqualified")
+        try:
+            url = urlsplit(target_url)
+            if (
+                url.scheme != "https" or url.hostname != "open.bigmodel.cn"
+                or url.port not in {None, 443}
+                or url.username is not None or url.password is not None
+                or url.query or url.fragment or not url.path.startswith("/api/")
+            ):
+                raise TaskBudgetDeniedError("positive_budget_endpoint_unqualified")
+        except ValueError as exc:
+            raise TaskBudgetDeniedError("positive_budget_endpoint_unqualified") from exc
 
     def assert_tool_allowed(self, name: str) -> None:
         snapshot = self._get_validated()
@@ -152,6 +226,7 @@ class TaskBudgetExecution:
         The root remains UNKNOWN across restart until reconciled.
         """
         self._local_stop.set()
+        self.abort_active_transports()
         self._cas_mutate("request_stop", reason=reason)
 
     def seal_at_run_end(self, *, reason: str = "run_ended") -> None:
@@ -167,6 +242,7 @@ class TaskBudgetExecution:
         all wake/subagent derivation.
         """
         self._local_stop.set()
+        self.abort_active_transports()
         snapshot = self.store.read(self.budget_id)
         if snapshot["phase"] in {BudgetPhase.ISSUED, BudgetPhase.ACTIVE}:
             self._cas_mutate("request_stop", reason=reason)
@@ -226,6 +302,16 @@ _BOUND_BUDGET: ContextVar[TaskBudgetExecution | None] = ContextVar(
     "lfl_task_budget_execution", default=None
 )
 
+_DISPATCHED_ATTEMPT: ContextVar[tuple[str, str] | None] = ContextVar(
+    "lfl_task_budget_dispatched_attempt", default=None
+)
+
+
+def has_dispatched_attempt(budget: TaskBudgetExecution) -> bool:
+    """The exclusive worker cannot start outside its owning CAS send scope."""
+    active = _DISPATCHED_ATTEMPT.get()
+    return active is not None and active[0] == budget.budget_id and bool(active[1])
+
 
 def active_task_budget() -> TaskBudgetExecution | None:
     return _BOUND_BUDGET.get()
@@ -252,13 +338,21 @@ def bind_task_budget(
 
 
 @contextmanager
-def checked_provider_attempt() -> Iterator[None]:
+def checked_provider_attempt(
+    *, provider_id: str = "", model_id: str = "",
+    wire_protocol: str = "", target_url: str = "",
+) -> Iterator[None]:
     """Physical transport reservation before the HTTP client sends any bytes."""
     budget = active_task_budget()
     if budget is None:
         yield
         return
+    budget.assert_provider_target(
+        provider_id=provider_id, model_id=model_id,
+        wire_protocol=wire_protocol, target_url=target_url,
+    )
     rid = budget.reserve(BudgetDimension.PHYSICAL_ATTEMPTS)
+    token = _DISPATCHED_ATTEMPT.set((budget.budget_id, rid))
     outcome = "interrupted"
     try:
         yield
@@ -267,6 +361,7 @@ def checked_provider_attempt() -> Iterator[None]:
         outcome = "failure"
         raise
     finally:
+        _DISPATCHED_ATTEMPT.reset(token)
         # Provider usage has NOT been authoritatively reconciled by I2.
         # Even after a successful HTTP call, retain unknown liability.
         budget.settle(rid, outcome=outcome, complete=False)

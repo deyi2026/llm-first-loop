@@ -85,28 +85,86 @@ def _check_stream_deadline(deadline: float, effective_timeout: float) -> None:
 
 
 def _iter_task_budget_checked_lines(resp: httpx.Response) -> Iterator[str]:
-    """I4-B: cooperative stop check for an explicitly bound SSE attempt.
+    """I5-B: owner-scoped transport abort and pre/post SSE budget checks.
 
-    Check before network reading and at each yielded line, including after
-    an outer consumer resumes from a content/reasoning/tool delta. The HTTP
-    stream context closes on denial; the attempt remains UNKNOWN because
-    local close does not prove remote stop/billing ACK.
-
-    Cannot interrupt a peer stalled *inside* blocking iter_lines(). That
-    requires a separate socket watchdog and physical cancellation proof.
-    No bound budget uses the exact legacy iterator, without ledger reads.
+    An explicit budget installs a watchdog/HTTP1 socket shutdown hook for
+    blocked reads. Unsupported transports use a bounded per-read timeout;
+    neither mechanism claims remote provider/billing quiescence. Unbound
+    traffic still uses the untouched legacy iterator.
     """
     from llm_loop.resources.task_budget_dispatch import active_task_budget
+    from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+    from llm_loop.resources.task_budget_transport import watched_budget_response
 
     budget = active_task_budget()
     if budget is None:
         yield from resp.iter_lines()
         return
-    budget._get_validated()
-    for line in resp.iter_lines():
-        budget._get_validated()
-        yield line
-        budget._get_validated()
+
+    # I5-C: a multiplexed HTTP/2 or HTTP/3 socket can belong to sibling
+    # requests. I5-B deliberately has no safe per-stream physical abort for
+    # these transports; reject the already-observed response before ANY SSE
+    # data enters the model. The dispatched Provider liability stays UNKNOWN.
+    # There is no model- or prompt-level override for this safety gate; an
+    # operator can choose the unbound/default-OFF path independently.
+    extensions = getattr(resp, "extensions", {})
+    http_version = extensions.get("http_version") if isinstance(extensions, dict) else None
+    if http_version in (b"HTTP/2", b"HTTP/3", "HTTP/2", "HTTP/3"):
+        budget.request_stop(reason="multiplexed_transport_unqualified")
+        raise TaskBudgetDeniedError("multiplexed_transport_unqualified")
+
+    def assert_live() -> None:
+        try:
+            budget._get_validated()
+        except TaskBudgetDeniedError as exc:
+            if exc.reason == "deadline_expired":
+                # A fast drip can make the owner see expiry before the
+                # watchdog. Persist Stop even in this cooperative path.
+                budget.request_stop(reason="deadline_expired")
+            raise
+
+    with watched_budget_response(budget, resp):
+        assert_live()
+        try:
+            for line in resp.iter_lines():
+                assert_live()
+                yield line
+                assert_live()
+        except TaskBudgetDeniedError:
+            # A denial subclasses PermissionError/OSError; do not catch it
+            # again as a socket exception and mask deadline_expired with the
+            # subsequent local Stop latch.
+            raise
+        except (httpx.TransportError, OSError):
+            # On Stop, surface the authoritative deny; do not misclassify a
+            # locally-aborted socket as a retryable provider/network failure.
+            assert_live()
+            raise
+        # A shutdown can result in clean EOF rather than a read exception.
+        assert_live()
+
+
+def _task_budget_transport_timeout(effective_timeout: float) -> float | httpx.Timeout:
+    from llm_loop.resources.task_budget_transport import budgeted_transport_timeout
+
+    return budgeted_transport_timeout(effective_timeout)
+
+
+def _task_budget_provider_stream(
+    client: httpx.Client, method: str, url: str, *,
+    json: dict[str, Any], headers: dict[str, str],
+    timeout: float | httpx.Timeout,
+) -> Any:
+    """I5-D: delegate only a trusted opt-in bound attempt to an OS worker.
+
+    With no explicit isolation profile this is the exact existing HTTPX
+    streaming context, including the same timeout argument and shared client.
+    """
+    from llm_loop.resources.task_budget_process_transport import isolated_provider_stream
+
+    return isolated_provider_stream(
+        client, method, url, json=json, headers=headers, timeout=timeout,
+    )
 
 
 # 2026-09-18（gen20 自愈）: 连接被拒绝时的单次重试前退避秒数。毫秒级原地重试对瞬断/
@@ -1180,6 +1238,7 @@ class LLMClient:
         self,
         *,
         model_id: str,
+        target_url: str = "",
         transport_retry_index: int = 0,
         prepared: Mapping[str, Any] | None = None,
     ) -> Any:
@@ -1207,7 +1266,10 @@ class LLMClient:
         def _scoped_attempt() -> Iterator[None]:
             from llm_loop.resources.task_budget_dispatch import checked_provider_attempt
 
-            with checked_provider_attempt(), observation:
+            with checked_provider_attempt(
+                provider_id=self.provider, model_id=model_id,
+                wire_protocol=self.wire_protocol, target_url=target_url,
+            ), observation:
                 yield
 
         return _scoped_attempt()
@@ -2060,13 +2122,14 @@ class LLMClient:
             with self._transport_attempt_scope(
                 model_id=str(payload["model"]),
                 transport_retry_index=transport_retry_index,
+                target_url=url,
                 prepared=self._prepared_attempt_facts(
                     payload=payload,
                     representation="openai-json",
                     timeout_s=effective_timeout,
                 ),
-            ), self._client.stream(
-                "POST", url, json=payload, headers=headers, timeout=effective_timeout
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
@@ -2325,13 +2388,14 @@ class LLMClient:
             with self._transport_attempt_scope(
                 model_id=str(payload["model"]),
                 transport_retry_index=0,
+                target_url=url,
                 prepared=self._prepared_attempt_facts(
                     payload=payload,
                     representation="anthropic-converted",
                     timeout_s=effective_timeout,
                 ),
-            ), self._client.stream(
-                "POST", url, json=payload, headers=headers, timeout=effective_timeout
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
@@ -2501,8 +2565,9 @@ class LLMClient:
                     representation="google-payload",
                     timeout_s=effective_timeout,
                 ),
-            ), self._client.stream(
-                "POST", url, json=payload, headers=headers, timeout=effective_timeout
+                target_url=url,
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 self._raise_for_status(resp, model_id=model_id)
                 self._observe_transport_response(resp, model_id=model_id)
@@ -2646,8 +2711,9 @@ class LLMClient:
                     representation="lms-chat-json",
                     timeout_s=effective_timeout,
                 ),
-            ), self._client.stream(
-                "POST", url, json=payload, headers=headers, timeout=effective_timeout
+                target_url=url,
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 if resp.status_code >= 400:
                     self._raise_for_status(resp, model_id=model_id)

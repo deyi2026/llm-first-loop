@@ -92,6 +92,9 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("tools", "nonconvergence_fuse_min_delta"): TomlField(("LFL_NONCONV_FUSE_MIN_DELTA",), "int"),
         ("web", "host"): TomlField(("WEB_HOST",), "str"),
         ("web", "port"): TomlField(("WEB_PORT",), "int"),
+        ("web", "task_budget_canary_config"): TomlField(
+            ("LFL_TASK_BUDGET_WEB_CANARY_CONFIG",), "str"
+        ),
         ("chatgpt_web", "enabled"): TomlField(("CHATGPT_WEB_ENABLED",), "bool"),
         ("chatgpt_web", "cdp_endpoint"): TomlField(("CHATGPT_WEB_CDP_ENDPOINT",), "str"),
         ("chatgpt_web", "project_url"): TomlField(("CHATGPT_WEB_PROJECT_URL",), "str"),
@@ -228,6 +231,7 @@ _LEGACY_GOVERNED_KEYS = (
 BUSINESS_KEYS = tuple(dict.fromkeys((*_TOML_ENV_KEYS, *_LEGACY_GOVERNED_KEYS)))
 _WEB_ONLY_KNOWLEDGE_KEYS = frozenset({
     "LFL_KNOWLEDGE_ADVISOR", "LFL_KNOWLEDGE_ADVISOR_SESSIONS",
+    "LFL_TASK_BUDGET_WEB_CANARY_CONFIG",
 })
 
 # Secret/credential material is never accepted by runtime.toml.

@@ -107,6 +107,7 @@ from llm_loop.resources.provider_settlement import (
     ProviderCallOutcome,
     ProviderCallPurpose,
 )
+from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
 from llm_loop.runtime.causality import (
     background_run_generation_fact,
     build_run_integrity_receipt,
@@ -626,6 +627,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         on_run_acquired: Any = None,
         ingress: object | None = None,
         user_metadata: dict[str, Any] | None = None,
+        on_human_event_appended: Any = None,
     ) -> Iterator[StreamDelta]:
         """run_stream 的循环本体（P0-5 包装层拆出；逻辑与拆分前逐行一致）.
 
@@ -847,7 +849,17 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         attach_recent_continuity_anchor(sess.messages, len(sess.messages) - 1)
         # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
         self._ensure_session_created(sess)
-        _user_event = self._append_message_event(sess, user_msg)
+        _user_event = self._append_message_event(
+            sess, user_msg, require_durable=on_human_event_appended is not None,
+        )
+        # I5-E: the signed authority must name this *actual* persisted user
+        # message event_id/seq. The optional operator callback is strictly
+        # after EventStore append and before even one model/tool side effect.
+        # No production Web route installs the callback; absent it, no change.
+        if on_human_event_appended is not None:
+            if _user_event is None:
+                raise TaskBudgetDeniedError("operator_human_event_not_persisted")
+            on_human_event_appended(_user_event)
         if raw_queue_id:
             # A queued human turn is replay-sensitive: after a dispatcher/process crash the
             # queue may re-dispatch only when it can prove this ingress never started. Make
