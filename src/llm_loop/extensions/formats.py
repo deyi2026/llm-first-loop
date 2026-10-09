@@ -341,7 +341,7 @@ def parse_plugin_package(root: str | Path) -> CompatibilityReport:
             version="",
             overall=PACKAGE_UNAVAILABLE,
             root=str(pkg_root),
-            warnings=["package root not found"],
+            warnings=("package root not found",),
         )
     manifest_file = pkg_root / MANIFEST_FILE
     try:
@@ -352,7 +352,7 @@ def parse_plugin_package(root: str | Path) -> CompatibilityReport:
             version="",
             overall=PACKAGE_UNAVAILABLE,
             root=str(pkg_root),
-            warnings=[f"invalid manifest ({MANIFEST_FILE}): {exc}"],
+            warnings=(f"invalid manifest ({MANIFEST_FILE}): {exc}",),
         )
     if not isinstance(manifest, dict):
         return CompatibilityReport(
@@ -360,7 +360,7 @@ def parse_plugin_package(root: str | Path) -> CompatibilityReport:
             version="",
             overall=PACKAGE_UNAVAILABLE,
             root=str(pkg_root),
-            warnings=[f"{MANIFEST_FILE} must be a JSON object"],
+            warnings=(f"{MANIFEST_FILE} must be a JSON object",),
         )
     warnings: list[str] = []
     plugin_name = str(manifest.get("name") or "").strip()
@@ -371,7 +371,7 @@ def parse_plugin_package(root: str | Path) -> CompatibilityReport:
             version=version,
             overall=PACKAGE_UNAVAILABLE,
             root=str(pkg_root),
-            warnings=["manifest missing required field: name"],
+            warnings=("manifest missing required field: name",),
         )
     schema_version = manifest.get("schema_version")
     if schema_version is None:

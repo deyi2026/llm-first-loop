@@ -1154,12 +1154,21 @@ def build_engine(
             )
         else:
             if _profile_decision.profile_class == "real":
-                logger.info(
-                    "browser tools registered at profile_class=real (ack_digest=%s, "
-                    "attestation_mode=%s) — real 档审计注记将出现在回执",
-                    ack_digest(_profile_decision.ack),
-                    _profile_decision.attestation_mode,
-                )
+                if _profile_decision.ack is None:
+                    # 门禁判定与 ack 缺失不一致：如实警告；下方 permit/deny 逻辑已
+                    # 用 deny_real 兜底（`and _profile_decision.ack` 条件）。
+                    logger.warning(
+                        "browser tools registered at profile_class=real but ack "
+                        "missing (inconsistent gate decision); binding policy will "
+                        "fall back to deny_real"
+                    )
+                else:
+                    logger.info(
+                        "browser tools registered at profile_class=real (ack_digest=%s, "
+                        "attestation_mode=%s) — real 档审计注记将出现在回执",
+                        ack_digest(_profile_decision.ack),
+                        _profile_decision.attestation_mode,
+                    )
             _browser_profile_annotation = annotation_for(_profile_decision)
             # S3a（v4-G3）：两 host 共享同一绑定协调器——首个绑定的 host 冻结
             # browser ws UUID+target+ws url 三元组，另一 host 新建绑定时必须全匹配，
@@ -1475,9 +1484,18 @@ def build_engine(
                 logger.warning(
                     "semantic memory startup warmup incomplete: %s", _memory_warm
                 )
-            memory.add_post_save_hook(semantic_retriever.schedule_memory_entry)
+            def _memory_post_save_hook(entry: Any) -> None:
+                # fail-open observer：入队结果（bool）无消费方，显式丢弃以符合 hook 契约
+                semantic_retriever.schedule_memory_entry(entry)
+
+            memory.add_post_save_hook(_memory_post_save_hook)
         if settings.semantic_archive_enabled and archive is not None:
-            archive.add_post_save_hook(semantic_retriever.schedule_archive_entry)
+
+            def _archive_post_save_hook(entry: Any) -> None:
+                # fail-open observer：同上，丢弃入队结果
+                semantic_retriever.schedule_archive_entry(entry)
+
+            archive.add_post_save_hook(_archive_post_save_hook)
 
     def _knowledge_health_snapshot() -> dict[str, Any]:
         return inspect_knowledge_health(_runtime_paths)
@@ -1723,11 +1741,13 @@ def build_engine(
             logger.warning(
                 "semantic method startup warmup incomplete: %s", _method_warm
             )
-        method_store.add_post_save_hook(
-            lambda record: semantic_retriever.schedule_method_candidate(
+        def _method_post_save_hook(record: Any) -> None:
+            # fail-open observer：丢弃入队结果（bool），符合 hook 契约
+            semantic_retriever.schedule_method_candidate(
                 method_store.semantic_candidate(record)
             )
-        )
+
+        method_store.add_post_save_hook(_method_post_save_hook)
     # REPORT-20260924 多查询融合影子模式：mode=shadow 时旁路测量（延迟/排序差异 JSONL），主路径零行为
     multiquery_probe = None
     if (

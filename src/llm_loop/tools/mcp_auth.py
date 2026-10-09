@@ -147,13 +147,17 @@ def _http_json(
 ) -> tuple[int, dict[str, Any] | list[Any] | None]:
     """最小 JSON GET/POST（OAuth 元数据/注册/令牌端点用；每请求独立建连）."""
     parts = urlsplit(url)
+    host = parts.hostname
+    if host is None:
+        # URL 残缺（无 host）时显式失败，而不是依赖标准库对 host=None 的隐式行为
+        raise ValueError(f"MCP OAuth endpoint URL missing host: {url!r}")
     if parts.scheme == "https":
         conn: http.client.HTTPConnection = http.client.HTTPSConnection(
-            parts.hostname, parts.port or 443, timeout=_AUTH_HTTP_TIMEOUT_S
+            host, parts.port or 443, timeout=_AUTH_HTTP_TIMEOUT_S
         )
     else:
         conn = http.client.HTTPConnection(
-            parts.hostname, parts.port or 80, timeout=_AUTH_HTTP_TIMEOUT_S
+            host, parts.port or 80, timeout=_AUTH_HTTP_TIMEOUT_S
         )
     try:
         payload = json.dumps(body) if body is not None else None

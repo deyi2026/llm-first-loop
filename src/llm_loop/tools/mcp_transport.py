@@ -59,6 +59,9 @@ class McpHttpError(McpProtocolError):
         self.status = status
         self.error = error  # 解析出的 JSON-RPC error（可能无 id；可能 None）
         self.body_text = detail
+        # 401 时由 transport 层填充（WWW-Authenticate 头），供 OAuth 质询解析；
+        # 其余状态保持空串。
+        self.www_authenticate: str = ""
 
 
 class McpTransport(ABC):

@@ -284,7 +284,7 @@ def effective_mcp_servers(store: Any = None, legacy_raw: str = "") -> AssemblyPl
     return AssemblyPlan(raw=raw, servers=effective, conflicts=conflicts)
 
 
-def assemble_mcp_tools(registry: Any, store: Any = None, legacy_raw: str = "") -> dict[str, int]:
+def assemble_mcp_tools(registry: Any, store: Any = None, legacy_raw: str = "") -> list[str]:
     """装配入口：合并 → 注册 → 冲突报告 → 记录装配 epoch 基线."""
     global _ASSEMBLY_EPOCH
     plan = effective_mcp_servers(store, legacy_raw)

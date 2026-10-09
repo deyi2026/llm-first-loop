@@ -22,8 +22,10 @@ import json
 import os
 import shutil
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import TypeVar
 
 from llm_loop.extensions.formats import (
     PACKAGE_UNAVAILABLE,
@@ -37,6 +39,8 @@ try:
 except ImportError:  # pragma: no cover - 非 POSIX 平台降级为无锁
     fcntl = None  # type: ignore[assignment]
     _FLOCK_OK = False
+
+_T = TypeVar("_T")
 
 _SENSITIVE_KEY_MARKERS = ("token", "secret", "password", "authorization")
 _MAX_RECORD_BYTES = 4 * 1024 * 1024  # installed.json 上限（防失控膨胀）
@@ -225,16 +229,16 @@ class ExtensionStore:
 
     def _commit(
         self,
-        mutator,
+        mutator: Callable[[StoreState], tuple[list[InstallRecord], _T]],
         expected_revision: int,
-    ) -> tuple[StoreState, object]:
+    ) -> tuple[StoreState, _T]:
         """独占锁 + CAS + 原子替换 + 读回校验（§9.1）.
 
         mutator(state) -> (new_installs, result)；revision 由本函数统一 +1。
         """
         lock_path = self.locks_dir / "extensions.lock"
         with open(lock_path, "a+b") as lock_file:
-            if _FLOCK_OK:
+            if fcntl is not None:  # _FLOCK_OK 等价判断（POSIX import 成功 ⟺ 非 None）
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             try:
                 state = self.read_state()
@@ -284,7 +288,7 @@ class ExtensionStore:
                     result,
                 )
             finally:
-                if _FLOCK_OK:
+                if fcntl is not None:  # _FLOCK_OK 等价判断
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     # ── 安装 / 更新 / 启停 ──
