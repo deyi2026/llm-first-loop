@@ -326,8 +326,14 @@ class TaskBudgetStore:
         *,
         root_run_generation: str,
         ingress_kind: str,
+        reject_duplicate: bool = False,
     ) -> dict[str, Any]:
-        """Create one root; duplicate identical issue is idempotent, not a reset."""
+        """Create a root; an operator-signed one-time proof cannot be replayed.
+
+        Existing offline callers retain idempotent issue semantics. An I5-A
+        proof instead opts into an atomic reject of every duplicate, even if
+        all identifiers match; a caller cannot spend the approval twice.
+        """
         root = TaskBudgetMember(
             member_id=grant.budget_id,
             parent_id=grant.budget_id,  # explicit root-self sentinel; never traversed
@@ -349,6 +355,8 @@ class TaskBudgetStore:
         with self._lock(grant.budget_id) as path:
             if path.exists() or path.is_symlink():
                 old = self._read_path(path, grant.budget_id)
+                if reject_duplicate:
+                    raise TaskBudgetDeniedError("operator_budget_proof_replayed")
                 if old["grant"] == template["grant"] and old["members"][grant.budget_id] == root.to_dict():
                     return old  # no reissue, no increase
                 raise TaskBudgetConflictError("budget root id already bound to different identity")

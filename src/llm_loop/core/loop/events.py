@@ -212,16 +212,19 @@ class _EventsMixin:
         except Exception as exc:  # noqa: BLE001 — fail-open
             logger.warning("session.created 事件写入失败（fail-open）: %s", exc)
 
-    def _append_message_event(self, sess, msg: Message) -> Any | None:
+    def _append_message_event(
+        self, sess, msg: Message, *, require_durable: bool = False,
+    ) -> Any | None:
         """消息落库点事件（payload 与 Session.to_dict() 消息字段逐一对齐）."""
         store = getattr(self, "_event_store", None)
         if store is None or getattr(store, "enabled", False) is False:
+            if require_durable:
+                from llm_loop.event_log.store import EventDurabilityError
+
+                raise EventDurabilityError("human_event_store_not_enabled")
             return None
         try:
-            return store.append(
-                sess.session_id,
-                "message.appended",
-                build_message_payload(
+            payload = build_message_payload(
                     index=len(sess.messages) - 1,
                     role=msg.role,
                     content=msg.content,
@@ -233,9 +236,13 @@ class _EventsMixin:
                     tool_calls=msg.tool_calls,
                     reasoning_content=msg.reasoning_content,
                     metadata=msg.metadata,
-                ),
             )
+            if require_durable:
+                return store.append_durable_human_message(sess.session_id, payload)
+            return store.append(sess.session_id, "message.appended", payload)
         except Exception as exc:  # noqa: BLE001 — fail-open
+            if require_durable:
+                raise  # never convert uncertain authorization into an ordinary warning
             logger.warning("message.appended 事件写入失败（fail-open）: %s", exc)
             return None
 

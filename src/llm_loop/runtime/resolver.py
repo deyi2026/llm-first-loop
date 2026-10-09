@@ -22,8 +22,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -92,6 +93,9 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("tools", "nonconvergence_fuse_min_delta"): TomlField(("LFL_NONCONV_FUSE_MIN_DELTA",), "int"),
         ("web", "host"): TomlField(("WEB_HOST",), "str"),
         ("web", "port"): TomlField(("WEB_PORT",), "int"),
+        ("web", "task_budget_canary_config"): TomlField(
+            ("LFL_TASK_BUDGET_WEB_CANARY_CONFIG",), "str"
+        ),
         ("chatgpt_web", "enabled"): TomlField(("CHATGPT_WEB_ENABLED",), "bool"),
         ("chatgpt_web", "cdp_endpoint"): TomlField(("CHATGPT_WEB_CDP_ENDPOINT",), "str"),
         ("chatgpt_web", "project_url"): TomlField(("CHATGPT_WEB_PROJECT_URL",), "str"),
@@ -228,6 +232,7 @@ _LEGACY_GOVERNED_KEYS = (
 BUSINESS_KEYS = tuple(dict.fromkeys((*_TOML_ENV_KEYS, *_LEGACY_GOVERNED_KEYS)))
 _WEB_ONLY_KNOWLEDGE_KEYS = frozenset({
     "LFL_KNOWLEDGE_ADVISOR", "LFL_KNOWLEDGE_ADVISOR_SESSIONS",
+    "LFL_TASK_BUDGET_WEB_CANARY_CONFIG",
 })
 
 # Secret/credential material is never accepted by runtime.toml.
@@ -665,3 +670,64 @@ def apply_to_environ(config: RuntimeConfig) -> None:
             os.environ[key] = projected[key]
         else:
             os.environ.pop(key, None)
+
+
+def check_runtime_toml(path: str, services: Sequence[str]) -> tuple[bool, str]:
+    """Check-only strict parse of a runtime.toml against THIS code's schema.
+
+    EVO-20261009-9d116efa G1: the restart pipeline runs this through the TARGET
+    release's own resolver (PYTHONPATH pinned to that release's src/) before
+    stopping any live process, so a runtime.toml field that the target code has
+    not registered aborts the restart with zero physical side effects instead
+    of taking the service down after ``_stop_*``.
+
+    Returns ``(ok, message)``. Never writes, never touches os.environ.
+    """
+    if not os.path.exists(path):
+        return True, f"runtime.toml 不存在，跳过 schema 校验: {path}"
+    problems: list[str] = []
+    checked: list[str] = []
+    for service in services:
+        try:
+            parse_runtime_toml(path, service=service)
+            checked.append(service)
+        except ValueError as exc:
+            problems.append(f"[{service}] {exc}")
+        except Exception as exc:  # fail closed on parser failures too
+            problems.append(f"[{service}] 解析异常: {exc!r}")
+    if problems:
+        detail = "; ".join(problems)
+        return (
+            False,
+            "runtime.toml 与目标代码 schema 不兼容（未知字段/类型/密钥违规），拒绝继续重启: "
+            + detail,
+        )
+    return True, f"runtime.toml schema 校验通过 services={checked}"
+
+
+def _cli_check_toml(argv: list[str]) -> int:
+    """Dispatch schema checks separately from restart-script endpoint queries."""
+    args = argv[1:]
+    if len(args) == 1 and args[0] in {"WEB_PORT", "WEB_HOST"}:
+        try:
+            value = resolve_effective("web").values[args[0]]
+        except (ValueError, OSError, KeyError) as exc:
+            print(f"runtime endpoint query failed: {exc}", file=sys.stderr)
+            return 1
+        print(value)
+        return 0
+    if len(args) < 2 or args[0] != "--check-toml":
+        print("usage: resolver WEB_PORT|WEB_HOST or --check-toml <runtime.toml> [service ...]", file=sys.stderr)
+        return 2
+    path = args[1]
+    services = args[2:] or ["web", "feishu", "learning"]
+    if any(service not in {"web", "feishu", "learning"} for service in services):
+        print("service must be web, feishu or learning", file=sys.stderr)
+        return 2
+    ok, message = check_runtime_toml(path, services)
+    print(message)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli_check_toml(sys.argv))
