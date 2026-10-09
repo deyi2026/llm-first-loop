@@ -34,6 +34,7 @@ from llm_loop.resources.task_budget_store import (
     TaskBudgetStore,
     _finite_time,
 )
+from llm_loop.resources.task_budget_transport_context import active_isolated_transport_profile
 
 _MAX_CAS_RETRIES = 12
 
@@ -143,10 +144,6 @@ class TaskBudgetExecution:
             raise TaskBudgetDeniedError("signed_model_identity_mismatch")
         if grant["profile"] != "web-glm-one-physical-attempt-v3":
             return
-        from llm_loop.resources.task_budget_process_transport import (
-            active_isolated_transport_profile,
-        )
-
         profile = active_isolated_transport_profile()
         if profile is None or profile.verify is not True or profile.proxy is not None:
             raise TaskBudgetDeniedError("positive_budget_requires_exclusive_verified_process")

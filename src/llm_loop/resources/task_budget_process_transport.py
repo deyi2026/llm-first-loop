@@ -16,8 +16,6 @@ import os
 import threading
 from collections.abc import Iterator
 from contextlib import closing, contextmanager, suppress
-from contextvars import ContextVar
-from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import Any
 
@@ -25,6 +23,16 @@ import httpx
 
 from llm_loop.resources.task_budget_dispatch import active_task_budget, has_dispatched_attempt
 from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+from llm_loop.resources.task_budget_transport_context import (
+    _ISOLATED_PROFILE,
+    IsolatedTransportProfile,
+    bind_isolated_provider_transport,
+)
+
+__all__ = [
+    "IsolatedTransportError", "IsolatedTransportProfile",
+    "bind_isolated_provider_transport", "isolated_provider_stream",
+]
 
 _POLL_SECONDS = 0.025
 _REAP_SECONDS = 0.35
@@ -34,51 +42,6 @@ _BODY_CHUNK = 16_384
 
 class IsolatedTransportError(httpx.TransportError):
     """A worker/IPC failure is never a remote completion receipt."""
-
-
-@dataclass(frozen=True)
-class IsolatedTransportProfile:
-    """Startup-trusted transport settings, not supplied by model output.
-
-    No implicit use of the parent process's HTTPX clients, env proxies, TLS
-    credentials or connection pools. Callers must explicitly qualify proxy
-    and CA behavior; worker is deliberately HTTP/1-only in this phase.
-    """
-
-    verify: bool | str = True
-    proxy: str | None = None
-
-    def __post_init__(self) -> None:
-        if self.verify is False:
-            raise ValueError("isolated_transport_tls_verify_required")
-        if not (self.verify is True or isinstance(self.verify, str) and self.verify):
-            raise ValueError("isolated_transport_verify_invalid")
-        if self.proxy is not None and (
-            not isinstance(self.proxy, str) or not self.proxy.startswith("http://")
-        ):
-            raise ValueError("isolated_transport_proxy_requires_explicit_http_url")
-
-
-_ISOLATED_PROFILE: ContextVar[IsolatedTransportProfile | None] = ContextVar(
-    "lfl_i5d_isolated_provider_transport", default=None
-)
-
-
-def active_isolated_transport_profile() -> IsolatedTransportProfile | None:
-    """Observe the explicit transport profile without activating it."""
-    return _ISOLATED_PROFILE.get()
-
-
-@contextmanager
-def bind_isolated_provider_transport(profile: IsolatedTransportProfile) -> Iterator[None]:
-    """Qualified operator/test opt-in; no production ingress binds this."""
-    if not isinstance(profile, IsolatedTransportProfile):
-        raise TypeError("isolated_transport_profile_required")
-    scope = _ISOLATED_PROFILE.set(profile)
-    try:
-        yield
-    finally:
-        _ISOLATED_PROFILE.reset(scope)
 
 
 def _encode_frame(event: str, **values: Any) -> bytes:
