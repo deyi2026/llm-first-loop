@@ -457,6 +457,22 @@ class RunFinalizer:
         # 统一出口落盘，结束原因/轮数/token 汇总/耗时一次可查（fail-open 不阻断）
         _run_end_event = None
         _run_incomplete = _run_end_reason != "completed" or provider_output_truncated
+        tracker = getattr(self._host._run_state(), "knowledge_runtime", None)
+        if tracker is not None:
+            try:
+                from llm_loop.core.loop.engine_services.knowledge_runtime import _paired_tool_trace
+
+                trace, receipts = _paired_tool_trace(
+                    sess.messages, int(self._host._run_state().current_turn_ref or 0),
+                )
+                tracker.finish(
+                    trace=trace, tool_messages=receipts, reason=_run_end_reason,
+                    rounds=rounds, tokens_in=tokens_in, tokens_out=tokens_out,
+                    duration_ms=int((time.monotonic() - _run_started_at) * 1000),
+                    model_used=model_used, run_incomplete=_run_incomplete,
+                )
+            except Exception:
+                logger.debug("knowledge terminal observation failed", exc_info=True)
         try:
             _run_end_event = self._host._event_append(
                 session_id,

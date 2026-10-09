@@ -57,6 +57,8 @@ class KnowledgeRun:
         self._first_failure: tuple[str, str] | None = None
         self._first_failure_prompted = False
         self._hydrated_refs: set[str] = set()
+        self._prepared_references: dict[str, tuple[str, tuple[str, ...]]] = {}
+        self._finished = False
 
     def _emit(self, kind: str, key: str, payload: dict[str, Any]) -> None:
         with suppress(Exception):
@@ -102,7 +104,7 @@ class KnowledgeRun:
             if name == "search_records":
                 ref = str(args.get("query") or "")
                 kind = str(args.get("kind") or "")
-                content = str(getattr(message, "content", "") or "")
+                content = str(getattr(message, "content", "") or "").removeprefix(f"[状态: {status}] ")
                 # A successful search_records call can also mean ZERO matches.
                 # An exact-looking query alone does not prove hydration.
                 hydrated = (
@@ -132,6 +134,32 @@ class KnowledgeRun:
                     "call_id": call_id, "ref": str(args.get("method_ref") or ""),
                     "decision": str(args.get("use_decision") or ""),
                     "task_benefit": "not_evaluated",
+                    "hydration_observed": str(args.get("method_ref") or "") in self._hydrated_refs,
+                })
+            elif name == "refine_experience" and args.get("action") == "record_use":
+                content = str(getattr(message, "content", "") or "").removeprefix(f"[状态: {status}] ")
+                if not content.startswith("[refine_experience] use declaration\n"):
+                    continue
+                try:
+                    declaration = json.loads(content.split("\n", 1)[1])
+                except (ValueError, IndexError):
+                    continue
+                if (
+                    not isinstance(declaration, dict)
+                    or declaration.get("schema") != "experience-use/v1"
+                    or declaration.get("ref") != args.get("experience_id")
+                    or declaration.get("decision") != args.get("use_decision")
+                    or declaration.get("decision") not in {"applied", "adapted", "not_applicable", "rejected"}
+                ):
+                    continue
+                ref = str(declaration["ref"])
+                self._emit("knowledge.experience_declaration", binding, {
+                    "call_id": call_id, "ref": ref, "decision": declaration["decision"],
+                    "record_kind": declaration.get("record_kind"),
+                    "verification_state": declaration.get("verification_state"),
+                    "document_projection_sha256": declaration.get("document_projection_sha256"),
+                    "hydration_observed": ref in self._hydrated_refs,
+                    "authority": "model_declared", "task_benefit": "not_evaluated",
                 })
             elif name == "save_experience":
                 kind = str(args.get("record_kind") or "")
@@ -140,7 +168,7 @@ class KnowledgeRun:
                     continue
                 # Store-side typed uncertainty / conflict cannot count as a
                 # confirmed new record, regardless of legacy wrapper status.
-                content = str(getattr(message, "content", "") or "")
+                content = str(getattr(message, "content", "") or "").removeprefix(f"[状态: {status}] ")
                 confirm = re.search(
                     r"\[save_experience\] 已沉淀 \S+ "
                     r"experience_ref=(experience:EXPERIENCE-[A-Za-z0-9-]+) "
@@ -222,7 +250,49 @@ class KnowledgeRun:
             "refs": list(refs), "reference_chars": len(discovery.reference),
             "provider_delivery": "not_confirmed",
         })
+        self._prepared_references[discovery.key] = (discovery.reference, refs)
         return discovery.reference, refs
+
+
+    def provider_reference_facts(self, payload: Any) -> list[dict[str, Any]]:
+        """Match exact prepared bytes in final OpenAI payload; no delivery claim."""
+        if not isinstance(payload, dict) or self.advisor.mode != "canary":
+            return []
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            return []  # other wire representations remain honestly unobserved
+        contents = [
+            str(row["content"]) for row in messages
+            if isinstance(row, dict) and row.get("role") == "user"
+            and isinstance(row.get("content"), str)
+        ]
+        return [
+            {
+                "knowledge_event_key": key, "run_ref": self.run_ref,
+                "refs": list(refs), "reference_chars": len(reference),
+                "reference_sha256": hashlib.sha256(reference.encode()).hexdigest(),
+            }
+            for key, (reference, refs) in self._prepared_references.items()
+            if any(content.endswith(reference) for content in contents)
+        ]
+
+    def finish(
+        self, *, trace: list[dict], tool_messages: list[Any], reason: str,
+        rounds: int, tokens_in: int, tokens_out: int, duration_ms: int,
+        model_used: str, run_incomplete: bool,
+    ) -> None:
+        """Observe terminal receipts and runtime outcome, never score task success."""
+        if self._finished or self.advisor.mode == "off":
+            return
+        self.observe_receipts(trace, tool_messages)
+        self._finished = True
+        self._emit("knowledge.run_outcome", "terminal", {
+            "reason": reason, "rounds": rounds, "tokens_in": tokens_in,
+            "tokens_out": tokens_out, "duration_ms": duration_ms,
+            "model_used": model_used, "run_incomplete": run_incomplete,
+            "task_benefit": "not_evaluated",
+            "hydrated_refs": sorted(self._hydrated_refs),
+        })
 
 
 def _paired_tool_trace(messages: list[Any], turn_index: int) -> tuple[list[dict], list[Any]]:

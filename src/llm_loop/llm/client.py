@@ -282,6 +282,9 @@ class GuardRequestContext:
     structure_state_hook: Callable[[dict[str, Any]], None] | None = field(
         default=None, repr=False, compare=False
     )
+    knowledge_reference_probe: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = field(
+        default=None, repr=False, compare=False,
+    )
     # Optional request-scoped observer for provider-native in-flight state.  It is
     # deliberately carried on the immutable request context rather than shared client
     # state so concurrent sessions cannot cross-write crash-recovery checkpoints.
@@ -1335,6 +1338,7 @@ class LLMClient:
         payload: Mapping[str, Any],
         representation: str,
         timeout_s: float,
+        knowledge_probe: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
     ) -> dict[str, Any] | None:
         """GAP-REQ-1 write-before-send prepared facts (hash-only default, fail-open).
 
@@ -1364,6 +1368,13 @@ class LLMClient:
                 "representation": representation,
                 "controls": controls,
             }
+            if knowledge_probe is not None:
+                try:
+                    facts = knowledge_probe(dict(payload))
+                    if facts:
+                        prepared["knowledge_references"] = facts
+                except Exception:
+                    logger.debug("knowledge wire probe unavailable", exc_info=True)
             try:
                 key = resolve_content_hmac_key(allow_create=False)
                 prepared["payload_hmac"] = key.digest(data)
@@ -2127,6 +2138,7 @@ class LLMClient:
                     payload=payload,
                     representation="openai-json",
                     timeout_s=effective_timeout,
+                    knowledge_probe=(guard_context.knowledge_reference_probe if guard_context else None),
                 ),
             ), _task_budget_provider_stream(
                 self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)

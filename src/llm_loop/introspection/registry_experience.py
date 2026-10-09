@@ -7,6 +7,8 @@ AI 优先：程序仅通道，提取/判断归 AI。
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import os
 from typing import Any
 
@@ -89,7 +91,7 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
 
 _REFINE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
     "name": "refine_experience",
-    "description": "经验生命周期流转入口。archive/invalidate/restore 显式流转记录；experience_id 接受 stable experience:<id>、裸 ID 或 .md。使用结果日志暂不提供，避免形成无界 append-only 堆积。",
+    "description": "经验生命周期和使用声明入口。archive/invalidate/restore 显式流转；record_use 只声明 applied/adapted/not_applicable/rejected，回执经既有工具事件保存，不修改原卡、不自动验证或晋级。experience_id 推荐 stable experience:<id>；声明不是任务收益证明。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -99,8 +101,11 @@ _REFINE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
             },
             "action": {
                 "type": "string",
-                "enum": ["archive", "invalidate", "restore"],
+                "enum": ["archive", "invalidate", "restore", "record_use"],
             },
+            "use_decision": {"type": "string", "enum": ["applied", "adapted", "not_applicable", "rejected"], "description": "record_use 必填；由模型比较任务与经验目的作出判断"},
+            "note": {"type": "string", "maxLength": 512, "description": "简短适用依据或跳过理由；不保存隐藏思维链"},
+            "evidence_refs": {"type": "array", "maxItems": 16, "items": {"type": "string"}, "description": "声明的证据引用；程序不自动判断正确性"},
         },
         "required": ["experience_id", "action"],
     },
@@ -201,6 +206,9 @@ def _run_refine_experience(args: dict, host: RegistryHost) -> ToolResult:
         )
     from llm_loop.introspection.tools_experience import run_refine_experience
 
+    if args.get("action") == "record_use":
+        return _experience_use_declaration(args, store)
+
     content = run_refine_experience(
         store,
         experience_id=args.get("experience_id", ""),
@@ -213,6 +221,36 @@ def _run_refine_experience(args: dict, host: RegistryHost) -> ToolResult:
         else ToolResultStatus.FAILURE
     )
     return ToolResult(status=status, content=content, tool_call_id="", tool_name="refine_experience")
+
+
+def _experience_use_declaration(args: dict, store: Any) -> ToolResult:
+    """Return a model-authored declaration; normal tool persistence is the ledger."""
+    ref = str(args.get("experience_id") or "").strip()
+    decision = str(args.get("use_decision") or "")
+    note = args.get("note") or ""
+    evidence = args.get("evidence_refs") or []
+    if (
+        not ref.startswith("experience:") or not ref[11:]
+        or decision not in {"applied", "adapted", "not_applicable", "rejected"}
+        or not isinstance(note, str) or len(note) > 512
+        or not isinstance(evidence, list) or len(evidence) > 16
+        or any(not isinstance(e, str) or len(e) > 256 for e in evidence)
+    ):
+        return _method_failure("refine_experience", "[参数错误] record_use 需要 stable experience ref、use_decision 和有界 note/evidence_refs")
+    doc = store.get(ref[11:])
+    if doc is None:
+        return _method_failure("refine_experience", "[refine_experience] 未找到指定经验；未记录使用声明")
+    payload = {
+        "schema": "experience-use/v1", "ref": ref, "decision": decision,
+        "record_kind": doc.record_kind, "verification_state": doc.verification_state,
+        "status": doc.status, "note": note, "evidence_refs": evidence,
+        "document_projection_sha256": hashlib.sha256(doc.to_md().encode()).hexdigest(),
+        "authority": "model_declared", "task_benefit": "not_evaluated",
+    }
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS, tool_call_id="", tool_name="refine_experience",
+        content="[refine_experience] use declaration\n" + json.dumps(payload, ensure_ascii=False),
+    )
 
 
 def _run_method_manage(args: dict, host: RegistryHost) -> ToolResult:

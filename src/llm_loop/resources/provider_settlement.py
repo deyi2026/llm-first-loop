@@ -439,6 +439,25 @@ class ProviderCallSettlementJournal:
         controls = prepared.get("controls")
         if isinstance(controls, Mapping):
             out["controls"] = {str(k): v for k, v in controls.items()}
+        knowledge = prepared.get("knowledge_references")
+        if isinstance(knowledge, list) and len(knowledge) <= 2:
+            valid = [
+                {key: row[key] for key in (
+                    "run_ref", "knowledge_event_key", "refs", "reference_chars", "reference_sha256",
+                )}
+                for row in knowledge
+                if isinstance(row, dict)
+                and isinstance(row.get("run_ref"), str)
+                and isinstance(row.get("knowledge_event_key"), str)
+                and isinstance(row.get("refs"), list)
+                and len(row["refs"]) <= 5
+                and all(isinstance(ref, str) for ref in row["refs"])
+                and isinstance(row.get("reference_chars"), int)
+                and isinstance(row.get("reference_sha256"), str)
+                and len(row["reference_sha256"]) == 64
+            ]
+            if valid:
+                out["knowledge_references"] = valid
         return out or None
 
     @staticmethod

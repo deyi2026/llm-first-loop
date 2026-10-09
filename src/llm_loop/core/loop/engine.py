@@ -1730,6 +1730,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             active_run_ingress_ref=_active_run_ingress_ref,
                             active_run_ingress_kind=_active_run_ingress_kind,
                             structure_state_hook=_structure_state_hook,
+                            knowledge_reference_probe=getattr(self._run_state().knowledge_runtime, "provider_reference_facts", None),
                             stream_state_hook=cap.on_provider_state,
                         )
                         if isinstance(llm_client, LLMClient)
@@ -1834,6 +1835,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             active_run_ingress_ref=_active_run_ingress_ref,
                             active_run_ingress_kind=_active_run_ingress_kind,
                             structure_state_hook=_structure_state_hook,
+                            knowledge_reference_probe=getattr(self._run_state().knowledge_runtime, "provider_reference_facts", None),
                         )
                     resp = foreground_task_provider_chat(
                         self,
