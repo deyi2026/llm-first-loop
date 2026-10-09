@@ -10,8 +10,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import llm_loop.runtime.service_control as sc
 from llm_loop.runtime.resolver import TOML_SCHEMA, check_runtime_toml
 
@@ -20,8 +18,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # ---------- G1: check_runtime_toml ----------
 
-def test_g1_check_passes_for_current_repo_runtime_toml():
-    ok, msg = check_runtime_toml(REPO_ROOT / "runtime.toml", ["web", "feishu", "learning"])
+def test_g1_check_passes_for_valid_runtime_toml(tmp_path):
+    config = tmp_path / "runtime.toml"
+    config.write_text('[web]\nhost = "127.0.0.1"\nport = 18903\n', encoding="utf-8")
+    ok, msg = check_runtime_toml(config, ["web", "feishu", "learning"])
     assert ok, msg
     assert "校验通过" in msg
 
@@ -58,9 +58,11 @@ def test_g1_cli_exit_codes(tmp_path):
     )
     assert r_bad.returncode == 1
     assert "web.ghost_field" in r_bad.stdout
+    good = tmp_path / "valid.toml"
+    good.write_text('[web]\nhost = "127.0.0.1"\nport = 18903\n', encoding="utf-8")
     r_ok = subprocess.run(
         [sys.executable, "-m", "llm_loop.runtime.resolver", "--check-toml",
-         str(REPO_ROOT / "runtime.toml"), "web"],
+         str(good), "web"],
         capture_output=True, text=True, env=env, cwd=REPO_ROOT,
     )
     assert r_ok.returncode == 0

@@ -41,7 +41,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from llm_loop.resources.foreground import active_run_locks
 from llm_loop.runtime.admission_barrier import (
@@ -1804,7 +1804,7 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
         # 显示事实：服务器本地时区 UTC 偏移（分钟，含夏令时实时值）。前端据此
         # 把 ISO 时间渲染为"服务器挂钟"，与访问设备的浏览器时区无关。
         "server_tz_offset_minutes": round(
-            system_local_now().utcoffset().total_seconds() // 60
+            cast(timedelta, system_local_now().utcoffset()).total_seconds() // 60
         ),
     }
 
@@ -2249,7 +2249,7 @@ def acknowledge_verify(
 
     if verdict == "reobserve":
         deployment = store.read()
-        targets = list(_MANAGED_SERVICES) if action.target == "all" else [action.target]
+        targets: list[str] = list(_MANAGED_SERVICES) if action.target == "all" else [action.target]
         # 纯证据三态（L6/L7）：reobserve 只重新采集，不替模型判终态。
         observed, summary, healthy = _verify_restart_targets(
             store, deployment, targets, action.updated_at
@@ -2917,7 +2917,7 @@ def _consume_restart_failure_receipt(
             action_ts = datetime.fromisoformat(action_created_at)
         except ValueError:
             rec_ts = action_ts = None  # ts 缺失/不可解析 → 走 action_id 身份判定
-        if rec_ts is not None and rec_ts.timestamp() < action_ts.timestamp():
+        if rec_ts is not None and action_ts is not None and rec_ts.timestamp() < action_ts.timestamp():
             stripped = script_output_tail.strip()
             tail = stripped.splitlines()[-1][:160] if stripped else ""
             return False, (
@@ -3141,7 +3141,7 @@ def _pid_dead(pid: int) -> bool:
 
 
 def _find_known_good_release(
-    runtime_root: str | Path, *, exclude_git_head: str
+    runtime_root: str | Path, *, exclude_git_head: str, target: str | None = None
 ) -> tuple[str, Path] | None:
     """EVO-20261009-9d116efa G2: receipt 历史最近一条 known-good release。
 
@@ -3167,6 +3167,8 @@ def _find_known_good_release(
             continue
         if rec.get("rc") != 0 or rec.get("authority") != "service_control":
             continue
+        if target is not None and rec.get("action") not in {target, "all"}:
+            continue
         sha = str(rec.get("git_head_full") or "")
         if not re.fullmatch(r"[0-9a-f]{40}", sha) or sha == exclude_git_head:
             continue
@@ -3178,7 +3180,8 @@ def _find_known_good_release(
 
 
 def _publish_rollback_desired(
-    store: ManagedServiceDeploymentStore, failing: ManagedServiceDeployment
+    store: ManagedServiceDeploymentStore, failing: ManagedServiceDeployment,
+    *, target: str | None = None,
 ) -> tuple[bool, str, Any]:
     """G2 单次回滚发布：把 desired 切回 receipt 历史最近 known-good release。
 
@@ -3187,7 +3190,7 @@ def _publish_rollback_desired(
     re-publish 冲突即放弃回滚，尊重新的接管者）。返回 ``(ok, note, rolled)``。
     """
     found = _find_known_good_release(
-        failing.runtime_root, exclude_git_head=failing.git_head
+        failing.runtime_root, exclude_git_head=failing.git_head, target=target
     )
     if found is None:
         return False, "receipt 历史无可用 known-good（或 .releases 产物缺失）", None
@@ -3207,14 +3210,47 @@ def _publish_rollback_desired(
     return True, note, rolled
 
 
+def _recover_failed_restart(
+    store: ManagedServiceDeploymentStore, action: ServiceControlAction,
+    failing: ManagedServiceDeployment, rc: int,
+) -> None:
+    """One scoped recovery action; preserve the original failed deployment identity.
+
+    Existing CAS, barrier adoption and full worker verification govern recovery.
+    The recovery origin prevents another rollback if that attempt fails. A script
+    exit code alone never proves restoration or releases its admission barrier.
+    """
+    roll_ok, note, rolled = _publish_rollback_desired(store, failing, target=action.target)
+    recovery_id = ""
+    if roll_ok and rolled is not None:
+        try:
+            recovery = store.accept_restart(
+                target=action.target, expected_generation=rolled.generation,
+                requester_session_id=action.requester_session_id,
+                origin=f"auto-rollback:{action.action_id}",
+            )
+            recovery_id = recovery.action_id
+            run_action_worker(store, recovery_id)
+            final = store.read_action(recovery_id)
+            state = final.status if final is not None else "unknown"
+            note += f"; recovery_action={recovery_id} status={state}"
+        except (OSError, ValueError, RuntimeError) as exc:
+            note += f"; recovery_action={recovery_id or 'not_accepted'} error={exc}"
+    original = store.read_action(action.action_id)
+    if original is not None:
+        _mark_action(
+            store, original, status="failed",
+            detail=f"{original.detail}; original_rc={rc}; AUTO-ROLLBACK {note}",
+            release_barriers="keep",
+        )
+
+
 def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> int:
     # 生命周期加固（GOAL-20261008-f143e051）：本进程即执行 worker，进入任何
     # 检查/等待前先盖章 pid——deployment 缺失即时退出的孤儿场景同样受益
     # （reaper 可按死 pid 秒级回收）。盖章失败不阻断执行（旧 store 兼容）。
-    try:
+    with contextlib.suppress(OSError, ValueError):
         store.record_worker_pid(action_id, os.getpid())
-    except (OSError, ValueError):
-        pass
     action = store.read_action(action_id)
     deployment = store.read()
     if action is None or deployment is None:
@@ -3387,7 +3423,10 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                         else "keep"
                     ),
                 )
-                return rc, desired_now, restarted_at, released
+                # Missing/stale receipts cannot prove a stop: retain the barrier but
+                # do not stop a healthy service merely to guess at recovery.
+                physical_failure = released if released or receipt_note.startswith("stage_fact=") else None
+                return rc, desired_now, restarted_at, physical_failure
             return rc, desired_now, restarted_at, None
 
     # 自核验目标（EVO-20260920-213965a1 案1）：目标全集传入，"是否受
@@ -3402,41 +3441,11 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
         # 当时 41 分钟人工回滚）→ 单次自动回滚到 receipt 历史最近一条 known-good
         # generation。仅尝试一次、失败不循环；无 known-good 或 CAS 冲突即放弃，
         # 维持 fail-closed keep 交操作员接管。
-        if rc != 0 and desired_now is not None and failure_released is False:
-            roll_ok, roll_note, rolled = _publish_rollback_desired(store, desired_now)
-            if roll_ok and rolled is not None:
-                rb_rc, _rb_desired, _rb_at, _rb_released = _run_physical_restart_once()
-                final_action = store.read_action(action_id)
-                if final_action is not None:
-                    if rb_rc == 0:
-                        _mark_action(
-                            store,
-                            final_action,
-                            status="failed",
-                            detail=(
-                                f"restart rc={rc}（停机级失败）; AUTO-ROLLBACK→{roll_note} "
-                                f"rc=0 stage_fact=rolled_back; 服务已回滚至最近 known-good "
-                                f"恢复；原目标代码修复并核 schema 后重新 publish"
-                            ),
-                            verify_evidence=(
-                                f"auto-rollback restart rc=0; rolled {roll_note}; "
-                                f"service restored at known-good"
-                            ),
-                            release_barriers=_barrier_services_for_target(action.target),
-                        )
-                    else:
-                        _mark_action(
-                            store,
-                            final_action,
-                            status="failed",
-                            detail=(
-                                f"restart rc={rc}（停机级失败）; AUTO-ROLLBACK→{roll_note} "
-                                f"重启 rc={rb_rc} 亦失败 stage_fact=rolled_back_failed; "
-                                f"服务仍不可用，保留屏障（不二次回滚），需操作员接管"
-                            ),
-                            release_barriers="keep",
-                        )
-                return rb_rc or rc
+        if (
+            rc != 0 and desired_now is not None and failure_released is False
+            and not action.origin.startswith("auto-rollback:")
+        ):
+            _recover_failed_restart(store, action, desired_now, rc)
         return rc or 1
 
     # Phase 4 - 纯证据采集，在 lifecycle lease 外执行（慢启动不阻塞 desired-state
@@ -4025,10 +4034,8 @@ def main(argv: list[str] | None = None) -> int:
         # EVO-20260924-dc3c7c78：成功回执附只读收敛快照——发布成功那一眼
         # 就能看到 lagging 服务，替代事后告警发现；读取失败只缺省该键。
         publish_out = deployment.to_dict()
-        try:
+        with contextlib.suppress(OSError, ValueError, json.JSONDecodeError):
             publish_out["convergence"] = compose_convergence_view(store)
-        except (OSError, ValueError, json.JSONDecodeError):
-            pass
         print(json.dumps(publish_out, ensure_ascii=False, sort_keys=True))
         return 0
     if args.command == "show":
@@ -4148,10 +4155,8 @@ def main(argv: list[str] | None = None) -> int:
             receipt["ok"] = True
             receipt["detached"] = True
             receipt["hint"] = "worker detached; poll status/show for terminal state"
-            try:
+            with contextlib.suppress(OSError, ValueError, json.JSONDecodeError):
                 receipt["convergence"] = compose_convergence_view(store)
-            except (OSError, ValueError, json.JSONDecodeError):
-                pass
         print(
             json.dumps(receipt, ensure_ascii=False),
             flush=True,
@@ -4323,10 +4328,8 @@ def main(argv: list[str] | None = None) -> int:
             update_out["ok"] = True
             update_out["detached"] = True
             update_out["hint"] = "worker detached; poll status/show for terminal state"
-        try:
+        with contextlib.suppress(OSError, ValueError, json.JSONDecodeError):
             update_out["convergence"] = compose_convergence_view(store)
-        except (OSError, ValueError, json.JSONDecodeError):
-            pass
         print(json.dumps(update_out, ensure_ascii=False), flush=True)
         return rc
     if args.command == "barriers":

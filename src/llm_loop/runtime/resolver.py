@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -705,23 +706,28 @@ def check_runtime_toml(path: str, services: Sequence[str]) -> tuple[bool, str]:
 
 
 def _cli_check_toml(argv: list[str]) -> int:
-    """``python -m llm_loop.runtime.resolver --check-toml <path> [service ...]``.
-
-    Only this subcommand is exposed; bare key resolution stays unimplemented on
-    purpose so pre-existing ``-m`` callers keep their current (silent) behavior.
-    """
-    args = [a for a in argv[1:] if a != "--check-toml"]
-    if not args:
-        print("usage: python -m llm_loop.runtime.resolver --check-toml <runtime.toml> [service ...]", file=sys.stderr)
+    """Dispatch schema checks separately from restart-script endpoint queries."""
+    args = argv[1:]
+    if len(args) == 1 and args[0] in {"WEB_PORT", "WEB_HOST"}:
+        try:
+            value = resolve_effective("web").values[args[0]]
+        except (ValueError, OSError, KeyError) as exc:
+            print(f"runtime endpoint query failed: {exc}", file=sys.stderr)
+            return 1
+        print(value)
+        return 0
+    if len(args) < 2 or args[0] != "--check-toml":
+        print("usage: resolver WEB_PORT|WEB_HOST or --check-toml <runtime.toml> [service ...]", file=sys.stderr)
         return 2
-    path = args[0]
-    services = args[1:] or ["web", "feishu", "learning"]
+    path = args[1]
+    services = args[2:] or ["web", "feishu", "learning"]
+    if any(service not in {"web", "feishu", "learning"} for service in services):
+        print("service must be web, feishu or learning", file=sys.stderr)
+        return 2
     ok, message = check_runtime_toml(path, services)
     print(message)
     return 0 if ok else 1
 
 
 if __name__ == "__main__":
-    import sys as _sys
-
-    raise SystemExit(_cli_check_toml(_sys.argv))
+    raise SystemExit(_cli_check_toml(sys.argv))

@@ -257,6 +257,14 @@ RESTART_PORT="$WEB_PORT"
 
 _log() { echo "[mirror] $(date '+%H:%M:%S') $*"; }
 
+# Endpoint queries are value channels; diagnostics must never reach stop/start.
+_web_endpoint_preflight() {
+  if [[ ! "$RESTART_PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$RESTART_PORT < 1 || 10#$RESTART_PORT > 65535 )); then
+    _log "❌ Web 端口解析无效，拒绝停止服务: $RESTART_PORT"
+    return 1
+  fi
+}
+
 # P0-A shared-service lifecycle authority: mutating restarts require an
 # operator-published desired deployment that exactly binds code/runtime roots and
 # tracked Git identity. Web/all also bind the ignored WebUI artifact tree. This is
@@ -1061,12 +1069,14 @@ case "${1:-web}" in
              # 不触任何服务、不验 service_control 绑定（那是 mutating 路径的职责）。
              # R2.3(2026-09-22): 追加 store 绑定校验——dual-root 缺声明在部署预检即 fail。
              # EVO-20261009-9d116efa G1: 追加 runtime.toml schema 兼容性（目标代码自校验）。
+             _web_endpoint_preflight || exit 1
              _webui_artifact_preflight || exit 1
              _knowledge_binding_preflight || exit 1
              _runtime_toml_schema_preflight || exit 1
              _log "✅ PREFLIGHT_ONLY 通过（未触碰任何服务）"
              exit 0 ;;
   web)     _webui_artifact_preflight || { _write_receipt web "1" "webui_artifact_preflight_failed"; exit 1; }
+           _web_endpoint_preflight || { _write_receipt web "1" "web_endpoint_preflight_failed"; exit 1; }
            _acquire_restart_lock web
            _service_control_preflight web || { _write_receipt web "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck web || { _write_receipt web "1" "active_run_precheck_failed"; exit 1; }
@@ -1129,6 +1139,7 @@ case "${1:-web}" in
            _write_receipt learning "$_rc" ""
            exit "$_rc" ;;
   all)     _webui_artifact_preflight || { _write_receipt all "1" "webui_artifact_preflight_failed"; exit 1; }
+           _web_endpoint_preflight || { _write_receipt all "1" "web_endpoint_preflight_failed"; exit 1; }
            _acquire_restart_lock all
            _service_control_preflight all || { _write_receipt all "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck all || { _write_receipt all "1" "active_run_precheck_failed"; exit 1; }

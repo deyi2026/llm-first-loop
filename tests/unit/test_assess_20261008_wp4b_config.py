@@ -73,6 +73,7 @@ def test_settings_llm_timeout_uses_float_parser(monkeypatch, tmp_path):
     from llm_loop.config import load_settings
 
     monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("LLM_BASE_URL", "http://config-test.invalid/v1")
     monkeypatch.setenv("LLM_TIMEOUT_S", "0.5")
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     settings = load_settings()
