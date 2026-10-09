@@ -21,12 +21,12 @@ import shutil
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Mapping
-from contextlib import nullcontext
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -1158,21 +1158,34 @@ class LLMClient:
         transport_retry_index: int = 0,
         prepared: Mapping[str, Any] | None = None,
     ) -> Any:
-        """Return RG-3C physical-send correlation scope or a zero-behavior fallback."""
+        """Compose an optional hard pre-send budget gate with RG-3C observation.
+
+        With no explicitly bound budget the transport behavior is unchanged.
+        Budget failures must never be swallowed by RG-3C shadow fail-open.
+        """
 
         observer = self.transport_observer
         fn = getattr(observer, "transport_attempt", None) if observer is not None else None
-        if not callable(fn):
-            return nullcontext()
-        try:
-            return fn(
-                provider_id=self.provider,
-                model_id=model_id,
-                transport_retry_index=transport_retry_index,
-                prepared=prepared,
-            )
-        except Exception:  # noqa: BLE001 - settlement shadow can never block transport
-            return nullcontext()
+        observation: AbstractContextManager[Any] = nullcontext()
+        if callable(fn):
+            try:
+                observation = cast(AbstractContextManager[Any], fn(
+                    provider_id=self.provider,
+                    model_id=model_id,
+                    transport_retry_index=transport_retry_index,
+                    prepared=prepared,
+                ))
+            except Exception:  # noqa: BLE001 - RG-3C remains shadow-only
+                observation = nullcontext()
+
+        @contextmanager
+        def _scoped_attempt() -> Iterator[None]:
+            from llm_loop.resources.task_budget_dispatch import checked_provider_attempt
+
+            with checked_provider_attempt(), observation:
+                yield
+
+        return _scoped_attempt()
 
     def _note_settled_response_facts(
         self,
@@ -1180,7 +1193,7 @@ class LLMClient:
         finish_reason: str | None,
         content: str | None,
         reasoning_content: str | None,
-        tool_calls: list[ToolCall] | list[Mapping[str, Any]] | None,
+        tool_calls: Sequence[ToolCall | Mapping[str, Any]] | None,
         provider_observed_model: str | None = None,
     ) -> None:
         """GAP-RESP-1 (C1): attach response facts to the active attempt settlement.
