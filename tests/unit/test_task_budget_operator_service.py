@@ -94,6 +94,12 @@ def _exchange(config: OperatorServiceConfig, request: dict[str, Any], monkeypatc
             "llm_loop.resources.task_budget_operator_service._peer_uid",
             lambda _conn: config.expected_web_uid,
         )
+        # Offline tests cannot create the two real UID/ACL principals;
+        # successful IPC tests mock both kernel-credential and EventStore ACL.
+        monkeypatch.setattr(
+            "llm_loop.resources.task_budget_operator_service._assert_readonly_event_source",
+            lambda _config, _session: None,
+        )
         worker = threading.Thread(target=serve_authenticated_connection, args=(config, left))
         worker.start()
         _send_frame(right, request)
@@ -208,6 +214,10 @@ def test_socket_client_api_can_receive_only_a_signed_token(tmp_path: Path, monke
     monkeypatch.setattr(
         "llm_loop.resources.task_budget_operator_service._peer_uid",
         lambda _conn: config.expected_web_uid,
+    )
+    monkeypatch.setattr(
+        "llm_loop.resources.task_budget_operator_service._assert_readonly_event_source",
+        lambda _config, _session: None,
     )
     # macOS AF_UNIX sun_path is short (~104 bytes); the MCP pytest temp
     # root can be much longer. Bind a *relative* socket name from temp cwd.

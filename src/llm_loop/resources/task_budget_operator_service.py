@@ -79,6 +79,57 @@ def _private_budget_key(path: Path) -> bytes:
         _deny()
 
 
+def assert_readonly_web_event_source(
+    *, event_store_dir: Path, expected_web_uid: int, session_id: str,
+) -> None:
+    """Check the ACTUAL issuer UID has read-only Web EventStore access.
+
+    Never infer an ACL from a printed ``ls -le`` string or from a declared
+    username. The kernel must allow O_RDONLY and refuse write access in the
+    current process. Rotated/multi-segment logs need a separate ACL contract;
+    fail closed rather than approving a partial EventStore projection.
+    """
+    store = EventStore(event_store_dir, enabled=True)
+    try:
+        if os.geteuid() == expected_web_uid or store._is_multi_segment(session_id):
+            _deny()
+        directory = os.lstat(event_store_dir)
+        if (
+            not stat.S_ISDIR(directory.st_mode)
+            or directory.st_uid != expected_web_uid
+            or directory.st_mode & 0o002
+            or os.access(event_store_dir, os.W_OK)
+        ):
+            _deny()
+        path = Path(store._path(session_id))
+        # On macOS mode 0600 can still have an explicit read-only ACL for
+        # another UID. Do NOT weaken POSIX modes to 0644 to make this pass.
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            source = os.fstat(fd)
+            if (
+                not stat.S_ISREG(source.st_mode)
+                or source.st_uid != expected_web_uid
+                or source.st_nlink != 1
+                or source.st_mode & 0o077
+                or os.access(path, os.W_OK)
+            ):
+                _deny()
+            # Verify a real readable byte/EOF with this process identity.
+            os.read(fd, 1)
+        finally:
+            os.close(fd)
+    except (OSError, ValueError):
+        _deny()
+
+
+def _assert_readonly_event_source(config: OperatorServiceConfig, session_id: str) -> None:
+    assert_readonly_web_event_source(
+        event_store_dir=config.event_store_dir,
+        expected_web_uid=config.expected_web_uid, session_id=session_id,
+    )
+
+
 def _peer_uid(conn: socket.socket) -> int:
     """Kernel-authenticated Unix peer identity, fail-closed off Linux/macOS."""
     if sys.platform == "darwin":
@@ -140,6 +191,7 @@ class OperatorServiceConfig:
     budget_key_id: str
     operator_trust_file: Path
     audit_dir: Path
+    expected_web_gid: int | None = None
 
     def validate_boundary(self) -> None:
         if (
@@ -156,10 +208,73 @@ class OperatorServiceConfig:
         _private_budget_key(self.budget_key_file)
         load_pinned_operator_verifier(self.operator_trust_file)
 
+    def validate_live_socket_boundary(self) -> None:
+        """Only a pre-provisioned operator-owned, Web-group-traversable dir.
+
+        Merely accepting a --web-uid CLI argument or chmodding the socket
+        cannot establish a real Web-to-issuer Unix IPC permission boundary.
+        This check is mandatory on actual daemon start, not just unit RPC.
+        """
+        self.validate_boundary()
+        if (
+            type(self.expected_web_gid) is not int
+            or self.expected_web_gid < 0
+            or len(os.fsencode(str(self.socket_path))) >= 100
+            or not self.socket_path.is_absolute()
+        ):
+            _deny()
+        folder = os.lstat(self.socket_path.parent)
+        if (
+            folder.st_gid != self.expected_web_gid
+            or not folder.st_mode & stat.S_ISGID
+            or folder.st_mode & 0o027
+            or folder.st_mode & 0o050 != 0o050
+        ):
+            _deny()
+        event_dir = os.lstat(self.event_store_dir)
+        if (
+            not stat.S_ISDIR(event_dir.st_mode)
+            or event_dir.st_uid != self.expected_web_uid
+            or event_dir.st_mode & 0o002
+            or os.access(self.event_store_dir, os.W_OK)
+            or not os.access(self.event_store_dir, os.R_OK | os.X_OK)
+        ):
+            _deny()
+
 
 def _audit_receipt(directory: Path, *, event_id: str, session_id: str, token: str) -> None:
     """Write a durable, bounded receipt BEFORE the positive token escapes."""
     _owner_directory(directory)
+    # Persistent O_EXCL fence is deliberately independent of the Web Run
+    # ledger. Even if a crash happens after file creation but before fsync,
+    # a subsequent request for this SAME event MUST NOT issue another token.
+    # Never remove/repair an uncertain fence automatically.
+    event_key = hashlib.sha256((session_id + "\0" + event_id).encode()).hexdigest()
+    fence_path = directory / f"issued-{event_key}.json"
+    fence = json.dumps({
+        "schema": "operator-approval-one-shot/v1",
+        "event_id": event_id, "session_id": session_id,
+        "token_sha256": hashlib.sha256(token.encode()).hexdigest(),
+        "timestamp": time.time(),
+    }, separators=(",", ":"), ensure_ascii=True).encode()
+    try:
+        fd = os.open(
+            fence_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            if os.write(fd, fence) != len(fence):
+                _deny()
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        dir_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        _deny()
     path = directory / "approvals.jsonl"
     payload = json.dumps({
         "schema": "operator-one-attempt-issued/v1",
@@ -207,6 +322,7 @@ def _issue_operator_approved(config: OperatorServiceConfig, request: dict[str, A
         or not isinstance(proof, str) or len(proof) > 8192
     ):
         _deny()
+    _assert_readonly_event_source(config, session_id)
     event_store = EventStore(config.event_store_dir)
     event = _rehydrate_event(event_store, session_id, event_id)
     issuer = ApprovedOneAttemptIssuer(
@@ -238,7 +354,7 @@ def serve_authenticated_connection(config: OperatorServiceConfig, conn: socket.s
 
 def serve_forever(config: OperatorServiceConfig) -> NoReturn:
     """Operator-started, owner-isolated daemon; never invoked by Web routes."""
-    config.validate_boundary()
+    config.validate_live_socket_boundary()
     if os.path.lexists(config.socket_path):
         _deny()
     previous_umask = os.umask(0o117)
@@ -246,6 +362,14 @@ def serve_forever(config: OperatorServiceConfig) -> NoReturn:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
             server.bind(str(config.socket_path))
             os.chmod(config.socket_path, 0o660)  # operator-owned, group-connect
+            mounted = os.lstat(config.socket_path)
+            if (
+                not stat.S_ISSOCK(mounted.st_mode)
+                or mounted.st_uid != os.geteuid()
+                or mounted.st_gid != config.expected_web_gid
+                or mounted.st_mode & 0o777 != 0o660
+            ):
+                _deny()
             server.listen(4)
             while True:
                 conn, _ = server.accept()
@@ -281,6 +405,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Operator-only GLM one-attempt budget signer")
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--web-uid", type=int, required=True)
+    parser.add_argument("--web-gid", type=int, required=True)
     parser.add_argument("--event-store", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--budget-key", type=Path, required=True)
@@ -293,6 +418,7 @@ def main() -> None:
         event_store_dir=args.event_store, workspace_root=args.workspace,
         budget_key_file=args.budget_key, budget_key_id=args.budget_key_id,
         operator_trust_file=args.operator_trust, audit_dir=args.audit_dir,
+        expected_web_gid=args.web_gid,
     ))
 
 
