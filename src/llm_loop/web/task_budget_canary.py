@@ -31,6 +31,7 @@ from llm_loop.resources.task_budget_process_transport import (
     bind_isolated_provider_transport,
 )
 from llm_loop.resources.task_budget_store import TaskBudgetDeniedError, TaskBudgetStore
+from llm_loop.runtime.resolver import business_config_snapshot
 
 
 @dataclass(frozen=True)
@@ -93,7 +94,9 @@ def _public_pem(raw: Any) -> bytes:
 
 def load_operator_web_canary(engine: Any) -> WebTaskBudgetCanary | None:
     """The ONLY startup switch. Absent config => default OFF, no side effects."""
-    config_path = os.environ.get("LFL_TASK_BUDGET_WEB_CANARY_CONFIG", "").strip()
+    config_path = business_config_snapshot("web").get(
+        "LFL_TASK_BUDGET_WEB_CANARY_CONFIG", ""
+    ).strip()
     if not config_path:
         return None
     config = _read_operator_config(Path(config_path))
