@@ -203,18 +203,27 @@ class _RunEntrypointMixin:
             _run_save_token = self.session._activate_run_save_token(
                 session_id, run_generation=run_generation
             )
-            # I4-A: only a test-owned explicit offline intent may bind a
-            # zero-provider/zero-tool root. This happens AFTER session lease
-            # admission and the exact Run generation is known. No production
-            # route supplies such an intent, so default execution is unchanged.
+            # I5-A: a separately operator-signed, zero-send Web intent may be
+            # consumed only after the real Run lease, generation and human
+            # ingress exist. Ordinary production routes install no intent.
+            from llm_loop.resources.task_budget_authority import (
+                prepare_signed_web_run_budget,
+            )
             from llm_loop.resources.task_budget_run_scope import prepare_offline_run_budget
 
-            _budget_execution = prepare_offline_run_budget(
-                session_id=session_id,
-                workspace_root=run_workspace,
-                run_generation=run_generation,
-                ingress=ingress,
+            _budget_execution = prepare_signed_web_run_budget(
+                session_id=session_id, workspace_root=run_workspace,
+                run_generation=run_generation, user_text=user_text, ingress=ingress,
             )
+            if _budget_execution is None:
+                # I4-A legacy offline fixture remains available; absent both
+                # explicit intents the ordinary Run is unchanged.
+                _budget_execution = prepare_offline_run_budget(
+                    session_id=session_id,
+                    workspace_root=run_workspace,
+                    run_generation=run_generation,
+                    ingress=ingress,
+                )
             if _budget_execution is not None:
                 from llm_loop.resources.task_budget_dispatch import (
                     register_active_task_budget,
