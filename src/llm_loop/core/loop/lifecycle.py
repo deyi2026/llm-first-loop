@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -160,10 +160,12 @@ class _RunEntrypointMixin:
         _run_stack = ExitStack()
         _run_save_token: object | None = None
         _budget_execution: Any = None
+        _event_step_scope: ExitStack | None = None
         inner = None
 
         @contextmanager
         def _bound_run_context():
+            nonlocal _event_step_scope
             sid_token = _current_session_id.set(session_id)
             generation_token = _current_run_generation.set(run_generation)
             ws_token = _current_workspace_root.set(run_workspace)
@@ -176,14 +178,23 @@ class _RunEntrypointMixin:
                 session_id if bound_ingress is not None else ""
             )
             try:
-                if _budget_execution is not None:
-                    from llm_loop.resources.task_budget_dispatch import bind_task_budget
+                # For I5-E, the *real* user EventStore event is appended inside
+                # the first next(inner), not before it. Its post-append callback
+                # can enter the same step scope to bind the newly admitted
+                # zero budget before any Provider/Tool dispatch. Subsequent
+                # generator resumptions bind that budget on entry as usual.
+                with ExitStack() as step_scope:
+                    _event_step_scope = step_scope
+                    try:
+                        if _budget_execution is not None:
+                            from llm_loop.resources.task_budget_dispatch import bind_task_budget
 
-                    with bind_task_budget(_budget_execution, cleanup_scope=True):
+                            step_scope.enter_context(
+                                bind_task_budget(_budget_execution, cleanup_scope=True)
+                            )
                         yield
-                else:
-                    with nullcontext():
-                        yield
+                    finally:
+                        _event_step_scope = None
             finally:
                 _current_ingress_session_id.reset(ingress_sid_token)
                 _current_ingress_token.reset(ingress_token)
@@ -207,47 +218,77 @@ class _RunEntrypointMixin:
             # consumed only after the real Run lease, generation and human
             # ingress exist. Ordinary production routes install no intent.
             from llm_loop.resources.task_budget_authority import (
+                active_signed_web_budget_intent,
                 prepare_signed_web_run_budget,
             )
-            from llm_loop.resources.task_budget_run_scope import prepare_offline_run_budget
-
-            _budget_execution = prepare_signed_web_run_budget(
-                session_id=session_id, workspace_root=run_workspace,
-                run_generation=run_generation, user_text=user_text, ingress=ingress,
+            from llm_loop.resources.task_budget_dispatch import (
+                bind_task_budget,
+                register_active_task_budget,
+                unregister_active_task_budget,
             )
-            if _budget_execution is None:
-                # I4-A legacy offline fixture remains available; absent both
-                # explicit intents the ordinary Run is unchanged.
-                _budget_execution = prepare_offline_run_budget(
+            from llm_loop.resources.task_budget_event_authority import (
+                active_signed_web_event_plan,
+                prepare_signed_web_event_budget,
+            )
+            from llm_loop.resources.task_budget_run_scope import prepare_offline_run_budget
+            from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+
+            _event_plan = active_signed_web_event_plan()
+            if _event_plan is not None and active_signed_web_budget_intent() is not None:
+                raise TaskBudgetDeniedError("operator_budget_mutually_exclusive_authority")
+            if _event_plan is None:
+                _budget_execution = prepare_signed_web_run_budget(
                     session_id=session_id,
                     workspace_root=run_workspace,
                     run_generation=run_generation,
-                    ingress=ingress,
+                    user_text=user_text, ingress=ingress,
                 )
-            if _budget_execution is not None:
-                from llm_loop.resources.task_budget_dispatch import (
-                    register_active_task_budget,
-                    unregister_active_task_budget,
-                )
-
-                register_active_task_budget(_budget_execution)
+                if _budget_execution is None:
+                    # Original I4-A offline fixture, exactly as before.
+                    _budget_execution = prepare_offline_run_budget(
+                        session_id=session_id, workspace_root=run_workspace,
+                        run_generation=run_generation, ingress=ingress,
+                    )
+            def _register_budget(execution: Any) -> None:
+                register_active_task_budget(execution)
                 # The registration lives through inner.close() and is
                 # identity-removed BEFORE the Session run lease is released.
-                _run_stack.callback(unregister_active_task_budget, _budget_execution)
+                _run_stack.callback(unregister_active_task_budget, execution)
                 # Runner.cancel can be accepted after _sync_active publish
                 # but before this budget registration. Re-read that exact
                 # accepted Stop AFTER installing the callback, so no
                 # already-cancelled Run obtains a fresh budget window.
                 if runner is not None and runner.is_cancelled(session_id):
-                    _budget_execution.request_stop(
+                    execution.request_stop(
                         reason=runner.cancel_reason(session_id) or "runner_stop"
                     )
+            if _budget_execution is not None:
+                _register_budget(_budget_execution)
+
+            def _on_human_event(event: Any) -> None:
+                nonlocal _budget_execution
+                if _event_plan is None:
+                    return
+                if _budget_execution is not None or _event_step_scope is None:
+                    raise TaskBudgetDeniedError("operator_budget_event_scope_invalid")
+                if getattr(self, "_event_store", None) is not _event_plan.event_store:
+                    raise TaskBudgetDeniedError("operator_budget_event_store_mismatch")
+                _budget_execution = prepare_signed_web_event_budget(
+                    plan=_event_plan, event=event, session_id=session_id,
+                    workspace_root=run_workspace, run_generation=run_generation,
+                    user_text=user_text, ingress=ingress,
+                )
+                _register_budget(_budget_execution)
+                _event_step_scope.enter_context(
+                    bind_task_budget(_budget_execution, cleanup_scope=True)
+                )
             with self._run_acquired_callbacks_guard:
                 on_run_acquired = self._run_acquired_callbacks.get(session_id)
             inner = self._run_stream_inner(
                 session_id, user_text, model,
                 run_save_token=_run_save_token, on_run_acquired=on_run_acquired,
                 ingress=ingress, user_metadata=user_metadata,
+                on_human_event_appended=_on_human_event if _event_plan is not None else None,
             )
 
             while True:

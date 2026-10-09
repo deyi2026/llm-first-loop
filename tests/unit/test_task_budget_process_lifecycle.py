@@ -22,16 +22,26 @@ from llm_loop.resources.task_budget_process_transport import (
 )
 from tests.unit.test_task_budget_process_transport import _isolated_children, _run_isolated
 from tests.unit.test_task_budget_tls_transport import _loopback_https
+from tests.unit.test_task_budget_tls_transport import _test_cert as _shared_cert_fixture
 from tests.unit.test_task_budget_transport_stop import _budget, _local_sse
 
-pytest_plugins = ("tests.unit.test_task_budget_tls_transport",)
+
+@pytest.fixture(scope="module")
+def i5d_tls_certificate(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    """Explicit dependency; pytest_plugins in a test module is order-sensitive.
+
+    Clean I5-D HEAD reproduces 4 missing-fixture errors when the whole
+    budget matrix is collected together. Reuse the fixture factory directly
+    instead of depending on test-module plugin discovery order.
+    """
+    return _shared_cert_fixture.__wrapped__(tmp_path_factory)
 
 
 @pytest.mark.parametrize("protocol", ["openai", "anthropic", "google", "lms-chat"])
 def test_verified_tls_worker_stop_is_physical_and_unknown(
-    tmp_path: Path, _test_cert: tuple[Path, Path], protocol: str,
+    tmp_path: Path, i5d_tls_certificate: tuple[Path, Path], protocol: str,
 ) -> None:
-    cert, key = _test_cert
+    cert, key = i5d_tls_certificate
     budget = _budget(tmp_path)
     register_active_task_budget(budget)
     try:

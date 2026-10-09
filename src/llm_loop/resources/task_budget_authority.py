@@ -153,6 +153,11 @@ _SIGNED_WEB_INTENT: ContextVar[SignedWebBudgetIntent | None] = ContextVar(
 )
 
 
+def active_signed_web_budget_intent() -> SignedWebBudgetIntent | None:
+    """I5-E: prevent simultaneous text-only and event-bound authorities."""
+    return _SIGNED_WEB_INTENT.get()
+
+
 @contextmanager
 def bind_signed_web_budget_intent(intent: SignedWebBudgetIntent) -> Iterator[None]:
     if not isinstance(intent, SignedWebBudgetIntent):
