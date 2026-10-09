@@ -1353,7 +1353,8 @@ def build_engine(
     # M48: 网络搜索（Bing/百度双后端降级）
     _register_basic("web_search", WebSearchTool(timeout_s=_tool_timeout))
 
-    # P3-1(2026-08-15): MCP 客户端接入（MCP_SERVERS env；stdio 连接 + schema 透传 +
+    # P3-1(2026-08-15)/P1-B(2026-10-09): MCP 客户端接入（MCP_SERVERS env；
+    # stdio 与 Streamable HTTP 双传输 + 双时代协议协商 + schema 透传 +
     # 五态包装 + 超时/审计复用；单服务器 fail-open）
     try:
         from llm_loop.tools.mcp_client import register_mcp_tools
