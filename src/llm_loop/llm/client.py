@@ -150,6 +150,23 @@ def _task_budget_transport_timeout(effective_timeout: float) -> float | httpx.Ti
     return budgeted_transport_timeout(effective_timeout)
 
 
+def _task_budget_provider_stream(
+    client: httpx.Client, method: str, url: str, *,
+    json: dict[str, Any], headers: dict[str, str],
+    timeout: float | httpx.Timeout,
+) -> Any:
+    """I5-D: delegate only a trusted opt-in bound attempt to an OS worker.
+
+    With no explicit isolation profile this is the exact existing HTTPX
+    streaming context, including the same timeout argument and shared client.
+    """
+    from llm_loop.resources.task_budget_process_transport import isolated_provider_stream
+
+    return isolated_provider_stream(
+        client, method, url, json=json, headers=headers, timeout=timeout,
+    )
+
+
 # 2026-09-18（gen20 自愈）: 连接被拒绝时的单次重试前退避秒数。毫秒级原地重试对瞬断/
 # 陈旧连接无效（实测两次尝试相隔 2.8ms 同因 ECONNREFUSED）；仅作用于 ConnectError。
 _TRANSPORT_RETRY_BACKOFF_S = 0.5
@@ -2106,8 +2123,8 @@ class LLMClient:
                     representation="openai-json",
                     timeout_s=effective_timeout,
                 ),
-            ), self._client.stream(
-                "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
@@ -2371,8 +2388,8 @@ class LLMClient:
                     representation="anthropic-converted",
                     timeout_s=effective_timeout,
                 ),
-            ), self._client.stream(
-                "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
@@ -2542,8 +2559,8 @@ class LLMClient:
                     representation="google-payload",
                     timeout_s=effective_timeout,
                 ),
-            ), self._client.stream(
-                "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 self._raise_for_status(resp, model_id=model_id)
                 self._observe_transport_response(resp, model_id=model_id)
@@ -2687,8 +2704,8 @@ class LLMClient:
                     representation="lms-chat-json",
                     timeout_s=effective_timeout,
                 ),
-            ), self._client.stream(
-                "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 if resp.status_code >= 400:
                     self._raise_for_status(resp, model_id=model_id)
