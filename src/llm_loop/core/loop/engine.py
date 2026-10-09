@@ -107,6 +107,7 @@ from llm_loop.resources.provider_settlement import (
     ProviderCallOutcome,
     ProviderCallPurpose,
 )
+from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
 from llm_loop.runtime.causality import (
     background_run_generation_fact,
     build_run_integrity_receipt,
@@ -855,8 +856,6 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # No production Web route installs the callback; absent it, no change.
         if on_human_event_appended is not None:
             if _user_event is None:
-                from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
-
                 raise TaskBudgetDeniedError("operator_human_event_not_persisted")
             on_human_event_appended(_user_event)
         if raw_queue_id:
