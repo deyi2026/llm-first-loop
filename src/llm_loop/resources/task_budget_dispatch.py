@@ -15,8 +15,8 @@ from __future__ import annotations
 import hashlib
 import threading
 import uuid
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,6 +52,48 @@ class TaskBudgetExecution:
     _local_stop: threading.Event = field(
         default_factory=threading.Event, repr=False, compare=False
     )
+    # Each response is owned by its exact Run; Stop may interrupt its own
+    # network socket but must never close an unrelated client or pooled stream.
+    _transport_lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
+    _transport_aborters: dict[int, Callable[[], None]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+
+    @contextmanager
+    def track_transport(self, abort: Callable[[], None]) -> Iterator[None]:
+        """Register an active, owner-scoped physical abort callback.
+
+        Double-check the local stop while holding the transport lock: no
+        callback may be attached after Stop has already drained this Run.
+        The callback is never treated as a remote cancellation/billing ACK.
+        """
+        self._get_validated()
+        key = id(abort)
+        with self._transport_lock:
+            if self._local_stop.is_set():
+                raise TaskBudgetDeniedError("local_run_stop_requested")
+            self._transport_aborters[key] = abort
+        try:
+            yield
+        finally:
+            with self._transport_lock:
+                self._transport_aborters.pop(key, None)
+
+    def abort_active_transports(self) -> None:
+        """Best-effort shutdown only of sockets registered to this Run.
+
+        Physical close/read termination is verified by transport-layer tests
+        or receipts, not by this request or the local stop flag.
+        """
+        with self._transport_lock:
+            callbacks = list(self._transport_aborters.values())
+            self._transport_aborters.clear()
+        for abort in callbacks:
+            # An already-closed socket cannot authorize further work.
+            with suppress(OSError, ValueError):
+                abort()
 
     def _get_validated(self) -> dict[str, Any]:
         if self._local_stop.is_set():
@@ -152,6 +194,7 @@ class TaskBudgetExecution:
         The root remains UNKNOWN across restart until reconciled.
         """
         self._local_stop.set()
+        self.abort_active_transports()
         self._cas_mutate("request_stop", reason=reason)
 
     def seal_at_run_end(self, *, reason: str = "run_ended") -> None:
@@ -167,6 +210,7 @@ class TaskBudgetExecution:
         all wake/subagent derivation.
         """
         self._local_stop.set()
+        self.abort_active_transports()
         snapshot = self.store.read(self.budget_id)
         if snapshot["phase"] in {BudgetPhase.ISSUED, BudgetPhase.ACTIVE}:
             self._cas_mutate("request_stop", reason=reason)
