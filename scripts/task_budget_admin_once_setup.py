@@ -73,6 +73,17 @@ def main() -> int:
         "valid_from_epoch_s": now - 1,
         "valid_until_epoch_s": now + args.ttl_seconds,
     }
+    # EVO-20261009-9d116efa G3：发放前置校验——字段未在本代码注册即拒发。
+    # 事故：task_budget_canary_config 先落 runtime.toml、目标代码未注册
+    # （2026-10-09，7fe0170d4 目标重启失败、41 分钟人工回滚）。发放一份
+    # 本代码消费不了的配置就是在制造同类事故，fail-closed 拒绝。
+    from llm_loop.runtime.resolver import TOML_SCHEMA
+
+    if ("web", "task_budget_canary_config") not in TOML_SCHEMA:
+        print("REFUSED: 本代码 TOML_SCHEMA 未注册 (web, task_budget_canary_config)")
+        print("先在 resolver.py 注册字段并补齐单测，再发放 admin-once 配置。")
+        print("未注册状态下 runtime.toml 引用该配置，重启会 fail-closed 中止（G1）或停机（旧脚本）。")
+        return 3
     _store_exclusive(args.output, payload)
     print("ADMIN_ONCE_CONFIG_CREATED: true")
     print("WEB_SESSION_ID:", session_id)
@@ -80,6 +91,10 @@ def main() -> int:
     print("TIME_WINDOW_SECONDS:", args.ttl_seconds)
     print("PHYSICAL_ATTEMPTS_MAX: 1")
     print("TOOLS_WAKE_SUBAGENTS: DENIED")
+    print(
+        "NEXT: runtime.toml [web] task_budget_canary_config 指向该文件后，"
+        "重启前先自检: python -m llm_loop.runtime.resolver --check-toml <runtime.toml> web"
+    )
     return 0
 
 
