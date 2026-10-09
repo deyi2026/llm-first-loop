@@ -473,6 +473,23 @@ def subagent_provider_call_lease(
         yield lease
 
 
+def _require_qualified_budget_client(client: object) -> None:
+    """A bound task must not bypass the budget via an uninstrumented client."""
+    from llm_loop.resources.task_budget_dispatch import active_task_budget
+
+    execution = active_task_budget()
+    if execution is None:
+        return
+    snapshot = execution._get_validated()
+    from llm_loop.llm.client import LLMClient
+    from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+
+    if not isinstance(client, LLMClient):
+        raise TaskBudgetDeniedError("provider_adapter_unqualified")
+    if snapshot["grant"]["limits"]["physical_attempts"] == 0:
+        raise TaskBudgetDeniedError("physical_attempts_exhausted")
+
+
 def foreground_task_provider_chat(
     owner: object,
     client: object,
@@ -488,6 +505,7 @@ def foreground_task_provider_chat(
     site_index: int = 0,
 ) -> Any:
     """Execute one foreground Task sync provider call under its qualified lease."""
+    _require_qualified_budget_client(client)
     coordinator = getattr(owner, "provider_call_coordinator", None)
     site_scope = (
         coordinator.bind_shadow_call_site(
@@ -528,6 +546,7 @@ def foreground_task_provider_stream(
     site_index: int = 0,
 ) -> Iterator[Any]:
     """Wrap one foreground Task stream; lease lives until stream terminal/close."""
+    _require_qualified_budget_client(client)
     coordinator = getattr(owner, "provider_call_coordinator", None)
     site_scope = (
         coordinator.bind_shadow_call_site(

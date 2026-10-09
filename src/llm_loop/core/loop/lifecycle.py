@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -159,6 +159,7 @@ class _RunEntrypointMixin:
         run_generation = str(_current_run_generation.get() or uuid.uuid4().hex)
         _run_stack = ExitStack()
         _run_save_token: object | None = None
+        _budget_execution: Any = None
         inner = None
 
         @contextmanager
@@ -175,7 +176,14 @@ class _RunEntrypointMixin:
                 session_id if bound_ingress is not None else ""
             )
             try:
-                yield
+                if _budget_execution is not None:
+                    from llm_loop.resources.task_budget_dispatch import bind_task_budget
+
+                    with bind_task_budget(_budget_execution):
+                        yield
+                else:
+                    with nullcontext():
+                        yield
             finally:
                 _current_ingress_session_id.reset(ingress_sid_token)
                 _current_ingress_token.reset(ingress_token)
@@ -194,6 +202,18 @@ class _RunEntrypointMixin:
                 raise SessionBusyError(f"会话 {session_id} 正由另一进程执行，请稍后重试")
             _run_save_token = self.session._activate_run_save_token(
                 session_id, run_generation=run_generation
+            )
+            # I4-A: only a test-owned explicit offline intent may bind a
+            # zero-provider/zero-tool root. This happens AFTER session lease
+            # admission and the exact Run generation is known. No production
+            # route supplies such an intent, so default execution is unchanged.
+            from llm_loop.resources.task_budget_run_scope import prepare_offline_run_budget
+
+            _budget_execution = prepare_offline_run_budget(
+                session_id=session_id,
+                workspace_root=run_workspace,
+                run_generation=run_generation,
+                ingress=ingress,
             )
             with self._run_acquired_callbacks_guard:
                 on_run_acquired = self._run_acquired_callbacks.get(session_id)

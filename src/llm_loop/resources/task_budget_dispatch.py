@@ -12,11 +12,13 @@ are rollbackable or quiescence has been independently verified.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from llm_loop.resources.task_budget_contracts import (
@@ -32,6 +34,13 @@ from llm_loop.resources.task_budget_store import (
 )
 
 _MAX_CAS_RETRIES = 12
+
+
+def exact_workspace_scope(workspace_root: str) -> str:
+    """Opaque canonical workspace identity; no path serialized to ledger."""
+    return "ws-" + hashlib.sha256(
+        str(Path(workspace_root).expanduser().resolve()).encode()
+    ).hexdigest()[:32]
 
 
 @dataclass(frozen=True)
@@ -67,6 +76,7 @@ class TaskBudgetExecution:
         if (
             current_workspace_root.get()
             and current_workspace_root.get() != self.member.workspace_scope
+            and exact_workspace_scope(current_workspace_root.get()) != self.member.workspace_scope
         ):
             raise TaskBudgetDeniedError("active_workspace_scope_mismatch")
         return snapshot
