@@ -181,3 +181,26 @@ def test_assembly_epoch_invalidated_by_list_changed(reset_assembly):
         assert mcp_catalog_changed_since_assembly() is True, "装配应判定失效"
     finally:
         server.close()
+
+
+def test_sse_entry_in_package_binds_legacy_transport(tmp_path, reset_assembly):
+    """P2-B：包内 type=sse → sse 旧传输绑定（identity 含 sse 前缀，显式不回退）."""
+    store = ExtensionStore(tmp_path / "ext")
+    _write_pkg(
+        tmp_path / "pkg",
+        "sse-plugin",
+        {
+            "legacy": {"type": "sse", "url": "http://127.0.0.1:9301/sse"},
+            "stream": {"type": "http", "url": "http://127.0.0.1:9301/mcp"},
+        },
+    )
+    store.install(tmp_path / "pkg", source="local", expected_revision=0)
+    plan = effective_mcp_servers(store, "[]")
+    by_name = {s.name.split(":", 1)[1] if ":" in s.name else s.name: s.entry for s in plan.servers}
+    assert by_name["legacy"]["type"] == "sse"
+    assert by_name["legacy"]["url"] == "http://127.0.0.1:9301/sse"
+    assert by_name["stream"]["type"] == "http"
+    # 身份区分传输：sse 与 http 同 host 也不冲突
+    identities = {s.identity for s in plan.servers}
+    assert any(i.startswith("sse|") for i in identities)
+    assert any(i.startswith("http|") for i in identities)

@@ -123,8 +123,8 @@ def test_gemini_overall_and_skills(tmp_path):
     assert {s.name: s.status for s in conv.report.skills} == {"security-audit": STATUS_SUPPORTED}
 
 
-def test_gemini_httpurl_renamed_sse_pending(tmp_path):
-    """httpUrl→url 字段重命名；SSE 端点 needs_configuration（P2-B 挂账）."""
+def test_gemini_httpurl_renamed_sse_legacy_transport(tmp_path):
+    """httpUrl→url 字段重命名；url-only 条目映射 sse 旧传输（P2-B 解挂账）."""
     conv = parse_vendor_package(_fixture("vendor_gemini_demo", tmp_path))
     by_name = {s.name: s for s in conv.report.servers}
     assert conv.mcp_servers["http-srv"] == {
@@ -133,9 +133,12 @@ def test_gemini_httpurl_renamed_sse_pending(tmp_path):
         "headers": {"Authorization": "Bearer tok"},
     }
     assert by_name["http-srv"].status == STATUS_SUPPORTED
-    assert by_name["legacy-sse"].status == STATUS_NEEDS_CONFIG
-    assert "SSE" in by_name["legacy-sse"].reason
-    assert "legacy-sse" not in conv.mcp_servers or conv.mcp_servers["legacy-sse"]["url"].startswith("https://")
+    # Gemini 官方语义：无 httpUrl 的 url 字段为 SSE 端点 → sse 旧传输（显式声明）
+    assert conv.mcp_servers["legacy-sse"]["type"] == "sse"
+    assert conv.mcp_servers["legacy-sse"]["url"].startswith("https://")
+    assert by_name["legacy-sse"].transport == "sse"
+    assert by_name["legacy-sse"].status == STATUS_SUPPORTED
+    assert "sse→sse" in by_name["legacy-sse"].reason
 
 
 def test_gemini_permission_fields_not_dropped_silently(tmp_path):
@@ -198,8 +201,10 @@ def test_vscode_servers_mapping(tmp_path):
     assert conv.mcp_servers["cli"]["command"] == "python3"
     assert by_name["cli"].status == STATUS_NEEDS_CONFIG  # ${input:entry} 无法自动转换
     assert "input" in by_name["cli"].reason
-    # type: sse → P2-B
-    assert by_name["legacy"].status == STATUS_NEEDS_CONFIG
+    # type: sse → P2-B：映射 sse 旧传输（源配置显式声明即显式选择）
+    assert conv.mcp_servers["legacy"]["type"] == "sse"
+    assert by_name["legacy"].status == STATUS_SUPPORTED
+    assert "sse→sse" in by_name["legacy"].reason
 
 
 def test_vscode_top_level_sandbox_ignored_with_warning(tmp_path):

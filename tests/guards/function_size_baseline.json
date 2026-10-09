@@ -233,7 +233,8 @@
       "src/llm_loop/learning_runtime.py": "当前命中仅为跨进程 lock file 的创建/打开；锁文件是同步载体，不承载 durable payload。",
       "src/llm_loop/web/fs_tree.py": "Web 文件树操作直接修改用户选择的 workspace 文件/目录，属于外部文件效果而非内部 runtime SoT。",
       "src/llm_loop/web/routes.py": "Web route 中的写入主要是用户上传/预览等 workspace 交付文件效果，不作为内部 durability surface。",
-      "src/llm_loop/workspace/file_service.py": "WorkspaceFileService 的写入就是受控用户文件效果；其 durable 事实由 workspace/file-effect 机制另行记录。"
+      "src/llm_loop/workspace/file_service.py": "WorkspaceFileService 的写入就是受控用户文件效果；其 durable 事实由 workspace/file-effect 机制另行记录。",
+      "src/llm_loop/extensions/sources.py": "P2-B（§5.2）源获取仅写 fetch 临时目录与解包目标（git 浅克隆、HTTP 下载 sink、zip/tar 解包、临时归档产物），属一次性外部文件效果与缓存，不是内部 durable 状态 SoT；插件安装态写入仍由 extensions/store.py 单一持久面负责。"
     }
   }
 }

@@ -321,6 +321,39 @@ def _parse_servers(
                 )
             )
             continue
+        if server_type == "sse":
+            # P2-B（§3/T04）：legacy HTTP+SSE 旧传输——显式声明即显式选择，
+            # 不从 HTTP 自动回退；凭证（headers）仅发同 origin 消息端点（传输层强校验）
+            url = entry.get("url")
+            if not isinstance(url, str) or not url.strip():
+                out.append(
+                    McpServerComponent(
+                        name=name,
+                        transport="sse",
+                        status=STATUS_NEEDS_CONFIG,
+                        reason="sse server missing url",
+                    )
+                )
+                continue
+            headers = entry.get("headers", {})
+            header_values = (
+                [str(v) for v in headers.values()]
+                if isinstance(headers, dict)
+                else []
+            )
+            bad = _check_placeholders(header_values)
+            out.append(
+                McpServerComponent(
+                    name=name,
+                    transport="sse",
+                    status=(
+                        STATUS_NEEDS_CONFIG if bad else STATUS_SUPPORTED
+                    ),
+                    reason=f"{bad}; provide at install time" if bad else "",
+                    url=url[:2048],
+                )
+            )
+            continue
         out.append(
             McpServerComponent(
                 name=name,

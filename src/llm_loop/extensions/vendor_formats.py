@@ -56,8 +56,9 @@ FORMAT_MCP_JSON = "mcp-servers-json/1"
 
 VENDOR_FORMATS = (FORMAT_CLAUDE, FORMAT_CODEX, FORMAT_GEMINI, FORMAT_CURSOR, FORMAT_VSCODE, FORMAT_MCP_JSON)
 
-# SSE 属旧协议，兼容按 §11 排在 P2-B（"旧 SSE 兼容"），P2-A 一律 needs_configuration。
-_SSE_PENDING = "SSE 端点：当前标准传输为 stdio/HTTP（P1-B），SSE 兼容规划在 P2-B"
+# P2-B：legacy HTTP+SSE 旧传输已交付（设计 §3/T04）。sse 仅在源配置显式声明时
+# 映射为 sse 传输（显式选择；LFL 不自动从 HTTP 回退）；无自动 OAuth 凭证注入。
+_SSE_LEGACY = "sse→sse：legacy HTTP+SSE 旧传输（源配置显式声明即显式选择；P2-B 支持；凭证不自动转换）"
 
 
 @dataclass(frozen=True)
@@ -272,10 +273,11 @@ def _convert_server_entry(
             transport = "stdio"
             converted["command"] = entry["command"]
         elif "url" in entry:
-            transport = "http"
+            # Gemini 官方语义：无 httpUrl 的 url 字段为 SSE 端点（旧流式传输）
+            transport = "sse"
             converted["url"] = entry["url"]
-            status = STATUS_NEEDS_CONFIG
-            reasons.append(_SSE_PENDING)
+            reasons.append(_SSE_LEGACY)
+            reasons.append("url（无 httpUrl）→sse 端点（Gemini 官方语义：url 为 SSE 流端点）")
         elif "authProviderType" in entry:
             transport = "http"
             converted["url"] = entry.get("authProviderType", "")
@@ -292,39 +294,47 @@ def _convert_server_entry(
             if declared is None:
                 reasons.append("未声明 type，按 command 推断 stdio（VS Code 允许省略）")
         elif declared == "sse":
-            transport = "http"
+            transport = "sse"
             converted["url"] = entry.get("url", "")
-            status = STATUS_NEEDS_CONFIG
-            reasons.append(_SSE_PENDING)
+            reasons.append(_SSE_LEGACY)
         else:
             status = STATUS_UNSUPPORTED
             reasons.append(f"未知传输声明 type={declared!r}")
     else:
+        # Codex .mcp.json / Cursor .cursor/mcp.json / 顶层 mcpServers 通用 JSON
+        declared = entry.get("type")
         if "command" in entry:
             transport = "stdio"
             converted["command"] = entry["command"]
         elif "url" in entry:
-            transport = "http"
-            converted["url"] = entry["url"]
+            url = entry["url"]
+            if declared == "sse":
+                # 显式声明 sse 的 url 端点 = legacy SSE（非 Streamable HTTP），不得按 http 装配
+                transport = "sse"
+                converted["url"] = url
+                reasons.append(_SSE_LEGACY)
+            else:
+                transport = "http"
+                converted["url"] = url
 
     if transport is None:
         status = STATUS_UNSUPPORTED
-        reasons.append("缺少 command/url 等传输字段，无法映射到 stdio/http")
+        reasons.append("缺少 command/url 等传输字段，无法映射到 stdio/http/sse")
     else:
         converted["type"] = transport
         if "args" in entry:
             converted["args"] = entry["args"]
         if "env" in entry:
             converted["env"] = entry["env"]
-        if transport == "http" and "headers" in entry:
+        if transport in ("http", "sse") and "headers" in entry:
             converted["headers"] = entry["headers"]
 
     if transport == "stdio" and not isinstance(converted.get("command"), str):
         status = STATUS_INVALID
         reasons.append("stdio 条目 command 必须是字符串")
-    if transport == "http" and not isinstance(converted.get("url"), str):
+    if transport in ("http", "sse") and not isinstance(converted.get("url"), str):
         status = STATUS_INVALID
-        reasons.append("http 条目 url 必须是字符串")
+        reasons.append(f"{transport} 条目 url 必须是字符串")
 
     # 形态校验：args 列表、env/headers 对象（不改变值，仅校验）
     if "args" in converted and not isinstance(converted["args"], list):

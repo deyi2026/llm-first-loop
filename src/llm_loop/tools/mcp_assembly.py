@@ -100,10 +100,10 @@ def _reset_assembly_state_for_tests() -> None:
 
 
 def _identity(entry: dict[str, Any]) -> str:
-    """精确身份：transport + 端点规范形（http 路径去尾斜杠；stdio argv 全列）."""
-    if entry.get("type") == "http":
+    """精确身份：transport + 端点规范形（http/sse 路径去尾斜杠；stdio argv 全列）."""
+    if entry.get("type") in ("http", "sse"):
         parts = urlsplit(str(entry.get("url") or ""))
-        return f"http|{parts.scheme}://{parts.netloc}{parts.path.rstrip('/')}"
+        return f"{entry.get('type')}|{parts.scheme}://{parts.netloc}{parts.path.rstrip('/')}"
     argv = [str(entry.get("command") or "")] + [str(a) for a in entry.get("args") or []]
     return "stdio|" + " ".join(argv)
 
@@ -131,12 +131,14 @@ def _normalize_package_entry(
 ) -> dict[str, Any] | None:
     """包 mcpServers 条目 → register 兼容条目（未知/缺配置返回 None 隔离）."""
     server_type = str(raw_entry.get("type", "") or "").strip()
-    if server_type == "http":
+    if server_type in ("http", "sse"):
+        # P2-B：sse = legacy HTTP+SSE（显式声明；传输层同 origin 强校验）。
+        # headers/credential_ref 处理与 http 一致（零凭证纪律：记录不复制值）。
         url = str(raw_entry.get("url") or "").strip()
         if not url:
-            logger.warning("MCP 包服务器 %s http 缺 url，隔离跳过", name)
+            logger.warning("MCP 包服务器 %s %s 缺 url，隔离跳过", name, server_type)
             return None
-        entry: dict[str, Any] = {"name": name, "type": "http", "url": url}
+        entry: dict[str, Any] = {"name": name, "type": server_type, "url": url}
         raw_headers = raw_entry.get("headers")
         if isinstance(raw_headers, dict) and raw_headers:
             entry["headers"] = {str(k): str(v) for k, v in raw_headers.items()}
