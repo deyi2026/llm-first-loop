@@ -27,6 +27,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -707,6 +708,7 @@ class BackgroundRunner:
         ingress: object | None = None,
         user_metadata: dict[str, Any] | None = None,
         terminal_callback: Callable[[str, str | None], None] | None = None,
+        signed_web_canary: Any = None,
     ) -> tuple[RunHandle | None, queue.Queue | None]:
         """注册 + 起后台线程；返回 (handle, queue)，调用方订阅消费.
 
@@ -783,6 +785,7 @@ class BackgroundRunner:
                 ingress,
                 user_metadata,
                 terminal_callback,
+                signed_web_canary,
             ),
             name=f"bg-run-{session_id[:8]}",
             daemon=True,  # B4: 进程退出不阻塞
@@ -818,6 +821,7 @@ class BackgroundRunner:
         ingress: object | None = None,
         user_metadata: dict[str, Any] | None = None,
         terminal_callback: Callable[[str, str | None], None] | None = None,
+        signed_web_canary: Any = None,
     ) -> None:
         """后台线程体：copy_context 传播（P0-5 模式）→ 迭代 run_stream → 广播终态."""
         self._worker_idents.add(threading.get_ident())
@@ -858,7 +862,14 @@ class BackgroundRunner:
                 finally:
                     current_run_generation.reset(generation_token)
 
-            result = ctx.run(_run)
+            # Background workers do not inherit the request thread's budget
+            # ContextVars. Bind only the trusted server-injected, exact-session
+            # canary across the whole generator consumption, never a user flag.
+            def _run_in_scope() -> Any:
+                with signed_web_canary.bind() if signed_web_canary is not None else nullcontext():
+                    return _run()
+
+            result = ctx.run(_run_in_scope)
             # The run itself owns terminal side effects. Subscribers may disconnect at any
             # point and therefore cannot be the sole owner of durable terminal callbacks.
             self._notify_terminal(terminal_callback, "completed", None)
