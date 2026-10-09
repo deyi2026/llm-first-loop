@@ -100,7 +100,9 @@ def test_real_registry_reads_and_use_declarations_share_eight_tool_ceiling(tmp_p
     with bind_task_budget(execution):
         results = registry.execute_many(calls)
         extra = registry.execute(ToolCall(id="ninth", name="search_records", arguments={"kind": "method"}))
-    assert all(r.status is ToolResultStatus.SUCCESS for r in results)
+    assert all(r.status is ToolResultStatus.SUCCESS for r in results), [
+        (r.tool_call_id, r.status.value, r.content) for r in results
+    ]
     assert extra.status is ToolResultStatus.BLOCKED
     assert len(effects) == 8
     assert plan.budget_store.report(plan.budget_id)["used_or_reserved"]["tool_invocations"] == 8

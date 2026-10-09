@@ -58,6 +58,12 @@ class TaskBudgetExecution:
     _local_stop: threading.Event = field(
         default_factory=threading.Event, repr=False, compare=False
     )
+    # Parallel Registry reads share this exact execution. Serialize only their
+    # ledger read/CAS transaction; tools/transports run outside this lock.
+    # External processes still use the unchanged bounded store CAS contract.
+    _ledger_lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
     # Each response is owned by its exact Run; Stop may interrupt its own
     # network socket but must never close an unrelated client or pooled stream.
     _transport_lock: threading.Lock = field(
@@ -190,17 +196,18 @@ class TaskBudgetExecution:
             raise TaskBudgetDeniedError("derived_execution_capability_unqualified")
 
     def _cas_mutate(self, method: str, **kwargs: Any) -> dict[str, Any]:
-        for _ in range(_MAX_CAS_RETRIES):
-            current = self.store.read(self.budget_id)
-            try:
-                return getattr(self.store, method)(
-                    self.budget_id,
-                    expected_revision=current["revision"],
-                    **kwargs,
-                )
-            except TaskBudgetConflictError as exc:
-                if "stale budget revision CAS" not in str(exc):
-                    raise
+        with self._ledger_lock:
+            for _ in range(_MAX_CAS_RETRIES):
+                current = self.store.read(self.budget_id)
+                try:
+                    return getattr(self.store, method)(
+                        self.budget_id,
+                        expected_revision=current["revision"],
+                        **kwargs,
+                    )
+                except TaskBudgetConflictError as exc:
+                    if "stale budget revision CAS" not in str(exc):
+                        raise
         raise TaskBudgetDeniedError("cas_contention_exhausted")
 
     def reserve(self, kind: BudgetDimension, *, tool_id: str = "") -> str:

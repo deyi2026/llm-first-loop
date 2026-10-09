@@ -656,6 +656,24 @@ class EventStore:
         self._extend_read_cache(new_event)
         return new_event
 
+    def read_source_files(self, session_id: str) -> list[tuple[str, bytes]]:
+        """Explicit exact-byte read surface; never skip errors, parse, write or run hooks.
+
+        Ordinary read/read_cached retain their existing fail-open semantics.
+        Snapshot consumers own row integrity and concurrent-capture validation.
+        """
+        session_id = _validate_session_id(session_id)
+        paths = self._all_segment_paths(session_id) if self._is_multi_segment(session_id) else (
+            [self._path(session_id)] if os.path.exists(self._path(session_id)) else []
+        )
+        root = self._dir.resolve()
+        captured = []
+        for filename in paths:
+            source = Path(filename).resolve()
+            source.relative_to(root)
+            captured.append((os.path.relpath(filename, self._dir_fs), source.read_bytes()))
+        return captured
+
     def read(self, session_id: str) -> list[Event]:
         """读全部事件（按 seq 升序；损坏行如实跳过；文件不存在/非法ID返回空列表）.
 
