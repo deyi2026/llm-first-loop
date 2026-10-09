@@ -13,6 +13,7 @@ dependencies = [
     "lark-oapi>=1.7.2",
     "pycryptodome>=3.23",
     "zstandard>=0.22",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

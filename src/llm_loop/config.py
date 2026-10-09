@@ -497,7 +497,7 @@ class Settings:
     # 压力路径候选年龄（0=按占用率调候选年龄；不再触发 under-budget 改写）
     # 默认 8000：常规工具输出（grep/读文件片段/短日志）不触发折叠，大输出（长日志/抓取全文）才降级；
     # 折叠时提取关键事实摘要优先、首尾截断兜底；越小越省 token，越大越少折叠触发）
-    mcp_servers_raw: str = ""  # P3-1: MCP_SERVERS JSON（stdio MCP 服务器列表）
+    mcp_servers_raw: str = ""  # P3-1/P1-B: MCP_SERVERS JSON（stdio 与 http(Streamable HTTP) 服务器列表）
     # EVO-20260912-10818cb5: smx 感知层 opt-in（LFL_SMX_PERCEIVE=smx.py 路径；空=默认不注册该工具）
     smx_perceive_path: str = ""
     # SMC Browser Phase 1 live perception: 显式 loopback CDP endpoint 才注册；

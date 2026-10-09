@@ -121,6 +121,7 @@ class CorrectionToolRegistry:
         self._recovery_memory_dir: str | Path | None = None
         self._skills_dir: str | None = None  # B3: 插件化 Skill 目录（None=未注入零回归）
         self._skill_execution_facts: dict[str, str] = {}
+        self._extensions_catalog: Any | None = None  # P1-A: 扩展目录（标准包 catalog）
 
     def build_knowledge_advisor(self, mode: str) -> Any | None:
         """Re-use the installed authoritative search adapter, without a new store.
@@ -147,6 +148,7 @@ class CorrectionToolRegistry:
         "recovery_memory_dir": "_recovery_memory_dir",
         "skills_dir": "_skills_dir",  # B3: 插件化 Skill 目录
         "skill_execution_facts": "_skill_execution_facts",
+        "extensions_catalog": "_extensions_catalog",  # P1-A: 扩展目录（标准包）
     }
 
     @property

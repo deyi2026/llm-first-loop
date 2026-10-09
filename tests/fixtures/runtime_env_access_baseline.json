@@ -1063,7 +1063,7 @@
     "src/llm_loop/tools/builtin/execute_command.py|_scrubbed_env|bulk:items|<all>": 1,
     "src/llm_loop/tools/builtin/web_fetch.py|_block_private_enabled|read|WEB_FETCH_BLOCK_PRIVATE": 1,
     "src/llm_loop/tools/builtin/web_fetch.py|_strict_fake_ip|read|WEB_FETCH_BLOCK_FAKE_IP": 1,
-    "src/llm_loop/tools/mcp_client.py|McpConnection/_start_process|bulk:raw|<all>": 1,
+    "src/llm_loop/tools/mcp_transport.py|StdioTransport/start|bulk:raw|<all>": 1,
     "src/llm_loop/web/__init__.py|_CanonicalOriginMiddleware/__init__|read|WEB_HOST": 1,
     "src/llm_loop/web/__init__.py|_install_exit_signal_log|read|DATA_DIR": 1,
     "src/llm_loop/web/__init__.py|build_app|read|SESSION_CONCURRENCY_LOCK": 1,

@@ -1353,12 +1353,27 @@ def build_engine(
     # M48: 网络搜索（Bing/百度双后端降级）
     _register_basic("web_search", WebSearchTool(timeout_s=_tool_timeout))
 
-    # P3-1(2026-08-15): MCP 客户端接入（MCP_SERVERS env；stdio 连接 + schema 透传 +
+    # P3-1(2026-08-15)/P1-B(2026-10-09): MCP 客户端接入（MCP_SERVERS env；
+    # stdio 与 Streamable HTTP 双传输 + 双时代协议协商 + schema 透传 +
     # 五态包装 + 超时/审计复用；单服务器 fail-open）
+    # P1-C(2026-10-09): 装配改经 mcp_assembly——安装实例（workspace>user）
+    # → legacy MCP_SERVERS 合并优先级；同一精确身份冲突报告不叠加；
+    # 装配后记录 catalog epoch 基线（热刷新失效判据）
     try:
-        from llm_loop.tools.mcp_client import register_mcp_tools
+        from llm_loop.extensions.store import ExtensionStore  # r9-import-exempt: plugin
+        from llm_loop.tools.mcp_assembly import assemble_mcp_tools
 
-        _mcp_tools = register_mcp_tools(registry, settings.mcp_servers_raw)
+        _mcp_ext_paths = settings._extra.get("runtime_paths")
+        if not isinstance(_mcp_ext_paths, RuntimePaths):
+            _mcp_ext_paths = resolve_runtime_paths(
+                data_dir=settings.data_dir,
+                code_root=Path(__file__).resolve().parents[2],
+            )
+        _mcp_tools = assemble_mcp_tools(
+            registry,
+            ExtensionStore(_mcp_ext_paths.extensions_dir),
+            settings.mcp_servers_raw,
+        )
         if _mcp_tools:
             logger.info("MCP 工具注册 %d 个: %s", len(_mcp_tools), ", ".join(_mcp_tools[:6]))
     except Exception:  # noqa: BLE001 — MCP 装配失败不影响核心链路
@@ -1824,6 +1839,16 @@ def build_engine(
     corrections._recovery_session_store = session_store  # noqa: SLF001 — 复用全局sid归属/原子恢复
     corrections._recovery_memory_dir = settings.memory_dir  # noqa: SLF001
     corrections._skills_dir = str(_runtime_paths.skills_dir) or None  # noqa: SLF001 — B3: 插件化 Skill 目录注入
+    # P1-A（DESIGN-20261009 §5.3/§5.4）: 扩展 store/catalog 装配（fail-open 零回归）
+    try:
+        from llm_loop.extensions.catalog import ExtensionCatalog  # r9-import-exempt: plugin
+        from llm_loop.extensions.store import ExtensionStore  # r9-import-exempt: plugin
+
+        corrections._extensions_catalog = ExtensionCatalog(  # noqa: SLF001 — 工具分派注入
+            ExtensionStore(_runtime_paths.extensions_dir)
+        )
+    except Exception:  # noqa: BLE001 — 装配失败降级为无扩展目录（skill_list/load 仍可用）
+        logger.warning("扩展 store/catalog 装配失败（fail-open）", exc_info=True)
     corrections._skill_execution_facts = {  # noqa: SLF001 — 当前执行环境机械事实
         "code_root": str(_runtime_paths.code_root),
         "runtime_root": str(
