@@ -36,6 +36,10 @@ from llm_loop.resources.task_budget_positive_authority import (
     limits,
 )
 from llm_loop.resources.task_budget_store import TaskBudgetDeniedError, TaskBudgetStore
+from llm_loop.resources.task_budget_transport_context import (
+    bind_authorized_provider_proxy,
+    qualify_loopback_provider_proxy,
+)
 
 _ID = re.compile(r"[0-9a-f]{32}\Z")
 _MAX_CONFIG_WINDOW_SECONDS = 3600
@@ -51,6 +55,7 @@ class AdminOnceEventPlan:
     valid_until_epoch_s: float
     event_store: EventStore
     budget_store: TaskBudgetStore
+    provider_proxy: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.authorization_id, str) or not _ID.fullmatch(self.authorization_id):
@@ -67,6 +72,13 @@ class AdminOnceEventPlan:
             or not isinstance(self.budget_store, TaskBudgetStore)
         ):
             raise TaskBudgetDeniedError("admin_once_plan_invalid")
+        if (
+            self.provider_proxy is not None
+            and qualify_loopback_provider_proxy(self.provider_proxy) is None
+        ):
+            # Only an explicit plain-http loopback proxy may ever be pinned
+            # for the one physical attempt; no env/system discovery exists.
+            raise TaskBudgetDeniedError("admin_once_proxy_invalid")
 
     @property
     def budget_id(self) -> str:
@@ -88,11 +100,12 @@ def active_admin_once_plan() -> AdminOnceEventPlan | None:
 def bind_admin_once_plan(plan: AdminOnceEventPlan) -> Iterator[None]:
     if not isinstance(plan, AdminOnceEventPlan):
         raise TypeError("admin_once_plan_required")
-    token = _ADMIN_PLAN.set(plan)
-    try:
-        yield
-    finally:
-        _ADMIN_PLAN.reset(token)
+    with bind_authorized_provider_proxy(plan.provider_proxy):
+        token = _ADMIN_PLAN.set(plan)
+        try:
+            yield
+        finally:
+            _ADMIN_PLAN.reset(token)
 
 
 def prepare_admin_once_event_budget(

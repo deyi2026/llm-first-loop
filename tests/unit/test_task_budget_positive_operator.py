@@ -266,3 +266,162 @@ def test_actual_llm_client_route_mismatch_is_pre_http_and_pre_cas(
         assert ledger.report(execution.budget_id)["used_or_reserved"]["physical_attempts"] == 0
     finally:
         client.close()
+
+
+def _admin_once_plan(store: EventStore, tmp_path: Path, *, proxy):
+    import time as _time
+
+    from llm_loop.resources.task_budget_admin_once import AdminOnceEventPlan
+    from llm_loop.resources.task_budget_dispatch import exact_workspace_scope
+
+    return AdminOnceEventPlan(
+        session_id="web-session",
+        workspace_scope=exact_workspace_scope(str(tmp_path)),
+        authorization_id="a" * 32,
+        valid_from_epoch_s=_time.time() - 1,
+        valid_until_epoch_s=_time.time() + 300,
+        event_store=store,
+        budget_store=TaskBudgetStore(tmp_path / "admin-once-ledger"),
+        provider_proxy=proxy,
+    )
+
+
+def test_v3_dispatch_accepts_admin_once_authorized_proxy(tmp_path: Path) -> None:
+    from llm_loop.resources.task_budget_admin_once import bind_admin_once_plan
+
+    store, event, *_tail, plan, ledger = _fixture(tmp_path)
+    execution = _open(plan, event, tmp_path)
+    proxy_url = "http://127.0.0.1:6152"
+    with bind_task_budget(execution), bind_admin_once_plan(
+        _admin_once_plan(store, tmp_path, proxy=proxy_url)
+    ), bind_isolated_provider_transport(IsolatedTransportProfile(proxy=proxy_url)):
+        with checked_provider_attempt(
+            provider_id="glm", model_id="glm-5.3",
+            wire_protocol="openai", target_url=_GLM_URL,
+        ):
+            assert has_dispatched_attempt(execution)
+    report = ledger.report(execution.budget_id)
+    assert report["used_or_reserved"]["physical_attempts"] == 1
+
+
+def test_v3_transport_passes_authorized_proxy_to_worker(tmp_path: Path) -> None:
+    """The dispatch CAS reservation and the transport guard must BOTH accept
+    exactly the operator-pinned proxy; the worker receives it via the profile."""
+    import httpx
+
+    from llm_loop.resources.task_budget_admin_once import bind_admin_once_plan
+    from llm_loop.resources.task_budget_process_transport import isolated_provider_stream
+
+    store, event, *_tail, plan, ledger = _fixture(tmp_path)
+    execution = _open(plan, event, tmp_path)
+    proxy_url = "http://127.0.0.1:6152"
+    with bind_task_budget(execution), bind_admin_once_plan(
+        _admin_once_plan(store, tmp_path, proxy=proxy_url)
+    ), bind_isolated_provider_transport(IsolatedTransportProfile(proxy=proxy_url)):
+        with checked_provider_attempt(
+            provider_id="glm", model_id="glm-5.3",
+            wire_protocol="openai", target_url=_GLM_URL,
+        ):
+            with mock.patch(
+                "llm_loop.resources.task_budget_process_transport._Attempt"
+            ) as attempt_cls:
+                opening = attempt_cls.return_value
+                opening.next_frame.return_value = {
+                    "event": "headers", "status": 200, "headers": [],
+                    "http_version": "HTTP/1.1",
+                }
+                with httpx.Client() as http:
+                    with isolated_provider_stream(
+                        http, "POST", _GLM_URL,
+                        json={"model": "glm-5.3"}, headers={}, timeout=2.0,
+                    ) as response:
+                        assert response.status_code == 200
+                assert attempt_cls.call_args.kwargs["profile"].proxy == proxy_url
+
+
+@pytest.mark.parametrize("proxy_url", ["http://127.0.0.1:6152", "http://localhost:7890"])
+def test_v3_proxy_without_admin_once_plan_denied_at_dispatch(
+    tmp_path: Path, proxy_url: str,
+) -> None:
+    store, event, *_tail, plan, ledger = _fixture(tmp_path)
+    execution = _open(plan, event, tmp_path)
+    with bind_task_budget(execution), bind_isolated_provider_transport(
+        IsolatedTransportProfile(proxy=proxy_url)
+    ):
+        with pytest.raises(
+            TaskBudgetDeniedError, match="positive_budget_requires_exclusive_verified_process",
+        ):
+            with checked_provider_attempt(
+                provider_id="glm", model_id="glm-5.3",
+                wire_protocol="openai", target_url=_GLM_URL,
+            ):
+                pytest.fail("dispatch must refuse an unauthorized proxy")
+    assert ledger.report(execution.budget_id)["used_or_reserved"]["physical_attempts"] == 0
+
+
+def test_v3_proxy_mismatched_with_admin_once_plan_denied(tmp_path: Path) -> None:
+    from llm_loop.resources.task_budget_admin_once import bind_admin_once_plan
+
+    store, event, *_tail, plan, ledger = _fixture(tmp_path)
+    execution = _open(plan, event, tmp_path)
+    with bind_task_budget(execution), bind_admin_once_plan(
+        _admin_once_plan(store, tmp_path, proxy="http://127.0.0.1:6152")
+    ), bind_isolated_provider_transport(
+        IsolatedTransportProfile(proxy="http://127.0.0.1:6153")
+    ):
+        with pytest.raises(
+            TaskBudgetDeniedError, match="positive_budget_requires_exclusive_verified_process",
+        ):
+            with checked_provider_attempt(
+                provider_id="glm", model_id="glm-5.3",
+                wire_protocol="openai", target_url=_GLM_URL,
+            ):
+                pytest.fail("dispatch must refuse a mismatched proxy")
+    assert ledger.report(execution.budget_id)["used_or_reserved"]["physical_attempts"] == 0
+
+
+def test_v3_transport_rejects_profile_proxy_rebound_mismatch(tmp_path: Path) -> None:
+    """After a legitimate dispatch, rebinding a different profile proxy must
+    still be refused by the transport-side guard before any spawn."""
+    import httpx
+
+    from llm_loop.resources.task_budget_admin_once import bind_admin_once_plan
+    from llm_loop.resources.task_budget_process_transport import isolated_provider_stream
+
+    store, event, *_tail, plan, _ledger = _fixture(tmp_path)
+    execution = _open(plan, event, tmp_path)
+    proxy_url = "http://127.0.0.1:6152"
+    with bind_task_budget(execution), bind_admin_once_plan(
+        _admin_once_plan(store, tmp_path, proxy=proxy_url)
+    ), bind_isolated_provider_transport(IsolatedTransportProfile(proxy=proxy_url)):
+        with checked_provider_attempt(
+            provider_id="glm", model_id="glm-5.3",
+            wire_protocol="openai", target_url=_GLM_URL,
+        ):
+            with bind_isolated_provider_transport(
+                IsolatedTransportProfile(proxy="http://127.0.0.1:6153")
+            ):
+                with httpx.Client() as http:
+                    with pytest.raises(
+                        TaskBudgetDeniedError, match="positive_transport_unqualified",
+                    ):
+                        with isolated_provider_stream(
+                            http, "POST", _GLM_URL,
+                            json={"model": "glm-5.3"}, headers={}, timeout=2.0,
+                        ):
+                            pytest.fail("worker must not spawn")
+
+
+@pytest.mark.parametrize("bad_proxy", [
+    "socks5://127.0.0.1:1080", "http://10.0.0.1:6152", "http://127.0.0.1",
+    "http://127.0.0.1:99999", "http://user:pw@127.0.0.1:6152",
+    "http://127.0.0.1:6152/path", "https://127.0.0.1:6152", 42, "",
+])
+def test_admin_once_plan_rejects_unqualified_provider_proxy(
+    tmp_path: Path, bad_proxy,
+) -> None:
+    from llm_loop.resources.task_budget_store import TaskBudgetDeniedError as _Denied
+
+    store, _event, *_tail = _fixture(tmp_path)
+    with pytest.raises(_Denied, match="admin_once_proxy_invalid"):
+        _admin_once_plan(store, tmp_path, proxy=bad_proxy)

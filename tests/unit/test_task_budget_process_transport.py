@@ -306,3 +306,184 @@ def test_worker_unexpected_exit_does_not_mark_remote_settlement(tmp_path: Path) 
     report = budget.store.report(budget.budget_id)
     assert len(report["outstanding_or_unknown"]) == 1
     assert report["physical_quiescence_verified"] is False
+
+
+def test_open_failure_surfaces_worker_exception_kind(tmp_path: Path) -> None:
+    """Incident 2026-10-09 14:14: the worker sent type(exc).__name__ but the
+    parent discarded it, leaving an unattributable open failure."""
+    import httpx
+    import socket
+
+    from llm_loop.resources.task_budget_process_transport import (
+        IsolatedTransportError,
+        isolated_provider_stream,
+    )
+
+    budget = _budget(tmp_path)
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        closed_port = listener.getsockname()[1]
+    with bind_task_budget(budget), bind_isolated_provider_transport(
+        IsolatedTransportProfile()
+    ), httpx.Client() as http:
+        with pytest.raises(IsolatedTransportError) as excinfo:
+            with isolated_provider_stream(
+                http, "POST", f"http://127.0.0.1:{closed_port}/v1/chat/completions",
+                json={"model": "glm-5.3"}, headers={}, timeout=5.0,
+            ):
+                pytest.fail("a closed loopback port must fail to open")
+    assert str(excinfo.value) == "isolated_transport_open_failed:ConnectError"
+    assert not _isolated_children()
+
+
+def test_midstream_worker_error_surfaces_exception_kind(tmp_path: Path) -> None:
+    import http.server
+    import threading
+
+    import httpx
+
+    from llm_loop.resources.task_budget_process_transport import (
+        IsolatedTransportError,
+        isolated_provider_stream,
+    )
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+        def do_POST(self) -> None:  # noqa: N802
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", "64")
+            self.end_headers()
+            self.wfile.write(b"data: truncated\n\n")
+            self.wfile.flush()
+            self.close_connection = True
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    budget = _budget(tmp_path)
+    try:
+        with bind_task_budget(budget), bind_isolated_provider_transport(
+            IsolatedTransportProfile()
+        ), httpx.Client() as http:
+            with pytest.raises(IsolatedTransportError) as excinfo:
+                with isolated_provider_stream(
+                    http, "POST",
+                    f"http://127.0.0.1:{server.server_port}/v1/chat/completions",
+                    json={"model": "glm-5.3"}, headers={}, timeout=5.0,
+                ) as response:
+                    response.read()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1.0)
+    assert str(excinfo.value) == "isolated_transport_worker_error:RemoteProtocolError"
+    assert not _isolated_children()
+
+
+def test_explicit_loopback_proxy_carries_one_sse_attempt(tmp_path: Path) -> None:
+    """End-to-end over loopback: the worker egresses ONLY through the
+    explicit profile proxy, and the full SSE round-trip still succeeds."""
+    import select
+    import socket
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.parse import urlsplit
+
+    budget = _budget(tmp_path)
+    connects: list[str] = []
+
+    class OriginHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+        def do_POST(self) -> None:  # noqa: N802
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = (
+                b'data: {"model":"glm-5.3","choices":[{"delta":{"content":"via-proxy"},'
+                b'"finish_reason":"stop"}],"usage":{"prompt_tokens":3,'
+                b'"completion_tokens":1}}\n\ndata: [DONE]\n\n'
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
+
+    origin = ThreadingHTTPServer(("127.0.0.1", 0), OriginHandler)
+    origin.daemon_threads = True
+    origin_thread = threading.Thread(target=origin.serve_forever, daemon=True)
+    origin_thread.start()
+
+    listener = socket.create_server(("127.0.0.1", 0))
+
+    def proxy_worker() -> None:
+        while True:
+            try:
+                conn, _peer = listener.accept()
+            except OSError:
+                return
+            try:
+                head = b""
+                while b"\r\n\r\n" not in head:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        raise ConnectionError("proxy client vanished")
+                    head += chunk
+                request_line = head.split(b"\r\n", 1)[0].decode("latin1")
+                method, absolute, _version = request_line.split(" ", 2)
+                parts = urlsplit(absolute)
+                upstream = socket.create_connection(
+                    (parts.hostname, parts.port or 80), timeout=5,
+                )
+                connects.append(f"{parts.hostname}:{parts.port}")
+                origin_form = f"{method} {parts.path or '/'} HTTP/1.1\r\n".encode()
+                upstream.sendall(origin_form + head.split(b"\r\n", 1)[1])
+                pair = [conn, upstream]
+                while pair:
+                    readable, _w, _e = select.select(pair, [], [], 10)
+                    if not readable:
+                        break
+                    for source in readable:
+                        data = source.recv(65536)
+                        if not data:
+                            pair = []
+                            break
+                        (upstream if source is conn else conn).sendall(data)
+                upstream.close()
+            except OSError:
+                pass
+            finally:
+                conn.close()
+
+    proxy_thread = threading.Thread(target=proxy_worker, daemon=True)
+    proxy_thread.start()
+    client = _real_client(origin.server_port)
+    try:
+        with bind_task_budget(budget), bind_isolated_provider_transport(
+            IsolatedTransportProfile(
+                proxy=f"http://127.0.0.1:{listener.getsockname()[1]}"
+            )
+        ):
+            output = client.chat(
+                messages=[{"role": "user", "content": "via proxy"}], tools=[],
+            )
+        assert output.content == "via-proxy"
+        assert output.prompt_tokens == 3
+    finally:
+        client.close()
+        listener.close()
+        origin.shutdown()
+        origin.server_close()
+        origin_thread.join(timeout=1.0)
+    assert connects == [f"127.0.0.1:{origin.server_port}"]
+    assert not _isolated_children()
