@@ -83,7 +83,11 @@ def build_arms() -> tuple[str, str]:
 
     arm_b_core = build_system_prompt()
     assert PINNED in arm_b_core and arm_b_core.endswith(POINTER.strip())
-    arm_a_core = arm_b_core.replace(PINNED, "").replace(POINTER, "")
+    # SOUL.MD 前置段(用户指令 2026-10-09)同样按 SoT 剥离, 保持旧锚点自证可重跑
+    soul_block = (REPO / "SOUL.MD").read_text(encoding="utf-8").rstrip("\n") + "\n\n"
+    arm_a_core = arm_b_core.replace(
+        soul_block, ""
+    ).replace(PINNED, "").replace(POINTER, "")
     assert len(arm_a_core) == OLD_LEN, f"ARM-A 长度 {len(arm_a_core)} != {OLD_LEN}"
     digest = sha256(arm_a_core.encode()).hexdigest()
     assert digest == OLD_SHA256, f"ARM-A sha256 {digest} != 旧锚点, 剥离不自证"

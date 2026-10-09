@@ -12,9 +12,10 @@ def test_common_governance_prefix_is_deterministic_and_bounded():
     a = build_system_prompt()
     b = build_system_prompt()
     assert a == b
+    # 1117 chars since SOUL.MD preamble pinned verbatim at head (user mandate 2026-10-09)
     # 645 chars since EVO-20261009-0ffcaad8 (甲 +2 句 RULE-AI-01 逐字投影 + 乙 1 行 SoT 指针)
     # 547 chars since EVO-20261003-8b053766 (+3 蒸馏纪律行); bound 留头部余量防回潮
-    assert len(a) < 700
+    assert len(a) < 1200
     assert sha256(a.encode()).hexdigest() == sha256(b.encode()).hexdigest()
 
 
@@ -48,9 +49,9 @@ def test_current_evidence_invariant_has_one_structured_core_anchor():
         f"[LFL核心认知]\n{invariant}{RULE_AI01_SENTENCES}\n"
         f"{DISCIPLINE_LINES_EVO_20261003}\n{RULES_POINTER}"
     )
-    assert len(prompt) == 645
+    assert len(prompt) == 1117
     assert sha256(prompt.encode()).hexdigest() == (
-        "55cd98cf09288b6e40527a919b4684d00b321bb1c9e028bf278032cc666dec77"
+        "5aeea16c7677b925c1049462d81d4169187335e2a71a372f322aea0a43be6a1a"
     )
 
 
@@ -114,6 +115,19 @@ def test_current_truth_and_authority_remain_primary():
     prompt = build_system_prompt()
     assert "当前用户指令是任务授权真值" in prompt
     assert "不得升级为当前任务" in prompt
+
+
+def test_soul_preamble_is_verbatim_projection_of_soul_md_and_undeletable():
+    """SOUL 前置章程 = 仓库根 SOUL.MD 的逐字投影(用户指令 2026-10-09, 不可删除):
+    SoT 文件缺失/清空/与 prompt 漂移/被移出前缀头部, 任一即红."""
+    soul_path = _ROOT / "SOUL.MD"
+    assert soul_path.is_file(), "SOUL.MD 缺失: 人格章程 SoT 被删除"
+    soul = soul_path.read_text(encoding="utf-8").rstrip("\n")
+    assert soul, "SOUL.MD 内容被清空"
+    assert soul.startswith("我是 LFL。诚实、忠诚、认真是我的人格基础。")
+    prompt = build_system_prompt()
+    assert prompt.startswith(soul + "\n\n"), "SOUL 章程不在上下文前缀最前部(被移除或移位)"
+    assert prompt.count(soul) == 1
 
 
 def test_common_governance_does_not_restore_prompt_heavy_playbooks():
