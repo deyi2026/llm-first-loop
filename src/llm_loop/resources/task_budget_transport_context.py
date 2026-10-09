@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True)
@@ -50,3 +51,53 @@ def bind_isolated_provider_transport(profile: IsolatedTransportProfile) -> Itera
         yield
     finally:
         _ISOLATED_PROFILE.reset(scope)
+
+
+def qualify_loopback_provider_proxy(value: object) -> str | None:
+    """Strict operator proxy shape: plain http:// loopback host, explicit port.
+
+    Returns the canonical value, or None when absent/invalid. No credentials,
+    path, query, fragment, https, socks, or non-loopback egress is accepted.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > 256:
+        return None
+    try:
+        parts = urlsplit(value)
+        port = parts.port
+    except ValueError:
+        return None
+    if (
+        parts.scheme != "http"
+        or parts.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or port is None or not 1 <= port <= 65535
+        or parts.username is not None or parts.password is not None
+        or parts.query or parts.fragment
+        or parts.path not in ("", "/")
+    ):
+        return None
+    return value
+
+
+_AUTHORIZED_PROVIDER_PROXY: ContextVar[str | None] = ContextVar(
+    "lfl_admin_once_authorized_provider_proxy", default=None
+)
+
+
+def active_authorized_provider_proxy() -> str | None:
+    """The operator-pinned loopback proxy of the active admin-once plan, if any."""
+    return _AUTHORIZED_PROVIDER_PROXY.get()
+
+
+@contextmanager
+def bind_authorized_provider_proxy(proxy: str | None) -> Iterator[None]:
+    """Bind only the qualified value; an unqualified explicit input is fatal."""
+    qualified = qualify_loopback_provider_proxy(proxy)
+    if proxy is not None and qualified is None:
+        raise ValueError("authorized_provider_proxy_loopback_http_required")
+    token = _AUTHORIZED_PROVIDER_PROXY.set(qualified)
+    try:
+        yield
+    finally:
+        _AUTHORIZED_PROVIDER_PROXY.reset(token)

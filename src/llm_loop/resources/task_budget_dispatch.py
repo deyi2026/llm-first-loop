@@ -34,7 +34,10 @@ from llm_loop.resources.task_budget_store import (
     TaskBudgetStore,
     _finite_time,
 )
-from llm_loop.resources.task_budget_transport_context import active_isolated_transport_profile
+from llm_loop.resources.task_budget_transport_context import (
+    active_authorized_provider_proxy,
+    active_isolated_transport_profile,
+)
 
 _MAX_CAS_RETRIES = 12
 
@@ -145,7 +148,14 @@ class TaskBudgetExecution:
         if grant["profile"] != "web-glm-one-physical-attempt-v3":
             return
         profile = active_isolated_transport_profile()
-        if profile is None or profile.verify is not True or profile.proxy is not None:
+        # 2026-10-09: the one physical attempt may use exactly one explicit
+        # operator-pinned loopback proxy (admin-once plan), never implicit
+        # trusted-env/system discovery in the isolated worker.
+        authorized = active_authorized_provider_proxy()
+        if (
+            profile is None or profile.verify is not True
+            or profile.proxy not in (None, authorized)
+        ):
             raise TaskBudgetDeniedError("positive_budget_requires_exclusive_verified_process")
         if wire_protocol != "openai" or provider_id != "glm" or model_id != "glm-5.3":
             raise TaskBudgetDeniedError("positive_budget_provider_wire_unqualified")

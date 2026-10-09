@@ -88,6 +88,12 @@ def test_worker_denies_unqualified_provider_after_durable_signed_human_event(
 def test_default_web_remains_off(build_test_engine: Any, monkeypatch) -> None:
     engine, _ = build_test_engine([])
     monkeypatch.delenv("LFL_TASK_BUDGET_WEB_CANARY_CONFIG", raising=False)
+    # delenv alone cannot hide a developer .env that pins a real canary config:
+    # business_config_snapshot reads dotenv, not just process env. Isolate the
+    # snapshot the same way test_real_web_bootstrap does (admin_once tests).
+    from llm_loop.web import task_budget_canary as _web_canary
+
+    monkeypatch.setattr(_web_canary, "business_config_snapshot", lambda _s: {})
     assert load_operator_web_canary(engine) is None
     assert build_app(engine=engine).state.task_budget_web_canary is None
 
@@ -99,6 +105,12 @@ def test_sync_route_cannot_bypass_selected_canary(
     session_id = engine.session.create()
     canary, _ = _zero_canary(engine, session_id, tmp_path)
     monkeypatch.delenv("LFL_TASK_BUDGET_WEB_CANARY_CONFIG", raising=False)
+    # delenv alone cannot hide a developer .env that pins a real canary config:
+    # business_config_snapshot reads dotenv, not just process env. Isolate the
+    # snapshot the same way test_real_web_bootstrap does (admin_once tests).
+    from llm_loop.web import task_budget_canary as _web_canary
+
+    monkeypatch.setattr(_web_canary, "business_config_snapshot", lambda _s: {})
     app = build_app(engine=engine)
     app.state.task_budget_web_canary = canary
     response = TestClient(app).post("/api/v1/chat", json={
@@ -159,6 +171,12 @@ def test_real_web_stream_passes_pinned_plan_to_background_runner(
     session_id = engine.session.create()
     canary, _ = _zero_canary(engine, session_id, tmp_path)
     monkeypatch.delenv("LFL_TASK_BUDGET_WEB_CANARY_CONFIG", raising=False)
+    # delenv alone cannot hide a developer .env that pins a real canary config:
+    # business_config_snapshot reads dotenv, not just process env. Isolate the
+    # snapshot the same way test_real_web_bootstrap does (admin_once tests).
+    from llm_loop.web import task_budget_canary as _web_canary
+
+    monkeypatch.setattr(_web_canary, "business_config_snapshot", lambda _s: {})
     monkeypatch.setattr(auth, "request_authenticated", lambda _req: True)
     app = build_app(engine=engine)
     app.state.task_budget_web_canary = canary

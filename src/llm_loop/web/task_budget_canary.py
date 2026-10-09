@@ -37,6 +37,9 @@ from llm_loop.resources.task_budget_process_transport import (
     bind_isolated_provider_transport,
 )
 from llm_loop.resources.task_budget_store import TaskBudgetDeniedError, TaskBudgetStore
+from llm_loop.resources.task_budget_transport_context import (
+    qualify_loopback_provider_proxy,
+)
 from llm_loop.runtime.resolver import business_config_snapshot
 
 
@@ -78,10 +81,17 @@ def _read_operator_config(path: Path) -> dict[str, Any]:
     if not isinstance(result, dict):
         _deny()
     if result.get("schema") == "web-task-budget-admin-once/v1":
-        if set(result) != {
+        base_keys = {
             "schema", "authorization_id", "session_id", "workspace_root",
             "model_ref", "valid_from_epoch_s", "valid_until_epoch_s",
-        }:
+        }
+        if set(result) not in (base_keys, base_keys | {"provider_proxy"}):
+            _deny()
+        # Optional explicit loopback egress proxy for the one physical
+        # attempt; never env/system discovery, never a remote proxy.
+        if result.get("provider_proxy") is not None and qualify_loopback_provider_proxy(
+            result.get("provider_proxy")
+        ) is None:
             _deny()
         return result
     if set(result) != {
@@ -142,6 +152,7 @@ def load_operator_web_canary(engine: Any) -> WebTaskBudgetCanary | None:
                 valid_until_epoch_s=config["valid_until_epoch_s"],
                 event_store=engine._event_store,
                 budget_store=TaskBudgetStore(data_dir / "task_budget_admin_once"),
+                provider_proxy=config.get("provider_proxy"),
             )
         except (TypeError, ValueError):
             _deny()
@@ -233,7 +244,7 @@ def bind_web_canary(canary: WebTaskBudgetCanary | None) -> Iterator[None]:
         return
     if isinstance(canary.plan, AdminOnceEventPlan):
         with bind_admin_once_plan(canary.plan), bind_isolated_provider_transport(
-            IsolatedTransportProfile(verify=True, proxy=None)
+            IsolatedTransportProfile(verify=True, proxy=canary.plan.provider_proxy)
         ):
             yield
     else:

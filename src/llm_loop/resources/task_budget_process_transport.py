@@ -13,6 +13,7 @@ import binascii
 import json
 import multiprocessing
 import os
+import re
 import threading
 from collections.abc import Iterator
 from contextlib import closing, contextmanager, suppress
@@ -26,6 +27,7 @@ from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
 from llm_loop.resources.task_budget_transport_context import (
     _ISOLATED_PROFILE,
     IsolatedTransportProfile,
+    active_authorized_provider_proxy,
     bind_isolated_provider_transport,
 )
 
@@ -38,6 +40,20 @@ _POLL_SECONDS = 0.025
 _REAP_SECONDS = 0.35
 _FRAME_MAX = 262_144
 _BODY_CHUNK = 16_384
+_KIND_RE = re.compile(r"[A-Za-z0-9_.]{1,64}\Z")
+
+
+def _worker_error_code(code: str, kind: object) -> str:
+    """Surface the worker's exception class so an open failure is attributable.
+
+    The class name is type-only evidence; it can never carry credentials,
+    URLs, or message bodies across the process boundary. Production incident
+    2026-10-09 14:14: the kind was discarded here, leaving only a generic
+    isolated_transport_open_failed that no one could attribute.
+    """
+    if isinstance(kind, str) and _KIND_RE.fullmatch(kind):
+        return f"{code}:{kind}"
+    return code
 
 
 class IsolatedTransportError(httpx.TransportError):
@@ -209,7 +225,9 @@ class _BodyStream(httpx.SyncByteStream):
             if event["event"] == "end":
                 return
             if event["event"] == "error":
-                raise IsolatedTransportError("isolated_transport_worker_error")
+                raise IsolatedTransportError(_worker_error_code(
+                    "isolated_transport_worker_error", event.get("kind"),
+                ))
             if event["event"] != "body" or not isinstance(event.get("data"), str):
                 raise IsolatedTransportError("isolated_transport_unexpected_frame")
             try:
@@ -243,7 +261,8 @@ def isolated_provider_stream(
         if not has_dispatched_attempt(budget):
             raise TaskBudgetDeniedError("positive_send_without_dispatched_cas_reservation")
         if (
-            profile.verify is not True or profile.proxy is not None
+            profile.verify is not True
+            or profile.proxy not in (None, active_authorized_provider_proxy())
             or json.get("model") != "glm-5.3"
         ):
             raise TaskBudgetDeniedError("positive_transport_unqualified")
@@ -273,7 +292,9 @@ def isolated_provider_stream(
             attempt.start()
             opening = attempt.next_frame()
             if opening["event"] == "error":
-                raise IsolatedTransportError("isolated_transport_open_failed")
+                raise IsolatedTransportError(_worker_error_code(
+                    "isolated_transport_open_failed", opening.get("kind"),
+                ))
             if opening["event"] != "headers":
                 raise IsolatedTransportError("isolated_transport_missing_headers")
             version = opening.get("http_version")

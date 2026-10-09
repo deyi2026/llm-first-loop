@@ -286,6 +286,7 @@ def test_real_web_bootstrap_installs_one_session_fence_without_signer(
         "session_id": sid,
         "workspace_root": str(workspace),
         "model_ref": "glm/glm-5.3",
+        "provider_proxy": "http://127.0.0.1:6152",
         "valid_from_epoch_s": time.time() - 1,
         "valid_until_epoch_s": time.time() + 300,
     }
@@ -300,6 +301,22 @@ def test_real_web_bootstrap_installs_one_session_fence_without_signer(
     pinned = app.state.task_budget_web_canary
     assert isinstance(pinned.plan, AdminOnceEventPlan)
     assert pinned.session_id == sid
+    # The operator-pinned loopback proxy must travel plan -> profile -> guard
+    # scope, and never leak outside the canary bind window.
+    from llm_loop.resources.task_budget_transport_context import (
+        active_authorized_provider_proxy,
+        active_isolated_transport_profile,
+    )
+    from llm_loop.web.task_budget_canary import bind_web_canary
+
+    assert pinned.plan.provider_proxy == "http://127.0.0.1:6152"
+    with bind_web_canary(pinned):
+        profile = active_isolated_transport_profile()
+        assert profile is not None
+        assert profile.proxy == "http://127.0.0.1:6152"
+        assert active_authorized_provider_proxy() == "http://127.0.0.1:6152"
+    assert active_authorized_provider_proxy() is None
+    assert active_isolated_transport_profile() is None
     assert engine._task_budget_restricted_session_id == sid
     # The pre-existing synchronous Engine API must also fail closed.
     with pytest.raises(TaskBudgetDeniedError, match="restricted_web_session_requires_budget_plan"):
@@ -323,3 +340,55 @@ def test_operator_setup_exclusive_and_fsync_file(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="must be new"):
         _store_exclusive(path, {**row, "authorization_id": "f" * 32})
     assert _read_operator_config(path) == row
+
+
+def test_operator_config_accepts_qualified_provider_proxy(tmp_path: Path) -> None:
+    from scripts.task_budget_admin_once_setup import _store_exclusive
+
+    row = {
+        "schema": "web-task-budget-admin-once/v1", "authorization_id": "e" * 32,
+        "session_id": "web-session", "workspace_root": str(tmp_path),
+        "model_ref": "glm/glm-5.3", "valid_from_epoch_s": time.time(),
+        "valid_until_epoch_s": time.time() + 300,
+        "provider_proxy": "http://localhost:6152",
+    }
+    path = tmp_path / "with-provider-proxy.json"
+    _store_exclusive(path, row)
+    assert _read_operator_config(path) == row
+
+
+def test_operator_config_accepts_null_provider_proxy(tmp_path: Path) -> None:
+    from scripts.task_budget_admin_once_setup import _store_exclusive
+
+    row = {
+        "schema": "web-task-budget-admin-once/v1", "authorization_id": "e" * 32,
+        "session_id": "web-session", "workspace_root": str(tmp_path),
+        "model_ref": "glm/glm-5.3", "valid_from_epoch_s": time.time(),
+        "valid_until_epoch_s": time.time() + 300,
+        "provider_proxy": None,
+    }
+    path = tmp_path / "null-provider-proxy.json"
+    _store_exclusive(path, row)
+    assert _read_operator_config(path) == row
+
+
+@pytest.mark.parametrize("bad_proxy", [
+    "socks5://127.0.0.1:1080", "http://10.0.0.1:6152", "http://127.0.0.1",
+    "https://127.0.0.1:6152", "http://u:p@127.0.0.1:6152", 42,
+])
+def test_operator_config_rejects_unqualified_provider_proxy(
+    tmp_path: Path, bad_proxy,
+) -> None:
+    from scripts.task_budget_admin_once_setup import _store_exclusive
+
+    row = {
+        "schema": "web-task-budget-admin-once/v1", "authorization_id": "e" * 32,
+        "session_id": "web-session", "workspace_root": str(tmp_path),
+        "model_ref": "glm/glm-5.3", "valid_from_epoch_s": time.time(),
+        "valid_until_epoch_s": time.time() + 300,
+        "provider_proxy": bad_proxy,
+    }
+    path = tmp_path / "bad-provider-proxy.json"
+    _store_exclusive(path, row)
+    with pytest.raises(TaskBudgetDeniedError):
+        _read_operator_config(path)
