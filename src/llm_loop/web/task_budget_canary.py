@@ -1,8 +1,9 @@
-"""The only opt-in Web -> signed TaskBudget cutover for ONE existing session.
+"""Opt-in Web -> TaskBudget cutover for ONE existing session.
 
 Default OFF. The browser/message/model cannot select, issue, edit or expand a
-budget. The human operator provisions the independent issuer + reviewer first;
-this adapter then binds their signed proof to the existing Web worker Run.
+budget. The admin-once plan uses an operator-provisioned single-use config;
+the legacy signed plan preserves its independent signer/reviewer. Neither
+plan is enabled by a Web request, tool result or model instruction.
 """
 
 from __future__ import annotations
@@ -20,6 +21,11 @@ from Crypto.PublicKey import ECC
 from fastapi import Request
 
 from llm_loop.event_log.store import EventStore
+from llm_loop.resources.task_budget_admin_once import (
+    AdminOnceEventPlan,
+    bind_admin_once_plan,
+)
+from llm_loop.resources.task_budget_dispatch import exact_workspace_scope
 from llm_loop.resources.task_budget_event_authority import (
     SignedWebEventPlan,
     bind_signed_web_event_plan,
@@ -37,7 +43,7 @@ from llm_loop.runtime.resolver import business_config_snapshot
 @dataclass(frozen=True)
 class WebTaskBudgetCanary:
     session_id: str
-    plan: SignedWebEventPlan
+    plan: SignedWebEventPlan | AdminOnceEventPlan
 
     def bind(self) -> AbstractContextManager[None]:
         return bind_web_canary(self)
@@ -69,7 +75,16 @@ def _read_operator_config(path: Path) -> dict[str, Any]:
         result = json.loads(content)
     except (ValueError, UnicodeError):
         _deny()
-    if not isinstance(result, dict) or set(result) != {
+    if not isinstance(result, dict):
+        _deny()
+    if result.get("schema") == "web-task-budget-admin-once/v1":
+        if set(result) != {
+            "schema", "authorization_id", "session_id", "workspace_root",
+            "model_ref", "valid_from_epoch_s", "valid_until_epoch_s",
+        }:
+            _deny()
+        return result
+    if set(result) != {
         "schema", "session_id", "workspace_root", "operator_uid", "issuer_uid",
         "web_group_gid", "mailbox_dir", "issuer_socket", "operator_key_id",
         "operator_public_key_pem", "operator_id", "budget_key_id",
@@ -107,6 +122,30 @@ def load_operator_web_canary(engine: Any) -> WebTaskBudgetCanary | None:
         or str(engine.workspace_root or "") != config["workspace_root"]
     ):
         _deny()
+    if config["schema"] == "web-task-budget-admin-once/v1":
+        # Administrator approves ONE immutable Run quota. No credential,
+        # signature service, operator mailbox or user-facing switch exists.
+        if config["model_ref"] != "glm/glm-5.3":
+            _deny()
+        if not isinstance(getattr(engine, "_event_store", None), EventStore):
+            _deny()
+        runner = getattr(engine, "runner", None)
+        if runner is None or runner.enabled is not True:
+            _deny()
+        data_dir = Path(engine.settings.data_dir).expanduser().resolve()
+        try:
+            plan = AdminOnceEventPlan(
+                session_id=session_id,
+                workspace_scope=exact_workspace_scope(config["workspace_root"]),
+                authorization_id=config["authorization_id"],
+                valid_from_epoch_s=config["valid_from_epoch_s"],
+                valid_until_epoch_s=config["valid_until_epoch_s"],
+                event_store=engine._event_store,
+                budget_store=TaskBudgetStore(data_dir / "task_budget_admin_once"),
+            )
+        except (TypeError, ValueError):
+            _deny()
+        return WebTaskBudgetCanary(session_id=session_id, plan=plan)
     web_uid, human_uid, issuer_uid, web_gid = (
         os.geteuid(), config["operator_uid"], config["issuer_uid"],
         config["web_group_gid"],
@@ -192,7 +231,13 @@ def bind_web_canary(canary: WebTaskBudgetCanary | None) -> Iterator[None]:
     if canary is None:
         yield
         return
-    with bind_signed_web_event_plan(canary.plan), bind_isolated_provider_transport(
-        IsolatedTransportProfile(verify=True, proxy=None)
-    ):
-        yield
+    if isinstance(canary.plan, AdminOnceEventPlan):
+        with bind_admin_once_plan(canary.plan), bind_isolated_provider_transport(
+            IsolatedTransportProfile(verify=True, proxy=None)
+        ):
+            yield
+    else:
+        with bind_signed_web_event_plan(canary.plan), bind_isolated_provider_transport(
+            IsolatedTransportProfile(verify=True, proxy=None)
+        ):
+            yield

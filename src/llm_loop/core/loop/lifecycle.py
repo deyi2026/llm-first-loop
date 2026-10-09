@@ -217,6 +217,10 @@ class _RunEntrypointMixin:
             # I5-A: a separately operator-signed, zero-send Web intent may be
             # consumed only after the real Run lease, generation and human
             # ingress exist. Ordinary production routes install no intent.
+            from llm_loop.resources.task_budget_admin_once import (
+                active_admin_once_plan,
+                prepare_admin_once_event_budget,
+            )
             from llm_loop.resources.task_budget_authority import (
                 active_signed_web_budget_intent,
                 prepare_signed_web_run_budget,
@@ -234,9 +238,19 @@ class _RunEntrypointMixin:
             from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
 
             _event_plan = active_signed_web_event_plan()
-            if _event_plan is not None and active_signed_web_budget_intent() is not None:
+            _admin_plan = active_admin_once_plan()
+            if sum((
+                _event_plan is not None, _admin_plan is not None,
+                active_signed_web_budget_intent() is not None,
+            )) > 1:
                 raise TaskBudgetDeniedError("operator_budget_mutually_exclusive_authority")
-            if _event_plan is None:
+            # A startup-restricted Web session can NEVER fall back to an
+            # unbounded/default Run through queue-recovery, direct Engine,
+            # interjection, or another alternate Web endpoint.
+            _restricted_sid = getattr(self, "_task_budget_restricted_session_id", None)
+            if _restricted_sid == session_id and _admin_plan is None and _event_plan is None:
+                raise TaskBudgetDeniedError("restricted_web_session_requires_budget_plan")
+            if _event_plan is None and _admin_plan is None:
                 _budget_execution = prepare_signed_web_run_budget(
                     session_id=session_id,
                     workspace_root=run_workspace,
@@ -267,17 +281,27 @@ class _RunEntrypointMixin:
 
             def _on_human_event(event: Any) -> None:
                 nonlocal _budget_execution
-                if _event_plan is None:
+                if _event_plan is None and _admin_plan is None:
                     return
                 if _budget_execution is not None or _event_step_scope is None:
                     raise TaskBudgetDeniedError("operator_budget_event_scope_invalid")
-                if getattr(self, "_event_store", None) is not _event_plan.event_store:
+                _chosen_plan = _admin_plan if _admin_plan is not None else _event_plan
+                assert _chosen_plan is not None
+                if getattr(self, "_event_store", None) is not _chosen_plan.event_store:
                     raise TaskBudgetDeniedError("operator_budget_event_store_mismatch")
-                _budget_execution = prepare_signed_web_event_budget(
-                    plan=_event_plan, event=event, session_id=session_id,
-                    workspace_root=run_workspace, run_generation=run_generation,
-                    user_text=user_text, ingress=ingress,
-                )
+                if _admin_plan is not None:
+                    _budget_execution = prepare_admin_once_event_budget(
+                        plan=_admin_plan, event=event, session_id=session_id,
+                        workspace_root=run_workspace, run_generation=run_generation,
+                        user_text=user_text, ingress=ingress,
+                    )
+                else:
+                    assert _event_plan is not None
+                    _budget_execution = prepare_signed_web_event_budget(
+                        plan=_event_plan, event=event, session_id=session_id,
+                        workspace_root=run_workspace, run_generation=run_generation,
+                        user_text=user_text, ingress=ingress,
+                    )
                 _register_budget(_budget_execution)
                 _event_step_scope.enter_context(
                     bind_task_budget(_budget_execution, cleanup_scope=True)
@@ -288,7 +312,9 @@ class _RunEntrypointMixin:
                 session_id, user_text, model,
                 run_save_token=_run_save_token, on_run_acquired=on_run_acquired,
                 ingress=ingress, user_metadata=user_metadata,
-                on_human_event_appended=_on_human_event if _event_plan is not None else None,
+                on_human_event_appended=(
+                    _on_human_event if _event_plan is not None or _admin_plan is not None else None
+                ),
             )
 
             while True:

@@ -220,9 +220,19 @@ def build_app(settings=None, engine=None) -> FastAPI:
         title="llm-first-loop-web", version="0.6.6", default_response_class=UTF8JSONResponse
     )
     app.state.engine = engine
-    # The normal Web app stays OFF unless the one-session canary is
-    # independently provisioned and its startup identity checks pass.
+    # Default OFF. A single preconfigured Web session can use the admin-once
+    # CAS plan or the existing separately signed operator plan.
     app.state.task_budget_web_canary = load_operator_web_canary(engine)
+    # Central Run admission fence: no queue/sync/direct-Engine bypass of a
+    # startup-authorized single-use session after its quota has been spent.
+    from llm_loop.resources.task_budget_admin_once import AdminOnceEventPlan
+
+    _canary = app.state.task_budget_web_canary
+    engine._task_budget_restricted_session_id = (
+        _canary.session_id
+        if _canary is not None and isinstance(_canary.plan, AdminOnceEventPlan)
+        else None
+    )
     app.state.web_sessions = WebSessionStore()
     app.state.login_rate_limiter = LoginRateLimiter()
     # Login/logout/status are deliberately public; all engine/data APIs stay behind

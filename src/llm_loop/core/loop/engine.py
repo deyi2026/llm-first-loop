@@ -396,6 +396,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         self.recovery = recovery
         # D1: 事件源化 EventStore（默认 None 零行为；注入时消息/元数据/压缩事件落事件日志）
         self._event_store = event_store
+        # Set only at Web bootstrap after an administrator's one-Run config
+        # is verified. Alternate ingress paths for that exact session must
+        # not bypass the durable CAS simply by omitting a Web request scope.
+        self._task_budget_restricted_session_id: str | None = None
         # Mechanical post-tool-receipt hook; factory binds SubAgent settlement only.
         self._tool_receipt_committed_hook: Callable[[str, Message], object] | None = None
         # INJECTION-GOVERNANCE R8.5: completed conversation episodes become
