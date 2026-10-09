@@ -691,6 +691,39 @@ def test_runner_acceptance_injected(build_test_engine):
     assert "3. 单测通过" in joined
 
 
+def test_runner_delegated_task_includes_method_discovery_discipline(build_test_engine):
+    """2026-10-10 canary R2：委派任务模板注入有界方法论检索纪律行；父任务已含则不重复。"""
+    import json
+
+    def capture_run(task: str) -> str:
+        engine, fake = build_test_engine([])
+        runner = SubAgentRunner(
+            llm=fake, registry=engine.registry, session_store=engine.session
+        )
+        captured: list[str] = []
+
+        def seq(calls):
+            msgs = (
+                json.dumps([m.to_llm_dict() for m in calls], ensure_ascii=False)
+                if hasattr(calls[0], "to_llm_dict")
+                else str(calls)
+            )
+            captured.append(msgs)
+            return LLMResponse(content="完成", tool_calls=[], provider="fake")
+
+        fake._responses = [seq]
+        result = runner.run(task=task, depth=0)
+        assert result.refused is False
+        return " ".join(captured)
+
+    joined = capture_run("检索旧事故复盘")
+    assert "kind=method，limit≤5" in joined
+    assert "仅作背景参考" in joined
+
+    joined2 = capture_run("先做 kind=method，limit≤5 的方法论检索再动手")
+    assert joined2.count("kind=method，limit≤5") == 1  # 父任务已含同款纪律行，模板不重复追加
+
+
 def test_spawn_tool_acceptance_param(build_test_engine):
     """spawn_subagent acceptance 透传到 background child，终态经 result 回收。"""
     engine, fake = build_test_engine([])
