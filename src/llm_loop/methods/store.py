@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -26,8 +27,12 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _SAFE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _STORE_LOCK_FILE = ".__method_store.lock"
 _STAGING_DIR = ".__method_store_staging"
+_USAGE_LEDGER_FILE = "usage.jsonl"
+_USAGE_WATERMARK_FILE = ".usage_watermark.json"
 _DIR_FSYNC_ATTEMPTS = 3
 _PROCESS_LOCK = threading.RLock()
+
+logger = logging.getLogger(__name__)
 
 try:
     import fcntl
@@ -860,12 +865,83 @@ class MethodStore:
         if clean_session:
             entry["session_id"] = clean_session
         self._dir.mkdir(parents=True, exist_ok=True)
-        path = self._dir / "usage.jsonl"
+        path = self._dir / _USAGE_LEDGER_FILE
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
             f.flush()
             os.fsync(f.fileno())
+        self._refresh_usage_watermark_locked()
         return entry
+
+    def _count_usage_lines(self) -> int:
+        """Count non-empty usage ledger lines; unreadable ledger reports zero."""
+        path = self._dir / _USAGE_LEDGER_FILE
+        if not path.is_file():
+            return 0
+        count = 0
+        try:
+            with path.open("rb") as f:
+                for raw in f:
+                    if raw.strip():
+                        count += 1
+        except OSError:
+            return 0
+        return count
+
+    def _refresh_usage_watermark_locked(self) -> None:
+        """Keep a monotonic line-count watermark for the append-only usage ledger.
+
+        EVO-20261010 usage-ledger loss: ``record_use`` had fsync'd and returned
+        success, yet the uncommitted append was later destroyed by a git
+        tree-clean revert because the ledger was also a tracked file. The
+        watermark never gates writes and never ratchets down; it only makes
+        external truncation observable at the next integrity check.
+        Call under the store's single-writer lock.
+        """
+        wm_path = self._dir / _USAGE_WATERMARK_FILE
+        previous = 0
+        try:
+            previous = int(json.loads(wm_path.read_text(encoding="utf-8")).get("count", 0))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            previous = 0
+        count = max(previous, self._count_usage_lines())
+        try:
+            payload = json.dumps({"count": count, "ts": _now()}, sort_keys=True)
+            with wm_path.open("w", encoding="utf-8") as f:
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError as exc:  # noqa: BLE001 - watermark is observability, not a write gate
+            logger.warning("usage watermark refresh failed (non-fatal): %s", exc)
+
+    def check_usage_integrity(self) -> dict[str, Any]:
+        """Report ledger-vs-watermark drift without mutating either file.
+
+        ``lost > 0`` means the ledger currently holds fewer entries than the
+        high-water mark of successful fsync'd appends: entries were removed by
+        an external actor (git revert, manual edit, partial restore).
+        """
+        wm_path = self._dir / _USAGE_WATERMARK_FILE
+        try:
+            watermark = json.loads(wm_path.read_text(encoding="utf-8"))
+            watermark_count = int(watermark.get("count", 0))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return {"monitored": False, "lost": 0}
+        current = self._count_usage_lines()
+        lost = max(watermark_count - current, 0)
+        report: dict[str, Any] = {
+            "monitored": True,
+            "lost": lost,
+            "watermark_count": watermark_count,
+            "current_count": current,
+            "watermark_ts": str(watermark.get("ts", "")),
+        }
+        if lost:
+            logger.error(
+                "method usage ledger lost %d entr%s (watermark=%d current=%d watermark_ts=%s)",
+                lost, "y" if lost == 1 else "ies", watermark_count, current, report["watermark_ts"],
+            )
+        return report
 
     def usage_entries(self, method_ref: str = "") -> list[dict[str, Any]]:
         """Read bounded-size local use declarations; semantic interpretation stays model-owned."""
