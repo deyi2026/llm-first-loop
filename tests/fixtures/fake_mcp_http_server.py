@@ -13,6 +13,9 @@
 from __future__ import annotations
 
 import json
+import queue
+import select
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -29,6 +32,34 @@ class _State:
         self.valid_sessions: set[str] = set()
         self.kill_next_session = threading.Event()
         self.seen: dict[str, dict[str, Any]] = {"last_meta": {}, "headers": {}}
+        # OAuth 门禁（FR-05）：设置为 FakeOAuthAuthorizationServer 时启用
+        # （duck 契约：is_valid_token(token) + protected_metadata_url）
+        self.token_gate: Any = None
+        # 常驻订阅（现代）：sid → 事件队列（GET 流消费；测试经 emit_list_changed 推送）
+        self.sub_lock = threading.Lock()
+        self.subscription_counter = 0
+        self.subscriptions: dict[str, queue.Queue[dict[str, Any] | None]] = {}
+
+    def emit_list_changed(self) -> None:
+        """向全部活跃订阅推送 tools/list_changed（params._meta.subscriptionId 标记）."""
+        with self.sub_lock:
+            items = list(self.subscriptions.items())
+        for sid, q in items:
+            q.put(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/tools/list_changed",
+                    "params": {"_meta": {"subscriptionId": sid}},
+                }
+            )
+
+    def stop_subscriptions(self) -> None:
+        """关停全部 GET 流（哨兵 None；close 时调用）."""
+        with self.sub_lock:
+            queues = list(self.subscriptions.values())
+            self.subscriptions.clear()
+        for q in queues:
+            q.put(None)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -48,7 +79,9 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return {}
 
-    def _send_json(self, status: int, payload: dict[str, Any], headers: dict[str, str] | None = None) -> None:
+    def _send_json(
+        self, status: int, payload: dict[str, Any], headers: dict[str, str] | None = None
+    ) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -58,7 +91,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_rpc_error(self, status: int, code: int, message: str, data: Any = None, mid: Any = None) -> None:
+    def _send_rpc_error(
+        self, status: int, code: int, message: str, data: Any = None, mid: Any = None
+    ) -> None:
         err: dict[str, Any] = {"code": code, "message": message}
         if data is not None:
             err["data"] = data
@@ -114,10 +149,88 @@ class Handler(BaseHTTPRequestHandler):
         if isinstance(params.get("_meta"), dict):
             state.seen["last_meta"] = params["_meta"]
 
+        if state.token_gate is not None and not self._bearer_ok():
+            # FR-05 门禁：无/无效令牌 → 401 + WWW-Authenticate（resource_metadata）
+            body = json.dumps({"error": "unauthorized"}).encode("utf-8")
+            self.send_response(401)
+            self.send_header(
+                "WWW-Authenticate",
+                f'Bearer resource_metadata="{state.token_gate.protected_metadata_url}"',
+            )
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if self.state.mode == "modern":
             self._handle_modern(msg, method, mid, params)
             return
         self._handle_legacy(msg, method, mid, params)
+
+    def _bearer_ok(self) -> bool:
+        gate = self.state.token_gate
+        auth = self.headers.get("Authorization") or ""
+        if not auth.startswith("Bearer "):
+            return False
+        assert gate is not None
+        return gate.is_valid_token(auth[len("Bearer ") :])
+
+    # ── 现代：常驻订阅 GET 流 ──
+    def do_GET(self) -> None:  # noqa: N802
+        state = self.state
+        if state.mode != "modern":
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        sid = self.headers.get("X-Subscription-Id")
+        with state.sub_lock:
+            q = state.subscriptions.get(sid) if sid else None
+        if q is None:
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        try:
+            while True:
+                try:
+                    frame = q.get(timeout=0.5)
+                except queue.Empty:
+                    if self._client_disconnected():
+                        break
+                    continue
+                if frame is None:
+                    break
+                payload = json.dumps(frame, ensure_ascii=False)
+                self.wfile.write(f"data: {payload}\n\n".encode())
+                self.wfile.flush()
+        except (OSError, ValueError):  # 客户端断开 → 清理订阅
+            pass
+        finally:
+            with state.sub_lock:
+                if state.subscriptions.get(sid) is q:
+                    del state.subscriptions[sid]
+
+    def _client_disconnected(self) -> bool:
+        """空闲轮询间隙探测客户端是否已断开（EOF 半关/全关；测试 fixture 用）."""
+        try:
+            readable, _, _ = select.select([self.connection], [], [], 0)
+        except (OSError, ValueError):
+            return True
+        if not readable:
+            return False
+        try:
+            data = self.connection.recv(1, socket.MSG_PEEK)
+        except BlockingIOError:  # 伪可读（常见于对端半关写侧）
+            return False
+        except OSError:
+            return True
+        return data == b""
 
     # ── 现代 ──
     def _handle_modern(self, msg: dict, method: Any, mid: Any, params: dict) -> None:
@@ -126,9 +239,22 @@ class Handler(BaseHTTPRequestHandler):
         meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
         body_version = meta.get(META_VERSION)
         if method == "subscriptions/listen":
-            self.send_response(202)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
+            if not isinstance(mid, int):
+                # 通知形态（无 id）：接受即忘
+                self.send_response(202)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            # 请求形态（常驻订阅）：分配 sid，客户端随后 GET 常驻流（X-Subscription-Id）
+            self.state.subscription_counter += 1
+            sid = f"sub-{self.state.subscription_counter}"
+            with self.state.sub_lock:
+                self.state.subscriptions[sid] = queue.Queue()
+            self._send_json(
+                200,
+                {"jsonrpc": "2.0", "id": mid, "result": {}},
+                headers={"X-Subscription-Id": sid},
+            )
             return
         if not isinstance(mid, int):
             self.send_response(202)
@@ -145,7 +271,9 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         if header_method != str(method or ""):
-            self._send_rpc_error(400, -32072, "HeaderMismatch: Mcp-Method must match body method", mid=mid)
+            self._send_rpc_error(
+                400, -32072, "HeaderMismatch: Mcp-Method must match body method", mid=mid
+            )
             return
         if method == "server/discover":
             self._send_json(
@@ -162,23 +290,34 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         if method == "tools/list":
-            self._send_json(200, {"jsonrpc": "2.0", "id": mid, "result": self._page(params.get("cursor"))})
+            self._send_json(
+                200, {"jsonrpc": "2.0", "id": mid, "result": self._page(params.get("cursor"))}
+            )
             return
         if method == "tools/call":
             name = params.get("name")
             header_name = self.headers.get("Mcp-Name")
             if header_name != str(name or ""):
-                self._send_rpc_error(400, -32072, "HeaderMismatch: Mcp-Name must match params.name", mid=mid)
+                self._send_rpc_error(
+                    400, -32072, "HeaderMismatch: Mcp-Name must match params.name", mid=mid
+                )
                 return
             if name == "echo":
                 text = (params.get("arguments") or {}).get("text", "")
                 self._send_sse(
                     [
-                        {"jsonrpc": "2.0", "method": "notifications/message", "params": {"level": "info"}},
+                        {
+                            "jsonrpc": "2.0",
+                            "method": "notifications/message",
+                            "params": {"level": "info"},
+                        },
                         {
                             "jsonrpc": "2.0",
                             "id": mid,
-                            "result": {"isError": False, "content": [{"type": "text", "text": f"echo:{text}"}]},
+                            "result": {
+                                "isError": False,
+                                "content": [{"type": "text", "text": f"echo:{text}"}],
+                            },
                         },
                     ]
                 )
@@ -189,7 +328,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Connection", "close")
                 self.end_headers()
-                self.wfile.write(b"data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{}}\n\n")
+                self.wfile.write(
+                    b'data: {"jsonrpc":"2.0","method":"notifications/message","params":{}}\n\n'
+                )
                 self.wfile.flush()
                 import time as _t
 
@@ -203,7 +344,14 @@ class Handler(BaseHTTPRequestHandler):
                             "id": mid,
                             "result": {
                                 "isError": False,
-                                "content": [{"type": "text", "text": json.dumps(self.state.seen["last_meta"], ensure_ascii=False)}],
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": json.dumps(
+                                            self.state.seen["last_meta"], ensure_ascii=False
+                                        ),
+                                    }
+                                ],
                             },
                         }
                     ]
@@ -215,7 +363,10 @@ class Handler(BaseHTTPRequestHandler):
                         {
                             "jsonrpc": "2.0",
                             "id": mid,
-                            "result": {"isError": True, "content": [{"type": "text", "text": "http boom"}]},
+                            "result": {
+                                "isError": True,
+                                "content": [{"type": "text", "text": "http boom"}],
+                            },
                         }
                     ]
                 )
@@ -262,7 +413,9 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if method == "tools/list":
-            self._send_json(200, {"jsonrpc": "2.0", "id": mid, "result": self._page(params.get("cursor"))})
+            self._send_json(
+                200, {"jsonrpc": "2.0", "id": mid, "result": self._page(params.get("cursor"))}
+            )
             return
         if method == "tools/call":
             name = params.get("name")
@@ -270,11 +423,18 @@ class Handler(BaseHTTPRequestHandler):
                 text = (params.get("arguments") or {}).get("text", "")
                 self._send_sse(
                     [
-                        {"jsonrpc": "2.0", "method": "notifications/message", "params": {"level": "info"}},
+                        {
+                            "jsonrpc": "2.0",
+                            "method": "notifications/message",
+                            "params": {"level": "info"},
+                        },
                         {
                             "jsonrpc": "2.0",
                             "id": mid,
-                            "result": {"isError": False, "content": [{"type": "text", "text": f"echo:{text}"}]},
+                            "result": {
+                                "isError": False,
+                                "content": [{"type": "text", "text": f"echo:{text}"}],
+                            },
                         },
                     ]
                 )
@@ -285,7 +445,10 @@ class Handler(BaseHTTPRequestHandler):
                         {
                             "jsonrpc": "2.0",
                             "id": mid,
-                            "result": {"isError": True, "content": [{"type": "text", "text": "http boom"}]},
+                            "result": {
+                                "isError": True,
+                                "content": [{"type": "text", "text": "http boom"}],
+                            },
                         }
                     ]
                 )
@@ -298,9 +461,10 @@ class Handler(BaseHTTPRequestHandler):
 class FakeMcpHttpServer:
     """测试内嵌 HTTP MCP 服务器（线程化；url 属性即端点）."""
 
-    def __init__(self, mode: str) -> None:
+    def __init__(self, mode: str, token_gate: Any = None) -> None:
         assert mode in ("modern", "legacy")
         state = _State(mode)
+        state.token_gate = token_gate
         handler_class = type(f"Handler_{mode}", (Handler,), {"state": state})
         self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler_class)
         self.state = state
@@ -309,7 +473,13 @@ class FakeMcpHttpServer:
         host, port = self._httpd.server_address[:2]
         self.url = f"http://{host}:{port}/mcp"
 
+    def subscription_count(self) -> int:
+        """活跃常驻订阅数（测试断言用）."""
+        with self.state.sub_lock:
+            return len(self.state.subscriptions)
+
     def close(self) -> None:
+        self.state.stop_subscriptions()
         self._httpd.shutdown()
         self._httpd.server_close()
         self.thread.join(timeout=3)

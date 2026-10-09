@@ -31,6 +31,11 @@ timeout / error，对齐 ToolResultStatus）。
   MCP-Protocol-Version 头；旧时代 Mcp-Session-Id 会话 + 202 通知 + SSE）
 - 本模块：era 判定（server/discover 探测；非现代错误/超时才回退旧握手）、
   tools/list 游标分页聚合、tools/list_changed 目录版本观察（stale），
+  现代连接 subscriptions/listen 常驻订阅（stdio fire-and-forget；HTTP
+  X-Subscription-Id + 常驻 GET 流），connection_epoch 连接代际（重连递增，
+  旧代通知按代际丢弃并记 adapter 事件；请求 id 跨重连绝不重置），
+  registry 级 catalog_epoch（注册/刷新/list_changed/配置清理均推进，
+  供 P1-C 装配点失效判定），
   以及 P0 typed 恢复语义（未派发→重连重放一次；HTTP 旧会话 404 视作
   未处理→重握手重放一次；结果未知/协议错误不重放）
 """
@@ -43,11 +48,14 @@ import json
 import logging
 import re
 import subprocess
+import threading
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import current_evidence_shadow_enabled
+from llm_loop.tools.mcp_auth import EnvSecretStore, McpOAuthClient
 from llm_loop.tools.mcp_protocol import (  # typed 错误（P0 语义；本模块导入路径兼容）
     LEGACY_ERA,
     LEGACY_VERSIONS,
@@ -87,6 +95,53 @@ _MAX_LIST_PAGES = 1000  # tools/list 游标分页防循环上限
 # LLM 协议工具名约束（OpenAI 兼容: ^[a-zA-Z0-9_-]+$）——mcp.<server>.<tool> 含点号
 # 会被提供方 400 拒绝，注册名统一替换为下划线；底层 MCP 调用仍用原始 tool 名。
 _REGISTRY_NAME_RE = re.compile(r"[^a-zA-Z0-9_-]")
+
+# ── registry 级目录 epoch + adapter 事件（设计 §7.3；与 P1-C 装配协同） ──
+# catalog epoch：MCP 工具目录空间的进程级单调递增版本。凡使"注册表中可见的
+# MCP 工具集可能变化"的事件（注册/热刷新/服务器宣告 tools/list_changed/
+# 配置移除清理）都必须推进它；P1-C 装配点在装配前后比对即可判定失效，
+# 无需自行订阅每个服务器的目录版本。
+_CATALOG_LOCK = threading.Lock()
+_CATALOG_EPOCH = 0
+#: adapter 事件环形缓冲（代际丢弃等诊断事实；不替日志，只留结构化最近事实）
+_ADAPTER_EVENTS: deque[dict[str, Any]] = deque(maxlen=64)
+
+
+def catalog_epoch() -> int:
+    """registry 级目录 epoch（单调递增；P1-C 装配失效判据）."""
+    with _CATALOG_LOCK:
+        return _CATALOG_EPOCH
+
+
+def adapter_events() -> tuple[dict[str, Any], ...]:
+    """最近 adapter 事件快照（如旧代际通知被丢弃；只读拷贝）."""
+    with _CATALOG_LOCK:
+        return tuple(_ADAPTER_EVENTS)
+
+
+def _record_adapter_event(kind: str, server: str, detail: str) -> None:
+    event = {"kind": kind, "server": server, "detail": detail}
+    with _CATALOG_LOCK:
+        _ADAPTER_EVENTS.append(event)
+    logger.info("MCP adapter 事件 [%s] %s: %s", kind, server, detail)
+
+
+def _advance_catalog_epoch(reason: str, server: str | None = None) -> None:
+    """推进目录 epoch（任意 MCP 目录可见性变化后调用）."""
+    global _CATALOG_EPOCH
+    with _CATALOG_LOCK:
+        _CATALOG_EPOCH += 1
+    logger.debug(
+        "MCP 目录 epoch → %d（%s%s）", _CATALOG_EPOCH, reason, f"，{server}" if server else ""
+    )
+
+
+def _reset_catalog_state_for_tests() -> None:
+    """测试隔离：清零 epoch 与 adapter 事件缓冲（仅供测试调用）."""
+    global _CATALOG_EPOCH
+    with _CATALOG_LOCK:
+        _CATALOG_EPOCH = 0
+        _ADAPTER_EVENTS.clear()
 
 
 def _registry_name(server_name: str, tool_name: str) -> str:
@@ -148,6 +203,7 @@ class McpServerSpec:
     type: str = "stdio"  # "stdio" | "http"（Streamable HTTP）
     url: str = ""
     headers: dict[str, str] = field(default_factory=dict)
+    credential_ref: str | None = None  # FR-05：env:VAR 引用（缺凭证可诊断）
 
 
 @dataclass
@@ -170,7 +226,9 @@ def parse_servers(raw: str) -> list[McpServerSpec]:
         logger.warning("MCP_SERVERS JSON 解析失败，MCP 工具未加载: %s", exc)
         return []
     if not isinstance(data, list):
-        logger.warning("MCP_SERVERS 必须为 JSON 数组（当前 %s），MCP 工具未加载", type(data).__name__)
+        logger.warning(
+            "MCP_SERVERS 必须为 JSON 数组（当前 %s），MCP 工具未加载", type(data).__name__
+        )
         return []
     out: list[McpServerSpec] = []
     for i, item in enumerate(data):
@@ -194,6 +252,7 @@ def parse_servers(raw: str) -> list[McpServerSpec]:
                     type="http",
                     url=url,
                     headers={str(k): str(v) for k, v in headers.items()},
+                    credential_ref=str(item.get("credential_ref") or "").strip() or None,
                     enabled=enabled,
                 )
             )
@@ -246,8 +305,21 @@ class McpConnection:
         self.profile: ProtocolProfile | None = None
         self._list_revision = 0
         self._stale = False
+        # 连接代际（设计 §7.3）：每次建立新通道（connect/重连/测试 _start_process）
+        # 递增；旧代通道晚到的通知按代际丢弃并记 adapter 事件。
+        self._connection_epoch = 0
         if spec.type == "http":
-            self.transport: McpTransport = HttpTransport(spec.name, spec.url, spec.headers)
+            transport: McpTransport = HttpTransport(spec.name, spec.url, spec.headers)
+            assert isinstance(transport, HttpTransport)
+            # FR-05：HTTP 连接挂 OAuth 客户端（credential_ref 绑定授权身份；
+            # 缺凭证在首次 401 时可诊断，不静默降级）
+            transport.oauth = McpOAuthClient(
+                spec.name,
+                spec.url,
+                secret_store=EnvSecretStore(),
+                credential_ref=spec.credential_ref,
+            )
+            self.transport = transport
         else:
             self.transport = StdioTransport(spec.name, spec.command, spec.args, spec.env)
         self.transport.notification_handler = self._on_notification
@@ -264,15 +336,37 @@ class McpConnection:
         return self._stale
 
     @property
+    def connection_epoch(self) -> int:
+        """当前连接代际（§5.4 绑定身份要素；每次重连递增，绝不回退）."""
+        return self._connection_epoch
+
+    @property
     def transport_kind(self) -> str:
         return self.spec.type
 
-    def _on_notification(self, method: str, params: dict[str, Any]) -> None:
+    def _enter_new_generation(self) -> None:
+        """建立新通道代际：epoch +1 并回填 transport.generation（供代际丢弃）."""
+        self._connection_epoch += 1
+        self.transport.generation = self._connection_epoch
+
+    def _on_notification(
+        self, method: str, params: dict[str, Any], generation: int | None = None
+    ) -> None:
+        # §7.3：旧 epoch 的通知一律按代际丢弃并记录 adapter 事件，
+        # 不得把旧代通道的晚到 tools/list_changed 套用到新代目录状态
+        if generation is not None and generation != self._connection_epoch:
+            _record_adapter_event(
+                "stale_generation_notification",
+                self.spec.name,
+                f"epoch {generation} 通知 {method} 被丢弃（当前 epoch {self._connection_epoch}）",
+            )
+            return
         # 规范方法名为 notifications/tools/list_changed（2024-11-05 起）；
         # 宽容接受裸 "tools/list_changed"（部分实现/文档混用）
         if method in ("notifications/tools/list_changed", "tools/list_changed"):
             self._stale = True
             self._list_revision += 1
+            _advance_catalog_epoch("tools_list_changed", self.spec.name)
             logger.info(
                 "MCP %s 宣告 tools/list_changed（目录版本 → %d，refresh 时重拉）",
                 self.spec.name,
@@ -280,6 +374,7 @@ class McpConnection:
             )
 
     def _next_msg_id(self) -> int:
+        """请求 id：跨重连单调递增、绝不重置（§7.3 id 命名空间要求）."""
         value = self._next_id
         self._next_id += 1
         return value
@@ -288,11 +383,12 @@ class McpConnection:
     def connect(self) -> list[McpToolDef]:
         """连接 + era 协商 + 全量工具清单（游标分页）；失败 close+raise（fail-open）."""
         self._closed = False
+        self._enter_new_generation()  # 每次 connect 都是新代际（重连语义）
         try:
             if isinstance(self.transport, StdioTransport):
                 self.transport.start()
             self.profile = self._negotiate()
-            if self.profile.is_modern and isinstance(self.transport, StdioTransport):
+            if self.profile.is_modern:
                 self._start_list_subscription()
             tools = self._list_all_tools()
             self._stale = False
@@ -324,6 +420,7 @@ class McpConnection:
 
     def _start_process(self) -> None:
         self._closed = False
+        self._enter_new_generation()  # 测试 seam：模拟进程重启 = 新代际
         if isinstance(self.transport, StdioTransport):
             self.transport.start()
 
@@ -354,17 +451,15 @@ class McpConnection:
             request = build_call_tool_request(self._next_msg_id(), name, arguments, self.profile)
             return self.transport.send_request(request, self._call_timeout)
         except McpHttpError as exc:
-            if (
-                exc.status == 404
-                and self.profile is not None
-                and not self.profile.is_modern
-            ):
+            if exc.status == 404 and self.profile is not None and not self.profile.is_modern:
                 # 旧时代 HTTP 会话被服务器终结（404）：请求未被处理 → 重握手重放一次
                 logger.warning("MCP %s HTTP 会话失效（404），重新握手后重放一次", self.spec.name)
                 self.transport.session_id = None  # type: ignore[union-attr]
                 self.profile = self._negotiate()
                 assert self.profile is not None
-                request = build_call_tool_request(self._next_msg_id(), name, arguments, self.profile)
+                request = build_call_tool_request(
+                    self._next_msg_id(), name, arguments, self.profile
+                )
                 return self.transport.send_request(request, self._call_timeout)
             raise
         # McpOutcomeUnknownError / McpProtocolError 如实上抛，不自动重放
@@ -413,13 +508,11 @@ class McpConnection:
             if isinstance(self.transport, StdioTransport):
                 # stdio 探测无响应：规范允许按旧服务器回退（探测本身无副作用）
                 elapsed = 0.0 if total_budget is None else min(probe_deadline, _time.monotonic())
-                remaining = (
-                    None
-                    if total_budget is None
-                    else max(total_budget - elapsed, 0.05)
-                )
+                remaining = None if total_budget is None else max(total_budget - elapsed, 0.05)
                 return self._legacy_handshake(
-                    deadline=_HANDSHAKE_TIMEOUT_S if remaining is None else min(_HANDSHAKE_TIMEOUT_S, remaining)
+                    deadline=_HANDSHAKE_TIMEOUT_S
+                    if remaining is None
+                    else min(_HANDSHAKE_TIMEOUT_S, remaining)
                 )
             # HTTP 探测超时：服务器不可用，如实失败（不猜测旧时代）
             raise
@@ -453,7 +546,9 @@ class McpConnection:
         retry = build_discover_request(self._next_msg_id(), version)
         result = self.transport.send_request(
             retry,
-            PROBE_TIMEOUT_S if self._probe_timeout_override is None else float(self._probe_timeout_override),
+            PROBE_TIMEOUT_S
+            if self._probe_timeout_override is None
+            else float(self._probe_timeout_override),
         )
         supported2, capabilities, server_info = parse_discover_result(result)
         return ProtocolProfile(
@@ -489,14 +584,26 @@ class McpConnection:
         )
 
     def _start_list_subscription(self) -> None:
-        """现代 stdio：发起 subscriptions/listen（fire-and-forget 长驻请求）.
+        """现代连接：发起 subscriptions/listen 长驻订阅（stdio/HTTP 双通道）.
 
-        通知帧（_meta.subscriptionId 标记）由读循环路由至 _on_notification；
-        派发失败 fail-open（stale 检测退化为显式 refresh）。
+        - stdio：fire-and-forget 长驻请求，通知帧（_meta.subscriptionId 标记）
+          由读循环路由至 _on_notification；派发失败 fail-open。
+        - HTTP：POST 订阅 → X-Subscription-Id → 常驻 GET 流（后台线程读取），
+          失败/断流 fail-open（stale 检测退化为显式 refresh，不自动重订阅）。
         """
-        assert self.profile is not None and isinstance(self.transport, StdioTransport)
+        assert self.profile is not None
         request = build_subscribe_request(self._next_msg_id(), ["toolsListChanged"], self.profile)
-        self.transport.dispatch(request)
+        if isinstance(self.transport, StdioTransport):
+            self.transport.dispatch(request)
+            return
+        assert isinstance(self.transport, HttpTransport)
+        sid = self.transport.start_subscription(request, self._call_timeout)
+        if sid is not None:
+            logger.info(
+                "MCP %s HTTP 常驻订阅就绪（subscription=%s；tools/list_changed → stale）",
+                self.spec.name,
+                sid,
+            )
 
     def _list_all_tools(self) -> list[McpToolDef]:
         """tools/list 游标分页聚合（nextCursor 循环到耗尽）."""
@@ -621,8 +728,7 @@ class McpTool:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
                 content=(
-                    f"[程序异常] MCP 工具 {self.name} 调用失败"
-                    f"（{type(exc).__name__}: {exc}）。"
+                    f"[程序异常] MCP 工具 {self.name} 调用失败（{type(exc).__name__}: {exc}）。"
                 ),
                 tool_call_id="",
                 tool_name=self.name,
@@ -632,8 +738,7 @@ class McpTool:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
                 content=(
-                    f"[程序异常] MCP 工具 {self.name} 调用失败"
-                    f"（{type(exc).__name__}: {exc}）。"
+                    f"[程序异常] MCP 工具 {self.name} 调用失败（{type(exc).__name__}: {exc}）。"
                 ),
                 tool_call_id="",
                 tool_name=self.name,
@@ -644,8 +749,7 @@ class McpTool:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
                 content=(
-                    f"[程序异常] MCP 工具 {self.name} 调用失败"
-                    f"（{type(exc).__name__}: {exc}）。"
+                    f"[程序异常] MCP 工具 {self.name} 调用失败（{type(exc).__name__}: {exc}）。"
                 ),
                 tool_call_id="",
                 tool_name=self.name,
@@ -722,6 +826,7 @@ def register_mcp_tools(registry: Any, raw_servers: str) -> list[str]:
             )
             continue
         logger.info("MCP 服务器 %s 已连接，注册 %d 个工具", spec.name, count)
+        _advance_catalog_epoch("register", spec.name)
     return registered
 
 
@@ -740,7 +845,9 @@ def _iter_mcp_tools(registry: Any) -> list[tuple[str, McpTool]]:
 
 def _server_tools(registry: Any, server_name: str) -> list[tuple[str, McpTool]]:
     """精确所有权：server_name 完全相等（非前缀匹配）的 McpTool 注册项."""
-    return [(name, tool) for name, tool in _iter_mcp_tools(registry) if tool.server_name == server_name]
+    return [
+        (name, tool) for name, tool in _iter_mcp_tools(registry) if tool.server_name == server_name
+    ]
 
 
 def _registry_identities(registry: Any) -> dict[str, str | None]:
@@ -793,6 +900,7 @@ def refresh_mcp_tools(registry: Any, raw_servers: str) -> tuple[list[str], list[
             if registry.unregister(name):
                 unregistered.append(name)
         logger.info("MCP 服务器 %s 已从配置移除或禁用，工具已卸载", server_name)
+        _advance_catalog_epoch("config_removed", server_name)
 
     # 2) 逐服务器先建后拆
     for spec in specs:
@@ -837,10 +945,13 @@ def refresh_mcp_tools(registry: Any, raw_servers: str) -> tuple[list[str], list[
                 )
             else:
                 logger.info("MCP 服务器 %s 刷新完成：注册 %d 个工具", spec.name, count)
+                _advance_catalog_epoch("refresh", spec.name)
         # 3) 拆旧：新视图已就绪（或确认 no-capability）才卸旧名、关旧连接
         for name in sorted(old_names - new_names):
             if registry.unregister(name):
                 unregistered.append(name)
+        if not tools and old_names:
+            _advance_catalog_epoch("refresh_no_capability", spec.name)
         for old_conn in old_conns.values():
             try:
                 old_conn.close()

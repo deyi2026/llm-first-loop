@@ -29,6 +29,7 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
+from llm_loop.tools.mcp_auth import McpOAuthClient
 from llm_loop.tools.mcp_protocol import (
     META_VERSION,
     McpError,
@@ -44,7 +45,10 @@ HANDSHAKE_TIMEOUT_S = 10.0
 #: era 探测（server/discover）等待上限；无响应按旧时代回退（规范允许）
 PROBE_TIMEOUT_S = 5.0
 
-NotificationHandler = Callable[[str, dict[str, Any]], None]
+#: 通知上送回调：(method, params, generation)。generation = 通道创建时的
+#: 连接代际（由编排层在建立新通道时回填）；旧代通道晚到的通知据此被
+#: 上层按代际丢弃（设计 §7.3：不得匹配到新代请求/目录状态）。
+NotificationHandler = Callable[[str, dict[str, Any], int], None]
 
 
 class McpHttpError(McpProtocolError):
@@ -63,6 +67,10 @@ class McpTransport(ABC):
     def __init__(self, name: str) -> None:
         self.name = name
         self.notification_handler: NotificationHandler | None = None
+        # 连接代际（0 = 未标记；编排层每次建立新通道时递增并回填）。
+        # 语义：同代通道的通知/响应共享同一请求 id 命名空间时代；重连后
+        # 旧代通道的晚到通知必须被上层丢弃，不得套用到新代状态。
+        self.generation: int = 0
 
     @abstractmethod
     def send_request(self, request: dict[str, Any], timeout: float) -> dict[str, Any]:
@@ -114,9 +122,7 @@ class StdioTransport(McpTransport):
         except OSError as exc:
             raise McpNotDispatchedError(f"MCP 服务器 {self.name} 启动失败: {exc}") from exc
         self._queue = queue.Queue()
-        threading.Thread(
-            target=self._read_loop, name=f"mcp-stdio-{self.name}", daemon=True
-        ).start()
+        threading.Thread(target=self._read_loop, name=f"mcp-stdio-{self.name}", daemon=True).start()
 
     @property
     def alive(self) -> bool:
@@ -164,7 +170,7 @@ class StdioTransport(McpTransport):
                 handler = self.notification_handler
                 if handler is not None:
                     try:
-                        handler(method, params)
+                        handler(method, params, self.generation)
                     except Exception:  # noqa: BLE001 — 通知处理失败不影响读循环
                         logger.debug("MCP %s 通知处理异常", self.name, exc_info=True)
 
@@ -241,8 +247,41 @@ class HttpTransport(McpTransport):
         self.url = url
         self.extra_headers = dict(extra_headers or {})
         self.session_id = session_id  # 旧时代会话（initialize 后设置）
+        # 常驻订阅（现代 subscriptions/listen）状态
+        self._sub_lock = threading.Lock()
+        self._sub_stop = threading.Event()
+        self._sub_thread: threading.Thread | None = None
+        self._sub_sid: str | None = None
+        self._sub_conn: http.client.HTTPConnection | None = None
+        # GET 流的原始 socket 引用：will_close 响应会让 http.client 在
+        # getresponse() 内自动 close 并置 conn.sock=None，socket 所有权移交给
+        # 响应对象；想从外部 shutdown 唤醒阻塞读，必须在此另存原始引用
+        self._sub_sock: socket.socket | None = None
+        # OAuth 客户端（FR-05）：由编排层（McpConnection）按 credential_ref 注入；
+        # None = 无授权（服务器 401 直接按可诊断错误上抛）
+        self.oauth: McpOAuthClient | None = None
 
     def close(self) -> None:
+        # 终止常驻订阅流（若有）：shutdown 原始 socket——close() 在部分平台
+        # （macOS）不会唤醒阻塞中的 recv/readline，shutdown(SHUT_RDWR) 才可靠
+        self._sub_stop.set()
+        with self._sub_lock:
+            conn = self._sub_conn
+            sock = self._sub_sock
+            self._sub_conn = None
+            self._sub_sid = None
+            self._sub_sock = None
+        if sock is not None:
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
+            with contextlib.suppress(OSError):
+                sock.close()
+        if conn is not None:
+            with contextlib.suppress(Exception):  # noqa: BLE001
+                conn.close()
+        thread = self._sub_thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
         # 无长连接可关（按请求建连）；旧时代会话按 DELETE 终止属可选，留空
         self.session_id = None
 
@@ -269,11 +308,35 @@ class HttpTransport(McpTransport):
         return headers
 
     def send_request(self, request: dict[str, Any], timeout: float) -> dict[str, Any]:
+        """请求（含 OAuth：401 → 换取/取令牌 → 同请求重放一次）."""
+        try:
+            return self._send_request_once(request, timeout)
+        except McpHttpError as exc:
+            if exc.status != 401 or self.oauth is None:
+                raise
+            # 401 = 服务器拒绝当前凭证：OAuth 处理（缺凭证/需交互授权会抛可诊断
+            # McpCredentialError / McpAuthRequiredError，不吞不包装），成功则重放一次
+            bearer = self.oauth.on_401(getattr(exc, "www_authenticate", "") or "")
+            return self._send_request_once(request, timeout, {"Authorization": f"Bearer {bearer}"})
+
+    def _auth_headers(self) -> dict[str, str]:
+        """缓存令牌预置（不触发网络；无 oauth/无令牌则空）."""
+        if self.oauth is None:
+            return {}
+        bearer = self.oauth.cached_bearer()
+        return {"Authorization": f"Bearer {bearer}"} if bearer else {}
+
+    def _send_request_once(
+        self,
+        request: dict[str, Any],
+        timeout: float,
+        extra_headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         msg_id = request.get("id")
         if not isinstance(msg_id, int):
             raise McpError("HTTP 请求缺少整数 id")
         body = json.dumps(request)
-        headers = self._build_headers(request)
+        headers = {**self._auth_headers(), **self._build_headers(request), **(extra_headers or {})}
         parts = urlsplit(self.url)
         host, port = parts.hostname or "", parts.port or (443 if parts.scheme == "https" else 80)
         if parts.scheme == "https":
@@ -311,16 +374,17 @@ class HttpTransport(McpTransport):
                         error = parsed["error"]
                 except json.JSONDecodeError:
                     pass
-                raise McpHttpError(status, error, raw[:500])
+                http_error = McpHttpError(status, error, raw[:500])
+                if status == 401:
+                    http_error.www_authenticate = resp.getheader("WWW-Authenticate") or ""
+                raise http_error
             if content_type == "text/event-stream":
                 return self._read_sse_response(resp, msg_id)
             raw = resp.read().decode("utf-8", errors="replace")
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError as exc:
-                raise McpProtocolError(
-                    f"MCP HTTP {self.name} 响应非 JSON: {raw[:200]!r}"
-                ) from exc
+                raise McpProtocolError(f"MCP HTTP {self.name} 响应非 JSON: {raw[:200]!r}") from exc
             if not isinstance(msg, dict):
                 raise McpProtocolError(f"MCP HTTP {self.name} 响应非对象: {raw[:200]!r}")
             if "error" in msg:
@@ -336,7 +400,7 @@ class HttpTransport(McpTransport):
 
     def send_notification(self, notification: dict[str, Any]) -> None:
         body = json.dumps(notification)
-        headers = self._build_headers(notification)
+        headers = {**self._auth_headers(), **self._build_headers(notification)}
         parts = urlsplit(self.url)
         host, port = parts.hostname or "", parts.port or (443 if parts.scheme == "https" else 80)
         if parts.scheme == "https":
@@ -348,11 +412,191 @@ class HttpTransport(McpTransport):
                 conn.request("POST", parts.path or "/", body=body, headers=headers)
                 resp = conn.getresponse()
                 resp.read()
+                if resp.status == 401 and self.oauth is not None:
+                    # OAuth 换取后重放一次（通知语义仍 fail-open：不抛不重试第二次）
+                    try:
+                        bearer = self.oauth.on_401(resp.getheader("WWW-Authenticate") or "")
+                    except McpError:
+                        return
+                    conn.request(
+                        "POST",
+                        parts.path or "/",
+                        body=body,
+                        headers={**headers, "Authorization": f"Bearer {bearer}"},
+                    )
+                    conn.getresponse().read()
             except _POST_SEND_FAILURES as exc:
                 logger.warning("MCP HTTP %s 通知发送失败（fail-open）: %s", self.name, exc)
         finally:
             with contextlib.suppress(Exception):  # noqa: BLE001
                 conn.close()
+
+    # ── 常驻订阅（现代 subscriptions/listen；设计 §7.3 HTTP 常驻监听） ──
+    def start_subscription(self, request: dict[str, Any], timeout: float) -> str | None:
+        """现代 HTTP 常驻订阅：POST subscriptions/listen → 读 X-Subscription-Id → 起 GET 常驻流.
+
+        流程（对齐 streamable HTTP subscriptions 草案约定，X-Subscription-Id 头）：
+        1. POST 订阅请求 → 服务器 200 + 响应头 X-Subscription-Id；
+        2. 同端点 GET（X-Subscription-Id + Accept: text/event-stream）→ 常驻 SSE 流，
+           后台线程逐事件解析，通知帧经 notification_handler(method, params, generation)
+           上送（generation = 建订阅时的连接代际）；
+        3. 任一步失败 fail-open 返回 None（stale 检测退化为显式 refresh）；
+           GET 流中断仅记日志（不自动重订阅，refresh/重连时重建）。
+
+        Returns:
+            subscription id（成功）| None（fail-open）。
+        """
+        assert isinstance(request.get("id"), int)
+        body = json.dumps(request)
+        parts = urlsplit(self.url)
+        host, port = parts.hostname or "", parts.port or (443 if parts.scheme == "https" else 80)
+
+        def _post(extra_headers: dict[str, str] | None = None) -> tuple[int, str, str]:
+            headers = {
+                **self._auth_headers(),
+                **self._build_headers(request),
+                **(extra_headers or {}),
+            }
+            if parts.scheme == "https":
+                post_conn: http.client.HTTPConnection = http.client.HTTPSConnection(
+                    host, port, timeout=timeout
+                )
+            else:
+                post_conn = http.client.HTTPConnection(host, port, timeout=timeout)
+            try:
+                post_conn.request("POST", parts.path or "/", body=body, headers=headers)
+                post_resp = post_conn.getresponse()
+                post_resp.read()
+                return (
+                    post_resp.status,
+                    post_resp.getheader("X-Subscription-Id") or "",
+                    post_resp.getheader("WWW-Authenticate") or "",
+                )
+            finally:
+                with contextlib.suppress(Exception):  # noqa: BLE001
+                    post_conn.close()
+
+        sid: str | None = None
+        try:
+            status, raw_sid, www_auth = _post()
+            if status == 401 and self.oauth is not None:
+                # OAuth 换取后同请求重放一次（可诊断失败 fail-open 退回显式 refresh）
+                try:
+                    bearer = self.oauth.on_401(www_auth)
+                    status, raw_sid, _ = _post({"Authorization": f"Bearer {bearer}"})
+                except McpError as exc:
+                    logger.warning(
+                        "MCP HTTP %s 订阅授权失败（fail-open，stale 检测退化为显式 refresh）: %s",
+                        self.name,
+                        exc,
+                    )
+                    return None
+        except _POST_SEND_FAILURES as exc:
+            logger.warning("MCP HTTP %s 订阅请求发送失败（fail-open）: %s", self.name, exc)
+            return None
+        sid = raw_sid or None
+        if status != 200 or not sid:
+            logger.warning(
+                "MCP HTTP %s 订阅请求失败（status=%s, sid=%r，fail-open）",
+                self.name,
+                status,
+                sid,
+            )
+            return None
+        self._sub_stop.clear()
+        with self._sub_lock:
+            self._sub_sid = sid
+        self._sub_thread = threading.Thread(
+            target=self._subscription_reader,
+            args=(sid,),
+            name=f"mcp-http-sub-{self.name}",
+            daemon=True,
+        )
+        self._sub_thread.start()
+        return sid
+
+    def _subscription_reader(self, sid: str) -> None:
+        """GET 常驻流读取线程：SSE 事件 → 通知上送；断流/停机即退出（fail-open）."""
+        parts = urlsplit(self.url)
+        host, port = parts.hostname or "", parts.port or (443 if parts.scheme == "https" else 80)
+        headers = {
+            **self._auth_headers(),
+            "Accept": "text/event-stream",
+            "X-Subscription-Id": sid,
+            **self.extra_headers,
+        }
+        try:
+            if parts.scheme == "https":
+                conn: http.client.HTTPConnection = http.client.HTTPSConnection(host, port)
+            else:
+                conn = http.client.HTTPConnection(host, port)
+        except OSError as exc:
+            logger.warning("MCP HTTP %s 订阅流建连失败（fail-open）: %s", self.name, exc)
+            return
+        with self._sub_lock:
+            if self._sub_stop.is_set():
+                with contextlib.suppress(Exception):  # noqa: BLE001
+                    conn.close()
+                return
+            self._sub_conn = conn
+        try:
+            conn.request("GET", parts.path or "/", headers=headers)
+            sock = conn.sock  # getresponse() 对 will_close 响应会接管 socket 并置 conn.sock=None
+            resp = conn.getresponse()
+            if resp.status != 200:
+                logger.warning(
+                    "MCP HTTP %s 订阅流被拒（status=%s，fail-open，stale 检测退化为显式 refresh）",
+                    self.name,
+                    resp.status,
+                )
+                return
+            with self._sub_lock:
+                self._sub_sock = sock
+            data_lines: list[str] = []
+            while not self._sub_stop.is_set():
+                raw = resp.readline()
+                if not raw:
+                    break  # 流正常结束（服务器关闭）
+                line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                if line == "":
+                    if data_lines:
+                        self._dispatch_subscription_event("\n".join(data_lines))
+                        data_lines = []
+                    continue
+                if line.startswith("data:"):
+                    data_lines.append(line[len("data:") :].lstrip(" "))
+            if data_lines and not self._sub_stop.is_set():
+                self._dispatch_subscription_event("\n".join(data_lines))
+            logger.info("MCP HTTP %s 订阅流结束（subscription=%s）", self.name, sid)
+        except Exception as exc:  # noqa: BLE001 — 断流 fail-open：不自动重订阅
+            logger.info("MCP HTTP %s 订阅流中断（fail-open）: %s", self.name, exc)
+        finally:
+            with contextlib.suppress(Exception):  # noqa: BLE001
+                conn.close()
+            with self._sub_lock:
+                if self._sub_conn is conn:
+                    self._sub_conn = None
+                if self._sub_sock is not None and self._sub_sock.fileno() == -1:
+                    self._sub_sock = None
+
+    def _dispatch_subscription_event(self, payload: str) -> None:
+        try:
+            msg = json.loads(payload)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(msg, dict):
+            return
+        method = msg.get("method")
+        if not isinstance(method, str):
+            return
+        raw_params = msg.get("params")
+        params = raw_params if isinstance(raw_params, dict) else {}
+        handler = self.notification_handler
+        if handler is not None:
+            try:
+                handler(method, params, self.generation)
+            except Exception:  # noqa: BLE001
+                logger.debug("MCP %s 订阅通知处理异常", self.name, exc_info=True)
 
     # ── SSE ──
     def _read_sse_response(self, resp: http.client.HTTPResponse, msg_id: int) -> dict[str, Any]:
@@ -391,9 +635,7 @@ class HttpTransport(McpTransport):
             f"MCP HTTP {self.name} SSE 流结束而无 id={msg_id} 响应（结果未知）"
         )
 
-    def _handle_sse_event(
-        self, payload: str, msg_id: int
-    ) -> tuple[bool, dict[str, Any]]:
+    def _handle_sse_event(self, payload: str, msg_id: int) -> tuple[bool, dict[str, Any]]:
         try:
             msg = json.loads(payload)
         except json.JSONDecodeError:
@@ -403,9 +645,7 @@ class HttpTransport(McpTransport):
         if msg.get("id") == msg_id:
             if "error" in msg:
                 error = msg["error"] if isinstance(msg.get("error"), dict) else None
-                raise McpProtocolError(
-                    f"MCP HTTP {self.name} SSE 响应错误: {msg['error']}", error
-                )
+                raise McpProtocolError(f"MCP HTTP {self.name} SSE 响应错误: {msg['error']}", error)
             return (True, msg.get("result") or {})
         if "method" in msg and isinstance(msg.get("method"), str):
             raw_params = msg.get("params")
@@ -413,7 +653,7 @@ class HttpTransport(McpTransport):
             handler = self.notification_handler
             if handler is not None:
                 try:
-                    handler(msg["method"], params)
+                    handler(msg["method"], params, self.generation)
                 except Exception:  # noqa: BLE001
                     logger.debug("MCP %s SSE 通知处理异常", self.name, exc_info=True)
         return (False, {})
