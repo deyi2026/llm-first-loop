@@ -417,3 +417,95 @@ def test_active_run_generation_and_session_cannot_borrow_other_grant(tmp_path: P
                 pass
     finally:
         current_session_id.reset(mismatched)
+
+
+_STREAM_TEXT = {
+    "openai": 'data: {"choices":[{"delta":{"content":"one"}}]}',
+    "anthropic": 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"one"}}',
+    "google": 'data: {"candidates":[{"content":{"parts":[{"text":"one"}]}}]}',
+    "lms-chat": 'data: {"type":"message.delta","content":"one"}',
+}
+
+
+class _ObservedStream(_FakeStream):
+    def __init__(self, protocol: str):
+        super().__init__((_STREAM_TEXT[protocol], _STREAM_TEXT[protocol]))
+        self.actual_lines = 0
+        self.exited = False
+        self.exit_type: type[BaseException] | None = None
+
+    def iter_lines(self):
+        for item in self.lines:
+            self.actual_lines += 1
+            yield item
+
+    def __exit__(self, typ, *_args: object) -> bool:
+        self.exited = True
+        self.exit_type = typ
+        return False
+
+
+@pytest.mark.parametrize("protocol", sorted(_STREAM_TEXT))
+def test_stop_during_bound_stream_closes_context_and_keeps_usage_unknown(
+    tmp_path: Path, protocol: str
+) -> None:
+    execution = _bound(tmp_path, physical=1)
+    stream = _ObservedStream(protocol)
+    client, http = _client(stream, protocol=protocol)
+
+    with bind_task_budget(execution):
+        iterator = client.chat_stream(
+            messages=[{"role": "user", "content": "offline stream stop"}],
+            tools=[],
+        )
+        first = next(iterator)
+        assert first.text == "one"
+        assert stream.actual_lines == 1
+        execution.request_stop(reason="user_stop")
+        with pytest.raises(TaskBudgetDeniedError, match="budget_not_active"):
+            next(iterator)
+
+    assert http.stream.call_count == 1
+    assert stream.actual_lines == 1  # no second SSE line read after stop
+    assert stream.exited and stream.exit_type is TaskBudgetDeniedError
+    row = execution.store.read(execution.budget_id)
+    reservation = next(iter(row["reservations"].values()))
+    assert reservation["phase"] == "unknown"
+    assert reservation["outcome"] == "failure"
+    assert execution.store.report(execution.budget_id)["physical_quiescence_verified"] is False
+
+
+@pytest.mark.parametrize("protocol", sorted(_STREAM_TEXT))
+def test_wall_deadline_during_bound_stream_stops_next_read(
+    tmp_path: Path, protocol: str
+) -> None:
+    execution = _bound(tmp_path, physical=1)
+    stream = _ObservedStream(protocol)
+    client, http = _client(stream, protocol=protocol)
+
+    with bind_task_budget(execution):
+        iterator = client.chat_stream(
+            messages=[{"role": "user", "content": "deadline test"}], tools=[]
+        )
+        assert next(iterator).text == "one"
+        execution.store._clock = lambda: 6000.0
+        with pytest.raises(TaskBudgetDeniedError, match="deadline_expired"):
+            next(iterator)
+    assert http.stream.call_count == 1
+    assert stream.actual_lines == 1
+    assert stream.exited
+    assert next(iter(execution.store.read(execution.budget_id)["reservations"].values()))["phase"] == "unknown"
+
+
+def test_unbound_stream_preserves_all_lines_without_budget_store(tmp_path: Path) -> None:
+    stream = _ObservedStream("openai")
+    client, http = _client(stream)
+    iterator = client.chat_stream(
+        messages=[{"role": "user", "content": "legacy no budget"}], tools=[]
+    )
+    deltas = list(iterator)
+    assert [delta.text for delta in deltas if delta.text] == ["one", "one"]
+    assert stream.actual_lines == 2
+    assert http.stream.call_count == 1
+    assert stream.exited
+    assert not (tmp_path / "budget").exists()

@@ -84,6 +84,31 @@ def _check_stream_deadline(deadline: float, effective_timeout: float) -> None:
         )
 
 
+def _iter_task_budget_checked_lines(resp: httpx.Response) -> Iterator[str]:
+    """I4-B: cooperative stop check for an explicitly bound SSE attempt.
+
+    Check before network reading and at each yielded line, including after
+    an outer consumer resumes from a content/reasoning/tool delta. The HTTP
+    stream context closes on denial; the attempt remains UNKNOWN because
+    local close does not prove remote stop/billing ACK.
+
+    Cannot interrupt a peer stalled *inside* blocking iter_lines(). That
+    requires a separate socket watchdog and physical cancellation proof.
+    No bound budget uses the exact legacy iterator, without ledger reads.
+    """
+    from llm_loop.resources.task_budget_dispatch import active_task_budget
+
+    budget = active_task_budget()
+    if budget is None:
+        yield from resp.iter_lines()
+        return
+    budget._get_validated()
+    for line in resp.iter_lines():
+        budget._get_validated()
+        yield line
+        budget._get_validated()
+
+
 # 2026-09-18（gen20 自愈）: 连接被拒绝时的单次重试前退避秒数。毫秒级原地重试对瞬断/
 # 陈旧连接无效（实测两次尝试相隔 2.8ms 同因 ECONNREFUSED）；仅作用于 ConnectError。
 _TRANSPORT_RETRY_BACKOFF_S = 0.5
@@ -2047,7 +2072,7 @@ class LLMClient:
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
                 _deadline = _stream_total_deadline(effective_timeout)
                 _observed_model: str | None = None
-                for line in resp.iter_lines():
+                for line in _iter_task_budget_checked_lines(resp):
                     _check_stream_deadline(_deadline, effective_timeout)
                     if not line or not line.startswith("data: "):
                         continue
@@ -2312,7 +2337,7 @@ class LLMClient:
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
                 _deadline = _stream_total_deadline(effective_timeout)
                 _observed_model: str | None = None
-                for line in resp.iter_lines():
+                for line in _iter_task_budget_checked_lines(resp):
                     _check_stream_deadline(_deadline, effective_timeout)
                     if not line.startswith("data: "):
                         continue
@@ -2483,7 +2508,7 @@ class LLMClient:
                 self._observe_transport_response(resp, model_id=model_id)
                 _deadline = _stream_total_deadline(effective_timeout)
                 _observed_model: str | None = None
-                for line in resp.iter_lines():
+                for line in _iter_task_budget_checked_lines(resp):
                     _check_stream_deadline(_deadline, effective_timeout)
                     if not line.startswith("data: "):
                         continue
@@ -2629,7 +2654,7 @@ class LLMClient:
                 self._observe_transport_response(resp, model_id=model_id)
                 _deadline = _stream_total_deadline(effective_timeout)
                 _observed_model: str | None = None
-                for line in resp.iter_lines():
+                for line in _iter_task_budget_checked_lines(resp):
                     _check_stream_deadline(_deadline, effective_timeout)
                     if not line or not line.startswith("data: "):
                         continue
