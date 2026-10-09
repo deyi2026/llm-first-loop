@@ -1825,6 +1825,16 @@ def build_engine(
     corrections._recovery_session_store = session_store  # noqa: SLF001 — 复用全局sid归属/原子恢复
     corrections._recovery_memory_dir = settings.memory_dir  # noqa: SLF001
     corrections._skills_dir = str(_runtime_paths.skills_dir) or None  # noqa: SLF001 — B3: 插件化 Skill 目录注入
+    # P1-A（DESIGN-20261009 §5.3/§5.4）: 扩展 store/catalog 装配（fail-open 零回归）
+    try:
+        from llm_loop.extensions.catalog import ExtensionCatalog
+        from llm_loop.extensions.store import ExtensionStore
+
+        corrections._extensions_catalog = ExtensionCatalog(  # noqa: SLF001 — 工具分派注入
+            ExtensionStore(_runtime_paths.extensions_dir)
+        )
+    except Exception:  # noqa: BLE001 — 装配失败降级为无扩展目录（skill_list/load 仍可用）
+        logger.warning("扩展 store/catalog 装配失败（fail-open）", exc_info=True)
     corrections._skill_execution_facts = {  # noqa: SLF001 — 当前执行环境机械事实
         "code_root": str(_runtime_paths.code_root),
         "runtime_root": str(

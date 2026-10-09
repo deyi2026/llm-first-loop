@@ -1,0 +1,8 @@
+{
+  "name": "demo-plugin",
+  "schema_version": "1.0.0",
+  "version": "0.1.0",
+  "description": "标准演示包（P1-A 验收 fixture）",
+  "author": "LFL",
+  "license": "MIT"
+}

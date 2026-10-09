@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "echo": {"type": "stdio", "command": "echo", "args": ["${PLUGIN_ROOT}/ok"]}
+  }
+}

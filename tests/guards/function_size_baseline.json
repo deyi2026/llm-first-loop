@@ -97,7 +97,8 @@
       "cache_guard": "Epistemic",
       "recovery": "Action（fail-open 恢复通道）",
       "skills": "Action",
-      "knowledge": "Epistemic"
+      "knowledge": "Epistemic",
+      "extensions": "Action（外部标准包 formats/store/catalog，DESIGN-20261009 P1-A）"
     },
     "modules": {
       "cli.py": "Action（入口）",
@@ -153,6 +154,7 @@
       "wake_authorization_store": {"tier":"T2","status":"conform","owner":"core","paths":["src/llm_loop/core/trace_leak/wake_authority.py"],"rationale":"DRC 已核：0600+flock+tmp+file fsync+replace+directory fsync+签名/tombstone。"},
       "event_store": {"tier":"T1","status":"conform","owner":"event_log","paths":["src/llm_loop/event_log/store.py","src/llm_loop/event_log/rotate.py"],"rationale":"DRC 已核：锁+O_APPEND 单行+读侧尾部截断容错+seq。"},
       "experience_store": {"tier":"T2","status":"conform","owner":"experiences","paths":["src/llm_loop/experiences/store.py"],"rationale":"2026-10-08 T2 迁移完成：save=store flock+tmp(O_EXCL)+file fsync+os.link 原子 create-if-absent；update_status=单写者 RMW+os.replace；均含目录 fsync fence 与 definitely_not_committed/commit_outcome_uncertain 分型+exact readback（test_experience_store_durability.py 12 例故障注入）。"},
+      "extensions_store": {"tier":"T2","status":"conform","owner":"extensions","paths":["src/llm_loop/extensions/store.py"],"rationale":"P1-A（DESIGN-20261009 §5.3/§9.1）：installed.json 单一写路径=flock 独占+expected_revision CAS（RevisionConflictError=晚到提交失败）+tmp+file fsync+os.replace+读回校验（失败=CommitUncertainError 不假装成功）；目录 fsync OSError 降级尽力而为（未做 fsync 耗尽故障注入，如实标注）；packages/ 不可变副本与 instances/ PLUGIN_DATA 为安装布局写。验收=tests/unit/test_extensions_store.py（CAS 冲突/顺序提交/T21 数据保留/敏感拒绝/损坏读拒绝）。"},
       "browser_attestation_state": {"tier":"T2","status":"observe","owner":"factory","paths":["src/llm_loop/factory.py"],"rationale":"factory 装配期 browser attestation 通过临时文件覆盖持久化。"},
       "service_exit_audit": {"tier":"T1","status":"observe","owner":"delivery","paths":["src/llm_loop/feishu/__init__.py","src/llm_loop/web/__init__.py"],"rationale":"Web/Feishu 退出原因以追加审计日志记录。"},
       "feishu_bridge_state": {"tier":"T2","status":"observe","owner":"feishu","paths":["src/llm_loop/feishu/bridge.py"],"rationale":"Feishu interrupted/dedup 等桥接状态存在覆盖式持久化。"},
