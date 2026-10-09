@@ -492,6 +492,24 @@ class BackgroundRunner:
                     run_generation = str(active_generation(session_id) or "")
             else:
                 return False
+        if run_generation:
+            # I4-C: the optional bound budget is a separate hard
+            # no-new-work authority. Revoke the *exact* Run budget before
+            # the existing tool cancellation hooks. A failed durable CAS
+            # leaves a local fail-closed latch; log uncertainty rather than
+            # treating this boolean ACK as physical/billing closure.
+            from llm_loop.resources.task_budget_dispatch import cancel_active_task_budget
+
+            try:
+                cancel_active_task_budget(
+                    session_id, run_generation, reason=reason
+                )
+            except Exception:  # noqa: BLE001 - preserve existing tool stop and report uncertainty
+                logger.exception(
+                    "task budget Stop persisted status UNKNOWN; local Run latch revoked: "
+                    "session=%s generation=%s",
+                    session_id, run_generation,
+                )
         registry = getattr(self._engine, "registry", None)
         cancel_session = getattr(registry, "cancel_session", None)
         if callable(cancel_session):

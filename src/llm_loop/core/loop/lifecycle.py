@@ -179,7 +179,7 @@ class _RunEntrypointMixin:
                 if _budget_execution is not None:
                     from llm_loop.resources.task_budget_dispatch import bind_task_budget
 
-                    with bind_task_budget(_budget_execution):
+                    with bind_task_budget(_budget_execution, cleanup_scope=True):
                         yield
                 else:
                     with nullcontext():
@@ -215,6 +215,24 @@ class _RunEntrypointMixin:
                 run_generation=run_generation,
                 ingress=ingress,
             )
+            if _budget_execution is not None:
+                from llm_loop.resources.task_budget_dispatch import (
+                    register_active_task_budget,
+                    unregister_active_task_budget,
+                )
+
+                register_active_task_budget(_budget_execution)
+                # The registration lives through inner.close() and is
+                # identity-removed BEFORE the Session run lease is released.
+                _run_stack.callback(unregister_active_task_budget, _budget_execution)
+                # Runner.cancel can be accepted after _sync_active publish
+                # but before this budget registration. Re-read that exact
+                # accepted Stop AFTER installing the callback, so no
+                # already-cancelled Run obtains a fresh budget window.
+                if runner is not None and runner.is_cancelled(session_id):
+                    _budget_execution.request_stop(
+                        reason=runner.cancel_reason(session_id) or "runner_stop"
+                    )
             with self._run_acquired_callbacks_guard:
                 on_run_acquired = self._run_acquired_callbacks.get(session_id)
             inner = self._run_stream_inner(
@@ -257,6 +275,23 @@ class _RunEntrypointMixin:
                 self._retire_runtime_session_state(retired_sid)
             if _run_save_token is not None:
                 self.session._deactivate_run_save_token(session_id, _run_save_token)
+            if _budget_execution is not None:
+                # Seal the root before releasing its Session lease so a
+                # stale async callback cannot send more after this Run ends.
+                # Any prior user_stop reason is retained by the CAS store;
+                # persistence uncertainty cannot undo the local stop latch.
+                try:
+                    _reason = (
+                        runner.cancel_reason(session_id)
+                        if runner is not None else ""
+                    ) or "run_ended"
+                    _budget_execution.seal_at_run_end(reason=_reason)
+                except Exception:  # noqa: BLE001 - cleanup must retain terminal truth
+                    logger.exception(
+                        "task budget Run-end seal unconfirmed: session=%s "
+                        "generation=%s; physical_quiescence_verified=false",
+                        session_id, run_generation,
+                    )
             _run_stack.close()
             with self._sync_guard:
                 self._sync_active.discard(session_id)

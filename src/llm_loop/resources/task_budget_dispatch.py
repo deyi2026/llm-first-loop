@@ -13,11 +13,12 @@ are rollbackable or quiescence has been independently verified.
 from __future__ import annotations
 
 import hashlib
+import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -48,8 +49,13 @@ class TaskBudgetExecution:
     store: TaskBudgetStore
     budget_id: str
     member: TaskBudgetMember
+    _local_stop: threading.Event = field(
+        default_factory=threading.Event, repr=False, compare=False
+    )
 
     def _get_validated(self) -> dict[str, Any]:
+        if self._local_stop.is_set():
+            raise TaskBudgetDeniedError("local_run_stop_requested")
         snapshot = self.store.read(self.budget_id)
         if snapshot["phase"] != BudgetPhase.ACTIVE:
             raise TaskBudgetDeniedError("budget_not_active")
@@ -139,8 +145,81 @@ class TaskBudgetExecution:
         )
 
     def request_stop(self, *, reason: str) -> None:
-        """Revoke *future* admissions. Never claim in-flight physical closure."""
+        """Latch locally before durable CAS; never claim physical closure.
+
+        Even if persistence is uncertain, late callbacks holding this same
+        execution instance cannot obtain another provider/tool permission.
+        The root remains UNKNOWN across restart until reconciled.
+        """
+        self._local_stop.set()
         self._cas_mutate("request_stop", reason=reason)
+
+    def seal_at_run_end(self, *, reason: str = "run_ended") -> None:
+        """Seal a zero-derivation task after its owning Run has terminated.
+
+        Cleanup must never leave a fresh/ACTIVE budget usable by a stale
+        worker ContextVar. Existing STOP_REQUESTED keeps its earlier reason.
+        Persist uncertainty is not physical closure; the local latch remains
+        revoked even when the durable write fails.
+
+        Future positive-wake profiles need a *member* terminal contract
+        that preserves separately authorized children; I4 currently denies
+        all wake/subagent derivation.
+        """
+        self._local_stop.set()
+        snapshot = self.store.read(self.budget_id)
+        if snapshot["phase"] in {BudgetPhase.ISSUED, BudgetPhase.ACTIVE}:
+            self._cas_mutate("request_stop", reason=reason)
+
+
+_ACTIVE_RUN_BUDGETS: dict[tuple[str, str], TaskBudgetExecution] = {}
+_ACTIVE_RUN_BUDGETS_GUARD = threading.Lock()
+
+
+def register_active_task_budget(execution: TaskBudgetExecution) -> None:
+    """Register a *currently admitted* exact Run for cancel handoff only.
+
+    No runtime issuer is created here; the calling Run already owns the
+    Session lease and has a separately authorized budget. Registry entries
+    only allow reduction/revocation, never mint additional authority.
+    """
+    execution._get_validated()
+    key = (execution.member.session_id, execution.member.run_generation)
+    if not key[0] or not key[1]:
+        raise TaskBudgetDeniedError("missing_run_owner")
+    with _ACTIVE_RUN_BUDGETS_GUARD:
+        existing = _ACTIVE_RUN_BUDGETS.get(key)
+        if existing is not None and existing is not execution:
+            raise TaskBudgetDeniedError("active_run_budget_identity_conflict")
+        _ACTIVE_RUN_BUDGETS[key] = execution
+
+
+def unregister_active_task_budget(execution: TaskBudgetExecution) -> None:
+    """Identity-scoped cleanup; a late Run-A cannot unregister Run-B."""
+    key = (execution.member.session_id, execution.member.run_generation)
+    with _ACTIVE_RUN_BUDGETS_GUARD:
+        if _ACTIVE_RUN_BUDGETS.get(key) is execution:
+            _ACTIVE_RUN_BUDGETS.pop(key, None)
+
+
+def cancel_active_task_budget(
+    session_id: str, run_generation: str, *, reason: str
+) -> bool:
+    """Revoke one active exact Run; no matching budget is a normal no-op.
+
+    On disk/CAS uncertainty, the local latch is still revoked before this
+    function raises. Caller must report the persistence failure separately;
+    it MUST NOT silently infer CLOSED_VERIFIED from Runner.cancel(True).
+    """
+    if not session_id or not run_generation:
+        return False
+    with _ACTIVE_RUN_BUDGETS_GUARD:
+        execution = _ACTIVE_RUN_BUDGETS.get((session_id, run_generation))
+        if execution is None:
+            return False
+        execution._local_stop.set()
+    execution.request_stop(reason=reason)
+    return True
 
 
 _BOUND_BUDGET: ContextVar[TaskBudgetExecution | None] = ContextVar(
@@ -153,9 +232,18 @@ def active_task_budget() -> TaskBudgetExecution | None:
 
 
 @contextmanager
-def bind_task_budget(execution: TaskBudgetExecution) -> Iterator[None]:
-    """Explicit (currently offline-only) propagation, never a model text grant."""
-    execution._get_validated()
+def bind_task_budget(
+    execution: TaskBudgetExecution, *, cleanup_scope: bool = False
+) -> Iterator[None]:
+    """Bind a verified execution without giving stopped work new authority.
+
+    The LoopEngine must keep its cleanup/receipt scope alive **after** Stop.
+    Only that already-authorized owner uses cleanup_scope; every actual
+    provider/tool operation still invokes _get_validated and hard denies.
+    Public/offline explicit bindings always validate on entry by default.
+    """
+    if not cleanup_scope:
+        execution._get_validated()
     token = _BOUND_BUDGET.set(execution)
     try:
         yield

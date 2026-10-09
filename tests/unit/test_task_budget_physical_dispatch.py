@@ -313,7 +313,7 @@ def test_cancellation_revokes_admission_without_faking_transport_ack(tmp_path: P
     with bind_task_budget(execution):
         assert _once(client) == "ok"
         execution.request_stop(reason="offline-operator")
-        with pytest.raises(TaskBudgetDeniedError, match="budget_not_active"):
+        with pytest.raises(TaskBudgetDeniedError, match="local_run_stop_requested"):
             _once(client)
     assert transport.stream.call_count == 1
     report = execution.store.report(execution.budget_id)
@@ -462,7 +462,7 @@ def test_stop_during_bound_stream_closes_context_and_keeps_usage_unknown(
         assert first.text == "one"
         assert stream.actual_lines == 1
         execution.request_stop(reason="user_stop")
-        with pytest.raises(TaskBudgetDeniedError, match="budget_not_active"):
+        with pytest.raises(TaskBudgetDeniedError, match="local_run_stop_requested"):
             next(iterator)
 
     assert http.stream.call_count == 1
