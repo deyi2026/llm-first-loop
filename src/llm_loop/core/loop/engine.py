@@ -849,7 +849,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         attach_recent_continuity_anchor(sess.messages, len(sess.messages) - 1)
         # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
         self._ensure_session_created(sess)
-        _user_event = self._append_message_event(sess, user_msg)
+        _user_event = self._append_message_event(
+            sess, user_msg, require_durable=on_human_event_appended is not None,
+        )
         # I5-E: the signed authority must name this *actual* persisted user
         # message event_id/seq. The optional operator callback is strictly
         # after EventStore append and before even one model/tool side effect.

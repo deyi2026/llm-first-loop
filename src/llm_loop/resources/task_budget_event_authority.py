@@ -40,6 +40,7 @@ from llm_loop.resources.task_budget_contracts import (
     TaskBudgetMember,
 )
 from llm_loop.resources.task_budget_dispatch import TaskBudgetExecution, exact_workspace_scope
+from llm_loop.resources.task_budget_operator_proof import OperatorApprovalVerifier
 from llm_loop.resources.task_budget_store import TaskBudgetDeniedError, TaskBudgetStore
 
 _DOMAIN = b"LFL-TaskBudget-web-human-event-zero-v2\0"
@@ -140,16 +141,20 @@ class AuthenticatedEventBudgetIssuer:
 
     def __init__(
         self, *, key_id: str, private_key_pem: bytes,
-        authenticate_operator: Callable[[str], str | None],
+        authenticate_operator: Callable[[str], str | None] | None = None,
+        operator_proof_verifier: OperatorApprovalVerifier | None = None,
     ) -> None:
         # Composition is deliberate. Exposing OperatorBudgetIssuer's legacy
         # approve_zero_web_turn() here would bypass this operator auth check.
         legacy_key = OperatorBudgetIssuer(key_id=key_id, private_key_pem=private_key_pem)
         self.key_id = legacy_key.key_id
         self._signer = legacy_key._signer
-        if not callable(authenticate_operator):
+        if (authenticate_operator is None) == (operator_proof_verifier is None):
+            raise TypeError("exactly_one_independent_operator_authenticator_required")
+        if authenticate_operator is not None and not callable(authenticate_operator):
             raise TypeError("independent_operator_authenticator_required")
         self._authenticate_operator = authenticate_operator
+        self._operator_proof_verifier = operator_proof_verifier
 
     def approve_zero_web_event(
         self, *, event_store: EventStore, event: Event, operator_ticket: str,
@@ -161,13 +166,21 @@ class AuthenticatedEventBudgetIssuer:
             or type(ttl_seconds) is not int or not 0 < ttl_seconds <= _TTL
         ):
             _deny()
-        principal = self._authenticate_operator(operator_ticket)
-        if not isinstance(principal, str) or not principal or len(principal) > 256:
-            _deny()
         if not isinstance(event, Event) or event.session_id != session_id:
             _deny()
         real = _rehydrate_event(event_store, session_id, event.event_id)
         if real != event:
+            _deny()
+        if self._operator_proof_verifier is not None:
+            principal = self._operator_proof_verifier.authenticate(
+                operator_ticket, event_id=real.event_id, event_seq=real.seq,
+                event_sha256=_event_hash(real), session_id=session_id,
+                workspace_scope=exact_workspace_scope(workspace_root),
+            )
+        else:
+            assert self._authenticate_operator is not None
+            principal = self._authenticate_operator(operator_ticket)
+        if not isinstance(principal, str) or not principal or len(principal) > 256:
             _deny()
         instant = time.time() if now is None else now
         if isinstance(instant, bool) or not isinstance(instant, (int, float)) or not math.isfinite(instant):
