@@ -43,5 +43,5 @@ def test_prompt_is_small_static_contract():
     first = build_system_prompt()
     second = build_system_prompt()
     assert first == second
-    # 547 chars since EVO-20261003-8b053766 (+3 蒸馏纪律行); 仍属小型静态契约
-    assert len(first) < 700
+    # 1117 chars since SOUL.MD 前置逐字钉入(用户指令 2026-10-09); 仍属小型静态契约
+    assert len(first) < 1200

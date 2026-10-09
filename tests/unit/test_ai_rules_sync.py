@@ -49,8 +49,8 @@ def test_universal_prompt_keeps_only_small_static_responsibility_root():
     assert "不替你制定任务策略或完成裁决" in prompt
     assert "当前用户指令是任务授权真值" in prompt
     assert "简短回复只绑定最近相关交互" in prompt
-    # 547 chars since EVO-20261003-8b053766 (+3 蒸馏纪律行); 仍属小型静态职责根
-    assert len(prompt) < 700
+    # 1117 chars since SOUL.MD 前置逐字钉入(用户指令 2026-10-09); 仍属小型静态职责根
+    assert len(prompt) < 1200
     assert build_system_prompt("ignored-policy") == prompt
 
 
