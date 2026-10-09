@@ -190,6 +190,23 @@ class TestT17Boundaries:
         r = parse_plugin_package(root)
         assert r.servers[0].status == STATUS_NEEDS_CONFIG
 
+    def test_sse_type_supported_explicit_legacy(self, tmp_path):
+        """P2-B：标准 mcp.json type=sse → sse 旧传输（显式声明即支持）."""
+        root = _mk_pkg(
+            tmp_path,
+            GOOD_MANIFEST,
+            mcp={"mcpServers": {
+                "s": {"type": "sse", "url": "http://127.0.0.1:9/sse"},
+                "bad": {"type": "sse"},
+            }},
+        )
+        r = parse_plugin_package(root)
+        by_name = {s.name: s for s in r.servers}
+        assert by_name["s"].transport == "sse"
+        assert by_name["s"].status == STATUS_SUPPORTED
+        assert by_name["bad"].status == STATUS_NEEDS_CONFIG
+        assert "missing url" in by_name["bad"].reason
+
     def test_unrecognized_placeholder_needs_config(self, tmp_path):
         root = _mk_pkg(
             tmp_path,

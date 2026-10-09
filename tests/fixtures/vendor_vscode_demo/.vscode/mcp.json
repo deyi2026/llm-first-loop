@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "http-s": {"type": "http", "url": "https://example.com/mcp", "sandboxEnabled": true},
+    "cli": {"command": "python3", "args": ["${input:entry}"]},
+    "legacy": {"type": "sse", "url": "https://example.com/old"}
+  },
+  "sandbox": {"agent": {"mode": "workspace"}}
+}

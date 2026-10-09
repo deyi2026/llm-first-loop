@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from llm_loop.extensions.vendor_formats import convert_mcp_servers
 from llm_loop.tools.mcp_client import (
     catalog_epoch,
     parse_servers,
@@ -99,10 +100,10 @@ def _reset_assembly_state_for_tests() -> None:
 
 
 def _identity(entry: dict[str, Any]) -> str:
-    """精确身份：transport + 端点规范形（http 路径去尾斜杠；stdio argv 全列）."""
-    if entry.get("type") == "http":
+    """精确身份：transport + 端点规范形（http/sse 路径去尾斜杠；stdio argv 全列）."""
+    if entry.get("type") in ("http", "sse"):
         parts = urlsplit(str(entry.get("url") or ""))
-        return f"http|{parts.scheme}://{parts.netloc}{parts.path.rstrip('/')}"
+        return f"{entry.get('type')}|{parts.scheme}://{parts.netloc}{parts.path.rstrip('/')}"
     argv = [str(entry.get("command") or "")] + [str(a) for a in entry.get("args") or []]
     return "stdio|" + " ".join(argv)
 
@@ -130,12 +131,14 @@ def _normalize_package_entry(
 ) -> dict[str, Any] | None:
     """包 mcpServers 条目 → register 兼容条目（未知/缺配置返回 None 隔离）."""
     server_type = str(raw_entry.get("type", "") or "").strip()
-    if server_type == "http":
+    if server_type in ("http", "sse"):
+        # P2-B：sse = legacy HTTP+SSE（显式声明；传输层同 origin 强校验）。
+        # headers/credential_ref 处理与 http 一致（零凭证纪律：记录不复制值）。
         url = str(raw_entry.get("url") or "").strip()
         if not url:
-            logger.warning("MCP 包服务器 %s http 缺 url，隔离跳过", name)
+            logger.warning("MCP 包服务器 %s %s 缺 url，隔离跳过", name, server_type)
             return None
-        entry: dict[str, Any] = {"name": name, "type": "http", "url": url}
+        entry: dict[str, Any] = {"name": name, "type": server_type, "url": url}
         raw_headers = raw_entry.get("headers")
         if isinstance(raw_headers, dict) and raw_headers:
             entry["headers"] = {str(k): str(v) for k, v in raw_headers.items()}
@@ -179,18 +182,38 @@ def _installed_servers(store: Any) -> list[LayeredServer]:
         pkg_root = store.package_root(rec.digest)
         data_dir = store.instance_data_dir(rec.install_id)
         mcp_file = pkg_root / _MCP_FILE
-        try:
-            data = json.loads(mcp_file.read_text(encoding="utf-8"))
-            servers = data.get("mcpServers")
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            logger.warning(
-                "MCP 安装 %s（%s）mcp.json 不可读，按包隔离跳过: %s",
-                rec.install_id,
-                rec.plugin_name,
-                exc,
-            )
-            continue
-        if not isinstance(servers, dict):
+        # P2-A：厂商包（source_format 非 standard）→ 运行时纯函数转换，
+        # 不直接读原 mcp.json（厂商变量 ${CLAUDE_PLUGIN_ROOT} 等须在厂商
+        # adapter 内展开，§5.1；凭证仍留在厂商原文件，§3）
+        source_format = getattr(rec, "source_format", "agent-plugins/1.0.0")
+        servers: dict[str, Any] | None = None
+        if source_format != "agent-plugins/1.0.0":
+            try:
+                servers = convert_mcp_servers(pkg_root, source_format) or None
+            except ValueError as exc:
+                logger.warning(
+                    "MCP 安装 %s（%s，%s）厂商配置转换失败，按包隔离跳过: %s",
+                    rec.install_id,
+                    rec.plugin_name,
+                    source_format,
+                    exc,
+                )
+                continue
+        else:
+            try:
+                data = json.loads(mcp_file.read_text(encoding="utf-8"))
+                raw_servers = data.get("mcpServers")
+                if isinstance(raw_servers, dict):
+                    servers = raw_servers
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                logger.warning(
+                    "MCP 安装 %s（%s）mcp.json 不可读，按包隔离跳过: %s",
+                    rec.install_id,
+                    rec.plugin_name,
+                    exc,
+                )
+                continue
+        if servers is None:
             continue
         for comp in rec.components:
             if comp.kind != "mcp_server" or not comp.enabled:

@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "local-srv": {"command": "${CLAUDE_PLUGIN_ROOT}/bin/srv", "args": ["--config", "${APP_CONFIG}"], "env": {"DATA_DIR": "${CLAUDE_PLUGIN_DATA}"}},
+    "web-srv": {"url": "https://example.com/mcp", "headers": {"X-Api": "k"}},
+    "broken": "not-an-object"
+  }
+}

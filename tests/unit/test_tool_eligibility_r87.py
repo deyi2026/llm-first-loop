@@ -14,6 +14,9 @@ class _FakeMcpConn:
     def __init__(self, tools: list[object]) -> None:
         self._tools = tools
         self.closed = False
+        # P2-B（§7.1/T13）后 register_mcp_tools 读取 conn.profile 判定
+        # resources/prompts 保活；fake 无能力宣告 → 维持 R8.7 隔离语义。
+        self.profile = None
 
     def connect(self) -> list[object]:
         return self._tools

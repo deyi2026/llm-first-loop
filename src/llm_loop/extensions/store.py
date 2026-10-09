@@ -31,6 +31,11 @@ from llm_loop.extensions.formats import (
     PACKAGE_UNAVAILABLE,
     parse_plugin_package,
 )
+from llm_loop.extensions.vendor_formats import (
+    FORMAT_STANDARD,
+    detect_vendor_format,
+    parse_vendor_package,
+)
 
 try:
     import fcntl
@@ -80,6 +85,8 @@ class InstallRecord:
     scopes: list[str] = field(default_factory=lambda: ["user"])
     created_at: str = ""
     updated_at: str = ""
+    # P2-A：来源格式 provenance（标准包 = agent-plugins/1.0.0；厂商包见 vendor_formats）
+    source_format: str = "agent-plugins/1.0.0"
 
     def as_dict(self) -> dict:
         d = asdict(self)
@@ -109,6 +116,7 @@ class InstallRecord:
             scopes=[str(s) for s in d.get("scopes", ["user"])],
             created_at=str(d.get("created_at", "")),
             updated_at=str(d.get("updated_at", "")),
+            source_format=str(d.get("source_format", "agent-plugins/1.0.0")),
         )
 
 
@@ -300,16 +308,23 @@ class ExtensionStore:
         source: str,
         scopes: list[str] | None = None,
         expected_revision: int,
+        source_format: str | None = None,
     ) -> InstallRecord:
-        """安装（或重装/更新）标准包.
+        """安装（或重装/更新）标准包或厂商包（P2-A）.
 
         - 先解析 → unavailable 拒绝
         - install_id 绑定 plugin_name（跨版本稳定）→ 同包更新走同一安装，
           instances/<id>/data（PLUGIN_DATA）保留（T21）
         - digest 变化 → 新不可变副本；既有 source 不同 → 身份冲突拒绝（不静默替换）
         - 同 digest 重装 → 记录如实更新（revision +1）
+        - source_format：None 时自动嗅探（厂商包走 vendor_formats 转换报告）；
+          标准包路径（agent-plugins/1.0.0）行为不变（§11 P2-A 不影响标准加载）
         """
-        report = parse_plugin_package(package_root)
+        fmt = source_format or detect_vendor_format(Path(package_root)) or FORMAT_STANDARD
+        if fmt == FORMAT_STANDARD:
+            report = parse_plugin_package(package_root)
+        else:
+            report = parse_vendor_package(package_root, source_format=fmt).report
         if report.overall == PACKAGE_UNAVAILABLE:
             raise InstallRejectedError(
                 f"package unavailable: {'; '.join(report.warnings) or report.overall}"
@@ -361,6 +376,7 @@ class ExtensionStore:
                     scopes=existing.scopes or scopes,
                     created_at=existing.created_at or now,
                     updated_at=now,
+                    source_format=fmt,
                 )
                 installs = [
                     rec if r.install_id == install_id else r
@@ -378,6 +394,7 @@ class ExtensionStore:
                 scopes=scopes,
                 created_at=now,
                 updated_at=now,
+                source_format=fmt,
             )
             installs = [*state.installs, rec]
             return installs, rec
@@ -427,6 +444,7 @@ class ExtensionStore:
                 scopes=existing.scopes,
                 created_at=existing.created_at,
                 updated_at=_now(),
+                source_format=existing.source_format,
             )
             installs = [
                 rec if r.install_id == install_id else r for r in state.installs

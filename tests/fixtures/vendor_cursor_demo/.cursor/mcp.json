@@ -1,0 +1,6 @@
+{
+  "mcpServers": {
+    "pkg": {"command": "npx", "args": ["-y", "pkg-mcp"], "env": {"N": "1"}},
+    "auth-srv": {"url": "https://example.com/mcp", "auth": {"CLIENT_ID": "abc", "scopes": ["read"]}}
+  }
+}

@@ -42,6 +42,7 @@ timeout / error，对齐 ToolResultStatus）。
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import json
@@ -50,6 +51,7 @@ import re
 import subprocess
 import threading
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -68,8 +70,13 @@ from llm_loop.tools.mcp_protocol import (  # typed 错误（P0 语义；本模�
     ProtocolProfile,
     build_call_tool_request,
     build_discover_request,
+    build_get_prompt_request,
     build_initialize_request,
+    build_list_prompts_request,
+    build_list_resource_templates_request,
+    build_list_resources_request,
     build_list_tools_request,
+    build_read_resource_request,
     build_subscribe_request,
     extract_supported_versions,
     negotiate_initialize_result,
@@ -80,6 +87,7 @@ from llm_loop.tools.mcp_protocol import (  # typed 错误（P0 语义；本模�
 from llm_loop.tools.mcp_transport import (
     PROBE_TIMEOUT_S,
     HttpTransport,
+    LegacySseTransport,
     McpHttpError,
     McpTransport,
     StdioTransport,
@@ -257,6 +265,28 @@ def parse_servers(raw: str) -> list[McpServerSpec]:
                 )
             )
             continue
+        if server_type == "sse":
+            # P2-B：legacy HTTP+SSE 旧传输（设计 §3/T04）——显式选择才启用，
+            # 无自动回退；凭证（headers）仅发往与 SSE 端点同 origin 的消息端点
+            # （跨 origin 端点由传输层 fail-closed 拒绝）。
+            url = str(item.get("url", "")).strip()
+            if not url:
+                logger.warning("MCP_SERVERS[%d]（%s）sse 类型缺 url，跳过", i, name)
+                continue
+            raw_headers = item.get("headers")
+            headers = raw_headers if isinstance(raw_headers, dict) else {}
+            out.append(
+                McpServerSpec(
+                    name=name,
+                    command="",
+                    type="sse",
+                    url=url,
+                    headers={str(k): str(v) for k, v in headers.items()},
+                    credential_ref=str(item.get("credential_ref") or "").strip() or None,
+                    enabled=enabled,
+                )
+            )
+            continue
         if server_type != "stdio":
             logger.warning("MCP_SERVERS[%d]（%s）未知 type %r，跳过", i, name, server_type)
             continue
@@ -320,6 +350,10 @@ class McpConnection:
                 credential_ref=spec.credential_ref,
             )
             self.transport = transport
+        elif spec.type == "sse":
+            # P2-B：legacy HTTP+SSE 显式旧传输（§3/T04）；凭证走 headers
+            # （同 origin 强校验由传输层保证），不挂 OAuth（旧传输无此流程）。
+            self.transport = LegacySseTransport(spec.name, spec.url, spec.headers)
         else:
             self.transport = StdioTransport(spec.name, spec.command, spec.args, spec.env)
         self.transport.notification_handler = self._on_notification
@@ -372,6 +406,17 @@ class McpConnection:
                 self.spec.name,
                 self._list_revision,
             )
+            return
+        # P2-B（FR-11）：resources/prompts 清单变化通知。清单按需读取、
+        # 无本地缓存需失效，故如实记录 adapter 事件（不自动重拉、不猜状态）。
+        if method in (
+            "notifications/resources/list_changed",
+            "resources/list_changed",
+            "notifications/prompts/list_changed",
+            "prompts/list_changed",
+        ):
+            _record_adapter_event("capability_list_changed", self.spec.name, f"{method}（清单按需读取，无缓存失效）")
+            logger.info("MCP %s 宣告 %s（按需读取面，记录即可）", self.spec.name, method)
 
     def _next_msg_id(self) -> int:
         """请求 id：跨重连单调递增、绝不重置（§7.3 id 命名空间要求）."""
@@ -569,17 +614,23 @@ class McpConnection:
         )
         raw_info = result.get("serverInfo")
         server_info = raw_info if isinstance(raw_info, dict) else {}
+        raw_caps = result.get("capabilities")
+        # P2-B：initialize result 的 capabilities 含 resources/prompts 宣告，
+        # 此前未捕获导致旧时代纯资源服务器被判"无能力"。
+        capabilities = raw_caps if isinstance(raw_caps, dict) else {}
         session_id = getattr(self.transport, "session_id", None)
         logger.info(
-            "MCP %s 旧时代握手完成（版本 %s，服务器 %s）",
+            "MCP %s 旧时代握手完成（版本 %s，服务器 %s，能力 %s）",
             self.spec.name,
             version,
             server_info.get("name", "unknown"),
+            ",".join(sorted(capabilities)) or "无宣告",
         )
         return ProtocolProfile(
             era=LEGACY_ERA,
             version=version,
             server_info=dict(server_info),
+            capabilities=dict(capabilities),
             http_session_id=session_id,
         )
 
@@ -596,7 +647,15 @@ class McpConnection:
         if isinstance(self.transport, StdioTransport):
             self.transport.dispatch(request)
             return
-        assert isinstance(self.transport, HttpTransport)
+        if not isinstance(self.transport, HttpTransport):
+            # LegacySseTransport（旧传输）：无常驻订阅 API；通知仅在流上
+            # 主动到达时经 _on_notification 处理（fail-open，退化见 docstring）。
+            logger.info(
+                "MCP %s 传输 %s 不支持常驻订阅（fail-open；stale 检测退化为显式 refresh）",
+                self.spec.name,
+                self.spec.type,
+            )
+            return
         sid = self.transport.start_subscription(request, self._call_timeout)
         if sid is not None:
             logger.info(
@@ -635,6 +694,76 @@ class McpConnection:
                     f"MCP {self.spec.name} tools/list 分页超过 {_MAX_LIST_PAGES} 页（疑似循环游标）"
                 )
         return out
+
+    # ── P2-B：resources / prompts（FR-11，设计 §7.1）──
+    def _require_capability(self, kind: str) -> ProtocolProfile:
+        """能力门控：未宣告对应能力 → 如实报"仅提供未支持能力"（非服务器无能力）."""
+        profile = self.profile
+        if profile is None or self._closed:
+            raise McpProtocolError(f"MCP {self.spec.name} 连接未就绪（尚未完成协议协商或已关闭）")
+        if not profile.supports(kind):
+            raise McpProtocolError(
+                f"MCP {self.spec.name} 未宣告 {kind} 能力（仅提供未支持能力；服务器宣告: "
+                f"{','.join(sorted(k for k in profile.capabilities if isinstance(k, str))) or '无'}）"
+            )
+        return profile
+
+    def _list_paged(
+        self, builder: Callable[[int, str | None], dict[str, Any]], key: str
+    ) -> list[dict[str, Any]]:
+        """游标分页聚合（resources/templates/prompts 清单共用；循环游标防护）."""
+        out: list[dict[str, Any]] = []
+        cursor: str | None = None
+        pages = 0
+        while True:
+            result = self.transport.send_request(builder(self._next_msg_id(), cursor), self._call_timeout)
+            for item in result.get(key) or []:
+                if isinstance(item, dict):
+                    out.append(item)
+            next_cursor = result.get("nextCursor")
+            if not isinstance(next_cursor, str) or not next_cursor:
+                break
+            cursor = next_cursor
+            pages += 1
+            if pages >= _MAX_LIST_PAGES:
+                raise McpProtocolError(
+                    f"MCP {self.spec.name} {key} 分页超过 {_MAX_LIST_PAGES} 页（疑似循环游标）"
+                )
+        return out
+
+    def list_resources(self) -> list[dict[str, Any]]:
+        """resources/list 全量聚合（uri/name/description/mimeType 保留原始字段）."""
+        profile = self._require_capability("resources")
+        return self._list_paged(
+            lambda msg_id, cursor: build_list_resources_request(msg_id, cursor, profile), "resources"
+        )
+
+    def list_resource_templates(self) -> list[dict[str, Any]]:
+        """resources/templates/list 全量聚合（uriTemplate 描述符）."""
+        profile = self._require_capability("resources")
+        return self._list_paged(
+            lambda msg_id, cursor: build_list_resource_templates_request(msg_id, cursor, profile),
+            "resourceTemplates",
+        )
+
+    def read_resource(self, uri: str) -> dict[str, Any]:
+        """resources/read：contents 原样返回（text/blob 未解码，模型视图在上层）."""
+        profile = self._require_capability("resources")
+        request = build_read_resource_request(self._next_msg_id(), uri, profile)
+        return self.transport.send_request(request, self._call_timeout)
+
+    def list_prompts(self) -> list[dict[str, Any]]:
+        """prompts/list 全量聚合（name/description/arguments 保留原始字段）."""
+        profile = self._require_capability("prompts")
+        return self._list_paged(
+            lambda msg_id, cursor: build_list_prompts_request(msg_id, cursor, profile), "prompts"
+        )
+
+    def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        """prompts/get：messages（role + typed content）原样返回，类型/角色由模型视图保留."""
+        profile = self._require_capability("prompts")
+        request = build_get_prompt_request(self._next_msg_id(), name, arguments, profile)
+        return self.transport.send_request(request, self._call_timeout)
 
 
 class McpTool:
@@ -779,6 +908,352 @@ class McpTool:
         )
 
 
+# ── P2-B：resources/prompts 模型工具（设计 §10.1：binding_id + URI/name + arguments）──
+
+#: 单条 text 内容入模型视图上限（超出截断 + digest 指针，可对回原始）
+_RESOURCE_TEXT_CAP_CHARS = 32_000
+
+
+class _McpCapabilityRouter:
+    """binding_id → McpConnection 路由基座（每注册表至多一份实例）.
+
+    binding_id 语义：env 配置服务器名，或装配层 install_id:name（ServerBinding
+    的 spec.name，见 mcp_assembly）。资源/提示的权限与来源边界以 binding
+    所属服务器连接为准（§5.4 绑定身份要素）。
+    """
+
+    def __init__(self, base_name: str, fallback_name: str) -> None:
+        self._base_name = base_name
+        self._fallback_name = fallback_name
+        self.name = base_name
+        self.bindings: dict[str, McpConnection] = {}
+
+    def _conn_for(self, binding_id: str) -> McpConnection:
+        conn = self.bindings.get(binding_id)
+        if conn is None or conn._closed:
+            raise McpProtocolError(
+                f"未知或已失效的 binding_id {binding_id!r}（当前可用: "
+                f"{', '.join(sorted(self.bindings)) or '无'}）"
+            )
+        return conn
+
+    def _error(self, exc: BaseException) -> ToolResult:
+        if isinstance(exc, McpOutcomeUnknownError):
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    f"[程序异常][结果未知] {self.name} 调用失败（{exc}）。"
+                    "请求已派发但响应未确认，未自动重放。"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type="mcp_outcome_unknown",
+            )
+        return ToolResult(
+            status=ToolResultStatus.ERROR,
+            content=f"[程序异常] {self.name} 调用失败（{type(exc).__name__}: {exc}）。",
+            tool_call_id="",
+            tool_name=self.name,
+            error_type="mcp_protocol_error" if isinstance(exc, McpError) else "runtime_error",
+        )
+
+    @staticmethod
+    def _raw_observation(payload: Any) -> str | None:
+        if not current_evidence_shadow_enabled.get():
+            return None
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+
+
+class McpResourceReadTool(_McpCapabilityRouter):
+    """mcp_resource_read：resources/read + 清单发现（list=true）.
+
+    模型视图保留：uri（来源）与 mimeType 原样回显；text 原文（超限截断+
+    digest 指针）；blob → sha256 指针 + 字节数（二进制不灌入上下文）。
+    """
+
+    def __init__(self) -> None:
+        super().__init__("mcp_resource_read", "mcp_lfl_resource_read")
+        self.parameters: dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "binding_id": {
+                    "type": "string",
+                    "description": "MCP 服务器绑定标识（env 服务器名或 install_id:name）",
+                },
+                "uri": {"type": "string", "description": "resources/read 目标 URI（list=true 时可省略）"},
+                "list": {
+                    "type": "boolean",
+                    "description": "true 时返回该服务器的资源与模板清单（uri/description/mimeType），用于发现 URI",
+                    "default": False,
+                },
+            },
+            "required": ["binding_id"],
+        }
+
+    @property
+    def description(self) -> str:
+        return (
+            "读取 MCP 服务器资源（resources/read；binding_id + uri）。list=true 返回"
+            "该服务器的资源/模板清单以发现可用 URI。text 原文返回，blob 以 digest"
+            " 指针呈现；服务器未宣告 resources 能力时如实报错。"
+        )
+
+    def _render_read(self, result: dict[str, Any]) -> str:
+        parts: list[str] = []
+        contents = result.get("contents")
+        for i, item in enumerate(contents if isinstance(contents, list) else []):
+            if not isinstance(item, dict):
+                parts.append(f"[内容 #{i} 非对象形态 {type(item).__name__}]")
+                continue
+            uri = str(item.get("uri", ""))
+            mime = str(item.get("mimeType", "") or "text/plain")
+            if isinstance(item.get("text"), str):
+                text = item["text"]
+                if len(text) > _RESOURCE_TEXT_CAP_CHARS:
+                    digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:16]
+                    parts.append(
+                        f"[内容 #{i} uri={uri} mimeType={mime}]\n{text[:_RESOURCE_TEXT_CAP_CHARS]}"
+                        f"\n[截断：全文 {len(text)} 字符，digest={digest}]"
+                    )
+                else:
+                    parts.append(f"[内容 #{i} uri={uri} mimeType={mime}]\n{text}")
+            elif isinstance(item.get("blob"), str):
+                try:
+                    data = base64.b64decode(item["blob"], validate=True)
+                    note = f"{len(data)} 字节"
+                except Exception:  # noqa: BLE001 — 非法 base64 如实呈现
+                    data = b""
+                    note = "（blob 非法 base64，按 0 字节计）"
+                digest = hashlib.sha256(data).hexdigest()[:16]
+                parts.append(
+                    f"[内容 #{i} uri={uri} mimeType={mime} blob={note} sha256={digest}"
+                    "（二进制不入上下文，指针可对回原始）]"
+                )
+            else:
+                parts.append(
+                    f"[内容 #{i} uri={uri} 未知内容形态 keys="
+                    f"{sorted(str(k) for k in item) or '空'}]"
+                )
+        return "\n".join(parts) or "（resources/read 返回空 contents）"
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        binding_id = str(kwargs.get("binding_id") or "").strip()
+        want_list = bool(kwargs.get("list"))
+        payload: Any = None
+        try:
+            conn = self._conn_for(binding_id)
+            if want_list:
+                resources = conn.list_resources()
+                try:
+                    templates = conn.list_resource_templates()
+                except McpProtocolError as exc:
+                    templates = [{"note": f"模板清单不可用：{exc}"}]
+                payload = {"resources": resources, "resourceTemplates": templates}
+                text = json.dumps(payload, ensure_ascii=False, indent=1, default=str)
+            else:
+                uri = str(kwargs.get("uri") or "").strip()
+                if not uri:
+                    raise McpProtocolError("缺 uri（可先以 list=true 发现资源清单）")
+                payload = conn.read_resource(uri)
+                text = self._render_read(payload if isinstance(payload, dict) else {})
+        except (McpError, RuntimeError) as exc:
+            return self._error(exc)
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=f"[状态: success] {text}",
+            tool_call_id="",
+            tool_name=self.name,
+            raw_observation=self._raw_observation(payload),
+        )
+
+
+class McpPromptGetTool(_McpCapabilityRouter):
+    """mcp_prompt_get：prompts/get + 清单发现（list=true）.
+
+    模型视图保留：消息 role（user/assistant 等）与内容块类型；text 原文；
+    image/audio/resource 等非文本块 → 类型 + digest 指针；description 保留。
+    """
+
+    def __init__(self) -> None:
+        super().__init__("mcp_prompt_get", "mcp_lfl_prompt_get")
+        self.parameters: dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "binding_id": {
+                    "type": "string",
+                    "description": "MCP 服务器绑定标识（env 服务器名或 install_id:name）",
+                },
+                "name": {"type": "string", "description": "prompts/get 目标提示名（list=true 时可省略）"},
+                "arguments": {
+                    "type": "object",
+                    "description": "提示参数（服务器声明的 arguments；缺省为空）",
+                },
+                "list": {
+                    "type": "boolean",
+                    "description": "true 时返回该服务器的提示清单（name/description/arguments），用于发现可用提示",
+                    "default": False,
+                },
+            },
+            "required": ["binding_id"],
+        }
+
+    @property
+    def description(self) -> str:
+        return (
+            "获取 MCP 服务器提示（prompts/get；binding_id + name + arguments）。"
+            "list=true 返回该服务器的提示清单。消息角色与内容块类型保留；"
+            "服务器未宣告 prompts 能力时如实报错。"
+        )
+
+    def _render_prompt(self, result: dict[str, Any]) -> str:
+        lines: list[str] = []
+        description = result.get("description")
+        if isinstance(description, str) and description:
+            lines.append(f"（描述: {description}）")
+        messages = result.get("messages")
+        for msg in messages if isinstance(messages, list) else []:
+            if not isinstance(msg, dict):
+                lines.append(f"[消息 非对象形态 {type(msg).__name__}]")
+                continue
+            role = str(msg.get("role", "unknown"))
+            content = msg.get("content")
+            blocks = content if isinstance(content, list) else [content]
+            for block in blocks:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    lines.append(f"[{role}] {block.get('text', '')}")
+                elif isinstance(block, dict):
+                    digest = _result_digest(block)
+                    meta = {
+                        str(k): v
+                        for k, v in block.items()
+                        if k not in ("data", "blob", "text")
+                    }
+                    lines.append(
+                        f"[{role}] <非文本块 type={block.get('type')} digest={digest}；"
+                        f"{json.dumps(meta, ensure_ascii=False, default=str)[:300]}>"
+                    )
+                else:
+                    lines.append(f"[{role}] <内容块缺失>")
+        return "\n".join(lines) or "（prompts/get 返回空 messages）"
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        binding_id = str(kwargs.get("binding_id") or "").strip()
+        want_list = bool(kwargs.get("list"))
+        payload: Any = None
+        try:
+            conn = self._conn_for(binding_id)
+            if want_list:
+                payload = conn.list_prompts()
+                text = json.dumps(payload, ensure_ascii=False, indent=1, default=str)
+            else:
+                name = str(kwargs.get("name") or "").strip()
+                if not name:
+                    raise McpProtocolError("缺 name（可先以 list=true 发现提示清单）")
+                raw_args = kwargs.get("arguments")
+                arguments = raw_args if isinstance(raw_args, dict) else None
+                payload = conn.get_prompt(name, arguments)
+                text = self._render_prompt(payload if isinstance(payload, dict) else {})
+        except (McpError, RuntimeError) as exc:
+            return self._error(exc)
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=f"[状态: success] {text}",
+            tool_call_id="",
+            tool_name=self.name,
+            raw_observation=self._raw_observation(payload),
+        )
+
+
+def _find_capability_tool(registry: Any, cls: type) -> tuple[str | None, _McpCapabilityRouter | None]:
+    """注册表中既有路由工具（按类型精确识别；名称可因冲突回退不同）."""
+    for name in registry.names():
+        try:
+            tool = registry.get(name)
+        except Exception:  # noqa: BLE001 — 竞态下名称消失
+            continue
+        if isinstance(tool, cls):
+            return name, tool
+    return None, None
+
+
+def _ensure_router_tool(registry: Any, tool: _McpCapabilityRouter) -> str | None:
+    """确保路由工具在册（基名被非同类工具占用时退回 fallback 名；再冲突则放弃）."""
+    existing_name, existing = _find_capability_tool(registry, type(tool))
+    if existing is not None:
+        return existing_name  # 已在册（refresh 复用同一实例）
+    for candidate in (tool._base_name, tool._fallback_name):
+        if not candidate:
+            continue
+        try:
+            registry.get(candidate)
+            continue  # 名称被其他工具占用
+        except Exception:  # noqa: BLE001 — 不存在即可注册
+            tool.name = candidate
+            try:
+                registry.register(tool)
+            except Exception:  # noqa: BLE001
+                logger.warning("MCP 能力路由工具注册失败: %s", candidate)
+                return None
+            return candidate
+    logger.warning(
+        "MCP 能力路由工具名冲突（%s/%s 均被占用），该能力面未注册", tool._base_name, tool._fallback_name
+    )
+    return None
+
+
+def _bind_capability_routes(registry: Any, server_name: str, conn: McpConnection) -> list[str]:
+    """按宣告能力把连接挂到路由工具（纯资源/提示服务器保活的前提）.
+
+    同名 binding 重建（refresh）时关闭被替换的旧连接（幂等；与上层
+    old-conns 关闭路径一致）。返回本服务器实际可用的路由注册名。
+    """
+    profile = conn.profile
+    if profile is None:
+        return []
+    names: list[str] = []
+    if profile.supports("resources"):
+        registered = _ensure_router_tool(registry, McpResourceReadTool())
+        if registered:
+            router = registry.get(registered)
+            assert isinstance(router, _McpCapabilityRouter)
+            old = router.bindings.get(server_name)
+            router.bindings[server_name] = conn
+            if old is not None and old is not conn:
+                try:
+                    old.close()
+                except Exception:  # noqa: BLE001
+                    logger.warning("MCP 旧能力绑定连接关闭失败（忽略）: %s", server_name)
+            names.append(registered)
+    if profile.supports("prompts"):
+        registered = _ensure_router_tool(registry, McpPromptGetTool())
+        if registered:
+            router = registry.get(registered)
+            assert isinstance(router, _McpCapabilityRouter)
+            old = router.bindings.get(server_name)
+            router.bindings[server_name] = conn
+            if old is not None and old is not conn:
+                try:
+                    old.close()
+                except Exception:  # noqa: BLE001
+                    logger.warning("MCP 旧能力绑定连接关闭失败（忽略）: %s", server_name)
+            names.append(registered)
+    return names
+
+
+def _drop_capability_routes(registry: Any, server_name: str, close: bool = True) -> None:
+    """移除服务器的能力绑定（配置移除/禁用路径；关闭其持有的连接）."""
+    for cls in (McpResourceReadTool, McpPromptGetTool):
+        _, router = _find_capability_tool(registry, cls)
+        if router is None:
+            continue
+        conn = router.bindings.pop(server_name, None)
+        if close and conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                logger.warning("MCP 能力绑定连接关闭失败（忽略）: %s", server_name)
+
+
 def register_mcp_tools(registry: Any, raw_servers: str) -> list[str]:
     """按 MCP_SERVERS 配置连接并注册 MCP 工具（每服务器独立 fail-open）.
 
@@ -799,7 +1274,31 @@ def register_mcp_tools(registry: Any, raw_servers: str) -> list[str]:
         except Exception as exc:  # noqa: BLE001 — 单服务器失败不阻断整体
             logger.warning("MCP 服务器 %s 连接失败（fail-open，工具未注册）: %s", spec.name, exc)
             continue
+        # P2-B（§7.1/T13）：有效能力集合涵盖 tools/resources/prompts；
+        # 宣告 resources/prompts 的服务器即使 tools/list=0 也保活并挂能力路由。
+        profile = conn.profile
+        extras = bool(
+            profile is not None and (profile.supports("resources") or profile.supports("prompts"))
+        )
         if not tools:
+            if extras:
+                routes = _bind_capability_routes(registry, spec.name, conn)
+                if routes:
+                    registered.extend(routes)
+                    logger.info(
+                        "MCP 服务器 %s tools/list=0 但宣告 resources/prompts"
+                        "（P2-B 保活，不隔离；能力路由 %s）",
+                        spec.name,
+                        ",".join(routes),
+                    )
+                    _advance_catalog_epoch("register", spec.name)
+                    continue
+                conn.close()
+                logger.warning(
+                    "MCP 服务器 %s tools/list=0 且能力路由注册失败，按 no-capability quarantine 关闭连接",
+                    spec.name,
+                )
+                continue
             # R8.7: a connected MCP server with tools/list=0 has no capability to expose.
             # Do not keep an idle stdio process alive and do not create prompt surface.
             conn.close()
@@ -818,14 +1317,21 @@ def register_mcp_tools(registry: Any, raw_servers: str) -> list[str]:
                 count += 1
             except Exception:  # noqa: BLE001 — 单工具注册失败跳过
                 logger.warning("MCP 工具注册失败: %s", name)
-        if count == 0:
+        routes = _bind_capability_routes(registry, spec.name, conn) if extras else []
+        if count == 0 and not routes:
             conn.close()
             logger.warning(
                 "MCP 服务器 %s 工具清单非空但有效注册数=0，按 no-capability quarantine 关闭连接",
                 spec.name,
             )
             continue
-        logger.info("MCP 服务器 %s 已连接，注册 %d 个工具", spec.name, count)
+        registered.extend(routes)
+        logger.info(
+            "MCP 服务器 %s 已连接，注册 %d 个工具%s",
+            spec.name,
+            count,
+            f" + 能力路由 {','.join(routes)}" if routes else "",
+        )
         _advance_catalog_epoch("register", spec.name)
     return registered
 
@@ -892,10 +1398,16 @@ def refresh_mcp_tools(registry: Any, raw_servers: str) -> tuple[list[str], list[
     specs = parse_servers(raw_servers)
     enabled_names = {spec.name for spec in specs if spec.enabled}
 
-    # 1) 精确清理：已从配置删除或禁用的服务器（diff 语义，非前缀扫描）
+    # 1) 精确清理：已从配置删除或禁用的服务器（diff 语义，非前缀扫描）。
+    #    纯资源/提示服务器的连接只挂在能力路由上（无 McpTool），需一并收集。
     known_servers = {tool.server_name for _, tool in _iter_mcp_tools(registry)}
+    for cls in (McpResourceReadTool, McpPromptGetTool):
+        _, router = _find_capability_tool(registry, cls)
+        if router is not None:
+            known_servers.update(router.bindings)
     for server_name in sorted(known_servers - enabled_names):
         _close_server_conns(registry, server_name)
+        _drop_capability_routes(registry, server_name, close=True)
         for name, _ in _server_tools(registry, server_name):
             if registry.unregister(name):
                 unregistered.append(name)
@@ -918,16 +1430,28 @@ def refresh_mcp_tools(registry: Any, raw_servers: str) -> tuple[list[str], list[
             )
             continue
         new_names: set[str] = set()
-        if not tools:
+        profile = conn.profile
+        extras = bool(
+            profile is not None and (profile.supports("resources") or profile.supports("prompts"))
+        )
+        if extras:
+            routes = _bind_capability_routes(registry, spec.name, conn)
+        else:
+            # 能力面消失：清掉上一轮可能残留的路由绑定（含其连接），不留陈旧引用
+            routes = []
+            _drop_capability_routes(registry, spec.name, close=True)
+        if routes:
+            new_names.update(routes)
+        if not tools and not routes:
             # no-capability server: close the fresh connection; teardown of old view below.
             conn.close()
             logger.warning(
                 "MCP 服务器 %s tools/list=0，按 no-capability quarantine 关闭连接",
                 spec.name,
             )
-        else:
+        elif tools:
             names = _assign_registry_names(spec.name, tools, _registry_identities(registry))
-            new_names = set(names.values())
+            new_names.update(names.values())
             count = 0
             for tool_def in tools:
                 name = names[tool_def.name]
@@ -937,20 +1461,36 @@ def refresh_mcp_tools(registry: Any, raw_servers: str) -> tuple[list[str], list[
                     count += 1
                 except Exception:  # noqa: BLE001 — 单工具注册失败跳过
                     logger.warning("MCP 工具注册失败: %s", name)
-            if count == 0:
+            if count == 0 and not routes:
                 conn.close()
                 logger.warning(
                     "MCP 服务器 %s 刷新后有效注册数=0，按 no-capability quarantine 关闭连接",
                     spec.name,
                 )
             else:
-                logger.info("MCP 服务器 %s 刷新完成：注册 %d 个工具", spec.name, count)
+                registered.extend(routes)
+                logger.info(
+                    "MCP 服务器 %s 刷新完成：注册 %d 个工具%s",
+                    spec.name,
+                    count,
+                    f" + 能力路由 {','.join(routes)}" if routes else "",
+                )
                 _advance_catalog_epoch("refresh", spec.name)
+        else:
+            # 纯 resources/prompts 服务器（tools=0 但能力面在）：保活 + 路由
+            registered.extend(routes)
+            logger.info(
+                "MCP 服务器 %s 刷新完成：tools/list=0 但宣告 resources/prompts"
+                "（P2-B 保活；能力路由 %s）",
+                spec.name,
+                ",".join(routes),
+            )
+            _advance_catalog_epoch("refresh", spec.name)
         # 3) 拆旧：新视图已就绪（或确认 no-capability）才卸旧名、关旧连接
         for name in sorted(old_names - new_names):
             if registry.unregister(name):
                 unregistered.append(name)
-        if not tools and old_names:
+        if not tools and not routes and old_names:
             _advance_catalog_epoch("refresh_no_capability", spec.name)
         for old_conn in old_conns.values():
             try:

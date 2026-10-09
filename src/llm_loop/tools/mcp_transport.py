@@ -8,6 +8,9 @@
     MCP-Protocol-Version（与 params._meta 一致），无会话；
   * 旧时代（≤2025-11-25）：initialize 握手 + Mcp-Session-Id 会话头，
     202 Accepted 通知，JSON 或 SSE 响应。
+- LegacySseTransport（P2-B）：legacy HTTP+SSE 旧传输——GET SSE 流 +
+  endpoint 事件下发消息端点 + POST 202 受理、响应经流回送；仅显式
+  spec type="sse" 选择；消息端点同 origin 强校验（凭证不越 origin）。
 
 同步契约：request() 阻塞至响应或超时（LFL Tool.execute 同步桥）。
 HTTP 连接按请求建立（无池化）；写后读超时=结果未知，连接失败=未派发。
@@ -27,7 +30,7 @@ import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from llm_loop.tools.mcp_auth import McpOAuthClient
 from llm_loop.tools.mcp_protocol import (
@@ -670,3 +673,380 @@ _POST_SEND_FAILURES = (
     http.client.HTTPException,
     OSError,
 )
+
+
+def _url_origin(parts: urlsplit) -> tuple[str, str, int]:
+    """(scheme, host, effective_port) origin 三元组（比较用）."""
+    scheme = parts.scheme.lower()
+    default_port = 443 if scheme == "https" else 80
+    return (scheme, (parts.hostname or "").lower(), parts.port or default_port)
+
+
+class LegacySseTransport(McpTransport):
+    """MCP legacy HTTP+SSE 传输（旧时代官方流式形态，P2-B 显式选择）.
+
+    语义（设计 §3/T04；与 Streamable HTTP 的 SSE 响应不同，默认不启用，
+    仅 spec type="sse" 显式选择本传输）：
+    1. GET <sse_url>（Accept: text/event-stream）→ 常驻 SSE 流；
+    2. 服务器 `endpoint` 事件下发消息端点（相对路径或绝对 URL）；
+    3. 请求 POST 到消息端点（期望 202 Accepted），响应帧在 SSE 流上按 id 匹配。
+
+    安全（fail-closed，T04）：
+    - 消息端点跨 origin（scheme/host/port 任一不同）→ McpProtocolError 拒绝，
+      防止携带凭证的 POST 被导向其他源（凭证不越 origin）；
+    - 认证头仅随同 origin 消息端点请求发送（由上一条保证）。
+
+    会话失效：POST 404 → McpHttpError(404)（上层置 session_id=None 走既有
+    重握手路径；setter 同步作废流与端点，下次请求重建）。断流：pending
+    等待者按 McpOutcomeUnknownError 收尾（已派发、结果未知，不自动重放）；
+    端点作废后下一次请求重新建流取新端点（旧时代会话随流存亡）。
+    """
+
+    #: GET 流 socket 读超时：超时视作断流（下次请求重建），不无限阻塞线程。
+    STREAM_IDLE_TIMEOUT_S = 620.0
+    #: 建流后等待 endpoint 事件的时限。
+    ENDPOINT_WAIT_TIMEOUT_S = 10.0
+
+    _EOF = object()  # 断流哨兵（读线程 → 等待者）
+
+    def __init__(self, name: str, url: str, headers: dict[str, str] | None = None) -> None:
+        super().__init__(name)
+        self.url = url
+        self.extra_headers = {
+            str(k): str(v) for k, v in (headers or {}).items() if isinstance(k, str)
+        }
+        self._sse_parts = urlsplit(url)
+        self._sse_origin = _url_origin(self._sse_parts)
+        self._stream_lock = threading.Lock()
+        self._conn: http.client.HTTPConnection | None = None
+        self._reader: threading.Thread | None = None
+        self._message_url: str | None = None
+        self._endpoint_ready = threading.Event()
+        self._endpoint_error: McpError | None = None
+        self._pending: dict[int, queue.Queue] = {}
+        self._pending_lock = threading.Lock()
+        self._stop = threading.Event()
+        self._session_id: str | None = None
+
+    # ── 会话失效路径（McpConnection 404 处理：session_id = None → 重建） ──
+    @property
+    def session_id(self) -> str | None:
+        return self._session_id
+
+    @session_id.setter
+    def session_id(self, value: str | None) -> None:
+        self._session_id = value
+        if value is None:
+            self._teardown_stream()
+
+    # ── 流建立/拆除 ──
+    def _teardown_stream(self) -> None:
+        """作废当前 SSE 流与消息端点（唤醒 pending；下次请求重建）."""
+        self._stop.set()
+        with self._stream_lock:
+            conn, self._conn = self._conn, None
+            self._message_url = None
+        if conn is not None:
+            with contextlib.suppress(Exception):  # noqa: BLE001
+                conn.close()
+        reader = self._reader
+        if reader is not None and reader.is_alive() and reader is not threading.current_thread():
+            reader.join(timeout=2.0)
+        self._wake_pending_eof()
+
+    def _wake_pending_eof(self) -> None:
+        with self._pending_lock:
+            waiters = list(self._pending.values())
+            self._pending.clear()
+        for q in waiters:
+            q.put(self._EOF)
+
+    def _ensure_stream(self) -> None:
+        """确保 SSE 流与同 origin 消息端点就绪（幂等；断流后重建）."""
+        with self._stream_lock:
+            if self._message_url is not None and self._reader is not None and self._reader.is_alive():
+                return
+            # 清场（旧流残留）
+            self._stop.set()
+            old_conn, self._conn = self._conn, None
+            if old_conn is not None:
+                with contextlib.suppress(Exception):  # noqa: BLE001
+                    old_conn.close()
+            self._message_url = None
+            self._endpoint_ready.clear()
+            self._endpoint_error = None
+            self._stop.clear()
+            # 建流
+            parts = self._sse_parts
+            host, port = parts.hostname or "", parts.port or (443 if parts.scheme == "https" else 80)
+            if parts.scheme == "https":
+                conn: http.client.HTTPConnection = http.client.HTTPSConnection(
+                    host, port, timeout=self.ENDPOINT_WAIT_TIMEOUT_S
+                )
+            elif parts.scheme == "http":
+                conn = http.client.HTTPConnection(
+                    host, port, timeout=self.ENDPOINT_WAIT_TIMEOUT_S
+                )
+            else:
+                raise McpError(
+                    f"MCP legacy SSE {self.name} 端点 scheme 不支持: {parts.scheme!r}（仅 http/https）"
+                )
+            try:
+                conn.request(
+                    "GET",
+                    (parts.path or "/") + (f"?{parts.query}" if parts.query else ""),
+                    headers={"Accept": "text/event-stream", **self.extra_headers},
+                )
+                resp = conn.getresponse()
+                sock = conn.sock  # getresponse() 对 will_close 响应会接管 socket
+                # 建流完成：读侧改用长空闲超时（超时视作断流，由读线程重建路径接管）
+                if sock is not None:
+                    sock.settimeout(self.STREAM_IDLE_TIMEOUT_S)
+            except _POST_SEND_FAILURES as exc:
+                with contextlib.suppress(Exception):  # noqa: BLE001
+                    conn.close()
+                if isinstance(exc, ConnectionRefusedError):
+                    raise McpNotDispatchedError(
+                        f"MCP legacy SSE {self.name} 建流被拒绝（请求未派发）: {exc}"
+                    ) from exc
+                raise McpOutcomeUnknownError(
+                    f"MCP legacy SSE {self.name} 建流传输失败（结果未知）: {exc}"
+                ) from exc
+            if resp.status >= 400:
+                raw = resp.read().decode("utf-8", errors="replace")
+                with contextlib.suppress(Exception):  # noqa: BLE001
+                    conn.close()
+                raise McpHttpError(resp.status, None, raw[:500])
+            if (resp.getheader("Content-Type") or "").split(";")[0].strip() != "text/event-stream":
+                with contextlib.suppress(Exception):  # noqa: BLE001
+                    conn.close()
+                raise McpProtocolError(
+                    f"MCP legacy SSE {self.name} 建流响应非 text/event-stream（非 SSE 服务器？）"
+                )
+            self._conn = conn
+            self._reader = threading.Thread(
+                target=self._reader_main,
+                args=(conn, resp, sock),
+                name=f"mcp-legacy-sse-{self.name}",
+                daemon=True,
+            )
+            self._reader.start()
+        if not self._endpoint_ready.wait(self.ENDPOINT_WAIT_TIMEOUT_S):
+            self._teardown_stream()
+            raise McpProtocolError(
+                f"MCP legacy SSE {self.name} 建流后 {self.ENDPOINT_WAIT_TIMEOUT_S}s 内未收到 endpoint 事件"
+            )
+        if self._endpoint_error is not None:
+            error = self._endpoint_error
+            self._teardown_stream()
+            raise error
+
+    def _reader_main(
+        self, conn: http.client.HTTPConnection, resp: http.client.HTTPResponse, sock: Any
+    ) -> None:
+        """SSE 流读取线程：endpoint 事件定端点；message 帧按 id 分发/通知上送."""
+        event_name = ""
+        data_lines: list[str] = []
+        try:
+            while not self._stop.is_set():
+                raw = resp.readline()
+                if not raw:
+                    break  # 服务器关闭流
+                line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                if line == "":
+                    if data_lines or event_name:
+                        self._handle_stream_event(event_name, "\n".join(data_lines))
+                    event_name, data_lines = "", []
+                    continue
+                if line.startswith(":"):
+                    continue  # SSE 注释/keepalive
+                if line.startswith("event:"):
+                    event_name = line[len("event:") :].strip()
+                elif line.startswith("data:"):
+                    data_lines.append(line[len("data:") :].lstrip(" "))
+        except _POST_SEND_FAILURES as exc:
+            logger.info("MCP legacy SSE %s 流中断（下次请求重建）: %s", self.name, exc)
+        finally:
+            with contextlib.suppress(Exception):  # noqa: BLE001
+                conn.close()
+            with self._stream_lock:
+                if self._conn is conn:
+                    self._conn = None
+                self._message_url = None
+            if not self._endpoint_ready.is_set():
+                # 流在 endpoint 前结束：让建流方如实失败
+                self._endpoint_error = McpProtocolError(
+                    f"MCP legacy SSE {self.name} 流在 endpoint 事件前结束"
+                )
+                self._endpoint_ready.set()
+            self._wake_pending_eof()
+
+    def _handle_stream_event(self, event_name: str, payload: str) -> None:
+        if event_name == "endpoint":
+            self._set_message_endpoint(payload.strip())
+            return
+        # 旧时代规范默认事件名为 message；容错无名事件（部分实现缺省 event: 行）
+        try:
+            msg = json.loads(payload) if payload else None
+        except json.JSONDecodeError:
+            return
+        if not isinstance(msg, dict):
+            return
+        msg_id = msg.get("id")
+        if "method" in msg and not ("result" in msg or "error" in msg):
+            if msg_id is not None:
+                # 服务器→客户端请求（如 sampling）：本端不支持，如实记日志不响应
+                logger.info(
+                    "MCP legacy SSE %s 收到服务器发起请求（不支持，忽略）: %s",
+                    self.name,
+                    msg.get("method"),
+                )
+                return
+            raw_params = msg.get("params")
+            params = raw_params if isinstance(raw_params, dict) else {}
+            handler = self.notification_handler
+            if handler is not None:
+                try:
+                    handler(str(msg.get("method")), params, self.generation)
+                except Exception:  # noqa: BLE001
+                    logger.debug("MCP legacy SSE %s 通知处理异常", self.name, exc_info=True)
+            return
+        if isinstance(msg_id, int):
+            with self._pending_lock:
+                q = self._pending.get(msg_id)
+            if q is None:
+                return
+            if "error" in msg:
+                error = msg["error"] if isinstance(msg.get("error"), dict) else None
+                q.put(
+                    McpProtocolError(
+                        f"MCP legacy SSE {self.name} 响应错误: {msg['error']}", error
+                    )
+                )
+            else:
+                q.put(("result", msg.get("result") or {}))
+
+    def _set_message_endpoint(self, endpoint: str) -> None:
+        """校验并固定消息端点（同 origin 强校验；跨 origin fail-closed）."""
+        try:
+            absolute = urljoin(self.url, endpoint)
+        except ValueError as exc:
+            self._endpoint_error = McpProtocolError(
+                f"MCP legacy SSE {self.name} endpoint 事件值非法: {endpoint!r:.120}（{exc}）"
+            )
+            self._endpoint_ready.set()
+            return
+        parts = urlsplit(absolute)
+        if parts.scheme not in ("http", "https"):
+            self._endpoint_error = McpProtocolError(
+                f"MCP legacy SSE {self.name} 消息端点 scheme 不支持: {parts.scheme!r}"
+            )
+        elif _url_origin(parts) != self._sse_origin:
+            # T04：跨 origin 端点 → 拒绝（凭证不越 origin，fail-closed）
+            self._endpoint_error = McpProtocolError(
+                f"MCP legacy SSE {self.name} 消息端点跨 origin 被拒: "
+                f"{absolute!r:.200}（SSE origin {self._sse_origin}；凭证不越 origin）"
+            )
+        else:
+            with self._stream_lock:
+                self._message_url = absolute
+            logger.info("MCP legacy SSE %s 消息端点就绪: %s", self.name, absolute)
+        self._endpoint_ready.set()
+
+    # ── 发送 ──
+    def send_request(self, request: dict[str, Any], timeout: float) -> dict[str, Any]:
+        msg_id = request.get("id")
+        if not isinstance(msg_id, int):
+            raise McpError("legacy SSE 请求缺少整数 id")
+        self._ensure_stream()
+        q: queue.Queue = queue.Queue()
+        with self._pending_lock:
+            self._pending[msg_id] = q
+        try:
+            self._post_message(request, timeout)
+            try:
+                item = q.get(timeout=max(float(timeout), 0.1))
+            except queue.Empty:
+                raise McpOutcomeUnknownError(
+                    f"MCP legacy SSE {self.name} {request.get('method')} 等待响应超时"
+                    f"（已派发，结果未知，不自动重放）"
+                ) from None
+            if item is self._EOF:
+                raise McpOutcomeUnknownError(
+                    f"MCP legacy SSE {self.name} {request.get('method')} 期间断流（结果未知，不自动重放）"
+                )
+            if isinstance(item, BaseException):
+                raise item
+            _, result = item
+            return result
+        finally:
+            with self._pending_lock:
+                self._pending.pop(msg_id, None)
+
+    def _post_message(self, message: dict[str, Any], timeout: float) -> None:
+        """POST 消息到消息端点（202=受理；直接 JSON 响应兜底支持）."""
+        url = self._message_url
+        assert isinstance(url, str)
+        parts = urlsplit(url)
+        host, port = parts.hostname or "", parts.port or (443 if parts.scheme == "https" else 80)
+        body = json.dumps(message)
+        headers = {"Content-Type": "application/json", **self.extra_headers}
+        target = parts.path or "/"
+        if parts.query:  # 消息端点 query 携带会话（如 sessionId），不可丢弃
+            target = f"{target}?{parts.query}"
+        if parts.scheme == "https":
+            conn: http.client.HTTPConnection = http.client.HTTPSConnection(host, port, timeout=timeout)
+        else:
+            conn = http.client.HTTPConnection(host, port, timeout=timeout)
+        try:
+            try:
+                conn.request("POST", target, body=body, headers=headers)
+                resp = conn.getresponse()
+            except ConnectionRefusedError as exc:
+                raise McpNotDispatchedError(
+                    f"MCP legacy SSE {self.name} POST 被拒绝（请求未派发）: {exc}"
+                ) from exc
+            except _POST_SEND_FAILURES as exc:
+                raise McpOutcomeUnknownError(
+                    f"MCP legacy SSE {self.name} POST 传输失败（结果未知，不自动重放）: {exc}"
+                ) from exc
+            status = resp.status
+            content_type = (resp.getheader("Content-Type") or "").split(";")[0].strip()
+            if status == 202:
+                resp.read()
+                return  # 受理；响应帧在 SSE 流上
+            if status >= 400:
+                raw = resp.read().decode("utf-8", errors="replace")
+                error: dict[str, Any] | None = None
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict) and isinstance(parsed.get("error"), dict):
+                        error = parsed["error"]
+                except json.JSONDecodeError:
+                    pass
+                raise McpHttpError(status, error, raw[:500])
+            # 200/201：容错部分实现直接回 JSON-RPC 响应
+            if content_type == "application/json":
+                raw = resp.read().decode("utf-8", errors="replace")
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    return
+                if isinstance(msg, dict) and msg.get("id") is not None:
+                    self._handle_stream_event("message", raw)
+                return
+            resp.read()
+        finally:
+            with contextlib.suppress(Exception):  # noqa: BLE001
+                conn.close()
+
+    def send_notification(self, notification: dict[str, Any]) -> None:
+        try:
+            self._ensure_stream()
+            self._post_message(notification, HANDSHAKE_TIMEOUT_S)
+        except McpError as exc:
+            logger.warning("MCP legacy SSE %s 通知发送失败（fail-open）: %s", self.name, exc)
+
+    def close(self) -> None:
+        self._teardown_stream()
+        self._stop.set()

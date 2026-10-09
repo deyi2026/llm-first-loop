@@ -90,6 +90,15 @@ class ProtocolProfile:
     def is_modern(self) -> bool:
         return self.era == MODERN_ERA
 
+    def supports(self, capability: str) -> bool:
+        """服务器能力宣告判定（P2-B：resources/prompts）.
+
+        MCP 语义：capabilities 对象中键存在即宣告支持（值可为 {} 或
+        选项对象，如 resources: {subscribe: true}）。缺键 = 未宣告，
+        调用对应方法应如实报"未支持能力"而非服务器无能力（§7.1）。
+        """
+        return isinstance(self.capabilities, dict) and capability in self.capabilities
+
     def describe(self) -> str:
         kind = "现代（无握手，逐请求 _meta）" if self.is_modern else "旧时代（initialize 握手）"
         return f"MCP {kind} 版本 {self.version}"
@@ -249,6 +258,68 @@ def build_subscribe_request(msg_id: int, types: list[str], profile: ProtocolProf
     if profile.is_modern:
         params = with_modern_meta(profile.version, params)
     return {"jsonrpc": "2.0", "id": msg_id, "method": "subscriptions/listen", "params": params}
+
+
+# ── P2-B：resources / prompts（FR-11）──────────────────────────────────
+
+
+def build_list_resources_request(
+    msg_id: int, cursor: str | None, profile: ProtocolProfile
+) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    if cursor:
+        params["cursor"] = cursor
+    if profile.is_modern:
+        params = with_modern_meta(profile.version, params)
+    return {"jsonrpc": "2.0", "id": msg_id, "method": "resources/list", "params": params}
+
+
+def build_read_resource_request(msg_id: int, uri: str, profile: ProtocolProfile) -> dict[str, Any]:
+    params: dict[str, Any] = {"uri": uri}
+    if profile.is_modern:
+        params = with_modern_meta(profile.version, params)
+    return {"jsonrpc": "2.0", "id": msg_id, "method": "resources/read", "params": params}
+
+
+def build_list_resource_templates_request(
+    msg_id: int, cursor: str | None, profile: ProtocolProfile
+) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    if cursor:
+        params["cursor"] = cursor
+    if profile.is_modern:
+        params = with_modern_meta(profile.version, params)
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "method": "resources/templates/list",
+        "params": params,
+    }
+
+
+def build_list_prompts_request(
+    msg_id: int, cursor: str | None, profile: ProtocolProfile
+) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    if cursor:
+        params["cursor"] = cursor
+    if profile.is_modern:
+        params = with_modern_meta(profile.version, params)
+    return {"jsonrpc": "2.0", "id": msg_id, "method": "prompts/list", "params": params}
+
+
+def build_get_prompt_request(
+    msg_id: int,
+    name: str,
+    arguments: dict[str, Any] | None,
+    profile: ProtocolProfile,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"name": name}
+    if arguments:
+        params["arguments"] = arguments
+    if profile.is_modern:
+        params = with_modern_meta(profile.version, params)
+    return {"jsonrpc": "2.0", "id": msg_id, "method": "prompts/get", "params": params}
 
 
 def build_cancel_notification(request_id: int) -> dict[str, Any]:
