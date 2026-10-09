@@ -101,6 +101,18 @@ def _iter_task_budget_checked_lines(resp: httpx.Response) -> Iterator[str]:
         yield from resp.iter_lines()
         return
 
+    # I5-C: a multiplexed HTTP/2 or HTTP/3 socket can belong to sibling
+    # requests. I5-B deliberately has no safe per-stream physical abort for
+    # these transports; reject the already-observed response before ANY SSE
+    # data enters the model. The dispatched Provider liability stays UNKNOWN.
+    # There is no model- or prompt-level override for this safety gate; an
+    # operator can choose the unbound/default-OFF path independently.
+    extensions = getattr(resp, "extensions", {})
+    http_version = extensions.get("http_version") if isinstance(extensions, dict) else None
+    if http_version in (b"HTTP/2", b"HTTP/3", "HTTP/2", "HTTP/3"):
+        budget.request_stop(reason="multiplexed_transport_unqualified")
+        raise TaskBudgetDeniedError("multiplexed_transport_unqualified")
+
     def assert_live() -> None:
         try:
             budget._get_validated()
