@@ -1356,10 +1356,24 @@ def build_engine(
     # P3-1(2026-08-15)/P1-B(2026-10-09): MCP 客户端接入（MCP_SERVERS env；
     # stdio 与 Streamable HTTP 双传输 + 双时代协议协商 + schema 透传 +
     # 五态包装 + 超时/审计复用；单服务器 fail-open）
+    # P1-C(2026-10-09): 装配改经 mcp_assembly——安装实例（workspace>user）
+    # → legacy MCP_SERVERS 合并优先级；同一精确身份冲突报告不叠加；
+    # 装配后记录 catalog epoch 基线（热刷新失效判据）
     try:
-        from llm_loop.tools.mcp_client import register_mcp_tools
+        from llm_loop.extensions.store import ExtensionStore  # r9-import-exempt: plugin
+        from llm_loop.tools.mcp_assembly import assemble_mcp_tools
 
-        _mcp_tools = register_mcp_tools(registry, settings.mcp_servers_raw)
+        _mcp_ext_paths = settings._extra.get("runtime_paths")
+        if not isinstance(_mcp_ext_paths, RuntimePaths):
+            _mcp_ext_paths = resolve_runtime_paths(
+                data_dir=settings.data_dir,
+                code_root=Path(__file__).resolve().parents[2],
+            )
+        _mcp_tools = assemble_mcp_tools(
+            registry,
+            ExtensionStore(_mcp_ext_paths.extensions_dir),
+            settings.mcp_servers_raw,
+        )
         if _mcp_tools:
             logger.info("MCP 工具注册 %d 个: %s", len(_mcp_tools), ", ".join(_mcp_tools[:6]))
     except Exception:  # noqa: BLE001 — MCP 装配失败不影响核心链路
