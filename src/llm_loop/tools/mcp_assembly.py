@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from llm_loop.extensions.vendor_formats import convert_mcp_servers
 from llm_loop.tools.mcp_client import (
     catalog_epoch,
     parse_servers,
@@ -179,18 +180,38 @@ def _installed_servers(store: Any) -> list[LayeredServer]:
         pkg_root = store.package_root(rec.digest)
         data_dir = store.instance_data_dir(rec.install_id)
         mcp_file = pkg_root / _MCP_FILE
-        try:
-            data = json.loads(mcp_file.read_text(encoding="utf-8"))
-            servers = data.get("mcpServers")
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            logger.warning(
-                "MCP 安装 %s（%s）mcp.json 不可读，按包隔离跳过: %s",
-                rec.install_id,
-                rec.plugin_name,
-                exc,
-            )
-            continue
-        if not isinstance(servers, dict):
+        # P2-A：厂商包（source_format 非 standard）→ 运行时纯函数转换，
+        # 不直接读原 mcp.json（厂商变量 ${CLAUDE_PLUGIN_ROOT} 等须在厂商
+        # adapter 内展开，§5.1；凭证仍留在厂商原文件，§3）
+        source_format = getattr(rec, "source_format", "agent-plugins/1.0.0")
+        servers: dict[str, Any] | None = None
+        if source_format != "agent-plugins/1.0.0":
+            try:
+                servers = convert_mcp_servers(pkg_root, source_format) or None
+            except ValueError as exc:
+                logger.warning(
+                    "MCP 安装 %s（%s，%s）厂商配置转换失败，按包隔离跳过: %s",
+                    rec.install_id,
+                    rec.plugin_name,
+                    source_format,
+                    exc,
+                )
+                continue
+        else:
+            try:
+                data = json.loads(mcp_file.read_text(encoding="utf-8"))
+                raw_servers = data.get("mcpServers")
+                if isinstance(raw_servers, dict):
+                    servers = raw_servers
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                logger.warning(
+                    "MCP 安装 %s（%s）mcp.json 不可读，按包隔离跳过: %s",
+                    rec.install_id,
+                    rec.plugin_name,
+                    exc,
+                )
+                continue
+        if servers is None:
             continue
         for comp in rec.components:
             if comp.kind != "mcp_server" or not comp.enabled:
