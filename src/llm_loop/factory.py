@@ -1827,8 +1827,8 @@ def build_engine(
     corrections._skills_dir = str(_runtime_paths.skills_dir) or None  # noqa: SLF001 — B3: 插件化 Skill 目录注入
     # P1-A（DESIGN-20261009 §5.3/§5.4）: 扩展 store/catalog 装配（fail-open 零回归）
     try:
-        from llm_loop.extensions.catalog import ExtensionCatalog
-        from llm_loop.extensions.store import ExtensionStore
+        from llm_loop.extensions.catalog import ExtensionCatalog  # r9-import-exempt: plugin
+        from llm_loop.extensions.store import ExtensionStore  # r9-import-exempt: plugin
 
         corrections._extensions_catalog = ExtensionCatalog(  # noqa: SLF001 — 工具分派注入
             ExtensionStore(_runtime_paths.extensions_dir)
