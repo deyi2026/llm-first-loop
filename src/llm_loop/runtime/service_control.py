@@ -3140,6 +3140,73 @@ def _pid_dead(pid: int) -> bool:
         return False
 
 
+def _find_known_good_release(
+    runtime_root: str | Path, *, exclude_git_head: str
+) -> tuple[str, Path] | None:
+    """EVO-20261009-9d116efa G2: receipt 历史最近一条 known-good release。
+
+    扫描 ``data/restart-receipt.log``（倒序），取第一条 ``rc == 0`` 且
+    ``authority == "service_control"`` 的 ``git_head_full``（排除当前失败代自身），
+    并要求 ``.releases/<full-sha>`` 产物仍在（含 restart 脚本）。无则返回 None——
+    不回滚、不猜测。
+    """
+    log_path = Path(runtime_root) / "data" / "restart-receipt.log"
+    if not log_path.is_file():
+        return None
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for raw in reversed(lines):
+        raw = raw.strip()
+        if not raw.startswith("{"):
+            continue
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        if rec.get("rc") != 0 or rec.get("authority") != "service_control":
+            continue
+        sha = str(rec.get("git_head_full") or "")
+        if not re.fullmatch(r"[0-9a-f]{40}", sha) or sha == exclude_git_head:
+            continue
+        release_dir = Path(runtime_root) / ".releases" / sha
+        if not (release_dir / "scripts" / "restart_mirror.sh").is_file():
+            continue
+        return sha, release_dir
+    return None
+
+
+def _publish_rollback_desired(
+    store: ManagedServiceDeploymentStore, failing: ManagedServiceDeployment
+) -> tuple[bool, str, Any]:
+    """G2 单次回滚发布：把 desired 切回 receipt 历史最近 known-good release。
+
+    复用 ``build_deployment`` 对既有 ``.releases/<sha>`` 的复用路径（幂等物化 +
+    webui 产物 hash 重绑），经 ``compare_and_swap`` 前进一代（期望代 CAS；并发
+    re-publish 冲突即放弃回滚，尊重新的接管者）。返回 ``(ok, note, rolled)``。
+    """
+    found = _find_known_good_release(
+        failing.runtime_root, exclude_git_head=failing.git_head
+    )
+    if found is None:
+        return False, "receipt 历史无可用 known-good（或 .releases 产物缺失）", None
+    kg_sha, kg_dir = found
+    try:
+        rolled = build_deployment(
+            code_root=kg_dir,
+            runtime_root=failing.runtime_root,
+            generation=failing.generation + 1,
+        )
+        store.compare_and_swap(rolled, expected_generation=failing.generation)
+    except DeploymentGenerationConflictError:
+        return False, "回滚发布期间期望代已被并发推进，放弃回滚（尊重接管者）", None
+    except Exception as exc:  # noqa: BLE001 - 回滚面失败必须显式记录而非冒泡
+        return False, f"known-good 重新发布失败: {exc}", None
+    note = f"known-good={kg_sha[:9]} → generation={rolled.generation}"
+    return True, note, rolled
+
+
 def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> int:
     # 生命周期加固（GOAL-20261008-f143e051）：本进程即执行 worker，进入任何
     # 检查/等待前先盖章 pid——deployment 缺失即时退出的孤儿场景同样受益
@@ -3199,7 +3266,11 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
     # waiting→execute TOCTOU）；重启后只做纯证据采集，在 lease 外执行（慢启动
     # 不阻塞 desired-state 发布）。程序不据核验自动判终态、不自动重跑：明确
     # 证据（ok/fail）幂等落终态，判据缺失置 verify_evidence_ready 交模型裁决。
-    def _run_physical_restart_once() -> tuple[int, Any, str]:
+    # EVO-20261009-9d116efa G2：返回值追加第 4 元 failure_released——rc!=0 且
+    # 回执判定零副作用（预检级 not_started）为 True；rc!=0 且未释放（停机级
+    # mid-run 失败）为 False；rc==0 或未执行到脚本为 None。外层据此触发
+    # 单次 known-good 自动回滚。
+    def _run_physical_restart_once() -> tuple[int, Any, str, bool | None]:
         with store.lifecycle_lease():
             with store.lease():
                 latest = store.read_action(action_id)
@@ -3208,7 +3279,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                 _mark_action(
                     store, action, status="failed", detail="action or desired state missing"
                 )
-                return 2, None, ""
+                return 2, None, "", None
             try:
                 plan = build_restart_plan(latest, desired_now)
             except (ValueError, DeploymentGenerationConflictError) as exc:
@@ -3218,7 +3289,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                     status="failed",
                     detail=f"desired deployment advanced while waiting: {exc}",
                 )
-                return 3, None, ""
+                return 3, None, "", None
             # P0-A.1: byte-level reverify of the desired binding inside the
             # lifecycle lease, immediately before the physical restart. The
             # generation CAS above only proves identity/generation agreement;
@@ -3244,7 +3315,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                     detail="deployment binding failed: " + "; ".join(binding_problems),
                     next_step=encode_next_steps(binding_next_steps(binding_facts)),
                 )
-                return 4, None, ""
+                return 4, None, "", None
             running = _mark_action(store, latest, status="running")
 
             # L3/5.x: 把模型经结构化出口举证推进的一致性门禁注入脚本；物理门
@@ -3316,16 +3387,56 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
                         else "keep"
                     ),
                 )
-                return rc, desired_now, restarted_at
-            return rc, desired_now, restarted_at
+                return rc, desired_now, restarted_at, released
+            return rc, desired_now, restarted_at, None
 
     # 自核验目标（EVO-20260920-213965a1 案1）：目标全集传入，"是否受
     # manifest 管辖"由 _verify_restart_targets 的首现窗口判定（不受管辖
     # 的目标记 no_manifest_skip，见其 docstring）。
     verify_targets: list[str] = list(_MANAGED_SERVICES) if action.target == "all" else [action.target]
 
-    rc, desired_now, restarted_at = _run_physical_restart_once()
+    rc, desired_now, restarted_at, failure_released = _run_physical_restart_once()
     if rc != 0 or desired_now is None:
+        # EVO-20261009-9d116efa G2：停旧进程后新进程未就绪（receipt 未释放屏障
+        # = 已有物理副作用的中途失败，13:55 task_budget_canary_config 事故类，
+        # 当时 41 分钟人工回滚）→ 单次自动回滚到 receipt 历史最近一条 known-good
+        # generation。仅尝试一次、失败不循环；无 known-good 或 CAS 冲突即放弃，
+        # 维持 fail-closed keep 交操作员接管。
+        if rc != 0 and desired_now is not None and failure_released is False:
+            roll_ok, roll_note, rolled = _publish_rollback_desired(store, desired_now)
+            if roll_ok and rolled is not None:
+                rb_rc, _rb_desired, _rb_at, _rb_released = _run_physical_restart_once()
+                final_action = store.read_action(action_id)
+                if final_action is not None:
+                    if rb_rc == 0:
+                        _mark_action(
+                            store,
+                            final_action,
+                            status="failed",
+                            detail=(
+                                f"restart rc={rc}（停机级失败）; AUTO-ROLLBACK→{roll_note} "
+                                f"rc=0 stage_fact=rolled_back; 服务已回滚至最近 known-good "
+                                f"恢复；原目标代码修复并核 schema 后重新 publish"
+                            ),
+                            verify_evidence=(
+                                f"auto-rollback restart rc=0; rolled {roll_note}; "
+                                f"service restored at known-good"
+                            ),
+                            release_barriers=_barrier_services_for_target(action.target),
+                        )
+                    else:
+                        _mark_action(
+                            store,
+                            final_action,
+                            status="failed",
+                            detail=(
+                                f"restart rc={rc}（停机级失败）; AUTO-ROLLBACK→{roll_note} "
+                                f"重启 rc={rb_rc} 亦失败 stage_fact=rolled_back_failed; "
+                                f"服务仍不可用，保留屏障（不二次回滚），需操作员接管"
+                            ),
+                            release_barriers="keep",
+                        )
+                return rb_rc or rc
         return rc or 1
 
     # Phase 4 - 纯证据采集，在 lifecycle lease 外执行（慢启动不阻塞 desired-state

@@ -23,7 +23,7 @@ import json
 import os
 import re
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -669,3 +669,59 @@ def apply_to_environ(config: RuntimeConfig) -> None:
             os.environ[key] = projected[key]
         else:
             os.environ.pop(key, None)
+
+
+def check_runtime_toml(path: str, services: Sequence[str]) -> tuple[bool, str]:
+    """Check-only strict parse of a runtime.toml against THIS code's schema.
+
+    EVO-20261009-9d116efa G1: the restart pipeline runs this through the TARGET
+    release's own resolver (PYTHONPATH pinned to that release's src/) before
+    stopping any live process, so a runtime.toml field that the target code has
+    not registered aborts the restart with zero physical side effects instead
+    of taking the service down after ``_stop_*``.
+
+    Returns ``(ok, message)``. Never writes, never touches os.environ.
+    """
+    if not os.path.exists(path):
+        return True, f"runtime.toml 不存在，跳过 schema 校验: {path}"
+    problems: list[str] = []
+    checked: list[str] = []
+    for service in services:
+        try:
+            parse_runtime_toml(path, service=service)
+            checked.append(service)
+        except ValueError as exc:
+            problems.append(f"[{service}] {exc}")
+        except Exception as exc:  # fail closed on parser failures too
+            problems.append(f"[{service}] 解析异常: {exc!r}")
+    if problems:
+        detail = "; ".join(problems)
+        return (
+            False,
+            "runtime.toml 与目标代码 schema 不兼容（未知字段/类型/密钥违规），拒绝继续重启: "
+            + detail,
+        )
+    return True, f"runtime.toml schema 校验通过 services={checked}"
+
+
+def _cli_check_toml(argv: list[str]) -> int:
+    """``python -m llm_loop.runtime.resolver --check-toml <path> [service ...]``.
+
+    Only this subcommand is exposed; bare key resolution stays unimplemented on
+    purpose so pre-existing ``-m`` callers keep their current (silent) behavior.
+    """
+    args = [a for a in argv[1:] if a != "--check-toml"]
+    if not args:
+        print("usage: python -m llm_loop.runtime.resolver --check-toml <runtime.toml> [service ...]", file=sys.stderr)
+        return 2
+    path = args[0]
+    services = args[1:] or ["web", "feishu", "learning"]
+    ok, message = check_runtime_toml(path, services)
+    print(message)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    import sys as _sys
+
+    raise SystemExit(_cli_check_toml(_sys.argv))
