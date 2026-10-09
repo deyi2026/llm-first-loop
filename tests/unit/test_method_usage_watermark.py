@@ -13,8 +13,7 @@ import json
 import logging
 
 from llm_loop.methods.store import MethodStore
-
-from tests.unit.test_method_store_durability import BODY, _save
+from tests.unit.test_method_store_durability import _save
 
 EP = "episode:00000000-0000-0000-0000-000000000000:0:deadbeef"
 

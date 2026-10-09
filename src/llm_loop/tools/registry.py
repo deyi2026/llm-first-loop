@@ -1188,7 +1188,7 @@ class ToolRegistry:
         try:
             from llm_loop.resources.task_budget_dispatch import checked_tool_dispatch
 
-            with checked_tool_dispatch(call.name) as budget_outcome:
+            with checked_tool_dispatch(call.name, arguments=call.arguments) as budget_outcome:
                 result = self._run_with_timeout(tool, call)
                 budget_outcome["complete"] = result.status != ToolResultStatus.TIMEOUT
             duration_ms = (time.perf_counter() - start) * 1000

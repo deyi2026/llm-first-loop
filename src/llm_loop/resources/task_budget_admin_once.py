@@ -6,8 +6,9 @@ model-supplied permission exists. The first durable human event atomically
 consumes that ID with the existing flock/fsync TaskBudgetStore CAS; every
 subsequent event/Run/restart is denied even when the first Run sent nothing.
 
-The guarantee is at most one attempted physical POST, NOT known GLM billing,
-completed transport quiescence, or an exact token/monetary ceiling.
+The default guarantee is at most one attempted physical POST. A separately
+installed consumption profile supplies four attempts/eight knowledge tools.
+Neither proves known GLM billing, completed tool quiescence or a token/fee cap.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from dataclasses import dataclass
 from llm_loop.core.trace_leak.ingress_token import IngressToken, is_whitelisted
 from llm_loop.event_log.model import Event
 from llm_loop.event_log.store import EventStore
+from llm_loop.resources import task_budget_knowledge_profile as knowledge_profile
 from llm_loop.resources.task_budget_contracts import (
     BudgetPhase,
     TaskBudgetGrant,
@@ -56,8 +58,13 @@ class AdminOnceEventPlan:
     event_store: EventStore
     budget_store: TaskBudgetStore
     provider_proxy: str | None = None
+    profile: str = PROFILE
 
     def __post_init__(self) -> None:
+        if self.profile not in {PROFILE, knowledge_profile.PROFILE}:
+            raise TaskBudgetDeniedError("admin_once_profile_invalid")
+        if self.profile == knowledge_profile.PROFILE and self.provider_proxy is not None:
+            raise TaskBudgetDeniedError("knowledge_consumption_proxy_unqualified")
         if not isinstance(self.authorization_id, str) or not _ID.fullmatch(self.authorization_id):
             raise TaskBudgetDeniedError("admin_once_id_invalid")
         if (
@@ -131,6 +138,7 @@ def prepare_admin_once_event_budget(
     if not plan.valid_from_epoch_s <= now < plan.valid_until_epoch_s:
         raise TaskBudgetDeniedError("admin_once_authorization_expired")
 
+    consumption = plan.profile == knowledge_profile.PROFILE
     grant = TaskBudgetGrant(
         budget_id=plan.budget_id,
         issuer="web-admin",
@@ -139,11 +147,14 @@ def prepare_admin_once_event_budget(
         session_id=session_id,
         human_turn_ref=f"event-{persisted.event_id}",
         surface="web",
-        profile=PROFILE,
-        policy_version=POLICY,
-        deadline_epoch_s=min(now + _RUN_DEADLINE_SECONDS, plan.valid_until_epoch_s),
-        limits=limits(),
-        capabilities=capabilities(),
+        profile=plan.profile,
+        policy_version=knowledge_profile.POLICY if consumption else POLICY,
+        deadline_epoch_s=min(
+            now + (knowledge_profile.RUN_DEADLINE_SECONDS if consumption else _RUN_DEADLINE_SECONDS),
+            plan.valid_until_epoch_s,
+        ),
+        limits=knowledge_profile.limits() if consumption else limits(),
+        capabilities=knowledge_profile.capabilities() if consumption else capabilities(),
         provider_identity="glm",
         exact_model_ref="glm-5.3",
     )

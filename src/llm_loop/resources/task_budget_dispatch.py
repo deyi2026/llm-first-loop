@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import threading
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from llm_loop.resources import task_budget_knowledge_profile as knowledge_profile
 from llm_loop.resources.task_budget_contracts import (
     BudgetDimension,
     BudgetPhase,
@@ -145,13 +146,15 @@ class TaskBudgetExecution:
             raise TaskBudgetDeniedError("signed_provider_identity_mismatch")
         if grant["exact_model_ref"] and model_id != grant["exact_model_ref"]:
             raise TaskBudgetDeniedError("signed_model_identity_mismatch")
-        if grant["profile"] != "web-glm-one-physical-attempt-v3":
+        if grant["profile"] not in {"web-glm-one-physical-attempt-v3", knowledge_profile.PROFILE}:
             return
         profile = active_isolated_transport_profile()
         # 2026-10-09: the one physical attempt may use exactly one explicit
         # operator-pinned loopback proxy (admin-once plan), never implicit
         # trusted-env/system discovery in the isolated worker.
         authorized = active_authorized_provider_proxy()
+        if grant["profile"] == knowledge_profile.PROFILE and profile is not None and profile.proxy is not None:
+            raise TaskBudgetDeniedError("knowledge_consumption_proxy_unqualified")
         if (
             profile is None or profile.verify is not True
             or profile.proxy not in (None, authorized)
@@ -378,12 +381,17 @@ def checked_provider_attempt(
 
 
 @contextmanager
-def checked_tool_dispatch(name: str) -> Iterator[dict[str, bool]]:
+def checked_tool_dispatch(
+    name: str, *, arguments: Mapping[str, Any] | None = None,
+) -> Iterator[dict[str, bool]]:
     outcome_fact = {"complete": False}
     budget = active_task_budget()
     if budget is None:
         yield outcome_fact
         return
+    snapshot = budget._get_validated()
+    if snapshot["grant"]["profile"] == knowledge_profile.PROFILE:
+        knowledge_profile.assert_tool_action(name, arguments)
     rid = budget.reserve(BudgetDimension.TOOL_INVOCATIONS, tool_id=name)
     outcome = "interrupted"
     try:

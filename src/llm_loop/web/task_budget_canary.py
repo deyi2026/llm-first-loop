@@ -21,6 +21,7 @@ from Crypto.PublicKey import ECC
 from fastapi import Request
 
 from llm_loop.event_log.store import EventStore
+from llm_loop.resources import task_budget_knowledge_profile as knowledge_profile
 from llm_loop.resources.task_budget_admin_once import (
     AdminOnceEventPlan,
     bind_admin_once_plan,
@@ -80,6 +81,13 @@ def _read_operator_config(path: Path) -> dict[str, Any]:
         _deny()
     if not isinstance(result, dict):
         _deny()
+    if result.get("schema") == knowledge_profile.CONFIG_SCHEMA:
+        if set(result) != {
+            "schema", "profile", "authorization_id", "session_id", "workspace_root",
+            "model_ref", "valid_from_epoch_s", "valid_until_epoch_s",
+        } or result["profile"] != knowledge_profile.PROFILE:
+            _deny()
+        return result
     if result.get("schema") == "web-task-budget-admin-once/v1":
         base_keys = {
             "schema", "authorization_id", "session_id", "workspace_root",
@@ -132,7 +140,7 @@ def load_operator_web_canary(engine: Any) -> WebTaskBudgetCanary | None:
         or str(engine.workspace_root or "") != config["workspace_root"]
     ):
         _deny()
-    if config["schema"] == "web-task-budget-admin-once/v1":
+    if config["schema"] in {"web-task-budget-admin-once/v1", knowledge_profile.CONFIG_SCHEMA}:
         # Administrator approves ONE immutable Run quota. No credential,
         # signature service, operator mailbox or user-facing switch exists.
         if config["model_ref"] != "glm/glm-5.3":
@@ -153,6 +161,8 @@ def load_operator_web_canary(engine: Any) -> WebTaskBudgetCanary | None:
                 event_store=engine._event_store,
                 budget_store=TaskBudgetStore(data_dir / "task_budget_admin_once"),
                 provider_proxy=config.get("provider_proxy"),
+                profile=(knowledge_profile.PROFILE if config["schema"] == knowledge_profile.CONFIG_SCHEMA
+                         else "web-glm-one-physical-attempt-v3"),
             )
         except (TypeError, ValueError):
             _deny()

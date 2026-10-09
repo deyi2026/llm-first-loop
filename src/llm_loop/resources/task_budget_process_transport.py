@@ -257,7 +257,9 @@ def isolated_provider_stream(
     if budget is None:
         raise TaskBudgetDeniedError("isolated_transport_requires_budget")
     snapshot = budget._get_validated()
-    if snapshot["grant"]["profile"] == "web-glm-one-physical-attempt-v3":
+    if snapshot["grant"]["profile"] in {
+        "web-glm-one-physical-attempt-v3", "web-glm-knowledge-consumption-v1",
+    }:
         if not has_dispatched_attempt(budget):
             raise TaskBudgetDeniedError("positive_send_without_dispatched_cas_reservation")
         if (
