@@ -21,6 +21,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from llm_loop.resources.task_budget_contracts import (
     BudgetDimension,
@@ -128,6 +129,40 @@ class TaskBudgetExecution:
         ):
             raise TaskBudgetDeniedError("active_workspace_scope_mismatch")
         return snapshot
+
+    def assert_provider_target(
+        self, *, provider_id: str, model_id: str,
+        wire_protocol: str, target_url: str,
+    ) -> None:
+        """I5-G: freeze the signed target before any physical send/charge."""
+        snapshot = self._get_validated()
+        grant = snapshot["grant"]
+        if grant["provider_identity"] and provider_id != grant["provider_identity"]:
+            raise TaskBudgetDeniedError("signed_provider_identity_mismatch")
+        if grant["exact_model_ref"] and model_id != grant["exact_model_ref"]:
+            raise TaskBudgetDeniedError("signed_model_identity_mismatch")
+        if grant["profile"] != "web-glm-one-physical-attempt-v3":
+            return
+        from llm_loop.resources.task_budget_process_transport import (
+            active_isolated_transport_profile,
+        )
+
+        profile = active_isolated_transport_profile()
+        if profile is None or profile.verify is not True or profile.proxy is not None:
+            raise TaskBudgetDeniedError("positive_budget_requires_exclusive_verified_process")
+        if wire_protocol != "openai" or provider_id != "glm" or model_id != "glm-5.3":
+            raise TaskBudgetDeniedError("positive_budget_provider_wire_unqualified")
+        try:
+            url = urlsplit(target_url)
+            if (
+                url.scheme != "https" or url.hostname != "open.bigmodel.cn"
+                or url.port not in {None, 443}
+                or url.username is not None or url.password is not None
+                or url.query or url.fragment or not url.path.startswith("/api/")
+            ):
+                raise TaskBudgetDeniedError("positive_budget_endpoint_unqualified")
+        except ValueError as exc:
+            raise TaskBudgetDeniedError("positive_budget_endpoint_unqualified") from exc
 
     def assert_tool_allowed(self, name: str) -> None:
         snapshot = self._get_validated()
@@ -270,6 +305,16 @@ _BOUND_BUDGET: ContextVar[TaskBudgetExecution | None] = ContextVar(
     "lfl_task_budget_execution", default=None
 )
 
+_DISPATCHED_ATTEMPT: ContextVar[tuple[str, str] | None] = ContextVar(
+    "lfl_task_budget_dispatched_attempt", default=None
+)
+
+
+def has_dispatched_attempt(budget: TaskBudgetExecution) -> bool:
+    """The exclusive worker cannot start outside its owning CAS send scope."""
+    active = _DISPATCHED_ATTEMPT.get()
+    return active is not None and active[0] == budget.budget_id and bool(active[1])
+
 
 def active_task_budget() -> TaskBudgetExecution | None:
     return _BOUND_BUDGET.get()
@@ -296,13 +341,21 @@ def bind_task_budget(
 
 
 @contextmanager
-def checked_provider_attempt() -> Iterator[None]:
+def checked_provider_attempt(
+    *, provider_id: str = "", model_id: str = "",
+    wire_protocol: str = "", target_url: str = "",
+) -> Iterator[None]:
     """Physical transport reservation before the HTTP client sends any bytes."""
     budget = active_task_budget()
     if budget is None:
         yield
         return
+    budget.assert_provider_target(
+        provider_id=provider_id, model_id=model_id,
+        wire_protocol=wire_protocol, target_url=target_url,
+    )
     rid = budget.reserve(BudgetDimension.PHYSICAL_ATTEMPTS)
+    token = _DISPATCHED_ATTEMPT.set((budget.budget_id, rid))
     outcome = "interrupted"
     try:
         yield
@@ -311,6 +364,7 @@ def checked_provider_attempt() -> Iterator[None]:
         outcome = "failure"
         raise
     finally:
+        _DISPATCHED_ATTEMPT.reset(token)
         # Provider usage has NOT been authoritatively reconciled by I2.
         # Even after a successful HTTP call, retain unknown liability.
         budget.settle(rid, outcome=outcome, complete=False)

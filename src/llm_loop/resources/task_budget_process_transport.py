@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 
-from llm_loop.resources.task_budget_dispatch import active_task_budget
+from llm_loop.resources.task_budget_dispatch import active_task_budget, has_dispatched_attempt
 from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
 
 _POLL_SECONDS = 0.025
@@ -62,6 +62,11 @@ class IsolatedTransportProfile:
 _ISOLATED_PROFILE: ContextVar[IsolatedTransportProfile | None] = ContextVar(
     "lfl_i5d_isolated_provider_transport", default=None
 )
+
+
+def active_isolated_transport_profile() -> IsolatedTransportProfile | None:
+    """Observe the explicit transport profile without activating it."""
+    return _ISOLATED_PROFILE.get()
 
 
 @contextmanager
@@ -270,7 +275,21 @@ def isolated_provider_stream(
     budget = active_task_budget()
     if budget is None:
         raise TaskBudgetDeniedError("isolated_transport_requires_budget")
-    budget._get_validated()
+    snapshot = budget._get_validated()
+    if snapshot["grant"]["profile"] == "web-glm-one-physical-attempt-v3":
+        if not has_dispatched_attempt(budget):
+            raise TaskBudgetDeniedError("positive_send_without_dispatched_cas_reservation")
+        if (
+            profile.verify is not True or profile.proxy is not None
+            or json.get("model") != "glm-5.3"
+        ):
+            raise TaskBudgetDeniedError("positive_transport_unqualified")
+        # Guard the final actual outbound URL too, not just LLMClient's
+        # pre-transport observation. No redirects or trusted-env proxies.
+        budget.assert_provider_target(
+            provider_id="glm", model_id="glm-5.3", wire_protocol="openai",
+            target_url=url,
+        )
     url_obj = httpx.URL(url)
     if method != "POST" or url_obj.scheme not in {"http", "https"} or not url_obj.host:
         raise TaskBudgetDeniedError("isolated_transport_endpoint_unqualified")

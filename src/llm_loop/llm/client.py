@@ -1238,6 +1238,7 @@ class LLMClient:
         self,
         *,
         model_id: str,
+        target_url: str = "",
         transport_retry_index: int = 0,
         prepared: Mapping[str, Any] | None = None,
     ) -> Any:
@@ -1265,7 +1266,10 @@ class LLMClient:
         def _scoped_attempt() -> Iterator[None]:
             from llm_loop.resources.task_budget_dispatch import checked_provider_attempt
 
-            with checked_provider_attempt(), observation:
+            with checked_provider_attempt(
+                provider_id=self.provider, model_id=model_id,
+                wire_protocol=self.wire_protocol, target_url=target_url,
+            ), observation:
                 yield
 
         return _scoped_attempt()
@@ -2118,6 +2122,7 @@ class LLMClient:
             with self._transport_attempt_scope(
                 model_id=str(payload["model"]),
                 transport_retry_index=transport_retry_index,
+                target_url=url,
                 prepared=self._prepared_attempt_facts(
                     payload=payload,
                     representation="openai-json",
@@ -2383,6 +2388,7 @@ class LLMClient:
             with self._transport_attempt_scope(
                 model_id=str(payload["model"]),
                 transport_retry_index=0,
+                target_url=url,
                 prepared=self._prepared_attempt_facts(
                     payload=payload,
                     representation="anthropic-converted",
@@ -2559,6 +2565,7 @@ class LLMClient:
                     representation="google-payload",
                     timeout_s=effective_timeout,
                 ),
+                target_url=url,
             ), _task_budget_provider_stream(
                 self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
@@ -2704,6 +2711,7 @@ class LLMClient:
                     representation="lms-chat-json",
                     timeout_s=effective_timeout,
                 ),
+                target_url=url,
             ), _task_budget_provider_stream(
                 self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:

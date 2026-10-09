@@ -226,6 +226,9 @@ class SignedWebEventPlan:
     trusted_public_keys: Mapping[str, bytes]
     event_store: EventStore
     budget_store: TaskBudgetStore
+    # Operator/run-control code must explicitly elect the I5-G profile;
+    # existing I5-E plans default to zero physical attempts.
+    allow_one_physical_attempt: bool = False
 
 
 _EVENT_PLAN: ContextVar[SignedWebEventPlan | None] = ContextVar(
@@ -241,6 +244,8 @@ def active_signed_web_event_plan() -> SignedWebEventPlan | None:
 def bind_signed_web_event_plan(plan: SignedWebEventPlan) -> Iterator[None]:
     if not isinstance(plan, SignedWebEventPlan):
         raise TypeError("signed_web_event_plan_type_required")
+    if type(plan.allow_one_physical_attempt) is not bool:
+        raise TypeError("positive_budget_control_flag_must_be_bool")
     token = _EVENT_PLAN.set(plan)
     try:
         yield
@@ -296,7 +301,27 @@ def prepare_signed_web_event_budget(
     if persisted != event or persisted.payload.get("content") != user_text:
         _deny()
     proof = plan.issue_for_event(persisted)
-    payload = _verify_event_proof(proof, plan.trusted_public_keys)
+    positive = isinstance(proof, str) and proof.startswith("tb3.")
+    if positive:
+        if plan.allow_one_physical_attempt is not True:
+            _deny()
+        # Import only inside the opt-in path to keep event authority's
+        # existing tb2 verifier separate from the v3 signing domain.
+        from llm_loop.resources import task_budget_positive_authority as positive
+
+        payload = positive.verify_positive_proof(proof, plan.trusted_public_keys)
+        expected_policy, expected_profile = positive.POLICY, positive.PROFILE
+        expected_source = "operator-event-ed25519-v3"
+        expected_limits, expected_capabilities = positive.limits(), positive.capabilities()
+        expected_provider, expected_model = "glm", "glm-5.3"
+        max_ttl = 30
+    else:
+        payload = _verify_event_proof(proof, plan.trusted_public_keys)
+        expected_policy, expected_profile = _POLICY, "web-event-zero-send-v2"
+        expected_source = "operator-event-ed25519-v2"
+        expected_limits, expected_capabilities = _zero_limits(), _zero_capabilities()
+        expected_provider, expected_model = "", ""
+        max_ttl = _TTL
     try:
         grant = TaskBudgetGrant.from_dict(payload["grant"])
     except (ValueError, TypeError, KeyError):
@@ -308,7 +333,7 @@ def prepare_signed_web_event_budget(
         isinstance(issued, bool) or not isinstance(issued, (int, float))
         or not math.isfinite(issued) or issued > clock + _SKEW
         or clock >= issued + _TTL
-        or grant.deadline_epoch_s <= issued or grant.deadline_epoch_s > issued + _TTL
+        or grant.deadline_epoch_s <= issued or grant.deadline_epoch_s > issued + max_ttl
         or clock >= grant.deadline_epoch_s
         or not isinstance(nonce, str) or not _NONCE.fullmatch(nonce)
         or grant.budget_id != f"webbudget-event-{persisted.event_id.replace('-', '')}"
@@ -319,13 +344,13 @@ def prepare_signed_web_event_budget(
         or not isinstance(payload["operator_ref"], str)
         or not re.fullmatch(r"[0-9a-f]{64}", payload["operator_ref"])
         or grant.issuer != "web-operator"
-        or grant.authority_source != "operator-event-ed25519-v2"
-        or grant.surface != "web" or grant.profile != "web-event-zero-send-v2"
-        or grant.policy_version != _POLICY or grant.generation != 1
-        or grant.provider_identity or grant.exact_model_ref
+        or grant.authority_source != expected_source
+        or grant.surface != "web" or grant.profile != expected_profile
+        or grant.policy_version != expected_policy or grant.generation != 1
+        or grant.provider_identity != expected_provider or grant.exact_model_ref != expected_model
         or grant.session_id != session_id
         or grant.workspace_scope != exact_workspace_scope(workspace_root)
-        or grant.limits != _zero_limits() or grant.capabilities != _zero_capabilities()
+        or grant.limits != expected_limits or grant.capabilities != expected_capabilities
     ):
         _deny()
     row = plan.budget_store.issue_root(
