@@ -139,6 +139,9 @@ def test_launch_dry_run(tmp_path, capsys, monkeypatch):
     from llm_loop.runtime.launch import main as launch_main
     _make_env_file(tmp_path, ["LLM_MODEL=glm/glm-5.3"])
     monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(tmp_path))
+    # 单根语义：conftest 的部署泄漏隔离会把 LFL_RUNTIME_ROOT 指到空 tmp；
+    # 本用例验证 workspace .env 决定 LLM_MODEL，runtime root 需与 workspace 一致。
+    monkeypatch.setenv("LFL_RUNTIME_ROOT", str(tmp_path))
     monkeypatch.delenv("PYTHONPATH", raising=False)
     rc = launch_main(["web", "--dry-run"])
     out = capsys.readouterr().out

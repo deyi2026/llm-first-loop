@@ -22,6 +22,9 @@ MIRROR_ROOT = Path(__file__).resolve().parents[2]
 def test_enforce_identity_match_ok(monkeypatch):
     """模块归属与 CWD 锚定均一致 → ok=True 原样返回（无失败 detail）."""
     monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(MIRROR_ROOT))
+    # 单根语义：conftest 的部署泄漏隔离会把 LFL_RUNTIME_ROOT 指到空 tmp；
+    # 本用例验证"runtime root == 启动目录"的完全一致，需显式恢复单根。
+    monkeypatch.setenv("LFL_RUNTIME_ROOT", str(MIRROR_ROOT))
     monkeypatch.setenv("RUNTIME_IDENTITY_MODE", "shadow")
     r = enforce_identity(MIRROR_ROOT)
     assert r.ok is True
