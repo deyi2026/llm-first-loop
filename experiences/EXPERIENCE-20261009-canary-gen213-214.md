@@ -1,0 +1,16 @@
+---
+title: Canary 配置接线必须先过目标版本离线预检再重启（gen213/214 双双启动死亡事故）
+scenario: "LFL web 生产发布（service_control update + restart）前修改 TaskBudget canary 配置接线：runtime.toml [web].task_budget_canary_config 指向配置文件。该字段非空时启动走 load_operator_web_canary 全链校验（绝对路径/文件权限/uid/nlink/大小/JSON schema 键集/model_ref/workspace_root/窗口），任何一处失败 _deny() 抛异常使 web 启动进程退出。2026-10-09 gen213 用了相对路径 data/task_budget_admin_operator/admin-once-gen213b-transport-verify.json → gen213 启动即死；自动回滚复用同一份 runtime.toml → gen214 同样失败；直到人工清空 task_budget_canary_config=\"\" 后 19:25 gen214/14352cc6f 才恢复。"
+root_cause: canary 配置接线（runtime.toml 相对路径）在 web 启动时触发 load_operator_web_canary → _read_operator_config 的 fail-closed _deny()，进程退出；回滚复用同一 runtime.toml 导致 gen214 同样失败。发布预检只校验了 TOML schema，未校验应用层加载语义（绝对路径/权限/键集/窗口）。
+solution: "发布/重启前用 ~/Project/lfl-ops/canary_config_preflight.py 做离线预检（真实接线为空时判定 OFF-safe）：(1) wiring 层解析 runtime.toml [web].task_budget_canary_config；(2) 静态校验全部 fail-closed 分支：绝对路径、非符号链接、0600、nlink==1、uid∈{euid,0}、大小、JSON、7键 schema(+可选 provider_proxy)、model_ref==glm/glm-5.3、workspace_root 匹配、窗口剩余>=120s 且未过早；(3) provider_proxy 存在时 TCP 探活；(4) 用 .venv/bin/python 子进程 oracle 真实导入 candidate(.releases/4b9ff14e0/src) 与 rollback baseline(.releases/14352cc6f/src) 的 _read_operator_config 做裁决——注意 sys.path 必须指向 worktree/src，否则会静默用到 venv 中已安装的陈旧 llm_loop 副本；(5) candidate 通过而 baseline 拒绝（如 provider_proxy 键）→ 打 ROLLBACK-INCOMPATIBLE 告警：canary 窗口必须短，结束后立即清空接线并重启回 OFF，否则回滚期间 web 会再次 fail-closed。自测矩阵全部符合预期，报告存 ~/Project/lfl-ops/preflight-matrix-20261009.txt。"
+evidence: "事故事实：用户报告（2026-10-09 19:31 消息，gen213 相对路径 data/...json 启动退出、gen214 回滚同败、19:25 恢复 gen214/14352cc6f PID 85960）；service_control status 回执（gen214 stable, matches_desired_generation, pid 85960, started_at 19:25:30）。代码事实：.releases/4b9ff14e0/src/llm_loop/web/task_budget_canary.py load_operator_web_canary/_read_operator_config 全链 _deny()（本会话 sed 读取）；.releases/14352cc6f 同文件 strict 7 键集。现场物证：runtime.toml（19:25 修改，task_budget_canary_config=\"\"）与 data/task_budget_admin_operator/admin-once-gen213b-transport-verify.json（窗口 1791542820→1791544621 已过期）。工具验证：~/Project/lfl-ops/preflight-matrix-20261009.txt（S1 OFF/S2 相对路径 FAIL/S3 过期 FAIL/S4 7键无代理双版本 PASS/S5 带代理候选 PASS+基线 DENY 回滚告警），本轮 execute_command 回执。"
+tags: [service-control, canary, fail-closed, preflight, rollback-compatibility, task-budget, incident-20261009-gen213]
+source: {}
+status: active
+record_kind: lesson
+verification_state: verified
+created_at: "2026-10-09T19:40:53.262240+08:00"
+updated_at: "2026-10-09T19:40:53.262240+08:00"
+---
+
+2026-10-09 晚 gen213 发布事故根因与防御措施。canary 接线由 runtime.toml [web].task_budget_canary_config 承载；空串=OFF 无副作用，非空则走全链 fail-closed 校验，任何一处不过即 _deny() 抛 TaskBudgetDeniedError → web 启动进程直接退出。gen213 接了相对路径 data/...json → 启动即死；自动回滚复用同一 runtime.toml → gen214 同样失败；用户摘除配置后 19:25 恢复 gen214/14352cc6f。教训与防御：(1) 修改 canary 接线前必须先跑 ~/Project/lfl-ops/canary_config_preflight.py；(2) oracle 导入路径必须拼 worktree+"/src"，否则会静默落到 venv 里陈旧的 llm_loop 副本，结果不可信；(3) admin-once/v1 权威键集=7键+可选 provider_proxy，勿凭记忆编造；(4) 含 provider_proxy 的配置会被基线 14352cc6f 拒绝 → 启用带代理的 canary 期间回滚=web 再挂，必须短窗口+用完立即清空接线重启回 OFF；(5) 发布接线与启动校验之间没有语义层拦截，只能靠运维侧预检工具补位。
