@@ -76,6 +76,7 @@ from .schemas import (
     WorkspaceRequest,
     WorkspaceSwitchRequest,
 )
+from .task_budget_canary import choose_signed_web_canary
 from .upload_handlers import (
     SUPPORTED_IMAGE_EXTS,
     file_ext,
@@ -828,6 +829,14 @@ def chat(
             request, session_id, payload.message, _barrier, task_kind="web_chat"
         )
 
+    # The signed one-session positive Canary must run under the BackgroundRunner
+    # Stop bridge, not this synchronous route's unbound Engine call.
+    if getattr(getattr(request.app.state, "task_budget_web_canary", None), "session_id", None) == session_id:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "budget_canary_requires_stream", "detail": "受控预算验收会话只允许流式后台执行。"},
+        )
+
     # T5.1: 会话级并发锁（同会话串行，不同会话并行，spec.md 5.4.1）
     lock = _get_session_lock(request, session_id)
     acquired = False
@@ -1039,6 +1048,7 @@ def _stream_background(
     expected_workspace_epoch: int | None = None,
     user_metadata: dict[str, Any] | None = None,
     queue_terminal: Callable[[str, str | None], None] | None = None,
+    signed_web_canary: Any = None,
 ) -> Any:
     """后台 run 订阅生成器（EVO 后台 run 改造）：提交 → 消费事件 → 分片 yield SSE.
 
@@ -1068,6 +1078,8 @@ def _stream_background(
             start_kwargs["user_metadata"] = user_metadata
         if not resume and queue_terminal is not None:
             start_kwargs["terminal_callback"] = queue_terminal
+        if not resume and signed_web_canary is not None:
+            start_kwargs["signed_web_canary"] = signed_web_canary
         handle, q = runner.start(session_id, message, **start_kwargs)
     except WorkspaceChangedError as exc:
         yield _sse("error", {"error": "workspace_changed", "detail": str(exc)})
@@ -1398,6 +1410,23 @@ def chat_stream(
     _route_model = payload.model if (payload.model and _persist_model_ref is None) else None
     _explicit_model_change = bool(payload.model_change or payload.new_session)
 
+    # Exact selected Session from operator-owned startup configuration.
+    # Invalid canary requests are denied, never silently downgraded to an
+    # unbounded/default run. Resume subscribes without creating another Run.
+    from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+
+    try:
+        _signed_canary = choose_signed_web_canary(
+            request, session_id, model=payload.model,
+            resume=_resume_requested, queued=bool(_queue_id),
+            attachments=bool(payload.attachments),
+        )
+    except TaskBudgetDeniedError:
+        return UTF8JSONResponse(
+            status_code=403,
+            content={"error": "budget_canary_not_qualified", "detail": "受控预算会话未通过独立授权条件。"},
+        )
+
     def event_stream():
         # 后台 run 模式（EVO 后台 run 改造，对齐 DSH）：提交 + 订阅；断连只停订阅
         runner = getattr(engine, "runner", None)
@@ -1447,6 +1476,7 @@ def chat_stream(
                     else None
                 ),
                 queue_terminal=_queue_terminal,
+                signed_web_canary=_signed_canary,
             )
             return
         if _resume:
