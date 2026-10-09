@@ -311,8 +311,9 @@ def test_worker_unexpected_exit_does_not_mark_remote_settlement(tmp_path: Path) 
 def test_open_failure_surfaces_worker_exception_kind(tmp_path: Path) -> None:
     """Incident 2026-10-09 14:14: the worker sent type(exc).__name__ but the
     parent discarded it, leaving an unattributable open failure."""
-    import httpx
     import socket
+
+    import httpx
 
     from llm_loop.resources.task_budget_process_transport import (
         IsolatedTransportError,
@@ -324,13 +325,13 @@ def test_open_failure_surfaces_worker_exception_kind(tmp_path: Path) -> None:
         closed_port = listener.getsockname()[1]
     with bind_task_budget(budget), bind_isolated_provider_transport(
         IsolatedTransportProfile()
-    ), httpx.Client() as http:
-        with pytest.raises(IsolatedTransportError) as excinfo:
-            with isolated_provider_stream(
-                http, "POST", f"http://127.0.0.1:{closed_port}/v1/chat/completions",
-                json={"model": "glm-5.3"}, headers={}, timeout=5.0,
-            ):
-                pytest.fail("a closed loopback port must fail to open")
+    ), httpx.Client() as http, pytest.raises(
+        IsolatedTransportError
+    ) as excinfo, isolated_provider_stream(
+        http, "POST", f"http://127.0.0.1:{closed_port}/v1/chat/completions",
+        json={"model": "glm-5.3"}, headers={}, timeout=5.0,
+    ):
+        pytest.fail("a closed loopback port must fail to open")
     assert str(excinfo.value) == "isolated_transport_open_failed:ConnectError"
     assert not _isolated_children()
 
@@ -370,14 +371,14 @@ def test_midstream_worker_error_surfaces_exception_kind(tmp_path: Path) -> None:
     try:
         with bind_task_budget(budget), bind_isolated_provider_transport(
             IsolatedTransportProfile()
-        ), httpx.Client() as http:
-            with pytest.raises(IsolatedTransportError) as excinfo:
-                with isolated_provider_stream(
-                    http, "POST",
-                    f"http://127.0.0.1:{server.server_port}/v1/chat/completions",
-                    json={"model": "glm-5.3"}, headers={}, timeout=5.0,
-                ) as response:
-                    response.read()
+        ), httpx.Client() as http, pytest.raises(
+            IsolatedTransportError
+        ) as excinfo, isolated_provider_stream(
+            http, "POST",
+            f"http://127.0.0.1:{server.server_port}/v1/chat/completions",
+            json={"model": "glm-5.3"}, headers={}, timeout=5.0,
+        ) as response:
+            response.read()
     finally:
         server.shutdown()
         server.server_close()
