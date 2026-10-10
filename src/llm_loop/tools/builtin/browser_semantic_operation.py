@@ -17,14 +17,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from llm_loop.browser.errors import (
+    MultiPageAmbiguityError,
+    PageTargetNotFoundError,
+)
 from llm_loop.browser.perception import (
     SEMANTIC_OBJECT_KINDS,
     BrowserPerceptionAdapter,
     normalize_semantic_name,
-)
-from llm_loop.browser.errors import (
-    MultiPageAmbiguityError,
-    PageTargetNotFoundError,
 )
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
