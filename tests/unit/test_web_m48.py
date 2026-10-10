@@ -350,6 +350,112 @@ def test_web_search_concurrent_queries():
     assert "Alpha 结果" in r.content and "Beta 结果" in r.content
 
 
+# ── EVO-20261010-528ab2f3: bing 词典降级检测 + 回执标注（人工已审批）──
+
+_DICT_HTML = (
+    '<ol>'
+    '<li class="b_algo"><h2><a href="https://www.bing.com/dict/search?q=production">'
+    "production 必应词典</a></h2><p>production n. 生产，产量; 出示，提供 ...</p></li>"
+    '<li class="b_algo"><h2><a href="https://cn.bing.com/dict/search?q=production">'
+    "production 的中文意思</a></h2><p>production 英 [prəˈdʌkʃn] 美 [...]</p></li>"
+    '<li class="b_algo"><h2><a href="https://dict.cn/production">'
+    "production 是什么意思_production的翻译</a></h2><p>n. 生产, 产量 ...</p></li>"
+    "</ol>"
+)
+
+
+def test_detect_dictionary_fallback_pure_dict_urls():
+    """强特征主导: 全部词典 URL → 判定降级."""
+    from llm_loop.tools.builtin.web_search import _detect_dictionary_fallback
+
+    results = [
+        {"title": "production 必应词典", "url": "https://www.bing.com/dict/search?q=production"},
+        {"title": "production 的中文意思", "url": "https://cn.bing.com/dict/search?q=production"},
+        {"title": "production", "url": "https://dictionary.cambridge.org/dictionary/english/production"},
+        {"title": "production", "url": "https://www.iciba.com/word?w=production"},
+        {"title": "production", "url": "https://en.wiktionary.org/wiki/production"},
+    ]
+    assert _detect_dictionary_fallback(results) is True
+
+
+def test_detect_dictionary_fallback_mixed_strong_weak():
+    """混合证据: 1 条词典 URL + 其余标题释义特征 → 判定降级."""
+    from llm_loop.tools.builtin.web_search import _detect_dictionary_fallback
+
+    results = [
+        {"title": "production 必应词典", "url": "https://dict.cn/production"},
+        {"title": "production 是什么意思", "url": "https://example.com/a"},
+        {"title": "Production meaning and usage", "url": "https://example.com/b"},
+        {"title": "production 的翻译与发音", "url": "https://example.com/c"},
+        {"title": "production definition page", "url": "https://example.com/d"},
+    ]
+    assert _detect_dictionary_fallback(results) is True
+
+
+def test_detect_dictionary_fallback_normal_results():
+    """正常多样结果（标题偶含 definition 也不误伤: 无强特征主导）→ 不判定."""
+    from llm_loop.tools.builtin.web_search import _detect_dictionary_fallback
+
+    results = [
+        {"title": "Definition of done in agile teams", "url": "https://www.atlassian.com/agile"},
+        {"title": "Production system guide", "url": "https://martinfowler.com/articles/production"},
+        {"title": "LLM inference at scale", "url": "https://arxiv.org/abs/2401.00001"},
+        {"title": "Production engineering blog", "url": "https://engineering.fb.com/2024/production"},
+        {"title": "K8s production checklist", "url": "https://kubernetes.io/docs/setup/production"},
+    ]
+    assert _detect_dictionary_fallback(results) is False
+
+
+def test_detect_dictionary_fallback_empty():
+    from llm_loop.tools.builtin.web_search import _detect_dictionary_fallback
+
+    assert _detect_dictionary_fallback([]) is False
+
+
+def test_web_search_dict_fallback_annotated():
+    """词典降级回执: 标注 degraded_backend=bing_dictionary_fallback 且结果仍完整保留."""
+    tool = WebSearchTool()
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.get.return_value = _FakeResponse(200, _DICT_HTML)
+        r = tool.execute(query="production", limit=5)
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "degraded_backend=bing_dictionary_fallback" in r.content
+    assert "[词典降级]" in r.content
+    # 第 3 条契约: 不改变现有返回结构——header 与结果行原样保留
+    assert "[query] production  [backend] bing  [count] 3" in r.content
+    assert "production 必应词典" in r.content
+
+
+def test_web_search_dict_intent_exempt():
+    """query 本身是词条查询（用户意图）→ 不标注降级，结果正常返回."""
+    tool = WebSearchTool()
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.get.return_value = _FakeResponse(200, _DICT_HTML)
+        r = tool.execute(query="production 是什么意思", limit=5)
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "degraded_backend" not in r.content
+    assert "production 必应词典" in r.content
+
+
+def test_web_search_normal_results_not_annotated():
+    """回归: 正常结果不触发标注（并发路径块级透传也依赖此行为）."""
+    tool = WebSearchTool()
+    html = (
+        '<ol>'
+        '<li class="b_algo"><h2><a href="https://arxiv.org/abs/2401.00001">Scaling Laws Paper</a></h2>'
+        "<p>We study scaling laws for neural language models with detailed analysis.</p></li>"
+        '<li class="b_algo"><h2><a href="https://example.com/blog">Engineering Guide</a></h2>'
+        "<p>A practical guide to building reliable systems in production environments.</p></li>"
+        "</ol>"
+    )
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.get.return_value = _FakeResponse(200, html)
+        r = tool.execute(query="llm inference scaling", limit=5)
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "degraded_backend" not in r.content
+    assert "[backend] bing  [count] 2" in r.content
+
+
 def test_web_search_concurrent_partial_failure_honest():
     """部分查询失败：成功块保留 + 失败如实标注（不吞错）."""
     tool = WebSearchTool()

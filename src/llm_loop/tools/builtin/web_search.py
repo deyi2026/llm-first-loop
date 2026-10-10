@@ -237,6 +237,67 @@ def _route_channel(query: str) -> str:
     return "general"
 
 
+# EVO-20261010-528ab2f3: general 通道 HTML 后端的词典降级检测（人工已审批）。
+# 现象: bing 会把 query 中的普通词（production/端/具 等）当词条解释返回，
+# 表面"成功"但零有效信源，模型只能反复改写 query 自救。
+# 此处只检测并在回执标注，结果本身完整保留（透传给模型决定是否改写重试）。
+_DICT_HOSTS = frozenset({
+    "dictionary.cambridge.org",
+    "merriam-webster.com",
+    "www.dictionary.com",
+    "dict.cn",
+    "www.iciba.com",
+    "www.youdao.com",
+    "www.vocabulary.com",
+    "en.wiktionary.org",
+    "zh.wiktionary.org",
+})
+_DICT_URL_MARKERS = ("/dict/",)  # bing/cn.bing 词典端点
+_DEFINITIONAL_TITLE_MARKERS = (
+    "释义", "是什么意思", "的翻译", "发音", "词典",
+    "definition", "meaning", "dictionary", "pronunciation",
+)
+_QUERY_DICT_INTENT_MARKERS = (
+    "意思", "翻译", "发音", "释义", "词典", "怎么读",
+    "definition of", "meaning of", "how to pronounce",
+)
+
+
+def _dict_url_hit(result: dict) -> bool:
+    """强特征: URL 指向词典端点/词典站（正常网页检索极少大量命中）."""
+    url = (result.get("url") or "").lower()
+    if any(m in url for m in _DICT_URL_MARKERS):
+        return True
+    host = url.split("//", 1)[-1].split("/", 1)[0]
+    return any(host == h or host.endswith("." + h) for h in _DICT_HOSTS)
+
+
+def _definitional_title_hit(result: dict) -> bool:
+    """弱特征: 仅标题含释义词（正常文章标题也可能含 definition，不单独触发）."""
+    title = (result.get("title") or "").lower()
+    return any(m in title for m in _DEFINITIONAL_TITLE_MARKERS)
+
+
+def _query_wants_dictionary(query: str) -> bool:
+    """豁免: query 本身就是词条查询（用户意图，不算降级）."""
+    q = query.lower()
+    return any(m in q for m in _QUERY_DICT_INTENT_MARKERS)
+
+
+def _detect_dictionary_fallback(results: list[dict]) -> bool:
+    """词典型结果占比判定（保守阈值: 宁漏检不误伤正常结果）.
+
+    strong = 词典 URL 特征; weak = 仅标题释义特征.
+    触发: strong 占比 >= 0.6，或 strong>=1 且 (strong+weak) 占比 >= 0.8.
+    """
+    if not results:
+        return False
+    strong = sum(1 for r in results if _dict_url_hit(r))
+    weak = sum(1 for r in results if not _dict_url_hit(r) and _definitional_title_hit(r))
+    n = len(results)
+    return strong / n >= 0.6 or (strong >= 1 and (strong + weak) / n >= 0.8)
+
+
 _BACKENDS = [("bing", _search_bing), ("baidu", _search_baidu)]
 
 
@@ -249,6 +310,8 @@ class WebSearchTool:
         "状态契约: 搜索结果默认完整返回；仅统一 ToolRegistry/Evidence 的真实输出硬上限可截断。"
         "何时不用: 已知确切 URL 时使用直接抓取能力；本地记录/档案检索使用对应的本地检索能力。"
         "失败对策: 后端被限流/超时会自动降级到备用后端并如实标注来源；全部失败如实返回原因。"
+        "词典降级: 回执出现 degraded_backend=*_dictionary_fallback 标注时，结果疑似词条解释"
+        "（仍完整保留），建议改写 query 后重试而非直接采信。"
         + SHARED_SOURCE_RECOVERY_CONTRACT
         + source_recovery_guidance(SourceRecoveryKind.WEB_SEARCH)
     )
@@ -344,6 +407,14 @@ class WebSearchTool:
                 continue
             if results:
                 lines = [f"[query] {query}  [backend] {name}  [count] {len(results)}"]
+                # EVO-20261010-528ab2f3: 词典降级检测标注（结果不丢弃，透传给模型决定改写重试）
+                if not _query_wants_dictionary(query) and _detect_dictionary_fallback(results):
+                    lines.append(
+                        f"[词典降级] degraded_backend={name}_dictionary_fallback: "
+                        "结果疑似词条解释而非正常网页检索（零有效信源风险）。"
+                        "建议改写 query（专有名词/品牌词开头，去掉孤立常用词）后重试; "
+                        "本回执结果仍完整保留供参考。"
+                    )
                 for i, r in enumerate(results, 1):
                     lines.append(f"{i}. {r['title']}\n   {r['url']}  ({r['source']})")
                     if r["snippet"]:
