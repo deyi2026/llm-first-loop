@@ -1066,11 +1066,13 @@ class RecordSearcher:
                 continue
             if entry_id in seen:
                 continue
-            canonical = lexical_by_id.get(entry_id)
+            canonical: dict[str, object] | None = lexical_by_id.get(entry_id)
             if canonical is None and session_id and self._archive is not None:
                 getter = getattr(self._archive, "get_by_id", None)
                 if callable(getter):
-                    canonical = getter(session_id, entry_id)
+                    fetched = getter(session_id, entry_id)
+                    if isinstance(fetched, dict):
+                        canonical = fetched
             if canonical is None:
                 failures += 1
                 continue
