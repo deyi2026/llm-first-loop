@@ -19,7 +19,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn
 
 from llm_loop.core.trace_leak.ingress_token import IngressToken, is_whitelisted
 from llm_loop.resources.task_budget_contracts import (
@@ -44,7 +44,7 @@ _KEY_ID = re.compile(r"[A-Za-z0-9_-]{1,48}\Z")
 _NONCE = re.compile(r"[0-9a-f]{32}\Z")
 
 
-def _deny() -> None:
+def _deny() -> NoReturn:
     # Never echo the proof or user input into error/telemetry.
     raise TaskBudgetDeniedError("operator_budget_proof_invalid")
 
