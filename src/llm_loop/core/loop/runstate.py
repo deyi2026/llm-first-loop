@@ -93,6 +93,10 @@ class _RunState:
     # （此前是 Engine 实例全局 self._current_turn_ref/_last_budget_info——
     #   同一 Engine 服务多 session（Web/飞书/Headless）时并发 run 互相覆盖）
     current_turn_ref: int | None = None
+    # Optional, per-session execution-knowledge observer. Created lazily by
+    # the existing message-builder boundary only if the explicit mode is on.
+    knowledge_runtime: Any = None
+    knowledge_turn_identity: str = ""
     # antidrift R3: engine run 入口冻结的 ingress 消息对象（压缩豁免退化路径第二候选身份源）
     active_run_ingress_message: Any = None
     last_budget_info: Any = None

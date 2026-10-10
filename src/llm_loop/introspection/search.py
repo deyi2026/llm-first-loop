@@ -14,6 +14,7 @@ LLM 可见的工具分派/呈现层在 introspection/corrections.py（消费本�
 
 from __future__ import annotations
 
+import heapq
 import json
 import logging
 from datetime import UTC, datetime
@@ -128,13 +129,20 @@ def _jsonl_search(
     EVO-20260918 修复: 检索域从 summary_keys+content 扩展为恒含 ``id``/``ts``
     ——按记录 id（如 ``EVO-20260918-c63f0c21``）查询不再结构性落空；
     多词查询按空白分词 AND 匹配。summary 呈现字段保持不变。
+
+    ASSESS-20261008 BUG-05: 候选选择发生在输出 limit 之前——同词多条命中按
+    （ts, 行序）取最新 top-k（结果新→旧），内存上界 O(limit)（有界淘汰，
+    不整文件载入排序）。原实现按文件位置取前 limit 条：append-only old→new
+    写入 + limit=1 永远只返回最旧记录（位置偏置）。损坏行跳过不崩溃；
+    ts 缺失视为最旧；同 ts 以行序新者胜。事件顺序复盘走 event_stream
+    （独立全扫实现，升序契约不受影响）。
     """
     if not path.exists():
         return []
     terms = _query_terms(query)
-    hits: list[dict] = []
+    hits: list[tuple[str, int, dict]] = []  # 小顶堆: (ts_key, seq, item)
     with path.open("r", encoding="utf-8") as f:
-        for line in f:
+        for seq, line in enumerate(f):
             line = line.strip()
             if not line:
                 continue
@@ -154,18 +162,26 @@ def _jsonl_search(
             ).lower()
             if terms and not _hay_matches(hay, terms):
                 continue
-            hits.append(
-                {
-                    "kind": kind,
-                    "ts": ts,
-                    "id": entry.get("id", ""),
-                    "summary": " ".join(str(entry.get(k, "")) for k in summary_keys)[:300],
-                    "file": str(path),
-                }
+            heapq.heappush(
+                hits,
+                (
+                    str(ts or ""),
+                    seq,
+                    {
+                        "kind": kind,
+                        "ts": ts,
+                        "id": entry.get("id", ""),
+                        "summary": " ".join(
+                            str(entry.get(k, "")) for k in summary_keys
+                        )[:300],
+                        "file": str(path),
+                    },
+                ),
             )
-            if len(hits) >= limit:
-                break
-    return hits
+            if len(hits) > limit:
+                heapq.heappop(hits)
+    hits.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    return [t[2] for t in hits]
 
 
 def _memory_progressive_summary(e) -> str:
@@ -1050,11 +1066,13 @@ class RecordSearcher:
                 continue
             if entry_id in seen:
                 continue
-            canonical = lexical_by_id.get(entry_id)
+            canonical: dict[str, object] | None = lexical_by_id.get(entry_id)
             if canonical is None and session_id and self._archive is not None:
                 getter = getattr(self._archive, "get_by_id", None)
                 if callable(getter):
-                    canonical = getter(session_id, entry_id)
+                    fetched = getter(session_id, entry_id)
+                    if isinstance(fetched, dict):
+                        canonical = fetched
             if canonical is None:
                 failures += 1
                 continue

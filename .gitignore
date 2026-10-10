@@ -16,6 +16,8 @@ htmlcov/
 # 运行时数据（会话/记忆/审计——不入库）；例外：data/methods/ 是学习方法资产，入库保全
 data/*
 !data/methods/
+/data/methods/usage.jsonl
+/data/methods/.usage_watermark.json
 # SMX 感知运行时数据（快照/回执/runs——不入库，任意层级）
 .smx/
 
@@ -122,3 +124,10 @@ cloudflared/tunnel-runtime.log
 
 # 本地测试运行日志不随库分发（安全扫描 .log$ 拦截；2026-10-08）
 .arts/*.log
+
+# 运行时 store 写锁（方法库/经验库瞬时锁文件，可再生非资产，不入库；2026-10-08）
+.__method_store.lock
+.__experience_store.lock
+
+# 本地工具缓存（verify-citations 等可再生产物，不入库；2026-10-10）
+.cache/

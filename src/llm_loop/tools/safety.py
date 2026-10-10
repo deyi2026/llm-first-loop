@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import shlex
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -39,16 +40,9 @@ class BlockDecision:
 
 # 不可逆删除 / 系统破坏的最小灾难性模式集合（design.md §2.1.3.5）
 _CATASTROPHIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    # rm -rf 指向根 / 系统关键目录（/home 不在此层：Linux HOME=/home/<user>，
-    # 前缀命中会误伤 $HOME 严格子路径；home 判定由分词层
-    # _is_dangerous_rm_target 的显式豁免承担——GH Actions runner 实测暴露）
-    (
-        "rm -rf 指向根目录或系统关键目录",
-        re.compile(
-            r"rm\s+(-[a-z]*r[a-z]*f[a-z]*|-f[a-z]*r[a-z]*|-[a-z]*rf)\s+(\/\s*$|~\/?\s*$|/(etc|boot|usr|bin|sbin|lib|var)(\s|/|$))",
-            re.IGNORECASE,
-        ),
-    ),
+    # rm -rf 的路径目标只能经下方完整 token + canonical path 判定:
+    # 前缀 regex 不知道 HOME 子路径、.. 或符号链接的真实目标，既可误拦也可漏拦。
+    # _scan_tokens 负责 rm、常用执行前缀与嵌套 shell；其余灾难行为正则不变。
     # 格式化 / 建文件系统
     ("mkfs/format 格式化磁盘", re.compile(r"(mkfs\.|mkfs\s|format\s+[a-z]:|newfs)", re.IGNORECASE)),
     # dd 写块设备
@@ -178,18 +172,95 @@ def _is_dangerous_rm_target(target: str) -> bool:
     会话内正常清理由 AI 自主裁决，程序只拦不可逆系统级破坏。
     """
     t = target.rstrip("/")
-    if t in ("", "/"):
+    if t in ("", "/") or "\x00" in t:
         return True
-    home = os.path.expanduser("~").rstrip("/")
-    if t == home:
+    # Realpath (strict=False) 解析存在的 symlink 前缀、相对路径和 ..，
+    # 不做任何磁盘写入。/etc -> /private/etc 与 /var -> /private/var
+    # 等 OS 别名必须被同一权威目标判定覆盖。
+    canonical = os.path.realpath(t).rstrip("/") or "/"
+    home = os.path.realpath(os.path.expanduser("~")).rstrip("/") or "/"
+    if canonical in ("/", home):
         return True
-    # 修正 1 的显式实现：$HOME 严格子路径放行。此前仅在 HOME 恰不位于
-    # 系统目录下（如 macOS /Users/x）偶然成立；Linux HOME=/home/<user> 会
-    # 落入 /home 前缀被误拦（GH Actions runner 实测：rm -rf $HOME/data
-    # 期望放行却阻断）。
-    if home and home != "/" and t.startswith(home + "/"):
+    # 只有真正 canonical HOME 严格子路径获豁免。HOME/../../etc、
+    # HOME 内指向 /etc 的符号链接不会被原始字符串前缀误放行。
+    if home != "/" and canonical.startswith(home + "/"):
         return False
-    return any(t == d or t.startswith(d + "/") for d in _SYSTEM_DIRS)
+    # 原有契约允许执行目录内的 ./build、find . 和普通相对文件清理。
+    # pytest/macOS 的工作目录可能在 /private/var/... 临时沙箱下；
+    # 不应因为 OS 临时目录的父路径属于 /var 就把局部相对清理全部误拦。
+    # 只豁免真实目标仍在 cwd 内（无 '..' 逃逸、无指向系统目录的 symlink）
+    # 且 cwd 本身不是受保护系统区的相对操作。
+    if not os.path.isabs(t):
+        cwd = os.path.realpath(os.getcwd()).rstrip("/") or "/"
+        local_target = os.path.normpath(os.path.join(cwd, t))
+        if (
+            cwd != "/"
+            and canonical == local_target
+            and (canonical == cwd or canonical.startswith(cwd + "/"))
+        ):
+            temp_root = os.path.realpath(tempfile.gettempdir()).rstrip("/") or "/"
+            temp_scoped = cwd == temp_root or cwd.startswith(temp_root + "/")
+            protected_cwd = any(
+                cwd == (d_real := os.path.realpath(d).rstrip("/") or "/")
+                or cwd.startswith(d_real + "/")
+                for d in _SYSTEM_DIRS
+            )
+            if temp_scoped or not protected_cwd:
+                return False
+    return any(
+        canonical == (d_real := os.path.realpath(d).rstrip("/") or "/")
+        or canonical.startswith(d_real + "/")
+        for d in _SYSTEM_DIRS
+    )
+
+
+def _execution_tokens(tokens: list[str]) -> list[str]:
+    """Unwrap common execution prefixes before rm/find/shell scanning.
+
+    The regex previously caught `sudo rm -rf /etc`; retaining this coverage
+    is required when moving rm targets to semantic canonical-path checks.
+    This is a known-pattern guard, not a complete shell interpreter.
+    """
+    parts = list(tokens)
+    for _ in range(6):
+        if not parts:
+            break
+        cmd = os.path.basename(parts[0])
+        if cmd in {"command", "builtin", "exec", "nohup"}:
+            parts = parts[1:]
+        elif cmd == "sudo":
+            idx = 1
+            while idx < len(parts):
+                opt = parts[idx]
+                if opt == "--":
+                    idx += 1
+                    break
+                if opt in {"-u", "-g", "-h", "-p", "-C", "-r", "-t"}:
+                    idx += 2
+                elif opt.startswith("-"):
+                    idx += 1
+                else:
+                    break
+            parts = parts[idx:]
+        elif cmd == "env":
+            idx = 1
+            while idx < len(parts):
+                opt = parts[idx]
+                if opt == "--":
+                    idx += 1
+                    break
+                if opt in {"-u", "--unset"}:
+                    idx += 2
+                elif opt.startswith("-") or ("=" in opt and not opt.startswith("=")):
+                    idx += 1
+                else:
+                    break
+            parts = parts[idx:]
+        else:
+            break
+    if parts:
+        parts[0] = os.path.basename(parts[0])
+    return parts
 
 
 def _find_start_points(tokens: list[str]) -> list[str]:
@@ -280,6 +351,7 @@ class CatastrophicGuard:
         return None
 
     def _scan_tokens(self, toks: list[str], sub: str, depth: int) -> BlockDecision | None:
+        toks = _execution_tokens(toks)
         if not toks:
             return None
 

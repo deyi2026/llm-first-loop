@@ -920,6 +920,27 @@ class ToolRegistry:
                 ),
             )
 
+        # I3 opt-in deny at the *physical Registry* (before optional
+        # prechecks/escalation-token consumption). Empty allowlist means
+        # real deny-all, not "hide the model schema and hope".
+        from llm_loop.resources.task_budget_dispatch import active_task_budget
+        from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+
+        budget = active_task_budget()
+        if budget is not None:
+            try:
+                budget.assert_tool_allowed(call.name)
+            except TaskBudgetDeniedError as exc:
+                return self._preblock(
+                    call,
+                    ToolResult(
+                        status=ToolResultStatus.BLOCKED,
+                        content=f"[任务预算硬阻断] {exc.reason}; tool execution not started",
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                    ),
+                )
+
         try:
             tool = self.get(call.name)
         except KeyError:
@@ -1165,7 +1186,11 @@ class ToolRegistry:
 
         # 4. 真实执行（带超时控制）
         try:
-            result = self._run_with_timeout(tool, call)
+            from llm_loop.resources.task_budget_dispatch import checked_tool_dispatch
+
+            with checked_tool_dispatch(call.name, arguments=call.arguments) as budget_outcome:
+                result = self._run_with_timeout(tool, call)
+                budget_outcome["complete"] = result.status != ToolResultStatus.TIMEOUT
             duration_ms = (time.perf_counter() - start) * 1000
             result.duration_ms = duration_ms
             # EVO-20260813-9ced1f4c: post 快照（不可变 result + post 钩子，默认关闭零回归）
@@ -1195,6 +1220,16 @@ class ToolRegistry:
                         result.status = ToolResultStatus(snapshot.status)  # 未知 status 保持原样
             self._notify_result_observers(call.name, result)
             return self._attach_typed_recovery(result)
+        except TaskBudgetDeniedError as exc:
+            return self._preblock(
+                call,
+                ToolResult(
+                    status=ToolResultStatus.BLOCKED,
+                    content=f"[任务预算硬阻断] {exc.reason}; tool not dispatched",
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                ),
+            )
         except Exception as exc:  # noqa: BLE001 — 如实构造异常结果
             result = ToolResult(
                 status=ToolResultStatus.ERROR,

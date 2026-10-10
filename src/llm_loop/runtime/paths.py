@@ -57,6 +57,14 @@ class RuntimePaths:
             "auto_rebind_applied": self.auto_rebind_applied,
         }
 
+    @property
+    def extensions_dir(self) -> Path:
+        """扩展安装根（P1-A，DESIGN-20261009 §5.3）: <data_dir>/extensions 派生.
+
+        无独立 env 覆盖（来源固定: 运行时数据目录派生）。
+        """
+        return self.data_dir / "extensions"
+
 
 def _resolved(value: str | Path) -> Path:
     return Path(value).expanduser().resolve()

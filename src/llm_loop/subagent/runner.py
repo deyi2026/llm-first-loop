@@ -1870,6 +1870,17 @@ class SubAgentRunner:
         if acceptance:
             items = "\n".join(f"{i}. {a}" for i, a in enumerate(acceptance, 1))
             sys_prompt += f"\n\n验收条件（供交付核对）：\n{items}"
+        if "kind=method" not in task:
+            # Method discovery bridge (EVO-20261010 canary R2, 3/3 scenarios):
+            # without this line subagents never searched method cards on their own
+            # (0/17 searches in R1); with it they do bounded discovery first and,
+            # when a relevant card exists, apply it (typing correct on first
+            # attempt, ~43% fewer tokens in scenario A).
+            sys_prompt += (
+                "\n\n纪律：动手前先对记录库做有界方法论检索"
+                "（search_records kind=method，limit≤5），结果仅作背景参考；"
+                "无相关卡或不适用则直接开始任务。"
+            )
         sess.messages.append(
             Message(
                 role="user",

@@ -403,12 +403,21 @@ def test_local_imports_ratchet():
 
 
 def test_import_exempt_markers_zero_this_batch():
-    """豁免标记登记 2 处（D2 裁定：标注即行为判断，不提前批量标注）。
+    """豁免标记登记 5 处（D2 裁定：标注即行为判断，不提前批量标注）。
 
     登记簿（逐处语义，增量需同步更新断言与本注释）：
     - 2026-09-29 +2 plugin：factory.py 的 chatgpt_web/deepseek_web provider 注册
       （feat 0b5f411e5/b8857b381 引入，settings 门控的 registry 延迟插件加载，
       恰为 D2 豁免两类语义之一；登记后棘轮回到基线 63）。
+    - 2026-10-09 +2 plugin：factory.py 的 ExtensionCatalog/ExtensionStore 装配
+      （feat e15d4a2d4/51087e01f，P1-A DESIGN-20261009 §5.3/§5.4；try/except
+      fail-open 的可选扩展子系统装配，import 失败降级为无扩展目录，
+      插件语义与 provider 注册同类；登记后棘轮保持基线 63）。
+    - 2026-10-09 +1 plugin：factory.py 的 MCP 装配路径 ExtensionStore 导入
+      （feat/p1a 合入 main 时 b5106a9ac 系；P1-C 装配改经 mcp_assembly，
+      workspace>user 安装实例与 legacy MCP_SERVERS 合并；try/except
+      fail-open 的可选扩展子系统装配，import 失败降级为无 MCP 工具，
+      与 §5.4 ExtensionStore 装配同一语义；登记后棘轮保持基线 63）。
     """
     b = _load_baseline()
     total_marks = 0
@@ -417,7 +426,7 @@ def test_import_exempt_markers_zero_this_batch():
         if p.exists():
             _, exempt, _ = _count_fn_imports(_read_source(rel))
             total_marks += exempt
-    assert total_marks == 2, f"豁免标记应登记 2 处（见登记簿注释），实测 {total_marks} 处"
+    assert total_marks == 5, f"豁免标记应登记 5 处（见登记簿注释），实测 {total_marks} 处"
 
 
 # ── runtime cycle 守卫（B2-P2-05 / R9-P2-06·DFX-12）─────────────────────────

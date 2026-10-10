@@ -318,11 +318,20 @@ def test_qualification_and_promotion_remain_consistent(tmp_path: Path) -> None:
         task_ref="episode:independent",
         verdict="pass",
         promotion="pass",
+        task_type="code-edit",
+    )
+    cross_domain = store.record_qualification(
+        record.method_ref,
+        task_ref="episode:independent-2",
+        verdict="pass",
+        task_type="browser",
     )
     assert entry["qualification_episode_ref"] == "episode:independent"
+    assert entry["task_type"] == "code-edit"
+    assert cross_domain["task_type"] == "browser"
     assert store.update_status(record.method_ref, "qualified").status == "qualified"
     assert store.update_status(record.method_ref, "active").status == "active"
-    assert len(store.qualification_entries(record.method_ref)) == 1
+    assert len(store.qualification_entries(record.method_ref)) == 2
 
 
 def test_lock_acquire_failure_is_fail_closed(

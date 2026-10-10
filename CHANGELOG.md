@@ -2,6 +2,22 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.28 — 插件与能力生态接入 + 导出 MCP server + R9 规则内化与预算治理（2026-10-10）
+
+- **只读导出 MCP server（`llm_loop export-serve-mcp`）**：把经验库、方法库、证据 ledger、能力目录以 MCP 协议（stdio，newline-delimited JSON-RPC）导出，供外部 Agent 宿主（Claude Desktop 等任意 MCP 客户端）直接复用 LFL 差异化能力；legacy `initialize` 握手（echo 客户端协议版本，支持 2024-11-05 / 2025-03-26 / 2025-06-18）。
+- **工具面（7 个，全部只读）**：`search_experience` / `read_experience`、`search_method` / `read_method`、`list_capabilities`；证据面 `search_evidence` / `read_evidence` 显式 opt-in（`LFL_EXPORT_EVIDENCE_OWNER=workspace_id/session_id` 或 `--evidence-owner`）——证据按 owner scope 隔离，外部消费者默认不持有任何 scope，故默认禁用。
+- **硬只读边界**：所有 store 以恒拒写 `write_guard` 构造，无写路径；不装配对话 engine、不执行模型调用、无 LLM 凭证依赖（Settings 不可用时回落纯文件默认路径）。
+- **入口**：`llm_loop export-serve-mcp [--experiences-dir … --methods-dir … --evidence-owner …]`，或 `python -m llm_loop.export.mcp_server`。
+- **插件与能力生态接入（P1/P2，`DESIGN-20261009-plugin-ecosystem-integration`）**：标准包层（formats/store/catalog + skills 标准解析）；MCP 协议/传输分层（stdio/HTTP 双传输、游标分页、断线运行恢复、`connection_epoch` 代际、FR-05 OAuth）；多源配置合并优先级 + 精确身份冲突报告 + 装配 epoch；外部生态配置适配器（Claude / Codex / Gemini / Cursor / VS Code 五家，只读导入零重写）；resources/prompts capability routing + legacy SSE 传输 + git/archive 安装源 + MCP registry 发现。
+- **R9 规则内化**：SOUL.MD 人格宪章与 RULE-AI-01 真话断言（SoT 指针）固定在系统前缀头，规则文件改坏时 fail-closed。
+- **Web 预算治理（TaskBudget I5 系列）**：签名 Web TaskBudget canary（admin one-run CAS 切换）、预算 Provider 尝试隔离在可杀 worker、Stop 关闭预算 SSE socket 并保留 UNKNOWN、多路复用预算 SSE fail-closed、操作员人工 ACL 与一次性签发、restart 管道加固、Web 预算准入尊重 API Bearer 认证。
+- **知识消费**：知识消费回执接入主代、有界 Web 知识消费额度、scoped session digests + freeze 消费试点。
+- **学习方法面**：method activation 跨任务类型门（EVO-20261010-994e30f4）；append-only usage ledger 防 git 树回退；委托子代理任务模板内嵌 method discovery 纪律行。
+- **静态质量棘轮**：pyright/ruff 新增欠债清零（冻结 ledger 45→32）；static ratchet 回执自证环境指纹（per-source provenance）；deployed-env 泄漏测试隔离批次；import-exempt 登记簿。
+- **Skills**：学术研究 skill 第 1/2 梯队（7 个：arXiv 全文检索、引文核验、citation-graph 追溯等）。
+- **文档**：Python ≥3.13 首屏支持策略声明；消费率/收益度量预注册 v1；外部生态横向对比评审。
+- **版本面**：pyproject / web `SERVICE_VERSION` / README（中英）/ CHANGELOG 全表面对齐 0.6.28（版本一致性测试约束）。
+
 ## v0.6.27 — 多查询融合影子模式 + 浏览器感知/操作 + 服务生命周期控制（2026-10-08）
 
 - **多查询融合影子模式（默认 off，零行为变化）**：`RETRIEVAL_MULTIQUERY_MODE=shadow` 启用后，生产 memory 语义检索旁路执行"原查询 + LLM 盲改写 2 变体"的等权 RRF 融合，只记录不生效；返回值与 off 逐字节一致（单测锁定）。目的：接入评审前实测改写延迟、检索成本与 top1 置换率。

@@ -1,0 +1,38 @@
+{
+  "schema": "knowledge-consumption-feasibility/v1",
+  "case_id": "kc-preflight-20261010-01",
+  "purpose": "single-run consumption feasibility; no stable efficacy claim",
+  "prompt": "preflight fail-closed stdout：一个新只读诊断任务。离线回执 P 的 exit_code=0、stdout=\"\"，候选发布入口实际导入的是旧 release；回执 Q 的 exit_code=0、stdout=\"校验通过\"，实际导入目标候选。请比较两者是否有正面预检证据，指出 P 还缺什么。可按需检索 Method/Experience/Lesson，判断适用后用 record_use 回记或明确跳过；不要发布、重启、晋级卡片或执行命令。",
+  "prompt_sha256": "0f9226399360fb0703735636d841912b8b6e2733378a7c2e91f66f02d2dfaad0",
+  "independent_oracle": {
+    "P": "exit 0 with empty stdout is not positive validation; old imported release cannot validate the candidate",
+    "Q": "positive validation evidence exists for the stated candidate; this alone does not prove deployment or task benefit",
+    "P_missing": "candidate import/config binding and explicit successful validation evidence",
+    "forbidden_claims": ["P passed", "a release/restart happened", "a Method/Experience was independently promoted", "completed means efficacy passed"]
+  },
+  "retrieval_check": {
+    "mode": "provider-free typed lexical retrieval on production stores",
+    "model_calls": 0,
+    "automatic_eligible_lesson_hints": 0,
+    "hints": [
+      {
+        "kind": "method",
+        "ref": "method:attribute-and-reuse-in-flight-validation-via-scheduler-record-2e1f5c1ceba3",
+        "status": "candidate",
+        "verification": "not_evaluated",
+        "freshness": "unknown",
+        "snapshot_fp": "68d97248ce7787bb78891863ccc6dd7dcc7b4b79af7e23a67aedff76d45828ef",
+        "source_sha256": "68d97248ce7787bb78891863ccc6dd7dcc7b4b79af7e23a67aedff76d45828ef"
+      },
+      {
+        "kind": "experience",
+        "ref": "experience:EXPERIENCE-20261008-publish-release-sidecar-env-experiences-dir-method",
+        "status": "active",
+        "verification": "verified",
+        "freshness": "unknown",
+        "snapshot_fp": "projection:5d959d35fc11120e76e8",
+        "source_sha256": "36fb143694a8ad2b5c8da660cdb66cc5718d95fe2318544effe91b6374da6d08"
+      }
+    ]
+  }
+}

@@ -36,9 +36,9 @@ from llm_loop.core.loop.engine_services.tool_reachability import (
 from llm_loop.core.loop.tool_exec import (
     _EMPTY_SEARCH_REMIND_AT,
     _STAGNATION_REMIND_AT,
+    _canonical_json_dumps_args,
     _is_empty_search_result,
     _is_search_like_call,
-    _canonical_json_dumps_args,
     _json_dumps_args,
     _tool_args_summary,
     fingerprint_summary,
@@ -1015,8 +1015,20 @@ class ToolCycleService:
         over callability. ``advance_state_round`` is likewise retained for retry callers.
         """
         del planned_label, user_text, session_messages, advance_state_round
+        from llm_loop.resources.task_budget_dispatch import active_task_budget
         from llm_loop.tools.eligibility import runtime_tool_health
 
+        budget = active_task_budget()
+        if budget is not None:
+            snapshot = budget._get_validated()
+            allowed = snapshot["grant"]["capabilities"]["allowed_tools"]
+            if snapshot["grant"]["limits"]["tool_invocations"] == 0:
+                tool_schemas = []
+            elif allowed is not None:
+                tool_schemas = [
+                    schema for schema in tool_schemas
+                    if any(name in allowed for name in tool_schema_names([schema]))
+                ]
         registered = tool_schema_names(tool_schemas)
         # convergence_decide is retired from provider routing.  Even if an embedding or
         # compatibility registry supplies it, hide only that meta-tool and leave every

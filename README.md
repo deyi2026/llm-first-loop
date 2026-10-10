@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.27 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.28 ｜ **Python**: ≥ 3.13 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
 
 大模型是核心，所有动作围绕大模型展开。架构核心 = **消息进 → 理解 → 行动 → 真诚回答 → 记住**。
 
@@ -106,6 +106,7 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 - **服务生命周期控制**（service_control）：status/publish/update/restart——发布新 desired deployment（当前代 CAS + 干净 git 树 + webui 产物 hash 绑定）；restart 走 desired-state 绑定的官方重启脚本；终态失败屏障可被新 restart 接管（自恢复）
 - **检索多查询融合（影子模式）**：`RETRIEVAL_MULTIQUERY_MODE=shadow` 在主检索旁路测量 RRF 融合收益（观测契约 `retrieval_shadow.jsonl`），默认 off 零行为变化
 - **蒸馏数据集导出**（export_distill，纯读只读薄壳）：`export-distill` 子命令把 `data/sessions/*.json` 会话轨迹导出为带思考链的 ReAct JSONL 蒸馏集 + 结构化统计报告——user 边界切分任务段 → `status=success` + 闭环完整性段级过滤（过滤原因分类计数）→ ReAct 三元组样本（thought/action/observation 与源逐字节一致，缺失思考链如实置 null）→ JSONL（`ensure_ascii=False` 超长不截断）+ 报告（通过+过滤=段总数闭环对账）；只产数据不训练、不切分/增强/脱敏；损坏文件 fail-open 如实标注跳过，输出已存在默认拒绝（`--force` 覆盖），源 session 文件只读零修改
+- **对外导出 MCP server**（P0-2，只读）：`export-serve-mcp` 子命令把经验库、方法库、证据 ledger、能力目录以 MCP 协议（stdio，newline-delimited JSON-RPC）导出，供外部 Agent 宿主（Claude Desktop 等任意 MCP 客户端）直接复用 LFL 差异化能力；7 个只读工具，legacy `initialize` 握手（echo 客户端协议版本）；证据面按 owner scope 隔离，默认禁用（`LFL_EXPORT_EVIDENCE_OWNER=workspace_id/session_id` 显式开启）；恒拒写 `write_guard` + 不装配 engine + 无 LLM 凭证依赖
 - **事件源化单一真相源**（D1 事件日志）：`data/event_logs/<session_id>.jsonl` 事件日志作为轨迹单一真相源（5 类事件：session.created / message.appended / context.compressed / session.meta_changed / session.forked），运行期经 fail-open 钩子追加事件，`event-replay` 回放重建派生视图；`event-inventory` 只读盘点（哈希+mtime 零修改）→ `event-migrate` 从存量 session JSON 迁移生成事件日志（迁移前自动备份 `event_logs/_backup/<ts>/`，v3 旧会话缺省字段自动补默认，幂等二次迁移 0 迁移）→ `event-verify` 重放视图与源逐字段对账（差异如实标注）→ `event-rollback` 备份区逐字节恢复（`--remove-events` 还原事件日志）；`EVENT_LOG_ENABLED=0` 时事件写入零行为，三套存量存储保留双轨可对账
 - **D1 后续批次**（d1_es_followup）：**D3 会话 fork**——`session-fork` / `POST /api/v1/sessions/{id}/fork` 触发事件日志物理复制继承（保留 type/ts/payload 重分配 seq/event_id/session_id）+ session.forked 事件承载 fork 元信息 + 源会话逐字节不变 + 新会话事件独立可 replay；**三套存储退役**——`event-retire` 编排（备份→双轨对账→归档 action_trace/session JSON→切读路径 `READ_PATH_SOURCE=event_log`）+ `event-retire-rollback` 逐字节恢复，对账全量通过方可切换（不一致不切换不退役）；**事件日志滚动**——多段目录 `<sid>/<segment_seq>.jsonl`（大小/天数/会话结束三触发条件）+ `event-rotate-status` 段清单 + 跨段 replay 逐字节一致 + 归档段只读；**D4 过滤钩子**——`EventStore.append` 入口 HookChain（filter 丢弃 / desensitize 脱敏 / transform 转换，按 priority 升序）+ 审计落盘 `_hook_audit.jsonl`（不含原始 payload 敏感内容）+ fail-open 异常不阻断 + `event-hooks` CLI（list/test）+ 钩子链默认空零行为零回归
 - **灾难性安全**：唯一硬边界 = 不可逆删除/系统破坏，其余一切反馈放行；**已知灾难模式硬阻断 + 全量阻断审计**（`data/audit/safety_blocks.jsonl`）——判定前做 `$VAR`/`~` 展开 + 复合命令切分 + shell/python `-c` 载荷递归检查（拦截 rm -rf 根/主目录/系统目录、mkfs、dd 写块设备、fork bomb、curl 管道执行、写系统关键区、find -delete/-exec rm）；如实标注：非完备沙箱，更强隔离叠加 EXEC_MODE 分级与系统级沙箱
@@ -113,7 +114,7 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 - **人工审批流**（T5a）：EXEC_MODE 拦截项在 CLI 交互模式可经终端确认放行（`_cli_approval_prompt`，无终端 fail-closed 拒绝）；审批审计落盘 `data/audit/approval_audit.jsonl`（decision/tool/参数摘要，不含密钥）；灾难性安全硬阻断不可审批
 - **symlink 写防护**（T5b）：edit_file 写路径含符号链接（自身/父目录）拒绝写入防越界（fail-closed + realpath 引导）；read_file 读 symlink 如实标注不拒绝
 - **评测体系**（T4）：固定评测集 `tests/eval_sets/scenarios_v1.json`（6 场景，判定口径源自内部实证基线）+ 运行器 `scripts/run_eval.py`（真实 LLM / `--dry` 管道验证，判定 + Wilson CI + 报告落盘 `docs/metrics/`）+ CI nightly 自动运行
-- **CI + 版本**（T7/B11）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；语义化版本 v0.6.27；tag 触发门禁复核 + 单写者 Release 草稿 + GitHub 自动生成发布说明（发布节奏制度化）
+- **CI + 版本**（T7/B11）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；语义化版本 v0.6.28；tag 触发门禁复核 + 单写者 Release 草稿 + GitHub 自动生成发布说明（发布节奏制度化）
 - **插件化 Skill**（B3）：`skills/<name>/SKILL.md` 目录自动扫描（`SKILLS_DIR`，默认 ./skills），AI 经 `skill_list`/`skill_load` 发现并加载外部技能执行——外部开发者零代码扩展框架能力；损坏/缺失文件 fail-open 跳过；仓库自带示例技能（`skills/`：notebook-session/incident-report）可直接 `skill_list` 发现体验
 - **Method Learning v1**：`search_records(kind=method)` 渐进发现/精确水合，支持 Teacher/Candidate/qualified/active/hold 等生命周期与独立 qualification；运行时 candidate 默认写 `data/methods/`，不自动注入 prompt。`METHOD_REFLECTION_MODE` 默认 `auto`——run 完成后按机械 friction（≥6 轮 / ≥6 工具 / ≥2 失败 / 重复调用 ≥2 / 停滞）触发一次隔离 self-distill，每次入队至多产生 1 次后台模型调用；`off` 显式关闭（非法值 fail-safe 回 off）。
 - **Learning Plane 装配**（DESIGN-20260910 §6）：`LEARNING_PLANE_ENABLED=1` 时 `engine.learning_journal` 注入（工厂/直接构造两路径反查断链=0），episode 完成后 LearningJournal 落 durable 队列，LearningPlane 后台消费执行 ReflectionRun（前台运行让位：进程内注册表 + 跨进程 `*.run.lock` 探测，requeue 不忙等），candidate 经 MethodStore 写入并带运行时推导 provenance（真实 episode ref + learning job ref）；**默认开启**（2026-09-17 起学习闭环为一等能力；`LEARNING_PLANE_ENABLED=0` 显式关闭，置空同 0——空 journal 时仅空闲守护线程、零模型调用）；method qualification 的 verdict（pass/fail/mixed/insufficient）判定权在模型——程序只证 episode 身份与 provenance（qualification episode ≠ source episode 防自证），旧 verdict ≠ 当前源真相，适用性由模型按当前任务自主判断
@@ -138,6 +139,7 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 .venv/bin/python -m llm_loop.cli evolve-review <id> <accepted|rejected>  # 审阅演进建议（accepted 且权限允许 → 自动执行）
 .venv/bin/python -m llm_loop.cli evolve-complete <id> "<结果说明>"  # 人工完成登记（涉边界演进 → executed, executor=human）
 .venv/bin/python -m llm_loop.cli export-distill [--input-dir DIR] [--output FILE] [--report FILE] [--force]  # 导出蒸馏数据集（薄壳只读，ReAct JSONL + 统计报告）
+.venv/bin/python -m llm_loop.cli export-serve-mcp [--experiences-dir DIR] [--methods-dir DIR] [--evidence-owner WS/SESS]  # 只读导出 MCP server（stdio；证据面默认禁用，opt-in）
 .venv/bin/python -m llm_loop.cli event-inventory [--event-logs-dir DIR]  # 事件日志盘点（只读，规模数字+割裂点，文件零修改）
 .venv/bin/python -m llm_loop.cli event-migrate [--event-logs-dir DIR] [--force]  # 存量 session 迁移为事件日志（先备份 _backup/<ts>/，幂等）
 .venv/bin/python -m llm_loop.cli event-verify [--all|--session ID] [--event-logs-dir DIR]  # 重放视图与源逐字段对账

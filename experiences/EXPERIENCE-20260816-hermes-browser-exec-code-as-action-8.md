@@ -24,3 +24,7 @@ updated_at: "2026-08-16T14:35:18.507744+08:00"
 6. 工具文档开头写"何时不要用"：纯 HTTP 能拿到的别起浏览器。
 7. 安全边界进 prompt + 工具注册门控：登录墙停下问用户；browser_exec 仅在有 terminal 工具集的会话注册。
 8. 低成本可观测性：代码首行 ≤60 字符注释直接当 UI 步骤标签。
+
+## 2026-10-10 lifecycle review
+
+S2 存量回溯分类核验：调研报告 docs/local/RESEARCH-20260816-hermes-browser-exec.md 仍在，模式知识有效，保持 active。注：正文提及的 tools/browser_use_cli.py 等文件属于 Hermes 上游仓库（非本工作区路径），不构成失效信号。

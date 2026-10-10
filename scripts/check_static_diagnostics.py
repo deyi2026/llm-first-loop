@@ -122,17 +122,31 @@ def deserialize(rows: list[dict[str, Any]]) -> collections.Counter[tuple[str, st
 
 
 def changed_python_paths(root: Path) -> set[str]:
-    """Source under test, including staged/uncommitted source for local preflight."""
+    """Source under test, including staged/uncommitted source for local preflight.
+
+    Prints per-source provenance: a 2026-10-10 mis-rooted run reported a
+    changed-set inconsistent with the actual HEAD diff, and no receipt field
+    showed where the set came from, which cost an hour of forensics.
+    """
     head = _git(root, "rev-parse", "HEAD").decode().strip()
     parent = _git(root, "rev-parse", "HEAD^").decode().strip()
-    changes = set()
-    for args in (
-        ("diff", "--name-only", "-z", "--diff-filter=ACMR", parent, head),
-        ("diff", "--name-only", "-z", "--diff-filter=ACMR", "HEAD"),
-        ("ls-files", "--others", "--exclude-standard", "-z"),
+    sources: dict[str, set[str]] = {}
+    for label, args in (
+        ("committed", ("diff", "--name-only", "-z", "--diff-filter=ACMR", parent, head)),
+        ("uncommitted", ("diff", "--name-only", "-z", "--diff-filter=ACMR", "HEAD")),
+        ("untracked", ("ls-files", "--others", "--exclude-standard", "-z")),
     ):
-        changes.update(filter(None, _git(root, *args).decode().split("\0")))
-    return {p for p in changes if p.endswith(".py") and p.startswith(("src/", "tests/", "scripts/"))}
+        raw = filter(None, _git(root, *args).decode().split("\0"))
+        sources[label] = {
+            p for p in raw
+            if p.endswith(".py") and p.startswith(("src/", "tests/", "scripts/"))
+        }
+    for label in ("committed", "uncommitted", "untracked"):
+        paths = sorted(sources[label])
+        print(f"ratchet changed[{label}]={len(paths)}")
+        for path in paths[:12]:
+            print(f"ratchet changed[{label}]: {path}")
+    return sources["committed"] | sources["uncommitted"] | sources["untracked"]
 
 
 def validate_baseline(
@@ -152,6 +166,7 @@ def validate_baseline(
         ).returncode
         == 0
     )
+    print(f"ratchet origin_head={origin[:12]} ancestry_enforced={origin_present}")
     if not origin_present:
         # Sanitized public lineage (CI) never carries the private origin commit
         # object; frozen-ledger SHA256 + schema checks above stay the integrity
@@ -188,13 +203,21 @@ def main() -> int:
     parser.add_argument("--tool", choices=TOOLS, required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
+    head = _git(root, "rev-parse", "HEAD").decode().strip()
     ledger = root / BASELINE_REL
     raw = ledger.read_bytes()
+    ledger_sha = hashlib.sha256(raw).hexdigest()
+    print(f"ratchet root={root}")
+    print(
+        f"ratchet HEAD={head[:12]} "
+        f"ledger_sha256={ledger_sha[:12]} (frozen {FROZEN_BASELINE_SHA256[:12]})"
+    )
     baseline = json.loads(raw)
     validate_baseline(root, baseline, raw, TOOLS, frozen_sha256=FROZEN_BASELINE_SHA256)
     python = sys.executable
     version, current = run_analyzer(root, python, args.tool)
     expected_version = baseline["versions"][args.tool]
+    print(f"ratchet analyzer {args.tool}: actual={version} frozen={expected_version}")
     if version != expected_version:
         raise ValueError(f"{args.tool} analyzer version drift: actual={version!r} frozen={expected_version!r}")
     old = deserialize(baseline["diagnostics"][args.tool])

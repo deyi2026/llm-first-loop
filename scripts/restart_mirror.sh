@@ -257,6 +257,14 @@ RESTART_PORT="$WEB_PORT"
 
 _log() { echo "[mirror] $(date '+%H:%M:%S') $*"; }
 
+# Endpoint queries are value channels; diagnostics must never reach stop/start.
+_web_endpoint_preflight() {
+  if [[ ! "$RESTART_PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$RESTART_PORT < 1 || 10#$RESTART_PORT > 65535 )); then
+    _log "❌ Web 端口解析无效，拒绝停止服务: $RESTART_PORT"
+    return 1
+  fi
+}
+
 # P0-A shared-service lifecycle authority: mutating restarts require an
 # operator-published desired deployment that exactly binds code/runtime roots and
 # tracked Git identity. Web/all also bind the ignored WebUI artifact tree. This is
@@ -962,6 +970,36 @@ _knowledge_binding_preflight() {
   return 1
 }
 
+# EVO-20261009-9d116efa G1：runtime.toml 与目标代码 schema 兼容预检。
+# 事故背景：runtime.toml 先落字段、目标代码未注册（2026-10-09 task_budget_canary_config，
+# 7fe0170d4 目标重启失败、41 分钟人工回滚）。本预检用【目标 release 自己的 resolver】
+# （PYTHONPATH 钉 $CODE_ROOT/src）对 live runtime.toml 做 check-only 严格解析：
+# 未知字段/类型不符/密钥违规 ⇒ 中止重启，stage_fact 保持 not_started（零物理副作用，
+# R1 白名单标记），旧进程不动。复用目标版本自己的校验代码，不维护第二份字段清单。
+_runtime_toml_schema_preflight() {
+  [[ -f "$RUNTIME_ROOT/runtime.toml" ]] || {
+    _log "ℹ️ runtime.toml 不存在，跳过 schema 预检"
+    return 0
+  }
+  _log "runtime.toml schema preflight（目标代码自校验）..."
+  local _out _rc=0
+  _out="$(LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" \
+      "$VENV_PY" -m llm_loop.runtime.resolver --check-toml "$RUNTIME_ROOT/runtime.toml" web feishu learning 2>&1)" || _rc=1
+  # fail-closed（实证 2026-10-09）：旧版 resolver 无 --check-toml 入口时静默 exit 0
+  # 且零输出（shell 残留 LFL_RESTART_CODE_ROOT 指旧 release 即可触发）——与
+  # WEB_PORT 解析同型陷阱。输出缺明确 PASS 标记一律视为校验通道失灵，拒绝停止服务。
+  if [[ "$_rc" -eq 0 && "$_out" == *"校验通过"* ]]; then
+    _log "✅ runtime.toml schema preflight PASS: $_out"
+    return 0
+  fi
+  if [[ "$_rc" -eq 0 ]]; then
+    _log "❌ runtime.toml schema 校验通道失灵（目标 resolver 不支持 --check-toml 或零输出），拒绝停止服务: ${_out:-<empty>}"
+  else
+    _log "❌ runtime.toml 与目标代码 schema 不兼容（字段未注册/类型违规），拒绝停止服务: $_out"
+  fi
+  return 1
+}
+
 
 # ── restart 互斥锁（2026-09-24 13:08 双通道并发实证）──
 # guard 巡检在权威通道停旧进程的端口空窗 detect_fail → 并发拉起 → 双 web 抢端口
@@ -1030,16 +1068,21 @@ case "${1:-web}" in
   preflight) # T0-A3(2026-09-16): 只读 dry-run——根校验+来源判定+webui 产物；
              # 不触任何服务、不验 service_control 绑定（那是 mutating 路径的职责）。
              # R2.3(2026-09-22): 追加 store 绑定校验——dual-root 缺声明在部署预检即 fail。
+             # EVO-20261009-9d116efa G1: 追加 runtime.toml schema 兼容性（目标代码自校验）。
+             _web_endpoint_preflight || exit 1
              _webui_artifact_preflight || exit 1
              _knowledge_binding_preflight || exit 1
+             _runtime_toml_schema_preflight || exit 1
              _log "✅ PREFLIGHT_ONLY 通过（未触碰任何服务）"
              exit 0 ;;
   web)     _webui_artifact_preflight || { _write_receipt web "1" "webui_artifact_preflight_failed"; exit 1; }
+           _web_endpoint_preflight || { _write_receipt web "1" "web_endpoint_preflight_failed"; exit 1; }
            _acquire_restart_lock web
            _service_control_preflight web || { _write_receipt web "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck web || { _write_receipt web "1" "active_run_precheck_failed"; exit 1; }
            _knowledge_binding_preflight || { _write_receipt web "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt web "1" "knowledge_preflight_failed"; exit 1; }
+           _runtime_toml_schema_preflight || { _write_receipt web "1" "runtime_toml_preflight_failed"; exit 1; }
            _rc=0
            if ! _stop_web "$RESTART_PORT"; then
              _rc=1
@@ -1060,6 +1103,7 @@ case "${1:-web}" in
            _restart_precheck feishu || { _write_receipt feishu "1" "active_run_precheck_failed"; exit 1; }
            _knowledge_binding_preflight || { _write_receipt feishu "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt feishu "1" "knowledge_preflight_failed"; exit 1; }
+           _runtime_toml_schema_preflight || { _write_receipt feishu "1" "runtime_toml_preflight_failed"; exit 1; }
            _rc=0
            if ! _feishu_stop; then
              _rc=1
@@ -1078,6 +1122,7 @@ case "${1:-web}" in
   learning) _service_control_preflight learning || { _write_receipt learning "1" "service_control_binding_failed"; exit 1; }
            _knowledge_binding_preflight || { _write_receipt learning "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt learning "1" "knowledge_preflight_failed"; exit 1; }
+           _runtime_toml_schema_preflight || { _write_receipt learning "1" "runtime_toml_preflight_failed"; exit 1; }
            _rc=0
            if ! _learning_stop; then
              _rc=1
@@ -1094,11 +1139,13 @@ case "${1:-web}" in
            _write_receipt learning "$_rc" ""
            exit "$_rc" ;;
   all)     _webui_artifact_preflight || { _write_receipt all "1" "webui_artifact_preflight_failed"; exit 1; }
+           _web_endpoint_preflight || { _write_receipt all "1" "web_endpoint_preflight_failed"; exit 1; }
            _acquire_restart_lock all
            _service_control_preflight all || { _write_receipt all "1" "service_control_binding_failed"; exit 1; }
            _restart_precheck all || { _write_receipt all "1" "active_run_precheck_failed"; exit 1; }
            _knowledge_binding_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }
            _knowledge_preflight || { _write_receipt all "1" "knowledge_preflight_failed"; exit 1; }
+           _runtime_toml_schema_preflight || { _write_receipt all "1" "runtime_toml_preflight_failed"; exit 1; }
            # 修2(2026-09-09): 失败补偿——web 停/启失败不再 && 短路吞掉 feishu 恢复；
            # 各服务按自身停止成败独立决定是否重启（停失败强启=制造双进程，禁止）。
             _rc=0; _web_stopped=0; _feishu_stopped=0; _learning_stopped=0

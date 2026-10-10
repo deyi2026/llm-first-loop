@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -26,8 +27,12 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _SAFE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _STORE_LOCK_FILE = ".__method_store.lock"
 _STAGING_DIR = ".__method_store_staging"
+_USAGE_LEDGER_FILE = "usage.jsonl"
+_USAGE_WATERMARK_FILE = ".usage_watermark.json"
 _DIR_FSYNC_ATTEMPTS = 3
 _PROCESS_LOCK = threading.RLock()
+
+logger = logging.getLogger(__name__)
 
 try:
     import fcntl
@@ -55,6 +60,19 @@ class MethodCommitUncertainError(OSError):
         self.operation = operation
         self.expected_sha256 = expected_sha256
         self.visible_state = visible_state
+
+
+def _normalize_task_type(value: object) -> str:
+    """Canonicalize a model-declared qualification task domain (EVO-20261010-994e30f4).
+
+    Free-form by design (browser / code-edit / diagnosis / writing / ...), but
+    case/whitespace variants collapse to one token so ``Code Edit``,
+    ``code_edit`` and ``code-edit`` count as a single type. Empty or missing
+    declarations stay ``unknown`` and never count toward activation diversity.
+    """
+    text = str(value if value is not None else "").strip().casefold()
+    text = "-".join(part for part in text.replace("_", " ").split() if part)
+    return text[:64] or "unknown"
 
 
 @contextlib.contextmanager
@@ -408,15 +426,17 @@ class MethodStore:
         return candidate
 
     def _iter_paths(self) -> list[Path]:
-        paths: list[Path] = []
-        if self._seed_dir is not None and self._seed_dir.exists():
-            paths.extend(self._seed_dir.glob("*/METHOD.md"))
-        if self._dir.exists():
-            paths.extend(self._dir.glob("*/METHOD.md"))
-        # Runtime copy wins exact-id collisions, but both stores remain independently auditable.
+        # ASSESS-20261008 BUG-18: seed → runtime 显式覆盖——同 ID 冲突由来源身份
+        # 决定（Runtime copy wins），各来源内部确定性排序。原实现把两类路径整体
+        # sorted 后用后者覆盖，优先级实际取决于目录字典序（z-seed/a-runtime 下
+        # seed 会赢），与注释意图相反。
         by_id: dict[str, Path] = {}
-        for path in sorted(paths):
-            by_id[path.parent.name] = path
+        if self._seed_dir is not None and self._seed_dir.exists():
+            for path in sorted(self._seed_dir.glob("*/METHOD.md")):
+                by_id[path.parent.name] = path
+        if self._dir.exists():
+            for path in sorted(self._dir.glob("*/METHOD.md")):
+                by_id[path.parent.name] = path
         return [by_id[k] for k in sorted(by_id)]
 
     def _load_path(self, path: Path) -> MethodRecord | None:
@@ -858,12 +878,83 @@ class MethodStore:
         if clean_session:
             entry["session_id"] = clean_session
         self._dir.mkdir(parents=True, exist_ok=True)
-        path = self._dir / "usage.jsonl"
+        path = self._dir / _USAGE_LEDGER_FILE
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
             f.flush()
             os.fsync(f.fileno())
+        self._refresh_usage_watermark_locked()
         return entry
+
+    def _count_usage_lines(self) -> int:
+        """Count non-empty usage ledger lines; unreadable ledger reports zero."""
+        path = self._dir / _USAGE_LEDGER_FILE
+        if not path.is_file():
+            return 0
+        count = 0
+        try:
+            with path.open("rb") as f:
+                for raw in f:
+                    if raw.strip():
+                        count += 1
+        except OSError:
+            return 0
+        return count
+
+    def _refresh_usage_watermark_locked(self) -> None:
+        """Keep a monotonic line-count watermark for the append-only usage ledger.
+
+        EVO-20261010 usage-ledger loss: ``record_use`` had fsync'd and returned
+        success, yet the uncommitted append was later destroyed by a git
+        tree-clean revert because the ledger was also a tracked file. The
+        watermark never gates writes and never ratchets down; it only makes
+        external truncation observable at the next integrity check.
+        Call under the store's single-writer lock.
+        """
+        wm_path = self._dir / _USAGE_WATERMARK_FILE
+        previous = 0
+        try:
+            previous = int(json.loads(wm_path.read_text(encoding="utf-8")).get("count", 0))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            previous = 0
+        count = max(previous, self._count_usage_lines())
+        try:
+            payload = json.dumps({"count": count, "ts": _now()}, sort_keys=True)
+            with wm_path.open("w", encoding="utf-8") as f:
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError as exc:  # noqa: BLE001 - watermark is observability, not a write gate
+            logger.warning("usage watermark refresh failed (non-fatal): %s", exc)
+
+    def check_usage_integrity(self) -> dict[str, Any]:
+        """Report ledger-vs-watermark drift without mutating either file.
+
+        ``lost > 0`` means the ledger currently holds fewer entries than the
+        high-water mark of successful fsync'd appends: entries were removed by
+        an external actor (git revert, manual edit, partial restore).
+        """
+        wm_path = self._dir / _USAGE_WATERMARK_FILE
+        try:
+            watermark = json.loads(wm_path.read_text(encoding="utf-8"))
+            watermark_count = int(watermark.get("count", 0))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return {"monitored": False, "lost": 0}
+        current = self._count_usage_lines()
+        lost = max(watermark_count - current, 0)
+        report: dict[str, Any] = {
+            "monitored": True,
+            "lost": lost,
+            "watermark_count": watermark_count,
+            "current_count": current,
+            "watermark_ts": str(watermark.get("ts", "")),
+        }
+        if lost:
+            logger.error(
+                "method usage ledger lost %d entr%s (watermark=%d current=%d watermark_ts=%s)",
+                lost, "y" if lost == 1 else "ies", watermark_count, current, report["watermark_ts"],
+            )
+        return report
 
     def usage_entries(self, method_ref: str = "") -> list[dict[str, Any]]:
         """Read bounded-size local use declarations; semantic interpretation stays model-owned."""
@@ -899,6 +990,7 @@ class MethodStore:
         evidence_refs: list[str] | None = None,
         note: str = "",
         evaluator: str = "model",
+        task_type: str = "unknown",
     ) -> dict[str, Any]:
         """Serialize seed overlay creation and qualification append with lifecycle RMW."""
         self._require_write_safe()
@@ -907,6 +999,7 @@ class MethodStore:
                 method_ref, task_ref=task_ref, verdict=verdict, mechanism=mechanism,
                 task_benefit=task_benefit, promotion=promotion,
                 evidence_refs=evidence_refs, note=note, evaluator=evaluator,
+                task_type=task_type,
             )
 
     def _record_qualification_locked(
@@ -921,6 +1014,7 @@ class MethodStore:
         evidence_refs: list[str] | None = None,
         note: str = "",
         evaluator: str = "model",
+        task_type: str = "unknown",
     ) -> dict[str, Any]:
         """Append a bounded qualification declaration without changing lifecycle status."""
         record = self.get(method_ref)
@@ -954,6 +1048,10 @@ class MethodStore:
             "evidence_refs": [str(v).strip() for v in (evidence_refs or []) if str(v).strip()],
             "note": note.strip()[:4000],
             "evaluator": evaluator.strip()[:128] or "model",
+            # EVO-20261010-994e30f4: model-declared task domain of the
+            # qualification episode. Old entries without this key read as
+            # "unknown" and never count toward activation diversity.
+            "task_type": _normalize_task_type(task_type),
         }
         freshness_hashes = self._freshness_snapshot(record)
         if freshness_hashes:
@@ -1121,6 +1219,32 @@ class MethodStore:
                 self._blocked(method_ref, target, "promotion_pass", "no promotion=pass with episode provenance", episode_ref=episode_ref)
                 raise ValueError(
                     "qualified requires at least one promotion=pass qualification with runtime episode provenance"
+                )
+        if target == "active" and record.status != "active":
+            # EVO-20261010-994e30f4: activation requires cross-task-type
+            # qualification. task_type is a model declaration; the program
+            # cannot verify task domains, so the gate only counts distinct
+            # declared types among verdict=pass entries ("unknown" never
+            # counts; the source task counts as one). Cards that are already
+            # active are grandfathered: the check applies to transitions into
+            # active only, never retroactively.
+            distinct_types = {
+                _normalize_task_type(e.get("task_type"))
+                for e in self.qualification_entries(method_ref)
+                if e.get("verdict") == "pass"
+            }
+            distinct_types.discard("unknown")
+            if len(distinct_types) < 2:
+                self._blocked(
+                    method_ref, target, "cross_task_type_qualification",
+                    f"distinct pass task_type count={len(distinct_types)} (<2)",
+                    episode_ref=episode_ref,
+                )
+                raise ValueError(
+                    "activation requires cross-task-type qualification: record "
+                    "verdict=pass qualifications spanning >=2 distinct task_type "
+                    "values (source domain plus at least one other); missing/unknown "
+                    "task_type does not count"
                 )
         # EVO-20260929-5283ab1b P1 (R3): destructive disposition needs independent
         # factual basis. The program never decides a Method *should* die; it only

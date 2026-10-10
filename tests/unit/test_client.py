@@ -47,5 +47,8 @@ def test_chat_stream_raises_on_sse_error_event():
                 raised = e
 
             assert isinstance(raised, LLMHTTPError), f"应抛 LLMHTTPError, 实际: {type(raised).__name__}: {raised}"
-            assert raised.status_code == 500
+            # ASSESS-20261008 BUG-03: status_code 保留真实 HTTP 状态（200），
+            # 业务码 500 由 provider_code 承载；body 结构化携带可解析业务码。
+            assert raised.status_code == 200
+            assert getattr(raised, "provider_code", None) == "500"
             assert "System message" in raised.body or "Jinja" in raised.body

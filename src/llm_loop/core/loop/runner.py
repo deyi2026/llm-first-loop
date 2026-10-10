@@ -27,6 +27,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -492,6 +493,24 @@ class BackgroundRunner:
                     run_generation = str(active_generation(session_id) or "")
             else:
                 return False
+        if run_generation:
+            # I4-C: the optional bound budget is a separate hard
+            # no-new-work authority. Revoke the *exact* Run budget before
+            # the existing tool cancellation hooks. A failed durable CAS
+            # leaves a local fail-closed latch; log uncertainty rather than
+            # treating this boolean ACK as physical/billing closure.
+            from llm_loop.resources.task_budget_dispatch import cancel_active_task_budget
+
+            try:
+                cancel_active_task_budget(
+                    session_id, run_generation, reason=reason
+                )
+            except Exception:  # noqa: BLE001 - preserve existing tool stop and report uncertainty
+                logger.exception(
+                    "task budget Stop persisted status UNKNOWN; local Run latch revoked: "
+                    "session=%s generation=%s",
+                    session_id, run_generation,
+                )
         registry = getattr(self._engine, "registry", None)
         cancel_session = getattr(registry, "cancel_session", None)
         if callable(cancel_session):
@@ -689,6 +708,7 @@ class BackgroundRunner:
         ingress: object | None = None,
         user_metadata: dict[str, Any] | None = None,
         terminal_callback: Callable[[str, str | None], None] | None = None,
+        signed_web_canary: Any = None,
     ) -> tuple[RunHandle | None, queue.Queue | None]:
         """注册 + 起后台线程；返回 (handle, queue)，调用方订阅消费.
 
@@ -765,6 +785,7 @@ class BackgroundRunner:
                 ingress,
                 user_metadata,
                 terminal_callback,
+                signed_web_canary,
             ),
             name=f"bg-run-{session_id[:8]}",
             daemon=True,  # B4: 进程退出不阻塞
@@ -800,6 +821,7 @@ class BackgroundRunner:
         ingress: object | None = None,
         user_metadata: dict[str, Any] | None = None,
         terminal_callback: Callable[[str, str | None], None] | None = None,
+        signed_web_canary: Any = None,
     ) -> None:
         """后台线程体：copy_context 传播（P0-5 模式）→ 迭代 run_stream → 广播终态."""
         self._worker_idents.add(threading.get_ident())
@@ -840,7 +862,14 @@ class BackgroundRunner:
                 finally:
                     current_run_generation.reset(generation_token)
 
-            result = ctx.run(_run)
+            # Background workers do not inherit the request thread's budget
+            # ContextVars. Bind only the trusted server-injected, exact-session
+            # canary across the whole generator consumption, never a user flag.
+            def _run_in_scope() -> Any:
+                with signed_web_canary.bind() if signed_web_canary is not None else nullcontext():
+                    return _run()
+
+            result = ctx.run(_run_in_scope)
             # The run itself owns terminal side effects. Subscribers may disconnect at any
             # point and therefore cannot be the sole owner of durable terminal callbacks.
             self._notify_terminal(terminal_callback, "completed", None)

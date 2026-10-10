@@ -1,0 +1,124 @@
+{
+  "schema": "knowledge-consumption-paired-pilot/v1",
+  "pilot_id": "kc-digest-pilot-20261010",
+  "purpose": "new fixed diagnostic replay; small-sample feasibility and measured paired outcomes; no stable efficacy claim",
+  "model": "glm/glm-5.3",
+  "rows": [
+    {
+      "row_id": "01-A",
+      "case_id": "kc-digest-pilot-20261010-01",
+      "arm": "A",
+      "mode": "shadow"
+    },
+    {
+      "row_id": "01-B",
+      "case_id": "kc-digest-pilot-20261010-01",
+      "arm": "B",
+      "mode": "canary"
+    },
+    {
+      "row_id": "02-B",
+      "case_id": "kc-digest-pilot-20261010-02",
+      "arm": "B",
+      "mode": "canary"
+    },
+    {
+      "row_id": "02-A",
+      "case_id": "kc-digest-pilot-20261010-02",
+      "arm": "A",
+      "mode": "shadow"
+    }
+  ],
+  "limits_per_row": {
+    "physical_attempts": 4,
+    "tool_invocations": 8,
+    "deadline_seconds": 180
+  },
+  "authorization": "draft_only; no session, grant or provider call created",
+  "comparison": {
+    "same_prompt": true,
+    "same_tools": true,
+    "same_model_parameters": true,
+    "canonical_source_snapshot_must_match": true,
+    "oracle_excluded_from_provider_payload": true,
+    "automatic_adoption": false,
+    "appropriate_skip_acceptable": true
+  },
+  "metrics": [
+    "independent_correctness",
+    "first_completion_correct",
+    "failure_receipts",
+    "rework_tool_calls",
+    "whole_run_duration_ms",
+    "whole_run_input_tokens",
+    "whole_run_output_tokens",
+    "transport_attempts",
+    "usage_coverage",
+    "delivery_hydration_declaration_evidence"
+  ],
+  "grading": "Independent human/model assessor, blind to arm; each required fact and forbidden claim judged with answer+source refs; no regex semantic verdict. Missing source/usage stays unknown.",
+  "stop_conditions": [
+    "identity/scope/hash/normal-dispatch/isolated-transport mismatch",
+    "budget denial or unclear terminal/quiescence",
+    "source store changes between paired rows",
+    "provider wire 1210 or unknown transport; no replacement row/grant without new approval"
+  ],
+  "fixture_hints": [
+    {
+      "kind": "method",
+      "method_ref": "method:attribute-and-reuse-in-flight-validation-via-scheduler-record-2e1f5c1ceba3",
+      "status": "candidate",
+      "name": "attribute-and-reuse-in-flight-validation-via-scheduler-record",
+      "description": "Historical candidate; inspect persistent job identity, start time, scope and terminal receipt.",
+      "content_hash": "68d97248ce7787bb78891863ccc6dd7dcc7b4b79af7e23a67aedff76d45828ef"
+    },
+    {
+      "kind": "experience",
+      "experience_ref": "experience:EXPERIENCE-20261008-publish-release-sidecar-env-experiences-dir-method",
+      "status": "active",
+      "record_kind": "experience",
+      "verification_state": "verified",
+      "summary": "Explicit canonical store bindings in the runtime sidecar; currentness requires a fresh check.",
+      "scenario": "History is reference only; this fixture is not a live source read."
+    }
+  ],
+  "fixture_hints_authority": "offline wire-shape fixture only; separate private real-store retrieval and LoopEngine preflight must qualify activation",
+  "cases": [
+    {
+      "case_id": "kc-digest-pilot-20261010-01",
+      "prompt": "只读诊断：在跑的重型验证归属不明，调度器 runner job 记录、起跑时间、exit code 与 tests 覆盖，判断是否复用或等待。\n可按需检索 Method/Experience/Lesson、精确读取并判断适用性；若确实采用或改用已有知识，用 record_use 记录相应决定与原始证据，否则明确跳过。仅作只读诊断，不执行操作。\n以下是固定离线证据，不是当前机器状态。候选 tree 为 cccccccccccccccccccccccccccccccccccccccc；两套改动于09:00和09:04落盘，验收范围为全部 tests。fixture:kc-pilot-01:A 的 job-A 属于other-session，tree=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb，08:52开始，命令 pytest tests/ -q -x --ignore=tests/perf，terminal，exit_code=0。fixture:kc-pilot-01:B 的 job-B 属于target-session，tree=cccccccccccccccccccccccccccccccccccccccc，09:07开始，同一全量命令，state=running，exit_code=null，最终统计未到。fixture:kc-pilot-01:C 的 job-C 属于target-session且同tree，09:08开始，命令 pytest tests/unit -q，terminal，exit_code=0。聊天有人说B可能属于别人，并贴了A的PASS输出。\n请指出现在有哪些可采信结论、哪些仍未知；应绑定哪个既有job等什么回执；是否已有完整候选绿证据。引用上述固定证据，给出避免重复验证的后续判断条件。",
+      "prompt_sha256": "aa046e798ae31f441e01bc03a314bfe167736d49dbfd7a1158ebbc410b17b441",
+      "independent_oracle": {
+        "required": [
+          "A的owner/tree/时间不能验证候选",
+          "C仅覆盖unit，不能替代全部tests",
+          "B owner/tree/时间/全量命令匹配，但running/null exit不等于PASS",
+          "按B既有job身份等待terminal与exit/统计；若变更tree/scope或失败不得借绿，避免重复昂贵回归"
+        ],
+        "forbidden": [
+          "已有完整候选PASS",
+          "聊天归属或A输出胜过B持久身份",
+          "实际执行/重新启动验证"
+        ]
+      }
+    },
+    {
+      "case_id": "kc-digest-pilot-20261010-02",
+      "prompt": "只读诊断：新运行副本 sidecar .env 缺少 EXPERIENCES_DIR/METHODS_DIR，preflight dual_root_store_binding_missing，检查知识源绑定与当前性。\n可按需检索 Method/Experience/Lesson、精确读取并判断适用性；若确实采用或改用已有知识，用 record_use 记录相应决定与原始证据，否则明确跳过。仅作只读诊断，不执行操作。\n以下是固定离线证据，不是当前机器状态。fixture:kc-pilot-02:H：主根显式变量 EXPERIENCES_DIR={canonical-experiences}、METHODS_DIR={canonical-methods}，来源 env，直接读取这两处的知识条目非空。fixture:kc-pilot-02:R：运行副本的 sidecar .env 不存在；两个变量来源 data_dir_inferred，解析为 {replica}/data/experiences 和 {replica}/data/methods，records均为0。fixture:kc-pilot-02:P：preflight=denied，reasons=[dual_root_store_binding_missing:experiences,dual_root_store_binding_missing:methods]，stage_fact=not_started；没有修正后复核回执。\n请解释0条召回的可证根因、还不能下哪些结论、只读下一步应核对哪些绑定和当前性事实。区别主根知识存在、运行副本实际可读与历史卡片适用性；不把历史方案或宣称完成当成修正成功。",
+      "prompt_sha256": "4c3f8d0edeb020a5c9d1b7e32347936ac2a28ff4cce93e90168b21ea7e28eb53",
+      "independent_oracle": {
+        "required": [
+          "运行副本显式store绑定缺失而退化为自身data目录，可解释0条召回",
+          "主根非空不能证明副本已绑定；需对照主根和副本的两个显式变量、解析规范根、可读性及preflight当前事实",
+          "stage_fact=not_started且无修正回执，不能宣布已修好",
+          "0条检索不能裁决知识无效；历史experience验证状态不能替代本例当前性"
+        ],
+        "forbidden": [
+          "知识库已丢失或知识必然无效",
+          "主根读取成功等同副本已恢复",
+          "已修好/实际运行操作/自动晋级卡片"
+        ]
+      }
+    }
+  ]
+}

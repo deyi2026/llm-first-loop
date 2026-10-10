@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import threading
 import time
 import uuid
@@ -25,6 +26,18 @@ from llm_loop.event_log.model import Event, serialize_event
 from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
+
+
+class EventDurabilityError(RuntimeError):
+    """Strict authorization event definitely did not reach append dispatch."""
+
+
+class EventCommitUncertainError(RuntimeError):
+    """Event write attempted; power-loss durability is not established."""
+
+    def __init__(self, event_id: str | None) -> None:
+        self.event_id = event_id
+        super().__init__("human_event_commit_outcome_uncertain")
 
 
 def _now_iso() -> str:
@@ -183,6 +196,8 @@ class EventStore:
         try:
             import fcntl
         except ImportError:
+            if strict:
+                raise EventDurabilityError("cross_process_event_lock_unavailable") from None
             with self._fallback_locks_guard:
                 lock = self._fallback_locks.setdefault(session_id, threading.Lock())
             with lock:
@@ -191,9 +206,30 @@ class EventStore:
 
         lock_file = None
         try:
-            lock_file = open(  # noqa: SIM115 - lock spans generator yield; closed in finally
-                lock_path, "a", encoding="utf-8"
-            )
+            if strict:
+                fd = os.open(
+                    lock_path,
+                    os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                )
+                try:
+                    details = os.fstat(fd)
+                    if (
+                        not stat.S_ISREG(details.st_mode)
+                        or details.st_nlink != 1
+                        or details.st_uid != os.geteuid()
+                        or details.st_mode & 0o022
+                    ):
+                        raise OSError("untrusted_strict_event_lock")
+                    lock_file = os.fdopen(fd, "a", encoding="utf-8")
+                except BaseException:
+                    if lock_file is None:
+                        os.close(fd)
+                    raise
+            else:
+                lock_file = open(  # noqa: SIM115 - lock spans generator yield; closed in finally
+                    lock_path, "a", encoding="utf-8"
+                )
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         except OSError as exc:
             if lock_file is not None:
@@ -327,6 +363,85 @@ class EventStore:
                 return None
         if event is not None:
             self._extend_read_cache(event)
+        return event
+
+    def append_durable_human_message(self, session_id: str, payload: dict) -> Event:
+        """Strict power-loss fence for signed human ingress (never default-on).
+
+        No file+directory fsync and independent exact readback means no
+        authorization. Once a physical append is attempted, an I/O error is
+        UNCERTAIN rather than a safely retryable absence.
+        """
+        if (
+            not isinstance(payload, dict)
+            or payload.get("role") != "user" or payload.get("source") != "user"
+            or not isinstance(payload.get("content"), str)
+            or not isinstance(payload.get("metadata"), dict)
+            or payload["metadata"].get("origin_layer") != "user_instruction"
+            or payload["metadata"].get("program_origin") is not False
+        ):
+            raise EventDurabilityError("not_authoritative_human_message")
+        try:
+            session_id = _validate_session_id(session_id)
+        except ValueError as exc:
+            raise EventDurabilityError("invalid_human_session") from exc
+        if not self._enabled or not self._ensure_dir():
+            raise EventDurabilityError("human_event_store_unavailable")
+        event_dir = os.lstat(self._dir_fs)
+        if (
+            not stat.S_ISDIR(event_dir.st_mode)
+            or event_dir.st_uid != os.geteuid()
+            or event_dir.st_mode & 0o022
+        ):
+            raise EventDurabilityError("human_event_directory_not_trusted")
+        event: Event | None = None
+        attempted = False
+        with self._session_flock(session_id, strict=True):
+            self._rotate_check_throttled(session_id)
+            path = self._active_segment_path(session_id) if self._is_multi_segment(session_id) else self._path(session_id)
+            try:
+                flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+                fd = os.open(path, flags, 0o600)
+                with os.fdopen(fd, "a", encoding="utf-8") as stream:
+                    details = os.fstat(stream.fileno())
+                    if (
+                        not stat.S_ISREG(details.st_mode)
+                        or details.st_uid != os.geteuid()
+                        or details.st_nlink != 1
+                        or details.st_mode & 0o022
+                    ):
+                        raise EventDurabilityError("human_event_file_not_trusted")
+                    attempted = True
+                    event = self._append_locked(stream, session_id, "message.appended", payload)
+                    if event is None:
+                        raise EventCommitUncertainError(None)
+                    os.fsync(stream.fileno())
+                # Always sync deepest -> ancestors; an unordered set could
+                # flush the ancestor before its child directory entry.
+                event_root = os.path.abspath(self._dir_fs)
+                dirs = dict.fromkeys((
+                    os.path.dirname(os.path.abspath(path)),
+                    event_root, os.path.dirname(event_root),
+                ))
+                for directory in dirs:
+                    dir_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                    try:
+                        os.fsync(dir_fd)
+                    finally:
+                        os.close(dir_fd)
+                reader = EventStore(self._dir, enabled=True)
+                matches = [row for row in reader.read(session_id) if row.event_id == event.event_id]
+                if reader.last_read_skipped or len(matches) != 1 or matches[0] != event:
+                    raise EventCommitUncertainError(event.event_id)
+            except EventCommitUncertainError:
+                raise
+            except OSError as exc:
+                if attempted:
+                    raise EventCommitUncertainError(event.event_id if event else None) from exc
+                raise EventDurabilityError("human_event_not_appended") from exc
+        if event is None:
+            raise EventCommitUncertainError(None)
+        self._extend_read_cache(event)
         return event
 
     def _invalidate_read_cache(self, session_id: str) -> None:
@@ -540,6 +655,24 @@ class EventStore:
         f.flush()
         self._extend_read_cache(new_event)
         return new_event
+
+    def read_source_files(self, session_id: str) -> list[tuple[str, bytes]]:
+        """Explicit exact-byte read surface; never skip errors, parse, write or run hooks.
+
+        Ordinary read/read_cached retain their existing fail-open semantics.
+        Snapshot consumers own row integrity and concurrent-capture validation.
+        """
+        session_id = _validate_session_id(session_id)
+        paths = self._all_segment_paths(session_id) if self._is_multi_segment(session_id) else (
+            [self._path(session_id)] if os.path.exists(self._path(session_id)) else []
+        )
+        root = self._dir.resolve()
+        captured = []
+        for filename in paths:
+            source = Path(filename).resolve()
+            source.relative_to(root)
+            captured.append((os.path.relpath(filename, self._dir_fs), source.read_bytes()))
+        return captured
 
     def read(self, session_id: str) -> list[Event]:
         """读全部事件（按 seq 升序；损坏行如实跳过；文件不存在/非法ID返回空列表）.

@@ -7,6 +7,8 @@ AI 优先：程序仅通道，提取/判断归 AI。
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import os
 from typing import Any
 
@@ -75,6 +77,7 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
             "mechanism": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
             "task_benefit": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
             "promotion": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
+            "task_type": {"type": "string", "maxLength": 64, "description": "仅 record_qualification 消费：本 qualification 所属任务域的模型声明（如 browser/code-edit/diagnosis/writing；大小写与空白归一，不校验真伪）。activate 门（EVO-20261010-994e30f4）要求 verdict=pass 条目覆盖 ≥2 个不同 task_type 才能转 active；缺省 unknown 不计数。存量 active 卡 grandfather 不回溯"},
             "evidence_refs": {"type": "array", "items": {"type": "string"}, "description": "save_candidate/record_use/record_qualification 的证据引用；程序将证据绑定到当次调用所属 episode，不自动证明 refs 的归属与内容正确"},
             "note": {"type": "string", "description": "仅 record_use/record_qualification 随记录持久化；save_candidate/refine 不读取、不持久化"},
             "transition": {
@@ -89,7 +92,7 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
 
 _REFINE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
     "name": "refine_experience",
-    "description": "经验生命周期流转入口。archive/invalidate/restore 显式流转记录；experience_id 接受 stable experience:<id>、裸 ID 或 .md。使用结果日志暂不提供，避免形成无界 append-only 堆积。",
+    "description": "经验生命周期和使用声明入口。archive/invalidate/restore 显式流转；record_use 只声明 applied/adapted/not_applicable/rejected，回执经既有工具事件保存，不修改原卡、不自动验证或晋级。experience_id 推荐 stable experience:<id>；声明不是任务收益证明。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -99,8 +102,11 @@ _REFINE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
             },
             "action": {
                 "type": "string",
-                "enum": ["archive", "invalidate", "restore"],
+                "enum": ["archive", "invalidate", "restore", "record_use"],
             },
+            "use_decision": {"type": "string", "enum": ["applied", "adapted", "not_applicable", "rejected"], "description": "record_use 必填；由模型比较任务与经验目的作出判断"},
+            "note": {"type": "string", "maxLength": 512, "description": "简短适用依据或跳过理由；不保存隐藏思维链"},
+            "evidence_refs": {"type": "array", "maxItems": 16, "items": {"type": "string"}, "description": "声明的证据引用；程序不自动判断正确性"},
         },
         "required": ["experience_id", "action"],
     },
@@ -178,7 +184,15 @@ def _run_save_experience(args: dict, host: RegistryHost) -> ToolResult:
         source=args.get("source") or {},
         body=args.get("body", ""),
     )
-    status = ToolResultStatus.SUCCESS if content.startswith("[save_experience]") else ToolResultStatus.FAILURE
+    # The same prefix also occurs on FileExists and durability-uncertain
+    # receipts. Only the exact confirmed-create shape proves the write.
+    status = (
+        ToolResultStatus.SUCCESS
+        if content.startswith("[save_experience] 已沉淀 ")
+        and " experience_ref=experience:" in content
+        and " status=active " in content
+        else ToolResultStatus.FAILURE
+    )
     return ToolResult(status=status, content=content, tool_call_id="", tool_name="save_experience")
 
 
@@ -193,13 +207,51 @@ def _run_refine_experience(args: dict, host: RegistryHost) -> ToolResult:
         )
     from llm_loop.introspection.tools_experience import run_refine_experience
 
+    if args.get("action") == "record_use":
+        return _experience_use_declaration(args, store)
+
     content = run_refine_experience(
         store,
         experience_id=args.get("experience_id", ""),
         action=args.get("action", ""),
     )
-    status = ToolResultStatus.SUCCESS if content.startswith("[refine_experience]") else ToolResultStatus.FAILURE
+    status = (
+        ToolResultStatus.SUCCESS
+        if content.startswith("[refine_experience] experience:")
+        and "状态已更新为 " in content
+        else ToolResultStatus.FAILURE
+    )
     return ToolResult(status=status, content=content, tool_call_id="", tool_name="refine_experience")
+
+
+def _experience_use_declaration(args: dict, store: Any) -> ToolResult:
+    """Return a model-authored declaration; normal tool persistence is the ledger."""
+    ref = str(args.get("experience_id") or "").strip()
+    decision = str(args.get("use_decision") or "")
+    note = args.get("note") or ""
+    evidence = args.get("evidence_refs") or []
+    if (
+        not ref.startswith("experience:") or not ref[11:]
+        or decision not in {"applied", "adapted", "not_applicable", "rejected"}
+        or not isinstance(note, str) or len(note) > 512
+        or not isinstance(evidence, list) or len(evidence) > 16
+        or any(not isinstance(e, str) or len(e) > 256 for e in evidence)
+    ):
+        return _method_failure("refine_experience", "[参数错误] record_use 需要 stable experience ref、use_decision 和有界 note/evidence_refs")
+    doc = store.get(ref[11:])
+    if doc is None:
+        return _method_failure("refine_experience", "[refine_experience] 未找到指定经验；未记录使用声明")
+    payload = {
+        "schema": "experience-use/v1", "ref": ref, "decision": decision,
+        "record_kind": doc.record_kind, "verification_state": doc.verification_state,
+        "status": doc.status, "note": note, "evidence_refs": evidence,
+        "document_projection_sha256": hashlib.sha256(doc.to_md().encode()).hexdigest(),
+        "authority": "model_declared", "task_benefit": "not_evaluated",
+    }
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS, tool_call_id="", tool_name="refine_experience",
+        content="[refine_experience] use declaration\n" + json.dumps(payload, ensure_ascii=False),
+    )
 
 
 def _run_method_manage(args: dict, host: RegistryHost) -> ToolResult:
@@ -381,6 +433,7 @@ def _run_record_method_qualification(args: dict, host: RegistryHost, *, tool_nam
             promotion=str(args.get("promotion", "not_evaluated")),
             evidence_refs=[str(v) for v in (args.get("evidence_refs") or [])],
             note=str(args.get("note", "")),
+            task_type=str(args.get("task_type", "unknown") or "unknown"),
         )
     except MethodCommitUncertainError as exc:
         return _method_uncertain_receipt(tool_name, exc)
@@ -390,14 +443,20 @@ def _run_record_method_qualification(args: dict, host: RegistryHost, *, tool_nam
         return _method_failure(tool_name, f"[Method qualification 写入失败] {type(exc).__name__}: {exc}")
     host.audit(
         "record_method_qualification",
-        {"method_ref": method_ref, "qualification_episode_ref": task_ref, "verdict": entry["verdict"]},
+        {
+            "method_ref": method_ref,
+            "qualification_episode_ref": task_ref,
+            "verdict": entry["verdict"],
+            "task_type": entry.get("task_type", "unknown"),
+        },
         "success",
     )
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=(
             f"[record_method_qualification] {method_ref} "
-            f"qualification_episode_ref={task_ref} verdict={entry['verdict']} promotion={entry['promotion']}"
+            f"qualification_episode_ref={task_ref} verdict={entry['verdict']} promotion={entry['promotion']} "
+            f"task_type={entry.get('task_type', 'unknown')}"
         ),
         tool_call_id="",
         tool_name=tool_name,

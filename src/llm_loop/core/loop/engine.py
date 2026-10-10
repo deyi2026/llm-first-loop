@@ -107,6 +107,7 @@ from llm_loop.resources.provider_settlement import (
     ProviderCallOutcome,
     ProviderCallPurpose,
 )
+from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
 from llm_loop.runtime.causality import (
     background_run_generation_fact,
     build_run_integrity_receipt,
@@ -395,6 +396,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         self.recovery = recovery
         # D1: 事件源化 EventStore（默认 None 零行为；注入时消息/元数据/压缩事件落事件日志）
         self._event_store = event_store
+        # Set only at Web bootstrap after an administrator's one-Run config
+        # is verified. Alternate ingress paths for that exact session must
+        # not bypass the durable CAS simply by omitting a Web request scope.
+        self._task_budget_restricted_session_id: str | None = None
         # Mechanical post-tool-receipt hook; factory binds SubAgent settlement only.
         self._tool_receipt_committed_hook: Callable[[str, Message], object] | None = None
         # INJECTION-GOVERNANCE R8.5: completed conversation episodes become
@@ -626,6 +631,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         on_run_acquired: Any = None,
         ingress: object | None = None,
         user_metadata: dict[str, Any] | None = None,
+        on_human_event_appended: Any = None,
     ) -> Iterator[StreamDelta]:
         """run_stream 的循环本体（P0-5 包装层拆出；逻辑与拆分前逐行一致）.
 
@@ -847,7 +853,17 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         attach_recent_continuity_anchor(sess.messages, len(sess.messages) - 1)
         # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
         self._ensure_session_created(sess)
-        _user_event = self._append_message_event(sess, user_msg)
+        _user_event = self._append_message_event(
+            sess, user_msg, require_durable=on_human_event_appended is not None,
+        )
+        # I5-E: the signed authority must name this *actual* persisted user
+        # message event_id/seq. The optional operator callback is strictly
+        # after EventStore append and before even one model/tool side effect.
+        # No production Web route installs the callback; absent it, no change.
+        if on_human_event_appended is not None:
+            if _user_event is None:
+                raise TaskBudgetDeniedError("operator_human_event_not_persisted")
+            on_human_event_appended(_user_event)
         if raw_queue_id:
             # A queued human turn is replay-sensitive: after a dispatcher/process crash the
             # queue may re-dispatch only when it can prove this ingress never started. Make
@@ -1714,6 +1730,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             active_run_ingress_ref=_active_run_ingress_ref,
                             active_run_ingress_kind=_active_run_ingress_kind,
                             structure_state_hook=_structure_state_hook,
+                            knowledge_reference_probe=getattr(self._run_state().knowledge_runtime, "provider_reference_facts", None),
                             stream_state_hook=cap.on_provider_state,
                         )
                         if isinstance(llm_client, LLMClient)
@@ -1818,6 +1835,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             active_run_ingress_ref=_active_run_ingress_ref,
                             active_run_ingress_kind=_active_run_ingress_kind,
                             structure_state_hook=_structure_state_hook,
+                            knowledge_reference_probe=getattr(self._run_state().knowledge_runtime, "provider_reference_facts", None),
                         )
                     resp = foreground_task_provider_chat(
                         self,

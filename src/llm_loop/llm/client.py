@@ -21,12 +21,12 @@ import shutil
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Mapping
-from contextlib import nullcontext
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -45,6 +45,7 @@ from llm_loop.llm.errors import (
     LLMHTTPError,
     LLMNetworkError,
     LLMProjectionError,
+    LLMStreamProviderError,
     LLMTimeoutError,
 )
 from llm_loop.llm.schemas import ToolCallDeltaAggregator
@@ -81,6 +82,89 @@ def _check_stream_deadline(deadline: float, effective_timeout: float) -> None:
             f"LLM 流式总时长超限（>{budget:.0f}s = timeout {effective_timeout:.0f} × "
             f"{_STREAM_TOTAL_BUDGET_FACTOR:.1f}；各 read 间隔均未超时——provider 持续滴流不收敛，已机械截断）"
         )
+
+
+def _iter_task_budget_checked_lines(resp: httpx.Response) -> Iterator[str]:
+    """I5-B: owner-scoped transport abort and pre/post SSE budget checks.
+
+    An explicit budget installs a watchdog/HTTP1 socket shutdown hook for
+    blocked reads. Unsupported transports use a bounded per-read timeout;
+    neither mechanism claims remote provider/billing quiescence. Unbound
+    traffic still uses the untouched legacy iterator.
+    """
+    from llm_loop.resources.task_budget_dispatch import active_task_budget
+    from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+    from llm_loop.resources.task_budget_transport import watched_budget_response
+
+    budget = active_task_budget()
+    if budget is None:
+        yield from resp.iter_lines()
+        return
+
+    # I5-C: a multiplexed HTTP/2 or HTTP/3 socket can belong to sibling
+    # requests. I5-B deliberately has no safe per-stream physical abort for
+    # these transports; reject the already-observed response before ANY SSE
+    # data enters the model. The dispatched Provider liability stays UNKNOWN.
+    # There is no model- or prompt-level override for this safety gate; an
+    # operator can choose the unbound/default-OFF path independently.
+    extensions = getattr(resp, "extensions", {})
+    http_version = extensions.get("http_version") if isinstance(extensions, dict) else None
+    if http_version in (b"HTTP/2", b"HTTP/3", "HTTP/2", "HTTP/3"):
+        budget.request_stop(reason="multiplexed_transport_unqualified")
+        raise TaskBudgetDeniedError("multiplexed_transport_unqualified")
+
+    def assert_live() -> None:
+        try:
+            budget._get_validated()
+        except TaskBudgetDeniedError as exc:
+            if exc.reason == "deadline_expired":
+                # A fast drip can make the owner see expiry before the
+                # watchdog. Persist Stop even in this cooperative path.
+                budget.request_stop(reason="deadline_expired")
+            raise
+
+    with watched_budget_response(budget, resp):
+        assert_live()
+        try:
+            for line in resp.iter_lines():
+                assert_live()
+                yield line
+                assert_live()
+        except TaskBudgetDeniedError:
+            # A denial subclasses PermissionError/OSError; do not catch it
+            # again as a socket exception and mask deadline_expired with the
+            # subsequent local Stop latch.
+            raise
+        except (httpx.TransportError, OSError):
+            # On Stop, surface the authoritative deny; do not misclassify a
+            # locally-aborted socket as a retryable provider/network failure.
+            assert_live()
+            raise
+        # A shutdown can result in clean EOF rather than a read exception.
+        assert_live()
+
+
+def _task_budget_transport_timeout(effective_timeout: float) -> float | httpx.Timeout:
+    from llm_loop.resources.task_budget_transport import budgeted_transport_timeout
+
+    return budgeted_transport_timeout(effective_timeout)
+
+
+def _task_budget_provider_stream(
+    client: httpx.Client, method: str, url: str, *,
+    json: dict[str, Any], headers: dict[str, str],
+    timeout: float | httpx.Timeout,
+) -> Any:
+    """I5-D: delegate only a trusted opt-in bound attempt to an OS worker.
+
+    With no explicit isolation profile this is the exact existing HTTPX
+    streaming context, including the same timeout argument and shared client.
+    """
+    from llm_loop.resources.task_budget_process_transport import isolated_provider_stream
+
+    return isolated_provider_stream(
+        client, method, url, json=json, headers=headers, timeout=timeout,
+    )
 
 
 # 2026-09-18（gen20 自愈）: 连接被拒绝时的单次重试前退避秒数。毫秒级原地重试对瞬断/
@@ -197,6 +281,9 @@ class GuardRequestContext:
     active_run_ingress_kind: str = "none"
     structure_state_hook: Callable[[dict[str, Any]], None] | None = field(
         default=None, repr=False, compare=False
+    )
+    knowledge_reference_probe: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = field(
+        default=None, repr=False, compare=False,
     )
     # Optional request-scoped observer for provider-native in-flight state.  It is
     # deliberately carried on the immutable request context rather than shared client
@@ -1154,24 +1241,41 @@ class LLMClient:
         self,
         *,
         model_id: str,
+        target_url: str = "",
         transport_retry_index: int = 0,
         prepared: Mapping[str, Any] | None = None,
     ) -> Any:
-        """Return RG-3C physical-send correlation scope or a zero-behavior fallback."""
+        """Compose an optional hard pre-send budget gate with RG-3C observation.
+
+        With no explicitly bound budget the transport behavior is unchanged.
+        Budget failures must never be swallowed by RG-3C shadow fail-open.
+        """
 
         observer = self.transport_observer
         fn = getattr(observer, "transport_attempt", None) if observer is not None else None
-        if not callable(fn):
-            return nullcontext()
-        try:
-            return fn(
-                provider_id=self.provider,
-                model_id=model_id,
-                transport_retry_index=transport_retry_index,
-                prepared=prepared,
-            )
-        except Exception:  # noqa: BLE001 - settlement shadow can never block transport
-            return nullcontext()
+        observation: AbstractContextManager[Any] = nullcontext()
+        if callable(fn):
+            try:
+                observation = cast(AbstractContextManager[Any], fn(
+                    provider_id=self.provider,
+                    model_id=model_id,
+                    transport_retry_index=transport_retry_index,
+                    prepared=prepared,
+                ))
+            except Exception:  # noqa: BLE001 - RG-3C remains shadow-only
+                observation = nullcontext()
+
+        @contextmanager
+        def _scoped_attempt() -> Iterator[None]:
+            from llm_loop.resources.task_budget_dispatch import checked_provider_attempt
+
+            with checked_provider_attempt(
+                provider_id=self.provider, model_id=model_id,
+                wire_protocol=self.wire_protocol, target_url=target_url,
+            ), observation:
+                yield
+
+        return _scoped_attempt()
 
     def _note_settled_response_facts(
         self,
@@ -1179,7 +1283,7 @@ class LLMClient:
         finish_reason: str | None,
         content: str | None,
         reasoning_content: str | None,
-        tool_calls: list[ToolCall] | list[Mapping[str, Any]] | None,
+        tool_calls: Sequence[ToolCall | Mapping[str, Any]] | None,
         provider_observed_model: str | None = None,
     ) -> None:
         """GAP-RESP-1 (C1): attach response facts to the active attempt settlement.
@@ -1234,6 +1338,7 @@ class LLMClient:
         payload: Mapping[str, Any],
         representation: str,
         timeout_s: float,
+        knowledge_probe: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
     ) -> dict[str, Any] | None:
         """GAP-REQ-1 write-before-send prepared facts (hash-only default, fail-open).
 
@@ -1263,6 +1368,13 @@ class LLMClient:
                 "representation": representation,
                 "controls": controls,
             }
+            if knowledge_probe is not None:
+                try:
+                    facts = knowledge_probe(dict(payload))
+                    if facts:
+                        prepared["knowledge_references"] = facts
+                except Exception:
+                    logger.debug("knowledge wire probe unavailable", exc_info=True)
             try:
                 key = resolve_content_hmac_key(allow_create=False)
                 prepared["payload_hmac"] = key.digest(data)
@@ -1746,7 +1858,18 @@ class LLMClient:
             # 空响应保证零 text/tool delta 已投递）；重试后仍空才如实上抛——默认装配
             # 路径由引擎 fallback 链接管，strict override 会话照实反馈（不静默换模型）。
             if result is not None and not result.content and not result.tool_calls:
-                if _empty_retries_used < _EMPTY_RESPONSE_RETRY_MAX:
+                # ASSESS-20261008 BUG-15: reasoning-only 响应已投递思考 delta——
+                # 不满足同模型重试的"零 delta 投递"幂等前提（重试会把两次思考
+                # 拼成一个成功回答，且已发生的 provider 请求/计费不因重试抹掉），
+                # 如实上抛空响应异常并携带已投递事实；引擎层按其 fallback 政策
+                # 决定是否换模型，展示侧保留 attempt 边界。
+                _reasoning_delivered = bool(
+                    getattr(result, "reasoning_content", None)
+                ) or bool(getattr(result, "reasoning_tokens", None) or 0)
+                if (
+                    not _reasoning_delivered
+                    and _empty_retries_used < _EMPTY_RESPONSE_RETRY_MAX
+                ):
                     _empty_retries_used += 1
                     logger.warning(
                         "空响应（provider=%s, model=%s, finish_reason=%s, reasoning_tokens=%s）"
@@ -1761,9 +1884,14 @@ class LLMClient:
                     )
                     time.sleep(_EMPTY_RESPONSE_RETRY_BACKOFF_S)
                     continue
+                _reasoning_note = (
+                    f"；已投递思考 {len(result.reasoning_content)} 字符"
+                    if _reasoning_delivered and result.reasoning_content
+                    else ""
+                )
                 raise LLMEmptyResponseError(
                     f"模型返回空响应（无内容且无工具调用，provider={self.provider}，model={self.model}；"
-                    f"已同模型自动重试 {_empty_retries_used} 次仍为空）",
+                    f"已同模型自动重试 {_empty_retries_used} 次仍为空{_reasoning_note}）",
                     provider=self.provider,
                     finish_reason=result.finish_reason,
                     completion_tokens=result.completion_tokens,
@@ -1989,25 +2117,37 @@ class LLMClient:
         _tc_seen = False
 
         def _openai_stream_once(transport_retry_index: int) -> Iterator[StreamDelta]:
-            """单次流式请求（yield delta；传输异常向上抛，由外层重试判定）."""
-            nonlocal _tc_seen
+            """单次流式请求（yield delta；传输异常向上抛，由外层重试判定）.
+
+            ASSESS-20261008 BUG-12: 每次 transport attempt 重新初始化 response
+            accumulator 与工具聚合——finish/truncation 状态不跨 attempt 残留
+            （复现: attempt1 length-only 零输出后断连，重试成功 stop 但最终
+            truncated 仍为 True）。失败 attempt 的 usage/transport 事实仍保留
+            在 attempt journal（_observe_transport_usage /
+            _note_settled_response_facts 逐 attempt 记录），不因重试被丢弃。
+            """
+            nonlocal _tc_seen, acc, agg
+            acc = _StreamAcc()
+            agg = ToolCallDeltaAggregator()
             think_parser = _ThinkTagStreamParser()
             with self._transport_attempt_scope(
                 model_id=str(payload["model"]),
                 transport_retry_index=transport_retry_index,
+                target_url=url,
                 prepared=self._prepared_attempt_facts(
                     payload=payload,
                     representation="openai-json",
                     timeout_s=effective_timeout,
+                    knowledge_probe=(guard_context.knowledge_reference_probe if guard_context else None),
                 ),
-            ), self._client.stream(
-                "POST", url, json=payload, headers=headers, timeout=effective_timeout
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
                 _deadline = _stream_total_deadline(effective_timeout)
                 _observed_model: str | None = None
-                for line in resp.iter_lines():
+                for line in _iter_task_budget_checked_lines(resp):
                     _check_stream_deadline(_deadline, effective_timeout)
                     if not line or not line.startswith("data: "):
                         continue
@@ -2161,7 +2301,17 @@ class LLMClient:
                 # 2026-09-18: 连接级失败先上报持有者（退休本实例，使后续调用按当前系统代理/
                 # 网络配置重建），再按既有单次重试语义决定是否重试。
                 self._notify_transport_failure(exc)
-                _output_seen = bool(acc.content_parts or acc.reasoning_parts) or _tc_seen
+                # ASSESS-20261008 BUG-12: 重试判定读取失败 attempt 的已投递事实
+                # （acc 在下一 attempt 开始时才重置）——content/reasoning/details/
+                # 工具任一已投递即不重试，避免 UI 重复与工具重复执行。
+                _output_seen = (
+                    bool(
+                        acc.content_parts
+                        or acc.reasoning_parts
+                        or acc.reasoning_details_text
+                    )
+                    or _tc_seen
+                )
                 if _attempt <= _retry_disconnect and not _output_seen:
                     logger.warning(
                         "LLM 流式传输中断（尚无输出已产出），重试 %d/%d: %s",
@@ -2250,19 +2400,20 @@ class LLMClient:
             with self._transport_attempt_scope(
                 model_id=str(payload["model"]),
                 transport_retry_index=0,
+                target_url=url,
                 prepared=self._prepared_attempt_facts(
                     payload=payload,
                     representation="anthropic-converted",
                     timeout_s=effective_timeout,
                 ),
-            ), self._client.stream(
-                "POST", url, json=payload, headers=headers, timeout=effective_timeout
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
                 _deadline = _stream_total_deadline(effective_timeout)
                 _observed_model: str | None = None
-                for line in resp.iter_lines():
+                for line in _iter_task_budget_checked_lines(resp):
                     _check_stream_deadline(_deadline, effective_timeout)
                     if not line.startswith("data: "):
                         continue
@@ -2274,6 +2425,33 @@ class LLMClient:
                     except json.JSONDecodeError:
                         continue
                     evt_type = evt.get("type")
+                    if evt_type == "error":
+                        # ASSESS-20261008 BUG-04: Anthropic 流内 error 事件显式上抛。
+                        # 原实现无分支——partial 后 error 会以"半截成功"收尾。
+                        err = evt.get("error") if isinstance(evt.get("error"), dict) else {}
+                        err_code = (
+                            _safe_provider_code_value(err.get("type"))
+                            or _safe_provider_code_value(err.get("code"))
+                        )
+                        err_msg = str(err.get("message") or "Anthropic 流内错误事件")
+                        partial = sum(len(p) for p in acc.content_parts) + sum(
+                            len(p) for p in acc.reasoning_parts
+                        )
+                        try:
+                            err_body = json.dumps(
+                                {"error": {"type": err.get("type"), "message": err_msg[:2000]}},
+                                ensure_ascii=False,
+                            )[:2000]
+                        except Exception:  # noqa: BLE001
+                            err_body = err_msg[:2000]
+                        raise LLMStreamProviderError(
+                            f"Anthropic 流内错误事件（type={err_code or '未知'}）: {err_msg[:500]}",
+                            status_code=int(resp.status_code),
+                            provider_code=err_code,
+                            body=err_body,
+                            provider=self.provider,
+                            partial_chars=partial,
+                        )
                     if evt_type == "message_start":
                         usage = (evt.get("message") or {}).get("usage") or {}
                         acc.prompt_tokens = int(usage.get("input_tokens") or 0)
@@ -2324,6 +2502,19 @@ class LLMClient:
                             acc.finish_reason = stop
                         if acc.finish_reason in ("max_tokens", "length"):
                             acc.truncated = True
+                        usage = evt.get("usage") or {}
+                        # ASSESS-20261008 BUG-11: message_delta.usage 为累计值
+                        # （platform.claude.com/docs streaming）——按字段存在即更新，
+                        # 缺字段不清零（M58 缺失不覆盖契约延续），不与已有值相加。
+                        if isinstance(usage, dict):
+                            if usage.get("input_tokens") is not None:
+                                acc.prompt_tokens = int(usage["input_tokens"])
+                            if usage.get("output_tokens") is not None:
+                                acc.completion_tokens = int(usage["output_tokens"])
+                            if usage.get("cache_read_input_tokens") is not None:
+                                acc.prompt_cache_hit_tokens = int(
+                                    usage["cache_read_input_tokens"]
+                                )
                 self._note_settled_response_facts(
                     finish_reason=acc.finish_reason,
                     content="".join(acc.content_parts) or None,
@@ -2386,14 +2577,15 @@ class LLMClient:
                     representation="google-payload",
                     timeout_s=effective_timeout,
                 ),
-            ), self._client.stream(
-                "POST", url, json=payload, headers=headers, timeout=effective_timeout
+                target_url=url,
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 self._raise_for_status(resp, model_id=model_id)
                 self._observe_transport_response(resp, model_id=model_id)
                 _deadline = _stream_total_deadline(effective_timeout)
                 _observed_model: str | None = None
-                for line in resp.iter_lines():
+                for line in _iter_task_budget_checked_lines(resp):
                     _check_stream_deadline(_deadline, effective_timeout)
                     if not line.startswith("data: "):
                         continue
@@ -2408,6 +2600,35 @@ class LLMClient:
                         _m = chunk.get("modelVersion")
                         if isinstance(_m, str) and _m:
                             _observed_model = _m
+                    err_obj = chunk.get("error")
+                    if isinstance(err_obj, dict):
+                        # ASSESS-20261008 BUG-04: Google 流内 error 事件显式上抛
+                        # （原实现无分支，partial 后 error 以"半截成功"收尾）。
+                        err_code = (
+                            _safe_provider_code_value(err_obj.get("status"))
+                            or _safe_provider_code_value(err_obj.get("code"))
+                        )
+                        err_msg = str(err_obj.get("message") or "Google 流内错误事件")
+                        partial = sum(len(p) for p in acc.content_parts) + sum(
+                            len(p) for p in acc.reasoning_parts
+                        )
+                        try:
+                            err_body = json.dumps(
+                                {"error": {"code": err_obj.get("code"),
+                                           "status": err_obj.get("status"),
+                                           "message": err_msg[:2000]}},
+                                ensure_ascii=False,
+                            )[:2000]
+                        except Exception:  # noqa: BLE001
+                            err_body = err_msg[:2000]
+                        raise LLMStreamProviderError(
+                            f"Google 流内错误事件（{err_code or '未知'}）: {err_msg[:500]}",
+                            status_code=int(resp.status_code),
+                            provider_code=err_code,
+                            body=err_body,
+                            provider=self.provider,
+                            partial_chars=partial,
+                        )
                     usage = chunk.get("usageMetadata") or {}
                     if usage:
                         # M58 修复（审查中危）: 缺失不覆盖（与 openai 路径一致）
@@ -2502,15 +2723,16 @@ class LLMClient:
                     representation="lms-chat-json",
                     timeout_s=effective_timeout,
                 ),
-            ), self._client.stream(
-                "POST", url, json=payload, headers=headers, timeout=effective_timeout
+                target_url=url,
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
             ) as resp:
                 if resp.status_code >= 400:
                     self._raise_for_status(resp, model_id=model_id)
                 self._observe_transport_response(resp, model_id=model_id)
                 _deadline = _stream_total_deadline(effective_timeout)
                 _observed_model: str | None = None
-                for line in resp.iter_lines():
+                for line in _iter_task_budget_checked_lines(resp):
                     _check_stream_deadline(_deadline, effective_timeout)
                     if not line or not line.startswith("data: "):
                         continue
@@ -2731,10 +2953,11 @@ class LLMClient:
     ) -> None:
         if resp.status_code >= 400:
             body = resp.read().decode("utf-8", errors="replace")[:2000]
+            provider_code = _safe_provider_code_from_body(body)
             self._observe_transport_error(
                 model_id=model_id or self.model,
                 status_code=int(resp.status_code),
-                provider_code=_safe_provider_code_from_body(body),
+                provider_code=provider_code,
                 headers=getattr(resp, "headers", None),
             )
             raise LLMHTTPError(
@@ -2742,6 +2965,7 @@ class LLMClient:
                 status_code=resp.status_code,
                 body=body,
                 provider=self.provider,
+                provider_code=provider_code,
             )
 
     def _check_sse_error(
@@ -2751,25 +2975,37 @@ class LLMClient:
         model_id: str | None = None,
         http_status: int | None = None,
     ) -> None:
-        """P1-FEISHU: LM Studio SSE 错误事件检测（HTTP 200 + data: {error:...}）."""
+        """SSE 流内 error 事件检测（HTTP 2xx + data: {error:...}）.
+
+        ASSESS-20261008 BUG-03 事实分离契约: status_code 保留真实 HTTP 状态，
+        业务码由 LLMStreamProviderError.provider_code 承载（原实现把业务码灌入
+        status_code 且非数值码回退 500，污染上层分类与降级判定）。
+        body 存结构化 JSON（含业务码），保持 parse_provider_error_code 可解析。
+        """
         err_obj = chunk.get("error")
         if isinstance(err_obj, dict):
-            msg = err_obj.get("message") or err_obj.get("code") or "未知 SSE 错误"
+            msg = str(err_obj.get("message") or err_obj.get("code") or "未知 SSE 错误")
             raw_code = err_obj.get("code")
-            code = raw_code or 500
+            code = _safe_provider_code_value(raw_code)
+            # 能进入流循环说明 HTTP 头已是 2xx（否则 _raise_for_status 已上抛）
+            real_status = int(http_status) if http_status is not None else 200
             self._observe_transport_error(
                 model_id=model_id or self.model,
-                status_code=http_status,
-                provider_code=_safe_provider_code_value(raw_code),
+                status_code=real_status,
+                provider_code=code,
             )
             try:
-                code_i = int(code)
-            except Exception:
-                code_i = 500
-            raise LLMHTTPError(
-                f"SSE provider error: {msg[:500]}",
-                status_code=code_i,
-                body=msg[:2000],
+                body = json.dumps(
+                    {"error": {"code": raw_code, "message": msg[:2000]}},
+                    ensure_ascii=False,
+                )[:2000]
+            except Exception:  # noqa: BLE001 — body 只是事实载体，构造失败退裸摘要
+                body = msg[:2000]
+            raise LLMStreamProviderError(
+                f"SSE 流内错误（HTTP {real_status} 码={code or '未知'}）: {msg[:500]}",
+                status_code=real_status,
+                provider_code=code,
+                body=body,
                 provider=self.provider,
             )
 

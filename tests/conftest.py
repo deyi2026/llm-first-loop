@@ -166,9 +166,23 @@ _DEPLOYED_PROVIDER_ADMIN_VARS = (
     "MODEL_PROVIDERS",
 )
 
+# 部署泄漏隔离（批次4，2026-10-09 main+生产整合全量回归归因）：宿主生产
+# runtime 可能携带 admin-once Web TaskBudget canary——env 直出
+# LFL_TASK_BUDGET_WEB_CANARY_CONFIG，或经 LFL_RUNTIME_ROOT 指向的生产
+# runtime.toml（task_budget_canary_config）注入。load_operator_web_canary
+# 的契约是 "Absent config => default OFF"；canary 资格判定依赖 root-owned
+# 配置与真实 workspace，在 tmp_path 测试工作区必然 _deny，令整批 web/engine
+# 测试误报 task budget denied。隔离方式：清 env 直出键 + 把 LFL_RUNTIME_ROOT
+# 指到空临时目录（resolver 找不到 runtime.toml/.env 即回退 defaults）。
+# 显式传 workspace_root/config_file 的 resolver 测试与函数级
+# monkeypatch.setenv("LFL_RUNTIME_ROOT", ...) 的用例不受影响。
+_DEPLOYED_TASK_BUDGET_VARS = (
+    "LFL_TASK_BUDGET_WEB_CANARY_CONFIG",
+)
+
 
 @pytest.fixture(autouse=True)
-def isolate_deployed_web_auth_env(monkeypatch):
+def isolate_deployed_web_auth_env(monkeypatch, tmp_path):
     """剥离部署环境泄漏的运行时配置变量（按批次清单逐组登记）。"""
     for var in _DEPLOYED_WEB_AUTH_VARS:
         monkeypatch.delenv(var, raising=False)
@@ -176,6 +190,12 @@ def isolate_deployed_web_auth_env(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     for var in _DEPLOYED_PROVIDER_ADMIN_VARS:
         monkeypatch.delenv(var, raising=False)
+    for var in _DEPLOYED_TASK_BUDGET_VARS:
+        monkeypatch.delenv(var, raising=False)
+    # 批次4：宿主 LFL_RUNTIME_ROOT 指向生产 runtime.toml（含 canary 等生产键）；
+    # 指到空临时目录使 resolver 回退 defaults。函数级 setenv 的 resolver 用例
+    # 在本 fixture 之后执行，优先级不变。
+    monkeypatch.setenv("LFL_RUNTIME_ROOT", str(tmp_path / "runtime-config-isolated"))
 
 
 class FakeLLM:

@@ -97,7 +97,9 @@
       "cache_guard": "Epistemic",
       "recovery": "Action（fail-open 恢复通道）",
       "skills": "Action",
-      "knowledge": "Epistemic"
+      "knowledge": "Epistemic",
+      "extensions": "Action（外部标准包 formats/store/catalog，DESIGN-20261009 P1-A）",
+      "export": "cross-plane（MCP 出向导出网关：Epistemic/Learning/Action 内容对外只读交付，r3 P0-2）"
     },
     "modules": {
       "cli.py": "Action（入口）",
@@ -153,6 +155,7 @@
       "wake_authorization_store": {"tier":"T2","status":"conform","owner":"core","paths":["src/llm_loop/core/trace_leak/wake_authority.py"],"rationale":"DRC 已核：0600+flock+tmp+file fsync+replace+directory fsync+签名/tombstone。"},
       "event_store": {"tier":"T1","status":"conform","owner":"event_log","paths":["src/llm_loop/event_log/store.py","src/llm_loop/event_log/rotate.py"],"rationale":"DRC 已核：锁+O_APPEND 单行+读侧尾部截断容错+seq。"},
       "experience_store": {"tier":"T2","status":"conform","owner":"experiences","paths":["src/llm_loop/experiences/store.py"],"rationale":"2026-10-08 T2 迁移完成：save=store flock+tmp(O_EXCL)+file fsync+os.link 原子 create-if-absent；update_status=单写者 RMW+os.replace；均含目录 fsync fence 与 definitely_not_committed/commit_outcome_uncertain 分型+exact readback（test_experience_store_durability.py 12 例故障注入）。"},
+      "extensions_store": {"tier":"T2","status":"conform","owner":"extensions","paths":["src/llm_loop/extensions/store.py"],"rationale":"P1-A（DESIGN-20261009 §5.3/§9.1）：installed.json 单一写路径=flock 独占+expected_revision CAS（RevisionConflictError=晚到提交失败）+tmp+file fsync+os.replace+读回校验（失败=CommitUncertainError 不假装成功）；目录 fsync OSError 降级尽力而为（未做 fsync 耗尽故障注入，如实标注）；packages/ 不可变副本与 instances/ PLUGIN_DATA 为安装布局写。验收=tests/unit/test_extensions_store.py（CAS 冲突/顺序提交/T21 数据保留/敏感拒绝/损坏读拒绝）。"},
       "browser_attestation_state": {"tier":"T2","status":"observe","owner":"factory","paths":["src/llm_loop/factory.py"],"rationale":"factory 装配期 browser attestation 通过临时文件覆盖持久化。"},
       "service_exit_audit": {"tier":"T1","status":"observe","owner":"delivery","paths":["src/llm_loop/feishu/__init__.py","src/llm_loop/web/__init__.py"],"rationale":"Web/Feishu 退出原因以追加审计日志记录。"},
       "feishu_bridge_state": {"tier":"T2","status":"observe","owner":"feishu","paths":["src/llm_loop/feishu/bridge.py"],"rationale":"Feishu interrupted/dedup 等桥接状态存在覆盖式持久化。"},
@@ -176,6 +179,9 @@
       "method_store": {"tier":"T2","status":"conform","owner":"methods","paths":["src/llm_loop/methods/store.py"],"rationale":"2026-10-08 Fleet T2 批次2：Method 卡片 save_candidate/seed_overlay=锁内 invisible staging + file fsync + directory atomic rename + dir fsync；update_status/annotate_freshness=锁内单写者 RMW + O_EXCL tmp + file fsync + replace + dir fsync；MethodPersistError/MethodCommitUncertainError typed + exact readback，不确定禁止盲重放；model-facing registry 明确分型。qualification/usage 等 JSONL 保留独立 T1 append 契约（追加 fsync + 单写者锁），annotation/blocked journal best-effort 不作为权限源。test_method_store_durability.py 故障注入/并发。"},
       "backup_store": {"tier":"T2","status":"conform","owner":"recovery","paths":["src/llm_loop/recovery/backup.py"],"rationale":"T2 已实施（Fleet 批次1，2026-10-08）：save=store flock+tmp(O_EXCL)+file fsync+os.link 原子 create-if-absent（绝不静默覆盖：同 id 同 payload 幂等，异 payload FileExistsError 先到保留）；mark_recovered=单写者 RMW+os.replace，保持 bool 契约不抛穿调用方，replace 前=definitely_not_committed(False 原文件保真)，目录 fsync 耗尽=commit_outcome_uncertain→持锁 exact readback reconcile；delete_source/cleanup 共用 store flock，删除后 best-effort 目录 fsync（删除不 durable 属保守面）。typed 异常为 OSError 子类，channel except Exception 吸收面不变。验收=tests/unit/test_backup_store_durability.py 13 例故障注入 + fail_open 回归。"},
       "content_digest_cache": {"tier":"T2","status":"observe","owner":"resources","paths":["src/llm_loop/resources/content_digest.py"],"rationale":"content digest 跨运行缓存使用临时文件/原子提交语义。"},
+      "task_budget_root_ledger": {"tier":"T2","status":"conform","owner":"resources","paths":["src/llm_loop/resources/task_budget_store.py"],"rationale":"2026-10-09 I0/I1 独立离线根预算存储：每 root 跨进程 flock+revision CAS，目录首次创建后 fsync parent，tmp(O_EXCL)+file fsync+os.replace+dir fsync；replace 前 TaskBudgetPersistError、replace 后 TaskBudgetCommitUncertainError+精确 readback 并禁止盲重放；JSON/策略身份损坏 fail-closed，Run/wake 共享 root balance；tests/unit/test_task_budget_store.py 含跨进程、持久故障注入。仅 T2 文件持久契约 conform，不代表 Provider/Tool 物理执行或真实 GLM 预算已接线。"},
+      "task_budget_operator_approval_audit": {"tier":"T2","status":"partial","owner":"resources","paths":["src/llm_loop/resources/task_budget_operator_service.py"],"rationale":"2026-10-09 I5-H：签发前先对(session,event)建立O_EXCL + file fsync + dir fsync的once-only栅栏，再追加T1 approvals.jsonl且fsync，写入/落盘不确定时保留已存在identity永久deny，不重复签发。混合T2+T1、未证明真实powerloss/跨UID/跨部署审计重放，保持partial，绝不声称生产授权持久资格；tests/unit/test_task_budget_operator_recovery.py验证并发、fsync失败和启动后拒绝。"},
+      "task_budget_human_approval_mailbox": {"tier":"T2","status":"partial","owner":"resources","paths":["src/llm_loop/resources/task_budget_operator_mailbox.py"],"rationale":"2026-10-09 I5-H：独立操作员终端逐事件哈希确认后，以 O_EXCL 写入一次性 op1 审批证明，写后file fsync + chmod 0640 + file fsync + 目录fsync，写中断不删除也不自动再次签名；可信Web只读邮箱需真实OS角色+SGID组ACL、无symlink/hardlink与取消栅栏。隔离测试仅为同UID模拟成功路径，真实跨账户部署/重启恢复/ACL资格未过，标partial。"},
       "admission_barrier_state": {"tier":"T2","status":"observe","owner":"runtime","paths":["src/llm_loop/runtime/admission_barrier.py"],"rationale":"admission barrier 含审计与原子状态文件，影响运行准入。"},
       "knowledge_health_receipts": {"tier":"T1","status":"observe","owner":"runtime","paths":["src/llm_loop/runtime/knowledge_health.py"],"rationale":"knowledge health 恢复回执属于追加/证据型运行记录。"},
       "runtime_manifest": {"tier":"T2","status":"observe","owner":"runtime","paths":["src/llm_loop/runtime/manifest.py"],"rationale":"runtime manifest 是服务身份/配置的覆盖式状态快照。"},
@@ -228,7 +234,8 @@
       "src/llm_loop/learning_runtime.py": "当前命中仅为跨进程 lock file 的创建/打开；锁文件是同步载体，不承载 durable payload。",
       "src/llm_loop/web/fs_tree.py": "Web 文件树操作直接修改用户选择的 workspace 文件/目录，属于外部文件效果而非内部 runtime SoT。",
       "src/llm_loop/web/routes.py": "Web route 中的写入主要是用户上传/预览等 workspace 交付文件效果，不作为内部 durability surface。",
-      "src/llm_loop/workspace/file_service.py": "WorkspaceFileService 的写入就是受控用户文件效果；其 durable 事实由 workspace/file-effect 机制另行记录。"
+      "src/llm_loop/workspace/file_service.py": "WorkspaceFileService 的写入就是受控用户文件效果；其 durable 事实由 workspace/file-effect 机制另行记录。",
+      "src/llm_loop/extensions/sources.py": "P2-B（§5.2）源获取仅写 fetch 临时目录与解包目标（git 浅克隆、HTTP 下载 sink、zip/tar 解包、临时归档产物），属一次性外部文件效果与缓存，不是内部 durable 状态 SoT；插件安装态写入仍由 extensions/store.py 单一持久面负责。"
     }
   }
 }

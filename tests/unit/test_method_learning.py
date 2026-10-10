@@ -294,11 +294,36 @@ def test_qualification_then_qualified_then_active(tmp_path: Path) -> None:
         task_benefit="pass",
         promotion="pass",
         evidence_refs=["evidence:1"],
+        task_type="code-edit",
     )
     qualified = store.update_status(record.method_ref, "qualified")
     assert qualified.status == "qualified"
+
+    # EVO-20261010-994e30f4: single-domain pass evidence cannot activate yet.
+    try:
+        store.update_status(record.method_ref, "active")
+    except ValueError as exc:
+        assert "task_type" in str(exc)
+    else:
+        raise AssertionError("single-domain activation must be blocked")
+
+    store.record_qualification(
+        record.method_ref,
+        task_ref="episode:unseen-2",
+        verdict="pass",
+        mechanism="pass",
+        task_benefit="pass",
+        evidence_refs=["evidence:2"],
+        task_type=" Browser ",
+    )
+    entries = store.qualification_entries(record.method_ref)
+    assert [e["task_type"] for e in entries] == ["code-edit", "browser"]
     active = store.update_status(record.method_ref, "active")
     assert active.status == "active"
+    # Idempotent re-assert of active stays available (grandfather clause:
+    # the gate only applies to transitions into active).
+    still = store.update_status(record.method_ref, "active")
+    assert still.status == "active"
 
 
 def test_same_source_episode_cannot_supply_promotion_pass(tmp_path: Path) -> None:
@@ -333,6 +358,60 @@ def test_same_source_episode_cannot_supply_promotion_pass(tmp_path: Path) -> Non
         promotion="pass",
     )
     assert independent["promotion"] == "pass"
+
+
+def test_activation_task_type_gate_counts_and_grandfather_semantics(tmp_path: Path) -> None:
+    store = MethodStore(tmp_path / "methods")
+    record = store.save_candidate(name="gate probe", description="type gate", body=_CONTRACT_BODY)
+
+    # Only verdict=pass entries with a declared task_type count toward diversity.
+    store.record_qualification(record.method_ref, task_ref="episode:x1", verdict="fail", task_type="browser")
+    store.record_qualification(record.method_ref, task_ref="episode:x2", verdict="mixed", task_type="writing")
+    store.record_qualification(record.method_ref, task_ref="episode:x3", verdict="not_evaluated", task_type="diagnosis")
+    store.record_qualification(record.method_ref, task_ref="episode:x4", verdict="pass", task_type="")
+    store.record_qualification(
+        record.method_ref, task_ref="episode:x5", verdict="pass", mechanism="pass",
+        task_benefit="pass", promotion="pass", task_type="code-edit",
+    )
+    store.update_status(record.method_ref, "qualified")
+    try:
+        store.update_status(record.method_ref, "active")
+    except ValueError as exc:
+        assert "task_type" in str(exc)
+    else:
+        raise AssertionError("non-pass/unknown declarations must not satisfy the gate")
+
+    # Case/format variants collapse to one type and must not fake diversity.
+    store.record_qualification(record.method_ref, task_ref="episode:x6", verdict="pass", task_type="CODE_EDIT")
+    try:
+        store.update_status(record.method_ref, "active")
+    except ValueError as exc:
+        assert "task_type" in str(exc)
+    else:
+        raise AssertionError("variant spellings must collapse to a single task_type")
+
+    store.record_qualification(record.method_ref, task_ref="episode:x7", verdict="pass", task_type="browser")
+    assert store.update_status(record.method_ref, "active").status == "active"
+
+    # Grandfather: a legacy card that was already active re-asserts fine, but
+    # leaving and re-entering active re-applies the gate.
+    legacy = store.save_candidate(name="legacy active", description="predates gate", body=_CONTRACT_BODY)
+    legacy_path = Path(legacy.path)
+    legacy_path.write_text(
+        legacy_path.read_text(encoding="utf-8").replace("status: candidate", "status: active"),
+        encoding="utf-8",
+    )
+    store2 = MethodStore(tmp_path / "methods")
+    reloaded = store2.get(legacy.method_ref)
+    assert reloaded is not None and reloaded.status == "active"
+    assert store2.update_status(legacy.method_ref, "active").status == "active"
+    assert store2.update_status(legacy.method_ref, "hold").status == "hold"
+    try:
+        store2.update_status(legacy.method_ref, "active")
+    except ValueError as exc:
+        assert "task_type" in str(exc)
+    else:
+        raise AssertionError("re-entering active must pass the cross-task-type gate")
 
 
 def test_teacher_cannot_be_reclassified(tmp_path: Path) -> None:
@@ -536,6 +615,7 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
             "mechanism": "pass",
             "task_benefit": "pass",
             "promotion": "pass",
+            "task_type": "Code Edit",
         },
         cast(Any, host),
     )
@@ -544,10 +624,34 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     assert entry["qualification_episode_ref"] == "episode:method-test-session:9:qualification"
     assert entry["task_ref"] == "episode:method-test-session:9:qualification"
     assert entry["task_ref"] != "episode:spoofed-caller-ref"
+    assert entry["task_type"] == "code-edit"
     moved = execute_experience_tool(
         "method_manage", {"action": "refine", "method_ref": ref, "transition": "qualify"}, cast(Any, host)
     )
     assert moved is not None and moved.status.value == "success"
+
+    # EVO-20261010-994e30f4: single-domain evidence cannot activate via the tool layer.
+    blocked_activate = execute_experience_tool(
+        "method_manage", {"action": "refine", "method_ref": ref, "transition": "activate"}, cast(Any, host)
+    )
+    assert blocked_activate is not None and blocked_activate.status.value == "failure"
+    assert "task_type" in blocked_activate.content
+
+    host.episode_ref = "episode:method-test-session:10:cross-domain"
+    cross_domain = execute_experience_tool(
+        "method_manage",
+        {
+            "action": "record_qualification",
+            "method_ref": ref,
+            "verdict": "pass",
+            "mechanism": "pass",
+            "task_benefit": "pass",
+            "task_type": "browser",
+        },
+        cast(Any, host),
+    )
+    assert cross_domain is not None and cross_domain.status.value == "success"
+    assert "task_type=browser" in cross_domain.content
     activated = execute_experience_tool(
         "method_manage", {"action": "refine", "method_ref": ref, "transition": "activate"}, cast(Any, host)
     )
@@ -836,7 +940,6 @@ def test_destructive_disposition_requires_independent_basis(tmp_path: Path) -> N
 
 def test_disposition_via_independent_qualification_fail(tmp_path: Path) -> None:
     """A qualification verdict=fail is also a mechanical basis for disposition."""
-    import pytest
 
     store = MethodStore(tmp_path / "methods")
     record = store.save_candidate(name="fail verdict", description="fail path", body=_CONTRACT_BODY)

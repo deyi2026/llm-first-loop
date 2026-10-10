@@ -354,7 +354,8 @@ def test_default_model_429_triggers_fallback_to_next(
     assert rec["result_status"] == "success"
     assert rec["arguments"]["from"] == "deepseek/deepseek-v4-flash"
     assert rec["arguments"]["to"] == "local/qwen3.6-27b"
-    assert rec["arguments"]["reason"] == "429 限流"
+    # ASSESS-20261008 BUG-02: 标签经 classify_llm_error，如实呈现 HTTP 事实
+    assert rec["arguments"]["reason"] == "限流（HTTP 429）"
 
     # 验证 architecture_status 暴露降级态
     snap = status.snapshot()
@@ -362,7 +363,8 @@ def test_default_model_429_triggers_fallback_to_next(
     assert snap["model_fallback"]["active"] is True
     assert snap["model_fallback"]["from"] == "deepseek/deepseek-v4-flash"
     assert snap["model_fallback"]["to"] == "local/qwen3.6-27b"
-    assert snap["model_fallback"]["reason"] == "429 限流"
+    # ASSESS-20261008 BUG-02: 标签经 classify_llm_error（限流（HTTP 429））
+    assert snap["model_fallback"]["reason"] == "限流（HTTP 429）"
 
 
 def test_default_model_timeout_triggers_fallback_chain(

@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LFL 横向对比评估看板 · 2026-10-07</title>
+<style>
+  :root{
+    --bg:#0f1216; --panel:#171c22; --panel2:#1e252d; --line:#2b333d;
+    --text:#e6edf3; --muted:#9aa7b4; --accent:#4da3ff; --lfl:#ffb454;
+    --good:#3fb950; --mid:#d29922; --bad:#f85149; --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0d1014,#0f1216 40%);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    line-height:1.6;padding:0 0 60px}
+  header{padding:38px 32px 26px;border-bottom:1px solid var(--line);
+    background:radial-gradient(1200px 300px at 20% -40%,rgba(77,163,255,.18),transparent)}
+  h1{margin:0 0 6px;font-size:26px;letter-spacing:.3px}
+  .sub{color:var(--muted);font-size:14px}
+  .badges{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}
+  .badge{background:var(--panel2);border:1px solid var(--line);border-radius:999px;
+    padding:4px 12px;font-size:12.5px;color:var(--muted)}
+  .badge b{color:var(--text)}
+  main{max-width:1180px;margin:0 auto;padding:0 24px}
+  section{margin-top:34px}
+  h2{font-size:18px;margin:0 0 4px;padding-left:11px;border-left:3px solid var(--accent)}
+  .hint{color:var(--muted);font-size:13px;margin:6px 0 16px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 18px 12px}
+  .card h3{margin:0 0 10px;font-size:15px;font-weight:600}
+  canvas{width:100%;height:auto;display:block}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 9px;text-align:center;border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:var(--panel);z-index:1}
+  th{color:var(--muted);font-weight:600;font-size:12px;background:var(--panel2)}
+  tbody tr:hover td{background:rgba(77,163,255,.07)}
+  tr.lfl td{background:rgba(255,180,84,.10);font-weight:600}
+  tr.lfl:hover td{background:rgba(255,180,84,.16)}
+  .score{font-variant-numeric:tabular-nums}
+  .rank{color:var(--muted);font-size:12px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12.5px;color:var(--muted)}
+  .legend span{cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+  .legend span.off{opacity:.35;text-decoration:line-through}
+  .pill{display:inline-block;border-radius:6px;padding:1px 7px;font-size:11.5px;font-weight:600}
+  .p0{background:rgba(248,81,73,.16);color:#ff8a80}
+  .p1{background:rgba(210,153,34,.16);color:#e3b341}
+  .p2{background:rgba(77,163,255,.16);color:#79c0ff}
+  .p3{background:rgba(63,185,80,.16);color:#56d364}
+  .adv{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:8px 0;font-size:13.5px}
+  .adv b{color:var(--lfl)}
+  footer{max-width:1180px;margin:40px auto 0;padding:0 24px;color:var(--muted);font-size:12.5px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  @media(max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .kpi .v{font-size:24px;font-weight:700}
+  .kpi .l{color:var(--muted);font-size:12px;margin-top:2px}
+</style>
+</head>
+<body>
+<header>
+  <h1>LLM-First Core Loop · 系统性审查与横向对比看板</h1>
+  <div class="sub">分三层对比（框架层 / 执行 Harness 层 / 评测层）｜10 维加权评分｜数据快照 2026-10-07</div>
+  <div class="badges">
+    <span class="badge">对象 <b>LFL</b></span>
+    <span class="badge">对比 <b>9</b> 个主流项目</span>
+    <span class="badge">LFL 总分 <b style="color:var(--lfl)">71.7</b> <span style="color:var(--good)">▲+5.0</span></span>
+    <span class="badge">分数口径 <b style="color:var(--lfl)">维度剖面（跨层不可通约）</b></span>
+    <span class="badge">最强项 <b>扩展 9 · 功能 9 · 工程 9</b></span>
+    <span class="badge">最弱项 <b>生态 3 · 易用 5</b></span>
+    <span class="badge">修订 <b>r2 · 2026-10-10</b></span>
+  </div>
+</header>
+
+<main>
+  <section>
+    <div class="kpis">
+      <div class="kpi"><div class="v" style="color:var(--lfl)">71.7</div><div class="l">LFL 加权总分（r3，原 66.7）</div></div>
+      <div class="kpi"><div class="v" style="color:var(--good)">9 / 10</div><div class="l">扩展性（r2：7→9，MCP 全套）</div></div>
+      <div class="kpi"><div class="v" style="color:var(--bad)">3 / 10</div><div class="l">生态与社区（仍为短板）</div></div>
+      <div class="kpi"><div class="v" style="color:var(--accent)">3 项</div><div class="l">LFL 独有领先能力</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>1 · 加权总分排名</h2>
+    <div class="hint">点击图例可显示/隐藏项目；橙色为 LFL。满分 100。</div>
+    <div class="card"><canvas id="bar" width="1100" height="430"></canvas></div>
+  </section>
+
+  <section>
+    <h2>2 · 能力雷达</h2>
+    <div class="hint">10 个维度（每维 1-10）。默认叠加 LFL 与各层代表；点击图例切换。</div>
+    <div class="grid">
+      <div class="card"><canvas id="radar" width="560" height="560"></canvas>
+        <div class="legend" id="radarLegend"></div>
+      </div>
+      <div class="card">
+        <h3>分维度解读</h3>
+        <div class="adv"><b>哑铃形（LFL，r3）</b>：功能/工程凸出，架构/扩展/安全居中偏上；易用与生态仍凹陷。r3 注：扩展性能力面已补齐，但工具面未接线，回调至 8。</div>
+        <div class="adv"><b>近似正多边形（Pydantic AI）</b>：各维 7–9，无明显短板。</div>
+        <div class="adv"><b>生态单极形（LangGraph / Claude Code）</b>：生态维度 10 分突出。</div>
+        <div class="adv"><b>整体收缩形（AutoGen）</b>：维护模式导致全维平庸。</div>
+        <div class="adv"><b>结论</b>：LFL 的凹陷已收窄到「分发与社区」（PyPI/外部贡献者），而非「能力」。</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>3 · 评分矩阵</h2>
+    <div class="hint">权重：功能15 · 架构12 · 易用10 · 扩展12 · 性能8 · 生态12 · 安全8 · 工程10 · 成本5 · 场景8 ＝ 100</div>
+    <div class="card" style="overflow:auto"><table id="matrix"></table></div>
+  </section>
+
+  <section>
+    <h2>4 · 关键能力矩阵（LFL 视角）</h2>
+    <div class="card" style="overflow:auto"><table id="cap"></table></div>
+  </section>
+
+  <section>
+    <h2>5 · 改进路线图</h2>
+    <div class="card" style="overflow:auto"><table id="road"></table></div>
+    <div class="hint">以 r3 基线 71.7 起算，剩余 P0+P1 预计 71.7 → ~78，进入上游。</div>
+  </section>
+</main>
+
+<footer>
+  资料：LFL 为本地只读代码审查；对比对象优先联网核实（GitHub/官方文档，2026-10-07），SWE-agent/Claude Code/promptfoo/LangSmith/SWE-bench 部分为知识库信息。<br>
+  <b>修订 r2（2026-10-10）</b>：LFL 插件生态 P1-A~P2-B（MCP 全套/标准包/厂商适配器）、method 生命周期 v2.2、Docker 沙箱后端纳入评分；LFL 总分 66.7→72.9。<br>
+<b>修订 r3（2026-10-10，评审修正）</b>：扩展性按「能力被外部消费」口径 9→8（工具面未接线），总分 72.9→71.7；移除跨层排名语义；P0-2 出向以 MCP server 导出优先。<br>
+  本看板为自包含文件，无外部依赖，可离线打开。
+</footer>
+
+<script>
+const W = {FC:15, AD:12, UX:10, EX:12, PF:8, EC:12, SEC:8, ENG:10, COST:5, SB:8};
+const DIMS = [
+  ["FC","功能完整性",15],["AD","架构设计",12],["UX","易用性",10],["EX","扩展性",12],
+  ["PF","性能与效率",8],["EC","生态与社区",12],["SEC","安全性",8],["ENG","工程化",10],
+  ["COST","成本控制",5],["SB","适用场景广度",8]
+];
+// scores: [FC,AD,UX,EX,PF,EC,SEC,ENG,COST,SB]
+const P = [
+  {n:"Pydantic AI",layer:"框架层",c:"#8b5cf6",s:[9,9,8,9,7,9,7,9,8,9]},
+  {n:"LangGraph",layer:"框架层",c:"#2f81f7",s:[8,9,7,9,7,10,6,8,6,8]},
+  {n:"OpenHands",layer:"Harness层",c:"#ec775c",s:[9,8,7,8,7,9,8,8,6,8]},
+  {n:"Claude Code",layer:"Harness层",c:"#d29922",s:[8,8,9,7,8,10,8,8,5,6]},
+  {n:"OpenAI Agents SDK",layer:"框架层",c:"#3fb950",s:[7,8,9,8,7,9,7,8,6,8]},
+  {n:"CrewAI",layer:"框架层",c:"#db61a2",s:[7,6,8,7,6,8,6,7,6,7]},
+  {n:"Aider",layer:"Harness层",c:"#39c5cf",s:[7,6,8,6,7,9,6,7,7,5]},
+  {n:"LFL",layer:"本报告对象(r3)",c:"#ffb454",s:[9,8,5,8,7,3,8,9,6,8],me:true},
+  {n:"SWE-agent",layer:"Harness层",c:"#a371f7",s:[6,7,6,6,7,8,7,7,6,4]},
+  {n:"AutoGen",layer:"框架层",c:"#8d96a0",s:[7,7,6,7,6,5,5,7,5,6]}
+];
+function total(s){let t=0;for(let i=0;i<DIMS.length;i++)t+=s[i]*DIMS[i][2];return t/10;}
+P.forEach(p=>p.t=total(p.s));
+const sorted=[...P].sort((a,b)=>b.t-a.t);
+
+/* ---------- 柱状图 ---------- */
+(function(){
+  const cv=document.getElementById("bar"),ctx=cv.getContext("2d");
+  const Wc=cv.width,Hc=cv.height,pad={l:150,r:70,t:20,b:20};
+  const max=100,rowH=(Hc-pad.t-pad.b)/sorted.length,barH=Math.min(22,rowH*0.6);
+  function draw(){
+    ctx.clearRect(0,0,Wc,Hc);
+    ctx.font="13px -apple-system,PingFang SC,sans-serif";
+    sorted.forEach((p,i)=>{
+      const y=pad.t+i*rowH+rowH/2;
+      const w=(p.t/max)*(Wc-pad.l-pad.r);
+      ctx.fillStyle="#9aa7b4";ctx.textAlign="right";ctx.textBaseline="middle";
+      ctx.fillText(p.n+"  "+p.t.toFixed(1),pad.l-12,y);
+      // track
+      ctx.fillStyle="#1e252d";
+      roundRect(ctx,pad.l,y-barH/2,Wc-pad.l-pad.r,barH,5);ctx.fill();
+      // bar
+      ctx.fillStyle=p.c;
+      roundRect(ctx,pad.l,y-barH/2,w,barH,5);ctx.fill();
+      // value
+      ctx.fillStyle=p.me?"#ffb454":"#e6edf3";
+      ctx.textAlign="left";ctx.font=(p.me?"bold ":"")+"13px -apple-system,PingFang SC,sans-serif";
+      ctx.fillText(p.t.toFixed(1),pad.l+w+8,y);
+    });
+  }
+  function roundRect(c,x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);
+    c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath();}
+  draw();
+})();
+
+/* ---------- 雷达图 ---------- */
+const radarSel=new Set(["LFL","Pydantic AI","LangGraph","OpenHands","AutoGen"]);
+(function(){
+  const cv=document.getElementById("radar"),ctx=cv.getContext("2d");
+  const cx=cv.width/2, cy=cv.height/2, R=cv.width*0.34, N=DIMS.length;
+  const ang=i=>-Math.PI/2 + i*2*Math.PI/N;
+  function pt(i,v){const a=ang(i);return [cx+Math.cos(a)*R*v, cy+Math.sin(a)*R*v];}
+  function draw(){
+    ctx.clearRect(0,0,cv.width,cv.height);
+    // rings
+    for(let ring=1;ring<=5;ring++){
+      ctx.beginPath();
+      for(let i=0;i<N;i++){const[x,y]=pt(i,ring/5);i?ctx.lineTo(x,y):ctx.moveTo(x,y);}
+      ctx.closePath();ctx.strokeStyle=ring===5?"#3a434d":"#252d36";ctx.lineWidth=1;ctx.stroke();
+    }
+    // axes + labels
+    ctx.font="12px -apple-system,PingFang SC,sans-serif";
+    for(let i=0;i<N;i++){
+      const[x,y]=pt(i,1);
+      ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(x,y);ctx.strokeStyle="#252d36";ctx.stroke();
+      const[lx,ly]=pt(i,1.16);
+      ctx.fillStyle="#9aa7b4";ctx.textAlign=Math.abs(lx-cx)<8?"center":(lx>cx?"left":"right");
+      ctx.textBaseline="middle";
+      ctx.fillText(DIMS[i][1],lx,ly);
+    }
+    // polygons
+    P.forEach(p=>{
+      if(!radarSel.has(p.n))return;
+      ctx.beginPath();
+      for(let i=0;i<N;i++){const[x,y]=pt(i,p.s[i]/10);i?ctx.lineTo(x,y):ctx.moveTo(x,y);}
+      ctx.closePath();
+      ctx.fillStyle=p.c+"33";ctx.fill();
+      ctx.strokeStyle=p.c;ctx.lineWidth=p.me?2.6:1.6;ctx.stroke();
+      if(p.me){for(let i=0;i<N;i++){const[x,y]=pt(i,p.s[i]/10);
+        ctx.beginPath();ctx.arc(x,y,3,0,7);ctx.fillStyle=p.c;ctx.fill();}}
+    });
+  }
+  const lg=document.getElementById("radarLegend");
+  P.forEach(p=>{
+    const s=document.createElement("span");
+    s.innerHTML=`<i style="background:${p.c}"></i>${p.n}`;
+    if(!radarSel.has(p.n))s.className="off";
+    s.onclick=()=>{radarSel.has(p.n)?radarSel.delete(p.n):radarSel.add(p.n);
+      s.className=radarSel.has(p.n)?"":"off";draw();};
+    lg.appendChild(s);
+  });
+  draw();
+})();
+
+/* ---------- 评分矩阵 ---------- */
+(function(){
+  const t=document.getElementById("matrix");
+  let h="<thead><tr><th>项目</th><th>层</th>";
+  DIMS.forEach(d=>h+=`<th>${d[1]}<br><span class='rank'>${d[2]}</span></th>`);
+  h+="<th>加权总分</th><th>排名</th></tr></thead><tbody>";
+  sorted.forEach((p,idx)=>{
+    h+=`<tr class="${p.me?'lfl':''}"><td>${p.me?'★ ':''}${p.n}</td><td class="rank">${p.layer}</td>`;
+    DIMS.forEach((d,i)=>{
+      const v=p.s[i];
+      const col=v>=9?"var(--good)":v>=7?"#79c0ff":v>=5?"var(--mid)":"var(--bad)";
+      h+=`<td class="score" style="color:${col}">${v}</td>`;
+    });
+    h+=`<td class="score" style="font-weight:700;color:${p.me?'var(--lfl)':'inherit'}">${p.t.toFixed(1)}</td>`;
+    h+=`<td class="rank">${idx+1}</td></tr>`;
+  });
+  t.innerHTML=h+"</tbody>";
+})();
+
+/* ---------- 能力矩阵 ---------- */
+(function(){
+  const rows=[
+    ["严格 function calling 协议硬化","✅ 领先","OpenAI/Anthropic SDK","领先"],
+    ["事件源化 + 逐字段对账","✅ 独有","LangGraph checkpoint / OpenHands state","领先"],
+    ["AI 自主演进闭环","✅ 独有","无同类一等能力","领先"],
+    ["实证评测纪律（预注册/冻结/Wilson CI）","✅ 领先","Inspect AI 相当","持平/领先"],
+    ["MCP 生态接入（协议/传输/OAuth/资源提示）","✅ r2 追平","AutoGen / OpenAI SDK / Pydantic AI","追平"],
+    ["标准插件包 + 厂商适配器","✅ r2 新增","Claude Code / Cursor / VS Code 生态","追平"],
+    ["沙箱隔离","✅ Docker/bwrap 后端","OpenHands / Inspect / SWE-agent","追平"],
+    ["标准协议出口（OpenAI 兼容 / MCP server 导出）","❌ 缺","多数框架","落后"],
+    ["包分发（PyPI / pip）","❌ 缺","全部","落后"],
+    ["社区与外部使用者","❌ 缺","全部","落后"],
+    ["类型安全 / IDE 体验","⚠️ 弱","Pydantic AI","落后"],
+    ["语音 / 实时 / 多模态","❌ 缺","OpenAI SDK / Pydantic AI","落后"],
+    ["首次跑通时间","⚠️ 长","OpenAI SDK / Pydantic AI / Aider","落后"]
+  ];
+  const col={"领先":"var(--good)","持平/领先":"var(--good)","落后":"var(--bad)"};
+  let h="<thead><tr><th>能力</th><th>LFL</th><th>主流代表</th><th>差距性质</th></tr></thead><tbody>";
+  rows.forEach(r=>{h+=`<tr><td>${r[0]}</td><td>${r[1]}</td><td class="rank">${r[2]}</td>
+    <td style="color:${col[r[3]]||'inherit'};font-weight:600">${r[3]}</td></tr>`;});
+  document.getElementById("cap").innerHTML=h+"</tbody>";
+})();
+
+/* ---------- 路线图 ---------- */
+(function(){
+  const rows=[
+    ["P0-1","发布 PyPI 包","release.yml 增加 build + trusted publishing","易用性 +3、生态 +2","pip 干净环境跑通 examples/01"],
+    ["P0-2","对外出口（r2 部分完成）","入向 MCP/插件已补齐；仍缺 OpenAI 兼容出口 + MCP server 导出 + extension_* 工具面","生态 +1、扩展 +1","OpenAI SDK/MCP 客户端连通"],
+    ["P0-3","降低首跑成本","lfl init 向导 + 极小默认配置 + 3 行跑通","易用性 +2","5 分钟无文档跑通"],
+    ["P0-4","剥离仓库噪声","evals/data_ab/swe-json/.env.bak 移出主仓","专业度、克隆成本↓","克隆体积对比"],
+    ["P1-1","拆分超大文件","factory/engine/registry/session 继续 R9 平移","架构 +1","无行为变更 + 体量守卫下降"],
+    ["P1-2","容器化沙箱（r2 已实现）","tools/sandbox.py（bwrap/docker）已有；下一步默认化 + 文档 + 扩边界","安全维持 8","不可信代码默认容器执行"],
+    ["P1-3","清收外部红豁免","~90 项按期销号；移除 legacy 分支","工程化 +1","豁免归零、守卫绿"],
+    ["P1-4","版本面统一","单一 SoT 派生版本；修正文档滞后","工程化 +1","版本一致性入 CI"],
+    ["P1-5","评测资产外化","run_eval 抽为独立包，兼容 Inspect 日志","生态 +1","第三方可评测自己的 Agent"],
+    ["P2-1","自主演进做成标杆","论文/技术报告 + 可复现 demo","不可替代影响力","对外引用"],
+    ["P2-2","事件溯源协议标准化","事件模型/对账抽为独立规范","从自用升级为协议","他方采纳"]
+  ];
+  const cls={P0:"p0",P1:"p1",P2:"p2"};
+  let h="<thead><tr><th>编号</th><th>建议</th><th>动作</th><th>预期收益</th><th>验证方式</th></tr></thead><tbody>";
+  rows.forEach(r=>{h+=`<tr><td><span class="pill ${cls[r[0].slice(0,2)]}">${r[0]}</span></td>
+    <td style="text-align:left">${r[1]}</td><td style="text-align:left" class="rank">${r[2]}</td>
+    <td style="text-align:left">${r[3]}</td><td style="text-align:left" class="rank">${r[4]}</td></tr>`;});
+  document.getElementById("road").innerHTML=h+"</tbody>";
+})();
+</script>
+</body>
+</html>

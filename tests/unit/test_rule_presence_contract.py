@@ -24,7 +24,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 _LEDGER_MD = _ROOT / ".codeartsdoer" / "specs" / "rule_presence" / "rule-presence-ledger.md"
 
 _BASELINE_SEARCH_RECORDS_COMPACT = 390
-_SLIM_PREFIX_HASH_12 = "66b4523a06e7"  # EVO-20261003-8b053766: +3 蒸馏纪律行(547 chars)
+_SLIM_PREFIX_HASH_12 = "5aeea16c7677"  # SOUL.MD 前置逐字钉入(1117 chars, 用户指令 2026-10-09); 前值 55cd98cf0928(645, EVO-20261009-0ffcaad8); 更早 66b4523a06e7(547, EVO-20261003-8b053766)
 
 _TOOL = ConvergenceDecideTool()
 _PARAMS = _TOOL.parameters

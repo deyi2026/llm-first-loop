@@ -10,3 +10,7 @@ status: active
 created_at: "2026-08-22T10:51:08.285198+08:00"
 updated_at: "2026-08-22T10:51:08.285198+08:00"
 ---
+
+## 2026-10-10 lifecycle review
+
+S2 核验：webui/src/components/sidebar/EvolutionPanel.tsx 健在（frontmatter scenario 首处写作 src/components/... 系省略 webui/ 前缀的旧写法，非失效）；审批链路排查路径仍适用，保持 active。

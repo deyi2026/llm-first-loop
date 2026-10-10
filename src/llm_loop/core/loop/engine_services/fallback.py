@@ -20,11 +20,8 @@ from llm_loop.core.loop.tool_exec import _json_dumps_args
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.client import GuardRequestContext, LLMClient, LLMResponse
 from llm_loop.llm.errors import (
-    LLMEmptyResponseError,
     LLMError,
-    LLMHTTPError,
-    LLMNetworkError,
-    LLMTimeoutError,
+    classify_llm_error,
 )
 from llm_loop.resources.provider_calls import foreground_task_provider_chat
 from llm_loop.resources.provider_settlement import (
@@ -98,17 +95,25 @@ class FallbackService:
     def _is_fallback_eligible_error(exc: LLMError) -> bool:
         """判定异常是否可触发降级（design §5.4 行为规则表）.
 
+        ASSESS-20261008 BUG-02 修复: 判定与标签消费同一份事实
+        （classify_llm_error），不再从被污染的 status_code 推断:
+
         可降级:
         - LLMTimeoutError (请求超时)
         - LLMNetworkError (网络不可达)
-        - LLMHTTPError(status_code >= 500)（上游服务错误）
-        - LLMHTTPError(status_code == 429)（限流, design §5.4 表「5xx/429」）
         - LLMEmptyResponseError（EVO-20261007-519eeb93：client 侧同模型重试后仍空——
           瞬时可用性故障语义与超时/网络同类；strict override 会话仍不降级，用户选择权优先）
+        - rate_limit（HTTP 429 / GLM 1302 / 流内限流）
+        - server_error（5xx / 流内服务端错误）
+        - model_permission（GLM 1311: 针对所选模型，订阅内其他候选可能可用——
+          语义如实分类为权限受限，不再冒称"限流"）
 
         不进入 availability failover:
-        - LLMHTTPError(其他 4xx)：不归类为默认 provider 的瞬时可用性故障
+        - account_billing（GLM 1113 欠费 / 配额模式: 账户级，换同账户模型无用，
+          如实反馈；与 is_quota_error 消费同一份事实）
+        - client_error（其他 4xx）: 不归类为默认 provider 的瞬时可用性故障
         - LLMProtocolError：保留原错误事实，不由程序推断另一个模型更适合任务
+        - 未知流内错误: 如实反馈，不发明语义
 
         Args:
             exc: 当前 LLM 调用抛出的异常.
@@ -116,11 +121,7 @@ class FallbackService:
         Returns:
             True 可降级, False 走如实反馈路径.
         """
-        if isinstance(exc, (LLMTimeoutError, LLMNetworkError, LLMEmptyResponseError)):
-            return True
-        if isinstance(exc, LLMHTTPError):
-            return exc.status_code == 429 or exc.status_code >= 500
-        return False
+        return classify_llm_error(exc).fallback_eligible
 
     @staticmethod
     def _merge_fallback_metadata(
@@ -409,16 +410,13 @@ class FallbackService:
 
     @staticmethod
     def _fallback_reason_label(exc: LLMError) -> str:
-        """将 LLM 异常映射为简短中文降级原因标注（注入消息用, 设计原则 2 如实反馈）."""
-        if isinstance(exc, LLMTimeoutError):
-            return "请求超时"
-        if isinstance(exc, LLMNetworkError):
-            return "网络不可达"
-        if isinstance(exc, LLMHTTPError):
-            if exc.status_code == 429:
-                return "429 限流"
-            return f"HTTP {exc.status_code} 上游错误"
-        return type(exc).__name__
+        """将 LLM 异常映射为简短中文降级原因标注（注入消息用, 设计原则 2 如实反馈）.
+
+        ASSESS-20261008 BUG-02: 标签消费 classify_llm_error 的同一份事实——
+        GLM 业务码语义如实呈现（1302 限流 / 1311 权限受限 / 1113 欠费），
+        不再把一切 429+业务码统称"429 限流"。
+        """
+        return classify_llm_error(exc).label
 
     @staticmethod
     def _build_fallback_all_failed_message(

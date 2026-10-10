@@ -42,6 +42,9 @@ nudge_growth_chars = 20000
 [web]
 host = "127.0.0.1"
 port = 8903
+# Default OFF. A one-session, one-Run admin approval is an owner-only 0600 file;
+# the older independently signed, three-UID option remains available.
+# task_budget_canary_config = "/absolute/operator-controlled/admin-once.json"
 
 [local_runtime]
 # On-demand diagnostic visibility only; independent from admission authority.

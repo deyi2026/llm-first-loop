@@ -58,6 +58,7 @@ from llm_loop.introspection.search import RecordSearcher
 from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.introspection.task_evidence import TaskEvidenceVerifier
 from llm_loop.llm.client import LLMClient
+from llm_loop.llm.providers import dial_target_observation, public_url
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.attachments import AttachmentStore
 from llm_loop.memory.embedder import HashEmbedder
@@ -1153,12 +1154,21 @@ def build_engine(
             )
         else:
             if _profile_decision.profile_class == "real":
-                logger.info(
-                    "browser tools registered at profile_class=real (ack_digest=%s, "
-                    "attestation_mode=%s) — real 档审计注记将出现在回执",
-                    ack_digest(_profile_decision.ack),
-                    _profile_decision.attestation_mode,
-                )
+                if _profile_decision.ack is None:
+                    # 门禁判定与 ack 缺失不一致：如实警告；下方 permit/deny 逻辑已
+                    # 用 deny_real 兜底（`and _profile_decision.ack` 条件）。
+                    logger.warning(
+                        "browser tools registered at profile_class=real but ack "
+                        "missing (inconsistent gate decision); binding policy will "
+                        "fall back to deny_real"
+                    )
+                else:
+                    logger.info(
+                        "browser tools registered at profile_class=real (ack_digest=%s, "
+                        "attestation_mode=%s) — real 档审计注记将出现在回执",
+                        ack_digest(_profile_decision.ack),
+                        _profile_decision.attestation_mode,
+                    )
             _browser_profile_annotation = annotation_for(_profile_decision)
             # S3a（v4-G3）：两 host 共享同一绑定协调器——首个绑定的 host 冻结
             # browser ws UUID+target+ws url 三元组，另一 host 新建绑定时必须全匹配，
@@ -1352,12 +1362,27 @@ def build_engine(
     # M48: 网络搜索（Bing/百度双后端降级）
     _register_basic("web_search", WebSearchTool(timeout_s=_tool_timeout))
 
-    # P3-1(2026-08-15): MCP 客户端接入（MCP_SERVERS env；stdio 连接 + schema 透传 +
+    # P3-1(2026-08-15)/P1-B(2026-10-09): MCP 客户端接入（MCP_SERVERS env；
+    # stdio 与 Streamable HTTP 双传输 + 双时代协议协商 + schema 透传 +
     # 五态包装 + 超时/审计复用；单服务器 fail-open）
+    # P1-C(2026-10-09): 装配改经 mcp_assembly——安装实例（workspace>user）
+    # → legacy MCP_SERVERS 合并优先级；同一精确身份冲突报告不叠加；
+    # 装配后记录 catalog epoch 基线（热刷新失效判据）
     try:
-        from llm_loop.tools.mcp_client import register_mcp_tools
+        from llm_loop.extensions.store import ExtensionStore  # r9-import-exempt: plugin
+        from llm_loop.tools.mcp_assembly import assemble_mcp_tools
 
-        _mcp_tools = register_mcp_tools(registry, settings.mcp_servers_raw)
+        _mcp_ext_paths = settings._extra.get("runtime_paths")
+        if not isinstance(_mcp_ext_paths, RuntimePaths):
+            _mcp_ext_paths = resolve_runtime_paths(
+                data_dir=settings.data_dir,
+                code_root=Path(__file__).resolve().parents[2],
+            )
+        _mcp_tools = assemble_mcp_tools(
+            registry,
+            ExtensionStore(_mcp_ext_paths.extensions_dir),
+            settings.mcp_servers_raw,
+        )
         if _mcp_tools:
             logger.info("MCP 工具注册 %d 个: %s", len(_mcp_tools), ", ".join(_mcp_tools[:6]))
     except Exception:  # noqa: BLE001 — MCP 装配失败不影响核心链路
@@ -1459,9 +1484,18 @@ def build_engine(
                 logger.warning(
                     "semantic memory startup warmup incomplete: %s", _memory_warm
                 )
-            memory.add_post_save_hook(semantic_retriever.schedule_memory_entry)
+            def _memory_post_save_hook(entry: Any) -> None:
+                # fail-open observer：入队结果（bool）无消费方，显式丢弃以符合 hook 契约
+                semantic_retriever.schedule_memory_entry(entry)
+
+            memory.add_post_save_hook(_memory_post_save_hook)
         if settings.semantic_archive_enabled and archive is not None:
-            archive.add_post_save_hook(semantic_retriever.schedule_archive_entry)
+
+            def _archive_post_save_hook(entry: Any) -> None:
+                # fail-open observer：同上，丢弃入队结果
+                semantic_retriever.schedule_archive_entry(entry)
+
+            archive.add_post_save_hook(_archive_post_save_hook)
 
     def _knowledge_health_snapshot() -> dict[str, Any]:
         return inspect_knowledge_health(_runtime_paths)
@@ -1487,32 +1521,7 @@ def build_engine(
 
     def _effective_model_status() -> dict[str, Any]:
         registry_snapshot, label, scope, source = _effective_model_binding()
-        if registry_snapshot is None:
-            return {
-                "llm_model": label,
-                "llm_base_url": None,
-                "llm_provider": None,
-                "llm_config_scope": scope,
-                "llm_config_source": "run_registry_unavailable" if scope == "current_run" else source,
-            }
-        try:
-            pid, mid = registry_snapshot.resolve(label)
-            provider = registry_snapshot.providers[pid]
-            return {
-                "llm_model": f"{pid}/{mid}",
-                "llm_base_url": provider.base_url,
-                "llm_provider": pid,
-                "llm_config_scope": scope,
-                "llm_config_source": source,
-            }
-        except Exception:  # noqa: BLE001 — unresolved current fact stays explicit
-            return {
-                "llm_model": label,
-                "llm_base_url": None,
-                "llm_provider": None,
-                "llm_config_scope": scope,
-                "llm_config_source": source,
-            }
+        return assemble_effective_model_status(registry_snapshot, label, scope, source)
 
     # 架构自省（M17 FR-REVIEW-AI-05: config_status 闭包含演进状态摘要，fail-open;
     # M18 AA10: memory_stats_fn 补记忆真实数据）
@@ -1732,11 +1741,13 @@ def build_engine(
             logger.warning(
                 "semantic method startup warmup incomplete: %s", _method_warm
             )
-        method_store.add_post_save_hook(
-            lambda record: semantic_retriever.schedule_method_candidate(
+        def _method_post_save_hook(record: Any) -> None:
+            # fail-open observer：丢弃入队结果（bool），符合 hook 契约
+            semantic_retriever.schedule_method_candidate(
                 method_store.semantic_candidate(record)
             )
-        )
+
+        method_store.add_post_save_hook(_method_post_save_hook)
     # REPORT-20260924 多查询融合影子模式：mode=shadow 时旁路测量（延迟/排序差异 JSONL），主路径零行为
     multiquery_probe = None
     if (
@@ -1848,6 +1859,16 @@ def build_engine(
     corrections._recovery_session_store = session_store  # noqa: SLF001 — 复用全局sid归属/原子恢复
     corrections._recovery_memory_dir = settings.memory_dir  # noqa: SLF001
     corrections._skills_dir = str(_runtime_paths.skills_dir) or None  # noqa: SLF001 — B3: 插件化 Skill 目录注入
+    # P1-A（DESIGN-20261009 §5.3/§5.4）: 扩展 store/catalog 装配（fail-open 零回归）
+    try:
+        from llm_loop.extensions.catalog import ExtensionCatalog  # r9-import-exempt: plugin
+        from llm_loop.extensions.store import ExtensionStore  # r9-import-exempt: plugin
+
+        corrections._extensions_catalog = ExtensionCatalog(  # noqa: SLF001 — 工具分派注入
+            ExtensionStore(_runtime_paths.extensions_dir)
+        )
+    except Exception:  # noqa: BLE001 — 装配失败降级为无扩展目录（skill_list/load 仍可用）
+        logger.warning("扩展 store/catalog 装配失败（fail-open）", exc_info=True)
     corrections._skill_execution_facts = {  # noqa: SLF001 — 当前执行环境机械事实
         "code_root": str(_runtime_paths.code_root),
         "runtime_root": str(
@@ -2559,6 +2580,56 @@ def _build_selfheal_budget(settings) -> Any:
         max_attempts=getattr(settings, "selfheal_max_attempts", 3),
         max_per_round=getattr(settings, "selfheal_max_per_round", 6),
     )
+
+
+def assemble_effective_model_status(
+    registry_snapshot: Any,
+    label: str,
+    scope: str,
+    source: str,
+) -> dict[str, Any]:
+    """组装当前生效模型的状态事实（ASSESS-20261008 BUG-07）.
+
+    事实分层（同一状态里可区分，不虚构）:
+    - llm_base_url / llm_base_url_kind: registry 路由声明（无凭证化）;
+    - llm_dial_target: 最近一次实际构造 client 时的拨号目标观测（仅当 local
+      直连发现发生改写才记录; None = 与路由一致或未观测到）。
+    状态查询只读观测映射，不触发服务发现、无新副作用；保密字段（userinfo/
+    query/api_key）不进入输出。§7.3 身份绑定: llm_dial_target 按 registry_snapshot
+    （本次状态的 authority 实例）身份读取，跨 registry / run 不串扰。
+    """
+    if registry_snapshot is None:
+        return {
+            "llm_model": label,
+            "llm_base_url": None,
+            "llm_base_url_kind": None,
+            "llm_dial_target": None,
+            "llm_provider": None,
+            "llm_config_scope": scope,
+            "llm_config_source": "run_registry_unavailable" if scope == "current_run" else source,
+        }
+    try:
+        pid, mid = registry_snapshot.resolve(label)
+        provider = registry_snapshot.providers[pid]
+        return {
+            "llm_model": f"{pid}/{mid}",
+            "llm_base_url": public_url(provider.base_url),
+            "llm_base_url_kind": "registry_route",
+            "llm_dial_target": dial_target_observation(registry_snapshot, pid, mid),
+            "llm_provider": pid,
+            "llm_config_scope": scope,
+            "llm_config_source": source,
+        }
+    except Exception:  # noqa: BLE001 — unresolved current fact stays explicit
+        return {
+            "llm_model": label,
+            "llm_base_url": None,
+            "llm_base_url_kind": None,
+            "llm_dial_target": None,
+            "llm_provider": None,
+            "llm_config_scope": scope,
+            "llm_config_source": source,
+        }
 
 
 def _build_memory_stats_fn(memory) -> Any:

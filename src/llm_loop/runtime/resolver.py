@@ -22,8 +22,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -92,6 +93,9 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("tools", "nonconvergence_fuse_min_delta"): TomlField(("LFL_NONCONV_FUSE_MIN_DELTA",), "int"),
         ("web", "host"): TomlField(("WEB_HOST",), "str"),
         ("web", "port"): TomlField(("WEB_PORT",), "int"),
+        ("web", "task_budget_canary_config"): TomlField(
+            ("LFL_TASK_BUDGET_WEB_CANARY_CONFIG",), "str"
+        ),
         ("chatgpt_web", "enabled"): TomlField(("CHATGPT_WEB_ENABLED",), "bool"),
         ("chatgpt_web", "cdp_endpoint"): TomlField(("CHATGPT_WEB_CDP_ENDPOINT",), "str"),
         ("chatgpt_web", "project_url"): TomlField(("CHATGPT_WEB_PROJECT_URL",), "str"),
@@ -123,6 +127,13 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         # 非法值由 config._env_multiquery_mode fail-safe 回 off
         ("retrieval", "multiquery_mode"): TomlField(("RETRIEVAL_MULTIQUERY_MODE",), "str"),
         ("tools", "schema_lazy"): TomlField(("TOOL_SCHEMA_LAZY",), "bool"),
+        # Execution-time Method/Experience/Lesson reference discovery is
+        # deliberately limited to Web in the first live rollout. In particular,
+        # a generic .env switch must never silently opt Feishu/Learning in.
+        ("knowledge_advisor", "mode"): TomlField(("LFL_KNOWLEDGE_ADVISOR",), "str"),
+        ("knowledge_advisor", "sessions"): TomlField(
+            ("LFL_KNOWLEDGE_ADVISOR_SESSIONS",), "str"
+        ),
         ("dsh", "home"): TomlField(("DSH_HOME",), "str"),
         ("dsh", "sessions_root"): TomlField(("DSH_SESSIONS_ROOT",), "str"),
         ("cache_guard", "perf_block_mode"): TomlField(("CACHE_GUARD_PERF_BLOCK",), "str"),
@@ -179,6 +190,7 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
 _SERVICE_SCOPED_SECTIONS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "semantic": frozenset({"web", "feishu", "learning"}),
+        "knowledge_advisor": frozenset({"web"}),
         # ChatGPT browser I/O is intentionally a Web-only surface.  Keeping the
         # runtime switch service-scoped prevents Feishu/Learning from acquiring
         # the browser-backed provider on future independent restarts.
@@ -218,6 +230,10 @@ _LEGACY_GOVERNED_KEYS = (
 )
 
 BUSINESS_KEYS = tuple(dict.fromkeys((*_TOML_ENV_KEYS, *_LEGACY_GOVERNED_KEYS)))
+_WEB_ONLY_KNOWLEDGE_KEYS = frozenset({
+    "LFL_KNOWLEDGE_ADVISOR", "LFL_KNOWLEDGE_ADVISOR_SESSIONS",
+    "LFL_TASK_BUDGET_WEB_CANARY_CONFIG",
+})
 
 # Secret/credential material is never accepted by runtime.toml.
 _SECRET_KEYS = (
@@ -249,6 +265,7 @@ def _mask_secret(key: str, val: str) -> str:
         or "SECRET" in key
         or "TOKEN" in key
         or "PASSWORD" in key
+        or key == "LFL_KNOWLEDGE_ADVISOR_SESSIONS"
     ):
         return f"<secret:{len(val)}chars>"
     return val
@@ -362,6 +379,14 @@ def _parse_runtime_toml_layers(
                 raise ValueError(f"runtime.toml 禁止存放凭证/密钥字段: {where}")
             raise ValueError(f"runtime.toml 未知字段: {where}")
         field_path = (raw_path[0], raw_path[1])
+        if field_path[0] == "knowledge_advisor":
+            # A global activation could affect unrelated Feishu/Learning
+            # services on a later independent restart, despite the first
+            # rollout being Web-only. Fail before any process is restarted.
+            raise ValueError(
+                "runtime.toml knowledge_advisor 仅支持服务级 "
+                "[knowledge_advisor.web]，不允许全局开启"
+            )
         spec = TOML_SCHEMA.get(field_path)
         if spec is None:
             where = ".".join(field_path)
@@ -508,6 +533,18 @@ def resolve_effective(
     ignored: dict[str, str] = {}
 
     for key in BUSINESS_KEYS:
+        if (
+            key in _WEB_ONLY_KNOWLEDGE_KEYS
+            and str(service).strip().lower() != "web"
+        ):
+            # The service-specific runtime contract is authoritative even
+            # under an operator's generic .env / shell override. No silent
+            # expansion to Feishu or Learning, and no user-message veto.
+            values[key] = "off" if key == "LFL_KNOWLEDGE_ADVISOR" else ""
+            sources[key] = "service_scope:disabled"
+            if env_values.get(key):
+                ignored[key] = str(env_values[key])
+            continue
         if cli_overrides and key in cli_overrides:
             values[key] = str(cli_overrides[key])
             sources[key] = "cli"
@@ -633,3 +670,64 @@ def apply_to_environ(config: RuntimeConfig) -> None:
             os.environ[key] = projected[key]
         else:
             os.environ.pop(key, None)
+
+
+def check_runtime_toml(path: str, services: Sequence[str]) -> tuple[bool, str]:
+    """Check-only strict parse of a runtime.toml against THIS code's schema.
+
+    EVO-20261009-9d116efa G1: the restart pipeline runs this through the TARGET
+    release's own resolver (PYTHONPATH pinned to that release's src/) before
+    stopping any live process, so a runtime.toml field that the target code has
+    not registered aborts the restart with zero physical side effects instead
+    of taking the service down after ``_stop_*``.
+
+    Returns ``(ok, message)``. Never writes, never touches os.environ.
+    """
+    if not os.path.exists(path):
+        return True, f"runtime.toml 不存在，跳过 schema 校验: {path}"
+    problems: list[str] = []
+    checked: list[str] = []
+    for service in services:
+        try:
+            parse_runtime_toml(path, service=service)
+            checked.append(service)
+        except ValueError as exc:
+            problems.append(f"[{service}] {exc}")
+        except Exception as exc:  # fail closed on parser failures too
+            problems.append(f"[{service}] 解析异常: {exc!r}")
+    if problems:
+        detail = "; ".join(problems)
+        return (
+            False,
+            "runtime.toml 与目标代码 schema 不兼容（未知字段/类型/密钥违规），拒绝继续重启: "
+            + detail,
+        )
+    return True, f"runtime.toml schema 校验通过 services={checked}"
+
+
+def _cli_check_toml(argv: list[str]) -> int:
+    """Dispatch schema checks separately from restart-script endpoint queries."""
+    args = argv[1:]
+    if len(args) == 1 and args[0] in {"WEB_PORT", "WEB_HOST"}:
+        try:
+            value = resolve_effective("web").values[args[0]]
+        except (ValueError, OSError, KeyError) as exc:
+            print(f"runtime endpoint query failed: {exc}", file=sys.stderr)
+            return 1
+        print(value)
+        return 0
+    if len(args) < 2 or args[0] != "--check-toml":
+        print("usage: resolver WEB_PORT|WEB_HOST or --check-toml <runtime.toml> [service ...]", file=sys.stderr)
+        return 2
+    path = args[1]
+    services = args[2:] or ["web", "feishu", "learning"]
+    if any(service not in {"web", "feishu", "learning"} for service in services):
+        print("service must be web, feishu or learning", file=sys.stderr)
+        return 2
+    ok, message = check_runtime_toml(path, services)
+    print(message)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli_check_toml(sys.argv))

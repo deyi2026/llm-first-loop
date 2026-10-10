@@ -174,6 +174,9 @@ def _method_pool_facts(methods_dir: Path, *, seed_dir: Path | None = None) -> di
         if re.search(r"^parent_ref:\s*\S", block, re.MULTILINE) is not None:
             with_parent += 1
     use_decisions, distinct_used_methods = _usage_facts(methods_dir)
+    from llm_loop.methods.store import MethodStore  # local import: keep module import graph flat
+
+    usage_integrity = MethodStore(methods_dir, seed_dir=seed_dir).check_usage_integrity()
     pool: dict[str, object] = {
         "total": total,
         "status": status_counts,
@@ -183,6 +186,8 @@ def _method_pool_facts(methods_dir: Path, *, seed_dir: Path | None = None) -> di
         "with_parent": with_parent,
         "age_buckets": age_buckets,
         "use_decisions": use_decisions,
+        "usage_ledger_monitored": usage_integrity["monitored"],
+        "usage_ledger_lost": usage_integrity["lost"],
         "blocked_transition_attempts": _count_lines(methods_dir / "lifecycle_attempts.jsonl"),
     }
     if seed_dir is not None:

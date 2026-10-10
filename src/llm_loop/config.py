@@ -45,6 +45,10 @@ class ToolRuntimeSettings:
     job_max_concurrent: int = 5
     evidence_capsule: str = "off"
     tool_guidance: str = "off"
+    # Independent reference-only Method/Experience/Lesson execution discovery.
+    # Canary requires an exact, explicitly approved Web session allowlist.
+    knowledge_advisor_mode: str = "off"
+    knowledge_advisor_sessions: str = ""
     exec_sandbox: str = "none"
     exec_sandbox_image: str = "python:3.13-slim"
     nonconvergence_fuse_windows: int = 3
@@ -85,18 +89,41 @@ def _note_invalid_fallback(name: str, fallback_value: Any, invalid_value_type: s
     )
 
 
+def _strip_inline_comment(val: str) -> str:
+    """剥离行内注释: 值与 # 之间的空白分隔处截断（EVO-20260813-ba4a107c）.
+
+    ASSESS-20261008 BUG-13c: 引号内的 ' #' 是值的一部分，不是注释——
+    原实现无脑 split(" #") 把 X="abc #def" 截成 "abc 且保留引号。
+    无空格的普通 #（如 1#tag）保持不截断（原契约）。
+    """
+    quote = ""
+    for i, ch in enumerate(val):
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "#" and i > 0 and val[i - 1] in (" ", "\t"):
+            return val[:i].rstrip()
+    return val
+
+
+def _strip_quotes(val: str) -> str:
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+        return val[1:-1]
+    return val
+
+
 def _raw_env(name: str, env: Mapping[str, str] | None = None) -> str:
     """读取环境变量并剥离行内注释（与 load_env_file EVO-ba4a107c 对齐）.
 
     防外层 shell 残留脏值（如 RETRIEVE_TIMEOUT_S="1  # 注释"）导致解析失败回退默认：
     环境变量优先原则下 .env 无法覆盖已存在的脏值，解析函数自身剥离注释兜底。
+    ASSESS-20261008 BUG-13c: 注释剥离改为引号感知，随后剥离包裹引号。
     """
     values = os.environ if env is None else env
     if name in values:
-        raw = values[name]
-        if " #" in raw:
-            raw = raw.split(" #", 1)[0]
-        return raw
+        return _strip_quotes(_strip_inline_comment(values[name]))
     return ""
 
 
@@ -175,11 +202,9 @@ def load_env_file(path: str | Path | None = None) -> None:
             if key in os.environ:
                 continue  # 环境变量优先，已设置的键不覆盖
             val = val.strip()
-            # 行内注释剥离（EVO-20260813-ba4a107c）: 值与 # 之间的空白分隔处截断，
-            # 避免 `KEY=1  # 注释` 把注释带进值导致 _env_int 解析失败回退默认
-            val = val.split(" #", 1)[0].strip()
-            if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
-                val = val[1:-1]
+            # ASSESS-20261008 BUG-13c: 引号感知的行内注释剥离 + 引号剥离
+            # （原 split(" #") 把 X="abc #def" 截成 "abc 且保留引号）
+            val = _strip_quotes(_strip_inline_comment(val)).strip()
             os.environ[key] = val
     except OSError:
         pass  # 读取失败 fail-open
@@ -193,8 +218,10 @@ def _env_bool(name: str, default: bool, env: Mapping[str, str] | None = None) ->
         return True
     if raw in {"0", "false", "no", "off"}:
         return False
-    _note_invalid_fallback(name, False, "非布尔字符串")
-    return False
+    # ASSESS-20261008 BUG-13a: 非法值回退传入 default（原硬编码 False——
+    # default=True 的开关在 typo 时被静默关掉），告警不泄露原值。
+    _note_invalid_fallback(name, default, "非布尔字符串")
+    return default
 
 
 def _env_thinking_mode(name: str, env: Mapping[str, str] | None = None) -> bool:
@@ -470,7 +497,7 @@ class Settings:
     # 压力路径候选年龄（0=按占用率调候选年龄；不再触发 under-budget 改写）
     # 默认 8000：常规工具输出（grep/读文件片段/短日志）不触发折叠，大输出（长日志/抓取全文）才降级；
     # 折叠时提取关键事实摘要优先、首尾截断兜底；越小越省 token，越大越少折叠触发）
-    mcp_servers_raw: str = ""  # P3-1: MCP_SERVERS JSON（stdio MCP 服务器列表）
+    mcp_servers_raw: str = ""  # P3-1/P1-B: MCP_SERVERS JSON（stdio 与 http(Streamable HTTP) 服务器列表）
     # EVO-20260912-10818cb5: smx 感知层 opt-in（LFL_SMX_PERCEIVE=smx.py 路径；空=默认不注册该工具）
     smx_perceive_path: str = ""
     # SMC Browser Phase 1 live perception: 显式 loopback CDP endpoint 才注册；
@@ -1030,6 +1057,12 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         tool_guidance=_mode(
             "LFL_TOOL_GUIDANCE", "off", {"on", "shadow", "off"}
         ),
+        knowledge_advisor_mode=_mode(
+            "LFL_KNOWLEDGE_ADVISOR", "off", {"off", "shadow", "canary"}
+        ),
+        knowledge_advisor_sessions=str(
+            env_values.get("LFL_KNOWLEDGE_ADVISOR_SESSIONS", "") or ""
+        ),
         exec_sandbox=_mode(
             "EXEC_SANDBOX", "none", {"none", "bwrap", "docker"}
         ),
@@ -1048,7 +1081,12 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         thinking_mode=env_one(_env_thinking_mode, "LLM_THINKING_MODE"),
         reasoning_effort=env_one(_env_effort, "LLM_REASONING_EFFORT"),
         max_iterations=env_int("LLM_MAX_ITERATIONS", 500),
-        llm_timeout_s=float(env_int("LLM_TIMEOUT_S", 120)),
+        # ASSESS-20261008 BUG-13b: timeout 是浮点字段，直接走 float parser
+        # （原经 env_int 拒绝 "0.5" 后回退 120——用户显式配置被静默丢弃）。
+        # rev4 追补: 必须线程 env_values——漏传时 parser 回落 os.environ，
+        # 显式 mapping 调用方（hermetic 契约）的 LLM_TIMEOUT_S 被进程环境
+        # 覆盖或整体丢弃（复现: mapping=30 → 120; procenv=93 时 → 93）。
+        llm_timeout_s=_env_float("LLM_TIMEOUT_S", 120.0, env_values),
         llm_max_tokens=env_int("LLM_MAX_TOKENS", 16000),  # 2026-08-15 显式输出预算
         llm_wire_protocol=env_values.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
         llm_trust_env=env_optional_true_set("LLM_TRUST_ENV"),

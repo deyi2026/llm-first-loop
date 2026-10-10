@@ -6,9 +6,11 @@ solution: contextvar 注入 + finally reset 模式（见 body）；工具内 ctx
 evidence: DSH 022 建议 B/A 落地（2026-08-17），测试 10/10 + 子代理回归 19/19 全绿
 tags: [contextvar, 子代理, 工具上下文, 模式, 隔离会话]
 source: {}
-status: active
+status: archived
+record_kind: experience
+verification_state: legacy_unclassified
 created_at: "2026-08-17T18:38:15.913320+08:00"
-updated_at: "2026-08-17T18:38:15.913320+08:00"
+updated_at: "2026-10-10T08:48:21.221938+08:00"
 ---
 
 ## 模式
