@@ -66,19 +66,20 @@
   <div class="badges">
     <span class="badge">对象 <b>LFL</b></span>
     <span class="badge">对比 <b>9</b> 个主流项目</span>
-    <span class="badge">LFL 总分 <b style="color:var(--lfl)">66.7 / 100</b></span>
-    <span class="badge">LFL 排名 <b style="color:var(--lfl)">8 / 10</b></span>
-    <span class="badge">最强项 <b>工程化 9 · 功能 9</b></span>
-    <span class="badge">最弱项 <b>生态 2 · 易用 4</b></span>
+    <span class="badge">LFL 总分 <b style="color:var(--lfl)">71.7</b> <span style="color:var(--good)">▲+5.0</span></span>
+    <span class="badge">分数口径 <b style="color:var(--lfl)">维度剖面（跨层不可通约）</b></span>
+    <span class="badge">最强项 <b>扩展 9 · 功能 9 · 工程 9</b></span>
+    <span class="badge">最弱项 <b>生态 3 · 易用 5</b></span>
+    <span class="badge">修订 <b>r2 · 2026-10-10</b></span>
   </div>
 </header>
 
 <main>
   <section>
     <div class="kpis">
-      <div class="kpi"><div class="v" style="color:var(--lfl)">66.7</div><div class="l">LFL 加权总分</div></div>
-      <div class="kpi"><div class="v">9 / 10</div><div class="l">LFL 功能完整性（并列第一梯队）</div></div>
-      <div class="kpi"><div class="v" style="color:var(--bad)">2 / 10</div><div class="l">LFL 生态与社区（最大短板）</div></div>
+      <div class="kpi"><div class="v" style="color:var(--lfl)">71.7</div><div class="l">LFL 加权总分（r3，原 66.7）</div></div>
+      <div class="kpi"><div class="v" style="color:var(--good)">9 / 10</div><div class="l">扩展性（r2：7→9，MCP 全套）</div></div>
+      <div class="kpi"><div class="v" style="color:var(--bad)">3 / 10</div><div class="l">生态与社区（仍为短板）</div></div>
       <div class="kpi"><div class="v" style="color:var(--accent)">3 项</div><div class="l">LFL 独有领先能力</div></div>
     </div>
   </section>
@@ -98,11 +99,11 @@
       </div>
       <div class="card">
         <h3>分维度解读</h3>
-        <div class="adv"><b>哑铃形（LFL）</b>：功能/架构/工程/安全凸出，易用与生态凹陷。</div>
+        <div class="adv"><b>哑铃形（LFL，r3）</b>：功能/工程凸出，架构/扩展/安全居中偏上；易用与生态仍凹陷。r3 注：扩展性能力面已补齐，但工具面未接线，回调至 8。</div>
         <div class="adv"><b>近似正多边形（Pydantic AI）</b>：各维 7–9，无明显短板。</div>
         <div class="adv"><b>生态单极形（LangGraph / Claude Code）</b>：生态维度 10 分突出。</div>
         <div class="adv"><b>整体收缩形（AutoGen）</b>：维护模式导致全维平庸。</div>
-        <div class="adv"><b>结论</b>：LFL 形状的凹陷位置，正好是「可被采纳」最关键的两维。</div>
+        <div class="adv"><b>结论</b>：LFL 的凹陷已收窄到「分发与社区」（PyPI/外部贡献者），而非「能力」。</div>
       </div>
     </div>
   </section>
@@ -121,12 +122,14 @@
   <section>
     <h2>5 · 改进路线图</h2>
     <div class="card" style="overflow:auto"><table id="road"></table></div>
-    <div class="hint">完成 P0+P1 预计总分 66.7 → ~76，进入中上游。</div>
+    <div class="hint">以 r3 基线 71.7 起算，剩余 P0+P1 预计 71.7 → ~78，进入上游。</div>
   </section>
 </main>
 
 <footer>
   资料：LFL 为本地只读代码审查；对比对象优先联网核实（GitHub/官方文档，2026-10-07），SWE-agent/Claude Code/promptfoo/LangSmith/SWE-bench 部分为知识库信息。<br>
+  <b>修订 r2（2026-10-10）</b>：LFL 插件生态 P1-A~P2-B（MCP 全套/标准包/厂商适配器）、method 生命周期 v2.2、Docker 沙箱后端纳入评分；LFL 总分 66.7→72.9。<br>
+<b>修订 r3（2026-10-10，评审修正）</b>：扩展性按「能力被外部消费」口径 9→8（工具面未接线），总分 72.9→71.7；移除跨层排名语义；P0-2 出向以 MCP server 导出优先。<br>
   本看板为自包含文件，无外部依赖，可离线打开。
 </footer>
 
@@ -146,7 +149,7 @@ const P = [
   {n:"OpenAI Agents SDK",layer:"框架层",c:"#3fb950",s:[7,8,9,8,7,9,7,8,6,8]},
   {n:"CrewAI",layer:"框架层",c:"#db61a2",s:[7,6,8,7,6,8,6,7,6,7]},
   {n:"Aider",layer:"Harness层",c:"#39c5cf",s:[7,6,8,6,7,9,6,7,7,5]},
-  {n:"LFL",layer:"本报告对象",c:"#ffb454",s:[9,8,4,7,7,2,7,9,6,7],me:true},
+  {n:"LFL",layer:"本报告对象(r3)",c:"#ffb454",s:[9,8,5,8,7,3,8,9,6,8],me:true},
   {n:"SWE-agent",layer:"Harness层",c:"#a371f7",s:[6,7,6,6,7,8,7,7,6,4]},
   {n:"AutoGen",layer:"框架层",c:"#8d96a0",s:[7,7,6,7,6,5,5,7,5,6]}
 ];
@@ -259,8 +262,10 @@ const radarSel=new Set(["LFL","Pydantic AI","LangGraph","OpenHands","AutoGen"]);
     ["事件源化 + 逐字段对账","✅ 独有","LangGraph checkpoint / OpenHands state","领先"],
     ["AI 自主演进闭环","✅ 独有","无同类一等能力","领先"],
     ["实证评测纪律（预注册/冻结/Wilson CI）","✅ 领先","Inspect AI 相当","持平/领先"],
-    ["沙箱隔离","⚠️ 弱","OpenHands / Inspect / SWE-agent","落后"],
-    ["标准协议出口（OpenAI 兼容 / MCP server）","❌ 缺","多数框架","落后"],
+    ["MCP 生态接入（协议/传输/OAuth/资源提示）","✅ r2 追平","AutoGen / OpenAI SDK / Pydantic AI","追平"],
+    ["标准插件包 + 厂商适配器","✅ r2 新增","Claude Code / Cursor / VS Code 生态","追平"],
+    ["沙箱隔离","✅ Docker/bwrap 后端","OpenHands / Inspect / SWE-agent","追平"],
+    ["标准协议出口（OpenAI 兼容 / MCP server 导出）","❌ 缺","多数框架","落后"],
     ["包分发（PyPI / pip）","❌ 缺","全部","落后"],
     ["社区与外部使用者","❌ 缺","全部","落后"],
     ["类型安全 / IDE 体验","⚠️ 弱","Pydantic AI","落后"],
@@ -278,11 +283,11 @@ const radarSel=new Set(["LFL","Pydantic AI","LangGraph","OpenHands","AutoGen"]);
 (function(){
   const rows=[
     ["P0-1","发布 PyPI 包","release.yml 增加 build + trusted publishing","易用性 +3、生态 +2","pip 干净环境跑通 examples/01"],
-    ["P0-2","OpenAI 兼容出口 + MCP server","Web 增 /v1/chat/completions；接线 mcp_server","扩展性 +2、生态 +2","用现成客户端连通"],
+    ["P0-2","对外出口（r2 部分完成）","入向 MCP/插件已补齐；仍缺 OpenAI 兼容出口 + MCP server 导出 + extension_* 工具面","生态 +1、扩展 +1","OpenAI SDK/MCP 客户端连通"],
     ["P0-3","降低首跑成本","lfl init 向导 + 极小默认配置 + 3 行跑通","易用性 +2","5 分钟无文档跑通"],
     ["P0-4","剥离仓库噪声","evals/data_ab/swe-json/.env.bak 移出主仓","专业度、克隆成本↓","克隆体积对比"],
     ["P1-1","拆分超大文件","factory/engine/registry/session 继续 R9 平移","架构 +1","无行为变更 + 体量守卫下降"],
-    ["P1-2","容器化沙箱选项","增加 Docker/远程沙箱执行后端","安全 +2","不可信代码容器内执行"],
+    ["P1-2","容器化沙箱（r2 已实现）","tools/sandbox.py（bwrap/docker）已有；下一步默认化 + 文档 + 扩边界","安全维持 8","不可信代码默认容器执行"],
     ["P1-3","清收外部红豁免","~90 项按期销号；移除 legacy 分支","工程化 +1","豁免归零、守卫绿"],
     ["P1-4","版本面统一","单一 SoT 派生版本；修正文档滞后","工程化 +1","版本一致性入 CI"],
     ["P1-5","评测资产外化","run_eval 抽为独立包，兼容 Inspect 日志","生态 +1","第三方可评测自己的 Agent"],

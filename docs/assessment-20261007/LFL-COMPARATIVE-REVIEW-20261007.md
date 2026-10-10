@@ -1,10 +1,12 @@
 # LFL 系统性审查与主流 Agent/Harness 横向对比分析
 
-- **审查对象**：LLM-First Core Loop（LFL），仓库 `llm-first-loop-mirror`，版本 `0.6.26`
-- **报告日期**：2026-10-07
+- **审查对象**：LLM-First Core Loop（LFL），仓库 `llm-first-loop-mirror`，版本 `0.6.27`（HEAD `98d1ce90e`）
+- **报告日期**：2026-10-07（初版 r1）｜ 2026-10-10（**修订 r2**）｜ 2026-10-10（**修订 r3：评审修正**）
 - **对比口径**：分层对比（Agent 框架层 / 执行 Harness 层 / 评测框架层）
 - **评分体系**：10 维加权（权重公开于 §4.1）
 - **资料声明**：LFL 事实来自本地只读代码审查；对比对象事实优先联网核实（GitHub 页面 / 官方文档，2026-10-07），无法联网核实的条目在文中以 *(知识库，未联网核实)* 标注。
+- **修订 r2（2026-10-10）**：LFL 在 10-09~10-10 有大量更新——**插件生态 P1-A~P2-B**（Agent Plugins 标准包 / MCP 全套 / 厂商适配器 / git·archive 安装源 / registry 发现）、**method 生命周期闭环 v2.2**、**方法/经验消费证据链**、**Docker 沙箱后端**。评分与结论已按最新 HEAD 修订。逐项修订与证据见 **§4.5**。
+- **修订 r3（2026-10-10，评审修正）**：① §2.4 技术债事实刷新（行数按 2026-10-10 实测；端口文档已修正、该条删除；版本面聚焦 tag 滞后）；② 扩展性 9→8——r2 按「能力存在」给 9，r3 按「能力被外部消费」口径回调：`extension_*` 工具面未接线、无真实插件全链路，9 分门槛 = 工具面接线 + 真实插件跑通；总分 72.9→**71.7**；③ 移除跨层排名表述（生态维度对个人项目近似常数惩罚，跨层分数不可通约）；④ P0-2 出向出口重排：**MCP server 导出优先**于 OpenAI 兼容出口；⑤ 新增 P1-6 消费率闭环、P1-7 对外版本承诺；⑥ P0-1 补 Python 支持策略前置决策。
 
 ---
 
@@ -12,9 +14,11 @@
 
 LFL 是一个**架构野心与技术纪律都远超「个人项目」的 LLM 优先 Agent 运行时**。它的差异化不在功能清单的堆叠，而在于三件主流框架普遍缺失的东西：**AI 自主演进闭环（自评 → 建议 → 分级执行 → 审计）**、**事件源化单一真相源 + 双轨逐字段对账**、以及**预注册/冻结/对照/Wilson CI 级别的实证研发纪律**。这三项在本次对比的全部对象中，**没有第二个项目同时具备**。
 
-但横评的残酷结论同样清晰：**若以「可被主流社区采纳的通用 Agent 框架」为标准，LFL 加权总分 66.7，在 10 个对比对象中列第 8**。拖累项高度集中——**生态与社区 2/10、易用性 4/10** 两项权重合计 22 分，LFL 只拿到 64 分（满分 220）。这不是能力问题，而是**开放度与上手成本问题**：未上 PyPI、要求 Python ≥3.13、`.env` 配置 18KB、大量内部术语（R9/M47/RULE-AI-*）、无 OpenAI 兼容出口、无外部贡献者。
+但横评的结论同样清晰：**若以「可被主流社区采纳的通用 Agent 框架」为标准，LFL 初版加权总分 66.7；经 10-09~10-10 的生态补全修订为 72.9（r2），r3 评审按「能力被外部消费」口径将扩展性回调至 8，总分 71.7**。核心矛盾未变——**生态与社区（2→3）、易用性（4→5）** 仍是相对短板，这轮补齐了**扩展性（7→8，能力面已齐、消费面未接线）**与**安全性（7→8）**：MCP 从「固定旧协议 + stdio」升级为「双时代协议 + 三传输 + OAuth + resources/prompts」，并新增标准插件包与主流工具链适配器。剩余硬门槛仍是**未上 PyPI、无对外出口（MCP server 导出 / OpenAI 兼容）、无外部贡献者**。
 
-一句话定位：**LFL 是一台「单机高精度研究仪器」，而非「即插即用的工程组件」**。它已经把「Agent 长期记忆 + 自我改进 + 可审计」这条最难的路走通了，接下来的瓶颈是**把内部资产（方法论、评测、能力）产品化并对外开放**。
+一句话定位：**LFL 已从「单机高精度研究仪器」补齐为「具备标准生态接入能力的研究级运行时」，但尚未成为「即插即用的工程组件」**——它把「Agent 长期记忆 + 自我改进 + 可审计」这条最难的路走通了并首次对齐了 MCP 生态标准，接下来的瓶颈仍是**把内部资产产品化并对社区开放**。
+
+> **读表口径（r3）**：下表按加权总分排列，仅供维度剖面参照。生态与社区维度实际测量「成立时间 × 组织化投入」，对个人维护的项目近似常数惩罚；框架 / Harness / 评测三层的分数不在同一可通约空间，**排名顺序不构成「谁更好」的结论**。
 
 | 分层 | 代表 | 加权总分（满分 100） |
 |:--|:--|:--:|
@@ -23,9 +27,9 @@ LFL 是一个**架构野心与技术纪律都远超「个人项目」的 LLM 优
 | Harness 层 | OpenHands | 79.9 |
 | Harness 层 | Claude Code | 79.1 |
 | 框架层 | OpenAI Agents SDK | 78.1 |
+| **LFL（r3 修订）** | **LLM-First Core Loop** | **71.7** ▲ |
 | 框架层 | CrewAI | 68.9 |
 | Harness 层 | Aider | 68.6 |
-| **LFL** | **LLM-First Core Loop** | **66.7** |
 | Harness 层 | SWE-agent | 64.6 |
 | 框架层 | AutoGen（维护模式） | 62.4 |
 
@@ -41,7 +45,7 @@ LFL 是一个**架构野心与技术纪律都远超「个人项目」的 LLM 优
 | 定位 | 「AI 优先」（LLM-first）的 **Agent 运行时 / Harness**；程序最小化 + 文档规则驱动 + AI 自主演进闭环 | `README.md:9` |
 | 目标 | 大模型是核心，架构主线 = **消息进 → 理解 → 行动 → 真诚回答 → 记住**；程序是辅助大模型的「感官 + 手脚」，不是约束 | `README.md:5-25` |
 | 技术栈 | Python ≥3.13、FastAPI、httpx、uv 锁定；前端 React 18 + TS + Vite | `pyproject.toml:5-15`、`webui/package.json` |
-| 规模 | `src` 399 个 py / **146,959 行**；测试 **738 文件 / 7,215 用例**；`docs` 732 文件 | 本地 `find/wc`、探索代理 |
+| 规模 | `src` 399 个 py / **146,959 行**；测试 **801 文件**（r2 复核 10-10，r1 为 738）/ 7,215 用例（r1 计数）；`docs` 732 文件 | 本地 `find/wc`、探索代理 |
 | 核心功能 | 五阶段状态机、严格 function calling（C1-C6）、事件源化、记忆/检索/证据、方法学习闭环、自评/演进、SubAgent、浏览器、工作区、多 provider | `src/llm_loop/` 各子系统 |
 | 三端接入 | CLI、Web（FastAPI，实际默认端口 **8903**）、飞书桥；共享同一 `build_engine` 装配路径 | `README.md:104`、`web/__init__.py:385`、`feishu/__init__.py:50-61` |
 | 许可 / 发布 | Apache-2.0；**未发布 PyPI**（`release.yml` 仅 GitHub Release 草稿） | `LICENSE:2`、`.github/workflows/release.yml` |
@@ -139,13 +143,13 @@ LFL 是一个**架构野心与技术纪律都远超「个人项目」的 LLM 优
 
 | 风险 | 证据 | 影响 |
 |:--|:--|:--|
-| 超大文件 + 高耦合宿主 | `factory.py` 2766 行、`engine.py` 2623 行、`registry.py` 1921 行、`session.py`/`history.py` ~100KB | 新人理解成本、回归面 |
+| 超大文件 + 高耦合宿主 | `factory.py` 2837 行、`engine.py` 2641 行、`registry.py` 1956 行（2026-10-10 实测，仍在增长）、`session.py`/`history.py` ~100KB | 新人理解成本、回归面 |
 | Mixin 与组合服务并存 | `engine_services/` 大量 `self._host` 回边 + 文件级 pyright 豁免 | 静态类型安全削弱 |
 | 残留兼容路径 | `err1210`、`LEGACY_PROGRAM_FINAL_MARKER`、`legacy_truncated_tail` | 认知负担、潜在死代码 |
 | 配置面极宽 + 三态开关 | `config.py` 66KB；`LFL_TOOL_GUIDANCE`/`LFL_EVIDENCE_CAPSULE`/`CACHE_GUARD_PERF_BLOCK` | 回归矩阵成本高 |
 | 外部红豁免登记 | `tests/guards/external_red_registry.json` ~90 项（带销号期限） | 显性技术债 |
-| 版本面不一致 | `pyproject.toml`=0.6.26 vs `CHANGELOG` v0.6.27 vs tag v0.6.26 | 发布可信度 |
-| 文档滞后 | README/api 写端口 `8902`，实际 `8903`；CONTRIBUTING 仍提 Release Drafter（文件已不存在） | 上手误导 |
+| 版本面不一致 | `pyproject.toml`=0.6.27 = `CHANGELOG` v0.6.27，但 **git tag 停在 v0.6.26**（2026-10-10 复核） | 发布可信度：对外无锚定 tag |
+| 文档滞后 | CONTRIBUTING 仍提 Release Drafter（`.github/release-drafter.yml` 不存在，2026-10-10 复核）；原「README/api 写端口 8902」一条已失效删除——README:104 现为 8903，与实际一致 | 上手误导 |
 | 仓库卫生 | 顶层 26 个 `*.swe-*.json`、`.env.bak-*`、`data/` 33 万文件、`evals/` 25 万文件 | 克隆/检索成本 |
 | **无 PyPI / 无 OpenAI 兼容出口 / MCP server 未接线** | `release.yml` 无 publish；`web/routes.py` 仅自有 REST；`cache_guard/mcp_server.py` 无调用者 | **生态采纳的最大阻塞** |
 
@@ -247,25 +251,25 @@ LFL 是一个**架构野心与技术纪律都远超「个人项目」的 LLM 优
 | OpenHands | 9 | 8 | 7 | 8 | 7 | 9 | 8 | 8 | 6 | 8 | **79.9** |
 | Claude Code | 8 | 8 | 9 | 7 | 8 | 10 | 8 | 8 | 5 | 6 | **79.1** |
 | OpenAI Agents SDK | 7 | 8 | 9 | 8 | 7 | 9 | 7 | 8 | 6 | 8 | **78.1** |
+| **LFL（r3 修订）** | **9** | **8** | **5** | **8** | **7** | **3** | **8** | **9** | **6** | **8** | **71.7** ▲ |
 | CrewAI | 7 | 6 | 8 | 7 | 6 | 8 | 6 | 7 | 6 | 7 | **68.9** |
 | Aider | 7 | 6 | 8 | 6 | 7 | 9 | 6 | 7 | 7 | 5 | **68.6** |
-| **LFL** | **9** | **8** | **4** | **7** | **7** | **2** | **7** | **9** | **6** | **7** | **66.7** |
 | SWE-agent | 6 | 7 | 6 | 6 | 7 | 8 | 7 | 7 | 6 | 4 | **64.6** |
 | AutoGen | 7 | 7 | 6 | 7 | 6 | 5 | 5 | 7 | 5 | 6 | **62.4** |
 
 ### 4.3 分项评分理由（重点说明 LFL 与高分项/低分项）
 
-**LFL**
+**LFL**（r3 修订后的分值；★ 为 r2 变动项，☆ 为 r3 评审回调项）
 - 功能完整性 9：五阶段循环 + 记忆/检索/经验/方法 + 自评/演进 + SubAgent/fleet + 浏览器 + 工作区 + 多 provider + 三端 + 事件溯源，广度与深度兼具；扣 1 分因缺 voice/realtime/多模态。
-- 架构设计 8：事件溯源、严格 FC、程序最小化理念清晰且可验证；扣分因超大文件、Mixin/服务并存、pyright 局部豁免。
-- 易用性 4：Python≥3.13、18KB `.env`、多分组 `runtime.toml`、内部术语（R9/M47/RULE-AI-*）、无 PyPI、前端需 Node 构建。
-- 扩展性 7：工具注册 + 无代码 Skill 双轨、公共 API 有签名快照；扣分因 provider 扩展依赖 JSON 注册表、无 Python 插件类、无 OpenAI 兼容/MCP server 出口。
-- 性能 7：模型窗口自适应预算 + 密度在线校准 + 资源治理；扣分因单进程重、长会话成本可观测但未优化到极致。
-- 生态与社区 2：个人仓库、无 PyPI、无外部使用者、无第三方贡献者；给 2 分仅因已有 Apache-2.0 + CONTRIBUTING + 双语 README 等开放姿态。
-- 安全 7：灾难性安全硬阻断 + 全量阻断审计 + SSRF 内网拦截 + DNS rebinding 收窄 + symlink 防护 + 审批流；扣分因**明确非完备沙箱**，隔离能力弱于容器方案。
-- 工程化 9：738 测试文件/7,215 用例、三件套门禁、提交队列锁、三层 CI、预注册/冻结/Wilson CI；扣 1 分因外部红豁免登记与版本面不一致。
-- 成本控制 6：cost_tier 路由 + 模型自主切换 + fallback；无硬预算/网关级成本治理。
-- 场景广度 7：编码、浏览器、IM、headless 多场景；无语音/实时/图像生成。
+- 架构设计 8：事件溯源、严格 FC、程序最小化理念清晰且可验证；r2 新增 `extensions/` 独立包管理模块与 MCP 五层分层（protocol/transport/client/auth/assembly）；扣分因核心超大文件、Mixin/服务并存、pyright 局部豁免。
+- 易用性 ★5（4→5）：新增 Agent Plugins 标准包与 Claude/Codex/Gemini/Cursor/VS Code 适配器，**插件作者接入门槛下降**；但仍 Python≥3.13、18KB `.env`、内部术语、**无 PyPI**。
+- 扩展性 ☆8（r2 曾按能力面给 9，r3 回调 7→8）：**能力面补齐是真实的**——工具注册 + 无代码 Skill 双轨之上，新增 **MCP 双时代协议 + 三传输（stdio/Streamable HTTP/legacy SSE）+ OAuth(PKCE) + resources/prompts + registry 发现 + git/archive 安装源 + 标准插件包**。但 r3 按「能力被外部消费」口径回调：**能力存在 ≠ 能力被消费**——`extension_*` 模型工具接口未实现、`sources.py`/`directory.py` 多为库函数未接入运行时工具面，外部使用者尚无一条「安装插件 → 模型调用」的完整路径。**9 分门槛**：`extension_*` 工具面接线 + 至少一个真实插件全链路跑通。
+- 性能 7：模型窗口自适应预算 + 密度在线校准 + 资源治理 + 多查询融合影子观测；扣分因单进程重、长会话成本可观测但未优化到极致。
+- 生态与社区 ★3（2→3）：生态**兼容位**显著增强（对齐主流工具链与 MCP 标准）；但包发布/外部使用者/第三方贡献者**仍未出现**，社区规模未变。
+- 安全 ★8（7→8）：灾难性安全硬阻断 + SSRF/DNS rebinding/symlink 防护 + 审批流之外，新增 **Docker 沙箱后端（`--network=none --read-only --cap-drop ALL`，fail-closed）**、MCP OAuth 身份隔离、archive 安全解压（越界/炸弹/链接防护）、装配身份冲突报告。
+- 工程化 9：测试 738→**801** 文件、三件套门禁、提交队列锁、三层 CI、预注册/冻结/Wilson CI；扣 1 分因外部红豁免登记与版本面历史遗留。
+- 成本控制 6：cost_tier 路由 + 模型自主切换 + fallback + knowledge 消费预算；无硬预算/网关级成本治理。
+- 场景广度 ★8（7→8）：编码、浏览器、IM、headless 多场景，r2 经 MCP/插件生态接入进一步拓宽；仍无语音/实时/图像生成。
 
 **高分对照**
 - Pydantic AI 85.3：在「类型化 + 可组合 + 持久化 + 评测 + 可观测 + 成本网关 + 多场景」上几乎无短板，且 100% 覆盖率；唯一略弱是性能与安全（相对沙箱方案）。
@@ -277,11 +281,37 @@ LFL 是一个**架构野心与技术纪律都远超「个人项目」的 LLM 优
 ### 4.4 雷达图（文字描述）
 
 以 LFL 为基准的五边形雷达（功能/架构/易用/扩展/生态/安全/工程/成本/场景）：
-- **LFL 的雷达形状是「哑铃形」**：工程化、功能完整性、架构、安全四个方向凸出（9/9/8/7），易用性与生态两个方向凹陷（4/2）。
+- **LFL 的雷达形状是「哑铃形」**：功能完整性与工程化凸出（9/9），架构、扩展、安全居中偏上（8/8/8），易用性与生态两个方向凹陷（5/3）。
 - **Pydantic AI 是「近似正多边形」**：各维 7–9，无明显短板。
 - **LangGraph 与 Claude Code 是「生态单极形」**：生态 10 分突出。
 - **AutoGen 是「整体收缩形」**：维护模式导致全维平庸。
 - 可交互雷达图见同目录 `LFL-COMPARATIVE-REVIEW-20261007.html`。
+
+### 4.5 增量复核（2026-10-09 ~ 10-10 更新对评分的影响）
+
+**触发**：用户指出 LFL 近期在**生态补全**与**方法/经验使用**上有大量更新。经对最新 HEAD（`98d1ce90e` / v0.6.27）复核，确认以下实质变化（证据均为本地只读代码/文档）：
+
+| # | 更新（提交/模块） | 事实证据 | 影响维度 | 分值变动 |
+|:--:|:--|:--|:--|:--:|
+| 1 | **Agent Plugins 1.0.0 标准包**（P1-A） | `extensions/formats.py`（固定位置 `plugin.json`/`skills/`/`mcp.json` 解析 + 组件级 CompatibilityReport）、`extensions/store.py`（CAS 原子写 + 不可变副本）、`extensions/catalog.py`（预算投影） | 扩展性 | 7→9（r3 回调至 8，见 §4.3） |
+| 2 | **MCP 全套**（P1-B/P1-C/P2-B） | `tools/mcp_protocol.py`（双时代：现代 `2026-07-28` + legacy）、`mcp_transport.py`（stdio / Streamable HTTP / legacy SSE 三传输）、`mcp_auth.py`（RFC 9728/8414/7591 + PKCE + client_credentials）、`mcp_client.py`（分页/能力保真/typed 错误/连接代际）、`mcp_assembly.py`（三层装配 + 身份冲突报告）、resources/prompts 路由工具 | 扩展性、场景广度 | ↑ |
+| 3 | **厂商生态适配器**（P2-A） | `extensions/vendor_formats.py`：Claude Code / Codex / Gemini / Cursor / VS Code / mcp-servers-json 格式嗅探与转换 | 易用性、生态兼容位 | 4→5 |
+| 4 | **git/archive 安装源 + registry 发现**（P2-B） | `extensions/sources.py`（commit/digest 固定、安全解压 64MB/4096 条上限）、`extensions/directory.py`（只读发现候选） | 扩展性 | ↑ |
+| 5 | **method 生命周期闭环 v2.2** | `methods/store.py`（`record_use`/`record_qualification`/`annotate_freshness`/`update_status`；独立证据门控；`update_status` 禁止 candidate→active 直跳；usage ledger append-only + 单调水位防 git revert 抹除） | 功能完整性、工程化 | 维持高位 |
+| 6 | **方法/经验消费证据链 + 语义检索** | `introspection/search.py`（method/experience 词法+RRF）、`methods/reflection.py`（reflect 期语义检索）、`subagent/runner.py:1873`（委派前有界 method 检索）、`engine_services/knowledge_runtime.py`（canary advisor 注入，默认 off） | 功能完整性 | 维持高位 |
+| 7 | **Docker 沙箱后端** | `tools/sandbox.py`：bwrap / docker 双后端，docker `--network=none --read-only --cap-drop ALL`，后端缺失 fail-closed | 安全性 | 7→8 |
+| 8 | **测试规模增长** | 738 → **801** 个 `test_*.py`，新增 `test_extensions_*` / `test_mcp_*` / `test_resource_vendor_*` 一批 | 工程化 | 维持 9 |
+
+**修订后 LFL 得分**：r2 为 `9/8/5/9/7/3/8/9/6/8` → 72.9；**r3 评审将扩展性回调至 8**：`9/8/5/8/7/3/8/9/6/8` → **加权总分 71.7**（原 r1 66.7，+5.0）。分数用于维度剖面参照，不构成跨层排名结论。
+
+**仍然存在的缺口（不因本轮更新改变）**：
+1. **无 PyPI 发布**（`release.yml` 仅 GitHub Release 草稿，无 publish job）——生态与社区维度无法再提升的根本原因。
+2. **无对外 OpenAI 兼容出口**（`/v1/chat/completions`）；Web 仅自有 REST。设计文档 FR-14「LFL 能力对外导出」标注为 **P3 未实现**。
+3. **`extension_*` 模型工具接口未实现**（`DESIGN §10.1` 拟议 `extension_list/inspect/manage/status/read/call`，代码中不存在）——插件管理仍为代码 API，模型无法自主管理插件。
+4. **安装授权/配额/源域白名单工具接口未实现**；`sources.py`/`directory.py` 多为库函数，未全面接入运行时工具面。
+5. **方法/经验消费率仍低**（仓库自带审计 `docs/AUDIT-20261007-p0-architecture-gap.md` 自述约 6/677 ≈ 0.9%）；开场 ACTIVE 卡注入已被实验否决，当前为 model-driven 检索 + 每 run 一次回记提醒 + canary，尚未形成闭环收益证明。
+
+**方法论评价**：本轮更新延续了 LFL 的一贯姿态——**先补正确性、再补能力、并保留诚实边界**（如 MCP 不广播未实现能力、沙箱 fail-closed、消费证据 append-only + 水位防丢失）。这使「扩展性/安全性」的跃升是**结构性的而非功能堆叠**，因此本次给分提升是可信的。值得注意：仓库自身已产出 `AUDIT-20261007-p0-architecture-gap.md`，其结论（"能力增速超过收敛速度"、kernel 无显式边界契约、durability 基座分散、method 消费闭环缺 T0）与本报告独立观察**高度一致**，可互为佐证。
 
 ---
 
@@ -293,8 +323,8 @@ LFL 是一个**架构野心与技术纪律都远超「个人项目」的 LLM 优
 
 | 建议 | 动作 | 预期收益 | 验证 |
 |:--|:--|:--|:--|
-| **P0-1 发布 PyPI 包** | 在 `release.yml` 增加 `build` + trusted publishing，打出 `llm-first-loop`；提供 `pip install llm-first-loop` | 易用性 +3、生态 +2；消除「只能源码安装」门槛 | 干净环境 `pip install` 跑通 examples/01 |
-| **P0-2 提供 OpenAI 兼容出口 + MCP server** | 在 Web 增加 `POST /v1/chat/completions`（映射到 `LoopEngine.run`）；接线 `cache_guard/mcp_server.py` 或暴露 Agent 能力为 MCP server | 扩展性 +2、生态 +2；接入现成客户端/编辑器生态 | 用 OpenAI SDK/任意 MCP 客户端连通 |
+| **P0-1 发布 PyPI 包** | 前置决策：**包元数据明确 Python 支持策略**（兼容 3.12 或明确 ≥3.13 并在 README 首屏声明——直接决定受众面）。随后 `release.yml` 增加 `build` + trusted publishing，打出 `llm-first-loop`；提供 `pip install llm-first-loop` | 易用性 +3、生态 +2；消除「只能源码安装」门槛 | 干净环境 `pip install` 跑通 examples/01 |
+| **P0-2 对外出口（r2 部分完成；r3 重排出向优先级）** | ✅ *入向* 已补齐：MCP 客户端全套 / 标准插件包 / 厂商适配器（Claude·Codex·Gemini·Cursor·VS Code）。**出向按序**：① **MCP server 导出**——把记忆/证据/方法学习/工具面导出为 MCP server，让其他 Agent 宿主直接复用 LFL 差异化能力（价值密度在工具面而非对话面，优先做）；② `extension_*` 模型工具接口；③ OpenAI 兼容出口 `POST /v1/chat/completions`（无状态会话接口与 LFL 有状态运行时阻抗失配，降为次要） | 生态 +1、扩展性 +1；第三方宿主直接消费 LFL 能力 | 第三方 MCP 客户端连通 LFL 导出 server 并成功调用 ≥1 个核心工具 |
 | **P0-3 降低首跑成本** | 提供 `lfl init` 向导 + 极小默认配置；`RUN_MODE=minimal` 作为默认示例；README 首屏给「3 行跑通」 | 易用性 +2 | 新用户在无 `docs/` 阅读下 5 分钟跑通 |
 | **P0-4 剥离仓库噪声** | 将 `evals/`、`data_ab/`、26 个 `*.swe-*.json`、`.env.bak-*` 移出主仓（独立 repo/Release 资产） | 克隆体积与检索成本大幅下降；专业度提升 | 克隆时间/体积对比 |
 
@@ -303,10 +333,12 @@ LFL 是一个**架构野心与技术纪律都远超「个人项目」的 LLM 优
 | 建议 | 动作 | 预期收益 | 验证 |
 |:--|:--|:--|:--|
 | **P1-1 拆分超大文件** | 对 `factory.py`/`engine.py`/`registry.py`/`session.py` 继续 R9 式逐字平移拆分，恢复 pyright 严格 | 架构 +1、可维护性 | 无行为变更 + 函数体量守卫下降 |
-| **P1-2 容器化沙箱选项** | 增加 Docker/远程沙箱执行后端（对齐 OpenHands/Inspect） | 安全 +2 | 不可信代码在容器内执行 |
+| **P1-2 容器化沙箱（r2 已实现，待默认化）** | ✅ 已有 `tools/sandbox.py`（bwrap / docker 双后端，`--network=none --read-only --cap-drop ALL`，缺失 fail-closed）；下一步：作为默认推荐执行档、完善 `docs/operations/EXECUTION-ISOLATION.md`、扩大适用边界 | 安全维持 8 | 不可信代码默认容器内执行 |
 | **P1-3 清收外部红豁免与兼容层** | 按期销号 ~90 项外部红；移除 `err1210`/legacy 分支 | 工程化 +1 | 豁免登记归零、守卫绿 |
 | **P1-4 版本面统一** | 以单一 SoT 派生 `pyproject`/`CHANGELOG`/tag；修正 README 端口与 CONTRIBUTING 滞后 | 工程化 +1 | 版本一致性检查入 CI |
 | **P1-5 评测资产外化** | 把 `run_eval.py` + scenarios 抽成可独立复用包/规范，输出与 Inspect 兼容的日志格式 | 生态 +1、扩大影响力 | 第三方可用其评测自己的 Agent |
+| **P1-6 方法/经验消费率闭环（r3 新增）** | 当前消费率 ~0.9%（6/677）——三个独有能力之一有「有器官、无循环」的空转风险。定义消费收益 T0（消费 → 行为改变 → 可度量收益的证据链），为消费率与闭环收益设可验证目标 | 自主演进闭环从「存在」变「有效」，差异化不空转 | 预注册的消费率/收益度量报告 |
+| **P1-7 对外版本承诺（r3 新增）** | PyPI 发布前建立外部可依赖锚点：tag 与 `pyproject` 同步的机械门禁（当前滞后：代码 0.6.27 vs tag v0.6.26）+ 弃用周期声明（0.x 内不破坏行为写入对外文档）。与 P1-4 互补：P1-4 对内一致性，本条对外承诺 | 生态/易用；采纳者可锚定版本 | CI 版本一致性门禁绿 + 文档含弃用政策 |
 
 ### P2 — 差异化放大（6-12 个月）
 
@@ -323,17 +355,17 @@ LFL 是一个**架构野心与技术纪律都远超「个人项目」的 LLM 优
 
 ### 预期收益汇总
 
-若完成 P0 + P1：预计 LFL 加权总分从 **66.7 → ~76**（易用性 4→7、生态 2→5、扩展 7→9、安全 7→9、工程 9→10），进入本轮对比的中上游，且**唯一不可替代性（自主演进 + 事件溯源）保持不变**。
+以 r3 修订基线（**71.7**）起算：若完成剩余 P0 + P1（PyPI 发布、MCP server 导出、清收外部红、版本统一、评测资产外化、消费率闭环），预计 LFL 加权总分从 **71.7 → ~78**（易用性 5→7、生态 3→5、工程 9→10），进入本轮对比的上游（与 OpenHands / Claude Code 同档），且**唯一不可替代性（自主演进 + 事件溯源 + 实证评测纪律）保持不变**。
 
 ---
 
 ## 6. 结论
 
 1. **LFL 的能力是真实的、非营销的**：事件源化对账、严格 FC 硬化、自主演进闭环、实证评测纪律，四项均经代码与文档证据证实，且多数为对比对象所无。
-2. **LFL 的短板是结构性的、非能力性的**：生态 2/10 与易用性 4/10 不是「做不出来」，而是「未对外开放」。这两项合计 22 分，LFL 仅得 64/220，是排名第 8 的直接原因。
-3. **正确战略不是「追功能」，而是「转开放」**：P0 四项（PyPI、OpenAI 兼容/MCP 出口、低门槛首跑、剥离噪声）投入小、杠杆大，可直接把总分推入中上游。
+2. **LFL 的短板是结构性的、非能力性的**：初版生态 2/10 与易用性 4/10 不是「做不出来」，而是「未对外开放」。r2 的生态补全（MCP 全套、标准插件包、厂商适配器、Docker 沙箱）把**扩展性 7→8（r3 回调：能力面已补齐、消费面未接线）、安全 7→8** 补上，总分 66.7→**71.7**；但生态维度受限于**仍未上 PyPI、仍无外部贡献者**，只从 2→3。
+3. **战略已部分收敛：从「追功能」转向「转开放」且初见成效**：r2 证明 LFL 具备按标准（Agent Plugins / MCP）补齐生态的能力；剩余杠杆集中在**对外出口与分发**（PyPI、**MCP server 导出优先**、`extension_*` 工具面；OpenAI 兼容出口次之），投入小、杠杆大。
 4. **差异化应被放大而非稀释**：LFL 不应以「通用框架」与 LangGraph/Pydantic AI 正面竞争功能，而应以「**可审计、可自我演进的 Agent 运行时**」占据差异化生态位，并把事件溯源/评测方法论产品化对外输出。
-5. **对标基线选择建议**：日常工程对标 **OpenHands**（隔离与产品化）与 **Pydantic AI**（类型化与组合）；方法论对标 **Inspect AI**（独立评测）；生态建设对标 **LangGraph**。
+5. **对标基线选择建议**：日常工程对标 **OpenHands**（隔离与产品化）与 **Pydantic AI**（类型化与组合）；生态接入对标 **MCP 生态**（本轮已对齐）；方法论对标 **Inspect AI**（独立评测）；社区建设对标 **LangGraph**。
 
 ---
 
@@ -362,4 +394,4 @@ SWE-agent、Claude Code、promptfoo、LangSmith、SWE-bench 的部分能力描�
 
 ---
 
-*报告生成：2026-10-07 ｜ 交付物：本 Markdown + 同目录交互式 HTML 看板*
+*报告生成：2026-10-07 ｜ 修订 r2：2026-10-10 ｜ 修订 r3（评审修正）：2026-10-10 ｜ 交付物：本 Markdown + 同目录交互式 HTML 看板*
