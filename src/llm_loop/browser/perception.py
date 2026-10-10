@@ -1740,7 +1740,6 @@ class BrowserPerceptionAdapter:
             if parent:
                 children_by_parent.setdefault(parent, []).append(node)
 
-        document_hash = _sha256(_guard_document_payload(raw_capture.get("url")))
         baseline: dict[str, dict[str, Any]] = {}
         for semantic_id, identity in (build.private_identity or {}).items():
             if not isinstance(identity, dict) or identity.get("stable") is not True:
