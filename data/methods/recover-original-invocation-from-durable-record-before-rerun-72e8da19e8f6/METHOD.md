@@ -1,7 +1,7 @@
 ---
 method_id: recover-original-invocation-from-durable-record-before-rerun-72e8da19e8f6
 name: recover-original-invocation-from-durable-record-before-rerun
-description: 后台任务失联/失败需要重跑时，原任务的准确定义（workdir、完整命令行、历史时长与结果基线）通常已持久化在任务回执/evidence 中，回执里的 durable=true/state_durable=true 就是显式信号。此时凭记忆重建路径是在未验证假设上执行：本集记忆路径 /home/svc/lfl-agent 直接失败，真实路径 /Users/yyj/Project/llm-first-loop-mirror 花了 1 次失败命令 + 宽枚举 + 2 次搜索才找回，而正确路径的一次定向检索即可同时取回路径、命令和历史基线（exit=0、7316 passed、313s），后者还直接给出重跑排程时长。与 resume-continuation 方法不同：那针对极简'继续'指令的状态重建，本方法针对失联任务重跑前的调用参数恢复。
+description: 后台任务失联/失败需要重跑时，原任务的准确定义（workdir、完整命令行、历史时长与结果基线）通常已持久化在任务回执/evidence 中，回执里的 durable=true/state_durable=true 就是显式信号。此时凭记忆重建路径是在未验证假设上执行：本集记忆路径 /home/<svc>/lfl-agent 直接失败，真实路径 /Users/<user>/Project/llm-first-loop-mirror 花了 1 次失败命令 + 宽枚举 + 2 次搜索才找回，而正确路径的一次定向检索即可同时取回路径、命令和历史基线（exit=0、7316 passed、313s），后者还直接给出重跑排程时长。与 resume-continuation 方法不同：那针对极简'继续'指令的状态重建，本方法针对失联任务重跑前的调用参数恢复。
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:8edca76a-022e-442c-9819-960bcdff7f8a:1166:da1a3540d4b02a504e26
