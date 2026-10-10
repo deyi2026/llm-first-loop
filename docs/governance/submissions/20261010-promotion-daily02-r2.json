@@ -6,6 +6,7 @@
     {
       "component_id": "promotion-materials-r2",
       "paths": [
+        "docs/governance/submissions/20261010-promotion-daily02-r2.json",
         "docs/promotion/20261010-lfl-daily-02.md",
         "docs/promotion/figures/_d2.py",
         "docs/promotion/img/fig10-weak-model-ab.png"
