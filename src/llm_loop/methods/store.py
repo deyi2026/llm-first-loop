@@ -62,6 +62,19 @@ class MethodCommitUncertainError(OSError):
         self.visible_state = visible_state
 
 
+def _normalize_task_type(value: object) -> str:
+    """Canonicalize a model-declared qualification task domain (EVO-20261010-994e30f4).
+
+    Free-form by design (browser / code-edit / diagnosis / writing / ...), but
+    case/whitespace variants collapse to one token so ``Code Edit``,
+    ``code_edit`` and ``code-edit`` count as a single type. Empty or missing
+    declarations stay ``unknown`` and never count toward activation diversity.
+    """
+    text = str(value if value is not None else "").strip().casefold()
+    text = "-".join(part for part in text.replace("_", " ").split() if part)
+    return text[:64] or "unknown"
+
+
 @contextlib.contextmanager
 def _store_lock(directory: Path):
     """One writer across Web/Feishu/Learning (POSIX flock + process RLock).
@@ -977,6 +990,7 @@ class MethodStore:
         evidence_refs: list[str] | None = None,
         note: str = "",
         evaluator: str = "model",
+        task_type: str = "unknown",
     ) -> dict[str, Any]:
         """Serialize seed overlay creation and qualification append with lifecycle RMW."""
         self._require_write_safe()
@@ -985,6 +999,7 @@ class MethodStore:
                 method_ref, task_ref=task_ref, verdict=verdict, mechanism=mechanism,
                 task_benefit=task_benefit, promotion=promotion,
                 evidence_refs=evidence_refs, note=note, evaluator=evaluator,
+                task_type=task_type,
             )
 
     def _record_qualification_locked(
@@ -999,6 +1014,7 @@ class MethodStore:
         evidence_refs: list[str] | None = None,
         note: str = "",
         evaluator: str = "model",
+        task_type: str = "unknown",
     ) -> dict[str, Any]:
         """Append a bounded qualification declaration without changing lifecycle status."""
         record = self.get(method_ref)
@@ -1032,6 +1048,10 @@ class MethodStore:
             "evidence_refs": [str(v).strip() for v in (evidence_refs or []) if str(v).strip()],
             "note": note.strip()[:4000],
             "evaluator": evaluator.strip()[:128] or "model",
+            # EVO-20261010-994e30f4: model-declared task domain of the
+            # qualification episode. Old entries without this key read as
+            # "unknown" and never count toward activation diversity.
+            "task_type": _normalize_task_type(task_type),
         }
         freshness_hashes = self._freshness_snapshot(record)
         if freshness_hashes:
@@ -1199,6 +1219,32 @@ class MethodStore:
                 self._blocked(method_ref, target, "promotion_pass", "no promotion=pass with episode provenance", episode_ref=episode_ref)
                 raise ValueError(
                     "qualified requires at least one promotion=pass qualification with runtime episode provenance"
+                )
+        if target == "active" and record.status != "active":
+            # EVO-20261010-994e30f4: activation requires cross-task-type
+            # qualification. task_type is a model declaration; the program
+            # cannot verify task domains, so the gate only counts distinct
+            # declared types among verdict=pass entries ("unknown" never
+            # counts; the source task counts as one). Cards that are already
+            # active are grandfathered: the check applies to transitions into
+            # active only, never retroactively.
+            distinct_types = {
+                _normalize_task_type(e.get("task_type"))
+                for e in self.qualification_entries(method_ref)
+                if e.get("verdict") == "pass"
+            }
+            distinct_types.discard("unknown")
+            if len(distinct_types) < 2:
+                self._blocked(
+                    method_ref, target, "cross_task_type_qualification",
+                    f"distinct pass task_type count={len(distinct_types)} (<2)",
+                    episode_ref=episode_ref,
+                )
+                raise ValueError(
+                    "activation requires cross-task-type qualification: record "
+                    "verdict=pass qualifications spanning >=2 distinct task_type "
+                    "values (source domain plus at least one other); missing/unknown "
+                    "task_type does not count"
                 )
         # EVO-20260929-5283ab1b P1 (R3): destructive disposition needs independent
         # factual basis. The program never decides a Method *should* die; it only

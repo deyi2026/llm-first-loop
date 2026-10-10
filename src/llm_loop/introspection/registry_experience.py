@@ -77,6 +77,7 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
             "mechanism": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
             "task_benefit": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
             "promotion": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
+            "task_type": {"type": "string", "maxLength": 64, "description": "仅 record_qualification 消费：本 qualification 所属任务域的模型声明（如 browser/code-edit/diagnosis/writing；大小写与空白归一，不校验真伪）。activate 门（EVO-20261010-994e30f4）要求 verdict=pass 条目覆盖 ≥2 个不同 task_type 才能转 active；缺省 unknown 不计数。存量 active 卡 grandfather 不回溯"},
             "evidence_refs": {"type": "array", "items": {"type": "string"}, "description": "save_candidate/record_use/record_qualification 的证据引用；程序将证据绑定到当次调用所属 episode，不自动证明 refs 的归属与内容正确"},
             "note": {"type": "string", "description": "仅 record_use/record_qualification 随记录持久化；save_candidate/refine 不读取、不持久化"},
             "transition": {
@@ -432,6 +433,7 @@ def _run_record_method_qualification(args: dict, host: RegistryHost, *, tool_nam
             promotion=str(args.get("promotion", "not_evaluated")),
             evidence_refs=[str(v) for v in (args.get("evidence_refs") or [])],
             note=str(args.get("note", "")),
+            task_type=str(args.get("task_type", "unknown") or "unknown"),
         )
     except MethodCommitUncertainError as exc:
         return _method_uncertain_receipt(tool_name, exc)
@@ -441,14 +443,20 @@ def _run_record_method_qualification(args: dict, host: RegistryHost, *, tool_nam
         return _method_failure(tool_name, f"[Method qualification 写入失败] {type(exc).__name__}: {exc}")
     host.audit(
         "record_method_qualification",
-        {"method_ref": method_ref, "qualification_episode_ref": task_ref, "verdict": entry["verdict"]},
+        {
+            "method_ref": method_ref,
+            "qualification_episode_ref": task_ref,
+            "verdict": entry["verdict"],
+            "task_type": entry.get("task_type", "unknown"),
+        },
         "success",
     )
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=(
             f"[record_method_qualification] {method_ref} "
-            f"qualification_episode_ref={task_ref} verdict={entry['verdict']} promotion={entry['promotion']}"
+            f"qualification_episode_ref={task_ref} verdict={entry['verdict']} promotion={entry['promotion']} "
+            f"task_type={entry.get('task_type', 'unknown')}"
         ),
         tool_call_id="",
         tool_name=tool_name,
