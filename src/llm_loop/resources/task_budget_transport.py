@@ -17,6 +17,7 @@ import httpx
 
 from llm_loop.resources.task_budget_dispatch import TaskBudgetExecution, active_task_budget
 from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+from llm_loop.resources.task_budget_transport_context import active_isolated_transport_profile
 
 _BOUND_IO_TIMEOUT_S = 1.0
 _WATCH_INTERVAL_S = 0.10
@@ -31,6 +32,11 @@ def budgeted_transport_timeout(value: float) -> float | httpx.Timeout:
     """
     if active_task_budget() is None:
         return value
+    if active_isolated_transport_profile() is not None:
+        # The parent can stop/reap this attempt's exclusive process during any
+        # blocking IO. The legacy socket fallback's polling timeout is not
+        # needed here; retain the worker's existing qualified <=60s IO bound.
+        return httpx.Timeout(min(60.0, value))
     return httpx.Timeout(min(_BOUND_IO_TIMEOUT_S, value))
 
 

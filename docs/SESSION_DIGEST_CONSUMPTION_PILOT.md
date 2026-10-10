@@ -163,3 +163,30 @@ new session/grant issuance or model calls. Recheck the current release, source
 snapshot, effective shadow and exact Web-only deployment scope at that point.
 Use new identities, retain the same frozen task prompts and limits, and report
 the stopped attempt separately. Restore and verify shadow after the new trial.
+
+## Stopped authenticated attempt and isolated IO timeout
+
+The authenticated retry reached one budget-owned GLM transport attempt, then
+ended with isolated_transport_open_failed:ReadTimeout before response headers.
+HTTP 200 and SSE done represented a terminal program error, not a model answer.
+Provider status and token usage were missing and remain unknown. The frozen
+unknown-transport stop applies; the other three rows were not submitted, and
+the Web configuration and temporary credential were restored/revoked.
+
+The normal client supplied a 120-second timeout, but the budget transport helper
+reduced all IO waits to one second, including independently owned child-process
+transports. Real loopback regressions reproduce the same opening ReadTimeout
+with headers delayed 1.3 seconds, and a worker ReadTimeout with body delayed
+1.3 seconds. No external Provider request is part of those regressions.
+
+For an explicitly bound isolated transport, the helper now uses the existing
+qualified worker IO bound of at most 60 seconds, respecting smaller configured
+timeouts. The parent still checks the exact Run budget while polling IPC and can
+terminate/reap its exclusive child during blocked IO. The non-isolated budget
+fallback retains its one-second timeout; no-budget traffic retains its original
+timeout. A local exit never proves remote completion or billing settlement.
+
+Preserve the stopped Run's exact event window. A later user-initiated Run in the
+same session is separate evidence, and cannot fill a frozen pilot row or supply
+a paired benefit grade. A newly qualified release and new one-Run-per-session
+matrix need separate approval before dispatch; do not resume the stopped grant.
