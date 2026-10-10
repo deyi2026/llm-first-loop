@@ -30,11 +30,12 @@
       "component_id": "experiences-cjk-slug",
       "paths": [
         "src/llm_loop/experiences/store.py",
-        "tests/unit/test_experience_store_durability.py"
+        "tests/unit/test_experience_store_durability.py",
+        "tests/unit/test_experience_library.py"
       ],
       "control_machinery": false,
       "owning_subsystem": "经验库落盘（experiences store）",
-      "disposition": "sanitize_slug Unicode 感知修复：中文标题不再塌缩为同日 untitled 冲突；空 slug 兜底 untitled-{title_sha256 前 8 位}；同日同 slug 拒写契约不变",
+      "disposition": "sanitize_slug Unicode 感知修复：中文标题不再塌缩为同日 untitled 冲突；空 slug 兜底 untitled-{title_sha256 前 8 位}；同日同 slug 拒写契约不变。发布门禁修复（1026fa164）：test_experience_library 旧 kebab-case 纯 ASCII 断言对齐 Unicode 契约（本地全量 8525 passed）",
       "evidence": [
         "CHANGELOG.md v0.6.29 经验落盘中文标题修复条目",
         "experiences/EXPERIENCE-20261010-sanitize-slug-中文标题修复真实验证-同日中文经验不再塌缩冲突.md"
