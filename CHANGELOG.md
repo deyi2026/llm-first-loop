@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## Unreleased — 对外导出 MCP server（P0-2 出向出口）
+
+- **只读导出 MCP server（`llm_loop export-serve-mcp`）**：把经验库、方法库、证据 ledger、能力目录以 MCP 协议（stdio，newline-delimited JSON-RPC）导出，供外部 Agent 宿主（Claude Desktop 等任意 MCP 客户端）直接复用 LFL 差异化能力；legacy `initialize` 握手（echo 客户端协议版本，支持 2024-11-05 / 2025-03-26 / 2025-06-18）。
+- **工具面（7 个，全部只读）**：`search_experience` / `read_experience`、`search_method` / `read_method`、`list_capabilities`；证据面 `search_evidence` / `read_evidence` 显式 opt-in（`LFL_EXPORT_EVIDENCE_OWNER=workspace_id/session_id` 或 `--evidence-owner`）——证据按 owner scope 隔离，外部消费者默认不持有任何 scope，故默认禁用。
+- **硬只读边界**：所有 store 以恒拒写 `write_guard` 构造，无写路径；不装配对话 engine、不执行模型调用、无 LLM 凭证依赖（Settings 不可用时回落纯文件默认路径）。
+- **入口**：`llm_loop export-serve-mcp [--experiences-dir … --methods-dir … --evidence-owner …]`，或 `python -m llm_loop.export.mcp_server`。
+
 ## v0.6.27 — 多查询融合影子模式 + 浏览器感知/操作 + 服务生命周期控制（2026-10-08）
 
 - **多查询融合影子模式（默认 off，零行为变化）**：`RETRIEVAL_MULTIQUERY_MODE=shadow` 启用后，生产 memory 语义检索旁路执行"原查询 + LLM 盲改写 2 变体"的等权 RRF 融合，只记录不生效；返回值与 off 逐字节一致（单测锁定）。目的：接入评审前实测改写延迟、检索成本与 top1 置换率。

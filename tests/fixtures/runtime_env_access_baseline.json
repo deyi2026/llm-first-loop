@@ -3,16 +3,25 @@
     "bootstrap_os": 2,
     "business_config": 79,
     "debug_test": 12,
-    "dynamic_or_bulk": 47,
+    "dynamic_or_bulk": 48,
     "dynamic_secret": 8,
     "secret": 7
   },
-  "access_count": 144,
+  "access_count": 145,
   "baseline_context": {
     "alias_recovered_direct_access_count": 8,
     "corrected_direct_access_count": 134,
     "corrected_effective_access_count": 150,
     "corrected_module_import_access_count": 5,
+    "p0_2_export_evidence_owner_review": {
+      "parent_commit": "ccf576087cb6c9bdcf14f4339b1d4ec4d5121ee4",
+      "phase": "p0-2-mcp-export-evidence-owner-env-20261010",
+      "review_rationale": "P0-2 export/mcp_server.py 为 stdio 只读出向服务（独立进程，不装配 runtime config resolver）。LFL_EXPORT_EVIDENCE_OWNER 为单 key opt-in 旗标（证据面默认禁用，owner-scoped 隔离，外部消费者默认不持有任何 owner scope），与 cognitive/telemetry.py|telemetry_enabled|COG_RUNTIME_TELEMETRY 受审单旗标直读同类；为单一 opt-in 旗标引入 resolver 装配耦合不成比例，故按受审债务登记，新增仅此 1 处签名。",
+      "reviewed_direct_access_count": 145,
+      "reviewed_new_signatures": [
+        "src/llm_loop/export/mcp_server.py|_resolve_evidence_access|read|<dynamic>"
+      ]
+    },
     "p2b_sources_review": {
       "parent_commit": "2a69cd7ae5a939f5eaf3b3c0d609bdb441d3fb4b",
       "phase": "plugin-ecosystem-p2b-sources-git-env-20261010",
@@ -52,7 +61,7 @@
     "dynamic_secret": 1,
     "secret": 5
   },
-  "direct_access_count": 144,
+  "direct_access_count": 145,
   "dynamic_helper_access_count": 3,
   "dynamic_secret_signatures": [
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>",
@@ -62,9 +71,9 @@
     "src/llm_loop/web/vision.py|_describe_provider|read|<dynamic>",
     "src/llm_loop/web/vision.py|_pick_provider_model|read|<dynamic>"
   ],
-  "effective_access_count": 155,
-  "effective_file_count": 51,
-  "file_count": 51,
+  "effective_access_count": 156,
+  "effective_file_count": 52,
+  "file_count": 52,
   "helper_class_key_counts": {
     "business_config": 7,
     "dynamic_secret": 1
@@ -224,6 +233,7 @@
         "src/llm_loop/core/trace_leak/leak_events.py",
         "src/llm_loop/core/trace_leak/trace_signature.py",
         "src/llm_loop/core/trace_leak/user_ingress_guard.py",
+        "src/llm_loop/export/mcp_server.py",
         "src/llm_loop/feishu/compensation.py",
         "src/llm_loop/feishu/config.py",
         "src/llm_loop/introspection/registry_experience.py",
@@ -234,7 +244,7 @@
         "src/llm_loop/web/vision.py"
       ],
       "module_import_reads": 0,
-      "reads": 19,
+      "reads": 20,
       "writes": 3
     },
     "COG_RUNTIME_MODE": {
@@ -1013,6 +1023,7 @@
     "src/llm_loop/core/trace_leak/leak_events.py|current_quarantine_mode|read|<dynamic>": 1,
     "src/llm_loop/core/trace_leak/trace_signature.py|current_signature_mode|read|<dynamic>": 1,
     "src/llm_loop/core/trace_leak/user_ingress_guard.py|current_guard_mode|read|<dynamic>": 1,
+    "src/llm_loop/export/mcp_server.py|_resolve_evidence_access|read|<dynamic>": 1,
     "src/llm_loop/extensions/sources.py|_git_env|bulk:raw|<all>": 1,
     "src/llm_loop/factory.py|_cwd_in_system_temp|read|LFL_ALLOW_TEMP_WORKSPACE": 1,
     "src/llm_loop/feishu/__init__.py|main|read|DATA_DIR": 1,

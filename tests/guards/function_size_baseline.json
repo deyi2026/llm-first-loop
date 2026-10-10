@@ -98,7 +98,8 @@
       "recovery": "Action（fail-open 恢复通道）",
       "skills": "Action",
       "knowledge": "Epistemic",
-      "extensions": "Action（外部标准包 formats/store/catalog，DESIGN-20261009 P1-A）"
+      "extensions": "Action（外部标准包 formats/store/catalog，DESIGN-20261009 P1-A）",
+      "export": "cross-plane（MCP 出向导出网关：Epistemic/Learning/Action 内容对外只读交付，r3 P0-2）"
     },
     "modules": {
       "cli.py": "Action（入口）",

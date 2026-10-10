@@ -349,6 +349,7 @@ def main(argv: list[str] | None = None) -> int:
         "evolve-complete",  # M17 FR-REVIEW-AI-01: 人工完成登记（涉边界演进）
         "evolve-verify",  # EVO-20260813-8279507f: 人工核验确认（executed → verified_at 标记）
         "export-distill",  # export_distill: 蒸馏数据集导出（薄壳只读，不装配 engine）
+        "export-serve-mcp",  # P0-2: 只读导出 MCP server（stdio，不装配 engine）
         "event-inventory",  # D1: 存量存储盘点（只读，不装配 engine）
         "archive-index",  # R3: 压缩档案存量段索引重建（纯存储操作，不装配 engine）
         "event-migrate",  # D1: 存量迁移为事件日志（纯存储操作，不装配 engine）
@@ -414,6 +415,11 @@ def _dispatch_command(argv: list[str]) -> int:
     # export_distill: 薄壳纯读命令，入口特判（早于 build_engine，避免无谓 engine 装配）
     if cmd == "export-distill":
         return _cmd_export_distill(argv[1:])
+    # P0-2: 只读导出 MCP server（stdio），薄壳特判（不装配 engine，无 LLM 凭证依赖）
+    if cmd == "export-serve-mcp":
+        from llm_loop.export.mcp_server import main as _serve_export_main
+
+        return _serve_export_main(argv[1:])
     # D1: event-* 纯存储/只读命令，入口特判（早于 build_engine，避免无谓 LLM 装配）
     if cmd == "event-inventory":
         return _cmd_event_inventory(argv[1:])
