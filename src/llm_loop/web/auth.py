@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security.utils import get_authorization_scheme_param
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -415,6 +416,12 @@ def request_authenticated(
     request: Request | None,
     credentials: HTTPAuthorizationCredentials | None = None,
 ) -> bool:
+    # Budget admission calls this helper directly, outside Depends(_bearer).
+    # Parse the same header while keeping the existing credential validator.
+    if credentials is None and request is not None:
+        scheme, token = get_authorization_scheme_param(request.headers.get("authorization"))
+        if scheme and token:
+            credentials = HTTPAuthorizationCredentials(scheme=scheme, credentials=token)
     return _bearer_valid(credentials) or _cookie_valid(request)
 
 

@@ -134,3 +134,32 @@ costs. If both arms are initially correct, report the ceiling effect; if B adds
 cost without benefit, report that. Two pairs are feasibility observations, not
 stable efficacy. Broader/weak-model rollout needs a new preregistered evaluation.
 Benefit verification stays open until real rows and independent grades exist.
+
+## Stopped first attempt and API authentication prerequisite
+
+The first authorized 01-A request returned HTTP 403 before any user event, Run,
+budget creation or Provider attempt. All four prepared sessions contain only
+their creation event; the other three rows were not submitted. Their exact
+digests validate the recorded absence of execution, not task correctness or
+consumption benefit. Keep this attempt and its one-shot submission marker.
+
+The original client supplied neither a browser session cookie nor an API Bearer
+header. Direct loopback does not satisfy the selected budget gate. Separately,
+an offline regression exposed a wiring defect: direct request_authenticated
+calls ignored an otherwise valid Authorization header when no FastAPI dependency
+had supplied parsed credentials. The minimal repair parses that header using
+FastAPI's existing scheme parser and reuses the existing Bearer validator.
+It preserves explicit credentials, browser cookies and every other budget gate.
+The original headerless request remains correctly denied after this repair.
+
+A future automation request must supply the configured WEB_API_KEY in a Bearer
+header, loaded only in client memory. Do not persist the key, authorization header
+or cookie in commands, trial artifacts or logs. No key change or cookie issuance
+is part of this patch. Offline authentication tests make no Provider calls.
+
+The original stop-on-denial rule still applies. An independently qualified auth
+patch and a new four-row attempt require explicit approval before merge/publish,
+new session/grant issuance or model calls. Recheck the current release, source
+snapshot, effective shadow and exact Web-only deployment scope at that point.
+Use new identities, retain the same frozen task prompts and limits, and report
+the stopped attempt separately. Restore and verify shadow after the new trial.
