@@ -61,6 +61,15 @@ Backend HTTP and HarmonyOS A2A are **distinct interfaces**. Do not present HTTPS
   `session_id/run_generation`; task active -> stream/status;
   task terminal -> `done/error`; artifacts -> *verified* workspace artifact
   descriptors only. Do not claim a generated A2A `Artifact` from an opaque ref.
+- The current SDK-neutral shadow adapter in `bridge/A2ATaskContract.ts`
+  additionally requires verified caller identity, SHA256 request fingerprint
+  and a backend durable task CAS reservation receipt. No issuer exists in
+  current LFL; neither this component nor the native App may submit a real
+  A2A `EXECUTE` without a valid separately implemented backend authority.
+- An in-flight `CANCEL` with a racing `done` remains `UNSPECIFIED` pending
+  an authoritative outcome receipt. HTTP cancel acknowledged does not imply
+  A2A `CANCELED`. The public `TaskState` numbers in the shadow contract
+  must be compared against actual installed SDK .d.ts on qualification.
 - A2A admission, SDK API availability, phone/tablet device, signing,
   real Xiǎoyì dispatch, performance/parity and end-device privacy remain
   **unverified** until separate real-device receipts are captured.

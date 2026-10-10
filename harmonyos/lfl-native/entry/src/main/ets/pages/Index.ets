@@ -1,4 +1,5 @@
 import { LflTransport } from '../bridge/LflTransport';
+import { A2aTaskBindings } from '../bridge/A2ATaskContract';
 import {
   LflEvent, artifactCandidates, cancellationPayload, historyAnswer,
   resumeDecision, resumePayload
@@ -19,6 +20,9 @@ struct Index {
   @State busy: boolean = false;
 
   private transport: LflTransport = new LflTransport();
+  // Offline type-check only: NO native A2A server registration. This guard is
+  // deliberately unarmed without trusted host identity + backend CAS receipts.
+  private a2aContract: A2aTaskBindings = new A2aTaskBindings();
 
   private process(event: LflEvent): void {
     const row = event.data;
@@ -194,6 +198,7 @@ struct Index {
     Column({ space: 10 }) {
       Text('LFL · HarmonyOS').fontSize(25).fontWeight(FontWeight.Bold)
       Text('Native SSE client · existing LFL engine').fontSize(12)
+      Text('A2A: awaiting matching SDK and verified host credentials').fontSize(11)
       TextInput({ text: this.endpoint, placeholder: 'Explicit HTTPS LFL origin' })
         .onChange((value: string) => { this.endpoint = value; })
       TextInput({ text: this.authToken, placeholder: 'Optional Bearer (memory only)' })

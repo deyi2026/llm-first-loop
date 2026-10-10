@@ -66,6 +66,25 @@ actual isolated LFL FastAPI routes with FakeLLM, including one real local
 See `CONTRACT.md` for normative boundary and unresolved A2A requirements.
 **No shell/CDP/process execution runs inside the App sandbox.**
 
+## A2A development gate (separate from this SSE client)
+
+The public Huawei API 26+ documentation contains a Beta A2A server API, but
+the installed **26.0.0.23 Beta1** SDK does not include `@hms.ai.A2A.d.ts`.
+Before attempting native server registration, execute this **read-only** gate:
+
+```sh
+node harmonyos/lfl-native/scripts/probe-a2a-sdk.mjs \
+  /Applications/DevEco-Studio.app/Contents/sdk/default
+node --test harmonyos/lfl-native/test/*.test.mjs
+```
+
+The observed gate result is exit **2**, i.e. no complete local A2A type
+surface. The `A2ATaskContract.ts` import in the App is only an **offline
+compile and identity-mapping proof**, not a registered A2A service. This
+contract requires a future authenticated platform caller and backend durable
+admission receipt; real `EXECUTE` remains disabled. See
+`docs/harmonyos/A2A-QUALIFICATION-20261011.md`.
+
 ## Outstanding external and product gates
 
 - Actual HarmonyOS phone/tablet + debug signing, App install/launch,
