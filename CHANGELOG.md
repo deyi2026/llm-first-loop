@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.29 — 浏览器精确寻址 + 中文经验落盘修复 + web_search 词典降级标注（2026-10-10）
+
+- **浏览器目标精确寻址三选一（EVO-20261010-1e06d6b4，commit ab4fd70a5）**：`browser_operate` 目标寻址三种形态——raw name 字节精确（kind+name）、确定性归一键（kind+name_normalized，零宽剥离/空白折叠）、grounding_ref 复用（受 world-version retention 约束）；混合形态或空值确定性拒绝。身份未命中回执有界候选清单替代旧 fuzzy 重绑，杜绝最新匹配静默漂移。
+- **经验落盘中文标题修复（commit 9e8f3abd9）**：`sanitize_slug` 改用 Unicode 感知 `\w`，中文标题经验不再塌缩为同日 `untitled` 冲突导致拒写；空 slug 兜底改 `untitled-{title_sha256 前 8 位}`，纯符号标题互不冲突；ASCII 旧 slug 行为不变。同日同 slug 仍拒绝写入（重试幂等契约不变）。上线当晚真实样本验证：同日两条不同中文标题经验均落盘，与修复前遗留的同日 `untitled` 文件共存无冲突。
+- **web_search 词典降级检测与回执标注（EVO-20261010-528ab2f3，commit 692aef752）**：bing general 通道对孤立普通词（如 production/端/具）返回词典站结果（剑桥词典/iciba/百度百科词条页）时，回执标注 `[词典降级] degraded_backend=bing_dictionary_fallback` 与改写建议；header 与结果行原样保留（不改变返回结构）。query 含词条意图标记（意思/翻译/发音/definition of 等）时豁免不标注。
+- **版本面**：pyproject / web `SERVICE_VERSION` / README（中英）/ CHANGELOG 全表面对齐 0.6.29（版本一致性测试约束）。
+
 ## v0.6.28 — 插件与能力生态接入 + 导出 MCP server + R9 规则内化与预算治理（2026-10-10）
 
 - **只读导出 MCP server（`llm_loop export-serve-mcp`）**：把经验库、方法库、证据 ledger、能力目录以 MCP 协议（stdio，newline-delimited JSON-RPC）导出，供外部 Agent 宿主（Claude Desktop 等任意 MCP 客户端）直接复用 LFL 差异化能力；legacy `initialize` 握手（echo 客户端协议版本，支持 2024-11-05 / 2025-03-26 / 2025-06-18）。
