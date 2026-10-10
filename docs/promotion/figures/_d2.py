@@ -8,20 +8,22 @@ def ctext(d, x, y, s, font, fill=INK):
 
 # ---------- fig6: 一致 != 正确 ----------
 img, d = canvas("稳定的裁判，未必是对的裁判",
-                "arXiv:2610.12083 · LLM-as-a-Judge 可靠性重估", 660)
-data = [("最「稳定」的裁判", 100, 51, 140), ("经位置纠偏的裁判", 100, 78, 560)]
-for name, cons, acc, x0 in data:
-    for j, (lab, val, col) in enumerate([("判定一致率", cons, ACC2), ("与标准答案吻合率", acc, ACCENT)]):
-        cx = x0 + j * 170
-        hgt = int(val * 2.3)
-        d.rectangle([(cx, 400 - hgt), (cx + 110, 400)], fill=col)
-        ctext(d, cx + 55, 400 - hgt - 42, f"{val}%", f(32), col)
-        ctext(d, cx + 55, 420, lab, f(18, False), MUTE)
-    ctext(d, x0 + 140, 486, name, f(22), INK)
-d.line([(70, 400), (W - 70, 400)], fill=LINE, width=2)
-d.text((80, 530), "左：一致率 100%，是因为它一直重复同一个「错」——全错，且非常一致。",
-       font=f(19, False), fill=INK)
-d.text((80, 578), "右：纠正位置偏差后，同一个裁判的正确率回到 78%。可靠的是「判定」，不是「模型」。",
+                "arXiv:2610.12083 · 6 个模型中最「确定」的一根", 660)
+d.text((110, 176), "最「确定」的那根裁判，同样两项指标：", font=f(23), fill=INK)
+vals = [("判定一致率", 100, ACC2), ("与标准答案\n吻合率", 51, ACCENT)]
+base = 490
+for j, (lab, val, col) in enumerate(vals):
+    cx = 110 + j * 230
+    hgt = int(val * 1.8)
+    top = base - hgt
+    d.rectangle([(cx, top), (cx + 150, base)], fill=col)
+    d.text((cx + 30, top - 56), f"{val}%", font=f(40), fill=col)
+    yy = base + 16
+    for ln in lab.split("\n"):
+        d.text((cx + 46, yy), ln, font=f(19, False), fill=MUTE); yy += 32
+d.line([(70, base), (930, base)], fill=LINE, width=2)
+d.line([(80, 578), (W - 80, 578)], fill=LINE, width=2)
+d.text((80, 596), "它的满分一致率，来自一遍遍重复同一个「错」——错得非常稳定。",
        font=f(19, False), fill=INK)
 save(img, "fig6-consistency-vs-correctness.png")
 
@@ -80,23 +82,35 @@ save(img, "fig8-four-program-gates.png")
 
 # ---------- fig9: 弱模型 A/B ----------
 img, d = canvas("上线前的一次弱模型对照",
-                "EVO-20261010-994e30f4 · qwen3.8-flash-next · temp=0 · 3 reps", 600)
-arms = [("ARM-A  旧 schema", 0, 3, "3 次全部输出为空", (170, 60, 50)),
-        ("ARM-B  新 schema", 3, 3, "3 次全部良构调用", ACC3)]
-for i, (name, ok, tot, note, col) in enumerate(arms):
-    x = 150 + i * 400
-    for j in range(tot):
-        cx = x + j * 70
-        d.ellipse([(cx, 210), (cx + 52, 262)], fill=(col if j < ok else (226, 229, 233)))
-    d.text((x - 10, 284), name, font=f(24), fill=INK)
-    d.text((x - 10, 326), f"{ok}/{tot} 可用", font=f(34), fill=col)
-    d.text((x - 10, 380), note, font=f(18, False), fill=MUTE)
-d.line([(70, 440), (W - 70, 440)], fill=LINE, width=2)
-d.text((80, 464), "如实声明：A 臂空输出源于 2000 token 预算被 thinking 耗尽，属模型×预算交互，",
+                "EVO-20261010-994e30f4 · qwen3.8-flash-next · temp=0 · 3 reps", 760)
+d.text((60, 170), "三轮结果（两臂对称比较只在 G2 出现不对称）", font=f(24), fill=INK)
+rows = [
+    ("G1  身份轮",     "3/3", "3/3", "两臂工具集合完全一致", ACC3),
+    ("G2  域已知任务轮", "0/3", "3/3", "A 臂输出全空，见下方说明", ACCENT),
+    ("G3  域未指明轮",  "3/3", "3/3", "两臂均正常，B 臂省略 task_type", ACC3),
+]
+d.text((300, 226), "ARM-A", font=f(20), fill=MUTE)
+d.text((470, 226), "ARM-B", font=f(20), fill=MUTE)
+for i, (name, a, b, note, col) in enumerate(rows):
+    y = 266 + i * 62
+    if col == ACCENT:
+        d.rectangle([(56, y - 6), (944, y + 44)], fill=(253, 244, 240))
+    d.text((66, y), name, font=f(21), fill=INK)
+    d.text((300, y), a, font=f(24), fill=(170, 60, 50) if a == "0/3" else MUTE)
+    d.text((470, y), b, font=f(24), fill=col)
+    d.text((580, y + 4), note, font=f(17, False), fill=MUTE)
+d.line([(70, 466), (W - 70, 466)], fill=LINE, width=2)
+d.text((80, 486), "如实声明：G2 中 A 臂空输出源于 2000 token 预算被 thinking 耗尽，属模型×预算交互，",
        font=f(18, False), fill=INK)
-d.text((80, 498), "不是新参数导致。故该轮「两臂对称比较」不可得——只能说 B 臂可用且无劣化。",
+d.text((80, 518), "不是新参数导致。故该轮「两臂对称比较」不可得——只能说 B 臂可用且无劣化，n=3。",
        font=f(18, False), fill=INK)
-save(img, "fig9-weak-model-ab.png")
+d.text((80, 566), "另：首轮 max_tokens=500 时两臂大面积空输出，判为测试装置功率不足，",
+       font=f(18, False), fill=INK)
+d.text((80, 598), "提至 2000 重跑，首轮 JSON 留档但明确不作为通过证据。",
+       font=f(18, False), fill=INK)
+d.line([(70, 646), (W - 70, 646)], fill=LINE, width=2)
+d.text((80, 664), "全量单测 7354 passed / 108 skipped / 0 failed。", font=f(18, False), fill=MUTE)
+save(img, "fig10-weak-model-ab.png")
 
 # ---------- fig10: 程序能守 / 守不住 ----------
 img, d = canvas("程序守得住什么，守不住什么", "LFL 的设计边界：只卡结构，不裁判内容", 600)
@@ -116,4 +130,5 @@ for i, s in enumerate(["task_type 声明的是不是真话", "经验内容本身
     y = 268 + i * 52
     d.ellipse([(545, y + 8), (563, y + 26)], fill=ACCENT)
     d.text((577, y), s, font=f(19, False), fill=INK)
-save(img, "fig10-program-boundary.png")
+d.text((60, 562), "颜色仅为分类标识，不代表「安全/不安全」的等级。", font=f(17, False), fill=MUTE)
+save(img, "fig9-program-boundary.png")
