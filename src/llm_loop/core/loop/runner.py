@@ -522,7 +522,10 @@ class BackgroundRunner:
             except Exception:  # noqa: BLE001 - UI acknowledgement cannot rewrite run truth
                 logger.warning("interjection acknowledgement failed (fail-open)", exc_info=True)
 
-    def cancel(self, session_id: str, reason: str = CANCEL_REASON_USER_STOP) -> bool:
+    def cancel(
+        self, session_id: str, reason: str = CANCEL_REASON_USER_STOP,
+        *, expected_run_generation: str | None = None,
+    ) -> bool:
         """请求取消进行中的 run（2026-08-23 停止按钮修复；双路径扩展）.
 
         - 置 handle.cancelled=True（registry 命中，后台 run）或写入 _sync_cancelled
@@ -532,19 +535,27 @@ class BackgroundRunner:
         - reason: 取消原因标记位（可扩展枚举，默认 user_stop；Web 停止按钮零改动
           自动获得同语义，运维清理路径显式传 runner_stop 保持可区分）
         - 返回 True=该会话确有进行中 run（后台或同步）且已请求取消；False=无 run
+        - 可选 expected_run_generation 由 caller 明确绑定；比较与取消在同一
+          registry 锁内进行。旧调用者未提供时保留原有 session cancel 语义。
         """
         run_generation = ""
         with self._guard:
             h = self._registry.get(session_id)
             if h is not None:
+                if (expected_run_generation is not None
+                        and str(h.run_generation or "") != expected_run_generation):
+                    return False
                 h.cancelled = True
                 h.cancel_reason = reason
                 run_generation = str(h.run_generation or "")
             elif self.is_sync_active(session_id):
-                self._sync_cancelled[session_id] = reason
                 active_generation = getattr(getattr(self._engine, "session", None), "active_run_generation", None)
                 if callable(active_generation):
                     run_generation = str(active_generation(session_id) or "")
+                if (expected_run_generation is not None
+                        and run_generation != expected_run_generation):
+                    return False
+                self._sync_cancelled[session_id] = reason
             else:
                 return False
         if run_generation:

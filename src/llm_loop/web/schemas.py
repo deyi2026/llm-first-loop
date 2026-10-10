@@ -95,6 +95,10 @@ class ChatCancelRequest(BaseModel):
     """停止请求（POST /api/v1/chat/cancel body，2026-08-23 停止按钮修复）."""
 
     session_id: str = Field(description="要停止的会话 ID（必填）")
+    run_generation: str | None = Field(
+        default=None, min_length=1, max_length=128,
+        description="可选精确后台 run 代次；不匹配则拒绝取消，防止旧客户端误停新 run",
+    )
 
 
 class QueueEnqueueRequest(BaseModel):

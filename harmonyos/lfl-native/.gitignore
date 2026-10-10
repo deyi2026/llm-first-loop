@@ -1,0 +1,9 @@
+# Local DevEco / hvigor build products are not sources or release artifacts.
+.hvigor/
+.ohpm/
+node_modules/
+**/build/
+*.hap
+*.app
+*.log
+.DS_Store

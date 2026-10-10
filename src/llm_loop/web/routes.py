@@ -1967,7 +1967,23 @@ def chat_cancel(payload: ChatCancelRequest, request: Request) -> Response:
         return UTF8JSONResponse(
             content={"cancelled": False, "detail": "后台 run 未启用（无取消需求）"}
         )
-    ok = runner.cancel(payload.session_id)
+    # Native/modern clients can bind the *exact* Run generation. The background
+    # runner checks this under its own lock, so the comparison and stop are
+    # atomic even if a different Run starts between HTTP preflight and dispatch.
+    expected = payload.run_generation
+    ok = (
+        runner.cancel(payload.session_id, expected_run_generation=expected)
+        if expected is not None else runner.cancel(payload.session_id)
+    )
+    if not ok and expected is not None:
+        snap = runner.get_handle(payload.session_id)
+        actual = str((snap or {}).get("run_generation") or "")
+        if actual and actual != expected:
+            return UTF8JSONResponse(
+                status_code=409,
+                content={"error": "run_generation_mismatch",
+                         "detail": "拒绝取消不同运行代次", "actual_run_generation": actual},
+            )
     return UTF8JSONResponse(content={"cancelled": ok})
 
 
