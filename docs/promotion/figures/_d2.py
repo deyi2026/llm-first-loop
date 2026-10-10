@@ -86,7 +86,7 @@ img, d = canvas("上线前的一次弱模型对照",
 d.text((60, 170), "三轮结果（两臂对称比较只在 G2 出现不对称）", font=f(24), fill=INK)
 rows = [
     ("G1  身份轮",     "3/3", "3/3", "两臂工具集合完全一致", ACC3),
-    ("G2  域已知任务轮", "0/3", "3/3", "A 臂输出全空，见下方说明", ACCENT),
+    ("G2  域已知任务轮", "0/3", "3/3", "A 臂输出全空，见下方说明", (150, 30, 20)),
     ("G3  域未指明轮",  "3/3", "3/3", "两臂均正常，B 臂省略 task_type", ACC3),
 ]
 d.text((300, 226), "ARM-A", font=f(20), fill=MUTE)
@@ -94,9 +94,9 @@ d.text((470, 226), "ARM-B", font=f(20), fill=MUTE)
 for i, (name, a, b, note, col) in enumerate(rows):
     y = 266 + i * 62
     if col == ACCENT:
-        d.rectangle([(56, y - 6), (944, y + 44)], fill=(253, 244, 240))
+        d.rectangle([(56, y - 6), (944, y + 44)], fill=(250, 233, 228))
     d.text((66, y), name, font=f(21), fill=INK)
-    d.text((300, y), a, font=f(24), fill=(170, 60, 50) if a == "0/3" else MUTE)
+    d.text((300, y), a, font=f(24), fill=(150, 30, 20) if a == "0/3" else MUTE)
     d.text((470, y), b, font=f(24), fill=col)
     d.text((580, y + 4), note, font=f(17, False), fill=MUTE)
 d.line([(70, 466), (W - 70, 466)], fill=LINE, width=2)
