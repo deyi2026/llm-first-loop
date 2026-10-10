@@ -324,7 +324,7 @@ class ExtensionStore:
         if fmt == FORMAT_STANDARD:
             report = parse_plugin_package(package_root)
         else:
-            report = parse_vendor_package(package_root, source_format=fmt).report
+            report = parse_vendor_package(Path(package_root), source_format=fmt).report
         if report.overall == PACKAGE_UNAVAILABLE:
             raise InstallRejectedError(
                 f"package unavailable: {'; '.join(report.warnings) or report.overall}"

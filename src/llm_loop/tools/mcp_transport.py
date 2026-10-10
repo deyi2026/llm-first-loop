@@ -30,7 +30,7 @@ import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import SplitResult, urljoin, urlsplit
 
 from llm_loop.tools.mcp_auth import McpOAuthClient
 from llm_loop.tools.mcp_protocol import (
@@ -675,7 +675,7 @@ _POST_SEND_FAILURES = (
 )
 
 
-def _url_origin(parts: urlsplit) -> tuple[str, str, int]:
+def _url_origin(parts: SplitResult) -> tuple[str, str, int]:
     """(scheme, host, effective_port) origin 三元组（比较用）."""
     scheme = parts.scheme.lower()
     default_port = 443 if scheme == "https" else 80

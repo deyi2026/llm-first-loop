@@ -154,7 +154,7 @@ def _finish_report(
         root=str(root),
         skills=skills,
         servers=servers,
-        warnings=warnings,
+        warnings=tuple(warnings),
     )
 
 
@@ -471,7 +471,8 @@ def _scan_claude_layout(
     if mcp_doc is not None:
         servers = mcp_doc.get("mcpServers")
         if isinstance(servers, dict):
-            server_components, converted_map = _convert_mcp_servers_map(servers, root, source_format, warnings)
+            converted_components, converted_map = _convert_mcp_servers_map(servers, root, source_format, warnings)
+            server_components = list(converted_components)
         elif isinstance(servers, str):
             kind = "mcp_bundle" if servers.endswith((".mcpb", ".dxt")) else "mcp_file_ref"
             status = STATUS_UNSUPPORTED if kind == "mcp_bundle" else STATUS_CONVERTIBLE
@@ -502,7 +503,7 @@ def _scan_claude_layout(
         if mcp_field is not None and not (root / ".mcp.json").exists() and not (root / "mcp.json").exists():
             if isinstance(mcp_field, dict):
                 inline_components, inline_map = _convert_mcp_servers_map(mcp_field, root, source_format, warnings)
-                server_components = inline_components
+                server_components = list(inline_components)
                 converted_map = inline_map
             else:
                 unmapped.append(
@@ -785,7 +786,7 @@ def _parse_codex(root: Path) -> VendorConversion:
         doc, mcp_error = _load_json(root / ".mcp.json")
         if mcp_error:
             warnings.append(f".mcp.json: {mcp_error}")
-        elif isinstance(doc.get("mcpServers"), dict):
+        elif isinstance(doc, dict) and isinstance(doc.get("mcpServers"), dict):
             server_components, converted_map = _convert_mcp_servers_map(doc["mcpServers"], root, FORMAT_CODEX, warnings)
 
     report = _finish_report(

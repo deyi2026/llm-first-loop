@@ -24,6 +24,7 @@ import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 __all__ = [
     "MAX_ARCHIVE_BYTES",
@@ -373,7 +374,7 @@ def fetch_archive_source(
 
 
 def install_fetched(
-    store: object,
+    store: Any,
     fetched: FetchedSource,
     *,
     scopes: list[str] | None = None,

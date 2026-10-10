@@ -58,7 +58,7 @@ class RegistryCandidate:
     def summary(self) -> str:
         pkgs = ";".join(
             f"{p.get('registry_type')}:{p.get('identifier')}@{p.get('version')}"
-            + (f"+sha256:{p.get('file_sha256')[:12]}" if p.get("file_sha256") else "")
+            + (f"+sha256:{sha[:12]}" if (sha := p.get("file_sha256")) else "")
             for p in self.packages
             if isinstance(p, dict)
         )
@@ -97,9 +97,13 @@ class DirectoryDiscovery:
 
 
 def _parse_candidate(entry: dict) -> RegistryCandidate:
-    server = entry.get("server") if isinstance(entry.get("server"), dict) else {}
+    server = entry.get("server")
+    if not isinstance(server, dict):
+        server = {}
     name = str(server.get("name", "") or "")
-    releases = server.get("releases") if isinstance(server.get("releases"), list) else []
+    releases = server.get("releases")
+    if not isinstance(releases, list):
+        releases = []
     latest_version = str(server.get("version", "") or "")
     transports: list[str] = []
     remote_urls: list[str] = []
@@ -134,12 +138,12 @@ def _parse_candidate(entry: dict) -> RegistryCandidate:
                     "file_sha256": str(pkg.get("file_sha256", "") or ""),
                 }
             )
-    meta = entry.get("_meta") if isinstance(entry.get("_meta"), dict) else {}
-    official = (
-        meta.get("io.modelcontextprotocol.registry/official")
-        if isinstance(meta.get("io.modelcontextprotocol.registry/official"), dict)
-        else {}
-    )
+    meta = entry.get("_meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    official = meta.get("io.modelcontextprotocol.registry/official")
+    if not isinstance(official, dict):
+        official = {}
     status = str(server.get("status", "") or official.get("status", "") or "unknown") or "unknown"
     return RegistryCandidate(
         name=name,
@@ -250,7 +254,9 @@ def discover_registry_servers(
             if isinstance(entry, dict):
                 candidates.append(_parse_candidate(entry))
         pages += 1
-        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
         next_cursor = str(metadata.get("nextCursor", "") or "")
         if not next_cursor:
             return DirectoryDiscovery(
