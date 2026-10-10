@@ -10,3 +10,7 @@ status: active
 created_at: "2026-08-15T16:08:33.685794+08:00"
 updated_at: "2026-08-15T16:08:33.685794+08:00"
 ---
+
+## 2026-10-10 lifecycle review
+
+S2 核验：卡内具体修复方案锚定的 _layer_trim / tool_trim_threshold / .env TOOL_TRIM_THRESHOLD 已从当前树移除（grep 零命中），extract_key_info 机制迁移至 src/llm_loop/memory/summarize.py 继续存在。两条纪律仍然通用：①摘要优先、机械截断仅兜底；②代码默认值可能被 .env 覆盖，须查装配后的实际值。保持 active，历史实现细节仅作考古。

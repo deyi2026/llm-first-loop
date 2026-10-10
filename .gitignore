@@ -128,3 +128,6 @@ cloudflared/tunnel-runtime.log
 # 运行时 store 写锁（方法库/经验库瞬时锁文件，可再生非资产，不入库；2026-10-08）
 .__method_store.lock
 .__experience_store.lock
+
+# 本地工具缓存（verify-citations 等可再生产物，不入库；2026-10-10）
+.cache/

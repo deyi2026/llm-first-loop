@@ -23,3 +23,7 @@ updated_at: "2026-10-07T13:23:29.688833+08:00"
 残留未知：live 引擎构建于 12:45:34（learning 12:45:21 先拉起且开 semantic method 预热）——进程内状态无法外部观测，根因未定位。
 修复动作：fail-open 分支全部加日志（flag off=INFO、store None=WARNING、异常=exception、零行=debug）+ architecture_config 投影 method_related_hint_enabled；重启重建引擎（复现已证明新构建必产尾注）。
 教训：静态验证"链路完整"不能替代运行时可观测；fail-open + 零日志 = 把下次排查成本放大 10 倍。发布后应有一次 memory 检索的尾注验证 + 日志核对作为标准验收步骤。
+
+## 2026-10-10 lifecycle review
+
+S2 核验：evidence 引用的 tests/unit/test_method_related_hint.py 已从当前树移除（仅 pyc 残留），method 尾注机制后续有演进；但本卡方法论（差分复现、进程级对照、fail-open 静默分支可观测化）为通用诊断模式、机制可解释，保持 active。
