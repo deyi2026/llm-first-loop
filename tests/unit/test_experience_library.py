@@ -161,8 +161,12 @@ def test_save_filename_kebab_case(tmp_path):
     assert filename.startswith("EXPERIENCE-")
     assert filename.endswith(".md")
     slug = filename[len("EXPERIENCE-YYYYMMDD-") : -3]  # noqa: E203
-    # kebab-case: 仅小写字母数字和连字符
-    assert all(c.islower() or c.isdigit() or c == "-" for c in slug)
+    # kebab-case（v0.6.29 9e8f3abd9 契约更新）：Unicode 字母数字保留（中文标题
+    # 不塌缩，避免同日 untitled 冲突丢经验），ASCII 一律小写，分隔符仅连字符，
+    # 无下划线/空白，无首尾连字符
+    assert "_" not in slug and " " not in slug and slug == slug.strip("-")
+    assert all(c == "-" or (c.isalnum() and (not c.isascii() or c.islower())) for c in slug)
+    assert "修复" in slug and "sse" in slug
 
 
 def test_save_slug_truncate_50(tmp_path):

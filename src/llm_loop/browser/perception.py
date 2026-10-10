@@ -373,6 +373,29 @@ def _content_hash_object_basis(
     return sorted(normalized, key=lambda item: str(item.get("id") or ""))
 
 
+_ZERO_WIDTH_NAME_RUNES = "\u200b\u200c\u200d\u00ad\ufeff"
+_WHITESPACE_RUN_PATTERN = re.compile(r"\s+")
+
+
+def normalize_semantic_name(value: str) -> str:
+    """Deterministic name canonicalization for the secondary addressing key.
+
+    EVO-20261010-1e06d6b4: strip zero-width and soft hyphen runes
+    (U+200B/U+200C/U+200D/U+00AD/U+FEFF), collapse every whitespace run
+    (including NBSP) to a single ASCII space, and strip leading/trailing
+    whitespace.  The raw observed ``name`` is never rewritten; this form is
+    exposed alongside it as ``attributes.name_normalized`` and matched
+    byte-exact by ``browser_operate`` when the model explicitly selects it.
+    No case folding, no transliteration, no locale rules - identical input
+    bytes always yield identical output bytes.
+    """
+    if not isinstance(value, str):
+        return ""
+    for rune in _ZERO_WIDTH_NAME_RUNES:
+        value = value.replace(rune, "")
+    return _WHITESPACE_RUN_PATTERN.sub(" ", value).strip()
+
+
 def _model_projection_order(
     objects: list[dict[str, Any]],
     object_grounding: dict[str, dict[str, Any]],
@@ -1717,7 +1740,6 @@ class BrowserPerceptionAdapter:
             if parent:
                 children_by_parent.setdefault(parent, []).append(node)
 
-        document_hash = _sha256(_guard_document_payload(raw_capture.get("url")))
         baseline: dict[str, dict[str, Any]] = {}
         for semantic_id, identity in (build.private_identity or {}).items():
             if not isinstance(identity, dict) or identity.get("stable") is not True:
@@ -1845,6 +1867,22 @@ class BrowserPerceptionAdapter:
             )
 
         objects_canonical = sorted(build.semantic_objects, key=lambda item: item["id"])
+        # EVO-20261010-1e06d6b4: attributes.name_normalized is a deterministic
+        # derivation of the raw observed name (zero-width runes stripped,
+        # whitespace runs collapsed) added before persistence so projections,
+        # hydrate, and operate-side exact matching all see the same field.
+        # The raw name is never rewritten; consumers choose the addressing
+        # form explicitly.  Empty normalizations are kept verbatim: the empty
+        # string is itself the honest canonical form of a name that contains
+        # only invisible runes.
+        for semantic_object in objects_canonical:
+            semantic_attributes = semantic_object.get("attributes")
+            if isinstance(semantic_attributes, dict) and isinstance(
+                semantic_attributes.get("name"), str
+            ):
+                semantic_attributes["name_normalized"] = normalize_semantic_name(
+                    semantic_attributes["name"]
+                )
         objects_projected = _model_projection_order(objects_canonical, build.object_grounding)
         projection_limit = max(1, min(int(projection_limit), 500))
         # EVO-20260918-c69527a1: model-declared projection window. The runtime

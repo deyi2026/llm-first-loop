@@ -339,6 +339,13 @@
             "null"
           ]
         },
+        "name_normalized": {
+          "description": "EVO-20261010-1e06d6b4: deterministic derivation of name (zero-width runes U+200B/U+200C/U+200D/U+00AD/U+FEFF stripped, whitespace runs collapsed, outer whitespace trimmed). Present only when name is a non-null string. Never rewrites name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "tag": {
           "type": [
             "string",

@@ -251,19 +251,28 @@ def test_identity_kind_schema_reuses_canonical_semantic_object_vocabulary() -> N
     schema = BrowserSemanticOperationTool._CLAUSE_PARAMETERS
     branches = schema["properties"]["clauses"]["items"]["oneOf"]
     object_kind_enums: list[list[str]] = []
+    grounding_branches = 0
     for branch in branches:
         target = branch["properties"].get("target")
         if not isinstance(target, dict):
             continue
-        identity = (target.get("properties") or {}).get("identity")
-        if not isinstance(identity, dict):
-            continue
-        object_kind_enums.append(identity["properties"]["kind"]["enum"])
+        # EVO-20261010-1e06d6b4: target may expose a oneOf of addressing
+        # forms; the identity form keeps the canonical kind vocabulary.
+        target_forms = target.get("oneOf") or [target]
+        for target_form in target_forms:
+            form_properties = target_form.get("properties") or {}
+            identity = form_properties.get("identity")
+            if isinstance(identity, dict):
+                object_kind_enums.append(identity["properties"]["kind"]["enum"])
+            if "grounding_ref" in form_properties:
+                grounding_branches += 1
 
     assert object_kind_enums
     assert all(tuple(enum) == SEMANTIC_OBJECT_KINDS for enum in object_kind_enums)
     assert "input" in SEMANTIC_OBJECT_KINDS
     assert "textbox" not in SEMANTIC_OBJECT_KINDS
+    # Grounding_ref addressing is offered wherever identity addressing is.
+    assert grounding_branches == len(object_kind_enums)
 
 
 def test_lazy_provider_surface_preserves_bounded_operation_first_call_contract() -> None:
@@ -304,7 +313,13 @@ def test_lazy_provider_surface_preserves_bounded_operation_first_call_contract()
         branch for branch in branches if branch["properties"]["kind"]["enum"] == ["wait"]
     )
     assert "verb" not in wait["properties"]
-    identity_kind = (
-        object_mutation["properties"]["target"]["properties"]["identity"]["properties"]["kind"]
-    )
+    # EVO-20261010-1e06d6b4: mutate targets offer two exact addressing forms -
+    # identity ({kind,name|name_normalized,role}) or grounding_ref - as a
+    # oneOf; the identity branch keeps the canonical vocabulary assertion.
+    object_target_branches = object_mutation["properties"]["target"]["oneOf"]
+    assert len(object_target_branches) == 2
+    identity_branch, grounding_branch = object_target_branches
+    identity_kind = identity_branch["properties"]["identity"]["properties"]["kind"]
     assert tuple(identity_kind["enum"]) == SEMANTIC_OBJECT_KINDS
+    assert set(grounding_branch["required"]) == {"kind", "grounding_ref"}
+    assert grounding_branch["additionalProperties"] is False

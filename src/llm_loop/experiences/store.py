@@ -194,8 +194,14 @@ class ExperienceStore:
 
     @staticmethod
     def sanitize_slug(slug: str) -> str:
-        """转 kebab-case：小写 + 非字母数字转连字符 + 去首尾连字符 + 截断 50 字符。"""
-        s = re.sub(r"[^a-zA-Z0-9]+", "-", slug).strip("-").lower()
+        """转 kebab-case：小写 + 非字母数字转连字符 + 去首尾连字符 + 截断 50 字符.
+
+        2026-10-10 修复：旧实现只保留 ASCII [a-zA-Z0-9]，纯中文/中文开头标题塌缩为
+        空串 → save() 回退 "untitled" → 同日第二条中文经验即同 slug 冲突被拒（不可逆
+        丢失；experiences/ 已累积 18 个 *-untitled.md）。现保留 Unicode 字母数字
+        （\\w 去下划线），纯 ASCII 输出与旧实现逐字节一致（回归测试锁定）。
+        """
+        s = re.sub(r"([^\w]|_)+", "-", slug).strip("-").lower()
         return s[:50].rstrip("-")
 
     @contextmanager
@@ -246,7 +252,10 @@ class ExperienceStore:
         date_str = system_local_now().strftime("%Y%m%d")
         slug = self.sanitize_slug(doc.title)
         if not slug:
-            slug = "untitled"
+            # 纯符号/空标题兜底（2026-10-10）：标题 hash 区分不同条目，避免同日全部
+            # 塌缩成同一个 "untitled" 互相冲突拒绝；同标题同日重试仍走既有同 slug
+            # 冲突契约（FileExistsError），保持重试幂等语义不变。
+            slug = f"untitled-{_payload_sha256(doc.title)[:8]}"
         filename = f"EXPERIENCE-{date_str}-{slug}.md"
         path = self._dir / filename
         experience_id = filename.removesuffix(".md")

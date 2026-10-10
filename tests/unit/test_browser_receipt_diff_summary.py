@@ -174,7 +174,12 @@ def test_enabled_inline_summary_field_names_only_no_values(tmp_path: Path) -> No
     assert summary["changed"]["total"] == 2
     changed_entries = summary["changed"]["items"]
     assert all(set(entry) == {"id", "fields"} for entry in changed_entries)
-    assert any(entry["fields"] == ["attributes.name"] for entry in changed_entries)
+    # EVO-20261010-1e06d6b4: a rename now reports both the raw name and its
+    # deterministic derivation name_normalized - field names only, no values.
+    assert any(
+        entry["fields"] == ["attributes.name", "attributes.name_normalized"]
+        for entry in changed_entries
+    )
     assert any("relations" in entry["fields"] for entry in changed_entries)
     # Re-appearing cancel -> created.
     assert summary["created"]["total"] == 1

@@ -288,3 +288,45 @@ def test_uncertain_readback_reconcile_is_get_recoverable(
     )
     filename2 = store.save(_doc(title="恢复后续写"))
     assert (tmp_path / filename2).exists()
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-10 回归：sanitize_slug Unicode 塌缩。旧实现只留 ASCII [a-zA-Z0-9]，纯中文/
+# 中文开头标题被整体吃掉 → 回退 "untitled" → 同日第二条中文经验同 slug 冲突被拒，
+# 不可逆丢失（experiences/ 曾累积 18 个 *-untitled.md）。
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_slug_preserves_cjk_and_keeps_ascii_legacy() -> None:
+    assert ExperienceStore.sanitize_slug("纯中文标题测试") == "纯中文标题测试"
+    assert ExperienceStore.sanitize_slug("openJiuwen 竞品分析") == "openjiuwen-竞品分析"
+    # 纯 ASCII 行为必须与旧实现逐字节一致：下划线→连字符、连续分隔折叠、小写
+    assert ExperienceStore.sanitize_slug("A_B-C!!d") == "a-b-c-d"
+    assert ExperienceStore.sanitize_slug("  --Fix: twin  space--  ") == "fix-twin-space"
+    # 纯符号仍为空（save() hash 兜底）；50 字符截断保持
+    assert ExperienceStore.sanitize_slug("！！！……") == ""
+    assert len(ExperienceStore.sanitize_slug("标" * 80)) == 50
+
+
+def test_save_two_distinct_cjk_titles_same_day_both_persist(tmp_path: Path) -> None:
+    store = ExperienceStore(experiences_dir=str(tmp_path))
+    first = store.save(_doc(title="第一条中文经验"))
+    second = store.save(_doc(title="第二条中文经验"))
+
+    # 修复前：第二条必然 FileExistsError（双双塌缩成 EXPERIENCE-*-untitled.md）
+    assert first != second
+    assert (tmp_path / first).exists() and (tmp_path / second).exists()
+    assert (
+        ExperienceDocument.from_md((tmp_path / second).read_text(encoding="utf-8")).title
+        == "第二条中文经验"
+    )
+    assert _tmp_residue(tmp_path) == []
+
+
+def test_save_symbol_only_titles_get_distinct_hash_fallback(tmp_path: Path) -> None:
+    store = ExperienceStore(experiences_dir=str(tmp_path))
+    a = store.save(_doc(title="！！！……"))
+    b = store.save(_doc(title="？？？——"))
+
+    assert a != b
+    assert "untitled-" in a and "untitled-" in b

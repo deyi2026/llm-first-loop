@@ -17,17 +17,22 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-from llm_loop.browser.perception import SEMANTIC_OBJECT_KINDS, BrowserPerceptionAdapter
 from llm_loop.browser.errors import (
     MultiPageAmbiguityError,
     PageTargetNotFoundError,
+)
+from llm_loop.browser.perception import (
+    SEMANTIC_OBJECT_KINDS,
+    BrowserPerceptionAdapter,
+    normalize_semantic_name,
 )
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
 from llm_loop.tools.builtin.browser_wait import BrowserWaitObjectTool
 
 _MAX_CLAUSES = 8
-_IDENTITY_KEYS = {"kind", "role", "name"}
+_IDENTITY_KEYS = {"kind", "role", "name", "name_normalized"}
+_MAX_CANDIDATE_PROJECTION = 20
 _OBJECT_VERBS = {"click", "fill", "select", "scroll"}
 _MUTATION_VERBS = _OBJECT_VERBS | {"navigate"}
 
@@ -138,15 +143,50 @@ _MODEL_FRIENDLY_WAIT_TEXT_MATCH = {
 
 # Module-level because Python class-body comprehensions do not close over class locals.
 # The class exposes the same schema value below for introspection/tests.
+# EVO-20261010-1e06d6b4: three exact addressing forms, choose exactly one -
+# raw {kind,name}, canonical {kind,name_normalized}, or a bare {grounding_ref}
+# carried over from a prior snapshot/candidate receipt.  Every form stays
+# byte-exact with no fuzzy matching and no silent fallback.
 _SHORT_TARGET_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
-        "name": {"type": "string", "minLength": 1},
-        "role": {"type": "string", "minLength": 1},
-    },
-    "required": ["kind", "name"],
-    "additionalProperties": False,
+    "oneOf": [
+        {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
+                "name": {"type": "string", "minLength": 1},
+                "role": {"type": "string", "minLength": 1},
+            },
+            "required": ["kind", "name"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
+                "name_normalized": {"type": "string", "minLength": 1},
+                "role": {"type": "string", "minLength": 1},
+            },
+            "required": ["kind", "name_normalized"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "grounding_ref": {"type": "string", "minLength": 1},
+            },
+            "required": ["grounding_ref"],
+            "additionalProperties": False,
+        },
+    ],
+    "description": (
+        "Exact target addressing (EVO-20261010-1e06d6b4). Pick one form: "
+        "{kind,name} matches the raw observed name byte-exact; "
+        "{kind,name_normalized} matches the deterministic zero-width-stripped / "
+        "whitespace-collapsed form exposed by browser_perceive snapshot objects; "
+        "{grounding_ref} reuses an object ref from a prior snapshot or miss "
+        "candidate list (world-version retention applies). Mixing forms or "
+        "empty values are rejected deterministically."
+    ),
 }
 
 
@@ -275,10 +315,15 @@ class BrowserSemanticOperationTool:
     name = "browser_operate"
     description = (
         "Browser 操作能力：一次调用只表达一个已经决定的 mutation。"
-        "do=navigate|click|set_text|append_text|select|scroll；对象 target 使用 exact semantic identity(kind/name，可选role)。"
+        "do=navigate|click|set_text|append_text|select|scroll；对象 target 三选一寻址"
+        "(EVO-20261010-1e06d6b4)：{kind,name[,role]} 原始 name 逐字节 exact；"
+        "{kind,name_normalized[,role]} 命中 browser_perceive snapshot 暴露的确定性归一形式"
+        "(零宽剥离+空白折叠)；{grounding_ref} 复用先前 snapshot/未命中候选清单中的对象 ref"
+        "(受 world-version retention 约束)。混用形式确定性拒绝；仍不做 fuzzy/"
+        "best-match/auto-target/latest/rebind/retry；identity 未命中时回执有界候选清单。"
         "wait 属于 browser_perceive，不在 actuation provider contract。"
-        "程序仅机械编译到既有 exact grounding/version guard/single-dispatch/ActionReceipt；"
-        "不 fuzzy/best-match，不 auto-target/latest/rebind/retry，不判断 task completion。"
+        "程序仅机械编译到既有 exact grounding/version guard/single-dispatch/ActionReceipt，"
+        "不判断 task completion。"
     )
     _IDENTITY_SCHEMA = {
         "type": "object",
@@ -286,18 +331,39 @@ class BrowserSemanticOperationTool:
             "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
             "role": {"type": "string", "minLength": 1},
             "name": {"type": "string", "minLength": 1},
+            "name_normalized": {"type": "string", "minLength": 1},
         },
-        "required": ["kind", "name"],
+        "required": ["kind"],
+        "anyOf": [
+            {"required": ["name"]},
+            {"required": ["name_normalized"]},
+        ],
         "additionalProperties": False,
     }
     _OBJECT_TARGET_SCHEMA = {
-        "type": "object",
-        "properties": {
-            "kind": {"const": "object"},
-            "identity": _IDENTITY_SCHEMA,
-        },
-        "required": ["kind", "identity"],
-        "additionalProperties": False,
+        # EVO-20261010-1e06d6b4: identity addressing or grounding_ref
+        # addressing, never both.  Branches use enum (not const) to keep the
+        # lazy provider surface const-free.
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {"enum": ["object"]},
+                    "identity": _IDENTITY_SCHEMA,
+                },
+                "required": ["kind", "identity"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {"enum": ["object"]},
+                    "grounding_ref": {"type": "string", "minLength": 1},
+                },
+                "required": ["kind", "grounding_ref"],
+                "additionalProperties": False,
+            },
+        ],
     }
     _PAGE_TARGET_SCHEMA = {
         "type": "object",
@@ -424,16 +490,10 @@ class BrowserSemanticOperationTool:
     # MF v0.2 model-facing wire.  This is deliberately a mechanical shorthand over
     # the already-qualified clause executor below; it does not add target selection,
     # retry, rebind, latest, or task-completion authority.
-    _SHORT_TARGET_SCHEMA = {
-        "type": "object",
-        "properties": {
-            "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
-            "name": {"type": "string", "minLength": 1},
-            "role": {"type": "string", "minLength": 1},
-        },
-        "required": ["kind", "name"],
-        "additionalProperties": False,
-    }
+    # EVO-20261010-1e06d6b4: single source of truth lives at module level
+    # (see the definition above); the class attribute is kept for
+    # introspection/tests and always equals the module-level schema.
+    _SHORT_TARGET_SCHEMA = _SHORT_TARGET_SCHEMA
     _SHORT_STEP_VARIANTS = [
         {
             "type": "object",
@@ -590,16 +650,42 @@ class BrowserSemanticOperationTool:
 
     @staticmethod
     def _normalize_identity(target: Any) -> dict[str, str]:
-        if not isinstance(target, dict) or set(target) != {"kind", "identity"}:
+        if not isinstance(target, dict) or target.get("kind") != "object":
+            raise BrowserSemanticOperationContractError("object_target_contract_mismatch")
+        if "grounding_ref" in target:
+            # EVO-20261010-1e06d6b4 (B): a grounding_ref replaces {kind,name,role}
+            # addressing entirely.  Carrying both forms in one target is a
+            # deterministic contract error - the runtime never picks one.
+            if set(target) != {"kind", "grounding_ref"}:
+                raise BrowserSemanticOperationContractError("object_target_fields_mismatch")
+            ref = str(target.get("grounding_ref") or "").strip()
+            if not ref:
+                raise BrowserSemanticOperationContractError("identity_grounding_ref_missing")
+            return {"grounding_ref": ref}
+        if set(target) != {"kind", "identity"}:
             raise BrowserSemanticOperationContractError("object_target_fields_mismatch")
-        if target.get("kind") != "object" or not isinstance(target.get("identity"), dict):
+        if not isinstance(target.get("identity"), dict):
             raise BrowserSemanticOperationContractError("object_target_contract_mismatch")
         identity = dict(target["identity"])
-        if not {"kind", "name"}.issubset(identity) or not set(identity).issubset(_IDENTITY_KEYS):
+        if not set(identity).issubset(_IDENTITY_KEYS):
+            raise BrowserSemanticOperationContractError("identity_fields_mismatch")
+        if "kind" not in identity:
+            raise BrowserSemanticOperationContractError("identity_kind_missing")
+        # EVO-20261010-1e06d6b4 (A): exactly one name addressing key - the raw
+        # observed name or its deterministic normalized form.  Supplying both
+        # is the new deterministic conflict error; missing both keeps the
+        # legacy fields-mismatch error.  No preference order, no silent
+        # fallback between the two forms.
+        if "name" in identity and "name_normalized" in identity:
+            raise BrowserSemanticOperationContractError("identity_name_addressing_conflict")
+        if "name" not in identity and "name_normalized" not in identity:
             raise BrowserSemanticOperationContractError("identity_fields_mismatch")
         normalized: dict[str, str] = {}
         for key, value in identity.items():
-            text = str(value or "").strip()
+            if key == "name_normalized":
+                text = normalize_semantic_name(str(value or ""))
+            else:
+                text = str(value or "").strip()
             if not text:
                 raise BrowserSemanticOperationContractError(f"identity_{key}_missing")
             normalized[key] = text
@@ -621,17 +707,45 @@ class BrowserSemanticOperationTool:
 
     def _ground_object(
         self, session_id: str, target: Any
-    ) -> tuple[str | None, int, dict[str, str], dict[str, Any]]:
+    ) -> tuple[str | None, int, dict[str, str], dict[str, Any], dict[str, Any]]:
         identity = self._normalize_identity(target)
+        if "grounding_ref" in identity:
+            # EVO-20261010-1e06d6b4 (B): hydrate reuses the perceive-side
+            # world-version/retention/session-scope validation.  No fresh
+            # snapshot, no re-grounding, no automatic retry - anything but a
+            # single available object is a deterministic failure whose
+            # availability reason is echoed back to the model.
+            hydrated = self._perception.hydrate(session_id, identity["grounding_ref"])
+            availability = str(hydrated.get("availability") or "unavailable")
+            detail: dict[str, Any] = {"availability": availability}
+            reason = hydrated.get("reason")
+            if isinstance(reason, str) and reason:
+                detail["reason"] = reason
+            expires_at = hydrated.get("expires_at_epoch")
+            if isinstance(expires_at, (int, float)):
+                detail["expires_at_epoch"] = expires_at
+            if availability != "available":
+                return None, 0, identity, {}, detail
+            content = hydrated.get("content")
+            semantic_object = (
+                content.get("semantic_object") if isinstance(content, dict) else None
+            )
+            if not isinstance(semantic_object, dict):
+                detail["reason"] = "object_projection_missing"
+                return None, 0, identity, {}, detail
+            ref = str(semantic_object.get("grounding_ref") or "").strip()
+            if not ref:
+                raise BrowserSemanticOperationContractError("exact_match_grounding_ref_missing")
+            return ref, 1, identity, {}, detail
         snapshot_result = self._snapshot(session_id)
         objects = [obj for obj in snapshot_result.get("objects", []) if isinstance(obj, dict)]
         matches = [obj for obj in objects if self._matches_identity(obj, identity)]
         if len(matches) != 1:
-            return None, len(matches), identity, snapshot_result
+            return None, len(matches), identity, snapshot_result, {}
         ref = str(matches[0].get("grounding_ref") or "").strip()
         if not ref:
             raise BrowserSemanticOperationContractError("exact_match_grounding_ref_missing")
-        return ref, 1, identity, snapshot_result
+        return ref, 1, identity, snapshot_result, {}
 
     def _ground_page(self, session_id: str, target: Any) -> tuple[str, dict[str, Any]]:
         if target != {"kind": "page"}:
@@ -666,10 +780,28 @@ class BrowserSemanticOperationTool:
     def _short_target_to_clause_target(cls, raw: Any) -> dict[str, Any]:
         if not isinstance(raw, dict):
             raise BrowserSemanticOperationContractError("short_target_must_be_object")
-        if not {"kind", "name"}.issubset(raw) or not set(raw).issubset(_IDENTITY_KEYS):
+        if "grounding_ref" in raw:
+            # EVO-20261010-1e06d6b4 (B): ref-only addressing; mixing with
+            # kind/name/role is rejected deterministically.
+            if set(raw) != {"grounding_ref"}:
+                raise BrowserSemanticOperationContractError("short_target_fields_mismatch")
+            ref = str(raw.get("grounding_ref") or "").strip()
+            if not ref:
+                raise BrowserSemanticOperationContractError("short_target_grounding_ref_missing")
+            return {"kind": "object", "grounding_ref": ref}
+        if not set(raw).issubset(_IDENTITY_KEYS):
+            raise BrowserSemanticOperationContractError("short_target_fields_mismatch")
+        if "kind" not in raw:
+            raise BrowserSemanticOperationContractError("short_target_kind_missing")
+        # EVO-20261010-1e06d6b4 (A): exactly one name addressing key.  Missing
+        # both keeps the legacy fields-mismatch error; supplying both is the
+        # new deterministic conflict error.
+        if "name" in raw and "name_normalized" in raw:
+            raise BrowserSemanticOperationContractError("short_target_name_addressing_conflict")
+        if "name" not in raw and "name_normalized" not in raw:
             raise BrowserSemanticOperationContractError("short_target_fields_mismatch")
         identity: dict[str, str] = {}
-        for key in ("kind", "name", "role"):
+        for key in ("kind", "name", "name_normalized", "role"):
             if key not in raw:
                 continue
             value = str(raw.get(key) or "").strip()
@@ -884,6 +1016,47 @@ class BrowserSemanticOperationTool:
             raise BrowserSemanticOperationContractError("step_discriminator_missing")
         return clauses
 
+    @classmethod
+    def _candidate_projection(cls, snapshot_result: Any) -> dict[str, Any]:
+        """Bounded miss-receipt candidate list (EVO-20261010-1e06d6b4).
+
+        When exact identity matching fails, echo up to
+        ``_MAX_CANDIDATE_PROJECTION`` observed objects with both addressing
+        forms (raw ``name`` and derived ``name_normalized``) plus their
+        ``grounding_ref`` so the model can pick form A or form B explicitly
+        on the next call.  Pure observation: no re-ranking, no scoring, no
+        retry.
+        """
+        objects = (
+            snapshot_result.get("objects")
+            if isinstance(snapshot_result, dict)
+            else None
+        ) or []
+        if not isinstance(objects, list):
+            objects = []
+        items: list[dict[str, Any]] = []
+        for obj in objects[:_MAX_CANDIDATE_PROJECTION]:
+            if not isinstance(obj, dict):
+                continue
+            attributes = obj.get("attributes")
+            if not isinstance(attributes, dict):
+                attributes = {}
+            entry: dict[str, Any] = {
+                "grounding_ref": obj.get("grounding_ref"),
+                "kind": obj.get("kind"),
+            }
+            for key in ("name", "name_normalized"):
+                value = attributes.get(key)
+                if isinstance(value, str):
+                    entry[key] = value
+            items.append(entry)
+        return {
+            "count": len(objects),
+            "returned": len(items),
+            "max_projection": _MAX_CANDIDATE_PROJECTION,
+            "items": items,
+        }
+
     def _compact_projection(
         self, session_id: str, full_receipt: dict[str, Any], receipt_ref: str
     ) -> dict[str, Any]:
@@ -909,6 +1082,14 @@ class BrowserSemanticOperationTool:
         last = clauses[-1] if clauses else {}
         if "exact_match_count" in last:
             compact["match_count"] = last.get("exact_match_count")
+        # EVO-20261010-1e06d6b4: surface the blocked clause's miss evidence in
+        # the compact receipt too - the candidate list (identity addressing) or
+        # hydrate availability (ref addressing) is what the model needs to
+        # re-ground explicitly on the next call.
+        if isinstance(last.get("candidates"), dict):
+            compact["candidates"] = last["candidates"]
+        if isinstance(last.get("grounding_availability"), dict):
+            compact["grounding_availability"] = last["grounding_availability"]
         action_receipt = last.get("action_receipt")
         if isinstance(action_receipt, dict):
             after_version = action_receipt.get("after_version")
@@ -1058,22 +1239,35 @@ class BrowserSemanticOperationTool:
                     exact_count = 1
                     identity: dict[str, str] | None = None
                 else:
-                    target_ref, exact_count, identity, _ = self._ground_object(
-                        session_id, clause.get("target")
+                    target_ref, exact_count, identity, snapshot_result, ground_detail = (
+                        self._ground_object(session_id, clause.get("target"))
                     )
                     if exact_count != 1 or target_ref is None:
-                        receipt["clauses"].append(
-                            {
-                                "index": index,
-                                "kind": kind,
-                                "verb": verb,
-                                "identity": identity,
-                                "exact_match_count": exact_count,
-                                "status": "blocked",
-                            }
-                        )
+                        blocked_clause: dict[str, Any] = {
+                            "index": index,
+                            "kind": kind,
+                            "verb": verb,
+                            "identity": identity,
+                            "exact_match_count": exact_count,
+                            "status": "blocked",
+                        }
+                        # EVO-20261010-1e06d6b4: deterministic miss receipts carry
+                        # either the snapshot candidate list (identity addressing)
+                        # or the hydrate availability detail (ref addressing) so
+                        # the model can re-ground explicitly instead of guessing.
+                        if "grounding_ref" in identity:
+                            blocked_clause["grounding_availability"] = ground_detail
+                            receipt["halt_reason"] = (
+                                "grounding_ref_"
+                                f"{ground_detail.get('availability', 'unavailable')}"
+                            )
+                        else:
+                            blocked_clause["candidates"] = self._candidate_projection(
+                                snapshot_result
+                            )
+                            receipt["halt_reason"] = f"exact_identity_match_count:{exact_count}"
+                        receipt["clauses"].append(blocked_clause)
                         receipt["execution_status"] = "halted"
-                        receipt["halt_reason"] = f"exact_identity_match_count:{exact_count}"
                         return finalize()
                 action_receipt = self._semantic_execute.execute_request(
                     session_id,
@@ -1117,21 +1311,31 @@ class BrowserSemanticOperationTool:
                 }
                 if set(clause) != required:
                     raise BrowserSemanticOperationContractError("wait_clause_fields_mismatch")
-                target_ref, exact_count, identity, _ = self._ground_object(
-                    session_id, clause.get("target")
+                target_ref, exact_count, identity, snapshot_result, ground_detail = (
+                    self._ground_object(session_id, clause.get("target"))
                 )
                 if exact_count != 1 or target_ref is None:
-                    receipt["clauses"].append(
-                        {
-                            "index": index,
-                            "kind": kind,
-                            "identity": identity,
-                            "exact_match_count": exact_count,
-                            "status": "blocked",
-                        }
-                    )
+                    blocked_clause: dict[str, Any] = {
+                        "index": index,
+                        "kind": kind,
+                        "identity": identity,
+                        "exact_match_count": exact_count,
+                        "status": "blocked",
+                    }
+                    # EVO-20261010-1e06d6b4: same miss-receipt policy as mutate.
+                    if "grounding_ref" in identity:
+                        blocked_clause["grounding_availability"] = ground_detail
+                        receipt["halt_reason"] = (
+                            "grounding_ref_"
+                            f"{ground_detail.get('availability', 'unavailable')}"
+                        )
+                    else:
+                        blocked_clause["candidates"] = self._candidate_projection(
+                            snapshot_result
+                        )
+                        receipt["halt_reason"] = f"exact_identity_match_count:{exact_count}"
+                    receipt["clauses"].append(blocked_clause)
                     receipt["execution_status"] = "halted"
-                    receipt["halt_reason"] = f"exact_identity_match_count:{exact_count}"
                     return finalize()
                 wait_result = self._wait_object.execute_request(
                     session_id,
