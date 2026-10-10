@@ -108,6 +108,13 @@ already-reserved Task must fail closed rather than replay a human message.
 No merge to `main`, push, signing, production restart or public listing is
 authorized at this phase.
 
+**Progress after the initial SDK gate:** a standalone provider-free LFL
+durable Task reservation store now exists at
+`src/llm_loop/web/a2a_task_admission.py`, with initial 17 focused tests
+passing. This is *not* a registered A2A endpoint or verified caller
+authorization and does not remove the above integration gate. See
+`docs/harmonyos/A2A-TASK-CAS-20261011.md`.
+
 ## Phase evidence receipts
 
 - `node --test harmonyos/lfl-native/test/*.test.mjs`: **26 passed / 0 failed**.

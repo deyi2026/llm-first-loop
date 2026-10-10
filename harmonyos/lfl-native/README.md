@@ -85,6 +85,14 @@ contract requires a future authenticated platform caller and backend durable
 admission receipt; real `EXECUTE` remains disabled. See
 `docs/harmonyos/A2A-QUALIFICATION-20261011.md`.
 
+An **offline-only** backend CAS record implementation was subsequently
+added to `src/llm_loop/web/a2a_task_admission.py`. It preserves exact
+human request bytes and returns an idempotent receipt after durable
+create-if-absent. This module has no public route and does not establish
+trusted platform principal/session scope. See
+`docs/harmonyos/A2A-TASK-CAS-20261011.md` for the remaining security
+conditions and exact replay tests.
+
 ## Outstanding external and product gates
 
 - Actual HarmonyOS phone/tablet + debug signing, App install/launch,
